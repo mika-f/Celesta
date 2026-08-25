@@ -29,7 +29,7 @@ export type { VideoConfig } from './hooks';
 export { Easings, interpolate, spring } from './animation';
 export type { Extrapolate, InterpolateOptions, SpringConfig, SpringOptions } from './animation';
 
-export { ProjectProvider, ProjectTimeline, useProject } from './project-runtime';
+export { ProjectProvider, ProjectTimeline, useProject, useProjectProperty } from './project-runtime';
 export type { ProjectProviderProps } from './project-runtime';
 
 export { loadProject, loadProjectFromString } from './project';
@@ -54,3 +54,4 @@ export type { Keyframe } from './generated/Keyframe';
 export type { KeyframeAnimation } from './generated/KeyframeAnimation';
 export type { KeyframeAnimationType } from './generated/KeyframeAnimationType';
 export type { Transform } from './generated/Transform';
+export type { JsonValue } from './generated/serde_json/JsonValue';

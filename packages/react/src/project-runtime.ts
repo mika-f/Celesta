@@ -2,6 +2,7 @@ import * as React from 'react';
 import type { ReactNode } from 'react';
 
 import type { Project } from './generated/Project';
+import type { JsonValue } from './generated/serde_json/JsonValue';
 import type { Layer } from './scene';
 
 // `Project` here is GUI-editor-owned data the entry chooses to load and wrap
@@ -24,6 +25,20 @@ export function useProject(): Project {
     throw new Error('useProject must be called from within a <ProjectProvider>');
   }
   return project;
+}
+
+// `Project.properties` (`Record<string, JsonValue>`) is the GUI-editable
+// value store: the editor writes plain JSON values there, and React reads
+// them back with this hook rather than hardcoding them into the entry.
+// There is no schema here yet — no declared type, default, or validation
+// beyond "this call's own `defaultValue`" — so a property renamed or
+// retyped in the editor silently falls back to `defaultValue` here rather
+// than erroring. A schema-based API (`defineProjectProperties`, generating
+// the Inspector fields) is intentionally deferred; see HANDOFF.md.
+export function useProjectProperty<T extends JsonValue = JsonValue>(key: string, defaultValue: T): T {
+  const project = useProject();
+  const value = project.properties[key];
+  return value === undefined ? defaultValue : (value as T);
 }
 
 // `<ProjectTimeline />` does not evaluate the project itself: mikan-evaluator

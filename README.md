@@ -41,8 +41,11 @@ The repository currently contains the first foundation:
   frame by frame, so it evaluates any single frame directly rather than
   needing the frames before it. A loaded
   `.mikan.json` project can also be read into a React entry: `loadProject()`
-  plus `<ProjectProvider>`/`useProject()` expose it as plain data, and
-  `<ProjectTimeline />` embeds its `video`/`image`/`text` timeline content —
+  plus `<ProjectProvider>`/`useProject()` expose it as plain data,
+  `useProjectProperty(key, defaultValue)` reads its editor-set
+  `properties` (falling back to `defaultValue` when the key is absent —
+  there is no schema yet), and `<ProjectTimeline />` embeds its
+  `video`/`image`/`text` timeline content —
   evaluated by `mikan-evaluator` (Rust), not reimplemented in TypeScript —
   alongside the entry's own React-authored content. `mikan-composition` and
   `mikan-project`'s public types carry `ts-rs` bindings (behind the `codegen`

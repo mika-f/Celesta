@@ -445,12 +445,29 @@ in any other React host.
   protocol directly (scale reaches ~1.25 at frame 10 before settling near 1
   by frame 30, position moves from 100 to 320 and clamps at the composition
   width beyond frame 60 per `extrapolateRight: 'clamp'`).
+- **`useProjectProperty(key, defaultValue)`** (`src/project-runtime.ts`,
+  alongside `useProject()`) reads `Project.properties`
+  (`Record<string, JsonValue>`, already generated — no Rust changes needed
+  for this) and falls back to `defaultValue` when the key is absent. There
+  is no schema: no declared type, no validation, no Inspector generation. A
+  property the editor renamed or retyped silently falls back rather than
+  erroring — this is the design doc's "React API の簡易形", not the
+  schema-based `defineProjectProperties`/generated-Inspector-fields version
+  it also describes as the eventual goal, which is deferred (see below;
+  `Property Value = project.json`/`Property schema = TypeScript source` are
+  two different things, and only the former exists yet). Verified manually:
+  a project with `{"title": "Chapter 3", "episode": 3}` in `properties`,
+  read back through `useProjectProperty` inside a `<ProjectProvider>`,
+  including a missing key correctly falling back to its default.
   - **Not yet built**: per-track access (`useProjectTrack()`,
     `<ProjectTrack id="..." />`) — the evaluator evaluates a whole project's
     tracks together, not one at a time, so this needs new evaluator-side
     surface first, not just a new React component. `dialogue`/`component`
     content in `<ProjectTimeline />`. A `<Video>` React component. An
-    `AudioGraph` source for React entries.
+    `AudioGraph` source for React entries. Schema-based Project Properties
+    (`defineProjectProperties`, GUI Inspector generation) and the Component
+    Property Schema / registry system — both explicitly marked undecided in
+    the design doc.
 
 ### TypeScript type generation and the Project loader
 
@@ -660,7 +677,9 @@ is already done:
    layer sets instead of one.
 3. ~~`interpolate()` / `spring()` animation utilities~~ — done, see
    "react-reconciler, hooks, and `<ProjectTimeline />`" above.
-4. Project Properties (`defineProjectProperties`, `useProjectProperty()`).
+4. ~~Project Properties~~ — `useProjectProperty(key, defaultValue)` (the
+   design doc's "React API の簡易形") is done; `defineProjectProperties`
+   (schema-based, generating Inspector fields) remains deferred, see below.
 5. Component registry / `ComponentContent` (`registerComponent`, resolving
    `TimelineContent::Component`'s `component`/`props` to a registered React
    component).
