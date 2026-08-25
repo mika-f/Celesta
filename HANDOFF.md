@@ -22,9 +22,11 @@ video/audio tracks.
   `git status --short` for newer work before editing or staging.
 - FFmpeg and FFprobe are installed and available on `PATH`.
 - GPUI is pinned to crates.io version `0.2.2`.
-- Node.js (>= 18) and npm are required for the React composition path
-  (`packages/react`, `mikan-react-bridge`). Run `npm install` once in
-  `packages/react` before using `mikan-exporter --react` or its tests.
+- Node.js (>= 18) and pnpm are required for the React composition path
+  (`packages/react`, `mikan-react-bridge`). Run `pnpm install && pnpm run
+  build` once in `packages/react` before using `mikan-exporter --react` or
+  its tests; `mikan-react-bridge` spawns the compiled `dist/cli.js`, not the
+  TypeScript sources directly.
 
 Before editing, run:
 
@@ -262,10 +264,12 @@ built-in editor demo has no file path, so its first Command-S opens Save As.
 The first vertical slice from `project.json` to a video also exists for React
 entries, matching the architecture diagram's "React entry" path:
 
-- `packages/react` (`@mikan/react`) exports `Composition`, `Group`, `Image`,
-  and `Text` components. They are never invoked as functions; `render.js`
-  walks the JSX element tree produced by calling function components directly
-  and matches these against the package's own exports by object identity to
+- `packages/react` is a TypeScript package managed with pnpm. `@mikan/react`
+  exports `Composition`, `Group`, `Image`, and `Text` components (typed props
+  in `src/components.ts`, the `Scene`/`Layer`/... JSON contract mirrored in
+  `src/scene.ts`). They are never invoked as functions; `src/render.ts` walks
+  the JSX element tree produced by calling function components directly and
+  matches these against the package's own exports by object identity to
   build layers. Function components can wrap them freely (props in, JSX out),
   but there is no react-reconciler, so hooks such as `useState` are not
   supported yet, and every requested frame currently re-renders an identical
@@ -274,14 +278,21 @@ entries, matching the architecture diagram's "React entry" path:
   height fps durationInFrames>` element. Layer ids default to a
   path-based string (for example `root.0.1`) stable across repeated renders of
   the same tree shape, or an explicit `id` prop.
-- `mikan-react-render` (`packages/react/src/cli.js`) is the Node.js CLI:
-  it bundles the given entry with esbuild (`jsx: automatic`, entry's own
-  `@mikan/react` import kept external so the same component-marker objects
-  are compared, not a bundled duplicate), writes the bundle beside the
-  package under `.tmp/` (self-reference resolution needs the bundle to live
-  inside the package directory tree), prints one `{"config": ...}` line with
-  width/height/frameRate/durationInFrames, then answers one `{"time": ...}`
-  request per line with `{"scene": ...}` or `{"error": ...}`.
+- `pnpm run build` compiles `src/*.ts` to `dist/*.js` (plain CommonJS, plus
+  `.d.ts`) with `tsc`; `mikan-react-bridge` and `mikan-exporter` spawn
+  `dist/cli.js`, not the TypeScript sources. `dist/` is gitignored like
+  `node_modules/` and `.tmp/`, so it must be rebuilt after checkout.
+- `mikan-react-render` (`packages/react/src/cli.ts`, compiled to
+  `dist/cli.js`) is the Node.js CLI: it bundles the given entry with esbuild
+  (`jsx: automatic`, entry's own `@mikan/react` import kept external so the
+  same component-marker objects are compared, not a bundled duplicate),
+  writes the bundle beside the package under `.tmp/` (self-reference
+  resolution needs the bundle to live inside the package directory tree),
+  prints one `{"config": ...}` line with width/height/frameRate/
+  durationInFrames, then answers one `{"time": ...}` request per line with
+  `{"scene": ...}` or `{"error": ...}`. esbuild transpiles the user's entry
+  file directly (TS or TSX) without type-checking it; `@mikan/react`'s own
+  source is type-checked by `pnpm run build`.
 - `mikan-react-bridge` spawns and owns this Node process for the lifetime of
   an export or preview, mirroring `mikan-media`'s one-process-per-composition
   sequential decoding session rather than spawning Node per frame.
@@ -368,9 +379,9 @@ git diff --check
 
 `mikan-react-bridge`'s integration test spawns the real `mikan-react-render`
 CLI and skips itself with a message if `node` is not on `PATH` or if
-`packages/react/node_modules` does not exist yet (run `npm install` there
-first). `mikan-media`'s FFmpeg integration tests use the same skip-if-missing
-pattern for `ffmpeg`/`ffprobe`.
+`packages/react/node_modules` or `packages/react/dist` do not exist yet (run
+`pnpm install && pnpm run build` there first). `mikan-media`'s FFmpeg
+integration tests use the same skip-if-missing pattern for `ffmpeg`/`ffprobe`.
 
 The editor and VOICEROID example were also launched successfully:
 

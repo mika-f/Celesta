@@ -4,9 +4,13 @@
   "private": true,
   "description": "Declarative React components for Mikan compositions, evaluated into the shared Rust Scene model.",
   "license": "MIT OR Apache-2.0",
-  "main": "./src/index.js",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.js"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
   },
   "bin": {
     "mikan-react-render": "./bin/mikan-react-render.js"
@@ -14,8 +18,17 @@
   "engines": {
     "node": ">=18"
   },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist"
+  },
   "dependencies": {
     "esbuild": "^0.24.2",
     "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.10",
+    "@types/react": "^18.3.18",
+    "typescript": "^5.7.3"
   }
 }

@@ -1,12 +1,12 @@
-'use strict';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as readline from 'node:readline';
 
-const fs = require('node:fs');
-const path = require('node:path');
-const readline = require('node:readline');
+import { readConfig, renderSceneAt } from './render';
+import type { EntryComponent } from './render';
+import type { CompositionConfig, Scene, Time } from './scene';
 
-const { readConfig, renderSceneAt } = require('./render');
-
-async function main() {
+async function main(): Promise<void> {
   const entry = process.argv[2];
   if (!entry) {
     process.stderr.write('usage: mikan-react-render <entry-file>\n');
@@ -14,7 +14,7 @@ async function main() {
     return;
   }
 
-  let defaultExport;
+  let defaultExport: EntryComponent;
   try {
     defaultExport = await loadEntryDefault(path.resolve(entry));
   } catch (error) {
@@ -23,7 +23,7 @@ async function main() {
     return;
   }
 
-  let config;
+  let config: CompositionConfig;
   try {
     config = readConfig(defaultExport);
   } catch (error) {
@@ -40,7 +40,7 @@ async function main() {
     if (trimmed.length === 0) {
       continue;
     }
-    let request;
+    let request: { time: Time };
     try {
       request = JSON.parse(trimmed);
     } catch (error) {
@@ -56,17 +56,17 @@ async function main() {
   }
 }
 
-function writeLine(value) {
+function writeLine(value: { config: CompositionConfig } | { scene: Scene } | { error: string }): void {
   process.stdout.write(`${JSON.stringify(value)}\n`);
 }
 
-function describeError(error) {
+function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-async function loadEntryDefault(entryPath) {
+async function loadEntryDefault(entryPath: string): Promise<EntryComponent> {
   // eslint-disable-next-line global-require -- optional, only needed by this CLI
-  const esbuild = require('esbuild');
+  const esbuild = require('esbuild') as typeof import('esbuild');
   const result = await esbuild.build({
     entryPoints: [entryPath],
     bundle: true,
@@ -77,14 +77,14 @@ async function loadEntryDefault(entryPath) {
     absWorkingDir: path.dirname(entryPath),
     logLevel: 'silent',
     // `@mikan/react`'s component markers are matched by object identity in
-    // render.js. Bundling the package would duplicate those functions, so it
+    // render.ts. Bundling the package would duplicate those functions, so it
     // must stay external and resolve through Node's own module cache instead.
     external: ['@mikan/react'],
   });
   const [output] = result.outputFiles;
 
   // The bundle keeps `require('@mikan/react')` external so its component
-  // markers resolve to the very functions render.js compares by identity,
+  // markers resolve to the very functions render.ts compares by identity,
   // instead of a second copy baked into the bundle. That require call is
   // only resolvable from inside this package's own directory tree (Node's
   // self-reference resolution), so the bundle is written there rather than
@@ -94,7 +94,7 @@ async function loadEntryDefault(entryPath) {
   const bundleDirectory = fs.mkdtempSync(path.join(tempRoot, 'entry-'));
   const bundlePath = path.join(bundleDirectory, 'entry.cjs');
   fs.writeFileSync(bundlePath, output.text);
-  let mod;
+  let mod: unknown;
   try {
     // eslint-disable-next-line global-require, import/no-dynamic-require -- entry path is only known at runtime
     mod = require(bundlePath);
@@ -102,11 +102,14 @@ async function loadEntryDefault(entryPath) {
     fs.rmSync(bundleDirectory, { recursive: true, force: true });
   }
 
-  const defaultExport = mod && typeof mod === 'object' && 'default' in mod ? mod.default : mod;
+  const defaultExport =
+    mod !== null && typeof mod === 'object' && 'default' in mod
+      ? (mod as { default: unknown }).default
+      : mod;
   if (typeof defaultExport !== 'function') {
     throw new Error('the entry module must have a default export that is a React component');
   }
-  return defaultExport;
+  return defaultExport as EntryComponent;
 }
 
 main();

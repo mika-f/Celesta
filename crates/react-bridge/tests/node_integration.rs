@@ -12,10 +12,10 @@ fn evaluates_the_example_composition_when_node_is_available() {
     };
 
     let package_root = react_package_root();
-    let cli_script = package_root.join("src/cli.js");
-    if !package_root.join("node_modules").is_dir() {
+    let cli_script = package_root.join("dist/cli.js");
+    if !package_root.join("node_modules").is_dir() || !cli_script.is_file() {
         eprintln!(
-            "skipping live Node.js test: run `npm install` in {} first",
+            "skipping live Node.js test: run `pnpm install && pnpm run build` in {} first",
             package_root.display()
         );
         return;

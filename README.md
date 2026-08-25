@@ -28,10 +28,11 @@ The repository currently contains the first foundation:
 - `mikan-react-bridge`: spawns the `@mikan/react` Node.js runtime as one
   long-lived process per composition and requests the evaluated `Scene` for
   each exact frame time over a JSON stdin/stdout pipe.
-- `packages/react` (`@mikan/react`): declarative `Composition`, `Group`,
-  `Image`, and `Text` components for authoring a React entry, plus the
-  `mikan-react-render` CLI that bundles an entry with esbuild and evaluates it
-  on request. Entries are plain function components composed with JSX; there
+- `packages/react` (`@mikan/react`, TypeScript, managed with pnpm): declarative
+  `Composition`, `Group`, `Image`, and `Text` components for authoring a React
+  entry, plus the `mikan-react-render` CLI that bundles an entry with esbuild
+  and evaluates it on request. Entries are plain function components composed
+  with JSX; there
   is no react-reconciler yet, so hooks such as `useState` are not supported.
 - `examples/minimal.mikan.json`: the smallest valid project.
 - `examples/voiceroid.mikan.json`: a small dialogue-oriented project example.
@@ -66,11 +67,11 @@ cargo run -p mikan-exporter -- examples/editor-demo.mikan.json output.mp4
 cargo run -p mikan-exporter -- --overwrite examples/editor-demo.mikan.json output.mp4
 ```
 
-Export a React composition entry instead of a project (requires `npm install`
-once in `packages/react`):
+Export a React composition entry instead of a project (requires `pnpm
+install` and `pnpm run build` once in `packages/react`):
 
 ```sh
-cd packages/react && npm install && cd ../..
+cd packages/react && pnpm install && pnpm run build && cd ../..
 cargo run -p mikan-exporter -- --react packages/react/examples/title.tsx output.mp4
 ```
 

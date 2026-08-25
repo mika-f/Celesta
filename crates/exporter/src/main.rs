@@ -65,6 +65,6 @@ fn run() -> Result<(), String> {
 /// to locate the runtime differently.
 fn default_react_runtime() -> ReactRuntimeOptions {
     let cli_script =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../packages/react/src/cli.js");
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../packages/react/dist/cli.js");
     ReactRuntimeOptions::new("node", cli_script)
 }

@@ -1,5 +1,3 @@
-'use strict';
-
 // Evaluates a Mikan React composition into the same `Scene` JSON shape that
 // `mikan_composition::Scene` deserializes on the Rust side. There is no
 // react-reconciler here: this is a plain synchronous tree walker over the
@@ -8,25 +6,46 @@
 // implement React's hook dispatcher, so hooks such as `useState` are not
 // supported yet.
 
-const React = require('react');
-const { Composition, Group, Image, Text } = require('./components');
+import * as React from 'react';
 
-const MARKERS = new Set([Group, Image, Text]);
+import { Composition, Group, Image, Text } from './components';
+import type {
+  CompositionConfig,
+  EvaluatedTransform,
+  Layer,
+  LayerContent,
+  Point,
+  Scene,
+  TextStyle,
+  Time,
+} from './scene';
+
+type ComponentMarker = typeof Group | typeof Image | typeof Text;
+
+const MARKERS: ReadonlySet<ComponentMarker> = new Set([Group, Image, Text]);
 const ELEMENT_TYPE = Symbol.for('react.element');
 const MAX_UNWRAP_DEPTH = 1000;
 
-function isElement(node) {
-  return node !== null && typeof node === 'object' && node.$$typeof === ELEMENT_TYPE;
+type AnyProps = Record<string, unknown>;
+type AnyElement = React.ReactElement<AnyProps, React.ElementType>;
+export type EntryComponent = (props: AnyProps) => React.ReactNode;
+
+function isElement(node: unknown): node is AnyElement {
+  return (
+    node !== null &&
+    typeof node === 'object' &&
+    (node as { $$typeof?: symbol }).$$typeof === ELEMENT_TYPE
+  );
 }
 
-function toChildArray(children) {
+function toChildArray(children: unknown): unknown[] {
   if (children === undefined || children === null || typeof children === 'boolean') {
     return [];
   }
   return Array.isArray(children) ? children : [children];
 }
 
-function unwrapToComposition(node) {
+function unwrapToComposition(node: unknown): AnyElement {
   let current = node;
   for (let depth = 0; depth < MAX_UNWRAP_DEPTH; depth += 1) {
     if (!isElement(current)) {
@@ -40,36 +59,38 @@ function unwrapToComposition(node) {
         `unsupported element <${describeType(current.type)}>; use Mikan's built-in components or a component function`,
       );
     }
-    current = current.type(current.props);
+    current = (current.type as EntryComponent)(current.props);
   }
   throw new Error('composition root nesting is too deep; check for a component that returns itself');
 }
 
-function describeType(type) {
+function describeType(type: unknown): string {
   if (typeof type === 'string') {
     return type;
   }
   if (typeof type === 'function') {
-    return type.name || 'anonymous component';
+    return (type as { name?: string }).name || 'anonymous component';
   }
   return String(type);
 }
 
-function numberOr(value, fallback) {
+function numberOr(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
-function extractTransform(props) {
+function extractTransform(props: AnyProps): EvaluatedTransform {
   const scale = numberOr(props.scale, 1);
+  const position: Point = { x: numberOr(props.x, 0), y: numberOr(props.y, 0) };
+  const anchor: Point = { x: numberOr(props.anchorX, 0.5), y: numberOr(props.anchorY, 0.5) };
   return {
-    position: { x: numberOr(props.x, 0), y: numberOr(props.y, 0) },
+    position,
     scale: { x: numberOr(props.scaleX, scale), y: numberOr(props.scaleY, scale) },
     rotation: numberOr(props.rotation, 0),
-    anchor: { x: numberOr(props.anchorX, 0.5), y: numberOr(props.anchorY, 0.5) },
+    anchor,
   };
 }
 
-function extractText(children) {
+function extractText(children: unknown): string {
   if (typeof children === 'string') {
     return children;
   }
@@ -82,29 +103,30 @@ function extractText(children) {
   throw new Error('<Text> children must be a string, a number, or an array of those');
 }
 
-function resolveAsset(src) {
+function resolveAsset(src: unknown): { id: string; location: { type: 'file'; path: string } } {
   if (typeof src !== 'string' || src.length === 0) {
     throw new Error('components with asset content require a non-empty `src` prop');
   }
   return { id: src, location: { type: 'file', path: src } };
 }
 
-function buildLayer(type, props, path) {
+function buildLayer(type: ComponentMarker, props: AnyProps, path: string): Layer {
   const id = typeof props.id === 'string' && props.id.length > 0 ? props.id : path;
   const transform = extractTransform(props);
   const opacity = numberOr(props.opacity, 1);
 
-  let content;
+  let content: LayerContent;
   if (type === Group) {
     content = { type: 'group', layers: renderChildren(props.children, path) };
   } else if (type === Image) {
     content = { type: 'image', asset: resolveAsset(props.src) };
   } else if (type === Text) {
+    const maxWidth = props.maxWidth;
     content = {
       type: 'text',
       text: extractText(props.children),
-      style: props.style ?? {},
-      ...(typeof props.maxWidth === 'number' ? { maxWidth: props.maxWidth } : {}),
+      style: (props.style as TextStyle | undefined) ?? {},
+      ...(typeof maxWidth === 'number' ? { maxWidth } : {}),
     };
   } else {
     throw new Error('unreachable: unknown Mikan component marker');
@@ -113,7 +135,7 @@ function buildLayer(type, props, path) {
   return { id, transform, opacity, content };
 }
 
-function renderNode(node, path) {
+function renderNode(node: unknown, path: string): Layer[] {
   if (node === null || node === undefined || typeof node === 'boolean') {
     return [];
   }
@@ -129,55 +151,53 @@ function renderNode(node, path) {
   if (type === Composition) {
     throw new Error('<Composition> may only appear once, as the single root element');
   }
-  if (MARKERS.has(type)) {
-    return [buildLayer(type, props, path)];
+  if (MARKERS.has(type as ComponentMarker)) {
+    return [buildLayer(type as ComponentMarker, props, path)];
   }
   if (typeof type !== 'function') {
     throw new Error(
       `unsupported element <${describeType(type)}>; use Mikan's built-in components or a component function`,
     );
   }
-  return renderNode(type(props), path);
+  return renderNode((type as EntryComponent)(props), path);
 }
 
-function renderChildren(children, parentPath) {
+function renderChildren(children: unknown, parentPath: string): Layer[] {
   return toChildArray(children).flatMap((child, index) => renderNode(child, `${parentPath}.${index}`));
 }
 
-function readConfig(defaultExport) {
+export function readConfig(defaultExport: EntryComponent): CompositionConfig {
   const composition = unwrapToComposition(React.createElement(defaultExport, {}));
   const { width, height, fps, durationInFrames } = composition.props;
-  if (!Number.isInteger(width) || width <= 0) {
+  if (!Number.isInteger(width) || (width as number) <= 0) {
     throw new Error('<Composition> requires a positive integer `width` prop');
   }
-  if (!Number.isInteger(height) || height <= 0) {
+  if (!Number.isInteger(height) || (height as number) <= 0) {
     throw new Error('<Composition> requires a positive integer `height` prop');
   }
-  if (!Number.isInteger(fps) || fps <= 0) {
+  if (!Number.isInteger(fps) || (fps as number) <= 0) {
     throw new Error('<Composition> requires a positive integer `fps` prop');
   }
-  if (!Number.isInteger(durationInFrames) || durationInFrames <= 0) {
+  if (!Number.isInteger(durationInFrames) || (durationInFrames as number) <= 0) {
     throw new Error('<Composition> requires a positive integer `durationInFrames` prop');
   }
   return {
-    width,
-    height,
-    frameRate: { numerator: fps, denominator: 1 },
-    durationInFrames,
+    width: width as number,
+    height: height as number,
+    frameRate: { numerator: fps as number, denominator: 1 },
+    durationInFrames: durationInFrames as number,
   };
 }
 
-function renderSceneAt(defaultExport, time) {
+export function renderSceneAt(defaultExport: EntryComponent, time: Time): Scene {
   const composition = unwrapToComposition(React.createElement(defaultExport, {}));
   const { width, height, fps } = composition.props;
   const layers = renderChildren(composition.props.children, 'root');
   return {
-    width,
-    height,
-    frameRate: { numerator: fps, denominator: 1 },
+    width: width as number,
+    height: height as number,
+    frameRate: { numerator: fps as number, denominator: 1 },
     time,
     layers,
   };
 }
-
-module.exports = { readConfig, renderSceneAt };
