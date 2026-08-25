@@ -1,0 +1,64 @@
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use mikan_composition::{Rational, Time};
+use mikan_react_bridge::ReactBridge;
+
+#[test]
+fn evaluates_the_example_composition_when_node_is_available() {
+    let Some(node) = find_executable("MIKAN_NODE", "node") else {
+        eprintln!("skipping live Node.js test: node was not found");
+        return;
+    };
+
+    let package_root = react_package_root();
+    let cli_script = package_root.join("src/cli.js");
+    if !package_root.join("node_modules").is_dir() {
+        eprintln!(
+            "skipping live Node.js test: run `npm install` in {} first",
+            package_root.display()
+        );
+        return;
+    }
+
+    let entry = package_root.join("examples/title.tsx");
+    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+
+    let metadata = bridge.metadata().clone();
+    assert_eq!((metadata.width, metadata.height), (1920, 1080));
+    assert_eq!(metadata.frame_rate, Rational::new(30, 1));
+    assert_eq!(metadata.duration_in_frames, 150);
+
+    let scene = bridge.scene_at(Time::new(0, 30)).unwrap();
+    assert_eq!((scene.width, scene.height), (1920, 1080));
+    assert_eq!(scene.layers.len(), 1);
+
+    // A second request on the same live process exercises the persistent
+    // pipe rather than spawning a new Node process per frame.
+    let scene_at_frame_fifteen = bridge.scene_at(Time::new(15, 30)).unwrap();
+    assert_eq!(scene_at_frame_fifteen.time, Time::new(15, 30));
+}
+
+fn react_package_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../packages/react")
+        .canonicalize()
+        .expect("packages/react must exist next to the crates/ workspace")
+}
+
+fn find_executable(environment: &str, command: &str) -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os(environment).map(PathBuf::from)
+        && executable_works(&path)
+    {
+        return Some(path);
+    }
+    let command = PathBuf::from(command);
+    executable_works(&command).then_some(command)
+}
+
+fn executable_works(path: &Path) -> bool {
+    Command::new(path)
+        .arg("--version")
+        .output()
+        .is_ok_and(|output| output.status.success())
+}

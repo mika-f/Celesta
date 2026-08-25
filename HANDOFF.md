@@ -5,7 +5,7 @@ Last updated: 2026-08-25
 ## Goal
 
 Mikan is a code-first video editor. The GPUI editor owns and edits project
-data. Projects and future React compositions are evaluated into the same Rust
+data. Projects and React compositions are evaluated into the same Rust
 composition model, and preview/export should consume the same renderer inputs.
 
 The current milestone is a usable editor foundation for gameplay videos with
@@ -18,10 +18,13 @@ video/audio tracks.
 - Rust edition: 2024
 - Minimum Rust version: 1.89
 - The initial implementation is tracked on `main`; track management landed in
-  commit `52b13d5`. Inspect `git status --short` for newer work before editing or
-  staging.
+  commit `52b13d5` and MP4 export landed in `dfb7f1a`. Inspect
+  `git status --short` for newer work before editing or staging.
 - FFmpeg and FFprobe are installed and available on `PATH`.
 - GPUI is pinned to crates.io version `0.2.2`.
+- Node.js (>= 18) and npm are required for the React composition path
+  (`packages/react`, `mikan-react-bridge`). Run `npm install` once in
+  `packages/react` before using `mikan-exporter --react` or its tests.
 
 Before editing, run:
 
@@ -40,8 +43,10 @@ cargo test --workspace
 | `mikan-media` | FFprobe metadata and FFmpeg exact-time RGBA video-frame decoding behind `VideoFrameDecoder`. |
 | `mikan-renderer` | Deterministic CPU reference renderer, PNG output, and the shared text rasterizer. |
 | `mikan-gpu-renderer` | `wgpu` renderer for images, video frames, styled text, nested transforms, opacity, offscreen readback, and renderer-owned surfaces. |
-| `mikan-exporter` | Deterministic frame-exact H.264/AAC MP4 export through the shared evaluator, GPU renderer, audio graph, and FFmpeg. |
+| `mikan-exporter` | Deterministic frame-exact H.264/AAC MP4 export through the shared evaluator, GPU renderer, audio graph, and FFmpeg. Also exports React entries via `mikan-react-bridge`. |
 | `mikan-editor` | GPUI application, editor-owned document state, playback clock, GPU preview bridge, asset panel, timeline, and inspector. |
+| `mikan-react-bridge` | Spawns one long-lived `@mikan/react` Node.js process per composition and requests the evaluated `Scene` for each exact frame time over stdin/stdout JSON. |
+| `packages/react` (`@mikan/react`, Node.js/TypeScript) | Declarative `Composition`/`Group`/`Image`/`Text` components and the `mikan-react-render` CLI: bundles a JSX/TSX entry with esbuild, walks the element tree (no react-reconciler yet, so no hooks), and emits `Scene`-shaped JSON. |
 
 Important files:
 
@@ -252,6 +257,44 @@ Keep these boundaries intact:
 Projects opened from the command line save back to their current path. The
 built-in editor demo has no file path, so its first Command-S opens Save As.
 
+## React composition integration
+
+The first vertical slice from `project.json` to a video also exists for React
+entries, matching the architecture diagram's "React entry" path:
+
+- `packages/react` (`@mikan/react`) exports `Composition`, `Group`, `Image`,
+  and `Text` components. They are never invoked as functions; `render.js`
+  walks the JSX element tree produced by calling function components directly
+  and matches these against the package's own exports by object identity to
+  build layers. Function components can wrap them freely (props in, JSX out),
+  but there is no react-reconciler, so hooks such as `useState` are not
+  supported yet, and every requested frame currently re-renders an identical
+  tree (no per-frame animation input is wired to components yet).
+- The entry's default export must render a single root `<Composition width
+  height fps durationInFrames>` element. Layer ids default to a
+  path-based string (for example `root.0.1`) stable across repeated renders of
+  the same tree shape, or an explicit `id` prop.
+- `mikan-react-render` (`packages/react/src/cli.js`) is the Node.js CLI:
+  it bundles the given entry with esbuild (`jsx: automatic`, entry's own
+  `@mikan/react` import kept external so the same component-marker objects
+  are compared, not a bundled duplicate), writes the bundle beside the
+  package under `.tmp/` (self-reference resolution needs the bundle to live
+  inside the package directory tree), prints one `{"config": ...}` line with
+  width/height/frameRate/durationInFrames, then answers one `{"time": ...}`
+  request per line with `{"scene": ...}` or `{"error": ...}`.
+- `mikan-react-bridge` spawns and owns this Node process for the lifetime of
+  an export or preview, mirroring `mikan-media`'s one-process-per-composition
+  sequential decoding session rather than spawning Node per frame.
+- `mikan-exporter --react <entry> <output.mp4>` renders every frame of the
+  composition through the same `GpuRenderer` used for projects and encodes it
+  with FFmpeg. There is no audio graph for React entries yet, so the encoded
+  video is published directly without FFmpeg's separate mux stage.
+- `<Video>` is intentionally not implemented yet; only `Group`, `Image`, and
+  `Text` layers are supported from React.
+- React entries do not yet integrate with the GPUI editor (no project
+  persistence, timeline/track placement, or preview panel); see Recommended
+  next work.
+
 ## Preview integration decision
 
 GPUI owns its macOS Metal presentation surface. Creating and presenting a
@@ -306,9 +349,15 @@ without crashing.
 from the macOS Kyoko system voice. It is an executable example asset, not a
 licensed VOICEROID voice sample.
 
+- `packages/react/examples/title.tsx`: a five-second, single-`Text` React
+  composition used by `mikan-react-bridge`'s integration test and as the
+  `mikan-exporter --react` example.
+
 ## Validation baseline
 
-At this handoff, the workspace has 81 passing tests. The last checks were:
+At this handoff, the workspace has 83 passing tests (81 plus
+`mikan-react-bridge`'s unit test and its live Node.js integration test). The
+last checks were:
 
 ```sh
 cargo test --workspace
@@ -317,12 +366,24 @@ cargo fmt --all -- --check
 git diff --check
 ```
 
+`mikan-react-bridge`'s integration test spawns the real `mikan-react-render`
+CLI and skips itself with a message if `node` is not on `PATH` or if
+`packages/react/node_modules` does not exist yet (run `npm install` there
+first). `mikan-media`'s FFmpeg integration tests use the same skip-if-missing
+pattern for `ffmpeg`/`ffprobe`.
+
 The editor and VOICEROID example were also launched successfully:
 
 ```sh
 cargo run -p mikan-editor
 cargo run -p mikan-editor -- examples/voiceroid.mikan.json
 ```
+
+A full React-entry export was also run end to end and its output frame was
+inspected: `cargo run -p mikan-exporter -- --react
+packages/react/examples/title.tsx output.mp4` produced a 150-frame, 1920x1080
+H.264 MP4 whose first decoded frame shows the expected centered white title
+text on the composition's background.
 
 There are future-incompatibility warnings in transitive dependencies
 `block 0.1.6` and `proc-macro-error2 2.0.1`; these are not current Mikan lint or
@@ -336,11 +397,25 @@ for synthetic GUI input. Keep drag behavior easy to exercise manually.
 ## Recommended next work
 
 The initial editor mutation, persistence, audio, background-worker, native
-preview, deterministic export, and editor export-control milestones are
-complete. Continue with:
+preview, deterministic export, editor export-control, and sequential-decoding
+export milestones are complete. The minimal React-composition-to-MP4 vertical
+slice (`packages/react`, `mikan-react-bridge`, `mikan-exporter --react`) is
+also complete. Continue with, roughly in order of value:
 
-1. Avoid launching one FFmpeg decoder per source-video frame during export by
-   adding a sequential decoding session behind the existing media boundary.
+1. GPUI editor integration for React entries: a way to load/reference a React
+   entry from a project (or alongside one), preview it through the existing
+   GPU preview bridge, and place it on the timeline like other clips. This was
+   explicitly deferred from the current slice.
+2. A `<Video>` component in `packages/react`, matching `LayerContent::Video`'s
+   `MediaTiming` (local time, source start, source time in seconds, playback
+   rate) the way project timeline clips already do.
+3. Per-frame animation input for React components (for example a `useFrame()`
+   value derived from the request's `Time`), once it is time to move past
+   identical-tree-every-frame rendering. This likely also motivates adopting
+   `react-reconciler` for real hook support, since the current plain
+   function-call tree walker has none.
+4. An `AudioGraph` source for React entries so `mikan-exporter --react` can
+   mux audio instead of always publishing a silent MP4.
 
 Do not optimize preview presentation by letting GPUI and wgpu both present to
 the same window surface.

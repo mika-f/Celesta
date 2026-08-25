@@ -1,0 +1,21 @@
+{
+  "name": "@mikan/react",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Declarative React components for Mikan compositions, evaluated into the shared Rust Scene model.",
+  "license": "MIT OR Apache-2.0",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "bin": {
+    "mikan-react-render": "./bin/mikan-react-render.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "esbuild": "^0.24.2",
+    "react": "^18.3.1"
+  }
+}

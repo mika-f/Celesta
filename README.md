@@ -25,6 +25,14 @@ The repository currently contains the first foundation:
 - `mikan-gpu-renderer`: the `wgpu` production-renderer foundation with
   offscreen image/video/text composition, nested transforms, opacity, painter
   ordering, and RGBA readback.
+- `mikan-react-bridge`: spawns the `@mikan/react` Node.js runtime as one
+  long-lived process per composition and requests the evaluated `Scene` for
+  each exact frame time over a JSON stdin/stdout pipe.
+- `packages/react` (`@mikan/react`): declarative `Composition`, `Group`,
+  `Image`, and `Text` components for authoring a React entry, plus the
+  `mikan-react-render` CLI that bundles an entry with esbuild and evaluates it
+  on request. Entries are plain function components composed with JSX; there
+  is no react-reconciler yet, so hooks such as `useState` are not supported.
 - `examples/minimal.mikan.json`: the smallest valid project.
 - `examples/voiceroid.mikan.json`: a small dialogue-oriented project example.
   It includes a tiny PPM portrait placeholder so the visual dialogue path can
@@ -56,6 +64,14 @@ Export a project to MP4 without overwriting an existing file:
 ```sh
 cargo run -p mikan-exporter -- examples/editor-demo.mikan.json output.mp4
 cargo run -p mikan-exporter -- --overwrite examples/editor-demo.mikan.json output.mp4
+```
+
+Export a React composition entry instead of a project (requires `npm install`
+once in `packages/react`):
+
+```sh
+cd packages/react && npm install && cd ../..
+cargo run -p mikan-exporter -- --react packages/react/examples/title.tsx output.mp4
 ```
 
 The exporter renders the exact rational project frame times through the shared
@@ -184,3 +200,13 @@ React entry ──┘             ▲
 The composition and project crates do not depend on React, GPUI, FFmpeg, or a
 GPU backend. Those integrations can evolve without changing the serialized
 project contract.
+
+A React entry evaluates directly to the same `Scene` JSON that the evaluator
+produces from a project, so both sources feed the identical renderer input.
+`mikan-react-bridge` spawns the `@mikan/react` Node.js CLI as one long-lived
+process per composition (mirroring `mikan-media`'s sequential video decoding
+session) and exchanges one JSON request/response pair per exact frame time
+over its stdio pipe, rather than spawning Node once per frame. React entries
+do not yet integrate with the GPUI editor's timeline/track model, project
+persistence, or audio graph; `mikan-exporter --react` renders a React entry
+straight to a silent MP4.

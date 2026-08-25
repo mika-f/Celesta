@@ -8,6 +8,7 @@ members = [
   "crates/gpu-renderer",
   "crates/media",
   "crates/project",
+  "crates/react-bridge",
   "crates/renderer",
 ]
 

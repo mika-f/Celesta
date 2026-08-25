@@ -17,6 +17,7 @@ use mikan_evaluator::{EvaluationError, Evaluator};
 use mikan_gpu_renderer::{GpuRenderError, GpuRenderOptions, GpuRenderer};
 use mikan_media::{AudioMixError, FfmpegBackend, mix_audio_graph_cancellable};
 use mikan_project::{LoadError, Project};
+use mikan_react_bridge::{ReactBridge, ReactBridgeError};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExportOptions {
@@ -31,6 +32,22 @@ impl Default for ExportOptions {
             ffmpeg: PathBuf::from("ffmpeg"),
             ffprobe: PathBuf::from("ffprobe"),
             overwrite: false,
+        }
+    }
+}
+
+/// Locates the `@mikan/react` Node.js runtime used to evaluate a React entry.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReactRuntimeOptions {
+    pub node: PathBuf,
+    pub cli_script: PathBuf,
+}
+
+impl ReactRuntimeOptions {
+    pub fn new(node: impl Into<PathBuf>, cli_script: impl Into<PathBuf>) -> Self {
+        Self {
+            node: node.into(),
+            cli_script: cli_script.into(),
         }
     }
 }
@@ -200,6 +217,89 @@ impl Exporter {
         Ok(())
     }
 
+    /// Exports a React composition entry to MP4. Unlike project export, this
+    /// path currently has no audio graph, so the encoded video is published
+    /// directly instead of going through a separate mux stage.
+    pub fn export_react_entry(
+        &self,
+        entry: impl AsRef<Path>,
+        react_runtime: &ReactRuntimeOptions,
+        output_path: impl AsRef<Path>,
+    ) -> Result<(), ExportError> {
+        self.export_react_entry_with_progress(entry, react_runtime, output_path, |_| {})
+    }
+
+    pub fn export_react_entry_with_progress(
+        &self,
+        entry: impl AsRef<Path>,
+        react_runtime: &ReactRuntimeOptions,
+        output_path: impl AsRef<Path>,
+        progress: impl FnMut(ExportProgress),
+    ) -> Result<(), ExportError> {
+        self.export_react_entry_cancellable(
+            entry,
+            react_runtime,
+            output_path,
+            &ExportCancellation::default(),
+            progress,
+        )
+    }
+
+    pub fn export_react_entry_cancellable(
+        &self,
+        entry: impl AsRef<Path>,
+        react_runtime: &ReactRuntimeOptions,
+        output_path: impl AsRef<Path>,
+        cancellation: &ExportCancellation,
+        mut progress: impl FnMut(ExportProgress),
+    ) -> Result<(), ExportError> {
+        let entry = entry.as_ref();
+        let output_path = output_path.as_ref();
+        ensure_not_cancelled(cancellation)?;
+        validate_output(output_path, self.options.overwrite)?;
+
+        let asset_root = entry.parent().unwrap_or_else(|| Path::new("."));
+        let parent = output_path.parent().unwrap_or_else(|| Path::new("."));
+        fs::create_dir_all(parent).map_err(|source| ExportError::Io {
+            operation: "create output directory",
+            source,
+        })?;
+        let final_file = tempfile::Builder::new()
+            .prefix(".mikan-export-")
+            .suffix(".mp4")
+            .tempfile_in(parent)
+            .map_err(|source| ExportError::Io {
+                operation: "create temporary output",
+                source,
+            })?;
+
+        self.render_react_video(
+            entry,
+            react_runtime,
+            asset_root,
+            final_file.path(),
+            cancellation,
+            &mut progress,
+        )?;
+        ensure_not_cancelled(cancellation)?;
+        if self.options.overwrite {
+            final_file.persist(output_path)
+        } else {
+            final_file.persist_noclobber(output_path)
+        }
+        .map_err(|error| {
+            if error.error.kind() == io::ErrorKind::AlreadyExists {
+                ExportError::OutputExists(output_path.to_owned())
+            } else {
+                ExportError::Io {
+                    operation: "publish exported video",
+                    source: error.error,
+                }
+            }
+        })?;
+        Ok(())
+    }
+
     fn render_video(
         &self,
         project: &Project,
@@ -267,6 +367,94 @@ impl Exporter {
                     i64::try_from(frame_index).map_err(|_| ExportError::TimelineTooLong)?;
                 let time = Time::frames(frame_index, frame_rate).map_err(ExportError::Time)?;
                 let scene = evaluator.scene_at(time).map_err(ExportError::Evaluation)?;
+                let frame = renderer.render(&scene).map_err(ExportError::Render)?;
+                stdin
+                    .write_all(frame.pixels())
+                    .map_err(|source| ExportError::Io {
+                        operation: "stream video frame to FFmpeg",
+                        source,
+                    })?;
+            }
+            stdin.flush().map_err(|source| ExportError::Io {
+                operation: "finish video frame stream",
+                source,
+            })?;
+            Ok(())
+        })();
+        finish_process(child, write_result, "video encoding")
+    }
+
+    fn render_react_video(
+        &self,
+        entry: &Path,
+        react_runtime: &ReactRuntimeOptions,
+        asset_root: &Path,
+        output: &Path,
+        cancellation: &ExportCancellation,
+        progress: &mut impl FnMut(ExportProgress),
+    ) -> Result<(), ExportError> {
+        let mut bridge = ReactBridge::spawn(&react_runtime.node, &react_runtime.cli_script, entry)
+            .map_err(ExportError::React)?;
+        let metadata = bridge.metadata().clone();
+        validate_dimensions(metadata.width, metadata.height)?;
+        if metadata.duration_in_frames == 0 {
+            return Err(ExportError::EmptyTimeline);
+        }
+
+        let dimensions = format!("{}x{}", metadata.width, metadata.height);
+        let rate = format!(
+            "{}/{}",
+            metadata.frame_rate.numerator, metadata.frame_rate.denominator
+        );
+        let mut child = Command::new(&self.options.ffmpeg)
+            .args(["-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgba"])
+            .arg("-video_size")
+            .arg(dimensions)
+            .arg("-framerate")
+            .arg(rate)
+            .args(["-i", "pipe:0", "-an", "-frames:v"])
+            .arg(metadata.duration_in_frames.to_string())
+            .args([
+                "-c:v",
+                "libx264",
+                "-preset",
+                "medium",
+                "-crf",
+                "18",
+                "-pix_fmt",
+                "yuv420p",
+                "-threads",
+                "1",
+                "-movflags",
+                "+faststart",
+            ])
+            .arg(output)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|source| ExportError::Executable {
+                executable: self.options.ffmpeg.clone(),
+                source,
+            })?;
+
+        let write_result = (|| {
+            let stdin = child.stdin.take().ok_or(ExportError::MissingPipe)?;
+            let mut stdin = BufWriter::new(stdin);
+            let mut renderer = GpuRenderer::new(GpuRenderOptions::default())
+                .map_err(ExportError::Render)?
+                .with_asset_root(asset_root);
+            for frame_index in 0..metadata.duration_in_frames {
+                ensure_not_cancelled(cancellation)?;
+                progress(ExportProgress::Rendering {
+                    frame: frame_index + 1,
+                    total: metadata.duration_in_frames,
+                });
+                let frame_index =
+                    i64::try_from(frame_index).map_err(|_| ExportError::TimelineTooLong)?;
+                let time =
+                    Time::frames(frame_index, metadata.frame_rate).map_err(ExportError::Time)?;
+                let scene = bridge.scene_at(time).map_err(ExportError::React)?;
                 let frame = renderer.render(&scene).map_err(ExportError::Render)?;
                 stdin
                     .write_all(frame.pixels())
@@ -427,6 +615,7 @@ pub enum ExportError {
     Evaluation(EvaluationError),
     Render(GpuRenderError),
     Audio(AudioMixError),
+    React(ReactBridgeError),
     Time(TimeError),
     Executable {
         executable: PathBuf,
@@ -460,6 +649,7 @@ impl fmt::Display for ExportError {
             Self::Evaluation(error) => write!(formatter, "could not evaluate export: {error}"),
             Self::Render(error) => write!(formatter, "could not render export: {error}"),
             Self::Audio(error) => write!(formatter, "could not mix export audio: {error}"),
+            Self::React(error) => write!(formatter, "could not evaluate React export: {error}"),
             Self::Time(error) => write!(formatter, "could not calculate export time: {error}"),
             Self::Executable { executable, source } => {
                 write!(
@@ -501,6 +691,7 @@ impl Error for ExportError {
             Self::Evaluation(error) => Some(error),
             Self::Render(error) => Some(error),
             Self::Audio(error) => Some(error),
+            Self::React(error) => Some(error),
             Self::Time(error) => Some(error),
             Self::Executable { source, .. } | Self::Io { source, .. } => Some(source),
             Self::Process { .. }
