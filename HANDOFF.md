@@ -115,8 +115,20 @@ Keep these boundaries intact:
   result through rodio synchronized to the editor playback start.
 - Audio pauses with transport, scrubbing, frame stepping, and timeline edits;
   audio decode/device failures remain recoverable toolbar errors.
-- GPU preview rendering/readback and FFmpeg audio decoding/mixing run on
-  dedicated workers rather than the GPUI thread.
+- GPU preview rendering and FFmpeg audio decoding/mixing run on dedicated
+  workers rather than the GPUI thread.
+- On macOS, even-sized preview frames stay on the GPU: wgpu composites into an
+  RGBA intermediate, converts it into the Y and CbCr planes of an
+  IOSurface-backed full-range NV12 `CVPixelBuffer`, and GPUI presents that
+  buffer through its native Surface element. The two libraries never present
+  to the same window surface.
+- Native preview initialization or conversion failure falls back to the
+  existing GPU readback/`RenderImage` bridge. Odd-sized projects use that
+  fallback because NV12 requires even plane dimensions.
+- The native bridge receives CoreVideo's Metal textures under the get rule and
+  retains them exactly once for wgpu. Each `CVMetalTexture` backing owner is
+  held by wgpu's external-resource drop callback so deferred destruction cannot
+  leave CoreVideo's texture cache with a dangling Metal object.
 - Preview and audio requests carry monotonically increasing generations.
   Queued work is coalesced to the latest request, stale results are discarded,
   and superseded audio mixing stops at cancellation checkpoints.
@@ -231,18 +243,20 @@ built-in editor demo has no file path, so its first Command-S opens Save As.
 
 GPUI owns its macOS Metal presentation surface. Creating and presenting a
 second `wgpu::Surface` for the same GPUI window would introduce conflicting
-surface ownership. The editor therefore currently:
+surface ownership. The editor therefore uses a single-presenter native bridge:
 
 1. evaluates the project into a `Scene`;
-2. renders an offscreen `GpuFrame` with `GpuRenderer`;
-3. converts RGBA bytes to GPUI's expected BGRA layout;
-4. displays an `Arc<RenderImage>` with GPUI.
+2. renders the scene into an offscreen RGBA texture with `GpuRenderer`;
+3. converts RGBA to full-range BT.601 NV12 in two GPU render passes;
+4. renders into IOSurface-backed CoreVideo planes wrapped as wgpu textures;
+5. gives the completed `CVPixelBuffer` to GPUI's Surface element for display.
 
-This performs a GPU-to-CPU readback for each preview frame, but rendering,
-readback, and RGBA-to-BGRA conversion now happen on the preview worker. Preserve
-this bridge boundary until a safe native Metal texture/CVPixelBuffer integration
-is designed. `GpuRenderer::render_to_surface` remains useful for a separate,
-renderer-owned preview window.
+The bridge waits for wgpu's command submission before handing the shared buffer
+to GPUI, but performs no pixel readback or CPU color conversion. Bridge setup or
+rendering failures and odd project dimensions retain the previous offscreen
+`GpuFrame` readback, RGBA-to-BGRA conversion, and `Arc<RenderImage>` path.
+`GpuRenderer::render_to_surface` remains useful for a separate, renderer-owned
+preview window.
 
 GPUI uses its `runtime_shaders` feature on macOS. Without it, GPUI's build
 script requires the separately downloadable Xcode Metal Toolchain component.
@@ -281,7 +295,7 @@ licensed VOICEROID voice sample.
 
 ## Validation baseline
 
-At this handoff, the workspace has 72 passing tests. The last checks were:
+At this handoff, the workspace has 74 passing tests. The last checks were:
 
 ```sh
 cargo test --workspace
@@ -308,11 +322,12 @@ for synthetic GUI input. Keep drag behavior easy to exercise manually.
 
 ## Recommended next work
 
-The initial editor mutation, persistence, audio, and background-worker
-milestones are complete. Continue with:
+The initial editor mutation, persistence, audio, background-worker, and native
+preview milestones are complete. Continue with:
 
-1. Replace GPUI image readback with a native texture bridge, while retaining a
-   single presenter for the window surface and the CPU readback fallback.
+1. Add a deterministic video export path that evaluates the same project scene
+   and audio graph used by preview, renders exact frames, and encodes them with
+   FFmpeg without moving export truth into the editor UI.
 
 Do not optimize preview presentation by letting GPUI and wgpu both present to
 the same window surface.

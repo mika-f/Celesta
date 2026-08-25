@@ -23,7 +23,7 @@ use mikan_composition::{
     integrate_f64,
 };
 use mikan_editor::{AssetSummary, ClipKind, EditorDocument, TimelineClock, TrackSummary};
-use mikan_gpu_renderer::{GpuFrame, GpuRenderOptions, GpuRenderer};
+use mikan_gpu_renderer::{GpuRenderOptions, GpuRenderer, PreviewFrame as GpuPreviewFrame};
 use mikan_media::{
     AudioBuffer, AudioDecoder, FfmpegBackend, MediaError, MediaProbe, mix_audio_graph_cancellable,
 };
@@ -113,13 +113,20 @@ struct PreviewRequest {
 
 struct PreviewResult {
     generation: u64,
-    frame: Result<PreviewFrame, String>,
+    frame: Result<PreviewPresentation, String>,
 }
 
-struct PreviewFrame {
+struct CpuPreviewFrame {
     width: u32,
     height: u32,
     pixels: Vec<u8>,
+}
+
+#[derive(Clone)]
+enum PreviewPresentation {
+    Image(Arc<RenderImage>),
+    #[cfg(target_os = "macos")]
+    Surface(mikan_gpu_renderer::NativePreviewFrame),
 }
 
 struct PreviewWorker {
@@ -210,7 +217,7 @@ impl PreviewWorker {
                     let request = take_latest(first, &request_rx);
                     renderer.set_asset_root(&request.asset_root);
                     let frame = renderer
-                        .render(&request.scene)
+                        .render_preview(&request.scene)
                         .map_err(|error| error.to_string())
                         .map(prepare_preview_frame);
                     if result_tx
@@ -523,7 +530,7 @@ struct EditorView {
     duration: SharedString,
     assets: Vec<AssetSummary>,
     tracks: Vec<TrackSummary>,
-    preview: Option<Arc<RenderImage>>,
+    preview: Option<PreviewPresentation>,
     preview_error: Option<SharedString>,
     save_error: Option<SharedString>,
     edit_error: Option<SharedString>,
@@ -689,7 +696,7 @@ impl EditorView {
                         continue;
                     }
                     self.preview_pending = false;
-                    match result.frame.and_then(frame_to_image) {
+                    match result.frame {
                         Ok(preview) => {
                             self.preview = Some(preview);
                             self.preview_error = None;
@@ -2389,8 +2396,16 @@ impl EditorView {
             .justify_center()
             .overflow_hidden()
             .bg(rgb(0x0d0f13))
-            .when_some(self.preview.clone(), |canvas, preview| {
-                canvas.child(img(preview).size_full().object_fit(ObjectFit::Contain))
+            .when_some(self.preview.clone(), |canvas, preview| match preview {
+                PreviewPresentation::Image(preview) => {
+                    canvas.child(img(preview).size_full().object_fit(ObjectFit::Contain))
+                }
+                #[cfg(target_os = "macos")]
+                PreviewPresentation::Surface(preview) => canvas.child(
+                    gpui::surface(preview.pixel_buffer())
+                        .size_full()
+                        .object_fit(ObjectFit::Contain),
+                ),
             })
             .when_some(self.preview_error.clone(), |canvas, error| {
                 canvas.child(
@@ -3718,24 +3733,30 @@ fn inspector_button(id: &'static str, label: &'static str) -> gpui::Stateful<gpu
         .child(label)
 }
 
-fn prepare_preview_frame(frame: GpuFrame) -> PreviewFrame {
-    let width = frame.width();
-    let height = frame.height();
-    let mut pixels = frame.into_pixels();
-    for pixel in pixels.chunks_exact_mut(4) {
-        pixel.swap(0, 2);
-    }
-    PreviewFrame {
-        width,
-        height,
-        pixels,
+fn prepare_preview_frame(frame: GpuPreviewFrame) -> PreviewPresentation {
+    match frame {
+        GpuPreviewFrame::Cpu(frame) => {
+            let width = frame.width();
+            let height = frame.height();
+            let mut pixels = frame.into_pixels();
+            for pixel in pixels.chunks_exact_mut(4) {
+                pixel.swap(0, 2);
+            }
+            PreviewPresentation::Image(frame_to_image(CpuPreviewFrame {
+                width,
+                height,
+                pixels,
+            }))
+        }
+        #[cfg(target_os = "macos")]
+        GpuPreviewFrame::Native(frame) => PreviewPresentation::Surface(frame),
     }
 }
 
-fn frame_to_image(frame: PreviewFrame) -> Result<Arc<RenderImage>, String> {
+fn frame_to_image(frame: CpuPreviewFrame) -> Arc<RenderImage> {
     let buffer = ImageBuffer::<Rgba<u8>, _>::from_raw(frame.width, frame.height, frame.pixels)
-        .ok_or_else(|| "GPU preview returned an invalid pixel buffer".to_owned())?;
-    Ok(Arc::new(RenderImage::new([Frame::new(buffer)])))
+        .expect("GPU preview frame dimensions match its pixel buffer");
+    Arc::new(RenderImage::new([Frame::new(buffer)]))
 }
 
 fn clip_kind_label(kind: ClipKind) -> &'static str {

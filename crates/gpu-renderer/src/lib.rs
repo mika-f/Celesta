@@ -20,6 +20,9 @@ use mikan_media::{MediaError, VideoFrameDecoder};
 use mikan_renderer::{RenderError, TextRasterizer};
 use wgpu::util::DeviceExt;
 
+#[cfg(target_os = "macos")]
+mod native_preview;
+
 const BYTES_PER_PIXEL: u32 = 4;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -71,6 +74,28 @@ pub struct GpuFrame {
     height: u32,
     pixels: Vec<u8>,
 }
+
+pub enum PreviewFrame {
+    Cpu(GpuFrame),
+    #[cfg(target_os = "macos")]
+    Native(NativePreviewFrame),
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NativePreviewFrame(core_video::pixel_buffer::CVPixelBuffer);
+
+#[cfg(target_os = "macos")]
+impl NativePreviewFrame {
+    pub fn pixel_buffer(&self) -> core_video::pixel_buffer::CVPixelBuffer {
+        self.0.clone()
+    }
+}
+
+// CVPixelBuffer is an immutable, reference-counted CoreVideo object once handed
+// to the UI. CoreVideo permits pixel buffers to cross thread boundaries.
+#[cfg(target_os = "macos")]
+unsafe impl Send for NativePreviewFrame {}
 
 impl GpuFrame {
     pub const fn width(&self) -> u32 {
@@ -162,6 +187,8 @@ pub struct GpuRenderer {
     images: HashMap<String, DecodedImage>,
     video_decoder: Option<Box<dyn VideoFrameDecoder>>,
     text_rasterizer: TextRasterizer,
+    #[cfg(target_os = "macos")]
+    native_preview: Option<native_preview::NativePreviewBridge>,
 }
 
 impl GpuRenderer {
@@ -264,6 +291,8 @@ impl GpuRenderer {
             min_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
         });
+        #[cfg(target_os = "macos")]
+        let native_preview = native_preview::NativePreviewBridge::new(&device).ok();
         Ok(Self {
             adapter,
             device,
@@ -279,6 +308,8 @@ impl GpuRenderer {
             images: HashMap::new(),
             video_decoder: None,
             text_rasterizer: TextRasterizer::new(),
+            #[cfg(target_os = "macos")]
+            native_preview,
         })
     }
 
@@ -492,6 +523,22 @@ impl GpuRenderer {
             height: scene.height,
             pixels,
         })
+    }
+
+    pub fn render_preview(&mut self, scene: &Scene) -> Result<PreviewFrame, GpuRenderError> {
+        #[cfg(target_os = "macos")]
+        if scene.width.is_multiple_of(2)
+            && scene.height.is_multiple_of(2)
+            && let Some(mut bridge) = self.native_preview.take()
+        {
+            let frame = bridge.render(self, scene);
+            self.native_preview = Some(bridge);
+            if let Ok(frame) = frame {
+                return Ok(PreviewFrame::Native(NativePreviewFrame(frame)));
+            }
+        }
+
+        self.render(scene).map(PreviewFrame::Cpu)
     }
 
     fn prepare_draws(&mut self, scene: &Scene) -> Result<Vec<GpuDraw>, GpuRenderError> {
@@ -985,6 +1032,7 @@ pub enum GpuRenderError {
         width: u32,
         height: u32,
     },
+    NativePreview(i32),
 }
 
 impl fmt::Display for GpuRenderError {
@@ -1054,6 +1102,12 @@ impl fmt::Display for GpuRenderError {
             Self::SurfaceTooLarge { width, height } => {
                 write!(formatter, "GPU frame is too large: {width}x{height}")
             }
+            Self::NativePreview(status) => {
+                write!(
+                    formatter,
+                    "could not create native preview surface ({status})"
+                )
+            }
         }
     }
 }
@@ -1080,7 +1134,8 @@ impl Error for GpuRenderError {
             | Self::IncompatibleSurface
             | Self::SurfaceNotConfigured
             | Self::SurfaceValidation
-            | Self::SurfaceTooLarge { .. } => None,
+            | Self::SurfaceTooLarge { .. }
+            | Self::NativePreview(_) => None,
         }
     }
 }
@@ -1157,6 +1212,73 @@ mod tests {
                 .chunks_exact(4)
                 .all(|pixel| pixel == [51, 102, 153, 255])
         );
+    }
+
+    #[test]
+    fn falls_back_to_cpu_preview_for_odd_dimensions() {
+        let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+            return;
+        };
+        match renderer.render_preview(&empty_scene(3, 2)).unwrap() {
+            PreviewFrame::Cpu(frame) => assert_eq!((frame.width(), frame.height()), (3, 2)),
+            #[cfg(target_os = "macos")]
+            PreviewFrame::Native(_) => panic!("NV12 preview requires even dimensions"),
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn keeps_native_preview_backings_alive_across_dialogue_frame_churn() {
+        use core_video::pixel_buffer::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange;
+
+        let Some(renderer) = renderer(GpuRenderOptions::default()) else {
+            return;
+        };
+        std::thread::spawn(move || {
+            use std::collections::VecDeque;
+
+            let mut renderer = renderer;
+            let mut frames = VecDeque::new();
+            for index in 0..120 {
+                let mut scene = empty_scene(1280, 720);
+                scene.layers.push(Layer {
+                    id: "changing-dialogue".to_owned(),
+                    transform: EvaluatedTransform {
+                        position: Point { x: 640.0, y: 600.0 },
+                        ..EvaluatedTransform::default()
+                    },
+                    opacity: 1.0,
+                    content: LayerContent::Text {
+                        text: format!("Dialogue preview frame {index}"),
+                        style: TextStyle {
+                            font_size: Some(48.0),
+                            ..TextStyle::default()
+                        },
+                        max_width: Some(1000.0),
+                    },
+                });
+                match renderer.render_preview(&scene).unwrap() {
+                    PreviewFrame::Native(frame) => {
+                        let buffer = frame.pixel_buffer();
+                        assert_eq!((buffer.get_width(), buffer.get_height()), (1280, 720));
+                        assert_eq!(
+                            buffer.get_pixel_format(),
+                            kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+                        );
+                        assert_eq!(buffer.get_plane_count(), 2);
+                        frames.push_back(frame);
+                        if frames.len() > 3 {
+                            frames.pop_front();
+                        }
+                    }
+                    PreviewFrame::Cpu(_) => {
+                        panic!("Metal preview unexpectedly used CPU readback")
+                    }
+                }
+            }
+        })
+        .join()
+        .unwrap();
     }
 
     #[test]
