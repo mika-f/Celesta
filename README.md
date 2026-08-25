@@ -1,0 +1,142 @@
+# Mikan
+
+Mikan is a code-first video editor designed around a shared project and
+composition model. The GUI editor owns project data, while React code may read
+that data and add compositions. Preview and export will ultimately use the same
+Rust renderer.
+
+The repository currently contains the first foundation:
+
+- `mikan-composition`: exact rational time and shared visual primitives.
+- `mikan-editor`: the first GPUI editor shell with project loading, an asset
+  browser, frame-accurate playback controls, GPU-rendered preview, inspector,
+  and timeline overview.
+- `mikan-project`: the version 0 project format, JSON loading, semantic
+  validation, and timeline duration calculation.
+- `mikan-evaluator`: deterministic conversion from a project to a scene at a
+  given time and to the complete audio graph.
+- `mikan-media`: FFprobe metadata parsing, FFmpeg-backed exact-time RGBA video
+  decoding, and project-rate stereo audio decoding/mixing behind replaceable
+  process boundaries.
+- `mikan-renderer`: a deterministic CPU reference renderer, PNG encoder, and
+  shared text rasterizer used to lock down composition behavior.
+- `mikan-gpu-renderer`: the `wgpu` production-renderer foundation with
+  offscreen image/video/text composition, nested transforms, opacity, painter
+  ordering, and RGBA readback.
+- `examples/minimal.mikan.json`: the smallest valid project.
+- `examples/voiceroid.mikan.json`: a small dialogue-oriented project example.
+  It includes a tiny PPM portrait placeholder so the visual dialogue path can
+  be previewed without downloading assets and a generated Japanese system-voice
+  WAV fixture for exercising synchronized audio preview.
+
+## Validate the foundation
+
+```sh
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+```
+
+Render the standalone smoke-test frame:
+
+```sh
+cargo run -p mikan-renderer --example hello -- hello.png
+```
+
+Launch the editor with the empty example, or pass a project path:
+
+```sh
+cargo run -p mikan-editor
+cargo run -p mikan-editor -- examples/voiceroid.mikan.json
+```
+
+With no project argument, the editor opens `examples/editor-demo.mikan.json` so
+the play/pause and single-frame controls can be exercised immediately. The
+playhead is stored as an integer frame in the project's exact rational frame
+rate; each new frame re-evaluates the shared scene and refreshes the GPU
+preview. Timeline clips use their actual project start and duration, and the
+orange ruler supports click-and-drag frame scrubbing. Selecting a clip outlines
+it and shows its type, start, and duration in the inspector. Drag the body of a
+selected clip to move it; drag either white edge handle to trim it. Edits are
+stored as exact project frames with coalesced undo/redo history. Grabbing any
+part of the clip body preserves its pointer offset; only the explicit white
+handles enter trim mode. Command-S and
+Command-Shift-S save atomically, and dirty documents are guarded when closing.
+Assets and Inspector content scroll independently when their rows overflow.
+Use Command-I or the Assets-panel Import button to select multiple local media
+files. Select an imported asset and choose Add (or Command-Return) to place a
+clip at the playhead using its probed source duration, with a five-second
+fallback while metadata is unavailable. Compatible tracks are reused or
+created automatically. Asset rows can also be dragged to an exact timeline
+frame: compatible tracks highlight green, while incompatible or locked targets
+show a rejection state. Clicking a track selects it as the Add target; clicking
+it again returns Add to automatic track selection. Delete the selected timeline clip with the Timeline
+button, Backspace, or Forward Delete. Import batches, insertion, and deletion
+all participate in undo/redo, and locked tracks reject destructive clip edits.
+Selected assets can be relinked only to the same media kind. Missing local files
+are called out in the Assets panel. Removing a referenced asset requires an
+explicit confirmation listing its consumers; the editor then updates dependent
+clips, Dialogue audio, and character expressions atomically so undo restores the
+entire operation.
+
+Audio clips from the shared `AudioGraph` are decoded by FFmpeg, mixed at the
+project sample rate, and played through the system output device in sync with
+the editor transport. Timeline/source offsets, playback-rate and volume
+animation, mute state, and overlapping clips are applied during mixing. GPU
+preview work and audio decoding/mixing run on dedicated workers; rapid playhead
+or document changes coalesce queued requests, discard stale preview results,
+and cancel superseded audio mixing. Audio/dialogue clips display downsampled
+peak waveforms in the timeline. Each waveform follows its source-range
+start/duration and integrated playback-rate curve, so trimmed, sped-up, and
+animated-rate clips remain aligned with the audio that is actually mixed.
+Track Mute/Solo and the toolbar's 0–200% master
+volume control are persisted in the project, feed the shared audio graph, and
+participate in undo/redo. FFprobe metadata and decoded PCM stay in editor-only
+session caches: project JSON remains source-authored, while repeated edits can
+remix cached samples without launching FFmpeg for every asset again.
+
+The CPU renderer currently decodes local PNG, JPEG, WebP, and PNM image assets.
+Construct it with `CpuRenderer::with_asset_root` to resolve project-relative
+paths. Font assets in the evaluated scene are registered before shaping;
+installed system fonts provide fallback for glyphs not covered by the project.
+Attach `FfmpegBackend` through `CpuRenderer::with_video_decoder` to decode local
+video frames. The backend expects `ffmpeg` and `ffprobe` on `PATH` by default,
+or accepts explicit executable paths. Remote URL assets remain a future boundary.
+
+`GpuRenderer` accepts the same evaluated `Scene`. Local images and injected
+video frames are uploaded as GPU textures; position, anchor, scale, rotation,
+group transforms, opacity, and painter order are applied by its WGSL pipeline.
+Text uses the same font loading, shaping, fill, stroke, alignment, and line
+layout rasterizer as the CPU reference renderer before GPU composition.
+
+For a renderer-owned preview window, create the `wgpu::Surface` from the
+window, initialize with `GpuRenderer::request_for_surface`, and call
+`configure_surface` whenever the drawable size changes. `render_to_surface`
+submits and presents without a CPU readback. Its `PreviewFrameStatus`
+distinguishes successful, occluded, timed-out, outdated, and lost frames so the
+UI event loop can recover correctly.
+
+The GPUI editor currently keeps presentation ownership with GPUI. A dedicated
+worker renders an offscreen GPU frame and bridges the readback into a GPUI
+`RenderImage`. This is an intentional first integration boundary; a later
+native texture bridge can remove the readback without changing project
+evaluation or renderer inputs.
+GPUI's runtime-shader feature is enabled on macOS so a separate downloadable
+Xcode Metal Toolchain component is not required for local development builds.
+
+The v0 format deliberately does not persist probed media metadata. Width,
+duration, codecs, and similar facts belong to a separate editor cache so that
+the project file does not become stale.
+
+## Architecture boundaries
+
+```text
+project.json ─┐
+              ├─> Composition model ─> Renderer ─> Export
+React entry ──┘             ▲
+                            │
+                       GPUI editor
+```
+
+The composition and project crates do not depend on React, GPUI, FFmpeg, or a
+GPU backend. Those integrations can evolve without changing the serialized
+project contract.
