@@ -1,25 +1,14 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use mikan_composition::{Rational, Time};
+use mikan_composition::{EvaluatedTransform, Layer, LayerContent, Rational, TextStyle, Time};
 use mikan_react_bridge::ReactBridge;
 
 #[test]
 fn evaluates_the_example_composition_when_node_is_available() {
-    let Some(node) = find_executable("MIKAN_NODE", "node") else {
-        eprintln!("skipping live Node.js test: node was not found");
+    let Some((node, cli_script, package_root)) = live_react_runtime() else {
         return;
     };
-
-    let package_root = react_package_root();
-    let cli_script = package_root.join("dist/cli.js");
-    if !package_root.join("node_modules").is_dir() || !cli_script.is_file() {
-        eprintln!(
-            "skipping live Node.js test: run `pnpm install && pnpm run build` in {} first",
-            package_root.display()
-        );
-        return;
-    }
 
     let entry = package_root.join("examples/title.tsx");
     let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
@@ -37,6 +26,58 @@ fn evaluates_the_example_composition_when_node_is_available() {
     // pipe rather than spawning a new Node process per frame.
     let scene_at_frame_fifteen = bridge.scene_at(Time::new(15, 30)).unwrap();
     assert_eq!(scene_at_frame_fifteen.time, Time::new(15, 30));
+}
+
+#[test]
+fn embeds_pre_evaluated_project_layers_into_project_timeline_when_node_is_available() {
+    let Some((node, cli_script, package_root)) = live_react_runtime() else {
+        return;
+    };
+
+    let entry = package_root.join("examples/with-project.tsx");
+    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+
+    let project_layer = Layer {
+        id: "from-project".to_owned(),
+        transform: EvaluatedTransform::default(),
+        opacity: 1.0,
+        content: LayerContent::Text {
+            text: "from the project".to_owned(),
+            style: TextStyle::default(),
+            max_width: None,
+        },
+    };
+
+    let scene = bridge
+        .scene_at_with_project(Time::new(0, 30), Some(&[project_layer]))
+        .unwrap();
+
+    // <ProjectTimeline /> passes the given layers through untouched, and the
+    // entry's own <Text> sibling still renders alongside them.
+    assert!(scene.layers.iter().any(|layer| layer.id == "from-project"));
+    assert!(scene.layers.iter().any(|layer| matches!(
+        &layer.content,
+        LayerContent::Text { text, .. } if text == "React overlay"
+    )));
+}
+
+fn live_react_runtime() -> Option<(PathBuf, PathBuf, PathBuf)> {
+    let Some(node) = find_executable("MIKAN_NODE", "node") else {
+        eprintln!("skipping live Node.js test: node was not found");
+        return None;
+    };
+
+    let package_root = react_package_root();
+    let cli_script = package_root.join("dist/cli.js");
+    if !package_root.join("node_modules").is_dir() || !cli_script.is_file() {
+        eprintln!(
+            "skipping live Node.js test: run `pnpm install && pnpm run build` in {} first",
+            package_root.display()
+        );
+        return None;
+    }
+
+    Some((node, cli_script, package_root))
 }
 
 fn react_package_root() -> PathBuf {

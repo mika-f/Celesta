@@ -1,93 +1,79 @@
-// Evaluates a Mikan React composition into the same `Scene` JSON shape that
-// `mikan_composition::Scene` deserializes on the Rust side. There is no
-// react-reconciler here: this is a plain synchronous tree walker over the
-// element graph produced by calling component functions directly. It
-// composes ordinary function components (props in, JSX out) but does not
-// implement React's hook dispatcher, so hooks such as `useState` are not
-// supported yet.
+// Mounts a Mikan React composition through react-reconciler (reconciler.ts)
+// and evaluates it into the same `Scene` JSON shape that
+// `mikan_composition::Scene` deserializes on the Rust side. The mount is
+// persistent across frames: cli.ts calls `renderSceneAt` once per requested
+// time against the same root, so component state and effects (to the extent
+// a synchronous, un-scheduled reconciler runs them) carry across frames
+// exactly as they would across re-renders in any other React host.
 
 import * as React from 'react';
 
-import { Composition, Group, Image, Text } from './components';
-import type {
-  CompositionConfig,
-  EvaluatedTransform,
-  Layer,
-  LayerContent,
-  Point,
-  ResolvedAsset,
-  Scene,
-  TextStyle,
-  Time,
-} from './scene';
+import { CompositionRuntimeContext } from './hooks';
+import { ProjectLayersContext } from './project-runtime';
+import { type HostNode, type RootContainer, HostReconciler, createRoot } from './reconciler';
+import type { CompositionConfig, Layer, LayerContent, ResolvedAsset, Scene, TextStyle, Time } from './scene';
 
-type ComponentMarker = typeof Group | typeof Image | typeof Text;
+const HOST_TYPES = new Set(['composition', 'group', 'image', 'text', 'rawLayers']);
+const ZERO_TIME: Time = { value: 0, timescale: 1 };
 
-const MARKERS: ReadonlySet<ComponentMarker> = new Set([Group, Image, Text]);
-const ELEMENT_TYPE = Symbol.for('react.element');
-const MAX_UNWRAP_DEPTH = 1000;
+type PlaceholderConfig = Pick<CompositionConfig, 'width' | 'height' | 'durationInFrames'> & {
+  frameRate: { numerator: number };
+};
+const PLACEHOLDER_CONFIG: PlaceholderConfig = {
+  width: 0,
+  height: 0,
+  durationInFrames: 1,
+  frameRate: { numerator: 1 },
+};
 
-type AnyProps = Record<string, unknown>;
-type AnyElement = React.ReactElement<AnyProps, React.ElementType>;
-export type EntryComponent = (props: AnyProps) => React.ReactNode;
+export type EntryComponent = (props: Record<string, unknown>) => React.ReactNode;
 
-function isElement(node: unknown): node is AnyElement {
-  return (
-    node !== null &&
-    typeof node === 'object' &&
-    (node as { $$typeof?: symbol }).$$typeof === ELEMENT_TYPE
-  );
+export interface MountedComposition {
+  readonly config: CompositionConfig;
+  renderAt(time: Time, projectLayers: Layer[] | null): Scene;
 }
 
-function toChildArray(children: unknown): unknown[] {
-  if (children === undefined || children === null || typeof children === 'boolean') {
-    return [];
+function findCompositionInstance(container: RootContainer): HostNode {
+  const [instance, ...rest] = container.children;
+  if (!instance || instance.type !== 'composition' || rest.length > 0) {
+    throw new Error("the entry module's default export must render a single root <Composition> element");
   }
-  return Array.isArray(children) ? children : [children];
+  return instance;
 }
 
-function unwrapToComposition(node: unknown): AnyElement {
-  let current = node;
-  for (let depth = 0; depth < MAX_UNWRAP_DEPTH; depth += 1) {
-    if (!isElement(current)) {
-      throw new Error("the entry module's default export must render a <Composition> element");
-    }
-    if (current.type === Composition) {
-      return current;
-    }
-    if (typeof current.type !== 'function') {
-      throw new Error(
-        `unsupported element <${describeType(current.type)}>; use Mikan's built-in components or a component function`,
-      );
-    }
-    current = (current.type as EntryComponent)(current.props);
+function readCompositionConfig(instance: HostNode): CompositionConfig {
+  const { width, height, fps, durationInFrames } = instance.props;
+  if (!Number.isInteger(width) || (width as number) <= 0) {
+    throw new Error('<Composition> requires a positive integer `width` prop');
   }
-  throw new Error('composition root nesting is too deep; check for a component that returns itself');
-}
-
-function describeType(type: unknown): string {
-  if (typeof type === 'string') {
-    return type;
+  if (!Number.isInteger(height) || (height as number) <= 0) {
+    throw new Error('<Composition> requires a positive integer `height` prop');
   }
-  if (typeof type === 'function') {
-    return (type as { name?: string }).name || 'anonymous component';
+  if (!Number.isInteger(fps) || (fps as number) <= 0) {
+    throw new Error('<Composition> requires a positive integer `fps` prop');
   }
-  return String(type);
+  if (!Number.isInteger(durationInFrames) || (durationInFrames as number) <= 0) {
+    throw new Error('<Composition> requires a positive integer `durationInFrames` prop');
+  }
+  return {
+    width: width as number,
+    height: height as number,
+    frameRate: { numerator: fps as number, denominator: 1 },
+    durationInFrames: durationInFrames as number,
+  };
 }
 
 function numberOr(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
-function extractTransform(props: AnyProps): EvaluatedTransform {
+function extractTransform(props: Record<string, unknown>) {
   const scale = numberOr(props.scale, 1);
-  const position: Point = { x: numberOr(props.x, 0), y: numberOr(props.y, 0) };
-  const anchor: Point = { x: numberOr(props.anchorX, 0.5), y: numberOr(props.anchorY, 0.5) };
   return {
-    position,
+    position: { x: numberOr(props.x, 0), y: numberOr(props.y, 0) },
     scale: { x: numberOr(props.scaleX, scale), y: numberOr(props.scaleY, scale) },
     rotation: numberOr(props.rotation, 0),
-    anchor,
+    anchor: { x: numberOr(props.anchorX, 0.5), y: numberOr(props.anchorY, 0.5) },
   };
 }
 
@@ -111,17 +97,18 @@ function resolveAsset(src: unknown): ResolvedAsset {
   return { id: src, location: { type: 'file', path: src } };
 }
 
-function buildLayer(type: ComponentMarker, props: AnyProps, path: string): Layer {
+function buildLayer(node: HostNode, path: string): Layer {
+  const { props } = node;
   const id = typeof props.id === 'string' && props.id.length > 0 ? props.id : path;
   const transform = extractTransform(props);
   const opacity = numberOr(props.opacity, 1);
 
   let content: LayerContent;
-  if (type === Group) {
-    content = { type: 'group', layers: renderChildren(props.children, path) };
-  } else if (type === Image) {
+  if (node.type === 'group') {
+    content = { type: 'group', layers: walkChildren(node, path) };
+  } else if (node.type === 'image') {
     content = { type: 'image', asset: resolveAsset(props.src) };
-  } else if (type === Text) {
+  } else if (node.type === 'text') {
     const maxWidth = props.maxWidth;
     content = {
       type: 'text',
@@ -130,75 +117,78 @@ function buildLayer(type: ComponentMarker, props: AnyProps, path: string): Layer
       ...(typeof maxWidth === 'number' ? { maxWidth } : {}),
     };
   } else {
-    throw new Error('unreachable: unknown Mikan component marker');
+    throw new Error(`unreachable: unknown host node type "${node.type}"`);
   }
 
   return { id, transform, opacity, content };
 }
 
-function renderNode(node: unknown, path: string): Layer[] {
-  if (node === null || node === undefined || typeof node === 'boolean') {
-    return [];
+function walkNode(node: HostNode, path: string): Layer[] {
+  if (!HOST_TYPES.has(node.type)) {
+    throw new Error(`unsupported element <${node.type}>; use Mikan's built-in components`);
   }
-  if (Array.isArray(node)) {
-    return node.flatMap((child, index) => renderNode(child, `${path}.${index}`));
+  if (node.type === 'rawLayers') {
+    return (node.props.layers as Layer[] | undefined) ?? [];
   }
-  if (!isElement(node)) {
-    throw new Error(
-      'only elements created from Mikan components are supported inside a composition; found a bare string, number, or other value',
-    );
-  }
-  const { type, props } = node;
-  if (type === Composition) {
-    throw new Error('<Composition> may only appear once, as the single root element');
-  }
-  if (MARKERS.has(type as ComponentMarker)) {
-    return [buildLayer(type as ComponentMarker, props, path)];
-  }
-  if (typeof type !== 'function') {
-    throw new Error(
-      `unsupported element <${describeType(type)}>; use Mikan's built-in components or a component function`,
-    );
-  }
-  return renderNode((type as EntryComponent)(props), path);
+  return [buildLayer(node, path)];
 }
 
-function renderChildren(children: unknown, parentPath: string): Layer[] {
-  return toChildArray(children).flatMap((child, index) => renderNode(child, `${parentPath}.${index}`));
+function walkChildren(node: HostNode, parentPath: string): Layer[] {
+  return node.children.flatMap((child, index) => walkNode(child, `${parentPath}.${index}`));
 }
 
-export function readConfig(defaultExport: EntryComponent): CompositionConfig {
-  const composition = unwrapToComposition(React.createElement(defaultExport, {}));
-  const { width, height, fps, durationInFrames } = composition.props;
-  if (!Number.isInteger(width) || (width as number) <= 0) {
-    throw new Error('<Composition> requires a positive integer `width` prop');
-  }
-  if (!Number.isInteger(height) || (height as number) <= 0) {
-    throw new Error('<Composition> requires a positive integer `height` prop');
-  }
-  if (!Number.isInteger(fps) || (fps as number) <= 0) {
-    throw new Error('<Composition> requires a positive integer `fps` prop');
-  }
-  if (!Number.isInteger(durationInFrames) || (durationInFrames as number) <= 0) {
-    throw new Error('<Composition> requires a positive integer `durationInFrames` prop');
-  }
-  return {
-    width: width as number,
-    height: height as number,
-    frameRate: { numerator: fps as number, denominator: 1 },
-    durationInFrames: durationInFrames as number,
+export function mount(defaultExport: EntryComponent): MountedComposition {
+  const { container, root } = createRoot();
+
+  const renderTree = (
+    time: Time,
+    projectLayers: Layer[] | null,
+    config: CompositionConfig | PlaceholderConfig,
+  ) => {
+    const runtimeValue = {
+      time,
+      width: config.width,
+      height: config.height,
+      fps: config.frameRate.numerator,
+      durationInFrames: config.durationInFrames,
+    };
+    const element = React.createElement(
+      ProjectLayersContext.Provider,
+      { value: projectLayers },
+      React.createElement(
+        CompositionRuntimeContext.Provider,
+        { value: runtimeValue },
+        React.createElement(defaultExport, {}),
+      ),
+    );
+    HostReconciler.flushSync(() => {
+      HostReconciler.updateContainer(element, root, null, null);
+    });
   };
-}
 
-export function renderSceneAt(defaultExport: EntryComponent, time: Time): Scene {
-  const composition = unwrapToComposition(React.createElement(defaultExport, {}));
-  const { width, height, fps } = composition.props;
-  const layers = renderChildren(composition.props.children, 'root');
+  // The first pass exists only to read <Composition>'s own props, which
+  // must be static (not derived from useVideoConfig()/useCurrentFrame()/
+  // <ProjectTimeline />) — but its children still render and may use those,
+  // so placeholder context is provided rather than leaving it unset, which
+  // would throw. An empty layer array (rather than null, which would still
+  // throw) is enough since this pass's own output layers are discarded.
+  renderTree(ZERO_TIME, [], PLACEHOLDER_CONFIG);
+  const compositionInstance = findCompositionInstance(container);
+  const config = readCompositionConfig(compositionInstance);
+
   return {
-    width: width as number,
-    height: height as number,
-    frameRate: { numerator: fps as number, denominator: 1 },
-    time,
-    layers,
+    config,
+    renderAt(time, projectLayers) {
+      renderTree(time, projectLayers, config);
+      const instance = findCompositionInstance(container);
+      const layers = walkChildren(instance, 'root');
+      return {
+        width: config.width,
+        height: config.height,
+        frameRate: config.frameRate,
+        time,
+        layers,
+      };
+    },
   };
 }

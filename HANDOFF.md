@@ -52,7 +52,7 @@ cargo test --workspace
 | `mikan-exporter` | Deterministic frame-exact H.264/AAC MP4 export through the shared evaluator, GPU renderer, audio graph, and FFmpeg. Also exports React entries via `mikan-react-bridge`. |
 | `mikan-editor` | GPUI application, editor-owned document state, playback clock, GPU preview bridge, asset panel, timeline, and inspector. |
 | `mikan-react-bridge` | Spawns one long-lived `@mikan/react` Node.js process per composition and requests the evaluated `Scene` for each exact frame time over stdin/stdout JSON. |
-| `packages/react` (`@mikan/react`, Node.js/TypeScript) | Declarative `Composition`/`Group`/`Image`/`Text` components and the `mikan-react-render` CLI: bundles a JSX/TSX entry with esbuild, walks the element tree (no react-reconciler yet, so no hooks), and emits `Scene`-shaped JSON. |
+| `packages/react` (`@mikan/react`, Node.js/TypeScript) | Declarative `Composition`/`Group`/`Image`/`Text` components rendered through a real `react-reconciler` host (hooks, including `useCurrentFrame`/`useVideoConfig`, work); `useProject`/`<ProjectTimeline />` embed a companion project's Rust-evaluated layers. The `mikan-react-render` CLI bundles a JSX/TSX entry with esbuild and emits `Scene`-shaped JSON. |
 
 Important files:
 
@@ -272,14 +272,7 @@ entries, matching the architecture diagram's "React entry" path:
   exports `Composition`, `Group`, `Image`, and `Text` components (typed props
   in `src/components.ts`; `src/scene.ts` re-exports the `Scene`/`Layer`/...
   types from `src/generated/`, ts-rs bindings generated from
-  `mikan_composition`, rather than hand-mirroring the JSON shape). They are
-  never invoked as functions; `src/render.ts` walks
-  the JSX element tree produced by calling function components directly and
-  matches these against the package's own exports by object identity to
-  build layers. Function components can wrap them freely (props in, JSX out),
-  but there is no react-reconciler, so hooks such as `useState` are not
-  supported yet, and every requested frame currently re-renders an identical
-  tree (no per-frame animation input is wired to components yet).
+  `mikan_composition`, rather than hand-mirroring the JSON shape).
 - The entry's default export must render a single root `<Composition width
   height fps durationInFrames>` element. Layer ids default to a
   path-based string (for example `root.0.1`) stable across repeated renders of
@@ -311,6 +304,125 @@ entries, matching the architecture diagram's "React entry" path:
 - React entries do not yet integrate with the GPUI editor (no project
   persistence, timeline/track placement, or preview panel); see Recommended
   next work.
+
+### react-reconciler, hooks, and `<ProjectTimeline />`
+
+The initial React-composition slice walked the JSX element tree directly
+(calling function components itself, matching `Composition`/`Group`/`Image`/
+`Text` by object identity) rather than using React's own reconciliation.
+That has been replaced with a real `react-reconciler` (`^0.29.2`, pinned to
+match `react@^18.3.1` — the reconciler's own peer dependency; do not bump
+either independently) host in `src/reconciler.ts`. `Composition`/`Group`/
+`Image`/`Text` (`src/components.ts`) are now thin wrappers around
+`React.createElement('composition' | 'group' | 'image' | 'text', props)`;
+the reconciler's host config (mutation mode; a plain `{type, props,
+children}` tree, no real host platform) turns those into instances, and
+`src/render.ts` walks that resulting instance tree (not JSX elements) into
+`Layer[]`. This means ordinary React composition — conditionals, `.map()`,
+context, and now hooks — works through user components exactly as it would
+in any other React host.
+
+- **The mount is persistent.** `render.ts`'s `mount(defaultExport)` creates
+  one root via `reconciler.ts`'s `createRoot()` and keeps it for the whole
+  process; `cli.ts` calls `mounted.renderAt(time, projectLayers)` once per
+  frame request against that same root (via `HostReconciler.flushSync(() =>
+  updateContainer(...))`, `LegacyRoot` mode for synchronous, un-batched
+  commits). This is required for hook state to mean anything: `useState`
+  persisting across frames was verified manually (a counter that only grows,
+  read back down after moving the request time backward, stays at its
+  high-water mark — proving state survives across `renderAt` calls on the
+  same root, not just within one).
+- **`useCurrentFrame()`, `useCurrentTime()`, `useVideoConfig()`**
+  (`src/hooks.ts`) read a `CompositionRuntimeContext` that `render.ts`
+  provides around the entry on every `renderAt` call, carrying that call's
+  `time` plus the composition's own static width/height/fps/durationInFrames
+  (read once, on a first bootstrap pass — see below). `useCurrentFrame()`
+  computes `round(time.value / time.timescale * fps)`.
+- **The bootstrap chicken-and-egg problem**: reading `<Composition>`'s own
+  props requires rendering the tree once, but the tree's children may call
+  `useCurrentFrame()`/`useVideoConfig()` or render `<ProjectTimeline />`
+  before real values exist for any of that. `mount()`'s first pass therefore
+  provides a placeholder `CompositionRuntimeContext` (zeros, `fps: 1`) and an
+  empty project-layers array rather than leaving them unset (which throws) —
+  its own *output* layers are discarded; only `<Composition>`'s width/
+  height/fps/durationInFrames props, which must be static, are read from it.
+- **`external` in `cli.ts`'s esbuild call now also covers `react` and
+  `react/jsx-runtime`/`react/jsx-dev-runtime`, not just `@mikan/react`.**
+  Without this, the entry's bundle gets its own copy of React with its own
+  internal dispatcher slot, separate from the one this process's
+  `react-reconciler` actually sets — hooks then fail at runtime with React's
+  "Invalid hook call" warning (reproduced and fixed during this work). All
+  of `react`, its jsx-runtime, and `@mikan/react` need to resolve to the
+  exact module instances this process already loaded, which is only
+  possible because the entry's bundle is written inside
+  `packages/react/`'s own directory tree (Node's package self-reference
+  resolution) rather than to the OS temp directory.
+- **`<ProjectTimeline />` and its Rust-side counterpart.** `useProject()`
+  (`src/project-runtime.ts`) reads a `Project` from `ProjectContext`, which
+  the entry populates explicitly with `<ProjectProvider project={...}>`
+  (typically `project={loadProject('./project.json')}`) — there is no
+  implicit project loading in the CLI. `<ProjectTimeline />` is different: it
+  cannot evaluate anything itself. It reads a `ProjectLayersContext` that
+  `render.ts` provides per `renderAt` call, sourced from Rust, and emits
+  those layers through a `rawLayers` host type that `render.ts`'s walker
+  splices directly into the output `Layer[]` at that position — no
+  transformation, since Rust already fully evaluated them.
+  - **Why Rust evaluates instead of Node asking Rust mid-render**: the
+    bridge protocol (`mikan-react-bridge`) is a synchronous one-request-per-
+    line pipe where Rust always initiates and blocks on Node's response. If
+    `<ProjectTimeline />` tried to ask Rust to evaluate while rendering,
+    Rust would already be blocked waiting for *this* response and could
+    never service that nested request — deadlock. Instead,
+    `ReactBridge::scene_at_with_project(time, Option<&[Layer]>)`
+    (`mikan-react-bridge`) embeds the already-evaluated layers in the
+    request itself: `{"time": ..., "project": {"layers": [...]}}`
+    (`project` omitted entirely when there is no companion project, via
+    `skip_serializing_if`).
+  - **`mikan-exporter`**: `Exporter::export_react_entry_with_project[
+    _and_progress/_cancellable]` take a `CompanionProject { project,
+    project_asset_root }` alongside the entry. Internally,
+    `visual_only_project()` clones the project and drops every timeline item
+    whose content isn't `Video`/`Image`/`Text` (v1 scope: no `audio`,
+    `dialogue`, or `component` — dialogue/component are dropped because
+    their evaluator-expanded output would otherwise appear even though the
+    entry never asked `<ProjectTimeline />` for it; audio produces no visual
+    layers anyway so dropping it is a no-op either way) before constructing
+    an `Evaluator` and calling `scene_at(time)` once per frame, same as
+    plain project export. When a companion project is present, the
+    `GpuRenderer` also gets a sequential-video decoder attached (project
+    `Video` content needs it; a React entry alone never does, since
+    `<Video>` isn't implemented — see above).
+  - **Two different asset roots, one renderer.** `GpuRenderer` resolves
+    every relative asset path against a single `asset_root`
+    (`crates/gpu-renderer/src/lib.rs`'s `local_asset_path`), which stays set
+    to the React entry's own directory. A companion project's assets can
+    live somewhere else entirely, so `absolutize_layers`/
+    `absolutize_fonts`/`absolutize_asset` (`mikan-exporter`) rewrite the
+    project-evaluated `Layer`s' (and `Scene.fonts`') relative `File` paths
+    into absolute ones (joined against `project_asset_root`) before they are
+    sent to Node — `local_asset_path` already left absolute paths alone, so
+    this needed no `GpuRenderer` changes. Project fonts are evaluated once
+    (not per frame, since they do not vary by time) and merged into every
+    frame's `Scene.fonts` after Node responds.
+  - **CLI**: `mikan-exporter --react <entry> --project <project.mikan.json>
+    <output.mp4>` loads the project relative to its own path (its parent
+    directory becomes `project_asset_root`) and requires `--react`;
+    `--project` without `--react` is a usage error.
+  - Verified end to end (`packages/react/examples/with-project.tsx`, a
+    `<ProjectTimeline />` alongside a React-authored `<Text>`, against a
+    project with one `text` timeline item): the exported frame shows both
+    the React-authored text and the project-evaluated text together. Also
+    covered by an integration test
+    (`crates/react-bridge/tests/node_integration.rs`,
+    `embeds_pre_evaluated_project_layers_into_project_timeline_when_node_is_available`)
+    that calls `scene_at_with_project` directly with a synthetic `Layer` and
+    asserts it comes back untouched alongside the entry's own content.
+  - **Not yet built**: per-track access (`useProjectTrack()`,
+    `<ProjectTrack id="..." />`) — the evaluator evaluates a whole project's
+    tracks together, not one at a time, so this needs new evaluator-side
+    surface first, not just a new React component. `dialogue`/`component`
+    content in `<ProjectTimeline />`. A `<Video>` React component. An
+    `AudioGraph` source for React entries.
 
 ### TypeScript type generation and the Project loader
 
@@ -424,12 +536,16 @@ licensed VOICEROID voice sample.
 - `packages/react/examples/title.tsx`: a five-second, single-`Text` React
   composition used by `mikan-react-bridge`'s integration test and as the
   `mikan-exporter --react` example.
+- `packages/react/examples/with-project.tsx`: `<ProjectTimeline />` alongside
+  a React-authored `<Text>`, used by `mikan-react-bridge`'s
+  project-companion integration test and the `mikan-exporter --react
+  --project` example.
 
 ## Validation baseline
 
-At this handoff, the workspace has 83 passing tests (81 plus
-`mikan-react-bridge`'s unit test and its live Node.js integration test). The
-last checks were:
+At this handoff, the workspace has 84 passing tests (83 from the previous
+handoff plus `mikan-react-bridge`'s new project-companion integration test).
+The last checks were:
 
 ```sh
 cargo test --workspace
@@ -463,7 +579,14 @@ A full React-entry export was also run end to end and its output frame was
 inspected: `cargo run -p mikan-exporter -- --react
 packages/react/examples/title.tsx output.mp4` produced a 150-frame, 1920x1080
 H.264 MP4 whose first decoded frame shows the expected centered white title
-text on the composition's background.
+text on the composition's background. A project-companion export (`--react
+packages/react/examples/with-project.tsx --project <a project.json with one
+text timeline item>`) was also run end to end and its output frame inspected:
+both the React-authored text and the project-evaluated text appear in the
+same frame. `useState` persisting across frames (a counter that only grows,
+checked by moving the requested time backward and confirming the value does
+not drop) was also verified manually via the CLI's stdin/stdout protocol
+directly.
 
 There are future-incompatibility warnings in transitive dependencies
 `block 0.1.6` and `proc-macro-error2 2.0.1`; these are not current Mikan lint or
@@ -494,20 +617,27 @@ React via an explicit Property Schema (`defineProjectProperties`,
 `useProjectProperty()`). That design's own priority order, adjusted for what
 is already done:
 
-1. ~~Rust Project type generation~~ and ~~Project loader~~ — done, see above.
-2. React context + `useProject()`.
-3. `useProjectTrack()`.
-4. `<ProjectTimeline />`.
-5. `<ProjectTrack />`.
-6. `useCurrentFrame()` / `useCurrentTime()` / `useVideoConfig()` — these need
-   real per-frame reactivity, which likely means adopting `react-reconciler`
-   (the current plain function-call tree walker has no hook dispatcher).
-7. `interpolate()` / `spring()` animation utilities.
-8. Project Properties (`defineProjectProperties`, `useProjectProperty()`).
-9. Component registry / `ComponentContent` (`registerComponent`, resolving
+1. ~~Rust Project type generation~~, ~~Project loader~~, ~~React context +
+   `useProject()`~~, ~~`<ProjectTimeline />`~~, ~~`useCurrentFrame()` /
+   `useCurrentTime()` / `useVideoConfig()`~~ (which did mean adopting
+   `react-reconciler`, as anticipated) — done, see "react-reconciler, hooks,
+   and `<ProjectTimeline />`" above.
+2. `useProjectTrack()` / `<ProjectTrack />` (per-track access). This needs
+   new evaluator-side surface, not just a new React component:
+   `mikan-evaluator::Evaluator` evaluates a whole project's tracks together
+   (`scene_at`), not one track at a time, and `<ProjectTimeline />`'s
+   "evaluate up front, embed the result" approach (see above) means
+   `<ProjectTrack />` would need its own per-track evaluation entry point on
+   the Rust side plus a way for the request payload to carry multiple named
+   layer sets instead of one.
+3. `interpolate()` / `spring()` animation utilities.
+4. Project Properties (`defineProjectProperties`, `useProjectProperty()`).
+5. Component registry / `ComponentContent` (`registerComponent`, resolving
    `TimelineContent::Component`'s `component`/`props` to a registered React
    component).
-10. Property schema / Inspector metadata for GUI-editable component props.
+6. Property schema / Inspector metadata for GUI-editable component props.
+7. `dialogue`/`component` timeline content in `<ProjectTimeline />` (dropped
+   in the v1 filter — see above — deliberately, pending items 4/5).
 
 Separately, still open from the original slice:
 
@@ -517,9 +647,10 @@ Separately, still open from the original slice:
 - An `AudioGraph` source for React entries so `mikan-exporter --react` can mux
   audio instead of always publishing a silent MP4.
 
-Before starting the `useProject()`/`<ProjectTimeline />` line of work, confirm
-scope with the user rather than assuming the full design doc — it explicitly
-marks several APIs (Property Schema, Component registry) as undecided.
+Before starting `useProjectTrack()`/`<ProjectTrack />` or anything further
+down this list, confirm scope with the user rather than assuming the full
+design doc — it explicitly marks several APIs (Property Schema, Component
+registry) as undecided.
 
 Do not optimize preview presentation by letting GPUI and wgpu both present to
 the same window surface.

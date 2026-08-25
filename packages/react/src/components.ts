@@ -1,11 +1,13 @@
+import * as React from 'react';
 import type { ReactNode } from 'react';
 
 import type { TextStyle } from './scene';
 
-// These are never invoked as functions. render.ts walks the JSX element tree
-// and matches host elements by reference against this module's exports, so
-// they only need to exist as stable, unique identities. The prop types below
-// exist purely for authoring: render.ts still reads props dynamically.
+// Unlike the pre-reconciler tree walker, these are real function components:
+// each returns a host element (a lowercase intrinsic type the reconciler in
+// reconciler.ts understands), so ordinary React composition — conditionals,
+// `.map()`, context, hooks — works through them exactly as it would for any
+// other component.
 
 export interface CommonProps {
   id?: string;
@@ -42,18 +44,18 @@ export interface TextProps extends CommonProps {
   maxWidth?: number;
 }
 
-export function Composition(_props: CompositionProps): null {
-  return null;
+export function Composition(props: CompositionProps): ReturnType<typeof React.createElement> {
+  return React.createElement('composition', props);
 }
 
-export function Group(_props: GroupProps): null {
-  return null;
+export function Group(props: GroupProps): ReturnType<typeof React.createElement> {
+  return React.createElement('group', props);
 }
 
-export function Image(_props: ImageProps): null {
-  return null;
+export function Image(props: ImageProps): ReturnType<typeof React.createElement> {
+  return React.createElement('image', props);
 }
 
-export function Text(_props: TextProps): null {
-  return null;
+export function Text(props: TextProps): ReturnType<typeof React.createElement> {
+  return React.createElement('text', props);
 }

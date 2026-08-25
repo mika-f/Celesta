@@ -12,11 +12,13 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-use mikan_composition::{Rational, Time, TimeError};
+use mikan_composition::{
+    AssetLocation, Layer, LayerContent, Rational, ResolvedAsset, Time, TimeError,
+};
 use mikan_evaluator::{EvaluationError, Evaluator};
 use mikan_gpu_renderer::{GpuRenderError, GpuRenderOptions, GpuRenderer};
 use mikan_media::{AudioMixError, FfmpegBackend, mix_audio_graph_cancellable};
-use mikan_project::{LoadError, Project};
+use mikan_project::{LoadError, Project, TimelineContent};
 use mikan_react_bridge::{ReactBridge, ReactBridgeError};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -50,6 +52,21 @@ impl ReactRuntimeOptions {
             cli_script: cli_script.into(),
         }
     }
+}
+
+/// A GUI-editor-owned project a React export evaluates alongside its entry,
+/// for the entry's `<ProjectTimeline />` to embed.
+#[derive(Clone, Copy, Debug)]
+pub struct CompanionProject<'a> {
+    pub project: &'a Project,
+    pub project_asset_root: &'a Path,
+}
+
+struct ReactVideoRequest<'a> {
+    entry: &'a Path,
+    react_runtime: &'a ReactRuntimeOptions,
+    asset_root: &'a Path,
+    project: Option<(&'a Project, &'a Path)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -251,6 +268,85 @@ impl Exporter {
         react_runtime: &ReactRuntimeOptions,
         output_path: impl AsRef<Path>,
         cancellation: &ExportCancellation,
+        progress: impl FnMut(ExportProgress),
+    ) -> Result<(), ExportError> {
+        self.export_react_entry_impl(
+            entry,
+            react_runtime,
+            None,
+            output_path,
+            cancellation,
+            progress,
+        )
+    }
+
+    /// Same as [`Self::export_react_entry`], but also evaluates a companion
+    /// project once per frame and gives the entry's `<ProjectTimeline />`
+    /// the resulting layers. `companion.project_asset_root` resolves the
+    /// project's own relative asset paths and may differ from the entry's
+    /// directory; only the project's `video`/`image`/`text` timeline
+    /// content is evaluated (`audio`, `dialogue`, and `component` items are
+    /// dropped before evaluation) — see `HANDOFF.md` for why.
+    pub fn export_react_entry_with_project(
+        &self,
+        entry: impl AsRef<Path>,
+        react_runtime: &ReactRuntimeOptions,
+        companion: CompanionProject<'_>,
+        output_path: impl AsRef<Path>,
+    ) -> Result<(), ExportError> {
+        self.export_react_entry_with_project_and_progress(
+            entry,
+            react_runtime,
+            companion,
+            output_path,
+            |_| {},
+        )
+    }
+
+    pub fn export_react_entry_with_project_and_progress(
+        &self,
+        entry: impl AsRef<Path>,
+        react_runtime: &ReactRuntimeOptions,
+        companion: CompanionProject<'_>,
+        output_path: impl AsRef<Path>,
+        progress: impl FnMut(ExportProgress),
+    ) -> Result<(), ExportError> {
+        self.export_react_entry_with_project_cancellable(
+            entry,
+            react_runtime,
+            companion,
+            output_path,
+            &ExportCancellation::default(),
+            progress,
+        )
+    }
+
+    pub fn export_react_entry_with_project_cancellable(
+        &self,
+        entry: impl AsRef<Path>,
+        react_runtime: &ReactRuntimeOptions,
+        companion: CompanionProject<'_>,
+        output_path: impl AsRef<Path>,
+        cancellation: &ExportCancellation,
+        progress: impl FnMut(ExportProgress),
+    ) -> Result<(), ExportError> {
+        self.export_react_entry_impl(
+            entry,
+            react_runtime,
+            Some((companion.project, companion.project_asset_root)),
+            output_path,
+            cancellation,
+            progress,
+        )
+    }
+
+    fn export_react_entry_impl(
+        &self,
+        entry: impl AsRef<Path>,
+        react_runtime: &ReactRuntimeOptions,
+        project: Option<(&Project, &Path)>,
+        output_path: impl AsRef<Path>,
+        cancellation: &ExportCancellation,
         mut progress: impl FnMut(ExportProgress),
     ) -> Result<(), ExportError> {
         let entry = entry.as_ref();
@@ -274,9 +370,12 @@ impl Exporter {
             })?;
 
         self.render_react_video(
-            entry,
-            react_runtime,
-            asset_root,
+            ReactVideoRequest {
+                entry,
+                react_runtime,
+                asset_root,
+                project,
+            },
             final_file.path(),
             cancellation,
             &mut progress,
@@ -386,16 +485,40 @@ impl Exporter {
 
     fn render_react_video(
         &self,
-        entry: &Path,
-        react_runtime: &ReactRuntimeOptions,
-        asset_root: &Path,
+        request: ReactVideoRequest<'_>,
         output: &Path,
         cancellation: &ExportCancellation,
         progress: &mut impl FnMut(ExportProgress),
     ) -> Result<(), ExportError> {
+        let ReactVideoRequest {
+            entry,
+            react_runtime,
+            asset_root,
+            project,
+        } = request;
         let mut bridge = ReactBridge::spawn(&react_runtime.node, &react_runtime.cli_script, entry)
             .map_err(ExportError::React)?;
         let metadata = bridge.metadata().clone();
+
+        let filtered_project = project.map(|(project, _)| visual_only_project(project));
+        let project_evaluator = filtered_project
+            .as_ref()
+            .map(Evaluator::new)
+            .transpose()
+            .map_err(ExportError::Evaluation)?;
+        let project_asset_root = project.map(|(_, asset_root)| asset_root);
+        let project_fonts = project_evaluator
+            .as_ref()
+            .map(|evaluator| -> Result<_, EvaluationError> {
+                let mut fonts = evaluator.scene_at(Time::ZERO)?.fonts;
+                if let Some(asset_root) = project_asset_root {
+                    absolutize_fonts(&mut fonts, asset_root);
+                }
+                Ok(fonts)
+            })
+            .transpose()
+            .map_err(ExportError::Evaluation)?
+            .unwrap_or_default();
         validate_dimensions(metadata.width, metadata.height)?;
         if metadata.duration_in_frames == 0 {
             return Err(ExportError::EmptyTimeline);
@@ -441,9 +564,21 @@ impl Exporter {
         let write_result = (|| {
             let stdin = child.stdin.take().ok_or(ExportError::MissingPipe)?;
             let mut stdin = BufWriter::new(stdin);
-            let mut renderer = GpuRenderer::new(GpuRenderOptions::default())
-                .map_err(ExportError::Render)?
-                .with_asset_root(asset_root);
+            let mut renderer =
+                GpuRenderer::new(GpuRenderOptions::default()).map_err(ExportError::Render)?;
+            renderer = renderer.with_asset_root(asset_root);
+            if project_evaluator.is_some() {
+                // The project's own Video content needs decoding; the React
+                // entry's asset_root stays the renderer's single asset_root
+                // (see absolutize_layers/absolutize_fonts below for how the
+                // project's own, differently-rooted assets still resolve).
+                let video_decoder = FfmpegBackend::with_executables(
+                    self.options.ffmpeg.clone(),
+                    self.options.ffprobe.clone(),
+                )
+                .with_sequential_video(metadata.frame_rate);
+                renderer = renderer.with_video_decoder(video_decoder);
+            }
             for frame_index in 0..metadata.duration_in_frames {
                 ensure_not_cancelled(cancellation)?;
                 progress(ExportProgress::Rendering {
@@ -454,7 +589,21 @@ impl Exporter {
                     i64::try_from(frame_index).map_err(|_| ExportError::TimelineTooLong)?;
                 let time =
                     Time::frames(frame_index, metadata.frame_rate).map_err(ExportError::Time)?;
-                let scene = bridge.scene_at(time).map_err(ExportError::React)?;
+                let project_layers = project_evaluator
+                    .as_ref()
+                    .map(|evaluator| -> Result<_, EvaluationError> {
+                        let mut scene = evaluator.scene_at(time)?;
+                        if let Some(asset_root) = project_asset_root {
+                            absolutize_layers(&mut scene.layers, asset_root);
+                        }
+                        Ok(scene.layers)
+                    })
+                    .transpose()
+                    .map_err(ExportError::Evaluation)?;
+                let mut scene = bridge
+                    .scene_at_with_project(time, project_layers.as_deref())
+                    .map_err(ExportError::React)?;
+                scene.fonts.extend(project_fonts.iter().cloned());
                 let frame = renderer.render(&scene).map_err(ExportError::Render)?;
                 stdin
                     .write_all(frame.pixels())
@@ -540,6 +689,63 @@ impl Exporter {
 impl Default for Exporter {
     fn default() -> Self {
         Self::new(ExportOptions::default())
+    }
+}
+
+/// Drops timeline items whose content isn't `video`/`image`/`text` before
+/// evaluating a companion project for a React export (v1 scope: no
+/// `audio`, `dialogue`, or `component` content). `audio` content produces no
+/// visual layers anyway; `dialogue` and `component` are dropped so their
+/// evaluator-expanded output doesn't appear where the entry didn't ask for
+/// it.
+fn visual_only_project(project: &Project) -> Project {
+    let mut filtered = project.clone();
+    for track in &mut filtered.tracks {
+        track.items.retain(|item| {
+            matches!(
+                item.content,
+                TimelineContent::Video { .. }
+                    | TimelineContent::Image { .. }
+                    | TimelineContent::Text { .. }
+            )
+        });
+    }
+    filtered
+}
+
+/// Rewrites a project-evaluated layer tree's relative asset paths into
+/// absolute ones. A React export's `GpuRenderer` has a single `asset_root`
+/// (the entry's own directory); a companion project's assets may live
+/// elsewhere, so its evaluated layers carry absolute paths instead of
+/// relying on that shared root.
+fn absolutize_layers(layers: &mut [Layer], asset_root: &Path) {
+    for layer in layers {
+        absolutize_layer_content(&mut layer.content, asset_root);
+    }
+}
+
+fn absolutize_layer_content(content: &mut LayerContent, asset_root: &Path) {
+    match content {
+        LayerContent::Video { asset, .. } | LayerContent::Image { asset } => {
+            absolutize_asset(asset, asset_root);
+        }
+        LayerContent::Group { layers } => absolutize_layers(layers, asset_root),
+        LayerContent::Text { .. } | LayerContent::MissingComponent { .. } => {}
+    }
+}
+
+fn absolutize_fonts(fonts: &mut [ResolvedAsset], asset_root: &Path) {
+    for font in fonts {
+        absolutize_asset(font, asset_root);
+    }
+}
+
+fn absolutize_asset(asset: &mut ResolvedAsset, asset_root: &Path) {
+    if let AssetLocation::File { path } = &mut asset.location {
+        let candidate = Path::new(path.as_str());
+        if candidate.is_relative() {
+            *path = asset_root.join(candidate).to_string_lossy().into_owned();
+        }
     }
 }
 

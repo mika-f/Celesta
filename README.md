@@ -30,14 +30,20 @@ The repository currently contains the first foundation:
   each exact frame time over a JSON stdin/stdout pipe.
 - `packages/react` (`@mikan/react`, TypeScript, managed with pnpm): declarative
   `Composition`, `Group`, `Image`, and `Text` components for authoring a React
-  entry, plus the `mikan-react-render` CLI that bundles an entry with esbuild
-  and evaluates it on request. Entries are plain function components composed
-  with JSX; there is no react-reconciler yet, so hooks such as `useState` are
-  not supported. `mikan-composition` and `mikan-project`'s public types carry
-  `ts-rs` bindings (behind the `codegen` cargo feature) that `pnpm run
-  codegen` regenerates into `packages/react/src/generated`; the package's own
-  `Scene`/`Layer`/... types and a `loadProject()`/`loadProjectFromString()`
-  reader for `.mikan.json` files are built on top of those generated types
+  entry, evaluated through a real `react-reconciler` host, plus the
+  `mikan-react-render` CLI that bundles an entry with esbuild and evaluates it
+  on request. Because the reconciler drives real React rendering, ordinary
+  hooks work: `useState`/`useEffect` and this package's own
+  `useCurrentFrame()`, `useCurrentTime()`, and `useVideoConfig()`. A loaded
+  `.mikan.json` project can also be read into a React entry: `loadProject()`
+  plus `<ProjectProvider>`/`useProject()` expose it as plain data, and
+  `<ProjectTimeline />` embeds its `video`/`image`/`text` timeline content —
+  evaluated by `mikan-evaluator` (Rust), not reimplemented in TypeScript —
+  alongside the entry's own React-authored content. `mikan-composition` and
+  `mikan-project`'s public types carry `ts-rs` bindings (behind the `codegen`
+  cargo feature) that `pnpm run codegen` regenerates into
+  `packages/react/src/generated`; the package's own `Scene`/`Layer`/...,
+  `Project`/`Track`/... types are built on top of those generated types
   rather than hand-mirrored.
 - `examples/minimal.mikan.json`: the smallest valid project.
 - `examples/voiceroid.mikan.json`: a small dialogue-oriented project example.
@@ -79,6 +85,13 @@ Export a React composition entry instead of a project (requires a one-time
 ```sh
 cd packages/react && pnpm install && pnpm run codegen && pnpm run build && cd ../..
 cargo run -p mikan-exporter -- --react packages/react/examples/title.tsx output.mp4
+```
+
+Add `--project <project.mikan.json>` to also evaluate a companion project and
+give the entry's `<ProjectTimeline />` its `video`/`image`/`text` layers:
+
+```sh
+cargo run -p mikan-exporter -- --react packages/react/examples/with-project.tsx --project examples/editor-demo.mikan.json output.mp4
 ```
 
 The exporter renders the exact rational project frame times through the shared
@@ -219,8 +232,19 @@ persistence, or audio graph; `mikan-exporter --react` renders a React entry
 straight to a silent MP4.
 
 `packages/react` can also read a `.mikan.json` project file directly, through
-`loadProject()`/`loadProjectFromString()` and the generated `Project` type,
-independent of the React entry / `Scene` path above. This is a read-only
-loader today: nothing yet connects a loaded `Project` into a `<Composition>`
-tree (no `<ProjectTimeline />`/`<ProjectTrack />` or `useProject()`), so a
-React entry cannot yet incorporate GUI-editor-owned timeline content.
+`loadProject()`/`loadProjectFromString()` and the generated `Project` type.
+`<ProjectProvider project={...}>` and `useProject()` expose that data as
+plain React context. `<ProjectTimeline />` goes further and embeds the
+project's own evaluated visual content (`video`/`image`/`text` timeline
+items only in this first pass; `audio`, `dialogue`, and `component` items
+are dropped): `mikan-exporter --react <entry> --project <project.mikan.json>`
+evaluates the project once per frame through the same `mikan-evaluator` a
+plain project export uses, and embeds the resulting layers directly in that
+frame's request to Node — `<ProjectTimeline />` cannot ask Rust to evaluate
+mid-render, since this process is synchronously blocked on that very
+request's response, so a call the other way would deadlock. Because the
+project's assets may live in a different directory than the React entry,
+and `GpuRenderer` resolves relative asset paths against a single
+`asset_root`, those evaluated layers' relative paths (and font asset paths)
+are rewritten to absolute before being sent, rather than adding a second
+asset root to the renderer.

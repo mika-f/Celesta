@@ -2,9 +2,14 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
 
-import { readConfig, renderSceneAt } from './render';
-import type { EntryComponent } from './render';
-import type { CompositionConfig, Scene, Time } from './scene';
+import { mount } from './render';
+import type { EntryComponent, MountedComposition } from './render';
+import type { CompositionConfig, Layer, Scene, Time } from './scene';
+
+interface FrameRequest {
+  time: Time;
+  project?: { layers: Layer[] };
+}
 
 async function main(): Promise<void> {
   const entry = process.argv[2];
@@ -23,16 +28,16 @@ async function main(): Promise<void> {
     return;
   }
 
-  let config: CompositionConfig;
+  let mounted: MountedComposition;
   try {
-    config = readConfig(defaultExport);
+    mounted = mount(defaultExport);
   } catch (error) {
     writeLine({ error: describeError(error) });
     process.exitCode = 1;
     return;
   }
 
-  writeLine({ config });
+  writeLine({ config: mounted.config });
 
   const rl = readline.createInterface({ input: process.stdin, terminal: false });
   for await (const line of rl) {
@@ -40,7 +45,7 @@ async function main(): Promise<void> {
     if (trimmed.length === 0) {
       continue;
     }
-    let request: { time: Time };
+    let request: FrameRequest;
     try {
       request = JSON.parse(trimmed);
     } catch (error) {
@@ -48,7 +53,7 @@ async function main(): Promise<void> {
       continue;
     }
     try {
-      const scene = renderSceneAt(defaultExport, request.time);
+      const scene = mounted.renderAt(request.time, request.project?.layers ?? null);
       writeLine({ scene });
     } catch (error) {
       writeLine({ error: describeError(error) });
@@ -76,17 +81,22 @@ async function loadEntryDefault(entryPath: string): Promise<EntryComponent> {
     jsx: 'automatic',
     absWorkingDir: path.dirname(entryPath),
     logLevel: 'silent',
-    // `@mikan/react`'s component markers are matched by object identity in
-    // render.ts. Bundling the package would duplicate those functions, so it
-    // must stay external and resolve through Node's own module cache instead.
-    external: ['@mikan/react'],
+    // `react` must resolve to the exact module instance this process's own
+    // react-reconciler is driving, or hooks fail with "Invalid hook call"
+    // (the entry's own copy of React would look for a dispatcher the
+    // reconciler never set on it). `@mikan/react`'s React Context objects
+    // (CompositionRuntimeContext, ProjectLayersContext, ProjectContext) need
+    // the same treatment: they must be the exact object identity the
+    // entry's `useCurrentFrame()`/`useProject()`/etc. read from, matching
+    // the Provider values render.ts sets around it. Both stay external and
+    // resolve through Node's own module cache instead of being duplicated
+    // into the bundle.
+    external: ['react', 'react/jsx-runtime', 'react/jsx-dev-runtime', '@mikan/react'],
   });
   const [output] = result.outputFiles;
 
-  // The bundle keeps `require('@mikan/react')` external so its component
-  // markers resolve to the very functions render.ts compares by identity,
-  // instead of a second copy baked into the bundle. That require call is
-  // only resolvable from inside this package's own directory tree (Node's
+  // The bundle keeps `require('@mikan/react')` external, which is only
+  // resolvable from inside this package's own directory tree (Node's
   // self-reference resolution), so the bundle is written there rather than
   // to the OS temp directory.
   const tempRoot = path.join(__dirname, '..', '.tmp');

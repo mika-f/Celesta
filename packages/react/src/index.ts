@@ -23,6 +23,12 @@ export type {
   Time,
 } from './scene';
 
+export { useCurrentFrame, useCurrentTime, useVideoConfig } from './hooks';
+export type { VideoConfig } from './hooks';
+
+export { ProjectProvider, ProjectTimeline, useProject } from './project-runtime';
+export type { ProjectProviderProps } from './project-runtime';
+
 export { loadProject, loadProjectFromString } from './project';
 export type { Project } from './generated/Project';
 export type { Asset } from './generated/Asset';

@@ -12,7 +12,7 @@ use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
-use mikan_composition::{Rational, Scene, Time};
+use mikan_composition::{Layer, Rational, Scene, Time};
 use serde::{Deserialize, Serialize};
 
 /// Static composition facts read once from the entry's `<Composition>` root.
@@ -94,8 +94,25 @@ impl ReactBridge {
 
     /// Requests the evaluated `Scene` at an exact composition time.
     pub fn scene_at(&mut self, time: Time) -> Result<Scene, ReactBridgeError> {
-        let payload =
-            serde_json::to_string(&Request { time }).map_err(ReactBridgeError::Protocol)?;
+        self.scene_at_with_project(time, None)
+    }
+
+    /// Same as [`Self::scene_at`], but also hands the entry's
+    /// `<ProjectTimeline />` a project's layers already evaluated for this
+    /// exact time. The Node side cannot ask Rust to evaluate a project
+    /// mid-render: this process is synchronously blocked on the response to
+    /// this very request, so a request travelling the other way would
+    /// deadlock. Evaluating up front and embedding the result avoids that.
+    pub fn scene_at_with_project(
+        &mut self,
+        time: Time,
+        project_layers: Option<&[Layer]>,
+    ) -> Result<Scene, ReactBridgeError> {
+        let request = Request {
+            time,
+            project: project_layers.map(|layers| ProjectPayload { layers }),
+        };
+        let payload = serde_json::to_string(&request).map_err(ReactBridgeError::Protocol)?;
         writeln!(self.stdin, "{payload}").map_err(ReactBridgeError::Io)?;
         self.stdin.flush().map_err(ReactBridgeError::Io)?;
 
@@ -117,8 +134,15 @@ impl ReactBridge {
 }
 
 #[derive(Serialize)]
-struct Request {
+struct Request<'a> {
     time: Time,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    project: Option<ProjectPayload<'a>>,
+}
+
+#[derive(Serialize)]
+struct ProjectPayload<'a> {
+    layers: &'a [Layer],
 }
 
 #[derive(Deserialize)]
