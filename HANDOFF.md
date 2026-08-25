@@ -40,6 +40,7 @@ cargo test --workspace
 | `mikan-media` | FFprobe metadata and FFmpeg exact-time RGBA video-frame decoding behind `VideoFrameDecoder`. |
 | `mikan-renderer` | Deterministic CPU reference renderer, PNG output, and the shared text rasterizer. |
 | `mikan-gpu-renderer` | `wgpu` renderer for images, video frames, styled text, nested transforms, opacity, offscreen readback, and renderer-owned surfaces. |
+| `mikan-exporter` | Deterministic frame-exact H.264/AAC MP4 export through the shared evaluator, GPU renderer, audio graph, and FFmpeg. |
 | `mikan-editor` | GPUI application, editor-owned document state, playback clock, GPU preview bridge, asset panel, timeline, and inspector. |
 
 Important files:
@@ -146,6 +147,18 @@ Keep these boundaries intact:
   position. Background mixing derives per-clip envelopes from source-mapped
   peaks and animated clip volume; active clips are aggregated per track without
   allocating an additional full-length PCM buffer for every track.
+- The standalone `mikan-exporter` CLI renders every project frame at its exact
+  rational time through `Evaluator` and `GpuRenderer`, mixes the same complete
+  `AudioGraph` used by preview, then creates H.264/AAC MP4 through FFmpeg.
+  Export work is staged beside the destination, cleaned after failure, and
+  atomically published without clobbering an existing file unless explicitly
+  requested. The current yuv420p output requires non-zero even dimensions.
+- The editor toolbar and Command-Shift-E open a native MP4 destination prompt,
+  snapshot the current `Project`, and invoke `mikan-exporter` on a dedicated
+  worker. Frame rendering, audio mixing, and muxing progress is visible while
+  the UI remains responsive. Cancellation is checked across rendering and
+  audio work, terminates the active FFmpeg stream, and removes staged output;
+  failures remain recoverable toolbar errors.
 - Selecting a Video, Audio, or audio-backed Dialogue clip exposes its 0%-200%
   volume in the Inspector. The +/- controls adjust static volume in 5% steps,
   or upsert a keyframe at the current clip-local playhead position once
@@ -295,7 +308,7 @@ licensed VOICEROID voice sample.
 
 ## Validation baseline
 
-At this handoff, the workspace has 74 passing tests. The last checks were:
+At this handoff, the workspace has 81 passing tests. The last checks were:
 
 ```sh
 cargo test --workspace
@@ -322,12 +335,12 @@ for synthetic GUI input. Keep drag behavior easy to exercise manually.
 
 ## Recommended next work
 
-The initial editor mutation, persistence, audio, background-worker, and native
-preview milestones are complete. Continue with:
+The initial editor mutation, persistence, audio, background-worker, native
+preview, deterministic export, and editor export-control milestones are
+complete. Continue with:
 
-1. Add a deterministic video export path that evaluates the same project scene
-   and audio graph used by preview, renders exact frames, and encodes them with
-   FFmpeg without moving export truth into the editor UI.
+1. Avoid launching one FFmpeg decoder per source-video frame during export by
+   adding a sequential decoding session behind the existing media boundary.
 
 Do not optimize preview presentation by letting GPUI and wgpu both present to
 the same window surface.

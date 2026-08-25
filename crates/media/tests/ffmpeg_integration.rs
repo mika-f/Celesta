@@ -62,6 +62,84 @@ fn probes_and_decodes_a_generated_video_when_ffmpeg_is_available() {
 }
 
 #[test]
+fn sequential_video_decode_reuses_one_process_and_matches_exact_time_decode() {
+    let Some(ffmpeg) = find_executable(
+        "MIKAN_FFMPEG",
+        "ffmpeg",
+        "/opt/homebrew/opt/ffmpeg/bin/ffmpeg",
+    ) else {
+        eprintln!("skipping sequential FFmpeg test: ffmpeg was not found");
+        return;
+    };
+    let Some(ffprobe) = find_executable(
+        "MIKAN_FFPROBE",
+        "ffprobe",
+        "/opt/homebrew/opt/ffmpeg/bin/ffprobe",
+    ) else {
+        eprintln!("skipping sequential FFmpeg test: ffprobe was not found");
+        return;
+    };
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let directory =
+        std::env::temp_dir().join(format!("mikan-sequence-{}-{suffix}", std::process::id()));
+    std::fs::create_dir(&directory).unwrap();
+    let video_path = directory.join("fixture.mkv");
+    let generated = Command::new(&ffmpeg)
+        .args(["-v", "error", "-y", "-f", "lavfi", "-i"])
+        .arg("testsrc2=size=8x4:rate=4:duration=2")
+        .args(["-c:v", "ffv1"])
+        .arg(&video_path)
+        .status()
+        .unwrap();
+    assert!(generated.success());
+
+    let mut exact = FfmpegBackend::with_executables(&ffmpeg, &ffprobe);
+    let mut sequential = FfmpegBackend::with_executables(&ffmpeg, &ffprobe)
+        .with_sequential_video(Rational::new(4, 1));
+    for timestamp in [0.0, 0.25, 0.5, 0.75] {
+        let expected = exact.decode_frame(&video_path, timestamp).unwrap();
+        let actual = sequential
+            .decode_frame_for("video-layer", &video_path, timestamp)
+            .unwrap();
+        assert_eq!(actual, expected, "frame differed at {timestamp}");
+    }
+    let repeated = sequential
+        .decode_frame_for("video-layer", &video_path, 0.75)
+        .unwrap();
+    assert_eq!(repeated, exact.decode_frame(&video_path, 0.75).unwrap());
+    assert_eq!(sequential.sequential_video_processes_started(), 1);
+
+    let mut offset_sequence = FfmpegBackend::with_executables(&ffmpeg, &ffprobe)
+        .with_sequential_video(Rational::new(4, 1));
+    for timestamp in [0.25, 0.5, 0.75] {
+        assert_eq!(
+            offset_sequence
+                .decode_frame_for("offset-layer", &video_path, timestamp)
+                .unwrap(),
+            exact.decode_frame(&video_path, timestamp).unwrap()
+        );
+    }
+    assert_eq!(offset_sequence.sequential_video_processes_started(), 1);
+
+    let mut double_speed = FfmpegBackend::with_executables(&ffmpeg, &ffprobe)
+        .with_sequential_video(Rational::new(4, 1));
+    for timestamp in [0.0, 0.5, 1.0] {
+        assert_eq!(
+            double_speed
+                .decode_frame_for("fast-layer", &video_path, timestamp)
+                .unwrap(),
+            exact.decode_frame(&video_path, timestamp).unwrap()
+        );
+    }
+    assert_eq!(double_speed.sequential_video_processes_started(), 2);
+
+    std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
 fn decodes_generated_audio_to_project_pcm_when_ffmpeg_is_available() {
     let Some(ffmpeg) = find_executable(
         "MIKAN_FFMPEG",

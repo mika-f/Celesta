@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::error::Error;
+use std::ffi::OsStr;
 use std::num::{NonZeroU16, NonZeroU32};
 use std::path::{Path, PathBuf};
 use std::sync::{
@@ -23,11 +24,12 @@ use mikan_composition::{
     integrate_f64,
 };
 use mikan_editor::{AssetSummary, ClipKind, EditorDocument, TimelineClock, TrackSummary};
+use mikan_exporter::{ExportCancellation, ExportError, ExportOptions, ExportProgress, Exporter};
 use mikan_gpu_renderer::{GpuRenderOptions, GpuRenderer, PreviewFrame as GpuPreviewFrame};
 use mikan_media::{
     AudioBuffer, AudioDecoder, FfmpegBackend, MediaError, MediaProbe, mix_audio_graph_cancellable,
 };
-use mikan_project::{AssetKind, TrackKind};
+use mikan_project::{AssetKind, Project, TrackKind};
 use rodio::{DeviceSinkBuilder, Player, buffer::SamplesBuffer};
 
 mod audio_cache;
@@ -43,6 +45,7 @@ actions!(
     [
         SaveProject,
         SaveProjectAs,
+        ExportProject,
         UndoEdit,
         RedoEdit,
         TogglePlayback,
@@ -261,6 +264,74 @@ struct AudioMixOutput {
     clip_waveforms: HashMap<String, Vec<f32>>,
     clip_levels: HashMap<String, Vec<f32>>,
     buffer: AudioBuffer,
+}
+
+struct ExportRequest {
+    project: Project,
+    asset_root: PathBuf,
+    output: PathBuf,
+    cancellation: ExportCancellation,
+}
+
+enum ExportEvent {
+    Progress(ExportProgress),
+    Finished {
+        output: PathBuf,
+        result: Result<(), String>,
+        cancelled: bool,
+    },
+}
+
+struct ExportWorker {
+    requests: mpsc::Sender<ExportRequest>,
+    events: mpsc::Receiver<ExportEvent>,
+}
+
+impl ExportWorker {
+    fn spawn() -> Result<Self, Box<dyn Error>> {
+        let (request_tx, request_rx) = mpsc::channel::<ExportRequest>();
+        let (event_tx, event_rx) = mpsc::channel::<ExportEvent>();
+        thread::Builder::new()
+            .name("mikan-export".to_owned())
+            .spawn(move || {
+                while let Ok(request) = request_rx.recv() {
+                    let exporter = Exporter::new(ExportOptions {
+                        overwrite: true,
+                        ..ExportOptions::default()
+                    });
+                    let result = exporter.export_project_cancellable(
+                        &request.project,
+                        &request.asset_root,
+                        &request.output,
+                        &request.cancellation,
+                        |progress| {
+                            let _ = event_tx.send(ExportEvent::Progress(progress));
+                        },
+                    );
+                    let cancelled = matches!(result, Err(ExportError::Cancelled));
+                    if event_tx
+                        .send(ExportEvent::Finished {
+                            output: request.output,
+                            result: result.map_err(|error| error.to_string()),
+                            cancelled,
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            })?;
+        Ok(Self {
+            requests: request_tx,
+            events: event_rx,
+        })
+    }
+
+    fn request(&self, request: ExportRequest) -> Result<(), String> {
+        self.requests
+            .send(request)
+            .map_err(|_| "export worker stopped unexpectedly".to_owned())
+    }
 }
 
 struct MasterVolumeDrag {
@@ -535,6 +606,14 @@ struct EditorView {
     save_error: Option<SharedString>,
     edit_error: Option<SharedString>,
     audio_error: Option<SharedString>,
+    export_worker: ExportWorker,
+    export_progress: Option<ExportProgress>,
+    export_path: Option<PathBuf>,
+    export_cancellation: Option<ExportCancellation>,
+    export_cancelling: bool,
+    export_error: Option<SharedString>,
+    export_message: Option<SharedString>,
+    choosing_export_path: bool,
     gpu_name: SharedString,
     focus_handle: Option<FocusHandle>,
     master_volume_focus: Option<FocusHandle>,
@@ -573,6 +652,7 @@ impl EditorView {
         let preview_worker = PreviewWorker::spawn(renderer)?;
         let media_probe_worker = MediaProbeWorker::spawn()?;
         let audio_mix_worker = AudioMixWorker::spawn()?;
+        let export_worker = ExportWorker::spawn()?;
         let mut editor = Self {
             document,
             preview_worker,
@@ -615,6 +695,14 @@ impl EditorView {
             save_error: None,
             edit_error: None,
             audio_error: None,
+            export_worker,
+            export_progress: None,
+            export_path: None,
+            export_cancellation: None,
+            export_cancelling: false,
+            export_error: None,
+            export_message: None,
+            choosing_export_path: false,
             gpu_name,
             focus_handle: None,
             master_volume_focus: None,
@@ -774,6 +862,53 @@ impl EditorView {
                         self.clip_levels.clear();
                         self.audio_preview = None;
                         self.audio_error = Some("audio mix worker stopped unexpectedly".into());
+                    }
+                    break;
+                }
+            }
+        }
+
+        loop {
+            match self.export_worker.events.try_recv() {
+                Ok(ExportEvent::Progress(progress)) => {
+                    self.export_progress = Some(progress);
+                }
+                Ok(ExportEvent::Finished {
+                    output,
+                    result,
+                    cancelled,
+                }) => {
+                    self.export_progress = None;
+                    self.export_cancellation = None;
+                    self.export_cancelling = false;
+                    match result {
+                        Ok(()) => {
+                            self.export_error = None;
+                            self.export_path = Some(output.clone());
+                            self.export_message =
+                                Some(format!("Exported {}", output.display()).into());
+                        }
+                        Err(_) if cancelled => {
+                            self.export_path = None;
+                            self.export_error = None;
+                            self.export_message = Some("Export cancelled".into());
+                        }
+                        Err(error) => {
+                            self.export_path = None;
+                            self.export_message = None;
+                            self.export_error = Some(error.into());
+                        }
+                    }
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    if self.export_cancellation.is_some() {
+                        self.export_progress = None;
+                        self.export_path = None;
+                        self.export_cancellation = None;
+                        self.export_cancelling = false;
+                        self.export_message = None;
+                        self.export_error = Some("export worker stopped unexpectedly".into());
                     }
                     break;
                 }
@@ -1851,6 +1986,110 @@ impl EditorView {
         self.request_save_as(window, cx, false);
     }
 
+    fn export_project_action(
+        &mut self,
+        _: &ExportProject,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.request_export(window, cx);
+    }
+
+    fn export_project_click(
+        &mut self,
+        _: &ClickEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.request_export(window, cx);
+    }
+
+    fn request_export(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.choosing_export_path || self.export_cancellation.is_some() {
+            return;
+        }
+        self.pause();
+        self.choosing_export_path = true;
+        self.export_error = None;
+        self.export_message = None;
+        let directory = self.document.path().and_then(Path::parent).map_or_else(
+            || std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            Path::to_path_buf,
+        );
+        let suggested_name = export_suggested_name(self.document.path(), &self.project_name);
+        let selection = cx.prompt_for_new_path(&directory, Some(&suggested_name));
+        cx.spawn_in(window, async move |view, cx| {
+            let selected_path = match selection.await {
+                Ok(Ok(path)) => path,
+                Ok(Err(error)) => {
+                    view.update_in(cx, |this, _, cx| {
+                        this.choosing_export_path = false;
+                        this.export_error =
+                            Some(format!("could not open Export dialog: {error}").into());
+                        cx.notify();
+                    })
+                    .ok();
+                    return;
+                }
+                Err(error) => {
+                    view.update_in(cx, |this, _, cx| {
+                        this.choosing_export_path = false;
+                        this.export_error =
+                            Some(format!("Export dialog was interrupted: {error}").into());
+                        cx.notify();
+                    })
+                    .ok();
+                    return;
+                }
+            };
+            view.update_in(cx, |this, _, cx| {
+                this.choosing_export_path = false;
+                let Some(mut output) = selected_path else {
+                    cx.notify();
+                    return;
+                };
+                if output.extension() != Some(OsStr::new("mp4")) {
+                    output.set_extension("mp4");
+                }
+                this.start_export(output);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn start_export(&mut self, output: PathBuf) {
+        let cancellation = ExportCancellation::default();
+        let request = ExportRequest {
+            project: self.document.project().clone(),
+            asset_root: self.document.asset_root().to_owned(),
+            output: output.clone(),
+            cancellation: cancellation.clone(),
+        };
+        self.export_path = Some(output);
+        self.export_progress = Some(ExportProgress::Rendering { frame: 0, total: 0 });
+        self.export_cancellation = Some(cancellation);
+        self.export_cancelling = false;
+        self.export_error = None;
+        self.export_message = None;
+        if let Err(error) = self.export_worker.request(request) {
+            self.export_path = None;
+            self.export_progress = None;
+            self.export_cancellation = None;
+            self.export_error = Some(error.into());
+        }
+    }
+
+    fn cancel_export_click(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(cancellation) = &self.export_cancellation {
+            cancellation.cancel();
+            self.export_cancelling = true;
+            cx.notify();
+        }
+    }
+
     fn request_save_as(
         &mut self,
         window: &mut Window,
@@ -2039,6 +2278,8 @@ impl EditorView {
 
     fn toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let master_volume = self.document.master_volume().clamp(0.0, 2.0);
+        let exporting = self.export_cancellation.is_some();
+        let export_label = self.export_progress.map(export_progress_label);
         div()
             .id("toolbar")
             .flex()
@@ -2102,6 +2343,70 @@ impl EditorView {
                                 .child(format!("Audio unavailable: {error}")),
                         )
                     })
+                    .when_some(self.export_error.clone(), |toolbar, error| {
+                        toolbar.child(
+                            div()
+                                .max_w(px(520.0))
+                                .overflow_hidden()
+                                .text_sm()
+                                .text_color(rgb(0xff8b8b))
+                                .child(format!("Export failed: {error}")),
+                        )
+                    })
+                    .when_some(self.export_message.clone(), |toolbar, message| {
+                        toolbar.child(
+                            div()
+                                .max_w(px(360.0))
+                                .overflow_hidden()
+                                .text_sm()
+                                .text_color(rgb(0x7ee2a8))
+                                .child(message),
+                        )
+                    })
+                    .when_some(export_label, |toolbar, label| {
+                        toolbar.child(div().text_xs().text_color(rgb(0xffc46b)).child(
+                            if self.export_cancelling {
+                                "Cancelling export…".to_owned()
+                            } else {
+                                label
+                            },
+                        ))
+                    })
+                    .child(
+                        div()
+                            .id("export-project")
+                            .rounded_sm()
+                            .px_2()
+                            .py_1()
+                            .bg(rgb(if exporting { 0x4a292c } else { 0x343842 }))
+                            .text_xs()
+                            .text_color(rgb(0xd8dae2))
+                            .child(if self.choosing_export_path {
+                                "Choosing…"
+                            } else if self.export_cancelling {
+                                "Cancelling…"
+                            } else if exporting {
+                                "Cancel Export"
+                            } else {
+                                "Export…"
+                            })
+                            .when(
+                                !self.choosing_export_path && !self.export_cancelling,
+                                |button| {
+                                    if exporting {
+                                        button
+                                            .cursor_pointer()
+                                            .hover(|style| style.bg(rgb(0x6b363b)))
+                                            .on_click(cx.listener(Self::cancel_export_click))
+                                    } else {
+                                        button
+                                            .cursor_pointer()
+                                            .hover(|style| style.bg(rgb(0x4a4f5b)))
+                                            .on_click(cx.listener(Self::export_project_click))
+                                    }
+                                },
+                            ),
+                    )
                     .child(
                         div()
                             .flex()
@@ -3333,7 +3638,11 @@ impl Render for EditorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.poll_background_work();
         self.update_playback(window);
-        if self.preview_pending || self.media_pending || self.audio_pending {
+        if self.preview_pending
+            || self.media_pending
+            || self.audio_pending
+            || self.export_cancellation.is_some()
+        {
             window.request_animation_frame();
         }
         let title = if self.document.is_dirty() {
@@ -3347,6 +3656,7 @@ impl Render for EditorView {
             .key_context("MikanEditor")
             .on_action(cx.listener(Self::save_project))
             .on_action(cx.listener(Self::save_project_as))
+            .on_action(cx.listener(Self::export_project_action))
             .on_action(cx.listener(Self::undo_edit))
             .on_action(cx.listener(Self::redo_edit))
             .on_action(cx.listener(Self::toggle_playback_action))
@@ -3778,6 +4088,29 @@ fn format_time(time: Time) -> String {
     format!("{hours:02}:{minutes:02}:{seconds:06.3}")
 }
 
+fn export_progress_label(progress: ExportProgress) -> String {
+    match progress {
+        ExportProgress::Rendering { frame: 0, total: 0 } => "Starting export…".to_owned(),
+        ExportProgress::Rendering { frame, total } => {
+            format!("Exporting frame {frame}/{total}")
+        }
+        ExportProgress::MixingAudio => "Mixing export audio…".to_owned(),
+        ExportProgress::Muxing => "Muxing MP4…".to_owned(),
+    }
+}
+
+fn export_suggested_name(path: Option<&Path>, project_name: &str) -> String {
+    let name = path
+        .and_then(Path::file_name)
+        .and_then(OsStr::to_str)
+        .unwrap_or(project_name);
+    let stem = name
+        .strip_suffix(".mikan.json")
+        .or_else(|| name.strip_suffix(".json"))
+        .unwrap_or(name);
+    format!("{stem}.mp4")
+}
+
 fn main() {
     if let Err(error) = run() {
         eprintln!("mikan-editor: {error}");
@@ -3794,6 +4127,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         cx.bind_keys([
             KeyBinding::new("cmd-s", SaveProject, Some("MikanEditor")),
             KeyBinding::new("cmd-shift-s", SaveProjectAs, Some("MikanEditor")),
+            KeyBinding::new("cmd-shift-e", ExportProject, Some("MikanEditor")),
             KeyBinding::new("cmd-z", UndoEdit, Some("MikanEditor")),
             KeyBinding::new("cmd-shift-z", RedoEdit, Some("MikanEditor")),
             KeyBinding::new("space", TogglePlayback, Some("MikanEditor")),
@@ -3861,20 +4195,22 @@ fn run() -> Result<(), Box<dyn Error>> {
 mod tests {
     use super::{
         AudioCacheKey, CachedAudioDecoder, ClipDrag, ClipDragKind, ClipKind, DiskAudioCache,
-        MediaAssetInfo, clip_level_envelope, dragged_clip_range, initial_clip_duration_frames,
-        level_at_time, map_clip_waveform, master_volume_from_drag, take_latest,
-        track_accepts_asset, track_accepts_clip, waveform_peaks, waveform_segment,
+        EDITOR_DEMO_PROJECT, ExportEvent, ExportRequest, ExportWorker, MediaAssetInfo,
+        clip_level_envelope, dragged_clip_range, export_suggested_name,
+        initial_clip_duration_frames, level_at_time, map_clip_waveform, master_volume_from_drag,
+        take_latest, track_accepts_asset, track_accepts_clip, waveform_peaks, waveform_segment,
     };
     use mikan_composition::{
         Animatable, AssetLocation, AudioClip, Rational, ResolvedAsset, Time, TimeRange,
     };
     use mikan_editor::ClipSummary;
+    use mikan_exporter::ExportCancellation;
     use mikan_media::{AudioBuffer, AudioDecoder};
-    use mikan_project::{AssetKind, TrackKind};
+    use mikan_project::{AssetKind, Project, TrackKind};
     use std::fs;
     use std::path::PathBuf;
     use std::sync::mpsc;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     #[test]
     fn background_workers_coalesce_queued_requests() {
@@ -3883,6 +4219,44 @@ mod tests {
         sender.send(3).unwrap();
 
         assert_eq!(take_latest(1, &receiver), 3);
+    }
+
+    #[test]
+    fn export_worker_reports_cancellation_without_creating_output() {
+        let worker = ExportWorker::spawn().unwrap();
+        let cancellation = ExportCancellation::default();
+        cancellation.cancel();
+        let output =
+            std::env::temp_dir().join(format!("mikan-cancelled-export-{}.mp4", std::process::id()));
+        let _ = fs::remove_file(&output);
+        worker
+            .request(ExportRequest {
+                project: Project::from_json(EDITOR_DEMO_PROJECT).unwrap(),
+                asset_root: PathBuf::from("examples"),
+                output: output.clone(),
+                cancellation,
+            })
+            .unwrap();
+
+        match worker.events.recv_timeout(Duration::from_secs(2)).unwrap() {
+            ExportEvent::Finished {
+                result, cancelled, ..
+            } => {
+                assert!(cancelled);
+                assert_eq!(result.unwrap_err(), "export was cancelled");
+            }
+            ExportEvent::Progress(progress) => panic!("unexpected export progress: {progress:?}"),
+        }
+        assert!(!output.exists());
+    }
+
+    #[test]
+    fn export_name_replaces_project_extensions() {
+        assert_eq!(
+            export_suggested_name(Some(PathBuf::from("demo.mikan.json").as_path()), "ignored"),
+            "demo.mp4"
+        );
+        assert_eq!(export_suggested_name(None, "Untitled"), "Untitled.mp4");
     }
 
     #[test]

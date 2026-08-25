@@ -452,7 +452,7 @@ impl CpuRenderer {
             }
             LayerContent::Video { asset, timing } => {
                 if self.video_decoder.is_some() {
-                    let image = self.decode_video_frame(asset, timing)?;
+                    let image = self.decode_video_frame(&layer.id, asset, timing)?;
                     render_image(frame, &image, layer.transform.anchor, state);
                 } else {
                     render_placeholder(
@@ -546,6 +546,7 @@ impl CpuRenderer {
 
     fn decode_video_frame(
         &mut self,
+        request_id: &str,
         asset: &ResolvedAsset,
         timing: &MediaTiming,
     ) -> Result<DecodedImage, RenderError> {
@@ -554,7 +555,7 @@ impl CpuRenderer {
             .video_decoder
             .as_mut()
             .expect("video decoder presence was checked")
-            .decode_frame(&path, timing.source_time_seconds)?;
+            .decode_frame_for(request_id, &path, timing.source_time_seconds)?;
         Ok(DecodedImage {
             width: frame.width,
             height: frame.height,

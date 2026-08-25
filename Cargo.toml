@@ -4,6 +4,7 @@ members = [
   "crates/composition",
   "crates/editor",
   "crates/evaluator",
+  "crates/exporter",
   "crates/gpu-renderer",
   "crates/media",
   "crates/project",

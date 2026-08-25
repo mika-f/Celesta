@@ -636,7 +636,8 @@ impl GpuRenderer {
                     .video_decoder
                     .as_mut()
                     .ok_or_else(|| GpuRenderError::MissingVideoDecoder(layer.id.clone()))?;
-                let frame = decoder.decode_frame(&path, timing.source_time_seconds)?;
+                let frame =
+                    decoder.decode_frame_for(&layer.id, &path, timing.source_time_seconds)?;
                 let image = DecodedImage::new(frame.width, frame.height, frame.pixels)?;
                 output.push(PreparedLayer::new(image, layer.transform.anchor, state));
             }

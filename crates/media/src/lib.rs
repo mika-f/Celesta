@@ -3,9 +3,9 @@
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
-use std::io;
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Child, ChildStdout, Command, Output, Stdio};
 
 use mikan_composition::{
     AnimationError, AssetLocation, AudioGraph, Rational, Time, TimeError, evaluate_f64,
@@ -65,6 +65,16 @@ pub trait VideoFrameDecoder: Send {
         path: &Path,
         source_time_seconds: f64,
     ) -> Result<VideoFrame, MediaError>;
+
+    fn decode_frame_for(
+        &mut self,
+        request_id: &str,
+        path: &Path,
+        source_time_seconds: f64,
+    ) -> Result<VideoFrame, MediaError> {
+        let _ = request_id;
+        self.decode_frame(path, source_time_seconds)
+    }
 }
 
 pub trait AudioDecoder {
@@ -80,6 +90,26 @@ pub struct FfmpegBackend {
     ffmpeg: PathBuf,
     ffprobe: PathBuf,
     probes: HashMap<PathBuf, MediaProbe>,
+    sequential_frame_rate: Option<Rational>,
+    video_sessions: HashMap<(String, PathBuf), SequentialVideoSession>,
+    sequential_video_processes_started: u64,
+}
+
+struct SequentialVideoSession {
+    child: Child,
+    stdout: ChildStdout,
+    width: u32,
+    height: u32,
+    step_seconds: f64,
+    last_timestamp: Option<f64>,
+    last_frame: Option<VideoFrame>,
+}
+
+impl Drop for SequentialVideoSession {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
 }
 
 impl FfmpegBackend {
@@ -92,7 +122,21 @@ impl FfmpegBackend {
             ffmpeg: ffmpeg.into(),
             ffprobe: ffprobe.into(),
             probes: HashMap::new(),
+            sequential_frame_rate: None,
+            video_sessions: HashMap::new(),
+            sequential_video_processes_started: 0,
         }
+    }
+
+    pub fn with_sequential_video(mut self, frame_rate: Rational) -> Self {
+        if frame_rate.is_valid() {
+            self.sequential_frame_rate = Some(frame_rate);
+        }
+        self
+    }
+
+    pub const fn sequential_video_processes_started(&self) -> u64 {
+        self.sequential_video_processes_started
     }
 
     pub fn probe(&mut self, path: impl AsRef<Path>) -> Result<&MediaProbe, MediaError> {
@@ -168,6 +212,147 @@ impl FfmpegBackend {
             pixels: output.stdout,
         })
     }
+
+    fn decode_sequential(
+        &mut self,
+        request_id: &str,
+        path: &Path,
+        source_time_seconds: f64,
+        default_frame_rate: Rational,
+    ) -> Result<VideoFrame, MediaError> {
+        if !source_time_seconds.is_finite() || source_time_seconds < 0.0 {
+            return Err(MediaError::InvalidTimestamp(source_time_seconds));
+        }
+        let video = self
+            .probe(path)?
+            .video
+            .clone()
+            .ok_or_else(|| MediaError::NoVideoStream(path.to_owned()))?;
+        let key = (request_id.to_owned(), path.to_owned());
+        if let Some(session) = self.video_sessions.get_mut(&key) {
+            if session
+                .last_timestamp
+                .is_some_and(|last| timestamps_match(last, source_time_seconds))
+            {
+                return session
+                    .last_frame
+                    .clone()
+                    .ok_or_else(|| MediaError::NoVideoStream(path.to_owned()));
+            }
+            let expected = session
+                .last_timestamp
+                .map(|last| last + session.step_seconds);
+            if expected.is_some_and(|expected| timestamps_match(expected, source_time_seconds)) {
+                return session.read_frame(source_time_seconds);
+            }
+        }
+
+        let learned_step = self.video_sessions.remove(&key).and_then(|session| {
+            session
+                .last_timestamp
+                .map(|last| source_time_seconds - last)
+                .filter(|step| step.is_finite() && *step > 0.0)
+        });
+        let (step_seconds, rate) = learned_step.map_or_else(
+            || {
+                (
+                    f64::from(default_frame_rate.denominator)
+                        / f64::from(default_frame_rate.numerator),
+                    format!(
+                        "{}/{}",
+                        default_frame_rate.numerator, default_frame_rate.denominator
+                    ),
+                )
+            },
+            |step| (step, format!("{:.12}", 1.0 / step)),
+        );
+        let mut session = SequentialVideoSession::spawn(
+            &self.ffmpeg,
+            path,
+            source_time_seconds,
+            step_seconds,
+            &rate,
+            video.width,
+            video.height,
+        )?;
+        self.sequential_video_processes_started =
+            self.sequential_video_processes_started.saturating_add(1);
+        let frame = session.read_frame(source_time_seconds)?;
+        self.video_sessions.insert(key, session);
+        Ok(frame)
+    }
+}
+
+impl SequentialVideoSession {
+    fn spawn(
+        ffmpeg: &Path,
+        path: &Path,
+        source_time_seconds: f64,
+        step_seconds: f64,
+        rate: &str,
+        width: u32,
+        height: u32,
+    ) -> Result<Self, MediaError> {
+        let timestamp = format!("{source_time_seconds:.9}");
+        let mut child = Command::new(ffmpeg)
+            .args(["-v", "error", "-ss"])
+            .arg(timestamp)
+            .arg("-i")
+            .arg(path)
+            .args(["-map", "0:v:0", "-vf"])
+            .arg(format!("fps=fps={rate}:start_time=0:round=near"))
+            .args(["-f", "rawvideo", "-pix_fmt", "rgba", "pipe:1"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|source| MediaError::Executable {
+                executable: ffmpeg.to_owned(),
+                source,
+            })?;
+        let stdout = child.stdout.take().ok_or(MediaError::MissingVideoPipe)?;
+        Ok(Self {
+            child,
+            stdout,
+            width,
+            height,
+            step_seconds,
+            last_timestamp: None,
+            last_frame: None,
+        })
+    }
+
+    fn read_frame(&mut self, source_time_seconds: f64) -> Result<VideoFrame, MediaError> {
+        let expected = frame_byte_len(self.width, self.height)?;
+        let mut pixels = vec![0; expected];
+        let mut actual = 0;
+        while actual < expected {
+            match self.stdout.read(&mut pixels[actual..]) {
+                Ok(0) => {
+                    return Err(MediaError::UnexpectedFrameSize {
+                        width: self.width,
+                        height: self.height,
+                        expected,
+                        actual,
+                    });
+                }
+                Ok(read) => actual += read,
+                Err(source) => return Err(MediaError::VideoPipe(source)),
+            }
+        }
+        let frame = VideoFrame {
+            width: self.width,
+            height: self.height,
+            pixels,
+        };
+        self.last_timestamp = Some(source_time_seconds);
+        self.last_frame = Some(frame.clone());
+        Ok(frame)
+    }
+}
+
+fn timestamps_match(left: f64, right: f64) -> bool {
+    (left - right).abs() <= 1e-7_f64.max(left.abs().max(right.abs()) * 1e-9)
 }
 
 impl Default for FfmpegBackend {
@@ -184,6 +369,20 @@ impl VideoFrameDecoder for FfmpegBackend {
     ) -> Result<VideoFrame, MediaError> {
         self.decode(path, source_time_seconds)
     }
+
+    fn decode_frame_for(
+        &mut self,
+        request_id: &str,
+        path: &Path,
+        source_time_seconds: f64,
+    ) -> Result<VideoFrame, MediaError> {
+        match self.sequential_frame_rate {
+            Some(frame_rate) => {
+                self.decode_sequential(request_id, path, source_time_seconds, frame_rate)
+            }
+            None => self.decode(path, source_time_seconds),
+        }
+    }
 }
 
 impl AudioDecoder for FfmpegBackend {
@@ -199,12 +398,19 @@ impl AudioDecoder for FfmpegBackend {
                 channels,
             });
         }
+        if self.probe(path).is_ok_and(|probe| probe.audio.is_empty()) {
+            return Ok(AudioBuffer {
+                sample_rate,
+                channels,
+                samples: Vec::new(),
+            });
+        }
         let output = Command::new(&self.ffmpeg)
             .args(["-v", "error", "-i"])
             .arg(path)
             .args([
                 "-map",
-                "0:a:0",
+                "0:a:0?",
                 "-vn",
                 "-f",
                 "f32le",
@@ -317,6 +523,9 @@ pub fn mix_audio_graph_cancellable(
             decoded.insert(path.clone(), audio);
         }
         let source = decoded.get(&path).expect("decoded audio was cached");
+        if source.frame_count() == 0 {
+            continue;
+        }
         let source_start_seconds = clip.source_start.as_seconds()?;
         let source_end_seconds = clip
             .source_duration
@@ -553,6 +762,8 @@ pub enum MediaError {
     InvalidProbeValue(&'static str),
     NoVideoStream(PathBuf),
     InvalidTimestamp(f64),
+    MissingVideoPipe,
+    VideoPipe(io::Error),
     FrameTooLarge {
         width: u32,
         height: u32,
@@ -603,6 +814,10 @@ impl fmt::Display for MediaError {
                 write!(formatter, "{} has no video stream", path.display())
             }
             Self::InvalidTimestamp(time) => write!(formatter, "invalid video timestamp {time}"),
+            Self::MissingVideoPipe => formatter.write_str("FFmpeg did not provide video output"),
+            Self::VideoPipe(error) => {
+                write!(formatter, "could not read FFmpeg video output: {error}")
+            }
             Self::FrameTooLarge { width, height } => {
                 write!(formatter, "video frame {width}x{height} is too large")
             }
@@ -636,7 +851,15 @@ impl fmt::Display for MediaError {
     }
 }
 
-impl Error for MediaError {}
+impl Error for MediaError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Executable { source, .. } | Self::VideoPipe(source) => Some(source),
+            Self::ProbeJson(error) => Some(error),
+            _ => None,
+        }
+    }
+}
 
 #[derive(Debug)]
 pub enum AudioMixError {

@@ -15,6 +15,8 @@ The repository currently contains the first foundation:
   validation, and timeline duration calculation.
 - `mikan-evaluator`: deterministic conversion from a project to a scene at a
   given time and to the complete audio graph.
+- `mikan-exporter`: frame-exact H.264/AAC MP4 export using the shared evaluator,
+  GPU renderer, audio graph, and FFmpeg process boundary.
 - `mikan-media`: FFprobe metadata parsing, FFmpeg-backed exact-time RGBA video
   decoding, and project-rate stereo audio decoding/mixing behind replaceable
   process boundaries.
@@ -48,6 +50,20 @@ Launch the editor with the empty example, or pass a project path:
 cargo run -p mikan-editor
 cargo run -p mikan-editor -- examples/voiceroid.mikan.json
 ```
+
+Export a project to MP4 without overwriting an existing file:
+
+```sh
+cargo run -p mikan-exporter -- examples/editor-demo.mikan.json output.mp4
+cargo run -p mikan-exporter -- --overwrite examples/editor-demo.mikan.json output.mp4
+```
+
+The exporter renders the exact rational project frame times through the shared
+evaluator and `GpuRenderer`, mixes the complete shared `AudioGraph`, and muxes
+H.264 video with AAC audio through FFmpeg. H.264 4:2:0 output currently requires
+non-zero even project dimensions. Work is staged beside the destination and is
+removed on failure; a completed file is published atomically, with no-clobber
+behavior unless `--overwrite` is present.
 
 With no project argument, the editor opens `examples/editor-demo.mikan.json` so
 the play/pause and single-frame controls can be exercised immediately. The
@@ -85,6 +101,14 @@ are called out in the Assets panel. Removing a referenced asset requires an
 explicit confirmation listing its consumers; the editor then updates dependent
 clips, Dialogue audio, and character expressions atomically so undo restores the
 entire operation.
+
+Use the toolbar Export button or Command-Shift-E to choose an MP4 destination.
+The editor snapshots the current project and runs `mikan-exporter` on a
+dedicated worker, so preview and editing remain responsive while frame progress
+is displayed. Cancel Export stops rendering or audio mixing at its next
+cancellation checkpoint and removes staged output. The native save panel owns
+explicit overwrite confirmation; export failures remain recoverable in the
+toolbar.
 
 Audio clips from the shared `AudioGraph` are decoded by FFmpeg, mixed at the
 project sample rate, and played through the system output device in sync with
@@ -134,10 +158,11 @@ submits and presents without a CPU readback. Its `PreviewFrameStatus`
 distinguishes successful, occluded, timed-out, outdated, and lost frames so the
 UI event loop can recover correctly.
 
-The GPUI editor currently keeps presentation ownership with GPUI. A dedicated
-worker renders an offscreen GPU frame and bridges the readback into a GPUI
-`RenderImage`. This is an intentional first integration boundary; a later
-native texture bridge can remove the readback without changing project
+The GPUI editor keeps presentation ownership with GPUI. On macOS, a dedicated
+worker renders offscreen, converts RGBA into IOSurface-backed NV12 CoreVideo
+planes on the GPU, and gives the resulting `CVPixelBuffer` to GPUI's native
+Surface element. Native bridge failure and odd project dimensions fall back to
+the previous GPU readback and `RenderImage` path without changing project
 evaluation or renderer inputs.
 GPUI's runtime-shader feature is enabled on macOS so a separate downloadable
 Xcode Metal Toolchain component is not required for local development builds.

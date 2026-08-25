@@ -3075,6 +3075,7 @@ dependencies = [
  "image",
  "mikan-composition",
  "mikan-evaluator",
+ "mikan-exporter",
  "mikan-gpu-renderer",
  "mikan-media",
  "mikan-project",
@@ -3089,6 +3090,19 @@ version = "0.0.0"
 dependencies = [
  "mikan-composition",
  "mikan-project",
+]
+
+[[package]]
+name = "mikan-exporter"
+version = "0.0.0"
+dependencies = [
+ "mikan-composition",
+ "mikan-evaluator",
+ "mikan-gpu-renderer",
+ "mikan-media",
+ "mikan-project",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
