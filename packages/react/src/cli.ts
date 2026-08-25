@@ -3,12 +3,12 @@ import * as path from 'node:path';
 import * as readline from 'node:readline';
 
 import { mount } from './render';
-import type { EntryComponent, MountedComposition } from './render';
-import type { CompositionConfig, Layer, Scene, Time } from './scene';
+import type { EntryComponent, MountedComposition, ProjectFrame } from './render';
+import type { CompositionConfig, Scene, Time } from './scene';
 
 interface FrameRequest {
   time: Time;
-  project?: { layers: Layer[] };
+  project?: ProjectFrame;
 }
 
 async function main(): Promise<void> {
@@ -53,7 +53,7 @@ async function main(): Promise<void> {
       continue;
     }
     try {
-      const scene = mounted.renderAt(request.time, request.project?.layers ?? null);
+      const scene = mounted.renderAt(request.time, request.project ?? null);
       writeLine({ scene });
     } catch (error) {
       writeLine({ error: describeError(error) });
@@ -85,7 +85,8 @@ async function loadEntryDefault(entryPath: string): Promise<EntryComponent> {
     // react-reconciler is driving, or hooks fail with "Invalid hook call"
     // (the entry's own copy of React would look for a dispatcher the
     // reconciler never set on it). `@mikan/react`'s React Context objects
-    // (CompositionRuntimeContext, ProjectLayersContext, ProjectContext) need
+    // (CompositionRuntimeContext, ProjectLayersContext,
+    // ProjectTrackLayersContext, ProjectContext) need
     // the same treatment: they must be the exact object identity the
     // entry's `useCurrentFrame()`/`useProject()`/etc. read from, matching
     // the Provider values render.ts sets around it. Both stay external and

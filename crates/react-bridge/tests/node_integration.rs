@@ -3,7 +3,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use mikan_composition::{EvaluatedTransform, Layer, LayerContent, Rational, TextStyle, Time};
-use mikan_react_bridge::ReactBridge;
+use mikan_react_bridge::{ProjectFrame, ReactBridge};
+
+fn no_tracks() -> BTreeMap<String, Vec<Layer>> {
+    BTreeMap::new()
+}
 
 #[test]
 fn evaluates_the_example_composition_when_node_is_available() {
@@ -49,8 +53,16 @@ fn embeds_pre_evaluated_project_layers_into_project_timeline_when_node_is_availa
         },
     };
 
+    let layers = [project_layer];
+    let tracks = no_tracks();
     let scene = bridge
-        .scene_at_with_project(Time::new(0, 30), Some(&[project_layer]))
+        .scene_at_with_project(
+            Time::new(0, 30),
+            Some(ProjectFrame {
+                layers: &layers,
+                tracks: &tracks,
+            }),
+        )
         .unwrap();
 
     // <ProjectTimeline /> passes the given layers through untouched, and the
@@ -93,10 +105,15 @@ fn resolves_a_registered_component_when_node_is_available() {
         },
     };
 
+    let layers = [registered_layer, unregistered_layer];
+    let tracks = no_tracks();
     let scene = bridge
         .scene_at_with_project(
             Time::new(0, 30),
-            Some(&[registered_layer, unregistered_layer]),
+            Some(ProjectFrame {
+                layers: &layers,
+                tracks: &tracks,
+            }),
         )
         .unwrap();
 
@@ -126,6 +143,61 @@ fn resolves_a_registered_component_when_node_is_available() {
         &unregistered.content,
         LayerContent::MissingComponent { component, .. } if component == "SomeOtherThing"
     ));
+}
+
+#[test]
+fn embeds_per_track_layers_for_use_project_track_when_node_is_available() {
+    let Some((node, cli_script, package_root)) = live_react_runtime() else {
+        return;
+    };
+
+    let entry = package_root.join("examples/with-project-track.tsx");
+    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+
+    let titles_layer = Layer {
+        id: "title-1".to_owned(),
+        transform: EvaluatedTransform::default(),
+        opacity: 1.0,
+        content: LayerContent::Text {
+            text: "a title".to_owned(),
+            style: TextStyle::default(),
+            max_width: None,
+        },
+    };
+    let overlay_layer = Layer {
+        id: "overlay-1".to_owned(),
+        transform: EvaluatedTransform::default(),
+        opacity: 1.0,
+        content: LayerContent::Text {
+            text: "an overlay".to_owned(),
+            style: TextStyle::default(),
+            max_width: None,
+        },
+    };
+    let mut tracks = BTreeMap::new();
+    tracks.insert("titles".to_owned(), vec![titles_layer]);
+    tracks.insert("overlays".to_owned(), vec![overlay_layer]);
+    let layers: Vec<Layer> = Vec::new();
+
+    let scene = bridge
+        .scene_at_with_project(
+            Time::new(0, 30),
+            Some(ProjectFrame {
+                layers: &layers,
+                tracks: &tracks,
+            }),
+        )
+        .unwrap();
+
+    // useProjectTrack("titles") only saw that one track's layer count.
+    assert!(scene.layers.iter().any(|layer| matches!(
+        &layer.content,
+        LayerContent::Text { text, .. } if text == "titles track has 1 layer(s)"
+    )));
+    // <ProjectTrack id="overlays" /> passed its track's layer through as-is.
+    assert!(scene.layers.iter().any(|layer| layer.id == "overlay-1"));
+    // Neither saw the other's track content directly.
+    assert!(!scene.layers.iter().any(|layer| layer.id == "title-1"));
 }
 
 fn live_react_runtime() -> Option<(PathBuf, PathBuf, PathBuf)> {

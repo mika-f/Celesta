@@ -6,6 +6,7 @@
 //! pipe, following the same "one long-lived process instead of one process
 //! per frame" shape as `mikan-media`'s sequential video decoding session.
 
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 use std::io::{self, BufRead, BufReader, Write};
@@ -14,6 +15,18 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 use mikan_composition::{Layer, Rational, Scene, Time};
 use serde::{Deserialize, Serialize};
+
+/// A companion project's layers for one exact frame, evaluated up front by
+/// the caller (see [`ReactBridge::scene_at_with_project`]).
+#[derive(Clone, Copy, Debug)]
+pub struct ProjectFrame<'a> {
+    /// Every evaluated layer together, in project order — what
+    /// `<ProjectTimeline />` embeds.
+    pub layers: &'a [Layer],
+    /// The same layers, grouped by track id — what `<ProjectTrack />` and
+    /// `useProjectTrack()` embed.
+    pub tracks: &'a BTreeMap<String, Vec<Layer>>,
+}
 
 /// Static composition facts read once from the entry's `<Composition>` root.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -98,19 +111,23 @@ impl ReactBridge {
     }
 
     /// Same as [`Self::scene_at`], but also hands the entry's
-    /// `<ProjectTimeline />` a project's layers already evaluated for this
-    /// exact time. The Node side cannot ask Rust to evaluate a project
-    /// mid-render: this process is synchronously blocked on the response to
-    /// this very request, so a request travelling the other way would
-    /// deadlock. Evaluating up front and embedding the result avoids that.
+    /// `<ProjectTimeline />`/`<ProjectTrack />`/`useProjectTrack()` a
+    /// project's layers already evaluated for this exact time. The Node
+    /// side cannot ask Rust to evaluate a project mid-render: this process
+    /// is synchronously blocked on the response to this very request, so a
+    /// request travelling the other way would deadlock. Evaluating up front
+    /// and embedding the result avoids that.
     pub fn scene_at_with_project(
         &mut self,
         time: Time,
-        project_layers: Option<&[Layer]>,
+        project: Option<ProjectFrame<'_>>,
     ) -> Result<Scene, ReactBridgeError> {
         let request = Request {
             time,
-            project: project_layers.map(|layers| ProjectPayload { layers }),
+            project: project.map(|frame| ProjectPayload {
+                layers: frame.layers,
+                tracks: frame.tracks,
+            }),
         };
         let payload = serde_json::to_string(&request).map_err(ReactBridgeError::Protocol)?;
         writeln!(self.stdin, "{payload}").map_err(ReactBridgeError::Io)?;
@@ -143,6 +160,7 @@ struct Request<'a> {
 #[derive(Serialize)]
 struct ProjectPayload<'a> {
     layers: &'a [Layer],
+    tracks: &'a BTreeMap<String, Vec<Layer>>,
 }
 
 #[derive(Deserialize)]

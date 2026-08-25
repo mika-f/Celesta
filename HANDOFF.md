@@ -503,16 +503,57 @@ in any other React host.
     resolved layer becomes a `group` wrapping the rendered `Text`, and the
     unresolved one stays a `missingComponent` layer with its original
     `component` name.
-  - **Not yet built**: per-track access (`useProjectTrack()`,
-    `<ProjectTrack id="..." />`) — the evaluator evaluates a whole project's
-    tracks together, not one at a time, so this needs new evaluator-side
-    surface first, not just a new React component. `dialogue` content in
-    `<ProjectTimeline />`. A `<Video>` React component. An `AudioGraph`
-    source for React entries. Schema-based Project Properties
-    (`defineProjectProperties`, GUI Inspector generation) and the Component
-    Property Schema (GUI-editable props for a registered component,
-    generating Inspector fields) — both explicitly marked undecided in the
-    design doc.
+  - **Not yet built**: `dialogue` content in `<ProjectTimeline />`. A
+    `<Video>` React component. An `AudioGraph` source for React entries.
+    Schema-based Project Properties (`defineProjectProperties`, GUI
+    Inspector generation) and the Component Property Schema (GUI-editable
+    props for a registered component, generating Inspector fields) — both
+    explicitly marked undecided in the design doc.
+- **Per-track access** (`useProjectTrack()`, `<ProjectTrack id="..." />`,
+  `src/project-runtime.ts`). `<ProjectTimeline />` embeds every track's
+  layers flattened together, which is fine for the whole-composition case
+  but gives an entry no way to read or re-embed just one track — needed new
+  evaluator-side surface, not just a new React component, since
+  `mikan-evaluator::Evaluator::scene_at` only ever evaluated all tracks
+  together.
+  - `Evaluator::layers_for_track(track_id, time)`
+    (`crates/evaluator/src/lib.rs`) evaluates one track's active visual
+    layers at an exact time, independent of the others; both it and
+    `scene_at` now share an `active_track_layers(track, time)` helper. An
+    unknown `track_id`, or a track disabled at the project level, evaluates
+    to an empty `Vec` rather than an error — from the caller's perspective
+    both are just "nothing to show."
+  - `mikan-exporter`'s `render_react_video` per-frame loop now evaluates
+    every track in the filtered companion project unconditionally, into a
+    `BTreeMap<String, Vec<Layer>>` (Rust cannot statically know which track
+    ids an entry's JSX will reference, so this avoids any negotiation
+    handshake with Node at the cost of always doing the per-track work —
+    acceptable given typical track counts), applying the same
+    `absolutize_layers` asset-root rewrite used for the flat `layers`
+    embed. This travels alongside the existing flat layers in a new
+    `ProjectFrame<'a> { layers: &'a [Layer], tracks: &'a BTreeMap<String,
+    Vec<Layer>> }` struct (`crates/react-bridge/src/lib.rs`), which replaced
+    `scene_at_with_project`'s old `Option<&[Layer]>` parameter with
+    `Option<ProjectFrame<'_>>`.
+  - On the TypeScript side, a new `ProjectTrackLayersContext` (parallel to
+    the existing `ProjectLayersContext`) carries the per-track map;
+    `useProjectTrack(trackId)` reads it and returns `tracks[trackId] ?? []`,
+    and `<ProjectTrack id="..." />` renders that track's layers the same way
+    `<ProjectTimeline />` renders the flat list — both now share a
+    `renderProjectLayers(layers)` helper (including `missingComponent`
+    resolution through the same registry) instead of duplicating it.
+    `mount()`'s bootstrap render pass and `renderAt()` provide both
+    Provider values from a single `ProjectFrame` argument (`{ layers,
+    tracks }`, empty during bootstrap) so the two contexts stay consistent.
+  - Verified end to end (`packages/react/examples/with-project-track.tsx`,
+    a project with `titles` and `overlays` tracks): `useProjectTrack('titles')`
+    correctly reported only that track's layer count, `<ProjectTrack
+    id="overlays" />` rendered that track's content at its project-evaluated
+    position, and neither track's actual layer content leaked into the
+    other — confirmed via `mikan-exporter --react --project` producing an MP4
+    with the expected on-screen text, and by a Rust integration test
+    (`crates/react-bridge/tests/node_integration.rs`,
+    `embeds_per_track_layers_for_use_project_track_when_node_is_available`).
 
 ### TypeScript type generation and the Project loader
 
@@ -633,12 +674,17 @@ licensed VOICEROID voice sample.
 - `packages/react/examples/with-registered-component.tsx`: registers a
   `BossIntroduction` component and renders `<ProjectTimeline />`, used by
   `mikan-react-bridge`'s component-registry integration test.
+- `packages/react/examples/with-project-track.tsx`: reads one track via
+  `useProjectTrack('titles')` and renders another whole via `<ProjectTrack
+  id="overlays" />`, used by `mikan-react-bridge`'s per-track integration
+  test.
 
 ## Validation baseline
 
-At this handoff, the workspace has 85 passing tests (84 from the previous
-handoff plus `mikan-react-bridge`'s new component-registry integration
-test). The last checks were:
+At this handoff, the workspace has 88 passing tests (85 from the previous
+handoff plus two `mikan-evaluator` per-track unit tests and
+`mikan-react-bridge`'s new per-track integration test). The last checks
+were:
 
 ```sh
 cargo test --workspace
@@ -715,14 +761,8 @@ is already done:
    `useCurrentTime()` / `useVideoConfig()`~~ (which did mean adopting
    `react-reconciler`, as anticipated) — done, see "react-reconciler, hooks,
    and `<ProjectTimeline />`" above.
-2. `useProjectTrack()` / `<ProjectTrack />` (per-track access). This needs
-   new evaluator-side surface, not just a new React component:
-   `mikan-evaluator::Evaluator` evaluates a whole project's tracks together
-   (`scene_at`), not one track at a time, and `<ProjectTimeline />`'s
-   "evaluate up front, embed the result" approach (see above) means
-   `<ProjectTrack />` would need its own per-track evaluation entry point on
-   the Rust side plus a way for the request payload to carry multiple named
-   layer sets instead of one.
+2. ~~`useProjectTrack()` / `<ProjectTrack />` (per-track access)~~ — done,
+   see "Per-track access" above.
 3. ~~`interpolate()` / `spring()` animation utilities~~ — done, see
    "react-reconciler, hooks, and `<ProjectTimeline />`" above.
 4. ~~Project Properties~~ — `useProjectProperty(key, defaultValue)` (the
@@ -747,10 +787,9 @@ Separately, still open from the original slice:
 - An `AudioGraph` source for React entries so `mikan-exporter --react` can mux
   audio instead of always publishing a silent MP4.
 
-Before starting `useProjectTrack()`/`<ProjectTrack />` or anything further
-down this list, confirm scope with the user rather than assuming the full
-design doc — it explicitly marks several APIs (Property Schema, Component
-registry) as undecided.
+Before starting item 6 or anything further down this list, confirm scope
+with the user rather than assuming the full design doc — it explicitly
+marks several APIs (Property Schema, Component registry) as undecided.
 
 Do not optimize preview presentation by letting GPUI and wgpu both present to
 the same window surface.

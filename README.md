@@ -51,6 +51,10 @@ The repository currently contains the first foundation:
   (`registerComponent(name, Component)`) resolve to a real rendered
   subtree positioned at the project-evaluated transform; an unregistered
   name is left for `GpuRenderer` to reject rather than silently dropped.
+  `useProjectTrack(trackId)` and `<ProjectTrack id="..." />` give the same
+  access one track at a time — `mikan-evaluator` evaluates every track's
+  layers per frame regardless of which ones the entry actually reads, so no
+  negotiation with Node is needed to know which tracks to send.
   `mikan-composition` and
   `mikan-project`'s public types carry `ts-rs` bindings (behind the `codegen`
   cargo feature) that `pnpm run codegen` regenerates into

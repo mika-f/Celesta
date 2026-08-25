@@ -9,7 +9,7 @@
 import * as React from 'react';
 
 import { CompositionRuntimeContext } from './hooks';
-import { ProjectLayersContext } from './project-runtime';
+import { ProjectLayersContext, ProjectTrackLayersContext } from './project-runtime';
 import { type HostNode, type RootContainer, HostReconciler, createRoot } from './reconciler';
 import type {
   CompositionConfig,
@@ -37,9 +37,14 @@ const PLACEHOLDER_CONFIG: PlaceholderConfig = {
 
 export type EntryComponent = (props: Record<string, unknown>) => React.ReactNode;
 
+export interface ProjectFrame {
+  layers: Layer[];
+  tracks: Record<string, Layer[]>;
+}
+
 export interface MountedComposition {
   readonly config: CompositionConfig;
-  renderAt(time: Time, projectLayers: Layer[] | null): Scene;
+  renderAt(time: Time, project: ProjectFrame | null): Scene;
 }
 
 function findCompositionInstance(container: RootContainer): HostNode {
@@ -160,7 +165,7 @@ export function mount(defaultExport: EntryComponent): MountedComposition {
 
   const renderTree = (
     time: Time,
-    projectLayers: Layer[] | null,
+    project: ProjectFrame | null,
     config: CompositionConfig | PlaceholderConfig,
   ) => {
     const runtimeValue = {
@@ -172,11 +177,15 @@ export function mount(defaultExport: EntryComponent): MountedComposition {
     };
     const element = React.createElement(
       ProjectLayersContext.Provider,
-      { value: projectLayers },
+      { value: project?.layers ?? null },
       React.createElement(
-        CompositionRuntimeContext.Provider,
-        { value: runtimeValue },
-        React.createElement(defaultExport, {}),
+        ProjectTrackLayersContext.Provider,
+        { value: project?.tracks ?? null },
+        React.createElement(
+          CompositionRuntimeContext.Provider,
+          { value: runtimeValue },
+          React.createElement(defaultExport, {}),
+        ),
       ),
     );
     HostReconciler.flushSync(() => {
@@ -186,18 +195,19 @@ export function mount(defaultExport: EntryComponent): MountedComposition {
 
   // The first pass exists only to read <Composition>'s own props, which
   // must be static (not derived from useVideoConfig()/useCurrentFrame()/
-  // <ProjectTimeline />) — but its children still render and may use those,
-  // so placeholder context is provided rather than leaving it unset, which
-  // would throw. An empty layer array (rather than null, which would still
-  // throw) is enough since this pass's own output layers are discarded.
-  renderTree(ZERO_TIME, [], PLACEHOLDER_CONFIG);
+  // <ProjectTimeline />/<ProjectTrack />) — but its children still render
+  // and may use those, so a placeholder context is provided rather than
+  // leaving it unset, which would throw. Empty layers/tracks (rather than
+  // null, which would still throw) are enough since this pass's own output
+  // layers are discarded.
+  renderTree(ZERO_TIME, { layers: [], tracks: {} }, PLACEHOLDER_CONFIG);
   const compositionInstance = findCompositionInstance(container);
   const config = readCompositionConfig(compositionInstance);
 
   return {
     config,
-    renderAt(time, projectLayers) {
-      renderTree(time, projectLayers, config);
+    renderAt(time, project) {
+      renderTree(time, project, config);
       const instance = findCompositionInstance(container);
       const layers = walkChildren(instance, 'root');
       return {

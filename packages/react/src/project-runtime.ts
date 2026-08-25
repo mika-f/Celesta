@@ -58,6 +58,47 @@ export function ProjectTimeline(): ReturnType<typeof React.createElement> {
       '<ProjectTimeline /> requires evaluated project layers; export with a companion project (mikan-exporter --react <entry> --project <project.json>) to provide them',
     );
   }
+  return renderProjectLayers(layers);
+}
+
+// Rust evaluates every track's layers alongside the whole-project ones on
+// every project-aware frame (see mikan-exporter's render_react_video) —
+// it cannot know in advance which track ids, if any, a <ProjectTrack />
+// or useProjectTrack() call in the entry will ask for, so there is no
+// negotiation step; the request just always carries all of them. An id
+// with no matching track (typo, or a track disabled at the project level)
+// evaluates to no layers on the Rust side (mikan-evaluator's
+// `layers_for_track`), so it is absent from this map rather than present
+// with an empty array — both `useProjectTrack` and `<ProjectTrack />`
+// treat "absent" and "empty" the same way, as "nothing to show".
+export const ProjectTrackLayersContext = React.createContext<Record<string, Layer[]> | null>(null);
+
+function useProjectTrackLayers(hookName: string): Record<string, Layer[]> {
+  const tracks = React.useContext(ProjectTrackLayersContext);
+  if (!tracks) {
+    throw new Error(
+      `${hookName} requires evaluated project layers; export with a companion project (mikan-exporter --react <entry> --project <project.json>) to provide them`,
+    );
+  }
+  return tracks;
+}
+
+/** The given project track's evaluated layers, or `[]` if it has none (including an unknown track id). */
+export function useProjectTrack(trackId: string): Layer[] {
+  const tracks = useProjectTrackLayers('useProjectTrack');
+  return tracks[trackId] ?? [];
+}
+
+export interface ProjectTrackProps {
+  id: string;
+}
+
+export function ProjectTrack(props: ProjectTrackProps): ReturnType<typeof React.createElement> {
+  const tracks = useProjectTrackLayers('<ProjectTrack />');
+  return renderProjectLayers(tracks[props.id] ?? []);
+}
+
+function renderProjectLayers(layers: Layer[]): ReturnType<typeof React.createElement> {
   return React.createElement(
     React.Fragment,
     null,

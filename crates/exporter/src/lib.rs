@@ -1,5 +1,6 @@
 //! Frame-exact project export through the shared evaluator and renderers.
 
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::ffi::OsStr;
 use std::fmt;
@@ -19,7 +20,7 @@ use mikan_evaluator::{EvaluationError, Evaluator};
 use mikan_gpu_renderer::{GpuRenderError, GpuRenderOptions, GpuRenderer};
 use mikan_media::{AudioMixError, FfmpegBackend, mix_audio_graph_cancellable};
 use mikan_project::{LoadError, Project, TimelineContent};
-use mikan_react_bridge::{ReactBridge, ReactBridgeError};
+use mikan_react_bridge::{ProjectFrame, ReactBridge, ReactBridgeError};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExportOptions {
@@ -589,19 +590,36 @@ impl Exporter {
                     i64::try_from(frame_index).map_err(|_| ExportError::TimelineTooLong)?;
                 let time =
                     Time::frames(frame_index, metadata.frame_rate).map_err(ExportError::Time)?;
-                let project_layers = project_evaluator
+                let project_frame = project_evaluator
                     .as_ref()
-                    .map(|evaluator| -> Result<_, EvaluationError> {
-                        let mut scene = evaluator.scene_at(time)?;
-                        if let Some(asset_root) = project_asset_root {
-                            absolutize_layers(&mut scene.layers, asset_root);
-                        }
-                        Ok(scene.layers)
-                    })
+                    .zip(filtered_project.as_ref())
+                    .map(
+                        |(evaluator, filtered_project)| -> Result<_, EvaluationError> {
+                            let mut scene = evaluator.scene_at(time)?;
+                            let mut tracks = BTreeMap::new();
+                            for track in &filtered_project.tracks {
+                                let mut layers = evaluator.layers_for_track(&track.id, time)?;
+                                if let Some(asset_root) = project_asset_root {
+                                    absolutize_layers(&mut layers, asset_root);
+                                }
+                                tracks.insert(track.id.clone(), layers);
+                            }
+                            if let Some(asset_root) = project_asset_root {
+                                absolutize_layers(&mut scene.layers, asset_root);
+                            }
+                            Ok((scene.layers, tracks))
+                        },
+                    )
                     .transpose()
                     .map_err(ExportError::Evaluation)?;
                 let mut scene = bridge
-                    .scene_at_with_project(time, project_layers.as_deref())
+                    .scene_at_with_project(
+                        time,
+                        project_frame.as_ref().map(|(layers, tracks)| ProjectFrame {
+                            layers: layers.as_slice(),
+                            tracks,
+                        }),
+                    )
                     .map_err(ExportError::React)?;
                 scene.fonts.extend(project_fonts.iter().cloned());
                 let frame = renderer.render(&scene).map_err(ExportError::Render)?;

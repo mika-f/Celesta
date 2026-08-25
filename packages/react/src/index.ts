@@ -29,8 +29,15 @@ export type { VideoConfig } from './hooks';
 export { Easings, interpolate, spring } from './animation';
 export type { Extrapolate, InterpolateOptions, SpringConfig, SpringOptions } from './animation';
 
-export { ProjectProvider, ProjectTimeline, useProject, useProjectProperty } from './project-runtime';
-export type { ProjectProviderProps } from './project-runtime';
+export {
+  ProjectProvider,
+  ProjectTimeline,
+  ProjectTrack,
+  useProject,
+  useProjectProperty,
+  useProjectTrack,
+} from './project-runtime';
+export type { ProjectProviderProps, ProjectTrackProps } from './project-runtime';
 
 export { registerComponent } from './registry';
 export type { ComponentDefinition } from './registry';
