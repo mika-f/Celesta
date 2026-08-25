@@ -32,8 +32,13 @@ The repository currently contains the first foundation:
   `Composition`, `Group`, `Image`, and `Text` components for authoring a React
   entry, plus the `mikan-react-render` CLI that bundles an entry with esbuild
   and evaluates it on request. Entries are plain function components composed
-  with JSX; there
-  is no react-reconciler yet, so hooks such as `useState` are not supported.
+  with JSX; there is no react-reconciler yet, so hooks such as `useState` are
+  not supported. `mikan-composition` and `mikan-project`'s public types carry
+  `ts-rs` bindings (behind the `codegen` cargo feature) that `pnpm run
+  codegen` regenerates into `packages/react/src/generated`; the package's own
+  `Scene`/`Layer`/... types and a `loadProject()`/`loadProjectFromString()`
+  reader for `.mikan.json` files are built on top of those generated types
+  rather than hand-mirrored.
 - `examples/minimal.mikan.json`: the smallest valid project.
 - `examples/voiceroid.mikan.json`: a small dialogue-oriented project example.
   It includes a tiny PPM portrait placeholder so the visual dialogue path can
@@ -67,11 +72,12 @@ cargo run -p mikan-exporter -- examples/editor-demo.mikan.json output.mp4
 cargo run -p mikan-exporter -- --overwrite examples/editor-demo.mikan.json output.mp4
 ```
 
-Export a React composition entry instead of a project (requires `pnpm
-install` and `pnpm run build` once in `packages/react`):
+Export a React composition entry instead of a project (requires a one-time
+`packages/react` setup: install, generate the TypeScript bindings for
+`mikan-composition`/`mikan-project`'s types, then build):
 
 ```sh
-cd packages/react && pnpm install && pnpm run build && cd ../..
+cd packages/react && pnpm install && pnpm run codegen && pnpm run build && cd ../..
 cargo run -p mikan-exporter -- --react packages/react/examples/title.tsx output.mp4
 ```
 
@@ -211,3 +217,10 @@ over its stdio pipe, rather than spawning Node once per frame. React entries
 do not yet integrate with the GPUI editor's timeline/track model, project
 persistence, or audio graph; `mikan-exporter --react` renders a React entry
 straight to a silent MP4.
+
+`packages/react` can also read a `.mikan.json` project file directly, through
+`loadProject()`/`loadProjectFromString()` and the generated `Project` type,
+independent of the React entry / `Scene` path above. This is a read-only
+loader today: nothing yet connects a loaded `Project` into a `<Composition>`
+tree (no `<ProjectTimeline />`/`<ProjectTrack />` or `useProject()`), so a
+React entry cannot yet incorporate GUI-editor-owned timeline content.

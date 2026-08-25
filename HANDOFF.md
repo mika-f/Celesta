@@ -24,9 +24,13 @@ video/audio tracks.
 - GPUI is pinned to crates.io version `0.2.2`.
 - Node.js (>= 18) and pnpm are required for the React composition path
   (`packages/react`, `mikan-react-bridge`). Run `pnpm install && pnpm run
-  build` once in `packages/react` before using `mikan-exporter --react` or
-  its tests; `mikan-react-bridge` spawns the compiled `dist/cli.js`, not the
-  TypeScript sources directly.
+  codegen && pnpm run build` once in `packages/react` before using
+  `mikan-exporter --react` or its tests; `mikan-react-bridge` spawns the
+  compiled `dist/cli.js`, not the TypeScript sources directly. `pnpm run
+  codegen` runs `cargo test -p mikan-project -p mikan-composition --features
+  codegen` to (re)generate `src/generated/*.ts`, which `pnpm run build`
+  requires as input; both `src/generated/` and `dist/` are gitignored build
+  output, not checked in.
 
 Before editing, run:
 
@@ -266,8 +270,10 @@ entries, matching the architecture diagram's "React entry" path:
 
 - `packages/react` is a TypeScript package managed with pnpm. `@mikan/react`
   exports `Composition`, `Group`, `Image`, and `Text` components (typed props
-  in `src/components.ts`, the `Scene`/`Layer`/... JSON contract mirrored in
-  `src/scene.ts`). They are never invoked as functions; `src/render.ts` walks
+  in `src/components.ts`; `src/scene.ts` re-exports the `Scene`/`Layer`/...
+  types from `src/generated/`, ts-rs bindings generated from
+  `mikan_composition`, rather than hand-mirroring the JSON shape). They are
+  never invoked as functions; `src/render.ts` walks
   the JSX element tree produced by calling function components directly and
   matches these against the package's own exports by object identity to
   build layers. Function components can wrap them freely (props in, JSX out),
@@ -305,6 +311,61 @@ entries, matching the architecture diagram's "React entry" path:
 - React entries do not yet integrate with the GPUI editor (no project
   persistence, timeline/track placement, or preview panel); see Recommended
   next work.
+
+### TypeScript type generation and the Project loader
+
+`mikan-composition`'s and `mikan-project`'s public serde types carry
+`#[cfg_attr(feature = "codegen", derive(ts_rs::TS))]` plus `#[cfg_attr(feature
+= "codegen", ts(export))]`, gated behind a `codegen` cargo feature so `ts-rs`
+is not a dependency of default builds (editor, exporter, etc. build exactly
+as before). `pnpm run codegen` in `packages/react` (or directly, `cargo test
+-p mikan-project -p mikan-composition --features codegen`) runs the tests
+`ts-rs`'s derive macro generates, one per exported type, each of which writes
+a `.ts` file. `.cargo/config.toml` sets `TS_RS_EXPORT_DIR` so those land in
+`packages/react/src/generated/` (workspace-relative, harmless when `codegen`
+is off) and `TS_RS_LARGE_INT = "number"` so `Time.value` (`i64`) binds to
+`number`, not `bigint` — `serde_json` has no bigint literal, so a `bigint`
+binding would not round-trip through the stdin/stdout JSON protocol
+`mikan-react-bridge` uses. `serde-json-impl` is enabled so `PropertyValue`
+(`serde_json::Value`) binds to a `JsonValue` type under
+`generated/serde_json/`. `src/generated/` is gitignored, like `dist/`, and
+regenerated from Rust rather than committed.
+
+`packages/react/src/scene.ts` now re-exports the render-output side (`Scene`,
+`Layer`, `LayerContent`, `Time`, `Rational`, ...) from `src/generated/`
+instead of hand-mirroring it, and `src/project.ts` adds a
+`loadProject(path)` / `loadProjectFromString(json)` reader for `.mikan.json`
+files, typed against the generated `Project`. This loader is read-only and
+intentionally thin (`JSON.parse` plus a type assertion): the canonical
+validation is `mikan-project`'s `Project::load`/`Project::from_json`, and a
+project loaded this way is expected to already be valid. Nothing yet
+connects a loaded `Project` into a `<Composition>` tree — there is no
+`<ProjectTimeline />`, `<ProjectTrack />`, or `useProject()` — so this is
+purely a typed-read building block for that future integration, not usable
+from a React entry yet.
+
+**Bug found and fixed while adding this**: `LayerContent`, `AssetLocation`,
+`Asset`, `AssetSource`, `Paint`, and `TimelineContent` are `#[serde(tag =
+"type", rename_all = "camelCase")]` enums with struct variants. `rename_all`
+on an enum only renames *variant names* (`video`, `dialogue`, ...); it does
+not rename the *fields inside* struct variants. `TimelineContent`'s
+`source_range`/`playback_rate` and `LayerContent::Text`'s `max_width` were
+therefore actually serialized/deserialized as snake_case in JSON, contrary
+to the camelCase convention documented and used everywhere else in the
+project — confirmed empirically (`serde_json::to_string` on a constructed
+`TimelineContent::Video`, and deserializing a `LayerContent::Text` JSON
+object with `"maxWidth"` vs `"max_width"`). This silently broke the `<Text
+maxWidth>` React prop added earlier in this same session: the JSON sent
+`"maxWidth"`, Rust ignored it as an unknown field, and `max_width` stayed
+`None`. Fixed by adding `rename_all_fields = "camelCase"` (stable since serde
+1.0.194; this workspace pins 1.0.229) alongside `rename_all` on all six
+affected enums, which renames fields across every variant while `rename_all`
+keeps renaming the tag values. Re-verified end to end: `mikan-exporter
+--react` on an entry using `<Text maxWidth={200}>` now visibly wraps the
+text. No existing test exercised these optional fields through a JSON round
+trip, so nothing else needed updating, but it is worth being alert to
+similar `rename_all`-without-`rename_all_fields` mistakes if more tagged
+enums with struct variants are added.
 
 ## Preview integration decision
 
@@ -375,13 +436,21 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
 git diff --check
+cargo test -p mikan-project -p mikan-composition --features codegen
+cargo clippy -p mikan-composition -p mikan-project --all-targets --features codegen -- -D warnings
 ```
+
+The `codegen`-feature checks add no new test count (the ts-rs-generated
+`export_bindings_*` tests just write files as a side effect) but are worth
+running whenever composition/project types change, since that is what
+regenerates `packages/react/src/generated/`.
 
 `mikan-react-bridge`'s integration test spawns the real `mikan-react-render`
 CLI and skips itself with a message if `node` is not on `PATH` or if
 `packages/react/node_modules` or `packages/react/dist` do not exist yet (run
-`pnpm install && pnpm run build` there first). `mikan-media`'s FFmpeg
-integration tests use the same skip-if-missing pattern for `ffmpeg`/`ffprobe`.
+`pnpm install && pnpm run codegen && pnpm run build` there first).
+`mikan-media`'s FFmpeg integration tests use the same skip-if-missing pattern
+for `ffmpeg`/`ffprobe`.
 
 The editor and VOICEROID example were also launched successfully:
 
@@ -411,22 +480,46 @@ The initial editor mutation, persistence, audio, background-worker, native
 preview, deterministic export, editor export-control, and sequential-decoding
 export milestones are complete. The minimal React-composition-to-MP4 vertical
 slice (`packages/react`, `mikan-react-bridge`, `mikan-exporter --react`) is
-also complete. Continue with, roughly in order of value:
+also complete, as is Rust-to-TypeScript type generation and a read-only
+`loadProject()` (see "React composition integration" above).
 
-1. GPUI editor integration for React entries: a way to load/reference a React
-   entry from a project (or alongside one), preview it through the existing
-   GPU preview bridge, and place it on the timeline like other clips. This was
-   explicitly deferred from the current slice.
-2. A `<Video>` component in `packages/react`, matching `LayerContent::Video`'s
-   `MediaTiming` (local time, source start, source time in seconds, playback
-   rate) the way project timeline clips already do.
-3. Per-frame animation input for React components (for example a `useFrame()`
-   value derived from the request's `Time`), once it is time to move past
-   identical-tree-every-frame rendering. This likely also motivates adopting
-   `react-reconciler` for real hook support, since the current plain
-   function-call tree walker has none.
-4. An `AudioGraph` source for React entries so `mikan-exporter --react` can
-   mux audio instead of always publishing a silent MP4.
+The user has shared a more ambitious design (see git history / conversation
+for the full text) where a React entry does not just describe an independent
+scene, but can read and re-embed GUI-editor-owned `project.json` content
+(`<ProjectTimeline />`, `<ProjectTrack />`, `useProject()`), where
+`project.json` can place a React component instance on the timeline
+(`TimelineContent::Component`, which already exists in the format — see
+`crates/project/src/lib.rs`), and where GUI-editable values are exposed from
+React via an explicit Property Schema (`defineProjectProperties`,
+`useProjectProperty()`). That design's own priority order, adjusted for what
+is already done:
+
+1. ~~Rust Project type generation~~ and ~~Project loader~~ — done, see above.
+2. React context + `useProject()`.
+3. `useProjectTrack()`.
+4. `<ProjectTimeline />`.
+5. `<ProjectTrack />`.
+6. `useCurrentFrame()` / `useCurrentTime()` / `useVideoConfig()` — these need
+   real per-frame reactivity, which likely means adopting `react-reconciler`
+   (the current plain function-call tree walker has no hook dispatcher).
+7. `interpolate()` / `spring()` animation utilities.
+8. Project Properties (`defineProjectProperties`, `useProjectProperty()`).
+9. Component registry / `ComponentContent` (`registerComponent`, resolving
+   `TimelineContent::Component`'s `component`/`props` to a registered React
+   component).
+10. Property schema / Inspector metadata for GUI-editable component props.
+
+Separately, still open from the original slice:
+
+- A `<Video>` component in `packages/react`, matching `LayerContent::Video`'s
+  `MediaTiming` (local time, source start, source time in seconds, playback
+  rate) the way project timeline clips already do.
+- An `AudioGraph` source for React entries so `mikan-exporter --react` can mux
+  audio instead of always publishing a silent MP4.
+
+Before starting the `useProject()`/`<ProjectTimeline />` line of work, confirm
+scope with the user rather than assuming the full design doc — it explicitly
+marks several APIs (Property Schema, Component registry) as undecided.
 
 Do not optimize preview presentation by letting GPUI and wgpu both present to
 the same window surface.

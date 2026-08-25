@@ -15,6 +15,7 @@ import type {
   Layer,
   LayerContent,
   Point,
+  ResolvedAsset,
   Scene,
   TextStyle,
   Time,
@@ -103,7 +104,7 @@ function extractText(children: unknown): string {
   throw new Error('<Text> children must be a string, a number, or an array of those');
 }
 
-function resolveAsset(src: unknown): { id: string; location: { type: 'file'; path: string } } {
+function resolveAsset(src: unknown): ResolvedAsset {
   if (typeof src !== 'string' || src.length === 0) {
     throw new Error('components with asset content require a non-empty `src` prop');
   }

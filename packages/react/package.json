@@ -19,6 +19,7 @@
     "node": ">=18"
   },
   "scripts": {
+    "codegen": "cd ../.. && cargo test -p mikan-project -p mikan-composition --features codegen",
     "build": "tsc -p tsconfig.json",
     "clean": "rm -rf dist"
   },
