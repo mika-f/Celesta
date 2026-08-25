@@ -10,7 +10,12 @@ The repository currently contains the first foundation:
 - `mikan-composition`: exact rational time and shared visual primitives.
 - `mikan-editor`: the first GPUI editor shell with project loading, an asset
   browser, frame-accurate playback controls, GPU-rendered preview, inspector,
-  and timeline overview.
+  and timeline overview. A project can point at a `.tsx` React entry
+  (`react_entry` in `project.json`, set/cleared from the Inspector); the
+  editor spawns the `@mikan/react` Node.js runtime just to read that entry's
+  `registerComponent()` schemas, then renders editable Inspector fields
+  (string/number/boolean/color/select) for a selected `TimelineContent::Component`
+  clip's props.
 - `mikan-project`: the version 0 project format, JSON loading, semantic
   validation, and timeline duration calculation.
 - `mikan-evaluator`: deterministic conversion from a project to a scene at a
@@ -25,6 +30,54 @@ The repository currently contains the first foundation:
 - `mikan-gpu-renderer`: the `wgpu` production-renderer foundation with
   offscreen image/video/text composition, nested transforms, opacity, painter
   ordering, and RGBA readback.
+- `mikan-react-bridge`: spawns the `@mikan/react` Node.js runtime as one
+  long-lived process per composition and requests the evaluated `Scene` for
+  each exact frame time over a JSON stdin/stdout pipe.
+- `packages/react` (`@mikan/react`, TypeScript, managed with pnpm): declarative
+  `Composition`, `Group`, `Image`, `Text`, and `Video` components for
+  authoring a React entry, evaluated through a real `react-reconciler` host,
+  plus the `mikan-react-render` CLI that bundles an entry with esbuild and
+  evaluates it on request. `<Video src="..." startFrom={seconds}
+  playbackRate={rate} />` plays synced to the composition's own clock from
+  frame 0 (there is no `<Sequence>`-style offset yet); `mikan-exporter`
+  attaches a sequential FFmpeg decoder to any React export so it decodes,
+  same as a project timeline's `Video` content. Because the reconciler
+  drives real React rendering, ordinary hooks work: `useState`/`useEffect`
+  and this package's own `useCurrentFrame()`, `useCurrentTime()`, and
+  `useVideoConfig()`.
+  `interpolate()` and `spring()` (plus a small `Easings` curve set) turn a
+  frame number into an animated value — `spring()` is a damped harmonic
+  oscillator's analytic step response, not a physics simulation stepped
+  frame by frame, so it evaluates any single frame directly rather than
+  needing the frames before it. A loaded
+  `.mikan.json` project can also be read into a React entry: `loadProject()`
+  plus `<ProjectProvider>`/`useProject()` expose it as plain data,
+  `useProjectProperty(key, defaultValue)` reads its editor-set
+  `properties` (falling back to `defaultValue` when the key is absent —
+  there is no schema yet), and `<ProjectTimeline />` embeds its
+  `video`/`image`/`text`/`dialogue`/`component` timeline content —
+  evaluated by `mikan-evaluator` (Rust), not reimplemented in TypeScript —
+  alongside the entry's own React-authored content. A `dialogue` item
+  evaluates to a portrait image plus subtitle text (a plain group layer,
+  the same as any author-placed one), so it needs no dialogue-specific
+  handling here. `component` items
+  (`registerComponent(name, Component, schema?)`) resolve to a real
+  rendered subtree positioned at the project-evaluated transform; an
+  unregistered name is left for `GpuRenderer` to reject rather than
+  silently dropped. The optional `schema` (a `ComponentPropertySchema`
+  declaring each prop's type/default/display hints, retrievable via
+  `getComponentSchema(name)`) is pure metadata for a future GUI Inspector —
+  it plays no part in resolution or rendering today.
+  `useProjectTrack(trackId)` and `<ProjectTrack id="..." />` give the same
+  access one track at a time — `mikan-evaluator` evaluates every track's
+  layers per frame regardless of which ones the entry actually reads, so no
+  negotiation with Node is needed to know which tracks to send.
+  `mikan-composition` and
+  `mikan-project`'s public types carry `ts-rs` bindings (behind the `codegen`
+  cargo feature) that `pnpm run codegen` regenerates into
+  `packages/react/src/generated`; the package's own `Scene`/`Layer`/...,
+  `Project`/`Track`/... types are built on top of those generated types
+  rather than hand-mirrored.
 - `examples/minimal.mikan.json`: the smallest valid project.
 - `examples/voiceroid.mikan.json`: a small dialogue-oriented project example.
   It includes a tiny PPM portrait placeholder so the visual dialogue path can
@@ -56,6 +109,22 @@ Export a project to MP4 without overwriting an existing file:
 ```sh
 cargo run -p mikan-exporter -- examples/editor-demo.mikan.json output.mp4
 cargo run -p mikan-exporter -- --overwrite examples/editor-demo.mikan.json output.mp4
+```
+
+Export a React composition entry instead of a project (requires a one-time
+`packages/react` setup: install, generate the TypeScript bindings for
+`mikan-composition`/`mikan-project`'s types, then build):
+
+```sh
+cd packages/react && pnpm install && pnpm run codegen && pnpm run build && cd ../..
+cargo run -p mikan-exporter -- --react packages/react/examples/title.tsx output.mp4
+```
+
+Add `--project <project.mikan.json>` to also evaluate a companion project and
+give the entry's `<ProjectTimeline />` its `video`/`image`/`text` layers:
+
+```sh
+cargo run -p mikan-exporter -- --react packages/react/examples/with-project.tsx --project examples/editor-demo.mikan.json output.mp4
 ```
 
 The exporter renders the exact rational project frame times through the shared
@@ -184,3 +253,31 @@ React entry ──┘             ▲
 The composition and project crates do not depend on React, GPUI, FFmpeg, or a
 GPU backend. Those integrations can evolve without changing the serialized
 project contract.
+
+A React entry evaluates directly to the same `Scene` JSON that the evaluator
+produces from a project, so both sources feed the identical renderer input.
+`mikan-react-bridge` spawns the `@mikan/react` Node.js CLI as one long-lived
+process per composition (mirroring `mikan-media`'s sequential video decoding
+session) and exchanges one JSON request/response pair per exact frame time
+over its stdio pipe, rather than spawning Node once per frame. React entries
+do not yet integrate with the GPUI editor's timeline/track model, project
+persistence, or audio graph; `mikan-exporter --react` renders a React entry
+straight to a silent MP4.
+
+`packages/react` can also read a `.mikan.json` project file directly, through
+`loadProject()`/`loadProjectFromString()` and the generated `Project` type.
+`<ProjectProvider project={...}>` and `useProject()` expose that data as
+plain React context. `<ProjectTimeline />` goes further and embeds the
+project's own evaluated visual content (`video`/`image`/`text` timeline
+items only in this first pass; `audio`, `dialogue`, and `component` items
+are dropped): `mikan-exporter --react <entry> --project <project.mikan.json>`
+evaluates the project once per frame through the same `mikan-evaluator` a
+plain project export uses, and embeds the resulting layers directly in that
+frame's request to Node — `<ProjectTimeline />` cannot ask Rust to evaluate
+mid-render, since this process is synchronously blocked on that very
+request's response, so a call the other way would deadlock. Because the
+project's assets may live in a different directory than the React entry,
+and `GpuRenderer` resolves relative asset paths against a single
+`asset_root`, those evaluated layers' relative paths (and font asset paths)
+are rewritten to absolute before being sent, rather than adding a second
+asset root to the renderer.

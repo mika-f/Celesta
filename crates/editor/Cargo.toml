@@ -15,6 +15,7 @@ mikan-exporter = { path = "../exporter" }
 mikan-gpu-renderer = { path = "../gpu-renderer" }
 mikan-media = { path = "../media" }
 mikan-project = { path = "../project" }
+mikan-react-bridge = { path = "../react-bridge" }
 rodio = { version = "0.22.2", default-features = false, features = ["playback"] }
 serde_json.workspace = true
 unicode-segmentation = "1.13.3"

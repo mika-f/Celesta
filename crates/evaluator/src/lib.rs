@@ -9,7 +9,8 @@ use mikan_composition::{
     evaluate_f64, integrate_f64,
 };
 use mikan_project::{
-    Asset, AssetSource, Project, SourceRange, TimelineContent, TimelineItem, ValidationErrors,
+    Asset, AssetSource, Project, SourceRange, TimelineContent, TimelineItem, Track,
+    ValidationErrors,
 };
 
 pub struct Evaluator<'project> {
@@ -32,17 +33,7 @@ impl<'project> Evaluator<'project> {
 
         let mut layers = Vec::new();
         for track in &self.project.tracks {
-            if track.enabled == Some(false) {
-                continue;
-            }
-            for item in &track.items {
-                if item.enabled == Some(false) || !is_active(item, time)? {
-                    continue;
-                }
-                if let Some(layer) = self.visual_layer(item, time)? {
-                    layers.push(layer);
-                }
-            }
+            layers.extend(self.active_track_layers(track, time)?);
         }
 
         Ok(Scene {
@@ -59,6 +50,51 @@ impl<'project> Evaluator<'project> {
                 .collect::<Result<_, _>>()?,
             layers,
         })
+    }
+
+    /// Evaluates one track's active visual layers at an exact project time,
+    /// independent of every other track — the counterpart to `scene_at`
+    /// evaluating all of them together. An unknown `track_id`, or a track
+    /// disabled at the project level, evaluates to no layers rather than an
+    /// error: from the caller's perspective these are the same "nothing to
+    /// show" outcome, not a distinct failure.
+    pub fn layers_for_track(
+        &self,
+        track_id: &str,
+        time: Time,
+    ) -> Result<Vec<Layer>, EvaluationError> {
+        if !time.is_valid() || time.value < 0 {
+            return Err(EvaluationError::InvalidTime(time));
+        }
+        let Some(track) = self
+            .project
+            .tracks
+            .iter()
+            .find(|track| track.id == track_id)
+        else {
+            return Ok(Vec::new());
+        };
+        self.active_track_layers(track, time)
+    }
+
+    fn active_track_layers(
+        &self,
+        track: &Track,
+        time: Time,
+    ) -> Result<Vec<Layer>, EvaluationError> {
+        if track.enabled == Some(false) {
+            return Ok(Vec::new());
+        }
+        let mut layers = Vec::new();
+        for item in &track.items {
+            if item.enabled == Some(false) || !is_active(item, time)? {
+                continue;
+            }
+            if let Some(layer) = self.visual_layer(item, time)? {
+                layers.push(layer);
+            }
+        }
+        Ok(layers)
     }
 
     /// Builds the complete audio timeline. Mixing and decoding remain backend concerns.
@@ -472,6 +508,50 @@ mod tests {
 
         assert_eq!(audio.clips.len(), 1);
         assert_eq!(audio.clips[0].id, "solo-dialogue-item:voice");
+    }
+
+    #[test]
+    fn evaluates_a_single_track_independent_of_the_others() {
+        let mut project = example();
+        let mut other = project.tracks[0].clone();
+        other.id = "other".to_owned();
+        other.items[0].id = "other-item".to_owned();
+        project.tracks.push(other);
+        let evaluator = Evaluator::new(&project).unwrap();
+
+        let time = Time::new(21, 4);
+        let dialogue_layers = evaluator.layers_for_track("dialogue", time).unwrap();
+        let other_layers = evaluator.layers_for_track("other", time).unwrap();
+        // Both tracks hold an equivalent dialogue item, evaluated the same
+        // way, but each track's own evaluation stays scoped to itself.
+        assert_eq!(dialogue_layers.len(), 1);
+        assert_eq!(other_layers.len(), 1);
+        assert_eq!(dialogue_layers[0].id, "dialogue-001");
+        assert_eq!(other_layers[0].id, "other-item");
+        assert_eq!(evaluator.scene_at(time).unwrap().layers.len(), 2);
+    }
+
+    #[test]
+    fn unknown_or_disabled_track_evaluates_to_no_layers() {
+        let mut project = example();
+        let evaluator = Evaluator::new(&project).unwrap();
+        let time = Time::new(21, 4);
+
+        assert!(
+            evaluator
+                .layers_for_track("does-not-exist", time)
+                .unwrap()
+                .is_empty()
+        );
+
+        project.tracks[0].enabled = Some(false);
+        let evaluator = Evaluator::new(&project).unwrap();
+        assert!(
+            evaluator
+                .layers_for_track("dialogue", time)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

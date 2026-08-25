@@ -1,0 +1,398 @@
+//! Spawns the `@mikan/react` Node.js runtime and evaluates a React
+//! composition into the shared `mikan_composition::Scene` model.
+//!
+//! A single Node process is kept alive for the lifetime of a [`ReactBridge`]
+//! and answers one JSON request per requested frame over its stdin/stdout
+//! pipe, following the same "one long-lived process instead of one process
+//! per frame" shape as `mikan-media`'s sequential video decoding session.
+
+use std::collections::BTreeMap;
+use std::error::Error;
+use std::fmt;
+use std::io::{self, BufRead, BufReader, Write};
+use std::path::{Path, PathBuf};
+use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+
+use mikan_composition::{Layer, Rational, Scene, Time};
+use serde::{Deserialize, Serialize};
+
+/// A companion project's layers for one exact frame, evaluated up front by
+/// the caller (see [`ReactBridge::scene_at_with_project`]).
+#[derive(Clone, Copy, Debug)]
+pub struct ProjectFrame<'a> {
+    /// Every evaluated layer together, in project order — what
+    /// `<ProjectTimeline />` embeds.
+    pub layers: &'a [Layer],
+    /// The same layers, grouped by track id — what `<ProjectTrack />` and
+    /// `useProjectTrack()` embed.
+    pub tracks: &'a BTreeMap<String, Vec<Layer>>,
+}
+
+/// Static composition facts read once from the entry's `<Composition>` root.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ReactCompositionMetadata {
+    pub width: u32,
+    pub height: u32,
+    pub frame_rate: Rational,
+    pub duration_in_frames: u64,
+    /// Every `ComponentPropertySchema` declared via `registerComponent(name,
+    /// component, schema)`, keyed by `name`. Populated at spawn time — every
+    /// `registerComponent()` call runs at module scope before the entry's
+    /// `Ready` handshake is sent — so this never changes for the lifetime of
+    /// a `ReactBridge`. A registered component with no `schema` argument has
+    /// no entry here.
+    pub component_schemas: BTreeMap<String, ComponentPropertySchema>,
+}
+
+/// One field of a `ComponentPropertySchema` declared on the TypeScript side
+/// (`packages/react/src/registry.ts`). Mirrors `ComponentPropertyField`
+/// there field-for-field; kept as a real enum here (rather than opaque JSON)
+/// so a GUI Inspector can match on `field_type` to choose a widget without
+/// re-parsing JSON itself.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ComponentPropertyField {
+    String {
+        #[serde(default)]
+        label: Option<String>,
+        default_value: String,
+    },
+    Number {
+        #[serde(default)]
+        label: Option<String>,
+        default_value: f64,
+        #[serde(default)]
+        min: Option<f64>,
+        #[serde(default)]
+        max: Option<f64>,
+        #[serde(default)]
+        step: Option<f64>,
+    },
+    Boolean {
+        #[serde(default)]
+        label: Option<String>,
+        default_value: bool,
+    },
+    Color {
+        #[serde(default)]
+        label: Option<String>,
+        default_value: String,
+    },
+    Select {
+        #[serde(default)]
+        label: Option<String>,
+        default_value: String,
+        options: Vec<String>,
+    },
+}
+
+/// One registered component's declared props, keyed by prop name — the
+/// Rust-side counterpart of `ComponentPropertySchema<Props>` in
+/// `packages/react/src/registry.ts`.
+pub type ComponentPropertySchema = BTreeMap<String, ComponentPropertyField>;
+
+/// A live connection to the `@mikan/react` CLI evaluating one entry module.
+pub struct ReactBridge {
+    child: Child,
+    stdin: ChildStdin,
+    stdout: BufReader<ChildStdout>,
+    metadata: ReactCompositionMetadata,
+}
+
+impl Drop for ReactBridge {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+impl ReactBridge {
+    /// Spawns `node <cli_script> <entry>` and reads its startup configuration.
+    pub fn spawn(
+        node: impl AsRef<Path>,
+        cli_script: impl AsRef<Path>,
+        entry: impl AsRef<Path>,
+    ) -> Result<Self, ReactBridgeError> {
+        let node = node.as_ref();
+        let mut child = Command::new(node)
+            .arg(cli_script.as_ref())
+            .arg(entry.as_ref())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .map_err(|source| ReactBridgeError::Executable {
+                executable: node.to_owned(),
+                source,
+            })?;
+        let stdin = child.stdin.take().ok_or(ReactBridgeError::MissingPipe)?;
+        let stdout = child.stdout.take().ok_or(ReactBridgeError::MissingPipe)?;
+        let mut stdout = BufReader::new(stdout);
+
+        let mut line = String::new();
+        let read = stdout.read_line(&mut line).map_err(ReactBridgeError::Io)?;
+        if read == 0 {
+            let _ = child.wait();
+            return Err(ReactBridgeError::UnexpectedExit);
+        }
+        let ready: ReadyMessage =
+            serde_json::from_str(line.trim()).map_err(ReactBridgeError::Protocol)?;
+        let metadata = match ready {
+            ReadyMessage::Ready {
+                config,
+                component_schemas,
+            } => ReactCompositionMetadata {
+                width: config.width,
+                height: config.height,
+                frame_rate: config.frame_rate,
+                duration_in_frames: config.duration_in_frames,
+                component_schemas,
+            },
+            ReadyMessage::Error { error } => return Err(ReactBridgeError::EntryFailed(error)),
+        };
+
+        Ok(Self {
+            child,
+            stdin,
+            stdout,
+            metadata,
+        })
+    }
+
+    pub const fn metadata(&self) -> &ReactCompositionMetadata {
+        &self.metadata
+    }
+
+    /// Requests the evaluated `Scene` at an exact composition time.
+    pub fn scene_at(&mut self, time: Time) -> Result<Scene, ReactBridgeError> {
+        self.scene_at_with_project(time, None)
+    }
+
+    /// Same as [`Self::scene_at`], but also hands the entry's
+    /// `<ProjectTimeline />`/`<ProjectTrack />`/`useProjectTrack()` a
+    /// project's layers already evaluated for this exact time. The Node
+    /// side cannot ask Rust to evaluate a project mid-render: this process
+    /// is synchronously blocked on the response to this very request, so a
+    /// request travelling the other way would deadlock. Evaluating up front
+    /// and embedding the result avoids that.
+    pub fn scene_at_with_project(
+        &mut self,
+        time: Time,
+        project: Option<ProjectFrame<'_>>,
+    ) -> Result<Scene, ReactBridgeError> {
+        let request = Request {
+            time,
+            project: project.map(|frame| ProjectPayload {
+                layers: frame.layers,
+                tracks: frame.tracks,
+            }),
+        };
+        let payload = serde_json::to_string(&request).map_err(ReactBridgeError::Protocol)?;
+        writeln!(self.stdin, "{payload}").map_err(ReactBridgeError::Io)?;
+        self.stdin.flush().map_err(ReactBridgeError::Io)?;
+
+        let mut line = String::new();
+        let read = self
+            .stdout
+            .read_line(&mut line)
+            .map_err(ReactBridgeError::Io)?;
+        if read == 0 {
+            return Err(ReactBridgeError::UnexpectedExit);
+        }
+        let response: Response =
+            serde_json::from_str(line.trim()).map_err(ReactBridgeError::Protocol)?;
+        match response {
+            Response::Ok { scene } => Ok(scene),
+            Response::Err { error } => Err(ReactBridgeError::Render(error)),
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct Request<'a> {
+    time: Time,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    project: Option<ProjectPayload<'a>>,
+}
+
+#[derive(Serialize)]
+struct ProjectPayload<'a> {
+    layers: &'a [Layer],
+    tracks: &'a BTreeMap<String, Vec<Layer>>,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Response {
+    Ok { scene: Scene },
+    Err { error: String },
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum ReadyMessage {
+    Ready {
+        config: ReactCompositionConfig,
+        #[serde(default, rename = "componentSchemas")]
+        component_schemas: BTreeMap<String, ComponentPropertySchema>,
+    },
+    Error {
+        error: String,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReactCompositionConfig {
+    width: u32,
+    height: u32,
+    frame_rate: Rational,
+    duration_in_frames: u64,
+}
+
+#[derive(Debug)]
+pub enum ReactBridgeError {
+    Executable {
+        executable: PathBuf,
+        source: io::Error,
+    },
+    MissingPipe,
+    Io(io::Error),
+    Protocol(serde_json::Error),
+    UnexpectedExit,
+    EntryFailed(String),
+    Render(String),
+}
+
+impl fmt::Display for ReactBridgeError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Executable { executable, source } => write!(
+                formatter,
+                "could not run {}: {source}",
+                executable.display()
+            ),
+            Self::MissingPipe => {
+                formatter.write_str("the Node.js React runtime did not provide its stdio pipes")
+            }
+            Self::Io(error) => write!(
+                formatter,
+                "could not communicate with the Node.js React runtime: {error}"
+            ),
+            Self::Protocol(error) => write!(
+                formatter,
+                "the Node.js React runtime sent an unexpected response: {error}"
+            ),
+            Self::UnexpectedExit => {
+                formatter.write_str("the Node.js React runtime exited unexpectedly")
+            }
+            Self::EntryFailed(error) => {
+                write!(formatter, "could not load the React composition: {error}")
+            }
+            Self::Render(error) => write!(formatter, "could not render the composition: {error}"),
+        }
+    }
+}
+
+impl Error for ReactBridgeError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::Executable { source, .. } | Self::Io(source) => Some(source),
+            Self::Protocol(error) => Some(error),
+            Self::MissingPipe | Self::UnexpectedExit | Self::EntryFailed(_) | Self::Render(_) => {
+                None
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reports_a_missing_node_executable() {
+        let result = ReactBridge::spawn(
+            "/definitely-not-installed/mikan-node",
+            "cli.js",
+            "entry.tsx",
+        );
+        assert!(matches!(result, Err(ReactBridgeError::Executable { .. })));
+    }
+
+    #[test]
+    fn deserializes_component_schemas_from_the_ready_message() {
+        let json = serde_json::json!({
+            "config": {
+                "width": 640,
+                "height": 360,
+                "frameRate": {"numerator": 30, "denominator": 1},
+                "durationInFrames": 30
+            },
+            "componentSchemas": {
+                "BossIntroduction": {
+                    "bossName": {"type": "string", "label": "Boss Name", "defaultValue": "Golem"},
+                    "level": {
+                        "type": "number",
+                        "defaultValue": 1,
+                        "min": 1,
+                        "max": 999
+                    }
+                }
+            }
+        })
+        .to_string();
+
+        let ReadyMessage::Ready {
+            config,
+            component_schemas,
+        } = serde_json::from_str(&json).unwrap()
+        else {
+            panic!("expected a Ready message");
+        };
+        assert_eq!(config.width, 640);
+        let schema = component_schemas.get("BossIntroduction").unwrap();
+        assert_eq!(
+            schema.get("bossName"),
+            Some(&ComponentPropertyField::String {
+                label: Some("Boss Name".to_owned()),
+                default_value: "Golem".to_owned(),
+            })
+        );
+        assert_eq!(
+            schema.get("level"),
+            Some(&ComponentPropertyField::Number {
+                label: None,
+                default_value: 1.0,
+                min: Some(1.0),
+                max: Some(999.0),
+                step: None,
+            })
+        );
+    }
+
+    #[test]
+    fn ready_message_without_component_schemas_defaults_to_empty() {
+        let json = serde_json::json!({
+            "config": {
+                "width": 640,
+                "height": 360,
+                "frameRate": {"numerator": 30, "denominator": 1},
+                "durationInFrames": 30
+            }
+        })
+        .to_string();
+
+        let ReadyMessage::Ready {
+            component_schemas, ..
+        } = serde_json::from_str(&json).unwrap()
+        else {
+            panic!("expected a Ready message");
+        };
+        assert!(component_schemas.is_empty());
+    }
+}

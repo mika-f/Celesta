@@ -1,5 +1,6 @@
 //! Frame-exact project export through the shared evaluator and renderers.
 
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::ffi::OsStr;
 use std::fmt;
@@ -12,11 +13,14 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-use mikan_composition::{Rational, Time, TimeError};
+use mikan_composition::{
+    AssetLocation, Layer, LayerContent, Rational, ResolvedAsset, Time, TimeError,
+};
 use mikan_evaluator::{EvaluationError, Evaluator};
 use mikan_gpu_renderer::{GpuRenderError, GpuRenderOptions, GpuRenderer};
 use mikan_media::{AudioMixError, FfmpegBackend, mix_audio_graph_cancellable};
-use mikan_project::{LoadError, Project};
+use mikan_project::{LoadError, Project, TimelineContent};
+use mikan_react_bridge::{ProjectFrame, ReactBridge, ReactBridgeError};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExportOptions {
@@ -33,6 +37,37 @@ impl Default for ExportOptions {
             overwrite: false,
         }
     }
+}
+
+/// Locates the `@mikan/react` Node.js runtime used to evaluate a React entry.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReactRuntimeOptions {
+    pub node: PathBuf,
+    pub cli_script: PathBuf,
+}
+
+impl ReactRuntimeOptions {
+    pub fn new(node: impl Into<PathBuf>, cli_script: impl Into<PathBuf>) -> Self {
+        Self {
+            node: node.into(),
+            cli_script: cli_script.into(),
+        }
+    }
+}
+
+/// A GUI-editor-owned project a React export evaluates alongside its entry,
+/// for the entry's `<ProjectTimeline />` to embed.
+#[derive(Clone, Copy, Debug)]
+pub struct CompanionProject<'a> {
+    pub project: &'a Project,
+    pub project_asset_root: &'a Path,
+}
+
+struct ReactVideoRequest<'a> {
+    entry: &'a Path,
+    react_runtime: &'a ReactRuntimeOptions,
+    asset_root: &'a Path,
+    project: Option<(&'a Project, &'a Path)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -200,6 +235,170 @@ impl Exporter {
         Ok(())
     }
 
+    /// Exports a React composition entry to MP4. Unlike project export, this
+    /// path currently has no audio graph, so the encoded video is published
+    /// directly instead of going through a separate mux stage.
+    pub fn export_react_entry(
+        &self,
+        entry: impl AsRef<Path>,
+        react_runtime: &ReactRuntimeOptions,
+        output_path: impl AsRef<Path>,
+    ) -> Result<(), ExportError> {
+        self.export_react_entry_with_progress(entry, react_runtime, output_path, |_| {})
+    }
+
+    pub fn export_react_entry_with_progress(
+        &self,
+        entry: impl AsRef<Path>,
+        react_runtime: &ReactRuntimeOptions,
+        output_path: impl AsRef<Path>,
+        progress: impl FnMut(ExportProgress),
+    ) -> Result<(), ExportError> {
+        self.export_react_entry_cancellable(
+            entry,
+            react_runtime,
+            output_path,
+            &ExportCancellation::default(),
+            progress,
+        )
+    }
+
+    pub fn export_react_entry_cancellable(
+        &self,
+        entry: impl AsRef<Path>,
+        react_runtime: &ReactRuntimeOptions,
+        output_path: impl AsRef<Path>,
+        cancellation: &ExportCancellation,
+        progress: impl FnMut(ExportProgress),
+    ) -> Result<(), ExportError> {
+        self.export_react_entry_impl(
+            entry,
+            react_runtime,
+            None,
+            output_path,
+            cancellation,
+            progress,
+        )
+    }
+
+    /// Same as [`Self::export_react_entry`], but also evaluates a companion
+    /// project once per frame and gives the entry's `<ProjectTimeline />`
+    /// the resulting layers. `companion.project_asset_root` resolves the
+    /// project's own relative asset paths and may differ from the entry's
+    /// directory; every timeline content kind but `audio` is evaluated (see
+    /// `visual_only_project`).
+    pub fn export_react_entry_with_project(
+        &self,
+        entry: impl AsRef<Path>,
+        react_runtime: &ReactRuntimeOptions,
+        companion: CompanionProject<'_>,
+        output_path: impl AsRef<Path>,
+    ) -> Result<(), ExportError> {
+        self.export_react_entry_with_project_and_progress(
+            entry,
+            react_runtime,
+            companion,
+            output_path,
+            |_| {},
+        )
+    }
+
+    pub fn export_react_entry_with_project_and_progress(
+        &self,
+        entry: impl AsRef<Path>,
+        react_runtime: &ReactRuntimeOptions,
+        companion: CompanionProject<'_>,
+        output_path: impl AsRef<Path>,
+        progress: impl FnMut(ExportProgress),
+    ) -> Result<(), ExportError> {
+        self.export_react_entry_with_project_cancellable(
+            entry,
+            react_runtime,
+            companion,
+            output_path,
+            &ExportCancellation::default(),
+            progress,
+        )
+    }
+
+    pub fn export_react_entry_with_project_cancellable(
+        &self,
+        entry: impl AsRef<Path>,
+        react_runtime: &ReactRuntimeOptions,
+        companion: CompanionProject<'_>,
+        output_path: impl AsRef<Path>,
+        cancellation: &ExportCancellation,
+        progress: impl FnMut(ExportProgress),
+    ) -> Result<(), ExportError> {
+        self.export_react_entry_impl(
+            entry,
+            react_runtime,
+            Some((companion.project, companion.project_asset_root)),
+            output_path,
+            cancellation,
+            progress,
+        )
+    }
+
+    fn export_react_entry_impl(
+        &self,
+        entry: impl AsRef<Path>,
+        react_runtime: &ReactRuntimeOptions,
+        project: Option<(&Project, &Path)>,
+        output_path: impl AsRef<Path>,
+        cancellation: &ExportCancellation,
+        mut progress: impl FnMut(ExportProgress),
+    ) -> Result<(), ExportError> {
+        let entry = entry.as_ref();
+        let output_path = output_path.as_ref();
+        ensure_not_cancelled(cancellation)?;
+        validate_output(output_path, self.options.overwrite)?;
+
+        let asset_root = entry.parent().unwrap_or_else(|| Path::new("."));
+        let parent = output_path.parent().unwrap_or_else(|| Path::new("."));
+        fs::create_dir_all(parent).map_err(|source| ExportError::Io {
+            operation: "create output directory",
+            source,
+        })?;
+        let final_file = tempfile::Builder::new()
+            .prefix(".mikan-export-")
+            .suffix(".mp4")
+            .tempfile_in(parent)
+            .map_err(|source| ExportError::Io {
+                operation: "create temporary output",
+                source,
+            })?;
+
+        self.render_react_video(
+            ReactVideoRequest {
+                entry,
+                react_runtime,
+                asset_root,
+                project,
+            },
+            final_file.path(),
+            cancellation,
+            &mut progress,
+        )?;
+        ensure_not_cancelled(cancellation)?;
+        if self.options.overwrite {
+            final_file.persist(output_path)
+        } else {
+            final_file.persist_noclobber(output_path)
+        }
+        .map_err(|error| {
+            if error.error.kind() == io::ErrorKind::AlreadyExists {
+                ExportError::OutputExists(output_path.to_owned())
+            } else {
+                ExportError::Io {
+                    operation: "publish exported video",
+                    source: error.error,
+                }
+            }
+        })?;
+        Ok(())
+    }
+
     fn render_video(
         &self,
         project: &Project,
@@ -230,7 +429,7 @@ impl Exporter {
                 "-pix_fmt",
                 "yuv420p",
                 "-threads",
-                "1",
+                "0",
                 "-movflags",
                 "+faststart",
             ])
@@ -284,6 +483,161 @@ impl Exporter {
         finish_process(child, write_result, "video encoding")
     }
 
+    fn render_react_video(
+        &self,
+        request: ReactVideoRequest<'_>,
+        output: &Path,
+        cancellation: &ExportCancellation,
+        progress: &mut impl FnMut(ExportProgress),
+    ) -> Result<(), ExportError> {
+        let ReactVideoRequest {
+            entry,
+            react_runtime,
+            asset_root,
+            project,
+        } = request;
+        let mut bridge = ReactBridge::spawn(&react_runtime.node, &react_runtime.cli_script, entry)
+            .map_err(ExportError::React)?;
+        let metadata = bridge.metadata().clone();
+
+        let filtered_project = project.map(|(project, _)| visual_only_project(project));
+        let project_evaluator = filtered_project
+            .as_ref()
+            .map(Evaluator::new)
+            .transpose()
+            .map_err(ExportError::Evaluation)?;
+        let project_asset_root = project.map(|(_, asset_root)| asset_root);
+        let project_fonts = project_evaluator
+            .as_ref()
+            .map(|evaluator| -> Result<_, EvaluationError> {
+                let mut fonts = evaluator.scene_at(Time::ZERO)?.fonts;
+                if let Some(asset_root) = project_asset_root {
+                    absolutize_fonts(&mut fonts, asset_root);
+                }
+                Ok(fonts)
+            })
+            .transpose()
+            .map_err(ExportError::Evaluation)?
+            .unwrap_or_default();
+        validate_dimensions(metadata.width, metadata.height)?;
+        if metadata.duration_in_frames == 0 {
+            return Err(ExportError::EmptyTimeline);
+        }
+
+        let dimensions = format!("{}x{}", metadata.width, metadata.height);
+        let rate = format!(
+            "{}/{}",
+            metadata.frame_rate.numerator, metadata.frame_rate.denominator
+        );
+        let mut child = Command::new(&self.options.ffmpeg)
+            .args(["-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgba"])
+            .arg("-video_size")
+            .arg(dimensions)
+            .arg("-framerate")
+            .arg(rate)
+            .args(["-i", "pipe:0", "-an", "-frames:v"])
+            .arg(metadata.duration_in_frames.to_string())
+            .args([
+                "-c:v",
+                "libx264",
+                "-preset",
+                "medium",
+                "-crf",
+                "18",
+                "-pix_fmt",
+                "yuv420p",
+                "-threads",
+                "0",
+                "-movflags",
+                "+faststart",
+            ])
+            .arg(output)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|source| ExportError::Executable {
+                executable: self.options.ffmpeg.clone(),
+                source,
+            })?;
+
+        let write_result = (|| {
+            let stdin = child.stdin.take().ok_or(ExportError::MissingPipe)?;
+            let mut stdin = BufWriter::new(stdin);
+            let mut renderer =
+                GpuRenderer::new(GpuRenderOptions::default()).map_err(ExportError::Render)?;
+            renderer = renderer.with_asset_root(asset_root);
+            // Attached unconditionally: the React entry's own <Video>
+            // elements need decoding just as much as a companion project's
+            // Video content does, and the React entry's asset_root stays the
+            // renderer's single asset_root either way (see
+            // absolutize_layers/absolutize_fonts below for how a project's
+            // own, differently-rooted assets still resolve).
+            let video_decoder = FfmpegBackend::with_executables(
+                self.options.ffmpeg.clone(),
+                self.options.ffprobe.clone(),
+            )
+            .with_sequential_video(metadata.frame_rate);
+            renderer = renderer.with_video_decoder(video_decoder);
+            for frame_index in 0..metadata.duration_in_frames {
+                ensure_not_cancelled(cancellation)?;
+                progress(ExportProgress::Rendering {
+                    frame: frame_index + 1,
+                    total: metadata.duration_in_frames,
+                });
+                let frame_index =
+                    i64::try_from(frame_index).map_err(|_| ExportError::TimelineTooLong)?;
+                let time =
+                    Time::frames(frame_index, metadata.frame_rate).map_err(ExportError::Time)?;
+                let project_frame = project_evaluator
+                    .as_ref()
+                    .zip(filtered_project.as_ref())
+                    .map(
+                        |(evaluator, filtered_project)| -> Result<_, EvaluationError> {
+                            let mut scene = evaluator.scene_at(time)?;
+                            let mut tracks = BTreeMap::new();
+                            for track in &filtered_project.tracks {
+                                let mut layers = evaluator.layers_for_track(&track.id, time)?;
+                                if let Some(asset_root) = project_asset_root {
+                                    absolutize_layers(&mut layers, asset_root);
+                                }
+                                tracks.insert(track.id.clone(), layers);
+                            }
+                            if let Some(asset_root) = project_asset_root {
+                                absolutize_layers(&mut scene.layers, asset_root);
+                            }
+                            Ok((scene.layers, tracks))
+                        },
+                    )
+                    .transpose()
+                    .map_err(ExportError::Evaluation)?;
+                let mut scene = bridge
+                    .scene_at_with_project(
+                        time,
+                        project_frame.as_ref().map(|(layers, tracks)| ProjectFrame {
+                            layers: layers.as_slice(),
+                            tracks,
+                        }),
+                    )
+                    .map_err(ExportError::React)?;
+                scene.fonts.extend(project_fonts.iter().cloned());
+                let frame = renderer.render(&scene).map_err(ExportError::Render)?;
+                stdin
+                    .write_all(frame.pixels())
+                    .map_err(|source| ExportError::Io {
+                        operation: "stream video frame to FFmpeg",
+                        source,
+                    })?;
+            }
+            stdin.flush().map_err(|source| ExportError::Io {
+                operation: "finish video frame stream",
+                source,
+            })?;
+            Ok(())
+        })();
+        finish_process(child, write_result, "video encoding")
+    }
+
     fn mux_audio(
         &self,
         video: &Path,
@@ -312,7 +666,7 @@ impl Exporter {
                 "-b:a",
                 "192k",
                 "-threads",
-                "1",
+                "0",
                 "-shortest",
                 "-movflags",
                 "+faststart",
@@ -352,6 +706,68 @@ impl Exporter {
 impl Default for Exporter {
     fn default() -> Self {
         Self::new(ExportOptions::default())
+    }
+}
+
+/// Drops `audio` timeline items before evaluating a companion project for a
+/// React export. `Evaluator::visual_layer` already evaluates an `audio` item
+/// to no layer (`TimelineContent::Audio { .. } => return Ok(None)`), so this
+/// filter is a cheap, explicit skip rather than a behavior change; the
+/// React export path doesn't mux any project audio yet regardless (see
+/// `HANDOFF.md`'s open `AudioGraph` item), so an `audio` item has nothing to
+/// contribute here either way. Every other kind reaches
+/// `<ProjectTimeline />`/`<ProjectTrack />`: `component` items evaluate to
+/// `LayerContent::MissingComponent`, which `@mikan/react` resolves against
+/// its own `registerComponent()` registry (falling back to leaving
+/// `missingComponent` layers as-is, which `GpuRenderer` then errors on);
+/// `dialogue` items evaluate to a `LayerContent::Group` of the character's
+/// portrait image and subtitle text (`Evaluator::dialogue`) — there is no
+/// dedicated `LayerContent::Dialogue`, so it needs no special handling here
+/// or on the TypeScript side, the same generic `Group`/`Image`/`Text`
+/// rendering every other layer already gets.
+fn visual_only_project(project: &Project) -> Project {
+    let mut filtered = project.clone();
+    for track in &mut filtered.tracks {
+        track
+            .items
+            .retain(|item| !matches!(item.content, TimelineContent::Audio { .. }));
+    }
+    filtered
+}
+
+/// Rewrites a project-evaluated layer tree's relative asset paths into
+/// absolute ones. A React export's `GpuRenderer` has a single `asset_root`
+/// (the entry's own directory); a companion project's assets may live
+/// elsewhere, so its evaluated layers carry absolute paths instead of
+/// relying on that shared root.
+fn absolutize_layers(layers: &mut [Layer], asset_root: &Path) {
+    for layer in layers {
+        absolutize_layer_content(&mut layer.content, asset_root);
+    }
+}
+
+fn absolutize_layer_content(content: &mut LayerContent, asset_root: &Path) {
+    match content {
+        LayerContent::Video { asset, .. } | LayerContent::Image { asset } => {
+            absolutize_asset(asset, asset_root);
+        }
+        LayerContent::Group { layers } => absolutize_layers(layers, asset_root),
+        LayerContent::Text { .. } | LayerContent::MissingComponent { .. } => {}
+    }
+}
+
+fn absolutize_fonts(fonts: &mut [ResolvedAsset], asset_root: &Path) {
+    for font in fonts {
+        absolutize_asset(font, asset_root);
+    }
+}
+
+fn absolutize_asset(asset: &mut ResolvedAsset, asset_root: &Path) {
+    if let AssetLocation::File { path } = &mut asset.location {
+        let candidate = Path::new(path.as_str());
+        if candidate.is_relative() {
+            *path = asset_root.join(candidate).to_string_lossy().into_owned();
+        }
     }
 }
 
@@ -427,6 +843,7 @@ pub enum ExportError {
     Evaluation(EvaluationError),
     Render(GpuRenderError),
     Audio(AudioMixError),
+    React(ReactBridgeError),
     Time(TimeError),
     Executable {
         executable: PathBuf,
@@ -460,6 +877,7 @@ impl fmt::Display for ExportError {
             Self::Evaluation(error) => write!(formatter, "could not evaluate export: {error}"),
             Self::Render(error) => write!(formatter, "could not render export: {error}"),
             Self::Audio(error) => write!(formatter, "could not mix export audio: {error}"),
+            Self::React(error) => write!(formatter, "could not evaluate React export: {error}"),
             Self::Time(error) => write!(formatter, "could not calculate export time: {error}"),
             Self::Executable { executable, source } => {
                 write!(
@@ -501,6 +919,7 @@ impl Error for ExportError {
             Self::Evaluation(error) => Some(error),
             Self::Render(error) => Some(error),
             Self::Audio(error) => Some(error),
+            Self::React(error) => Some(error),
             Self::Time(error) => Some(error),
             Self::Executable { source, .. } | Self::Io { source, .. } => Some(source),
             Self::Process { .. }
@@ -529,6 +948,77 @@ mod tests {
             frame_count(Time::new(1002, 1000), Rational::new(30_000, 1001)).unwrap(),
             31
         );
+    }
+
+    #[test]
+    fn visual_only_project_keeps_dialogue_and_component_but_drops_audio() {
+        const WITH_DIALOGUE: &str = r#"{
+            "version": 0,
+            "settings": {
+                "width": 640,
+                "height": 360,
+                "frameRate": {"numerator": 30, "denominator": 1},
+                "sampleRate": 48000
+            },
+            "assets": {
+                "akane-default": {"type": "image", "name": "Akane", "source": {"type": "file", "path": "./portrait.png"}},
+                "voice-001": {"type": "audio", "source": {"type": "file", "path": "./voice.wav"}}
+            },
+            "characters": {
+                "akane": {
+                    "name": "Akane",
+                    "portrait": {
+                        "defaultExpression": "default",
+                        "expressions": {"default": "akane-default"}
+                    },
+                    "subtitle": {}
+                }
+            },
+            "tracks": [
+                {
+                    "id": "dialogue",
+                    "name": "Dialogue",
+                    "kind": "dialogue",
+                    "items": [
+                        {
+                            "id": "line-1",
+                            "range": {"start": {"value": 0, "timescale": 1}, "duration": {"value": 1, "timescale": 1}},
+                            "content": {"type": "dialogue", "character": "akane", "text": "Hello", "audio": "voice-001"}
+                        },
+                        {
+                            "id": "voice-only",
+                            "range": {"start": {"value": 0, "timescale": 1}, "duration": {"value": 1, "timescale": 1}},
+                            "content": {"type": "audio", "asset": "voice-001"}
+                        }
+                    ]
+                }
+            ],
+            "properties": {}
+        }"#;
+        let project = Project::from_json(WITH_DIALOGUE).unwrap();
+
+        let filtered = visual_only_project(&project);
+        let item_ids: Vec<&str> = filtered.tracks[0]
+            .items
+            .iter()
+            .map(|item| item.id.as_str())
+            .collect();
+        assert_eq!(item_ids, vec!["line-1"]);
+
+        let evaluator = Evaluator::new(&filtered).unwrap();
+        let scene = evaluator.scene_at(Time::ZERO).unwrap();
+        assert_eq!(scene.layers.len(), 1);
+        let LayerContent::Group { layers } = &scene.layers[0].content else {
+            panic!("dialogue should evaluate to a group of portrait + subtitle layers");
+        };
+        assert!(layers.iter().any(|layer| matches!(
+            &layer.content,
+            LayerContent::Image { asset } if asset.id == "akane-default"
+        )));
+        assert!(layers.iter().any(|layer| matches!(
+            &layer.content,
+            LayerContent::Text { text, .. } if text == "Hello"
+        )));
     }
 
     #[test]

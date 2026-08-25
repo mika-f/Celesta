@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::ffi::OsStr;
 use std::num::{NonZeroU16, NonZeroU32};
@@ -23,13 +23,16 @@ use mikan_composition::{
     Animatable, AssetLocation, AudioClip, AudioGraph, Rational, Scene, Time, evaluate_f64,
     integrate_f64,
 };
-use mikan_editor::{AssetSummary, ClipKind, EditorDocument, TimelineClock, TrackSummary};
+use mikan_editor::{
+    AssetSummary, ClipKind, ComponentClipSummary, EditorDocument, TimelineClock, TrackSummary,
+};
 use mikan_exporter::{ExportCancellation, ExportError, ExportOptions, ExportProgress, Exporter};
 use mikan_gpu_renderer::{GpuRenderOptions, GpuRenderer, PreviewFrame as GpuPreviewFrame};
 use mikan_media::{
     AudioBuffer, AudioDecoder, FfmpegBackend, MediaError, MediaProbe, mix_audio_graph_cancellable,
 };
 use mikan_project::{AssetKind, Project, TrackKind};
+use mikan_react_bridge::{ComponentPropertyField, ComponentPropertySchema, ReactBridge};
 use rodio::{DeviceSinkBuilder, Player, buffer::SamplesBuffer};
 
 mod audio_cache;
@@ -39,6 +42,17 @@ use audio_cache::DiskAudioCache;
 use text_input::{TextInput, TextInputEvent};
 
 const EDITOR_DEMO_PROJECT: &str = include_str!("../../../examples/editor-demo.mikan.json");
+
+/// The `node` executable and `@mikan/react` CLI script `ComponentSchemaWorker`
+/// spawns to query a `react_entry`'s registered component schemas — the same
+/// `node` on `PATH` and workspace-relative `packages/react/dist/cli.js` that
+/// `mikan-exporter --react` resolves (see its `main.rs`), so a developer only
+/// needs `pnpm install && pnpm run build` in `packages/react` once for both.
+fn react_runtime_paths() -> (PathBuf, PathBuf) {
+    let cli_script =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../packages/react/dist/cli.js");
+    (PathBuf::from("node"), cli_script)
+}
 
 actions!(
     mikan_editor,
@@ -209,6 +223,76 @@ impl MediaProbeWorker {
     }
 }
 
+struct ComponentSchemaRequest {
+    generation: u64,
+    node: PathBuf,
+    cli_script: PathBuf,
+    entry: PathBuf,
+}
+
+struct ComponentSchemaResult {
+    generation: u64,
+    schemas: Result<BTreeMap<String, ComponentPropertySchema>, String>,
+}
+
+/// Queries a `.tsx` entry's registered `registerComponent()` schemas by
+/// spawning the same `@mikan/react` Node.js runtime `mikan-exporter --react`
+/// uses, reading them off `ReactBridge::metadata` (populated during the
+/// startup handshake, before any frame is requested), then dropping the
+/// process — the editor's own preview never renders React content, so
+/// nothing else needs this connection to stay open. `ReactBridge::spawn` is
+/// a blocking call (it blocks on the child process's first stdout line), so
+/// this runs on its own thread like the other editor workers rather than on
+/// the GPUI render thread.
+struct ComponentSchemaWorker {
+    requests: mpsc::Sender<ComponentSchemaRequest>,
+    results: mpsc::Receiver<ComponentSchemaResult>,
+}
+
+impl ComponentSchemaWorker {
+    fn spawn() -> Result<Self, Box<dyn Error>> {
+        let (request_tx, request_rx) = mpsc::channel::<ComponentSchemaRequest>();
+        let (result_tx, result_rx) = mpsc::channel::<ComponentSchemaResult>();
+        thread::Builder::new()
+            .name("mikan-component-schema".to_owned())
+            .spawn(move || {
+                while let Ok(first) = request_rx.recv() {
+                    let request = take_latest(first, &request_rx);
+                    let schemas =
+                        ReactBridge::spawn(&request.node, &request.cli_script, &request.entry)
+                            .map(|bridge| {
+                                bridge
+                                    .metadata()
+                                    .component_schemas
+                                    .iter()
+                                    .map(|(name, schema)| (name.clone(), schema.clone()))
+                                    .collect()
+                            })
+                            .map_err(|error| error.to_string());
+                    if result_tx
+                        .send(ComponentSchemaResult {
+                            generation: request.generation,
+                            schemas,
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            })?;
+        Ok(Self {
+            requests: request_tx,
+            results: result_rx,
+        })
+    }
+
+    fn request(&self, request: ComponentSchemaRequest) -> Result<(), String> {
+        self.requests
+            .send(request)
+            .map_err(|_| "component schema worker stopped unexpectedly".to_owned())
+    }
+}
+
 impl PreviewWorker {
     fn spawn(mut renderer: GpuRenderer) -> Result<Self, Box<dyn Error>> {
         let (request_tx, request_rx) = mpsc::channel::<PreviewRequest>();
@@ -337,6 +421,15 @@ impl ExportWorker {
 struct MasterVolumeDrag {
     pointer_x: Pixels,
     start_volume: f64,
+}
+
+/// A `string`- or `color`-typed component prop currently being edited
+/// through `component_prop_input`, one at a time (the same shape as track
+/// renaming's single shared `TextInput`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ComponentPropEdit {
+    clip_id: String,
+    key: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -595,6 +688,14 @@ struct EditorView {
     selected_track_id: Option<String>,
     renaming_track_id: Option<String>,
     track_name_input: Option<Entity<TextInput>>,
+    component_schema_worker: ComponentSchemaWorker,
+    component_schema_generation: u64,
+    component_schema_pending: bool,
+    component_schema_entry: Option<String>,
+    component_schemas: BTreeMap<String, ComponentPropertySchema>,
+    component_schema_error: Option<SharedString>,
+    editing_component_prop: Option<ComponentPropEdit>,
+    component_prop_input: Option<Entity<TextInput>>,
     project_name: SharedString,
     dimensions: SharedString,
     frame_rate_label: SharedString,
@@ -653,6 +754,7 @@ impl EditorView {
         let media_probe_worker = MediaProbeWorker::spawn()?;
         let audio_mix_worker = AudioMixWorker::spawn()?;
         let export_worker = ExportWorker::spawn()?;
+        let component_schema_worker = ComponentSchemaWorker::spawn()?;
         let mut editor = Self {
             document,
             preview_worker,
@@ -684,6 +786,14 @@ impl EditorView {
             selected_track_id: None,
             renaming_track_id: None,
             track_name_input: None,
+            component_schema_worker,
+            component_schema_generation: 0,
+            component_schema_pending: false,
+            component_schema_entry: None,
+            component_schemas: BTreeMap::new(),
+            component_schema_error: None,
+            editing_component_prop: None,
+            component_prop_input: None,
             project_name,
             dimensions,
             frame_rate_label,
@@ -716,6 +826,7 @@ impl EditorView {
         editor.refresh_preview();
         editor.refresh_media_cache();
         editor.refresh_audio_preview();
+        editor.refresh_component_schemas();
         Ok(editor)
     }
 
@@ -776,6 +887,42 @@ impl EditorView {
         }
     }
 
+    /// Re-queries the project's `react_entry` for its registered components'
+    /// property schemas. Called whenever the entry changes (on load, and
+    /// after `set_react_entry`/`clear_react_entry`) — the result is cached
+    /// by entry path (`component_schema_entry`) rather than re-fetched on
+    /// every clip selection, since spawning Node is comparatively slow and
+    /// the schemas cannot change without the entry file changing (Node
+    /// isn't re-run to pick up entry edits made after this cache is filled;
+    /// re-select the entry, or reload the project, to refresh it).
+    fn refresh_component_schemas(&mut self) {
+        self.component_schema_generation = self.component_schema_generation.wrapping_add(1);
+        let generation = self.component_schema_generation;
+        let Some(entry) = self.document.react_entry_absolute_path() else {
+            self.component_schema_entry = None;
+            self.component_schema_pending = false;
+            self.component_schema_error = None;
+            self.component_schemas.clear();
+            return;
+        };
+        self.component_schema_entry = self.document.react_entry().map(str::to_owned);
+        self.component_schema_pending = true;
+        self.component_schema_error = None;
+        let (node, cli_script) = react_runtime_paths();
+        if let Err(error) = self
+            .component_schema_worker
+            .request(ComponentSchemaRequest {
+                generation,
+                node,
+                cli_script,
+                entry,
+            })
+        {
+            self.component_schema_pending = false;
+            self.component_schema_error = Some(error.into());
+        }
+    }
+
     fn poll_background_work(&mut self) {
         loop {
             match self.preview_worker.results.try_recv() {
@@ -819,6 +966,36 @@ impl EditorView {
                     if self.media_pending {
                         self.media_pending = false;
                         self.edit_error = Some("media probe worker stopped unexpectedly".into());
+                    }
+                    break;
+                }
+            }
+        }
+
+        loop {
+            match self.component_schema_worker.results.try_recv() {
+                Ok(result) => {
+                    if result.generation != self.component_schema_generation {
+                        continue;
+                    }
+                    self.component_schema_pending = false;
+                    match result.schemas {
+                        Ok(schemas) => {
+                            self.component_schemas = schemas;
+                            self.component_schema_error = None;
+                        }
+                        Err(error) => {
+                            self.component_schemas.clear();
+                            self.component_schema_error = Some(error.into());
+                        }
+                    }
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    if self.component_schema_pending {
+                        self.component_schema_pending = false;
+                        self.component_schema_error =
+                            Some("component schema worker stopped unexpectedly".into());
                     }
                     break;
                 }
@@ -1325,6 +1502,125 @@ impl EditorView {
         cx.notify();
     }
 
+    fn apply_component_prop(
+        &mut self,
+        clip_id: &str,
+        key: &str,
+        value: serde_json::Value,
+        cx: &mut Context<Self>,
+    ) {
+        match self.document.set_component_prop(clip_id, key, value) {
+            Ok(()) => {
+                self.tracks = self.document.tracks();
+                self.edit_error = None;
+            }
+            Err(error) => self.edit_error = Some(error.to_string().into()),
+        }
+        cx.notify();
+    }
+
+    fn toggle_component_prop_boolean(
+        &mut self,
+        clip_id: &str,
+        key: &str,
+        current: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.apply_component_prop(clip_id, key, serde_json::Value::Bool(!current), cx);
+    }
+
+    fn step_component_prop_number(
+        &mut self,
+        clip_id: &str,
+        key: &str,
+        current: f64,
+        delta: f64,
+        bounds: (Option<f64>, Option<f64>),
+        cx: &mut Context<Self>,
+    ) {
+        let (min, max) = bounds;
+        let mut next = current + delta;
+        if let Some(min) = min {
+            next = next.max(min);
+        }
+        if let Some(max) = max {
+            next = next.min(max);
+        }
+        let Some(value) = serde_json::Number::from_f64(next).map(serde_json::Value::Number) else {
+            return;
+        };
+        self.apply_component_prop(clip_id, key, value, cx);
+    }
+
+    fn cycle_component_prop_select(
+        &mut self,
+        clip_id: &str,
+        key: &str,
+        options: &[String],
+        current: &str,
+        cx: &mut Context<Self>,
+    ) {
+        if options.is_empty() {
+            return;
+        }
+        let next_index = options
+            .iter()
+            .position(|option| option == current)
+            .map_or(0, |index| (index + 1) % options.len());
+        self.apply_component_prop(
+            clip_id,
+            key,
+            serde_json::Value::String(options[next_index].clone()),
+            cx,
+        );
+    }
+
+    fn begin_component_prop_edit(
+        &mut self,
+        clip_id: &str,
+        key: &str,
+        current: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.editing_component_prop = Some(ComponentPropEdit {
+            clip_id: clip_id.to_owned(),
+            key: key.to_owned(),
+        });
+        self.edit_error = None;
+        if let Some(input) = &self.component_prop_input {
+            input.update(cx, |input, cx| input.set_text(current.to_owned(), cx));
+            input.read(cx).focus(window);
+        }
+        cx.notify();
+    }
+
+    fn commit_component_prop_edit(&mut self, cx: &mut Context<Self>) {
+        let Some(edit) = self.editing_component_prop.clone() else {
+            return;
+        };
+        let Some(text) = self
+            .component_prop_input
+            .as_ref()
+            .map(|input| input.read(cx).text())
+        else {
+            return;
+        };
+        self.editing_component_prop = None;
+        self.apply_component_prop(
+            &edit.clip_id,
+            &edit.key,
+            serde_json::Value::String(text),
+            cx,
+        );
+    }
+
+    fn cancel_component_prop_edit(&mut self, cx: &mut Context<Self>) {
+        self.editing_component_prop = None;
+        self.edit_error = None;
+        cx.notify();
+    }
+
     fn toggle_track_enabled(&mut self, track_id: &str, cx: &mut Context<Self>) {
         match self.document.toggle_track_enabled(track_id) {
             Ok(_) => {
@@ -1765,6 +2061,78 @@ impl EditorView {
 
     fn relink_asset_click(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.request_relink_asset(window, cx);
+    }
+
+    fn request_set_react_entry(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.asset_operation_active {
+            return;
+        }
+        self.asset_operation_active = true;
+        self.edit_error = None;
+        let selection = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Set React Entry".into()),
+        });
+        cx.spawn_in(window, async move |view, cx| {
+            let selected_paths = match selection.await {
+                Ok(Ok(paths)) => paths,
+                Ok(Err(error)) => {
+                    view.update_in(cx, |this, _, cx| {
+                        this.asset_operation_active = false;
+                        this.edit_error =
+                            Some(format!("could not open React entry picker: {error}").into());
+                        cx.notify();
+                    })
+                    .ok();
+                    return;
+                }
+                Err(error) => {
+                    view.update_in(cx, |this, _, cx| {
+                        this.asset_operation_active = false;
+                        this.edit_error =
+                            Some(format!("React entry picker was interrupted: {error}").into());
+                        cx.notify();
+                    })
+                    .ok();
+                    return;
+                }
+            };
+            view.update_in(cx, |this, _, cx| {
+                this.asset_operation_active = false;
+                let Some(path) = selected_paths.and_then(|paths| paths.into_iter().next()) else {
+                    cx.notify();
+                    return;
+                };
+                match this.document.set_react_entry(path) {
+                    Ok(()) => {
+                        this.edit_error = None;
+                        this.refresh_component_schemas();
+                    }
+                    Err(error) => this.edit_error = Some(error.to_string().into()),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn set_react_entry_click(
+        &mut self,
+        _: &ClickEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.request_set_react_entry(window, cx);
+    }
+
+    fn clear_react_entry_click(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+        self.document.clear_react_entry();
+        self.refresh_component_schemas();
+        cx.notify();
     }
 
     fn remove_selected_asset_now(
@@ -2817,6 +3185,43 @@ impl EditorView {
             .child(inspector_row("Duration", self.duration.clone()))
             .child(inspector_row("Renderer", "wgpu"))
             .child(inspector_row("Adapter", self.gpu_name.clone()))
+            .child(inspector_row(
+                "React Entry",
+                self.document
+                    .react_entry()
+                    .map_or_else(|| "Not set".to_owned(), str::to_owned),
+            ))
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap_2()
+                    .px_3()
+                    .py_2()
+                    .border_b_1()
+                    .border_color(rgb(0x292c34))
+                    .child(
+                        inspector_button("react-entry-set", "Set…")
+                            .on_click(cx.listener(Self::set_react_entry_click)),
+                    )
+                    .when(self.document.react_entry().is_some(), |controls| {
+                        controls.child(
+                            inspector_button("react-entry-clear", "Clear")
+                                .on_click(cx.listener(Self::clear_react_entry_click)),
+                        )
+                    })
+                    .when(self.component_schema_pending, |controls| {
+                        controls.child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(0x8d919c))
+                                .child("Loading component schemas…"),
+                        )
+                    })
+                    .when_some(self.component_schema_error.clone(), |controls, error| {
+                        controls.child(div().text_xs().text_color(rgb(0xff9a9a)).child(error))
+                    }),
+            )
             .when_some(selected_track, |panel, track| {
                 let rename_track_id = track.id.clone();
                 let enabled_track_id = track.id.clone();
@@ -3070,6 +3475,9 @@ impl EditorView {
                                 ),
                         )
                     })
+                    .when_some(clip.component.clone(), |panel, component| {
+                        self.render_component_props(panel, &clip.id, &component, cx)
+                    })
             });
         div()
             .flex()
@@ -3082,6 +3490,225 @@ impl EditorView {
             .border_color(rgb(0x30333d))
             .child(panel_header("Inspector", 0))
             .child(contents)
+    }
+
+    /// Renders one editable row per field of a registered component's
+    /// `ComponentPropertySchema`, or an explanatory fallback when no schema
+    /// is available yet (or ever, for a component registered without one).
+    fn render_component_props<E: ParentElement + Sized>(
+        &self,
+        panel: E,
+        clip_id: &str,
+        component: &ComponentClipSummary,
+        cx: &mut Context<Self>,
+    ) -> E {
+        let panel = panel.child(
+            div()
+                .mt_3()
+                .px_3()
+                .py_2()
+                .border_t_1()
+                .border_b_1()
+                .border_color(rgb(0x30333d))
+                .text_sm()
+                .text_color(rgb(0xffb466))
+                .child("Component"),
+        );
+        let panel = panel.child(inspector_row("Registered as", component.name.clone()));
+        let Some(schema) = self.component_schemas.get(&component.name) else {
+            let hint = if self.document.react_entry().is_none() {
+                "Set a React Entry to edit this component's properties."
+            } else if self.component_schema_pending {
+                "Loading this component's property schema…"
+            } else {
+                "This component has no declared property schema."
+            };
+            return panel.child(
+                div()
+                    .px_3()
+                    .py_2()
+                    .text_xs()
+                    .text_color(rgb(0x8d919c))
+                    .child(hint),
+            );
+        };
+        schema.iter().fold(panel, |panel, (key, field)| {
+            self.render_component_prop_field(panel, clip_id, key, field, component, cx)
+        })
+    }
+
+    fn render_component_prop_field<E: ParentElement + Sized>(
+        &self,
+        panel: E,
+        clip_id: &str,
+        key: &str,
+        field: &ComponentPropertyField,
+        component: &ComponentClipSummary,
+        cx: &mut Context<Self>,
+    ) -> E {
+        let label: SharedString = match field {
+            ComponentPropertyField::String { label, .. }
+            | ComponentPropertyField::Number { label, .. }
+            | ComponentPropertyField::Boolean { label, .. }
+            | ComponentPropertyField::Color { label, .. }
+            | ComponentPropertyField::Select { label, .. } => label
+                .clone()
+                .map_or_else(|| key.to_owned().into(), Into::into),
+        };
+        let current = component.props.get(key);
+        let editing = self
+            .editing_component_prop
+            .as_ref()
+            .is_some_and(|edit| edit.clip_id == clip_id && edit.key == key);
+        let field_id: SharedString = format!("component-prop-{clip_id}-{key}").into();
+
+        panel.child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .px_3()
+                .py_2()
+                .border_b_1()
+                .border_color(rgb(0x292c34))
+                .child(div().text_xs().text_color(rgb(0x737783)).child(label))
+                .child(match field {
+                    ComponentPropertyField::Boolean { default_value, .. } => {
+                        let value = current
+                            .and_then(serde_json::Value::as_bool)
+                            .unwrap_or(*default_value);
+                        let clip_id = clip_id.to_owned();
+                        let key = key.to_owned();
+                        inspector_dynamic_button(field_id, if value { "True" } else { "False" })
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.toggle_component_prop_boolean(&clip_id, &key, value, cx);
+                            }))
+                            .into_any_element()
+                    }
+                    ComponentPropertyField::Number {
+                        default_value,
+                        min,
+                        max,
+                        step,
+                        ..
+                    } => {
+                        let value = current
+                            .and_then(serde_json::Value::as_f64)
+                            .unwrap_or(*default_value);
+                        let step = step.unwrap_or(1.0);
+                        let (min, max) = (*min, *max);
+                        let down_clip_id = clip_id.to_owned();
+                        let down_key = key.to_owned();
+                        let up_clip_id = clip_id.to_owned();
+                        let up_key = key.to_owned();
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                inspector_dynamic_button(
+                                    SharedString::from(format!("{field_id}-down")),
+                                    "−",
+                                )
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        this.step_component_prop_number(
+                                            &down_clip_id,
+                                            &down_key,
+                                            value,
+                                            -step,
+                                            (min, max),
+                                            cx,
+                                        );
+                                    },
+                                )),
+                            )
+                            .child(
+                                div()
+                                    .w(px(64.0))
+                                    .text_center()
+                                    .text_sm()
+                                    .text_color(rgb(0xc8cad2))
+                                    .child(format_component_number(value)),
+                            )
+                            .child(
+                                inspector_dynamic_button(
+                                    SharedString::from(format!("{field_id}-up")),
+                                    "+",
+                                )
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        this.step_component_prop_number(
+                                            &up_clip_id,
+                                            &up_key,
+                                            value,
+                                            step,
+                                            (min, max),
+                                            cx,
+                                        );
+                                    },
+                                )),
+                            )
+                            .into_any_element()
+                    }
+                    ComponentPropertyField::Select {
+                        default_value,
+                        options,
+                        ..
+                    } => {
+                        let value = current
+                            .and_then(serde_json::Value::as_str)
+                            .map_or_else(|| default_value.clone(), str::to_owned);
+                        let clip_id = clip_id.to_owned();
+                        let key = key.to_owned();
+                        let options = options.clone();
+                        inspector_dynamic_button(field_id, value.clone())
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.cycle_component_prop_select(
+                                    &clip_id, &key, &options, &value, cx,
+                                );
+                            }))
+                            .into_any_element()
+                    }
+                    ComponentPropertyField::String { default_value, .. }
+                    | ComponentPropertyField::Color { default_value, .. } => {
+                        let value = current
+                            .and_then(serde_json::Value::as_str)
+                            .map_or_else(|| default_value.clone(), str::to_owned);
+                        if editing {
+                            div()
+                                .id(SharedString::from(format!("{field_id}-input")))
+                                .px_2()
+                                .py_1()
+                                .rounded_sm()
+                                .border_1()
+                                .border_color(rgb(0xffa13b))
+                                .bg(rgb(0x17191f))
+                                .text_sm()
+                                .text_color(rgb(0xffffff))
+                                .when_some(self.component_prop_input.clone(), |field, input| {
+                                    field.child(input)
+                                })
+                                .into_any_element()
+                        } else {
+                            let clip_id = clip_id.to_owned();
+                            let key = key.to_owned();
+                            let value_for_edit = value.clone();
+                            inspector_dynamic_button(field_id, value)
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.begin_component_prop_edit(
+                                        &clip_id,
+                                        &key,
+                                        &value_for_edit,
+                                        window,
+                                        cx,
+                                    );
+                                }))
+                                .into_any_element()
+                        }
+                    }
+                }),
+        )
     }
 
     fn timeline(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -4030,8 +4657,18 @@ fn inspector_row(label: &'static str, value: impl Into<SharedString>) -> impl In
 }
 
 fn inspector_button(id: &'static str, label: &'static str) -> gpui::Stateful<gpui::Div> {
+    inspector_dynamic_button(id, label)
+}
+
+/// Same styling as [`inspector_button`], but for a `component_prop_field_id`,
+/// derived from a dynamic clip id and prop key, that cannot be a `&'static
+/// str`.
+fn inspector_dynamic_button(
+    id: impl Into<gpui::ElementId>,
+    label: impl Into<SharedString>,
+) -> gpui::Stateful<gpui::Div> {
     div()
-        .id(id)
+        .id(id.into())
         .cursor_pointer()
         .rounded_sm()
         .bg(rgb(0x292c34))
@@ -4040,7 +4677,15 @@ fn inspector_button(id: &'static str, label: &'static str) -> gpui::Stateful<gpu
         .py_1()
         .text_xs()
         .text_color(rgb(0xc8cad2))
-        .child(label)
+        .child(label.into())
+}
+
+fn format_component_number(value: f64) -> String {
+    if value.fract() == 0.0 && value.abs() < 1e15 {
+        format!("{value:.0}")
+    } else {
+        format!("{value}")
+    }
 }
 
 fn prepare_preview_frame(frame: GpuPreviewFrame) -> PreviewPresentation {
@@ -4168,10 +4813,20 @@ fn run() -> Result<(), Box<dyn Error>> {
                         },
                     )
                     .detach();
+                    let component_prop_input = cx.new(TextInput::new);
+                    cx.subscribe(
+                        &component_prop_input,
+                        |editor: &mut EditorView, _, event: &TextInputEvent, cx| match event {
+                            TextInputEvent::Submit => editor.commit_component_prop_edit(cx),
+                            TextInputEvent::Cancel => editor.cancel_component_prop_edit(cx),
+                        },
+                    )
+                    .detach();
                     focus_handle.focus(window);
                     editor.focus_handle = Some(focus_handle);
                     editor.master_volume_focus = Some(master_volume_focus);
                     editor.track_name_input = Some(track_name_input);
+                    editor.component_prop_input = Some(component_prop_input);
                     editor
                 });
                 let close_view = view.clone();
@@ -4323,6 +4978,7 @@ mod tests {
             kind: ClipKind::Audio,
             enabled: true,
             volume: Some(Animatable::Static(1.0)),
+            component: None,
         };
 
         assert_eq!(level_at_time(&[0.2, 0.8], &clip, Time::new(10, 1)), 0.2);

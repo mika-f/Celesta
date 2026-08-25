@@ -1,5 +1,6 @@
 //! Editor-owned project state and renderer-facing preview evaluation.
 
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 use std::fs::{self, OpenOptions};
@@ -47,6 +48,15 @@ pub struct ClipSummary {
     pub kind: ClipKind,
     pub enabled: bool,
     pub volume: Option<Animatable<f64>>,
+    /// The registered component name and its currently configured props,
+    /// present only for `ClipKind::Component` clips.
+    pub component: Option<ComponentClipSummary>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ComponentClipSummary {
+    pub name: String,
+    pub props: BTreeMap<String, serde_json::Value>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -310,6 +320,15 @@ impl EditorDocument {
                             } => Some(volume.clone().unwrap_or(Animatable::Static(1.0))),
                             _ => None,
                         },
+                        component: match &item.content {
+                            TimelineContent::Component { component, props } => {
+                                Some(ComponentClipSummary {
+                                    name: component.clone(),
+                                    props: props.clone().unwrap_or_default(),
+                                })
+                            }
+                            _ => None,
+                        },
                     })
                     .collect(),
                 enabled: track.enabled != Some(false),
@@ -550,6 +569,83 @@ impl EditorDocument {
         let before = self.project.clone();
         let before_revision = self.current_revision;
         self.project.settings.master_volume = (volume != 1.0).then_some(volume);
+        if self.project != before {
+            self.record_mutation(before, before_revision);
+        }
+        Ok(())
+    }
+
+    /// The `.tsx` entry `TimelineContent::Component` items resolve against,
+    /// as stored in `project.json` (relative to the project file, like an
+    /// asset path) — see `ProjectSettings::react_entry`.
+    pub fn react_entry(&self) -> Option<&str> {
+        self.project.settings.react_entry.as_deref()
+    }
+
+    /// Resolves the stored `react_entry` to an absolute path, the same way
+    /// `local_asset_path` resolves a relative asset path, so a caller can
+    /// hand it straight to `ReactBridge::spawn`.
+    pub fn react_entry_absolute_path(&self) -> Option<PathBuf> {
+        let entry = self.project.settings.react_entry.as_deref()?;
+        let path = Path::new(entry);
+        Some(if path.is_absolute() {
+            path.to_owned()
+        } else {
+            self.asset_root.join(path)
+        })
+    }
+
+    /// Records `path` as the project's React entry, storing it relative to
+    /// the project file the same way an imported asset's path is stored.
+    pub fn set_react_entry(&mut self, path: impl AsRef<Path>) -> Result<(), EditorDocumentError> {
+        let path = path.as_ref();
+        let canonical =
+            fs::canonicalize(path).map_err(|source| EditorDocumentError::ImportAsset {
+                path: path.to_owned(),
+                source,
+            })?;
+        let before = self.project.clone();
+        let before_revision = self.current_revision;
+        self.project.settings.react_entry = Some(self.serialized_asset_path(&canonical));
+        if self.project != before {
+            self.record_mutation(before, before_revision);
+        }
+        Ok(())
+    }
+
+    pub fn clear_react_entry(&mut self) {
+        let before = self.project.clone();
+        let before_revision = self.current_revision;
+        self.project.settings.react_entry = None;
+        if self.project != before {
+            self.record_mutation(before, before_revision);
+        }
+    }
+
+    /// Sets one prop on a `TimelineContent::Component` clip's `props` map,
+    /// creating the map if this is the clip's first configured prop. Errors
+    /// if `clip_id` is not a Component clip — there is nothing else on a
+    /// Video/Text/etc. clip a "component prop" could mean.
+    pub fn set_component_prop(
+        &mut self,
+        clip_id: &str,
+        key: &str,
+        value: serde_json::Value,
+    ) -> Result<(), EditorDocumentError> {
+        let before = self.project.clone();
+        let before_revision = self.current_revision;
+        let (track_index, item_index) = self.clip_indices(clip_id)?;
+        self.ensure_track_unlocked(track_index)?;
+        let TimelineContent::Component { props, .. } =
+            &mut self.project.tracks[track_index].items[item_index].content
+        else {
+            return Err(EditorDocumentError::UnsupportedComponentProp(
+                clip_id.to_owned(),
+            ));
+        };
+        props
+            .get_or_insert_with(BTreeMap::new)
+            .insert(key.to_owned(), value);
         if self.project != before {
             self.record_mutation(before, before_revision);
         }
@@ -1625,6 +1721,7 @@ pub enum EditorDocumentError {
         duration_frames: i64,
         timeline_end_frame: i64,
     },
+    UnsupportedComponentProp(String),
 }
 
 impl fmt::Display for EditorDocumentError {
@@ -1718,6 +1815,9 @@ impl fmt::Display for EditorDocumentError {
                 formatter,
                 "clip frame range {start_frame}+{duration_frames} is outside 0..{timeline_end_frame}"
             ),
+            Self::UnsupportedComponentProp(clip) => {
+                write!(formatter, "clip `{clip}` is not a registered component")
+            }
         }
     }
 }
@@ -1748,7 +1848,8 @@ impl Error for EditorDocumentError {
             | Self::InvalidClipVolume(_)
             | Self::InvalidClipVolumeTime { .. }
             | Self::UnsupportedClipVolume(_)
-            | Self::InvalidClipFrameRange { .. } => None,
+            | Self::InvalidClipFrameRange { .. }
+            | Self::UnsupportedComponentProp(_) => None,
         }
     }
 }
@@ -2007,6 +2108,64 @@ mod tests {
     }
 
     #[test]
+    fn react_entry_and_component_props_are_undoable() {
+        const WITH_COMPONENT: &str = r#"{
+            "version": 0,
+            "settings": {
+                "width": 1920,
+                "height": 1080,
+                "frameRate": {"numerator": 30, "denominator": 1},
+                "sampleRate": 48000
+            },
+            "assets": {},
+            "characters": {},
+            "tracks": [
+                {
+                    "id": "overlays",
+                    "name": "Overlays",
+                    "kind": "overlay",
+                    "items": [
+                        {
+                            "id": "boss-intro",
+                            "range": {"start": {"value": 0, "timescale": 1}, "duration": {"value": 1, "timescale": 1}},
+                            "content": {
+                                "type": "component",
+                                "component": "BossIntroduction",
+                                "props": {"bossName": "Golem"}
+                            }
+                        }
+                    ]
+                }
+            ],
+            "properties": {}
+        }"#;
+        let mut document = EditorDocument::from_json(WITH_COMPONENT, "examples").unwrap();
+
+        assert!(document.react_entry().is_none());
+        assert!(
+            document
+                .set_component_prop("boss-intro", "level", serde_json::json!(42))
+                .is_ok()
+        );
+        let component = document.tracks()[0].clips[0].component.clone().unwrap();
+        assert_eq!(component.name, "BossIntroduction");
+        assert_eq!(
+            component.props.get("bossName"),
+            Some(&serde_json::json!("Golem"))
+        );
+        assert_eq!(component.props.get("level"), Some(&serde_json::json!(42)));
+
+        assert!(document.undo().unwrap());
+        let component = document.tracks()[0].clips[0].component.clone().unwrap();
+        assert!(!component.props.contains_key("level"));
+
+        assert!(matches!(
+            document.set_component_prop("does-not-exist", "level", serde_json::json!(1)),
+            Err(EditorDocumentError::MissingClip(_))
+        ));
+    }
+
+    #[test]
     fn authors_and_flattens_clip_volume_keyframes() {
         let mut document = EditorDocument::from_json(VOICEROID, "examples").unwrap();
 
@@ -2059,6 +2218,37 @@ mod tests {
             document.tracks()[0].clips[0].volume,
             Some(Animatable::Static(0.5))
         );
+    }
+
+    #[test]
+    fn react_entry_path_is_stored_relative_and_resolves_back_to_absolute() {
+        let root = std::env::temp_dir().join(format!(
+            "mikan-editor-react-entry-{}-{}",
+            std::process::id(),
+            TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(root.join("react")).unwrap();
+        let entry_path = root.join("react/entry.tsx");
+        fs::write(
+            &entry_path,
+            b"export default function Root() { return null; }",
+        )
+        .unwrap();
+        let project_path = root.join("project.mikan.json");
+        fs::write(&project_path, MINIMAL).unwrap();
+        let mut document = EditorDocument::load(&project_path).unwrap();
+
+        document.set_react_entry(&entry_path).unwrap();
+        assert_eq!(document.react_entry(), Some("./react/entry.tsx"));
+        assert_eq!(
+            document.react_entry_absolute_path().unwrap(),
+            fs::canonicalize(&entry_path).unwrap()
+        );
+
+        document.clear_react_entry();
+        assert!(document.react_entry().is_none());
+        assert!(document.undo().unwrap());
+        assert_eq!(document.react_entry(), Some("./react/entry.tsx"));
     }
 
     #[test]
