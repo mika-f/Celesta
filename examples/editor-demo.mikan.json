@@ -1,0 +1,62 @@
+{
+  "version": 0,
+  "settings": {
+    "width": 1280,
+    "height": 720,
+    "frameRate": {
+      "numerator": 60,
+      "denominator": 1
+    },
+    "sampleRate": 48000,
+    "duration": {
+      "value": 10,
+      "timescale": 1
+    }
+  },
+  "assets": {},
+  "characters": {},
+  "tracks": [
+    {
+      "id": "titles",
+      "name": "Titles",
+      "kind": "overlay",
+      "items": [
+        {
+          "id": "welcome",
+          "name": "Welcome",
+          "range": {
+            "start": {
+              "value": 0,
+              "timescale": 1
+            },
+            "duration": {
+              "value": 10,
+              "timescale": 1
+            }
+          },
+          "content": {
+            "type": "text",
+            "text": "Mikan",
+            "style": {
+              "fontSize": 96,
+              "fill": {
+                "type": "solid",
+                "color": "#FFA13BFF"
+              },
+              "align": "center"
+            }
+          },
+          "transform": {
+            "position": {
+              "x": 640,
+              "y": 360
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "properties": {
+    "title": "Mikan editor demo"
+  }
+}

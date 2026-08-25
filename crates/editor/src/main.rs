@@ -1,0 +1,2981 @@
+use std::collections::HashMap;
+use std::error::Error;
+use std::num::{NonZeroU16, NonZeroU32};
+use std::path::{Path, PathBuf};
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+    mpsc,
+};
+use std::thread;
+use std::time::{Duration, Instant};
+
+use gpui::{
+    App, Application, Bounds, ClickEvent, Context, CursorStyle, FocusHandle, KeyBinding,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ObjectFit, PathPromptOptions,
+    Pixels, Point, PromptButton, PromptLevel, RenderImage, SharedString, StyledImage, Window,
+    WindowBounds, WindowOptions, actions, div, img, prelude::*, px, relative, rgb, size,
+};
+use image::{Frame, ImageBuffer, Rgba};
+use mikan_composition::{
+    AssetLocation, AudioClip, AudioGraph, Rational, Scene, Time, integrate_f64,
+};
+use mikan_editor::{AssetSummary, ClipKind, EditorDocument, TimelineClock, TrackSummary};
+use mikan_gpu_renderer::{GpuFrame, GpuRenderOptions, GpuRenderer};
+use mikan_media::{
+    AudioBuffer, AudioDecoder, FfmpegBackend, MediaError, MediaProbe, mix_audio_graph_cancellable,
+};
+use mikan_project::{AssetKind, TrackKind};
+use rodio::{DeviceSinkBuilder, Player, buffer::SamplesBuffer};
+
+const EDITOR_DEMO_PROJECT: &str = include_str!("../../../examples/editor-demo.mikan.json");
+
+actions!(
+    mikan_editor,
+    [
+        SaveProject,
+        SaveProjectAs,
+        UndoEdit,
+        RedoEdit,
+        TogglePlayback,
+        PreviousFrame,
+        NextFrame,
+        ImportAssets,
+        InsertSelectedAsset,
+        DeleteSelectedClip
+    ]
+);
+
+#[derive(Clone, Copy)]
+enum ClipDragKind {
+    Move,
+    TrimStart,
+    TrimEnd,
+}
+
+struct ClipDrag {
+    clip_id: String,
+    kind: ClipDragKind,
+    pointer_frame: i64,
+    start_frame: i64,
+    duration_frames: i64,
+}
+
+#[derive(Clone)]
+struct AssetDrag {
+    id: String,
+    kind: AssetKind,
+}
+
+impl Render for AssetDrag {
+    fn render(&mut self, _: &mut Window, _: &mut Context<'_, Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .w(px(180.0))
+            .h(px(34.0))
+            .px_3()
+            .rounded_sm()
+            .bg(rgb(0x343842))
+            .border_1()
+            .border_color(rgb(0xffa13b))
+            .shadow_md()
+            .text_xs()
+            .text_color(rgb(0xf0f1f4))
+            .child(format!(
+                "{}  {}",
+                self.kind.to_string().to_uppercase(),
+                self.id
+            ))
+    }
+}
+
+struct AudioPreview {
+    _device_sink: rodio::MixerDeviceSink,
+    player: Player,
+    source: SamplesBuffer,
+}
+
+struct PreviewRequest {
+    generation: u64,
+    scene: Scene,
+    asset_root: PathBuf,
+}
+
+struct PreviewResult {
+    generation: u64,
+    frame: Result<PreviewFrame, String>,
+}
+
+struct PreviewFrame {
+    width: u32,
+    height: u32,
+    pixels: Vec<u8>,
+}
+
+struct PreviewWorker {
+    requests: mpsc::Sender<PreviewRequest>,
+    results: mpsc::Receiver<PreviewResult>,
+}
+
+struct MediaProbeRequest {
+    generation: u64,
+    assets: Vec<ProbeAsset>,
+}
+
+struct ProbeAsset {
+    id: String,
+    path: PathBuf,
+}
+
+struct MediaProbeResult {
+    generation: u64,
+    assets: Vec<(String, Result<MediaAssetInfo, String>)>,
+}
+
+#[derive(Clone)]
+struct MediaAssetInfo {
+    duration: Option<Time>,
+    video_size: Option<(u32, u32)>,
+    has_audio: bool,
+}
+
+struct MediaProbeWorker {
+    requests: mpsc::Sender<MediaProbeRequest>,
+    results: mpsc::Receiver<MediaProbeResult>,
+}
+
+impl MediaProbeWorker {
+    fn spawn() -> Result<Self, Box<dyn Error>> {
+        let (request_tx, request_rx) = mpsc::channel::<MediaProbeRequest>();
+        let (result_tx, result_rx) = mpsc::channel::<MediaProbeResult>();
+        thread::Builder::new()
+            .name("mikan-media-probe".to_owned())
+            .spawn(move || {
+                let mut backend = FfmpegBackend::new();
+                while let Ok(first) = request_rx.recv() {
+                    let request = take_latest(first, &request_rx);
+                    let assets = request
+                        .assets
+                        .into_iter()
+                        .map(|asset| {
+                            let result = backend
+                                .probe(&asset.path)
+                                .map(media_asset_info)
+                                .map_err(|error| error.to_string());
+                            (asset.id, result)
+                        })
+                        .collect();
+                    if result_tx
+                        .send(MediaProbeResult {
+                            generation: request.generation,
+                            assets,
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            })?;
+        Ok(Self {
+            requests: request_tx,
+            results: result_rx,
+        })
+    }
+
+    fn request(&self, request: MediaProbeRequest) -> Result<(), String> {
+        self.requests
+            .send(request)
+            .map_err(|_| "media probe worker stopped unexpectedly".to_owned())
+    }
+}
+
+impl PreviewWorker {
+    fn spawn(mut renderer: GpuRenderer) -> Result<Self, Box<dyn Error>> {
+        let (request_tx, request_rx) = mpsc::channel::<PreviewRequest>();
+        let (result_tx, result_rx) = mpsc::channel::<PreviewResult>();
+        thread::Builder::new()
+            .name("mikan-preview".to_owned())
+            .spawn(move || {
+                while let Ok(first) = request_rx.recv() {
+                    let request = take_latest(first, &request_rx);
+                    renderer.set_asset_root(&request.asset_root);
+                    let frame = renderer
+                        .render(&request.scene)
+                        .map_err(|error| error.to_string())
+                        .map(prepare_preview_frame);
+                    if result_tx
+                        .send(PreviewResult {
+                            generation: request.generation,
+                            frame,
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            })?;
+        Ok(Self {
+            requests: request_tx,
+            results: result_rx,
+        })
+    }
+
+    fn request(&self, request: PreviewRequest) -> Result<(), String> {
+        self.requests
+            .send(request)
+            .map_err(|_| "preview worker stopped unexpectedly".to_owned())
+    }
+}
+
+struct AudioMixRequest {
+    generation: u64,
+    cache_epoch: u64,
+    graph: AudioGraph,
+    asset_root: PathBuf,
+    duration: Time,
+}
+
+struct AudioMixResult {
+    generation: u64,
+    output: Result<AudioMixOutput, String>,
+}
+
+struct AudioMixOutput {
+    clip_waveforms: HashMap<String, Vec<f32>>,
+    buffer: AudioBuffer,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct AudioCacheKey {
+    path: PathBuf,
+    sample_rate: u32,
+    channels: u16,
+}
+
+struct CachedAudioDecoder {
+    backend: FfmpegBackend,
+    buffers: HashMap<AudioCacheKey, AudioBuffer>,
+    waveforms: HashMap<AudioCacheKey, Vec<f32>>,
+}
+
+impl CachedAudioDecoder {
+    fn new() -> Self {
+        Self {
+            backend: FfmpegBackend::new(),
+            buffers: HashMap::new(),
+            waveforms: HashMap::new(),
+        }
+    }
+
+    fn clip_waveform(
+        &self,
+        path: &Path,
+        sample_rate: u32,
+        channels: u16,
+        clip: &AudioClip,
+    ) -> Option<Vec<f32>> {
+        let key = AudioCacheKey {
+            path: path.to_owned(),
+            sample_rate,
+            channels,
+        };
+        let peaks = self.waveforms.get(&key)?;
+        let source_frames = self.buffers.get(&key)?.frame_count();
+        Some(map_clip_waveform(
+            peaks,
+            source_frames,
+            sample_rate,
+            clip,
+            peaks.len(),
+        ))
+    }
+
+    fn clear(&mut self) {
+        self.buffers.clear();
+        self.waveforms.clear();
+    }
+}
+
+impl AudioDecoder for CachedAudioDecoder {
+    fn decode_audio(
+        &mut self,
+        path: &Path,
+        sample_rate: u32,
+        channels: u16,
+    ) -> Result<AudioBuffer, MediaError> {
+        let key = AudioCacheKey {
+            path: path.to_owned(),
+            sample_rate,
+            channels,
+        };
+        if let Some(buffer) = self.buffers.get(&key) {
+            return Ok(buffer.clone());
+        }
+        let buffer = self.backend.decode_audio(path, sample_rate, channels)?;
+        self.waveforms
+            .insert(key.clone(), waveform_peaks(&buffer, 512));
+        self.buffers.insert(key, buffer.clone());
+        Ok(buffer)
+    }
+}
+
+struct AudioMixWorker {
+    requests: mpsc::Sender<AudioMixRequest>,
+    results: mpsc::Receiver<AudioMixResult>,
+    current_generation: Arc<AtomicU64>,
+}
+
+impl AudioMixWorker {
+    fn spawn() -> Result<Self, Box<dyn Error>> {
+        let (request_tx, request_rx) = mpsc::channel::<AudioMixRequest>();
+        let (result_tx, result_rx) = mpsc::channel::<AudioMixResult>();
+        let current_generation = Arc::new(AtomicU64::new(0));
+        let worker_generation = Arc::clone(&current_generation);
+        thread::Builder::new()
+            .name("mikan-audio-mix".to_owned())
+            .spawn(move || {
+                let mut decoder = CachedAudioDecoder::new();
+                let mut cache_epoch = 0;
+                while let Ok(first) = request_rx.recv() {
+                    let request = take_latest(first, &request_rx);
+                    if request.cache_epoch != cache_epoch {
+                        decoder.clear();
+                        cache_epoch = request.cache_epoch;
+                    }
+                    let output = mix_audio_graph_cancellable(
+                        &request.graph,
+                        &request.asset_root,
+                        request.duration,
+                        &mut decoder,
+                        || worker_generation.load(Ordering::Acquire) != request.generation,
+                    )
+                    .map(|buffer| {
+                        let clip_waveforms = request
+                            .graph
+                            .clips
+                            .iter()
+                            .filter_map(|clip| {
+                                let path = resolve_asset_location(
+                                    &clip.asset.location,
+                                    &request.asset_root,
+                                )?;
+                                let waveform = decoder.clip_waveform(
+                                    &path,
+                                    request.graph.sample_rate,
+                                    2,
+                                    clip,
+                                )?;
+                                let clip_id = clip
+                                    .id
+                                    .strip_suffix(":voice")
+                                    .unwrap_or(&clip.id)
+                                    .to_owned();
+                                Some((clip_id, waveform))
+                            })
+                            .collect();
+                        AudioMixOutput {
+                            clip_waveforms,
+                            buffer,
+                        }
+                    })
+                    .map_err(|error| error.to_string());
+                    if result_tx
+                        .send(AudioMixResult {
+                            generation: request.generation,
+                            output,
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            })?;
+        Ok(Self {
+            requests: request_tx,
+            results: result_rx,
+            current_generation,
+        })
+    }
+
+    fn request(&self, request: AudioMixRequest) -> Result<(), String> {
+        self.cancel_before(request.generation);
+        self.requests
+            .send(request)
+            .map_err(|_| "audio mix worker stopped unexpectedly".to_owned())
+    }
+
+    fn cancel_before(&self, generation: u64) {
+        self.current_generation.store(generation, Ordering::Release);
+    }
+}
+
+fn take_latest<T>(mut latest: T, receiver: &mpsc::Receiver<T>) -> T {
+    while let Ok(next) = receiver.try_recv() {
+        latest = next;
+    }
+    latest
+}
+
+impl AudioPreview {
+    fn from_buffer(buffer: AudioBuffer) -> Result<Self, Box<dyn Error>> {
+        let channels = NonZeroU16::new(buffer.channels).ok_or("audio has zero channels")?;
+        let sample_rate =
+            NonZeroU32::new(buffer.sample_rate).ok_or("audio has a zero sample rate")?;
+        let source = SamplesBuffer::new(channels, sample_rate, buffer.samples);
+        let device_sink = DeviceSinkBuilder::open_default_sink()?;
+        let player = Player::connect_new(device_sink.mixer());
+        player.append(source.clone());
+        player.pause();
+        Ok(Self {
+            _device_sink: device_sink,
+            player,
+            source,
+        })
+    }
+
+    fn seek(&mut self, time: Time, playing: bool) -> Result<(), Box<dyn Error>> {
+        self.player.stop();
+        self.player = Player::connect_new(self._device_sink.mixer());
+        self.player.append(self.source.clone());
+        self.player.pause();
+        let seconds = time.as_seconds()?.max(0.0);
+        self.player.try_seek(Duration::from_secs_f64(seconds))?;
+        if playing {
+            self.player.play();
+        }
+        Ok(())
+    }
+
+    fn pause(&self) {
+        self.player.pause();
+    }
+}
+
+struct EditorView {
+    document: EditorDocument,
+    preview_worker: PreviewWorker,
+    preview_generation: u64,
+    preview_pending: bool,
+    media_probe_worker: MediaProbeWorker,
+    media_generation: u64,
+    media_pending: bool,
+    media_cache: HashMap<String, Result<MediaAssetInfo, String>>,
+    audio_mix_worker: AudioMixWorker,
+    audio_generation: u64,
+    audio_cache_epoch: u64,
+    audio_pending: bool,
+    audio_preview: Option<AudioPreview>,
+    clip_waveforms: HashMap<String, Vec<f32>>,
+    clock: TimelineClock,
+    frame_rate_value: Rational,
+    playing: bool,
+    playback_started_at: Option<Instant>,
+    playback_started_frame: i64,
+    scrubbing: bool,
+    clip_drag: Option<ClipDrag>,
+    selected_clip_id: Option<String>,
+    selected_asset_id: Option<String>,
+    selected_track_id: Option<String>,
+    project_name: SharedString,
+    dimensions: SharedString,
+    frame_rate_label: SharedString,
+    duration: SharedString,
+    assets: Vec<AssetSummary>,
+    tracks: Vec<TrackSummary>,
+    preview: Option<Arc<RenderImage>>,
+    preview_error: Option<SharedString>,
+    save_error: Option<SharedString>,
+    edit_error: Option<SharedString>,
+    audio_error: Option<SharedString>,
+    gpu_name: SharedString,
+    focus_handle: Option<FocusHandle>,
+    saving_as: bool,
+    importing_assets: bool,
+    asset_operation_active: bool,
+    close_prompt_active: bool,
+    force_close: bool,
+}
+
+impl EditorView {
+    fn open(path: Option<&Path>) -> Result<Self, Box<dyn Error>> {
+        let document = match path {
+            Some(path) => EditorDocument::load(path)?,
+            None => EditorDocument::from_json(EDITOR_DEMO_PROJECT, "examples")?,
+        };
+        let settings = &document.project().settings;
+        let frame_rate_value = settings.frame_rate;
+        let clock = TimelineClock::new(document.duration(), frame_rate_value)?;
+        let project_name = document.display_name().into();
+        let dimensions = format!("{} x {}", settings.width, settings.height).into();
+        let frame_rate_label = format!(
+            "{:.2} fps",
+            f64::from(settings.frame_rate.numerator) / f64::from(settings.frame_rate.denominator)
+        )
+        .into();
+        let duration = format_time(document.duration()).into();
+        let assets = document.assets();
+        let tracks = document.tracks();
+
+        let renderer = GpuRenderer::new(GpuRenderOptions::default())?
+            .with_asset_root(document.asset_root())
+            .with_video_decoder(FfmpegBackend::new());
+        let gpu_name = renderer.adapter_info().name.clone().into();
+        let preview_worker = PreviewWorker::spawn(renderer)?;
+        let media_probe_worker = MediaProbeWorker::spawn()?;
+        let audio_mix_worker = AudioMixWorker::spawn()?;
+        let mut editor = Self {
+            document,
+            preview_worker,
+            preview_generation: 0,
+            preview_pending: false,
+            media_probe_worker,
+            media_generation: 0,
+            media_pending: false,
+            media_cache: HashMap::new(),
+            audio_mix_worker,
+            audio_generation: 0,
+            audio_cache_epoch: 0,
+            audio_pending: false,
+            audio_preview: None,
+            clip_waveforms: HashMap::new(),
+            clock,
+            frame_rate_value,
+            playing: false,
+            playback_started_at: None,
+            playback_started_frame: 0,
+            scrubbing: false,
+            clip_drag: None,
+            selected_clip_id: None,
+            selected_asset_id: None,
+            selected_track_id: None,
+            project_name,
+            dimensions,
+            frame_rate_label,
+            duration,
+            assets,
+            tracks,
+            preview: None,
+            preview_error: None,
+            save_error: None,
+            edit_error: None,
+            audio_error: None,
+            gpu_name,
+            focus_handle: None,
+            saving_as: false,
+            importing_assets: false,
+            asset_operation_active: false,
+            close_prompt_active: false,
+            force_close: false,
+        };
+        editor.refresh_preview();
+        editor.refresh_media_cache();
+        editor.refresh_audio_preview();
+        Ok(editor)
+    }
+
+    fn current_time(&self) -> Time {
+        self.clock.time().unwrap_or(Time::ZERO)
+    }
+
+    fn refresh_preview(&mut self) {
+        self.preview_generation = self.preview_generation.wrapping_add(1);
+        let generation = self.preview_generation;
+        match self.document.scene_at(self.current_time()) {
+            Ok(scene) => {
+                self.preview_pending = true;
+                self.preview_error = None;
+                if let Err(error) = self.preview_worker.request(PreviewRequest {
+                    generation,
+                    scene,
+                    asset_root: self.document.asset_root().to_owned(),
+                }) {
+                    self.preview_pending = false;
+                    self.preview_error = Some(error.into());
+                }
+            }
+            Err(error) => {
+                self.preview_pending = false;
+                self.preview_error = Some(error.to_string().into());
+            }
+        }
+    }
+
+    fn refresh_media_cache(&mut self) {
+        self.media_generation = self.media_generation.wrapping_add(1);
+        let generation = self.media_generation;
+        let assets = self
+            .assets
+            .iter()
+            .filter(|asset| matches!(asset.kind, AssetKind::Video | AssetKind::Audio))
+            .filter_map(|asset| {
+                Some(ProbeAsset {
+                    id: asset.id.clone(),
+                    path: asset.path.clone()?,
+                })
+            })
+            .collect::<Vec<_>>();
+        self.media_cache
+            .retain(|id, _| assets.iter().any(|asset| asset.id == *id));
+        if assets.is_empty() {
+            self.media_pending = false;
+            return;
+        }
+        self.media_pending = true;
+        if let Err(error) = self
+            .media_probe_worker
+            .request(MediaProbeRequest { generation, assets })
+        {
+            self.media_pending = false;
+            self.edit_error = Some(error.into());
+        }
+    }
+
+    fn poll_background_work(&mut self) {
+        loop {
+            match self.preview_worker.results.try_recv() {
+                Ok(result) => {
+                    if result.generation != self.preview_generation {
+                        continue;
+                    }
+                    self.preview_pending = false;
+                    match result.frame.and_then(frame_to_image) {
+                        Ok(preview) => {
+                            self.preview = Some(preview);
+                            self.preview_error = None;
+                        }
+                        Err(error) => {
+                            self.preview_error = Some(error.into());
+                        }
+                    }
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    if self.preview_pending {
+                        self.preview_pending = false;
+                        self.preview_error = Some("preview worker stopped unexpectedly".into());
+                    }
+                    break;
+                }
+            }
+        }
+
+        loop {
+            match self.media_probe_worker.results.try_recv() {
+                Ok(result) => {
+                    if result.generation != self.media_generation {
+                        continue;
+                    }
+                    self.media_pending = false;
+                    self.media_cache.extend(result.assets);
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    if self.media_pending {
+                        self.media_pending = false;
+                        self.edit_error = Some("media probe worker stopped unexpectedly".into());
+                    }
+                    break;
+                }
+            }
+        }
+
+        loop {
+            match self.audio_mix_worker.results.try_recv() {
+                Ok(result) => {
+                    if result.generation != self.audio_generation {
+                        continue;
+                    }
+                    self.audio_pending = false;
+                    match result.output.and_then(|output| {
+                        self.clip_waveforms = output.clip_waveforms;
+                        AudioPreview::from_buffer(output.buffer).map_err(|error| error.to_string())
+                    }) {
+                        Ok(mut preview) => {
+                            if let Err(error) = preview.seek(self.current_time(), self.playing) {
+                                self.audio_preview = None;
+                                self.audio_error = Some(error.to_string().into());
+                            } else {
+                                self.audio_preview = Some(preview);
+                                self.audio_error = None;
+                            }
+                        }
+                        Err(error) => {
+                            self.clip_waveforms.clear();
+                            self.audio_preview = None;
+                            self.audio_error = Some(error.into());
+                        }
+                    }
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    if self.audio_pending {
+                        self.audio_pending = false;
+                        self.clip_waveforms.clear();
+                        self.audio_preview = None;
+                        self.audio_error = Some("audio mix worker stopped unexpectedly".into());
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
+    fn pause(&mut self) {
+        self.playing = false;
+        self.playback_started_at = None;
+        if let Some(audio) = &self.audio_preview {
+            audio.pause();
+        }
+    }
+
+    fn seek_frame(&mut self, frame: i64) {
+        self.clock.seek(frame);
+        self.refresh_preview();
+    }
+
+    fn toggle_playback(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+        self.toggle_playback_state();
+        // GPUI only permits `request_animation_frame` during rendering. This
+        // notification enters `render`, where `update_playback` requests it.
+        cx.notify();
+    }
+
+    fn toggle_playback_state(&mut self) {
+        if self.playing {
+            self.pause();
+        } else if self.clock.end_frame() > 0 {
+            if self.clock.is_at_end() {
+                self.seek_frame(0);
+            }
+            self.playing = true;
+            self.playback_started_at = Some(Instant::now());
+            self.playback_started_frame = self.clock.frame();
+            if let Some(audio) = &mut self.audio_preview
+                && let Err(error) = audio.seek(self.clock.time().unwrap_or(Time::ZERO), true)
+            {
+                self.audio_error = Some(error.to_string().into());
+                self.audio_preview = None;
+            }
+        }
+    }
+
+    fn step_backward(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+        self.pause();
+        self.seek_frame(self.clock.frame().saturating_sub(1));
+        cx.notify();
+    }
+
+    fn step_forward(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+        self.pause();
+        self.seek_frame(self.clock.frame().saturating_add(1));
+        cx.notify();
+    }
+
+    fn update_playback(&mut self, window: &mut Window) {
+        if !self.playing {
+            return;
+        }
+        let Some(started_at) = self.playback_started_at else {
+            self.pause();
+            return;
+        };
+        let frames_per_second = f64::from(self.frame_rate_value.numerator)
+            / f64::from(self.frame_rate_value.denominator);
+        let elapsed_frames = (started_at.elapsed().as_secs_f64() * frames_per_second) as i64;
+        let target = self.playback_started_frame.saturating_add(elapsed_frames);
+        if target != self.clock.frame() {
+            self.seek_frame(target);
+        }
+        if self.clock.is_at_end() {
+            self.pause();
+        } else {
+            window.request_animation_frame();
+        }
+    }
+
+    fn frame_for_timeline_position(&self, position: Point<Pixels>, window: &Window) -> i64 {
+        const TRACK_LABEL_WIDTH: f32 = 230.0;
+        const RIGHT_INSET: f32 = 8.0;
+        let window_width = f32::from(window.bounds().size.width);
+        let timeline_width = (window_width - TRACK_LABEL_WIDTH - RIGHT_INSET).max(1.0);
+        let local_x = (f32::from(position.x) - TRACK_LABEL_WIDTH).clamp(0.0, timeline_width);
+        let progress = local_x / timeline_width;
+        self.clock.frame_at_fraction(progress)
+    }
+
+    fn scrub_to(&mut self, position: Point<Pixels>, window: &Window, cx: &mut Context<Self>) {
+        self.pause();
+        let frame = self.frame_for_timeline_position(position, window);
+        if frame != self.clock.frame() {
+            self.seek_frame(frame);
+            cx.notify();
+        }
+    }
+
+    fn begin_scrub(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        self.scrubbing = true;
+        self.scrub_to(event.position, window, cx);
+    }
+
+    fn continue_scrub(
+        &mut self,
+        event: &MouseMoveEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.scrubbing && event.dragging() {
+            self.scrub_to(event.position, window, cx);
+        }
+    }
+
+    fn end_scrub(&mut self, event: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self.scrubbing {
+            self.scrub_to(event.position, window, cx);
+            self.scrubbing = false;
+        }
+    }
+
+    fn begin_clip_drag(
+        &mut self,
+        clip_id: &str,
+        kind: ClipDragKind,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(track) = self
+            .tracks
+            .iter()
+            .find(|track| track.clips.iter().any(|clip| clip.id == clip_id))
+            && track.locked
+        {
+            self.edit_error = Some(format!("track `{}` is locked", track.id).into());
+            cx.notify();
+            return;
+        }
+        let Some((start, duration)) = self
+            .tracks
+            .iter()
+            .flat_map(|track| &track.clips)
+            .find(|clip| clip.id == clip_id)
+            .and_then(|clip| {
+                Some((
+                    self.clock.frame_for_time(clip.start).ok()?,
+                    self.clock.frame_for_time(clip.duration).ok()?.max(1),
+                ))
+            })
+        else {
+            return;
+        };
+        let pointer_frame = self.frame_for_timeline_position(event.position, window);
+        self.pause();
+        self.scrubbing = false;
+        self.document.begin_history_group();
+        self.selected_clip_id = Some(clip_id.to_owned());
+        self.clip_drag = Some(ClipDrag {
+            clip_id: clip_id.to_owned(),
+            kind,
+            pointer_frame,
+            start_frame: start,
+            duration_frames: duration,
+        });
+        cx.notify();
+    }
+
+    fn continue_clip_drag(
+        &mut self,
+        event: &MouseMoveEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !event.dragging() {
+            return;
+        }
+        let Some(drag) = self.clip_drag.as_ref() else {
+            return;
+        };
+        let pointer_frame = self.frame_for_timeline_position(event.position, window);
+        let (start, duration) = dragged_clip_range(drag, pointer_frame, self.clock.end_frame());
+        let clip_id = drag.clip_id.clone();
+        let unchanged = self
+            .tracks
+            .iter()
+            .flat_map(|track| &track.clips)
+            .find(|clip| clip.id == clip_id)
+            .and_then(|clip| {
+                Some((
+                    self.clock.frame_for_time(clip.start).ok()?,
+                    self.clock.frame_for_time(clip.duration).ok()?,
+                ))
+            })
+            == Some((start, duration));
+        if unchanged {
+            return;
+        }
+        if let Err(error) = self.document.edit_clip_frames(&clip_id, start, duration) {
+            self.preview_error = Some(error.to_string().into());
+            cx.notify();
+            return;
+        }
+        self.tracks = self.document.tracks();
+        self.refresh_preview();
+        cx.notify();
+    }
+
+    fn end_clip_drag(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
+        if self.clip_drag.take().is_some() {
+            if self.document.commit_history_group() {
+                self.refresh_audio_preview();
+            }
+            cx.notify();
+        }
+    }
+
+    fn sync_document_state(&mut self) {
+        let frame = self.clock.frame();
+        let assets = self.document.assets();
+        let assets_changed = assets != self.assets;
+        self.assets = assets;
+        self.tracks = self.document.tracks();
+        self.duration = format_time(self.document.duration()).into();
+        if let Ok(mut clock) = TimelineClock::new(self.document.duration(), self.frame_rate_value) {
+            clock.seek(frame);
+            self.clock = clock;
+        }
+        self.refresh_preview();
+        if assets_changed {
+            self.audio_cache_epoch = self.audio_cache_epoch.wrapping_add(1);
+            self.refresh_media_cache();
+        }
+        self.refresh_audio_preview();
+    }
+
+    fn refresh_audio_preview(&mut self) {
+        self.audio_generation = self.audio_generation.wrapping_add(1);
+        let generation = self.audio_generation;
+        self.audio_mix_worker.cancel_before(generation);
+        self.audio_pending = false;
+        self.audio_preview = None;
+        match self.document.audio_graph() {
+            Ok(graph) if graph.clips.is_empty() => {
+                self.clip_waveforms.clear();
+                self.audio_error = None;
+            }
+            Ok(graph) => {
+                self.audio_pending = true;
+                self.audio_error = None;
+                if let Err(error) = self.audio_mix_worker.request(AudioMixRequest {
+                    generation,
+                    cache_epoch: self.audio_cache_epoch,
+                    graph,
+                    asset_root: self.document.asset_root().to_owned(),
+                    duration: self.document.duration(),
+                }) {
+                    self.audio_pending = false;
+                    self.audio_error = Some(error.into());
+                }
+            }
+            Err(error) => {
+                self.clip_waveforms.clear();
+                self.audio_error = Some(error.to_string().into());
+            }
+        }
+    }
+
+    fn toggle_track_mute(&mut self, track_id: &str, cx: &mut Context<Self>) {
+        match self.document.toggle_track_muted(track_id) {
+            Ok(_) => {
+                self.tracks = self.document.tracks();
+                self.refresh_audio_preview();
+            }
+            Err(error) => self.audio_error = Some(error.to_string().into()),
+        }
+        cx.notify();
+    }
+
+    fn toggle_track_solo(&mut self, track_id: &str, cx: &mut Context<Self>) {
+        match self.document.toggle_track_solo(track_id) {
+            Ok(_) => {
+                self.tracks = self.document.tracks();
+                self.refresh_audio_preview();
+            }
+            Err(error) => self.audio_error = Some(error.to_string().into()),
+        }
+        cx.notify();
+    }
+
+    fn adjust_master_volume(&mut self, delta_percent: i32, cx: &mut Context<Self>) {
+        let current_percent = (self.document.master_volume() * 100.0).round() as i32;
+        let next_percent = current_percent.saturating_add(delta_percent).clamp(0, 200);
+        match self
+            .document
+            .set_master_volume(f64::from(next_percent) / 100.0)
+        {
+            Ok(()) => self.refresh_audio_preview(),
+            Err(error) => self.audio_error = Some(error.to_string().into()),
+        }
+        cx.notify();
+    }
+
+    fn decrease_master_volume(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+        self.adjust_master_volume(-5, cx);
+    }
+
+    fn increase_master_volume(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+        self.adjust_master_volume(5, cx);
+    }
+
+    fn request_import_assets(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.importing_assets {
+            return;
+        }
+        self.importing_assets = true;
+        self.edit_error = None;
+        let selection = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: true,
+            prompt: Some("Import".into()),
+        });
+        cx.spawn_in(window, async move |view, cx| {
+            let selected_paths = match selection.await {
+                Ok(Ok(paths)) => paths,
+                Ok(Err(error)) => {
+                    view.update_in(cx, |this, _, cx| {
+                        this.importing_assets = false;
+                        this.edit_error =
+                            Some(format!("could not open asset picker: {error}").into());
+                        cx.notify();
+                    })
+                    .ok();
+                    return;
+                }
+                Err(error) => {
+                    view.update_in(cx, |this, _, cx| {
+                        this.importing_assets = false;
+                        this.edit_error =
+                            Some(format!("asset picker was interrupted: {error}").into());
+                        cx.notify();
+                    })
+                    .ok();
+                    return;
+                }
+            };
+            view.update_in(cx, |this, _, cx| {
+                this.importing_assets = false;
+                let Some(paths) = selected_paths else {
+                    cx.notify();
+                    return;
+                };
+                match this.document.import_assets(paths) {
+                    Ok(imported) => {
+                        this.selected_asset_id = imported.last().map(|asset| asset.id.clone());
+                        this.assets = this.document.assets();
+                        this.audio_cache_epoch = this.audio_cache_epoch.wrapping_add(1);
+                        this.refresh_media_cache();
+                        this.edit_error = None;
+                    }
+                    Err(error) => this.edit_error = Some(error.to_string().into()),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn import_assets_action(
+        &mut self,
+        _: &ImportAssets,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.request_import_assets(window, cx);
+    }
+
+    fn import_assets_click(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+        self.request_import_assets(window, cx);
+    }
+
+    fn request_relink_asset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(asset_id) = self.selected_asset_id.clone() else {
+            return;
+        };
+        if self.asset_operation_active {
+            return;
+        }
+        self.asset_operation_active = true;
+        self.edit_error = None;
+        let selection = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Relink".into()),
+        });
+        cx.spawn_in(window, async move |view, cx| {
+            let selected_paths = match selection.await {
+                Ok(Ok(paths)) => paths,
+                Ok(Err(error)) => {
+                    view.update_in(cx, |this, _, cx| {
+                        this.asset_operation_active = false;
+                        this.edit_error =
+                            Some(format!("could not open relink picker: {error}").into());
+                        cx.notify();
+                    })
+                    .ok();
+                    return;
+                }
+                Err(error) => {
+                    view.update_in(cx, |this, _, cx| {
+                        this.asset_operation_active = false;
+                        this.edit_error =
+                            Some(format!("relink picker was interrupted: {error}").into());
+                        cx.notify();
+                    })
+                    .ok();
+                    return;
+                }
+            };
+            view.update_in(cx, |this, _, cx| {
+                this.asset_operation_active = false;
+                let Some(path) = selected_paths.and_then(|paths| paths.into_iter().next()) else {
+                    cx.notify();
+                    return;
+                };
+                match this.document.relink_asset(&asset_id, path) {
+                    Ok(()) => {
+                        this.edit_error = None;
+                        this.sync_document_state();
+                    }
+                    Err(error) => this.edit_error = Some(error.to_string().into()),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn relink_asset_click(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+        self.request_relink_asset(window, cx);
+    }
+
+    fn remove_selected_asset_now(
+        &mut self,
+        asset_id: &str,
+        remove_references: bool,
+        cx: &mut Context<Self>,
+    ) {
+        match self.document.remove_asset(asset_id, remove_references) {
+            Ok(()) => {
+                self.selected_asset_id = None;
+                self.selected_clip_id = None;
+                self.edit_error = None;
+                self.sync_document_state();
+            }
+            Err(error) => self.edit_error = Some(error.to_string().into()),
+        }
+        cx.notify();
+    }
+
+    fn request_remove_asset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(asset_id) = self.selected_asset_id.clone() else {
+            return;
+        };
+        if self.asset_operation_active {
+            return;
+        }
+        let references = match self.document.asset_references(&asset_id) {
+            Ok(references) => references,
+            Err(error) => {
+                self.edit_error = Some(error.to_string().into());
+                cx.notify();
+                return;
+            }
+        };
+        if references.is_empty() {
+            self.remove_selected_asset_now(&asset_id, false, cx);
+            return;
+        }
+        self.asset_operation_active = true;
+        let mut detail = format!(
+            "This asset has {} reference(s). Removing it will also update or remove:",
+            references.len()
+        );
+        for reference in references.iter().take(4) {
+            detail.push_str(&format!("\n\n• {reference}"));
+        }
+        if references.len() > 4 {
+            detail.push_str(&format!("\n\n• …and {} more", references.len() - 4));
+        }
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            "Remove referenced asset?",
+            Some(&detail),
+            &[
+                PromptButton::ok("Remove Asset and References"),
+                PromptButton::cancel("Cancel"),
+            ],
+            cx,
+        );
+        cx.spawn_in(window, async move |view, cx| {
+            let answer = answer.await.unwrap_or(1);
+            view.update_in(cx, |this, _, cx| {
+                this.asset_operation_active = false;
+                if answer == 0 {
+                    this.remove_selected_asset_now(&asset_id, true, cx);
+                } else {
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn remove_asset_click(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+        self.request_remove_asset(window, cx);
+    }
+
+    fn insert_asset_at(
+        &mut self,
+        asset_id: &str,
+        target_track_id: Option<&str>,
+        requested_start: i64,
+        cx: &mut Context<Self>,
+    ) {
+        let frame_rate = self.document.project().settings.frame_rate;
+        let mut start = requested_start;
+        let mut duration = initial_clip_duration_frames(self.media_cache.get(asset_id), frame_rate);
+        if self.document.project().settings.duration.is_some() {
+            if self.clock.end_frame() == 0 {
+                self.edit_error = Some("the fixed project timeline has no available frames".into());
+                cx.notify();
+                return;
+            }
+            start = start.min(self.clock.end_frame() - 1);
+            duration = duration.min(self.clock.end_frame() - start);
+        }
+        match self
+            .document
+            .insert_asset_clip_on_track(asset_id, target_track_id, start, duration)
+        {
+            Ok(clip_id) => {
+                self.selected_clip_id = Some(clip_id);
+                self.edit_error = None;
+                self.sync_document_state();
+            }
+            Err(error) => self.edit_error = Some(error.to_string().into()),
+        }
+        cx.notify();
+    }
+
+    fn insert_selected_asset(&mut self, cx: &mut Context<Self>) {
+        let Some(asset_id) = self.selected_asset_id.clone() else {
+            self.edit_error = Some("select an asset before adding it to the timeline".into());
+            cx.notify();
+            return;
+        };
+        let target_track_id = self.selected_track_id.clone();
+        self.insert_asset_at(
+            &asset_id,
+            target_track_id.as_deref(),
+            self.clock.frame(),
+            cx,
+        );
+    }
+
+    fn drop_asset_on_track(
+        &mut self,
+        asset: &AssetDrag,
+        track_id: &str,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        let start = self.frame_for_timeline_position(window.mouse_position(), window);
+        self.selected_asset_id = Some(asset.id.clone());
+        self.selected_track_id = Some(track_id.to_owned());
+        self.insert_asset_at(&asset.id, Some(track_id), start, cx);
+    }
+
+    fn drop_asset_without_track(
+        &mut self,
+        asset: &AssetDrag,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        let start = self.frame_for_timeline_position(window.mouse_position(), window);
+        self.selected_asset_id = Some(asset.id.clone());
+        self.selected_track_id = None;
+        self.insert_asset_at(&asset.id, None, start, cx);
+    }
+
+    fn insert_selected_asset_action(
+        &mut self,
+        _: &InsertSelectedAsset,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.insert_selected_asset(cx);
+    }
+
+    fn insert_selected_asset_click(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.insert_selected_asset(cx);
+    }
+
+    fn delete_selected_clip(&mut self, cx: &mut Context<Self>) {
+        let Some(clip_id) = self.selected_clip_id.clone() else {
+            return;
+        };
+        self.pause();
+        match self.document.delete_clip(&clip_id) {
+            Ok(()) => {
+                self.selected_clip_id = None;
+                self.edit_error = None;
+                self.sync_document_state();
+            }
+            Err(error) => self.edit_error = Some(error.to_string().into()),
+        }
+        cx.notify();
+    }
+
+    fn delete_selected_clip_action(
+        &mut self,
+        _: &DeleteSelectedClip,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.delete_selected_clip(cx);
+    }
+
+    fn delete_selected_clip_click(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.delete_selected_clip(cx);
+    }
+
+    fn save_project(&mut self, _: &SaveProject, window: &mut Window, cx: &mut Context<Self>) {
+        if self.document.path().is_none() {
+            self.request_save_as(window, cx, false);
+            return;
+        }
+        match self.document.save() {
+            Ok(()) => self.save_error = None,
+            Err(error) => self.save_error = Some(error.to_string().into()),
+        }
+        cx.notify();
+    }
+
+    fn save_project_as(&mut self, _: &SaveProjectAs, window: &mut Window, cx: &mut Context<Self>) {
+        self.request_save_as(window, cx, false);
+    }
+
+    fn request_save_as(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        close_after_save: bool,
+    ) {
+        if self.saving_as {
+            return;
+        }
+        self.saving_as = true;
+        self.save_error = None;
+        let directory = self.document.path().and_then(Path::parent).map_or_else(
+            || std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+            Path::to_path_buf,
+        );
+        let suggested_name = self
+            .document
+            .path()
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            .unwrap_or("Untitled.mikan.json")
+            .to_owned();
+        let selection = cx.prompt_for_new_path(&directory, Some(&suggested_name));
+        cx.spawn_in(window, async move |view, cx| {
+            let selected_path = match selection.await {
+                Ok(Ok(path)) => path,
+                Ok(Err(error)) => {
+                    view.update_in(cx, |this, _, cx| {
+                        this.saving_as = false;
+                        this.close_prompt_active = false;
+                        this.save_error = Some(format!("could not open Save As: {error}").into());
+                        cx.notify();
+                    })
+                    .ok();
+                    return;
+                }
+                Err(error) => {
+                    view.update_in(cx, |this, _, cx| {
+                        this.saving_as = false;
+                        this.close_prompt_active = false;
+                        this.save_error = Some(format!("Save As was interrupted: {error}").into());
+                        cx.notify();
+                    })
+                    .ok();
+                    return;
+                }
+            };
+            view.update_in(cx, |this, window, cx| {
+                this.saving_as = false;
+                let Some(path) = selected_path else {
+                    this.close_prompt_active = false;
+                    cx.notify();
+                    return;
+                };
+                match this.document.save_as(path) {
+                    Ok(()) => {
+                        this.save_error = None;
+                        this.project_name = this.document.display_name().into();
+                        this.assets = this.document.assets();
+                        this.audio_cache_epoch = this.audio_cache_epoch.wrapping_add(1);
+                        this.refresh_preview();
+                        this.refresh_media_cache();
+                        this.refresh_audio_preview();
+                        if close_after_save {
+                            this.force_close = true;
+                            window.remove_window();
+                        } else {
+                            this.close_prompt_active = false;
+                        }
+                    }
+                    Err(error) => {
+                        this.close_prompt_active = false;
+                        this.save_error = Some(error.to_string().into());
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn prompt_to_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.close_prompt_active {
+            return;
+        }
+        self.close_prompt_active = true;
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            "Save changes before closing?",
+            Some("Unsaved changes will be lost if you choose Don't Save."),
+            &[
+                PromptButton::ok("Save"),
+                PromptButton::new("Don't Save"),
+                PromptButton::cancel("Cancel"),
+            ],
+            cx,
+        );
+        cx.spawn_in(window, async move |view, cx| {
+            let answer = answer.await.unwrap_or(2);
+            view.update_in(cx, move |this, window, cx| match answer {
+                0 if this.document.path().is_some() => match this.document.save() {
+                    Ok(()) => {
+                        this.save_error = None;
+                        this.force_close = true;
+                        window.remove_window();
+                    }
+                    Err(error) => {
+                        this.close_prompt_active = false;
+                        this.save_error = Some(error.to_string().into());
+                        cx.notify();
+                    }
+                },
+                0 => this.request_save_as(window, cx, true),
+                1 => {
+                    this.force_close = true;
+                    window.remove_window();
+                }
+                _ => {
+                    this.close_prompt_active = false;
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn undo_edit(&mut self, _: &UndoEdit, _: &mut Window, cx: &mut Context<Self>) {
+        self.pause();
+        self.clip_drag = None;
+        match self.document.undo() {
+            Ok(true) => {
+                self.save_error = None;
+                self.sync_document_state();
+            }
+            Ok(false) => {}
+            Err(error) => self.save_error = Some(error.to_string().into()),
+        }
+        cx.notify();
+    }
+
+    fn redo_edit(&mut self, _: &RedoEdit, _: &mut Window, cx: &mut Context<Self>) {
+        self.pause();
+        self.clip_drag = None;
+        match self.document.redo() {
+            Ok(true) => {
+                self.save_error = None;
+                self.sync_document_state();
+            }
+            Ok(false) => {}
+            Err(error) => self.save_error = Some(error.to_string().into()),
+        }
+        cx.notify();
+    }
+
+    fn toggle_playback_action(
+        &mut self,
+        _: &TogglePlayback,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_playback_state();
+        cx.notify();
+    }
+
+    fn previous_frame_action(&mut self, _: &PreviousFrame, _: &mut Window, cx: &mut Context<Self>) {
+        self.pause();
+        self.seek_frame(self.clock.frame().saturating_sub(1));
+        cx.notify();
+    }
+
+    fn next_frame_action(&mut self, _: &NextFrame, _: &mut Window, cx: &mut Context<Self>) {
+        self.pause();
+        self.seek_frame(self.clock.frame().saturating_add(1));
+        cx.notify();
+    }
+
+    fn toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_none()
+            .h(px(48.0))
+            .w_full()
+            .px_4()
+            .items_center()
+            .justify_between()
+            .bg(rgb(0x181a20))
+            .border_b_1()
+            .border_color(rgb(0x30333d))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(div().text_lg().text_color(rgb(0xffa13b)).child("Mikan"))
+                    .child(div().text_sm().text_color(rgb(0xd8dae2)).child(
+                        if self.document.is_dirty() {
+                            format!("{} *", self.project_name)
+                        } else {
+                            self.project_name.to_string()
+                        },
+                    )),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .when_some(self.save_error.clone(), |toolbar, error| {
+                        toolbar.child(
+                            div()
+                                .max_w(px(520.0))
+                                .overflow_hidden()
+                                .text_sm()
+                                .text_color(rgb(0xff8b8b))
+                                .child(format!("Save failed: {error}")),
+                        )
+                    })
+                    .when_some(self.edit_error.clone(), |toolbar, error| {
+                        toolbar.child(
+                            div()
+                                .max_w(px(520.0))
+                                .overflow_hidden()
+                                .text_sm()
+                                .text_color(rgb(0xff8b8b))
+                                .child(format!("Edit failed: {error}")),
+                        )
+                    })
+                    .when_some(self.audio_error.clone(), |toolbar, error| {
+                        toolbar.child(
+                            div()
+                                .max_w(px(520.0))
+                                .overflow_hidden()
+                                .text_sm()
+                                .text_color(rgb(0xffc46b))
+                                .child(format!("Audio unavailable: {error}")),
+                        )
+                    })
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .text_xs()
+                            .text_color(rgb(0xb8bbc5))
+                            .child("Master")
+                            .child(
+                                div()
+                                    .id("master-volume-down")
+                                    .cursor_pointer()
+                                    .px_2()
+                                    .py_1()
+                                    .rounded_sm()
+                                    .bg(rgb(0x292c34))
+                                    .hover(|style| style.bg(rgb(0x404550)))
+                                    .child("−")
+                                    .on_click(cx.listener(Self::decrease_master_volume)),
+                            )
+                            .child(div().w(px(42.0)).text_center().child(format!(
+                                "{}%",
+                                (self.document.master_volume() * 100.0).round() as i32
+                            )))
+                            .child(
+                                div()
+                                    .id("master-volume-up")
+                                    .cursor_pointer()
+                                    .px_2()
+                                    .py_1()
+                                    .rounded_sm()
+                                    .bg(rgb(0x292c34))
+                                    .hover(|style| style.bg(rgb(0x404550)))
+                                    .child("+")
+                                    .on_click(cx.listener(Self::increase_master_volume)),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .px_2()
+                            .py_1()
+                            .rounded_sm()
+                            .bg(rgb(0x243b30))
+                            .text_xs()
+                            .text_color(rgb(0x7ee2a8))
+                            .child("GPU PREVIEW"),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(rgb(0x9da1ad))
+                            .child(format_time(self.current_time())),
+                    ),
+            )
+    }
+
+    fn asset_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let has_selected = self.selected_asset_id.is_some();
+        let can_insert_selected = self.selected_asset_id.as_deref().is_some_and(|selected| {
+            self.assets
+                .iter()
+                .any(|asset| asset.id == selected && asset.kind != mikan_project::AssetKind::Font)
+        });
+        let rows = self.assets.iter().map(|asset| {
+            let asset_id = asset.id.clone();
+            let drag = AssetDrag {
+                id: asset.id.clone(),
+                kind: asset.kind,
+            };
+            let selected = self.selected_asset_id.as_deref() == Some(asset.id.as_str());
+            let element_id: SharedString = format!("asset-row-{}", asset.id).into();
+            let media_detail = match (asset.missing, self.media_cache.get(&asset.id)) {
+                (true, _) => Some("Missing file — Relink required".to_owned()),
+                (false, Some(Ok(info))) => Some(format_media_asset_info(info)),
+                (false, Some(Err(_))) => Some("Probe failed".to_owned()),
+                (false, None) if matches!(asset.kind, AssetKind::Video | AssetKind::Audio) => {
+                    Some("Probing…".to_owned())
+                }
+                (false, None) => None,
+            };
+            div()
+                .id(element_id)
+                .flex()
+                .items_center()
+                .gap_2()
+                .px_3()
+                .py_2()
+                .cursor_pointer()
+                .when(selected, |row| row.bg(rgb(0x343842)))
+                .hover(|style| style.bg(rgb(0x292c34)))
+                .text_sm()
+                .text_color(rgb(0xc8cad2))
+                .child(
+                    div()
+                        .w(px(46.0))
+                        .text_xs()
+                        .text_color(rgb(0xffb466))
+                        .child(asset.kind.to_string().to_uppercase()),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_1()
+                        .overflow_hidden()
+                        .child(asset.id.clone())
+                        .when_some(media_detail, |column, detail| {
+                            column.child(
+                                div()
+                                    .text_xs()
+                                    .text_color(rgb(if asset.missing {
+                                        0xff8b8b
+                                    } else {
+                                        0x858a96
+                                    }))
+                                    .child(detail),
+                            )
+                        }),
+                )
+                .on_drag(drag, |asset, _, _, cx| {
+                    let asset = asset.clone();
+                    cx.new(|_| asset)
+                })
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.selected_asset_id = Some(asset_id.clone());
+                    this.edit_error = None;
+                    cx.notify();
+                }))
+        });
+        let contents = div()
+            .id("asset-list-scroll")
+            .flex()
+            .flex_col()
+            .flex_1()
+            .w_full()
+            .overflow_x_hidden()
+            .overflow_y_scroll()
+            .when(self.assets.is_empty(), |contents| {
+                contents.child(
+                    div()
+                        .p_3()
+                        .text_sm()
+                        .text_color(rgb(0x737783))
+                        .child("No assets in this project"),
+                )
+            })
+            .children(rows);
+        div()
+            .flex()
+            .flex_col()
+            .flex_none()
+            .w(px(230.0))
+            .h_full()
+            .bg(rgb(0x1d2027))
+            .border_r_1()
+            .border_color(rgb(0x30333d))
+            .child(panel_header("Assets", self.assets.len()))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_none()
+                    .h(px(if has_selected { 68.0 } else { 38.0 }))
+                    .justify_center()
+                    .gap_1()
+                    .px_3()
+                    .border_b_1()
+                    .border_color(rgb(0x30333d))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .id("import-assets")
+                                    .cursor_pointer()
+                                    .rounded_sm()
+                                    .px_2()
+                                    .py_1()
+                                    .bg(rgb(0x343842))
+                                    .hover(|style| style.bg(rgb(0x4a4f5b)))
+                                    .text_xs()
+                                    .text_color(rgb(0xd8dae2))
+                                    .child(if self.importing_assets {
+                                        "Importing…"
+                                    } else {
+                                        "Import…"
+                                    })
+                                    .on_click(cx.listener(Self::import_assets_click)),
+                            )
+                            .child(
+                                div()
+                                    .id("insert-selected-asset")
+                                    .rounded_sm()
+                                    .px_2()
+                                    .py_1()
+                                    .bg(rgb(if can_insert_selected {
+                                        0x3c674d
+                                    } else {
+                                        0x292c34
+                                    }))
+                                    .text_xs()
+                                    .text_color(rgb(if can_insert_selected {
+                                        0xd8f3df
+                                    } else {
+                                        0x737783
+                                    }))
+                                    .child("Add")
+                                    .when(can_insert_selected, |button| {
+                                        button
+                                            .cursor_pointer()
+                                            .hover(|style| style.bg(rgb(0x4c805f)))
+                                            .on_click(
+                                                cx.listener(Self::insert_selected_asset_click),
+                                            )
+                                    }),
+                            ),
+                    )
+                    .when(has_selected, |actions| {
+                        actions.child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .id("relink-selected-asset")
+                                        .cursor_pointer()
+                                        .rounded_sm()
+                                        .px_2()
+                                        .py_1()
+                                        .bg(rgb(0x343842))
+                                        .hover(|style| style.bg(rgb(0x4a4f5b)))
+                                        .text_xs()
+                                        .text_color(rgb(0xd8dae2))
+                                        .child("Relink…")
+                                        .on_click(cx.listener(Self::relink_asset_click)),
+                                )
+                                .child(
+                                    div()
+                                        .id("remove-selected-asset")
+                                        .cursor_pointer()
+                                        .rounded_sm()
+                                        .px_2()
+                                        .py_1()
+                                        .bg(rgb(0x4a292c))
+                                        .hover(|style| style.bg(rgb(0x6b363b)))
+                                        .text_xs()
+                                        .text_color(rgb(0xffb7b7))
+                                        .child("Remove")
+                                        .on_click(cx.listener(Self::remove_asset_click)),
+                                ),
+                        )
+                    }),
+            )
+            .child(contents)
+    }
+
+    fn preview_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let canvas = div()
+            .flex()
+            .flex_1()
+            .w_full()
+            .items_center()
+            .justify_center()
+            .overflow_hidden()
+            .bg(rgb(0x0d0f13))
+            .when_some(self.preview.clone(), |canvas, preview| {
+                canvas.child(img(preview).size_full().object_fit(ObjectFit::Contain))
+            })
+            .when_some(self.preview_error.clone(), |canvas, error| {
+                canvas.child(
+                    div()
+                        .p_4()
+                        .text_sm()
+                        .text_color(rgb(0xff8b8b))
+                        .child(format!("Preview unavailable: {error}")),
+                )
+            });
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .h_full()
+            .child(canvas)
+            .child(
+                div()
+                    .flex()
+                    .flex_none()
+                    .h(px(44.0))
+                    .w_full()
+                    .items_center()
+                    .justify_center()
+                    .gap_3()
+                    .bg(rgb(0x181a20))
+                    .border_t_1()
+                    .border_color(rgb(0x30333d))
+                    .text_color(rgb(0xc8cad2))
+                    .child(
+                        div()
+                            .id("previous-frame")
+                            .cursor_pointer()
+                            .hover(|style| style.bg(rgb(0x404550)))
+                            .px_3()
+                            .py_1()
+                            .rounded_sm()
+                            .bg(rgb(0x292c34))
+                            .child("-1f")
+                            .on_click(cx.listener(Self::step_backward)),
+                    )
+                    .child(
+                        div()
+                            .id("toggle-playback")
+                            .cursor_pointer()
+                            .hover(|style| style.bg(rgb(0x4a4f5b)))
+                            .px_3()
+                            .py_1()
+                            .rounded_sm()
+                            .bg(rgb(0x343842))
+                            .child(if self.playing { "Pause" } else { "Play" })
+                            .on_click(cx.listener(Self::toggle_playback)),
+                    )
+                    .child(
+                        div()
+                            .id("next-frame")
+                            .cursor_pointer()
+                            .hover(|style| style.bg(rgb(0x404550)))
+                            .px_3()
+                            .py_1()
+                            .rounded_sm()
+                            .bg(rgb(0x292c34))
+                            .child("+1f")
+                            .on_click(cx.listener(Self::step_forward)),
+                    )
+                    .child(
+                        div()
+                            .w(px(110.0))
+                            .text_sm()
+                            .text_color(rgb(0x9da1ad))
+                            .child(format!(
+                                "{} / {}f",
+                                self.clock.frame(),
+                                self.clock.end_frame()
+                            )),
+                    ),
+            )
+    }
+
+    fn inspector_panel(&self) -> impl IntoElement {
+        let selected_clip = self.selected_clip_id.as_deref().and_then(|selected| {
+            self.tracks
+                .iter()
+                .flat_map(|track| &track.clips)
+                .find(|clip| clip.id == selected)
+        });
+        let contents = div()
+            .id("inspector-scroll")
+            .flex()
+            .flex_col()
+            .flex_1()
+            .w_full()
+            .overflow_x_hidden()
+            .overflow_y_scroll()
+            .child(inspector_row("Canvas", self.dimensions.clone()))
+            .child(inspector_row("Frame rate", self.frame_rate_label.clone()))
+            .child(inspector_row("Duration", self.duration.clone()))
+            .child(inspector_row("Renderer", "wgpu"))
+            .child(inspector_row("Adapter", self.gpu_name.clone()))
+            .when_some(selected_clip, |panel, clip| {
+                panel
+                    .child(
+                        div()
+                            .mt_3()
+                            .px_3()
+                            .py_2()
+                            .border_t_1()
+                            .border_b_1()
+                            .border_color(rgb(0x30333d))
+                            .text_sm()
+                            .text_color(rgb(0xffb466))
+                            .child("Selected clip"),
+                    )
+                    .child(inspector_row("Name", clip.name.clone()))
+                    .child(inspector_row("Type", clip_kind_label(clip.kind)))
+                    .child(inspector_row("Start", format_time(clip.start)))
+                    .child(inspector_row("Length", format_time(clip.duration)))
+            });
+        div()
+            .flex()
+            .flex_col()
+            .flex_none()
+            .w(px(260.0))
+            .h_full()
+            .bg(rgb(0x1d2027))
+            .border_l_1()
+            .border_color(rgb(0x30333d))
+            .child(panel_header("Inspector", 0))
+            .child(contents)
+    }
+
+    fn timeline(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let progress = if self.clock.end_frame() == 0 {
+            0.0
+        } else {
+            self.clock.frame() as f32 / self.clock.end_frame() as f32
+        };
+        let total_duration = self.document.duration().as_seconds().unwrap_or(0.0);
+        let rows = self.tracks.iter().map(|track| {
+            let selected_track = self.selected_track_id.as_deref() == Some(track.id.as_str());
+            let color = match track.kind {
+                TrackKind::Video => 0x4b7bec,
+                TrackKind::Audio => 0x26a269,
+                TrackKind::Overlay => 0x9b59b6,
+                TrackKind::Dialogue => 0xe58e26,
+            };
+            let clips = track.clips.iter().map(|clip| {
+                let start = if total_duration > 0.0 {
+                    (clip.start.as_seconds().unwrap_or(0.0) / total_duration).clamp(0.0, 1.0) as f32
+                } else {
+                    0.0
+                };
+                let duration = if total_duration > 0.0 {
+                    (clip.duration.as_seconds().unwrap_or(0.0) / total_duration).clamp(0.0, 1.0)
+                        as f32
+                } else {
+                    0.0
+                };
+                let kind = match clip.kind {
+                    ClipKind::Video => "VIDEO",
+                    ClipKind::Audio => "AUDIO",
+                    ClipKind::Image => "IMAGE",
+                    ClipKind::Text => "TEXT",
+                    ClipKind::Dialogue => "DIALOGUE",
+                    ClipKind::Component => "COMPONENT",
+                };
+                let clip_id = clip.id.clone();
+                let drag_clip_id = clip_id.clone();
+                let trim_start_clip_id = clip_id.clone();
+                let trim_end_clip_id = clip_id.clone();
+                let trim_start_element_id: SharedString = format!("trim-start-{clip_id}").into();
+                let trim_end_element_id: SharedString = format!("trim-end-{clip_id}").into();
+                let element_id: SharedString = format!("timeline-clip-{clip_id}").into();
+                let selected = self.selected_clip_id.as_deref() == Some(clip.id.as_str());
+                let waveform = self
+                    .clip_waveforms
+                    .get(&clip.id)
+                    .map(|peaks| waveform_segment(peaks, 0.0, 1.0, 48))
+                    .unwrap_or_default();
+                div()
+                    .id(element_id)
+                    .absolute()
+                    .left(relative(start))
+                    .top(px(5.0))
+                    .h(px(28.0))
+                    .w(relative(duration))
+                    .min_w(px(3.0))
+                    .overflow_hidden()
+                    .rounded_sm()
+                    .bg(rgb(color))
+                    .cursor_pointer()
+                    .when(selected, |clip| clip.border_2().border_color(rgb(0xffd29d)))
+                    .when(!clip.enabled, |clip| clip.opacity(0.4))
+                    .px_2()
+                    .text_xs()
+                    .text_color(rgb(0xffffff))
+                    .when(!waveform.is_empty(), |clip| {
+                        clip.child(
+                            div()
+                                .absolute()
+                                .left(px(2.0))
+                                .right(px(2.0))
+                                .top(px(4.0))
+                                .bottom(px(4.0))
+                                .flex()
+                                .items_center()
+                                .opacity(0.48)
+                                .children(waveform.into_iter().map(|amplitude| {
+                                    div()
+                                        .flex_1()
+                                        .min_w(px(1.0))
+                                        .h(relative(amplitude.clamp(0.04, 1.0)))
+                                        .bg(rgb(0xffffff))
+                                })),
+                        )
+                    })
+                    .child(div().relative().child(format!("{kind}  {}", clip.name)))
+                    .when(selected, |clip| {
+                        clip.child(
+                            div()
+                                .id(trim_start_element_id)
+                                .absolute()
+                                .left(px(0.0))
+                                .top(px(0.0))
+                                .bottom(px(0.0))
+                                .w(px(8.0))
+                                .cursor(CursorStyle::ResizeLeftRight)
+                                .child(
+                                    div()
+                                        .absolute()
+                                        .left(px(1.0))
+                                        .top(px(4.0))
+                                        .bottom(px(4.0))
+                                        .w(px(3.0))
+                                        .rounded_full()
+                                        .bg(rgb(0xffffff)),
+                                )
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |this, event, window, cx| {
+                                        cx.stop_propagation();
+                                        this.begin_clip_drag(
+                                            &trim_start_clip_id,
+                                            ClipDragKind::TrimStart,
+                                            event,
+                                            window,
+                                            cx,
+                                        );
+                                    }),
+                                ),
+                        )
+                        .child(
+                            div()
+                                .id(trim_end_element_id)
+                                .absolute()
+                                .right(px(0.0))
+                                .top(px(0.0))
+                                .bottom(px(0.0))
+                                .w(px(8.0))
+                                .cursor(CursorStyle::ResizeLeftRight)
+                                .child(
+                                    div()
+                                        .absolute()
+                                        .right(px(1.0))
+                                        .top(px(4.0))
+                                        .bottom(px(4.0))
+                                        .w(px(3.0))
+                                        .rounded_full()
+                                        .bg(rgb(0xffffff)),
+                                )
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |this, event, window, cx| {
+                                        cx.stop_propagation();
+                                        this.begin_clip_drag(
+                                            &trim_end_clip_id,
+                                            ClipDragKind::TrimEnd,
+                                            event,
+                                            window,
+                                            cx,
+                                        );
+                                    }),
+                                ),
+                        )
+                    })
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, event, window, cx| {
+                            this.begin_clip_drag(
+                                &drag_clip_id,
+                                ClipDragKind::Move,
+                                event,
+                                window,
+                                cx,
+                            );
+                        }),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.selected_clip_id = Some(clip_id.clone());
+                        cx.notify();
+                    }))
+            });
+            let track_name = match (track.enabled, track.locked) {
+                (false, true) => format!("{}  [off, locked]", track.name),
+                (false, false) => format!("{}  [off]", track.name),
+                (true, true) => format!("{}  [locked]", track.name),
+                (true, false) => track.name.clone(),
+            };
+            let mute_track_id = track.id.clone();
+            let solo_track_id = track.id.clone();
+            let select_track_id = track.id.clone();
+            let drop_track_id = track.id.clone();
+            let drop_track_kind = track.kind;
+            let drop_track_locked = track.locked;
+            let mute_element_id: SharedString = format!("track-mute-{}", track.id).into();
+            let solo_element_id: SharedString = format!("track-solo-{}", track.id).into();
+            let track_element_id: SharedString = format!("timeline-track-{}", track.id).into();
+            div()
+                .id(track_element_id)
+                .flex()
+                .flex_none()
+                .h(px(38.0))
+                .w_full()
+                .border_b_1()
+                .border_color(rgb(0x292c34))
+                .when(selected_track, |row| row.bg(rgb(0x252a34)))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    if this.selected_track_id.as_deref() == Some(select_track_id.as_str()) {
+                        this.selected_track_id = None;
+                    } else {
+                        this.selected_track_id = Some(select_track_id.clone());
+                    }
+                    this.edit_error = None;
+                    cx.notify();
+                }))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .w(px(230.0))
+                        .px_3()
+                        .text_sm()
+                        .text_color(rgb(0xc8cad2))
+                        .child(div().flex_1().overflow_hidden().child(track_name))
+                        .when(track.kind != TrackKind::Overlay, |header| {
+                            header
+                                .child(
+                                    div()
+                                        .id(mute_element_id)
+                                        .flex_none()
+                                        .cursor_pointer()
+                                        .rounded_sm()
+                                        .px_2()
+                                        .py_1()
+                                        .text_xs()
+                                        .bg(rgb(if track.muted { 0xb84c4c } else { 0x292c34 }))
+                                        .hover(|style| style.bg(rgb(0x555b68)))
+                                        .child("M")
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.toggle_track_mute(&mute_track_id, cx);
+                                        })),
+                                )
+                                .child(
+                                    div()
+                                        .id(solo_element_id)
+                                        .flex_none()
+                                        .cursor_pointer()
+                                        .rounded_sm()
+                                        .px_2()
+                                        .py_1()
+                                        .text_xs()
+                                        .bg(rgb(if track.solo { 0xb28a2e } else { 0x292c34 }))
+                                        .hover(|style| style.bg(rgb(0x555b68)))
+                                        .child("S")
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.toggle_track_solo(&solo_track_id, cx);
+                                        })),
+                                )
+                        }),
+                )
+                .child(
+                    div()
+                        .relative()
+                        .flex_1()
+                        .h_full()
+                        .mr_2()
+                        .overflow_hidden()
+                        .drag_over::<AssetDrag>(move |style, asset, _, _| {
+                            if drop_track_locked {
+                                style
+                                    .bg(rgb(0x552b30))
+                                    .border_1()
+                                    .border_color(rgb(0xff747f))
+                            } else if track_accepts_asset(drop_track_kind, asset.kind) {
+                                style
+                                    .bg(rgb(0x294636))
+                                    .border_1()
+                                    .border_color(rgb(0x70d99a))
+                            } else {
+                                style
+                                    .bg(rgb(0x4b3032))
+                                    .border_1()
+                                    .border_color(rgb(0xe27980))
+                            }
+                        })
+                        .on_drop(cx.listener(move |this, asset: &AssetDrag, window, cx| {
+                            this.drop_asset_on_track(asset, &drop_track_id, window, cx);
+                        }))
+                        .children(clips),
+                )
+        });
+        div()
+            .id("timeline-panel")
+            .flex()
+            .flex_col()
+            .flex_none()
+            .h(px(230.0))
+            .w_full()
+            .bg(rgb(0x181a20))
+            .border_t_1()
+            .border_color(rgb(0x30333d))
+            .on_mouse_move(cx.listener(Self::continue_clip_drag))
+            .on_mouse_up(MouseButton::Left, cx.listener(Self::end_clip_drag))
+            .child(
+                div()
+                    .flex()
+                    .flex_none()
+                    .h(px(38.0))
+                    .items_center()
+                    .px_3()
+                    .justify_between()
+                    .child(div().text_sm().text_color(rgb(0xd8dae2)).child("Timeline"))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .child(div().text_xs().text_color(rgb(0x737783)).child(format!(
+                                "{} / {}",
+                                format_time(self.current_time()),
+                                self.duration
+                            )))
+                            .when(self.selected_clip_id.is_some(), |controls| {
+                                controls.child(
+                                    div()
+                                        .id("delete-selected-clip")
+                                        .cursor_pointer()
+                                        .rounded_sm()
+                                        .px_2()
+                                        .py_1()
+                                        .bg(rgb(0x4a292c))
+                                        .hover(|style| style.bg(rgb(0x6b363b)))
+                                        .text_xs()
+                                        .text_color(rgb(0xffb7b7))
+                                        .child("Delete")
+                                        .on_click(cx.listener(Self::delete_selected_clip_click)),
+                                )
+                            }),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_none()
+                    .h(px(24.0))
+                    .w_full()
+                    .items_center()
+                    .child(div().w(px(230.0)))
+                    .child(
+                        div()
+                            .id("timeline-scrubber")
+                            .relative()
+                            .flex_1()
+                            .h(px(16.0))
+                            .mr_2()
+                            .cursor_pointer()
+                            .on_mouse_down(MouseButton::Left, cx.listener(Self::begin_scrub))
+                            .on_mouse_move(cx.listener(Self::continue_scrub))
+                            .on_mouse_up(MouseButton::Left, cx.listener(Self::end_scrub))
+                            .child(
+                                div()
+                                    .absolute()
+                                    .top(px(7.0))
+                                    .left(px(0.0))
+                                    .w_full()
+                                    .h(px(3.0))
+                                    .bg(rgb(0x30333d)),
+                            )
+                            .child(
+                                div()
+                                    .absolute()
+                                    .top(px(7.0))
+                                    .left(px(0.0))
+                                    .h(px(3.0))
+                                    .w(relative(progress))
+                                    .bg(rgb(0xffa13b)),
+                            )
+                            .child(
+                                div()
+                                    .absolute()
+                                    .top(px(2.0))
+                                    .left(relative(progress))
+                                    .ml(px(-5.0))
+                                    .size(px(11.0))
+                                    .rounded_full()
+                                    .bg(rgb(0xffa13b)),
+                            ),
+                    ),
+            )
+            .when(self.tracks.is_empty(), |timeline| {
+                timeline.child(
+                    div()
+                        .id("empty-timeline-drop-target")
+                        .flex()
+                        .flex_1()
+                        .items_center()
+                        .justify_center()
+                        .text_sm()
+                        .text_color(rgb(0x737783))
+                        .drag_over::<AssetDrag>(|style, asset, _, _| {
+                            if asset.kind == AssetKind::Font {
+                                style.bg(rgb(0x4b3032))
+                            } else {
+                                style.bg(rgb(0x294636))
+                            }
+                        })
+                        .on_drop(cx.listener(|this, asset: &AssetDrag, window, cx| {
+                            this.drop_asset_without_track(asset, window, cx);
+                        }))
+                        .child("No tracks yet — drop an asset here"),
+                )
+            })
+            .children(rows)
+    }
+}
+
+impl Render for EditorView {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.poll_background_work();
+        self.update_playback(window);
+        if self.preview_pending || self.media_pending || self.audio_pending {
+            window.request_animation_frame();
+        }
+        let title = if self.document.is_dirty() {
+            format!("{} * — Mikan", self.project_name)
+        } else {
+            format!("{} — Mikan", self.project_name)
+        };
+        window.set_window_title(&title);
+        window.set_window_edited(self.document.is_dirty());
+        div()
+            .key_context("MikanEditor")
+            .on_action(cx.listener(Self::save_project))
+            .on_action(cx.listener(Self::save_project_as))
+            .on_action(cx.listener(Self::undo_edit))
+            .on_action(cx.listener(Self::redo_edit))
+            .on_action(cx.listener(Self::toggle_playback_action))
+            .on_action(cx.listener(Self::previous_frame_action))
+            .on_action(cx.listener(Self::next_frame_action))
+            .on_action(cx.listener(Self::import_assets_action))
+            .on_action(cx.listener(Self::insert_selected_asset_action))
+            .on_action(cx.listener(Self::delete_selected_clip_action))
+            .when_some(self.focus_handle.as_ref(), |view, focus_handle| {
+                view.track_focus(focus_handle)
+            })
+            .flex()
+            .flex_col()
+            .size_full()
+            .overflow_hidden()
+            .bg(rgb(0x14161b))
+            .font_family(".SystemUIFont")
+            .child(self.toolbar(cx))
+            .child(
+                div()
+                    .flex()
+                    .flex_1()
+                    .w_full()
+                    .overflow_hidden()
+                    .child(self.asset_panel(cx))
+                    .child(self.preview_panel(cx))
+                    .child(self.inspector_panel()),
+            )
+            .child(self.timeline(cx))
+    }
+}
+
+fn panel_header(title: &'static str, count: usize) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_none()
+        .h(px(40.0))
+        .items_center()
+        .justify_between()
+        .px_3()
+        .border_b_1()
+        .border_color(rgb(0x30333d))
+        .text_sm()
+        .text_color(rgb(0xd8dae2))
+        .child(title)
+        .when(count > 0, |header| {
+            header.child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(0x737783))
+                    .child(count.to_string()),
+            )
+        })
+}
+
+fn dragged_clip_range(drag: &ClipDrag, pointer_frame: i64, timeline_end: i64) -> (i64, i64) {
+    let delta = pointer_frame.saturating_sub(drag.pointer_frame);
+    let original_end = drag.start_frame.saturating_add(drag.duration_frames);
+    match drag.kind {
+        ClipDragKind::Move => {
+            let latest_start = timeline_end.saturating_sub(drag.duration_frames);
+            (
+                drag.start_frame
+                    .saturating_add(delta)
+                    .clamp(0, latest_start),
+                drag.duration_frames,
+            )
+        }
+        ClipDragKind::TrimStart => {
+            let start = drag
+                .start_frame
+                .saturating_add(delta)
+                .clamp(0, original_end.saturating_sub(1));
+            (start, original_end.saturating_sub(start))
+        }
+        ClipDragKind::TrimEnd => {
+            let end = original_end
+                .saturating_add(delta)
+                .clamp(drag.start_frame.saturating_add(1), timeline_end);
+            (drag.start_frame, end.saturating_sub(drag.start_frame))
+        }
+    }
+}
+
+fn initial_clip_duration_frames(
+    media: Option<&Result<MediaAssetInfo, String>>,
+    frame_rate: Rational,
+) -> i64 {
+    let fallback = (u64::from(frame_rate.numerator) * 5)
+        .div_ceil(u64::from(frame_rate.denominator))
+        .max(1)
+        .min(i64::MAX as u64) as i64;
+    media
+        .and_then(|info| info.as_ref().ok())
+        .and_then(|info| info.duration)
+        .and_then(|duration| TimelineClock::new(duration, frame_rate).ok())
+        .map(TimelineClock::end_frame)
+        .filter(|frames| *frames > 0)
+        .unwrap_or(fallback)
+}
+
+fn track_accepts_asset(track: TrackKind, asset: AssetKind) -> bool {
+    matches!(
+        (track, asset),
+        (TrackKind::Video, AssetKind::Video)
+            | (TrackKind::Audio, AssetKind::Audio)
+            | (TrackKind::Overlay, AssetKind::Image)
+    )
+}
+
+fn waveform_peaks(buffer: &AudioBuffer, requested_buckets: usize) -> Vec<f32> {
+    let frame_count = buffer.frame_count();
+    if frame_count == 0 || requested_buckets == 0 || buffer.channels == 0 {
+        return Vec::new();
+    }
+    let bucket_count = requested_buckets.min(frame_count);
+    let channels = usize::from(buffer.channels);
+    let mut peaks = vec![0.0_f32; bucket_count];
+    for (frame_index, frame) in buffer.samples.chunks_exact(channels).enumerate() {
+        let bucket = frame_index * bucket_count / frame_count;
+        let amplitude = frame
+            .iter()
+            .fold(0.0_f32, |peak, sample| peak.max(sample.abs()));
+        peaks[bucket] = peaks[bucket].max(amplitude);
+    }
+    peaks
+}
+
+fn resolve_asset_location(location: &AssetLocation, asset_root: &Path) -> Option<PathBuf> {
+    match location {
+        AssetLocation::File { path } => {
+            let path = Path::new(path);
+            Some(if path.is_absolute() {
+                path.to_owned()
+            } else {
+                asset_root.join(path)
+            })
+        }
+        AssetLocation::Url { .. } => None,
+    }
+}
+
+fn media_asset_info(probe: &MediaProbe) -> MediaAssetInfo {
+    let duration = probe
+        .duration
+        .or_else(|| probe.video.as_ref().and_then(|video| video.duration))
+        .or_else(|| probe.audio.iter().find_map(|audio| audio.duration));
+    MediaAssetInfo {
+        duration,
+        video_size: probe
+            .video
+            .as_ref()
+            .map(|video| (video.width, video.height)),
+        has_audio: !probe.audio.is_empty(),
+    }
+}
+
+fn format_media_asset_info(info: &MediaAssetInfo) -> String {
+    let mut parts = Vec::new();
+    if let Some((width, height)) = info.video_size {
+        parts.push(format!("{width}×{height}"));
+    }
+    if let Some(duration) = info
+        .duration
+        .and_then(|duration| duration.as_seconds().ok())
+    {
+        parts.push(format!("{duration:.3}s"));
+    }
+    if info.has_audio && info.video_size.is_some() {
+        parts.push("audio".to_owned());
+    }
+    if parts.is_empty() {
+        "No media streams".to_owned()
+    } else {
+        parts.join(" · ")
+    }
+}
+
+fn map_clip_waveform(
+    peaks: &[f32],
+    source_frames: usize,
+    sample_rate: u32,
+    clip: &AudioClip,
+    requested_buckets: usize,
+) -> Vec<f32> {
+    if peaks.is_empty() || source_frames == 0 || sample_rate == 0 || requested_buckets == 0 {
+        return Vec::new();
+    }
+    let Ok(source_start) = clip.source_start.as_seconds() else {
+        return Vec::new();
+    };
+    let source_limit = match clip.source_duration {
+        Some(duration) => {
+            let Ok(duration) = duration.as_seconds() else {
+                return Vec::new();
+            };
+            Some(source_start + duration)
+        }
+        None => None,
+    };
+    let source_duration = source_frames as f64 / f64::from(sample_rate);
+    let bucket_count = requested_buckets.min(peaks.len().max(1));
+    (0..bucket_count)
+        .map(|bucket| {
+            let Some(local_start) = time_fraction(clip.range.duration, bucket, bucket_count) else {
+                return 0.0;
+            };
+            let Some(local_end) = time_fraction(clip.range.duration, bucket + 1, bucket_count)
+            else {
+                return 0.0;
+            };
+            let Ok(mapped_start) = integrate_f64(&clip.playback_rate, local_start) else {
+                return 0.0;
+            };
+            let Ok(mapped_end) = integrate_f64(&clip.playback_rate, local_end) else {
+                return 0.0;
+            };
+            let start = (source_start + mapped_start).max(0.0);
+            let mut end = (source_start + mapped_end).max(start);
+            if let Some(limit) = source_limit {
+                if start >= limit {
+                    return 0.0;
+                }
+                end = end.min(limit);
+            }
+            if start >= source_duration || end <= start {
+                return 0.0;
+            }
+            let start_fraction = (start / source_duration).clamp(0.0, 1.0) as f32;
+            let duration_fraction =
+                ((end.min(source_duration) - start) / source_duration).clamp(0.0, 1.0) as f32;
+            waveform_segment(peaks, start_fraction, duration_fraction, 1)
+                .into_iter()
+                .next()
+                .unwrap_or(0.0)
+        })
+        .collect()
+}
+
+fn time_fraction(duration: Time, numerator: usize, denominator: usize) -> Option<Time> {
+    let value = i128::from(duration.value).checked_mul(i128::try_from(numerator).ok()?)?;
+    let timescale = u64::from(duration.timescale).checked_mul(u64::try_from(denominator).ok()?)?;
+    Some(Time::new(
+        i64::try_from(value).ok()?,
+        u32::try_from(timescale).ok()?,
+    ))
+}
+
+fn waveform_segment(
+    peaks: &[f32],
+    start_fraction: f32,
+    duration_fraction: f32,
+    max_bars: usize,
+) -> Vec<f32> {
+    if peaks.is_empty() || duration_fraction <= 0.0 || max_bars == 0 {
+        return Vec::new();
+    }
+    let start = (start_fraction.clamp(0.0, 1.0) * peaks.len() as f32).floor() as usize;
+    let end =
+        ((start_fraction + duration_fraction).clamp(0.0, 1.0) * peaks.len() as f32).ceil() as usize;
+    let values = &peaks[start.min(peaks.len())..end.max(start + 1).min(peaks.len())];
+    let bar_count = values.len().min(max_bars);
+    (0..bar_count)
+        .map(|bar| {
+            let from = bar * values.len() / bar_count;
+            let to = ((bar + 1) * values.len()).div_ceil(bar_count);
+            values[from..to].iter().copied().fold(0.0_f32, f32::max)
+        })
+        .collect()
+}
+
+fn inspector_row(label: &'static str, value: impl Into<SharedString>) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .px_3()
+        .py_2()
+        .border_b_1()
+        .border_color(rgb(0x292c34))
+        .child(div().text_xs().text_color(rgb(0x737783)).child(label))
+        .child(
+            div()
+                .text_sm()
+                .text_color(rgb(0xc8cad2))
+                .child(value.into()),
+        )
+}
+
+fn prepare_preview_frame(frame: GpuFrame) -> PreviewFrame {
+    let width = frame.width();
+    let height = frame.height();
+    let mut pixels = frame.into_pixels();
+    for pixel in pixels.chunks_exact_mut(4) {
+        pixel.swap(0, 2);
+    }
+    PreviewFrame {
+        width,
+        height,
+        pixels,
+    }
+}
+
+fn frame_to_image(frame: PreviewFrame) -> Result<Arc<RenderImage>, String> {
+    let buffer = ImageBuffer::<Rgba<u8>, _>::from_raw(frame.width, frame.height, frame.pixels)
+        .ok_or_else(|| "GPU preview returned an invalid pixel buffer".to_owned())?;
+    Ok(Arc::new(RenderImage::new([Frame::new(buffer)])))
+}
+
+fn clip_kind_label(kind: ClipKind) -> &'static str {
+    match kind {
+        ClipKind::Video => "Video",
+        ClipKind::Audio => "Audio",
+        ClipKind::Image => "Image",
+        ClipKind::Text => "Text",
+        ClipKind::Dialogue => "Dialogue",
+        ClipKind::Component => "Component",
+    }
+}
+
+fn format_time(time: Time) -> String {
+    let total = time.as_seconds().unwrap_or(0.0).max(0.0);
+    let hours = (total / 3600.0).floor() as u64;
+    let minutes = ((total % 3600.0) / 60.0).floor() as u64;
+    let seconds = total % 60.0;
+    format!("{hours:02}:{minutes:02}:{seconds:06.3}")
+}
+
+fn main() {
+    if let Err(error) = run() {
+        eprintln!("mikan-editor: {error}");
+        std::process::exit(1);
+    }
+}
+
+fn run() -> Result<(), Box<dyn Error>> {
+    let path = std::env::args_os().nth(1).map(PathBuf::from);
+    let mut editor = EditorView::open(path.as_deref())?;
+
+    Application::new().run(move |cx: &mut App| {
+        cx.bind_keys([
+            KeyBinding::new("cmd-s", SaveProject, Some("MikanEditor")),
+            KeyBinding::new("cmd-shift-s", SaveProjectAs, Some("MikanEditor")),
+            KeyBinding::new("cmd-z", UndoEdit, Some("MikanEditor")),
+            KeyBinding::new("cmd-shift-z", RedoEdit, Some("MikanEditor")),
+            KeyBinding::new("space", TogglePlayback, Some("MikanEditor")),
+            KeyBinding::new("left", PreviousFrame, Some("MikanEditor")),
+            KeyBinding::new("right", NextFrame, Some("MikanEditor")),
+            KeyBinding::new("cmd-i", ImportAssets, Some("MikanEditor")),
+            KeyBinding::new("cmd-return", InsertSelectedAsset, Some("MikanEditor")),
+            KeyBinding::new("backspace", DeleteSelectedClip, Some("MikanEditor")),
+            KeyBinding::new("delete", DeleteSelectedClip, Some("MikanEditor")),
+        ]);
+        cx.on_window_closed(|cx| {
+            if cx.windows().is_empty() {
+                cx.quit();
+            }
+        })
+        .detach();
+
+        let bounds = Bounds::centered(None, size(px(1440.0), px(900.0)), cx);
+        cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                titlebar: Some(gpui::TitlebarOptions {
+                    title: Some("Mikan".into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            |window, cx| {
+                let view = cx.new(|cx| {
+                    let focus_handle = cx.focus_handle();
+                    focus_handle.focus(window);
+                    editor.focus_handle = Some(focus_handle);
+                    editor
+                });
+                let close_view = view.clone();
+                window.on_window_should_close(cx, move |window, cx| {
+                    if close_view.read(cx).force_close || !close_view.read(cx).document.is_dirty() {
+                        return true;
+                    }
+                    close_view.update(cx, |editor, cx| editor.prompt_to_close(window, cx));
+                    false
+                });
+                view
+            },
+        )
+        .expect("could not open the Mikan editor window");
+        cx.activate(true);
+    });
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        AudioCacheKey, CachedAudioDecoder, ClipDrag, ClipDragKind, MediaAssetInfo,
+        dragged_clip_range, initial_clip_duration_frames, map_clip_waveform, take_latest,
+        track_accepts_asset, waveform_peaks, waveform_segment,
+    };
+    use mikan_composition::{
+        Animatable, AssetLocation, AudioClip, Rational, ResolvedAsset, Time, TimeRange,
+    };
+    use mikan_media::{AudioBuffer, AudioDecoder};
+    use mikan_project::{AssetKind, TrackKind};
+    use std::path::PathBuf;
+    use std::sync::mpsc;
+
+    #[test]
+    fn background_workers_coalesce_queued_requests() {
+        let (sender, receiver) = mpsc::channel();
+        sender.send(2).unwrap();
+        sender.send(3).unwrap();
+
+        assert_eq!(take_latest(1, &receiver), 3);
+    }
+
+    #[test]
+    fn waveform_peaks_are_aligned_and_downsampled_for_clips() {
+        let buffer = AudioBuffer {
+            sample_rate: 4,
+            channels: 2,
+            samples: vec![0.1, -0.2, 0.4, -0.3, 0.8, -0.7, 0.2, -0.1],
+        };
+
+        let peaks = waveform_peaks(&buffer, 4);
+        assert_eq!(peaks, vec![0.2, 0.4, 0.8, 0.2]);
+        assert_eq!(waveform_segment(&peaks, 0.5, 0.5, 1), vec![0.8]);
+    }
+
+    #[test]
+    fn clip_waveforms_follow_source_ranges_and_playback_rate() {
+        let mut clip = AudioClip {
+            id: "clip".to_owned(),
+            asset: ResolvedAsset {
+                id: "audio".to_owned(),
+                location: AssetLocation::File {
+                    path: "audio.wav".to_owned(),
+                },
+            },
+            range: TimeRange {
+                start: Time::ZERO,
+                duration: Time::new(1, 1),
+            },
+            source_start: Time::new(1, 2),
+            source_duration: Some(Time::new(1, 2)),
+            playback_rate: Animatable::Static(1.0),
+            volume: Animatable::Static(1.0),
+            muted: false,
+        };
+        let peaks = vec![0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8];
+
+        assert_eq!(
+            map_clip_waveform(&peaks, 8, 4, &clip, 4),
+            vec![0.3, 0.4, 0.0, 0.0]
+        );
+
+        clip.source_duration = None;
+        clip.playback_rate = Animatable::Static(2.0);
+        assert_eq!(
+            map_clip_waveform(&peaks, 8, 4, &clip, 4),
+            vec![0.4, 0.6, 0.8, 0.0]
+        );
+    }
+
+    #[test]
+    fn body_drag_preserves_the_clip_center_from_every_grab_position() {
+        let move_from = |pointer_frame| ClipDrag {
+            clip_id: "clip".to_owned(),
+            kind: ClipDragKind::Move,
+            pointer_frame,
+            start_frame: 100,
+            duration_frames: 60,
+        };
+
+        assert_eq!(dragged_clip_range(&move_from(100), 110, 1_000), (110, 60));
+        assert_eq!(dragged_clip_range(&move_from(130), 140, 1_000), (110, 60));
+        assert_eq!(dragged_clip_range(&move_from(159), 169, 1_000), (110, 60));
+    }
+
+    #[test]
+    fn probed_duration_replaces_the_five_second_insertion_default() {
+        let info = Ok(MediaAssetInfo {
+            duration: Some(Time::new(961_104, 1_000_000)),
+            video_size: None,
+            has_audio: true,
+        });
+
+        assert_eq!(
+            initial_clip_duration_frames(Some(&info), Rational::new(60, 1)),
+            58
+        );
+        assert_eq!(
+            initial_clip_duration_frames(None, Rational::new(60, 1)),
+            300
+        );
+    }
+
+    #[test]
+    fn assets_only_highlight_compatible_timeline_tracks() {
+        assert!(track_accepts_asset(TrackKind::Video, AssetKind::Video));
+        assert!(track_accepts_asset(TrackKind::Audio, AssetKind::Audio));
+        assert!(track_accepts_asset(TrackKind::Overlay, AssetKind::Image));
+        assert!(!track_accepts_asset(TrackKind::Audio, AssetKind::Video));
+        assert!(!track_accepts_asset(TrackKind::Dialogue, AssetKind::Audio));
+        assert!(!track_accepts_asset(TrackKind::Overlay, AssetKind::Font));
+    }
+
+    #[test]
+    fn audio_decoder_reuses_session_pcm_cache() {
+        let path = PathBuf::from("/does/not/need/to/exist.wav");
+        let key = AudioCacheKey {
+            path: path.clone(),
+            sample_rate: 48_000,
+            channels: 2,
+        };
+        let expected = AudioBuffer {
+            sample_rate: 48_000,
+            channels: 2,
+            samples: vec![0.25, -0.25],
+        };
+        let mut decoder = CachedAudioDecoder::new();
+        decoder.buffers.insert(key, expected.clone());
+
+        let decoded = decoder.decode_audio(&path, 48_000, 2).unwrap();
+
+        assert_eq!(decoded, expected);
+    }
+}
