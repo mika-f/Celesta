@@ -3080,6 +3080,7 @@ dependencies = [
  "mikan-project",
  "rodio",
  "serde_json",
+ "unicode-segmentation",
 ]
 
 [[package]]

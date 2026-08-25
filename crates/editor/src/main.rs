@@ -11,7 +11,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    App, Application, Bounds, ClickEvent, Context, CursorStyle, FocusHandle, KeyBinding,
+    App, Application, Bounds, ClickEvent, Context, CursorStyle, Entity, FocusHandle, KeyBinding,
     KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ObjectFit,
     PathPromptOptions, Pixels, Point, PromptButton, PromptLevel, RenderImage, SharedString,
     StyledImage, Window, WindowBounds, WindowOptions, actions, div, img, prelude::*, px, relative,
@@ -31,8 +31,10 @@ use mikan_project::{AssetKind, TrackKind};
 use rodio::{DeviceSinkBuilder, Player, buffer::SamplesBuffer};
 
 mod audio_cache;
+mod text_input;
 
 use audio_cache::DiskAudioCache;
+use text_input::{TextInput, TextInputEvent};
 
 const EDITOR_DEMO_PROJECT: &str = include_str!("../../../examples/editor-demo.mikan.json");
 
@@ -514,7 +516,7 @@ struct EditorView {
     selected_asset_id: Option<String>,
     selected_track_id: Option<String>,
     renaming_track_id: Option<String>,
-    track_name_draft: String,
+    track_name_input: Option<Entity<TextInput>>,
     project_name: SharedString,
     dimensions: SharedString,
     frame_rate_label: SharedString,
@@ -529,7 +531,6 @@ struct EditorView {
     gpu_name: SharedString,
     focus_handle: Option<FocusHandle>,
     master_volume_focus: Option<FocusHandle>,
-    track_name_focus: Option<FocusHandle>,
     saving_as: bool,
     importing_assets: bool,
     asset_operation_active: bool,
@@ -595,7 +596,7 @@ impl EditorView {
             selected_asset_id: None,
             selected_track_id: None,
             renaming_track_id: None,
-            track_name_draft: String::new(),
+            track_name_input: None,
             project_name,
             dimensions,
             frame_rate_label,
@@ -610,7 +611,6 @@ impl EditorView {
             gpu_name,
             focus_handle: None,
             master_volume_focus: None,
-            track_name_focus: None,
             saving_as: false,
             importing_assets: false,
             asset_operation_active: false,
@@ -1147,10 +1147,10 @@ impl EditorView {
             return;
         }
         self.renaming_track_id = Some(track_id.to_owned());
-        self.track_name_draft = track.name.clone();
         self.edit_error = None;
-        if let Some(focus) = &self.track_name_focus {
-            focus.focus(window);
+        if let Some(input) = &self.track_name_input {
+            input.update(cx, |input, cx| input.set_text(track.name.clone(), cx));
+            input.read(cx).focus(window);
         }
         cx.notify();
     }
@@ -1159,13 +1159,16 @@ impl EditorView {
         let Some(track_id) = self.renaming_track_id.clone() else {
             return;
         };
-        match self
-            .document
-            .rename_track(&track_id, &self.track_name_draft)
-        {
+        let Some(name) = self
+            .track_name_input
+            .as_ref()
+            .map(|input| input.read(cx).text())
+        else {
+            return;
+        };
+        match self.document.rename_track(&track_id, &name) {
             Ok(()) => {
                 self.renaming_track_id = None;
-                self.track_name_draft.clear();
                 self.tracks = self.document.tracks();
                 self.edit_error = None;
             }
@@ -1174,45 +1177,10 @@ impl EditorView {
         cx.notify();
     }
 
-    fn track_name_key_down(
-        &mut self,
-        event: &KeyDownEvent,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        match event.keystroke.key.as_str() {
-            "enter" => self.commit_track_rename(cx),
-            "escape" => {
-                self.renaming_track_id = None;
-                self.track_name_draft.clear();
-                self.edit_error = None;
-                cx.notify();
-            }
-            "backspace" => {
-                self.track_name_draft.pop();
-                cx.notify();
-            }
-            "v" if event.keystroke.modifiers.platform => {
-                if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-                    self.track_name_draft
-                        .push_str(&text.replace(['\r', '\n'], " "));
-                    cx.notify();
-                }
-            }
-            _ if !event.keystroke.modifiers.platform
-                && !event.keystroke.modifiers.control
-                && !event.keystroke.modifiers.alt =>
-            {
-                if let Some(text) = &event.keystroke.key_char {
-                    self.track_name_draft.push_str(text);
-                    cx.notify();
-                } else {
-                    return;
-                }
-            }
-            _ => return,
-        }
-        cx.stop_propagation();
+    fn cancel_track_rename(&mut self, cx: &mut Context<Self>) {
+        self.renaming_track_id = None;
+        self.edit_error = None;
+        cx.notify();
     }
 
     fn toggle_track_enabled(&mut self, track_id: &str, cx: &mut Context<Self>) {
@@ -1232,7 +1200,6 @@ impl EditorView {
         match self.document.toggle_track_locked(track_id) {
             Ok(_) => {
                 self.renaming_track_id = None;
-                self.track_name_draft.clear();
                 self.tracks = self.document.tracks();
                 self.edit_error = None;
             }
@@ -1249,7 +1216,6 @@ impl EditorView {
                     self.selected_track_id = None;
                 }
                 self.renaming_track_id = None;
-                self.track_name_draft.clear();
                 self.sync_document_state();
                 if self.selected_clip_id.as_ref().is_some_and(|selected| {
                     !self
@@ -2014,7 +1980,6 @@ impl EditorView {
         self.clip_drag_hover_track_id = None;
         self.clip_drag_target_track_id = None;
         self.renaming_track_id = None;
-        self.track_name_draft.clear();
         match self.document.undo() {
             Ok(true) => {
                 self.save_error = None;
@@ -2032,7 +1997,6 @@ impl EditorView {
         self.clip_drag_hover_track_id = None;
         self.clip_drag_target_track_id = None;
         self.renaming_track_id = None;
-        self.track_name_draft.clear();
         match self.document.redo() {
             Ok(true) => {
                 self.save_error = None;
@@ -2638,11 +2602,6 @@ impl EditorView {
                                 .child(
                                     div()
                                         .id("track-name-input")
-                                        .when_some(
-                                            self.track_name_focus.as_ref(),
-                                            |input, focus| input.track_focus(focus),
-                                        )
-                                        .on_key_down(cx.listener(Self::track_name_key_down))
                                         .px_2()
                                         .py_1()
                                         .rounded_sm()
@@ -2651,7 +2610,10 @@ impl EditorView {
                                         .bg(rgb(0x17191f))
                                         .text_sm()
                                         .text_color(rgb(0xffffff))
-                                        .child(format!("{}▏", self.track_name_draft)),
+                                        .when_some(
+                                            self.track_name_input.clone(),
+                                            |field, input| field.child(input),
+                                        ),
                                 )
                                 .child(
                                     div()
@@ -2667,10 +2629,7 @@ impl EditorView {
                                         .child(
                                             inspector_button("track-rename-cancel", "Cancel")
                                                 .on_click(cx.listener(|this, _, _, cx| {
-                                                    this.renaming_track_id = None;
-                                                    this.track_name_draft.clear();
-                                                    this.edit_error = None;
-                                                    cx.notify();
+                                                    this.cancel_track_rename(cx);
                                                 })),
                                         ),
                                 ),
@@ -3039,7 +2998,6 @@ impl EditorView {
                 .on_click(cx.listener(move |this, _, _, cx| {
                     if this.renaming_track_id.as_deref() != Some(select_track_id.as_str()) {
                         this.renaming_track_id = None;
-                        this.track_name_draft.clear();
                     }
                     if this.selected_track_id.as_deref() == Some(select_track_id.as_str()) {
                         this.selected_track_id = None;
@@ -3811,6 +3769,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     let mut editor = EditorView::open(path.as_deref())?;
 
     Application::new().run(move |cx: &mut App| {
+        TextInput::bind_keys(cx);
         cx.bind_keys([
             KeyBinding::new("cmd-s", SaveProject, Some("MikanEditor")),
             KeyBinding::new("cmd-shift-s", SaveProjectAs, Some("MikanEditor")),
@@ -3845,11 +3804,19 @@ fn run() -> Result<(), Box<dyn Error>> {
                 let view = cx.new(|cx| {
                     let focus_handle = cx.focus_handle();
                     let master_volume_focus = cx.focus_handle().tab_stop(true).tab_index(0);
-                    let track_name_focus = cx.focus_handle().tab_stop(true).tab_index(1);
+                    let track_name_input = cx.new(TextInput::new);
+                    cx.subscribe(
+                        &track_name_input,
+                        |editor: &mut EditorView, _, event: &TextInputEvent, cx| match event {
+                            TextInputEvent::Submit => editor.commit_track_rename(cx),
+                            TextInputEvent::Cancel => editor.cancel_track_rename(cx),
+                        },
+                    )
+                    .detach();
                     focus_handle.focus(window);
                     editor.focus_handle = Some(focus_handle);
                     editor.master_volume_focus = Some(master_volume_focus);
-                    editor.track_name_focus = Some(track_name_focus);
+                    editor.track_name_input = Some(track_name_input);
                     editor
                 });
                 let close_view = view.clone();

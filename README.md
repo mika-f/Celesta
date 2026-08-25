@@ -75,8 +75,9 @@ dragging a clip vertically moves it between compatible unlocked tracks. Track
 rows scroll below the fixed ruler when they overflow. Selecting a track exposes
 Enable/Disable, Lock/Unlock, Rename, and Delete controls in the Inspector;
 non-empty deletion requires confirmation and locked tracks protect all edits
-until unlocked. Delete the selected timeline clip with the Timeline button,
-Backspace, or Forward Delete. Import
+until unlocked. Rename is a native GPUI text field with IME composition,
+selection, grapheme-aware editing, and clipboard shortcuts. Delete the selected
+timeline clip with the Timeline button, Backspace, or Forward Delete. Import
 batches, insertion, and deletion
 all participate in undo/redo, and locked tracks reject destructive clip edits.
 Selected assets can be relinked only to the same media kind. Missing local files

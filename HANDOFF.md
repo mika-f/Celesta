@@ -17,9 +17,9 @@ video/audio tracks.
 - Workspace: `/Users/natsuneko/ghq/github.com/mika-f/mikan`
 - Rust edition: 2024
 - Minimum Rust version: 1.89
-- The initial implementation is tracked on `main`; clip-volume automation
-  landed in commit `714be05`. Inspect `git status --short` for newer work before
-  editing or staging.
+- The initial implementation is tracked on `main`; track management landed in
+  commit `52b13d5`. Inspect `git status --short` for newer work before editing or
+  staging.
 - FFmpeg and FFprobe are installed and available on `PATH`.
 - GPUI is pinned to crates.io version `0.2.2`.
 
@@ -174,9 +174,11 @@ Keep these boundaries intact:
   scrubber, allowing manually created tracks to remain reachable.
 - Selecting a track exposes Enable/Disable, Lock/Unlock, Rename, and Delete in
   the Inspector. Locked tracks allow only Unlock; their rename, enabled state,
-  ordering, clips, and deletion remain protected. Inline rename accepts direct
-  key input and clipboard paste, commits with Enter/Save, and cancels with
-  Escape/Cancel.
+  ordering, clips, and deletion remain protected. Inline rename uses GPUI's
+  `EntityInputHandler`, including platform IME composition, UTF-16/UTF-8 range
+  conversion, grapheme-aware cursor movement and deletion, mouse/Shift
+  selection, Home/End, clipboard shortcuts, and the character palette. It
+  commits with Enter/Save and cancels with Escape/Cancel.
 - Empty tracks delete immediately. Deleting a track with clips requires an
   explicit warning confirmation and removes the serialized items only after
   approval. The document API rejects non-empty deletion unless the caller opts
@@ -279,7 +281,7 @@ licensed VOICEROID voice sample.
 
 ## Validation baseline
 
-At this handoff, the workspace has 71 passing tests. The last checks were:
+At this handoff, the workspace has 72 passing tests. The last checks were:
 
 ```sh
 cargo test --workspace
@@ -309,13 +311,11 @@ for synthetic GUI input. Keep drag behavior easy to exercise manually.
 The initial editor mutation, persistence, audio, and background-worker
 milestones are complete. Continue with:
 
-1. Replace the lightweight track-name key handler with a full GPUI
-   `EntityInputHandler`, including IME composition, selection, cursor movement,
-   and platform editing shortcuts.
+1. Replace GPUI image readback with a native texture bridge, while retaining a
+   single presenter for the window surface and the CPU readback fallback.
 
-Later performance work should replace GPUI image readback with a native texture
-bridge. Do not optimize this by letting GPUI and wgpu both present to the same
-window surface.
+Do not optimize preview presentation by letting GPUI and wgpu both present to
+the same window surface.
 
 ## Working conventions
 
