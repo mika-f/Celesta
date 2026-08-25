@@ -50,9 +50,12 @@ The repository currently contains the first foundation:
   `useProjectProperty(key, defaultValue)` reads its editor-set
   `properties` (falling back to `defaultValue` when the key is absent —
   there is no schema yet), and `<ProjectTimeline />` embeds its
-  `video`/`image`/`text`/`component` timeline content — evaluated by
-  `mikan-evaluator` (Rust), not reimplemented in TypeScript — alongside the
-  entry's own React-authored content. `component` items
+  `video`/`image`/`text`/`dialogue`/`component` timeline content —
+  evaluated by `mikan-evaluator` (Rust), not reimplemented in TypeScript —
+  alongside the entry's own React-authored content. A `dialogue` item
+  evaluates to a portrait image plus subtitle text (a plain group layer,
+  the same as any author-placed one), so it needs no dialogue-specific
+  handling here. `component` items
   (`registerComponent(name, Component, schema?)`) resolve to a real
   rendered subtree positioned at the project-evaluated transform; an
   unregistered name is left for `GpuRenderer` to reject rather than

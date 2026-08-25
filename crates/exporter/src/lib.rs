@@ -285,9 +285,8 @@ impl Exporter {
     /// project once per frame and gives the entry's `<ProjectTimeline />`
     /// the resulting layers. `companion.project_asset_root` resolves the
     /// project's own relative asset paths and may differ from the entry's
-    /// directory; only the project's `video`/`image`/`text` timeline
-    /// content is evaluated (`audio`, `dialogue`, and `component` items are
-    /// dropped before evaluation) — see `HANDOFF.md` for why.
+    /// directory; every timeline content kind but `audio` is evaluated (see
+    /// `visual_only_project`).
     pub fn export_react_entry_with_project(
         &self,
         entry: impl AsRef<Path>,
@@ -710,29 +709,28 @@ impl Default for Exporter {
     }
 }
 
-/// Drops timeline items whose content isn't `video`/`image`/`text`/
-/// `component` before evaluating a companion project for a React export
-/// (v1 scope: no `audio` or `dialogue` content). `audio` content produces
-/// no visual layers anyway; `dialogue` is dropped so its evaluator-expanded
-/// output doesn't appear where the entry didn't ask for it. `component`
-/// items are kept: the evaluator has no registry of its own and always
-/// evaluates them to `LayerContent::MissingComponent`, which
-/// `@mikan/react`'s `<ProjectTimeline />` resolves against its own
-/// `registerComponent()` registry (falling back to leaving
-/// `missingComponent` layers as-is, which `GpuRenderer` then errors on —
-/// see `HANDOFF.md`).
+/// Drops `audio` timeline items before evaluating a companion project for a
+/// React export. `Evaluator::visual_layer` already evaluates an `audio` item
+/// to no layer (`TimelineContent::Audio { .. } => return Ok(None)`), so this
+/// filter is a cheap, explicit skip rather than a behavior change; the
+/// React export path doesn't mux any project audio yet regardless (see
+/// `HANDOFF.md`'s open `AudioGraph` item), so an `audio` item has nothing to
+/// contribute here either way. Every other kind reaches
+/// `<ProjectTimeline />`/`<ProjectTrack />`: `component` items evaluate to
+/// `LayerContent::MissingComponent`, which `@mikan/react` resolves against
+/// its own `registerComponent()` registry (falling back to leaving
+/// `missingComponent` layers as-is, which `GpuRenderer` then errors on);
+/// `dialogue` items evaluate to a `LayerContent::Group` of the character's
+/// portrait image and subtitle text (`Evaluator::dialogue`) — there is no
+/// dedicated `LayerContent::Dialogue`, so it needs no special handling here
+/// or on the TypeScript side, the same generic `Group`/`Image`/`Text`
+/// rendering every other layer already gets.
 fn visual_only_project(project: &Project) -> Project {
     let mut filtered = project.clone();
     for track in &mut filtered.tracks {
-        track.items.retain(|item| {
-            matches!(
-                item.content,
-                TimelineContent::Video { .. }
-                    | TimelineContent::Image { .. }
-                    | TimelineContent::Text { .. }
-                    | TimelineContent::Component { .. }
-            )
-        });
+        track
+            .items
+            .retain(|item| !matches!(item.content, TimelineContent::Audio { .. }));
     }
     filtered
 }
@@ -950,6 +948,77 @@ mod tests {
             frame_count(Time::new(1002, 1000), Rational::new(30_000, 1001)).unwrap(),
             31
         );
+    }
+
+    #[test]
+    fn visual_only_project_keeps_dialogue_and_component_but_drops_audio() {
+        const WITH_DIALOGUE: &str = r#"{
+            "version": 0,
+            "settings": {
+                "width": 640,
+                "height": 360,
+                "frameRate": {"numerator": 30, "denominator": 1},
+                "sampleRate": 48000
+            },
+            "assets": {
+                "akane-default": {"type": "image", "name": "Akane", "source": {"type": "file", "path": "./portrait.png"}},
+                "voice-001": {"type": "audio", "source": {"type": "file", "path": "./voice.wav"}}
+            },
+            "characters": {
+                "akane": {
+                    "name": "Akane",
+                    "portrait": {
+                        "defaultExpression": "default",
+                        "expressions": {"default": "akane-default"}
+                    },
+                    "subtitle": {}
+                }
+            },
+            "tracks": [
+                {
+                    "id": "dialogue",
+                    "name": "Dialogue",
+                    "kind": "dialogue",
+                    "items": [
+                        {
+                            "id": "line-1",
+                            "range": {"start": {"value": 0, "timescale": 1}, "duration": {"value": 1, "timescale": 1}},
+                            "content": {"type": "dialogue", "character": "akane", "text": "Hello", "audio": "voice-001"}
+                        },
+                        {
+                            "id": "voice-only",
+                            "range": {"start": {"value": 0, "timescale": 1}, "duration": {"value": 1, "timescale": 1}},
+                            "content": {"type": "audio", "asset": "voice-001"}
+                        }
+                    ]
+                }
+            ],
+            "properties": {}
+        }"#;
+        let project = Project::from_json(WITH_DIALOGUE).unwrap();
+
+        let filtered = visual_only_project(&project);
+        let item_ids: Vec<&str> = filtered.tracks[0]
+            .items
+            .iter()
+            .map(|item| item.id.as_str())
+            .collect();
+        assert_eq!(item_ids, vec!["line-1"]);
+
+        let evaluator = Evaluator::new(&filtered).unwrap();
+        let scene = evaluator.scene_at(Time::ZERO).unwrap();
+        assert_eq!(scene.layers.len(), 1);
+        let LayerContent::Group { layers } = &scene.layers[0].content else {
+            panic!("dialogue should evaluate to a group of portrait + subtitle layers");
+        };
+        assert!(layers.iter().any(|layer| matches!(
+            &layer.content,
+            LayerContent::Image { asset } if asset.id == "akane-default"
+        )));
+        assert!(layers.iter().any(|layer| matches!(
+            &layer.content,
+            LayerContent::Text { text, .. } if text == "Hello"
+        )));
     }
 
     #[test]

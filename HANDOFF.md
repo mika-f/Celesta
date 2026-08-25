@@ -381,12 +381,12 @@ in any other React host.
   - **`mikan-exporter`**: `Exporter::export_react_entry_with_project[
     _and_progress/_cancellable]` take a `CompanionProject { project,
     project_asset_root }` alongside the entry. Internally,
-    `visual_only_project()` clones the project and drops every timeline item
-    whose content isn't `Video`/`Image`/`Text` (v1 scope: no `audio`,
-    `dialogue`, or `component` — dialogue/component are dropped because
-    their evaluator-expanded output would otherwise appear even though the
-    entry never asked `<ProjectTimeline />` for it; audio produces no visual
-    layers anyway so dropping it is a no-op either way) before constructing
+    `visual_only_project()` clones the project and drops `Audio` timeline
+    items — `Evaluator::visual_layer` already evaluates those to no layer,
+    so this is a cheap explicit skip rather than a behavior change, and the
+    React export path doesn't mux any project audio yet regardless (see the
+    open `AudioGraph` item below). Every other content kind (`Video`,
+    `Image`, `Text`, `Dialogue`, `Component`) is kept — before constructing
     an `Evaluator` and calling `scene_at(time)` once per frame, same as
     plain project export. When a companion project is present, the
     `GpuRenderer` also gets a sequential-video decoder attached (project
@@ -466,8 +466,9 @@ in any other React host.
   content to `LayerContent::MissingComponent { component, props }` (see
   `crates/evaluator/src/lib.rs`), and `visual_only_project()`
   (`mikan-exporter`) now keeps `component` items through its filter
-  (previously dropped, alongside `dialogue`, in the earlier v1 pass —
-  `dialogue` is still dropped). `registerComponent(name, Component)`
+  (previously dropped, alongside `dialogue`, in the earlier v1 pass — see
+  "`dialogue` timeline content" below for when that changed too).
+  `registerComponent(name, Component)`
   (called at module scope in the entry, so registration happens before any
   frame renders — the registry is a plain process-global `Map`, safe
   because one `mikan-react-render` process only ever handles one entry) is
@@ -503,10 +504,9 @@ in any other React host.
     resolved layer becomes a `group` wrapping the rendered `Text`, and the
     unresolved one stays a `missingComponent` layer with its original
     `component` name.
-  - **Not yet built**: `dialogue` content in `<ProjectTimeline />`. A
-    `<Video>` React component. An `AudioGraph` source for React entries.
-    Schema-based Project Properties (`defineProjectProperties`, GUI
-    Inspector generation).
+  - **Not yet built**: a `<Video>` React component. An `AudioGraph` source
+    for React entries. Schema-based Project Properties
+    (`defineProjectProperties`, GUI Inspector generation).
 - **Component Property Schema** (`src/registry.ts`), now including GPUI
   editor integration. `registerComponent(name, component, schema?)` takes
   an optional third argument, a `ComponentPropertySchema<Props>` — a
@@ -646,6 +646,35 @@ in any other React host.
     with the expected on-screen text, and by a Rust integration test
     (`crates/react-bridge/tests/node_integration.rs`,
     `embeds_per_track_layers_for_use_project_track_when_node_is_available`).
+- **`dialogue` timeline content in `<ProjectTimeline />`/`<ProjectTrack />`**
+  (`crates/exporter/src/lib.rs`'s `visual_only_project`). Turned out to need
+  no TypeScript changes at all — the only thing standing between a
+  `TimelineContent::Dialogue` item and `<ProjectTimeline />` was the v1
+  filter dropping it before evaluation. `Evaluator::dialogue` (called from
+  `visual_layer`, `crates/evaluator/src/lib.rs`) already expands a dialogue
+  item into a plain `LayerContent::Group` of up to two sublayers — the
+  character's portrait `Image` (if the `Character` has one, picking
+  `expression` or falling back to `default_expression` from
+  `PortraitDefinition.expressions`) and a subtitle `Text` (if the character
+  has a `SubtitleDefinition`, or a default-styled one otherwise) — there is
+  no dedicated `LayerContent::Dialogue` variant, so the resolved layer looks
+  identical to any other author-placed `Group` by the time it reaches
+  Node. `visual_only_project()` now only drops `Audio` items (and only as a
+  cheap explicit skip — `Evaluator::visual_layer` already evaluates those to
+  no layer on its own); every other content kind, including `Dialogue`,
+  passes through unfiltered.
+  Verified: a new `mikan-exporter` unit test
+  (`visual_only_project_keeps_dialogue_and_component_but_drops_audio`)
+  constructs a project with one `dialogue` item (with `audio` set) and one
+  bare `audio` item, asserting the filter keeps only the former and that
+  evaluating it produces the expected portrait+subtitle `Group`. End to end,
+  `mikan-exporter --react packages/react/examples/with-project.tsx
+  --project <a project with one dialogue track item>` produced an MP4 whose
+  frame shows the character portrait, the subtitle text, and the entry's own
+  `<Text>` overlay all composited together, confirming `<ProjectTimeline />`
+  needed no dialogue-specific handling on the TypeScript side — the generic
+  `Group`/`Image`/`Text` rendering (already exercised by the Component
+  registry's resolved-subtree case) covers it.
 
 ### TypeScript type generation and the Project loader
 
@@ -774,10 +803,9 @@ licensed VOICEROID voice sample.
 
 ## Validation baseline
 
-At this handoff, the workspace has 93 passing tests (88 from the previous
-handoff plus two `mikan-react-bridge` `Ready`-message unit tests, its new
-component-schema integration test, and two `mikan-editor` unit tests for
-`react_entry`/component prop mutation). The last checks were:
+At this handoff, the workspace has 94 passing tests (93 from the previous
+handoff plus a new `mikan-exporter` unit test for `visual_only_project`'s
+dialogue handling). The last checks were:
 
 ```sh
 cargo test --workspace
@@ -871,9 +899,9 @@ is already done:
    `react_entry`'s registered schemas and rendering editable Inspector
    fields for a selected Component clip) are done, see "Component Property
    Schema" above.
-7. `dialogue` timeline content in `<ProjectTimeline />` (dropped in the v1
-   filter — see above — deliberately; `component` content is no longer
-   dropped, per item 5).
+7. ~~`dialogue` timeline content in `<ProjectTimeline />`~~ — done, see
+   "`dialogue` timeline content" above; `visual_only_project()` no longer
+   drops it.
 
 Separately, still open from the original slice:
 
@@ -883,8 +911,8 @@ Separately, still open from the original slice:
 - An `AudioGraph` source for React entries so `mikan-exporter --react` can mux
   audio instead of always publishing a silent MP4.
 
-Before starting item 7 or anything further down this list, confirm scope
-with the user rather than assuming the full design doc.
+Before starting either of the above, confirm scope with the user rather
+than assuming the full design doc.
 
 Do not optimize preview presentation by letting GPUI and wgpu both present to
 the same window surface.
