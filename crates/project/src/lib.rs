@@ -114,6 +114,14 @@ pub struct ProjectSettings {
     pub master_volume: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration: Option<Time>,
+    /// Path (relative to the project file, like an asset's) to the `.tsx`
+    /// entry a `TimelineContent::Component` item's `component` name
+    /// resolves against. Nothing in `mikan-project` or `mikan-evaluator`
+    /// reads this — it exists so a GUI editor knows which Node process to
+    /// query for a registered component's property schema (see
+    /// `@mikan/react`'s `registerComponent`/`ComponentPropertySchema`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub react_entry: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

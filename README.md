@@ -10,7 +10,12 @@ The repository currently contains the first foundation:
 - `mikan-composition`: exact rational time and shared visual primitives.
 - `mikan-editor`: the first GPUI editor shell with project loading, an asset
   browser, frame-accurate playback controls, GPU-rendered preview, inspector,
-  and timeline overview.
+  and timeline overview. A project can point at a `.tsx` React entry
+  (`react_entry` in `project.json`, set/cleared from the Inspector); the
+  editor spawns the `@mikan/react` Node.js runtime just to read that entry's
+  `registerComponent()` schemas, then renders editable Inspector fields
+  (string/number/boolean/color/select) for a selected `TimelineContent::Component`
+  clip's props.
 - `mikan-project`: the version 0 project format, JSON loading, semantic
   validation, and timeline duration calculation.
 - `mikan-evaluator`: deterministic conversion from a project to a scene at a

@@ -3080,6 +3080,7 @@ dependencies = [
  "mikan-gpu-renderer",
  "mikan-media",
  "mikan-project",
+ "mikan-react-bridge",
  "rodio",
  "serde_json",
  "unicode-segmentation",

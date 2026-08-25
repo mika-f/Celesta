@@ -75,3 +75,20 @@ export function resolveComponent(name: string): ComponentDefinition | undefined 
 export function getComponentSchema(name: string): ComponentPropertySchema | undefined {
   return registry.get(name)?.schema;
 }
+
+/**
+ * Every registered component's schema, keyed by name — omitting components
+ * registered without one. `cli.ts` sends this once, in the startup `Ready`
+ * message (all `registerComponent()` calls have already run by then, since
+ * they happen at module scope), so a GUI editor can discover an entry's
+ * component schemas without knowing the component names up front.
+ */
+export function listComponentSchemas(): Record<string, ComponentPropertySchema> {
+  const schemas: Record<string, ComponentPropertySchema> = {};
+  for (const [name, entry] of registry) {
+    if (entry.schema !== undefined) {
+      schemas[name] = entry.schema;
+    }
+  }
+  return schemas;
+}

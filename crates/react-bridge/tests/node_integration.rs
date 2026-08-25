@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use mikan_composition::{EvaluatedTransform, Layer, LayerContent, Rational, TextStyle, Time};
-use mikan_react_bridge::{ProjectFrame, ReactBridge};
+use mikan_react_bridge::{ComponentPropertyField, ProjectFrame, ReactBridge};
 
 fn no_tracks() -> BTreeMap<String, Vec<Layer>> {
     BTreeMap::new()
@@ -143,6 +143,38 @@ fn resolves_a_registered_component_when_node_is_available() {
         &unregistered.content,
         LayerContent::MissingComponent { component, .. } if component == "SomeOtherThing"
     ));
+}
+
+#[test]
+fn reports_a_registered_components_property_schema_when_node_is_available() {
+    let Some((node, cli_script, package_root)) = live_react_runtime() else {
+        return;
+    };
+
+    let entry = package_root.join("examples/with-registered-component.tsx");
+    let bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+
+    let schemas = &bridge.metadata().component_schemas;
+    let schema = schemas
+        .get("BossIntroduction")
+        .expect("BossIntroduction declares a schema");
+    assert_eq!(
+        schema.get("bossName"),
+        Some(&ComponentPropertyField::String {
+            label: Some("Boss Name".to_owned()),
+            default_value: "Golem".to_owned(),
+        })
+    );
+    assert_eq!(
+        schema.get("level"),
+        Some(&ComponentPropertyField::Number {
+            label: Some("Level".to_owned()),
+            default_value: 1.0,
+            min: Some(1.0),
+            max: Some(999.0),
+            step: None,
+        })
+    );
 }
 
 #[test]

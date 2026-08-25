@@ -4,6 +4,8 @@ import * as readline from 'node:readline';
 
 import { mount } from './render';
 import type { EntryComponent, MountedComposition, ProjectFrame } from './render';
+import { listComponentSchemas } from './registry';
+import type { ComponentPropertySchema } from './registry';
 import type { CompositionConfig, Scene, Time } from './scene';
 
 interface FrameRequest {
@@ -37,7 +39,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  writeLine({ config: mounted.config });
+  writeLine({ config: mounted.config, componentSchemas: listComponentSchemas() });
 
   const rl = readline.createInterface({ input: process.stdin, terminal: false });
   for await (const line of rl) {
@@ -61,7 +63,12 @@ async function main(): Promise<void> {
   }
 }
 
-function writeLine(value: { config: CompositionConfig } | { scene: Scene } | { error: string }): void {
+function writeLine(
+  value:
+    | { config: CompositionConfig; componentSchemas: Record<string, ComponentPropertySchema> }
+    | { scene: Scene }
+    | { error: string },
+): void {
   process.stdout.write(`${JSON.stringify(value)}\n`);
 }
 

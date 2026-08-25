@@ -507,37 +507,100 @@ in any other React host.
     `<Video>` React component. An `AudioGraph` source for React entries.
     Schema-based Project Properties (`defineProjectProperties`, GUI
     Inspector generation).
-- **Component Property Schema** (`src/registry.ts`). Scoped down with the
-  user to the TypeScript-side declaration API only — no GPUI editor
-  integration yet (that would need the editor to query a running Node
-  process for registered schemas, a new kind of Node dependency for a
-  currently Node-independent editor, and was explicitly deferred rather
-  than decided against). `registerComponent(name, component, schema?)`
-  takes an optional third argument, a `ComponentPropertySchema<Props>` — a
+- **Component Property Schema** (`src/registry.ts`), now including GPUI
+  editor integration. `registerComponent(name, component, schema?)` takes
+  an optional third argument, a `ComponentPropertySchema<Props>` — a
   `{[K in keyof Props]: ComponentPropertyField}` record where each field is
   one of `{type: 'string'|'boolean'|'color', label?, defaultValue}`,
   `{type: 'number', label?, defaultValue, min?, max?, step?}`, or
   `{type: 'select', label?, defaultValue, options}`. It is pure metadata:
   neither `<ProjectTimeline />`'s resolution nor `GpuRenderer` reads it, and
   a component registered without one resolves and renders exactly as
-  before — this only future-proofs the registry call for a GUI Inspector
-  that does not exist yet. `getComponentSchema(name)` (also exported from
-  `@mikan/react`, alongside the `ComponentPropertyField`/
-  `ComponentPropertySchema` types) looks it up, returning `undefined` for
-  both an unregistered name and a registered one with no schema — callers
-  that need to tell those apart check `resolveComponent(name)` (internal,
-  not exported) first. `crates/react-bridge`/`mikan-evaluator` are
-  untouched: `TimelineContent::Component`'s `props` stays opaque JSON to
-  Rust regardless of whether the entry declared a schema for it.
-  Verified: `packages/react/examples/with-registered-component.tsx` now
-  declares a `bossIntroductionSchema` for `BossIntroduction`'s `bossName`/
-  `level` props (`tsc` type-checks the schema against the component's
-  actual props type), a manual Node smoke test against the built
-  `dist/index.js` confirmed `getComponentSchema` round-trips a registered
-  schema, returns `undefined` for a schema-less registration and for an
-  unregistered name, and the existing
-  `resolves_a_registered_component_when_node_is_available` integration
-  test still passes unchanged (rendering never reads the schema).
+  before. `getComponentSchema(name)` (also exported from `@mikan/react`,
+  alongside the `ComponentPropertyField`/`ComponentPropertySchema` types)
+  looks it up, returning `undefined` for both an unregistered name and a
+  registered one with no schema — callers that need to tell those apart
+  check `resolveComponent(name)` (internal, not exported) first.
+  `listComponentSchemas()` collects every registered component's schema,
+  keyed by name (skipping schema-less registrations); `cli.ts` sends this
+  once, alongside `config`, in the startup `Ready` message — all
+  `registerComponent()` calls have already run by module-scope time, so
+  nothing is missing.
+  - **GPUI editor integration.** `mikan-project`'s `ProjectSettings` gained
+    an optional `react_entry: Option<String>` field (relative to the
+    project file, like an asset path) — project.json's only pointer to
+    which `.tsx` entry a `TimelineContent::Component` item's `component`
+    name resolves against; nothing in `mikan-project`/`mikan-evaluator`
+    reads it, it exists purely so the editor knows which Node process to
+    query. `mikan-react-bridge` gained `ComponentPropertyField`/
+    `ComponentPropertySchema` Rust types (a real enum mirroring the
+    TypeScript shape field-for-field, `#[serde(tag = "type", rename_all =
+    "camelCase", rename_all_fields = "camelCase")]` — the same
+    `rename_all_fields` gotcha noted above applies here too) and
+    `ReactCompositionMetadata::component_schemas: BTreeMap<String,
+    ComponentPropertySchema>`, populated by parsing the `Ready` message's
+    new `componentSchemas` field during `ReactBridge::spawn`'s handshake —
+    no new request/response round trip needed, since this rides the
+    existing startup message.
+  - `mikan-editor` (previously fully Node-independent — confirmed by
+    grepping for zero `Command::new`/`ReactBridge` references before this
+    change) now depends on `mikan-react-bridge`. `EditorDocument` gained
+    `react_entry()`/`react_entry_absolute_path()`/`set_react_entry()`/
+    `clear_react_entry()` (mirroring `serialized_asset_path`'s
+    relative-path-under-project-root convention) and
+    `set_component_prop(clip_id, key, value)` (mutating a
+    `TimelineContent::Component`'s `props` map, erroring
+    `UnsupportedComponentProp` for any other clip kind) — all through the
+    same `record_mutation`-based undo/redo path every other editor mutation
+    uses. `ClipSummary` gained a `component: Option<ComponentClipSummary>`
+    (name + current props) for Component clips.
+  - A new `ComponentSchemaWorker` (in `main.rs`, following the exact
+    `MediaProbeWorker`/`PreviewWorker` pattern: request/result `mpsc`
+    channels into a dedicated thread, polled from `poll_background_work`)
+    spawns `ReactBridge::spawn(node, cli_script, entry)` — the same `node`
+    on `PATH` and workspace-relative `packages/react/dist/cli.js` that
+    `mikan-exporter --react` resolves — purely to read
+    `metadata().component_schemas` off the handshake, then drops the
+    connection; the editor's own preview never renders React content, so
+    nothing needs the process to stay open. This runs on its own thread
+    because `ReactBridge::spawn` blocks on the child's first stdout line.
+    `EditorView::refresh_component_schemas` re-queries on project load and
+    whenever `react_entry` changes; results are cached by entry path rather
+    than re-fetched per clip selection (spawning Node is comparatively
+    slow, and the schemas cannot change without the entry file changing).
+  - Inspector UI: a "React Entry" row (path or "Not set") plus Set…/Clear
+    buttons (`cx.prompt_for_paths`, the same native-picker pattern
+    `request_relink_asset` uses) always shows, alongside loading/error
+    state for the schema fetch. Selecting a `ClipKind::Component` clip adds
+    a "Component" section rendering one editable row per schema field:
+    boolean as a toggle button, number as −/+ steppers respecting
+    `min`/`max`/`step`, select as a cycle-through button, and string/color
+    through a single shared inline `TextInput` entity (`
+    component_prop_input`, generalizing track rename's one-`TextInput`
+    pattern to "whichever field is being edited" via a small
+    `ComponentPropEdit { clip_id, key }` state). A component with no
+    matching schema (not found in `component_schemas`, or `react_entry`
+    unset, or still loading) shows an explanatory hint instead of empty
+    rows.
+  - Verified: new `mikan-editor` unit tests
+    (`react_entry_path_is_stored_relative_and_resolves_back_to_absolute`,
+    `react_entry_and_component_props_are_undoable`) cover the document
+    layer end to end including undo; a new `mikan-react-bridge` integration
+    test (`reports_a_registered_components_property_schema_when_node_is_available`)
+    spawns the real Node runtime against
+    `packages/react/examples/with-registered-component.tsx` (which now
+    declares a `bossIntroductionSchema`) and asserts
+    `bridge.metadata().component_schemas` carries the exact declared
+    fields; two new `mikan-react-bridge` unit tests cover `Ready`-message
+    deserialization (with and without `componentSchemas` present). The
+    full editor UI (native window, click-driven schema fetch and prop
+    editing) could not be exercised interactively in this environment — the
+    same limitation HANDOFF.md already notes for pointer-drag testing
+    applies here too (GPUI's Linux backend reports "neither DISPLAY nor
+    WAYLAND_DISPLAY is set" even with a running `Xvfb` in this sandbox) —
+    so this integration is verified by the document-layer/protocol tests
+    above plus `cargo build`/`clippy` on the real `main.rs`, not by a
+    manual click-through.
 - **Per-track access** (`useProjectTrack()`, `<ProjectTrack id="..." />`,
   `src/project-runtime.ts`). `<ProjectTimeline />` embeds every track's
   layers flattened together, which is fine for the whole-composition case
@@ -711,10 +774,10 @@ licensed VOICEROID voice sample.
 
 ## Validation baseline
 
-At this handoff, the workspace has 88 passing tests (85 from the previous
-handoff plus two `mikan-evaluator` per-track unit tests and
-`mikan-react-bridge`'s new per-track integration test). The last checks
-were:
+At this handoff, the workspace has 93 passing tests (88 from the previous
+handoff plus two `mikan-react-bridge` `Ready`-message unit tests, its new
+component-schema integration test, and two `mikan-editor` unit tests for
+`react_entry`/component prop mutation). The last checks were:
 
 ```sh
 cargo test --workspace
@@ -802,12 +865,12 @@ is already done:
    resolving `TimelineContent::Component`'s `component`/`props` to a
    registered React component is done, see "Component registry" above.
 6. ~~Property schema / Inspector metadata for GUI-editable component
-   props~~ — the TypeScript-side declaration API
+   props~~ — both the TypeScript-side declaration API
    (`registerComponent(name, component, schema)`, `getComponentSchema()`)
-   is done, see "Component Property Schema" above; GPUI editor integration
-   (the editor actually reading a schema and rendering Inspector fields
-   from it) was scoped out for now — it would be the editor's first Node.js
-   dependency, and stays open for a future session.
+   and the GPUI editor integration (the editor spawning Node to read a
+   `react_entry`'s registered schemas and rendering editable Inspector
+   fields for a selected Component clip) are done, see "Component Property
+   Schema" above.
 7. `dialogue` timeline content in `<ProjectTimeline />` (dropped in the v1
    filter — see above — deliberately; `component` content is no longer
    dropped, per item 5).
@@ -819,9 +882,6 @@ Separately, still open from the original slice:
   rate) the way project timeline clips already do.
 - An `AudioGraph` source for React entries so `mikan-exporter --react` can mux
   audio instead of always publishing a silent MP4.
-- GPUI editor integration for the Component Property Schema (item 6 above):
-  querying a running Node process for registered components' schemas and
-  rendering Inspector fields from them.
 
 Before starting item 7 or anything further down this list, confirm scope
 with the user rather than assuming the full design doc.

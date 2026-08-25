@@ -29,13 +29,71 @@ pub struct ProjectFrame<'a> {
 }
 
 /// Static composition facts read once from the entry's `<Composition>` root.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ReactCompositionMetadata {
     pub width: u32,
     pub height: u32,
     pub frame_rate: Rational,
     pub duration_in_frames: u64,
+    /// Every `ComponentPropertySchema` declared via `registerComponent(name,
+    /// component, schema)`, keyed by `name`. Populated at spawn time — every
+    /// `registerComponent()` call runs at module scope before the entry's
+    /// `Ready` handshake is sent — so this never changes for the lifetime of
+    /// a `ReactBridge`. A registered component with no `schema` argument has
+    /// no entry here.
+    pub component_schemas: BTreeMap<String, ComponentPropertySchema>,
 }
+
+/// One field of a `ComponentPropertySchema` declared on the TypeScript side
+/// (`packages/react/src/registry.ts`). Mirrors `ComponentPropertyField`
+/// there field-for-field; kept as a real enum here (rather than opaque JSON)
+/// so a GUI Inspector can match on `field_type` to choose a widget without
+/// re-parsing JSON itself.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ComponentPropertyField {
+    String {
+        #[serde(default)]
+        label: Option<String>,
+        default_value: String,
+    },
+    Number {
+        #[serde(default)]
+        label: Option<String>,
+        default_value: f64,
+        #[serde(default)]
+        min: Option<f64>,
+        #[serde(default)]
+        max: Option<f64>,
+        #[serde(default)]
+        step: Option<f64>,
+    },
+    Boolean {
+        #[serde(default)]
+        label: Option<String>,
+        default_value: bool,
+    },
+    Color {
+        #[serde(default)]
+        label: Option<String>,
+        default_value: String,
+    },
+    Select {
+        #[serde(default)]
+        label: Option<String>,
+        default_value: String,
+        options: Vec<String>,
+    },
+}
+
+/// One registered component's declared props, keyed by prop name — the
+/// Rust-side counterpart of `ComponentPropertySchema<Props>` in
+/// `packages/react/src/registry.ts`.
+pub type ComponentPropertySchema = BTreeMap<String, ComponentPropertyField>;
 
 /// A live connection to the `@mikan/react` CLI evaluating one entry module.
 pub struct ReactBridge {
@@ -84,11 +142,15 @@ impl ReactBridge {
         let ready: ReadyMessage =
             serde_json::from_str(line.trim()).map_err(ReactBridgeError::Protocol)?;
         let metadata = match ready {
-            ReadyMessage::Ready { config } => ReactCompositionMetadata {
+            ReadyMessage::Ready {
+                config,
+                component_schemas,
+            } => ReactCompositionMetadata {
                 width: config.width,
                 height: config.height,
                 frame_rate: config.frame_rate,
                 duration_in_frames: config.duration_in_frames,
+                component_schemas,
             },
             ReadyMessage::Error { error } => return Err(ReactBridgeError::EntryFailed(error)),
         };
@@ -173,8 +235,14 @@ enum Response {
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum ReadyMessage {
-    Ready { config: ReactCompositionConfig },
-    Error { error: String },
+    Ready {
+        config: ReactCompositionConfig,
+        #[serde(default, rename = "componentSchemas")]
+        component_schemas: BTreeMap<String, ComponentPropertySchema>,
+    },
+    Error {
+        error: String,
+    },
 }
 
 #[derive(Deserialize)]
@@ -254,5 +322,77 @@ mod tests {
             "entry.tsx",
         );
         assert!(matches!(result, Err(ReactBridgeError::Executable { .. })));
+    }
+
+    #[test]
+    fn deserializes_component_schemas_from_the_ready_message() {
+        let json = serde_json::json!({
+            "config": {
+                "width": 640,
+                "height": 360,
+                "frameRate": {"numerator": 30, "denominator": 1},
+                "durationInFrames": 30
+            },
+            "componentSchemas": {
+                "BossIntroduction": {
+                    "bossName": {"type": "string", "label": "Boss Name", "defaultValue": "Golem"},
+                    "level": {
+                        "type": "number",
+                        "defaultValue": 1,
+                        "min": 1,
+                        "max": 999
+                    }
+                }
+            }
+        })
+        .to_string();
+
+        let ReadyMessage::Ready {
+            config,
+            component_schemas,
+        } = serde_json::from_str(&json).unwrap()
+        else {
+            panic!("expected a Ready message");
+        };
+        assert_eq!(config.width, 640);
+        let schema = component_schemas.get("BossIntroduction").unwrap();
+        assert_eq!(
+            schema.get("bossName"),
+            Some(&ComponentPropertyField::String {
+                label: Some("Boss Name".to_owned()),
+                default_value: "Golem".to_owned(),
+            })
+        );
+        assert_eq!(
+            schema.get("level"),
+            Some(&ComponentPropertyField::Number {
+                label: None,
+                default_value: 1.0,
+                min: Some(1.0),
+                max: Some(999.0),
+                step: None,
+            })
+        );
+    }
+
+    #[test]
+    fn ready_message_without_component_schemas_defaults_to_empty() {
+        let json = serde_json::json!({
+            "config": {
+                "width": 640,
+                "height": 360,
+                "frameRate": {"numerator": 30, "denominator": 1},
+                "durationInFrames": 30
+            }
+        })
+        .to_string();
+
+        let ReadyMessage::Ready {
+            component_schemas, ..
+        } = serde_json::from_str(&json).unwrap()
+        else {
+            panic!("expected a Ready message");
+        };
+        assert!(component_schemas.is_empty());
     }
 }
