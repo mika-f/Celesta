@@ -1,0 +1,16 @@
+{
+  "version": 0,
+  "settings": {
+    "width": 1920,
+    "height": 1080,
+    "frameRate": {
+      "numerator": 60,
+      "denominator": 1
+    },
+    "sampleRate": 48000
+  },
+  "assets": {},
+  "characters": {},
+  "tracks": [],
+  "properties": {}
+}

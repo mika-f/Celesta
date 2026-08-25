@@ -1,0 +1,127 @@
+{
+  "version": 0,
+  "settings": {
+    "width": 1920,
+    "height": 1080,
+    "frameRate": {
+      "numerator": 60,
+      "denominator": 1
+    },
+    "sampleRate": 48000
+  },
+  "assets": {
+    "akane-default": {
+      "type": "image",
+      "name": "Akane",
+      "source": {
+        "type": "file",
+        "path": "./assets/akane/default.ppm"
+      }
+    },
+    "voice-001": {
+      "type": "audio",
+      "source": {
+        "type": "file",
+        "path": "./assets/voices/001.wav"
+      }
+    }
+  },
+  "characters": {
+    "akane": {
+      "name": "琴葉茜",
+      "portrait": {
+        "defaultExpression": "default",
+        "expressions": {
+          "default": "akane-default"
+        },
+        "transform": {
+          "position": {
+            "x": 1650,
+            "y": 780
+          },
+          "scale": {
+            "x": 20,
+            "y": 20
+          }
+        }
+      },
+      "subtitle": {
+        "style": {
+          "fontFamily": "M PLUS Rounded 1c",
+          "fontSize": 64,
+          "fill": {
+            "type": "solid",
+            "color": "#FFFFFFFF"
+          },
+          "stroke": {
+            "paint": {
+              "type": "solid",
+              "color": "#D65B7AFF"
+            },
+            "width": 6
+          },
+          "align": "center"
+        },
+        "transform": {
+          "position": {
+            "x": 960,
+            "y": 940
+          }
+        },
+        "maxWidth": 1600
+      }
+    }
+  },
+  "tracks": [
+    {
+      "id": "dialogue",
+      "name": "Dialogue",
+      "kind": "dialogue",
+      "items": [
+        {
+          "id": "dialogue-001",
+          "range": {
+            "start": {
+              "value": 5,
+              "timescale": 1
+            },
+            "duration": {
+              "value": 3,
+              "timescale": 1
+            }
+          },
+          "content": {
+            "type": "dialogue",
+            "character": "akane",
+            "text": "こんにちはやで",
+            "audio": "voice-001",
+            "expression": "default"
+          },
+          "opacity": {
+            "type": "keyframes",
+            "keyframes": [
+              {
+                "time": {
+                  "value": 0,
+                  "timescale": 60
+                },
+                "value": 0
+              },
+              {
+                "time": {
+                  "value": 15,
+                  "timescale": 60
+                },
+                "value": 1,
+                "easing": "ease-out"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "properties": {
+    "title": "Mikan example"
+  }
+}
