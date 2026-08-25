@@ -17,9 +17,9 @@ video/audio tracks.
 - Workspace: `/Users/natsuneko/ghq/github.com/mika-f/mikan`
 - Rust edition: 2024
 - Minimum Rust version: 1.89
-- The initial implementation is tracked on `main`; bounded persistent-cache
-  maintenance landed in commit `2d5c7f4`. Inspect `git status --short` for newer
-  work before editing or staging.
+- The initial implementation is tracked on `main`; clip-volume automation
+  landed in commit `714be05`. Inspect `git status --short` for newer work before
+  editing or staging.
 - FFmpeg and FFprobe are installed and available on `PATH`.
 - GPUI is pinned to crates.io version `0.2.2`.
 
@@ -172,6 +172,18 @@ Keep these boundaries intact:
   simultaneous horizontal and vertical movement is one undo entry.
 - Timeline track rows scroll independently below the fixed Timeline header and
   scrubber, allowing manually created tracks to remain reachable.
+- Selecting a track exposes Enable/Disable, Lock/Unlock, Rename, and Delete in
+  the Inspector. Locked tracks allow only Unlock; their rename, enabled state,
+  ordering, clips, and deletion remain protected. Inline rename accepts direct
+  key input and clipboard paste, commits with Enter/Save, and cancels with
+  Escape/Cancel.
+- Empty tracks delete immediately. Deleting a track with clips requires an
+  explicit warning confirmation and removes the serialized items only after
+  approval. The document API rejects non-empty deletion unless the caller opts
+  in, so this safety does not depend solely on the UI.
+- Track rename, enabled/locked toggles, and deletion participate in undo/redo.
+  Track enabled state immediately refreshes both visual and audio evaluation;
+  deleting a dynamic-duration track recalculates the timeline duration.
 - Selected clips can be deleted from the Timeline header or with Backspace /
   Forward Delete. Insert/delete operations are undoable, derived timelines
   recalculate duration, and locked tracks reject both deletion and drag edits.
@@ -267,7 +279,7 @@ licensed VOICEROID voice sample.
 
 ## Validation baseline
 
-At this handoff, the workspace has 70 passing tests. The last checks were:
+At this handoff, the workspace has 71 passing tests. The last checks were:
 
 ```sh
 cargo test --workspace
@@ -297,8 +309,9 @@ for synthetic GUI input. Keep drag behavior easy to exercise manually.
 The initial editor mutation, persistence, audio, and background-worker
 milestones are complete. Continue with:
 
-1. Add track rename/delete and enabled/locked controls, including a safe choice
-   when deleting non-empty tracks.
+1. Replace the lightweight track-name key handler with a full GPUI
+   `EntityInputHandler`, including IME composition, selection, cursor movement,
+   and platform editing shortcuts.
 
 Later performance work should replace GPUI image readback with a native texture
 bridge. Do not optimize this by letting GPUI and wgpu both present to the same

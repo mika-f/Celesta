@@ -72,8 +72,11 @@ show a rejection state. Clicking a track selects it as the Add target; clicking
 it again returns Add to automatic track selection. The Timeline header creates
 empty Video, Audio, Overlay, or Dialogue tracks; track arrows reorder them, and
 dragging a clip vertically moves it between compatible unlocked tracks. Track
-rows scroll below the fixed ruler when they overflow. Delete the selected
-timeline clip with the Timeline button, Backspace, or Forward Delete. Import
+rows scroll below the fixed ruler when they overflow. Selecting a track exposes
+Enable/Disable, Lock/Unlock, Rename, and Delete controls in the Inspector;
+non-empty deletion requires confirmation and locked tracks protect all edits
+until unlocked. Delete the selected timeline clip with the Timeline button,
+Backspace, or Forward Delete. Import
 batches, insertion, and deletion
 all participate in undo/redo, and locked tracks reject destructive clip edits.
 Selected assets can be relinked only to the same media kind. Missing local files

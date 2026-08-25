@@ -385,6 +385,96 @@ impl EditorDocument {
         Ok(true)
     }
 
+    pub fn rename_track(&mut self, track_id: &str, name: &str) -> Result<(), EditorDocumentError> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(EditorDocumentError::InvalidTrackName);
+        }
+        let before = self.project.clone();
+        let before_revision = self.current_revision;
+        let track = self
+            .project
+            .tracks
+            .iter_mut()
+            .find(|track| track.id == track_id)
+            .ok_or_else(|| EditorDocumentError::MissingTrack(track_id.to_owned()))?;
+        if track.locked == Some(true) {
+            return Err(EditorDocumentError::LockedTrack(track_id.to_owned()));
+        }
+        track.name = name.to_owned();
+        if self.project != before {
+            self.record_mutation(before, before_revision);
+        }
+        Ok(())
+    }
+
+    pub fn toggle_track_enabled(&mut self, track_id: &str) -> Result<bool, EditorDocumentError> {
+        let before = self.project.clone();
+        let before_revision = self.current_revision;
+        let track = self
+            .project
+            .tracks
+            .iter_mut()
+            .find(|track| track.id == track_id)
+            .ok_or_else(|| EditorDocumentError::MissingTrack(track_id.to_owned()))?;
+        if track.locked == Some(true) {
+            return Err(EditorDocumentError::LockedTrack(track_id.to_owned()));
+        }
+        let enabled = track.enabled == Some(false);
+        track.enabled = (!enabled).then_some(false);
+        self.record_mutation(before, before_revision);
+        Ok(enabled)
+    }
+
+    pub fn toggle_track_locked(&mut self, track_id: &str) -> Result<bool, EditorDocumentError> {
+        let before = self.project.clone();
+        let before_revision = self.current_revision;
+        let track = self
+            .project
+            .tracks
+            .iter_mut()
+            .find(|track| track.id == track_id)
+            .ok_or_else(|| EditorDocumentError::MissingTrack(track_id.to_owned()))?;
+        let locked = track.locked != Some(true);
+        track.locked = locked.then_some(true);
+        self.record_mutation(before, before_revision);
+        Ok(locked)
+    }
+
+    pub fn delete_track(
+        &mut self,
+        track_id: &str,
+        delete_non_empty: bool,
+    ) -> Result<(), EditorDocumentError> {
+        let index = self
+            .project
+            .tracks
+            .iter()
+            .position(|track| track.id == track_id)
+            .ok_or_else(|| EditorDocumentError::MissingTrack(track_id.to_owned()))?;
+        let track = &self.project.tracks[index];
+        if track.locked == Some(true) {
+            return Err(EditorDocumentError::LockedTrack(track_id.to_owned()));
+        }
+        if !delete_non_empty && !track.items.is_empty() {
+            return Err(EditorDocumentError::NonEmptyTrack {
+                track: track_id.to_owned(),
+                item_count: track.items.len(),
+            });
+        }
+        let before = self.project.clone();
+        let before_revision = self.current_revision;
+        self.project.tracks.remove(index);
+        if self.project.settings.duration.is_none() {
+            self.duration = self
+                .project
+                .effective_duration()
+                .map_err(EditorDocumentError::Duration)?;
+        }
+        self.record_mutation(before, before_revision);
+        Ok(())
+    }
+
     pub fn move_clip_to_track(
         &mut self,
         clip_id: &str,
@@ -1519,6 +1609,11 @@ pub enum EditorDocumentError {
         duration_frames: i64,
     },
     InvalidMasterVolume(f64),
+    InvalidTrackName,
+    NonEmptyTrack {
+        track: String,
+        item_count: usize,
+    },
     InvalidClipVolume(f64),
     InvalidClipVolumeTime {
         clip: String,
@@ -1597,6 +1692,11 @@ impl fmt::Display for EditorDocumentError {
                     "master volume {volume} must be finite and non-negative"
                 )
             }
+            Self::InvalidTrackName => formatter.write_str("track name must not be empty"),
+            Self::NonEmptyTrack { track, item_count } => write!(
+                formatter,
+                "track `{track}` still contains {item_count} clip(s)"
+            ),
             Self::InvalidClipVolume(volume) => {
                 write!(
                     formatter,
@@ -1643,6 +1743,8 @@ impl Error for EditorDocumentError {
             | Self::UnsupportedTimelineAsset(_)
             | Self::InvalidNewClipFrameRange { .. }
             | Self::InvalidMasterVolume(_)
+            | Self::InvalidTrackName
+            | Self::NonEmptyTrack { .. }
             | Self::InvalidClipVolume(_)
             | Self::InvalidClipVolumeTime { .. }
             | Self::UnsupportedClipVolume(_)
@@ -1853,6 +1955,33 @@ mod tests {
                 .iter()
                 .any(|clip| clip.id == "welcome")
         );
+    }
+
+    #[test]
+    fn renames_toggles_and_safely_deletes_tracks() {
+        let mut document = EditorDocument::from_json(EDITOR_DEMO, ".").unwrap();
+
+        document.rename_track("titles", "  Main titles  ").unwrap();
+        assert_eq!(document.tracks()[0].name, "Main titles");
+        assert!(!document.toggle_track_enabled("titles").unwrap());
+        assert!(!document.tracks()[0].enabled);
+        assert!(matches!(
+            document.delete_track("titles", false),
+            Err(EditorDocumentError::NonEmptyTrack { item_count: 1, .. })
+        ));
+
+        assert!(document.toggle_track_locked("titles").unwrap());
+        assert!(matches!(
+            document.rename_track("titles", "Locked"),
+            Err(EditorDocumentError::LockedTrack(_))
+        ));
+        assert!(!document.toggle_track_locked("titles").unwrap());
+        document.delete_track("titles", true).unwrap();
+        assert!(document.tracks().is_empty());
+
+        assert!(document.undo().unwrap());
+        assert_eq!(document.tracks()[0].name, "Main titles");
+        assert!(!document.tracks()[0].enabled);
     }
 
     #[test]

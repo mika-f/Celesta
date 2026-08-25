@@ -513,6 +513,8 @@ struct EditorView {
     selected_clip_id: Option<String>,
     selected_asset_id: Option<String>,
     selected_track_id: Option<String>,
+    renaming_track_id: Option<String>,
+    track_name_draft: String,
     project_name: SharedString,
     dimensions: SharedString,
     frame_rate_label: SharedString,
@@ -527,9 +529,11 @@ struct EditorView {
     gpu_name: SharedString,
     focus_handle: Option<FocusHandle>,
     master_volume_focus: Option<FocusHandle>,
+    track_name_focus: Option<FocusHandle>,
     saving_as: bool,
     importing_assets: bool,
     asset_operation_active: bool,
+    track_delete_prompt_active: bool,
     close_prompt_active: bool,
     force_close: bool,
 }
@@ -590,6 +594,8 @@ impl EditorView {
             selected_clip_id: None,
             selected_asset_id: None,
             selected_track_id: None,
+            renaming_track_id: None,
+            track_name_draft: String::new(),
             project_name,
             dimensions,
             frame_rate_label,
@@ -604,9 +610,11 @@ impl EditorView {
             gpu_name,
             focus_handle: None,
             master_volume_focus: None,
+            track_name_focus: None,
             saving_as: false,
             importing_assets: false,
             asset_operation_active: false,
+            track_delete_prompt_active: false,
             close_prompt_active: false,
             force_close: false,
         };
@@ -1127,6 +1135,176 @@ impl EditorView {
             Err(error) => self.edit_error = Some(error.to_string().into()),
         }
         cx.notify();
+    }
+
+    fn begin_track_rename(&mut self, track_id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(track) = self.tracks.iter().find(|track| track.id == track_id) else {
+            return;
+        };
+        if track.locked {
+            self.edit_error = Some(format!("track `{track_id}` is locked").into());
+            cx.notify();
+            return;
+        }
+        self.renaming_track_id = Some(track_id.to_owned());
+        self.track_name_draft = track.name.clone();
+        self.edit_error = None;
+        if let Some(focus) = &self.track_name_focus {
+            focus.focus(window);
+        }
+        cx.notify();
+    }
+
+    fn commit_track_rename(&mut self, cx: &mut Context<Self>) {
+        let Some(track_id) = self.renaming_track_id.clone() else {
+            return;
+        };
+        match self
+            .document
+            .rename_track(&track_id, &self.track_name_draft)
+        {
+            Ok(()) => {
+                self.renaming_track_id = None;
+                self.track_name_draft.clear();
+                self.tracks = self.document.tracks();
+                self.edit_error = None;
+            }
+            Err(error) => self.edit_error = Some(error.to_string().into()),
+        }
+        cx.notify();
+    }
+
+    fn track_name_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event.keystroke.key.as_str() {
+            "enter" => self.commit_track_rename(cx),
+            "escape" => {
+                self.renaming_track_id = None;
+                self.track_name_draft.clear();
+                self.edit_error = None;
+                cx.notify();
+            }
+            "backspace" => {
+                self.track_name_draft.pop();
+                cx.notify();
+            }
+            "v" if event.keystroke.modifiers.platform => {
+                if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                    self.track_name_draft
+                        .push_str(&text.replace(['\r', '\n'], " "));
+                    cx.notify();
+                }
+            }
+            _ if !event.keystroke.modifiers.platform
+                && !event.keystroke.modifiers.control
+                && !event.keystroke.modifiers.alt =>
+            {
+                if let Some(text) = &event.keystroke.key_char {
+                    self.track_name_draft.push_str(text);
+                    cx.notify();
+                } else {
+                    return;
+                }
+            }
+            _ => return,
+        }
+        cx.stop_propagation();
+    }
+
+    fn toggle_track_enabled(&mut self, track_id: &str, cx: &mut Context<Self>) {
+        match self.document.toggle_track_enabled(track_id) {
+            Ok(_) => {
+                self.tracks = self.document.tracks();
+                self.refresh_preview();
+                self.refresh_audio_preview();
+                self.edit_error = None;
+            }
+            Err(error) => self.edit_error = Some(error.to_string().into()),
+        }
+        cx.notify();
+    }
+
+    fn toggle_track_locked(&mut self, track_id: &str, cx: &mut Context<Self>) {
+        match self.document.toggle_track_locked(track_id) {
+            Ok(_) => {
+                self.renaming_track_id = None;
+                self.track_name_draft.clear();
+                self.tracks = self.document.tracks();
+                self.edit_error = None;
+            }
+            Err(error) => self.edit_error = Some(error.to_string().into()),
+        }
+        cx.notify();
+    }
+
+    fn delete_track_now(&mut self, track_id: &str, cx: &mut Context<Self>) {
+        self.pause();
+        match self.document.delete_track(track_id, true) {
+            Ok(()) => {
+                if self.selected_track_id.as_deref() == Some(track_id) {
+                    self.selected_track_id = None;
+                }
+                self.renaming_track_id = None;
+                self.track_name_draft.clear();
+                self.sync_document_state();
+                if self.selected_clip_id.as_ref().is_some_and(|selected| {
+                    !self
+                        .tracks
+                        .iter()
+                        .flat_map(|track| &track.clips)
+                        .any(|clip| &clip.id == selected)
+                }) {
+                    self.selected_clip_id = None;
+                }
+                self.edit_error = None;
+            }
+            Err(error) => self.edit_error = Some(error.to_string().into()),
+        }
+        cx.notify();
+    }
+
+    fn request_delete_track(
+        &mut self,
+        track_id: &str,
+        item_count: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.track_delete_prompt_active {
+            return;
+        }
+        if item_count == 0 {
+            self.delete_track_now(track_id, cx);
+            return;
+        }
+        self.track_delete_prompt_active = true;
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            "Delete non-empty track?",
+            Some(&format!(
+                "Track `{track_id}` contains {item_count} clip(s). Deleting the track also deletes all of them."
+            )),
+            &[PromptButton::ok("Delete Track"), PromptButton::cancel("Cancel")],
+            cx,
+        );
+        let track_id = track_id.to_owned();
+        cx.spawn_in(window, async move |view, cx| {
+            let answer = answer.await.unwrap_or(1);
+            view.update_in(cx, |this, _, cx| {
+                this.track_delete_prompt_active = false;
+                if answer == 0 {
+                    this.delete_track_now(&track_id, cx);
+                } else {
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn selected_audio_clip(&self) -> Option<mikan_editor::ClipSummary> {
@@ -1835,6 +2013,8 @@ impl EditorView {
         self.clip_drag = None;
         self.clip_drag_hover_track_id = None;
         self.clip_drag_target_track_id = None;
+        self.renaming_track_id = None;
+        self.track_name_draft.clear();
         match self.document.undo() {
             Ok(true) => {
                 self.save_error = None;
@@ -1851,6 +2031,8 @@ impl EditorView {
         self.clip_drag = None;
         self.clip_drag_hover_track_id = None;
         self.clip_drag_target_track_id = None;
+        self.renaming_track_id = None;
+        self.track_name_draft.clear();
         match self.document.redo() {
             Ok(true) => {
                 self.save_error = None;
@@ -2325,6 +2507,12 @@ impl EditorView {
     }
 
     fn inspector_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let selected_track = self.selected_track_id.as_deref().and_then(|selected| {
+            self.tracks
+                .iter()
+                .find(|track| track.id == selected)
+                .cloned()
+        });
         let selected_clip = self.selected_clip_id.as_deref().and_then(|selected| {
             self.tracks
                 .iter()
@@ -2345,6 +2533,150 @@ impl EditorView {
             .child(inspector_row("Duration", self.duration.clone()))
             .child(inspector_row("Renderer", "wgpu"))
             .child(inspector_row("Adapter", self.gpu_name.clone()))
+            .when_some(selected_track, |panel, track| {
+                let rename_track_id = track.id.clone();
+                let enabled_track_id = track.id.clone();
+                let locked_track_id = track.id.clone();
+                let delete_track_id = track.id.clone();
+                let renaming = self.renaming_track_id.as_deref() == Some(track.id.as_str());
+                panel
+                    .child(
+                        div()
+                            .mt_3()
+                            .px_3()
+                            .py_2()
+                            .border_t_1()
+                            .border_b_1()
+                            .border_color(rgb(0x30333d))
+                            .text_sm()
+                            .text_color(rgb(0xffb466))
+                            .child("Selected track"),
+                    )
+                    .child(inspector_row("ID", track.id.clone()))
+                    .when(!renaming, |panel| {
+                        panel
+                            .child(inspector_row("Name", track.name.clone()))
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_wrap()
+                                    .gap_2()
+                                    .px_3()
+                                    .py_2()
+                                    .border_b_1()
+                                    .border_color(rgb(0x292c34))
+                                    .child(
+                                        inspector_button(
+                                            "track-enabled",
+                                            if track.enabled { "Disable" } else { "Enable" },
+                                        )
+                                        .when(!track.locked, |button| {
+                                            button.on_click(cx.listener(move |this, _, _, cx| {
+                                                this.toggle_track_enabled(&enabled_track_id, cx);
+                                            }))
+                                        })
+                                        .when(track.locked, |button| button.opacity(0.45)),
+                                    )
+                                    .child(
+                                        inspector_button(
+                                            "track-locked",
+                                            if track.locked { "Unlock" } else { "Lock" },
+                                        )
+                                        .on_click(
+                                            cx.listener(move |this, _, _, cx| {
+                                                this.toggle_track_locked(&locked_track_id, cx);
+                                            }),
+                                        ),
+                                    )
+                                    .child(
+                                        inspector_button("track-rename", "Rename")
+                                            .when(!track.locked, |button| {
+                                                button.on_click(cx.listener(
+                                                    move |this, _, window, cx| {
+                                                        this.begin_track_rename(
+                                                            &rename_track_id,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    },
+                                                ))
+                                            })
+                                            .when(track.locked, |button| button.opacity(0.45)),
+                                    )
+                                    .child(
+                                        inspector_button("track-delete", "Delete")
+                                            .text_color(rgb(if track.locked {
+                                                0x777b86
+                                            } else {
+                                                0xff9a9a
+                                            }))
+                                            .when(!track.locked, |button| {
+                                                button.on_click(cx.listener(
+                                                    move |this, _, window, cx| {
+                                                        this.request_delete_track(
+                                                            &delete_track_id,
+                                                            track.item_count,
+                                                            window,
+                                                            cx,
+                                                        );
+                                                    },
+                                                ))
+                                            }),
+                                    ),
+                            )
+                    })
+                    .when(renaming, |panel| {
+                        panel.child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_2()
+                                .px_3()
+                                .py_2()
+                                .border_b_1()
+                                .border_color(rgb(0x292c34))
+                                .child(
+                                    div()
+                                        .id("track-name-input")
+                                        .when_some(
+                                            self.track_name_focus.as_ref(),
+                                            |input, focus| input.track_focus(focus),
+                                        )
+                                        .on_key_down(cx.listener(Self::track_name_key_down))
+                                        .px_2()
+                                        .py_1()
+                                        .rounded_sm()
+                                        .border_1()
+                                        .border_color(rgb(0xffa13b))
+                                        .bg(rgb(0x17191f))
+                                        .text_sm()
+                                        .text_color(rgb(0xffffff))
+                                        .child(format!("{}▏", self.track_name_draft)),
+                                )
+                                .child(
+                                    div()
+                                        .flex()
+                                        .gap_2()
+                                        .child(
+                                            inspector_button("track-rename-save", "Save").on_click(
+                                                cx.listener(|this, _, _, cx| {
+                                                    this.commit_track_rename(cx);
+                                                }),
+                                            ),
+                                        )
+                                        .child(
+                                            inspector_button("track-rename-cancel", "Cancel")
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.renaming_track_id = None;
+                                                    this.track_name_draft.clear();
+                                                    this.edit_error = None;
+                                                    cx.notify();
+                                                })),
+                                        ),
+                                ),
+                        )
+                    })
+            })
             .when_some(selected_clip, |panel, clip| {
                 panel
                     .child(
@@ -2705,6 +3037,10 @@ impl EditorView {
                     this.update_clip_drag_target(&hover_track_id, event, cx);
                 }))
                 .on_click(cx.listener(move |this, _, _, cx| {
+                    if this.renaming_track_id.as_deref() != Some(select_track_id.as_str()) {
+                        this.renaming_track_id = None;
+                        this.track_name_draft.clear();
+                    }
                     if this.selected_track_id.as_deref() == Some(select_track_id.as_str()) {
                         this.selected_track_id = None;
                     } else {
@@ -3509,9 +3845,11 @@ fn run() -> Result<(), Box<dyn Error>> {
                 let view = cx.new(|cx| {
                     let focus_handle = cx.focus_handle();
                     let master_volume_focus = cx.focus_handle().tab_stop(true).tab_index(0);
+                    let track_name_focus = cx.focus_handle().tab_stop(true).tab_index(1);
                     focus_handle.focus(window);
                     editor.focus_handle = Some(focus_handle);
                     editor.master_volume_focus = Some(master_volume_focus);
+                    editor.track_name_focus = Some(track_name_focus);
                     editor
                 });
                 let close_view = view.clone();
