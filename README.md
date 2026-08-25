@@ -34,7 +34,12 @@ The repository currently contains the first foundation:
   `mikan-react-render` CLI that bundles an entry with esbuild and evaluates it
   on request. Because the reconciler drives real React rendering, ordinary
   hooks work: `useState`/`useEffect` and this package's own
-  `useCurrentFrame()`, `useCurrentTime()`, and `useVideoConfig()`. A loaded
+  `useCurrentFrame()`, `useCurrentTime()`, and `useVideoConfig()`.
+  `interpolate()` and `spring()` (plus a small `Easings` curve set) turn a
+  frame number into an animated value — `spring()` is a damped harmonic
+  oscillator's analytic step response, not a physics simulation stepped
+  frame by frame, so it evaluates any single frame directly rather than
+  needing the frames before it. A loaded
   `.mikan.json` project can also be read into a React entry: `loadProject()`
   plus `<ProjectProvider>`/`useProject()` expose it as plain data, and
   `<ProjectTimeline />` embeds its `video`/`image`/`text` timeline content —

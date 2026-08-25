@@ -417,6 +417,34 @@ in any other React host.
     `embeds_pre_evaluated_project_layers_into_project_timeline_when_node_is_available`)
     that calls `scene_at_with_project` directly with a synthetic `Layer` and
     asserts it comes back untouched alongside the entry's own content.
+- **`interpolate()` and `spring()`** (`src/animation.ts`) are plain
+  functions over a frame/time number, no reconciler or hooks involved — they
+  compose with `useCurrentFrame()`/`useVideoConfig()` but do not depend on
+  them. `interpolate(input, inputRange, outputRange, options?)` matches the
+  usual Remotion-shaped contract: piecewise-linear by default, an optional
+  per-segment `easing`, and `extrapolateLeft`/`extrapolateRight` (`'extend'`
+  default, `'clamp'`, `'identity'`) for input outside the given range.
+  `Easings` (plural — the generated `Easing` union type from
+  `mikan_composition`, an unrelated project.json-facing concept, already
+  used that name) provides `linear`/`easeIn`/`easeOut`/`easeInOut` curves.
+  `spring({frame, fps, config?, from?, to?, delay?, durationInFrames?})` is
+  the closed-form step response of a damped harmonic oscillator (mass-
+  spring-damper solved analytically for the underdamped/critically-damped/
+  overdamped cases), not a physics simulation stepped frame by frame — this
+  matters because it means any single requested frame can be evaluated
+  directly, with no dependency on the frames before it, which fits how this
+  renderer works (each `renderAt` call is an independent frame request, not
+  guaranteed to arrive in order). `durationInFrames` clamps late frames to
+  the settled value rather than fitting the spring's stiffness to finish by
+  exactly that frame (Remotion does the latter; not implemented here).
+  Verified manually end to end: a `<Text>` combining `spring()` (scale, with
+  reduced damping so the overshoot is visible) and `interpolate()`
+  (position) rendered through `mikan-exporter --react` shows the text
+  entering from the left, bouncing past full scale, and settling — matches
+  the JSON values spot-checked in isolation via the CLI's stdin/stdout
+  protocol directly (scale reaches ~1.25 at frame 10 before settling near 1
+  by frame 30, position moves from 100 to 320 and clamps at the composition
+  width beyond frame 60 per `extrapolateRight: 'clamp'`).
   - **Not yet built**: per-track access (`useProjectTrack()`,
     `<ProjectTrack id="..." />`) — the evaluator evaluates a whole project's
     tracks together, not one at a time, so this needs new evaluator-side
@@ -630,7 +658,8 @@ is already done:
    `<ProjectTrack />` would need its own per-track evaluation entry point on
    the Rust side plus a way for the request payload to carry multiple named
    layer sets instead of one.
-3. `interpolate()` / `spring()` animation utilities.
+3. ~~`interpolate()` / `spring()` animation utilities~~ — done, see
+   "react-reconciler, hooks, and `<ProjectTimeline />`" above.
 4. Project Properties (`defineProjectProperties`, `useProjectProperty()`).
 5. Component registry / `ComponentContent` (`registerComponent`, resolving
    `TimelineContent::Component`'s `component`/`props` to a registered React

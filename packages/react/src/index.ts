@@ -26,6 +26,9 @@ export type {
 export { useCurrentFrame, useCurrentTime, useVideoConfig } from './hooks';
 export type { VideoConfig } from './hooks';
 
+export { Easings, interpolate, spring } from './animation';
+export type { Extrapolate, InterpolateOptions, SpringConfig, SpringOptions } from './animation';
+
 export { ProjectProvider, ProjectTimeline, useProject } from './project-runtime';
 export type { ProjectProviderProps } from './project-runtime';
 
