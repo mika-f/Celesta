@@ -3,7 +3,10 @@ resolver = "3"
 members = [
   "crates/composition",
   "crates/evaluator",
+  "crates/gpu-renderer",
+  "crates/media",
   "crates/project",
+  "crates/renderer",
 ]
 
 [workspace.package]
