@@ -34,12 +34,17 @@ The repository currently contains the first foundation:
   long-lived process per composition and requests the evaluated `Scene` for
   each exact frame time over a JSON stdin/stdout pipe.
 - `packages/react` (`@mikan/react`, TypeScript, managed with pnpm): declarative
-  `Composition`, `Group`, `Image`, and `Text` components for authoring a React
-  entry, evaluated through a real `react-reconciler` host, plus the
-  `mikan-react-render` CLI that bundles an entry with esbuild and evaluates it
-  on request. Because the reconciler drives real React rendering, ordinary
-  hooks work: `useState`/`useEffect` and this package's own
-  `useCurrentFrame()`, `useCurrentTime()`, and `useVideoConfig()`.
+  `Composition`, `Group`, `Image`, `Text`, and `Video` components for
+  authoring a React entry, evaluated through a real `react-reconciler` host,
+  plus the `mikan-react-render` CLI that bundles an entry with esbuild and
+  evaluates it on request. `<Video src="..." startFrom={seconds}
+  playbackRate={rate} />` plays synced to the composition's own clock from
+  frame 0 (there is no `<Sequence>`-style offset yet); `mikan-exporter`
+  attaches a sequential FFmpeg decoder to any React export so it decodes,
+  same as a project timeline's `Video` content. Because the reconciler
+  drives real React rendering, ordinary hooks work: `useState`/`useEffect`
+  and this package's own `useCurrentFrame()`, `useCurrentTime()`, and
+  `useVideoConfig()`.
   `interpolate()` and `spring()` (plus a small `Easings` curve set) turn a
   frame number into an animated value — `spring()` is a damped harmonic
   oscillator's analytic step response, not a physics simulation stepped

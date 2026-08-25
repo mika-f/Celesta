@@ -1,10 +1,11 @@
-export { Composition, Group, Image, Text } from './components';
+export { Composition, Group, Image, Text, Video } from './components';
 export type {
   CommonProps,
   CompositionProps,
   GroupProps,
   ImageProps,
   TextProps,
+  VideoProps,
 } from './components';
 export type {
   AssetLocation,

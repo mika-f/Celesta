@@ -34,6 +34,29 @@ fn evaluates_the_example_composition_when_node_is_available() {
 }
 
 #[test]
+fn computes_video_timing_from_the_composition_clock_when_node_is_available() {
+    let Some((node, cli_script, package_root)) = live_react_runtime() else {
+        return;
+    };
+
+    let entry = package_root.join("examples/with-video.tsx");
+    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+
+    // <Video src="./clip.mp4" startFrom={1} playbackRate={2} /> has no
+    // timeline-item range the way a project clip does, so it plays synced
+    // to the composition's own clock from frame 0: at frame 15/30 (0.5s in),
+    // sourceTimeSeconds should be startFrom + 0.5 * playbackRate = 2.0.
+    let scene = bridge.scene_at(Time::new(15, 30)).unwrap();
+    assert_eq!(scene.layers.len(), 1);
+    let LayerContent::Video { asset, timing } = &scene.layers[0].content else {
+        panic!("expected a video layer");
+    };
+    assert_eq!(asset.id, "./clip.mp4");
+    assert_eq!(timing.playback_rate, 2.0);
+    assert_eq!(timing.source_time_seconds, 2.0);
+}
+
+#[test]
 fn embeds_pre_evaluated_project_layers_into_project_timeline_when_node_is_available() {
     let Some((node, cli_script, package_root)) = live_react_runtime() else {
         return;

@@ -567,18 +567,18 @@ impl Exporter {
             let mut renderer =
                 GpuRenderer::new(GpuRenderOptions::default()).map_err(ExportError::Render)?;
             renderer = renderer.with_asset_root(asset_root);
-            if project_evaluator.is_some() {
-                // The project's own Video content needs decoding; the React
-                // entry's asset_root stays the renderer's single asset_root
-                // (see absolutize_layers/absolutize_fonts below for how the
-                // project's own, differently-rooted assets still resolve).
-                let video_decoder = FfmpegBackend::with_executables(
-                    self.options.ffmpeg.clone(),
-                    self.options.ffprobe.clone(),
-                )
-                .with_sequential_video(metadata.frame_rate);
-                renderer = renderer.with_video_decoder(video_decoder);
-            }
+            // Attached unconditionally: the React entry's own <Video>
+            // elements need decoding just as much as a companion project's
+            // Video content does, and the React entry's asset_root stays the
+            // renderer's single asset_root either way (see
+            // absolutize_layers/absolutize_fonts below for how a project's
+            // own, differently-rooted assets still resolve).
+            let video_decoder = FfmpegBackend::with_executables(
+                self.options.ffmpeg.clone(),
+                self.options.ffprobe.clone(),
+            )
+            .with_sequential_video(metadata.frame_rate);
+            renderer = renderer.with_video_decoder(video_decoder);
             for frame_index in 0..metadata.duration_in_frames {
                 ensure_not_cancelled(cancellation)?;
                 progress(ExportProgress::Rendering {

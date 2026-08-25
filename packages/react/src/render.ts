@@ -22,8 +22,12 @@ import type {
   Time,
 } from './scene';
 
-const HOST_TYPES = new Set(['composition', 'group', 'image', 'text', 'rawLayers']);
+const HOST_TYPES = new Set(['composition', 'group', 'image', 'text', 'video', 'rawLayers']);
 const ZERO_TIME: Time = { value: 0, timescale: 1 };
+// Precision `<Video>`'s `startFrom`/computed `sourceTimeSeconds` are encoded
+// at when built back into a `Time` — comfortably finer than any video frame
+// rate, so trimming isn't visibly quantized.
+const SECONDS_TIMESCALE = 1_000_000;
 
 type PlaceholderConfig = Pick<CompositionConfig, 'width' | 'height' | 'durationInFrames'> & {
   frameRate: { numerator: number };
@@ -120,7 +124,15 @@ function resolveAsset(src: unknown): ResolvedAsset {
   return { id: src, location: { type: 'file', path: src } };
 }
 
-function buildLayer(node: HostNode, path: string): Layer {
+function secondsToTime(seconds: number): Time {
+  return { value: Math.round(seconds * SECONDS_TIMESCALE), timescale: SECONDS_TIMESCALE };
+}
+
+function secondsFromTime(time: Time): number {
+  return time.value / time.timescale;
+}
+
+function buildLayer(node: HostNode, path: string, time: Time): Layer {
   const { props } = node;
   const id = typeof props.id === 'string' && props.id.length > 0 ? props.id : path;
   const transform = extractTransform(props);
@@ -128,7 +140,7 @@ function buildLayer(node: HostNode, path: string): Layer {
 
   let content: LayerContent;
   if (node.type === 'group') {
-    content = { type: 'group', layers: walkChildren(node, path) };
+    content = { type: 'group', layers: walkChildren(node, path, time) };
   } else if (node.type === 'image') {
     content = { type: 'image', asset: resolveAsset(props.src) };
   } else if (node.type === 'text') {
@@ -139,6 +151,26 @@ function buildLayer(node: HostNode, path: string): Layer {
       style: (props.style as TextStyle | undefined) ?? {},
       ...(typeof maxWidth === 'number' ? { maxWidth } : {}),
     };
+  } else if (node.type === 'video') {
+    // A React <Video> has no timeline-item "range.start" the way a project
+    // clip does (there is no <Sequence>-style offset component yet), so it
+    // plays synced to the composition's own clock from frame 0: `time` here
+    // *is* the video's local time. `sourceTimeSeconds` — the only field
+    // GpuRenderer actually reads to seek/decode — is `startFrom` plus local
+    // time scaled by `playbackRate`, mirroring how mikan-evaluator derives
+    // it for a project TimelineContent::Video at playback_rate 1.
+    const startFrom = numberOr(props.startFrom, 0);
+    const playbackRate = numberOr(props.playbackRate, 1);
+    content = {
+      type: 'video',
+      asset: resolveAsset(props.src),
+      timing: {
+        localTime: time,
+        sourceStart: secondsToTime(startFrom),
+        sourceTimeSeconds: startFrom + secondsFromTime(time) * playbackRate,
+        playbackRate,
+      },
+    };
   } else {
     throw new Error(`unreachable: unknown host node type "${node.type}"`);
   }
@@ -146,18 +178,18 @@ function buildLayer(node: HostNode, path: string): Layer {
   return { id, transform, opacity, content };
 }
 
-function walkNode(node: HostNode, path: string): Layer[] {
+function walkNode(node: HostNode, path: string, time: Time): Layer[] {
   if (!HOST_TYPES.has(node.type)) {
     throw new Error(`unsupported element <${node.type}>; use Mikan's built-in components`);
   }
   if (node.type === 'rawLayers') {
     return (node.props.layers as Layer[] | undefined) ?? [];
   }
-  return [buildLayer(node, path)];
+  return [buildLayer(node, path, time)];
 }
 
-function walkChildren(node: HostNode, parentPath: string): Layer[] {
-  return node.children.flatMap((child, index) => walkNode(child, `${parentPath}.${index}`));
+function walkChildren(node: HostNode, parentPath: string, time: Time): Layer[] {
+  return node.children.flatMap((child, index) => walkNode(child, `${parentPath}.${index}`, time));
 }
 
 export function mount(defaultExport: EntryComponent): MountedComposition {
@@ -209,7 +241,7 @@ export function mount(defaultExport: EntryComponent): MountedComposition {
     renderAt(time, project) {
       renderTree(time, project, config);
       const instance = findCompositionInstance(container);
-      const layers = walkChildren(instance, 'root');
+      const layers = walkChildren(instance, 'root', time);
       return {
         width: config.width,
         height: config.height,

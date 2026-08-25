@@ -504,9 +504,9 @@ in any other React host.
     resolved layer becomes a `group` wrapping the rendered `Text`, and the
     unresolved one stays a `missingComponent` layer with its original
     `component` name.
-  - **Not yet built**: a `<Video>` React component. An `AudioGraph` source
-    for React entries. Schema-based Project Properties
-    (`defineProjectProperties`, GUI Inspector generation).
+  - **Not yet built**: an `AudioGraph` source for React entries.
+    Schema-based Project Properties (`defineProjectProperties`, GUI
+    Inspector generation).
 - **Component Property Schema** (`src/registry.ts`), now including GPUI
   editor integration. `registerComponent(name, component, schema?)` takes
   an optional third argument, a `ComponentPropertySchema<Props>` — a
@@ -675,6 +675,38 @@ in any other React host.
   needed no dialogue-specific handling on the TypeScript side — the generic
   `Group`/`Image`/`Text` rendering (already exercised by the Component
   registry's resolved-subtree case) covers it.
+- **`<Video>` component** (`src/components.ts`, `src/render.ts`). Props:
+  `src` (matching `<Image>`), `startFrom?: number` (seconds into the source
+  file playback begins at, default 0 — the React counterpart of a project
+  clip's trim-in point), `playbackRate?: number` (default 1). A React
+  `<Video>` has no timeline-item `range.start` the way a project clip does
+  (there is no `<Sequence>`-style offset component), so it always plays
+  synced to the whole composition's own clock from frame 0: `buildLayer`'s
+  new `video` branch (`render.ts`) is passed the current composition
+  `Time` (threaded through `walkChildren`/`walkNode`, which previously
+  didn't need it) and uses it directly as `MediaTiming.localTime`,
+  computing the only field `GpuRenderer` actually reads to decode —
+  `sourceTimeSeconds` — as `startFrom + localTimeSeconds * playbackRate`,
+  the same formula `mikan-evaluator::visual_layer` uses for a project
+  `TimelineContent::Video` at a constant (non-animated) playback rate.
+  `secondsToTime`/`secondsFromTime` (new small helpers) convert between a
+  plain seconds number and the generated `Time { value, timescale }` shape,
+  using a microsecond timescale so trimming isn't visibly quantized.
+  `mikan-exporter`'s `render_react_video` now attaches a video decoder
+  (`FfmpegBackend::with_sequential_video`) unconditionally rather than only
+  when a companion project is present — previously a React-only export
+  (no `--project`) had no decoder at all, so any `LayerContent::Video`
+  layer would have hit `GpuRenderError::MissingVideoDecoder`.
+  Verified: a new `mikan-react-bridge` integration test
+  (`computes_video_timing_from_the_composition_clock_when_node_is_available`,
+  against a new `packages/react/examples/with-video.tsx` declaring
+  `startFrom={1} playbackRate={2}`) asserts `sourceTimeSeconds` at frame
+  15/30 (0.5s in) comes out to `1 + 0.5 * 2 = 2.0`. End to end, a real
+  `mikan-exporter --react` export against a synthetic `ffmpeg testsrc`
+  clip produced an MP4 whose frames actually changed over time (confirming
+  real sequential decoding, not a frozen first frame) and correctly seeked
+  when `startFrom` was set to a later point in the source, with a `<Text>`
+  sibling compositing on top as expected.
 
 ### TypeScript type generation and the Project loader
 
@@ -800,12 +832,16 @@ licensed VOICEROID voice sample.
   `useProjectTrack('titles')` and renders another whole via `<ProjectTrack
   id="overlays" />`, used by `mikan-react-bridge`'s per-track integration
   test.
+- `packages/react/examples/with-video.tsx`: a `<Video src="./clip.mp4"
+  startFrom={1} playbackRate={2} />`, used by `mikan-react-bridge`'s video
+  timing integration test (no actual `clip.mp4` needed there — Node
+  evaluates the layer tree without decoding).
 
 ## Validation baseline
 
-At this handoff, the workspace has 94 passing tests (93 from the previous
-handoff plus a new `mikan-exporter` unit test for `visual_only_project`'s
-dialogue handling). The last checks were:
+At this handoff, the workspace has 95 passing tests (94 from the previous
+handoff plus a new `mikan-react-bridge` integration test for `<Video>`
+timing). The last checks were:
 
 ```sh
 cargo test --workspace
@@ -905,9 +941,8 @@ is already done:
 
 Separately, still open from the original slice:
 
-- A `<Video>` component in `packages/react`, matching `LayerContent::Video`'s
-  `MediaTiming` (local time, source start, source time in seconds, playback
-  rate) the way project timeline clips already do.
+- ~~A `<Video>` component in `packages/react`~~ — done, see "`<Video>`
+  component" above.
 - An `AudioGraph` source for React entries so `mikan-exporter --react` can mux
   audio instead of always publishing a silent MP4.
 

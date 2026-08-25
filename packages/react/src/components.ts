@@ -44,6 +44,24 @@ export interface TextProps extends CommonProps {
   maxWidth?: number;
 }
 
+export interface VideoProps extends CommonProps {
+  src: string;
+  /**
+   * Seconds into the source file playback starts from, at the composition's
+   * own frame 0 — the counterpart of a project timeline clip's trim-in
+   * point. Defaults to 0.
+   */
+  startFrom?: number;
+  /**
+   * Speed the source plays back at relative to the composition's own clock
+   * (2 plays twice as fast, 0.5 half as fast). Defaults to 1. A React
+   * `<Video>` has no per-frame automation the way a project timeline clip's
+   * `Animatable<f64>` playback rate does — it is a single static value for
+   * the whole clip.
+   */
+  playbackRate?: number;
+}
+
 export function Composition(props: CompositionProps): ReturnType<typeof React.createElement> {
   return React.createElement('composition', props);
 }
@@ -58,4 +76,8 @@ export function Image(props: ImageProps): ReturnType<typeof React.createElement>
 
 export function Text(props: TextProps): ReturnType<typeof React.createElement> {
   return React.createElement('text', props);
+}
+
+export function Video(props: VideoProps): ReturnType<typeof React.createElement> {
+  return React.createElement('video', props);
 }
