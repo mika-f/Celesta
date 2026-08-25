@@ -330,7 +330,7 @@ impl Exporter {
                 "-pix_fmt",
                 "yuv420p",
                 "-threads",
-                "1",
+                "0",
                 "-movflags",
                 "+faststart",
             ])
@@ -424,7 +424,7 @@ impl Exporter {
                 "-pix_fmt",
                 "yuv420p",
                 "-threads",
-                "1",
+                "0",
                 "-movflags",
                 "+faststart",
             ])
@@ -500,7 +500,7 @@ impl Exporter {
                 "-b:a",
                 "192k",
                 "-threads",
-                "1",
+                "0",
                 "-shortest",
                 "-movflags",
                 "+faststart",
