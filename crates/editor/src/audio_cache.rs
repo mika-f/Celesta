@@ -1,10 +1,10 @@
 use std::collections::hash_map::DefaultHasher;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File, FileTimes, OpenOptions};
 use std::hash::{Hash, Hasher};
 use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::UNIX_EPOCH;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
@@ -14,6 +14,7 @@ use mikan_media::AudioBuffer;
 const MAGIC: &[u8; 8] = b"MIKANPCM";
 const VERSION: u32 = 1;
 const HEADER_LEN: u64 = 32;
+const DEFAULT_MAX_BYTES: u64 = 1024 * 1024 * 1024;
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) struct CachedAudio {
@@ -23,6 +24,7 @@ pub(crate) struct CachedAudio {
 
 pub(crate) struct DiskAudioCache {
     root: PathBuf,
+    max_bytes: u64,
 }
 
 impl DiskAudioCache {
@@ -31,7 +33,15 @@ impl DiskAudioCache {
     }
 
     pub(crate) fn new(root: PathBuf) -> Self {
-        Self { root }
+        Self {
+            root,
+            max_bytes: DEFAULT_MAX_BYTES,
+        }
+    }
+
+    #[cfg(test)]
+    fn with_max_bytes(root: PathBuf, max_bytes: u64) -> Self {
+        Self { root, max_bytes }
     }
 
     pub(crate) fn load(
@@ -46,10 +56,11 @@ impl DiskAudioCache {
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error),
         };
-        let cached = decode(file)?;
+        let cached = decode(&file)?;
         if cached.buffer.sample_rate != sample_rate || cached.buffer.channels != channels {
             return Err(invalid_cache("cache format does not match its key"));
         }
+        let _ = file.set_times(FileTimes::new().set_modified(SystemTime::now()));
         Ok(Some(cached))
     }
 
@@ -84,7 +95,9 @@ impl DiskAudioCache {
         if result.is_err() {
             let _ = fs::remove_file(temporary);
         }
-        result
+        result?;
+        let _ = self.prune();
+        Ok(())
     }
 
     fn entry_path(&self, source: &Path, sample_rate: u32, channels: u16) -> io::Result<PathBuf> {
@@ -107,6 +120,51 @@ impl DiskAudioCache {
         sample_rate.hash(&mut hasher);
         channels.hash(&mut hasher);
         Ok(self.root.join(format!("{:016x}.pcm", hasher.finish())))
+    }
+
+    fn prune(&self) -> io::Result<()> {
+        let entries = match fs::read_dir(&self.root) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error),
+        };
+        let mut total_bytes = 0_u64;
+        let mut cache_entries = Vec::new();
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(_) => continue,
+            };
+            let path = entry.path();
+            if path.extension().and_then(|extension| extension.to_str()) != Some("pcm") {
+                continue;
+            }
+            let metadata = match entry.metadata() {
+                Ok(metadata) if metadata.is_file() => metadata,
+                _ => continue,
+            };
+            let size = metadata.len();
+            total_bytes = total_bytes.saturating_add(size);
+            cache_entries.push((metadata.modified().unwrap_or(UNIX_EPOCH), path, size));
+        }
+        if total_bytes <= self.max_bytes {
+            return Ok(());
+        }
+        cache_entries
+            .sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+        for (_, path, size) in cache_entries {
+            if total_bytes <= self.max_bytes {
+                break;
+            }
+            match fs::remove_file(path) {
+                Ok(()) => total_bytes = total_bytes.saturating_sub(size),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    total_bytes = total_bytes.saturating_sub(size);
+                }
+                Err(_) => {}
+            }
+        }
+        Ok(())
     }
 }
 
@@ -149,7 +207,7 @@ fn encode(writer: &mut impl Write, buffer: &AudioBuffer, waveform: &[f32]) -> io
     Ok(())
 }
 
-fn decode(file: File) -> io::Result<CachedAudio> {
+fn decode(file: &File) -> io::Result<CachedAudio> {
     let file_len = file.metadata()?.len();
     let mut reader = BufReader::new(file);
     let mut magic = [0_u8; 8];
@@ -290,6 +348,53 @@ mod tests {
         fs::write(&entry, MAGIC).unwrap();
 
         assert!(cache.load(&source, 48_000, 2).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn evicts_the_least_recently_used_entries_above_the_size_limit() {
+        let root = fixture_root("lru");
+        fs::create_dir_all(&root).unwrap();
+        let sources = [root.join("a.wav"), root.join("b.wav"), root.join("c.wav")];
+        for source in &sources {
+            fs::write(source, b"source").unwrap();
+        }
+        let buffer = AudioBuffer {
+            sample_rate: 48_000,
+            channels: 2,
+            samples: vec![0.25, -0.25, 0.5, -0.5],
+        };
+        let waveform = vec![0.25, 0.5];
+        let entry_size = HEADER_LEN + (buffer.samples.len() + waveform.len()) as u64 * 4;
+        let cache = DiskAudioCache::with_max_bytes(root.join("cache"), entry_size * 2);
+
+        cache.store(&sources[0], &buffer, &waveform).unwrap();
+        cache.store(&sources[1], &buffer, &waveform).unwrap();
+        let first = cache.entry_path(&sources[0], 48_000, 2).unwrap();
+        let second = cache.entry_path(&sources[1], 48_000, 2).unwrap();
+        File::options()
+            .write(true)
+            .open(&first)
+            .unwrap()
+            .set_times(
+                FileTimes::new().set_modified(UNIX_EPOCH + std::time::Duration::from_secs(1)),
+            )
+            .unwrap();
+        File::options()
+            .write(true)
+            .open(&second)
+            .unwrap()
+            .set_times(
+                FileTimes::new().set_modified(UNIX_EPOCH + std::time::Duration::from_secs(2)),
+            )
+            .unwrap();
+
+        cache.load(&sources[0], 48_000, 2).unwrap().unwrap();
+        cache.store(&sources[2], &buffer, &waveform).unwrap();
+
+        assert!(first.exists());
+        assert!(!second.exists());
+        assert!(cache.entry_path(&sources[2], 48_000, 2).unwrap().exists());
         fs::remove_dir_all(root).unwrap();
     }
 }

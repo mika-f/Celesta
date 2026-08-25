@@ -101,7 +101,9 @@ cached samples without launching FFmpeg for every asset again. Decoded PCM and
 source waveform peaks also use a versioned on-disk cache across editor sessions.
 Entries are keyed by canonical file identity, size, modification time, sample
 rate, and channel count; invalid or corrupt entries fall back to FFmpeg without
-blocking playback.
+blocking playback. The cache is capped at 1 GiB; successful reads refresh
+recency and saving a new entry evicts least-recently-used files until the cache
+is within the limit.
 
 The CPU renderer currently decodes local PNG, JPEG, WebP, and PNM image assets.
 Construct it with `CpuRenderer::with_asset_root` to resolve project-relative

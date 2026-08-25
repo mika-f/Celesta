@@ -17,9 +17,9 @@ video/audio tracks.
 - Workspace: `/Users/natsuneko/ghq/github.com/mika-f/mikan`
 - Rust edition: 2024
 - Minimum Rust version: 1.89
-- The initial implementation is tracked on `main`; the persistent audio-cache
-  milestone is commit `088ee0e`. Inspect `git status --short` for newer work
-  before editing or staging.
+- The initial implementation is tracked on `main`; timeline track controls and
+  level-meter work landed in commit `69cd4e2`. Inspect `git status --short` for
+  newer work before editing or staging.
 - FFmpeg and FFprobe are installed and available on `PATH`.
 - GPUI is pinned to crates.io version `0.2.2`.
 
@@ -180,6 +180,10 @@ Keep these boundaries intact:
   Cache corruption, staleness, and read/write failures are recoverable misses;
   the worker falls back to FFmpeg and rewrites the entry without surfacing an
   editor failure.
+- The persistent cache is capped at 1 GiB. Successful reads update entry mtime
+  as a last-used marker; after each store, `.pcm` sizes are totaled and the
+  oldest entries are removed until within the limit. Maintenance errors remain
+  non-fatal.
 - Waveform peaks are cached per source asset and mapped to each audible clip,
   replacing the previous complete-mix waveform approximation.
 - Clip waveforms map each timeline bucket through `sourceRange.start`, optional
@@ -256,7 +260,7 @@ licensed VOICEROID voice sample.
 
 ## Validation baseline
 
-At this handoff, the workspace has 68 passing tests. The last checks were:
+At this handoff, the workspace has 69 passing tests. The last checks were:
 
 ```sh
 cargo test --workspace
@@ -286,11 +290,9 @@ for synthetic GUI input. Keep drag behavior easy to exercise manually.
 The initial editor mutation, persistence, audio, and background-worker
 milestones are complete. Continue with:
 
-1. Add bounded cache maintenance (size accounting and least-recently-used
-   eviction) before long-form projects make the persistent audio cache large.
-2. Add clip-level volume controls and automation editing so the displayed meter
+1. Add clip-level volume controls and automation editing so the displayed meter
    envelope can be authored directly in the editor.
-3. Add track rename/delete and enabled/locked controls, including a safe choice
+2. Add track rename/delete and enabled/locked controls, including a safe choice
    when deleting non-empty tracks.
 
 Later performance work should replace GPUI image readback with a native texture
