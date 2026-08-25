@@ -45,9 +45,13 @@ The repository currently contains the first foundation:
   `useProjectProperty(key, defaultValue)` reads its editor-set
   `properties` (falling back to `defaultValue` when the key is absent —
   there is no schema yet), and `<ProjectTimeline />` embeds its
-  `video`/`image`/`text` timeline content —
-  evaluated by `mikan-evaluator` (Rust), not reimplemented in TypeScript —
-  alongside the entry's own React-authored content. `mikan-composition` and
+  `video`/`image`/`text`/`component` timeline content — evaluated by
+  `mikan-evaluator` (Rust), not reimplemented in TypeScript — alongside the
+  entry's own React-authored content. `component` items
+  (`registerComponent(name, Component)`) resolve to a real rendered
+  subtree positioned at the project-evaluated transform; an unregistered
+  name is left for `GpuRenderer` to reject rather than silently dropped.
+  `mikan-composition` and
   `mikan-project`'s public types carry `ts-rs` bindings (behind the `codegen`
   cargo feature) that `pnpm run codegen` regenerates into
   `packages/react/src/generated`; the package's own `Scene`/`Layer`/...,

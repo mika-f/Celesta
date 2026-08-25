@@ -11,7 +11,16 @@ import * as React from 'react';
 import { CompositionRuntimeContext } from './hooks';
 import { ProjectLayersContext } from './project-runtime';
 import { type HostNode, type RootContainer, HostReconciler, createRoot } from './reconciler';
-import type { CompositionConfig, Layer, LayerContent, ResolvedAsset, Scene, TextStyle, Time } from './scene';
+import type {
+  CompositionConfig,
+  EvaluatedTransform,
+  Layer,
+  LayerContent,
+  ResolvedAsset,
+  Scene,
+  TextStyle,
+  Time,
+} from './scene';
 
 const HOST_TYPES = new Set(['composition', 'group', 'image', 'text', 'rawLayers']);
 const ZERO_TIME: Time = { value: 0, timescale: 1 };
@@ -67,7 +76,16 @@ function numberOr(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
-function extractTransform(props: Record<string, unknown>) {
+function extractTransform(props: Record<string, unknown>): EvaluatedTransform {
+  // `rawTransform`/`rawOpacity` (checked here and in buildLayer) are an
+  // internal escape hatch: project-runtime.ts's <ProjectTimeline /> uses
+  // them to place a resolved registry component's rendered subtree at the
+  // exact transform/opacity mikan-evaluator already computed for that
+  // project timeline item, bypassing the flat x/y/scale/rotation props
+  // authored components use. Not part of the public component prop types.
+  if (props.rawTransform) {
+    return props.rawTransform as EvaluatedTransform;
+  }
   const scale = numberOr(props.scale, 1);
   return {
     position: { x: numberOr(props.x, 0), y: numberOr(props.y, 0) },
@@ -101,7 +119,7 @@ function buildLayer(node: HostNode, path: string): Layer {
   const { props } = node;
   const id = typeof props.id === 'string' && props.id.length > 0 ? props.id : path;
   const transform = extractTransform(props);
-  const opacity = numberOr(props.opacity, 1);
+  const opacity = typeof props.rawOpacity === 'number' ? props.rawOpacity : numberOr(props.opacity, 1);
 
   let content: LayerContent;
   if (node.type === 'group') {

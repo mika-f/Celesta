@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 
 import type { Project } from './generated/Project';
 import type { JsonValue } from './generated/serde_json/JsonValue';
+import { resolveComponent } from './registry';
 import type { Layer } from './scene';
 
 // `Project` here is GUI-editor-owned data the entry chooses to load and wrap
@@ -57,5 +58,36 @@ export function ProjectTimeline(): ReturnType<typeof React.createElement> {
       '<ProjectTimeline /> requires evaluated project layers; export with a companion project (mikan-exporter --react <entry> --project <project.json>) to provide them',
     );
   }
-  return React.createElement('rawLayers', { layers });
+  return React.createElement(
+    React.Fragment,
+    null,
+    layers.map((layer) => React.createElement(ResolvedProjectLayer, { key: layer.id, layer })),
+  );
+}
+
+// A project.json `TimelineContent::Component` item always evaluates
+// (mikan-evaluator has no component registry of its own) to a
+// `LayerContent::MissingComponent { component, props }` layer. This is
+// where that name actually gets resolved against registerComponent()'s
+// registry, on the Node side. Resolved, the registered component renders as
+// a real subtree — its own hooks and state work normally — wrapped in a
+// `group` that carries the transform/opacity mikan-evaluator already
+// computed for that timeline item (see the `rawTransform`/`rawOpacity`
+// escape hatch in render.ts), so its authored position on the timeline is
+// preserved regardless of what the component itself renders. Unresolved
+// (no matching registerComponent() call), the layer passes through as-is:
+// `GpuRenderer` errors on `missingComponent` content, which is the honest
+// outcome for a name the entry never registered.
+function ResolvedProjectLayer({ layer }: { layer: Layer }): ReturnType<typeof React.createElement> {
+  if (layer.content.type === 'missingComponent') {
+    const definition = resolveComponent(layer.content.component);
+    if (definition) {
+      return React.createElement(
+        'group',
+        { id: layer.id, rawTransform: layer.transform, rawOpacity: layer.opacity },
+        React.createElement(definition, layer.content.props),
+      );
+    }
+  }
+  return React.createElement('rawLayers', { layers: [layer] });
 }

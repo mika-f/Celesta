@@ -459,15 +459,60 @@ in any other React host.
   a project with `{"title": "Chapter 3", "episode": 3}` in `properties`,
   read back through `useProjectProperty` inside a `<ProjectProvider>`,
   including a missing key correctly falling back to its default.
+- **Component registry** (`src/registry.ts`, resolved by
+  `<ProjectTimeline />` in `src/project-runtime.ts`). A project.json
+  `TimelineContent::Component { component, props }` item has no meaning to
+  `mikan-evaluator` — Rust has no registry, so it always evaluates that
+  content to `LayerContent::MissingComponent { component, props }` (see
+  `crates/evaluator/src/lib.rs`), and `visual_only_project()`
+  (`mikan-exporter`) now keeps `component` items through its filter
+  (previously dropped, alongside `dialogue`, in the earlier v1 pass —
+  `dialogue` is still dropped). `registerComponent(name, Component)`
+  (called at module scope in the entry, so registration happens before any
+  frame renders — the registry is a plain process-global `Map`, safe
+  because one `mikan-react-render` process only ever handles one entry) is
+  how the entry supplies what Rust cannot. `<ProjectTimeline />` walks the
+  layers Rust evaluated; for each `missingComponent` layer, it looks up
+  `component` in the registry:
+  - **Resolved**: renders `<RegisteredComponent {...props} />` as a real
+    subtree — the registered component's own hooks/state work normally,
+    since it becomes part of the same persistent reconciler tree as
+    everything else — wrapped in a `group` carrying the *original*
+    evaluated `transform`/`opacity` from the timeline item (a
+    `rawTransform`/`rawOpacity` escape hatch added to `render.ts`'s
+    `extractTransform`/`buildLayer`, recognized only on internally-constructed
+    elements, not part of the public `GroupProps` type), so the resolved
+    content lands exactly where the project placed it regardless of what
+    the component itself renders.
+  - **Unresolved** (no matching `registerComponent()` call): the
+    `missingComponent` layer passes through unchanged. `GpuRenderer` then
+    errors on it (`GpuRenderError::UnsupportedContent`) — this is the
+    correct, honest outcome for export; the design doc's "Editor では
+    Missing Component として警告表示できるようにしたい" is about the GPUI
+    editor's own preview, not this export path, and remains unbuilt.
+  - Verified end to end
+    (`packages/react/examples/with-registered-component.tsx`, registering
+    `BossIntroduction`) both ways: a project with a registered
+    `component: "BossIntroduction"` item renders its resolved `<Text>`
+    (`"Golem (Lv.42)"` from `props: {bossName, level}`) through
+    `mikan-exporter --react --project`, and a project with an unregistered
+    component name fails the export with the expected `GpuRenderError`.
+    Also covered by an integration test
+    (`crates/react-bridge/tests/node_integration.rs`,
+    `resolves_a_registered_component_when_node_is_available`) asserting the
+    resolved layer becomes a `group` wrapping the rendered `Text`, and the
+    unresolved one stays a `missingComponent` layer with its original
+    `component` name.
   - **Not yet built**: per-track access (`useProjectTrack()`,
     `<ProjectTrack id="..." />`) — the evaluator evaluates a whole project's
     tracks together, not one at a time, so this needs new evaluator-side
-    surface first, not just a new React component. `dialogue`/`component`
-    content in `<ProjectTimeline />`. A `<Video>` React component. An
-    `AudioGraph` source for React entries. Schema-based Project Properties
+    surface first, not just a new React component. `dialogue` content in
+    `<ProjectTimeline />`. A `<Video>` React component. An `AudioGraph`
+    source for React entries. Schema-based Project Properties
     (`defineProjectProperties`, GUI Inspector generation) and the Component
-    Property Schema / registry system — both explicitly marked undecided in
-    the design doc.
+    Property Schema (GUI-editable props for a registered component,
+    generating Inspector fields) — both explicitly marked undecided in the
+    design doc.
 
 ### TypeScript type generation and the Project loader
 
@@ -585,12 +630,15 @@ licensed VOICEROID voice sample.
   a React-authored `<Text>`, used by `mikan-react-bridge`'s
   project-companion integration test and the `mikan-exporter --react
   --project` example.
+- `packages/react/examples/with-registered-component.tsx`: registers a
+  `BossIntroduction` component and renders `<ProjectTimeline />`, used by
+  `mikan-react-bridge`'s component-registry integration test.
 
 ## Validation baseline
 
-At this handoff, the workspace has 84 passing tests (83 from the previous
-handoff plus `mikan-react-bridge`'s new project-companion integration test).
-The last checks were:
+At this handoff, the workspace has 85 passing tests (84 from the previous
+handoff plus `mikan-react-bridge`'s new component-registry integration
+test). The last checks were:
 
 ```sh
 cargo test --workspace
@@ -680,12 +728,16 @@ is already done:
 4. ~~Project Properties~~ — `useProjectProperty(key, defaultValue)` (the
    design doc's "React API の簡易形") is done; `defineProjectProperties`
    (schema-based, generating Inspector fields) remains deferred, see below.
-5. Component registry / `ComponentContent` (`registerComponent`, resolving
-   `TimelineContent::Component`'s `component`/`props` to a registered React
-   component).
-6. Property schema / Inspector metadata for GUI-editable component props.
-7. `dialogue`/`component` timeline content in `<ProjectTimeline />` (dropped
-   in the v1 filter — see above — deliberately, pending items 4/5).
+5. ~~Component registry~~ — `registerComponent()`/`<ProjectTimeline />`
+   resolving `TimelineContent::Component`'s `component`/`props` to a
+   registered React component is done, see "Component registry" above.
+6. Property schema / Inspector metadata for GUI-editable component props
+   (a registered component declaring which of its props the GPUI editor
+   can show/edit — undecided in the design doc, separate from the
+   Component registry itself, which is just name → component resolution).
+7. `dialogue` timeline content in `<ProjectTimeline />` (dropped in the v1
+   filter — see above — deliberately; `component` content is no longer
+   dropped, per item 5).
 
 Separately, still open from the original slice:
 

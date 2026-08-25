@@ -692,12 +692,17 @@ impl Default for Exporter {
     }
 }
 
-/// Drops timeline items whose content isn't `video`/`image`/`text` before
-/// evaluating a companion project for a React export (v1 scope: no
-/// `audio`, `dialogue`, or `component` content). `audio` content produces no
-/// visual layers anyway; `dialogue` and `component` are dropped so their
-/// evaluator-expanded output doesn't appear where the entry didn't ask for
-/// it.
+/// Drops timeline items whose content isn't `video`/`image`/`text`/
+/// `component` before evaluating a companion project for a React export
+/// (v1 scope: no `audio` or `dialogue` content). `audio` content produces
+/// no visual layers anyway; `dialogue` is dropped so its evaluator-expanded
+/// output doesn't appear where the entry didn't ask for it. `component`
+/// items are kept: the evaluator has no registry of its own and always
+/// evaluates them to `LayerContent::MissingComponent`, which
+/// `@mikan/react`'s `<ProjectTimeline />` resolves against its own
+/// `registerComponent()` registry (falling back to leaving
+/// `missingComponent` layers as-is, which `GpuRenderer` then errors on —
+/// see `HANDOFF.md`).
 fn visual_only_project(project: &Project) -> Project {
     let mut filtered = project.clone();
     for track in &mut filtered.tracks {
@@ -707,6 +712,7 @@ fn visual_only_project(project: &Project) -> Project {
                 TimelineContent::Video { .. }
                     | TimelineContent::Image { .. }
                     | TimelineContent::Text { .. }
+                    | TimelineContent::Component { .. }
             )
         });
     }

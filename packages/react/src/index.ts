@@ -32,6 +32,9 @@ export type { Extrapolate, InterpolateOptions, SpringConfig, SpringOptions } fro
 export { ProjectProvider, ProjectTimeline, useProject, useProjectProperty } from './project-runtime';
 export type { ProjectProviderProps } from './project-runtime';
 
+export { registerComponent } from './registry';
+export type { ComponentDefinition } from './registry';
+
 export { loadProject, loadProjectFromString } from './project';
 export type { Project } from './generated/Project';
 export type { Asset } from './generated/Asset';

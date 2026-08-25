@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -59,6 +60,72 @@ fn embeds_pre_evaluated_project_layers_into_project_timeline_when_node_is_availa
         &layer.content,
         LayerContent::Text { text, .. } if text == "React overlay"
     )));
+}
+
+#[test]
+fn resolves_a_registered_component_when_node_is_available() {
+    let Some((node, cli_script, package_root)) = live_react_runtime() else {
+        return;
+    };
+
+    let entry = package_root.join("examples/with-registered-component.tsx");
+    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+
+    let mut props = BTreeMap::new();
+    props.insert("bossName".to_owned(), serde_json::json!("Golem"));
+    props.insert("level".to_owned(), serde_json::json!(42));
+    let registered_layer = Layer {
+        id: "boss-intro".to_owned(),
+        transform: EvaluatedTransform::default(),
+        opacity: 1.0,
+        content: LayerContent::MissingComponent {
+            component: "BossIntroduction".to_owned(),
+            props,
+        },
+    };
+    let unregistered_layer = Layer {
+        id: "unregistered".to_owned(),
+        transform: EvaluatedTransform::default(),
+        opacity: 1.0,
+        content: LayerContent::MissingComponent {
+            component: "SomeOtherThing".to_owned(),
+            props: BTreeMap::new(),
+        },
+    };
+
+    let scene = bridge
+        .scene_at_with_project(
+            Time::new(0, 30),
+            Some(&[registered_layer, unregistered_layer]),
+        )
+        .unwrap();
+
+    // The registered component resolved to a real rendered subtree: a group
+    // wrapping the Text it rendered, not the original missingComponent
+    // layer.
+    let resolved_group = scene
+        .layers
+        .iter()
+        .find(|layer| layer.id == "boss-intro")
+        .expect("resolved component layer");
+    let LayerContent::Group { layers: children } = &resolved_group.content else {
+        panic!("expected the resolved component to render as a group");
+    };
+    assert!(children.iter().any(|layer| matches!(
+        &layer.content,
+        LayerContent::Text { text, .. } if text == "Golem (Lv.42)"
+    )));
+
+    // The unregistered component name passes through unresolved.
+    let unregistered = scene
+        .layers
+        .iter()
+        .find(|layer| layer.id == "unregistered")
+        .expect("unresolved component layer");
+    assert!(matches!(
+        &unregistered.content,
+        LayerContent::MissingComponent { component, .. } if component == "SomeOtherThing"
+    ));
 }
 
 fn live_react_runtime() -> Option<(PathBuf, PathBuf, PathBuf)> {
