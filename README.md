@@ -91,8 +91,12 @@ animated-rate clips remain aligned with the audio that is actually mixed.
 Track Mute/Solo and the toolbar's 0–200% master
 volume control are persisted in the project, feed the shared audio graph, and
 participate in undo/redo. FFprobe metadata and decoded PCM stay in editor-only
-session caches: project JSON remains source-authored, while repeated edits can
-remix cached samples without launching FFmpeg for every asset again.
+caches: project JSON remains source-authored, while repeated edits can remix
+cached samples without launching FFmpeg for every asset again. Decoded PCM and
+source waveform peaks also use a versioned on-disk cache across editor sessions.
+Entries are keyed by canonical file identity, size, modification time, sample
+rate, and channel count; invalid or corrupt entries fall back to FFmpeg without
+blocking playback.
 
 The CPU renderer currently decodes local PNG, JPEG, WebP, and PNM image assets.
 Construct it with `CpuRenderer::with_asset_root` to resolve project-relative

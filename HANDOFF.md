@@ -159,6 +159,12 @@ Keep these boundaries intact:
 - The audio worker caches decoded PCM by path, project sample rate, and channel
   count. Subsequent edits remixes cached samples instead of invoking FFmpeg for
   every audio asset again.
+- Decoded PCM and 512-bucket source peaks are persisted in a versioned binary
+  cache (`~/Library/Caches/com.natsuneko.mikan/audio-v1` on macOS). Keys include
+  canonical path, file identity, size, mtime, sample rate, and channel count.
+  Cache corruption, staleness, and read/write failures are recoverable misses;
+  the worker falls back to FFmpeg and rewrites the entry without surfacing an
+  editor failure.
 - Waveform peaks are cached per source asset and mapped to each audible clip,
   replacing the previous complete-mix waveform approximation.
 - Clip waveforms map each timeline bucket through `sourceRange.start`, optional
@@ -235,7 +241,7 @@ licensed VOICEROID voice sample.
 
 ## Validation baseline
 
-At this handoff, the workspace has 63 passing tests. The last checks were:
+At this handoff, the workspace has 66 passing tests. The last checks were:
 
 ```sh
 cargo test --workspace
@@ -265,13 +271,13 @@ for synthetic GUI input. Keep drag behavior easy to exercise manually.
 The initial editor mutation, persistence, audio, and background-worker
 milestones are complete. Continue with:
 
-1. Consider an on-disk PCM/waveform cache keyed by file identity, mtime, sample
-   rate, and channel count so decoding can be reused across editor sessions.
-2. Add per-track level meters and replace the stepped master-volume buttons
+1. Add per-track level meters and replace the stepped master-volume buttons
    with a draggable, keyboard-accessible control when GPUI input primitives are
    introduced.
-3. Add timeline track creation/reordering controls and drag clips between
+2. Add timeline track creation/reordering controls and drag clips between
    compatible tracks.
+3. Add bounded cache maintenance (size accounting and least-recently-used
+   eviction) before long-form projects make the persistent audio cache large.
 
 Later performance work should replace GPUI image readback with a native texture
 bridge. Do not optimize this by letting GPUI and wgpu both present to the same

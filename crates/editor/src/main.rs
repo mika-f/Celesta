@@ -28,6 +28,10 @@ use mikan_media::{
 use mikan_project::{AssetKind, TrackKind};
 use rodio::{DeviceSinkBuilder, Player, buffer::SamplesBuffer};
 
+mod audio_cache;
+
+use audio_cache::DiskAudioCache;
+
 const EDITOR_DEMO_PROJECT: &str = include_str!("../../../examples/editor-demo.mikan.json");
 
 actions!(
@@ -258,14 +262,20 @@ struct CachedAudioDecoder {
     backend: FfmpegBackend,
     buffers: HashMap<AudioCacheKey, AudioBuffer>,
     waveforms: HashMap<AudioCacheKey, Vec<f32>>,
+    disk_cache: DiskAudioCache,
 }
 
 impl CachedAudioDecoder {
     fn new() -> Self {
+        Self::with_disk_cache(DiskAudioCache::standard())
+    }
+
+    fn with_disk_cache(disk_cache: DiskAudioCache) -> Self {
         Self {
             backend: FfmpegBackend::new(),
             buffers: HashMap::new(),
             waveforms: HashMap::new(),
+            disk_cache,
         }
     }
 
@@ -313,9 +323,15 @@ impl AudioDecoder for CachedAudioDecoder {
         if let Some(buffer) = self.buffers.get(&key) {
             return Ok(buffer.clone());
         }
+        if let Ok(Some(cached)) = self.disk_cache.load(path, sample_rate, channels) {
+            self.waveforms.insert(key.clone(), cached.waveform);
+            self.buffers.insert(key, cached.buffer.clone());
+            return Ok(cached.buffer);
+        }
         let buffer = self.backend.decode_audio(path, sample_rate, channels)?;
-        self.waveforms
-            .insert(key.clone(), waveform_peaks(&buffer, 512));
+        let waveform = waveform_peaks(&buffer, 512);
+        let _ = self.disk_cache.store(path, &buffer, &waveform);
+        self.waveforms.insert(key.clone(), waveform);
         self.buffers.insert(key, buffer.clone());
         Ok(buffer)
     }
@@ -2846,7 +2862,7 @@ fn run() -> Result<(), Box<dyn Error>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        AudioCacheKey, CachedAudioDecoder, ClipDrag, ClipDragKind, MediaAssetInfo,
+        AudioCacheKey, CachedAudioDecoder, ClipDrag, ClipDragKind, DiskAudioCache, MediaAssetInfo,
         dragged_clip_range, initial_clip_duration_frames, map_clip_waveform, take_latest,
         track_accepts_asset, waveform_peaks, waveform_segment,
     };
@@ -2855,8 +2871,10 @@ mod tests {
     };
     use mikan_media::{AudioBuffer, AudioDecoder};
     use mikan_project::{AssetKind, TrackKind};
+    use std::fs;
     use std::path::PathBuf;
     use std::sync::mpsc;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn background_workers_coalesce_queued_requests() {
@@ -2977,5 +2995,34 @@ mod tests {
         let decoded = decoder.decode_audio(&path, 48_000, 2).unwrap();
 
         assert_eq!(decoded, expected);
+    }
+
+    #[test]
+    fn audio_decoder_reuses_pcm_cache_across_sessions() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "mikan-editor-disk-cache-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("voice.wav");
+        fs::write(&path, b"not valid audio; cache must be used").unwrap();
+        let expected = AudioBuffer {
+            sample_rate: 48_000,
+            channels: 2,
+            samples: vec![0.25, -0.25],
+        };
+        let disk_cache = DiskAudioCache::new(root.join("cache"));
+        disk_cache.store(&path, &expected, &[0.25]).unwrap();
+        let mut decoder = CachedAudioDecoder::with_disk_cache(disk_cache);
+
+        let decoded = decoder.decode_audio(&path, 48_000, 2).unwrap();
+
+        assert_eq!(decoded, expected);
+        assert_eq!(decoder.waveforms.values().next().unwrap(), &[0.25]);
+        fs::remove_dir_all(root).unwrap();
     }
 }
