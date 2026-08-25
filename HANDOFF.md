@@ -17,9 +17,9 @@ video/audio tracks.
 - Workspace: `/Users/natsuneko/ghq/github.com/mika-f/mikan`
 - Rust edition: 2024
 - Minimum Rust version: 1.89
-- The initial implementation is tracked on `main`; timeline track controls and
-  level-meter work landed in commit `69cd4e2`. Inspect `git status --short` for
-  newer work before editing or staging.
+- The initial implementation is tracked on `main`; bounded persistent-cache
+  maintenance landed in commit `2d5c7f4`. Inspect `git status --short` for newer
+  work before editing or staging.
 - FFmpeg and FFprobe are installed and available on `PATH`.
 - GPUI is pinned to crates.io version `0.2.2`.
 
@@ -134,6 +134,13 @@ Keep these boundaries intact:
   position. Background mixing derives per-clip envelopes from source-mapped
   peaks and animated clip volume; active clips are aggregated per track without
   allocating an additional full-length PCM buffer for every track.
+- Selecting a Video, Audio, or audio-backed Dialogue clip exposes its 0%-200%
+  volume in the Inspector. The +/- controls adjust static volume in 5% steps,
+  or upsert a keyframe at the current clip-local playhead position once
+  automation is active. Add/Update, Remove, and Flatten controls author the
+  `Animatable<f64>` project representation directly. Dialogue's optional
+  `volume` field is backward compatible with existing v0 projects. All changes
+  are undoable and immediately remix the audio preview and level envelope.
 - Track Mute/Solo and master-volume changes participate in project-snapshot
   undo/redo and dirty tracking.
 - The Assets panel imports multiple local video, audio, supported image, and
@@ -260,7 +267,7 @@ licensed VOICEROID voice sample.
 
 ## Validation baseline
 
-At this handoff, the workspace has 69 passing tests. The last checks were:
+At this handoff, the workspace has 70 passing tests. The last checks were:
 
 ```sh
 cargo test --workspace
@@ -290,9 +297,7 @@ for synthetic GUI input. Keep drag behavior easy to exercise manually.
 The initial editor mutation, persistence, audio, and background-worker
 milestones are complete. Continue with:
 
-1. Add clip-level volume controls and automation editing so the displayed meter
-   envelope can be authored directly in the editor.
-2. Add track rename/delete and enabled/locked controls, including a safe choice
+1. Add track rename/delete and enabled/locked controls, including a safe choice
    when deleting non-empty tracks.
 
 Later performance work should replace GPUI image readback with a native texture

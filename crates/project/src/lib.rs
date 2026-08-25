@@ -283,6 +283,8 @@ pub enum TimelineContent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         audio: Option<AssetId>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        volume: Option<Animatable<f64>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         expression: Option<String>,
     },
     Component {

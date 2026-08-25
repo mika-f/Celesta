@@ -95,7 +95,11 @@ animated-rate clips remain aligned with the audio that is actually mixed.
 Track headers show live source- and volume-aware level meters. Track Mute/Solo
 and the toolbar's draggable, keyboard-accessible 0–200% master-volume slider are
 persisted in the project, feed the shared audio graph, and participate in
-undo/redo. FFprobe metadata and decoded PCM stay in editor-only
+undo/redo. Selecting a Video, Audio, or audio-backed Dialogue clip exposes
+0–200% clip volume plus playhead-relative Add/Update/Remove keyframe and Flatten
+controls in the Inspector; edits immediately update mixing and the displayed
+meter envelope.
+FFprobe metadata and decoded PCM stay in editor-only
 caches: project JSON remains source-authored, while repeated edits can remix
 cached samples without launching FFmpeg for every asset again. Decoded PCM and
 source waveform peaks also use a versioned on-disk cache across editor sessions.

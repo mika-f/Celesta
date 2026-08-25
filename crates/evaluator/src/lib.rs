@@ -105,7 +105,9 @@ impl<'project> Evaluator<'project> {
                         muted: muted.unwrap_or(false),
                     }),
                     TimelineContent::Dialogue {
-                        audio: Some(asset), ..
+                        audio: Some(asset),
+                        volume,
+                        ..
                     } => clips.push(AudioClip {
                         id: format!("{}:voice", item.id),
                         asset: self.asset(asset)?,
@@ -113,7 +115,7 @@ impl<'project> Evaluator<'project> {
                         source_start: Time::ZERO,
                         source_duration: None,
                         playback_rate: Animatable::Static(1.0),
-                        volume: Animatable::Static(1.0),
+                        volume: volume.clone().unwrap_or(Animatable::Static(1.0)),
                         muted: false,
                     }),
                     _ => {}

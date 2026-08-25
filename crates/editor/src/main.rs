@@ -19,7 +19,8 @@ use gpui::{
 };
 use image::{Frame, ImageBuffer, Rgba};
 use mikan_composition::{
-    AssetLocation, AudioClip, AudioGraph, Rational, Scene, Time, evaluate_f64, integrate_f64,
+    Animatable, AssetLocation, AudioClip, AudioGraph, Rational, Scene, Time, evaluate_f64,
+    integrate_f64,
 };
 use mikan_editor::{AssetSummary, ClipKind, EditorDocument, TimelineClock, TrackSummary};
 use mikan_gpu_renderer::{GpuFrame, GpuRenderOptions, GpuRenderer};
@@ -1128,6 +1129,141 @@ impl EditorView {
         cx.notify();
     }
 
+    fn selected_audio_clip(&self) -> Option<mikan_editor::ClipSummary> {
+        let selected = self.selected_clip_id.as_deref()?;
+        self.tracks
+            .iter()
+            .flat_map(|track| &track.clips)
+            .find(|clip| clip.id == selected && clip.volume.is_some())
+            .cloned()
+    }
+
+    fn apply_selected_clip_volume(
+        &mut self,
+        volume: f64,
+        force_keyframe: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(clip) = self.selected_audio_clip() else {
+            return;
+        };
+        let local_time = clip_local_time(self.current_time(), &clip);
+        let animated = matches!(clip.volume, Some(Animatable::Keyframes(_)));
+        let result = if force_keyframe || animated {
+            self.document
+                .set_clip_volume_keyframe(&clip.id, local_time, volume.clamp(0.0, 2.0))
+        } else {
+            self.document
+                .set_clip_volume_static(&clip.id, volume.clamp(0.0, 2.0))
+        };
+        match result {
+            Ok(()) => {
+                self.tracks = self.document.tracks();
+                self.refresh_audio_preview();
+                self.edit_error = None;
+            }
+            Err(error) => self.edit_error = Some(error.to_string().into()),
+        }
+        cx.notify();
+    }
+
+    fn adjust_selected_clip_volume(&mut self, delta_percent: i32, cx: &mut Context<Self>) {
+        let Some(clip) = self.selected_audio_clip() else {
+            return;
+        };
+        let local_time = clip_local_time(self.current_time(), &clip);
+        let current = clip
+            .volume
+            .as_ref()
+            .and_then(|volume| evaluate_f64(volume, local_time).ok())
+            .unwrap_or(1.0);
+        let percent = (current * 100.0).round() as i32;
+        let next = percent.saturating_add(delta_percent).clamp(0, 200);
+        self.apply_selected_clip_volume(f64::from(next) / 100.0, false, cx);
+    }
+
+    fn decrease_selected_clip_volume(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.adjust_selected_clip_volume(-5, cx);
+    }
+
+    fn increase_selected_clip_volume(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.adjust_selected_clip_volume(5, cx);
+    }
+
+    fn set_selected_clip_volume_keyframe(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(clip) = self.selected_audio_clip() else {
+            return;
+        };
+        let local_time = clip_local_time(self.current_time(), &clip);
+        let volume = clip
+            .volume
+            .as_ref()
+            .and_then(|volume| evaluate_f64(volume, local_time).ok())
+            .unwrap_or(1.0);
+        self.apply_selected_clip_volume(volume, true, cx);
+    }
+
+    fn remove_selected_clip_volume_keyframe(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(clip) = self.selected_audio_clip() else {
+            return;
+        };
+        let local_time = clip_local_time(self.current_time(), &clip);
+        match self
+            .document
+            .remove_clip_volume_keyframe(&clip.id, local_time)
+        {
+            Ok(true) => {
+                self.tracks = self.document.tracks();
+                self.refresh_audio_preview();
+                self.edit_error = None;
+            }
+            Ok(false) => {}
+            Err(error) => self.edit_error = Some(error.to_string().into()),
+        }
+        cx.notify();
+    }
+
+    fn flatten_selected_clip_volume(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(clip) = self.selected_audio_clip() else {
+            return;
+        };
+        let local_time = clip_local_time(self.current_time(), &clip);
+        match self.document.flatten_clip_volume(&clip.id, local_time) {
+            Ok(()) => {
+                self.tracks = self.document.tracks();
+                self.refresh_audio_preview();
+                self.edit_error = None;
+            }
+            Err(error) => self.edit_error = Some(error.to_string().into()),
+        }
+        cx.notify();
+    }
+
     fn adjust_master_volume(&mut self, delta_percent: i32, cx: &mut Context<Self>) {
         let current_percent = (self.document.master_volume() * 100.0).round() as i32;
         let next_percent = current_percent.saturating_add(delta_percent).clamp(0, 200);
@@ -2188,12 +2324,13 @@ impl EditorView {
             )
     }
 
-    fn inspector_panel(&self) -> impl IntoElement {
+    fn inspector_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let selected_clip = self.selected_clip_id.as_deref().and_then(|selected| {
             self.tracks
                 .iter()
                 .flat_map(|track| &track.clips)
                 .find(|clip| clip.id == selected)
+                .cloned()
         });
         let contents = div()
             .id("inspector-scroll")
@@ -2226,6 +2363,102 @@ impl EditorView {
                     .child(inspector_row("Type", clip_kind_label(clip.kind)))
                     .child(inspector_row("Start", format_time(clip.start)))
                     .child(inspector_row("Length", format_time(clip.duration)))
+                    .when_some(clip.volume.as_ref(), |panel, volume| {
+                        let local_time = clip_local_time(self.current_time(), &clip);
+                        let current_volume = evaluate_f64(volume, local_time).unwrap_or(1.0);
+                        let keyframe_count = match volume {
+                            Animatable::Static(_) => 0,
+                            Animatable::Keyframes(animation) => animation.keyframes.len(),
+                        };
+                        let animated = keyframe_count > 0;
+                        let has_keyframe = volume_keyframe_at(volume, local_time);
+                        panel.child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_2()
+                                .px_3()
+                                .py_2()
+                                .border_b_1()
+                                .border_color(rgb(0x292c34))
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(rgb(0x737783))
+                                        .child("Clip volume"),
+                                )
+                                .child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap_2()
+                                        .child(inspector_button("clip-volume-down", "−").on_click(
+                                            cx.listener(Self::decrease_selected_clip_volume),
+                                        ))
+                                        .child(
+                                            div()
+                                                .w(px(64.0))
+                                                .text_center()
+                                                .text_sm()
+                                                .text_color(rgb(0xc8cad2))
+                                                .child(format!(
+                                                    "{}%",
+                                                    (current_volume * 100.0).round() as i32
+                                                )),
+                                        )
+                                        .child(inspector_button("clip-volume-up", "+").on_click(
+                                            cx.listener(Self::increase_selected_clip_volume),
+                                        )),
+                                )
+                                .child(div().text_xs().text_color(rgb(0x8d919c)).child(
+                                    if animated {
+                                        format!("Automation · {keyframe_count} keyframes")
+                                    } else {
+                                        "Automation · Static".to_owned()
+                                    },
+                                ))
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_wrap()
+                                        .gap_2()
+                                        .child(
+                                            inspector_button(
+                                                "clip-volume-keyframe",
+                                                if has_keyframe {
+                                                    "Update keyframe"
+                                                } else {
+                                                    "Add keyframe"
+                                                },
+                                            )
+                                            .on_click(
+                                                cx.listener(
+                                                    Self::set_selected_clip_volume_keyframe,
+                                                ),
+                                            ),
+                                        )
+                                        .when(has_keyframe, |controls| {
+                                            controls.child(
+                                                inspector_button(
+                                                    "clip-volume-remove-keyframe",
+                                                    "Remove",
+                                                )
+                                                .on_click(cx.listener(
+                                                    Self::remove_selected_clip_volume_keyframe,
+                                                )),
+                                            )
+                                        })
+                                        .when(animated, |controls| {
+                                            controls.child(
+                                                inspector_button("clip-volume-flatten", "Flatten")
+                                                    .on_click(cx.listener(
+                                                        Self::flatten_selected_clip_volume,
+                                                    )),
+                                            )
+                                        }),
+                                ),
+                        )
+                    })
             });
         div()
             .flex()
@@ -2831,7 +3064,7 @@ impl Render for EditorView {
                     .overflow_hidden()
                     .child(self.asset_panel(cx))
                     .child(self.preview_panel(cx))
-                    .child(self.inspector_panel()),
+                    .child(self.inspector_panel(cx)),
             )
             .child(self.timeline(cx))
     }
@@ -3097,6 +3330,36 @@ fn level_at_time(levels: &[f32], clip: &mikan_editor::ClipSummary, time: Time) -
     levels[index.min(levels.len() - 1)]
 }
 
+fn clip_local_time(time: Time, clip: &mikan_editor::ClipSummary) -> Time {
+    if time
+        .cmp_exact(clip.start)
+        .is_ok_and(|ordering| !ordering.is_gt())
+    {
+        return Time::ZERO;
+    }
+    let local = time.checked_sub(clip.start).unwrap_or(Time::ZERO);
+    if local
+        .cmp_exact(clip.duration)
+        .is_ok_and(|ordering| ordering.is_gt())
+    {
+        clip.duration
+    } else {
+        local
+    }
+}
+
+fn volume_keyframe_at(volume: &Animatable<f64>, time: Time) -> bool {
+    let Animatable::Keyframes(animation) = volume else {
+        return false;
+    };
+    animation.keyframes.iter().any(|keyframe| {
+        keyframe
+            .time
+            .cmp_exact(time)
+            .is_ok_and(|ordering| ordering.is_eq())
+    })
+}
+
 fn time_fraction(duration: Time, numerator: usize, denominator: usize) -> Option<Time> {
     let value = i128::from(duration.value).checked_mul(i128::try_from(numerator).ok()?)?;
     let timescale = u64::from(duration.timescale).checked_mul(u64::try_from(denominator).ok()?)?;
@@ -3145,6 +3408,20 @@ fn inspector_row(label: &'static str, value: impl Into<SharedString>) -> impl In
                 .text_color(rgb(0xc8cad2))
                 .child(value.into()),
         )
+}
+
+fn inspector_button(id: &'static str, label: &'static str) -> gpui::Stateful<gpui::Div> {
+    div()
+        .id(id)
+        .cursor_pointer()
+        .rounded_sm()
+        .bg(rgb(0x292c34))
+        .hover(|style| style.bg(rgb(0x454a56)))
+        .px_2()
+        .py_1()
+        .text_xs()
+        .text_color(rgb(0xc8cad2))
+        .child(label)
 }
 
 fn prepare_preview_frame(frame: GpuFrame) -> PreviewFrame {
@@ -3345,6 +3622,7 @@ mod tests {
             duration: Time::new(2, 1),
             kind: ClipKind::Audio,
             enabled: true,
+            volume: Some(Animatable::Static(1.0)),
         };
 
         assert_eq!(level_at_time(&[0.2, 0.8], &clip, Time::new(10, 1)), 0.2);

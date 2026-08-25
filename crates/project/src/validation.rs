@@ -209,6 +209,7 @@ impl Validator<'_> {
             TimelineContent::Dialogue {
                 character,
                 audio,
+                volume,
                 expression,
                 ..
             } => {
@@ -221,6 +222,14 @@ impl Validator<'_> {
                 };
                 if let Some(audio) = audio {
                     self.asset_ref(&format!("{path}.content.audio"), audio, AssetKind::Audio);
+                }
+                if let Some(volume) = volume {
+                    self.animatable(
+                        &format!("{path}.content.volume"),
+                        volume,
+                        |value| value.is_finite() && *value >= 0.0,
+                        "must be finite and non-negative",
+                    );
                 }
                 if let Some(expression) = expression {
                     match &definition.portrait {

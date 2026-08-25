@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use mikan_composition::{
-    Animatable, AnimatablePoint, AudioGraph, Rational, Scene, Time, TimeError, TimeRange, Transform,
+    Animatable, AnimatablePoint, AudioGraph, Keyframe, KeyframeAnimation, KeyframeAnimationType,
+    Rational, Scene, Time, TimeError, TimeRange, Transform, evaluate_f64,
 };
 use mikan_evaluator::{EvaluationError, Evaluator};
 use mikan_project::{
@@ -24,7 +25,7 @@ pub struct AssetSummary {
     pub missing: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct TrackSummary {
     pub id: String,
     pub name: String,
@@ -37,7 +38,7 @@ pub struct TrackSummary {
     pub solo: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ClipSummary {
     pub id: String,
     pub name: String,
@@ -45,6 +46,7 @@ pub struct ClipSummary {
     pub duration: Time,
     pub kind: ClipKind,
     pub enabled: bool,
+    pub volume: Option<Animatable<f64>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -296,6 +298,18 @@ impl EditorDocument {
                             TimelineContent::Component { .. } => ClipKind::Component,
                         },
                         enabled: item.enabled != Some(false),
+                        volume: match &item.content {
+                            TimelineContent::Video { volume, .. }
+                            | TimelineContent::Audio { volume, .. } => {
+                                Some(volume.clone().unwrap_or(Animatable::Static(1.0)))
+                            }
+                            TimelineContent::Dialogue {
+                                audio: Some(_),
+                                volume,
+                                ..
+                            } => Some(volume.clone().unwrap_or(Animatable::Static(1.0))),
+                            _ => None,
+                        },
                     })
                     .collect(),
                 enabled: track.enabled != Some(false),
@@ -450,6 +464,169 @@ impl EditorDocument {
             self.record_mutation(before, before_revision);
         }
         Ok(())
+    }
+
+    pub fn set_clip_volume_static(
+        &mut self,
+        clip_id: &str,
+        volume: f64,
+    ) -> Result<(), EditorDocumentError> {
+        validate_clip_volume(volume)?;
+        let before = self.project.clone();
+        let before_revision = self.current_revision;
+        let (track_index, item_index) = self.clip_indices(clip_id)?;
+        self.ensure_track_unlocked(track_index)?;
+        let field = clip_volume_field_mut(
+            clip_id,
+            &mut self.project.tracks[track_index].items[item_index].content,
+        )?;
+        *field = (volume != 1.0).then_some(Animatable::Static(volume));
+        if self.project != before {
+            self.record_mutation(before, before_revision);
+        }
+        Ok(())
+    }
+
+    pub fn set_clip_volume_keyframe(
+        &mut self,
+        clip_id: &str,
+        local_time: Time,
+        volume: f64,
+    ) -> Result<(), EditorDocumentError> {
+        validate_clip_volume(volume)?;
+        let before = self.project.clone();
+        let before_revision = self.current_revision;
+        let (track_index, item_index) = self.clip_indices(clip_id)?;
+        self.ensure_track_unlocked(track_index)?;
+        let duration = self.project.tracks[track_index].items[item_index]
+            .range
+            .duration;
+        validate_clip_local_time(clip_id, local_time, duration)?;
+        let field = clip_volume_field_mut(
+            clip_id,
+            &mut self.project.tracks[track_index].items[item_index].content,
+        )?;
+        let existing = field.clone().unwrap_or(Animatable::Static(1.0));
+        let mut keyframes = match existing {
+            Animatable::Static(value) => {
+                let mut keyframes = vec![Keyframe {
+                    time: Time::ZERO,
+                    value,
+                    easing: None,
+                }];
+                if local_time != Time::ZERO {
+                    keyframes.push(Keyframe {
+                        time: local_time,
+                        value: volume,
+                        easing: None,
+                    });
+                } else {
+                    keyframes[0].value = volume;
+                }
+                keyframes
+            }
+            Animatable::Keyframes(animation) => animation.keyframes,
+        };
+        if let Some(keyframe) = keyframes.iter_mut().find(|keyframe| {
+            keyframe
+                .time
+                .cmp_exact(local_time)
+                .is_ok_and(|ordering| ordering.is_eq())
+        }) {
+            keyframe.value = volume;
+        } else {
+            keyframes.push(Keyframe {
+                time: local_time,
+                value: volume,
+                easing: None,
+            });
+            keyframes.sort_by(|left, right| {
+                left.time
+                    .cmp_exact(right.time)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+        }
+        *field = Some(Animatable::Keyframes(KeyframeAnimation {
+            kind: KeyframeAnimationType::Keyframes,
+            keyframes,
+        }));
+        if self.project != before {
+            self.record_mutation(before, before_revision);
+        }
+        Ok(())
+    }
+
+    pub fn remove_clip_volume_keyframe(
+        &mut self,
+        clip_id: &str,
+        local_time: Time,
+    ) -> Result<bool, EditorDocumentError> {
+        let before = self.project.clone();
+        let before_revision = self.current_revision;
+        let (track_index, item_index) = self.clip_indices(clip_id)?;
+        self.ensure_track_unlocked(track_index)?;
+        let duration = self.project.tracks[track_index].items[item_index]
+            .range
+            .duration;
+        validate_clip_local_time(clip_id, local_time, duration)?;
+        let field = clip_volume_field_mut(
+            clip_id,
+            &mut self.project.tracks[track_index].items[item_index].content,
+        )?;
+        let Some(Animatable::Keyframes(animation)) = field else {
+            return Ok(false);
+        };
+        let Some(index) = animation.keyframes.iter().position(|keyframe| {
+            keyframe
+                .time
+                .cmp_exact(local_time)
+                .is_ok_and(|ordering| ordering.is_eq())
+        }) else {
+            return Ok(false);
+        };
+        animation.keyframes.remove(index);
+        if animation.keyframes.len() == 1 {
+            *field = Some(Animatable::Static(animation.keyframes[0].value));
+        } else if animation.keyframes.is_empty() {
+            *field = None;
+        }
+        self.record_mutation(before, before_revision);
+        Ok(true)
+    }
+
+    pub fn flatten_clip_volume(
+        &mut self,
+        clip_id: &str,
+        local_time: Time,
+    ) -> Result<(), EditorDocumentError> {
+        let (track_index, item_index) = self.clip_indices(clip_id)?;
+        let duration = self.project.tracks[track_index].items[item_index]
+            .range
+            .duration;
+        validate_clip_local_time(clip_id, local_time, duration)?;
+        let volume = match &self.project.tracks[track_index].items[item_index].content {
+            TimelineContent::Video { volume, .. }
+            | TimelineContent::Audio { volume, .. }
+            | TimelineContent::Dialogue {
+                audio: Some(_),
+                volume,
+                ..
+            } => match volume {
+                Some(volume) => evaluate_f64(volume, local_time).map_err(|_| {
+                    EditorDocumentError::InvalidClipVolumeTime {
+                        clip: clip_id.to_owned(),
+                        time: local_time,
+                    }
+                })?,
+                None => 1.0,
+            },
+            _ => {
+                return Err(EditorDocumentError::UnsupportedClipVolume(
+                    clip_id.to_owned(),
+                ));
+            }
+        };
+        self.set_clip_volume_static(clip_id, volume)
     }
 
     pub fn import_assets(
@@ -922,6 +1099,30 @@ impl EditorDocument {
         Ok(())
     }
 
+    fn clip_indices(&self, clip_id: &str) -> Result<(usize, usize), EditorDocumentError> {
+        self.project
+            .tracks
+            .iter()
+            .enumerate()
+            .find_map(|(track_index, track)| {
+                track
+                    .items
+                    .iter()
+                    .position(|item| item.id == clip_id)
+                    .map(|item_index| (track_index, item_index))
+            })
+            .ok_or_else(|| EditorDocumentError::MissingClip(clip_id.to_owned()))
+    }
+
+    fn ensure_track_unlocked(&self, track_index: usize) -> Result<(), EditorDocumentError> {
+        let track = &self.project.tracks[track_index];
+        if track.locked == Some(true) {
+            Err(EditorDocumentError::LockedTrack(track.id.clone()))
+        } else {
+            Ok(())
+        }
+    }
+
     fn apply_clip_frames(
         &mut self,
         clip_id: &str,
@@ -1136,6 +1337,53 @@ fn timeline_content_track_kind(content: &TimelineContent) -> TrackKind {
     }
 }
 
+fn clip_volume_field_mut<'a>(
+    clip_id: &str,
+    content: &'a mut TimelineContent,
+) -> Result<&'a mut Option<Animatable<f64>>, EditorDocumentError> {
+    match content {
+        TimelineContent::Video { volume, .. }
+        | TimelineContent::Audio { volume, .. }
+        | TimelineContent::Dialogue {
+            audio: Some(_),
+            volume,
+            ..
+        } => Ok(volume),
+        _ => Err(EditorDocumentError::UnsupportedClipVolume(
+            clip_id.to_owned(),
+        )),
+    }
+}
+
+fn validate_clip_volume(volume: f64) -> Result<(), EditorDocumentError> {
+    if volume.is_finite() && volume >= 0.0 {
+        Ok(())
+    } else {
+        Err(EditorDocumentError::InvalidClipVolume(volume))
+    }
+}
+
+fn validate_clip_local_time(
+    clip_id: &str,
+    time: Time,
+    duration: Time,
+) -> Result<(), EditorDocumentError> {
+    let within_range = time
+        .cmp_exact(Time::ZERO)
+        .is_ok_and(|ordering| !ordering.is_lt())
+        && time
+            .cmp_exact(duration)
+            .is_ok_and(|ordering| !ordering.is_gt());
+    if within_range {
+        Ok(())
+    } else {
+        Err(EditorDocumentError::InvalidClipVolumeTime {
+            clip: clip_id.to_owned(),
+            time,
+        })
+    }
+}
+
 fn set_asset_source(asset: &mut Asset, new_source: AssetSource) {
     match asset {
         Asset::Video { source, .. }
@@ -1271,6 +1519,12 @@ pub enum EditorDocumentError {
         duration_frames: i64,
     },
     InvalidMasterVolume(f64),
+    InvalidClipVolume(f64),
+    InvalidClipVolumeTime {
+        clip: String,
+        time: Time,
+    },
+    UnsupportedClipVolume(String),
     InvalidClipFrameRange {
         start_frame: i64,
         duration_frames: i64,
@@ -1343,6 +1597,19 @@ impl fmt::Display for EditorDocumentError {
                     "master volume {volume} must be finite and non-negative"
                 )
             }
+            Self::InvalidClipVolume(volume) => {
+                write!(
+                    formatter,
+                    "clip volume {volume} must be finite and non-negative"
+                )
+            }
+            Self::InvalidClipVolumeTime { clip, time } => write!(
+                formatter,
+                "volume keyframe time {time:?} is outside clip `{clip}`"
+            ),
+            Self::UnsupportedClipVolume(clip) => {
+                write!(formatter, "clip `{clip}` does not have an audio volume")
+            }
             Self::InvalidClipFrameRange {
                 start_frame,
                 duration_frames,
@@ -1376,6 +1643,9 @@ impl Error for EditorDocumentError {
             | Self::UnsupportedTimelineAsset(_)
             | Self::InvalidNewClipFrameRange { .. }
             | Self::InvalidMasterVolume(_)
+            | Self::InvalidClipVolume(_)
+            | Self::InvalidClipVolumeTime { .. }
+            | Self::UnsupportedClipVolume(_)
             | Self::InvalidClipFrameRange { .. } => None,
         }
     }
@@ -1605,6 +1875,61 @@ mod tests {
         assert!(!document.tracks()[0].solo);
         assert!(document.undo().unwrap());
         assert!(!document.tracks()[0].muted);
+    }
+
+    #[test]
+    fn authors_and_flattens_clip_volume_keyframes() {
+        let mut document = EditorDocument::from_json(VOICEROID, "examples").unwrap();
+
+        document
+            .set_clip_volume_static("dialogue-001", 0.5)
+            .unwrap();
+        document
+            .set_clip_volume_keyframe("dialogue-001", Time::new(1, 1), 1.0)
+            .unwrap();
+        let volume = document.tracks()[0].clips[0].volume.clone().unwrap();
+        assert_eq!(evaluate_f64(&volume, Time::new(1, 2)).unwrap(), 0.75);
+        assert_eq!(
+            evaluate_f64(
+                &document.audio_graph().unwrap().clips[0].volume,
+                Time::new(1, 2)
+            )
+            .unwrap(),
+            0.75
+        );
+
+        document
+            .set_clip_volume_keyframe("dialogue-001", Time::new(1, 1), 0.8)
+            .unwrap();
+        let Animatable::Keyframes(animation) =
+            document.tracks()[0].clips[0].volume.clone().unwrap()
+        else {
+            panic!("volume should be keyframed");
+        };
+        assert_eq!(animation.keyframes.len(), 2);
+        assert_eq!(animation.keyframes[1].value, 0.8);
+
+        document
+            .flatten_clip_volume("dialogue-001", Time::new(1, 2))
+            .unwrap();
+        assert_eq!(
+            document.tracks()[0].clips[0].volume,
+            Some(Animatable::Static(0.65))
+        );
+        assert!(document.undo().unwrap());
+        assert!(matches!(
+            document.tracks()[0].clips[0].volume,
+            Some(Animatable::Keyframes(_))
+        ));
+        assert!(
+            document
+                .remove_clip_volume_keyframe("dialogue-001", Time::new(1, 1))
+                .unwrap()
+        );
+        assert_eq!(
+            document.tracks()[0].clips[0].volume,
+            Some(Animatable::Static(0.5))
+        );
     }
 
     #[test]
