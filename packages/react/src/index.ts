@@ -39,8 +39,8 @@ export {
 } from './project-runtime';
 export type { ProjectProviderProps, ProjectTrackProps } from './project-runtime';
 
-export { registerComponent } from './registry';
-export type { ComponentDefinition } from './registry';
+export { getComponentSchema, registerComponent } from './registry';
+export type { ComponentDefinition, ComponentPropertyField, ComponentPropertySchema } from './registry';
 
 export { loadProject, loadProjectFromString } from './project';
 export type { Project } from './generated/Project';

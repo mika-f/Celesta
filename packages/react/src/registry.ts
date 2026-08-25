@@ -16,21 +16,62 @@ export type ComponentDefinition<Props extends Record<string, JsonValue> = Record
   props: Props,
 ) => ReactNode;
 
-const registry = new Map<string, ComponentDefinition>();
+// A registered component's props are opaque JSON to the GUI editor (Rust
+// never sees `Props`, only `props: BTreeMap<String, serde_json::Value>` on
+// the timeline item), so there is no way for the editor to know what
+// fields exist, what type each one is, or how to present it in an
+// Inspector without the entry telling it. A `ComponentPropertySchema`
+// declares exactly that, per field, alongside the registration — it is
+// metadata for a future GUI-side Inspector, not something this package's
+// own rendering reads today.
+export type ComponentPropertyField =
+  | { type: 'string'; label?: string; defaultValue: string }
+  | { type: 'number'; label?: string; defaultValue: number; min?: number; max?: number; step?: number }
+  | { type: 'boolean'; label?: string; defaultValue: boolean }
+  | { type: 'color'; label?: string; defaultValue: string }
+  | { type: 'select'; label?: string; defaultValue: string; options: readonly string[] };
+
+export type ComponentPropertySchema<Props extends Record<string, JsonValue> = Record<string, JsonValue>> = {
+  [K in keyof Props]: ComponentPropertyField;
+};
+
+interface RegistryEntry {
+  component: ComponentDefinition;
+  schema: ComponentPropertySchema | undefined;
+}
+
+const registry = new Map<string, RegistryEntry>();
 
 /**
  * Registers a component under `name` so `<ProjectTimeline />` can resolve a
  * project.json `{"type": "component", "component": name, "props": {...}}`
  * timeline item to it. Call this at module scope in the entry (or a module
  * it imports) so registration happens before any frame is rendered.
+ *
+ * `schema`, when given, declares each prop's type, default value, and
+ * display hints for a future GUI Inspector — see
+ * `getComponentSchema`/`ComponentPropertySchema`. It plays no part in
+ * rendering or evaluation; a component with no schema resolves and renders
+ * exactly as one with a schema does.
  */
 export function registerComponent<Props extends Record<string, JsonValue>>(
   name: string,
   component: ComponentDefinition<Props>,
+  schema?: ComponentPropertySchema<Props>,
 ): void {
-  registry.set(name, component as ComponentDefinition);
+  registry.set(name, { component: component as ComponentDefinition, schema: schema as ComponentPropertySchema | undefined });
 }
 
 export function resolveComponent(name: string): ComponentDefinition | undefined {
-  return registry.get(name);
+  return registry.get(name)?.component;
+}
+
+/**
+ * Looks up the property schema a registered component declared, if any.
+ * Returns `undefined` both when `name` was never registered and when it
+ * was registered without a `schema` argument — callers that need to tell
+ * those apart should check `resolveComponent(name)` first.
+ */
+export function getComponentSchema(name: string): ComponentPropertySchema | undefined {
+  return registry.get(name)?.schema;
 }

@@ -1,4 +1,5 @@
 import { Composition, ProjectTimeline, registerComponent, Text } from '@mikan/react';
+import type { ComponentPropertySchema } from '@mikan/react';
 
 interface BossIntroductionProps extends Record<string, unknown> {
   bossName: string;
@@ -13,7 +14,12 @@ function BossIntroduction({ bossName, level }: BossIntroductionProps) {
   );
 }
 
-registerComponent('BossIntroduction', BossIntroduction as never);
+const bossIntroductionSchema: ComponentPropertySchema<BossIntroductionProps> = {
+  bossName: { type: 'string', label: 'Boss Name', defaultValue: 'Golem' },
+  level: { type: 'number', label: 'Level', defaultValue: 1, min: 1, max: 999 },
+};
+
+registerComponent('BossIntroduction', BossIntroduction as never, bossIntroductionSchema);
 
 export default function Root() {
   return (

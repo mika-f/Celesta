@@ -48,9 +48,13 @@ The repository currently contains the first foundation:
   `video`/`image`/`text`/`component` timeline content — evaluated by
   `mikan-evaluator` (Rust), not reimplemented in TypeScript — alongside the
   entry's own React-authored content. `component` items
-  (`registerComponent(name, Component)`) resolve to a real rendered
-  subtree positioned at the project-evaluated transform; an unregistered
-  name is left for `GpuRenderer` to reject rather than silently dropped.
+  (`registerComponent(name, Component, schema?)`) resolve to a real
+  rendered subtree positioned at the project-evaluated transform; an
+  unregistered name is left for `GpuRenderer` to reject rather than
+  silently dropped. The optional `schema` (a `ComponentPropertySchema`
+  declaring each prop's type/default/display hints, retrievable via
+  `getComponentSchema(name)`) is pure metadata for a future GUI Inspector —
+  it plays no part in resolution or rendering today.
   `useProjectTrack(trackId)` and `<ProjectTrack id="..." />` give the same
   access one track at a time — `mikan-evaluator` evaluates every track's
   layers per frame regardless of which ones the entry actually reads, so no

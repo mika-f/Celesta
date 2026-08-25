@@ -506,9 +506,38 @@ in any other React host.
   - **Not yet built**: `dialogue` content in `<ProjectTimeline />`. A
     `<Video>` React component. An `AudioGraph` source for React entries.
     Schema-based Project Properties (`defineProjectProperties`, GUI
-    Inspector generation) and the Component Property Schema (GUI-editable
-    props for a registered component, generating Inspector fields) — both
-    explicitly marked undecided in the design doc.
+    Inspector generation).
+- **Component Property Schema** (`src/registry.ts`). Scoped down with the
+  user to the TypeScript-side declaration API only — no GPUI editor
+  integration yet (that would need the editor to query a running Node
+  process for registered schemas, a new kind of Node dependency for a
+  currently Node-independent editor, and was explicitly deferred rather
+  than decided against). `registerComponent(name, component, schema?)`
+  takes an optional third argument, a `ComponentPropertySchema<Props>` — a
+  `{[K in keyof Props]: ComponentPropertyField}` record where each field is
+  one of `{type: 'string'|'boolean'|'color', label?, defaultValue}`,
+  `{type: 'number', label?, defaultValue, min?, max?, step?}`, or
+  `{type: 'select', label?, defaultValue, options}`. It is pure metadata:
+  neither `<ProjectTimeline />`'s resolution nor `GpuRenderer` reads it, and
+  a component registered without one resolves and renders exactly as
+  before — this only future-proofs the registry call for a GUI Inspector
+  that does not exist yet. `getComponentSchema(name)` (also exported from
+  `@mikan/react`, alongside the `ComponentPropertyField`/
+  `ComponentPropertySchema` types) looks it up, returning `undefined` for
+  both an unregistered name and a registered one with no schema — callers
+  that need to tell those apart check `resolveComponent(name)` (internal,
+  not exported) first. `crates/react-bridge`/`mikan-evaluator` are
+  untouched: `TimelineContent::Component`'s `props` stays opaque JSON to
+  Rust regardless of whether the entry declared a schema for it.
+  Verified: `packages/react/examples/with-registered-component.tsx` now
+  declares a `bossIntroductionSchema` for `BossIntroduction`'s `bossName`/
+  `level` props (`tsc` type-checks the schema against the component's
+  actual props type), a manual Node smoke test against the built
+  `dist/index.js` confirmed `getComponentSchema` round-trips a registered
+  schema, returns `undefined` for a schema-less registration and for an
+  unregistered name, and the existing
+  `resolves_a_registered_component_when_node_is_available` integration
+  test still passes unchanged (rendering never reads the schema).
 - **Per-track access** (`useProjectTrack()`, `<ProjectTrack id="..." />`,
   `src/project-runtime.ts`). `<ProjectTimeline />` embeds every track's
   layers flattened together, which is fine for the whole-composition case
@@ -672,7 +701,8 @@ licensed VOICEROID voice sample.
   project-companion integration test and the `mikan-exporter --react
   --project` example.
 - `packages/react/examples/with-registered-component.tsx`: registers a
-  `BossIntroduction` component and renders `<ProjectTimeline />`, used by
+  `BossIntroduction` component (with a `ComponentPropertySchema` declaring
+  its `bossName`/`level` props) and renders `<ProjectTimeline />`, used by
   `mikan-react-bridge`'s component-registry integration test.
 - `packages/react/examples/with-project-track.tsx`: reads one track via
   `useProjectTrack('titles')` and renders another whole via `<ProjectTrack
@@ -771,10 +801,13 @@ is already done:
 5. ~~Component registry~~ — `registerComponent()`/`<ProjectTimeline />`
    resolving `TimelineContent::Component`'s `component`/`props` to a
    registered React component is done, see "Component registry" above.
-6. Property schema / Inspector metadata for GUI-editable component props
-   (a registered component declaring which of its props the GPUI editor
-   can show/edit — undecided in the design doc, separate from the
-   Component registry itself, which is just name → component resolution).
+6. ~~Property schema / Inspector metadata for GUI-editable component
+   props~~ — the TypeScript-side declaration API
+   (`registerComponent(name, component, schema)`, `getComponentSchema()`)
+   is done, see "Component Property Schema" above; GPUI editor integration
+   (the editor actually reading a schema and rendering Inspector fields
+   from it) was scoped out for now — it would be the editor's first Node.js
+   dependency, and stays open for a future session.
 7. `dialogue` timeline content in `<ProjectTimeline />` (dropped in the v1
    filter — see above — deliberately; `component` content is no longer
    dropped, per item 5).
@@ -786,10 +819,12 @@ Separately, still open from the original slice:
   rate) the way project timeline clips already do.
 - An `AudioGraph` source for React entries so `mikan-exporter --react` can mux
   audio instead of always publishing a silent MP4.
+- GPUI editor integration for the Component Property Schema (item 6 above):
+  querying a running Node process for registered components' schemas and
+  rendering Inspector fields from them.
 
-Before starting item 6 or anything further down this list, confirm scope
-with the user rather than assuming the full design doc — it explicitly
-marks several APIs (Property Schema, Component registry) as undecided.
+Before starting item 7 or anything further down this list, confirm scope
+with the user rather than assuming the full design doc.
 
 Do not optimize preview presentation by letting GPUI and wgpu both present to
 the same window surface.
