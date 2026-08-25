@@ -17,10 +17,9 @@ video/audio tracks.
 - Workspace: `/Users/natsuneko/ghq/github.com/mika-f/mikan`
 - Rust edition: 2024
 - Minimum Rust version: 1.89
-- No commit has been created yet.
-- The repository currently has no tracked files; `git status --short` reports
-  the whole implementation as untracked. Do not assume there is a clean Git
-  baseline or discard any of these files.
+- The initial implementation is tracked on `main`; the persistent audio-cache
+  milestone is commit `088ee0e`. Inspect `git status --short` for newer work
+  before editing or staging.
 - FFmpeg and FFprobe are installed and available on `PATH`.
 - GPUI is pinned to crates.io version `0.2.2`.
 
@@ -126,8 +125,15 @@ Keep these boundaries intact:
 - Audio-capable track headers expose persistent Mute and Solo controls. Mute
   affects audio without hiding visual layers; when any audible track is soloed,
   non-solo audio tracks are excluded from the shared `AudioGraph`.
-- The toolbar exposes a persistent master-volume control from 0% to 200% in 5%
-  steps. It is evaluated into `AudioGraph` and applied at final mixdown.
+- The toolbar exposes a persistent master-volume slider from 0% to 200%. Pointer
+  dragging updates it in 1% increments and coalesces into one undo entry. It is
+  a tab stop with Arrow keys for 5% changes, Shift-Arrow for 10%, and Home/End
+  for 0%/200%. The value is evaluated into `AudioGraph` and applied at final
+  mixdown.
+- Audio-capable track headers display a live level meter at the current playhead
+  position. Background mixing derives per-clip envelopes from source-mapped
+  peaks and animated clip volume; active clips are aggregated per track without
+  allocating an additional full-length PCM buffer for every track.
 - Track Mute/Solo and master-volume changes participate in project-snapshot
   undo/redo and dirty tracking.
 - The Assets panel imports multiple local video, audio, supported image, and
@@ -150,6 +156,15 @@ Keep these boundaries intact:
   second time clears the selection and restores automatic compatible-track
   reuse/creation. Explicit targets are validated in `EditorDocument`, so Add and
   drag/drop cannot silently fall back to another track.
+- The Timeline header can create empty Video, Audio, Overlay, and Dialogue
+  tracks. Track headers provide Up/Down ordering controls; locked tracks reject
+  reordering. Creation and ordering are project mutations with undo/redo.
+- Dragging a clip body vertically highlights compatible unlocked tracks in
+  green and incompatible or locked tracks in red. Releasing over a compatible
+  target moves the serialized timeline item while preserving its exact range;
+  simultaneous horizontal and vertical movement is one undo entry.
+- Timeline track rows scroll independently below the fixed Timeline header and
+  scrubber, allowing manually created tracks to remain reachable.
 - Selected clips can be deleted from the Timeline header or with Backspace /
   Forward Delete. Insert/delete operations are undoable, derived timelines
   recalculate duration, and locked tracks reject both deletion and drag edits.
@@ -241,7 +256,7 @@ licensed VOICEROID voice sample.
 
 ## Validation baseline
 
-At this handoff, the workspace has 66 passing tests. The last checks were:
+At this handoff, the workspace has 68 passing tests. The last checks were:
 
 ```sh
 cargo test --workspace
@@ -271,13 +286,12 @@ for synthetic GUI input. Keep drag behavior easy to exercise manually.
 The initial editor mutation, persistence, audio, and background-worker
 milestones are complete. Continue with:
 
-1. Add per-track level meters and replace the stepped master-volume buttons
-   with a draggable, keyboard-accessible control when GPUI input primitives are
-   introduced.
-2. Add timeline track creation/reordering controls and drag clips between
-   compatible tracks.
-3. Add bounded cache maintenance (size accounting and least-recently-used
+1. Add bounded cache maintenance (size accounting and least-recently-used
    eviction) before long-form projects make the persistent audio cache large.
+2. Add clip-level volume controls and automation editing so the displayed meter
+   envelope can be authored directly in the editor.
+3. Add track rename/delete and enabled/locked controls, including a safe choice
+   when deleting non-empty tracks.
 
 Later performance work should replace GPUI image readback with a native texture
 bridge. Do not optimize this by letting GPUI and wgpu both present to the same

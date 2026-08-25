@@ -69,8 +69,12 @@ fallback while metadata is unavailable. Compatible tracks are reused or
 created automatically. Asset rows can also be dragged to an exact timeline
 frame: compatible tracks highlight green, while incompatible or locked targets
 show a rejection state. Clicking a track selects it as the Add target; clicking
-it again returns Add to automatic track selection. Delete the selected timeline clip with the Timeline
-button, Backspace, or Forward Delete. Import batches, insertion, and deletion
+it again returns Add to automatic track selection. The Timeline header creates
+empty Video, Audio, Overlay, or Dialogue tracks; track arrows reorder them, and
+dragging a clip vertically moves it between compatible unlocked tracks. Track
+rows scroll below the fixed ruler when they overflow. Delete the selected
+timeline clip with the Timeline button, Backspace, or Forward Delete. Import
+batches, insertion, and deletion
 all participate in undo/redo, and locked tracks reject destructive clip edits.
 Selected assets can be relinked only to the same media kind. Missing local files
 are called out in the Assets panel. Removing a referenced asset requires an
@@ -88,9 +92,10 @@ and cancel superseded audio mixing. Audio/dialogue clips display downsampled
 peak waveforms in the timeline. Each waveform follows its source-range
 start/duration and integrated playback-rate curve, so trimmed, sped-up, and
 animated-rate clips remain aligned with the audio that is actually mixed.
-Track Mute/Solo and the toolbar's 0–200% master
-volume control are persisted in the project, feed the shared audio graph, and
-participate in undo/redo. FFprobe metadata and decoded PCM stay in editor-only
+Track headers show live source- and volume-aware level meters. Track Mute/Solo
+and the toolbar's draggable, keyboard-accessible 0–200% master-volume slider are
+persisted in the project, feed the shared audio graph, and participate in
+undo/redo. FFprobe metadata and decoded PCM stay in editor-only
 caches: project JSON remains source-authored, while repeated edits can remix
 cached samples without launching FFmpeg for every asset again. Decoded PCM and
 source waveform peaks also use a versioned on-disk cache across editor sessions.

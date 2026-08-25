@@ -12,13 +12,14 @@ use std::time::{Duration, Instant};
 
 use gpui::{
     App, Application, Bounds, ClickEvent, Context, CursorStyle, FocusHandle, KeyBinding,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ObjectFit, PathPromptOptions,
-    Pixels, Point, PromptButton, PromptLevel, RenderImage, SharedString, StyledImage, Window,
-    WindowBounds, WindowOptions, actions, div, img, prelude::*, px, relative, rgb, size,
+    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ObjectFit,
+    PathPromptOptions, Pixels, Point, PromptButton, PromptLevel, RenderImage, SharedString,
+    StyledImage, Window, WindowBounds, WindowOptions, actions, div, img, prelude::*, px, relative,
+    rgb, size,
 };
 use image::{Frame, ImageBuffer, Rgba};
 use mikan_composition::{
-    AssetLocation, AudioClip, AudioGraph, Rational, Scene, Time, integrate_f64,
+    AssetLocation, AudioClip, AudioGraph, Rational, Scene, Time, evaluate_f64, integrate_f64,
 };
 use mikan_editor::{AssetSummary, ClipKind, EditorDocument, TimelineClock, TrackSummary};
 use mikan_gpu_renderer::{GpuFrame, GpuRenderOptions, GpuRenderer};
@@ -248,7 +249,13 @@ struct AudioMixResult {
 
 struct AudioMixOutput {
     clip_waveforms: HashMap<String, Vec<f32>>,
+    clip_levels: HashMap<String, Vec<f32>>,
     buffer: AudioBuffer,
+}
+
+struct MasterVolumeDrag {
+    pointer_x: Pixels,
+    start_volume: f64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -368,11 +375,10 @@ impl AudioMixWorker {
                         || worker_generation.load(Ordering::Acquire) != request.generation,
                     )
                     .map(|buffer| {
-                        let clip_waveforms = request
-                            .graph
-                            .clips
-                            .iter()
-                            .filter_map(|clip| {
+                        let mut clip_waveforms = HashMap::new();
+                        let mut clip_levels = HashMap::new();
+                        for clip in &request.graph.clips {
+                            let Some((clip_id, waveform)) = (|| {
                                 let path = resolve_asset_location(
                                     &clip.asset.location,
                                     &request.asset_root,
@@ -389,10 +395,18 @@ impl AudioMixWorker {
                                     .unwrap_or(&clip.id)
                                     .to_owned();
                                 Some((clip_id, waveform))
-                            })
-                            .collect();
+                            })() else {
+                                continue;
+                            };
+                            if !clip.muted {
+                                clip_levels
+                                    .insert(clip_id.clone(), clip_level_envelope(&waveform, clip));
+                            }
+                            clip_waveforms.insert(clip_id, waveform);
+                        }
                         AudioMixOutput {
                             clip_waveforms,
+                            clip_levels,
                             buffer,
                         }
                     })
@@ -484,6 +498,7 @@ struct EditorView {
     audio_pending: bool,
     audio_preview: Option<AudioPreview>,
     clip_waveforms: HashMap<String, Vec<f32>>,
+    clip_levels: HashMap<String, Vec<f32>>,
     clock: TimelineClock,
     frame_rate_value: Rational,
     playing: bool,
@@ -491,6 +506,9 @@ struct EditorView {
     playback_started_frame: i64,
     scrubbing: bool,
     clip_drag: Option<ClipDrag>,
+    clip_drag_hover_track_id: Option<String>,
+    clip_drag_target_track_id: Option<String>,
+    master_volume_drag: Option<MasterVolumeDrag>,
     selected_clip_id: Option<String>,
     selected_asset_id: Option<String>,
     selected_track_id: Option<String>,
@@ -507,6 +525,7 @@ struct EditorView {
     audio_error: Option<SharedString>,
     gpu_name: SharedString,
     focus_handle: Option<FocusHandle>,
+    master_volume_focus: Option<FocusHandle>,
     saving_as: bool,
     importing_assets: bool,
     asset_operation_active: bool,
@@ -556,6 +575,7 @@ impl EditorView {
             audio_pending: false,
             audio_preview: None,
             clip_waveforms: HashMap::new(),
+            clip_levels: HashMap::new(),
             clock,
             frame_rate_value,
             playing: false,
@@ -563,6 +583,9 @@ impl EditorView {
             playback_started_frame: 0,
             scrubbing: false,
             clip_drag: None,
+            clip_drag_hover_track_id: None,
+            clip_drag_target_track_id: None,
+            master_volume_drag: None,
             selected_clip_id: None,
             selected_asset_id: None,
             selected_track_id: None,
@@ -579,6 +602,7 @@ impl EditorView {
             audio_error: None,
             gpu_name,
             focus_handle: None,
+            master_volume_focus: None,
             saving_as: false,
             importing_assets: false,
             asset_operation_active: false,
@@ -706,6 +730,7 @@ impl EditorView {
                     self.audio_pending = false;
                     match result.output.and_then(|output| {
                         self.clip_waveforms = output.clip_waveforms;
+                        self.clip_levels = output.clip_levels;
                         AudioPreview::from_buffer(output.buffer).map_err(|error| error.to_string())
                     }) {
                         Ok(mut preview) => {
@@ -719,6 +744,7 @@ impl EditorView {
                         }
                         Err(error) => {
                             self.clip_waveforms.clear();
+                            self.clip_levels.clear();
                             self.audio_preview = None;
                             self.audio_error = Some(error.into());
                         }
@@ -729,6 +755,7 @@ impl EditorView {
                     if self.audio_pending {
                         self.audio_pending = false;
                         self.clip_waveforms.clear();
+                        self.clip_levels.clear();
                         self.audio_preview = None;
                         self.audio_error = Some("audio mix worker stopped unexpectedly".into());
                     }
@@ -861,16 +888,19 @@ impl EditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let Some(track) = self
+        let Some(source_track) = self
             .tracks
             .iter()
             .find(|track| track.clips.iter().any(|clip| clip.id == clip_id))
-            && track.locked
-        {
-            self.edit_error = Some(format!("track `{}` is locked", track.id).into());
+        else {
+            return;
+        };
+        if source_track.locked {
+            self.edit_error = Some(format!("track `{}` is locked", source_track.id).into());
             cx.notify();
             return;
         }
+        let source_track_id = source_track.id.clone();
         let Some((start, duration)) = self
             .tracks
             .iter()
@@ -890,6 +920,10 @@ impl EditorView {
         self.scrubbing = false;
         self.document.begin_history_group();
         self.selected_clip_id = Some(clip_id.to_owned());
+        self.clip_drag_target_track_id =
+            matches!(kind, ClipDragKind::Move).then_some(source_track_id.clone());
+        self.clip_drag_hover_track_id =
+            matches!(kind, ClipDragKind::Move).then_some(source_track_id);
         self.clip_drag = Some(ClipDrag {
             clip_id: clip_id.to_owned(),
             kind,
@@ -898,6 +932,42 @@ impl EditorView {
             duration_frames: duration,
         });
         cx.notify();
+    }
+
+    fn update_clip_drag_target(
+        &mut self,
+        track_id: &str,
+        event: &MouseMoveEvent,
+        cx: &mut Context<Self>,
+    ) {
+        if !event.dragging()
+            || !self
+                .clip_drag
+                .as_ref()
+                .is_some_and(|drag| matches!(drag.kind, ClipDragKind::Move))
+        {
+            return;
+        }
+        let clip_kind = self.clip_drag.as_ref().and_then(|drag| {
+            self.tracks
+                .iter()
+                .flat_map(|track| &track.clips)
+                .find(|clip| clip.id == drag.clip_id)
+                .map(|clip| clip.kind)
+        });
+        let target = self.tracks.iter().find(|track| track.id == track_id);
+        let next = target
+            .filter(|track| {
+                !track.locked && clip_kind.is_some_and(|kind| track_accepts_clip(track.kind, kind))
+            })
+            .map(|track| track.id.clone());
+        if self.clip_drag_target_track_id != next
+            || self.clip_drag_hover_track_id.as_deref() != Some(track_id)
+        {
+            self.clip_drag_target_track_id = next;
+            self.clip_drag_hover_track_id = Some(track_id.to_owned());
+            cx.notify();
+        }
     }
 
     fn continue_clip_drag(
@@ -941,8 +1011,19 @@ impl EditorView {
     }
 
     fn end_clip_drag(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        if self.clip_drag.take().is_some() {
+        let drag = self.clip_drag.take();
+        self.clip_drag_hover_track_id = None;
+        let target = self.clip_drag_target_track_id.take();
+        if let Some(drag) = drag {
+            if matches!(drag.kind, ClipDragKind::Move)
+                && let Some(target) = target
+                && let Err(error) = self.document.move_clip_to_track(&drag.clip_id, &target)
+            {
+                self.edit_error = Some(error.to_string().into());
+            }
             if self.document.commit_history_group() {
+                self.tracks = self.document.tracks();
+                self.refresh_preview();
                 self.refresh_audio_preview();
             }
             cx.notify();
@@ -974,9 +1055,11 @@ impl EditorView {
         self.audio_mix_worker.cancel_before(generation);
         self.audio_pending = false;
         self.audio_preview = None;
+        self.clip_levels.clear();
         match self.document.audio_graph() {
             Ok(graph) if graph.clips.is_empty() => {
                 self.clip_waveforms.clear();
+                self.clip_levels.clear();
                 self.audio_error = None;
             }
             Ok(graph) => {
@@ -995,6 +1078,7 @@ impl EditorView {
             }
             Err(error) => {
                 self.clip_waveforms.clear();
+                self.clip_levels.clear();
                 self.audio_error = Some(error.to_string().into());
             }
         }
@@ -1022,25 +1106,106 @@ impl EditorView {
         cx.notify();
     }
 
+    fn add_track(&mut self, kind: TrackKind, cx: &mut Context<Self>) {
+        let track_id = self.document.add_track(kind);
+        self.selected_track_id = Some(track_id);
+        self.edit_error = None;
+        self.tracks = self.document.tracks();
+        cx.notify();
+    }
+
+    fn move_track(&mut self, track_id: &str, offset: isize, cx: &mut Context<Self>) {
+        match self.document.move_track(track_id, offset) {
+            Ok(true) => {
+                self.tracks = self.document.tracks();
+                self.refresh_preview();
+                self.refresh_audio_preview();
+                self.edit_error = None;
+            }
+            Ok(false) => {}
+            Err(error) => self.edit_error = Some(error.to_string().into()),
+        }
+        cx.notify();
+    }
+
     fn adjust_master_volume(&mut self, delta_percent: i32, cx: &mut Context<Self>) {
         let current_percent = (self.document.master_volume() * 100.0).round() as i32;
         let next_percent = current_percent.saturating_add(delta_percent).clamp(0, 200);
-        match self
-            .document
-            .set_master_volume(f64::from(next_percent) / 100.0)
-        {
+        self.set_master_volume(f64::from(next_percent) / 100.0, cx);
+    }
+
+    fn set_master_volume(&mut self, volume: f64, cx: &mut Context<Self>) {
+        match self.document.set_master_volume(volume.clamp(0.0, 2.0)) {
             Ok(()) => self.refresh_audio_preview(),
             Err(error) => self.audio_error = Some(error.to_string().into()),
         }
         cx.notify();
     }
 
-    fn decrease_master_volume(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.adjust_master_volume(-5, cx);
+    fn begin_master_volume_drag(
+        &mut self,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(focus) = &self.master_volume_focus {
+            focus.focus(window);
+        }
+        self.document.begin_history_group();
+        self.master_volume_drag = Some(MasterVolumeDrag {
+            pointer_x: event.position.x,
+            start_volume: self.document.master_volume(),
+        });
+        cx.notify();
     }
 
-    fn increase_master_volume(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.adjust_master_volume(5, cx);
+    fn continue_master_volume_drag(
+        &mut self,
+        event: &MouseMoveEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !event.dragging() {
+            return;
+        }
+        let Some(drag) = &self.master_volume_drag else {
+            return;
+        };
+        let volume = master_volume_from_drag(
+            drag.start_volume,
+            f64::from(event.position.x - drag.pointer_x),
+        );
+        if (volume - self.document.master_volume()).abs() >= f64::EPSILON {
+            self.set_master_volume(volume, cx);
+        }
+    }
+
+    fn end_master_volume_drag(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
+        if self.master_volume_drag.take().is_some() {
+            self.document.commit_history_group();
+            cx.notify();
+        }
+    }
+
+    fn master_volume_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let step = if event.keystroke.modifiers.shift {
+            10
+        } else {
+            5
+        };
+        match event.keystroke.key.as_str() {
+            "left" | "down" => self.adjust_master_volume(-step, cx),
+            "right" | "up" => self.adjust_master_volume(step, cx),
+            "home" => self.set_master_volume(0.0, cx),
+            "end" => self.set_master_volume(2.0, cx),
+            _ => return,
+        }
+        cx.stop_propagation();
     }
 
     fn request_import_assets(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1532,6 +1697,8 @@ impl EditorView {
     fn undo_edit(&mut self, _: &UndoEdit, _: &mut Window, cx: &mut Context<Self>) {
         self.pause();
         self.clip_drag = None;
+        self.clip_drag_hover_track_id = None;
+        self.clip_drag_target_track_id = None;
         match self.document.undo() {
             Ok(true) => {
                 self.save_error = None;
@@ -1546,6 +1713,8 @@ impl EditorView {
     fn redo_edit(&mut self, _: &RedoEdit, _: &mut Window, cx: &mut Context<Self>) {
         self.pause();
         self.clip_drag = None;
+        self.clip_drag_hover_track_id = None;
+        self.clip_drag_target_track_id = None;
         match self.document.redo() {
             Ok(true) => {
                 self.save_error = None;
@@ -1580,7 +1749,9 @@ impl EditorView {
     }
 
     fn toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let master_volume = self.document.master_volume().clamp(0.0, 2.0);
         div()
+            .id("toolbar")
             .flex()
             .flex_none()
             .h(px(48.0))
@@ -1591,6 +1762,8 @@ impl EditorView {
             .bg(rgb(0x181a20))
             .border_b_1()
             .border_color(rgb(0x30333d))
+            .on_mouse_move(cx.listener(Self::continue_master_volume_drag))
+            .on_mouse_up(MouseButton::Left, cx.listener(Self::end_master_volume_drag))
             .child(
                 div()
                     .flex()
@@ -1650,31 +1823,57 @@ impl EditorView {
                             .child("Master")
                             .child(
                                 div()
-                                    .id("master-volume-down")
+                                    .id("master-volume-slider")
+                                    .relative()
+                                    .w(px(88.0))
+                                    .h(px(20.0))
                                     .cursor_pointer()
-                                    .px_2()
-                                    .py_1()
                                     .rounded_sm()
                                     .bg(rgb(0x292c34))
+                                    .when_some(
+                                        self.master_volume_focus.as_ref(),
+                                        |slider, focus| slider.track_focus(focus),
+                                    )
+                                    .focus(|slider| slider.border_1().border_color(rgb(0xffb466)))
                                     .hover(|style| style.bg(rgb(0x404550)))
-                                    .child("−")
-                                    .on_click(cx.listener(Self::decrease_master_volume)),
+                                    .child(
+                                        div()
+                                            .absolute()
+                                            .left(px(5.0))
+                                            .right(px(5.0))
+                                            .top(px(8.0))
+                                            .h(px(4.0))
+                                            .rounded_full()
+                                            .overflow_hidden()
+                                            .bg(rgb(0x15171c))
+                                            .child(
+                                                div()
+                                                    .h_full()
+                                                    .w(relative((master_volume / 2.0) as f32))
+                                                    .rounded_full()
+                                                    .bg(rgb(0x70d99a)),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .absolute()
+                                            .left(px((master_volume / 2.0 * 78.0) as f32))
+                                            .top(px(5.0))
+                                            .size(px(10.0))
+                                            .rounded_full()
+                                            .bg(rgb(0xf0f1f4)),
+                                    )
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(Self::begin_master_volume_drag),
+                                    )
+                                    .on_key_down(cx.listener(Self::master_volume_key_down)),
                             )
-                            .child(div().w(px(42.0)).text_center().child(format!(
-                                "{}%",
-                                (self.document.master_volume() * 100.0).round() as i32
-                            )))
                             .child(
                                 div()
-                                    .id("master-volume-up")
-                                    .cursor_pointer()
-                                    .px_2()
-                                    .py_1()
-                                    .rounded_sm()
-                                    .bg(rgb(0x292c34))
-                                    .hover(|style| style.bg(rgb(0x404550)))
-                                    .child("+")
-                                    .on_click(cx.listener(Self::increase_master_volume)),
+                                    .w(px(38.0))
+                                    .text_center()
+                                    .child(format!("{}%", (master_volume * 100.0).round() as i32)),
                             ),
                     )
                     .child(
@@ -2048,8 +2247,32 @@ impl EditorView {
             self.clock.frame() as f32 / self.clock.end_frame() as f32
         };
         let total_duration = self.document.duration().as_seconds().unwrap_or(0.0);
-        let rows = self.tracks.iter().map(|track| {
+        let current_time = self.current_time();
+        let track_count = self.tracks.len();
+        let rows = self.tracks.iter().enumerate().map(|(track_index, track)| {
             let selected_track = self.selected_track_id.as_deref() == Some(track.id.as_str());
+            let clip_drag_hover =
+                self.clip_drag_hover_track_id.as_deref() == Some(track.id.as_str());
+            let clip_drag_target =
+                self.clip_drag_target_track_id.as_deref() == Some(track.id.as_str());
+            let track_level = track
+                .clips
+                .iter()
+                .filter_map(|clip| {
+                    self.clip_levels
+                        .get(&clip.id)
+                        .map(|levels| level_at_time(levels, clip, current_time))
+                })
+                .fold(0.0_f32, f32::max)
+                .sqrt()
+                .clamp(0.0, 1.0);
+            let meter_color = if track_level >= 0.9 {
+                0xe05d5d
+            } else if track_level >= 0.7 {
+                0xe4b34c
+            } else {
+                0x70d99a
+            };
             let color = match track.kind {
                 TrackKind::Video => 0x4b7bec,
                 TrackKind::Audio => 0x26a269,
@@ -2221,11 +2444,16 @@ impl EditorView {
             let mute_track_id = track.id.clone();
             let solo_track_id = track.id.clone();
             let select_track_id = track.id.clone();
+            let hover_track_id = track.id.clone();
+            let move_up_track_id = track.id.clone();
+            let move_down_track_id = track.id.clone();
             let drop_track_id = track.id.clone();
             let drop_track_kind = track.kind;
             let drop_track_locked = track.locked;
             let mute_element_id: SharedString = format!("track-mute-{}", track.id).into();
             let solo_element_id: SharedString = format!("track-solo-{}", track.id).into();
+            let up_element_id: SharedString = format!("track-up-{}", track.id).into();
+            let down_element_id: SharedString = format!("track-down-{}", track.id).into();
             let track_element_id: SharedString = format!("timeline-track-{}", track.id).into();
             div()
                 .id(track_element_id)
@@ -2236,6 +2464,13 @@ impl EditorView {
                 .border_b_1()
                 .border_color(rgb(0x292c34))
                 .when(selected_track, |row| row.bg(rgb(0x252a34)))
+                .when(clip_drag_target, |row| row.bg(rgb(0x294636)))
+                .when(clip_drag_hover && !clip_drag_target, |row| {
+                    row.bg(rgb(0x4b3032))
+                })
+                .on_mouse_move(cx.listener(move |this, event, _, cx| {
+                    this.update_clip_drag_target(&hover_track_id, event, cx);
+                }))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     if this.selected_track_id.as_deref() == Some(select_track_id.as_str()) {
                         this.selected_track_id = None;
@@ -2256,6 +2491,67 @@ impl EditorView {
                         .text_color(rgb(0xc8cad2))
                         .child(div().flex_1().overflow_hidden().child(track_name))
                         .when(track.kind != TrackKind::Overlay, |header| {
+                            header.child(
+                                div()
+                                    .relative()
+                                    .flex_none()
+                                    .w(px(34.0))
+                                    .h(px(6.0))
+                                    .rounded_full()
+                                    .overflow_hidden()
+                                    .bg(rgb(0x15171c))
+                                    .child(
+                                        div()
+                                            .h_full()
+                                            .w(relative(track_level))
+                                            .rounded_full()
+                                            .bg(rgb(meter_color)),
+                                    ),
+                            )
+                        })
+                        .child(
+                            div()
+                                .id(up_element_id)
+                                .flex_none()
+                                .cursor_pointer()
+                                .px_1()
+                                .text_xs()
+                                .text_color(rgb(if track_index > 0 && !track.locked {
+                                    0xc8cad2
+                                } else {
+                                    0x555964
+                                }))
+                                .child("↑")
+                                .when(track_index > 0 && !track.locked, |button| {
+                                    button.on_click(cx.listener(move |this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        this.move_track(&move_up_track_id, -1, cx);
+                                    }))
+                                }),
+                        )
+                        .child(
+                            div()
+                                .id(down_element_id)
+                                .flex_none()
+                                .cursor_pointer()
+                                .px_1()
+                                .text_xs()
+                                .text_color(rgb(
+                                    if track_index + 1 < track_count && !track.locked {
+                                        0xc8cad2
+                                    } else {
+                                        0x555964
+                                    },
+                                ))
+                                .child("↓")
+                                .when(track_index + 1 < track_count && !track.locked, |button| {
+                                    button.on_click(cx.listener(move |this, _, _, cx| {
+                                        cx.stop_propagation();
+                                        this.move_track(&move_down_track_id, 1, cx);
+                                    }))
+                                }),
+                        )
+                        .when(track.kind != TrackKind::Overlay, |header| {
                             header
                                 .child(
                                     div()
@@ -2270,6 +2566,7 @@ impl EditorView {
                                         .hover(|style| style.bg(rgb(0x555b68)))
                                         .child("M")
                                         .on_click(cx.listener(move |this, _, _, cx| {
+                                            cx.stop_propagation();
                                             this.toggle_track_mute(&mute_track_id, cx);
                                         })),
                                 )
@@ -2286,6 +2583,7 @@ impl EditorView {
                                         .hover(|style| style.bg(rgb(0x555b68)))
                                         .child("S")
                                         .on_click(cx.listener(move |this, _, _, cx| {
+                                            cx.stop_propagation();
                                             this.toggle_track_solo(&solo_track_id, cx);
                                         })),
                                 )
@@ -2322,6 +2620,38 @@ impl EditorView {
                         .children(clips),
                 )
         });
+        let track_area = div()
+            .id("timeline-tracks-scroll")
+            .flex()
+            .flex_col()
+            .flex_1()
+            .w_full()
+            .overflow_x_hidden()
+            .overflow_y_scroll()
+            .when(self.tracks.is_empty(), |area| {
+                area.child(
+                    div()
+                        .id("empty-timeline-drop-target")
+                        .flex()
+                        .flex_1()
+                        .items_center()
+                        .justify_center()
+                        .text_sm()
+                        .text_color(rgb(0x737783))
+                        .drag_over::<AssetDrag>(|style, asset, _, _| {
+                            if asset.kind == AssetKind::Font {
+                                style.bg(rgb(0x4b3032))
+                            } else {
+                                style.bg(rgb(0x294636))
+                            }
+                        })
+                        .on_drop(cx.listener(|this, asset: &AssetDrag, window, cx| {
+                            this.drop_asset_without_track(asset, window, cx);
+                        }))
+                        .child("No tracks yet — drop an asset here"),
+                )
+            })
+            .children(rows);
         div()
             .id("timeline-panel")
             .flex()
@@ -2342,7 +2672,40 @@ impl EditorView {
                     .items_center()
                     .px_3()
                     .justify_between()
-                    .child(div().text_sm().text_color(rgb(0xd8dae2)).child("Timeline"))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(div().text_sm().text_color(rgb(0xd8dae2)).child("Timeline"))
+                            .children(
+                                [
+                                    (TrackKind::Video, "+ Video", "add-video-track"),
+                                    (TrackKind::Audio, "+ Audio", "add-audio-track"),
+                                    (TrackKind::Overlay, "+ Overlay", "add-overlay-track"),
+                                    (TrackKind::Dialogue, "+ Dialogue", "add-dialogue-track"),
+                                ]
+                                .into_iter()
+                                .map(
+                                    |(kind, label, element_id)| {
+                                        div()
+                                            .id(element_id)
+                                            .cursor_pointer()
+                                            .rounded_sm()
+                                            .px_2()
+                                            .py_1()
+                                            .bg(rgb(0x292c34))
+                                            .hover(|style| style.bg(rgb(0x404550)))
+                                            .text_xs()
+                                            .text_color(rgb(0xb8bbc5))
+                                            .child(label)
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.add_track(kind, cx);
+                                            }))
+                                    },
+                                ),
+                            ),
+                    )
                     .child(
                         div()
                             .flex()
@@ -2420,30 +2783,7 @@ impl EditorView {
                             ),
                     ),
             )
-            .when(self.tracks.is_empty(), |timeline| {
-                timeline.child(
-                    div()
-                        .id("empty-timeline-drop-target")
-                        .flex()
-                        .flex_1()
-                        .items_center()
-                        .justify_center()
-                        .text_sm()
-                        .text_color(rgb(0x737783))
-                        .drag_over::<AssetDrag>(|style, asset, _, _| {
-                            if asset.kind == AssetKind::Font {
-                                style.bg(rgb(0x4b3032))
-                            } else {
-                                style.bg(rgb(0x294636))
-                            }
-                        })
-                        .on_drop(cx.listener(|this, asset: &AssetDrag, window, cx| {
-                            this.drop_asset_without_track(asset, window, cx);
-                        }))
-                        .child("No tracks yet — drop an asset here"),
-                )
-            })
-            .children(rows)
+            .child(track_area)
     }
 }
 
@@ -2575,6 +2915,19 @@ fn track_accepts_asset(track: TrackKind, asset: AssetKind) -> bool {
     )
 }
 
+fn track_accepts_clip(track: TrackKind, clip: ClipKind) -> bool {
+    matches!(
+        (track, clip),
+        (TrackKind::Video, ClipKind::Video)
+            | (TrackKind::Audio, ClipKind::Audio)
+            | (
+                TrackKind::Overlay,
+                ClipKind::Image | ClipKind::Text | ClipKind::Component
+            )
+            | (TrackKind::Dialogue, ClipKind::Dialogue)
+    )
+}
+
 fn waveform_peaks(buffer: &AudioBuffer, requested_buckets: usize) -> Vec<f32> {
     let frame_count = buffer.frame_count();
     if frame_count == 0 || requested_buckets == 0 || buffer.channels == 0 {
@@ -2702,6 +3055,46 @@ fn map_clip_waveform(
                 .unwrap_or(0.0)
         })
         .collect()
+}
+
+fn clip_level_envelope(waveform: &[f32], clip: &AudioClip) -> Vec<f32> {
+    let bucket_count = waveform.len();
+    waveform
+        .iter()
+        .enumerate()
+        .map(|(bucket, peak)| {
+            let Some(local_time) = time_fraction(clip.range.duration, bucket, bucket_count) else {
+                return 0.0;
+            };
+            let Ok(volume) = evaluate_f64(&clip.volume, local_time) else {
+                return 0.0;
+            };
+            (*peak * volume.clamp(0.0, 16.0) as f32).clamp(0.0, 1.0)
+        })
+        .collect()
+}
+
+fn master_volume_from_drag(start_volume: f64, delta_pixels: f64) -> f64 {
+    const SLIDER_WIDTH: f64 = 88.0;
+    ((start_volume + delta_pixels / SLIDER_WIDTH * 2.0).clamp(0.0, 2.0) * 100.0).round() / 100.0
+}
+
+fn level_at_time(levels: &[f32], clip: &mikan_editor::ClipSummary, time: Time) -> f32 {
+    if levels.is_empty() {
+        return 0.0;
+    }
+    let (Ok(now), Ok(start), Ok(duration)) = (
+        time.as_seconds(),
+        clip.start.as_seconds(),
+        clip.duration.as_seconds(),
+    ) else {
+        return 0.0;
+    };
+    if duration <= 0.0 || now < start || now >= start + duration {
+        return 0.0;
+    }
+    let index = (((now - start) / duration) * levels.len() as f64).floor() as usize;
+    levels[index.min(levels.len() - 1)]
 }
 
 fn time_fraction(duration: Time, numerator: usize, denominator: usize) -> Option<Time> {
@@ -2838,8 +3231,10 @@ fn run() -> Result<(), Box<dyn Error>> {
             |window, cx| {
                 let view = cx.new(|cx| {
                     let focus_handle = cx.focus_handle();
+                    let master_volume_focus = cx.focus_handle().tab_stop(true).tab_index(0);
                     focus_handle.focus(window);
                     editor.focus_handle = Some(focus_handle);
+                    editor.master_volume_focus = Some(master_volume_focus);
                     editor
                 });
                 let close_view = view.clone();
@@ -2862,13 +3257,15 @@ fn run() -> Result<(), Box<dyn Error>> {
 #[cfg(test)]
 mod tests {
     use super::{
-        AudioCacheKey, CachedAudioDecoder, ClipDrag, ClipDragKind, DiskAudioCache, MediaAssetInfo,
-        dragged_clip_range, initial_clip_duration_frames, map_clip_waveform, take_latest,
-        track_accepts_asset, waveform_peaks, waveform_segment,
+        AudioCacheKey, CachedAudioDecoder, ClipDrag, ClipDragKind, ClipKind, DiskAudioCache,
+        MediaAssetInfo, clip_level_envelope, dragged_clip_range, initial_clip_duration_frames,
+        level_at_time, map_clip_waveform, master_volume_from_drag, take_latest,
+        track_accepts_asset, track_accepts_clip, waveform_peaks, waveform_segment,
     };
     use mikan_composition::{
         Animatable, AssetLocation, AudioClip, Rational, ResolvedAsset, Time, TimeRange,
     };
+    use mikan_editor::ClipSummary;
     use mikan_media::{AudioBuffer, AudioDecoder};
     use mikan_project::{AssetKind, TrackKind};
     use std::fs;
@@ -2931,6 +3328,31 @@ mod tests {
             map_clip_waveform(&peaks, 8, 4, &clip, 4),
             vec![0.4, 0.6, 0.8, 0.0]
         );
+
+        clip.volume = Animatable::Static(0.5);
+        assert_eq!(
+            clip_level_envelope(&[0.4, 0.6, 0.8, 0.0], &clip),
+            vec![0.2, 0.3, 0.4, 0.0]
+        );
+    }
+
+    #[test]
+    fn track_levels_follow_the_active_clip_and_master_drag_is_clamped() {
+        let clip = ClipSummary {
+            id: "clip".to_owned(),
+            name: "Clip".to_owned(),
+            start: Time::new(10, 1),
+            duration: Time::new(2, 1),
+            kind: ClipKind::Audio,
+            enabled: true,
+        };
+
+        assert_eq!(level_at_time(&[0.2, 0.8], &clip, Time::new(10, 1)), 0.2);
+        assert_eq!(level_at_time(&[0.2, 0.8], &clip, Time::new(11, 1)), 0.8);
+        assert_eq!(level_at_time(&[0.2, 0.8], &clip, Time::new(12, 1)), 0.0);
+        assert_eq!(master_volume_from_drag(1.0, 22.0), 1.5);
+        assert_eq!(master_volume_from_drag(1.0, -100.0), 0.0);
+        assert_eq!(master_volume_from_drag(1.0, 100.0), 2.0);
     }
 
     #[test]
@@ -2974,6 +3396,9 @@ mod tests {
         assert!(!track_accepts_asset(TrackKind::Audio, AssetKind::Video));
         assert!(!track_accepts_asset(TrackKind::Dialogue, AssetKind::Audio));
         assert!(!track_accepts_asset(TrackKind::Overlay, AssetKind::Font));
+        assert!(track_accepts_clip(TrackKind::Audio, ClipKind::Audio));
+        assert!(track_accepts_clip(TrackKind::Overlay, ClipKind::Text));
+        assert!(!track_accepts_clip(TrackKind::Video, ClipKind::Audio));
     }
 
     #[test]

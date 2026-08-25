@@ -321,6 +321,109 @@ impl EditorDocument {
         Ok(muted)
     }
 
+    pub fn add_track(&mut self, kind: TrackKind) -> String {
+        let before = self.project.clone();
+        let before_revision = self.current_revision;
+        let (base, name) = track_defaults(kind);
+        let track_id = unique_id(
+            base,
+            self.project.tracks.iter().map(|track| track.id.as_str()),
+        );
+        self.project.tracks.push(Track {
+            id: track_id.clone(),
+            name: name.to_owned(),
+            kind,
+            enabled: None,
+            locked: None,
+            muted: None,
+            solo: None,
+            items: Vec::new(),
+        });
+        self.record_mutation(before, before_revision);
+        track_id
+    }
+
+    pub fn move_track(
+        &mut self,
+        track_id: &str,
+        offset: isize,
+    ) -> Result<bool, EditorDocumentError> {
+        let index = self
+            .project
+            .tracks
+            .iter()
+            .position(|track| track.id == track_id)
+            .ok_or_else(|| EditorDocumentError::MissingTrack(track_id.to_owned()))?;
+        if self.project.tracks[index].locked == Some(true) {
+            return Err(EditorDocumentError::LockedTrack(track_id.to_owned()));
+        }
+        let target = index
+            .saturating_add_signed(offset)
+            .min(self.project.tracks.len() - 1);
+        if target == index {
+            return Ok(false);
+        }
+        let before = self.project.clone();
+        let before_revision = self.current_revision;
+        let track = self.project.tracks.remove(index);
+        self.project.tracks.insert(target, track);
+        self.record_mutation(before, before_revision);
+        Ok(true)
+    }
+
+    pub fn move_clip_to_track(
+        &mut self,
+        clip_id: &str,
+        target_track_id: &str,
+    ) -> Result<bool, EditorDocumentError> {
+        let source_index = self
+            .project
+            .tracks
+            .iter()
+            .position(|track| track.items.iter().any(|item| item.id == clip_id))
+            .ok_or_else(|| EditorDocumentError::MissingClip(clip_id.to_owned()))?;
+        let target_index = self
+            .project
+            .tracks
+            .iter()
+            .position(|track| track.id == target_track_id)
+            .ok_or_else(|| EditorDocumentError::MissingTrack(target_track_id.to_owned()))?;
+        if source_index == target_index {
+            return Ok(false);
+        }
+        if self.project.tracks[source_index].locked == Some(true) {
+            return Err(EditorDocumentError::LockedTrack(
+                self.project.tracks[source_index].id.clone(),
+            ));
+        }
+        if self.project.tracks[target_index].locked == Some(true) {
+            return Err(EditorDocumentError::LockedTrack(target_track_id.to_owned()));
+        }
+        let item_index = self.project.tracks[source_index]
+            .items
+            .iter()
+            .position(|item| item.id == clip_id)
+            .expect("source track contains the clip");
+        let expected = timeline_content_track_kind(
+            &self.project.tracks[source_index].items[item_index].content,
+        );
+        let actual = self.project.tracks[target_index].kind;
+        if expected != actual {
+            return Err(EditorDocumentError::IncompatibleClipTrack {
+                clip: clip_id.to_owned(),
+                track: target_track_id.to_owned(),
+                expected,
+                actual,
+            });
+        }
+        let before = self.project.clone();
+        let before_revision = self.current_revision;
+        let item = self.project.tracks[source_index].items.remove(item_index);
+        self.project.tracks[target_index].items.push(item);
+        self.record_mutation(before, before_revision);
+        Ok(true)
+    }
+
     pub fn toggle_track_solo(&mut self, track_id: &str) -> Result<bool, EditorDocumentError> {
         let before = self.project.clone();
         let before_revision = self.current_revision;
@@ -1013,6 +1116,26 @@ fn asset_name(asset: &Asset) -> Option<&str> {
     }
 }
 
+fn track_defaults(kind: TrackKind) -> (&'static str, &'static str) {
+    match kind {
+        TrackKind::Video => ("video", "Video"),
+        TrackKind::Audio => ("audio", "Audio"),
+        TrackKind::Overlay => ("overlays", "Overlays"),
+        TrackKind::Dialogue => ("dialogue", "Dialogue"),
+    }
+}
+
+fn timeline_content_track_kind(content: &TimelineContent) -> TrackKind {
+    match content {
+        TimelineContent::Video { .. } => TrackKind::Video,
+        TimelineContent::Audio { .. } => TrackKind::Audio,
+        TimelineContent::Image { .. }
+        | TimelineContent::Text { .. }
+        | TimelineContent::Component { .. } => TrackKind::Overlay,
+        TimelineContent::Dialogue { .. } => TrackKind::Dialogue,
+    }
+}
+
 fn set_asset_source(asset: &mut Asset, new_source: AssetSource) {
     match asset {
         Asset::Video { source, .. }
@@ -1132,6 +1255,12 @@ pub enum EditorDocumentError {
         expected: TrackKind,
         actual: TrackKind,
     },
+    IncompatibleClipTrack {
+        clip: String,
+        track: String,
+        expected: TrackKind,
+        actual: TrackKind,
+    },
     AssetInUse {
         asset: String,
         references: Vec<String>,
@@ -1184,6 +1313,15 @@ impl fmt::Display for EditorDocumentError {
                 formatter,
                 "asset `{asset}` requires a {expected:?} track, but `{track}` is {actual:?}"
             ),
+            Self::IncompatibleClipTrack {
+                clip,
+                track,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "clip `{clip}` requires a {expected:?} track, but `{track}` is {actual:?}"
+            ),
             Self::AssetInUse { asset, references } => write!(
                 formatter,
                 "asset `{asset}` is still used by {} reference(s)",
@@ -1233,6 +1371,7 @@ impl Error for EditorDocumentError {
             | Self::UnsupportedAsset(_)
             | Self::AssetKindMismatch { .. }
             | Self::IncompatibleTrack { .. }
+            | Self::IncompatibleClipTrack { .. }
             | Self::AssetInUse { .. }
             | Self::UnsupportedTimelineAsset(_)
             | Self::InvalidNewClipFrameRange { .. }
@@ -1403,6 +1542,47 @@ mod tests {
         assert!(document.undo().unwrap());
         assert_eq!(document.tracks()[0].clips[0].start, Time::ZERO);
         assert!(!document.undo().unwrap());
+    }
+
+    #[test]
+    fn creates_reorders_and_moves_clips_between_compatible_tracks() {
+        let mut document = EditorDocument::from_json(EDITOR_DEMO, ".").unwrap();
+        let second_overlay = document.add_track(TrackKind::Overlay);
+        let audio = document.add_track(TrackKind::Audio);
+        assert_eq!(second_overlay, "overlays");
+        assert_eq!(audio, "audio");
+
+        assert!(
+            document
+                .move_clip_to_track("welcome", &second_overlay)
+                .unwrap()
+        );
+        assert!(
+            document
+                .tracks()
+                .iter()
+                .find(|track| track.id == second_overlay)
+                .unwrap()
+                .clips
+                .iter()
+                .any(|clip| clip.id == "welcome")
+        );
+        assert!(matches!(
+            document.move_clip_to_track("welcome", &audio),
+            Err(EditorDocumentError::IncompatibleClipTrack { .. })
+        ));
+
+        assert!(document.move_track(&second_overlay, -1).unwrap());
+        assert_eq!(document.tracks()[0].id, second_overlay);
+        assert!(document.undo().unwrap());
+        assert_eq!(document.tracks()[1].id, second_overlay);
+        assert!(document.undo().unwrap());
+        assert!(
+            document.tracks()[0]
+                .clips
+                .iter()
+                .any(|clip| clip.id == "welcome")
+        );
     }
 
     #[test]
