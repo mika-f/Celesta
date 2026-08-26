@@ -251,6 +251,7 @@ struct ComponentSchemaRequest {
 struct ComponentSchemaResult {
     generation: u64,
     schemas: Result<BTreeMap<String, ComponentPropertySchema>, String>,
+    project_property_schema: Option<BTreeMap<String, ComponentPropertyField>>,
 }
 
 /// Queries a `.tsx` entry's registered `registerComponent()` schemas by
@@ -276,21 +277,27 @@ impl ComponentSchemaWorker {
             .spawn(move || {
                 while let Ok(first) = request_rx.recv() {
                     let request = take_latest(first, &request_rx);
-                    let schemas =
-                        ReactBridge::spawn(&request.node, &request.cli_script, &request.entry)
-                            .map(|bridge| {
-                                bridge
-                                    .metadata()
-                                    .component_schemas
-                                    .iter()
-                                    .map(|(name, schema)| (name.clone(), schema.clone()))
-                                    .collect()
-                            })
-                            .map_err(|error| error.to_string());
+                    let result =
+                        ReactBridge::spawn(&request.node, &request.cli_script, &request.entry);
+                    let schemas = result
+                        .as_ref()
+                        .map(|bridge| {
+                            bridge
+                                .metadata()
+                                .component_schemas
+                                .iter()
+                                .map(|(name, schema)| (name.clone(), schema.clone()))
+                                .collect()
+                        })
+                        .map_err(|error| error.to_string());
+                    let project_property_schema = result
+                        .ok()
+                        .and_then(|bridge| bridge.metadata().project_property_schema.clone());
                     if result_tx
                         .send(ComponentSchemaResult {
                             generation: request.generation,
                             schemas,
+                            project_property_schema,
                         })
                         .is_err()
                     {
@@ -645,12 +652,20 @@ struct MasterVolumeDrag {
     start_volume: f64,
 }
 
-/// A `string`- or `color`-typed component prop currently being edited
-/// through `component_prop_input`, one at a time (the same shape as track
-/// renaming's single shared `TextInput`).
+/// A `string`- or `color`-typed schema field currently being edited through
+/// `property_input`, one at a time (the same shape as track renaming's
+/// single shared `TextInput`). The target says which value store the commit
+/// goes into: the selected component clip's `props`, or the project-level
+/// `properties` map declared by the entry's `defineProjectProperties()`.
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct ComponentPropEdit {
-    clip_id: String,
+enum PropertyEditTarget {
+    Project,
+    Clip { clip_id: String },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PropertyEdit {
+    target: PropertyEditTarget,
     key: String,
 }
 
@@ -915,9 +930,10 @@ struct EditorView {
     component_schema_pending: bool,
     component_schema_entry: Option<String>,
     component_schemas: BTreeMap<String, ComponentPropertySchema>,
+    project_property_schema: Option<BTreeMap<String, ComponentPropertyField>>,
     component_schema_error: Option<SharedString>,
-    editing_component_prop: Option<ComponentPropEdit>,
-    component_prop_input: Option<Entity<TextInput>>,
+    editing_property: Option<PropertyEdit>,
+    property_input: Option<Entity<TextInput>>,
     project_name: SharedString,
     dimensions: SharedString,
     frame_rate_label: SharedString,
@@ -1014,9 +1030,10 @@ impl EditorView {
             component_schema_pending: false,
             component_schema_entry: None,
             component_schemas: BTreeMap::new(),
+            project_property_schema: None,
             component_schema_error: None,
-            editing_component_prop: None,
-            component_prop_input: None,
+            editing_property: None,
+            property_input: None,
             project_name,
             dimensions,
             frame_rate_label,
@@ -1140,6 +1157,7 @@ impl EditorView {
             self.component_schema_pending = false;
             self.component_schema_error = None;
             self.component_schemas.clear();
+            self.project_property_schema = None;
             return;
         };
         self.component_schema_entry = self.document.react_entry().map(str::to_owned);
@@ -1220,10 +1238,12 @@ impl EditorView {
                     match result.schemas {
                         Ok(schemas) => {
                             self.component_schemas = schemas;
+                            self.project_property_schema = result.project_property_schema;
                             self.component_schema_error = None;
                         }
                         Err(error) => {
                             self.component_schemas.clear();
+                            self.project_property_schema = None;
                             self.component_schema_error = Some(error.into());
                         }
                     }
@@ -1740,16 +1760,27 @@ impl EditorView {
         cx.notify();
     }
 
-    fn apply_component_prop(
+    fn apply_property(
         &mut self,
-        clip_id: &str,
+        target: &PropertyEditTarget,
         key: &str,
         value: serde_json::Value,
         cx: &mut Context<Self>,
     ) {
-        match self.document.set_component_prop(clip_id, key, value) {
+        let result = match target {
+            PropertyEditTarget::Project => {
+                self.document.set_project_property(key, value);
+                Ok(())
+            }
+            PropertyEditTarget::Clip { clip_id } => {
+                self.document.set_component_prop(clip_id, key, value)
+            }
+        };
+        match result {
             Ok(()) => {
-                self.tracks = self.document.tracks();
+                if matches!(target, PropertyEditTarget::Clip { .. }) {
+                    self.tracks = self.document.tracks();
+                }
                 self.edit_error = None;
             }
             Err(error) => self.edit_error = Some(error.to_string().into()),
@@ -1757,19 +1788,19 @@ impl EditorView {
         cx.notify();
     }
 
-    fn toggle_component_prop_boolean(
+    fn toggle_property_boolean(
         &mut self,
-        clip_id: &str,
+        target: &PropertyEditTarget,
         key: &str,
         current: bool,
         cx: &mut Context<Self>,
     ) {
-        self.apply_component_prop(clip_id, key, serde_json::Value::Bool(!current), cx);
+        self.apply_property(target, key, serde_json::Value::Bool(!current), cx);
     }
 
-    fn step_component_prop_number(
+    fn step_property_number(
         &mut self,
-        clip_id: &str,
+        target: &PropertyEditTarget,
         key: &str,
         current: f64,
         delta: f64,
@@ -1787,12 +1818,12 @@ impl EditorView {
         let Some(value) = serde_json::Number::from_f64(next).map(serde_json::Value::Number) else {
             return;
         };
-        self.apply_component_prop(clip_id, key, value, cx);
+        self.apply_property(target, key, value, cx);
     }
 
-    fn cycle_component_prop_select(
+    fn cycle_property_select(
         &mut self,
-        clip_id: &str,
+        target: &PropertyEditTarget,
         key: &str,
         options: &[String],
         current: &str,
@@ -1805,56 +1836,51 @@ impl EditorView {
             .iter()
             .position(|option| option == current)
             .map_or(0, |index| (index + 1) % options.len());
-        self.apply_component_prop(
-            clip_id,
+        self.apply_property(
+            target,
             key,
             serde_json::Value::String(options[next_index].clone()),
             cx,
         );
     }
 
-    fn begin_component_prop_edit(
+    fn begin_property_edit(
         &mut self,
-        clip_id: &str,
+        target: &PropertyEditTarget,
         key: &str,
         current: &str,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.editing_component_prop = Some(ComponentPropEdit {
-            clip_id: clip_id.to_owned(),
+        self.editing_property = Some(PropertyEdit {
+            target: target.clone(),
             key: key.to_owned(),
         });
         self.edit_error = None;
-        if let Some(input) = &self.component_prop_input {
+        if let Some(input) = &self.property_input {
             input.update(cx, |input, cx| input.set_text(current.to_owned(), cx));
             input.read(cx).focus(window);
         }
         cx.notify();
     }
 
-    fn commit_component_prop_edit(&mut self, cx: &mut Context<Self>) {
-        let Some(edit) = self.editing_component_prop.clone() else {
+    fn commit_property_edit(&mut self, cx: &mut Context<Self>) {
+        let Some(edit) = self.editing_property.clone() else {
             return;
         };
         let Some(text) = self
-            .component_prop_input
+            .property_input
             .as_ref()
             .map(|input| input.read(cx).text())
         else {
             return;
         };
-        self.editing_component_prop = None;
-        self.apply_component_prop(
-            &edit.clip_id,
-            &edit.key,
-            serde_json::Value::String(text),
-            cx,
-        );
+        self.editing_property = None;
+        self.apply_property(&edit.target, &edit.key, serde_json::Value::String(text), cx);
     }
 
-    fn cancel_component_prop_edit(&mut self, cx: &mut Context<Self>) {
-        self.editing_component_prop = None;
+    fn cancel_property_edit(&mut self, cx: &mut Context<Self>) {
+        self.editing_property = None;
         self.edit_error = None;
         cx.notify();
     }
@@ -3481,6 +3507,9 @@ impl EditorView {
                         controls.child(div().text_xs().text_color(rgb(0xff9a9a)).child(error))
                     }),
             )
+            .when(self.document.react_entry().is_some(), |panel| {
+                self.render_project_properties(panel, cx)
+            })
             .when_some(selected_track, |panel, track| {
                 let rename_track_id = track.id.clone();
                 let enabled_track_id = track.id.clone();
@@ -3791,18 +3820,80 @@ impl EditorView {
                     .child(hint),
             );
         };
+        let target = PropertyEditTarget::Clip {
+            clip_id: clip_id.to_owned(),
+        };
         schema.iter().fold(panel, |panel, (key, field)| {
-            self.render_component_prop_field(panel, clip_id, key, field, component, cx)
+            self.render_property_field(panel, &target, key, field, component.props.get(key), cx)
         })
     }
 
-    fn render_component_prop_field<E: ParentElement + Sized>(
+    /// Renders the entry-declared project property schema as one editable
+    /// row per field, writing into the project-level `properties` map.
+    /// Values not yet set fall back to each field's declared default — the
+    /// same rule `useProjectProperty` applies when React reads them.
+    fn render_project_properties<E: ParentElement + Sized>(
         &self,
         panel: E,
-        clip_id: &str,
+        cx: &mut Context<Self>,
+    ) -> E {
+        let panel = panel.child(
+            div()
+                .mt_3()
+                .px_3()
+                .py_2()
+                .border_t_1()
+                .border_b_1()
+                .border_color(rgb(0x30333d))
+                .text_sm()
+                .text_color(rgb(0xffb466))
+                .child("Project Properties"),
+        );
+        if !self.component_schema_pending && self.project_property_schema.is_none() {
+            let hint = if self.component_schema_error.is_some() {
+                "Project properties could not be loaded; see the error above."
+            } else {
+                "This React entry has not declared any project properties."
+            };
+            return panel.child(
+                div()
+                    .px_3()
+                    .py_2()
+                    .text_xs()
+                    .text_color(rgb(0x8d919c))
+                    .child(hint),
+            );
+        }
+        let Some(schema) = self.project_property_schema.as_ref() else {
+            return panel.child(
+                div()
+                    .px_3()
+                    .py_2()
+                    .text_xs()
+                    .text_color(rgb(0x8d919c))
+                    .child("Loading this entry's project property schema…"),
+            );
+        };
+        let target = PropertyEditTarget::Project;
+        schema.iter().fold(panel, |panel, (key, field)| {
+            self.render_property_field(
+                panel,
+                &target,
+                key,
+                field,
+                self.document.project_properties().get(key),
+                cx,
+            )
+        })
+    }
+
+    fn render_property_field<E: ParentElement + Sized>(
+        &self,
+        panel: E,
+        target: &PropertyEditTarget,
         key: &str,
         field: &ComponentPropertyField,
-        component: &ComponentClipSummary,
+        current: Option<&serde_json::Value>,
         cx: &mut Context<Self>,
     ) -> E {
         let label: SharedString = match field {
@@ -3814,12 +3905,19 @@ impl EditorView {
                 .clone()
                 .map_or_else(|| key.to_owned().into(), Into::into),
         };
-        let current = component.props.get(key);
         let editing = self
-            .editing_component_prop
+            .editing_property
             .as_ref()
-            .is_some_and(|edit| edit.clip_id == clip_id && edit.key == key);
-        let field_id: SharedString = format!("component-prop-{clip_id}-{key}").into();
+            .is_some_and(|edit| edit.target == *target && edit.key == key);
+        let id_prefix = match target {
+            PropertyEditTarget::Project => "project-prop",
+            PropertyEditTarget::Clip { .. } => "component-prop",
+        };
+        let field_id: SharedString = match target {
+            PropertyEditTarget::Project => format!("{id_prefix}-project-{key}"),
+            PropertyEditTarget::Clip { clip_id } => format!("{id_prefix}-{clip_id}-{key}"),
+        }
+        .into();
 
         panel.child(
             div()
@@ -3836,11 +3934,11 @@ impl EditorView {
                         let value = current
                             .and_then(serde_json::Value::as_bool)
                             .unwrap_or(*default_value);
-                        let clip_id = clip_id.to_owned();
+                        let target = target.clone();
                         let key = key.to_owned();
                         inspector_dynamic_button(field_id, if value { "True" } else { "False" })
                             .on_click(cx.listener(move |this, _, _, cx| {
-                                this.toggle_component_prop_boolean(&clip_id, &key, value, cx);
+                                this.toggle_property_boolean(&target, &key, value, cx);
                             }))
                             .into_any_element()
                     }
@@ -3856,9 +3954,9 @@ impl EditorView {
                             .unwrap_or(*default_value);
                         let step = step.unwrap_or(1.0);
                         let (min, max) = (*min, *max);
-                        let down_clip_id = clip_id.to_owned();
+                        let down_target = target.clone();
                         let down_key = key.to_owned();
-                        let up_clip_id = clip_id.to_owned();
+                        let up_target = target.clone();
                         let up_key = key.to_owned();
                         div()
                             .flex()
@@ -3871,8 +3969,8 @@ impl EditorView {
                                 )
                                 .on_click(cx.listener(
                                     move |this, _, _, cx| {
-                                        this.step_component_prop_number(
-                                            &down_clip_id,
+                                        this.step_property_number(
+                                            &down_target,
                                             &down_key,
                                             value,
                                             -step,
@@ -3897,8 +3995,8 @@ impl EditorView {
                                 )
                                 .on_click(cx.listener(
                                     move |this, _, _, cx| {
-                                        this.step_component_prop_number(
-                                            &up_clip_id,
+                                        this.step_property_number(
+                                            &up_target,
                                             &up_key,
                                             value,
                                             step,
@@ -3918,14 +4016,12 @@ impl EditorView {
                         let value = current
                             .and_then(serde_json::Value::as_str)
                             .map_or_else(|| default_value.clone(), str::to_owned);
-                        let clip_id = clip_id.to_owned();
+                        let target = target.clone();
                         let key = key.to_owned();
                         let options = options.clone();
                         inspector_dynamic_button(field_id, value.clone())
                             .on_click(cx.listener(move |this, _, _, cx| {
-                                this.cycle_component_prop_select(
-                                    &clip_id, &key, &options, &value, cx,
-                                );
+                                this.cycle_property_select(&target, &key, &options, &value, cx);
                             }))
                             .into_any_element()
                     }
@@ -3945,18 +4041,18 @@ impl EditorView {
                                 .bg(rgb(0x17191f))
                                 .text_sm()
                                 .text_color(rgb(0xffffff))
-                                .when_some(self.component_prop_input.clone(), |field, input| {
+                                .when_some(self.property_input.clone(), |field, input| {
                                     field.child(input)
                                 })
                                 .into_any_element()
                         } else {
-                            let clip_id = clip_id.to_owned();
+                            let target = target.clone();
                             let key = key.to_owned();
                             let value_for_edit = value.clone();
                             inspector_dynamic_button(field_id, value)
                                 .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.begin_component_prop_edit(
-                                        &clip_id,
+                                    this.begin_property_edit(
+                                        &target,
                                         &key,
                                         &value_for_edit,
                                         window,
@@ -5072,12 +5168,12 @@ fn run() -> Result<(), Box<dyn Error>> {
                         },
                     )
                     .detach();
-                    let component_prop_input = cx.new(TextInput::new);
+                    let property_input = cx.new(TextInput::new);
                     cx.subscribe(
-                        &component_prop_input,
+                        &property_input,
                         |editor: &mut EditorView, _, event: &TextInputEvent, cx| match event {
-                            TextInputEvent::Submit => editor.commit_component_prop_edit(cx),
-                            TextInputEvent::Cancel => editor.cancel_component_prop_edit(cx),
+                            TextInputEvent::Submit => editor.commit_property_edit(cx),
+                            TextInputEvent::Cancel => editor.cancel_property_edit(cx),
                         },
                     )
                     .detach();
@@ -5085,7 +5181,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                     editor.focus_handle = Some(focus_handle);
                     editor.master_volume_focus = Some(master_volume_focus);
                     editor.track_name_input = Some(track_name_input);
-                    editor.component_prop_input = Some(component_prop_input);
+                    editor.property_input = Some(property_input);
                     editor
                 });
                 let close_view = view.clone();

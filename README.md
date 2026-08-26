@@ -59,8 +59,8 @@ The repository currently contains the first foundation:
   `.mikan.json` project can also be read into a React entry: `loadProject()`
   plus `<ProjectProvider>`/`useProject()` expose it as plain data,
   `useProjectProperty(key, defaultValue)` reads its editor-set
-  `properties` (falling back to `defaultValue` when the key is absent —
-  there is no schema yet), and `<ProjectTimeline />` embeds its
+  `properties` (falling back to `defaultValue` when the key is absent), and
+  `<ProjectTimeline />` embeds its
   `video`/`image`/`text`/`dialogue`/`component` timeline content —
   evaluated by `mikan-evaluator` (Rust), not reimplemented in TypeScript —
   alongside the entry's own React-authored content. A `dialogue` item
@@ -72,8 +72,13 @@ The repository currently contains the first foundation:
   unregistered name is left for `GpuRenderer` to reject rather than
   silently dropped. The optional `schema` (a `ComponentPropertySchema`
   declaring each prop's type/default/display hints, retrievable via
-  `getComponentSchema(name)`) is pure metadata for a future GUI Inspector —
-  it plays no part in resolution or rendering today.
+  `getComponentSchema(name)`) is pure metadata for the GPUI editor: a
+  project's `react_entry` setting tells it which Node process to query, and
+  it renders one editable Inspector row per declared field for a selected
+  component clip. Likewise `defineProjectProperties(schema)` declares the
+  entry's project-level properties, which the Inspector renders into
+  `Project.properties`; neither schema plays any part in rendering or
+  evaluation here.
   `useProjectTrack(trackId)` and `<ProjectTrack id="..." />` give the same
   access one track at a time — `mikan-evaluator` evaluates every track's
   layers per frame regardless of which ones the entry actually reads, so no

@@ -658,6 +658,39 @@ impl EditorDocument {
         Ok(())
     }
 
+    /// The project's GUI-editable `properties` map. React entries read these
+    /// values through `useProjectProperty(key, defaultValue)`; which fields
+    /// exist and how the Inspector presents them comes from the entry's
+    /// `defineProjectProperties()` schema, which is advisory Inspector
+    /// metadata — this map itself stays schema-free.
+    pub fn project_properties(&self) -> &BTreeMap<String, serde_json::Value> {
+        &self.project.properties
+    }
+
+    /// Upserts one project property value, undoable like every other
+    /// document mutation. There is no declared-key or type whitelist here:
+    /// a schema only describes how to present fields, so writing an
+    /// unlisted key stays legal.
+    pub fn set_project_property(&mut self, key: &str, value: serde_json::Value) {
+        let before = self.project.clone();
+        let before_revision = self.current_revision;
+        self.project.properties.insert(key.to_owned(), value);
+        if self.project != before {
+            self.record_mutation(before, before_revision);
+        }
+    }
+
+    /// Removes one project property value. Removing an absent key changes
+    /// nothing and records no undo entry.
+    pub fn remove_project_property(&mut self, key: &str) {
+        let before = self.project.clone();
+        let before_revision = self.current_revision;
+        self.project.properties.remove(key);
+        if self.project != before {
+            self.record_mutation(before, before_revision);
+        }
+    }
+
     pub fn set_clip_volume_static(
         &mut self,
         clip_id: &str,
@@ -2169,6 +2202,38 @@ mod tests {
             document.set_component_prop("does-not-exist", "level", serde_json::json!(1)),
             Err(EditorDocumentError::MissingClip(_))
         ));
+    }
+
+    #[test]
+    fn project_properties_are_undoable() {
+        let mut document = EditorDocument::from_json(VOICEROID, "examples").unwrap();
+        assert_eq!(
+            document.project_properties().get("title"),
+            Some(&serde_json::json!("Mikan example"))
+        );
+        document.set_project_property("title", serde_json::json!("Chapter 1"));
+
+        // Setting an identical value and removing an absent key record no
+        // undo entry, so exactly two undos restore the original state.
+        document.set_project_property("episode", serde_json::json!(3));
+        document.set_project_property("episode", serde_json::json!(3));
+        document.remove_project_property("does-not-exist");
+        assert_eq!(
+            document.project_properties().get("title"),
+            Some(&serde_json::json!("Chapter 1"))
+        );
+        assert_eq!(
+            document.project_properties().get("episode"),
+            Some(&serde_json::json!(3))
+        );
+
+        assert!(document.undo().unwrap());
+        assert!(!document.project_properties().contains_key("episode"));
+        assert!(document.undo().unwrap());
+        assert_eq!(
+            document.project_properties().get("title"),
+            Some(&serde_json::json!("Mikan example"))
+        );
     }
 
     #[test]

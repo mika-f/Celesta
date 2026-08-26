@@ -57,6 +57,9 @@ export type { ProjectProviderProps, ProjectTrackProps } from './project-runtime'
 export { getComponentSchema, registerComponent } from './registry';
 export type { ComponentDefinition, ComponentPropertyField, ComponentPropertySchema } from './registry';
 
+export { defineProjectProperties, listProjectProperties } from './properties';
+export type { ProjectPropertyField, ProjectPropertySchema } from './properties';
+
 export { loadProject, loadProjectFromString } from './project';
 export type { Project } from './generated/Project';
 export type { Asset } from './generated/Asset';

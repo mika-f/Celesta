@@ -455,17 +455,18 @@ in any other React host.
 - **`useProjectProperty(key, defaultValue)`** (`src/project-runtime.ts`,
   alongside `useProject()`) reads `Project.properties`
   (`Record<string, JsonValue>`, already generated — no Rust changes needed
-  for this) and falls back to `defaultValue` when the key is absent. There
-  is no schema: no declared type, no validation, no Inspector generation. A
+  for this) and falls back to `defaultValue` when the key is absent. A
   property the editor renamed or retyped silently falls back rather than
-  erroring — this is the design doc's "React API の簡易形", not the
+  erroring. This is the design doc's "React API の簡易形"; the
   schema-based `defineProjectProperties`/generated-Inspector-fields version
-  it also describes as the eventual goal, which is deferred (see below;
-  `Property Value = project.json`/`Property schema = TypeScript source` are
-  two different things, and only the former exists yet). Verified manually:
-  a project with `{"title": "Chapter 3", "episode": 3}` in `properties`,
-  read back through `useProjectProperty` inside a `<ProjectProvider>`,
-  including a missing key correctly falling back to its default.
+  it also describes as the eventual goal now exists too (see "Project
+  Property Schema" below) — `Property Value = project.json` and
+  `Property schema = TypeScript source` remain two different things, and
+  the hook itself still takes its own `defaultValue` argument rather than
+  consulting the declared one. Verified manually: a project with
+  `{"title": "Chapter 3", "episode": 3}` in `properties`, read back through
+  `useProjectProperty` inside a `<ProjectProvider>`, including a missing key
+  correctly falling back to its default.
 - **Component registry** (`src/registry.ts`, resolved by
   `<ProjectTimeline />` in `src/project-runtime.ts`). A project.json
   `TimelineContent::Component { component, props }` item has no meaning to
@@ -511,8 +512,9 @@ in any other React host.
     resolved layer becomes a `group` wrapping the rendered `Text`, and the
     unresolved one stays a `missingComponent` layer with its original
     `component` name.
-  - **Not yet built**: Schema-based Project Properties
-    (`defineProjectProperties`, GUI Inspector generation). An `AudioGraph`
+  - Schema-based Project Properties
+    (`defineProjectProperties`, GUI Inspector generation) is now built too —
+    see "Project Property Schema" below. An `AudioGraph`
     source for React entries is done, see "`<Audio>` component and React
     export audio mixdown" below.
 - **Component Property Schema** (`src/registry.ts`), now including GPUI
@@ -609,6 +611,60 @@ in any other React host.
     so this integration is verified by the document-layer/protocol tests
     above plus `cargo build`/`clippy` on the real `main.rs`, not by a
     manual click-through.
+- **Project Property Schema** (`src/properties.ts`, new; 2026-08-26). The
+  last piece of the design doc: a React entry can now declare its
+  GUI-editable project properties, and the GPUI Inspector renders one
+  editable row per declared field writing into the project's
+  `properties` map (the values `useProjectProperty()` reads). The field
+  shape is deliberately shared with component schemas —
+  `ProjectPropertyField` is an alias of `ComponentPropertyField`
+  (string/number/boolean/color/select with labels, defaults, and display
+  hints); the two concepts differ only in where their values live
+  (project-level vs per timeline item).
+  - `defineProjectProperties(schema)` (`src/properties.ts`, exported from
+    `@mikan/react`) stores a process-global schema — call at module scope,
+    like `registerComponent()`. `listProjectProperties()` returns it (or
+    `undefined` when never called); `cli.ts` adds it to the startup `Ready`
+    message as `propertySchema` — `null` when undeclared, `{}` for a
+    declared-but-empty schema, riding the existing handshake like
+    `componentSchemas` does. It plays no part in rendering or evaluation;
+    values themselves live in project.json.
+  - Rust mirror: `ReactCompositionMetadata::project_property_schema:
+    Option<BTreeMap<String, ComponentPropertyField>>` (reusing the existing
+    enum rather than duplicating it), parsed during `ReactBridge::spawn`'s
+    handshake with `#[serde(default)]` so older CLI builds stay compatible.
+  - Editor: the `ComponentSchemaWorker` (which already spawns Node once to
+    read the handshake) now also carries `project_property_schema` back in
+    its result — no extra spawn. `EditorDocument` gains
+    `project_properties()` plus `set_project_property(key, value)`/
+    `remove_project_property(key)` through the usual snapshot undo path
+    (identical-value writes and absent-key removals record no entry). The
+    Inspector shows a "Project Properties" section whenever a React Entry is
+    set: per-field rows reusing the exact widget set from component props
+    (boolean toggle, number −/+ steppers respecting min/max/step, select
+    cycle, string/color through the shared inline `TextInput`), unset fields
+    falling back to their declared defaults — the same rule
+    `useProjectProperty` applies when reading. The single inline-input state
+    was generalized from clip-scoped `ComponentPropEdit` to a
+    `PropertyEdit { target: PropertyEditTarget, key }` whose target is either
+    the project map or a specific component clip, so both sections share one
+    commit/cancel path.
+  - Note the value flow: editor edits write into `project.properties`; a
+    React entry reads them via its own `loadProject()` of the saved file (or
+    `<ProjectTimeline />`'s pre-evaluated layers) — the schema travels only
+    to the Inspector, not into rendering.
+  - Verified: two new `mikan-react-bridge` unit tests (`Ready` parsing with
+    all five field types present / absent-or-null defaulting to None); a new
+    integration test (`reports_a_declared_project_property_schema_when_node_
+    is_available`, against a new `packages/react/examples/with-properties.tsx`
+    declaring all five field types over an embedded `loadProjectFromString()`
+    project) asserting the metadata round-trips exactly, that an entry
+    without `defineProjectProperties()` yields `None`, and that the entry's
+    own `useProjectProperty()` reads its embedded project's value; a new
+    `mikan-editor` document test covering set/remove/undo semantics. The
+    interactive Inspector click-through remains untested for the same
+    environment reason noted above; UI wiring is covered by clippy on the
+    real `main.rs`.
 - **Per-track access** (`useProjectTrack()`, `<ProjectTrack id="..." />`,
   `src/project-runtime.ts`). `<ProjectTimeline />` embeds every track's
   layers flattened together, which is fine for the whole-composition case
@@ -1066,15 +1122,19 @@ licensed VOICEROID voice sample.
 - `packages/react/examples/with-conditional-audio.tsx`: an `<Audio>` behind
   `{frame >= 15 && ...}` with a keyframed volume animation, used by the
   conditional-rendering audio integration test.
+- `packages/react/examples/with-properties.tsx`: declares a five-field
+  `defineProjectProperties()` schema (one per field type) and reads
+  `properties.title` back through `useProjectProperty()` over an embedded
+  `loadProjectFromString()` project, used by the project-property-schema
+  integration test.
 
 ## Validation baseline
 
-At this handoff, the workspace has 105 passing tests (98 from the previous
-handoff plus new `mikan-react-bridge` unit tests for frame-response audio
-and component-resolution parsing, `mikan-exporter` unit tests for per-frame
-audio report merging and React graph construction, and the rewritten/new
-`mikan-react-bridge` integration tests; two obsolete `audioClips`
-`Ready`-message tests were removed). The last checks were:
+At this handoff, the workspace has 109 passing tests (105 from the previous
+handoff plus new `mikan-react-bridge` unit tests for `propertySchema`
+`Ready`-message parsing, a `mikan-react-bridge` integration test for a
+declared project property schema, and an `mikan-editor` document test for
+project property undo). The last checks were:
 
 ```sh
 cargo test --workspace
@@ -1171,8 +1231,9 @@ is already done:
 3. ~~`interpolate()` / `spring()` animation utilities~~ — done, see
    "react-reconciler, hooks, and `<ProjectTimeline />`" above.
 4. ~~Project Properties~~ — `useProjectProperty(key, defaultValue)` (the
-   design doc's "React API の簡易形") is done; `defineProjectProperties`
-   (schema-based, generating Inspector fields) remains deferred, see below.
+   design doc's "React API の簡易形") and the schema-based
+   `defineProjectProperties` (generating Inspector fields, see "Project
+   Property Schema" above) are both done.
 5. ~~Component registry~~ — `registerComponent()`/`<ProjectTimeline />`
    resolving `TimelineContent::Component`'s `component`/`props` to a
    registered React component is done, see "Component registry" above.

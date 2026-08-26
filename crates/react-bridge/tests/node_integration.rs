@@ -219,6 +219,75 @@ fn resolves_individual_components_through_the_bridge_when_node_is_available() {
 }
 
 #[test]
+fn reports_a_declared_project_property_schema_when_node_is_available() {
+    let Some((node, cli_script, package_root)) = live_react_runtime() else {
+        return;
+    };
+
+    let entry = package_root.join("examples/with-properties.tsx");
+    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+
+    let schema = bridge
+        .metadata()
+        .project_property_schema
+        .as_ref()
+        .expect("the entry declares a project property schema");
+    assert_eq!(
+        schema.get("title"),
+        Some(&ComponentPropertyField::String {
+            label: Some("Title".to_owned()),
+            default_value: "Mikan".to_owned(),
+        })
+    );
+    assert_eq!(
+        schema.get("accent"),
+        Some(&ComponentPropertyField::Color {
+            label: Some("Accent".to_owned()),
+            default_value: "#ff8800".to_owned(),
+        })
+    );
+    assert_eq!(
+        schema.get("fontSize"),
+        Some(&ComponentPropertyField::Number {
+            label: Some("Font Size".to_owned()),
+            default_value: 48.0,
+            min: Some(8.0),
+            max: Some(200.0),
+            step: Some(2.0),
+        })
+    );
+    assert_eq!(
+        schema.get("showSubtitle"),
+        Some(&ComponentPropertyField::Boolean {
+            label: Some("Show Subtitle".to_owned()),
+            default_value: false,
+        })
+    );
+    assert_eq!(
+        schema.get("weight"),
+        Some(&ComponentPropertyField::Select {
+            label: Some("Weight".to_owned()),
+            default_value: "bold".to_owned(),
+            options: vec!["bold".to_owned(), "light".to_owned()],
+        })
+    );
+
+    // An entry that never calls defineProjectProperties() leaves the
+    // metadata field None — distinct from a declared-but-empty schema.
+    let plain = package_root.join("examples/title.tsx");
+    let plain_bridge = ReactBridge::spawn(&node, &cli_script, &plain).unwrap();
+    assert!(plain_bridge.metadata().project_property_schema.is_none());
+
+    // The entry's own useProjectProperty() call reads its embedded project's
+    // `properties.title` ("Chapter 3"), not the declared default.
+    let scene = bridge.scene_at(Time::new(0, 30)).unwrap();
+    assert!(scene.layers.iter().any(|layer| matches!(
+        &layer.content,
+        LayerContent::Text { text, .. } if text == "Chapter 3"
+    )));
+}
+
+#[test]
 fn embeds_pre_evaluated_project_layers_into_project_timeline_when_node_is_available() {
     let Some((node, cli_script, package_root)) = live_react_runtime() else {
         return;

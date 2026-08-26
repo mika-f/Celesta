@@ -42,6 +42,12 @@ pub struct ReactCompositionMetadata {
     /// a `ReactBridge`. A registered component with no `schema` argument has
     /// no entry here.
     pub component_schemas: BTreeMap<String, ComponentPropertySchema>,
+    /// The project property schema declared via `defineProjectProperties()`,
+    /// or `None` when the entry declared none (distinct from an empty
+    /// schema). Fields share `ComponentPropertyField`'s shape with component
+    /// schemas; only where their values live differs (project-level vs per
+    /// timeline item).
+    pub project_property_schema: Option<BTreeMap<String, ComponentPropertyField>>,
 }
 
 /// One audible `<Audio>` element as reported for a single rendered frame
@@ -185,12 +191,14 @@ impl ReactBridge {
             ReadyMessage::Ready {
                 config,
                 component_schemas,
+                project_property_schema,
             } => ReactCompositionMetadata {
                 width: config.width,
                 height: config.height,
                 frame_rate: config.frame_rate,
                 duration_in_frames: config.duration_in_frames,
                 component_schemas,
+                project_property_schema,
             },
             ReadyMessage::Error { error } => return Err(ReactBridgeError::EntryFailed(error)),
         };
@@ -343,6 +351,11 @@ enum ReadyMessage {
         config: ReactCompositionConfig,
         #[serde(default, rename = "componentSchemas")]
         component_schemas: BTreeMap<String, ComponentPropertySchema>,
+        /// `null` (or absent) when the entry never called
+        /// `defineProjectProperties()`; an empty object means it declared an
+        /// intentionally empty schema.
+        #[serde(default, rename = "propertySchema")]
+        project_property_schema: Option<BTreeMap<String, ComponentPropertyField>>,
     },
     Error {
         error: String,
@@ -460,6 +473,7 @@ mod tests {
         let ReadyMessage::Ready {
             config,
             component_schemas,
+            ..
         } = serde_json::from_str(&json).unwrap()
         else {
             panic!("expected a Ready message");
@@ -504,6 +518,110 @@ mod tests {
             panic!("expected a Ready message");
         };
         assert!(component_schemas.is_empty());
+    }
+
+    #[test]
+    fn deserializes_the_project_property_schema_from_the_ready_message() {
+        let json = serde_json::json!({
+            "config": {
+                "width": 640,
+                "height": 360,
+                "frameRate": {"numerator": 30, "denominator": 1},
+                "durationInFrames": 30
+            },
+            "componentSchemas": {},
+            "propertySchema": {
+                "title": {"type": "string", "label": "Title", "defaultValue": "Mikan"},
+                "accent": {"type": "color", "defaultValue": "#ff8800"},
+                "opacity": {"type": "number", "defaultValue": 1.0, "min": 0.0, "max": 1.0},
+                "visible": {"type": "boolean", "defaultValue": true},
+                "style": {"type": "select", "defaultValue": "bold", "options": ["bold", "light"]}
+            }
+        })
+        .to_string();
+
+        let ReadyMessage::Ready {
+            project_property_schema,
+            ..
+        } = serde_json::from_str(&json).unwrap()
+        else {
+            panic!("expected a Ready message");
+        };
+        let schema = project_property_schema.expect("a declared property schema");
+        assert_eq!(
+            schema.get("title"),
+            Some(&ComponentPropertyField::String {
+                label: Some("Title".to_owned()),
+                default_value: "Mikan".to_owned(),
+            })
+        );
+        assert_eq!(
+            schema.get("accent"),
+            Some(&ComponentPropertyField::Color {
+                label: None,
+                default_value: "#ff8800".to_owned(),
+            })
+        );
+        assert_eq!(
+            schema.get("opacity"),
+            Some(&ComponentPropertyField::Number {
+                label: None,
+                default_value: 1.0,
+                min: Some(0.0),
+                max: Some(1.0),
+                step: None,
+            })
+        );
+        assert_eq!(
+            schema.get("visible"),
+            Some(&ComponentPropertyField::Boolean {
+                label: None,
+                default_value: true,
+            })
+        );
+        assert_eq!(
+            schema.get("style"),
+            Some(&ComponentPropertyField::Select {
+                label: None,
+                default_value: "bold".to_owned(),
+                options: vec!["bold".to_owned(), "light".to_owned()],
+            })
+        );
+    }
+
+    #[test]
+    fn ready_message_without_a_project_property_schema_is_none() {
+        for json in [
+            serde_json::json!({
+                "config": {
+                    "width": 640,
+                    "height": 360,
+                    "frameRate": {"numerator": 30, "denominator": 1},
+                    "durationInFrames": 30
+                }
+            }),
+            // `null` is what the CLI sends when the entry never called
+            // defineProjectProperties(); an empty object would be a
+            // declared-but-empty schema.
+            serde_json::json!({
+                "config": {
+                    "width": 640,
+                    "height": 360,
+                    "frameRate": {"numerator": 30, "denominator": 1},
+                    "durationInFrames": 30
+                },
+                "propertySchema": null
+            }),
+        ] {
+            let ReadyMessage::Ready {
+                project_property_schema,
+                ..
+            } = serde_json::from_str(&json.to_string()).unwrap()
+            else {
+                panic!("expected a Ready message");
+            };
+            assert!(project_property_schema.is_none());
+        }
     }
 
     #[test]

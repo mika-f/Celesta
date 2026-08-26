@@ -14,6 +14,8 @@ import type {
 } from './render';
 import { listComponentSchemas } from './registry';
 import type { ComponentPropertySchema } from './registry';
+import { listProjectProperties } from './properties';
+import type { ProjectPropertyField } from './properties';
 import type { CompositionConfig, Scene, Time } from './scene';
 
 interface FrameRequest {
@@ -60,6 +62,7 @@ async function main(): Promise<void> {
   writeLine({
     config: mounted.config,
     componentSchemas: listComponentSchemas(),
+    propertySchema: listProjectProperties() ?? null,
   });
 
   let resolver: Resolver | null = null;
@@ -96,6 +99,7 @@ function writeLine(
     | {
         config: CompositionConfig;
         componentSchemas: Record<string, ComponentPropertySchema>;
+        propertySchema: Record<string, ProjectPropertyField> | null;
       }
     | { scene: Scene; audio: AudioClipDescriptor[] }
     | { components: ComponentResolution[] }
