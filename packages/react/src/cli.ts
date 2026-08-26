@@ -10,6 +10,7 @@ import type {
   EntryComponent,
   MountedComposition,
   ProjectFrame,
+  ResolutionRuntime,
   Resolver,
 } from './render';
 import { listComponentSchemas } from './registry';
@@ -25,6 +26,8 @@ interface FrameRequest {
 
 interface ResolveRequest {
   components: ComponentResolutionRequest[];
+  /** Absent from older bridges; resolved components then see frame 0. */
+  runtime?: ResolutionRuntime;
 }
 
 type Request = FrameRequest | ResolveRequest;
@@ -83,7 +86,7 @@ async function main(): Promise<void> {
     try {
       if (isResolveRequest(request)) {
         resolver ??= createResolver();
-        writeLine({ components: resolver.resolve(request.components) });
+        writeLine({ components: resolver.resolve(request.components, request.runtime) });
       } else {
         const { scene, audio } = mounted.renderAt(request.time, request.project ?? null);
         writeLine({ scene, audio });

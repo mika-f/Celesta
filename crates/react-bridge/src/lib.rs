@@ -249,6 +249,7 @@ impl ReactBridge {
                 layers: frame.layers,
                 tracks: frame.tracks,
             }),
+            runtime: None,
             components: None,
         };
         match self.request_response(request)? {
@@ -262,16 +263,28 @@ impl ReactBridge {
     /// registry without rendering the whole composition — one rendered layer
     /// list per request, in order, with `None` for names nothing registered.
     /// Used by the GPUI editor preview to place resolved component content at
-    /// `TimelineContent::Component` items it has already evaluated. Resolved
-    /// components render outside any real composition timeline, so hooks
-    /// like `useCurrentFrame()` see placeholder values there.
+    /// `TimelineContent::Component` items it has already evaluated. The
+    /// components' hooks see this composition's real static facts (from the
+    /// same `<Composition>` the handshake metadata was read from) and
+    /// `time` — normally the preview playhead, so `useCurrentFrame()`
+    /// matches what an export would render at that frame. Hook state still
+    /// persists across calls on the resolution-only root.
     pub fn resolve_components(
         &mut self,
         requests: &[ComponentResolutionRequest<'_>],
+        time: Time,
     ) -> Result<Vec<Option<Vec<Layer>>>, ReactBridgeError> {
         let request = Request {
             time: None,
             project: None,
+            runtime: Some(ResolutionRuntime {
+                width: self.metadata.width,
+                height: self.metadata.height,
+                fps: f64::from(self.metadata.frame_rate.numerator)
+                    / f64::from(self.metadata.frame_rate.denominator),
+                duration_in_frames: self.metadata.duration_in_frames,
+                time,
+            }),
             components: Some(
                 requests
                     .iter()
@@ -312,8 +325,26 @@ struct Request<'a> {
     time: Option<Time>,
     #[serde(skip_serializing_if = "Option::is_none")]
     project: Option<ProjectPayload<'a>>,
+    /// Composition facts plus the requested time a component-resolution
+    /// request's hooks should see (absent for frame requests, which carry
+    /// `time` instead).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    runtime: Option<ResolutionRuntime>,
     #[serde(skip_serializing_if = "Option::is_none")]
     components: Option<Vec<ComponentRequest<'a>>>,
+}
+
+/// The runtime context sent alongside component-resolution requests; the
+/// TypeScript side turns it into the `CompositionRuntimeContext` those
+/// components' `useCurrentFrame()`/`useVideoConfig()` read.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ResolutionRuntime {
+    width: u32,
+    height: u32,
+    fps: f64,
+    duration_in_frames: u64,
+    time: Time,
 }
 
 #[derive(Serialize)]

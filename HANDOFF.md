@@ -947,13 +947,22 @@ Three related gaps closed in one pass; they share one protocol change.
 - **Editor React preview** (`src/render.ts`'s new `createResolver()`,
   `src/cli.ts`, `crates/react-bridge/src/lib.rs`'s
   `resolve_components`, `crates/editor/src/main.rs`). A new protocol request
-  `{"components": [{component, props}]}` answers
+  `{"components": [{component, props}], "runtime": {width, height, fps,
+  durationInFrames, time}}` answers
   `{"components": [layers|null, ...]}`: each registered name renders against
   a second persistent reconciler root dedicated to resolution (hook state in
   resolved components survives across calls; unresolved names yield null).
-  Resolved components render outside any real composition timeline there, so
-  `useCurrentFrame()` sees placeholders in editor preview (the export path
-  resolves inside the real tree and is unaffected). The GPUI preview worker
+  The `runtime` object — added 2026-08-26; older bridges omit it and the
+  components then see frame-0 placeholders — carries the entry's own
+  `<Composition>` facts (the same ones the handshake metadata was read from)
+  plus the exact preview playhead, so resolved components'
+  `useCurrentFrame()`/`useVideoConfig()` match what an export renders at
+  that frame (`ReactBridge::resolve_components` takes the `Time` parameter
+  and derives the rest from its own metadata; the editor passes
+  `scene.time`). `<ProjectTimeline />`/`useProjectTrack()` inside a
+  *resolved* component still see empty content — threading the real
+  per-frame project layers into resolution requests is future work. The GPUI
+  preview worker
   owns an optional `ReactPreviewBridge` keyed by (node, cli script, entry) —
   respawned when `react_entry` changes, spawn/resolution failures remembered
   per context so a broken setup does not restart Node every frame. Each
@@ -973,9 +982,14 @@ Three related gaps closed in one pass; they share one protocol change.
 Verified: new integration tests (`shifts_media_inside_sequences_...`,
 `collects_conditionally_rendered_audio_with_keyframed_volume_...`,
 `reports_audio_clips_per_frame_...`,
-`resolves_individual_components_through_the_bridge_...` in
+`resolves_individual_components_through_the_bridge_...`,
+`resolves_components_against_the_requested_time_...` in
 `crates/react-bridge/tests/node_integration.rs` against new examples
-`with-sequence.tsx` and `with-conditional-audio.tsx`); exporter unit tests
+`with-sequence.tsx`, `with-conditional-audio.tsx`, and
+`with-frame-component.tsx` — the last one registers a component rendering
+`useCurrentFrame()`/`useVideoConfig()` and asserts two resolve calls on the
+same root report "frame 15 of 640 at 30fps" then "frame 7 of ...", proving
+resolved hooks follow the requested time); exporter unit tests
 for report merging and graph construction; end-to-end
 `mikan-exporter --react packages/react/examples/with-sequence.tsx out.mp4`
 produced h264+aac (ffprobe) whose extracted frame 45 shows only the
@@ -1127,14 +1141,16 @@ licensed VOICEROID voice sample.
   `properties.title` back through `useProjectProperty()` over an embedded
   `loadProjectFromString()` project, used by the project-property-schema
   integration test.
+- `packages/react/examples/with-frame-component.tsx`: registers a
+  `FrameCaption` component rendering `useCurrentFrame()`/`useVideoConfig()`,
+  used by the integration test asserting editor-path component resolution
+  sees the requested time.
 
 ## Validation baseline
 
-At this handoff, the workspace has 109 passing tests (105 from the previous
-handoff plus new `mikan-react-bridge` unit tests for `propertySchema`
-`Ready`-message parsing, a `mikan-react-bridge` integration test for a
-declared project property schema, and an `mikan-editor` document test for
-project property undo). The last checks were:
+At this handoff, the workspace has 110 passing tests (109 from the previous
+handoff plus a `mikan-react-bridge` integration test asserting editor-path
+component resolution sees the requested time). The last checks were:
 
 ```sh
 cargo test --workspace
@@ -1260,11 +1276,17 @@ Separately, still open from the original slice:
   ~~per-frame (conditionally rendered / keyframed) `<Audio>` support~~, and
   ~~React content in the GPUI editor preview with unresolved-component
   warnings~~ — all done, see "`<Sequence>`, per-frame audio collection, and
-  editor React preview" above. Still open within those: resolved components
-  render against placeholder hooks in the *editor* resolution path (the
-  export path is exact), and an `<Audio>` whose source runs out before its
-  window ends still fails that frame's decode (`mikan-media` errors at EOF;
-  same as project clips).
+  editor React preview" above. Still open within those: resolved components'
+  `useCurrentFrame()` in the *editor* resolution path was fixed (2026-08-26,
+  see "Editor React preview" above), though `<ProjectTimeline />`/
+  `<ProjectTrack />` inside a resolved component still see empty content
+  there; and media decoding past a source's end still fails that frame's
+  render — the sequential FFmpeg video session errors at EOF
+  (`mikan-media`'s `read_frame` reports an unexpected frame size when the
+  pipe ends) rather than freezing on the last decoded frame, which affects
+  project `Video` clips and React `<Video>` alike whose source time runs
+  past the file's end. (Audio does not have this problem: the mixer skips
+  silently past a source's last sample.)
 
 Before starting new work here, confirm scope with the user rather than
 assuming the full design doc.

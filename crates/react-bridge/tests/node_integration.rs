@@ -203,7 +203,9 @@ fn resolves_individual_components_through_the_bridge_when_node_is_available() {
         },
     ];
 
-    let resolved = bridge.resolve_components(&requests).unwrap();
+    let resolved = bridge
+        .resolve_components(&requests, Time::new(0, 30))
+        .unwrap();
     assert_eq!(resolved.len(), 2);
     let registered = resolved[0]
         .as_ref()
@@ -284,6 +286,47 @@ fn reports_a_declared_project_property_schema_when_node_is_available() {
     assert!(scene.layers.iter().any(|layer| matches!(
         &layer.content,
         LayerContent::Text { text, .. } if text == "Chapter 3"
+    )));
+}
+
+#[test]
+fn resolves_components_against_the_requested_time_when_node_is_available() {
+    let Some((node, cli_script, package_root)) = live_react_runtime() else {
+        return;
+    };
+
+    let entry = package_root.join("examples/with-frame-component.tsx");
+    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+
+    // The entry's own <Composition> declares 640x360@30fps; a resolved
+    // component's useVideoConfig() must see those same facts.
+    let request = [ComponentResolutionRequest {
+        component: "FrameCaption",
+        props: &BTreeMap::new(),
+    }];
+
+    let at_frame_fifteen = bridge
+        .resolve_components(&request, Time::new(15, 30))
+        .unwrap();
+    let layers = at_frame_fifteen[0]
+        .as_ref()
+        .expect("the registered component resolves");
+    assert!(layers.iter().any(|layer| matches!(
+        &layer.content,
+        LayerContent::Text { text, .. } if text == "frame 15 of 640 at 30fps"
+    )));
+
+    // A second call on the same persistent root follows the new time rather
+    // than staying on the first one (hook state persists; the clock moves).
+    let at_frame_seven = bridge
+        .resolve_components(&request, Time::new(7, 30))
+        .unwrap();
+    let layers = at_frame_seven[0]
+        .as_ref()
+        .expect("the registered component resolves");
+    assert!(layers.iter().any(|layer| matches!(
+        &layer.content,
+        LayerContent::Text { text, .. } if text == "frame 7 of 640 at 30fps"
     )));
 }
 

@@ -141,13 +141,13 @@ function readCompositionConfig(instance: HostNode): CompositionConfig {
   };
 }
 
-function rootWalkContext(config: PlaceholderConfig, time: Time): WalkContext {
+function rootWalkContext(fps: number, durationInFrames: number, time: Time): WalkContext {
   return {
     time,
-    fps: config.frameRate.numerator,
+    fps,
     originSec: 0,
     rangeStartSec: 0,
-    rangeEndSec: config.durationInFrames / config.frameRate.numerator,
+    rangeEndSec: durationInFrames / fps,
   };
 }
 
@@ -452,7 +452,12 @@ export function mount(defaultExport: EntryComponent): MountedComposition {
       renderTree(time, project, config);
       const instance = findCompositionInstance(container);
       const audio: AudioClipDescriptor[] = [];
-      const layers = walkChildren(instance, 'root', rootWalkContext(config, time), audio);
+      const layers = walkChildren(
+        instance,
+        'root',
+        rootWalkContext(config.frameRate.numerator, config.durationInFrames, time),
+        audio,
+      );
       return {
         scene: {
           width: config.width,
@@ -472,6 +477,22 @@ export interface ComponentResolutionRequest {
   props: Record<string, JsonValue>;
 }
 
+/**
+ * The composition facts a resolved component's hooks should see: everything
+ * `useVideoConfig()`/`useCurrentFrame()` read, matching the entry's own
+ * `<Composition>` (the Rust bridge derives it from the same handshake
+ * metadata the export path renders against), plus the exact frame time the
+ * resolution was requested for. Omitted by older bridges — components then
+ * see the placeholder runtime (frame 0) they always saw.
+ */
+export interface ResolutionRuntime {
+  width: number;
+  height: number;
+  fps: number;
+  durationInFrames: number;
+  time: Time;
+}
+
 /** One resolution outcome: the component's layers, or null when its name has no registerComponent() match. */
 export type ComponentResolution = Layer[] | null;
 
@@ -481,12 +502,14 @@ export interface Resolver {
    * persistent root (separate from the composition's, so hook state in
    * resolved components survives across calls exactly as it does for the
    * main tree), returning the layers each one produced — or null for a
-   * name with no matching registerComponent() call. Components see a
-   * placeholder runtime (frame 0): resolution happens outside any real
-   * composition timeline, so hooks like useCurrentFrame() have no
-   * meaningful value here.
+   * name with no matching registerComponent() call. `runtime`, when given,
+   * is what those components' `useCurrentFrame()`/`useVideoConfig()` see;
+   * without one they fall back to the placeholder frame-0 runtime.
    */
-  resolve(items: readonly ComponentResolutionRequest[]): (Layer[] | null)[];
+  resolve(
+    items: readonly ComponentResolutionRequest[],
+    runtime?: ResolutionRuntime,
+  ): (Layer[] | null)[];
 }
 
 /**
@@ -515,7 +538,8 @@ export function createResolver(): Resolver {
     );
 
   return {
-    resolve(items) {
+    resolve(items, runtime) {
+      const runtimeValue = runtime ?? PLACEHOLDER_RUNTIME;
       const element = React.createElement(
         ProjectLayersContext.Provider,
         { value: [] },
@@ -524,7 +548,7 @@ export function createResolver(): Resolver {
           { value: {} },
           React.createElement(
             CompositionRuntimeContext.Provider,
-            { value: PLACEHOLDER_RUNTIME },
+            { value: runtimeValue },
             React.createElement(ResolverHost, { items }),
           ),
         ),
@@ -532,7 +556,11 @@ export function createResolver(): Resolver {
       HostReconciler.flushSync(() => {
         HostReconciler.updateContainer(element, root, null, null);
       });
-      const placeholderContext = rootWalkContext(PLACEHOLDER_CONFIG, ZERO_TIME);
+      const walkContext = rootWalkContext(
+        runtimeValue.fps,
+        runtimeValue.durationInFrames,
+        runtime?.time ?? ZERO_TIME,
+      );
       return container.children.map((child, index) => {
         // An unresolved name renders the empty 'rawLayers' marker; anything
         // else is a resolved component's group (possibly one that rendered
@@ -541,7 +569,7 @@ export function createResolver(): Resolver {
           return null;
         }
         const audio: AudioClipDescriptor[] = [];
-        return walkChildren(child, `resolve.${index}`, placeholderContext, audio);
+        return walkChildren(child, `resolve.${index}`, walkContext, audio);
       });
     },
   };

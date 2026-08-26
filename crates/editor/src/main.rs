@@ -432,7 +432,7 @@ fn resolve_preview_components(
                 .iter()
                 .map(|(component, props)| ComponentResolutionRequest { component, props })
                 .collect();
-            match bridge.resolve_components(&resolution_requests) {
+            match bridge.resolve_components(&resolution_requests, scene.time) {
                 Ok(resolutions) => {
                     let mut cursor = 0;
                     let mut unresolved = Vec::new();
