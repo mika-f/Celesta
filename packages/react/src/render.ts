@@ -22,7 +22,7 @@ import type {
   Time,
 } from './scene';
 
-const HOST_TYPES = new Set(['composition', 'group', 'image', 'text', 'video', 'rawLayers']);
+const HOST_TYPES = new Set(['composition', 'group', 'image', 'text', 'video', 'audio', 'rawLayers']);
 const ZERO_TIME: Time = { value: 0, timescale: 1 };
 // Precision `<Video>`'s `startFrom`/computed `sourceTimeSeconds` are encoded
 // at when built back into a `Time` — comfortably finer than any video frame
@@ -46,9 +46,33 @@ export interface ProjectFrame {
   tracks: Record<string, Layer[]>;
 }
 
+/**
+ * One `<Audio>` element's fully-resolved props, collected once by
+ * `MountedComposition.collectAudioClips()` rather than per rendered frame —
+ * see that method's doc comment for why.
+ */
+export interface AudioClipDescriptor {
+  src: string;
+  startFrom: number;
+  playbackRate: number;
+  volume: number;
+  muted: boolean;
+}
+
 export interface MountedComposition {
   readonly config: CompositionConfig;
   renderAt(time: Time, project: ProjectFrame | null): Scene;
+  /**
+   * Walks the instance tree once and collects every `<Audio>` element found
+   * anywhere in it (including inside `<Group>`s), in tree order. `<Audio>`
+   * declarations are treated as static for the whole composition: this is a
+   * single tree walk, not something re-evaluated per requested frame, so an
+   * `<Audio>` that only conditionally renders for part of the composition
+   * (based on `useCurrentFrame()`, for example) is not supported — it will
+   * either always or never appear here depending on what it evaluates to at
+   * the time this walk runs.
+   */
+  collectAudioClips(): AudioClipDescriptor[];
 }
 
 function findCompositionInstance(container: RootContainer): HostNode {
@@ -185,11 +209,39 @@ function walkNode(node: HostNode, path: string, time: Time): Layer[] {
   if (node.type === 'rawLayers') {
     return (node.props.layers as Layer[] | undefined) ?? [];
   }
+  if (node.type === 'audio') {
+    // <Audio> contributes no visual Layer (there is no LayerContent audio
+    // variant — audio is a separate top-level AudioGraph). It is collected
+    // by collectAudioClips() instead, once, rather than handled here.
+    return [];
+  }
   return [buildLayer(node, path, time)];
 }
 
 function walkChildren(node: HostNode, parentPath: string, time: Time): Layer[] {
   return node.children.flatMap((child, index) => walkNode(child, `${parentPath}.${index}`, time));
+}
+
+function buildAudioClipDescriptor(props: Record<string, unknown>): AudioClipDescriptor {
+  if (typeof props.src !== 'string' || props.src.length === 0) {
+    throw new Error('<Audio> requires a non-empty `src` prop');
+  }
+  return {
+    src: props.src,
+    startFrom: numberOr(props.startFrom, 0),
+    playbackRate: numberOr(props.playbackRate, 1),
+    volume: numberOr(props.volume, 1),
+    muted: props.muted === true,
+  };
+}
+
+function collectAudioNodes(node: HostNode, results: AudioClipDescriptor[]): void {
+  if (node.type === 'audio') {
+    results.push(buildAudioClipDescriptor(node.props));
+  }
+  for (const child of node.children) {
+    collectAudioNodes(child, results);
+  }
 }
 
 export function mount(defaultExport: EntryComponent): MountedComposition {
@@ -249,6 +301,17 @@ export function mount(defaultExport: EntryComponent): MountedComposition {
         time,
         layers,
       };
+    },
+    collectAudioClips() {
+      // A real render at the real config (unlike the bootstrap pass above,
+      // which uses a placeholder config so it can run before config is
+      // known) so <Audio> elements gated behind useVideoConfig()/hooks that
+      // depend on real values evaluate the same way a frame render would.
+      renderTree(ZERO_TIME, { layers: [], tracks: {} }, config);
+      const instance = findCompositionInstance(container);
+      const clips: AudioClipDescriptor[] = [];
+      collectAudioNodes(instance, clips);
+      return clips;
     },
   };
 }

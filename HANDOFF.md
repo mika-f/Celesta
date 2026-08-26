@@ -297,8 +297,11 @@ entries, matching the architecture diagram's "React entry" path:
   sequential decoding session rather than spawning Node per frame.
 - `mikan-exporter --react <entry> <output.mp4>` renders every frame of the
   composition through the same `GpuRenderer` used for projects and encodes it
-  with FFmpeg. There is no audio graph for React entries yet, so the encoded
-  video is published directly without FFmpeg's separate mux stage.
+  with FFmpeg. When the composition has no audio (no `<Audio>` in the entry,
+  no companion project, or a companion project with no audio of its own), the
+  encoded video is still published directly without FFmpeg's separate mux
+  stage; see "`<Audio>` component and React export audio mixdown" below for
+  the case where it does.
 - `<Video>` is intentionally not implemented yet; only `Group`, `Image`, and
   `Text` layers are supported from React.
 - React entries do not yet integrate with the GPUI editor (no project
@@ -382,10 +385,12 @@ in any other React host.
     _and_progress/_cancellable]` take a `CompanionProject { project,
     project_asset_root }` alongside the entry. Internally,
     `visual_only_project()` clones the project and drops `Audio` timeline
-    items — `Evaluator::visual_layer` already evaluates those to no layer,
-    so this is a cheap explicit skip rather than a behavior change, and the
-    React export path doesn't mux any project audio yet regardless (see the
-    open `AudioGraph` item below). Every other content kind (`Video`,
+    items for *visual* evaluation — `Evaluator::visual_layer` already
+    evaluates those to no layer, so this is a cheap explicit skip rather than
+    a behavior change. This filtering is specific to the visual path: the
+    companion project's own audio still plays in the exported MP4, evaluated
+    unfiltered — see "`<Audio>` component and React export audio mixdown"
+    below. Every other content kind (`Video`,
     `Image`, `Text`, `Dialogue`, `Component`) is kept — before constructing
     an `Evaluator` and calling `scene_at(time)` once per frame, same as
     plain project export. When a companion project is present, the
@@ -504,9 +509,10 @@ in any other React host.
     resolved layer becomes a `group` wrapping the rendered `Text`, and the
     unresolved one stays a `missingComponent` layer with its original
     `component` name.
-  - **Not yet built**: an `AudioGraph` source for React entries.
-    Schema-based Project Properties (`defineProjectProperties`, GUI
-    Inspector generation).
+  - **Not yet built**: Schema-based Project Properties
+    (`defineProjectProperties`, GUI Inspector generation). An `AudioGraph`
+    source for React entries is done, see "`<Audio>` component and React
+    export audio mixdown" below.
 - **Component Property Schema** (`src/registry.ts`), now including GPUI
   editor integration. `registerComponent(name, component, schema?)` takes
   an optional third argument, a `ComponentPropertySchema<Props>` — a
@@ -707,6 +713,119 @@ in any other React host.
   real sequential decoding, not a frozen first frame) and correctly seeked
   when `startFrom` was set to a later point in the source, with a `<Text>`
   sibling compositing on top as expected.
+- **`<Audio>` component and React export audio mixdown** (2026-08-26;
+  `packages/react/src/components.ts`, `src/render.ts`, `src/cli.ts`,
+  `crates/react-bridge/src/lib.rs`, `crates/exporter/src/lib.rs`). Closes the
+  "no audio graph for React entries" gap noted above and in "Recommended next
+  work". Props (`AudioProps`): `src`, `startFrom?: number` (default 0,
+  matching `<Video>`), `playbackRate?: number` (default 1), `volume?: number`
+  (default 1), `muted?: boolean` (default false). Like `<Video>`, `<Audio>`
+  always plays synced to the whole composition's own clock from frame 0 —
+  there is no `<Sequence>`-style range offset — and `volume`/`muted` are
+  plain static values in this scope, not `Animatable`; per-frame-varying
+  volume automation for React-declared audio is not implemented.
+  - **Collection, not per-frame evaluation.** `<Audio>` elements produce no
+    `LayerContent` variant (`mikan_composition::Scene`/`LayerContent` stay
+    render-only, as intended — audio remains a separate top-level
+    `AudioGraph`): `render.ts`'s `walkNode` recognizes the `'audio'` host
+    type (added to `HOST_TYPES`) but returns no layer for it. Because
+    `<Audio>` declarations are static per this scope, they are gathered by
+    one dedicated evaluation rather than a per-frame protocol addition:
+    `mount()`'s returned `MountedComposition` gained `collectAudioClips()`,
+    which performs one additional real `renderAt`-shaped render (at time
+    zero, with the entry's real `CompositionConfig` — unlike the bootstrap
+    pass, which uses a placeholder config so it can run before config is
+    known) and then walks the resulting instance tree recursively
+    (`collectAudioNodes`, following `node.children` regardless of type, so
+    `<Audio>` nested inside `<Group>` is found too) collecting every
+    `audio`-typed node into a flat `AudioClipDescriptor[]`
+    (`{ src, startFrom, playbackRate, volume, muted }`, defaults already
+    resolved). `cli.ts` calls this once after `mount()` and includes the
+    result as a new `audioClips` field in the existing one-time `Ready` JSON
+    message, alongside `config`/`componentSchemas` — the same "piggyback on
+    the startup handshake instead of a new request/response round trip"
+    precedent `componentSchemas` already established. **Known limitation**:
+    since this is a single tree walk and not something re-evaluated per
+    requested frame, an `<Audio>` that only conditionally renders for part of
+    the composition (based on `useCurrentFrame()`, for example) is not
+    supported — it will either always or never appear in the collected list
+    depending on what it evaluates to at the time this one walk runs.
+  - **Rust-side parsing** (`crates/react-bridge/src/lib.rs`).
+    `ReactAudioClipDescriptor { src, start_from, playback_rate, volume,
+    muted }` is a real struct (not opaque JSON) mirroring `AudioClipDescriptor`
+    field-for-field, `#[serde(rename_all = "camelCase")]`.
+    `ReactCompositionMetadata` gained `audio_clips: Vec<ReactAudioClipDescriptor>`,
+    parsed from the `Ready` message's new `audioClips` field
+    (`#[serde(default, rename = "audioClips")]`, defaulting to empty exactly
+    like `componentSchemas` does) during `ReactBridge::spawn`'s handshake —
+    no new accessor beyond the existing `metadata()`. Two new unit tests
+    cover `Ready`-message deserialization with and without `audioClips`
+    present, mirroring the existing `componentSchemas` tests.
+  - **`mikan-exporter`'s audio graph construction**
+    (`crates/exporter/src/lib.rs`'s new `build_audio_graph`). Builds one
+    `mikan_composition::AudioGraph` per React export: React-declared clips
+    (from `metadata.audio_clips`, always) plus, when a companion project is
+    given, that project's own complete `Evaluator::audio_graph()` — called on
+    the project *unfiltered* (unlike the visual path's
+    `visual_only_project()`, which drops `TimelineContent::Audio` items
+    because they contribute nothing visually; the audio mixdown needs them to
+    actually play, so it deliberately does not reuse that filter). The
+    companion project supplies `sample_rate`/`master_volume` when present,
+    since its `AudioGraph` already carries authoritative values; otherwise a
+    new `DEFAULT_REACT_AUDIO_SAMPLE_RATE = 48_000` constant is used — there is
+    no project to source a sample rate from, and every checked-in example
+    project's `sampleRate` is already 48000, so this matches that existing
+    convention. Each React-declared clip becomes an `AudioClip` with `range`
+    spanning the full composition duration from `Time::ZERO` (`<Audio>` has
+    no project-relative range the way a project clip does),
+    `playback_rate`/`volume` wrapped as `Animatable::Static` (matching the
+    static-only scope above), and `source_start` built from `startFrom`
+    seconds via a `seconds_to_time` helper using the same
+    microsecond-timescale convention `render.ts`'s `secondsToTime` already
+    uses for `<Video>`. **Two asset roots, resolved the same way the visual
+    path already does it**: a React-declared clip's `src` is resolved
+    relative to the entry's own directory, a companion project's clip asset
+    relative to `project_asset_root` — both go through the existing
+    `absolutize_asset` helper (previously used only for visual layers/fonts)
+    before being added to the graph, so `mix_audio_graph_cancellable`'s
+    single `asset_root` parameter never actually needs to resolve a relative
+    path itself.
+  - **Two-stage export only when there is audio to mix.** `export_react_entry_impl`
+    now spawns the `ReactBridge` and builds this `AudioGraph` before deciding
+    how to render: if `graph.clips` is empty (no `<Audio>`, no companion
+    project, or a companion project with no audio of its own), the export
+    keeps today's exact behavior — one FFmpeg process renders frames straight
+    to the published output, `-an`, no mux stage, so silent exports are
+    unaffected and unregressed. If the graph has clips, video renders instead
+    into a temporary workspace file (mirroring plain project export's own
+    `tempdir_in`/`video.mp4` staging), then `mix_audio_graph_cancellable` (the
+    same function plain project export already uses) mixes the graph, then
+    the existing `mux_audio` (also shared with plain project export, unchanged)
+    muxes video and audio into the real published output over a second FFmpeg
+    process. `ReactVideoRequest`/`render_react_video` were refactored to take
+    the already-spawned `&mut ReactBridge` and `&ReactCompositionMetadata` as
+    parameters (previously `render_react_video` spawned the bridge itself),
+    since the caller now needs the metadata before deciding which rendering
+    path to take.
+  - Verified: two new `mikan-react-bridge` unit tests
+    (`deserializes_audio_clips_from_the_ready_message`,
+    `ready_message_without_audio_clips_defaults_to_empty`) cover the
+    `Ready`-message parsing; a new integration test
+    (`crates/react-bridge/tests/node_integration.rs`,
+    `collects_audio_clips_from_the_ready_message_when_node_is_available`,
+    against a new `packages/react/examples/with-audio.tsx` declaring
+    `startFrom={1} playbackRate={2} volume={0.5} muted={false}`) asserts the
+    collected `audio_clips` metadata exactly, and that the `<Audio>` element
+    contributes no layer to the rendered scene (only the entry's sibling
+    `<Text>` layer appears). End to end, a real `mikan-exporter --react`
+    export of an entry with `<Audio src="<absolute path to
+    examples/assets/voices/001.wav>" />` (default `startFrom`/`playbackRate`/
+    `volume`/`muted`) against the real Node/FFmpeg toolchain produced an MP4
+    with both an `h264` video stream and an `aac` audio stream at 48 kHz
+    stereo (confirmed with `ffprobe`), while re-exporting the pre-existing
+    `packages/react/examples/title.tsx` (no `<Audio>`, no companion project)
+    still produced a video-only MP4 with no `mixing audio`/`muxing MP4`
+    progress stages, confirming the silent path is unregressed.
 
 ### TypeScript type generation and the Project loader
 
@@ -836,12 +955,18 @@ licensed VOICEROID voice sample.
   startFrom={1} playbackRate={2} />`, used by `mikan-react-bridge`'s video
   timing integration test (no actual `clip.mp4` needed there — Node
   evaluates the layer tree without decoding).
+- `packages/react/examples/with-audio.tsx`: a `<Text>` alongside `<Audio
+  src="./voice.wav" startFrom={1} playbackRate={2} volume={0.5}
+  muted={false} />`, used by `mikan-react-bridge`'s audio-clip-collection
+  integration test (no actual `voice.wav` needed there either, for the same
+  reason).
 
 ## Validation baseline
 
-At this handoff, the workspace has 95 passing tests (94 from the previous
-handoff plus a new `mikan-react-bridge` integration test for `<Video>`
-timing). The last checks were:
+At this handoff, the workspace has 98 passing tests (95 from the previous
+handoff plus two new `mikan-react-bridge` unit tests for `audioClips`
+`Ready`-message deserialization and a new `mikan-react-bridge` integration
+test collecting `<Audio>` metadata). The last checks were:
 
 ```sh
 cargo test --workspace
@@ -883,6 +1008,21 @@ same frame. `useState` persisting across frames (a counter that only grows,
 checked by moving the requested time backward and confirming the value does
 not drop) was also verified manually via the CLI's stdin/stdout protocol
 directly.
+
+This session's sandbox had `node`/`pnpm` on `PATH` but not `ffmpeg`/`ffprobe`
+or an ALSA dev package, so `pnpm install && pnpm run codegen && pnpm run
+build` in `packages/react` and the full `mikan-react-bridge` integration
+suite (real Node, no skip) were run for real; `libasound2-dev`, `ffmpeg`, and
+`mesa-vulkan-drivers`/`libegl1` (software Vulkan, for `mikan-gpu-renderer`'s
+wgpu backend) were installed via `apt-get` to unblock `mikan-editor`'s build
+and a real `mikan-exporter --react` run respectively — neither is a repo
+change, just sandbox setup, and is not guaranteed present in a future
+session. With that in place, a real `mikan-exporter --react` export of an
+entry declaring `<Audio src="<absolute path to
+examples/assets/voices/001.wav>" />` alongside a `<Text>` was run end to end
+(see "`<Audio>` component and React export audio mixdown" above for the
+`ffprobe`-confirmed result), and re-exporting `packages/react/examples/
+title.tsx` (no audio) was re-verified to still skip the mux stage.
 
 There are future-incompatibility warnings in transitive dependencies
 `block 0.1.6` and `proc-macro-error2 2.0.1`; these are not current Mikan lint or
@@ -943,11 +1083,16 @@ Separately, still open from the original slice:
 
 - ~~A `<Video>` component in `packages/react`~~ — done, see "`<Video>`
   component" above.
-- An `AudioGraph` source for React entries so `mikan-exporter --react` can mux
-  audio instead of always publishing a silent MP4.
+- ~~An `AudioGraph` source for React entries so `mikan-exporter --react` can
+  mux audio instead of always publishing a silent MP4~~ — done, see
+  "`<Audio>` component and React export audio mixdown" above; a composition
+  with no audio still publishes a silent MP4 exactly as before. `<Audio>`'s
+  `volume`/`muted` are plain static values (not `Animatable`), and an
+  `<Audio>` that only conditionally renders for part of the composition is
+  not supported (see that section's "Known limitation").
 
-Before starting either of the above, confirm scope with the user rather
-than assuming the full design doc.
+Before starting new work here, confirm scope with the user rather than
+assuming the full design doc.
 
 Do not optimize preview presentation by letting GPUI and wgpu both present to
 the same window surface.

@@ -5,9 +5,12 @@
 // message, not part of the Scene contract itself.
 
 export type { AssetLocation } from './generated/AssetLocation';
+export type { AudioClip } from './generated/AudioClip';
+export type { AudioGraph } from './generated/AudioGraph';
 export type { EvaluatedTransform } from './generated/EvaluatedTransform';
 export type { Layer } from './generated/Layer';
 export type { LayerContent } from './generated/LayerContent';
+export type { MediaTiming } from './generated/MediaTiming';
 export type { Paint } from './generated/Paint';
 export type { Point } from './generated/Point';
 export type { Rational } from './generated/Rational';
