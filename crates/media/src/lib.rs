@@ -168,11 +168,12 @@ impl FfmpegBackend {
         if !source_time_seconds.is_finite() || source_time_seconds < 0.0 {
             return Err(MediaError::InvalidTimestamp(source_time_seconds));
         }
-        let video = self
-            .probe(path)?
+        let probe = self.probe(path)?;
+        let video = probe
             .video
             .clone()
             .ok_or_else(|| MediaError::NoVideoStream(path.to_owned()))?;
+        let source_time_seconds = clamp_to_source_end(source_time_seconds, &video, probe.duration);
         let timestamp = format!("{source_time_seconds:.9}");
         let output = Command::new(&self.ffmpeg)
             .args(["-v", "error", "-ss"])
@@ -223,11 +224,12 @@ impl FfmpegBackend {
         if !source_time_seconds.is_finite() || source_time_seconds < 0.0 {
             return Err(MediaError::InvalidTimestamp(source_time_seconds));
         }
-        let video = self
-            .probe(path)?
+        let probe = self.probe(path)?;
+        let video = probe
             .video
             .clone()
             .ok_or_else(|| MediaError::NoVideoStream(path.to_owned()))?;
+        let source_time_seconds = clamp_to_source_end(source_time_seconds, &video, probe.duration);
         let key = (request_id.to_owned(), path.to_owned());
         if let Some(session) = self.video_sessions.get_mut(&key) {
             if session
@@ -329,6 +331,14 @@ impl SequentialVideoSession {
         while actual < expected {
             match self.stdout.read(&mut pixels[actual..]) {
                 Ok(0) => {
+                    // Clean EOF: the source ran out while playback continued
+                    // into it (a clip whose window or rate outruns its
+                    // file). Freeze on the last decoded frame rather than
+                    // failing the caller's whole frame render; only a
+                    // session that never produced any frame stays an error.
+                    if let Some(frame) = self.last_frame.clone() {
+                        return Ok(frame);
+                    }
                     return Err(MediaError::UnexpectedFrameSize {
                         width: self.width,
                         height: self.height,
@@ -594,6 +604,40 @@ fn frame_byte_len(width: u32, height: u32) -> Result<usize, MediaError> {
         .and_then(|pixels| pixels.checked_mul(4))
         .and_then(|bytes| usize::try_from(bytes).ok())
         .ok_or(MediaError::FrameTooLarge { width, height })
+}
+
+/// Clamps a requested source time to just inside the source's final frame.
+/// FFmpeg's input seek only outputs frames at or after the target
+/// timestamp, so landing anywhere past the last frame's presentation time
+/// (container duration minus one nominal frame period) yields zero output;
+/// clamping there instead makes a clip whose playback outruns its file
+/// render the source's last frame. Sources without a usable probed duration
+/// or frame rate pass through untouched and keep the old error behavior.
+fn clamp_to_source_end(
+    source_time_seconds: f64,
+    video: &VideoStream,
+    format_duration: Option<Time>,
+) -> f64 {
+    let Some(frame_rate) = video
+        .frame_rate
+        .filter(|rate| rate.is_valid() && rate.numerator > 0)
+    else {
+        return source_time_seconds;
+    };
+    let seconds = match (format_duration, video.duration) {
+        (Some(format), Some(stream)) => format
+            .as_seconds()
+            .ok()
+            .zip(stream.as_seconds().ok())
+            .map(|(format, stream)| format.min(stream)),
+        (available, None) | (None, available) => available.and_then(|time| time.as_seconds().ok()),
+    }
+    .filter(|seconds| seconds.is_finite() && *seconds > 0.0);
+    let Some(seconds) = seconds else {
+        return source_time_seconds;
+    };
+    let frame_step = f64::from(frame_rate.denominator) / f64::from(frame_rate.numerator);
+    source_time_seconds.min((seconds - frame_step).max(0.0))
 }
 
 fn ensure_success(program: &'static str, output: &Output) -> Result<(), MediaError> {
@@ -939,6 +983,8 @@ impl From<TimeError> for AudioMixError {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use mikan_composition::{Animatable, AudioClip, ResolvedAsset, TimeRange};
 
     use super::*;
@@ -991,6 +1037,85 @@ mod tests {
     #[test]
     fn validates_rgba_frame_sizes() {
         assert_eq!(frame_byte_len(1920, 1080).unwrap(), 8_294_400);
+    }
+
+    #[test]
+    fn freezes_on_the_last_frame_past_the_source_end_when_ffmpeg_is_available() {
+        let Some((ffmpeg, ffprobe)) = find_ffmpeg_binaries() else {
+            eprintln!("skipping live FFmpeg test: ffmpeg/ffprobe were not found");
+            return;
+        };
+
+        // A one-second, 64x64 testsrc clip whose content visibly changes
+        // over time (so "the last frame" is distinguishable from the first).
+        let directory =
+            std::env::temp_dir().join(format!("mikan-media-eof-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        let clip = directory.join("clip.mp4");
+        let generated = Command::new(&ffmpeg)
+            .args([
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=size=64x64:rate=10",
+            ])
+            .args(["-t", "1", "-y"])
+            .arg(&clip)
+            .output()
+            .unwrap();
+        assert!(
+            generated.status.success(),
+            "{}",
+            String::from_utf8_lossy(&generated.stderr)
+        );
+
+        // One-shot decoding far past the end clamps to the source's final
+        // frame instead of failing with an unexpected frame size, and that
+        // frozen frame is a real decoded frame (different from the first).
+        let mut backend = FfmpegBackend::with_executables(&ffmpeg, &ffprobe);
+        let first = backend.decode_frame(&clip, 0.0).unwrap();
+        let overrun = backend.decode_frame(&clip, 60.0).unwrap();
+        assert_eq!((overrun.width, overrun.height), (64, 64));
+        assert_ne!(overrun.pixels, first.pixels);
+
+        // Sequential sessions freeze the same way while playback walks past
+        // the end, and repeated tail requests keep returning identical
+        // pixels.
+        let mut sequential = FfmpegBackend::with_executables(&ffmpeg, &ffprobe)
+            .with_sequential_video(Rational::new(10, 1));
+        let mut previous = sequential.decode_frame_for("clip", &clip, 0.0).unwrap();
+        for step in 1..40 {
+            previous = sequential
+                .decode_frame_for("clip", &clip, f64::from(step) * 0.1)
+                .unwrap_or_else(|error| panic!("frame {step} should decode: {error}"));
+        }
+        let tail_a = sequential.decode_frame_for("clip", &clip, 9.9).unwrap();
+        let tail_b = sequential.decode_frame_for("clip", &clip, 30.3).unwrap();
+        assert_eq!(tail_a.pixels, tail_b.pixels);
+        assert_eq!(tail_a.pixels, previous.pixels);
+
+        fs::remove_dir_all(&directory).ok();
+    }
+
+    fn find_ffmpeg_binaries() -> Option<(PathBuf, PathBuf)> {
+        if let Some(directory) = std::env::var_os("MIKAN_FFMPEG_DIR").map(PathBuf::from) {
+            let ffmpeg = directory.join("ffmpeg");
+            let ffprobe = directory.join("ffprobe");
+            if ffmpeg.is_file() && ffprobe.is_file() {
+                return Some((ffmpeg, ffprobe));
+            }
+        }
+        let which = |program: &str| {
+            Command::new("which")
+                .arg(program)
+                .output()
+                .ok()
+                .filter(|output| output.status.success())
+                .map(|output| PathBuf::from(String::from_utf8_lossy(&output.stdout).trim()))
+        };
+        Some((which("ffmpeg")?, which("ffprobe")?))
     }
 
     #[test]

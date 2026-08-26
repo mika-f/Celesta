@@ -23,8 +23,9 @@ The repository currently contains the first foundation:
 - `mikan-exporter`: frame-exact H.264/AAC MP4 export using the shared evaluator,
   GPU renderer, audio graph, and FFmpeg process boundary.
 - `mikan-media`: FFprobe metadata parsing, FFmpeg-backed exact-time RGBA video
-  decoding, and project-rate stereo audio decoding/mixing behind replaceable
-  process boundaries.
+  decoding (a clip whose playback outruns its source freezes on the last
+  frame rather than failing), and project-rate stereo audio decoding/mixing
+  behind replaceable process boundaries.
 - `mikan-renderer`: a deterministic CPU reference renderer, PNG encoder, and
   shared text rasterizer used to lock down composition behavior.
 - `mikan-gpu-renderer`: the `wgpu` production-renderer foundation with

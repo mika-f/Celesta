@@ -46,7 +46,7 @@ cargo test --workspace
 | `mikan-composition` | Renderer-independent scene types, exact rational time, transforms, animation evaluation, text styles, and audio graph types. |
 | `mikan-project` | Version 0 JSON project format, loading, semantic validation, references, and duration calculation. |
 | `mikan-evaluator` | Deterministic conversion from `Project` to a visual `Scene` at a time and to the complete `AudioGraph`. |
-| `mikan-media` | FFprobe metadata and FFmpeg exact-time RGBA video-frame decoding behind `VideoFrameDecoder`. |
+| `mikan-media` | FFprobe metadata and FFmpeg exact-time RGBA video-frame decoding behind `VideoFrameDecoder` (source overruns freeze on the final frame). |
 | `mikan-renderer` | Deterministic CPU reference renderer, PNG output, and the shared text rasterizer. |
 | `mikan-gpu-renderer` | `wgpu` renderer for images, video frames, styled text, nested transforms, opacity, offscreen readback, and renderer-owned surfaces. |
 | `mikan-exporter` | Deterministic frame-exact H.264/AAC MP4 export through the shared evaluator, GPU renderer, audio graph, and FFmpeg. Also exports React entries via `mikan-react-bridge`. |
@@ -1148,9 +1148,10 @@ licensed VOICEROID voice sample.
 
 ## Validation baseline
 
-At this handoff, the workspace has 110 passing tests (109 from the previous
-handoff plus a `mikan-react-bridge` integration test asserting editor-path
-component resolution sees the requested time). The last checks were:
+At this handoff, the workspace has 111 passing tests (110 from the previous
+handoff plus a live-FFmpeg `mikan-media` test freezing on the last frame
+past a source's end; it skips itself when ffmpeg/ffprobe are missing, or
+locates them via `MIKAN_FFMPEG_DIR`). The last checks were:
 
 ```sh
 cargo test --workspace
@@ -1276,17 +1277,20 @@ Separately, still open from the original slice:
   ~~per-frame (conditionally rendered / keyframed) `<Audio>` support~~, and
   ~~React content in the GPUI editor preview with unresolved-component
   warnings~~ — all done, see "`<Sequence>`, per-frame audio collection, and
-  editor React preview" above. Still open within those: resolved components'
-  `useCurrentFrame()` in the *editor* resolution path was fixed (2026-08-26,
-  see "Editor React preview" above), though `<ProjectTimeline />`/
-  `<ProjectTrack />` inside a resolved component still see empty content
-  there; and media decoding past a source's end still fails that frame's
-  render — the sequential FFmpeg video session errors at EOF
-  (`mikan-media`'s `read_frame` reports an unexpected frame size when the
-  pipe ends) rather than freezing on the last decoded frame, which affects
-  project `Video` clips and React `<Video>` alike whose source time runs
-  past the file's end. (Audio does not have this problem: the mixer skips
-  silently past a source's last sample.)
+  editor React preview" above. Resolved components' hooks now follow the
+  requested preview time (2026-08-26, see "Editor React preview" above);
+  `<ProjectTimeline />`/`<ProjectTrack />` inside a *resolved* component
+  still see empty project content there — threading real per-frame layers
+  into resolution requests is future work. Media decoding past a source's
+  end no longer fails the frame either (2026-08-26): `mikan-media` clamps
+  requested source times to the probed final frame's presentation time
+  (container/stream duration minus one nominal frame period — FFmpeg's input
+  seek only emits frames at or after the target) and sequential sessions
+  freeze on their last decoded frame at clean EOF, so a `Video` clip or
+  React `<Video>` whose playback outruns its file shows a held last frame in
+  both export and editor preview instead of erroring. Sources without a
+  usable duration/frame rate keep the old error; audio has always degraded
+  to silence past its source's end (the mixer skips exhausted sources).
 
 Before starting new work here, confirm scope with the user rather than
 assuming the full design doc.
