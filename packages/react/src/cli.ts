@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import * as readline from 'node:readline';
 
 import { mount } from './render';
-import type { EntryComponent, MountedComposition, ProjectFrame } from './render';
+import type { AudioClipDescriptor, EntryComponent, MountedComposition, ProjectFrame } from './render';
 import { listComponentSchemas } from './registry';
 import type { ComponentPropertySchema } from './registry';
 import type { CompositionConfig, Scene, Time } from './scene';
@@ -39,7 +39,20 @@ async function main(): Promise<void> {
     return;
   }
 
-  writeLine({ config: mounted.config, componentSchemas: listComponentSchemas() });
+  let audioClips: AudioClipDescriptor[];
+  try {
+    audioClips = mounted.collectAudioClips();
+  } catch (error) {
+    writeLine({ error: describeError(error) });
+    process.exitCode = 1;
+    return;
+  }
+
+  writeLine({
+    config: mounted.config,
+    componentSchemas: listComponentSchemas(),
+    audioClips,
+  });
 
   const rl = readline.createInterface({ input: process.stdin, terminal: false });
   for await (const line of rl) {
@@ -65,7 +78,11 @@ async function main(): Promise<void> {
 
 function writeLine(
   value:
-    | { config: CompositionConfig; componentSchemas: Record<string, ComponentPropertySchema> }
+    | {
+        config: CompositionConfig;
+        componentSchemas: Record<string, ComponentPropertySchema>;
+        audioClips: AudioClipDescriptor[];
+      }
     | { scene: Scene }
     | { error: string },
 ): void {

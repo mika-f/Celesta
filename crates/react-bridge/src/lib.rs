@@ -42,6 +42,26 @@ pub struct ReactCompositionMetadata {
     /// a `ReactBridge`. A registered component with no `schema` argument has
     /// no entry here.
     pub component_schemas: BTreeMap<String, ComponentPropertySchema>,
+    /// Every `<Audio>` element found anywhere in the entry's tree, collected
+    /// once by a dedicated real render at spawn time (see
+    /// `packages/react/src/render.ts`'s `collectAudioClips`), not
+    /// re-evaluated per requested frame. An `<Audio>` that only
+    /// conditionally renders for part of the composition is not supported;
+    /// see that method's doc comment.
+    pub audio_clips: Vec<ReactAudioClipDescriptor>,
+}
+
+/// One `<Audio>` element's fully-resolved props (`packages/react/src/
+/// components.ts`'s `AudioProps`), as collected by the TypeScript side and
+/// carried in the startup `Ready` message's `audioClips` field.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReactAudioClipDescriptor {
+    pub src: String,
+    pub start_from: f64,
+    pub playback_rate: f64,
+    pub volume: f64,
+    pub muted: bool,
 }
 
 /// One field of a `ComponentPropertySchema` declared on the TypeScript side
@@ -145,12 +165,14 @@ impl ReactBridge {
             ReadyMessage::Ready {
                 config,
                 component_schemas,
+                audio_clips,
             } => ReactCompositionMetadata {
                 width: config.width,
                 height: config.height,
                 frame_rate: config.frame_rate,
                 duration_in_frames: config.duration_in_frames,
                 component_schemas,
+                audio_clips,
             },
             ReadyMessage::Error { error } => return Err(ReactBridgeError::EntryFailed(error)),
         };
@@ -239,6 +261,8 @@ enum ReadyMessage {
         config: ReactCompositionConfig,
         #[serde(default, rename = "componentSchemas")]
         component_schemas: BTreeMap<String, ComponentPropertySchema>,
+        #[serde(default, rename = "audioClips")]
+        audio_clips: Vec<ReactAudioClipDescriptor>,
     },
     Error {
         error: String,
@@ -350,6 +374,7 @@ mod tests {
         let ReadyMessage::Ready {
             config,
             component_schemas,
+            ..
         } = serde_json::from_str(&json).unwrap()
         else {
             panic!("expected a Ready message");
@@ -394,5 +419,59 @@ mod tests {
             panic!("expected a Ready message");
         };
         assert!(component_schemas.is_empty());
+    }
+
+    #[test]
+    fn deserializes_audio_clips_from_the_ready_message() {
+        let json = serde_json::json!({
+            "config": {
+                "width": 640,
+                "height": 360,
+                "frameRate": {"numerator": 30, "denominator": 1},
+                "durationInFrames": 30
+            },
+            "audioClips": [
+                {
+                    "src": "./voice.wav",
+                    "startFrom": 1.0,
+                    "playbackRate": 2.0,
+                    "volume": 0.5,
+                    "muted": false
+                }
+            ]
+        })
+        .to_string();
+
+        let ReadyMessage::Ready { audio_clips, .. } = serde_json::from_str(&json).unwrap() else {
+            panic!("expected a Ready message");
+        };
+        assert_eq!(
+            audio_clips,
+            vec![ReactAudioClipDescriptor {
+                src: "./voice.wav".to_owned(),
+                start_from: 1.0,
+                playback_rate: 2.0,
+                volume: 0.5,
+                muted: false,
+            }]
+        );
+    }
+
+    #[test]
+    fn ready_message_without_audio_clips_defaults_to_empty() {
+        let json = serde_json::json!({
+            "config": {
+                "width": 640,
+                "height": 360,
+                "frameRate": {"numerator": 30, "denominator": 1},
+                "durationInFrames": 30
+            }
+        })
+        .to_string();
+
+        let ReadyMessage::Ready { audio_clips, .. } = serde_json::from_str(&json).unwrap() else {
+            panic!("expected a Ready message");
+        };
+        assert!(audio_clips.is_empty());
     }
 }

@@ -1,5 +1,6 @@
-export { Composition, Group, Image, Text, Video } from './components';
+export { Audio, Composition, Group, Image, Text, Video } from './components';
 export type {
+  AudioProps,
   CommonProps,
   CompositionProps,
   GroupProps,
@@ -9,10 +10,13 @@ export type {
 } from './components';
 export type {
   AssetLocation,
+  AudioClip,
+  AudioGraph,
   CompositionConfig,
   EvaluatedTransform,
   Layer,
   LayerContent,
+  MediaTiming,
   Paint,
   Point,
   Rational,

@@ -3,7 +3,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use mikan_composition::{EvaluatedTransform, Layer, LayerContent, Rational, TextStyle, Time};
-use mikan_react_bridge::{ComponentPropertyField, ProjectFrame, ReactBridge};
+use mikan_react_bridge::{
+    ComponentPropertyField, ProjectFrame, ReactAudioClipDescriptor, ReactBridge,
+};
 
 fn no_tracks() -> BTreeMap<String, Vec<Layer>> {
     BTreeMap::new()
@@ -54,6 +56,37 @@ fn computes_video_timing_from_the_composition_clock_when_node_is_available() {
     assert_eq!(asset.id, "./clip.mp4");
     assert_eq!(timing.playback_rate, 2.0);
     assert_eq!(timing.source_time_seconds, 2.0);
+}
+
+#[test]
+fn collects_audio_clips_from_the_ready_message_when_node_is_available() {
+    let Some((node, cli_script, package_root)) = live_react_runtime() else {
+        return;
+    };
+
+    let entry = package_root.join("examples/with-audio.tsx");
+    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+
+    // <Audio src="./voice.wav" startFrom={1} playbackRate={2} volume={0.5}
+    // muted={false} /> is collected once at spawn time, not per rendered
+    // frame, and contributes no visual layer to the rendered scene.
+    assert_eq!(
+        bridge.metadata().audio_clips,
+        vec![ReactAudioClipDescriptor {
+            src: "./voice.wav".to_owned(),
+            start_from: 1.0,
+            playback_rate: 2.0,
+            volume: 0.5,
+            muted: false,
+        }]
+    );
+
+    let scene = bridge.scene_at(Time::new(0, 30)).unwrap();
+    assert_eq!(scene.layers.len(), 1);
+    assert!(matches!(
+        &scene.layers[0].content,
+        LayerContent::Text { .. }
+    ));
 }
 
 #[test]

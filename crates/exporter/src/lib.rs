@@ -14,13 +14,25 @@ use std::sync::{
 };
 
 use mikan_composition::{
-    AssetLocation, Layer, LayerContent, Rational, ResolvedAsset, Time, TimeError,
+    Animatable, AssetLocation, AudioClip, AudioGraph, Layer, LayerContent, Rational, ResolvedAsset,
+    Time, TimeError, TimeRange,
 };
 use mikan_evaluator::{EvaluationError, Evaluator};
 use mikan_gpu_renderer::{GpuRenderError, GpuRenderOptions, GpuRenderer};
 use mikan_media::{AudioMixError, FfmpegBackend, mix_audio_graph_cancellable};
 use mikan_project::{LoadError, Project, TimelineContent};
-use mikan_react_bridge::{ProjectFrame, ReactBridge, ReactBridgeError};
+use mikan_react_bridge::{ProjectFrame, ReactBridge, ReactBridgeError, ReactCompositionMetadata};
+
+/// Sample rate used to mix a React export's audio when no companion project
+/// supplies its own `AudioGraph.sample_rate` (the project format has no
+/// default of its own; every checked-in example project's `sampleRate` is
+/// 48000, so this matches that convention).
+const DEFAULT_REACT_AUDIO_SAMPLE_RATE: u32 = 48_000;
+
+/// Timescale `<Audio>`'s `startFrom` (seconds) is converted at when built
+/// into a `Time`, matching `packages/react/src/render.ts`'s
+/// `SECONDS_TIMESCALE` for `<Video>`'s `startFrom`/`sourceTimeSeconds`.
+const AUDIO_SECONDS_TIMESCALE: u32 = 1_000_000;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ExportOptions {
@@ -64,8 +76,8 @@ pub struct CompanionProject<'a> {
 }
 
 struct ReactVideoRequest<'a> {
-    entry: &'a Path,
-    react_runtime: &'a ReactRuntimeOptions,
+    bridge: &'a mut ReactBridge,
+    metadata: &'a ReactCompositionMetadata,
     asset_root: &'a Path,
     project: Option<(&'a Project, &'a Path)>,
 }
@@ -360,6 +372,25 @@ impl Exporter {
             operation: "create output directory",
             source,
         })?;
+
+        let mut bridge = ReactBridge::spawn(&react_runtime.node, &react_runtime.cli_script, entry)
+            .map_err(ExportError::React)?;
+        let metadata = bridge.metadata().clone();
+        validate_dimensions(metadata.width, metadata.height)?;
+        if metadata.duration_in_frames == 0 {
+            return Err(ExportError::EmptyTimeline);
+        }
+
+        // React-declared <Audio> clips (always) plus a companion project's
+        // own, unfiltered AudioGraph (when present — unlike the visual path,
+        // which drops TimelineContent::Audio items via
+        // visual_only_project(), the audio mixdown needs them). An empty
+        // result (no <Audio>, no companion project, or a companion project
+        // with no audio of its own) keeps today's silent-export behavior:
+        // one ffmpeg process renders straight to the published output, no
+        // mux stage.
+        let graph = build_audio_graph(&metadata, asset_root, project)?;
+
         let final_file = tempfile::Builder::new()
             .prefix(".mikan-export-")
             .suffix(".mp4")
@@ -369,17 +400,66 @@ impl Exporter {
                 source,
             })?;
 
-        self.render_react_video(
-            ReactVideoRequest {
-                entry,
-                react_runtime,
+        if graph.clips.is_empty() {
+            self.render_react_video(
+                ReactVideoRequest {
+                    bridge: &mut bridge,
+                    metadata: &metadata,
+                    asset_root,
+                    project,
+                },
+                final_file.path(),
+                cancellation,
+                &mut progress,
+            )?;
+        } else {
+            let temporary = tempfile::Builder::new()
+                .prefix(".mikan-export-")
+                .tempdir_in(parent)
+                .map_err(|source| ExportError::Io {
+                    operation: "create export workspace",
+                    source,
+                })?;
+            let video_path = temporary.path().join("video.mp4");
+            self.render_react_video(
+                ReactVideoRequest {
+                    bridge: &mut bridge,
+                    metadata: &metadata,
+                    asset_root,
+                    project,
+                },
+                &video_path,
+                cancellation,
+                &mut progress,
+            )?;
+            ensure_not_cancelled(cancellation)?;
+            progress(ExportProgress::MixingAudio);
+            let duration = Time::frames(
+                i64::try_from(metadata.duration_in_frames)
+                    .map_err(|_| ExportError::TimelineTooLong)?,
+                metadata.frame_rate,
+            )
+            .map_err(ExportError::Time)?;
+            let mut audio_decoder = FfmpegBackend::with_executables(
+                self.options.ffmpeg.clone(),
+                self.options.ffprobe.clone(),
+            );
+            let audio = mix_audio_graph_cancellable(
+                &graph,
                 asset_root,
-                project,
-            },
-            final_file.path(),
-            cancellation,
-            &mut progress,
-        )?;
+                duration,
+                &mut audio_decoder,
+                || cancellation.is_cancelled(),
+            )
+            .map_err(|error| match error {
+                AudioMixError::Cancelled => ExportError::Cancelled,
+                error => ExportError::Audio(error),
+            })?;
+            ensure_not_cancelled(cancellation)?;
+            progress(ExportProgress::Muxing);
+            self.mux_audio(&video_path, final_file.path(), &audio, cancellation)?;
+        }
+
         ensure_not_cancelled(cancellation)?;
         if self.options.overwrite {
             final_file.persist(output_path)
@@ -491,14 +571,11 @@ impl Exporter {
         progress: &mut impl FnMut(ExportProgress),
     ) -> Result<(), ExportError> {
         let ReactVideoRequest {
-            entry,
-            react_runtime,
+            bridge,
+            metadata,
             asset_root,
             project,
         } = request;
-        let mut bridge = ReactBridge::spawn(&react_runtime.node, &react_runtime.cli_script, entry)
-            .map_err(ExportError::React)?;
-        let metadata = bridge.metadata().clone();
 
         let filtered_project = project.map(|(project, _)| visual_only_project(project));
         let project_evaluator = filtered_project
@@ -519,10 +596,6 @@ impl Exporter {
             .transpose()
             .map_err(ExportError::Evaluation)?
             .unwrap_or_default();
-        validate_dimensions(metadata.width, metadata.height)?;
-        if metadata.duration_in_frames == 0 {
-            return Err(ExportError::EmptyTimeline);
-        }
 
         let dimensions = format!("{}x{}", metadata.width, metadata.height);
         let rate = format!(
@@ -709,13 +782,16 @@ impl Default for Exporter {
     }
 }
 
-/// Drops `audio` timeline items before evaluating a companion project for a
-/// React export. `Evaluator::visual_layer` already evaluates an `audio` item
-/// to no layer (`TimelineContent::Audio { .. } => return Ok(None)`), so this
-/// filter is a cheap, explicit skip rather than a behavior change; the
-/// React export path doesn't mux any project audio yet regardless (see
-/// `HANDOFF.md`'s open `AudioGraph` item), so an `audio` item has nothing to
-/// contribute here either way. Every other kind reaches
+/// Drops `audio` timeline items before evaluating a companion project's
+/// *visual* content for a React export. `Evaluator::visual_layer` already
+/// evaluates an `audio` item to no layer (`TimelineContent::Audio { .. } =>
+/// return Ok(None)`), so this filter is a cheap, explicit skip rather than a
+/// behavior change; an `audio` item has nothing to contribute to
+/// `<ProjectTimeline />`/`<ProjectTrack />` either way. This filtering is
+/// specific to the visual path: the companion project's *audio* mixdown
+/// (`build_audio_graph` below) deliberately uses the project unfiltered, via
+/// `Evaluator::audio_graph()`, so its audio timeline items do play. Every
+/// other visual kind reaches
 /// `<ProjectTimeline />`/`<ProjectTrack />`: `component` items evaluate to
 /// `LayerContent::MissingComponent`, which `@mikan/react` resolves against
 /// its own `registerComponent()` registry (falling back to leaving
@@ -733,6 +809,83 @@ fn visual_only_project(project: &Project) -> Project {
             .retain(|item| !matches!(item.content, TimelineContent::Audio { .. }));
     }
     filtered
+}
+
+/// Builds the complete `AudioGraph` a React export mixes down: every
+/// React-declared `<Audio>` clip (`metadata.audio_clips`, always present
+/// once collected — see `ReactCompositionMetadata::audio_clips`) plus, when
+/// a companion project is given, that project's own complete, *unfiltered*
+/// `Evaluator::audio_graph()` (unlike the visual path's
+/// `visual_only_project()`, which drops `TimelineContent::Audio` items
+/// because they contribute nothing visually — the audio mixdown needs them
+/// to actually play). The companion project supplies the graph's
+/// `sample_rate`/`master_volume` when present, since it already carries
+/// authoritative values for those; otherwise `DEFAULT_REACT_AUDIO_SAMPLE_RATE`
+/// is used. React-declared clips always play synced to the whole
+/// composition's own clock from frame 0 (`range` spans the full composition
+/// duration), matching `<Audio>`'s documented behavior — there is no
+/// `<Sequence>`-style range offset. `<Audio>`'s `volume`/`muted` are plain
+/// static values in this scope (not per-frame automation), so they are
+/// wrapped as `Animatable::Static` rather than integrated from keyframes.
+fn build_audio_graph(
+    metadata: &ReactCompositionMetadata,
+    react_asset_root: &Path,
+    project: Option<(&Project, &Path)>,
+) -> Result<AudioGraph, ExportError> {
+    let mut graph = match project {
+        Some((project, project_asset_root)) => {
+            let evaluator = Evaluator::new(project).map_err(ExportError::Evaluation)?;
+            let mut graph = evaluator.audio_graph().map_err(ExportError::Evaluation)?;
+            for clip in &mut graph.clips {
+                absolutize_asset(&mut clip.asset, project_asset_root);
+            }
+            graph
+        }
+        None => AudioGraph {
+            sample_rate: DEFAULT_REACT_AUDIO_SAMPLE_RATE,
+            master_volume: 1.0,
+            clips: Vec::new(),
+        },
+    };
+
+    if !metadata.audio_clips.is_empty() {
+        let duration = Time::frames(
+            i64::try_from(metadata.duration_in_frames).map_err(|_| ExportError::TimelineTooLong)?,
+            metadata.frame_rate,
+        )
+        .map_err(ExportError::Time)?;
+        for (index, clip) in metadata.audio_clips.iter().enumerate() {
+            let mut asset = ResolvedAsset {
+                id: clip.src.clone(),
+                location: AssetLocation::File {
+                    path: clip.src.clone(),
+                },
+            };
+            absolutize_asset(&mut asset, react_asset_root);
+            graph.clips.push(AudioClip {
+                id: format!("react-audio:{index}"),
+                asset,
+                range: TimeRange {
+                    start: Time::ZERO,
+                    duration,
+                },
+                source_start: seconds_to_time(clip.start_from),
+                source_duration: None,
+                playback_rate: Animatable::Static(clip.playback_rate),
+                volume: Animatable::Static(clip.volume),
+                muted: clip.muted,
+            });
+        }
+    }
+
+    Ok(graph)
+}
+
+fn seconds_to_time(seconds: f64) -> Time {
+    Time::new(
+        (seconds * f64::from(AUDIO_SECONDS_TIMESCALE)).round() as i64,
+        AUDIO_SECONDS_TIMESCALE,
+    )
 }
 
 /// Rewrites a project-evaluated layer tree's relative asset paths into
