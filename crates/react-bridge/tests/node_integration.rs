@@ -2,13 +2,28 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use mikan_composition::{EvaluatedTransform, Layer, LayerContent, Rational, TextStyle, Time};
+use mikan_composition::{
+    Animatable, EvaluatedTransform, Layer, LayerContent, Rational, TextStyle, Time,
+};
 use mikan_react_bridge::{
-    ComponentPropertyField, ProjectFrame, ReactAudioClipDescriptor, ReactBridge,
+    ComponentPropertyField, ComponentResolutionRequest, ProjectFrame, ReactBridge,
 };
 
 fn no_tracks() -> BTreeMap<String, Vec<Layer>> {
     BTreeMap::new()
+}
+
+/// Depth-first iteration over a layer tree — `<Sequence>` wraps its children
+/// in a group, so content of interest can be nested.
+fn all_layers(layers: &[Layer]) -> Vec<&Layer> {
+    let mut all = Vec::new();
+    for layer in layers {
+        if let LayerContent::Group { layers: children } = &layer.content {
+            all.extend(all_layers(children));
+        }
+        all.push(layer);
+    }
+    all
 }
 
 #[test]
@@ -59,7 +74,7 @@ fn computes_video_timing_from_the_composition_clock_when_node_is_available() {
 }
 
 #[test]
-fn collects_audio_clips_from_the_ready_message_when_node_is_available() {
+fn reports_audio_clips_per_frame_when_node_is_available() {
     let Some((node, cli_script, package_root)) = live_react_runtime() else {
         return;
     };
@@ -68,25 +83,139 @@ fn collects_audio_clips_from_the_ready_message_when_node_is_available() {
     let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
 
     // <Audio src="./voice.wav" startFrom={1} playbackRate={2} volume={0.5}
-    // muted={false} /> is collected once at spawn time, not per rendered
-    // frame, and contributes no visual layer to the rendered scene.
-    assert_eq!(
-        bridge.metadata().audio_clips,
-        vec![ReactAudioClipDescriptor {
-            src: "./voice.wav".to_owned(),
-            start_from: 1.0,
-            playback_rate: 2.0,
-            volume: 0.5,
-            muted: false,
-        }]
-    );
-
-    let scene = bridge.scene_at(Time::new(0, 30)).unwrap();
-    assert_eq!(scene.layers.len(), 1);
+    // muted={false} /> is reported by every rendered frame's evaluation
+    // (gathered during the same tree walk as the layers), and contributes no
+    // visual layer itself.
+    let evaluation = bridge.evaluate_at(Time::new(0, 30), None).unwrap();
+    assert_eq!(evaluation.scene.layers.len(), 1);
     assert!(matches!(
-        &scene.layers[0].content,
+        &evaluation.scene.layers[0].content,
         LayerContent::Text { .. }
     ));
+    assert_eq!(evaluation.audio.len(), 1);
+    let clip = &evaluation.audio[0];
+    assert_eq!(clip.src, "./voice.wav");
+    assert_eq!(clip.source_start, 1.0);
+    assert_eq!(clip.playback_rate, Animatable::Static(2.0));
+    assert_eq!(clip.volume, Animatable::Static(0.5));
+    assert!(!clip.muted);
+    // Bare <Audio> spans the whole composition.
+    assert_eq!(clip.start, 0.0);
+    assert_eq!(clip.duration, 1.0);
+}
+
+#[test]
+fn shifts_media_inside_sequences_when_node_is_available() {
+    let Some((node, cli_script, package_root)) = live_react_runtime() else {
+        return;
+    };
+
+    let entry = package_root.join("examples/with-sequence.tsx");
+    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+
+    // Frame 30 starts the first sequence; the video inside it plays synced
+    // to the sequence's own clock (startFrom={1} playbackRate={2}), so at
+    // frame 45 — half a second into the sequence — sourceTimeSeconds is
+    // 1 + 0.5 * 2 = 2.0, exactly what the same props produce unsequenced at
+    // frame 15.
+    let mid = bridge.evaluate_at(Time::new(45, 30), None).unwrap();
+    let video = all_layers(&mid.scene.layers)
+        .into_iter()
+        .find_map(|layer| match &layer.content {
+            LayerContent::Video { timing, .. } => Some(timing),
+            _ => None,
+        })
+        .expect("the sequenced video renders from its sequence's window on");
+    assert_eq!(video.source_time_seconds, 2.0);
+
+    // The audio inside that sequence is audible from the sequence's start to
+    // the end of the composition, starting at its own local zero.
+    assert_eq!(mid.audio.len(), 1);
+    assert_eq!(mid.audio[0].src, "./voice.wav");
+    assert_eq!(mid.audio[0].start, 1.0);
+    assert_eq!(mid.audio[0].duration, 2.0);
+    assert_eq!(mid.audio[0].source_start, 0.0);
+
+    // Before the sequence starts: neither the video nor the audio exists,
+    // and neither does the second sequence's text (frames 60-89 only).
+    let early = bridge.evaluate_at(Time::ZERO, None).unwrap();
+    assert_eq!(early.scene.layers.len(), 0);
+    assert_eq!(early.audio.len(), 0);
+
+    // Inside the second sequence, useCurrentFrame() reports the shifted
+    // local clock: at composition frame 75 the text says "frame 15 inside".
+    let late = bridge.evaluate_at(Time::new(75, 30), None).unwrap();
+    assert!(all_layers(&late.scene.layers).iter().any(|layer| matches!(
+        &layer.content,
+        LayerContent::Text { text, .. } if text == "frame 15 inside"
+    )));
+}
+
+#[test]
+fn collects_conditionally_rendered_audio_with_keyframed_volume_when_node_is_available() {
+    let Some((node, cli_script, package_root)) = live_react_runtime() else {
+        return;
+    };
+
+    let entry = package_root.join("examples/with-conditional-audio.tsx");
+    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+
+    // The <Audio> is behind `{frame >= 15 && ...}`, so frames before 15
+    // report nothing while later frames report it with its keyframed volume
+    // animation intact.
+    let before = bridge.evaluate_at(Time::ZERO, None).unwrap();
+    assert_eq!(before.audio.len(), 0);
+
+    let after = bridge.evaluate_at(Time::new(20, 30), None).unwrap();
+    assert_eq!(after.audio.len(), 1);
+    let clip = &after.audio[0];
+    assert_eq!(clip.src, "./voice.wav");
+    assert_eq!(clip.start, 0.0);
+    assert_eq!(clip.duration, 2.0);
+    let Animatable::Keyframes(volume) = &clip.volume else {
+        panic!("expected the declared keyframed volume to survive collection");
+    };
+    assert_eq!(volume.keyframes.len(), 2);
+    assert_eq!(volume.keyframes[0].value, 0.25);
+    assert_eq!(volume.keyframes[1].value, 1.0);
+}
+
+#[test]
+fn resolves_individual_components_through_the_bridge_when_node_is_available() {
+    let Some((node, cli_script, package_root)) = live_react_runtime() else {
+        return;
+    };
+
+    let entry = package_root.join("examples/with-registered-component.tsx");
+    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+
+    let mut props = BTreeMap::new();
+    props.insert("bossName".to_owned(), serde_json::json!("Golem"));
+    props.insert("level".to_owned(), serde_json::json!(42));
+    let requests = [
+        ComponentResolutionRequest {
+            component: "BossIntroduction",
+            props: &props,
+        },
+        ComponentResolutionRequest {
+            component: "SomeOtherThing",
+            props: &BTreeMap::new(),
+        },
+    ];
+
+    let resolved = bridge.resolve_components(&requests).unwrap();
+    assert_eq!(resolved.len(), 2);
+    let registered = resolved[0]
+        .as_ref()
+        .expect("the registered component resolves");
+    assert!(registered.iter().any(|layer| matches!(
+        &layer.content,
+        LayerContent::Text { text, .. } if text == "Golem (Lv.42)"
+    )));
+    assert!(
+        resolved[1].is_none(),
+        "an unregistered name resolves to none"
+    );
 }
 
 #[test]

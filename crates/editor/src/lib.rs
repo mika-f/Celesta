@@ -180,10 +180,16 @@ impl EditorDocument {
     pub fn load(path: impl AsRef<Path>) -> Result<Self, EditorDocumentError> {
         let path = path.as_ref();
         let project = Project::load(path).map_err(EditorDocumentError::Load)?;
+        // Canonicalize so paths serialized relative to the root
+        // (`serialized_asset_path`) resolve back to exactly the same
+        // absolute paths — on macOS, `/var` is a symlink to `/private/var`,
+        // and mixing canonicalized input paths with a non-canonicalized
+        // root would break that round trip.
+        let path = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
         let asset_root = path
             .parent()
             .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
-        Self::new(project, Some(path.to_path_buf()), asset_root)
+        Self::new(project, Some(path), asset_root)
     }
 
     pub fn from_json(

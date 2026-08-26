@@ -31,21 +31,27 @@ The repository currently contains the first foundation:
   offscreen image/video/text composition, nested transforms, opacity, painter
   ordering, and RGBA readback.
 - `mikan-react-bridge`: spawns the `@mikan/react` Node.js runtime as one
-  long-lived process per composition and requests the evaluated `Scene` for
-  each exact frame time over a JSON stdin/stdout pipe.
+  long-lived process per composition and requests the evaluated `Scene`
+  (plus that frame's `<Audio>` clips) for each exact frame time over a JSON
+  stdin/stdout pipe, or resolves individual registered components for the
+  editor preview.
 - `packages/react` (`@mikan/react`, TypeScript, managed with pnpm): declarative
-  `Composition`, `Group`, `Image`, `Text`, and `Video` components for
-  authoring a React entry, evaluated through a real `react-reconciler` host,
-  plus the `mikan-react-render` CLI that bundles an entry with esbuild and
-  evaluates it on request. `<Video src="..." startFrom={seconds}
-  playbackRate={rate} />` plays synced to the composition's own clock from
-  frame 0 (there is no `<Sequence>`-style offset yet); `mikan-exporter`
-  attaches a sequential FFmpeg decoder to any React export so it decodes,
-  same as a project timeline's `Video` content. Because the reconciler
+  `Composition`, `Sequence`, `Group`, `Image`, `Text`, `Video`, and `Audio`
+  components for authoring a React entry, evaluated through a real
+  `react-reconciler` host, plus the `mikan-react-render` CLI that bundles an
+  entry with esbuild and evaluates it on request. `<Sequence from={frames}
+  durationInFrames={frames}>` shifts its children onto an enclosing
+  timeline's clock (origins add and audible windows intersect when nested),
+  so `<Video>`/`<Audio>` inside play synced to their sequence rather than the
+  whole composition; `mikan-exporter` attaches a sequential FFmpeg decoder to
+  any React export so `<Video>` decodes, same as a project timeline's `Video`
+  content, and mixes every frame-reported `<Audio>` into the exported MP4
+  (a composition with no audio still publishes a silent MP4). Because the reconciler
   drives real React rendering, ordinary hooks work: `useState`/`useEffect`
   and this package's own `useCurrentFrame()`, `useCurrentTime()`, and
   `useVideoConfig()`.
-  `interpolate()` and `spring()` (plus a small `Easings` curve set) turn a
+  `interpolate()` and `spring()` (plus an `Easings` curve set covering the
+  usual sine/quad/cubic/.../bounce families) turn a
   frame number into an animated value — `spring()` is a damped harmonic
   oscillator's analytic step response, not a physics simulation stepped
   frame by frame, so it evaluates any single frame directly rather than
@@ -259,18 +265,21 @@ produces from a project, so both sources feed the identical renderer input.
 `mikan-react-bridge` spawns the `@mikan/react` Node.js CLI as one long-lived
 process per composition (mirroring `mikan-media`'s sequential video decoding
 session) and exchanges one JSON request/response pair per exact frame time
-over its stdio pipe, rather than spawning Node once per frame. React entries
-do not yet integrate with the GPUI editor's timeline/track model, project
-persistence, or audio graph; `mikan-exporter --react` renders a React entry
-straight to a silent MP4.
+over its stdio pipe, rather than spawning Node once per frame. A project's
+`react_entry` setting also lets the GPUI editor preview resolve
+`component` timeline items against the entry's registered components —
+unresolved ones surface as a warning overlay instead of failing the whole
+preview. `mikan-exporter --react` renders a React entry to an MP4, muxing
+the composition's `<Audio>` clips (plus a companion project's own audio)
+when any exist and publishing a silent MP4 directly when none do.
 
 `packages/react` can also read a `.mikan.json` project file directly, through
 `loadProject()`/`loadProjectFromString()` and the generated `Project` type.
 `<ProjectProvider project={...}>` and `useProject()` expose that data as
 plain React context. `<ProjectTimeline />` goes further and embeds the
-project's own evaluated visual content (`video`/`image`/`text` timeline
-items only in this first pass; `audio`, `dialogue`, and `component` items
-are dropped): `mikan-exporter --react <entry> --project <project.mikan.json>`
+project's own evaluated visual content (`video`/`image`/`text`,
+`dialogue`, and `component` items; only `audio` items are dropped from the
+visual path, since they contribute no layer): `mikan-exporter --react <entry> --project <project.mikan.json>`
 evaluates the project once per frame through the same `mikan-evaluator` a
 plain project export uses, and embeds the resulting layers directly in that
 frame's request to Node — `<ProjectTimeline />` cannot ask Rust to evaluate

@@ -2,8 +2,9 @@
   "compilerOptions": {
     "target": "ES2021",
     "lib": ["ES2021"],
-    "module": "CommonJS",
-    "moduleResolution": "Node",
+    "types": ["node"],
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
     "declaration": true,
     "outDir": "dist",
     "rootDir": "src",

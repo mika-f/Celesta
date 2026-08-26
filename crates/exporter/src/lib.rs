@@ -14,14 +14,16 @@ use std::sync::{
 };
 
 use mikan_composition::{
-    Animatable, AssetLocation, AudioClip, AudioGraph, Layer, LayerContent, Rational, ResolvedAsset,
-    Time, TimeError, TimeRange,
+    AssetLocation, AudioClip, AudioGraph, Layer, LayerContent, Rational, ResolvedAsset, Time,
+    TimeError, TimeRange,
 };
 use mikan_evaluator::{EvaluationError, Evaluator};
 use mikan_gpu_renderer::{GpuRenderError, GpuRenderOptions, GpuRenderer};
 use mikan_media::{AudioMixError, FfmpegBackend, mix_audio_graph_cancellable};
 use mikan_project::{LoadError, Project, TimelineContent};
-use mikan_react_bridge::{ProjectFrame, ReactBridge, ReactBridgeError, ReactCompositionMetadata};
+use mikan_react_bridge::{
+    ProjectFrame, ReactAudioClipDescriptor, ReactBridge, ReactBridgeError, ReactCompositionMetadata,
+};
 
 /// Sample rate used to mix a React export's audio when no companion project
 /// supplies its own `AudioGraph.sample_rate` (the project format has no
@@ -80,6 +82,10 @@ struct ReactVideoRequest<'a> {
     metadata: &'a ReactCompositionMetadata,
     asset_root: &'a Path,
     project: Option<(&'a Project, &'a Path)>,
+    /// Every frame's reported `<Audio>` clips accumulate here (one entry per
+    /// clip per frame; duplicates are merged afterwards — see
+    /// `merge_react_audio_clips`).
+    audio: &'a mut Vec<ReactAudioClipDescriptor>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -247,9 +253,9 @@ impl Exporter {
         Ok(())
     }
 
-    /// Exports a React composition entry to MP4. Unlike project export, this
-    /// path currently has no audio graph, so the encoded video is published
-    /// directly instead of going through a separate mux stage.
+    /// Exports a React composition entry to MP4. When the composition (and
+    /// any companion project) declares no audio, the encoded video is
+    /// published directly instead of going through a separate mux stage.
     pub fn export_react_entry(
         &self,
         entry: impl AsRef<Path>,
@@ -366,7 +372,19 @@ impl Exporter {
         ensure_not_cancelled(cancellation)?;
         validate_output(output_path, self.options.overwrite)?;
 
+        // Absolutize the asset roots up front: `absolutize_layers` and
+        // `build_audio_graph` rewrite relative asset paths into absolute ones
+        // by joining them with these roots, and a relative root (an entry
+        // path passed relative to the current directory) would produce a
+        // still-relative "absolute" path that the audio mixer then joins
+        // again.
         let asset_root = entry.parent().unwrap_or_else(|| Path::new("."));
+        let asset_root = &fs::canonicalize(asset_root).unwrap_or_else(|_| asset_root.to_owned());
+        let project = project.map(|(project, project_asset_root)| {
+            let project_asset_root = fs::canonicalize(project_asset_root)
+                .unwrap_or_else(|_| project_asset_root.to_owned());
+            (project, project_asset_root)
+        });
         let parent = output_path.parent().unwrap_or_else(|| Path::new("."));
         fs::create_dir_all(parent).map_err(|source| ExportError::Io {
             operation: "create output directory",
@@ -381,16 +399,13 @@ impl Exporter {
             return Err(ExportError::EmptyTimeline);
         }
 
-        // React-declared <Audio> clips (always) plus a companion project's
-        // own, unfiltered AudioGraph (when present — unlike the visual path,
-        // which drops TimelineContent::Audio items via
-        // visual_only_project(), the audio mixdown needs them). An empty
-        // result (no <Audio>, no companion project, or a companion project
-        // with no audio of its own) keeps today's silent-export behavior:
-        // one ffmpeg process renders straight to the published output, no
-        // mux stage.
-        let graph = build_audio_graph(&metadata, asset_root, project)?;
-
+        // Video frames stream into a staged file first; every frame's
+        // response reports the `<Audio>` clips its tree declares (see
+        // ReactAudioClipDescriptor), which accumulate into the export's
+        // AudioGraph afterwards. An empty result (no `<Audio>` anywhere it
+        // renders, no companion project audio) keeps the silent-export
+        // behavior: the staged video is published directly, no mix/mux
+        // stage.
         let final_file = tempfile::Builder::new()
             .prefix(".mikan-export-")
             .suffix(".mp4")
@@ -399,40 +414,28 @@ impl Exporter {
                 operation: "create temporary output",
                 source,
             })?;
+        let mut react_audio = Vec::new();
+        let project_refs = project
+            .as_ref()
+            .map(|(project, root)| (*project, root.as_path()));
+        self.render_react_video(
+            ReactVideoRequest {
+                bridge: &mut bridge,
+                metadata: &metadata,
+                asset_root,
+                project: project_refs,
+                audio: &mut react_audio,
+            },
+            final_file.path(),
+            cancellation,
+            &mut progress,
+        )?;
+        ensure_not_cancelled(cancellation)?;
 
-        if graph.clips.is_empty() {
-            self.render_react_video(
-                ReactVideoRequest {
-                    bridge: &mut bridge,
-                    metadata: &metadata,
-                    asset_root,
-                    project,
-                },
-                final_file.path(),
-                cancellation,
-                &mut progress,
-            )?;
+        let graph = build_audio_graph(&react_audio, asset_root, project_refs)?;
+        let output_file = if graph.clips.is_empty() {
+            final_file
         } else {
-            let temporary = tempfile::Builder::new()
-                .prefix(".mikan-export-")
-                .tempdir_in(parent)
-                .map_err(|source| ExportError::Io {
-                    operation: "create export workspace",
-                    source,
-                })?;
-            let video_path = temporary.path().join("video.mp4");
-            self.render_react_video(
-                ReactVideoRequest {
-                    bridge: &mut bridge,
-                    metadata: &metadata,
-                    asset_root,
-                    project,
-                },
-                &video_path,
-                cancellation,
-                &mut progress,
-            )?;
-            ensure_not_cancelled(cancellation)?;
             progress(ExportProgress::MixingAudio);
             let duration = Time::frames(
                 i64::try_from(metadata.duration_in_frames)
@@ -457,14 +460,23 @@ impl Exporter {
             })?;
             ensure_not_cancelled(cancellation)?;
             progress(ExportProgress::Muxing);
-            self.mux_audio(&video_path, final_file.path(), &audio, cancellation)?;
-        }
+            let muxed_file = tempfile::Builder::new()
+                .prefix(".mikan-export-")
+                .suffix(".mp4")
+                .tempfile_in(parent)
+                .map_err(|source| ExportError::Io {
+                    operation: "create temporary output",
+                    source,
+                })?;
+            self.mux_audio(final_file.path(), muxed_file.path(), &audio, cancellation)?;
+            muxed_file
+        };
 
         ensure_not_cancelled(cancellation)?;
         if self.options.overwrite {
-            final_file.persist(output_path)
+            output_file.persist(output_path)
         } else {
-            final_file.persist_noclobber(output_path)
+            output_file.persist_noclobber(output_path)
         }
         .map_err(|error| {
             if error.error.kind() == io::ErrorKind::AlreadyExists {
@@ -575,6 +587,7 @@ impl Exporter {
             metadata,
             asset_root,
             project,
+            audio: react_audio,
         } = request;
 
         let filtered_project = project.map(|(project, _)| visual_only_project(project));
@@ -684,8 +697,8 @@ impl Exporter {
                     )
                     .transpose()
                     .map_err(ExportError::Evaluation)?;
-                let mut scene = bridge
-                    .scene_at_with_project(
+                let evaluation = bridge
+                    .evaluate_at(
                         time,
                         project_frame.as_ref().map(|(layers, tracks)| ProjectFrame {
                             layers: layers.as_slice(),
@@ -693,6 +706,8 @@ impl Exporter {
                         }),
                     )
                     .map_err(ExportError::React)?;
+                react_audio.extend(evaluation.audio);
+                let mut scene = evaluation.scene;
                 scene.fonts.extend(project_fonts.iter().cloned());
                 let frame = renderer.render(&scene).map_err(ExportError::Render)?;
                 stdin
@@ -812,23 +827,18 @@ fn visual_only_project(project: &Project) -> Project {
 }
 
 /// Builds the complete `AudioGraph` a React export mixes down: every
-/// React-declared `<Audio>` clip (`metadata.audio_clips`, always present
-/// once collected — see `ReactCompositionMetadata::audio_clips`) plus, when
-/// a companion project is given, that project's own complete, *unfiltered*
+/// `<Audio>` clip the entry's frames reported (`react_audio`, accumulated by
+/// `render_react_video` — one raw entry per clip per frame) plus, when a
+/// companion project is given, that project's own complete, *unfiltered*
 /// `Evaluator::audio_graph()` (unlike the visual path's
 /// `visual_only_project()`, which drops `TimelineContent::Audio` items
 /// because they contribute nothing visually — the audio mixdown needs them
 /// to actually play). The companion project supplies the graph's
 /// `sample_rate`/`master_volume` when present, since it already carries
 /// authoritative values for those; otherwise `DEFAULT_REACT_AUDIO_SAMPLE_RATE`
-/// is used. React-declared clips always play synced to the whole
-/// composition's own clock from frame 0 (`range` spans the full composition
-/// duration), matching `<Audio>`'s documented behavior — there is no
-/// `<Sequence>`-style range offset. `<Audio>`'s `volume`/`muted` are plain
-/// static values in this scope (not per-frame automation), so they are
-/// wrapped as `Animatable::Static` rather than integrated from keyframes.
+/// is used.
 fn build_audio_graph(
-    metadata: &ReactCompositionMetadata,
+    react_audio: &[ReactAudioClipDescriptor],
     react_asset_root: &Path,
     project: Option<(&Project, &Path)>,
 ) -> Result<AudioGraph, ExportError> {
@@ -848,37 +858,52 @@ fn build_audio_graph(
         },
     };
 
-    if !metadata.audio_clips.is_empty() {
-        let duration = Time::frames(
-            i64::try_from(metadata.duration_in_frames).map_err(|_| ExportError::TimelineTooLong)?,
-            metadata.frame_rate,
-        )
-        .map_err(ExportError::Time)?;
-        for (index, clip) in metadata.audio_clips.iter().enumerate() {
-            let mut asset = ResolvedAsset {
-                id: clip.src.clone(),
-                location: AssetLocation::File {
-                    path: clip.src.clone(),
-                },
-            };
-            absolutize_asset(&mut asset, react_asset_root);
-            graph.clips.push(AudioClip {
-                id: format!("react-audio:{index}"),
-                asset,
-                range: TimeRange {
-                    start: Time::ZERO,
-                    duration,
-                },
-                source_start: seconds_to_time(clip.start_from),
-                source_duration: None,
-                playback_rate: Animatable::Static(clip.playback_rate),
-                volume: Animatable::Static(clip.volume),
-                muted: clip.muted,
-            });
-        }
+    // The same declaration reports once per rendered frame; merge identical
+    // reports (bit-identical because every field is recomputed from the same
+    // inputs each frame) while preserving multiplicity — two distinct clips
+    // with identical parameters at the same instant really do play twice.
+    let merged = merge_react_audio_clips(react_audio);
+
+    for (index, (clip, _)) in merged.iter().enumerate() {
+        let mut asset = ResolvedAsset {
+            id: clip.src.clone(),
+            location: AssetLocation::File {
+                path: clip.src.clone(),
+            },
+        };
+        absolutize_asset(&mut asset, react_asset_root);
+        graph.clips.push(AudioClip {
+            id: format!("react-audio:{index}"),
+            asset,
+            range: TimeRange {
+                start: seconds_to_time(clip.start),
+                duration: seconds_to_time(clip.duration),
+            },
+            source_start: seconds_to_time(clip.source_start),
+            source_duration: None,
+            playback_rate: clip.playback_rate.clone(),
+            volume: clip.volume.clone(),
+            muted: clip.muted,
+        });
     }
 
     Ok(graph)
+}
+
+/// Collapses per-frame audio reports into one entry per distinct clip,
+/// keeping first-seen order and how many frames reported it (its
+/// multiplicity — two identical clips playing at once must stay two clips).
+fn merge_react_audio_clips(
+    clips: &[ReactAudioClipDescriptor],
+) -> Vec<(ReactAudioClipDescriptor, usize)> {
+    let mut merged: Vec<(ReactAudioClipDescriptor, usize)> = Vec::new();
+    for clip in clips {
+        match merged.iter_mut().find(|(known, _)| known == clip) {
+            Some((_, count)) => *count += 1,
+            None => merged.push((clip.clone(), 1)),
+        }
+    }
+    merged
 }
 
 fn seconds_to_time(seconds: f64) -> Time {
@@ -1090,6 +1115,86 @@ impl Error for ExportError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mikan_composition::{Animatable, Keyframe, KeyframeAnimation, KeyframeAnimationType};
+
+    fn static_clip(src: &str, start: f64, duration: f64, volume: f64) -> ReactAudioClipDescriptor {
+        ReactAudioClipDescriptor {
+            src: src.to_owned(),
+            source_start: 0.0,
+            playback_rate: Animatable::Static(1.0),
+            volume: Animatable::Static(volume),
+            muted: false,
+            start,
+            duration,
+        }
+    }
+
+    #[test]
+    fn merges_identical_frame_reports_while_preserving_multiplicity() {
+        let clips = vec![
+            static_clip("./a.wav", 0.0, 5.0, 1.0),
+            static_clip("./b.wav", 1.0, 2.0, 0.5),
+            static_clip("./a.wav", 0.0, 5.0, 1.0),
+            static_clip("./a.wav", 1.0, 4.0, 1.0),
+        ];
+
+        let merged = merge_react_audio_clips(&clips);
+        assert_eq!(merged.len(), 3);
+        assert_eq!(merged[0].1, 2, "the same clip reported twice merges");
+        assert_eq!(merged[1].1, 1);
+        assert_eq!(merged[2].1, 1);
+        // A different window or volume is a different clip even for the
+        // same source file.
+        assert_eq!(merged[0].0.src, "./a.wav");
+        assert_eq!(merged[1].0.volume, Animatable::Static(0.5));
+        assert_eq!(merged[2].0.start, 1.0);
+    }
+
+    #[test]
+    fn builds_a_react_audio_graph_with_ranges_and_keyframed_volume() {
+        let clips = vec![ReactAudioClipDescriptor {
+            src: "./voice.wav".to_owned(),
+            source_start: 1.5,
+            playback_rate: Animatable::Static(2.0),
+            volume: Animatable::Keyframes(KeyframeAnimation {
+                kind: KeyframeAnimationType::Keyframes,
+                keyframes: vec![Keyframe {
+                    time: Time::new(500_000, 1_000_000),
+                    value: 0.25,
+                    easing: None,
+                }],
+            }),
+            muted: false,
+            start: 1.0,
+            duration: 2.0,
+        }];
+
+        let graph = build_audio_graph(&clips, Path::new("/entry/root"), None).unwrap();
+        assert_eq!(graph.sample_rate, DEFAULT_REACT_AUDIO_SAMPLE_RATE);
+        assert_eq!(graph.clips.len(), 1);
+        let clip = &graph.clips[0];
+        assert_eq!(
+            clip.range.start.as_seconds().unwrap(),
+            1.0,
+            "range.start is the composition-space audible start"
+        );
+        assert_eq!(clip.range.duration.as_seconds().unwrap(), 2.0);
+        assert_eq!(
+            clip.source_start.as_seconds().unwrap(),
+            1.5,
+            "source_start carries the head-clipping adjustment"
+        );
+        assert_eq!(clip.playback_rate, Animatable::Static(2.0));
+        assert!(matches!(&clip.volume, Animatable::Keyframes(_)));
+        let AssetLocation::File { path } = &clip.asset.location else {
+            panic!("expected a file asset");
+        };
+        assert_eq!(
+            path,
+            Path::new("/entry/root/./voice.wav"),
+            "relative sources resolve against the entry's own directory"
+        );
+    }
 
     #[test]
     fn rounds_partial_project_frames_up_exactly() {

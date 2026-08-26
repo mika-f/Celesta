@@ -51,8 +51,8 @@ cargo test --workspace
 | `mikan-gpu-renderer` | `wgpu` renderer for images, video frames, styled text, nested transforms, opacity, offscreen readback, and renderer-owned surfaces. |
 | `mikan-exporter` | Deterministic frame-exact H.264/AAC MP4 export through the shared evaluator, GPU renderer, audio graph, and FFmpeg. Also exports React entries via `mikan-react-bridge`. |
 | `mikan-editor` | GPUI application, editor-owned document state, playback clock, GPU preview bridge, asset panel, timeline, and inspector. |
-| `mikan-react-bridge` | Spawns one long-lived `@mikan/react` Node.js process per composition and requests the evaluated `Scene` for each exact frame time over stdin/stdout JSON. |
-| `packages/react` (`@mikan/react`, Node.js/TypeScript) | Declarative `Composition`/`Group`/`Image`/`Text` components rendered through a real `react-reconciler` host (hooks, including `useCurrentFrame`/`useVideoConfig`, work); `useProject`/`<ProjectTimeline />` embed a companion project's Rust-evaluated layers. The `mikan-react-render` CLI bundles a JSX/TSX entry with esbuild and emits `Scene`-shaped JSON. |
+| `mikan-react-bridge` | Spawns one long-lived `@mikan/react` Node.js process per composition and requests the evaluated `Scene` (plus that frame's `<Audio>` clips) for each exact frame time over stdin/stdout JSON, or resolves individual registered components for the editor preview. |
+| `packages/react` (`@mikan/react`, Node.js/TypeScript) | Declarative `Composition`/`Sequence`/`Group`/`Image`/`Text`/`Video`/`Audio` components rendered through a real `react-reconciler` host (hooks, including `useCurrentFrame`/`useVideoConfig`, work); `useProject`/`<ProjectTimeline />` embed a companion project's Rust-evaluated layers. The `mikan-react-render` CLI bundles a JSX/TSX entry with esbuild and emits `Scene`-shaped JSON plus per-frame audio declarations. |
 
 Important files:
 
@@ -287,9 +287,10 @@ entries, matching the architecture diagram's "React entry" path:
   same component-marker objects are compared, not a bundled duplicate),
   writes the bundle beside the package under `.tmp/` (self-reference
   resolution needs the bundle to live inside the package directory tree),
-  prints one `{"config": ...}` line with width/height/frameRate/
-  durationInFrames, then answers one `{"time": ...}` request per line with
-  `{"scene": ...}` or `{"error": ...}`. esbuild transpiles the user's entry
+  prints one `{"config": ..., "componentSchemas": ...}` startup line, then
+  answers one request per line — `{"time": ...}` frame requests with
+  `{"scene": ..., "audio": [...]}` and component-resolution requests with
+  `{"components": [...]}` — or `{"error": ...}`. esbuild transpiles the user's entry
   file directly (TS or TSX) without type-checking it; `@mikan/react`'s own
   source is type-checked by `pnpm run build`.
 - `mikan-react-bridge` spawns and owns this Node process for the lifetime of
@@ -302,11 +303,10 @@ entries, matching the architecture diagram's "React entry" path:
   encoded video is still published directly without FFmpeg's separate mux
   stage; see "`<Audio>` component and React export audio mixdown" below for
   the case where it does.
-- `<Video>` is intentionally not implemented yet; only `Group`, `Image`, and
-  `Text` layers are supported from React.
-- React entries do not yet integrate with the GPUI editor (no project
-  persistence, timeline/track placement, or preview panel); see Recommended
-  next work.
+- React entries integrate with the GPUI editor preview through the
+  project's `react_entry`: component clips resolve against the entry's
+  registered components, unresolved ones surface as a warning overlay
+  instead of failing the whole preview — see "Editor React preview" below.
 
 ### react-reconciler, hooks, and `<ProjectTimeline />`
 
@@ -431,7 +431,9 @@ in any other React host.
   default, `'clamp'`, `'identity'`) for input outside the given range.
   `Easings` (plural — the generated `Easing` union type from
   `mikan_composition`, an unrelated project.json-facing concept, already
-  used that name) provides `linear`/`easeIn`/`easeOut`/`easeInOut` curves.
+   used that name) provides `linear`/`easeIn`/`easeOut`/`easeInOut` plus the
+   usual sine/quad/cubic/quart/quint/expo/circ/back/elastic/bounce families
+   (expanded 2026-08-26 alongside the `<Sequence>` work).
   `spring({frame, fps, config?, from?, to?, delay?, durationInFrames?})` is
   the closed-form step response of a damped harmonic oscillator (mass-
   spring-damper solved analytically for the underdamped/critically-damped/
@@ -685,9 +687,9 @@ in any other React host.
   `src` (matching `<Image>`), `startFrom?: number` (seconds into the source
   file playback begins at, default 0 — the React counterpart of a project
   clip's trim-in point), `playbackRate?: number` (default 1). A React
-  `<Video>` has no timeline-item `range.start` the way a project clip does
-  (there is no `<Sequence>`-style offset component), so it always plays
-  synced to the whole composition's own clock from frame 0: `buildLayer`'s
+  `<Video>` plays synced to its enclosing sequence chain's own clock from
+  local frame 0 (originally only the whole composition's clock; sequences
+  added 2026-08-26 — see below): `buildLayer`'s
   new `video` branch (`render.ts`) is passed the current composition
   `Time` (threaded through `walkChildren`/`walkNode`, which previously
   didn't need it) and uses it directly as `MediaTiming.localTime`,
@@ -750,6 +752,10 @@ in any other React host.
     the composition (based on `useCurrentFrame()`, for example) is not
     supported — it will either always or never appear in the collected list
     depending on what it evaluates to at the time this one walk runs.
+    (Superseded 2026-08-26: audio moved to per-frame collection and this
+    limitation is gone — see "`<Sequence>`, per-frame audio collection, and
+    editor React preview" below; the `audioClips` `Ready` field no longer
+    exists.)
   - **Rust-side parsing** (`crates/react-bridge/src/lib.rs`).
     `ReactAudioClipDescriptor { src, start_from, playback_rate, volume,
     muted }` is a real struct (not opaque JSON) mirroring `AudioClipDescriptor`
@@ -826,6 +832,99 @@ in any other React host.
     `packages/react/examples/title.tsx` (no `<Audio>`, no companion project)
     still produced a video-only MP4 with no `mixing audio`/`muxing MP4`
     progress stages, confirming the silent path is unregressed.
+
+### `<Sequence>`, per-frame audio collection, and editor React preview (2026-08-26)
+
+Three related gaps closed in one pass; they share one protocol change.
+
+- **`<Sequence>` component** (`packages/react/src/components.ts`,
+  `src/render.ts`). Props: `from?: number` (frame offset in the enclosing
+  timeline's own frame numbering, default 0), `durationInFrames?: number`
+  (default: run until the enclosing window ends), plus the common
+  transform/opacity props. It is a real function component: it reads the
+  enclosing runtime context and re-provides a shifted
+  `CompositionRuntimeContext` around its children, so hooks called from a
+  component *inside* a sequence see `frame - from` (JSX children evaluate
+  where they are written, so hooks written inline in the parent still see the
+  parent's clock — the same rule as every other React host, called out
+  because it surprises people). The `'sequence'` host node itself always
+  stays in the instance tree regardless of time: whether the window contains
+  the currently rendered time is decided by render.ts's walker per requested
+  frame (`childSequenceContext`), not at React render time. Inactive → no
+  layers and no audio collected for that frame. Active → children render
+  inside a group layer carrying the sequence's own x/y/opacity, and local
+  time is shifted (`<Video>`/`<Audio>` inside play synced to the sequence's
+  own clock). Nested sequences compose (origins add, audible windows
+  intersect). This is what replaced the "no `<Sequence>`-style range offset"
+  caveat on `<Video>`/`<Audio>`.
+- **Per-frame audio collection** (`src/render.ts`, `src/cli.ts`,
+  `crates/react-bridge/src/lib.rs`, `crates/exporter/src/lib.rs`). Frame
+  responses are now `{scene, audio}` where `audio` lists every `<Audio>`
+  element that rendered into *that* tree, each as
+  `{src, sourceStart, playbackRate, volume, muted, start, duration}`:
+  composition-space audible window (`start`/`duration`, intersected through
+  any enclosing sequences and never before the clip's local zero),
+  `sourceStart` adjusted so head-clipping keeps the source clock continuous,
+  and `playbackRate`/`volume` as `number | KeyframeAnimation` — the
+  TypeScript mirror of the project format's `Animatable<f64>` (this closes
+  the "static-only volume" caveat too). When a window clips a clip's head,
+  animation keyframes shift earlier by the clipped amount so curves stay
+  aligned with what is actually heard (exact for static rates; documented
+  approximation for keyframed rates). Because collection rides the same walk
+  as layers, an `<Audio>` behind an ordinary React conditional or hook now
+  contributes sound on exactly the frames where it renders — the old single
+  `Ready`-message collection (`collectAudioClips`, `audioClips`) is gone.
+  Rust mirrors this: `ReactAudioClipDescriptor` carries the new shape,
+  `ReactBridge::evaluate_at` returns `FrameEvaluation { scene, audio }`
+  (the `scene_at*` wrappers still return just the `Scene`),
+  `render_react_video` accumulates reports across frames, and
+  `merge_react_audio_clips` collapses bit-identical per-frame reports while
+  preserving multiplicity (two identical clips playing at once stay two).
+  **Export flow reorder**: frames stream into the staged output file first,
+  the graph is built afterwards; empty graph → staged file published
+  directly (silent exports keep their no-mix/no-mux path, verified against
+  `title.tsx`), non-empty → mix + mux into a second temp then publish.
+  **Bug fixed here**: `export_react_entry_impl` canonicalizes the entry's
+  and companion project's asset roots before absolutizing relative asset
+  paths — a relative CLI entry path produced a still-relative "absolute"
+  path that the audio mixer joined twice.
+- **Editor React preview** (`src/render.ts`'s new `createResolver()`,
+  `src/cli.ts`, `crates/react-bridge/src/lib.rs`'s
+  `resolve_components`, `crates/editor/src/main.rs`). A new protocol request
+  `{"components": [{component, props}]}` answers
+  `{"components": [layers|null, ...]}`: each registered name renders against
+  a second persistent reconciler root dedicated to resolution (hook state in
+  resolved components survives across calls; unresolved names yield null).
+  Resolved components render outside any real composition timeline there, so
+  `useCurrentFrame()` sees placeholders in editor preview (the export path
+  resolves inside the real tree and is unaffected). The GPUI preview worker
+  owns an optional `ReactPreviewBridge` keyed by (node, cli script, entry) —
+  respawned when `react_entry` changes, spawn/resolution failures remembered
+  per context so a broken setup does not restart Node every frame. Each
+  preview request collects the evaluated scene's `missingComponent` layers
+  recursively, resolves them, splices resolved layers back inside their
+  original layer shells (same placement semantics as the exporter's
+  `rawTransform` wrapper), strips unresolved ones, and returns warnings;
+  `EditorView` renders those as an amber overlay in the preview panel. With
+  no `react_entry` set, component clips are hidden with an explanatory
+  warning instead of failing the whole GPU render (`GpuRenderer` still
+  errors on `missingComponent` content — the honest export outcome).
+  **Bug fixed here**: `EditorDocument::load` now canonicalizes the project
+  path before deriving the asset root, so paths serialized relative to the
+  root resolve back to exactly the same absolute path (on macOS `/var` is a
+  symlink to `/private/var`, which broke the `react_entry` round trip).
+
+Verified: new integration tests (`shifts_media_inside_sequences_...`,
+`collects_conditionally_rendered_audio_with_keyframed_volume_...`,
+`reports_audio_clips_per_frame_...`,
+`resolves_individual_components_through_the_bridge_...` in
+`crates/react-bridge/tests/node_integration.rs` against new examples
+`with-sequence.tsx` and `with-conditional-audio.tsx`); exporter unit tests
+for report merging and graph construction; end-to-end
+`mikan-exporter --react packages/react/examples/with-sequence.tsx out.mp4`
+produced h264+aac (ffprobe) whose extracted frame 45 shows only the
+sequence-shifted testsrc video and frame 75 shows "frame 15 inside" beside
+it, while `title.tsx` stayed video-only with no mix/mux progress stages.
 
 ### TypeScript type generation and the Project loader
 
@@ -957,16 +1056,25 @@ licensed VOICEROID voice sample.
   evaluates the layer tree without decoding).
 - `packages/react/examples/with-audio.tsx`: a `<Text>` alongside `<Audio
   src="./voice.wav" startFrom={1} playbackRate={2} volume={0.5}
-  muted={false} />`, used by `mikan-react-bridge`'s audio-clip-collection
-  integration test (no actual `voice.wav` needed there either, for the same
+  muted={false} />`, used by `mikan-react-bridge`'s per-frame audio
+  integration test (no actual `voice.wav` needed there, for the same
   reason).
+- `packages/react/examples/with-sequence.tsx`: a `<Sequence>`-shifted
+  `<Video>`/`<Audio>` pair starting at frame 30 plus a caption component
+  inside a second sequence (frames 60–89) reading its shifted
+  `useCurrentFrame()`, used by the sequence-timing integration test.
+- `packages/react/examples/with-conditional-audio.tsx`: an `<Audio>` behind
+  `{frame >= 15 && ...}` with a keyframed volume animation, used by the
+  conditional-rendering audio integration test.
 
 ## Validation baseline
 
-At this handoff, the workspace has 98 passing tests (95 from the previous
-handoff plus two new `mikan-react-bridge` unit tests for `audioClips`
-`Ready`-message deserialization and a new `mikan-react-bridge` integration
-test collecting `<Audio>` metadata). The last checks were:
+At this handoff, the workspace has 105 passing tests (98 from the previous
+handoff plus new `mikan-react-bridge` unit tests for frame-response audio
+and component-resolution parsing, `mikan-exporter` unit tests for per-frame
+audio report merging and React graph construction, and the rewritten/new
+`mikan-react-bridge` integration tests; two obsolete `audioClips`
+`Ready`-message tests were removed). The last checks were:
 
 ```sh
 cargo test --workspace
@@ -1086,10 +1194,16 @@ Separately, still open from the original slice:
 - ~~An `AudioGraph` source for React entries so `mikan-exporter --react` can
   mux audio instead of always publishing a silent MP4~~ — done, see
   "`<Audio>` component and React export audio mixdown" above; a composition
-  with no audio still publishes a silent MP4 exactly as before. `<Audio>`'s
-  `volume`/`muted` are plain static values (not `Animatable`), and an
-  `<Audio>` that only conditionally renders for part of the composition is
-  not supported (see that section's "Known limitation").
+  with no audio still publishes a silent MP4 exactly as before.
+- ~~`<Sequence>`-style range placement for React media and layers~~,
+  ~~per-frame (conditionally rendered / keyframed) `<Audio>` support~~, and
+  ~~React content in the GPUI editor preview with unresolved-component
+  warnings~~ — all done, see "`<Sequence>`, per-frame audio collection, and
+  editor React preview" above. Still open within those: resolved components
+  render against placeholder hooks in the *editor* resolution path (the
+  export path is exact), and an `<Audio>` whose source runs out before its
+  window ends still fails that frame's decode (`mikan-media` errors at EOF;
+  same as project clips).
 
 Before starting new work here, confirm scope with the user rather than
 assuming the full design doc.

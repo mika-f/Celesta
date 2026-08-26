@@ -2,8 +2,16 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
 
-import { mount } from './render';
-import type { AudioClipDescriptor, EntryComponent, MountedComposition, ProjectFrame } from './render';
+import { createResolver, mount } from './render';
+import type {
+  AudioClipDescriptor,
+  ComponentResolution,
+  ComponentResolutionRequest,
+  EntryComponent,
+  MountedComposition,
+  ProjectFrame,
+  Resolver,
+} from './render';
 import { listComponentSchemas } from './registry';
 import type { ComponentPropertySchema } from './registry';
 import type { CompositionConfig, Scene, Time } from './scene';
@@ -11,6 +19,16 @@ import type { CompositionConfig, Scene, Time } from './scene';
 interface FrameRequest {
   time: Time;
   project?: ProjectFrame;
+}
+
+interface ResolveRequest {
+  components: ComponentResolutionRequest[];
+}
+
+type Request = FrameRequest | ResolveRequest;
+
+function isResolveRequest(request: Request): request is ResolveRequest {
+  return Array.isArray((request as ResolveRequest).components);
 }
 
 async function main(): Promise<void> {
@@ -39,20 +57,12 @@ async function main(): Promise<void> {
     return;
   }
 
-  let audioClips: AudioClipDescriptor[];
-  try {
-    audioClips = mounted.collectAudioClips();
-  } catch (error) {
-    writeLine({ error: describeError(error) });
-    process.exitCode = 1;
-    return;
-  }
-
   writeLine({
     config: mounted.config,
     componentSchemas: listComponentSchemas(),
-    audioClips,
   });
+
+  let resolver: Resolver | null = null;
 
   const rl = readline.createInterface({ input: process.stdin, terminal: false });
   for await (const line of rl) {
@@ -60,7 +70,7 @@ async function main(): Promise<void> {
     if (trimmed.length === 0) {
       continue;
     }
-    let request: FrameRequest;
+    let request: Request;
     try {
       request = JSON.parse(trimmed);
     } catch (error) {
@@ -68,8 +78,13 @@ async function main(): Promise<void> {
       continue;
     }
     try {
-      const scene = mounted.renderAt(request.time, request.project ?? null);
-      writeLine({ scene });
+      if (isResolveRequest(request)) {
+        resolver ??= createResolver();
+        writeLine({ components: resolver.resolve(request.components) });
+      } else {
+        const { scene, audio } = mounted.renderAt(request.time, request.project ?? null);
+        writeLine({ scene, audio });
+      }
     } catch (error) {
       writeLine({ error: describeError(error) });
     }
@@ -81,9 +96,9 @@ function writeLine(
     | {
         config: CompositionConfig;
         componentSchemas: Record<string, ComponentPropertySchema>;
-        audioClips: AudioClipDescriptor[];
       }
-    | { scene: Scene }
+    | { scene: Scene; audio: AudioClipDescriptor[] }
+    | { components: ComponentResolution[] }
     | { error: string },
 ): void {
   process.stdout.write(`${JSON.stringify(value)}\n`);

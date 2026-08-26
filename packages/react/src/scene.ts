@@ -6,8 +6,12 @@
 
 export type { AssetLocation } from './generated/AssetLocation';
 export type { AudioClip } from './generated/AudioClip';
+export type { Animatable } from './generated/Animatable';
 export type { AudioGraph } from './generated/AudioGraph';
+export type { Easing } from './generated/Easing';
 export type { EvaluatedTransform } from './generated/EvaluatedTransform';
+export type { Keyframe } from './generated/Keyframe';
+export type { KeyframeAnimation } from './generated/KeyframeAnimation';
 export type { Layer } from './generated/Layer';
 export type { LayerContent } from './generated/LayerContent';
 export type { MediaTiming } from './generated/MediaTiming';

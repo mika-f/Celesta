@@ -20,8 +20,8 @@ use gpui::{
 };
 use image::{Frame, ImageBuffer, Rgba};
 use mikan_composition::{
-    Animatable, AssetLocation, AudioClip, AudioGraph, Rational, Scene, Time, evaluate_f64,
-    integrate_f64,
+    Animatable, AssetLocation, AudioClip, AudioGraph, Layer, LayerContent, Rational, Scene, Time,
+    evaluate_f64, integrate_f64,
 };
 use mikan_editor::{
     AssetSummary, ClipKind, ComponentClipSummary, EditorDocument, TimelineClock, TrackSummary,
@@ -32,7 +32,9 @@ use mikan_media::{
     AudioBuffer, AudioDecoder, FfmpegBackend, MediaError, MediaProbe, mix_audio_graph_cancellable,
 };
 use mikan_project::{AssetKind, Project, TrackKind};
-use mikan_react_bridge::{ComponentPropertyField, ComponentPropertySchema, ReactBridge};
+use mikan_react_bridge::{
+    ComponentPropertyField, ComponentPropertySchema, ComponentResolutionRequest, ReactBridge,
+};
 use rodio::{DeviceSinkBuilder, Player, buffer::SamplesBuffer};
 
 mod audio_cache;
@@ -126,11 +128,27 @@ struct PreviewRequest {
     generation: u64,
     scene: Scene,
     asset_root: PathBuf,
+    /// The project's `react_entry` and the runtime that serves it, when one
+    /// is configured. `None` means component clips have nothing to resolve
+    /// against this frame.
+    react: Option<ReactPreviewContext>,
 }
 
 struct PreviewResult {
     generation: u64,
     frame: Result<PreviewPresentation, String>,
+    /// Recoverable diagnostics for this frame: unresolved `registerComponent`
+    /// names (hidden from the preview) and React runtime failures.
+    warnings: Vec<String>,
+}
+
+/// The Node.js runtime a preview's `TimelineContent::Component` clips resolve
+/// against — the same paths `ComponentSchemaWorker` uses.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ReactPreviewContext {
+    node: PathBuf,
+    cli_script: PathBuf,
+    entry: PathBuf,
 }
 
 struct CpuPreviewFrame {
@@ -293,6 +311,16 @@ impl ComponentSchemaWorker {
     }
 }
 
+/// The preview worker's long-lived connection to a React entry, respawned
+/// whenever the project's `react_entry` (or runtime paths) change. A failed
+/// spawn or a dead connection is remembered per context so a permanent
+/// failure does not restart Node on every rendered frame.
+struct ReactPreviewBridge {
+    context: ReactPreviewContext,
+    bridge: Option<ReactBridge>,
+    failure: Option<String>,
+}
+
 impl PreviewWorker {
     fn spawn(mut renderer: GpuRenderer) -> Result<Self, Box<dyn Error>> {
         let (request_tx, request_rx) = mpsc::channel::<PreviewRequest>();
@@ -300,17 +328,25 @@ impl PreviewWorker {
         thread::Builder::new()
             .name("mikan-preview".to_owned())
             .spawn(move || {
+                let mut react_bridge: Option<ReactPreviewBridge> = None;
                 while let Ok(first) = request_rx.recv() {
                     let request = take_latest(first, &request_rx);
                     renderer.set_asset_root(&request.asset_root);
+                    let mut scene = request.scene;
+                    let warnings = resolve_preview_components(
+                        &mut scene,
+                        &mut react_bridge,
+                        request.react.as_ref(),
+                    );
                     let frame = renderer
-                        .render_preview(&request.scene)
+                        .render_preview(&scene)
                         .map_err(|error| error.to_string())
                         .map(prepare_preview_frame);
                     if result_tx
                         .send(PreviewResult {
                             generation: request.generation,
                             frame,
+                            warnings,
                         })
                         .is_err()
                     {
@@ -328,6 +364,192 @@ impl PreviewWorker {
         self.requests
             .send(request)
             .map_err(|_| "preview worker stopped unexpectedly".to_owned())
+    }
+}
+
+/// Replaces every `missingComponent` layer in the scene with its registered
+/// component's rendered layers (wrapped in the original layer shell so the
+/// timeline item's evaluated transform and opacity still place it), dropping
+/// unresolved ones from the preview and reporting them as warnings instead —
+/// an unrenderable component would otherwise fail the whole GPU render.
+fn resolve_preview_components(
+    scene: &mut Scene,
+    react_bridge: &mut Option<ReactPreviewBridge>,
+    react: Option<&ReactPreviewContext>,
+) -> Vec<String> {
+    let mut requests = Vec::new();
+    collect_component_requests(&scene.layers, &mut requests);
+    if requests.is_empty() {
+        return Vec::new();
+    }
+
+    let Some(react) = react else {
+        let mut warnings =
+            vec!["React Entry is not set; component clips are hidden from the preview".to_owned()];
+        append_component_names(&requests, &mut warnings);
+        strip_missing_components(&mut scene.layers);
+        return warnings;
+    };
+
+    // Respawn only when the entry (or runtime) changed; a remembered failure
+    // keeps retrying cheap until then.
+    if react_bridge
+        .as_ref()
+        .is_none_or(|state| state.context != *react)
+    {
+        match ReactBridge::spawn(&react.node, &react.cli_script, &react.entry) {
+            Ok(bridge) => {
+                *react_bridge = Some(ReactPreviewBridge {
+                    context: react.clone(),
+                    bridge: Some(bridge),
+                    failure: None,
+                });
+            }
+            Err(error) => {
+                *react_bridge = Some(ReactPreviewBridge {
+                    context: react.clone(),
+                    bridge: None,
+                    failure: Some(error.to_string()),
+                });
+            }
+        }
+    }
+
+    let Some(state) = react_bridge else {
+        return Vec::new();
+    };
+    let mut warnings = Vec::new();
+    match &mut state.bridge {
+        Some(bridge) => {
+            let resolution_requests: Vec<ComponentResolutionRequest> = requests
+                .iter()
+                .map(|(component, props)| ComponentResolutionRequest { component, props })
+                .collect();
+            match bridge.resolve_components(&resolution_requests) {
+                Ok(resolutions) => {
+                    let mut cursor = 0;
+                    let mut unresolved = Vec::new();
+                    splice_resolved_components(
+                        &mut scene.layers,
+                        &resolutions,
+                        &mut cursor,
+                        &mut unresolved,
+                    );
+                    if !unresolved.is_empty() {
+                        warnings
+                            .push("Unresolved component(s) hidden from the preview:".to_owned());
+                        for name in unresolved {
+                            warnings.push(format!("  {name}"));
+                        }
+                        warnings.push(
+                            "Register them with registerComponent() in the React entry.".to_owned(),
+                        );
+                    }
+                }
+                Err(error) => {
+                    // The Node process is no longer trustworthy; remember the
+                    // failure until the entry changes rather than respawning
+                    // on every frame.
+                    state.bridge = None;
+                    state.failure = Some(error.to_string());
+                    warnings.push("React component resolution failed; component clips are hidden from the preview".to_owned());
+                    append_component_names(&requests, &mut warnings);
+                    strip_missing_components(&mut scene.layers);
+                }
+            }
+        }
+        None => {
+            if let Some(failure) = &state.failure {
+                warnings.push(format!("React preview unavailable: {failure}"));
+            }
+            warnings.push("Component clips are hidden from the preview".to_owned());
+            append_component_names(&requests, &mut warnings);
+            strip_missing_components(&mut scene.layers);
+        }
+    }
+    warnings
+}
+
+fn append_component_names(
+    requests: &[(String, BTreeMap<String, serde_json::Value>)],
+    warnings: &mut Vec<String>,
+) {
+    let mut seen = Vec::new();
+    for (component, _) in requests {
+        if !seen.contains(component) {
+            seen.push(component.clone());
+        }
+    }
+    for name in seen {
+        warnings.push(format!("  {name}"));
+    }
+}
+
+fn collect_component_requests(
+    layers: &[Layer],
+    out: &mut Vec<(String, BTreeMap<String, serde_json::Value>)>,
+) {
+    for layer in layers {
+        match &layer.content {
+            LayerContent::MissingComponent { component, props } => {
+                out.push((component.clone(), props.clone()));
+            }
+            LayerContent::Group { layers } => collect_component_requests(layers, out),
+            _ => {}
+        }
+    }
+}
+
+fn strip_missing_components(layers: &mut Vec<Layer>) {
+    let mut index = 0;
+    while index < layers.len() {
+        match &mut layers[index].content {
+            LayerContent::Group { layers: children } => strip_missing_components(children),
+            LayerContent::MissingComponent { .. } => {
+                layers.remove(index);
+                continue;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+}
+
+/// Walks in the same order [`collect_component_requests`] did, replacing the
+/// `cursor`-th missing-component layer with its resolution (a group of the
+/// component's own layers inside the original layer shell) or removing it
+/// when unresolved.
+fn splice_resolved_components(
+    layers: &mut Vec<Layer>,
+    resolutions: &[Option<Vec<Layer>>],
+    cursor: &mut usize,
+    unresolved: &mut Vec<String>,
+) {
+    let mut index = 0;
+    while index < layers.len() {
+        match &layers[index].content {
+            LayerContent::Group { .. } => {
+                if let LayerContent::Group { layers: children } = &mut layers[index].content {
+                    splice_resolved_components(children, resolutions, cursor, unresolved);
+                }
+                index += 1;
+            }
+            LayerContent::MissingComponent { component, .. } => {
+                let resolved = resolutions.get(*cursor).cloned().flatten();
+                *cursor += 1;
+                match resolved {
+                    Some(children) => {
+                        layers[index].content = LayerContent::Group { layers: children };
+                        index += 1;
+                    }
+                    None => {
+                        unresolved.push(component.clone());
+                        layers.remove(index);
+                    }
+                }
+            }
+            _ => index += 1,
+        }
     }
 }
 
@@ -704,6 +926,7 @@ struct EditorView {
     tracks: Vec<TrackSummary>,
     preview: Option<PreviewPresentation>,
     preview_error: Option<SharedString>,
+    preview_warnings: Vec<SharedString>,
     save_error: Option<SharedString>,
     edit_error: Option<SharedString>,
     audio_error: Option<SharedString>,
@@ -802,6 +1025,7 @@ impl EditorView {
             tracks,
             preview: None,
             preview_error: None,
+            preview_warnings: Vec::new(),
             save_error: None,
             edit_error: None,
             audio_error: None,
@@ -837,14 +1061,27 @@ impl EditorView {
     fn refresh_preview(&mut self) {
         self.preview_generation = self.preview_generation.wrapping_add(1);
         let generation = self.preview_generation;
+        // Component clips resolve against the project's React entry when one
+        // is set; without it the preview still renders everything else and
+        // surfaces a warning instead of failing outright.
+        let react = self.document.react_entry_absolute_path().map(|entry| {
+            let (node, cli_script) = react_runtime_paths();
+            ReactPreviewContext {
+                node,
+                cli_script,
+                entry,
+            }
+        });
         match self.document.scene_at(self.current_time()) {
             Ok(scene) => {
                 self.preview_pending = true;
                 self.preview_error = None;
+                self.preview_warnings.clear();
                 if let Err(error) = self.preview_worker.request(PreviewRequest {
                     generation,
                     scene,
                     asset_root: self.document.asset_root().to_owned(),
+                    react,
                 }) {
                     self.preview_pending = false;
                     self.preview_error = Some(error.into());
@@ -940,6 +1177,7 @@ impl EditorView {
                             self.preview_error = Some(error.into());
                         }
                     }
+                    self.preview_warnings = result.warnings.into_iter().map(Into::into).collect();
                 }
                 Err(mpsc::TryRecvError::Empty) => break,
                 Err(mpsc::TryRecvError::Disconnected) => {
@@ -3062,6 +3300,7 @@ impl EditorView {
 
     fn preview_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let canvas = div()
+            .relative()
             .flex()
             .flex_1()
             .w_full()
@@ -3087,6 +3326,26 @@ impl EditorView {
                         .text_sm()
                         .text_color(rgb(0xff8b8b))
                         .child(format!("Preview unavailable: {error}")),
+                )
+            })
+            .when(!self.preview_warnings.is_empty(), |canvas| {
+                canvas.child(
+                    div()
+                        .absolute()
+                        .bottom(px(8.0))
+                        .left(px(8.0))
+                        .right(px(8.0))
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(rgb(0x6b5327))
+                        .bg(rgb(0x241f14))
+                        .p_2()
+                        .text_xs()
+                        .text_color(rgb(0xffc46e))
+                        .children(self.preview_warnings.iter().cloned()),
                 )
             });
         div()

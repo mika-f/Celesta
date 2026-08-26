@@ -1,10 +1,20 @@
-export { Audio, Composition, Group, Image, Text, Video } from './components';
+export {
+  Audio,
+  Composition,
+  Group,
+  Image,
+  Sequence,
+  Text,
+  Video,
+} from './components';
 export type {
   AudioProps,
+  AnimatedNumber,
   CommonProps,
   CompositionProps,
   GroupProps,
   ImageProps,
+  SequenceProps,
   TextProps,
   VideoProps,
 } from './components';

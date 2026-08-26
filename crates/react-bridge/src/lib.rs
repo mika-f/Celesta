@@ -13,7 +13,7 @@ use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
-use mikan_composition::{Layer, Rational, Scene, Time};
+use mikan_composition::{Animatable, Layer, Rational, Scene, Time};
 use serde::{Deserialize, Serialize};
 
 /// A companion project's layers for one exact frame, evaluated up front by
@@ -42,26 +42,30 @@ pub struct ReactCompositionMetadata {
     /// a `ReactBridge`. A registered component with no `schema` argument has
     /// no entry here.
     pub component_schemas: BTreeMap<String, ComponentPropertySchema>,
-    /// Every `<Audio>` element found anywhere in the entry's tree, collected
-    /// once by a dedicated real render at spawn time (see
-    /// `packages/react/src/render.ts`'s `collectAudioClips`), not
-    /// re-evaluated per requested frame. An `<Audio>` that only
-    /// conditionally renders for part of the composition is not supported;
-    /// see that method's doc comment.
-    pub audio_clips: Vec<ReactAudioClipDescriptor>,
 }
 
-/// One `<Audio>` element's fully-resolved props (`packages/react/src/
-/// components.ts`'s `AudioProps`), as collected by the TypeScript side and
-/// carried in the startup `Ready` message's `audioClips` field.
+/// One audible `<Audio>` element as reported for a single rendered frame
+/// (`packages/react/src/render.ts`'s `AudioClipDescriptor`, gathered during
+/// the same tree walk that produces that frame's layers). Because collection
+/// happens per frame, an `<Audio>` behind an ordinary React conditional or
+/// nested inside `<Sequence>`s contributes on exactly the frames where it
+/// actually renders; the caller merges these reports into the export's
+/// `AudioGraph`.
+///
+/// `start`/`duration` are composition-space seconds bounded by any enclosing
+/// sequences; `source_start` is where in the source file the first audible
+/// moment plays, already adjusted so head-clipping by outer sequences keeps
+/// the source clock continuous.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReactAudioClipDescriptor {
     pub src: String,
-    pub start_from: f64,
-    pub playback_rate: f64,
-    pub volume: f64,
+    pub source_start: f64,
+    pub playback_rate: Animatable<f64>,
+    pub volume: Animatable<f64>,
     pub muted: bool,
+    pub start: f64,
+    pub duration: f64,
 }
 
 /// One field of a `ComponentPropertySchema` declared on the TypeScript side
@@ -115,6 +119,22 @@ pub enum ComponentPropertyField {
 /// `packages/react/src/registry.ts`.
 pub type ComponentPropertySchema = BTreeMap<String, ComponentPropertyField>;
 
+/// One component-resolution request: a `registerComponent()` name plus the
+/// timeline item's configured props (see [`ReactBridge::resolve_components`]).
+#[derive(Clone, Copy, Debug)]
+pub struct ComponentResolutionRequest<'a> {
+    pub component: &'a str,
+    pub props: &'a BTreeMap<String, serde_json::Value>,
+}
+
+/// One frame's evaluation: the visual scene plus every `<Audio>` declaration
+/// audible at that frame (see [`ReactAudioClipDescriptor`]).
+#[derive(Clone, Debug)]
+pub struct FrameEvaluation {
+    pub scene: Scene,
+    pub audio: Vec<ReactAudioClipDescriptor>,
+}
+
 /// A live connection to the `@mikan/react` CLI evaluating one entry module.
 pub struct ReactBridge {
     child: Child,
@@ -165,14 +185,12 @@ impl ReactBridge {
             ReadyMessage::Ready {
                 config,
                 component_schemas,
-                audio_clips,
             } => ReactCompositionMetadata {
                 width: config.width,
                 height: config.height,
                 frame_rate: config.frame_rate,
                 duration_in_frames: config.duration_in_frames,
                 component_schemas,
-                audio_clips,
             },
             ReadyMessage::Error { error } => return Err(ReactBridgeError::EntryFailed(error)),
         };
@@ -191,7 +209,7 @@ impl ReactBridge {
 
     /// Requests the evaluated `Scene` at an exact composition time.
     pub fn scene_at(&mut self, time: Time) -> Result<Scene, ReactBridgeError> {
-        self.scene_at_with_project(time, None)
+        Ok(self.evaluate_at(time, None)?.scene)
     }
 
     /// Same as [`Self::scene_at`], but also hands the entry's
@@ -206,13 +224,64 @@ impl ReactBridge {
         time: Time,
         project: Option<ProjectFrame<'_>>,
     ) -> Result<Scene, ReactBridgeError> {
+        Ok(self.evaluate_at(time, project)?.scene)
+    }
+
+    /// The full evaluation behind [`Self::scene_at_with_project`]: the
+    /// scene plus every `<Audio>` clip this frame's tree declares (see
+    /// [`FrameEvaluation::audio`]).
+    pub fn evaluate_at(
+        &mut self,
+        time: Time,
+        project: Option<ProjectFrame<'_>>,
+    ) -> Result<FrameEvaluation, ReactBridgeError> {
         let request = Request {
-            time,
+            time: Some(time),
             project: project.map(|frame| ProjectPayload {
                 layers: frame.layers,
                 tracks: frame.tracks,
             }),
+            components: None,
         };
+        match self.request_response(request)? {
+            Response::Ok { scene, audio } => Ok(FrameEvaluation { scene, audio }),
+            Response::Components { .. } => Err(ReactBridgeError::UnexpectedResponse),
+            Response::Err { error } => Err(ReactBridgeError::Render(error)),
+        }
+    }
+
+    /// Resolves individual `registerComponent()` names against the entry's
+    /// registry without rendering the whole composition — one rendered layer
+    /// list per request, in order, with `None` for names nothing registered.
+    /// Used by the GPUI editor preview to place resolved component content at
+    /// `TimelineContent::Component` items it has already evaluated. Resolved
+    /// components render outside any real composition timeline, so hooks
+    /// like `useCurrentFrame()` see placeholder values there.
+    pub fn resolve_components(
+        &mut self,
+        requests: &[ComponentResolutionRequest<'_>],
+    ) -> Result<Vec<Option<Vec<Layer>>>, ReactBridgeError> {
+        let request = Request {
+            time: None,
+            project: None,
+            components: Some(
+                requests
+                    .iter()
+                    .map(|request| ComponentRequest {
+                        component: request.component,
+                        props: request.props,
+                    })
+                    .collect(),
+            ),
+        };
+        match self.request_response(request)? {
+            Response::Components { components } => Ok(components),
+            Response::Ok { .. } => Err(ReactBridgeError::UnexpectedResponse),
+            Response::Err { error } => Err(ReactBridgeError::Render(error)),
+        }
+    }
+
+    fn request_response<R: Serialize>(&mut self, request: R) -> Result<Response, ReactBridgeError> {
         let payload = serde_json::to_string(&request).map_err(ReactBridgeError::Protocol)?;
         writeln!(self.stdin, "{payload}").map_err(ReactBridgeError::Io)?;
         self.stdin.flush().map_err(ReactBridgeError::Io)?;
@@ -225,20 +294,18 @@ impl ReactBridge {
         if read == 0 {
             return Err(ReactBridgeError::UnexpectedExit);
         }
-        let response: Response =
-            serde_json::from_str(line.trim()).map_err(ReactBridgeError::Protocol)?;
-        match response {
-            Response::Ok { scene } => Ok(scene),
-            Response::Err { error } => Err(ReactBridgeError::Render(error)),
-        }
+        serde_json::from_str(line.trim()).map_err(ReactBridgeError::Protocol)
     }
 }
 
 #[derive(Serialize)]
 struct Request<'a> {
-    time: Time,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    time: Option<Time>,
     #[serde(skip_serializing_if = "Option::is_none")]
     project: Option<ProjectPayload<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    components: Option<Vec<ComponentRequest<'a>>>,
 }
 
 #[derive(Serialize)]
@@ -247,11 +314,26 @@ struct ProjectPayload<'a> {
     tracks: &'a BTreeMap<String, Vec<Layer>>,
 }
 
+#[derive(Serialize)]
+struct ComponentRequest<'a> {
+    component: &'a str,
+    props: &'a BTreeMap<String, serde_json::Value>,
+}
+
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum Response {
-    Ok { scene: Scene },
-    Err { error: String },
+    Ok {
+        scene: Scene,
+        #[serde(default)]
+        audio: Vec<ReactAudioClipDescriptor>,
+    },
+    Components {
+        components: Vec<Option<Vec<Layer>>>,
+    },
+    Err {
+        error: String,
+    },
 }
 
 #[derive(Deserialize)]
@@ -261,8 +343,6 @@ enum ReadyMessage {
         config: ReactCompositionConfig,
         #[serde(default, rename = "componentSchemas")]
         component_schemas: BTreeMap<String, ComponentPropertySchema>,
-        #[serde(default, rename = "audioClips")]
-        audio_clips: Vec<ReactAudioClipDescriptor>,
     },
     Error {
         error: String,
@@ -288,6 +368,7 @@ pub enum ReactBridgeError {
     Io(io::Error),
     Protocol(serde_json::Error),
     UnexpectedExit,
+    UnexpectedResponse,
     EntryFailed(String),
     Render(String),
 }
@@ -314,6 +395,8 @@ impl fmt::Display for ReactBridgeError {
             Self::UnexpectedExit => {
                 formatter.write_str("the Node.js React runtime exited unexpectedly")
             }
+            Self::UnexpectedResponse => formatter
+                .write_str("the Node.js React runtime answered with the wrong kind of response"),
             Self::EntryFailed(error) => {
                 write!(formatter, "could not load the React composition: {error}")
             }
@@ -327,9 +410,11 @@ impl Error for ReactBridgeError {
         match self {
             Self::Executable { source, .. } | Self::Io(source) => Some(source),
             Self::Protocol(error) => Some(error),
-            Self::MissingPipe | Self::UnexpectedExit | Self::EntryFailed(_) | Self::Render(_) => {
-                None
-            }
+            Self::MissingPipe
+            | Self::UnexpectedExit
+            | Self::UnexpectedResponse
+            | Self::EntryFailed(_)
+            | Self::Render(_) => None,
         }
     }
 }
@@ -337,6 +422,7 @@ impl Error for ReactBridgeError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mikan_composition::{Keyframe, KeyframeAnimation, KeyframeAnimationType};
 
     #[test]
     fn reports_a_missing_node_executable() {
@@ -374,7 +460,6 @@ mod tests {
         let ReadyMessage::Ready {
             config,
             component_schemas,
-            ..
         } = serde_json::from_str(&json).unwrap()
         else {
             panic!("expected a Ready message");
@@ -422,56 +507,103 @@ mod tests {
     }
 
     #[test]
-    fn deserializes_audio_clips_from_the_ready_message() {
+    fn deserializes_audio_clips_from_a_frame_response() {
         let json = serde_json::json!({
-            "config": {
+            "scene": {
                 "width": 640,
                 "height": 360,
                 "frameRate": {"numerator": 30, "denominator": 1},
-                "durationInFrames": 30
+                "time": {"value": 0, "timescale": 1},
+                "layers": []
             },
-            "audioClips": [
+            "audio": [
                 {
                     "src": "./voice.wav",
-                    "startFrom": 1.0,
-                    "playbackRate": 2.0,
+                    "sourceStart": 1.5,
+                    "playbackRate": {"type": "keyframes", "keyframes": [
+                        {"time": {"value": 0, "timescale": 1}, "value": 1.0}
+                    ]},
                     "volume": 0.5,
-                    "muted": false
+                    "muted": false,
+                    "start": 2.0,
+                    "duration": 3.0
                 }
             ]
         })
         .to_string();
 
-        let ReadyMessage::Ready { audio_clips, .. } = serde_json::from_str(&json).unwrap() else {
-            panic!("expected a Ready message");
+        let Response::Ok { audio, .. } = serde_json::from_str(&json).unwrap() else {
+            panic!("expected an Ok response");
         };
         assert_eq!(
-            audio_clips,
+            audio,
             vec![ReactAudioClipDescriptor {
                 src: "./voice.wav".to_owned(),
-                start_from: 1.0,
-                playback_rate: 2.0,
-                volume: 0.5,
+                source_start: 1.5,
+                playback_rate: Animatable::Keyframes(KeyframeAnimation {
+                    kind: KeyframeAnimationType::Keyframes,
+                    keyframes: vec![Keyframe {
+                        time: Time::ZERO,
+                        value: 1.0,
+                        easing: None,
+                    }],
+                }),
+                volume: Animatable::Static(0.5),
                 muted: false,
+                start: 2.0,
+                duration: 3.0,
             }]
         );
     }
 
     #[test]
-    fn ready_message_without_audio_clips_defaults_to_empty() {
+    fn frame_response_without_audio_defaults_to_empty() {
         let json = serde_json::json!({
-            "config": {
+            "scene": {
                 "width": 640,
                 "height": 360,
                 "frameRate": {"numerator": 30, "denominator": 1},
-                "durationInFrames": 30
+                "time": {"value": 0, "timescale": 1},
+                "layers": []
             }
         })
         .to_string();
 
-        let ReadyMessage::Ready { audio_clips, .. } = serde_json::from_str(&json).unwrap() else {
-            panic!("expected a Ready message");
+        let Response::Ok { audio, .. } = serde_json::from_str(&json).unwrap() else {
+            panic!("expected an Ok response");
         };
-        assert!(audio_clips.is_empty());
+        assert!(audio.is_empty());
+    }
+
+    #[test]
+    fn deserializes_component_resolutions_from_a_response() {
+        let json = serde_json::json!({
+            "components": [
+                null,
+                [
+                    {
+                        "id": "resolved",
+                        "transform": {
+                            "position": {"x": 0.0, "y": 0.0},
+                            "scale": {"x": 1.0, "y": 1.0},
+                            "rotation": 0.0,
+                            "anchor": {"x": 0.5, "y": 0.5}
+                        },
+                        "opacity": 1.0,
+                        "content": {"type": "text", "text": "hello", "style": {}}
+                    }
+                ]
+            ]
+        })
+        .to_string();
+
+        let Response::Components { components } = serde_json::from_str(&json).unwrap() else {
+            panic!("expected a Components response");
+        };
+        assert_eq!(components.len(), 2);
+        assert!(components[0].is_none());
+        let resolved = components[1].as_ref().unwrap();
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(resolved[0].id, "resolved");
     }
 }
