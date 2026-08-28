@@ -4,7 +4,7 @@
 //! transforms, opacity, painter ordering, and deterministic RGBA readback.
 //! Unsupported content returns an error instead of silently disappearing.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::error::Error;
 use std::fmt;
 use std::io;
@@ -24,6 +24,14 @@ use wgpu::util::DeviceExt;
 mod native_preview;
 
 const BYTES_PER_PIXEL: u32 = 4;
+
+/// How many frames `GpuRenderer::submit` keeps in flight before it blocks to
+/// reclaim the oldest one. Each `submit` call only blocks on GPU readback
+/// once this many frames are outstanding, so the caller's own per-frame work
+/// (Node IPC for a React entry, encoding the previous frame to FFmpeg, ...)
+/// overlaps with the GPU actually rendering, instead of a full submit-wait
+/// round trip serializing every frame.
+const PIPELINE_DEPTH: usize = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Color {
@@ -189,6 +197,13 @@ pub struct GpuRenderer {
     text_rasterizer: TextRasterizer,
     #[cfg(target_os = "macos")]
     native_preview: Option<native_preview::NativePreviewBridge>,
+    /// Ring of reusable offscreen texture/readback-buffer pairs behind
+    /// `submit`/`drain`. Indices not currently rendering or awaiting readback
+    /// sit in `readback_free`; in-flight ones are queued in `readback_order`
+    /// (submission order, so `drain`/reclaim always returns frames in order).
+    readback_slots: Vec<ReadbackSlot>,
+    readback_order: VecDeque<usize>,
+    readback_free: Vec<usize>,
 }
 
 impl GpuRenderer {
@@ -310,6 +325,9 @@ impl GpuRenderer {
             text_rasterizer: TextRasterizer::new(),
             #[cfg(target_os = "macos")]
             native_preview,
+            readback_slots: Vec::new(),
+            readback_order: VecDeque::new(),
+            readback_free: Vec::new(),
         })
     }
 
@@ -523,6 +541,168 @@ impl GpuRenderer {
             height: scene.height,
             pixels,
         })
+    }
+
+    /// Encodes and submits `scene` for GPU rendering without blocking for its
+    /// pixels, for batch callers (frame-exact export) that render many
+    /// scenes back to back. Up to [`PIPELINE_DEPTH`] frames are kept
+    /// in flight at once, reusing their texture/readback-buffer pair rather
+    /// than allocating fresh ones every call like `render` does; once that
+    /// many are outstanding, this blocks to reclaim the oldest one (in
+    /// submission order) and returns its now-ready pixels — by then, the GPU
+    /// has usually already finished rendering it while the caller was busy
+    /// evaluating/encoding other frames, so the wait is short or free.
+    /// Call `drain` after the last `submit` to collect the remaining
+    /// in-flight frames.
+    pub fn submit(&mut self, scene: &Scene) -> Result<Option<GpuFrame>, GpuRenderError> {
+        if scene.width == 0 || scene.height == 0 {
+            return Err(GpuRenderError::InvalidSurfaceSize {
+                width: scene.width,
+                height: scene.height,
+            });
+        }
+        let draws = self.prepare_draws(scene)?;
+
+        let ready = if self.readback_free.is_empty() && self.readback_order.len() >= PIPELINE_DEPTH
+        {
+            Some(self.reclaim_oldest()?)
+        } else {
+            None
+        };
+
+        let slot_index = match self.readback_free.pop() {
+            Some(index) => {
+                if self.readback_slots[index].width != scene.width
+                    || self.readback_slots[index].height != scene.height
+                {
+                    self.readback_slots[index] =
+                        ReadbackSlot::new(&self.device, scene.width, scene.height)?;
+                }
+                index
+            }
+            None => {
+                self.readback_slots.push(ReadbackSlot::new(
+                    &self.device,
+                    scene.width,
+                    scene.height,
+                )?);
+                self.readback_slots.len() - 1
+            }
+        };
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Mikan pipelined offscreen commands"),
+            });
+        // Cloned out first (a cheap handle clone, not a data copy) so it
+        // doesn't keep `self.readback_slots` borrowed across the
+        // `self.encode_draws` call below, which itself needs `&mut self`.
+        let slot_view = self.readback_slots[slot_index].view.clone();
+        self.encode_draws(
+            &mut encoder,
+            scene,
+            GpuRenderTarget {
+                view: &slot_view,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                width: scene.width,
+                height: scene.height,
+            },
+            &draws,
+        )?;
+        {
+            let slot = &self.readback_slots[slot_index];
+            encoder.copy_texture_to_buffer(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &slot.texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &slot.buffer,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(slot.layout.padded_bytes_per_row),
+                        rows_per_image: Some(scene.height),
+                    },
+                },
+                wgpu::Extent3d {
+                    width: scene.width,
+                    height: scene.height,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+        self.queue.submit([encoder.finish()]);
+
+        let slot = &mut self.readback_slots[slot_index];
+        let (sender, receiver) = mpsc::sync_channel(1);
+        slot.buffer
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                let _ = sender.send(result);
+            });
+        slot.pending = Some(receiver);
+        self.readback_order.push_back(slot_index);
+
+        Ok(ready)
+    }
+
+    /// Blocks until every frame `submit` has queued but not yet returned is
+    /// ready, in the order they were submitted.
+    pub fn drain(&mut self) -> Result<Vec<GpuFrame>, GpuRenderError> {
+        let mut frames = Vec::with_capacity(self.readback_order.len());
+        while !self.readback_order.is_empty() {
+            frames.push(self.reclaim_oldest()?);
+        }
+        Ok(frames)
+    }
+
+    /// Blocks on the oldest in-flight slot's readback, frees it for reuse,
+    /// and returns its pixels.
+    fn reclaim_oldest(&mut self) -> Result<GpuFrame, GpuRenderError> {
+        let slot_index = self
+            .readback_order
+            .pop_front()
+            .expect("reclaim_oldest called with no in-flight frame");
+        let frame = {
+            let slot = &mut self.readback_slots[slot_index];
+            let receiver = slot
+                .pending
+                .take()
+                .expect("in-flight slot always has a pending readback");
+            self.device
+                .poll(wgpu::PollType::wait_indefinitely())
+                .map_err(GpuRenderError::Poll)?;
+            receiver
+                .recv()
+                .map_err(|_| GpuRenderError::MapCallbackDropped)?
+                .map_err(GpuRenderError::Map)?;
+
+            let slice = slot.buffer.slice(..);
+            let mapped = slice.get_mapped_range().map_err(GpuRenderError::MapRange)?;
+            let capacity = usize::try_from(slot.layout.unpadded_bytes_per_row)
+                .ok()
+                .and_then(|row| row.checked_mul(slot.height as usize))
+                .ok_or(GpuRenderError::SurfaceTooLarge {
+                    width: slot.width,
+                    height: slot.height,
+                })?;
+            let mut pixels = Vec::with_capacity(capacity);
+            for row in mapped.chunks_exact(slot.layout.padded_bytes_per_row as usize) {
+                pixels.extend_from_slice(&row[..slot.layout.unpadded_bytes_per_row as usize]);
+            }
+            drop(mapped);
+            slot.buffer.unmap();
+            GpuFrame {
+                width: slot.width,
+                height: slot.height,
+                pixels,
+            }
+        };
+        self.readback_free.push(slot_index);
+        Ok(frame)
     }
 
     pub fn render_preview(&mut self, scene: &Scene) -> Result<PreviewFrame, GpuRenderError> {
@@ -1003,6 +1183,55 @@ impl ReadbackLayout {
     }
 }
 
+/// One reusable texture/readback-buffer pair behind `GpuRenderer::submit`'s
+/// ring, plus the receiver for its currently outstanding `map_async` call
+/// (`None` when the slot is free).
+struct ReadbackSlot {
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    buffer: wgpu::Buffer,
+    width: u32,
+    height: u32,
+    layout: ReadbackLayout,
+    pending: Option<mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>>,
+}
+
+impl ReadbackSlot {
+    fn new(device: &wgpu::Device, width: u32, height: u32) -> Result<Self, GpuRenderError> {
+        let layout = ReadbackLayout::new(width, height)?;
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Mikan pipelined offscreen frame"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Mikan pipelined RGBA readback"),
+            size: layout.buffer_size,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        Ok(Self {
+            texture,
+            view,
+            buffer,
+            width,
+            height,
+            layout,
+            pending: None,
+        })
+    }
+}
+
 #[derive(Debug)]
 pub enum GpuRenderError {
     RequestAdapter(wgpu::RequestAdapterError),
@@ -1231,6 +1460,43 @@ mod tests {
                 .chunks_exact(4)
                 .all(|pixel| pixel == [51, 102, 153, 255])
         );
+    }
+
+    #[test]
+    fn submit_and_drain_return_frames_in_submission_order_with_correct_content() {
+        let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+            return;
+        };
+
+        // More scenes than PIPELINE_DEPTH so this exercises both the
+        // reclaim-while-submitting path and the final drain, each scene
+        // filled with a distinct background color to catch a slot mix-up.
+        let colors = [
+            Color::rgba(10, 20, 30, 255),
+            Color::rgba(40, 50, 60, 255),
+            Color::rgba(70, 80, 90, 255),
+            Color::rgba(100, 110, 120, 255),
+            Color::rgba(130, 140, 150, 255),
+        ];
+        let mut ready = Vec::new();
+        for color in colors {
+            renderer.options.background = color;
+            if let Some(frame) = renderer.submit(&empty_scene(2, 2)).unwrap() {
+                ready.push(frame);
+            }
+        }
+        ready.extend(renderer.drain().unwrap());
+
+        assert_eq!(ready.len(), colors.len());
+        for (frame, color) in ready.iter().zip(colors) {
+            assert_eq!((frame.width(), frame.height()), (2, 2));
+            assert!(
+                frame
+                    .pixels()
+                    .chunks_exact(4)
+                    .all(|pixel| pixel == [color.red, color.green, color.blue, color.alpha])
+            );
+        }
     }
 
     #[test]

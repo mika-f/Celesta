@@ -558,13 +558,16 @@ impl Exporter {
                     i64::try_from(frame_index).map_err(|_| ExportError::TimelineTooLong)?;
                 let time = Time::frames(frame_index, frame_rate).map_err(ExportError::Time)?;
                 let scene = evaluator.scene_at(time).map_err(ExportError::Evaluation)?;
-                let frame = renderer.render(&scene).map_err(ExportError::Render)?;
-                stdin
-                    .write_all(frame.pixels())
-                    .map_err(|source| ExportError::Io {
-                        operation: "stream video frame to FFmpeg",
-                        source,
-                    })?;
+                // `submit` keeps a few frames in flight on the GPU rather
+                // than blocking on this frame's readback immediately, so the
+                // wait (when there is one) overlaps with evaluating and
+                // encoding other frames instead of stalling every frame.
+                if let Some(frame) = renderer.submit(&scene).map_err(ExportError::Render)? {
+                    write_frame(&mut stdin, &frame)?;
+                }
+            }
+            for frame in renderer.drain().map_err(ExportError::Render)? {
+                write_frame(&mut stdin, &frame)?;
             }
             stdin.flush().map_err(|source| ExportError::Io {
                 operation: "finish video frame stream",
@@ -709,13 +712,15 @@ impl Exporter {
                 react_audio.extend(evaluation.audio);
                 let mut scene = evaluation.scene;
                 scene.fonts.extend(project_fonts.iter().cloned());
-                let frame = renderer.render(&scene).map_err(ExportError::Render)?;
-                stdin
-                    .write_all(frame.pixels())
-                    .map_err(|source| ExportError::Io {
-                        operation: "stream video frame to FFmpeg",
-                        source,
-                    })?;
+                // See render_video's matching comment: submit overlaps this
+                // frame's GPU work with the *next* frame's Node IPC round
+                // trip and project evaluation instead of blocking here.
+                if let Some(frame) = renderer.submit(&scene).map_err(ExportError::Render)? {
+                    write_frame(&mut stdin, &frame)?;
+                }
+            }
+            for frame in renderer.drain().map_err(ExportError::Render)? {
+                write_frame(&mut stdin, &frame)?;
             }
             stdin.flush().map_err(|source| ExportError::Io {
                 operation: "finish video frame stream",
@@ -959,6 +964,18 @@ fn validate_output(output: &Path, overwrite: bool) -> Result<(), ExportError> {
         return Err(ExportError::OutputExists(output.to_owned()));
     }
     Ok(())
+}
+
+fn write_frame(
+    stdin: &mut impl Write,
+    frame: &mikan_gpu_renderer::GpuFrame,
+) -> Result<(), ExportError> {
+    stdin
+        .write_all(frame.pixels())
+        .map_err(|source| ExportError::Io {
+            operation: "stream video frame to FFmpeg",
+            source,
+        })
 }
 
 fn ensure_not_cancelled(cancellation: &ExportCancellation) -> Result<(), ExportError> {
