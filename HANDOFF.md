@@ -322,6 +322,14 @@ entries, matching the architecture diagram's "React entry" path:
 - `mikan-react-bridge` spawns and owns this Node process for the lifetime of
   an export or preview, mirroring `mikan-media`'s one-process-per-composition
   sequential decoding session rather than spawning Node per frame.
+- An entry can additionally export an async `prepare()`. `cli.ts`'s `main()`
+  awaits it exactly once, before mounting the composition and before the
+  first frame request — the one point in the pipeline where async work (e.g.
+  fetching remote data) is allowed, since `renderAt()` itself and the Rust
+  side's request/response loop are both fully synchronous. Data fetched in
+  `prepare()` should be stashed in module-level state and read synchronously
+  by the rendered components, so it is fetched once per export/preview
+  session rather than once per frame (see `examples/homepage-demo.tsx`).
 - `mikan-exporter --react <entry> <output.mp4>` renders every frame of the
   composition through the same `GpuRenderer` used for projects and encodes it
   with FFmpeg. When the composition has no audio (no `<Audio>` in the entry,

@@ -4,10 +4,9 @@
 // - Visuals and animation only. The original Player lets a viewer drag cards
 //   around and click buttons; Mikan has no browser-side interactive Player,
 //   so this is a fixed, non-interactive composition instead.
-// - Fixed mock data in place of the original's live GitHub-trending/weather
-//   fetches (`getDataAndProps` in the linked source), since a single
-//   requested frame here must render deterministically without waiting on a
-//   network round trip.
+// - Live GitHub-trending/weather data, fetched once via this module's
+//   `prepare` export (see below) rather than per frame, in place of the
+//   original's `getDataAndProps`.
 // - Mikan-native replacements for Remotion-only packages: `<Rect>` (a Mikan
 //   addition made for this composition — see HANDOFF.md) draws each card's
 //   flat rounded background/border in place of CSS, a plain emoji glyph
@@ -81,7 +80,12 @@ function Card({ index, children }: { index: number; children: ReactNode }) {
   );
 }
 
-const TRENDING_REPOS = ['mika-f/mikan', 'octocat/hello-world', 'your-org/your-repo'];
+const TRENDING_REPO_COUNT = 3;
+
+// Filled in once by `prepare()` below, before the first frame is rendered —
+// see that function for why a plain module-level variable is enough here.
+let trendingRepos: string[] = ['mika-f/mikan', 'octocat/hello-world', 'your-org/your-repo'];
+let temperatureCelsius = 24;
 
 function TrendingReposCard() {
   return (
@@ -92,7 +96,7 @@ function TrendingReposCard() {
       >
         Trending on GitHub
       </Text>
-      {TRENDING_REPOS.map((repo, index) => (
+      {trendingRepos.map((repo, index) => (
         <Text
           key={repo}
           y={-CARD_HEIGHT / 2 + 52 + index * 22}
@@ -107,11 +111,10 @@ function TrendingReposCard() {
 
 function TemperatureCard() {
   const frame = useCurrentFrame();
-  const targetCelsius = 24;
-  // Counts up to the mock temperature over the card's first second, echoing
-  // the original's `TemperatureNumber` digit-wheel reveal.
+  // Counts up to the fetched temperature over the card's first second,
+  // echoing the original's `TemperatureNumber` digit-wheel reveal.
   const celsius = Math.round(
-    interpolate(frame, [0, 30], [0, targetCelsius], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }),
+    interpolate(frame, [0, 30], [0, temperatureCelsius], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' }),
   );
 
   return (
@@ -185,6 +188,59 @@ function EmojiCard() {
       </Text>
     </>
   );
+}
+
+interface GitHubSearchResponse {
+  items: { full_name: string }[];
+}
+
+interface OpenMeteoResponse {
+  current: { temperature_2m: number };
+}
+
+// Tokyo — matches `CurrentCountryCard`'s fixed 🇯🇵/"Japan" below, so the
+// weather card's location and the location card agree without a second,
+// unrelated network round trip just to resolve "where is this render for".
+const WEATHER_LATITUDE = 35.6762;
+const WEATHER_LONGITUDE = 139.6503;
+
+/**
+ * `mikan-react-render` (`packages/react/src/cli.ts`) awaits this exact export
+ * name exactly once, before mounting the composition and before the first
+ * `renderAt()` — see the comment at its call site. That is the one place in
+ * the render pipeline async work is allowed: `renderAt()` itself, called once
+ * per requested frame, is fully synchronous end-to-end (Rust blocks on a
+ * single-line reply). So data fetched here is fetched once for the whole
+ * export/preview session, cached in the module-level `trendingRepos` /
+ * `temperatureCelsius` above, and then just read synchronously by every
+ * frame's render — never re-fetched per frame.
+ *
+ * Network failures fall back to the mock values those variables start out
+ * with (logged, not thrown) so the example still renders deterministically
+ * when offline, e.g. in a sandboxed CI runner.
+ */
+export async function prepare(): Promise<void> {
+  const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const results = await Promise.allSettled([
+    fetch(
+      `https://api.github.com/search/repositories?q=created:>${since}&sort=stars&order=desc&per_page=${TRENDING_REPO_COUNT}`,
+    ).then((response) => response.json() as Promise<GitHubSearchResponse>),
+    fetch(
+      `https://api.open-meteo.com/v1/forecast?latitude=${WEATHER_LATITUDE}&longitude=${WEATHER_LONGITUDE}&current=temperature_2m`,
+    ).then((response) => response.json() as Promise<OpenMeteoResponse>),
+  ]);
+
+  const [repos, weather] = results;
+  if (repos.status === 'fulfilled') {
+    trendingRepos = repos.value.items.slice(0, TRENDING_REPO_COUNT).map((item) => item.full_name);
+  } else {
+    console.error('homepage-demo: failed to fetch trending repos, using fallback data', repos.reason);
+  }
+  if (weather.status === 'fulfilled') {
+    temperatureCelsius = Math.round(weather.value.current.temperature_2m);
+  } else {
+    console.error('homepage-demo: failed to fetch weather, using fallback data', weather.reason);
+  }
 }
 
 export default function HomepageDemo() {
