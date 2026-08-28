@@ -42,10 +42,7 @@ fn run() -> Result<(), String> {
     if companion_project_path.is_some() && !react {
         return Err("--project requires --react".into());
     }
-    let exporter = Exporter::new(ExportOptions {
-        overwrite,
-        ..ExportOptions::default()
-    });
+    let exporter = Exporter::new(ExportOptions { overwrite });
     let on_progress = |progress: ExportProgress| match progress {
         ExportProgress::Rendering { frame, total } => {
             eprint!("\rrendering frame {frame}/{total}");

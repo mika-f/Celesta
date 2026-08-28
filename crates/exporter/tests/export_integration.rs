@@ -1,46 +1,34 @@
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
+use ez_ffmpeg::stream_info::{StreamInfo, find_audio_stream_info, find_video_stream_info};
+use ez_ffmpeg::{FfmpegContext, Input, Output};
 use mikan_composition::{Rational, Time, TimeRange};
 use mikan_exporter::{ExportCancellation, ExportError, ExportOptions, Exporter};
 use mikan_gpu_renderer::GpuRenderError;
 use mikan_media::{FfmpegBackend, VideoFrameDecoder};
 use mikan_project::{Asset, AssetSource, Project, TimelineContent, TimelineItem, Track, TrackKind};
 
-#[test]
-fn exports_frame_exact_mp4_with_silent_audio_when_ffmpeg_is_available() {
-    let Some(ffmpeg) = find_executable(
-        "MIKAN_FFMPEG",
-        "ffmpeg",
-        "/opt/homebrew/opt/ffmpeg/bin/ffmpeg",
-    ) else {
-        eprintln!("skipping live export test: ffmpeg was not found");
-        return;
-    };
-    let Some(ffprobe) = find_executable(
-        "MIKAN_FFPROBE",
-        "ffprobe",
-        "/opt/homebrew/opt/ffmpeg/bin/ffprobe",
-    ) else {
-        eprintln!("skipping live export test: ffprobe was not found");
-        return;
-    };
-    if !supports_libx264(&ffmpeg) {
-        eprintln!("skipping live export test: FFmpeg does not provide libx264");
-        return;
-    }
+/// Renders a synthetic `lavfi` source to a lossless MKV fixture through the
+/// linked FFmpeg libraries.
+fn generate_source(path: &Path, lavfi: &str) {
+    FfmpegContext::builder()
+        .input(Input::from(lavfi).set_format("lavfi"))
+        .output(Output::from(path.to_string_lossy().into_owned()).set_video_codec("ffv1"))
+        .build()
+        .unwrap()
+        .start()
+        .unwrap()
+        .wait()
+        .unwrap();
+}
 
+#[test]
+fn exports_frame_exact_mp4_with_silent_audio() {
     let directory = tempfile::tempdir().unwrap();
     let output = directory.path().join("export.mp4");
     let source = directory.path().join("source.mkv");
-    let generated = Command::new(&ffmpeg)
-        .args(["-v", "error", "-y", "-f", "lavfi", "-i"])
-        .arg("testsrc2=size=64x64:rate=2:duration=1")
-        .args(["-c:v", "ffv1"])
-        .arg(&source)
-        .status()
-        .unwrap();
-    assert!(generated.success());
+    generate_source(&source, "testsrc2=size=64x64:rate=2:duration=1");
+
     let mut project = Project::load(workspace_root().join("examples/minimal.mikan.json")).unwrap();
     project.settings.width = 64;
     project.settings.height = 64;
@@ -84,11 +72,7 @@ fn exports_frame_exact_mp4_with_silent_audio_when_ffmpeg_is_available() {
         }],
     });
 
-    let exporter = Exporter::new(ExportOptions {
-        ffmpeg: ffmpeg.clone(),
-        ffprobe: ffprobe.clone(),
-        overwrite: false,
-    });
+    let exporter = Exporter::new(ExportOptions { overwrite: false });
     match exporter.export_project(&project, directory.path(), &output) {
         Ok(()) => {}
         Err(ExportError::Render(GpuRenderError::RequestAdapter(error))) => {
@@ -98,37 +82,44 @@ fn exports_frame_exact_mp4_with_silent_audio_when_ffmpeg_is_available() {
         Err(error) => panic!("export failed: {error}"),
     }
 
-    let probe = Command::new(&ffprobe)
-        .args([
-            "-v",
-            "error",
-            "-count_frames",
-            "-show_entries",
-            "stream=codec_type,width,height,r_frame_rate,sample_rate,channels,nb_read_frames",
-            "-of",
-            "compact=p=0:nk=0",
-        ])
-        .arg(&output)
-        .output()
-        .unwrap();
-    assert!(probe.status.success());
-    let probe = String::from_utf8(probe.stdout).unwrap();
-    assert!(probe.contains("codec_type=video"), "{probe}");
-    assert!(probe.contains("width=64"), "{probe}");
-    assert!(probe.contains("height=64"), "{probe}");
-    assert!(probe.contains("r_frame_rate=2/1"), "{probe}");
-    assert!(probe.contains("nb_read_frames=2"), "{probe}");
-    assert!(probe.contains("codec_type=audio"), "{probe}");
-    assert!(probe.contains("sample_rate=8000"), "{probe}");
-    assert!(probe.contains("channels=2"), "{probe}");
-    let mut decoder = FfmpegBackend::with_executables(ffmpeg, ffprobe.clone());
+    let url = output.to_string_lossy().into_owned();
+    let Some(StreamInfo::Video {
+        width,
+        height,
+        avg_frame_rate,
+        ..
+    }) = find_video_stream_info(&url).unwrap()
+    else {
+        panic!("exported file has no video stream");
+    };
+    assert_eq!((width, height), (64, 64));
+    assert_eq!(
+        (avg_frame_rate.num, avg_frame_rate.den),
+        (2, 1),
+        "exported frame rate"
+    );
+    let Some(StreamInfo::Audio {
+        sample_rate,
+        nb_channels,
+        ..
+    }) = find_audio_stream_info(&url).unwrap()
+    else {
+        panic!("exported file has no (silent) audio stream");
+    };
+    assert_eq!((sample_rate, nb_channels), (8_000, 2));
+
+    // The two rendered frames are distinct decoded frames carrying the
+    // testsrc2 pattern (not a flat fill).
+    let mut decoder = FfmpegBackend::new();
     let first_frame = decoder.decode_frame(&output, 0.0).unwrap();
+    let second_frame = decoder.decode_frame(&output, 0.5).unwrap();
     assert!(
         first_frame
             .pixels
             .chunks_exact(4)
             .any(|pixel| { pixel[0] != pixel[1] || pixel[1] != pixel[2] || pixel[0] != 0 })
     );
+    assert_ne!(first_frame.pixels, second_frame.pixels);
 
     let cancelled_output = directory.path().join("cancelled.mp4");
     let cancellation = ExportCancellation::default();
@@ -149,29 +140,6 @@ fn exports_frame_exact_mp4_with_silent_audio_when_ffmpeg_is_available() {
     );
     assert!(matches!(result, Err(ExportError::Cancelled)));
     assert!(!cancelled_output.exists());
-}
-
-#[test]
-fn removes_temporary_outputs_when_ffmpeg_cannot_start() {
-    let directory = tempfile::tempdir().unwrap();
-    let output = directory.path().join("export.mp4");
-    let mut project = Project::load(workspace_root().join("examples/minimal.mikan.json")).unwrap();
-    project.settings.width = 64;
-    project.settings.height = 64;
-    project.settings.frame_rate = Rational::new(2, 1);
-    project.settings.duration = Some(Time::new(1, 1));
-    let exporter = Exporter::new(ExportOptions {
-        ffmpeg: directory.path().join("missing-ffmpeg"),
-        ffprobe: directory.path().join("missing-ffprobe"),
-        overwrite: false,
-    });
-
-    assert!(matches!(
-        exporter.export_project(&project, directory.path(), &output),
-        Err(ExportError::Executable { .. })
-    ));
-    assert!(!output.exists());
-    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
 }
 
 #[test]
@@ -203,34 +171,4 @@ fn workspace_root() -> PathBuf {
         .parent()
         .unwrap()
         .to_owned()
-}
-
-fn find_executable(environment: &str, command: &str, homebrew: &str) -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os(environment).map(PathBuf::from)
-        && executable_works(&path)
-    {
-        return Some(path);
-    }
-    let command = PathBuf::from(command);
-    if executable_works(&command) {
-        return Some(command);
-    }
-    let homebrew = PathBuf::from(homebrew);
-    executable_works(&homebrew).then_some(homebrew)
-}
-
-fn executable_works(path: &Path) -> bool {
-    Command::new(path)
-        .arg("-version")
-        .output()
-        .is_ok_and(|output| output.status.success())
-}
-
-fn supports_libx264(ffmpeg: &Path) -> bool {
-    Command::new(ffmpeg)
-        .args(["-v", "error", "-encoders"])
-        .output()
-        .is_ok_and(|output| {
-            output.status.success() && String::from_utf8_lossy(&output.stdout).contains("libx264")
-        })
 }

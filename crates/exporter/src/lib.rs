@@ -5,14 +5,14 @@ use std::error::Error;
 use std::ffi::OsStr;
 use std::fmt;
 use std::fs;
-use std::io::{self, BufWriter, Write};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
 
+use ez_ffmpeg::{FfmpegContext, Input, Output, VideoWriter};
 use mikan_composition::{
     AssetLocation, AudioClip, AudioGraph, Layer, LayerContent, Rational, ResolvedAsset, Time,
     TimeError, TimeRange,
@@ -36,21 +36,9 @@ const DEFAULT_REACT_AUDIO_SAMPLE_RATE: u32 = 48_000;
 /// `SECONDS_TIMESCALE` for `<Video>`'s `startFrom`/`sourceTimeSeconds`.
 const AUDIO_SECONDS_TIMESCALE: u32 = 1_000_000;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ExportOptions {
-    pub ffmpeg: PathBuf,
-    pub ffprobe: PathBuf,
     pub overwrite: bool,
-}
-
-impl Default for ExportOptions {
-    fn default() -> Self {
-        Self {
-            ffmpeg: PathBuf::from("ffmpeg"),
-            ffprobe: PathBuf::from("ffprobe"),
-            overwrite: false,
-        }
-    }
 }
 
 /// Locates the `@mikan/react` Node.js runtime used to evaluate a React entry.
@@ -218,10 +206,7 @@ impl Exporter {
         progress(ExportProgress::MixingAudio);
         let evaluator = Evaluator::new(project).map_err(ExportError::Evaluation)?;
         let graph = evaluator.audio_graph().map_err(ExportError::Evaluation)?;
-        let mut audio_decoder = FfmpegBackend::with_executables(
-            self.options.ffmpeg.clone(),
-            self.options.ffprobe.clone(),
-        );
+        let mut audio_decoder = FfmpegBackend::new();
         let audio =
             mix_audio_graph_cancellable(&graph, asset_root, duration, &mut audio_decoder, || {
                 cancellation.is_cancelled()
@@ -443,10 +428,7 @@ impl Exporter {
                 metadata.frame_rate,
             )
             .map_err(ExportError::Time)?;
-            let mut audio_decoder = FfmpegBackend::with_executables(
-                self.options.ffmpeg.clone(),
-                self.options.ffprobe.clone(),
-            );
+            let mut audio_decoder = FfmpegBackend::new();
             let audio = mix_audio_graph_cancellable(
                 &graph,
                 asset_root,
@@ -501,49 +483,16 @@ impl Exporter {
         progress: &mut impl FnMut(ExportProgress),
     ) -> Result<(), ExportError> {
         let frame_rate = project.settings.frame_rate;
-        let dimensions = format!("{}x{}", project.settings.width, project.settings.height);
-        let rate = format!("{}/{}", frame_rate.numerator, frame_rate.denominator);
-        let mut child = Command::new(&self.options.ffmpeg)
-            .args(["-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgba"])
-            .arg("-video_size")
-            .arg(dimensions)
-            .arg("-framerate")
-            .arg(rate)
-            .args(["-i", "pipe:0", "-an", "-frames:v"])
-            .arg(frame_count.to_string())
-            .args([
-                "-c:v",
-                "libx264",
-                "-preset",
-                "medium",
-                "-crf",
-                "18",
-                "-pix_fmt",
-                "yuv420p",
-                "-threads",
-                "0",
-                "-movflags",
-                "+faststart",
-            ])
-            .arg(output)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|source| ExportError::Executable {
-                executable: self.options.ffmpeg.clone(),
-                source,
-            })?;
+        let mut writer = open_video_writer(
+            project.settings.width,
+            project.settings.height,
+            frame_rate,
+            output,
+        )?;
 
-        let write_result = (|| {
-            let stdin = child.stdin.take().ok_or(ExportError::MissingPipe)?;
-            let mut stdin = BufWriter::new(stdin);
+        let result = (|| {
             let evaluator = Evaluator::new(project).map_err(ExportError::Evaluation)?;
-            let video_decoder = FfmpegBackend::with_executables(
-                self.options.ffmpeg.clone(),
-                self.options.ffprobe.clone(),
-            )
-            .with_sequential_video(frame_rate);
+            let video_decoder = FfmpegBackend::new().with_sequential_video(frame_rate);
             let mut renderer = GpuRenderer::new(GpuRenderOptions::default())
                 .map_err(ExportError::Render)?
                 .with_asset_root(asset_root)
@@ -563,19 +512,15 @@ impl Exporter {
                 // wait (when there is one) overlaps with evaluating and
                 // encoding other frames instead of stalling every frame.
                 if let Some(frame) = renderer.submit(&scene).map_err(ExportError::Render)? {
-                    write_frame(&mut stdin, &frame)?;
+                    write_frame(&mut writer, &frame)?;
                 }
             }
             for frame in renderer.drain().map_err(ExportError::Render)? {
-                write_frame(&mut stdin, &frame)?;
+                write_frame(&mut writer, &frame)?;
             }
-            stdin.flush().map_err(|source| ExportError::Io {
-                operation: "finish video frame stream",
-                source,
-            })?;
             Ok(())
         })();
-        finish_process(child, write_result, "video encoding")
+        finish_encode(writer, result)
     }
 
     fn render_react_video(
@@ -613,46 +558,14 @@ impl Exporter {
             .map_err(ExportError::Evaluation)?
             .unwrap_or_default();
 
-        let dimensions = format!("{}x{}", metadata.width, metadata.height);
-        let rate = format!(
-            "{}/{}",
-            metadata.frame_rate.numerator, metadata.frame_rate.denominator
-        );
-        let mut child = Command::new(&self.options.ffmpeg)
-            .args(["-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgba"])
-            .arg("-video_size")
-            .arg(dimensions)
-            .arg("-framerate")
-            .arg(rate)
-            .args(["-i", "pipe:0", "-an", "-frames:v"])
-            .arg(metadata.duration_in_frames.to_string())
-            .args([
-                "-c:v",
-                "libx264",
-                "-preset",
-                "medium",
-                "-crf",
-                "18",
-                "-pix_fmt",
-                "yuv420p",
-                "-threads",
-                "0",
-                "-movflags",
-                "+faststart",
-            ])
-            .arg(output)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|source| ExportError::Executable {
-                executable: self.options.ffmpeg.clone(),
-                source,
-            })?;
+        let mut writer = open_video_writer(
+            metadata.width,
+            metadata.height,
+            metadata.frame_rate,
+            output,
+        )?;
 
-        let write_result = (|| {
-            let stdin = child.stdin.take().ok_or(ExportError::MissingPipe)?;
-            let mut stdin = BufWriter::new(stdin);
+        let result = (|| {
             let mut renderer =
                 GpuRenderer::new(GpuRenderOptions::default()).map_err(ExportError::Render)?;
             renderer = renderer.with_asset_root(asset_root);
@@ -662,10 +575,7 @@ impl Exporter {
             // renderer's single asset_root either way (see
             // absolutize_layers/absolutize_fonts below for how a project's
             // own, differently-rooted assets still resolve).
-            let video_decoder = FfmpegBackend::with_executables(
-                self.options.ffmpeg.clone(),
-                self.options.ffprobe.clone(),
-            )
+            let video_decoder = FfmpegBackend::new()
             .with_sequential_video(metadata.frame_rate);
             renderer = renderer.with_video_decoder(video_decoder);
             for frame_index in 0..metadata.duration_in_frames {
@@ -716,21 +626,21 @@ impl Exporter {
                 // frame's GPU work with the *next* frame's Node IPC round
                 // trip and project evaluation instead of blocking here.
                 if let Some(frame) = renderer.submit(&scene).map_err(ExportError::Render)? {
-                    write_frame(&mut stdin, &frame)?;
+                    write_frame(&mut writer, &frame)?;
                 }
             }
             for frame in renderer.drain().map_err(ExportError::Render)? {
-                write_frame(&mut stdin, &frame)?;
+                write_frame(&mut writer, &frame)?;
             }
-            stdin.flush().map_err(|source| ExportError::Io {
-                operation: "finish video frame stream",
-                source,
-            })?;
             Ok(())
         })();
-        finish_process(child, write_result, "video encoding")
+        finish_encode(writer, result)
     }
 
+    /// Muxes the encoded, audio-less `video` with the mixed `audio` (staged as
+    /// a raw `f32le` PCM sidecar file) into `output`, stream-copying the video
+    /// and encoding AAC — the library-linked equivalent of a second
+    /// `ffmpeg -i video -f f32le -i pcm -c:v copy -c:a aac` pass.
     fn mux_audio(
         &self,
         video: &Path,
@@ -738,61 +648,64 @@ impl Exporter {
         audio: &mikan_media::AudioBuffer,
         cancellation: &ExportCancellation,
     ) -> Result<(), ExportError> {
-        let mut child = Command::new(&self.options.ffmpeg)
-            .args(["-v", "error", "-y", "-i"])
-            .arg(video)
-            .args(["-f", "f32le", "-ar"])
-            .arg(audio.sample_rate.to_string())
-            .arg("-ac")
-            .arg(audio.channels.to_string())
-            .args([
-                "-i",
-                "pipe:0",
-                "-map",
-                "0:v:0",
-                "-map",
-                "1:a:0",
-                "-c:v",
-                "copy",
-                "-c:a",
-                "aac",
-                "-b:a",
-                "192k",
-                "-threads",
-                "0",
-                "-shortest",
-                "-movflags",
-                "+faststart",
-            ])
-            .arg(output)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|source| ExportError::Executable {
-                executable: self.options.ffmpeg.clone(),
+        ensure_not_cancelled(cancellation)?;
+        let pcm_path = video.with_extension("pcm");
+        let mut pcm = io::BufWriter::new(fs::File::create(&pcm_path).map_err(|source| {
+            ExportError::Io {
+                operation: "create mixed audio sidecar",
+                source,
+            }
+        })?);
+        for sample in &audio.samples {
+            pcm.write_all(&sample.to_le_bytes())
+                .map_err(|source| ExportError::Io {
+                    operation: "stage mixed audio",
+                    source,
+                })?;
+        }
+        pcm.into_inner()
+            .map_err(|error| ExportError::Io {
+                operation: "flush mixed audio",
+                source: error.into_error(),
+            })?
+            .sync_all()
+            .map_err(|source| ExportError::Io {
+                operation: "flush mixed audio",
                 source,
             })?;
-        let write_result = (|| {
-            let stdin = child.stdin.take().ok_or(ExportError::MissingPipe)?;
-            let mut stdin = BufWriter::new(stdin);
-            for samples in audio.samples.chunks(4_096) {
-                ensure_not_cancelled(cancellation)?;
-                for sample in samples {
-                    stdin
-                        .write_all(&sample.to_le_bytes())
-                        .map_err(|source| ExportError::Io {
-                            operation: "stream mixed audio to FFmpeg",
-                            source,
-                        })?;
-                }
-            }
-            stdin.flush().map_err(|source| ExportError::Io {
-                operation: "finish mixed audio stream",
+        ensure_not_cancelled(cancellation)?;
+
+        let context = FfmpegContext::builder()
+            .input(Input::from(path_to_url(video)))
+            .input(
+                Input::from(path_to_url(&pcm_path))
+                    .set_format("f32le")
+                    .set_format_opt("sample_rate", audio.sample_rate.to_string())
+                    .set_format_opt("ch_layout", format!("{}c", audio.channels)),
+            )
+            .output(
+                Output::from(path_to_url(output))
+                    .add_stream_map_with_copy("0:v:0")
+                    .add_stream_map("1:a:0")
+                    .set_audio_codec("aac")
+                    .set_audio_codec_opt("b", "192k")
+                    .set_shortest(true)
+                    .set_format_opt("movflags", "+faststart"),
+            )
+            .build()
+            .map_err(|source| ExportError::Ffmpeg {
+                stage: "audio muxing",
                 source,
-            })
-        })();
-        finish_process(child, write_result, "audio muxing")
+            })?;
+        let result = context
+            .start()
+            .and_then(|running| running.wait())
+            .map_err(|source| ExportError::Ffmpeg {
+                stage: "audio muxing",
+                source,
+            });
+        let _ = fs::remove_file(&pcm_path);
+        result
     }
 }
 
@@ -966,16 +879,64 @@ fn validate_output(output: &Path, overwrite: bool) -> Result<(), ExportError> {
     Ok(())
 }
 
-fn write_frame(
-    stdin: &mut impl Write,
-    frame: &mikan_gpu_renderer::GpuFrame,
-) -> Result<(), ExportError> {
-    stdin
-        .write_all(frame.pixels())
-        .map_err(|source| ExportError::Io {
-            operation: "stream video frame to FFmpeg",
+fn path_to_url(path: &Path) -> String {
+    path.to_string_lossy().into_owned()
+}
+
+/// Opens a constant-frame-rate H.264 `VideoWriter` for pushed RGBA frames —
+/// the library-linked equivalent of piping `rawvideo` into
+/// `ffmpeg -c:v libx264 -preset medium -crf 18 -pix_fmt yuv420p -movflags +faststart`.
+fn open_video_writer(
+    width: u32,
+    height: u32,
+    frame_rate: Rational,
+    output: &Path,
+) -> Result<VideoWriter, ExportError> {
+    let fps_num = i32::try_from(frame_rate.numerator).map_err(|_| ExportError::TimelineTooLong)?;
+    let fps_den = i32::try_from(frame_rate.denominator).map_err(|_| ExportError::TimelineTooLong)?;
+    VideoWriter::builder(width, height)
+        .pixel_format("rgba")
+        .fps(fps_num, fps_den)
+        .open(
+            Output::from(path_to_url(output))
+                .set_video_codec("libx264")
+                .set_video_codec_opt("preset", "medium")
+                .set_video_codec_opt("crf", "18")
+                .set_pix_fmt("yuv420p")
+                .set_format_opt("movflags", "+faststart"),
+        )
+        .map_err(|source| ExportError::Ffmpeg {
+            stage: "video encoding",
             source,
         })
+}
+
+fn write_frame(
+    writer: &mut VideoWriter,
+    frame: &mikan_gpu_renderer::GpuFrame,
+) -> Result<(), ExportError> {
+    writer
+        .write(frame.pixels())
+        .map_err(|error| ExportError::Ffmpeg {
+            stage: "video encoding",
+            source: error.into(),
+        })
+}
+
+/// Finalizes an encode: `finish()` on success (writes the container trailer),
+/// `abort()` on any earlier failure (dropping the writer would also abort, but
+/// this is explicit and drains the worker).
+fn finish_encode(writer: VideoWriter, result: Result<(), ExportError>) -> Result<(), ExportError> {
+    match result {
+        Ok(()) => writer.finish().map_err(|source| ExportError::Ffmpeg {
+            stage: "video encoding",
+            source,
+        }),
+        Err(error) => {
+            writer.abort();
+            Err(error)
+        }
+    }
 }
 
 fn ensure_not_cancelled(cancellation: &ExportCancellation) -> Result<(), ExportError> {
@@ -1009,31 +970,6 @@ fn frame_count(duration: Time, frame_rate: Rational) -> Result<u64, ExportError>
     Ok(frames)
 }
 
-fn finish_process(
-    mut child: Child,
-    write_result: Result<(), ExportError>,
-    stage: &'static str,
-) -> Result<(), ExportError> {
-    drop(child.stdin.take());
-    if matches!(&write_result, Err(ExportError::Cancelled)) {
-        let _ = child.kill();
-        let _ = child.wait();
-        return write_result;
-    }
-    let output = child.wait_with_output().map_err(|source| ExportError::Io {
-        operation: "wait for FFmpeg",
-        source,
-    })?;
-    if !output.status.success() {
-        return Err(ExportError::Process {
-            stage,
-            status: output.status,
-            stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-        });
-    }
-    write_result
-}
-
 #[derive(Debug)]
 pub enum ExportError {
     Project(LoadError),
@@ -1042,18 +978,13 @@ pub enum ExportError {
     Audio(AudioMixError),
     React(ReactBridgeError),
     Time(TimeError),
-    Executable {
-        executable: PathBuf,
-        source: io::Error,
-    },
     Io {
         operation: &'static str,
         source: io::Error,
     },
-    Process {
+    Ffmpeg {
         stage: &'static str,
-        status: ExitStatus,
-        stderr: String,
+        source: ez_ffmpeg::error::Error,
     },
     OutputExists(PathBuf),
     UnsupportedOutput(PathBuf),
@@ -1064,7 +995,6 @@ pub enum ExportError {
     EmptyTimeline,
     Cancelled,
     TimelineTooLong,
-    MissingPipe,
 }
 
 impl fmt::Display for ExportError {
@@ -1076,19 +1006,10 @@ impl fmt::Display for ExportError {
             Self::Audio(error) => write!(formatter, "could not mix export audio: {error}"),
             Self::React(error) => write!(formatter, "could not evaluate React export: {error}"),
             Self::Time(error) => write!(formatter, "could not calculate export time: {error}"),
-            Self::Executable { executable, source } => {
-                write!(
-                    formatter,
-                    "could not run {}: {source}",
-                    executable.display()
-                )
-            }
             Self::Io { operation, source } => write!(formatter, "could not {operation}: {source}"),
-            Self::Process {
-                stage,
-                status,
-                stderr,
-            } => write!(formatter, "FFmpeg {stage} failed ({status}): {stderr}"),
+            Self::Ffmpeg { stage, source } => {
+                write!(formatter, "FFmpeg {stage} failed: {source}")
+            }
             Self::OutputExists(path) => {
                 write!(formatter, "output already exists: {}", path.display())
             }
@@ -1104,7 +1025,6 @@ impl fmt::Display for ExportError {
             Self::EmptyTimeline => formatter.write_str("cannot export an empty timeline"),
             Self::Cancelled => formatter.write_str("export was cancelled"),
             Self::TimelineTooLong => formatter.write_str("export timeline is too long"),
-            Self::MissingPipe => formatter.write_str("FFmpeg did not provide its input pipe"),
         }
     }
 }
@@ -1118,15 +1038,14 @@ impl Error for ExportError {
             Self::Audio(error) => Some(error),
             Self::React(error) => Some(error),
             Self::Time(error) => Some(error),
-            Self::Executable { source, .. } | Self::Io { source, .. } => Some(source),
-            Self::Process { .. }
-            | Self::OutputExists(_)
+            Self::Io { source, .. } => Some(source),
+            Self::Ffmpeg { source, .. } => Some(source),
+            Self::OutputExists(_)
             | Self::UnsupportedOutput(_)
             | Self::UnsupportedDimensions { .. }
             | Self::EmptyTimeline
             | Self::Cancelled
-            | Self::TimelineTooLong
-            | Self::MissingPipe => None,
+            | Self::TimelineTooLong => None,
         }
     }
 }

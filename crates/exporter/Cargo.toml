@@ -9,6 +9,7 @@ rust-version.workspace = true
 [dependencies]
 mikan-composition = { path = "../composition" }
 mikan-evaluator = { path = "../evaluator" }
+ez-ffmpeg.workspace = true
 mikan-gpu-renderer = { path = "../gpu-renderer" }
 mikan-media = { path = "../media" }
 mikan-project = { path = "../project" }

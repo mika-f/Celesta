@@ -1,17 +1,21 @@
-//! Media probing and frame decoding behind an FFmpeg process boundary.
+//! Media probing and frame decoding through the linked FFmpeg libraries
+//! (`ez-ffmpeg`).
 
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
-use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdout, Command, Output, Stdio};
+
+use ez_ffmpeg::frame_export::{
+    Channels, FrameExtractor, FrameIter, PixelLayout, SampleExtractor, VideoFrame as EzVideoFrame,
+};
+use ez_ffmpeg::stream_info::{StreamInfo, find_all_stream_infos};
+use ez_ffmpeg::{AVRational, Input, container_info};
 
 use mikan_composition::{
     AnimationError, AssetLocation, AudioGraph, Rational, Time, TimeError, evaluate_f64,
     integrate_f64,
 };
-use serde::Deserialize;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MediaProbe {
@@ -87,40 +91,39 @@ pub trait AudioDecoder {
 }
 
 pub struct FfmpegBackend {
-    ffmpeg: PathBuf,
-    ffprobe: PathBuf,
     probes: HashMap<PathBuf, MediaProbe>,
     sequential_frame_rate: Option<Rational>,
     video_sessions: HashMap<(String, PathBuf), SequentialVideoSession>,
     sequential_video_processes_started: u64,
 }
 
+/// One long-lived `ez-ffmpeg` decode run held open across a monotonic
+/// sequence of frame requests. Frames are pulled from `frames` at the
+/// source's native cadence; each request walks the iterator forward to the
+/// first frame at or after the requested time (a container seek re-zeroed
+/// `frames`' timeline at `start_seconds`).
 struct SequentialVideoSession {
-    child: Child,
-    stdout: ChildStdout,
+    frames: FrameIter,
     width: u32,
     height: u32,
+    /// The source time the decode window was seeked to; frame presentation
+    /// times are reported relative to this.
+    start_seconds: f64,
+    /// The expected spacing between consecutive requests, used only to decide
+    /// whether the next request stays within this session's cadence.
     step_seconds: f64,
+    /// The last (clamped) request time this session served — the cadence the
+    /// `decode_sequential` fast paths reason about.
     last_timestamp: Option<f64>,
+    /// The presentation time of `last_frame`, used to tell whether the frame
+    /// already in hand answers a near-repeat request.
+    last_frame_seconds: Option<f64>,
     last_frame: Option<VideoFrame>,
-}
-
-impl Drop for SequentialVideoSession {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
 }
 
 impl FfmpegBackend {
     pub fn new() -> Self {
-        Self::with_executables("ffmpeg", "ffprobe")
-    }
-
-    pub fn with_executables(ffmpeg: impl Into<PathBuf>, ffprobe: impl Into<PathBuf>) -> Self {
         Self {
-            ffmpeg: ffmpeg.into(),
-            ffprobe: ffprobe.into(),
             probes: HashMap::new(),
             sequential_frame_rate: None,
             video_sessions: HashMap::new(),
@@ -142,23 +145,7 @@ impl FfmpegBackend {
     pub fn probe(&mut self, path: impl AsRef<Path>) -> Result<&MediaProbe, MediaError> {
         let path = path.as_ref();
         if !self.probes.contains_key(path) {
-            let output = Command::new(&self.ffprobe)
-                .args([
-                    "-v",
-                    "error",
-                    "-of",
-                    "json",
-                    "-show_streams",
-                    "-show_format",
-                ])
-                .arg(path)
-                .output()
-                .map_err(|source| MediaError::Executable {
-                    executable: self.ffprobe.clone(),
-                    source,
-                })?;
-            ensure_success("ffprobe", &output)?;
-            let probe = parse_probe(&output.stdout)?;
+            let probe = probe_path(path)?;
             self.probes.insert(path.to_owned(), probe);
         }
         Ok(self.probes.get(path).expect("probe was cached"))
@@ -174,44 +161,23 @@ impl FfmpegBackend {
             .clone()
             .ok_or_else(|| MediaError::NoVideoStream(path.to_owned()))?;
         let source_time_seconds = clamp_to_source_end(source_time_seconds, &video, probe.duration);
-        let timestamp = format!("{source_time_seconds:.9}");
-        let output = Command::new(&self.ffmpeg)
-            .args(["-v", "error", "-ss"])
-            .arg(timestamp)
-            .arg("-i")
-            .arg(path)
-            .args([
-                "-map",
-                "0:v:0",
-                "-frames:v",
-                "1",
-                "-f",
-                "rawvideo",
-                "-pix_fmt",
-                "rgba",
-                "pipe:1",
-            ])
-            .output()
-            .map_err(|source| MediaError::Executable {
-                executable: self.ffmpeg.clone(),
-                source,
-            })?;
-        ensure_success("ffmpeg", &output)?;
 
-        let expected = frame_byte_len(video.width, video.height)?;
-        if output.stdout.len() != expected {
-            return Err(MediaError::UnexpectedFrameSize {
-                width: video.width,
-                height: video.height,
-                expected,
-                actual: output.stdout.len(),
-            });
-        }
-        Ok(VideoFrame {
-            width: video.width,
-            height: video.height,
-            pixels: output.stdout,
-        })
+        // A container seek to the keyframe at or before the request re-zeroes
+        // the timeline; the in-graph trim then drops the negative-pts lead-in,
+        // so the first delivered frame is the one at or after the request —
+        // the same frame `ffmpeg -ss <t> -i … -frames:v 1` produced.
+        let mut frames = FrameExtractor::new(Input::from(path_to_url(path)))
+            .start_time_us(seconds_to_us(source_time_seconds))
+            .pixel(PixelLayout::Rgba32)
+            .max_frames(1)
+            .frames()
+            .map_err(MediaError::Ffmpeg)?;
+        let frame = frames
+            .next()
+            .transpose()
+            .map_err(MediaError::Ffmpeg)?
+            .ok_or_else(|| MediaError::NoVideoStream(path.to_owned()))?;
+        convert_frame(frame, video.width, video.height)
     }
 
     fn decode_sequential(
@@ -241,39 +207,32 @@ impl FfmpegBackend {
                     .clone()
                     .ok_or_else(|| MediaError::NoVideoStream(path.to_owned()));
             }
-            let expected = session
+            // Forward progress within this session's cadence: keep pulling
+            // from the open decode run instead of re-seeking.
+            let next = session
                 .last_timestamp
                 .map(|last| last + session.step_seconds);
-            if expected.is_some_and(|expected| timestamps_match(expected, source_time_seconds)) {
+            if next.is_some_and(|next| timestamps_match(next, source_time_seconds)) {
                 return session.read_frame(source_time_seconds);
             }
         }
 
+        // A discontinuity (a seek backwards, or a jump past one step): learn
+        // the real request spacing from the last delivered frame, then open a
+        // fresh decode run seeked to the request.
         let learned_step = self.video_sessions.remove(&key).and_then(|session| {
             session
                 .last_timestamp
                 .map(|last| source_time_seconds - last)
                 .filter(|step| step.is_finite() && *step > 0.0)
         });
-        let (step_seconds, rate) = learned_step.map_or_else(
-            || {
-                (
-                    f64::from(default_frame_rate.denominator)
-                        / f64::from(default_frame_rate.numerator),
-                    format!(
-                        "{}/{}",
-                        default_frame_rate.numerator, default_frame_rate.denominator
-                    ),
-                )
-            },
-            |step| (step, format!("{:.12}", 1.0 / step)),
-        );
+        let step_seconds = learned_step.unwrap_or_else(|| {
+            f64::from(default_frame_rate.denominator) / f64::from(default_frame_rate.numerator)
+        });
         let mut session = SequentialVideoSession::spawn(
-            &self.ffmpeg,
             path,
             source_time_seconds,
             step_seconds,
-            &rate,
             video.width,
             video.height,
         )?;
@@ -287,82 +246,197 @@ impl FfmpegBackend {
 
 impl SequentialVideoSession {
     fn spawn(
-        ffmpeg: &Path,
         path: &Path,
         source_time_seconds: f64,
         step_seconds: f64,
-        rate: &str,
         width: u32,
         height: u32,
     ) -> Result<Self, MediaError> {
-        let timestamp = format!("{source_time_seconds:.9}");
-        let mut child = Command::new(ffmpeg)
-            .args(["-v", "error", "-ss"])
-            .arg(timestamp)
-            .arg("-i")
-            .arg(path)
-            .args(["-map", "0:v:0", "-vf"])
-            .arg(format!("fps=fps={rate}:start_time=0:round=near"))
-            .args(["-f", "rawvideo", "-pix_fmt", "rgba", "pipe:1"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|source| MediaError::Executable {
-                executable: ffmpeg.to_owned(),
-                source,
-            })?;
-        let stdout = child.stdout.take().ok_or(MediaError::MissingVideoPipe)?;
+        let frames = FrameExtractor::new(Input::from(path_to_url(path)))
+            .start_time_us(seconds_to_us(source_time_seconds))
+            .pixel(PixelLayout::Rgba32)
+            .frames()
+            .map_err(MediaError::Ffmpeg)?;
         Ok(Self {
-            child,
-            stdout,
+            frames,
             width,
             height,
+            start_seconds: source_time_seconds,
             step_seconds,
             last_timestamp: None,
+            last_frame_seconds: None,
             last_frame: None,
         })
     }
 
-    fn read_frame(&mut self, source_time_seconds: f64) -> Result<VideoFrame, MediaError> {
-        let expected = frame_byte_len(self.width, self.height)?;
-        let mut pixels = vec![0; expected];
-        let mut actual = 0;
-        while actual < expected {
-            match self.stdout.read(&mut pixels[actual..]) {
-                Ok(0) => {
-                    // Clean EOF: the source ran out while playback continued
-                    // into it (a clip whose window or rate outruns its
-                    // file). Freeze on the last decoded frame rather than
-                    // failing the caller's whole frame render; only a
-                    // session that never produced any frame stays an error.
+    /// Walks the open decode run forward to the first frame at or after
+    /// `target_seconds`. A clean end of stream freezes on the last decoded
+    /// frame (a clip whose window outruns its file); only a run that never
+    /// produced any frame stays an error.
+    fn read_frame(&mut self, target_seconds: f64) -> Result<VideoFrame, MediaError> {
+        loop {
+            // The frame already in hand is at or past the request (a
+            // near-repeat that slipped the exact-match fast path): reuse it.
+            if let (Some(seconds), Some(frame)) = (self.last_frame_seconds, &self.last_frame)
+                && reached(seconds, target_seconds)
+            {
+                let frame = frame.clone();
+                self.last_timestamp = Some(target_seconds);
+                return Ok(frame);
+            }
+            match self.frames.next() {
+                None => {
                     if let Some(frame) = self.last_frame.clone() {
+                        self.last_timestamp = Some(target_seconds);
                         return Ok(frame);
                     }
                     return Err(MediaError::UnexpectedFrameSize {
                         width: self.width,
                         height: self.height,
-                        expected,
-                        actual,
+                        expected: frame_byte_len(self.width, self.height)?,
+                        actual: 0,
                     });
                 }
-                Ok(read) => actual += read,
-                Err(source) => return Err(MediaError::VideoPipe(source)),
+                Some(Err(error)) => return Err(MediaError::Ffmpeg(error)),
+                Some(Ok(raw)) => {
+                    let frame_seconds =
+                        self.start_seconds + raw.pts_us().unwrap_or(0) as f64 / 1_000_000.0;
+                    let frame = convert_frame(raw, self.width, self.height)?;
+                    self.last_frame_seconds = Some(frame_seconds);
+                    self.last_frame = Some(frame.clone());
+                    if reached(frame_seconds, target_seconds) {
+                        self.last_timestamp = Some(target_seconds);
+                        return Ok(frame);
+                    }
+                }
             }
         }
-        let frame = VideoFrame {
-            width: self.width,
-            height: self.height,
-            pixels,
-        };
-        self.last_timestamp = Some(source_time_seconds);
-        self.last_frame = Some(frame.clone());
-        Ok(frame)
     }
 }
 
 fn timestamps_match(left: f64, right: f64) -> bool {
     (left - right).abs() <= 1e-7_f64.max(left.abs().max(right.abs()) * 1e-9)
+}
+
+/// Whether a decoded frame at `frame_seconds` satisfies a request for
+/// `target_seconds` — it is at or after the request (with the same tolerance
+/// [`timestamps_match`] uses for an exact landing).
+fn reached(frame_seconds: f64, target_seconds: f64) -> bool {
+    frame_seconds > target_seconds || timestamps_match(frame_seconds, target_seconds)
+}
+
+fn path_to_url(path: &Path) -> String {
+    path.to_string_lossy().into_owned()
+}
+
+fn seconds_to_us(seconds: f64) -> i64 {
+    (seconds * 1_000_000.0).round() as i64
+}
+
+/// Converts one `ez-ffmpeg` RGBA frame into a [`VideoFrame`], rejecting any
+/// frame whose dimensions or packed length disagree with the probed stream.
+fn convert_frame(
+    frame: EzVideoFrame,
+    expected_width: u32,
+    expected_height: u32,
+) -> Result<VideoFrame, MediaError> {
+    let (width, height) = (frame.width(), frame.height());
+    let pixels = frame.into_vec();
+    let expected = frame_byte_len(expected_width, expected_height)?;
+    if width != expected_width || height != expected_height || pixels.len() != expected {
+        return Err(MediaError::UnexpectedFrameSize {
+            width: expected_width,
+            height: expected_height,
+            expected,
+            actual: pixels.len(),
+        });
+    }
+    Ok(VideoFrame {
+        width,
+        height,
+        pixels,
+    })
+}
+
+fn probe_path(path: &Path) -> Result<MediaProbe, MediaError> {
+    let url = path_to_url(path);
+    let streams = find_all_stream_infos(url.as_str()).map_err(MediaError::Ffmpeg)?;
+    let duration = container_info::get_duration_us(url.as_str())
+        .ok()
+        .filter(|micros| *micros > 0)
+        .map(|micros| Time::new(micros, 1_000_000).reduced());
+
+    let mut video = None;
+    let mut audio = Vec::new();
+    for stream in streams {
+        match stream {
+            StreamInfo::Video {
+                index,
+                codec_name,
+                width,
+                height,
+                avg_frame_rate,
+                r_frame_rate,
+                duration,
+                time_base,
+                ..
+            } if video.is_none() => {
+                video = Some(VideoStream {
+                    index: index.max(0) as u32,
+                    codec: normalize_codec(codec_name),
+                    width: width.max(0) as u32,
+                    height: height.max(0) as u32,
+                    frame_rate: rational_from_av(avg_frame_rate)
+                        .or_else(|| rational_from_av(r_frame_rate)),
+                    duration: stream_duration(duration, time_base),
+                });
+            }
+            StreamInfo::Audio {
+                index,
+                codec_name,
+                sample_rate,
+                nb_channels,
+                duration,
+                time_base,
+                ..
+            } => {
+                audio.push(AudioStream {
+                    index: index.max(0) as u32,
+                    codec: normalize_codec(codec_name),
+                    sample_rate: (sample_rate > 0).then_some(sample_rate as u32),
+                    channels: (nb_channels > 0).then_some(nb_channels as u16),
+                    duration: stream_duration(duration, time_base),
+                });
+            }
+            _ => {}
+        }
+    }
+    Ok(MediaProbe {
+        duration,
+        video,
+        audio,
+    })
+}
+
+fn normalize_codec(name: String) -> Option<String> {
+    (!name.is_empty() && name != "Unknown codec").then_some(name)
+}
+
+fn rational_from_av(rate: AVRational) -> Option<Rational> {
+    (rate.num > 0 && rate.den > 0).then(|| Rational::new(rate.num as u32, rate.den as u32))
+}
+
+/// A stream's own `duration` (in `time_base` units) as exact [`Time`], or
+/// `None` when the demuxer reported no usable value.
+fn stream_duration(duration: i64, time_base: AVRational) -> Option<Time> {
+    if duration <= 0 || time_base.num <= 0 || time_base.den <= 0 {
+        return None;
+    }
+    let micros =
+        i128::from(duration) * i128::from(time_base.num) * 1_000_000 / i128::from(time_base.den);
+    i64::try_from(micros)
+        .ok()
+        .map(|micros| Time::new(micros, 1_000_000).reduced())
 }
 
 impl Default for FfmpegBackend {
@@ -415,37 +489,16 @@ impl AudioDecoder for FfmpegBackend {
                 samples: Vec::new(),
             });
         }
-        let output = Command::new(&self.ffmpeg)
-            .args(["-v", "error", "-i"])
-            .arg(path)
-            .args([
-                "-map",
-                "0:a:0?",
-                "-vn",
-                "-f",
-                "f32le",
-                "-acodec",
-                "pcm_f32le",
-            ])
-            .arg("-ac")
-            .arg(channels.to_string())
-            .arg("-ar")
-            .arg(sample_rate.to_string())
-            .arg("pipe:1")
-            .output()
-            .map_err(|source| MediaError::Executable {
-                executable: self.ffmpeg.clone(),
-                source,
-            })?;
-        ensure_success("ffmpeg", &output)?;
-        if output.stdout.len() % 4 != 0 {
-            return Err(MediaError::InvalidAudioByteLength(output.stdout.len()));
-        }
-        let samples = output
-            .stdout
-            .chunks_exact(4)
-            .map(|bytes| f32::from_le_bytes(bytes.try_into().expect("chunk has four bytes")))
-            .collect::<Vec<_>>();
+        let layout = if channels == 1 {
+            Channels::Mono
+        } else {
+            Channels::Stereo
+        };
+        let samples = SampleExtractor::new(Input::from(path_to_url(path)))
+            .sample_rate(sample_rate)
+            .channels(layout)
+            .collect_samples()
+            .map_err(MediaError::Ffmpeg)?;
         if samples.len() % usize::from(channels) != 0 {
             return Err(MediaError::InvalidAudioSampleCount {
                 samples: samples.len(),
@@ -640,174 +693,11 @@ fn clamp_to_source_end(
     source_time_seconds.min((seconds - frame_step).max(0.0))
 }
 
-fn ensure_success(program: &'static str, output: &Output) -> Result<(), MediaError> {
-    if output.status.success() {
-        return Ok(());
-    }
-    Err(MediaError::Process {
-        program,
-        status: output.status.code(),
-        stderr: String::from_utf8_lossy(&output.stderr).trim().to_owned(),
-    })
-}
-
-#[derive(Deserialize)]
-struct ProbeOutput {
-    #[serde(default)]
-    streams: Vec<ProbeStream>,
-    format: Option<ProbeFormat>,
-}
-
-#[derive(Deserialize)]
-struct ProbeFormat {
-    duration: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct ProbeStream {
-    index: u32,
-    codec_type: String,
-    codec_name: Option<String>,
-    width: Option<u32>,
-    height: Option<u32>,
-    avg_frame_rate: Option<String>,
-    sample_rate: Option<String>,
-    channels: Option<u16>,
-    duration: Option<String>,
-}
-
-fn parse_probe(input: &[u8]) -> Result<MediaProbe, MediaError> {
-    let output: ProbeOutput = serde_json::from_slice(input).map_err(MediaError::ProbeJson)?;
-    let duration = output
-        .format
-        .and_then(|format| format.duration)
-        .map(|duration| parse_decimal_time(&duration))
-        .transpose()?;
-    let mut video = None;
-    let mut audio = Vec::new();
-    for stream in output.streams {
-        let stream_duration = stream
-            .duration
-            .as_deref()
-            .map(parse_decimal_time)
-            .transpose()?;
-        match stream.codec_type.as_str() {
-            "video" if video.is_none() => {
-                let width = stream.width.ok_or(MediaError::MissingProbeField("width"))?;
-                let height = stream
-                    .height
-                    .ok_or(MediaError::MissingProbeField("height"))?;
-                video = Some(VideoStream {
-                    index: stream.index,
-                    codec: stream.codec_name,
-                    width,
-                    height,
-                    frame_rate: stream
-                        .avg_frame_rate
-                        .as_deref()
-                        .filter(|rate| *rate != "0/0")
-                        .map(parse_rational)
-                        .transpose()?,
-                    duration: stream_duration,
-                });
-            }
-            "audio" => audio.push(AudioStream {
-                index: stream.index,
-                codec: stream.codec_name,
-                sample_rate: stream
-                    .sample_rate
-                    .as_deref()
-                    .map(str::parse)
-                    .transpose()
-                    .map_err(|_| MediaError::InvalidProbeValue("sample_rate"))?,
-                channels: stream.channels,
-                duration: stream_duration,
-            }),
-            _ => {}
-        }
-    }
-    Ok(MediaProbe {
-        duration,
-        video,
-        audio,
-    })
-}
-
-fn parse_rational(input: &str) -> Result<Rational, MediaError> {
-    let (numerator, denominator) = input
-        .split_once('/')
-        .ok_or(MediaError::InvalidProbeValue("frame_rate"))?;
-    let rational = Rational::new(
-        numerator
-            .parse()
-            .map_err(|_| MediaError::InvalidProbeValue("frame_rate"))?,
-        denominator
-            .parse()
-            .map_err(|_| MediaError::InvalidProbeValue("frame_rate"))?,
-    );
-    if !rational.is_valid() {
-        return Err(MediaError::InvalidProbeValue("frame_rate"));
-    }
-    Ok(rational)
-}
-
-fn parse_decimal_time(input: &str) -> Result<Time, MediaError> {
-    let input = input.trim();
-    let (negative, unsigned) = input
-        .strip_prefix('-')
-        .map_or((false, input), |value| (true, value));
-    let (whole, fraction) = unsigned.split_once('.').unwrap_or((unsigned, ""));
-    if whole.is_empty()
-        || !whole.bytes().all(|byte| byte.is_ascii_digit())
-        || !fraction.bytes().all(|byte| byte.is_ascii_digit())
-        || fraction.len() > 9
-    {
-        return Err(MediaError::InvalidProbeValue("duration"));
-    }
-    let timescale = 10_u32.pow(fraction.len() as u32);
-    let whole: i128 = whole
-        .parse()
-        .map_err(|_| MediaError::InvalidProbeValue("duration"))?;
-    let fraction: i128 = if fraction.is_empty() {
-        0
-    } else {
-        fraction
-            .parse()
-            .map_err(|_| MediaError::InvalidProbeValue("duration"))?
-    };
-    let value = whole
-        .checked_mul(i128::from(timescale))
-        .and_then(|value| value.checked_add(fraction))
-        .and_then(|value| {
-            if negative {
-                value.checked_neg()
-            } else {
-                Some(value)
-            }
-        })
-        .and_then(|value| i64::try_from(value).ok())
-        .ok_or(MediaError::InvalidProbeValue("duration"))?;
-    Ok(Time::new(value, timescale).reduced())
-}
-
 #[derive(Debug)]
 pub enum MediaError {
-    Executable {
-        executable: PathBuf,
-        source: io::Error,
-    },
-    Process {
-        program: &'static str,
-        status: Option<i32>,
-        stderr: String,
-    },
-    ProbeJson(serde_json::Error),
-    MissingProbeField(&'static str),
-    InvalidProbeValue(&'static str),
+    Ffmpeg(ez_ffmpeg::error::Error),
     NoVideoStream(PathBuf),
     InvalidTimestamp(f64),
-    MissingVideoPipe,
-    VideoPipe(io::Error),
     FrameTooLarge {
         width: u32,
         height: u32,
@@ -822,7 +712,6 @@ pub enum MediaError {
         sample_rate: u32,
         channels: u16,
     },
-    InvalidAudioByteLength(usize),
     InvalidAudioSampleCount {
         samples: usize,
         channels: u16,
@@ -832,36 +721,11 @@ pub enum MediaError {
 impl fmt::Display for MediaError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Executable { executable, source } => {
-                write!(
-                    formatter,
-                    "could not run {}: {source}",
-                    executable.display()
-                )
-            }
-            Self::Process {
-                program,
-                status,
-                stderr,
-            } => {
-                write!(
-                    formatter,
-                    "{program} failed with status {status:?}: {stderr}"
-                )
-            }
-            Self::ProbeJson(error) => write!(formatter, "invalid ffprobe JSON: {error}"),
-            Self::MissingProbeField(field) => write!(formatter, "ffprobe omitted `{field}`"),
-            Self::InvalidProbeValue(field) => {
-                write!(formatter, "ffprobe returned invalid `{field}`")
-            }
+            Self::Ffmpeg(error) => write!(formatter, "FFmpeg operation failed: {error}"),
             Self::NoVideoStream(path) => {
                 write!(formatter, "{} has no video stream", path.display())
             }
             Self::InvalidTimestamp(time) => write!(formatter, "invalid video timestamp {time}"),
-            Self::MissingVideoPipe => formatter.write_str("FFmpeg did not provide video output"),
-            Self::VideoPipe(error) => {
-                write!(formatter, "could not read FFmpeg video output: {error}")
-            }
             Self::FrameTooLarge { width, height } => {
                 write!(formatter, "video frame {width}x{height} is too large")
             }
@@ -881,12 +745,6 @@ impl fmt::Display for MediaError {
                 formatter,
                 "invalid audio output format {sample_rate} Hz, {channels} channels"
             ),
-            Self::InvalidAudioByteLength(bytes) => {
-                write!(
-                    formatter,
-                    "decoded audio has an invalid byte length of {bytes}"
-                )
-            }
             Self::InvalidAudioSampleCount { samples, channels } => write!(
                 formatter,
                 "decoded audio has {samples} samples, not divisible by {channels} channels"
@@ -898,8 +756,7 @@ impl fmt::Display for MediaError {
 impl Error for MediaError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::Executable { source, .. } | Self::VideoPipe(source) => Some(source),
-            Self::ProbeJson(error) => Some(error),
+            Self::Ffmpeg(error) => Some(error),
             _ => None,
         }
     }
@@ -984,53 +841,63 @@ impl From<TimeError> for AudioMixError {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
+    use ez_ffmpeg::{FfmpegContext, Output};
     use mikan_composition::{Animatable, AudioClip, ResolvedAsset, TimeRange};
 
     use super::*;
 
-    const PROBE: &[u8] = br#"{
-      "streams": [
-        {
-          "index": 0,
-          "codec_name": "h264",
-          "codec_type": "video",
-          "width": 1920,
-          "height": 1080,
-          "avg_frame_rate": "30000/1001",
-          "duration": "12.512500"
-        },
-        {
-          "index": 1,
-          "codec_name": "aac",
-          "codec_type": "audio",
-          "sample_rate": "48000",
-          "channels": 2,
-          "duration": "12.500000"
-        }
-      ],
-      "format": { "duration": "12.512500" }
-    }"#;
+    /// Renders a synthetic `lavfi` source to a lossless MKV fixture through
+    /// the linked FFmpeg libraries.
+    fn generate_clip(path: &Path, lavfi: &str) {
+        FfmpegContext::builder()
+            .input(Input::from(lavfi).set_format("lavfi"))
+            .output(Output::from(path_to_url(path)).set_video_codec("ffv1"))
+            .build()
+            .unwrap()
+            .start()
+            .unwrap()
+            .wait()
+            .unwrap();
+    }
 
-    #[test]
-    fn parses_probe_metadata_without_floating_point_time() {
-        let probe = parse_probe(PROBE).unwrap();
-        assert_eq!(probe.duration, Some(Time::new(1001, 80)));
-        let video = probe.video.unwrap();
-        assert_eq!(video.frame_rate, Some(Rational::new(30_000, 1001)));
-        assert_eq!((video.width, video.height), (1920, 1080));
-        assert_eq!(probe.audio[0].sample_rate, Some(48_000));
+    fn fixture_dir(label: &str) -> PathBuf {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "mikan-media-{label}-{}-{suffix}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        directory
     }
 
     #[test]
-    fn reports_a_missing_ffprobe_executable() {
-        let mut backend = FfmpegBackend::with_executables(
-            "/definitely-not-installed/mikan-ffmpeg",
-            "/definitely-not-installed/mikan-ffprobe",
-        );
+    fn probes_stream_metadata_as_exact_rational_time() {
+        let directory = fixture_dir("probe");
+        let clip = directory.join("clip.mkv");
+        generate_clip(&clip, "testsrc2=size=320x240:rate=25:duration=1");
+
+        let mut backend = FfmpegBackend::new();
+        let probe = backend.probe(&clip).unwrap();
+        let video = probe.video.clone().unwrap();
+        assert_eq!(video.frame_rate, Some(Rational::new(25, 1)));
+        assert_eq!((video.width, video.height), (320, 240));
+        let seconds = probe.duration.unwrap().as_seconds().unwrap();
+        assert!((0.9..=1.1).contains(&seconds), "probed duration {seconds}");
+
+        fs::remove_dir_all(&directory).ok();
+    }
+
+    #[test]
+    fn reports_a_missing_source_as_an_ffmpeg_error() {
+        let mut backend = FfmpegBackend::new();
         assert!(matches!(
-            backend.probe("video.mp4"),
-            Err(MediaError::Executable { .. })
+            backend.probe("/definitely-not-a-real/mikan-media.mkv"),
+            Err(MediaError::Ffmpeg(_))
         ));
     }
 
@@ -1040,41 +907,17 @@ mod tests {
     }
 
     #[test]
-    fn freezes_on_the_last_frame_past_the_source_end_when_ffmpeg_is_available() {
-        let Some((ffmpeg, ffprobe)) = find_ffmpeg_binaries() else {
-            eprintln!("skipping live FFmpeg test: ffmpeg/ffprobe were not found");
-            return;
-        };
-
+    fn freezes_on_the_last_frame_past_the_source_end() {
         // A one-second, 64x64 testsrc clip whose content visibly changes
         // over time (so "the last frame" is distinguishable from the first).
-        let directory =
-            std::env::temp_dir().join(format!("mikan-media-eof-{}", std::process::id()));
-        fs::create_dir_all(&directory).unwrap();
-        let clip = directory.join("clip.mp4");
-        let generated = Command::new(&ffmpeg)
-            .args([
-                "-v",
-                "error",
-                "-f",
-                "lavfi",
-                "-i",
-                "testsrc=size=64x64:rate=10",
-            ])
-            .args(["-t", "1", "-y"])
-            .arg(&clip)
-            .output()
-            .unwrap();
-        assert!(
-            generated.status.success(),
-            "{}",
-            String::from_utf8_lossy(&generated.stderr)
-        );
+        let directory = fixture_dir("eof");
+        let clip = directory.join("clip.mkv");
+        generate_clip(&clip, "testsrc=size=64x64:rate=10:duration=1");
 
         // One-shot decoding far past the end clamps to the source's final
         // frame instead of failing with an unexpected frame size, and that
         // frozen frame is a real decoded frame (different from the first).
-        let mut backend = FfmpegBackend::with_executables(&ffmpeg, &ffprobe);
+        let mut backend = FfmpegBackend::new();
         let first = backend.decode_frame(&clip, 0.0).unwrap();
         let overrun = backend.decode_frame(&clip, 60.0).unwrap();
         assert_eq!((overrun.width, overrun.height), (64, 64));
@@ -1083,8 +926,8 @@ mod tests {
         // Sequential sessions freeze the same way while playback walks past
         // the end, and repeated tail requests keep returning identical
         // pixels.
-        let mut sequential = FfmpegBackend::with_executables(&ffmpeg, &ffprobe)
-            .with_sequential_video(Rational::new(10, 1));
+        let mut sequential =
+            FfmpegBackend::new().with_sequential_video(Rational::new(10, 1));
         let mut previous = sequential.decode_frame_for("clip", &clip, 0.0).unwrap();
         for step in 1..40 {
             previous = sequential
@@ -1097,25 +940,6 @@ mod tests {
         assert_eq!(tail_a.pixels, previous.pixels);
 
         fs::remove_dir_all(&directory).ok();
-    }
-
-    fn find_ffmpeg_binaries() -> Option<(PathBuf, PathBuf)> {
-        if let Some(directory) = std::env::var_os("MIKAN_FFMPEG_DIR").map(PathBuf::from) {
-            let ffmpeg = directory.join("ffmpeg");
-            let ffprobe = directory.join("ffprobe");
-            if ffmpeg.is_file() && ffprobe.is_file() {
-                return Some((ffmpeg, ffprobe));
-            }
-        }
-        let which = |program: &str| {
-            Command::new("which")
-                .arg(program)
-                .output()
-                .ok()
-                .filter(|output| output.status.success())
-                .map(|output| PathBuf::from(String::from_utf8_lossy(&output.stdout).trim()))
-        };
-        Some((which("ffmpeg")?, which("ffprobe")?))
     }
 
     #[test]
