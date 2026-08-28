@@ -24,7 +24,8 @@ use mikan_composition::{
     evaluate_f64, integrate_f64,
 };
 use mikan_editor::{
-    AssetSummary, ClipKind, ComponentClipSummary, EditorDocument, TimelineClock, TrackSummary,
+    AssetSummary, CharacterSummary, ClipKind, ComponentClipSummary, DialogueClipSummary,
+    EditorDocument, TimelineClock, TrackSummary,
 };
 use mikan_exporter::{ExportCancellation, ExportError, ExportOptions, ExportProgress, Exporter};
 use mikan_gpu_renderer::{GpuRenderOptions, GpuRenderer, PreviewFrame as GpuPreviewFrame};
@@ -925,6 +926,8 @@ struct EditorView {
     selected_track_id: Option<String>,
     renaming_track_id: Option<String>,
     track_name_input: Option<Entity<TextInput>>,
+    editing_dialogue_clip_id: Option<String>,
+    dialogue_text_input: Option<Entity<TextInput>>,
     component_schema_worker: ComponentSchemaWorker,
     component_schema_generation: u64,
     component_schema_pending: bool,
@@ -1025,6 +1028,8 @@ impl EditorView {
             selected_track_id: None,
             renaming_track_id: None,
             track_name_input: None,
+            editing_dialogue_clip_id: None,
+            dialogue_text_input: None,
             component_schema_worker,
             component_schema_generation: 0,
             component_schema_pending: false,
@@ -1757,6 +1762,68 @@ impl EditorView {
     fn cancel_track_rename(&mut self, cx: &mut Context<Self>) {
         self.renaming_track_id = None;
         self.edit_error = None;
+        cx.notify();
+    }
+
+    fn begin_dialogue_text_edit(
+        &mut self,
+        clip_id: &str,
+        text: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.editing_dialogue_clip_id = Some(clip_id.to_owned());
+        self.edit_error = None;
+        if let Some(input) = &self.dialogue_text_input {
+            input.update(cx, |input, cx| input.set_text(text.to_owned(), cx));
+            input.read(cx).focus(window);
+        }
+        cx.notify();
+    }
+
+    fn commit_dialogue_text_edit(&mut self, cx: &mut Context<Self>) {
+        let Some(clip_id) = self.editing_dialogue_clip_id.clone() else {
+            return;
+        };
+        let Some(text) = self
+            .dialogue_text_input
+            .as_ref()
+            .map(|input| input.read(cx).text())
+        else {
+            return;
+        };
+        match self.document.set_dialogue_text(&clip_id, &text) {
+            Ok(()) => {
+                self.editing_dialogue_clip_id = None;
+                self.tracks = self.document.tracks();
+                self.refresh_preview();
+                self.edit_error = None;
+            }
+            Err(error) => self.edit_error = Some(error.to_string().into()),
+        }
+        cx.notify();
+    }
+
+    fn cancel_dialogue_text_edit(&mut self, cx: &mut Context<Self>) {
+        self.editing_dialogue_clip_id = None;
+        self.edit_error = None;
+        cx.notify();
+    }
+
+    fn set_dialogue_character(
+        &mut self,
+        clip_id: &str,
+        character_id: &str,
+        cx: &mut Context<Self>,
+    ) {
+        match self.document.set_dialogue_character(clip_id, character_id) {
+            Ok(()) => {
+                self.tracks = self.document.tracks();
+                self.refresh_preview();
+                self.edit_error = None;
+            }
+            Err(error) => self.edit_error = Some(error.to_string().into()),
+        }
         cx.notify();
     }
 
@@ -2525,6 +2592,47 @@ impl EditorView {
         );
     }
 
+    fn insert_selected_asset_as_dialogue(&mut self, cx: &mut Context<Self>) {
+        let Some(asset_id) = self.selected_asset_id.clone() else {
+            return;
+        };
+        let Some(character) = self.document.characters().into_iter().next() else {
+            self.edit_error =
+                Some("define at least one project character before adding dialogue".into());
+            cx.notify();
+            return;
+        };
+        let frame_rate = self.document.project().settings.frame_rate;
+        let mut start = self.clock.frame();
+        let mut duration =
+            initial_clip_duration_frames(self.media_cache.get(&asset_id), frame_rate);
+        if self.document.project().settings.duration.is_some() {
+            if self.clock.end_frame() == 0 {
+                self.edit_error = Some("the fixed project timeline has no available frames".into());
+                cx.notify();
+                return;
+            }
+            start = start.min(self.clock.end_frame() - 1);
+            duration = duration.min(self.clock.end_frame() - start);
+        }
+        let target_track_id = self.selected_track_id.clone();
+        match self.document.insert_dialogue_clip(
+            &asset_id,
+            &character.id,
+            target_track_id.as_deref(),
+            start,
+            duration,
+        ) {
+            Ok(clip_id) => {
+                self.selected_clip_id = Some(clip_id);
+                self.edit_error = None;
+                self.sync_document_state();
+            }
+            Err(error) => self.edit_error = Some(error.to_string().into()),
+        }
+        cx.notify();
+    }
+
     fn drop_asset_on_track(
         &mut self,
         asset: &AssetDrag,
@@ -2566,6 +2674,15 @@ impl EditorView {
         cx: &mut Context<Self>,
     ) {
         self.insert_selected_asset(cx);
+    }
+
+    fn insert_selected_dialogue_click(
+        &mut self,
+        _: &ClickEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.insert_selected_asset_as_dialogue(cx);
     }
 
     fn delete_selected_clip(&mut self, cx: &mut Context<Self>) {
@@ -3128,6 +3245,16 @@ impl EditorView {
                 .iter()
                 .any(|asset| asset.id == selected && asset.kind != mikan_project::AssetKind::Font)
         });
+        let can_insert_dialogue = self.selected_asset_id.as_deref().is_some_and(|selected| {
+            self.assets
+                .iter()
+                .any(|asset| asset.id == selected && asset.kind == AssetKind::Audio)
+        }) && !self.document.characters().is_empty()
+            && self.selected_track_id.as_deref().is_none_or(|selected| {
+                self.tracks.iter().any(|track| {
+                    track.id == selected && track.kind == TrackKind::Dialogue && !track.locked
+                })
+            });
         let rows = self.assets.iter().map(|asset| {
             let asset_id = asset.id.clone();
             let drag = AssetDrag {
@@ -3280,6 +3407,33 @@ impl EditorView {
                                             .hover(|style| style.bg(rgb(0x4c805f)))
                                             .on_click(
                                                 cx.listener(Self::insert_selected_asset_click),
+                                            )
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .id("insert-selected-dialogue")
+                                    .rounded_sm()
+                                    .px_2()
+                                    .py_1()
+                                    .bg(rgb(if can_insert_dialogue {
+                                        0x6b4a2f
+                                    } else {
+                                        0x292c34
+                                    }))
+                                    .text_xs()
+                                    .text_color(rgb(if can_insert_dialogue {
+                                        0xffdbb5
+                                    } else {
+                                        0x737783
+                                    }))
+                                    .child("Dialogue")
+                                    .when(can_insert_dialogue, |button| {
+                                        button
+                                            .cursor_pointer()
+                                            .hover(|style| style.bg(rgb(0x865e3d)))
+                                            .on_click(
+                                                cx.listener(Self::insert_selected_dialogue_click),
                                             )
                                     }),
                             ),
@@ -3766,6 +3920,10 @@ impl EditorView {
                     .when_some(clip.component.clone(), |panel, component| {
                         self.render_component_props(panel, &clip.id, &component, cx)
                     })
+                    .when_some(clip.dialogue.clone(), |panel, dialogue| {
+                        let characters = self.document.characters();
+                        self.render_dialogue_fields(panel, &clip.id, &dialogue, &characters, cx)
+                    })
             });
         div()
             .flex()
@@ -3778,6 +3936,132 @@ impl EditorView {
             .border_color(rgb(0x30333d))
             .child(panel_header("Inspector", 0))
             .child(contents)
+    }
+
+    fn render_dialogue_fields<E: ParentElement + Sized>(
+        &self,
+        panel: E,
+        clip_id: &str,
+        dialogue: &DialogueClipSummary,
+        characters: &[CharacterSummary],
+        cx: &mut Context<Self>,
+    ) -> E {
+        let editing = self.editing_dialogue_clip_id.as_deref() == Some(clip_id);
+        let edit_clip_id = clip_id.to_owned();
+        let edit_text = dialogue.text.clone();
+        let panel = panel
+            .child(
+                div()
+                    .mt_3()
+                    .px_3()
+                    .py_2()
+                    .border_t_1()
+                    .border_b_1()
+                    .border_color(rgb(0x30333d))
+                    .text_sm()
+                    .text_color(rgb(0xffb466))
+                    .child("Dialogue"),
+            )
+            .child(inspector_row(
+                "Voice asset",
+                dialogue.audio.clone().unwrap_or_else(|| "None".to_owned()),
+            ));
+        let panel = if editing {
+            panel.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .px_3()
+                    .py_2()
+                    .border_b_1()
+                    .border_color(rgb(0x292c34))
+                    .child(div().text_xs().text_color(rgb(0x737783)).child("Text"))
+                    .child(
+                        div()
+                            .id("dialogue-text-input")
+                            .px_2()
+                            .py_1()
+                            .rounded_sm()
+                            .border_1()
+                            .border_color(rgb(0xffa13b))
+                            .bg(rgb(0x17191f))
+                            .text_sm()
+                            .text_color(rgb(0xffffff))
+                            .when_some(self.dialogue_text_input.clone(), |field, input| {
+                                field.child(input)
+                            }),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .gap_2()
+                            .child(inspector_button("dialogue-text-save", "Save").on_click(
+                                cx.listener(|this, _, _, cx| {
+                                    this.commit_dialogue_text_edit(cx);
+                                }),
+                            ))
+                            .child(inspector_button("dialogue-text-cancel", "Cancel").on_click(
+                                cx.listener(|this, _, _, cx| {
+                                    this.cancel_dialogue_text_edit(cx);
+                                }),
+                            )),
+                    ),
+            )
+        } else {
+            panel
+                .child(inspector_row("Text", dialogue.text.clone()))
+                .child(
+                    div()
+                        .px_3()
+                        .py_2()
+                        .border_b_1()
+                        .border_color(rgb(0x292c34))
+                        .child(
+                            inspector_button("dialogue-text-edit", "Edit text").on_click(
+                                cx.listener(move |this, _, window, cx| {
+                                    this.begin_dialogue_text_edit(
+                                        &edit_clip_id,
+                                        &edit_text,
+                                        window,
+                                        cx,
+                                    );
+                                }),
+                            ),
+                        ),
+                )
+        };
+        panel.child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .px_3()
+                .py_2()
+                .border_b_1()
+                .border_color(rgb(0x292c34))
+                .child(div().text_xs().text_color(rgb(0x737783)).child("Character"))
+                .child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .gap_2()
+                        .children(characters.iter().map(|character| {
+                            let clip_id = clip_id.to_owned();
+                            let character_id = character.id.clone();
+                            let selected = dialogue.character == character.id;
+                            let element_id: SharedString =
+                                format!("dialogue-character-{}", character.id).into();
+                            inspector_dynamic_button(element_id, character.name.clone())
+                                .when(selected, |button| {
+                                    button.bg(rgb(0x6b4a2f)).text_color(rgb(0xffdbb5))
+                                })
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.set_dialogue_character(&clip_id, &character_id, cx);
+                                }))
+                        })),
+                ),
+        )
     }
 
     /// Renders one editable row per field of a registered component's
@@ -5177,11 +5461,21 @@ fn run() -> Result<(), Box<dyn Error>> {
                         },
                     )
                     .detach();
+                    let dialogue_text_input = cx.new(TextInput::new);
+                    cx.subscribe(
+                        &dialogue_text_input,
+                        |editor: &mut EditorView, _, event: &TextInputEvent, cx| match event {
+                            TextInputEvent::Submit => editor.commit_dialogue_text_edit(cx),
+                            TextInputEvent::Cancel => editor.cancel_dialogue_text_edit(cx),
+                        },
+                    )
+                    .detach();
                     focus_handle.focus(window);
                     editor.focus_handle = Some(focus_handle);
                     editor.master_volume_focus = Some(master_volume_focus);
                     editor.track_name_input = Some(track_name_input);
                     editor.property_input = Some(property_input);
+                    editor.dialogue_text_input = Some(dialogue_text_input);
                     editor
                 });
                 let close_view = view.clone();
@@ -5334,6 +5628,7 @@ mod tests {
             enabled: true,
             volume: Some(Animatable::Static(1.0)),
             component: None,
+            dialogue: None,
         };
 
         assert_eq!(level_at_time(&[0.2, 0.8], &clip, Time::new(10, 1)), 0.2);

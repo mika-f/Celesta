@@ -51,12 +51,28 @@ pub struct ClipSummary {
     /// The registered component name and its currently configured props,
     /// present only for `ClipKind::Component` clips.
     pub component: Option<ComponentClipSummary>,
+    /// Dialogue-specific authoring fields, present only for dialogue clips.
+    pub dialogue: Option<DialogueClipSummary>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ComponentClipSummary {
     pub name: String,
     pub props: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DialogueClipSummary {
+    pub character: String,
+    pub text: String,
+    pub audio: Option<String>,
+    pub expression: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CharacterSummary {
+    pub id: String,
+    pub name: String,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -288,6 +304,17 @@ impl EditorDocument {
             .collect()
     }
 
+    pub fn characters(&self) -> Vec<CharacterSummary> {
+        self.project
+            .characters
+            .iter()
+            .map(|(id, character)| CharacterSummary {
+                id: id.clone(),
+                name: character.name.clone(),
+            })
+            .collect()
+    }
+
     pub fn tracks(&self) -> Vec<TrackSummary> {
         self.project
             .tracks
@@ -333,6 +360,21 @@ impl EditorDocument {
                                     props: props.clone().unwrap_or_default(),
                                 })
                             }
+                            _ => None,
+                        },
+                        dialogue: match &item.content {
+                            TimelineContent::Dialogue {
+                                character,
+                                text,
+                                audio,
+                                expression,
+                                ..
+                            } => Some(DialogueClipSummary {
+                                character: character.clone(),
+                                text: text.clone(),
+                                audio: audio.clone(),
+                                expression: expression.clone(),
+                            }),
                             _ => None,
                         },
                     })
@@ -939,28 +981,7 @@ impl EditorDocument {
         if kind == AssetKind::Font {
             return Err(EditorDocumentError::UnsupportedTimelineAsset(kind));
         }
-        if start_frame < 0 || duration_frames < 1 {
-            return Err(EditorDocumentError::InvalidNewClipFrameRange {
-                start_frame,
-                duration_frames,
-            });
-        }
-        let end_frame = start_frame.checked_add(duration_frames).ok_or(
-            EditorDocumentError::InvalidNewClipFrameRange {
-                start_frame,
-                duration_frames,
-            },
-        )?;
-        if let Some(duration) = self.project.settings.duration {
-            let clock = TimelineClock::new(duration, self.project.settings.frame_rate)
-                .map_err(EditorDocumentError::Duration)?;
-            if end_frame > clock.end_frame() {
-                return Err(EditorDocumentError::InvalidNewClipFrameRange {
-                    start_frame,
-                    duration_frames,
-                });
-            }
-        }
+        let range = self.new_clip_range(start_frame, duration_frames)?;
 
         let before = self.project.clone();
         let before_revision = self.current_revision;
@@ -997,12 +1018,6 @@ impl EditorDocument {
                 .flat_map(|track| &track.items)
                 .map(|item| item.id.as_str()),
         );
-        let range = TimeRange {
-            start: Time::frames(start_frame, self.project.settings.frame_rate)
-                .map_err(EditorDocumentError::Duration)?,
-            duration: Time::frames(duration_frames, self.project.settings.frame_rate)
-                .map_err(EditorDocumentError::Duration)?,
-        };
         let name = asset_name(asset).unwrap_or(asset_id).to_owned();
         let transform = matches!(kind, AssetKind::Video | AssetKind::Image).then(|| Transform {
             position: Some(AnimatablePoint {
@@ -1095,6 +1110,218 @@ impl EditorDocument {
         }
         self.record_mutation(before, before_revision);
         Ok(item_id)
+    }
+
+    pub fn insert_dialogue_clip(
+        &mut self,
+        audio_asset_id: &str,
+        character_id: &str,
+        target_track_id: Option<&str>,
+        start_frame: i64,
+        duration_frames: i64,
+    ) -> Result<String, EditorDocumentError> {
+        let asset = self
+            .project
+            .assets
+            .get(audio_asset_id)
+            .ok_or_else(|| EditorDocumentError::MissingAsset(audio_asset_id.to_owned()))?;
+        if asset.kind() != AssetKind::Audio {
+            return Err(EditorDocumentError::AssetKindMismatch {
+                asset: audio_asset_id.to_owned(),
+                expected: AssetKind::Audio,
+                actual: asset.kind(),
+            });
+        }
+        if !self.project.characters.contains_key(character_id) {
+            return Err(EditorDocumentError::MissingCharacter(
+                character_id.to_owned(),
+            ));
+        }
+        let range = self.new_clip_range(start_frame, duration_frames)?;
+        if let Some(track_id) = target_track_id {
+            let track = self
+                .project
+                .tracks
+                .iter()
+                .find(|track| track.id == track_id)
+                .ok_or_else(|| EditorDocumentError::MissingTrack(track_id.to_owned()))?;
+            if track.locked == Some(true) {
+                return Err(EditorDocumentError::LockedTrack(track_id.to_owned()));
+            }
+            if track.kind != TrackKind::Dialogue {
+                return Err(EditorDocumentError::IncompatibleTrack {
+                    asset: audio_asset_id.to_owned(),
+                    track: track_id.to_owned(),
+                    expected: TrackKind::Dialogue,
+                    actual: track.kind,
+                });
+            }
+        }
+
+        let before = self.project.clone();
+        let before_revision = self.current_revision;
+        let item_id = unique_id(
+            "dialogue",
+            self.project
+                .tracks
+                .iter()
+                .flat_map(|track| &track.items)
+                .map(|item| item.id.as_str()),
+        );
+        let name = asset_name(asset).unwrap_or(audio_asset_id).to_owned();
+        let item = TimelineItem {
+            id: item_id.clone(),
+            name: Some(name.clone()),
+            range,
+            content: TimelineContent::Dialogue {
+                character: character_id.to_owned(),
+                text: name,
+                audio: Some(audio_asset_id.to_owned()),
+                volume: None,
+                expression: None,
+            },
+            enabled: None,
+            transform: None,
+            opacity: None,
+        };
+        if let Some(track_id) = target_track_id {
+            if let Some(track) = self
+                .project
+                .tracks
+                .iter_mut()
+                .find(|track| track.id == track_id)
+            {
+                track.items.push(item);
+            }
+        } else if let Some(track) = self
+            .project
+            .tracks
+            .iter_mut()
+            .find(|track| track.kind == TrackKind::Dialogue && track.locked != Some(true))
+        {
+            track.items.push(item);
+        } else {
+            let track_id = unique_id(
+                "dialogue",
+                self.project.tracks.iter().map(|track| track.id.as_str()),
+            );
+            self.project.tracks.push(Track {
+                id: track_id,
+                name: "Dialogue".to_owned(),
+                kind: TrackKind::Dialogue,
+                enabled: None,
+                locked: None,
+                muted: None,
+                solo: None,
+                items: vec![item],
+            });
+        }
+        if self.project.settings.duration.is_none() {
+            self.duration = self
+                .project
+                .effective_duration()
+                .map_err(EditorDocumentError::Duration)?;
+        }
+        self.record_mutation(before, before_revision);
+        Ok(item_id)
+    }
+
+    pub fn set_dialogue_text(
+        &mut self,
+        clip_id: &str,
+        text: &str,
+    ) -> Result<(), EditorDocumentError> {
+        let text = text.trim();
+        if text.is_empty() {
+            return Err(EditorDocumentError::InvalidDialogueText);
+        }
+        let before = self.project.clone();
+        let before_revision = self.current_revision;
+        let (track_index, item_index) = self.clip_indices(clip_id)?;
+        self.ensure_track_unlocked(track_index)?;
+        let TimelineContent::Dialogue {
+            text: current_text, ..
+        } = &mut self.project.tracks[track_index].items[item_index].content
+        else {
+            return Err(EditorDocumentError::UnsupportedDialogueClip(
+                clip_id.to_owned(),
+            ));
+        };
+        *current_text = text.to_owned();
+        if self.project != before {
+            self.record_mutation(before, before_revision);
+        }
+        Ok(())
+    }
+
+    pub fn set_dialogue_character(
+        &mut self,
+        clip_id: &str,
+        character_id: &str,
+    ) -> Result<(), EditorDocumentError> {
+        if !self.project.characters.contains_key(character_id) {
+            return Err(EditorDocumentError::MissingCharacter(
+                character_id.to_owned(),
+            ));
+        }
+        let before = self.project.clone();
+        let before_revision = self.current_revision;
+        let (track_index, item_index) = self.clip_indices(clip_id)?;
+        self.ensure_track_unlocked(track_index)?;
+        let TimelineContent::Dialogue {
+            character,
+            expression,
+            ..
+        } = &mut self.project.tracks[track_index].items[item_index].content
+        else {
+            return Err(EditorDocumentError::UnsupportedDialogueClip(
+                clip_id.to_owned(),
+            ));
+        };
+        if character == character_id {
+            return Ok(());
+        }
+        *character = character_id.to_owned();
+        *expression = None;
+        if self.project != before {
+            self.record_mutation(before, before_revision);
+        }
+        Ok(())
+    }
+
+    fn new_clip_range(
+        &self,
+        start_frame: i64,
+        duration_frames: i64,
+    ) -> Result<TimeRange, EditorDocumentError> {
+        if start_frame < 0 || duration_frames < 1 {
+            return Err(EditorDocumentError::InvalidNewClipFrameRange {
+                start_frame,
+                duration_frames,
+            });
+        }
+        let end_frame = start_frame.checked_add(duration_frames).ok_or(
+            EditorDocumentError::InvalidNewClipFrameRange {
+                start_frame,
+                duration_frames,
+            },
+        )?;
+        if let Some(duration) = self.project.settings.duration {
+            let clock = TimelineClock::new(duration, self.project.settings.frame_rate)
+                .map_err(EditorDocumentError::Duration)?;
+            if end_frame > clock.end_frame() {
+                return Err(EditorDocumentError::InvalidNewClipFrameRange {
+                    start_frame,
+                    duration_frames,
+                });
+            }
+        }
+        Ok(TimeRange {
+            start: Time::frames(start_frame, self.project.settings.frame_rate)
+                .map_err(EditorDocumentError::Duration)?,
+            duration: Time::frames(duration_frames, self.project.settings.frame_rate)
+                .map_err(EditorDocumentError::Duration)?,
+        })
     }
 
     pub fn asset_references(&self, asset_id: &str) -> Result<Vec<String>, EditorDocumentError> {
@@ -1711,6 +1938,7 @@ pub enum EditorDocumentError {
     MissingClip(String),
     MissingTrack(String),
     MissingAsset(String),
+    MissingCharacter(String),
     LockedTrack(String),
     UnsupportedAsset(PathBuf),
     ImportAsset {
@@ -1745,6 +1973,7 @@ pub enum EditorDocumentError {
     },
     InvalidMasterVolume(f64),
     InvalidTrackName,
+    InvalidDialogueText,
     NonEmptyTrack {
         track: String,
         item_count: usize,
@@ -1761,6 +1990,7 @@ pub enum EditorDocumentError {
         timeline_end_frame: i64,
     },
     UnsupportedComponentProp(String),
+    UnsupportedDialogueClip(String),
 }
 
 impl fmt::Display for EditorDocumentError {
@@ -1774,6 +2004,9 @@ impl fmt::Display for EditorDocumentError {
             Self::MissingClip(clip_id) => write!(formatter, "clip `{clip_id}` does not exist"),
             Self::MissingTrack(track_id) => write!(formatter, "track `{track_id}` does not exist"),
             Self::MissingAsset(asset_id) => write!(formatter, "asset `{asset_id}` does not exist"),
+            Self::MissingCharacter(character_id) => {
+                write!(formatter, "character `{character_id}` does not exist")
+            }
             Self::LockedTrack(track_id) => write!(formatter, "track `{track_id}` is locked"),
             Self::UnsupportedAsset(path) => {
                 write!(formatter, "unsupported asset file `{}`", path.display())
@@ -1829,6 +2062,7 @@ impl fmt::Display for EditorDocumentError {
                 )
             }
             Self::InvalidTrackName => formatter.write_str("track name must not be empty"),
+            Self::InvalidDialogueText => formatter.write_str("dialogue text must not be empty"),
             Self::NonEmptyTrack { track, item_count } => write!(
                 formatter,
                 "track `{track}` still contains {item_count} clip(s)"
@@ -1857,6 +2091,9 @@ impl fmt::Display for EditorDocumentError {
             Self::UnsupportedComponentProp(clip) => {
                 write!(formatter, "clip `{clip}` is not a registered component")
             }
+            Self::UnsupportedDialogueClip(clip) => {
+                write!(formatter, "clip `{clip}` is not dialogue")
+            }
         }
     }
 }
@@ -1873,6 +2110,7 @@ impl Error for EditorDocumentError {
             | Self::MissingClip(_)
             | Self::MissingTrack(_)
             | Self::MissingAsset(_)
+            | Self::MissingCharacter(_)
             | Self::LockedTrack(_)
             | Self::UnsupportedAsset(_)
             | Self::AssetKindMismatch { .. }
@@ -1883,12 +2121,14 @@ impl Error for EditorDocumentError {
             | Self::InvalidNewClipFrameRange { .. }
             | Self::InvalidMasterVolume(_)
             | Self::InvalidTrackName
+            | Self::InvalidDialogueText
             | Self::NonEmptyTrack { .. }
             | Self::InvalidClipVolume(_)
             | Self::InvalidClipVolumeTime { .. }
             | Self::UnsupportedClipVolume(_)
             | Self::InvalidClipFrameRange { .. }
-            | Self::UnsupportedComponentProp(_) => None,
+            | Self::UnsupportedComponentProp(_)
+            | Self::UnsupportedDialogueClip(_) => None,
         }
     }
 }
@@ -2394,6 +2634,70 @@ mod tests {
         assert!(document.assets().is_empty());
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn creates_and_edits_dialogue_from_an_audio_asset() {
+        let mut document = EditorDocument::from_json(VOICEROID, "examples").unwrap();
+        let mut aoi = document.project.characters["akane"].clone();
+        aoi.name = "琴葉葵".to_owned();
+        document.project.characters.insert("aoi".to_owned(), aoi);
+
+        let clip_id = document
+            .insert_dialogue_clip("voice-001", "akane", None, 0, 60)
+            .unwrap();
+        document
+            .set_dialogue_text(&clip_id, "ゲームを始めるで")
+            .unwrap();
+        document.set_dialogue_character(&clip_id, "aoi").unwrap();
+
+        let dialogue = document
+            .tracks()
+            .into_iter()
+            .flat_map(|track| track.clips)
+            .find(|clip| clip.id == clip_id)
+            .and_then(|clip| clip.dialogue)
+            .unwrap();
+        assert_eq!(
+            dialogue,
+            DialogueClipSummary {
+                character: "aoi".to_owned(),
+                text: "ゲームを始めるで".to_owned(),
+                audio: Some("voice-001".to_owned()),
+                expression: None,
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_non_audio_assets_for_dialogue() {
+        let mut document = EditorDocument::from_json(VOICEROID, "examples").unwrap();
+
+        let error = document
+            .insert_dialogue_clip("akane-default", "akane", None, 0, 60)
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            EditorDocumentError::AssetKindMismatch { .. }
+        ));
+    }
+
+    #[test]
+    fn keeping_the_same_dialogue_character_preserves_its_expression() {
+        let mut document = EditorDocument::from_json(VOICEROID, "examples").unwrap();
+
+        document
+            .set_dialogue_character("dialogue-001", "akane")
+            .unwrap();
+
+        assert_eq!(
+            document.tracks()[0].clips[0]
+                .dialogue
+                .as_ref()
+                .and_then(|dialogue| dialogue.expression.as_deref()),
+            Some("default")
+        );
     }
 
     #[test]

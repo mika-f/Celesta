@@ -1,6 +1,6 @@
 # Mikan implementation handoff
 
-Last updated: 2026-08-25
+Last updated: 2026-08-28
 
 ## Goal
 
@@ -191,6 +191,14 @@ Keep these boundaries intact:
   used while metadata is unavailable. Compatible unlocked tracks are reused;
   otherwise Video, Audio, or Overlay tracks are created. New visual clips start
   centered on the canvas.
+- A selected audio asset can instead be added as a Dialogue clip when the
+  project already defines at least one character. The first project character
+  is the initial speaker, probed audio duration supplies the initial clip
+  length, and a compatible unlocked Dialogue track is reused or created.
+  Selecting the resulting clip exposes its text and all project characters in
+  the Inspector; text and speaker edits are undoable and refresh the shared
+  preview immediately. Changing speaker clears the old expression override so
+  a character-specific expression name cannot leak into the new speaker.
 - Asset rows can be dragged directly onto a timeline track. The pointer's drop
   position determines the exact insertion frame; compatible tracks highlight
   green and incompatible or locked tracks show a red rejection state. Dropping
@@ -1148,10 +1156,11 @@ licensed VOICEROID voice sample.
 
 ## Validation baseline
 
-At this handoff, the workspace has 111 passing tests (110 from the previous
-handoff plus a live-FFmpeg `mikan-media` test freezing on the last frame
-past a source's end; it skips itself when ffmpeg/ffprobe are missing, or
-locates them via `MIKAN_FFMPEG_DIR`). The last checks were:
+At this handoff, the workspace has 114 passing tests (110 from the previous
+handoff, a live-FFmpeg `mikan-media` test freezing on the last frame past a
+source's end, and three dialogue-authoring editor tests). The media test skips
+itself when ffmpeg/ffprobe are missing, or locates them via
+`MIKAN_FFMPEG_DIR`. The last checks were:
 
 ```sh
 cargo test --workspace
@@ -1226,6 +1235,13 @@ export milestones are complete. The minimal React-composition-to-MP4 vertical
 slice (`packages/react`, `mikan-react-bridge`, `mikan-exporter --react`) is
 also complete, as is Rust-to-TypeScript type generation and a read-only
 `loadProject()` (see "React composition integration" above).
+
+The first GUI dialogue-authoring slice is also complete: an imported voice can
+be inserted as a Dialogue clip and its text/speaker edited. Character creation,
+portrait/expression assignment, and subtitle-style editing still require
+editing project JSON. Those are the next VOICEROID-specific editor gap; caption
+file/transcript import and transitions remain later workflow gaps compared with
+Remotion's broader ecosystem.
 
 The user has shared a more ambitious design (see git history / conversation
 for the full text) where a React entry does not just describe an independent
