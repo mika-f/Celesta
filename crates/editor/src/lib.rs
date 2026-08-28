@@ -391,6 +391,29 @@ impl EditorDocument {
         Ok(CharacterSummary { id, name })
     }
 
+    pub fn rename_character(
+        &mut self,
+        character_id: &str,
+        name: &str,
+    ) -> Result<(), EditorDocumentError> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err(EditorDocumentError::InvalidCharacterName);
+        }
+        let before = self.project.clone();
+        let before_revision = self.current_revision;
+        let character = self
+            .project
+            .characters
+            .get_mut(character_id)
+            .ok_or_else(|| EditorDocumentError::MissingCharacter(character_id.to_owned()))?;
+        character.name = name.to_owned();
+        if self.project != before {
+            self.record_mutation(before, before_revision);
+        }
+        Ok(())
+    }
+
     pub fn tracks(&self) -> Vec<TrackSummary> {
         self.project
             .tracks
@@ -2049,6 +2072,7 @@ pub enum EditorDocumentError {
     },
     InvalidMasterVolume(f64),
     InvalidTrackName,
+    InvalidCharacterName,
     InvalidDialogueText,
     NonEmptyTrack {
         track: String,
@@ -2138,6 +2162,7 @@ impl fmt::Display for EditorDocumentError {
                 )
             }
             Self::InvalidTrackName => formatter.write_str("track name must not be empty"),
+            Self::InvalidCharacterName => formatter.write_str("character name must not be empty"),
             Self::InvalidDialogueText => formatter.write_str("dialogue text must not be empty"),
             Self::NonEmptyTrack { track, item_count } => write!(
                 formatter,
@@ -2197,6 +2222,7 @@ impl Error for EditorDocumentError {
             | Self::InvalidNewClipFrameRange { .. }
             | Self::InvalidMasterVolume(_)
             | Self::InvalidTrackName
+            | Self::InvalidCharacterName
             | Self::InvalidDialogueText
             | Self::NonEmptyTrack { .. }
             | Self::InvalidClipVolume(_)
@@ -2782,6 +2808,32 @@ mod tests {
         document.undo().unwrap();
 
         assert!(!document.project.characters.contains_key(&character.id));
+    }
+
+    #[test]
+    fn character_rename_is_trimmed_and_undoable() {
+        let mut document = EditorDocument::from_json(VOICEROID, "examples").unwrap();
+
+        document.rename_character("akane", "  茜ちゃん  ").unwrap();
+        let renamed = document.project.characters["akane"].name.clone();
+        document.undo().unwrap();
+
+        assert_eq!(
+            (
+                renamed.as_str(),
+                document.project.characters["akane"].name.as_str()
+            ),
+            ("茜ちゃん", "琴葉茜")
+        );
+    }
+
+    #[test]
+    fn character_rename_rejects_an_empty_name() {
+        let mut document = EditorDocument::from_json(VOICEROID, "examples").unwrap();
+
+        let error = document.rename_character("akane", "  ").unwrap_err();
+
+        assert!(matches!(error, EditorDocumentError::InvalidCharacterName));
     }
 
     #[test]

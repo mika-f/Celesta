@@ -926,6 +926,8 @@ struct EditorView {
     selected_track_id: Option<String>,
     renaming_track_id: Option<String>,
     track_name_input: Option<Entity<TextInput>>,
+    renaming_character_id: Option<String>,
+    character_name_input: Option<Entity<TextInput>>,
     editing_dialogue_clip_id: Option<String>,
     dialogue_text_input: Option<Entity<TextInput>>,
     component_schema_worker: ComponentSchemaWorker,
@@ -1028,6 +1030,8 @@ impl EditorView {
             selected_track_id: None,
             renaming_track_id: None,
             track_name_input: None,
+            renaming_character_id: None,
+            character_name_input: None,
             editing_dialogue_clip_id: None,
             dialogue_text_input: None,
             component_schema_worker,
@@ -1761,6 +1765,50 @@ impl EditorView {
 
     fn cancel_track_rename(&mut self, cx: &mut Context<Self>) {
         self.renaming_track_id = None;
+        self.edit_error = None;
+        cx.notify();
+    }
+
+    fn begin_character_rename(
+        &mut self,
+        character_id: &str,
+        name: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.renaming_character_id = Some(character_id.to_owned());
+        self.edit_error = None;
+        if let Some(input) = &self.character_name_input {
+            input.update(cx, |input, cx| input.set_text(name.to_owned(), cx));
+            input.read(cx).focus(window);
+        }
+        cx.notify();
+    }
+
+    fn commit_character_rename(&mut self, cx: &mut Context<Self>) {
+        let Some(character_id) = self.renaming_character_id.clone() else {
+            return;
+        };
+        let Some(name) = self
+            .character_name_input
+            .as_ref()
+            .map(|input| input.read(cx).text())
+        else {
+            return;
+        };
+        match self.document.rename_character(&character_id, &name) {
+            Ok(()) => {
+                self.renaming_character_id = None;
+                self.refresh_preview();
+                self.edit_error = None;
+            }
+            Err(error) => self.edit_error = Some(error.to_string().into()),
+        }
+        cx.notify();
+    }
+
+    fn cancel_character_rename(&mut self, cx: &mut Context<Self>) {
+        self.renaming_character_id = None;
         self.edit_error = None;
         cx.notify();
     }
@@ -2990,6 +3038,7 @@ impl EditorView {
         self.clip_drag_hover_track_id = None;
         self.clip_drag_target_track_id = None;
         self.renaming_track_id = None;
+        self.renaming_character_id = None;
         match self.document.undo() {
             Ok(true) => {
                 self.save_error = None;
@@ -3007,6 +3056,7 @@ impl EditorView {
         self.clip_drag_hover_track_id = None;
         self.clip_drag_target_track_id = None;
         self.renaming_track_id = None;
+        self.renaming_character_id = None;
         match self.document.redo() {
             Ok(true) => {
                 self.save_error = None;
@@ -3643,6 +3693,7 @@ impl EditorView {
     }
 
     fn inspector_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let characters = self.document.characters();
         let selected_track = self.selected_track_id.as_deref().and_then(|selected| {
             self.tracks
                 .iter()
@@ -3708,6 +3759,9 @@ impl EditorView {
             )
             .when(self.document.react_entry().is_some(), |panel| {
                 self.render_project_properties(panel, cx)
+            })
+            .when(!characters.is_empty(), |panel| {
+                self.render_characters(panel, &characters, cx)
             })
             .when_some(selected_track, |panel, track| {
                 let rename_track_id = track.id.clone();
@@ -3981,6 +4035,117 @@ impl EditorView {
             .border_color(rgb(0x30333d))
             .child(panel_header("Inspector", 0))
             .child(contents)
+    }
+
+    fn render_characters<E: ParentElement + Sized>(
+        &self,
+        panel: E,
+        characters: &[CharacterSummary],
+        cx: &mut Context<Self>,
+    ) -> E {
+        let panel = panel.child(
+            div()
+                .mt_3()
+                .px_3()
+                .py_2()
+                .border_t_1()
+                .border_b_1()
+                .border_color(rgb(0x30333d))
+                .text_sm()
+                .text_color(rgb(0xffb466))
+                .child(format!("Characters ({})", characters.len())),
+        );
+        characters.iter().fold(panel, |panel, character| {
+            let renaming = self.renaming_character_id.as_deref() == Some(character.id.as_str());
+            if renaming {
+                panel.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .px_3()
+                        .py_2()
+                        .border_b_1()
+                        .border_color(rgb(0x292c34))
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(rgb(0x737783))
+                                .child(character.id.clone()),
+                        )
+                        .child(
+                            div()
+                                .id("character-name-input")
+                                .px_2()
+                                .py_1()
+                                .rounded_sm()
+                                .border_1()
+                                .border_color(rgb(0xffa13b))
+                                .bg(rgb(0x17191f))
+                                .text_sm()
+                                .text_color(rgb(0xffffff))
+                                .when_some(self.character_name_input.clone(), |field, input| {
+                                    field.child(input)
+                                }),
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .gap_2()
+                                .child(inspector_button("character-rename-save", "Save").on_click(
+                                    cx.listener(|this, _, _, cx| {
+                                        this.commit_character_rename(cx);
+                                    }),
+                                ))
+                                .child(
+                                    inspector_button("character-rename-cancel", "Cancel").on_click(
+                                        cx.listener(|this, _, _, cx| {
+                                            this.cancel_character_rename(cx);
+                                        }),
+                                    ),
+                                ),
+                        ),
+                )
+            } else {
+                let character_id = character.id.clone();
+                let name = character.name.clone();
+                let button_id: SharedString = format!("character-rename-{character_id}").into();
+                panel.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .px_3()
+                        .py_2()
+                        .border_b_1()
+                        .border_color(rgb(0x292c34))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .flex_1()
+                                .overflow_hidden()
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(rgb(0xc8cad2))
+                                        .child(character.name.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(rgb(0x737783))
+                                        .child(character.id.clone()),
+                                ),
+                        )
+                        .child(inspector_dynamic_button(button_id, "Rename").on_click(
+                            cx.listener(move |this, _, window, cx| {
+                                this.begin_character_rename(&character_id, &name, window, cx);
+                            }),
+                        )),
+                )
+            }
+        })
     }
 
     fn render_dialogue_fields<E: ParentElement + Sized>(
@@ -5497,6 +5662,15 @@ fn run() -> Result<(), Box<dyn Error>> {
                         },
                     )
                     .detach();
+                    let character_name_input = cx.new(TextInput::new);
+                    cx.subscribe(
+                        &character_name_input,
+                        |editor: &mut EditorView, _, event: &TextInputEvent, cx| match event {
+                            TextInputEvent::Submit => editor.commit_character_rename(cx),
+                            TextInputEvent::Cancel => editor.cancel_character_rename(cx),
+                        },
+                    )
+                    .detach();
                     let property_input = cx.new(TextInput::new);
                     cx.subscribe(
                         &property_input,
@@ -5519,6 +5693,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                     editor.focus_handle = Some(focus_handle);
                     editor.master_volume_focus = Some(master_volume_focus);
                     editor.track_name_input = Some(track_name_input);
+                    editor.character_name_input = Some(character_name_input);
                     editor.property_input = Some(property_input);
                     editor.dialogue_text_input = Some(dialogue_text_input);
                     editor
