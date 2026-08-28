@@ -1,6 +1,6 @@
 # Mikan implementation handoff
 
-Last updated: 2026-08-28
+Last updated: 2026-08-28 (Rect primitive + homepage-demo composition)
 
 ## Goal
 
@@ -52,7 +52,7 @@ cargo test --workspace
 | `mikan-exporter` | Deterministic frame-exact H.264/AAC MP4 export through the shared evaluator, GPU renderer, audio graph, and FFmpeg. Also exports React entries via `mikan-react-bridge`. |
 | `mikan-editor` | GPUI application, editor-owned document state, playback clock, GPU preview bridge, asset panel, timeline, and inspector. |
 | `mikan-react-bridge` | Spawns one long-lived `@mikan/react` Node.js process per composition and requests the evaluated `Scene` (plus that frame's `<Audio>` clips) for each exact frame time over stdin/stdout JSON, or resolves individual registered components for the editor preview. |
-| `packages/react` (`@mikan/react`, Node.js/TypeScript) | Declarative `Composition`/`Sequence`/`Group`/`Image`/`Text`/`Video`/`Audio` components rendered through a real `react-reconciler` host (hooks, including `useCurrentFrame`/`useVideoConfig`, work); `useProject`/`<ProjectTimeline />` embed a companion project's Rust-evaluated layers. The `mikan-react-render` CLI bundles a JSX/TSX entry with esbuild and emits `Scene`-shaped JSON plus per-frame audio declarations. |
+| `packages/react` (`@mikan/react`, Node.js/TypeScript) | Declarative `Composition`/`Sequence`/`Group`/`Image`/`Rect`/`Text`/`Video`/`Audio` components rendered through a real `react-reconciler` host (hooks, including `useCurrentFrame`/`useVideoConfig`, work); `useProject`/`<ProjectTimeline />` embed a companion project's Rust-evaluated layers. The `mikan-react-render` CLI bundles a JSX/TSX entry with esbuild and emits `Scene`-shaped JSON plus per-frame audio declarations. |
 
 Important files:
 
@@ -208,6 +208,11 @@ Keep these boundaries intact:
 - The Inspector lists project characters and supports inline, IME-aware name
   editing through the existing `TextInput`. Names are trimmed, cannot be empty,
   participate in undo/redo, and refresh React-aware preview state immediately.
+- Selecting an image asset exposes Add expression on each character. The image
+  filename becomes a unique expression id, registration is undoable, and adding
+  the same image again is an idempotent no-op. A selected Dialogue clip exposes
+  Default plus the speaker's non-default expressions; switching expression is
+  validated against that character, respects track locking, and is undoable.
 - Unreferenced characters delete immediately. Characters used by Dialogue clips
   show a warning with the affected clips; confirmed deletion removes the
   character and those Dialogue items as one undoable mutation. A referencing
@@ -1017,6 +1022,74 @@ produced h264+aac (ffprobe) whose extracted frame 45 shows only the
 sequence-shifted testsrc video and frame 75 shows "frame 15 inside" beside
 it, while `title.tsx` stayed video-only with no mix/mux progress stages.
 
+### `Rect` primitive and a Remotion-homepage-style demo composition (2026-08-28)
+
+Requested as a reproduction of Remotion's homepage "Interactive Demo"
+(`packages/promo-pages/.../homepage/Demo/Comp.tsx` upstream). Scoped down
+after confirming with the user: visuals/animation only (no browser-side
+interactive Player — Mikan has none), fixed mock data instead of the
+original's live GitHub-trending/weather fetches, and Mikan-native
+replacements for Remotion-only packages (`@remotion/animated-emoji`,
+`@remotion/media`).
+
+- **`LayerContent::Rect`** (`crates/composition/src/model.rs`): a flat-shaded
+  rectangle, `{ width, height, fill: Option<Paint>, stroke: Option<Stroke>,
+  corner_radius }`, reusing the existing `Paint`/`Stroke` types `TextStyle`
+  already has rather than introducing a new color type. Unlike
+  `Image`/`Video`, a rect has no natural size, hence the explicit
+  `width`/`height`. This closes a real gap: before this, Mikan had no way to
+  draw a flat background or border at all, in a project or a React entry.
+- **Shared rasterizer** (`crates/renderer/src/lib.rs`): `pub fn
+  rasterize_rect(width, height, corner_radius, fill: Option<&Paint>, stroke:
+  Option<&Stroke>) -> Result<RasterizedText, RenderError>` mirrors
+  `TextRasterizer::rasterize`'s shape exactly (same `RasterizedText`
+  width/height/pixels output) so it composites through the exact same
+  `render_image` path text does, and so `mikan-gpu-renderer` can call it
+  directly without its own color-parsing code (it already depends on
+  `mikan-renderer` for `TextRasterizer`; this is the same precedent). Uses
+  Inigo Quilez's rounded-box signed-distance function, anti-aliased over a
+  ~1px edge via `smoothstep`-style clamping; the stroke band is a second SDF
+  evaluation against the fill rect shrunk by the stroke width. `mikan-editor`
+  needed no changes — its `LayerContent` matches already have wildcard `_ =>`
+  arms. `mikan-exporter`'s `absolutize_layer_content` needed one match arm
+  added (a rect has no asset to absolutize, so it's a no-op alongside
+  `Text`/`MissingComponent`).
+- **`<Rect>` in `@mikan/react`** (`src/components.ts`, `src/render.ts`):
+  `{width, height, fill?: string, stroke?: string, strokeWidth?, cornerRadius?}`
+  — plain hex color strings rather than requiring authors to build `Paint`/
+  `Stroke` JSON objects by hand, converted in `render.ts`'s new `'rect'`
+  branch of `buildLayer` (added to `HOST_TYPES` alongside the others).
+- Verified: a new `mikan-renderer` unit test
+  (`renders_a_filled_rounded_rect_with_a_stroke`) asserts the fill color at
+  the rect's center and that a corner-radius-excluded pixel is neither the
+  fill nor the stroke color; a new `mikan-react-bridge` integration test
+  (`evaluates_a_rect_with_fill_stroke_and_corner_radius_when_node_is_available`,
+  against a new `packages/react/examples/with-rect.tsx`) asserts the
+  evaluated `LayerContent::Rect` fields round-trip exactly through the Node
+  bridge. `cargo test -p mikan-project -p mikan-composition --features
+  codegen` regenerated `packages/react/src/generated/LayerContent.ts` with
+  the new `rect` variant; `pnpm run build` type-checks clean against it.
+- **`packages/react/examples/homepage-demo.tsx`**: a 640x360/30fps/120-frame
+  composition reproducing the four-card layout (GitHub trending, weather,
+  current country, an emoji picker) using `<Rect>` for each card's
+  background/border, `spring()`-based staggered entrance per card,
+  `interpolate()` for the weather card's count-up, and a plain emoji-glyph
+  `<Text>` (cycled every 40 frames) in place of the original's Lottie
+  animated emoji. `<Audio src="../../../examples/assets/voices/001.wav">`
+  (the repo's existing VOICEROID voice fixture) stands in for
+  `@remotion/media`'s reaction sound. Verified end to end: `cargo run -p
+  mikan-exporter -- --react packages/react/examples/homepage-demo.tsx
+  out.mp4` produced an h264+aac MP4 (ffprobe-confirmed); extracted frames at
+  10/60/100 were inspected and show the expected staggered card entrance,
+  the weather card's temperature counting up to a settled `24°C`, and the
+  emoji swapping across its three glyphs. **Known limitation, not introduced
+  by this work**: this environment's text rasterizer (`cosmic-text`/`swash`)
+  has no color/COLR emoji font support, so emoji glyphs render as their
+  monochrome fallback outline (a flame silhouette, a plain flag shape, a
+  bare circle for the "pleading face") rather than full-color glyphs — a
+  pre-existing constraint of the shared text rasterizer, not of the new
+  `Rect` work.
+
 ### TypeScript type generation and the Project loader
 
 `mikan-composition`'s and `mikan-project`'s public serde types carry
@@ -1166,15 +1239,23 @@ licensed VOICEROID voice sample.
   `FrameCaption` component rendering `useCurrentFrame()`/`useVideoConfig()`,
   used by the integration test asserting editor-path component resolution
   sees the requested time.
+- `packages/react/examples/with-rect.tsx`: a single filled, stroked,
+  rounded `<Rect>`, used by `mikan-react-bridge`'s rect-evaluation
+  integration test.
+- `packages/react/examples/homepage-demo.tsx`: the Remotion-homepage-style
+  four-card demo composition described above; not tied to a Rust test, run
+  manually via `mikan-exporter --react`.
 
 ## Validation baseline
 
-At this handoff, the workspace has 120 passing tests (110 from the previous
-handoff, a live-FFmpeg `mikan-media` test freezing on the last frame past a
-source's end, three dialogue-authoring editor tests, and two character-creation
-editor tests, two character-name tests, and two safe character-deletion tests).
-The media test skips
-itself when ffmpeg/ffprobe are missing, or locates them via
+At this handoff, the workspace has 124 passing tests (122 from the previous
+handoff, plus a `mikan-renderer` `Rect` rasterization test and a
+`mikan-react-bridge` `<Rect>` evaluation integration test). Before that, 122
+(110 from the handoff before that, a live-FFmpeg `mikan-media` test freezing
+on the last frame past a source's end, three dialogue-authoring editor
+tests, and two character-creation editor tests, two character-name tests,
+two safe character-deletion tests, and two character-expression tests). The
+media test skips itself when ffmpeg/ffprobe are missing, or locates them via
 `MIKAN_FFMPEG_DIR`. The last checks were:
 
 ```sh
@@ -1255,11 +1336,11 @@ The first GUI dialogue-authoring slice is also complete: an imported portrait
 can create a ready-to-use character, and an imported voice can be inserted as a
 Dialogue clip with editable text/speaker, and character names can be changed
 inline in the Inspector. Characters can also be safely removed with reference
-confirmation and undo. Additional portrait expressions and fine-grained
-portrait/subtitle styling still require editing project JSON. Additional
-expressions are the next VOICEROID-specific editor gap; caption file/transcript
-import and transitions remain later workflow gaps compared with Remotion's
-broader ecosystem.
+confirmation and undo. Selected images can now be registered as additional
+portrait expressions and chosen per Dialogue clip. Fine-grained
+portrait/subtitle styling is the next VOICEROID-specific editor gap; caption
+file/transcript import and transitions remain later workflow gaps compared with
+Remotion's broader ecosystem.
 
 The user has shared a more ambitious design (see git history / conversation
 for the full text) where a React entry does not just describe an independent

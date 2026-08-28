@@ -17,8 +17,8 @@ use cosmic_text::{
 };
 use image::ImageReader;
 use mikan_composition::{
-    AssetLocation, Layer, LayerContent, MediaTiming, Paint, Point, ResolvedAsset, Scene, TextAlign,
-    TextStyle,
+    AssetLocation, Layer, LayerContent, MediaTiming, Paint, Point, ResolvedAsset, Scene, Stroke,
+    TextAlign, TextStyle,
 };
 use mikan_media::{MediaError, VideoFrameDecoder};
 
@@ -469,6 +469,31 @@ impl CpuRenderer {
                 let image = self.load_image(asset)?;
                 render_image(frame, image, layer.transform.anchor, state);
             }
+            LayerContent::Rect {
+                width,
+                height,
+                fill,
+                stroke,
+                corner_radius,
+            } => {
+                let image = rasterize_rect(
+                    *width,
+                    *height,
+                    *corner_radius,
+                    fill.as_ref(),
+                    stroke.as_ref(),
+                )?;
+                render_image(
+                    frame,
+                    &DecodedImage {
+                        width: image.width(),
+                        height: image.height(),
+                        pixels: image.into_pixels(),
+                    },
+                    layer.transform.anchor,
+                    state,
+                );
+            }
             LayerContent::MissingComponent { .. } => render_placeholder(
                 frame,
                 layer.transform.anchor,
@@ -684,6 +709,121 @@ fn render_image(frame: &mut RgbaFrame, image: &DecodedImage, anchor: Point, stat
             );
         }
     }
+}
+
+/// Rasterizes a flat-shaded, optionally rounded and stroked rectangle into an
+/// RGBA buffer, anti-aliased by signed distance. Shares `RasterizedText`'s
+/// shape (width/height/pixels) so it composites through the exact same
+/// `render_image` path text does. Takes the raw `Paint`/`Stroke` composition
+/// types (like `TextRasterizer::rasterize` takes `&TextStyle`) so callers,
+/// including `mikan-gpu-renderer`, never need their own color parsing.
+pub fn rasterize_rect(
+    width: f64,
+    height: f64,
+    corner_radius: f64,
+    fill: Option<&Paint>,
+    stroke: Option<&Stroke>,
+) -> Result<RasterizedText, RenderError> {
+    let fill = paint_color(fill)?;
+    let stroke = stroke
+        .map(|stroke| -> Result<(Color, f64), RenderError> {
+            let Paint::Solid { color } = &stroke.paint;
+            Ok((Color::from_hex(color)?, stroke.width))
+        })
+        .transpose()?;
+    Ok(rasterize_rect_pixels(
+        width,
+        height,
+        corner_radius,
+        fill,
+        stroke,
+    ))
+}
+
+fn rasterize_rect_pixels(
+    width: f64,
+    height: f64,
+    corner_radius: f64,
+    fill: Option<Color>,
+    stroke: Option<(Color, f64)>,
+) -> RasterizedText {
+    let pixel_width = width.max(0.0).ceil().max(1.0) as u32;
+    let pixel_height = height.max(0.0).ceil().max(1.0) as u32;
+    let mut pixels = vec![0_u8; pixel_width as usize * pixel_height as usize * 4];
+
+    let half_width = width / 2.0;
+    let half_height = height / 2.0;
+    let radius = corner_radius.max(0.0).min(half_width.min(half_height));
+    let stroke = stroke.filter(|(_, stroke_width)| *stroke_width > 0.0);
+
+    for y in 0..pixel_height {
+        for x in 0..pixel_width {
+            let px = x as f64 + 0.5 - half_width;
+            let py = y as f64 + 0.5 - half_height;
+            let outer_distance =
+                signed_distance_rounded_box(px, py, half_width, half_height, radius);
+            let outer_alpha = (0.5 - outer_distance).clamp(0.0, 1.0);
+            if outer_alpha <= 0.0 {
+                continue;
+            }
+
+            let mut color = fill.unwrap_or(Color::TRANSPARENT);
+            if let Some((stroke_color, stroke_width)) = stroke {
+                let inner_half_width = (half_width - stroke_width).max(0.0);
+                let inner_half_height = (half_height - stroke_width).max(0.0);
+                let inner_radius = (radius - stroke_width).max(0.0);
+                let inner_distance = signed_distance_rounded_box(
+                    px,
+                    py,
+                    inner_half_width,
+                    inner_half_height,
+                    inner_radius,
+                );
+                let inner_alpha = (0.5 - inner_distance).clamp(0.0, 1.0);
+                color = Color::rgba(
+                    lerp(stroke_color.red, color.red, inner_alpha),
+                    lerp(stroke_color.green, color.green, inner_alpha),
+                    lerp(stroke_color.blue, color.blue, inner_alpha),
+                    lerp(stroke_color.alpha, color.alpha, inner_alpha),
+                );
+            }
+
+            let offset = (y * pixel_width + x) as usize * 4;
+            pixels[offset] = color.red;
+            pixels[offset + 1] = color.green;
+            pixels[offset + 2] = color.blue;
+            pixels[offset + 3] = (f64::from(color.alpha) * outer_alpha)
+                .round()
+                .clamp(0.0, 255.0) as u8;
+        }
+    }
+
+    RasterizedText {
+        width: pixel_width,
+        height: pixel_height,
+        pixels,
+    }
+}
+
+/// Inigo Quilez's rounded-box signed distance function: negative inside the
+/// shape, zero at the edge, positive outside, in the same pixel units as
+/// `half_width`/`half_height`/`radius`.
+fn signed_distance_rounded_box(
+    px: f64,
+    py: f64,
+    half_width: f64,
+    half_height: f64,
+    radius: f64,
+) -> f64 {
+    let qx = px.abs() - half_width + radius;
+    let qy = py.abs() - half_height + radius;
+    qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - radius
+}
+
+fn lerp(a: u8, b: u8, t: f64) -> u8 {
+    (f64::from(a) + (f64::from(b) - f64::from(a)) * t)
+        .round()
+        .clamp(0.0, 255.0) as u8
 }
 
 fn dilate_mask(mask: &[u8], width: u32, height: u32, radius: u32) -> Vec<u8> {
@@ -933,6 +1073,56 @@ mod tests {
                 .chunks_exact(4)
                 .any(|pixel| pixel == [255, 255, 255, 255])
         );
+    }
+
+    #[test]
+    fn renders_a_filled_rounded_rect_with_a_stroke() {
+        let scene = Scene {
+            width: 200,
+            height: 120,
+            frame_rate: Rational::new(60, 1),
+            time: Time::ZERO,
+            fonts: Vec::new(),
+            layers: vec![Layer {
+                id: "card".to_owned(),
+                transform: EvaluatedTransform {
+                    position: Point { x: 100.0, y: 60.0 },
+                    ..EvaluatedTransform::default()
+                },
+                opacity: 1.0,
+                content: LayerContent::Rect {
+                    width: 100.0,
+                    height: 60.0,
+                    fill: Some(Paint::Solid {
+                        color: "#3366CCFF".to_owned(),
+                    }),
+                    stroke: Some(mikan_composition::Stroke {
+                        paint: Paint::Solid {
+                            color: "#FFFFFFFF".to_owned(),
+                        },
+                        width: 4.0,
+                    }),
+                    corner_radius: 12.0,
+                },
+            }],
+        };
+        let mut renderer = CpuRenderer::default();
+        let frame = renderer.render(&scene).unwrap();
+
+        // Center of the rect is inside the fill, away from the stroke band.
+        let center_offset = ((60 * frame.width() + 100) * 4) as usize;
+        assert_eq!(
+            &frame.pixels()[center_offset..center_offset + 4],
+            &[0x33, 0x66, 0xCC, 0xFF]
+        );
+
+        // A pixel just outside the corner radius stays background (transparent
+        // over the render's own background, so at least distinct from the fill
+        // and stroke colors).
+        let corner_offset = ((32 * frame.width() + 52) * 4) as usize;
+        let corner_pixel = &frame.pixels()[corner_offset..corner_offset + 4];
+        assert_ne!(corner_pixel, [0x33, 0x66, 0xCC, 0xFF]);
+        assert_ne!(corner_pixel, [0xFF, 0xFF, 0xFF, 0xFF]);
     }
 
     #[test]

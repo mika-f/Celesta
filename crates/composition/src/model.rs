@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{Animatable, Rational, TextStyle, Time, TimeRange};
+use crate::{Animatable, Paint, Rational, Stroke, TextStyle, Time, TimeRange};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "codegen", derive(ts_rs::TS))]
@@ -56,6 +56,19 @@ pub enum LayerContent {
     },
     Group {
         layers: Vec<Layer>,
+    },
+    /// A flat-shaded rectangle, optionally rounded and/or stroked. Has no
+    /// natural size the way `Image`/`Video` do, so `width`/`height` are
+    /// explicit.
+    Rect {
+        width: f64,
+        height: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fill: Option<Paint>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stroke: Option<Stroke>,
+        #[serde(default)]
+        corner_radius: f64,
     },
     MissingComponent {
         component: String,

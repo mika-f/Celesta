@@ -17,7 +17,7 @@ use mikan_composition::{
     AssetLocation, EvaluatedTransform, Layer, LayerContent, Point, ResolvedAsset, Scene,
 };
 use mikan_media::{MediaError, VideoFrameDecoder};
-use mikan_renderer::{RenderError, TextRasterizer};
+use mikan_renderer::{RenderError, TextRasterizer, rasterize_rect};
 use wgpu::util::DeviceExt;
 
 #[cfg(target_os = "macos")]
@@ -651,6 +651,24 @@ impl GpuRenderer {
                     .rasterize(text, style, *max_width, 1.0)
                     .map_err(GpuRenderError::Text)?;
                 let image = DecodedImage::new(text.width(), text.height(), text.into_pixels())?;
+                output.push(PreparedLayer::new(image, layer.transform.anchor, state));
+            }
+            LayerContent::Rect {
+                width,
+                height,
+                fill,
+                stroke,
+                corner_radius,
+            } => {
+                let rect = rasterize_rect(
+                    *width,
+                    *height,
+                    *corner_radius,
+                    fill.as_ref(),
+                    stroke.as_ref(),
+                )
+                .map_err(GpuRenderError::Text)?;
+                let image = DecodedImage::new(rect.width(), rect.height(), rect.into_pixels())?;
                 output.push(PreparedLayer::new(image, layer.transform.anchor, state));
             }
             LayerContent::MissingComponent { .. } => {

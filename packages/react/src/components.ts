@@ -46,6 +46,17 @@ export interface TextProps extends CommonProps {
   maxWidth?: number;
 }
 
+export interface RectProps extends CommonProps {
+  width: number;
+  height: number;
+  /** Hex fill color (`"#RRGGBB"` or `"#RRGGBBAA"`). Omit for no fill. */
+  fill?: string;
+  /** Hex stroke color; has no visible effect without `strokeWidth`. */
+  stroke?: string;
+  strokeWidth?: number;
+  cornerRadius?: number;
+}
+
 export interface VideoProps extends CommonProps {
   src: string;
   /**
@@ -78,6 +89,11 @@ export function Image(props: ImageProps): ReturnType<typeof React.createElement>
 
 export function Text(props: TextProps): ReturnType<typeof React.createElement> {
   return React.createElement('text', props);
+}
+
+/** A flat-shaded rectangle, optionally rounded and/or stroked. */
+export function Rect(props: RectProps): ReturnType<typeof React.createElement> {
+  return React.createElement('rect', props);
 }
 
 export function Video(props: VideoProps): ReturnType<typeof React.createElement> {

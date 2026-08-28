@@ -18,8 +18,10 @@ import type {
   KeyframeAnimation,
   Layer,
   LayerContent,
+  Paint,
   ResolvedAsset,
   Scene,
+  Stroke,
   TextStyle,
   Time,
 } from './scene';
@@ -30,6 +32,7 @@ const HOST_TYPES = new Set([
   'composition',
   'group',
   'image',
+  'rect',
   'text',
   'video',
   'audio',
@@ -271,6 +274,20 @@ function buildLayer(
       text: extractText(props.children),
       style: (props.style as TextStyle | undefined) ?? {},
       ...(typeof maxWidth === 'number' ? { maxWidth } : {}),
+    };
+  } else if (node.type === 'rect') {
+    const fill = typeof props.fill === 'string' ? ({ type: 'solid', color: props.fill } as Paint) : undefined;
+    const strokeColor = typeof props.stroke === 'string' ? props.stroke : undefined;
+    const strokeWidth = numberOr(props.strokeWidth, 0);
+    const stroke: Stroke | undefined =
+      strokeColor && strokeWidth > 0 ? { paint: { type: 'solid', color: strokeColor }, width: strokeWidth } : undefined;
+    content = {
+      type: 'rect',
+      width: numberOr(props.width, 0),
+      height: numberOr(props.height, 0),
+      ...(fill ? { fill } : {}),
+      ...(stroke ? { stroke } : {}),
+      cornerRadius: numberOr(props.cornerRadius, 0),
     };
   } else if (node.type === 'video') {
     // A React <Video> plays synced to the enclosing sequence chain's own

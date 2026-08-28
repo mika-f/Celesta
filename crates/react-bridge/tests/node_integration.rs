@@ -74,6 +74,46 @@ fn computes_video_timing_from_the_composition_clock_when_node_is_available() {
 }
 
 #[test]
+fn evaluates_a_rect_with_fill_stroke_and_corner_radius_when_node_is_available() {
+    let Some((node, cli_script, package_root)) = live_react_runtime() else {
+        return;
+    };
+
+    let entry = package_root.join("examples/with-rect.tsx");
+    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+
+    let scene = bridge.scene_at(Time::new(0, 30)).unwrap();
+    assert_eq!(scene.layers.len(), 1);
+    let LayerContent::Rect {
+        width,
+        height,
+        fill,
+        stroke,
+        corner_radius,
+    } = &scene.layers[0].content
+    else {
+        panic!("expected a rect layer");
+    };
+    assert_eq!(*width, 200.0);
+    assert_eq!(*height, 100.0);
+    assert_eq!(
+        fill,
+        &Some(mikan_composition::Paint::Solid {
+            color: "#3366CC".to_owned()
+        })
+    );
+    let stroke = stroke.as_ref().expect("expected a stroke");
+    assert_eq!(
+        stroke.paint,
+        mikan_composition::Paint::Solid {
+            color: "#FFFFFF".to_owned()
+        }
+    );
+    assert_eq!(stroke.width, 4.0);
+    assert_eq!(*corner_radius, 16.0);
+}
+
+#[test]
 fn reports_audio_clips_per_frame_when_node_is_available() {
     let Some((node, cli_script, package_root)) = live_react_runtime() else {
         return;
