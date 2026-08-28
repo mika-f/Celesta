@@ -215,6 +215,12 @@ pub struct Keyframe<T> {
     pub easing: Option<Easing>,
 }
 
+/// Mirrors the easings.net catalogue (`EaseIn`/`EaseOut`/`EaseInOut` are the
+/// pre-existing quadratic shorthand, kept for backward compatibility with
+/// project files that already reference them — they compute the same curve
+/// as `EaseInQuad`/`EaseOutQuad`/`EaseInOutQuad`). See `animation.rs`'s
+/// `apply_easing`/`easing_integral` for the formulas, which mirror
+/// `packages/react/src/animation.ts`'s `Easings` object.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "codegen", derive(ts_rs::TS))]
 #[cfg_attr(feature = "codegen", ts(export))]
@@ -224,6 +230,36 @@ pub enum Easing {
     EaseIn,
     EaseOut,
     EaseInOut,
+    EaseInSine,
+    EaseOutSine,
+    EaseInOutSine,
+    EaseInQuad,
+    EaseOutQuad,
+    EaseInOutQuad,
+    EaseInCubic,
+    EaseOutCubic,
+    EaseInOutCubic,
+    EaseInQuart,
+    EaseOutQuart,
+    EaseInOutQuart,
+    EaseInQuint,
+    EaseOutQuint,
+    EaseInOutQuint,
+    EaseInExpo,
+    EaseOutExpo,
+    EaseInOutExpo,
+    EaseInCirc,
+    EaseOutCirc,
+    EaseInOutCirc,
+    EaseInBack,
+    EaseOutBack,
+    EaseInOutBack,
+    EaseInElastic,
+    EaseOutElastic,
+    EaseInOutElastic,
+    EaseInBounce,
+    EaseOutBounce,
+    EaseInOutBounce,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

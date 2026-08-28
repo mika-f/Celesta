@@ -468,6 +468,18 @@ in any other React host.
    used that name) provides `linear`/`easeIn`/`easeOut`/`easeInOut` plus the
    usual sine/quad/cubic/quart/quint/expo/circ/back/elastic/bounce families
    (expanded 2026-08-26 alongside the `<Sequence>` work).
+  `mikan_composition::Easing` (the project.json-facing enum a `Keyframe`'s
+  own `easing` field uses, applied by `crates/composition/src/animation.rs`'s
+  `apply_easing`/`easing_integral`) was widened to the same easings.net
+  catalogue on 2026-08-28, formula-for-formula matching `Easings` above so a
+  named curve looks the same whether it drives a project keyframe or an
+  `interpolate()` call. `apply_easing` has a hand-derived closed-form
+  antiderivative only for the original four curves (`linear`/`ease-in`/
+  `ease-out`/`ease-in-out`) that `easing_integral` needs for
+  `integrate_f64` (animated-playback-rate integration); every other curve
+  falls back to a composite-Simpson's-rule numeric integral over
+  `apply_easing` itself rather than a hand-verified closed form for
+  trig/exponential/piecewise curves like elastic and bounce.
   `spring({frame, fps, config?, from?, to?, delay?, durationInFrames?})` is
   the closed-form step response of a damped harmonic oscillator (mass-
   spring-damper solved analytically for the underdamped/critically-damped/
