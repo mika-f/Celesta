@@ -226,11 +226,25 @@ impl TextRasterizer {
         });
         let mask_width = width.unwrap_or(measured_width).ceil().max(1.0) as u32;
         let mask_height = measured_height.ceil().max(1.0) as u32;
+        let fill = paint_color(style.fill.as_ref())?.unwrap_or(Color::WHITE);
+        // A coverage-only alpha mask, used for the stroke's dilation below —
+        // meaningful for both ordinary glyphs and color glyphs (an emoji's
+        // silhouette dilates the same way plain text would).
         let mut mask = vec![0_u8; mask_width as usize * mask_height as usize];
+        // The actual per-pixel glyph color. cosmic-text/swash already decode
+        // color glyphs (COLR, sbix, CBDT/CBLC — how system emoji fonts like
+        // Apple Color Emoji store their glyphs) into real per-pixel RGBA
+        // here, not just a coverage mask; passing `fill` as the base color
+        // below means an ordinary (non-color) glyph's pixels come back as
+        // `fill` scaled by coverage, so accumulating directly into this
+        // buffer reproduces flat-fill text exactly while also capturing
+        // multi-color emoji glyphs, which a single mask+solid-fill
+        // composite cannot represent.
+        let mut glyph_pixels = vec![0_u8; mask_width as usize * mask_height as usize * 4];
         buffer.draw(
             &mut self.font_system,
             &mut self.swash_cache,
-            CosmicColor::rgb(255, 255, 255),
+            CosmicColor::rgba(fill.red, fill.green, fill.blue, fill.alpha),
             |x, y, width, height, color| {
                 for offset_y in 0..height as i32 {
                     for offset_x in 0..width as i32 {
@@ -245,6 +259,12 @@ impl TextRasterizer {
                         }
                         let offset = pixel_y as usize * mask_width as usize + pixel_x as usize;
                         mask[offset] = mask[offset].max(color.a());
+                        let pixel_offset = offset * 4;
+                        blend(
+                            &mut glyph_pixels[pixel_offset..pixel_offset + 4],
+                            Color::rgba(color.r(), color.g(), color.b(), color.a()),
+                            1.0,
+                        );
                     }
                 }
             },
@@ -273,8 +293,7 @@ impl TextRasterizer {
                 );
             }
         }
-        let fill = paint_color(style.fill.as_ref())?.unwrap_or(Color::WHITE);
-        composite_mask(&mut frame, &mask, mask_width, mask_height, 0, 0, fill, 1.0);
+        composite_rgba(&mut frame, &glyph_pixels, mask_width, mask_height, 0, 0);
         if !text.contains('\n') {
             frame = trim_transparent_edges(frame, max_width.is_none());
         }
@@ -892,6 +911,50 @@ fn composite_mask(
     }
 }
 
+/// Like `composite_mask`, but `source` already carries its own per-pixel RGBA
+/// (used for glyph rendering, where a color emoji glyph's pixels vary in hue
+/// across the glyph, not just coverage).
+fn composite_rgba(
+    frame: &mut RgbaFrame,
+    source: &[u8],
+    width: u32,
+    height: u32,
+    left: i32,
+    top: i32,
+) {
+    for y in 0..height {
+        for x in 0..width {
+            let destination_x = left + x as i32;
+            let destination_y = top + y as i32;
+            if destination_x < 0
+                || destination_y < 0
+                || destination_x >= frame.width as i32
+                || destination_y >= frame.height as i32
+            {
+                continue;
+            }
+            let source_offset = ((y * width + x) * 4) as usize;
+            let alpha = source[source_offset + 3];
+            if alpha == 0 {
+                continue;
+            }
+            let destination_offset =
+                ((destination_y as u32 * frame.width + destination_x as u32) * 4) as usize;
+            let color = Color::rgba(
+                source[source_offset],
+                source[source_offset + 1],
+                source[source_offset + 2],
+                alpha,
+            );
+            blend(
+                &mut frame.pixels[destination_offset..destination_offset + 4],
+                color,
+                1.0,
+            );
+        }
+    }
+}
+
 fn paint_color(paint: Option<&Paint>) -> Result<Option<Color>, RenderError> {
     paint
         .map(|paint| match paint {
@@ -1036,6 +1099,47 @@ mod tests {
     use mikan_media::{MediaError, VideoFrame, VideoFrameDecoder};
 
     use super::*;
+
+    #[test]
+    fn rasterizes_color_emoji_glyphs_when_a_color_font_is_available() {
+        let mut rasterizer = TextRasterizer::new();
+        let rasterized = rasterizer
+            .rasterize(
+                "\u{1F525}", // fire emoji: multi-colored (red/orange/yellow) on
+                // any real color-emoji font, unlike a flat single-fill glyph.
+                &TextStyle {
+                    font_size: Some(64.0),
+                    fill: Some(Paint::Solid {
+                        color: "#FFFFFFFF".to_owned(),
+                    }),
+                    ..TextStyle::default()
+                },
+                None,
+                1.0,
+            )
+            .unwrap();
+
+        let distinct_colors: std::collections::HashSet<[u8; 3]> = rasterized
+            .pixels()
+            .chunks_exact(4)
+            .filter(|pixel| pixel[3] > 0)
+            .map(|pixel| [pixel[0], pixel[1], pixel[2]])
+            .collect();
+
+        // A regression back to alpha-only mask compositing would flatten
+        // every opaque pixel to the single fill color (white here), so this
+        // is the direct check that color glyph data survives rasterization.
+        // Environments without any color-emoji font (uncommon, but possible
+        // outside macOS) fall back to a monochrome glyph outline instead of
+        // failing — not a regression this test can detect there.
+        if distinct_colors.len() <= 1 {
+            eprintln!(
+                "skipping color emoji assertion: no color-emoji font available in this environment"
+            );
+            return;
+        }
+        assert!(distinct_colors.len() > 1);
+    }
 
     #[test]
     fn renders_text_to_a_png() {
