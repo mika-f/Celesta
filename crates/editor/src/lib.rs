@@ -414,6 +414,81 @@ impl EditorDocument {
         Ok(())
     }
 
+    pub fn character_references(
+        &self,
+        character_id: &str,
+    ) -> Result<Vec<String>, EditorDocumentError> {
+        if !self.project.characters.contains_key(character_id) {
+            return Err(EditorDocumentError::MissingCharacter(
+                character_id.to_owned(),
+            ));
+        }
+        Ok(self
+            .project
+            .tracks
+            .iter()
+            .flat_map(|track| {
+                track.items.iter().filter_map(|item| match &item.content {
+                    TimelineContent::Dialogue { character, .. } if character == character_id => {
+                        Some(format!("track `{}` / clip `{}`", track.id, item.id))
+                    }
+                    _ => None,
+                })
+            })
+            .collect())
+    }
+
+    pub fn delete_character(
+        &mut self,
+        character_id: &str,
+        remove_dialogue_items: bool,
+    ) -> Result<(), EditorDocumentError> {
+        let references = self.character_references(character_id)?;
+        if !references.is_empty() && !remove_dialogue_items {
+            return Err(EditorDocumentError::CharacterInUse {
+                character: character_id.to_owned(),
+                references,
+            });
+        }
+        if remove_dialogue_items
+            && let Some(track) = self.project.tracks.iter().find(|track| {
+                track.locked == Some(true)
+                    && track.items.iter().any(|item| {
+                        matches!(
+                            &item.content,
+                            TimelineContent::Dialogue { character, .. }
+                                if character == character_id
+                        )
+                    })
+            })
+        {
+            return Err(EditorDocumentError::LockedTrack(track.id.clone()));
+        }
+
+        let before = self.project.clone();
+        let before_revision = self.current_revision;
+        if remove_dialogue_items {
+            for track in &mut self.project.tracks {
+                track.items.retain(|item| {
+                    !matches!(
+                        &item.content,
+                        TimelineContent::Dialogue { character, .. }
+                            if character == character_id
+                    )
+                });
+            }
+        }
+        self.project.characters.remove(character_id);
+        if self.project.settings.duration.is_none() {
+            self.duration = self
+                .project
+                .effective_duration()
+                .map_err(EditorDocumentError::Duration)?;
+        }
+        self.record_mutation(before, before_revision);
+        Ok(())
+    }
+
     pub fn tracks(&self) -> Vec<TrackSummary> {
         self.project
             .tracks
@@ -2065,6 +2140,10 @@ pub enum EditorDocumentError {
         asset: String,
         references: Vec<String>,
     },
+    CharacterInUse {
+        character: String,
+        references: Vec<String>,
+    },
     UnsupportedTimelineAsset(AssetKind),
     InvalidNewClipFrameRange {
         start_frame: i64,
@@ -2145,6 +2224,14 @@ impl fmt::Display for EditorDocumentError {
                 "asset `{asset}` is still used by {} reference(s)",
                 references.len()
             ),
+            Self::CharacterInUse {
+                character,
+                references,
+            } => write!(
+                formatter,
+                "character `{character}` is still used by {} dialogue clip(s)",
+                references.len()
+            ),
             Self::UnsupportedTimelineAsset(kind) => {
                 write!(formatter, "{kind} assets cannot be placed on the timeline")
             }
@@ -2218,6 +2305,7 @@ impl Error for EditorDocumentError {
             | Self::IncompatibleTrack { .. }
             | Self::IncompatibleClipTrack { .. }
             | Self::AssetInUse { .. }
+            | Self::CharacterInUse { .. }
             | Self::UnsupportedTimelineAsset(_)
             | Self::InvalidNewClipFrameRange { .. }
             | Self::InvalidMasterVolume(_)
@@ -2834,6 +2922,41 @@ mod tests {
         let error = document.rename_character("akane", "  ").unwrap_err();
 
         assert!(matches!(error, EditorDocumentError::InvalidCharacterName));
+    }
+
+    #[test]
+    fn character_deletion_requires_confirmation_and_is_undoable() {
+        let mut document = EditorDocument::from_json(VOICEROID, "examples").unwrap();
+        let references = document.character_references("akane").unwrap();
+
+        assert_eq!(references, vec!["track `dialogue` / clip `dialogue-001`"]);
+        assert!(matches!(
+            document.delete_character("akane", false),
+            Err(EditorDocumentError::CharacterInUse { .. })
+        ));
+
+        document.delete_character("akane", true).unwrap();
+        assert!(!document.project.characters.contains_key("akane"));
+        assert!(document.tracks()[0].clips.is_empty());
+        document.project.validate().unwrap();
+
+        assert!(document.undo().unwrap());
+        assert!(document.project.characters.contains_key("akane"));
+        assert_eq!(document.tracks()[0].clips.len(), 1);
+    }
+
+    #[test]
+    fn character_deletion_preserves_dialogue_on_locked_tracks() {
+        let mut document = EditorDocument::from_json(VOICEROID, "examples").unwrap();
+        document.project.tracks[0].locked = Some(true);
+
+        assert!(matches!(
+            document.delete_character("akane", true),
+            Err(EditorDocumentError::LockedTrack(_))
+        ));
+        assert!(document.project.characters.contains_key("akane"));
+        assert_eq!(document.tracks()[0].clips.len(), 1);
+        assert!(!document.is_dirty());
     }
 
     #[test]

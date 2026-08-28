@@ -966,6 +966,7 @@ struct EditorView {
     importing_assets: bool,
     asset_operation_active: bool,
     track_delete_prompt_active: bool,
+    character_delete_prompt_active: bool,
     close_prompt_active: bool,
     force_close: bool,
 }
@@ -1070,6 +1071,7 @@ impl EditorView {
             importing_assets: false,
             asset_operation_active: false,
             track_delete_prompt_active: false,
+            character_delete_prompt_active: false,
             close_prompt_active: false,
             force_close: false,
         };
@@ -1810,6 +1812,98 @@ impl EditorView {
     fn cancel_character_rename(&mut self, cx: &mut Context<Self>) {
         self.renaming_character_id = None;
         self.edit_error = None;
+        cx.notify();
+    }
+
+    fn delete_character_now(
+        &mut self,
+        character_id: &str,
+        remove_dialogue_items: bool,
+        cx: &mut Context<Self>,
+    ) {
+        self.pause();
+        match self
+            .document
+            .delete_character(character_id, remove_dialogue_items)
+        {
+            Ok(()) => {
+                if self.renaming_character_id.as_deref() == Some(character_id) {
+                    self.renaming_character_id = None;
+                }
+                self.sync_document_state();
+                if self.selected_clip_id.as_ref().is_some_and(|selected| {
+                    !self
+                        .tracks
+                        .iter()
+                        .flat_map(|track| &track.clips)
+                        .any(|clip| &clip.id == selected)
+                }) {
+                    self.selected_clip_id = None;
+                }
+                self.edit_error = None;
+            }
+            Err(error) => self.edit_error = Some(error.to_string().into()),
+        }
+        cx.notify();
+    }
+
+    fn request_delete_character(
+        &mut self,
+        character_id: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.character_delete_prompt_active {
+            return;
+        }
+        let references = match self.document.character_references(character_id) {
+            Ok(references) => references,
+            Err(error) => {
+                self.edit_error = Some(error.to_string().into());
+                cx.notify();
+                return;
+            }
+        };
+        if references.is_empty() {
+            self.delete_character_now(character_id, false, cx);
+            return;
+        }
+
+        self.character_delete_prompt_active = true;
+        let character_id = character_id.to_owned();
+        let mut detail = format!(
+            "This character has {} dialogue clip(s). Deleting it will also remove:",
+            references.len()
+        );
+        for reference in references.iter().take(4) {
+            detail.push_str(&format!("\n\n• {reference}"));
+        }
+        if references.len() > 4 {
+            detail.push_str(&format!("\n\n• …and {} more", references.len() - 4));
+        }
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            "Delete referenced character?",
+            Some(&detail),
+            &[
+                PromptButton::ok("Delete Character and Dialogue"),
+                PromptButton::cancel("Cancel"),
+            ],
+            cx,
+        );
+        cx.spawn_in(window, async move |view, cx| {
+            let answer = answer.await.unwrap_or(1);
+            view.update_in(cx, |this, _, cx| {
+                this.character_delete_prompt_active = false;
+                if answer == 0 {
+                    this.delete_character_now(&character_id, true, cx);
+                } else {
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
         cx.notify();
     }
 
@@ -4107,9 +4201,13 @@ impl EditorView {
                         ),
                 )
             } else {
-                let character_id = character.id.clone();
+                let rename_character_id = character.id.clone();
+                let delete_character_id = character.id.clone();
                 let name = character.name.clone();
-                let button_id: SharedString = format!("character-rename-{character_id}").into();
+                let rename_button_id: SharedString =
+                    format!("character-rename-{rename_character_id}").into();
+                let delete_button_id: SharedString =
+                    format!("character-delete-{delete_character_id}").into();
                 panel.child(
                     div()
                         .flex()
@@ -4138,11 +4236,35 @@ impl EditorView {
                                         .child(character.id.clone()),
                                 ),
                         )
-                        .child(inspector_dynamic_button(button_id, "Rename").on_click(
-                            cx.listener(move |this, _, window, cx| {
-                                this.begin_character_rename(&character_id, &name, window, cx);
-                            }),
-                        )),
+                        .child(
+                            div()
+                                .flex()
+                                .gap_2()
+                                .child(
+                                    inspector_dynamic_button(rename_button_id, "Rename").on_click(
+                                        cx.listener(move |this, _, window, cx| {
+                                            this.begin_character_rename(
+                                                &rename_character_id,
+                                                &name,
+                                                window,
+                                                cx,
+                                            );
+                                        }),
+                                    ),
+                                )
+                                .child(
+                                    inspector_dynamic_button(delete_button_id, "Delete")
+                                        .bg(rgb(0x512b30))
+                                        .hover(|style| style.bg(rgb(0x713840)))
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.request_delete_character(
+                                                &delete_character_id,
+                                                window,
+                                                cx,
+                                            );
+                                        })),
+                                ),
+                        ),
                 )
             }
         })

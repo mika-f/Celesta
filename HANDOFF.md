@@ -208,6 +208,10 @@ Keep these boundaries intact:
 - The Inspector lists project characters and supports inline, IME-aware name
   editing through the existing `TextInput`. Names are trimmed, cannot be empty,
   participate in undo/redo, and refresh React-aware preview state immediately.
+- Unreferenced characters delete immediately. Characters used by Dialogue clips
+  show a warning with the affected clips; confirmed deletion removes the
+  character and those Dialogue items as one undoable mutation. A referencing
+  locked track rejects the entire operation before any project state changes.
 - Asset rows can be dragged directly onto a timeline track. The pointer's drop
   position determines the exact insertion frame; compatible tracks highlight
   green and incompatible or locked tracks show a red rejection state. Dropping
@@ -1165,10 +1169,11 @@ licensed VOICEROID voice sample.
 
 ## Validation baseline
 
-At this handoff, the workspace has 118 passing tests (110 from the previous
+At this handoff, the workspace has 120 passing tests (110 from the previous
 handoff, a live-FFmpeg `mikan-media` test freezing on the last frame past a
 source's end, three dialogue-authoring editor tests, and two character-creation
-editor tests, plus two character-name tests). The media test skips
+editor tests, two character-name tests, and two safe character-deletion tests).
+The media test skips
 itself when ffmpeg/ffprobe are missing, or locates them via
 `MIKAN_FFMPEG_DIR`. The last checks were:
 
@@ -1249,11 +1254,12 @@ also complete, as is Rust-to-TypeScript type generation and a read-only
 The first GUI dialogue-authoring slice is also complete: an imported portrait
 can create a ready-to-use character, and an imported voice can be inserted as a
 Dialogue clip with editable text/speaker, and character names can be changed
-inline in the Inspector. Character removal, additional portrait expressions,
-and fine-grained portrait/subtitle styling still require editing project JSON.
-Removal and additional expressions are the next VOICEROID-specific editor gap; caption
-file/transcript import and transitions remain later workflow gaps compared with
-Remotion's broader ecosystem.
+inline in the Inspector. Characters can also be safely removed with reference
+confirmation and undo. Additional portrait expressions and fine-grained
+portrait/subtitle styling still require editing project JSON. Additional
+expressions are the next VOICEROID-specific editor gap; caption file/transcript
+import and transitions remain later workflow gaps compared with Remotion's
+broader ecosystem.
 
 The user has shared a more ambitious design (see git history / conversation
 for the full text) where a React entry does not just describe an independent
