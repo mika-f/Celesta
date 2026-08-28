@@ -74,6 +74,8 @@ pub struct DialogueClipSummary {
 pub struct CharacterSummary {
     pub id: String,
     pub name: String,
+    pub default_expression: Option<String>,
+    pub expressions: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -312,6 +314,15 @@ impl EditorDocument {
             .map(|(id, character)| CharacterSummary {
                 id: id.clone(),
                 name: character.name.clone(),
+                default_expression: character
+                    .portrait
+                    .as_ref()
+                    .map(|portrait| portrait.default_expression.clone()),
+                expressions: character
+                    .portrait
+                    .as_ref()
+                    .map(|portrait| portrait.expressions.keys().cloned().collect())
+                    .unwrap_or_default(),
             })
             .collect()
     }
@@ -388,7 +399,84 @@ impl EditorDocument {
             },
         );
         self.record_mutation(before, before_revision);
-        Ok(CharacterSummary { id, name })
+        Ok(CharacterSummary {
+            id,
+            name,
+            default_expression: Some("default".to_owned()),
+            expressions: vec!["default".to_owned()],
+        })
+    }
+
+    pub fn add_character_expression(
+        &mut self,
+        character_id: &str,
+        asset_id: &str,
+    ) -> Result<String, EditorDocumentError> {
+        let asset = self
+            .project
+            .assets
+            .get(asset_id)
+            .ok_or_else(|| EditorDocumentError::MissingAsset(asset_id.to_owned()))?;
+        if asset.kind() != AssetKind::Image {
+            return Err(EditorDocumentError::AssetKindMismatch {
+                asset: asset_id.to_owned(),
+                expected: AssetKind::Image,
+                actual: asset.kind(),
+            });
+        }
+        let expression_base = asset_name(asset)
+            .and_then(|name| Path::new(name).file_stem())
+            .and_then(|name| name.to_str())
+            .unwrap_or(asset_id);
+        let character = self
+            .project
+            .characters
+            .get(character_id)
+            .ok_or_else(|| EditorDocumentError::MissingCharacter(character_id.to_owned()))?;
+        if let Some((expression, _)) = character.portrait.as_ref().and_then(|portrait| {
+            portrait
+                .expressions
+                .iter()
+                .find(|(_, existing_asset)| existing_asset.as_str() == asset_id)
+        }) {
+            return Ok(expression.clone());
+        }
+        let expression = unique_id(
+            &slugify(expression_base),
+            character
+                .portrait
+                .iter()
+                .flat_map(|portrait| portrait.expressions.keys().map(String::as_str)),
+        );
+
+        let before = self.project.clone();
+        let before_revision = self.current_revision;
+        let character = self
+            .project
+            .characters
+            .get_mut(character_id)
+            .expect("character existence was checked");
+        if let Some(portrait) = &mut character.portrait {
+            portrait
+                .expressions
+                .insert(expression.clone(), asset_id.to_owned());
+        } else {
+            let width = f64::from(self.project.settings.width);
+            let height = f64::from(self.project.settings.height);
+            character.portrait = Some(PortraitDefinition {
+                default_expression: expression.clone(),
+                expressions: BTreeMap::from([(expression.clone(), asset_id.to_owned())]),
+                transform: Some(Transform {
+                    position: Some(AnimatablePoint {
+                        x: Some(Animatable::Static(width * 0.82)),
+                        y: Some(Animatable::Static(height * 0.72)),
+                    }),
+                    ..Transform::default()
+                }),
+            });
+        }
+        self.record_mutation(before, before_revision);
+        Ok(expression)
     }
 
     pub fn rename_character(
@@ -1463,6 +1551,49 @@ impl EditorDocument {
         Ok(())
     }
 
+    pub fn set_dialogue_expression(
+        &mut self,
+        clip_id: &str,
+        expression_id: Option<&str>,
+    ) -> Result<(), EditorDocumentError> {
+        let (track_index, item_index) = self.clip_indices(clip_id)?;
+        self.ensure_track_unlocked(track_index)?;
+        let TimelineContent::Dialogue { character, .. } =
+            &self.project.tracks[track_index].items[item_index].content
+        else {
+            return Err(EditorDocumentError::UnsupportedDialogueClip(
+                clip_id.to_owned(),
+            ));
+        };
+        if let Some(expression_id) = expression_id {
+            let expression_exists = self
+                .project
+                .characters
+                .get(character)
+                .and_then(|character| character.portrait.as_ref())
+                .is_some_and(|portrait| portrait.expressions.contains_key(expression_id));
+            if !expression_exists {
+                return Err(EditorDocumentError::MissingCharacterExpression {
+                    character: character.clone(),
+                    expression: expression_id.to_owned(),
+                });
+            }
+        }
+
+        let before = self.project.clone();
+        let before_revision = self.current_revision;
+        let TimelineContent::Dialogue { expression, .. } =
+            &mut self.project.tracks[track_index].items[item_index].content
+        else {
+            unreachable!("dialogue content was checked");
+        };
+        *expression = expression_id.map(str::to_owned);
+        if self.project != before {
+            self.record_mutation(before, before_revision);
+        }
+        Ok(())
+    }
+
     fn new_clip_range(
         &self,
         start_frame: i64,
@@ -2113,6 +2244,10 @@ pub enum EditorDocumentError {
     MissingTrack(String),
     MissingAsset(String),
     MissingCharacter(String),
+    MissingCharacterExpression {
+        character: String,
+        expression: String,
+    },
     LockedTrack(String),
     UnsupportedAsset(PathBuf),
     ImportAsset {
@@ -2186,6 +2321,13 @@ impl fmt::Display for EditorDocumentError {
             Self::MissingCharacter(character_id) => {
                 write!(formatter, "character `{character_id}` does not exist")
             }
+            Self::MissingCharacterExpression {
+                character,
+                expression,
+            } => write!(
+                formatter,
+                "character `{character}` has no expression `{expression}`"
+            ),
             Self::LockedTrack(track_id) => write!(formatter, "track `{track_id}` is locked"),
             Self::UnsupportedAsset(path) => {
                 write!(formatter, "unsupported asset file `{}`", path.display())
@@ -2299,6 +2441,7 @@ impl Error for EditorDocumentError {
             | Self::MissingTrack(_)
             | Self::MissingAsset(_)
             | Self::MissingCharacter(_)
+            | Self::MissingCharacterExpression { .. }
             | Self::LockedTrack(_)
             | Self::UnsupportedAsset(_)
             | Self::AssetKindMismatch { .. }
@@ -2887,6 +3030,36 @@ mod tests {
     }
 
     #[test]
+    fn character_expression_creation_is_named_and_undoable() {
+        let mut document = EditorDocument::from_json(VOICEROID, "examples").unwrap();
+        document.project.assets.insert(
+            "akane-happy".to_owned(),
+            Asset::Image {
+                name: Some("Akane Happy.png".to_owned()),
+                source: AssetSource::File {
+                    path: "assets/akane-happy.png".to_owned(),
+                },
+            },
+        );
+
+        let expression = document
+            .add_character_expression("akane", "akane-happy")
+            .unwrap();
+        assert_eq!(expression, "akane-happy");
+        assert_eq!(
+            document.project.characters["akane"]
+                .portrait
+                .as_ref()
+                .unwrap()
+                .expressions["akane-happy"],
+            "akane-happy"
+        );
+
+        assert!(document.undo().unwrap());
+        assert_eq!(document.characters()[0].expressions, vec!["default"]);
+    }
+
+    #[test]
     fn character_creation_is_undoable() {
         let mut document = EditorDocument::from_json(VOICEROID, "examples").unwrap();
 
@@ -2981,6 +3154,47 @@ mod tests {
             .set_dialogue_character("dialogue-001", "akane")
             .unwrap();
 
+        assert_eq!(
+            document.tracks()[0].clips[0]
+                .dialogue
+                .as_ref()
+                .and_then(|dialogue| dialogue.expression.as_deref()),
+            Some("default")
+        );
+    }
+
+    #[test]
+    fn dialogue_expression_selection_validates_and_is_undoable() {
+        let mut document = EditorDocument::from_json(VOICEROID, "examples").unwrap();
+        document.project.assets.insert(
+            "akane-happy".to_owned(),
+            Asset::Image {
+                name: Some("Akane Happy.png".to_owned()),
+                source: AssetSource::File {
+                    path: "assets/akane-happy.png".to_owned(),
+                },
+            },
+        );
+        document
+            .add_character_expression("akane", "akane-happy")
+            .unwrap();
+
+        assert!(matches!(
+            document.set_dialogue_expression("dialogue-001", Some("missing")),
+            Err(EditorDocumentError::MissingCharacterExpression { .. })
+        ));
+        document
+            .set_dialogue_expression("dialogue-001", Some("akane-happy"))
+            .unwrap();
+        assert_eq!(
+            document.tracks()[0].clips[0]
+                .dialogue
+                .as_ref()
+                .and_then(|dialogue| dialogue.expression.as_deref()),
+            Some("akane-happy")
+        );
+
+        assert!(document.undo().unwrap());
         assert_eq!(
             document.tracks()[0].clips[0]
                 .dialogue

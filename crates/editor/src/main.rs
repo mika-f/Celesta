@@ -1969,6 +1969,43 @@ impl EditorView {
         cx.notify();
     }
 
+    fn set_dialogue_expression(
+        &mut self,
+        clip_id: &str,
+        expression_id: Option<&str>,
+        cx: &mut Context<Self>,
+    ) {
+        match self
+            .document
+            .set_dialogue_expression(clip_id, expression_id)
+        {
+            Ok(()) => {
+                self.tracks = self.document.tracks();
+                self.refresh_preview();
+                self.edit_error = None;
+            }
+            Err(error) => self.edit_error = Some(error.to_string().into()),
+        }
+        cx.notify();
+    }
+
+    fn add_selected_image_to_character(&mut self, character_id: &str, cx: &mut Context<Self>) {
+        let Some(asset_id) = self.selected_asset_id.clone() else {
+            return;
+        };
+        match self
+            .document
+            .add_character_expression(character_id, &asset_id)
+        {
+            Ok(_) => {
+                self.refresh_preview();
+                self.edit_error = None;
+            }
+            Err(error) => self.edit_error = Some(error.to_string().into()),
+        }
+        cx.notify();
+    }
+
     fn apply_property(
         &mut self,
         target: &PropertyEditTarget,
@@ -4137,6 +4174,11 @@ impl EditorView {
         characters: &[CharacterSummary],
         cx: &mut Context<Self>,
     ) -> E {
+        let selected_image_asset_id = self.selected_asset_id.as_ref().filter(|selected| {
+            self.assets
+                .iter()
+                .any(|asset| asset.id == **selected && asset.kind == AssetKind::Image)
+        });
         let panel = panel.child(
             div()
                 .mt_3()
@@ -4203,6 +4245,7 @@ impl EditorView {
             } else {
                 let rename_character_id = character.id.clone();
                 let delete_character_id = character.id.clone();
+                let expression_character_id = character.id.clone();
                 let name = character.name.clone();
                 let rename_button_id: SharedString =
                     format!("character-rename-{rename_character_id}").into();
@@ -4229,17 +4272,32 @@ impl EditorView {
                                         .text_color(rgb(0xc8cad2))
                                         .child(character.name.clone()),
                                 )
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(rgb(0x737783))
-                                        .child(character.id.clone()),
-                                ),
+                                .child(div().text_xs().text_color(rgb(0x737783)).child(format!(
+                                    "{} · {} expression(s)",
+                                    character.id,
+                                    character.expressions.len()
+                                ))),
                         )
                         .child(
                             div()
                                 .flex()
+                                .flex_wrap()
                                 .gap_2()
+                                .when_some(selected_image_asset_id, |actions, asset_id| {
+                                    let button_id: SharedString = format!(
+                                        "character-expression-{expression_character_id}-{asset_id}"
+                                    )
+                                    .into();
+                                    actions.child(
+                                        inspector_dynamic_button(button_id, "Add expression")
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.add_selected_image_to_character(
+                                                    &expression_character_id,
+                                                    cx,
+                                                );
+                                            })),
+                                    )
+                                })
                                 .child(
                                     inspector_dynamic_button(rename_button_id, "Rename").on_click(
                                         cx.listener(move |this, _, window, cx| {
@@ -4363,7 +4421,7 @@ impl EditorView {
                         ),
                 )
         };
-        panel.child(
+        let panel = panel.child(
             div()
                 .flex()
                 .flex_col()
@@ -4392,6 +4450,77 @@ impl EditorView {
                                     this.set_dialogue_character(&clip_id, &character_id, cx);
                                 }))
                         })),
+                ),
+        );
+        let Some(character) = characters
+            .iter()
+            .find(|character| character.id == dialogue.character)
+        else {
+            return panel;
+        };
+        let default_expression = character.default_expression.as_deref();
+        let default_clip_id = clip_id.to_owned();
+        let default_selected =
+            dialogue.expression.is_none() || dialogue.expression.as_deref() == default_expression;
+        let default_button_id: SharedString =
+            format!("dialogue-expression-default-{clip_id}").into();
+        panel.child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .px_3()
+                .py_2()
+                .border_b_1()
+                .border_color(rgb(0x292c34))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(rgb(0x737783))
+                        .child("Expression"),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .gap_2()
+                        .child(
+                            inspector_dynamic_button(default_button_id, "Default")
+                                .when(default_selected, |button| {
+                                    button.bg(rgb(0x6b4a2f)).text_color(rgb(0xffdbb5))
+                                })
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.set_dialogue_expression(&default_clip_id, None, cx);
+                                })),
+                        )
+                        .children(
+                            character
+                                .expressions
+                                .iter()
+                                .filter(|expression| {
+                                    Some(expression.as_str()) != default_expression
+                                })
+                                .map(|expression| {
+                                    let clip_id = clip_id.to_owned();
+                                    let expression_id = expression.clone();
+                                    let selected =
+                                        dialogue.expression.as_deref() == Some(expression.as_str());
+                                    let button_id: SharedString =
+                                        format!("dialogue-expression-{clip_id}-{expression_id}")
+                                            .into();
+                                    inspector_dynamic_button(button_id, expression.clone())
+                                        .when(selected, |button| {
+                                            button.bg(rgb(0x6b4a2f)).text_color(rgb(0xffdbb5))
+                                        })
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.set_dialogue_expression(
+                                                &clip_id,
+                                                Some(&expression_id),
+                                                cx,
+                                            );
+                                        }))
+                                }),
+                        ),
                 ),
         )
     }
