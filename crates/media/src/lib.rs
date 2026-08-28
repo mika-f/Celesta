@@ -386,8 +386,7 @@ fn probe_path(path: &Path) -> Result<MediaProbe, MediaError> {
                     codec: normalize_codec(codec_name),
                     width: width.max(0) as u32,
                     height: height.max(0) as u32,
-                    frame_rate: rational_from_av(avg_frame_rate)
-                        .or_else(|| rational_from_av(r_frame_rate)),
+                    frame_rate: video_frame_rate(avg_frame_rate, r_frame_rate),
                     duration: stream_duration(duration, time_base),
                 });
             }
@@ -424,6 +423,20 @@ fn normalize_codec(name: String) -> Option<String> {
 
 fn rational_from_av(rate: AVRational) -> Option<Rational> {
     (rate.num > 0 && rate.den > 0).then(|| Rational::new(rate.num as u32, rate.den as u32))
+}
+
+/// A video stream's frame rate: `avg_frame_rate` when the demuxer computed
+/// one, otherwise `r_frame_rate` — but only when the latter is a plausible
+/// capture/render rate. FFmpeg reports the container time base as
+/// `r_frame_rate` (Matroska's `1000/1`, MPEG-TS's `90000/1`, …) when a stream
+/// carries no real frame-duration hint, and that artifact must not be
+/// mistaken for a real rate (`clamp_to_source_end` reads it).
+fn video_frame_rate(avg: AVRational, raw: AVRational) -> Option<Rational> {
+    rational_from_av(avg).or_else(|| rational_from_av(raw).filter(is_plausible_frame_rate))
+}
+
+fn is_plausible_frame_rate(rate: &Rational) -> bool {
+    f64::from(rate.numerator) / f64::from(rate.denominator) <= 480.0
 }
 
 /// A stream's own `duration` (in `time_base` units) as exact [`Time`], or
@@ -849,11 +862,16 @@ mod tests {
     use super::*;
 
     /// Renders a synthetic `lavfi` source to a lossless MKV fixture through
-    /// the linked FFmpeg libraries.
-    fn generate_clip(path: &Path, lavfi: &str) {
+    /// the linked FFmpeg libraries, forcing the output frame rate so the
+    /// container records a real frame-duration hint.
+    fn generate_clip(path: &Path, lavfi: &str, fps: (i32, i32)) {
         FfmpegContext::builder()
             .input(Input::from(lavfi).set_format("lavfi"))
-            .output(Output::from(path_to_url(path)).set_video_codec("ffv1"))
+            .output(
+                Output::from(path_to_url(path))
+                    .set_video_codec("ffv1")
+                    .set_framerate(fps.0, fps.1),
+            )
             .build()
             .unwrap()
             .start()
@@ -879,7 +897,7 @@ mod tests {
     fn probes_stream_metadata_as_exact_rational_time() {
         let directory = fixture_dir("probe");
         let clip = directory.join("clip.mkv");
-        generate_clip(&clip, "testsrc2=size=320x240:rate=25:duration=1");
+        generate_clip(&clip, "testsrc2=size=320x240:rate=25:duration=1", (25, 1));
 
         let mut backend = FfmpegBackend::new();
         let probe = backend.probe(&clip).unwrap();
@@ -912,7 +930,7 @@ mod tests {
         // over time (so "the last frame" is distinguishable from the first).
         let directory = fixture_dir("eof");
         let clip = directory.join("clip.mkv");
-        generate_clip(&clip, "testsrc=size=64x64:rate=10:duration=1");
+        generate_clip(&clip, "testsrc=size=64x64:rate=10:duration=1", (10, 1));
 
         // One-shot decoding far past the end clamps to the source's final
         // frame instead of failing with an unexpected frame size, and that

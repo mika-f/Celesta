@@ -6,11 +6,17 @@ use mikan_composition::Rational;
 use mikan_media::{AudioDecoder, FfmpegBackend, VideoFrameDecoder};
 
 /// Renders a synthetic `lavfi` source to a lossless fixture through the linked
-/// FFmpeg libraries (`ffv1` in MKV for video, WAV for audio).
-fn generate(path: &Path, lavfi: &str, video_codec: Option<&str>) {
+/// FFmpeg libraries (`ffv1` in MKV for video, WAV for audio). `fps`, when set,
+/// forces the output stream's frame rate so the container records a real
+/// frame-duration hint (short synthetic clips otherwise leave the demuxer with
+/// nothing but the container time base).
+fn generate(path: &Path, lavfi: &str, video_codec: Option<&str>, fps: Option<(i32, i32)>) {
     let mut output = Output::from(path.to_string_lossy().into_owned());
     if let Some(codec) = video_codec {
         output = output.set_video_codec(codec);
+    }
+    if let Some((num, den)) = fps {
+        output = output.set_framerate(num, den);
     }
     FfmpegContext::builder()
         .input(Input::from(lavfi).set_format("lavfi"))
@@ -42,6 +48,7 @@ fn probes_and_decodes_a_generated_video() {
         &video_path,
         "color=c=red:s=4x2:r=2:d=1",
         Some("ffv1"),
+        Some((2, 1)),
     );
 
     let mut backend = FfmpegBackend::new();
@@ -71,6 +78,7 @@ fn sequential_video_decode_reuses_one_process_and_matches_exact_time_decode() {
         &video_path,
         "testsrc2=size=8x4:rate=4:duration=2",
         Some("ffv1"),
+        Some((4, 1)),
     );
 
     let mut exact = FfmpegBackend::new();
@@ -122,6 +130,7 @@ fn decodes_generated_audio_to_project_pcm() {
     generate(
         &audio_path,
         "sine=frequency=440:sample_rate=8000:duration=0.05",
+        None,
         None,
     );
 

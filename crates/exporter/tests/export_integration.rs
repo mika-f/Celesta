@@ -9,11 +9,16 @@ use mikan_media::{FfmpegBackend, VideoFrameDecoder};
 use mikan_project::{Asset, AssetSource, Project, TimelineContent, TimelineItem, Track, TrackKind};
 
 /// Renders a synthetic `lavfi` source to a lossless MKV fixture through the
-/// linked FFmpeg libraries.
-fn generate_source(path: &Path, lavfi: &str) {
+/// linked FFmpeg libraries, forcing the output frame rate so the container
+/// records a real frame-duration hint.
+fn generate_source(path: &Path, lavfi: &str, fps: (i32, i32)) {
     FfmpegContext::builder()
         .input(Input::from(lavfi).set_format("lavfi"))
-        .output(Output::from(path.to_string_lossy().into_owned()).set_video_codec("ffv1"))
+        .output(
+            Output::from(path.to_string_lossy().into_owned())
+                .set_video_codec("ffv1")
+                .set_framerate(fps.0, fps.1),
+        )
         .build()
         .unwrap()
         .start()
@@ -27,7 +32,7 @@ fn exports_frame_exact_mp4_with_silent_audio() {
     let directory = tempfile::tempdir().unwrap();
     let output = directory.path().join("export.mp4");
     let source = directory.path().join("source.mkv");
-    generate_source(&source, "testsrc2=size=64x64:rate=2:duration=1");
+    generate_source(&source, "testsrc2=size=64x64:rate=2:duration=1", (2, 1));
 
     let mut project = Project::load(workspace_root().join("examples/minimal.mikan.json")).unwrap();
     project.settings.width = 64;
