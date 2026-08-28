@@ -10,12 +10,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use mikan_composition::{
     Animatable, AnimatablePoint, AudioGraph, Keyframe, KeyframeAnimation, KeyframeAnimationType,
-    Rational, Scene, Time, TimeError, TimeRange, Transform, evaluate_f64,
+    Paint, Rational, Scene, Stroke, TextAlign, TextStyle, Time, TimeError, TimeRange, Transform,
+    evaluate_f64,
 };
 use mikan_evaluator::{EvaluationError, Evaluator};
 use mikan_project::{
-    Asset, AssetKind, AssetSource, LoadError, Project, TimelineContent, TimelineItem, Track,
-    TrackKind,
+    Asset, AssetKind, AssetSource, Character, LoadError, PortraitDefinition, Project,
+    SubtitleDefinition, TimelineContent, TimelineItem, Track, TrackKind,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -313,6 +314,81 @@ impl EditorDocument {
                 name: character.name.clone(),
             })
             .collect()
+    }
+
+    pub fn create_character_from_image(
+        &mut self,
+        asset_id: &str,
+    ) -> Result<CharacterSummary, EditorDocumentError> {
+        let asset = self
+            .project
+            .assets
+            .get(asset_id)
+            .ok_or_else(|| EditorDocumentError::MissingAsset(asset_id.to_owned()))?;
+        if asset.kind() != AssetKind::Image {
+            return Err(EditorDocumentError::AssetKindMismatch {
+                asset: asset_id.to_owned(),
+                expected: AssetKind::Image,
+                actual: asset.kind(),
+            });
+        }
+        let name = asset_name(asset)
+            .and_then(|name| Path::new(name).file_stem())
+            .and_then(|name| name.to_str())
+            .unwrap_or(asset_id)
+            .to_owned();
+        let id = unique_id(
+            &slugify(&name),
+            self.project.characters.keys().map(String::as_str),
+        );
+        let width = f64::from(self.project.settings.width);
+        let height = f64::from(self.project.settings.height);
+        let before = self.project.clone();
+        let before_revision = self.current_revision;
+        self.project.characters.insert(
+            id.clone(),
+            Character {
+                name: name.clone(),
+                portrait: Some(PortraitDefinition {
+                    default_expression: "default".to_owned(),
+                    expressions: BTreeMap::from([("default".to_owned(), asset_id.to_owned())]),
+                    transform: Some(Transform {
+                        position: Some(AnimatablePoint {
+                            x: Some(Animatable::Static(width * 0.82)),
+                            y: Some(Animatable::Static(height * 0.72)),
+                        }),
+                        ..Transform::default()
+                    }),
+                }),
+                subtitle: Some(SubtitleDefinition {
+                    style: Some(TextStyle {
+                        font_size: Some((height * 0.06).max(24.0)),
+                        fill: Some(Paint::Solid {
+                            color: "#FFFFFFFF".to_owned(),
+                        }),
+                        stroke: Some(Stroke {
+                            paint: Paint::Solid {
+                                color: "#000000FF".to_owned(),
+                            },
+                            width: (height * 0.004).max(2.0),
+                        }),
+                        align: Some(TextAlign::Center),
+                        line_height: Some(1.15),
+                        ..TextStyle::default()
+                    }),
+                    transform: Some(Transform {
+                        position: Some(AnimatablePoint {
+                            x: Some(Animatable::Static(width / 2.0)),
+                            y: Some(Animatable::Static(height * 0.9)),
+                        }),
+                        ..Transform::default()
+                    }),
+                    max_width: Some(width * 0.85),
+                }),
+            },
+        );
+        self.record_mutation(before, before_revision);
+        Ok(CharacterSummary { id, name })
     }
 
     pub fn tracks(&self) -> Vec<TrackSummary> {
@@ -2667,6 +2743,45 @@ mod tests {
                 expression: None,
             }
         );
+    }
+
+    #[test]
+    fn creates_a_ready_to_use_character_from_an_image_asset() {
+        let mut document = EditorDocument::from_json(VOICEROID, "examples").unwrap();
+
+        let character = document
+            .create_character_from_image("akane-default")
+            .unwrap();
+        let created = &document.project.characters[&character.id];
+        assert_eq!(
+            (
+                character.id.as_str(),
+                created.name.as_str(),
+                created
+                    .portrait
+                    .as_ref()
+                    .and_then(|portrait| portrait.expressions.get("default"))
+                    .map(String::as_str),
+                created.subtitle.is_some(),
+            ),
+            ("akane-2", "Akane", Some("akane-default"), true)
+        );
+        document
+            .insert_dialogue_clip("voice-001", &character.id, None, 0, 60)
+            .unwrap();
+        assert_eq!(document.scene_at(Time::ZERO).unwrap().layers.len(), 1);
+    }
+
+    #[test]
+    fn character_creation_is_undoable() {
+        let mut document = EditorDocument::from_json(VOICEROID, "examples").unwrap();
+
+        let character = document
+            .create_character_from_image("akane-default")
+            .unwrap();
+        document.undo().unwrap();
+
+        assert!(!document.project.characters.contains_key(&character.id));
     }
 
     #[test]

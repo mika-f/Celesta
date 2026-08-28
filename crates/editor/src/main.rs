@@ -2633,6 +2633,17 @@ impl EditorView {
         cx.notify();
     }
 
+    fn create_character_from_selected_image(&mut self, cx: &mut Context<Self>) {
+        let Some(asset_id) = self.selected_asset_id.clone() else {
+            return;
+        };
+        match self.document.create_character_from_image(&asset_id) {
+            Ok(_) => self.edit_error = None,
+            Err(error) => self.edit_error = Some(error.to_string().into()),
+        }
+        cx.notify();
+    }
+
     fn drop_asset_on_track(
         &mut self,
         asset: &AssetDrag,
@@ -2683,6 +2694,10 @@ impl EditorView {
         cx: &mut Context<Self>,
     ) {
         self.insert_selected_asset_as_dialogue(cx);
+    }
+
+    fn create_character_click(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+        self.create_character_from_selected_image(cx);
     }
 
     fn delete_selected_clip(&mut self, cx: &mut Context<Self>) {
@@ -3255,6 +3270,21 @@ impl EditorView {
                     track.id == selected && track.kind == TrackKind::Dialogue && !track.locked
                 })
             });
+        let can_create_character = self.selected_asset_id.as_deref().is_some_and(|selected| {
+            self.assets
+                .iter()
+                .any(|asset| asset.id == selected && asset.kind == AssetKind::Image)
+                && !self
+                    .document
+                    .project()
+                    .characters
+                    .values()
+                    .any(|character| {
+                        character.portrait.as_ref().is_some_and(|portrait| {
+                            portrait.expressions.values().any(|id| id == selected)
+                        })
+                    })
+        });
         let rows = self.assets.iter().map(|asset| {
             let asset_id = asset.id.clone();
             let drag = AssetDrag {
@@ -3410,33 +3440,48 @@ impl EditorView {
                                             )
                                     }),
                             )
-                            .child(
-                                div()
-                                    .id("insert-selected-dialogue")
-                                    .rounded_sm()
-                                    .px_2()
-                                    .py_1()
-                                    .bg(rgb(if can_insert_dialogue {
-                                        0x6b4a2f
-                                    } else {
-                                        0x292c34
-                                    }))
-                                    .text_xs()
-                                    .text_color(rgb(if can_insert_dialogue {
-                                        0xffdbb5
-                                    } else {
-                                        0x737783
-                                    }))
-                                    .child("Dialogue")
-                                    .when(can_insert_dialogue, |button| {
-                                        button
-                                            .cursor_pointer()
-                                            .hover(|style| style.bg(rgb(0x865e3d)))
-                                            .on_click(
-                                                cx.listener(Self::insert_selected_dialogue_click),
-                                            )
-                                    }),
-                            ),
+                            .when(can_insert_dialogue, |actions| {
+                                actions.child(
+                                    div()
+                                        .id("insert-selected-dialogue")
+                                        .rounded_sm()
+                                        .px_2()
+                                        .py_1()
+                                        .bg(rgb(if can_insert_dialogue {
+                                            0x6b4a2f
+                                        } else {
+                                            0x292c34
+                                        }))
+                                        .text_xs()
+                                        .text_color(rgb(if can_insert_dialogue {
+                                            0xffdbb5
+                                        } else {
+                                            0x737783
+                                        }))
+                                        .child("Dialogue")
+                                        .cursor_pointer()
+                                        .hover(|style| style.bg(rgb(0x865e3d)))
+                                        .on_click(
+                                            cx.listener(Self::insert_selected_dialogue_click),
+                                        ),
+                                )
+                            })
+                            .when(can_create_character, |actions| {
+                                actions.child(
+                                    div()
+                                        .id("create-character")
+                                        .rounded_sm()
+                                        .px_2()
+                                        .py_1()
+                                        .bg(rgb(0x6b4a2f))
+                                        .text_xs()
+                                        .text_color(rgb(0xffdbb5))
+                                        .child("Character")
+                                        .cursor_pointer()
+                                        .hover(|style| style.bg(rgb(0x865e3d)))
+                                        .on_click(cx.listener(Self::create_character_click)),
+                                )
+                            }),
                     )
                     .when(has_selected, |actions| {
                         actions.child(
