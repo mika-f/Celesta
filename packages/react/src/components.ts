@@ -199,9 +199,21 @@ function assetReference(
   src: AssetInput,
   name?: string,
 ): AssetReference {
-  const value = typeof src === 'string' ? src : 'current' in src ? src.current : src;
+  // `src` may be a plain path, an `AssetReference`, or a ref object still
+  // holding its initial `undefined`. Guard the `in` check so a missing or
+  // nullish `src` falls through to the error below instead of throwing a
+  // bare `TypeError: Cannot use 'in' operator to search for 'current' in
+  // undefined` — this runs during `mount()`'s first render pass, so that
+  // raw error would otherwise surface as "could not load the React
+  // composition".
+  const value =
+    typeof src === 'string' ? src : src != null && 'current' in src ? src.current : src;
   if (!value) {
-    throw new Error('asset references must be declared before they are used');
+    throw new Error(
+      `<${kind[0].toUpperCase()}${kind.slice(1)}> requires a non-empty \`src\`, but it was ${
+        src == null ? String(src) : 'an unassigned ref'
+      }`,
+    );
   }
   return {
     id: name ?? (typeof value === 'string' ? value : value.id),
