@@ -1,3 +1,4 @@
+import { Console } from 'node:console';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
@@ -18,6 +19,14 @@ import type { ComponentPropertySchema } from './registry';
 import { listProjectProperties } from './properties';
 import type { ProjectPropertyField } from './properties';
 import type { CompositionConfig, Scene, Time } from './scene';
+
+// stdout is the JSON request/response channel the Rust bridge
+// (crates/react-bridge) parses one line at a time; anything else written
+// there corrupts the protocol and fails the export. Route every `console`
+// method to stderr — which the bridge inherits straight to the user's
+// terminal — so a `console.log` left in a composition is evaluated and
+// printed to the console instead of breaking the run.
+globalThis.console = new Console({ stdout: process.stderr, stderr: process.stderr });
 
 interface FrameRequest {
   time: Time;
