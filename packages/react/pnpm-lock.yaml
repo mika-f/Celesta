@@ -7,16 +7,6 @@ settings:
 importers:
 
   .:
-    dependencies:
-      esbuild:
-        specifier: ^0.24.2
-        version: 0.24.2
-      react:
-        specifier: ^18.3.1
-        version: 18.3.1
-      react-reconciler:
-        specifier: ^0.29.2
-        version: 0.29.2(react@18.3.1)
     devDependencies:
       '@types/node':
         specifier: ^22.10.10
@@ -30,6 +20,15 @@ importers:
       ag-psd:
         specifier: ^31.0.2
         version: 31.0.2
+      esbuild:
+        specifier: ^0.24.2
+        version: 0.24.2
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+      react-reconciler:
+        specifier: ^0.29.2
+        version: 0.29.2(react@18.3.1)
       typescript:
         specifier: ^5.7.3
         version: 5.9.3
