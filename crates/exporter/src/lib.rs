@@ -844,7 +844,9 @@ fn absolutize_layers(layers: &mut [Layer], asset_root: &Path) {
 
 fn absolutize_layer_content(content: &mut LayerContent, asset_root: &Path) {
     match content {
-        LayerContent::Video { asset, .. } | LayerContent::Image { asset } => {
+        LayerContent::Video { asset, .. }
+        | LayerContent::Image { asset }
+        | LayerContent::Psd { asset, .. } => {
             absolutize_asset(asset, asset_root);
         }
         LayerContent::Group { layers } => absolutize_layers(layers, asset_root),

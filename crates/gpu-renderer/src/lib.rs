@@ -810,6 +810,16 @@ impl GpuRenderer {
                 let image = self.load_image(asset)?.clone();
                 output.push(PreparedLayer::new(image, layer.transform.anchor, state));
             }
+            LayerContent::Psd {
+                asset,
+                enabled_layers,
+                disabled_layers,
+            } => {
+                let image = self
+                    .load_psd(asset, enabled_layers, disabled_layers)?
+                    .clone();
+                output.push(PreparedLayer::new(image, layer.transform.anchor, state));
+            }
             LayerContent::Video { asset, timing } => {
                 let path = self.local_asset_path(asset)?;
                 let decoder = self
@@ -879,6 +889,29 @@ impl GpuRenderer {
             self.images.insert(asset.id.clone(), image);
         }
         Ok(self.images.get(&asset.id).expect("image was cached"))
+    }
+
+    fn load_psd(
+        &mut self,
+        asset: &ResolvedAsset,
+        enabled_layers: &[String],
+        disabled_layers: &[String],
+    ) -> Result<&DecodedImage, GpuRenderError> {
+        let key = format!(
+            "psd\0{}\0{}\0{}",
+            asset.id,
+            enabled_layers.join("\0"),
+            disabled_layers.join("\0")
+        );
+        if !self.images.contains_key(&key) {
+            let path = self.local_asset_path(asset)?;
+            let frame =
+                mikan_renderer::rasterize_psd(&asset.id, &path, enabled_layers, disabled_layers)
+                    .map_err(GpuRenderError::Psd)?;
+            let image = DecodedImage::new(frame.width(), frame.height(), frame.pixels().to_vec())?;
+            self.images.insert(key.clone(), image);
+        }
+        Ok(self.images.get(&key).expect("PSD image was cached"))
     }
 
     fn local_asset_path(&self, asset: &ResolvedAsset) -> Result<PathBuf, GpuRenderError> {
@@ -1248,6 +1281,7 @@ pub enum GpuRenderError {
         asset: String,
         source: image::ImageError,
     },
+    Psd(RenderError),
     Media(MediaError),
     Text(RenderError),
     InvalidImageData {
@@ -1300,6 +1334,7 @@ impl fmt::Display for GpuRenderError {
             Self::ImageDecode { asset, source } => {
                 write!(formatter, "could not decode GPU image {asset}: {source}")
             }
+            Self::Psd(error) => write!(formatter, "could not rasterize GPU PSD: {error}"),
             Self::Media(error) => write!(formatter, "could not decode GPU video frame: {error}"),
             Self::Text(error) => write!(formatter, "could not rasterize GPU text: {error}"),
             Self::InvalidImageData {
@@ -1370,6 +1405,7 @@ impl Error for GpuRenderError {
             Self::MapRange(error) => Some(error),
             Self::AssetIo { source, .. } => Some(source),
             Self::ImageDecode { source, .. } => Some(source),
+            Self::Psd(error) => Some(error),
             Self::Media(error) => Some(error),
             Self::Text(error) => Some(error),
             Self::MapCallbackDropped

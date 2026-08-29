@@ -12,6 +12,7 @@ image = { version = "0.25.8", default-features = false, features = ["jpeg", "png
 mikan-composition = { path = "../composition" }
 mikan-media = { path = "../media" }
 png = "0.18.1"
+psd = "0.3.5"
 
 [dev-dependencies]
 mikan-evaluator = { path = "../evaluator" }

@@ -97,11 +97,20 @@ export interface CharacterProps {
   children?: ReactNode;
 }
 
-export interface CharacterPortrait {
+export interface ImageCharacterPortrait {
+  type?: 'image';
   defaultExpression: string;
   expressions: Record<string, AssetInput>;
   lipSync?: CharacterLipSync;
 }
+
+export interface PsdCharacterPortrait {
+  type: 'psd';
+  src: AssetInput;
+  lipSync?: PsdCharacterLipSync;
+}
+
+export type CharacterPortrait = ImageCharacterPortrait | PsdCharacterPortrait;
 
 export interface CharacterLipSync {
   a: AssetInput;
@@ -110,6 +119,15 @@ export interface CharacterLipSync {
   e: AssetInput;
   o: AssetInput;
   closed?: AssetInput;
+}
+
+export interface PsdCharacterLipSync {
+  a: string;
+  i: string;
+  u: string;
+  e: string;
+  o: string;
+  closed?: string;
 }
 
 export interface CharacterViewProps extends CommonProps {

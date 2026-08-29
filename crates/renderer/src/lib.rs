@@ -7,7 +7,7 @@
 use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fmt;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
@@ -488,6 +488,14 @@ impl CpuRenderer {
                 let image = self.load_image(asset)?;
                 render_image(frame, image, layer.transform.anchor, state);
             }
+            LayerContent::Psd {
+                asset,
+                enabled_layers,
+                disabled_layers,
+            } => {
+                let image = self.load_psd(asset, enabled_layers, disabled_layers)?;
+                render_image(frame, image, layer.transform.anchor, state);
+            }
             LayerContent::Rect {
                 width,
                 height,
@@ -588,6 +596,28 @@ impl CpuRenderer {
         Ok(self.images.get(&asset.id).expect("image was cached"))
     }
 
+    fn load_psd(
+        &mut self,
+        asset: &ResolvedAsset,
+        enabled_layers: &[String],
+        disabled_layers: &[String],
+    ) -> Result<&DecodedImage, RenderError> {
+        let key = psd_cache_key(asset, enabled_layers, disabled_layers);
+        if !self.images.contains_key(&key) {
+            let path = self.local_asset_path(asset)?;
+            let image = rasterize_psd(&asset.id, &path, enabled_layers, disabled_layers)?;
+            self.images.insert(
+                key.clone(),
+                DecodedImage {
+                    width: image.width,
+                    height: image.height,
+                    pixels: image.pixels,
+                },
+            );
+        }
+        Ok(self.images.get(&key).expect("PSD image was cached"))
+    }
+
     fn decode_video_frame(
         &mut self,
         request_id: &str,
@@ -627,6 +657,121 @@ fn local_asset_path(asset_root: &Path, asset: &ResolvedAsset) -> Result<PathBuf,
             url: url.clone(),
         }),
     }
+}
+
+fn psd_cache_key(
+    asset: &ResolvedAsset,
+    enabled_layers: &[String],
+    disabled_layers: &[String],
+) -> String {
+    format!(
+        "psd\0{}\0{}\0{}",
+        asset.id,
+        enabled_layers.join("\0"),
+        disabled_layers.join("\0")
+    )
+}
+
+pub fn rasterize_psd(
+    asset: &str,
+    path: &Path,
+    enabled_layers: &[String],
+    disabled_layers: &[String],
+) -> Result<RgbaFrame, RenderError> {
+    let bytes = fs::read(path).map_err(|source| RenderError::AssetIo {
+        asset: asset.to_owned(),
+        source,
+    })?;
+    let psd = psd::Psd::from_bytes(&bytes).map_err(|source| RenderError::PsdDecode {
+        asset: asset.to_owned(),
+        source,
+    })?;
+    let enabled: HashSet<String> = enabled_layers
+        .iter()
+        .map(|path| normalize_psd_path(path))
+        .collect();
+    let disabled: HashSet<String> = disabled_layers
+        .iter()
+        .map(|path| normalize_psd_path(path))
+        .collect();
+    let layer_paths: Vec<String> = psd
+        .layers()
+        .iter()
+        .map(|layer| psd_layer_path(&psd, layer))
+        .collect();
+    for requested in enabled.iter().chain(disabled.iter()) {
+        if !layer_paths.iter().any(|path| path == requested) {
+            return Err(RenderError::MissingPsdLayer {
+                asset: asset.to_owned(),
+                layer: requested.clone(),
+            });
+        }
+    }
+
+    let mut pixels = vec![0; psd.width() as usize * psd.height() as usize * 4];
+    for (layer, path) in psd.layers().iter().zip(layer_paths).rev() {
+        let (parents_visible, parent_opacity) = psd_parent_state(&psd, layer.parent_id());
+        let selected = enabled.contains(&path);
+        if disabled.contains(&path) || (!selected && (!layer.visible() || !parents_visible)) {
+            continue;
+        }
+        let opacity = (f64::from(layer.opacity()) / 255.0) * parent_opacity;
+        for (destination, source) in pixels.chunks_exact_mut(4).zip(layer.rgba().chunks_exact(4)) {
+            blend(
+                destination,
+                Color::rgba(source[0], source[1], source[2], source[3]),
+                opacity,
+            );
+        }
+    }
+    Ok(RgbaFrame {
+        width: psd.width(),
+        height: psd.height(),
+        pixels,
+    })
+}
+
+fn normalize_psd_path(path: &str) -> String {
+    path.split('/')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn psd_layer_path(psd: &psd::Psd, layer: &psd::PsdLayer) -> String {
+    let mut names = vec![layer.name()];
+    let mut parent = layer.parent_id();
+    let mut visited = HashSet::new();
+    while let Some(id) = parent {
+        if !visited.insert(id) {
+            break;
+        }
+        let Some(group) = psd.groups().get(&id) else {
+            break;
+        };
+        names.push(group.name());
+        parent = group.parent_id();
+    }
+    names.reverse();
+    names.join("/")
+}
+
+fn psd_parent_state(psd: &psd::Psd, mut parent: Option<u32>) -> (bool, f64) {
+    let mut visible = true;
+    let mut opacity = 1.0;
+    let mut visited = HashSet::new();
+    while let Some(id) = parent {
+        if !visited.insert(id) {
+            break;
+        }
+        let Some(group) = psd.groups().get(&id) else {
+            break;
+        };
+        visible &= group.visible();
+        opacity *= f64::from(group.opacity()) / 255.0;
+        parent = group.parent_id();
+    }
+    (visible, opacity)
 }
 
 impl Default for CpuRenderer {
@@ -1030,6 +1175,14 @@ pub enum RenderError {
         asset: String,
         source: image::ImageError,
     },
+    PsdDecode {
+        asset: String,
+        source: psd::PsdError,
+    },
+    MissingPsdLayer {
+        asset: String,
+        layer: String,
+    },
     Media(MediaError),
     Time(mikan_composition::TimeError),
     Io(io::Error),
@@ -1065,6 +1218,12 @@ impl fmt::Display for RenderError {
                     formatter,
                     "could not decode image asset `{asset}`: {source}"
                 )
+            }
+            Self::PsdDecode { asset, source } => {
+                write!(formatter, "could not decode PSD asset `{asset}`: {source}")
+            }
+            Self::MissingPsdLayer { asset, layer } => {
+                write!(formatter, "PSD asset `{asset}` has no layer `{layer}`")
             }
             Self::Media(error) => write!(formatter, "could not decode video frame: {error}"),
             Self::Time(error) => write!(formatter, "could not calculate video time: {error}"),

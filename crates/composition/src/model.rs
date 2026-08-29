@@ -48,6 +48,13 @@ pub enum LayerContent {
     Image {
         asset: ResolvedAsset,
     },
+    Psd {
+        asset: ResolvedAsset,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        enabled_layers: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        disabled_layers: Vec<String>,
+    },
     Text {
         text: String,
         style: TextStyle,

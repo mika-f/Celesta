@@ -51,6 +51,28 @@ fn evaluates_the_example_composition_when_node_is_available() {
 }
 
 #[test]
+fn evaluates_a_psd_character_with_one_selected_mouth_layer_when_node_is_available() {
+    let Some((node, cli_script, package_root)) = live_react_runtime() else {
+        return;
+    };
+
+    let entry = package_root.join("examples/with-psd-character.tsx");
+    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let scene = bridge.scene_at(Time::ZERO).unwrap();
+    let LayerContent::Psd {
+        asset,
+        enabled_layers,
+        disabled_layers,
+    } = &scene.layers[0].content
+    else {
+        panic!("expected a PSD layer");
+    };
+    assert_eq!(asset.id, "./teto.psd");
+    assert_eq!(enabled_layers, &["本体/顔パーツ/口/あいうえお/あ"]);
+    assert_eq!(disabled_layers.len(), 5);
+}
+
+#[test]
 fn computes_video_timing_from_the_composition_clock_when_node_is_available() {
     let Some((node, cli_script, package_root)) = live_react_runtime() else {
         return;
