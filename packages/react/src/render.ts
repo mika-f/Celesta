@@ -36,6 +36,7 @@ const HOST_TYPES = new Set([
   'asset-video',
   'asset-audio',
   'asset-font',
+  'character-view',
   'group',
   'image',
   'rect',
@@ -209,6 +210,12 @@ function resolveAsset(src: unknown): ResolvedAsset {
   return { id: typeof id === 'string' && id.length > 0 ? id : path, location: { type: 'file', path } };
 }
 
+function resolveReference(value: unknown): unknown {
+  return value && typeof value === 'object' && 'current' in value
+    ? (value as { current?: unknown }).current
+    : value;
+}
+
 function isKeyframeAnimation(value: unknown): value is KeyframeAnimation<number> {
   if (value === null || typeof value !== 'object') {
     return false;
@@ -279,6 +286,58 @@ function buildLayer(
     content = { type: 'group', layers: walkChildren(node, path, context, audio) };
   } else if (node.type === 'image') {
     content = { type: 'image', asset: resolveAsset(props.src) };
+  } else if (node.type === 'character-view') {
+    const character = resolveReference(props.character) as
+      | {
+          portrait?: {
+            defaultExpression: string;
+            expressions: Record<string, unknown>;
+            lipSync?: {
+              a: unknown;
+              i: unknown;
+              u: unknown;
+              e: unknown;
+              o: unknown;
+              closed?: unknown;
+            };
+          };
+        }
+      | null;
+    const portrait = character?.portrait;
+    if (!portrait) {
+      throw new Error('<CharacterView> requires a character with a portrait');
+    }
+    const expression = typeof props.expression === 'string' ? props.expression : portrait.defaultExpression;
+    const src = portrait.expressions[expression];
+    if (src === undefined) {
+      throw new Error(`character has no expression "${expression}"`);
+    }
+    const layers: Layer[] = [
+      {
+        id: `${id}.portrait`,
+        transform: extractTransform({}),
+        opacity: 1,
+        content: { type: 'image', asset: resolveAsset(src) },
+      },
+    ];
+    const mouth = typeof props.mouth === 'string' ? props.mouth : undefined;
+    const mouthSource = mouth && portrait.lipSync
+      ? mouth === 'closed'
+        ? portrait.lipSync.closed
+        : portrait.lipSync[mouth as 'a' | 'i' | 'u' | 'e' | 'o']
+      : undefined;
+    if (mouthSource !== undefined) {
+      layers.push({
+        id: `${id}.mouth`,
+        transform: extractTransform({}),
+        opacity: 1,
+        content: { type: 'image', asset: resolveAsset(mouthSource) },
+      });
+    }
+    content = {
+      type: 'group',
+      layers,
+    };
   } else if (node.type === 'text') {
     const maxWidth = props.maxWidth;
     content = {

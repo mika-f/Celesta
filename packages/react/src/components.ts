@@ -81,6 +81,7 @@ export interface AssetReference {
   readonly id: string;
   readonly kind: 'character' | 'image' | 'video' | 'audio' | 'font';
   readonly src?: string;
+  readonly portrait?: CharacterPortrait;
 }
 
 export type AssetInput = string | AssetReference | React.RefObject<AssetReference>;
@@ -92,7 +93,29 @@ export interface AssetsProps {
 export interface CharacterProps {
   name: string;
   id?: string;
+  portrait?: CharacterPortrait;
   children?: ReactNode;
+}
+
+export interface CharacterPortrait {
+  defaultExpression: string;
+  expressions: Record<string, AssetInput>;
+  lipSync?: CharacterLipSync;
+}
+
+export interface CharacterLipSync {
+  a: AssetInput;
+  i: AssetInput;
+  u: AssetInput;
+  e: AssetInput;
+  o: AssetInput;
+  closed?: AssetInput;
+}
+
+export interface CharacterViewProps extends CommonProps {
+  character: AssetInput;
+  expression?: string;
+  mouth?: 'closed' | 'a' | 'i' | 'u' | 'e' | 'o';
 }
 
 export interface FontProps {
@@ -115,8 +138,8 @@ export const Character = React.forwardRef<AssetReference, CharacterProps>(functi
   ref,
 ) {
   const reference = React.useMemo<AssetReference>(
-    () => ({ id: props.id ?? props.name, kind: 'character' }),
-    [props.id, props.name],
+    () => ({ id: props.id ?? props.name, kind: 'character', portrait: props.portrait }),
+    [props.id, props.name, props.portrait],
   );
   assignAssetRef(ref, reference);
   React.useImperativeHandle(ref, () => reference, [reference]);
@@ -151,6 +174,10 @@ export function Composition(props: CompositionProps): ReturnType<typeof React.cr
 
 export function Group(props: GroupProps): ReturnType<typeof React.createElement> {
   return React.createElement('group', props);
+}
+
+export function CharacterView(props: CharacterViewProps): ReturnType<typeof React.createElement> {
+  return React.createElement('character-view', props);
 }
 
 export const Image = React.forwardRef<AssetReference, ImageProps>(function Image(props, ref) {
