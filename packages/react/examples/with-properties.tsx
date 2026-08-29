@@ -45,7 +45,7 @@ function Title() {
   const fontSize = useProjectProperty('fontSize', 48);
   const accent = useProjectProperty('accent', '#ff8800');
   return (
-    <Text x={320} y={180} style={{ fontSize, fill: { type: 'solid', color: accent } }}>
+    <Text x={320} y={180} anchorX={0.5} anchorY={0.5} style={{ fontSize, fill: { type: 'solid', color: accent } }}>
       {title}
     </Text>
   );

@@ -7,6 +7,8 @@ export default function Root() {
       <Text
         x={320}
         y={40}
+        anchorX={0.5}
+        anchorY={0.5}
         style={{ fontSize: 24, fill: { type: 'solid', color: '#ffffff' } }}
       >
         React overlay

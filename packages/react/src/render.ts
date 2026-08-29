@@ -181,7 +181,12 @@ function extractTransform(props: Record<string, unknown>): EvaluatedTransform {
     position: { x: numberOr(props.x, 0), y: numberOr(props.y, 0) },
     scale: { x: numberOr(props.scaleX, scale), y: numberOr(props.scaleY, scale) },
     rotation: numberOr(props.rotation, 0),
-    anchor: { x: numberOr(props.anchorX, 0.5), y: numberOr(props.anchorY, 0.5) },
+    // `x`/`y` place the object's top-left corner, which reads more naturally
+    // than a centre offset (this matches CSS/canvas and Remotion). The anchor
+    // is also the pivot `scale`/`rotation` turn about, so pass
+    // `anchorX={0.5} anchorY={0.5}` to spin/scale a component about its centre
+    // — `x`/`y` then address that centre instead.
+    anchor: { x: numberOr(props.anchorX, 0), y: numberOr(props.anchorY, 0) },
   };
 }
 

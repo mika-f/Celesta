@@ -8,6 +8,8 @@ function Caption() {
     <Text
       x={320}
       y={180}
+      anchorX={0.5}
+      anchorY={0.5}
       style={{
         fontFamily: 'sans-serif',
         fontSize: 48,

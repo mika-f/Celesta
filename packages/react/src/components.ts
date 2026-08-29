@@ -15,13 +15,26 @@ import { secondsFromTime, secondsToTime } from './time';
 
 export interface CommonProps {
   id?: string;
+  /**
+   * Position of the object's top-left corner in its parent's coordinate
+   * space, in pixels. Defaults to 0. (Set `anchorX`/`anchorY` to 0.5 to make
+   * `x`/`y` address the centre instead.)
+   */
   x?: number;
+  /** Top-left corner Y, in pixels. Defaults to 0. See `x`. */
   y?: number;
   scale?: number;
   scaleX?: number;
   scaleY?: number;
   rotation?: number;
+  /**
+   * Normalized pivot the object is positioned by and that `scale`/`rotation`
+   * turn about: 0 is the left edge, 1 the right, 0.5 the centre. Defaults to
+   * 0, so `x`/`y` place the top-left corner. Use 0.5 to position and
+   * rotate/scale about the centre.
+   */
   anchorX?: number;
+  /** Vertical pivot: 0 top, 1 bottom, 0.5 centre. Defaults to 0. See `anchorX`. */
   anchorY?: number;
   opacity?: number;
 }

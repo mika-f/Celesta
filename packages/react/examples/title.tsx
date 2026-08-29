@@ -6,6 +6,8 @@ export default function Root() {
       <Text
         x={960}
         y={540}
+        anchorX={0.5}
+        anchorY={0.5}
         style={{
           fontFamily: 'sans-serif',
           fontSize: 96,

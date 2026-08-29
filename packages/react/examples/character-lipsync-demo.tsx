@@ -39,14 +39,29 @@ function DemoOverlay({ track }: { track: LipSyncTrack }) {
   const mouth = useLipSync(track);
   return (
     <>
-      <Text x={64 + 256} y={70} style={{ fontFamily: 'sans-serif', fontSize: 30, fontWeight: 700, fill: { type: 'solid', color: '#ffffff' } }}>
+      <Text x={64} y={56} style={{ fontFamily: 'sans-serif', fontSize: 30, fontWeight: 700, fill: { type: 'solid', color: '#ffffff' } }}>
         Mikan Character + PSD + Auto LipSync
       </Text>
-      <Text x={64 + 208} y={112} style={{ fontFamily: 'sans-serif', fontSize: 20, fill: { type: 'solid', color: '#b7c5ff' } }}>
+      <Text x={64} y={102} style={{ fontFamily: 'sans-serif', fontSize: 20, fill: { type: 'solid', color: '#b7c5ff' } }}>
         {`琴葉茜「${NARRATION}」`}
       </Text>
-      <Rect x={WIDTH - 170} y={HEIGHT - 64} width={260} height={48} cornerRadius={24} fill="#252b49" />
-      <Text x={WIDTH - 170} y={HEIGHT - 56} style={{ fontFamily: 'sans-serif', fontSize: 18, fill: { type: 'solid', color: '#ffffff' }, align: 'center' }}>
+      <Rect
+        x={WIDTH - 170}
+        y={HEIGHT - 64}
+        anchorX={0.5}
+        anchorY={0.5}
+        width={260}
+        height={48}
+        cornerRadius={24}
+        fill="#252b49"
+      />
+      <Text
+        x={WIDTH - 170}
+        y={HEIGHT - 64}
+        anchorX={0.5}
+        anchorY={0.5}
+        style={{ fontFamily: 'sans-serif', fontSize: 18, fill: { type: 'solid', color: '#ffffff' }, align: 'center' }}
+      >
         mouth: {mouth}
       </Text>
     </>
@@ -58,7 +73,7 @@ export default function CharacterLipSyncDemo() {
   const durationInFrames = Math.max(1, Math.round((track?.durationInSeconds ?? 10) * FPS));
   return (
     <Composition width={WIDTH} height={HEIGHT} fps={FPS} durationInFrames={durationInFrames}>
-      <Rect x={WIDTH / 2} y={HEIGHT / 2} width={WIDTH} height={HEIGHT} fill="#101426" />
+      <Rect x={0} y={0} width={WIDTH} height={HEIGHT} fill="#101426" />
       <Assets>
         <Character
           ref={akane}
@@ -80,7 +95,15 @@ export default function CharacterLipSyncDemo() {
       </Assets>
       {track ? (
         <>
-          <CharacterView character={akane} x={WIDTH / 2} y={HEIGHT / 2 + 30} scale={0.28} lipSync={track} />
+          <CharacterView
+            character={akane}
+            x={WIDTH / 2}
+            y={HEIGHT / 2 + 30}
+            anchorX={0.5}
+            anchorY={0.5}
+            scale={0.28}
+            lipSync={track}
+          />
           <DemoOverlay track={track} />
         </>
       ) : null}
