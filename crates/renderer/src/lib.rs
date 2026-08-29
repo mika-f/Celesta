@@ -490,10 +490,12 @@ impl CpuRenderer {
             }
             LayerContent::Psd {
                 asset,
+                visible_layers,
                 enabled_layers,
                 disabled_layers,
             } => {
-                let image = self.load_psd(asset, enabled_layers, disabled_layers)?;
+                let image =
+                    self.load_psd(asset, visible_layers, enabled_layers, disabled_layers)?;
                 render_image(frame, image, layer.transform.anchor, state);
             }
             LayerContent::Rect {
@@ -599,13 +601,20 @@ impl CpuRenderer {
     fn load_psd(
         &mut self,
         asset: &ResolvedAsset,
+        visible_layers: &[String],
         enabled_layers: &[String],
         disabled_layers: &[String],
     ) -> Result<&DecodedImage, RenderError> {
-        let key = psd_cache_key(asset, enabled_layers, disabled_layers);
+        let key = psd_cache_key(asset, visible_layers, enabled_layers, disabled_layers);
         if !self.images.contains_key(&key) {
             let path = self.local_asset_path(asset)?;
-            let image = rasterize_psd(&asset.id, &path, enabled_layers, disabled_layers)?;
+            let image = rasterize_psd(
+                &asset.id,
+                &path,
+                visible_layers,
+                enabled_layers,
+                disabled_layers,
+            )?;
             self.images.insert(
                 key.clone(),
                 DecodedImage {
@@ -661,20 +670,33 @@ fn local_asset_path(asset_root: &Path, asset: &ResolvedAsset) -> Result<PathBuf,
 
 fn psd_cache_key(
     asset: &ResolvedAsset,
+    visible_layers: &[String],
     enabled_layers: &[String],
     disabled_layers: &[String],
 ) -> String {
     format!(
-        "psd\0{}\0{}\0{}",
+        "psd\0{}\0{}\0{}\0{}",
         asset.id,
+        visible_layers.join("\0"),
         enabled_layers.join("\0"),
         disabled_layers.join("\0")
     )
 }
 
+/// Rasterizes a PSD portrait into a full-canvas RGBA frame.
+///
+/// Layer visibility is resolved as: `disabled_layers` always hide, then
+/// `enabled_layers` always show (the current lip-sync mouth), then — when
+/// `visible_layers` is non-empty — exactly the listed layer paths compose
+/// (a portrait preset; the PSD's own saved visibility is ignored), otherwise
+/// the PSD's saved per-layer/-folder visibility drives the composite. Each
+/// layer is placed at its real PSD coordinates (via [`psd::PsdLayer::rgba`],
+/// which returns canvas-sized pixels). Per-layer opacity is applied; group
+/// opacity is not (the `psd` crate misreads it as 0 for real PSDTool files).
 pub fn rasterize_psd(
     asset: &str,
     path: &Path,
+    visible_layers: &[String],
     enabled_layers: &[String],
     disabled_layers: &[String],
 ) -> Result<RgbaFrame, RenderError> {
@@ -686,6 +708,10 @@ pub fn rasterize_psd(
         asset: asset.to_owned(),
         source,
     })?;
+    let visible: HashSet<String> = visible_layers
+        .iter()
+        .map(|path| normalize_psd_path(path))
+        .collect();
     let enabled: HashSet<String> = enabled_layers
         .iter()
         .map(|path| normalize_psd_path(path))
@@ -699,6 +725,10 @@ pub fn rasterize_psd(
         .iter()
         .map(|layer| psd_layer_path(&psd, layer))
         .collect();
+    // `enabled`/`disabled` come straight from the character's lip-sync
+    // configuration, so a typo there should surface rather than silently do
+    // nothing. `visible_layers` is a preset that may target a slightly
+    // different build of the PSD, so unknown entries there are ignored.
     for requested in enabled.iter().chain(disabled.iter()) {
         if !layer_paths.iter().any(|path| path == requested) {
             return Err(RenderError::MissingPsdLayer {
@@ -707,15 +737,26 @@ pub fn rasterize_psd(
             });
         }
     }
+    let use_preset = !visible.is_empty();
 
     let mut pixels = vec![0; psd.width() as usize * psd.height() as usize * 4];
     for (layer, path) in psd.layers().iter().zip(layer_paths).rev() {
-        let (parents_visible, parent_opacity) = psd_parent_state(&psd, layer.parent_id());
-        let selected = enabled.contains(&path);
-        if disabled.contains(&path) || (!selected && (!layer.visible() || !parents_visible)) {
+        let shown = if disabled.contains(&path) {
+            false
+        } else if enabled.contains(&path) {
+            true
+        } else if use_preset {
+            visible.contains(&path)
+        } else {
+            layer.visible() && psd_ancestors_visible(&psd, layer.parent_id())
+        };
+        if !shown {
             continue;
         }
-        let opacity = (f64::from(layer.opacity()) / 255.0) * parent_opacity;
+        // Group opacity is deliberately not applied: the `psd` crate reads it
+        // from the wrong ("bounding section") record and reports 0 for every
+        // folder in real PSDTool files. Per-layer opacity is read correctly.
+        let opacity = f64::from(layer.opacity()) / 255.0;
         for (destination, source) in pixels.chunks_exact_mut(4).zip(layer.rgba().chunks_exact(4)) {
             blend(
                 destination,
@@ -756,9 +797,7 @@ fn psd_layer_path(psd: &psd::Psd, layer: &psd::PsdLayer) -> String {
     names.join("/")
 }
 
-fn psd_parent_state(psd: &psd::Psd, mut parent: Option<u32>) -> (bool, f64) {
-    let mut visible = true;
-    let mut opacity = 1.0;
+fn psd_ancestors_visible(psd: &psd::Psd, mut parent: Option<u32>) -> bool {
     let mut visited = HashSet::new();
     while let Some(id) = parent {
         if !visited.insert(id) {
@@ -767,11 +806,12 @@ fn psd_parent_state(psd: &psd::Psd, mut parent: Option<u32>) -> (bool, f64) {
         let Some(group) = psd.groups().get(&id) else {
             break;
         };
-        visible &= group.visible();
-        opacity *= f64::from(group.opacity()) / 255.0;
+        if !group.visible() {
+            return false;
+        }
         parent = group.parent_id();
     }
-    (visible, opacity)
+    true
 }
 
 impl Default for CpuRenderer {
@@ -1534,5 +1574,83 @@ mod tests {
         let mut renderer = CpuRenderer::default().with_video_decoder(Decoder);
         let frame = renderer.render(&scene).unwrap();
         assert_eq!(frame.pixels(), &[12, 34, 56, 255]);
+    }
+
+    // `examples/assets/lipsync-fixture.psd` mimics a real "tachie" PSD: a
+    // 240x320 canvas with every folder saved hidden and a `face/mouth`
+    // group of six small vowel shapes at their true positions. Regenerate it
+    // with `packages/react/scripts/make-lipsync-fixture.mjs`.
+    fn lipsync_fixture_psd() -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/assets/lipsync-fixture.psd")
+    }
+
+    fn pixel_at(frame: &RgbaFrame, x: u32, y: u32) -> [u8; 4] {
+        let index = ((y * frame.width + x) * 4) as usize;
+        frame.pixels[index..index + 4].try_into().unwrap()
+    }
+
+    #[test]
+    fn rasterize_psd_without_a_preset_renders_nothing_when_every_folder_is_hidden() {
+        let frame = rasterize_psd("fixture", &lipsync_fixture_psd(), &[], &[], &[]).unwrap();
+        assert_eq!((frame.width, frame.height), (240, 320));
+        assert!(
+            frame.pixels.chunks_exact(4).all(|pixel| pixel[3] == 0),
+            "a saved-all-hidden PSD with no preset should compose to nothing"
+        );
+    }
+
+    #[test]
+    fn rasterize_psd_composes_the_preset_and_the_selected_mouth_at_real_coordinates() {
+        let preset = [
+            "body".to_owned(),
+            "body/base".to_owned(),
+            "body/outfit-navy".to_owned(),
+            "face".to_owned(),
+            "face/eyes".to_owned(),
+            "face/eyes/open".to_owned(),
+        ];
+        let frame = rasterize_psd(
+            "fixture",
+            &lipsync_fixture_psd(),
+            &preset,
+            &["face/mouth/a".to_owned()],
+            &["face/mouth/o".to_owned()],
+        )
+        .unwrap();
+
+        // The navy outfit rect covers (56,176)..(184,296).
+        assert_eq!(pixel_at(&frame, 120, 220), [40, 60, 130, 255]);
+        // The "a" mouth is a 24x20 rect at (108,142) — force-enabled even
+        // though its layer and every ancestor folder are saved hidden. Its
+        // red channel dominates, unlike the skin behind it.
+        let mouth = pixel_at(&frame, 120, 150);
+        assert_eq!(mouth[3], 255);
+        assert!(mouth[0] > 150 && mouth[0] > mouth[1] + 40 && mouth[0] > mouth[2] + 40);
+        // A point clear of every visible layer stays transparent.
+        assert_eq!(pixel_at(&frame, 5, 5), [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn rasterize_psd_disabled_layers_win_over_enabled() {
+        let mouth = "face/mouth/a".to_owned();
+        let with = rasterize_psd(
+            "fixture",
+            &lipsync_fixture_psd(),
+            &["body".to_owned(), "body/base".to_owned()],
+            std::slice::from_ref(&mouth),
+            &[],
+        )
+        .unwrap();
+        let without = rasterize_psd(
+            "fixture",
+            &lipsync_fixture_psd(),
+            &["body".to_owned(), "body/base".to_owned()],
+            std::slice::from_ref(&mouth),
+            std::slice::from_ref(&mouth),
+        )
+        .unwrap();
+        assert_ne!(pixel_at(&with, 120, 150), pixel_at(&without, 120, 150));
+        // With the mouth suppressed the pixel is the bare skin base.
+        assert_eq!(pixel_at(&without, 120, 150), [250, 224, 205, 255]);
     }
 }

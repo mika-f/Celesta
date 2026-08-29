@@ -10,6 +10,7 @@ import * as React from 'react';
 
 import { CompositionRuntimeContext } from './hooks';
 import { ProjectLayersContext, ProjectTrackLayersContext } from './project-runtime';
+import { resolveVisibleLayers } from './psd-preset';
 import { resolveComponent } from './registry';
 import { type HostNode, type RootContainer, HostReconciler, createRoot } from './reconciler';
 import type {
@@ -180,7 +181,12 @@ function extractTransform(props: Record<string, unknown>): EvaluatedTransform {
     position: { x: numberOr(props.x, 0), y: numberOr(props.y, 0) },
     scale: { x: numberOr(props.scaleX, scale), y: numberOr(props.scaleY, scale) },
     rotation: numberOr(props.rotation, 0),
-    anchor: { x: numberOr(props.anchorX, 0.5), y: numberOr(props.anchorY, 0.5) },
+    // `x`/`y` place the object's top-left corner, which reads more naturally
+    // than a centre offset (this matches CSS/canvas and Remotion). The anchor
+    // is also the pivot `scale`/`rotation` turn about, so pass
+    // `anchorX={0.5} anchorY={0.5}` to spin/scale a component about its centre
+    // — `x`/`y` then address that centre instead.
+    anchor: { x: numberOr(props.anchorX, 0), y: numberOr(props.anchorY, 0) },
   };
 }
 
@@ -306,6 +312,7 @@ function buildLayer(
             | {
                 type: 'psd';
                 src: unknown;
+                layers?: string[] | string;
                 lipSync?: {
                   a: string;
                   i: string;
@@ -329,9 +336,15 @@ function buildLayer(
           : portrait.lipSync[mouth as 'a' | 'i' | 'u' | 'e' | 'o']
         : undefined;
       const mouthLayers = portrait.lipSync ? Object.values(portrait.lipSync) : [];
+      const visibleLayers = Array.isArray(portrait.layers)
+        ? portrait.layers
+        : typeof portrait.layers === 'string'
+          ? resolveVisibleLayers(portrait.layers)
+          : [];
       content = {
         type: 'psd',
         asset: resolveAsset(portrait.src),
+        ...(visibleLayers.length ? { visibleLayers } : {}),
         ...(selectedLayer ? { enabledLayers: [selectedLayer] } : {}),
         ...(selectedLayer
           ? { disabledLayers: [...new Set(mouthLayers.filter((layer) => layer !== selectedLayer))] }

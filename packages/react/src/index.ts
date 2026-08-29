@@ -77,6 +77,19 @@ export type { ComponentDefinition, ComponentPropertyField, ComponentPropertySche
 export { defineProjectProperties, listProjectProperties } from './properties';
 export type { ProjectPropertyField, ProjectPropertySchema } from './properties';
 
+export {
+  buildEnvelope,
+  decodeWav,
+  loadLipSync,
+  lipSyncTimeline,
+  useLipSync,
+  vowelShapes,
+} from './lipsync';
+export type { LipSyncOptions, LipSyncTrack, WavAudio } from './lipsync';
+
+export { loadPsdPreset, parsePfv, resolveVisibleLayers } from './psd-preset';
+export type { LoadPsdPresetOptions, ParsedPfv, PfvFavorite } from './psd-preset';
+
 export { loadProject, loadProjectFromString } from './project';
 export type { Project } from './generated/Project';
 export type { Asset } from './generated/Asset';

@@ -44,10 +44,16 @@ async function main(): Promise<void> {
     return;
   }
 
+  const entryPath = path.resolve(entry);
+  // Local-file helpers used during `prepare()` (loadLipSync, loadPsdPreset)
+  // resolve relative paths against this, matching how the Rust renderer
+  // resolves a relative `<Audio>`/`<Image>` src against the entry directory.
+  process.env.MIKAN_REACT_ENTRY_DIR = path.dirname(entryPath);
+
   let defaultExport: EntryComponent;
   let prepare: (() => Promise<void>) | undefined;
   try {
-    ({ defaultExport, prepare } = await loadEntry(path.resolve(entry)));
+    ({ defaultExport, prepare } = await loadEntry(entryPath));
   } catch (error) {
     writeLine({ error: describeError(error) });
     process.exitCode = 1;

@@ -64,6 +64,8 @@ function Card({ index, children }: { index: number; children: ReactNode }) {
       <Rect
         x={x + CARD_WIDTH / 2}
         y={y + CARD_HEIGHT / 2}
+        anchorX={0.5}
+        anchorY={0.5}
         width={CARD_WIDTH}
         height={CARD_HEIGHT}
         fill={THEME.card}
@@ -73,6 +75,9 @@ function Card({ index, children }: { index: number; children: ReactNode }) {
         scale={scale}
         opacity={opacity}
       />
+      {/* A <Group> has no size of its own: its children are placed relative to
+          its `x`/`y` origin (here the card centre) and `scale` pivots about
+          that same point, so no anchor is involved. */}
       <Group x={x + CARD_WIDTH / 2} y={y + CARD_HEIGHT / 2} scale={scale} opacity={opacity}>
         {children}
       </Group>
@@ -92,6 +97,8 @@ function TrendingReposCard() {
     <>
       <Text
         y={-CARD_HEIGHT / 2 + 22}
+        anchorX={0.5}
+        anchorY={0.5}
         style={{ fontFamily: 'sans-serif', fontSize: 14, fontWeight: 700, fill: { type: 'solid', color: THEME.accent }, align: 'center' }}
       >
         Trending on GitHub
@@ -100,6 +107,8 @@ function TrendingReposCard() {
         <Text
           key={repo}
           y={-CARD_HEIGHT / 2 + 52 + index * 22}
+          anchorX={0.5}
+          anchorY={0.5}
           style={{ fontFamily: 'sans-serif', fontSize: 13, fill: { type: 'solid', color: THEME.text }, align: 'center' }}
         >
           {repo}
@@ -121,18 +130,24 @@ function TemperatureCard() {
     <>
       <Text
         y={-CARD_HEIGHT / 2 + 22}
+        anchorX={0.5}
+        anchorY={0.5}
         style={{ fontFamily: 'sans-serif', fontSize: 14, fontWeight: 700, fill: { type: 'solid', color: THEME.accent }, align: 'center' }}
       >
         Weather
       </Text>
       <Text
         y={-6}
+        anchorX={0.5}
+        anchorY={0.5}
         style={{ fontFamily: 'sans-serif', fontSize: 40, fontWeight: 700, fill: { type: 'solid', color: THEME.text }, align: 'center' }}
       >
         {`${celsius}°C`}
       </Text>
       <Text
         y={34}
+        anchorX={0.5}
+        anchorY={0.5}
         style={{ fontFamily: 'sans-serif', fontSize: 13, fill: { type: 'solid', color: THEME.subtleText }, align: 'center' }}
       >
         Tokyo, Japan
@@ -146,15 +161,19 @@ function CurrentCountryCard() {
     <>
       <Text
         y={-CARD_HEIGHT / 2 + 22}
+        anchorX={0.5}
+        anchorY={0.5}
         style={{ fontFamily: 'sans-serif', fontSize: 14, fontWeight: 700, fill: { type: 'solid', color: THEME.accent }, align: 'center' }}
       >
         Current Location
       </Text>
-      <Text y={4} style={{ fontFamily: 'sans-serif', fontSize: 44, align: 'center' }}>
+      <Text y={4} anchorX={0.5} anchorY={0.5} style={{ fontFamily: 'sans-serif', fontSize: 44, align: 'center' }}>
         🇯🇵
       </Text>
       <Text
         y={44}
+        anchorX={0.5}
+        anchorY={0.5}
         style={{ fontFamily: 'sans-serif', fontSize: 13, fill: { type: 'solid', color: THEME.text }, align: 'center' }}
       >
         Japan
@@ -179,11 +198,19 @@ function EmojiCard() {
     <>
       <Text
         y={-CARD_HEIGHT / 2 + 22}
+        anchorX={0.5}
+        anchorY={0.5}
         style={{ fontFamily: 'sans-serif', fontSize: 13, fontWeight: 500, fill: { type: 'solid', color: THEME.accent }, align: 'center' }}
       >
         Choose an emoji
       </Text>
-      <Text y={4} scale={0.4 + pop * 0.6} style={{ fontFamily: 'sans-serif', fontSize: 64, align: 'center' }}>
+      <Text
+        y={4}
+        anchorX={0.5}
+        anchorY={0.5}
+        scale={0.4 + pop * 0.6}
+        style={{ fontFamily: 'sans-serif', fontSize: 64, align: 'center' }}
+      >
         {EMOJIS[step]}
       </Text>
     </>
@@ -246,7 +273,7 @@ export async function prepare(): Promise<void> {
 export default function HomepageDemo() {
   return (
     <Composition width={WIDTH} height={HEIGHT} fps={FPS} durationInFrames={DURATION_IN_FRAMES}>
-      <Rect x={WIDTH / 2} y={HEIGHT / 2} width={WIDTH} height={HEIGHT} fill={THEME.background} />
+      <Rect x={0} y={0} width={WIDTH} height={HEIGHT} fill={THEME.background} />
       <Card index={0}>
         <TrendingReposCard />
       </Card>
