@@ -61,6 +61,7 @@ fn evaluates_a_psd_character_with_one_selected_mouth_layer_when_node_is_availabl
     let scene = bridge.scene_at(Time::ZERO).unwrap();
     let LayerContent::Psd {
         asset,
+        visible_layers,
         enabled_layers,
         disabled_layers,
     } = &scene.layers[0].content
@@ -68,8 +69,68 @@ fn evaluates_a_psd_character_with_one_selected_mouth_layer_when_node_is_availabl
         panic!("expected a PSD layer");
     };
     assert_eq!(asset.id, "./teto.psd");
+    assert!(visible_layers.is_empty());
     assert_eq!(enabled_layers, &["本体/顔パーツ/口/あいうえお/あ"]);
     assert_eq!(disabled_layers.len(), 5);
+}
+
+#[test]
+fn resolves_a_psd_portrait_preset_into_visible_layers_when_node_is_available() {
+    let Some((node, cli_script, package_root)) = live_react_runtime() else {
+        return;
+    };
+
+    let entry = package_root.join("examples/with-psd-preset.tsx");
+    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let scene = bridge.scene_at(Time::ZERO).unwrap();
+    let LayerContent::Psd {
+        visible_layers,
+        enabled_layers,
+        disabled_layers,
+        ..
+    } = &scene.layers[0].content
+    else {
+        panic!("expected a PSD layer");
+    };
+    // The `layers` prop was a raw PSDTool "all layer" state string; render.ts
+    // parsed it into the visible-layer list.
+    assert!(visible_layers.contains(&"body/base".to_owned()));
+    assert!(visible_layers.contains(&"face/eyes/open".to_owned()));
+    assert_eq!(enabled_layers, &["face/mouth/a"]);
+    assert_eq!(disabled_layers.len(), 5);
+}
+
+#[test]
+fn generates_a_lip_sync_mouth_track_from_a_wav_when_node_is_available() {
+    let Some((node, cli_script, package_root)) = live_react_runtime() else {
+        return;
+    };
+
+    let entry = package_root.join("examples/with-lip-sync.tsx");
+    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+
+    let mouth_at = |bridge: &mut ReactBridge, frame: i64| -> Vec<String> {
+        let scene = bridge.scene_at(Time::new(frame, 30)).unwrap();
+        let LayerContent::Psd { enabled_layers, .. } = &scene.layers[0].content else {
+            panic!("expected a PSD layer");
+        };
+        enabled_layers.clone()
+    };
+
+    // 001.wav opens with a beat of silence, so the first frame is closed; a
+    // frame partway through the voiced span opens to a vowel from あいうえお.
+    assert_eq!(
+        mouth_at(&mut bridge, 0),
+        vec!["face/mouth/closed".to_owned()]
+    );
+    let voiced = mouth_at(&mut bridge, 15);
+    assert_eq!(voiced.len(), 1);
+    assert!(
+        ["a", "i", "u", "e", "o"]
+            .iter()
+            .any(|shape| voiced[0] == format!("face/mouth/{shape}")),
+        "expected a vowel mouth at frame 15, got {voiced:?}"
+    );
 }
 
 #[test]

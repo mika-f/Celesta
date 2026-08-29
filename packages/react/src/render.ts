@@ -10,6 +10,7 @@ import * as React from 'react';
 
 import { CompositionRuntimeContext } from './hooks';
 import { ProjectLayersContext, ProjectTrackLayersContext } from './project-runtime';
+import { resolveVisibleLayers } from './psd-preset';
 import { resolveComponent } from './registry';
 import { type HostNode, type RootContainer, HostReconciler, createRoot } from './reconciler';
 import type {
@@ -306,6 +307,7 @@ function buildLayer(
             | {
                 type: 'psd';
                 src: unknown;
+                layers?: string[] | string;
                 lipSync?: {
                   a: string;
                   i: string;
@@ -329,9 +331,15 @@ function buildLayer(
           : portrait.lipSync[mouth as 'a' | 'i' | 'u' | 'e' | 'o']
         : undefined;
       const mouthLayers = portrait.lipSync ? Object.values(portrait.lipSync) : [];
+      const visibleLayers = Array.isArray(portrait.layers)
+        ? portrait.layers
+        : typeof portrait.layers === 'string'
+          ? resolveVisibleLayers(portrait.layers)
+          : [];
       content = {
         type: 'psd',
         asset: resolveAsset(portrait.src),
+        ...(visibleLayers.length ? { visibleLayers } : {}),
         ...(selectedLayer ? { enabledLayers: [selectedLayer] } : {}),
         ...(selectedLayer
           ? { disabledLayers: [...new Set(mouthLayers.filter((layer) => layer !== selectedLayer))] }

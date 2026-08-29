@@ -2,6 +2,8 @@ import * as React from 'react';
 import type { ReactNode } from 'react';
 
 import { CompositionRuntimeContext } from './hooks';
+import { useOptionalLipSync } from './lipsync';
+import type { LipSyncTrack } from './lipsync';
 import type { Animatable, TextStyle } from './scene';
 import { secondsFromTime, secondsToTime } from './time';
 
@@ -107,6 +109,16 @@ export interface ImageCharacterPortrait {
 export interface PsdCharacterPortrait {
   type: 'psd';
   src: AssetInput;
+  /**
+   * Which layers compose the base portrait. Real multi-outfit / multi-face
+   * PSDs save every folder hidden, so without this only the lip-sync mouth
+   * would render. Either the flat list of visible layer/folder full paths
+   * (PSDTool "all layer" semantics), or a raw PSDTool layer-state string to
+   * parse (paste "copy layer state" output directly). For a `.pfv` file,
+   * resolve it in `prepare()` with `loadPsdPreset()` and pass the result
+   * here. When omitted the PSD renders from its own saved visibility.
+   */
+  layers?: string[] | string;
   lipSync?: PsdCharacterLipSync;
 }
 
@@ -134,6 +146,11 @@ export interface CharacterViewProps extends CommonProps {
   character: AssetInput;
   expression?: string;
   mouth?: 'closed' | 'a' | 'i' | 'u' | 'e' | 'o';
+  /**
+   * A lip-sync track from `loadLipSync()`. When set and `mouth` is not
+   * given, the mouth shape is driven from the track for the current frame.
+   */
+  lipSync?: LipSyncTrack;
 }
 
 export interface FontProps {
@@ -195,7 +212,10 @@ export function Group(props: GroupProps): ReturnType<typeof React.createElement>
 }
 
 export function CharacterView(props: CharacterViewProps): ReturnType<typeof React.createElement> {
-  return React.createElement('character-view', props);
+  const { lipSync, ...rest } = props;
+  const tracked = useOptionalLipSync(lipSync);
+  const mouth = rest.mouth ?? tracked;
+  return React.createElement('character-view', { ...rest, mouth });
 }
 
 export const Image = React.forwardRef<AssetReference, ImageProps>(function Image(props, ref) {

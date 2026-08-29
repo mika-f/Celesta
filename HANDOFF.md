@@ -1,6 +1,6 @@
 # Mikan implementation handoff
 
-Last updated: 2026-08-29 (waveform-authored character LipSync)
+Last updated: 2026-08-29 (React PSD portrait presets + automatic lip sync)
 
 ## Goal
 
@@ -1066,6 +1066,96 @@ for report merging and graph construction; end-to-end
 produced h264+aac (ffprobe) whose extracted frame 45 shows only the
 sequence-shifted testsrc video and frame 75 shows "frame 15 inside" beside
 it, while `title.tsx` stayed video-only with no mix/mux progress stages.
+
+### Character portraits, PSD presets, and automatic lip sync (2026-08-29)
+
+`@mikan/react` has `<Character>` / `<CharacterView>` (`src/components.ts`,
+`src/render.ts`): a `<Character>` inside `<Assets>` declares a reusable
+portrait via a ref, and `<CharacterView character={ref}>` renders it. A
+portrait is either `{ type: 'image', defaultExpression, expressions,
+lipSync? }` (a base image plus optional transparent mouth overlays) or
+`{ type: 'psd', src, layers?, lipSync? }`. The PSD path evaluates to a
+single `LayerContent::Psd`; `mikan_renderer::rasterize_psd` composites it.
+
+- **PSD layer visibility.** Real multi-outfit / multi-expression "tachie"
+  PSDs save every folder hidden, so rendering from the PSD's own saved
+  visibility composes nothing but force-enabled layers. `LayerContent::Psd`
+  now carries `visible_layers` (`crates/composition/src/model.rs`) alongside
+  the existing `enabled_layers` / `disabled_layers`. `rasterize_psd`
+  (`crates/renderer/src/lib.rs`) resolves each leaf layer as: `disabled`
+  hides, then `enabled` shows (ignoring saved/ancestor visibility — this is
+  the current lip-sync mouth), then when `visible_layers` is non-empty
+  exactly those paths compose (a preset; saved visibility ignored),
+  otherwise the PSD's saved visibility drives it (`layer.visible()` plus
+  every ancestor group's `visible()`). Layers are placed at their real PSD
+  coordinates (via `psd::PsdLayer::rgba`, which returns canvas-sized
+  pixels). Blend modes and clipping masks are not reproduced (plain alpha).
+  **Group opacity is deliberately not applied**: the `psd` crate (`0.3.5`)
+  reads a folder's opacity from the wrong ("bounding section") record and
+  reports `0` for every folder in real PSDTool files — applying it made
+  presets compose nothing. Per-layer opacity is read correctly and applied.
+  PSDTool's `*` (radio) / `!` (force-on) name conventions are **not**
+  interpreted: a preset is a resolved layer list, so a real PSDTool file
+  (all folders hidden, or `*` radio siblings all left visible) needs one.
+  GPU path mirrors all this in `crates/gpu-renderer/src/lib.rs`'s
+  `load_psd`; the cache key includes `visible_layers`.
+- **PSDTool presets** (`src/psd-preset.ts`). `resolveVisibleLayers(state)`
+  parses a PSDTool layer-state string (the "copy layer state" output — both
+  the `/`-prefixed "all layer" form and the compact form), percent-decoding
+  segments and dropping the `\N` sibling-dedup suffix (duplicate sibling
+  names are not disambiguated — a known limitation, since the Rust side
+  builds paths from bare names). `parsePfv(text)` reads a `.pfv` favorites
+  file (`[PSDToolFavorites-v1]` header, `//tree/path` blocks with a
+  possibly multi-line state, blank-line separated). `loadPsdPreset({ src,
+  favorite? })` reads a `.pfv` from disk and resolves one favorite — call
+  it from an entry's `prepare()`. The portrait's `layers` prop accepts the
+  resolved `string[]`, or a raw state string (`render.ts` parses it
+  synchronously, no disk IO).
+- **Automatic lip sync** (`src/lipsync.ts`). TypeScript port of the
+  editor's `lip_sync_cues_from_waveform` / `vowel_shapes`
+  (`crates/editor/src/lib.rs`). `decodeWav(bytes)` parses uncompressed
+  PCM/IEEE-float WAV (8/16/24/32-bit int, 32/64-bit float, any channel
+  count, `WAVE_FORMAT_EXTENSIBLE`) to mono; `buildEnvelope` takes a
+  per-hop (default 100 Hz, fps-independent) peak envelope; `lipSyncTimeline`
+  applies the same adaptive gate (`open = max(peak*0.18, 0.015)`,
+  `close = open*0.6`), hysteresis, and even vowel distribution across
+  voiced hops. `loadLipSync({ src, text, hopHz? })` (call in `prepare()`)
+  returns a `LipSyncTrack` with `mouthAtSeconds` / `mouthAtFrame`.
+  `useLipSync(track)` reads `useCurrentTime()`; `<CharacterView
+  lipSync={track}>` drives its own mouth when no `mouth` prop is given
+  (`CharacterView` calls the hook internally — always, tolerating a missing
+  track). Only WAV is supported; other formats would need a decoder.
+- **Entry-directory resolution** (`src/entry-dir.ts`, `src/cli.ts`).
+  `cli.ts` sets `MIKAN_REACT_ENTRY_DIR` before running `prepare()`, so
+  `loadLipSync` / `loadPsdPreset` resolve relative paths against the entry
+  file's directory — matching how the Rust renderer resolves a relative
+  `<Audio>` / `<Image>` `src`.
+- **Test fixture** (`examples/assets/lipsync-fixture.psd` / `.pfv`, generated
+  by `packages/react/scripts/make-lipsync-fixture.mjs` — `ag-psd` is a
+  devDependency used only by that script). A 240x320 PSD with every folder
+  saved hidden and a `face/mouth` group of six small vowel shapes at their
+  true positions, small enough for fast unit-test pixel assertions.
+- **Demo assets** (`examples/assets/illust/`): redistribution-permitted BOOTH
+  SD tachie PSDs (Kotonoha sisters / 紲星あかり / 結月ゆかり), each with a
+  sibling `.txt` naming its BOOTH source. The demo uses
+  `琴葉姉妹_SD立ち絵.psd` (3292x2400, 135 layers, `*`/`!` PSDTool
+  conventions) plus a hand-authored `琴葉茜.pfv` favorite (`茜 メイド 通常`)
+  selecting one sister's maid pose. These `.psd`s are large (16–19 MB each);
+  renderer unit tests use the small `lipsync-fixture.psd`, not these.
+  `examples/assets/voices/character-lipsync-demo.wav` (+ `.txt` transcript)
+  is the committed demo narration.
+- **Verified**: `crates/renderer` `rasterize_psd` unit tests (no preset →
+  fully transparent; preset + a force-enabled hidden mouth → the pose plus
+  the mouth at real coordinates; `disabled` beats `enabled`);
+  `packages/react/test/*.test.mjs` (`node --test`, run via `pnpm test`) for
+  `vowelShapes` / `parsePfv` (incl. the real `琴葉茜.pfv`) /
+  `resolveVisibleLayers` / `decodeWav` / `lipSyncTimeline`; new
+  `crates/react-bridge/tests/node_integration.rs` cases
+  (`with-psd-preset.tsx`, `with-lip-sync.tsx`) asserting the scene's
+  `visibleLayers` and per-frame mouth selection; end-to-end
+  `mikan-exporter --react packages/react/examples/character-lipsync-demo.tsx`
+  produced an MP4 whose frames show 琴葉茜 fully composited (maid outfit,
+  twintails, gentle eyes) with the あいうえお mouth tracking the narration.
 
 ### `Rect` primitive and a Remotion-homepage-style demo composition (2026-08-28)
 

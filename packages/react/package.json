@@ -21,6 +21,7 @@
   "scripts": {
     "codegen": "cd ../.. && cargo test -p mikan-project -p mikan-composition --features codegen",
     "build": "tsc -p tsconfig.json",
+    "test": "node --test \"test/**/*.test.mjs\"",
     "clean": "rm -rf dist"
   },
   "dependencies": {
@@ -32,6 +33,7 @@
     "@types/node": "^22.10.10",
     "@types/react": "^18.3.18",
     "@types/react-reconciler": "^0.28.9",
+    "ag-psd": "^31.0.2",
     "typescript": "^5.7.3"
   }
 }

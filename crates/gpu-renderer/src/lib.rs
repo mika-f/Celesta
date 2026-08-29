@@ -812,11 +812,12 @@ impl GpuRenderer {
             }
             LayerContent::Psd {
                 asset,
+                visible_layers,
                 enabled_layers,
                 disabled_layers,
             } => {
                 let image = self
-                    .load_psd(asset, enabled_layers, disabled_layers)?
+                    .load_psd(asset, visible_layers, enabled_layers, disabled_layers)?
                     .clone();
                 output.push(PreparedLayer::new(image, layer.transform.anchor, state));
             }
@@ -894,20 +895,27 @@ impl GpuRenderer {
     fn load_psd(
         &mut self,
         asset: &ResolvedAsset,
+        visible_layers: &[String],
         enabled_layers: &[String],
         disabled_layers: &[String],
     ) -> Result<&DecodedImage, GpuRenderError> {
         let key = format!(
-            "psd\0{}\0{}\0{}",
+            "psd\0{}\0{}\0{}\0{}",
             asset.id,
+            visible_layers.join("\0"),
             enabled_layers.join("\0"),
             disabled_layers.join("\0")
         );
         if !self.images.contains_key(&key) {
             let path = self.local_asset_path(asset)?;
-            let frame =
-                mikan_renderer::rasterize_psd(&asset.id, &path, enabled_layers, disabled_layers)
-                    .map_err(GpuRenderError::Psd)?;
+            let frame = mikan_renderer::rasterize_psd(
+                &asset.id,
+                &path,
+                visible_layers,
+                enabled_layers,
+                disabled_layers,
+            )
+            .map_err(GpuRenderError::Psd)?;
             let image = DecodedImage::new(frame.width(), frame.height(), frame.pixels().to_vec())?;
             self.images.insert(key.clone(), image);
         }

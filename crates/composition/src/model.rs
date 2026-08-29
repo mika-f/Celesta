@@ -50,8 +50,17 @@ pub enum LayerContent {
     },
     Psd {
         asset: ResolvedAsset,
+        /// Full paths of the layers and folders a portrait preset makes
+        /// visible (PSDTool "all layer" semantics). When non-empty the PSD's
+        /// own saved visibility is ignored and exactly these layers compose;
+        /// when empty the PSD renders from its saved visibility state.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        visible_layers: Vec<String>,
+        /// Layers forced visible on top of the resolved set — the selected
+        /// lip-sync mouth for the current frame.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         enabled_layers: Vec<String>,
+        /// Layers forced hidden — the other lip-sync mouth shapes.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         disabled_layers: Vec<String>,
     },
