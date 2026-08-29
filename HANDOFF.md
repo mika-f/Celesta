@@ -1,6 +1,6 @@
 # Mikan implementation handoff
 
-Last updated: 2026-08-28 (Rect primitive + homepage-demo composition; pipelined GPU export readback; color emoji glyph rendering)
+Last updated: 2026-08-29 (waveform-authored character LipSync)
 
 ## Goal
 
@@ -219,6 +219,25 @@ Keep these boundaries intact:
   the same image again is an idempotent no-op. A selected Dialogue clip exposes
   Default plus the speaker's non-default expressions; switching expression is
   validated against that character, respects track locking, and is undoable.
+- Selecting an image asset also exposes `Mouth: a/i/u/e/o` plus optional
+  `Mouth: closed` actions for each character portrait. These configure
+  `PortraitDefinition::lip_sync` as transparent overlay assets, independently
+  of the selected facial expression. Without a closed asset, silent frames
+  simply retain the original portrait without a mouth overlay; Clear closed
+  mouth removes only that optional assignment.
+  Selecting an audio-backed Dialogue clip for a configured character exposes
+  Generate/Regenerate from voice and Clear controls. Generation maps the
+  editor's cached clip-local waveform to exact project frames with an adaptive
+  relative noise gate and hysteresis, and maps the Dialogue text's hiragana,
+  katakana, or Latin vowel sequence across voiced frames. Small kana replace
+  the preceding vowel and `ー` repeats it. It then stores a compact sequence of
+  `LipSyncCue { time, shape }` values on the Dialogue item. The evaluator adds
+  the selected mouth image between portrait and subtitle layers, so GPUI
+  preview, React `<ProjectTimeline />`/`<ProjectTrack />`, CPU/GPU rendering,
+  and MP4 export share identical results without making the evaluator decode
+  audio. Mouth configuration and cue generation are undoable; project
+  validation checks image kinds, cue ordering/range, and the required voice
+  asset. Cascading mouth/voice asset removal clears dependent LipSync state.
 - Unreferenced characters delete immediately. Characters used by Dialogue clips
   show a warning with the affected clips; confirmed deletion removes the
   character and those Dialogue items as one undoable mutation. A referencing

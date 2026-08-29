@@ -32,7 +32,7 @@ use mikan_gpu_renderer::{GpuRenderOptions, GpuRenderer, PreviewFrame as GpuPrevi
 use mikan_media::{
     AudioBuffer, AudioDecoder, FfmpegBackend, MediaError, MediaProbe, mix_audio_graph_cancellable,
 };
-use mikan_project::{AssetKind, Project, TrackKind};
+use mikan_project::{AssetKind, MouthShape, Project, TrackKind};
 use mikan_react_bridge::{
     ComponentPropertyField, ComponentPropertySchema, ComponentResolutionRequest, ReactBridge,
 };
@@ -1995,6 +1995,79 @@ impl EditorView {
             .add_character_expression(character_id, &asset_id)
         {
             Ok(_) => {
+                self.refresh_preview();
+                self.edit_error = None;
+            }
+            Err(error) => self.edit_error = Some(error.to_string().into()),
+        }
+        cx.notify();
+    }
+
+    fn set_selected_image_as_mouth(
+        &mut self,
+        character_id: &str,
+        shape: MouthShape,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(asset_id) = self.selected_asset_id.clone() else {
+            return;
+        };
+        match self
+            .document
+            .set_character_lip_sync_asset(character_id, shape, &asset_id)
+        {
+            Ok(()) => {
+                self.refresh_preview();
+                self.edit_error = None;
+            }
+            Err(error) => self.edit_error = Some(error.to_string().into()),
+        }
+        cx.notify();
+    }
+
+    fn clear_character_lip_sync(&mut self, character_id: &str, cx: &mut Context<Self>) {
+        match self.document.clear_character_lip_sync(character_id) {
+            Ok(()) => {
+                self.refresh_preview();
+                self.edit_error = None;
+            }
+            Err(error) => self.edit_error = Some(error.to_string().into()),
+        }
+        cx.notify();
+    }
+
+    fn clear_character_closed_mouth(&mut self, character_id: &str, cx: &mut Context<Self>) {
+        match self.document.clear_character_closed_mouth(character_id) {
+            Ok(()) => {
+                self.refresh_preview();
+                self.edit_error = None;
+            }
+            Err(error) => self.edit_error = Some(error.to_string().into()),
+        }
+        cx.notify();
+    }
+
+    fn generate_dialogue_lip_sync(&mut self, clip_id: &str, cx: &mut Context<Self>) {
+        let Some(waveform) = self.clip_waveforms.get(clip_id).cloned() else {
+            self.edit_error = Some("Voice waveform is still loading; try again shortly.".into());
+            cx.notify();
+            return;
+        };
+        match self.document.generate_dialogue_lip_sync(clip_id, &waveform) {
+            Ok(_) => {
+                self.tracks = self.document.tracks();
+                self.refresh_preview();
+                self.edit_error = None;
+            }
+            Err(error) => self.edit_error = Some(error.to_string().into()),
+        }
+        cx.notify();
+    }
+
+    fn clear_dialogue_lip_sync(&mut self, clip_id: &str, cx: &mut Context<Self>) {
+        match self.document.clear_dialogue_lip_sync(clip_id) {
+            Ok(()) => {
+                self.tracks = self.document.tracks();
                 self.refresh_preview();
                 self.edit_error = None;
             }
@@ -4243,6 +4316,14 @@ impl EditorView {
                 let rename_character_id = character.id.clone();
                 let delete_character_id = character.id.clone();
                 let expression_character_id = character.id.clone();
+                let closed_mouth_character_id = character.id.clone();
+                let a_mouth_character_id = character.id.clone();
+                let i_mouth_character_id = character.id.clone();
+                let u_mouth_character_id = character.id.clone();
+                let e_mouth_character_id = character.id.clone();
+                let o_mouth_character_id = character.id.clone();
+                let clear_lip_sync_character_id = character.id.clone();
+                let clear_closed_mouth_character_id = character.id.clone();
                 let name = character.name.clone();
                 let rename_button_id: SharedString =
                     format!("character-rename-{rename_character_id}").into();
@@ -4273,7 +4354,26 @@ impl EditorView {
                                     "{} · {} expression(s)",
                                     character.id,
                                     character.expressions.len()
-                                ))),
+                                )))
+                                .when_some(character.lip_sync.clone(), |details, lip_sync| {
+                                    details.child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(rgb(0x8b91a1))
+                                            .child(format!(
+                                                "LipSync: a={} i={} u={} e={} o={} closed={}",
+                                                lip_sync.a,
+                                                lip_sync.i,
+                                                lip_sync.u,
+                                                lip_sync.e,
+                                                lip_sync.o,
+                                                lip_sync
+                                                    .closed
+                                                    .as_deref()
+                                                    .unwrap_or("original portrait")
+                                            )),
+                                    )
+                                }),
                         )
                         .child(
                             div()
@@ -4294,7 +4394,136 @@ impl EditorView {
                                                 );
                                             })),
                                     )
+                                    .child(
+                                        inspector_dynamic_button(
+                                            SharedString::from(format!(
+                                                "character-mouth-closed-{closed_mouth_character_id}-{asset_id}"
+                                            )),
+                                            "Mouth: closed (optional)",
+                                        )
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.set_selected_image_as_mouth(
+                                                &closed_mouth_character_id,
+                                                MouthShape::Closed,
+                                                cx,
+                                            );
+                                        })),
+                                    )
+                                    .child(
+                                        inspector_dynamic_button(
+                                            SharedString::from(format!(
+                                                "character-mouth-a-{a_mouth_character_id}-{asset_id}"
+                                            )),
+                                            "Mouth: a",
+                                        )
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.set_selected_image_as_mouth(
+                                                &a_mouth_character_id,
+                                                MouthShape::A,
+                                                cx,
+                                            );
+                                        })),
+                                    )
+                                    .child(
+                                        inspector_dynamic_button(
+                                            SharedString::from(format!(
+                                                "character-mouth-i-{i_mouth_character_id}-{asset_id}"
+                                            )),
+                                            "Mouth: i",
+                                        )
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.set_selected_image_as_mouth(
+                                                &i_mouth_character_id,
+                                                MouthShape::I,
+                                                cx,
+                                            );
+                                        })),
+                                    )
+                                    .child(
+                                        inspector_dynamic_button(
+                                            SharedString::from(format!(
+                                                "character-mouth-u-{u_mouth_character_id}-{asset_id}"
+                                            )),
+                                            "Mouth: u",
+                                        )
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.set_selected_image_as_mouth(
+                                                &u_mouth_character_id,
+                                                MouthShape::U,
+                                                cx,
+                                            );
+                                        })),
+                                    )
+                                    .child(
+                                        inspector_dynamic_button(
+                                            SharedString::from(format!(
+                                                "character-mouth-e-{e_mouth_character_id}-{asset_id}"
+                                            )),
+                                            "Mouth: e",
+                                        )
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.set_selected_image_as_mouth(
+                                                &e_mouth_character_id,
+                                                MouthShape::E,
+                                                cx,
+                                            );
+                                        })),
+                                    )
+                                    .child(
+                                        inspector_dynamic_button(
+                                            SharedString::from(format!(
+                                                "character-mouth-o-{o_mouth_character_id}-{asset_id}"
+                                            )),
+                                            "Mouth: o",
+                                        )
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.set_selected_image_as_mouth(
+                                                &o_mouth_character_id,
+                                                MouthShape::O,
+                                                cx,
+                                            );
+                                        })),
+                                    )
                                 })
+                                .when(character.lip_sync.is_some(), |actions| {
+                                    actions.child(
+                                        inspector_dynamic_button(
+                                            SharedString::from(format!(
+                                                "character-lip-sync-clear-{clear_lip_sync_character_id}"
+                                            )),
+                                            "Clear LipSync",
+                                        )
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            this.clear_character_lip_sync(
+                                                &clear_lip_sync_character_id,
+                                                cx,
+                                            );
+                                        })),
+                                    )
+                                })
+                                .when(
+                                    character
+                                        .lip_sync
+                                        .as_ref()
+                                        .and_then(|lip_sync| lip_sync.closed.as_ref())
+                                        .is_some(),
+                                    |actions| {
+                                        actions.child(
+                                            inspector_dynamic_button(
+                                                SharedString::from(format!(
+                                                    "character-closed-mouth-clear-{clear_closed_mouth_character_id}"
+                                                )),
+                                                "Clear closed mouth",
+                                            )
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.clear_character_closed_mouth(
+                                                    &clear_closed_mouth_character_id,
+                                                    cx,
+                                                );
+                                            })),
+                                        )
+                                    },
+                                )
                                 .child(
                                     inspector_dynamic_button(rename_button_id, "Rename").on_click(
                                         cx.listener(move |this, _, window, cx| {
@@ -4461,7 +4690,7 @@ impl EditorView {
             dialogue.expression.is_none() || dialogue.expression.as_deref() == default_expression;
         let default_button_id: SharedString =
             format!("dialogue-expression-default-{clip_id}").into();
-        panel.child(
+        let panel = panel.child(
             div()
                 .flex()
                 .flex_col()
@@ -4518,6 +4747,66 @@ impl EditorView {
                                         }))
                                 }),
                         ),
+                ),
+        );
+        if character.lip_sync.is_none() || dialogue.audio.is_none() {
+            return panel;
+        }
+
+        let generate_clip_id = clip_id.to_owned();
+        let clear_clip_id = clip_id.to_owned();
+        panel.child(
+            div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .px_3()
+                .py_2()
+                .border_b_1()
+                .border_color(rgb(0x292c34))
+                .child(div().text_xs().text_color(rgb(0x737783)).child("LipSync"))
+                .child(div().text_xs().text_color(rgb(0x8b91a1)).child(
+                    if dialogue.lip_sync_cue_count == 0 {
+                        "Not generated".to_owned()
+                    } else {
+                        format!("{} mouth cue(s)", dialogue.lip_sync_cue_count)
+                    },
+                ))
+                .child(
+                    div()
+                        .flex()
+                        .flex_wrap()
+                        .gap_2()
+                        .child(
+                            inspector_dynamic_button(
+                                SharedString::from(format!("dialogue-lip-sync-generate-{clip_id}")),
+                                if dialogue.lip_sync_cue_count == 0 {
+                                    "Generate from voice"
+                                } else {
+                                    "Regenerate from voice"
+                                },
+                            )
+                            .on_click(cx.listener(
+                                move |this, _, _, cx| {
+                                    this.generate_dialogue_lip_sync(&generate_clip_id, cx);
+                                },
+                            )),
+                        )
+                        .when(dialogue.lip_sync_cue_count > 0, |actions| {
+                            actions.child(
+                                inspector_dynamic_button(
+                                    SharedString::from(format!(
+                                        "dialogue-lip-sync-clear-{clip_id}"
+                                    )),
+                                    "Clear",
+                                )
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| {
+                                        this.clear_dialogue_lip_sync(&clear_clip_id, cx);
+                                    },
+                                )),
+                            )
+                        }),
                 ),
         )
     }

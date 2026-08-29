@@ -139,6 +139,31 @@ impl Validator<'_> {
             if let Some(transform) = &portrait.transform {
                 self.transform(&format!("{path}.portrait.transform"), transform);
             }
+            if let Some(lip_sync) = &portrait.lip_sync {
+                for (shape, asset) in [
+                    ("a", &lip_sync.a),
+                    ("i", &lip_sync.i),
+                    ("u", &lip_sync.u),
+                    ("e", &lip_sync.e),
+                    ("o", &lip_sync.o),
+                ] {
+                    self.asset_ref(
+                        &format!("{path}.portrait.lipSync.{shape}"),
+                        asset,
+                        AssetKind::Image,
+                    );
+                }
+                if let Some(asset) = &lip_sync.closed {
+                    self.asset_ref(
+                        &format!("{path}.portrait.lipSync.closed"),
+                        asset,
+                        AssetKind::Image,
+                    );
+                }
+                if let Some(transform) = &lip_sync.transform {
+                    self.transform(&format!("{path}.portrait.lipSync.transform"), transform);
+                }
+            }
         }
         if let Some(subtitle) = &character.subtitle {
             if let Some(width) = subtitle.max_width
@@ -211,6 +236,7 @@ impl Validator<'_> {
                 audio,
                 volume,
                 expression,
+                lip_sync,
                 ..
             } => {
                 let Some(definition) = self.project.characters.get(character) else {
@@ -239,6 +265,42 @@ impl Validator<'_> {
                             format!("character `{character}` has no expression `{expression}`"),
                         ),
                     }
+                }
+                if !lip_sync.is_empty() && audio.is_none() {
+                    self.error(format!("{path}.content.lipSync"), "requires an audio asset");
+                }
+                if !lip_sync.is_empty()
+                    && definition
+                        .portrait
+                        .as_ref()
+                        .and_then(|portrait| portrait.lip_sync.as_ref())
+                        .is_none()
+                {
+                    self.error(
+                        format!("{path}.content.lipSync"),
+                        format!("character `{character}` has no lip sync mouth assets"),
+                    );
+                }
+                let mut previous = None;
+                for (index, cue) in lip_sync.iter().enumerate() {
+                    let cue_path = format!("{path}.content.lipSync[{index}].time");
+                    self.time(&cue_path, cue.time, true);
+                    if cue
+                        .time
+                        .cmp_exact(item.range.duration)
+                        .is_ok_and(|ordering| ordering.is_gt())
+                    {
+                        self.error(cue_path.clone(), "must be inside the dialogue clip");
+                    }
+                    if let Some(previous) = previous
+                        && cue
+                            .time
+                            .cmp_exact(previous)
+                            .is_ok_and(|ordering| !ordering.is_gt())
+                    {
+                        self.error(cue_path, "must be in strictly ascending order");
+                    }
+                    previous = Some(cue.time);
                 }
             }
             TimelineContent::Component { component, .. } => {

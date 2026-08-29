@@ -15,8 +15,9 @@ use mikan_composition::{
 };
 use mikan_evaluator::{EvaluationError, Evaluator};
 use mikan_project::{
-    Asset, AssetKind, AssetSource, Character, LoadError, PortraitDefinition, Project,
-    SubtitleDefinition, TimelineContent, TimelineItem, Track, TrackKind,
+    Asset, AssetKind, AssetSource, Character, LipSyncCue, LipSyncDefinition, LoadError, MouthShape,
+    PortraitDefinition, Project, SubtitleDefinition, TimelineContent, TimelineItem, Track,
+    TrackKind,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -68,6 +69,7 @@ pub struct DialogueClipSummary {
     pub text: String,
     pub audio: Option<String>,
     pub expression: Option<String>,
+    pub lip_sync_cue_count: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -76,6 +78,17 @@ pub struct CharacterSummary {
     pub name: String,
     pub default_expression: Option<String>,
     pub expressions: Vec<String>,
+    pub lip_sync: Option<LipSyncSummary>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LipSyncSummary {
+    pub a: String,
+    pub i: String,
+    pub u: String,
+    pub e: String,
+    pub o: String,
+    pub closed: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -168,6 +181,116 @@ impl TimelineClock {
     pub fn step(&mut self, delta: i64) {
         self.seek(self.frame.saturating_add(delta));
     }
+}
+
+/// Converts a clip-local peak envelope into a compact, frame-aligned mouth
+/// animation. A relative noise gate adapts to quiet recordings, while
+/// hysteresis prevents rapid open/closed chatter around the threshold.
+pub fn lip_sync_cues_from_waveform(
+    waveform: &[f32],
+    text: &str,
+    duration: Time,
+    frame_rate: Rational,
+) -> Result<Vec<LipSyncCue>, TimeError> {
+    let clock = TimelineClock::new(duration, frame_rate)?;
+    let frame_count = clock.end_frame().max(1);
+    let peak = waveform
+        .iter()
+        .copied()
+        .filter(|value| value.is_finite())
+        .fold(0.0_f32, f32::max);
+    let open_threshold = (peak * 0.18).max(0.015);
+    let close_threshold = open_threshold * 0.6;
+    let mut voiced = false;
+    let mut voiced_frames = Vec::with_capacity(frame_count as usize);
+
+    for frame in 0..frame_count {
+        let amplitude = if waveform.is_empty() {
+            0.0
+        } else {
+            let index = ((frame as usize).saturating_mul(waveform.len()) / frame_count as usize)
+                .min(waveform.len() - 1);
+            waveform[index]
+        };
+        voiced = match voiced {
+            false if amplitude >= open_threshold => true,
+            true if amplitude <= close_threshold => false,
+            current => current,
+        };
+        voiced_frames.push(voiced);
+    }
+
+    let vowels = vowel_shapes(text);
+    let voiced_count = voiced_frames.iter().filter(|voiced| **voiced).count();
+    let mut voiced_index = 0;
+    let mut current = None;
+    let mut cues = Vec::new();
+    for (frame, voiced) in voiced_frames.into_iter().enumerate() {
+        let next = if voiced {
+            let shape = if vowels.is_empty() {
+                MouthShape::A
+            } else {
+                vowels[(voiced_index * vowels.len() / voiced_count).min(vowels.len() - 1)]
+            };
+            voiced_index += 1;
+            shape
+        } else {
+            MouthShape::Closed
+        };
+        if frame == 0 || Some(next) != current {
+            cues.push(LipSyncCue {
+                time: Time::frames(frame as i64, frame_rate)?,
+                shape: next,
+            });
+        }
+        current = Some(next);
+    }
+
+    Ok(cues)
+}
+
+fn vowel_shapes(text: &str) -> Vec<MouthShape> {
+    let mut shapes = Vec::new();
+    for character in text.chars() {
+        let shape = if "aAあぁゃかがさざただなはばぱまやらわアァャカガサザタダナハバパマヤラワ"
+            .contains(character)
+        {
+            Some(MouthShape::A)
+        } else if "iIいぃきぎしじちぢにひびぴみりイィキギシジチヂニヒビピミリ".contains(character)
+        {
+            Some(MouthShape::I)
+        } else if "uUうぅゅくぐすずつづぬふぶぷむゆるゔウゥュクグスズツヅヌフブプムユルヴ"
+            .contains(character)
+        {
+            Some(MouthShape::U)
+        } else if "eEえぇけげせぜてでねへべぺめれゑエェケゲセゼテデネヘベペメレヱ"
+            .contains(character)
+        {
+            Some(MouthShape::E)
+        } else if "oOおぉょこごそぞとどのほぼぽもよろをオォョコゴソゾトドノホボポモヨロヲ"
+            .contains(character)
+        {
+            Some(MouthShape::O)
+        } else {
+            None
+        };
+        let Some(shape) = shape else {
+            if character == 'ー'
+                && let Some(previous) = shapes.last().copied()
+            {
+                shapes.push(previous);
+            }
+            continue;
+        };
+        if "ぁぃぅぇぉゃゅょァィゥェォャュョ".contains(character)
+            && let Some(previous) = shapes.last_mut()
+        {
+            *previous = shape;
+        } else {
+            shapes.push(shape);
+        }
+    }
+    shapes
 }
 
 /// A loaded project plus the editor-only context that must not be serialized.
@@ -323,6 +446,16 @@ impl EditorDocument {
                     .as_ref()
                     .map(|portrait| portrait.expressions.keys().cloned().collect())
                     .unwrap_or_default(),
+                lip_sync: character.portrait.as_ref().and_then(|portrait| {
+                    portrait.lip_sync.as_ref().map(|lip_sync| LipSyncSummary {
+                        a: lip_sync.a.clone(),
+                        i: lip_sync.i.clone(),
+                        u: lip_sync.u.clone(),
+                        e: lip_sync.e.clone(),
+                        o: lip_sync.o.clone(),
+                        closed: lip_sync.closed.clone(),
+                    })
+                }),
             })
             .collect()
     }
@@ -370,6 +503,7 @@ impl EditorDocument {
                         }),
                         ..Transform::default()
                     }),
+                    lip_sync: None,
                 }),
                 subtitle: Some(SubtitleDefinition {
                     style: Some(TextStyle {
@@ -404,6 +538,7 @@ impl EditorDocument {
             name,
             default_expression: Some("default".to_owned()),
             expressions: vec!["default".to_owned()],
+            lip_sync: None,
         })
     }
 
@@ -473,10 +608,125 @@ impl EditorDocument {
                     }),
                     ..Transform::default()
                 }),
+                lip_sync: None,
             });
         }
         self.record_mutation(before, before_revision);
         Ok(expression)
+    }
+
+    /// Assigns one transparent mouth overlay to a character. The first
+    /// vowel assignment initializes every vowel to the same image, keeping the
+    /// project valid while the remaining images are selected. Closed is optional.
+    pub fn set_character_lip_sync_asset(
+        &mut self,
+        character_id: &str,
+        shape: MouthShape,
+        asset_id: &str,
+    ) -> Result<(), EditorDocumentError> {
+        let asset = self
+            .project
+            .assets
+            .get(asset_id)
+            .ok_or_else(|| EditorDocumentError::MissingAsset(asset_id.to_owned()))?;
+        if asset.kind() != AssetKind::Image {
+            return Err(EditorDocumentError::AssetKindMismatch {
+                asset: asset_id.to_owned(),
+                expected: AssetKind::Image,
+                actual: asset.kind(),
+            });
+        }
+        let before = self.project.clone();
+        let before_revision = self.current_revision;
+        let character = self
+            .project
+            .characters
+            .get_mut(character_id)
+            .ok_or_else(|| EditorDocumentError::MissingCharacter(character_id.to_owned()))?;
+        let portrait = character.portrait.as_mut().ok_or_else(|| {
+            EditorDocumentError::MissingCharacterPortrait(character_id.to_owned())
+        })?;
+        let lip_sync = portrait.lip_sync.get_or_insert_with(|| LipSyncDefinition {
+            a: asset_id.to_owned(),
+            i: asset_id.to_owned(),
+            u: asset_id.to_owned(),
+            e: asset_id.to_owned(),
+            o: asset_id.to_owned(),
+            closed: None,
+            transform: None,
+        });
+        match shape {
+            MouthShape::Closed => lip_sync.closed = Some(asset_id.to_owned()),
+            MouthShape::A => lip_sync.a = asset_id.to_owned(),
+            MouthShape::I => lip_sync.i = asset_id.to_owned(),
+            MouthShape::U => lip_sync.u = asset_id.to_owned(),
+            MouthShape::E => lip_sync.e = asset_id.to_owned(),
+            MouthShape::O => lip_sync.o = asset_id.to_owned(),
+        }
+        if self.project != before {
+            self.record_mutation(before, before_revision);
+        }
+        Ok(())
+    }
+
+    pub fn clear_character_lip_sync(
+        &mut self,
+        character_id: &str,
+    ) -> Result<(), EditorDocumentError> {
+        let before = self.project.clone();
+        let before_revision = self.current_revision;
+        let character = self
+            .project
+            .characters
+            .get_mut(character_id)
+            .ok_or_else(|| EditorDocumentError::MissingCharacter(character_id.to_owned()))?;
+        if let Some(portrait) = &mut character.portrait {
+            portrait.lip_sync = None;
+        }
+        for item in self
+            .project
+            .tracks
+            .iter_mut()
+            .flat_map(|track| &mut track.items)
+        {
+            if let TimelineContent::Dialogue {
+                character,
+                lip_sync,
+                ..
+            } = &mut item.content
+                && character == character_id
+            {
+                lip_sync.clear();
+            }
+        }
+        if self.project != before {
+            self.record_mutation(before, before_revision);
+        }
+        Ok(())
+    }
+
+    pub fn clear_character_closed_mouth(
+        &mut self,
+        character_id: &str,
+    ) -> Result<(), EditorDocumentError> {
+        let before = self.project.clone();
+        let before_revision = self.current_revision;
+        let character = self
+            .project
+            .characters
+            .get_mut(character_id)
+            .ok_or_else(|| EditorDocumentError::MissingCharacter(character_id.to_owned()))?;
+        if let Some(lip_sync) = character
+            .portrait
+            .as_mut()
+            .and_then(|portrait| portrait.lip_sync.as_mut())
+        {
+            lip_sync.closed = None;
+        }
+        if self.project != before {
+            self.record_mutation(before, before_revision);
+        }
+        Ok(())
     }
 
     pub fn rename_character(
@@ -630,12 +880,14 @@ impl EditorDocument {
                                 text,
                                 audio,
                                 expression,
+                                lip_sync,
                                 ..
                             } => Some(DialogueClipSummary {
                                 character: character.clone(),
                                 text: text.clone(),
                                 audio: audio.clone(),
                                 expression: expression.clone(),
+                                lip_sync_cue_count: lip_sync.len(),
                             }),
                             _ => None,
                         },
@@ -1441,6 +1693,7 @@ impl EditorDocument {
                 audio: Some(audio_asset_id.to_owned()),
                 volume: None,
                 expression: None,
+                lip_sync: Vec::new(),
             },
             enabled: None,
             transform: None,
@@ -1594,6 +1847,65 @@ impl EditorDocument {
         Ok(())
     }
 
+    pub fn generate_dialogue_lip_sync(
+        &mut self,
+        clip_id: &str,
+        waveform: &[f32],
+    ) -> Result<usize, EditorDocumentError> {
+        let (track_index, item_index) = self.clip_indices(clip_id)?;
+        self.ensure_track_unlocked(track_index)?;
+        let item = &self.project.tracks[track_index].items[item_index];
+        let TimelineContent::Dialogue { audio, text, .. } = &item.content else {
+            return Err(EditorDocumentError::UnsupportedDialogueClip(
+                clip_id.to_owned(),
+            ));
+        };
+        if audio.is_none() {
+            return Err(EditorDocumentError::DialogueLipSyncRequiresAudio(
+                clip_id.to_owned(),
+            ));
+        }
+        let cues = lip_sync_cues_from_waveform(
+            waveform,
+            text,
+            item.range.duration,
+            self.project.settings.frame_rate,
+        )
+        .map_err(EditorDocumentError::Duration)?;
+        let cue_count = cues.len();
+        let before = self.project.clone();
+        let before_revision = self.current_revision;
+        let TimelineContent::Dialogue { lip_sync, .. } =
+            &mut self.project.tracks[track_index].items[item_index].content
+        else {
+            unreachable!("dialogue content was checked")
+        };
+        *lip_sync = cues;
+        if self.project != before {
+            self.record_mutation(before, before_revision);
+        }
+        Ok(cue_count)
+    }
+
+    pub fn clear_dialogue_lip_sync(&mut self, clip_id: &str) -> Result<(), EditorDocumentError> {
+        let (track_index, item_index) = self.clip_indices(clip_id)?;
+        self.ensure_track_unlocked(track_index)?;
+        let before = self.project.clone();
+        let before_revision = self.current_revision;
+        let TimelineContent::Dialogue { lip_sync, .. } =
+            &mut self.project.tracks[track_index].items[item_index].content
+        else {
+            return Err(EditorDocumentError::UnsupportedDialogueClip(
+                clip_id.to_owned(),
+            ));
+        };
+        lip_sync.clear();
+        if self.project != before {
+            self.record_mutation(before, before_revision);
+        }
+        Ok(())
+    }
+
     fn new_clip_range(
         &self,
         start_frame: i64,
@@ -1656,6 +1968,26 @@ impl EditorDocument {
                     if asset == asset_id {
                         references.push(format!(
                             "character `{character_id}` / expression `{expression}`"
+                        ));
+                    }
+                }
+                if let Some(lip_sync) = &portrait.lip_sync {
+                    for (shape, asset) in [
+                        ("a", &lip_sync.a),
+                        ("i", &lip_sync.i),
+                        ("u", &lip_sync.u),
+                        ("e", &lip_sync.e),
+                        ("o", &lip_sync.o),
+                    ] {
+                        if asset == asset_id {
+                            references.push(format!(
+                                "character `{character_id}` / lip sync {shape} mouth"
+                            ));
+                        }
+                    }
+                    if lip_sync.closed.as_deref() == Some(asset_id) {
+                        references.push(format!(
+                            "character `{character_id}` / lip sync closed mouth"
                         ));
                     }
                 }
@@ -1732,20 +2064,43 @@ impl EditorDocument {
                     TimelineContent::Video { asset, .. }
                     | TimelineContent::Audio { asset, .. }
                     | TimelineContent::Image { asset } => asset != asset_id,
-                    TimelineContent::Dialogue { audio, .. } => {
+                    TimelineContent::Dialogue {
+                        audio, lip_sync, ..
+                    } => {
                         if audio.as_deref() == Some(asset_id) {
                             *audio = None;
+                            lip_sync.clear();
                         }
                         true
                     }
                     _ => true,
                 });
             }
-            for character in self.project.characters.values_mut() {
+            let mut cleared_lip_sync_characters = Vec::new();
+            for (character_id, character) in &mut self.project.characters {
                 let Some(portrait) = &mut character.portrait else {
                     continue;
                 };
                 portrait.expressions.retain(|_, asset| asset != asset_id);
+                let removes_required_mouth = portrait.lip_sync.as_ref().is_some_and(|lip_sync| {
+                    [
+                        &lip_sync.a,
+                        &lip_sync.i,
+                        &lip_sync.u,
+                        &lip_sync.e,
+                        &lip_sync.o,
+                    ]
+                    .into_iter()
+                    .any(|asset| asset == asset_id)
+                });
+                if removes_required_mouth {
+                    portrait.lip_sync = None;
+                    cleared_lip_sync_characters.push(character_id.clone());
+                } else if let Some(lip_sync) = &mut portrait.lip_sync
+                    && lip_sync.closed.as_deref() == Some(asset_id)
+                {
+                    lip_sync.closed = None;
+                }
                 if portrait.expressions.is_empty() {
                     character.portrait = None;
                 } else if !portrait
@@ -1770,6 +2125,7 @@ impl EditorDocument {
                 let TimelineContent::Dialogue {
                     character,
                     expression,
+                    lip_sync,
                     ..
                 } = &mut item.content
                 else {
@@ -1783,6 +2139,9 @@ impl EditorDocument {
                 });
                 if !expression_is_valid {
                     *expression = None;
+                }
+                if cleared_lip_sync_characters.contains(character) {
+                    lip_sync.clear();
                 }
             }
         }
@@ -2244,6 +2603,7 @@ pub enum EditorDocumentError {
     MissingTrack(String),
     MissingAsset(String),
     MissingCharacter(String),
+    MissingCharacterPortrait(String),
     MissingCharacterExpression {
         character: String,
         expression: String,
@@ -2305,6 +2665,7 @@ pub enum EditorDocumentError {
     },
     UnsupportedComponentProp(String),
     UnsupportedDialogueClip(String),
+    DialogueLipSyncRequiresAudio(String),
 }
 
 impl fmt::Display for EditorDocumentError {
@@ -2320,6 +2681,9 @@ impl fmt::Display for EditorDocumentError {
             Self::MissingAsset(asset_id) => write!(formatter, "asset `{asset_id}` does not exist"),
             Self::MissingCharacter(character_id) => {
                 write!(formatter, "character `{character_id}` does not exist")
+            }
+            Self::MissingCharacterPortrait(character_id) => {
+                write!(formatter, "character `{character_id}` has no portrait")
             }
             Self::MissingCharacterExpression {
                 character,
@@ -2424,6 +2788,9 @@ impl fmt::Display for EditorDocumentError {
             Self::UnsupportedDialogueClip(clip) => {
                 write!(formatter, "clip `{clip}` is not dialogue")
             }
+            Self::DialogueLipSyncRequiresAudio(clip) => {
+                write!(formatter, "dialogue clip `{clip}` has no voice asset")
+            }
         }
     }
 }
@@ -2441,6 +2808,7 @@ impl Error for EditorDocumentError {
             | Self::MissingTrack(_)
             | Self::MissingAsset(_)
             | Self::MissingCharacter(_)
+            | Self::MissingCharacterPortrait(_)
             | Self::MissingCharacterExpression { .. }
             | Self::LockedTrack(_)
             | Self::UnsupportedAsset(_)
@@ -2461,7 +2829,8 @@ impl Error for EditorDocumentError {
             | Self::UnsupportedClipVolume(_)
             | Self::InvalidClipFrameRange { .. }
             | Self::UnsupportedComponentProp(_)
-            | Self::UnsupportedDialogueClip(_) => None,
+            | Self::UnsupportedDialogueClip(_)
+            | Self::DialogueLipSyncRequiresAudio(_) => None,
         }
     }
 }
@@ -2469,6 +2838,7 @@ impl Error for EditorDocumentError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mikan_composition::LayerContent;
 
     const MINIMAL: &str = include_str!("../../../examples/minimal.mikan.json");
     const EDITOR_DEMO: &str = include_str!("../../../examples/editor-demo.mikan.json");
@@ -2530,6 +2900,100 @@ mod tests {
         assert_eq!(clock.frame(), 600);
         clock.seek_fraction(f32::NAN);
         assert_eq!(clock.frame(), 0);
+    }
+
+    #[test]
+    fn lip_sync_waveform_generation_is_frame_aligned_and_uses_hysteresis() {
+        let cues = lip_sync_cues_from_waveform(
+            &[0.0, 1.0, 1.0, 0.0],
+            "あい",
+            Time::new(4, 1),
+            Rational::new(1, 1),
+        )
+        .unwrap();
+
+        assert_eq!(
+            cues,
+            vec![
+                LipSyncCue {
+                    time: Time::ZERO,
+                    shape: MouthShape::Closed,
+                },
+                LipSyncCue {
+                    time: Time::new(1, 1),
+                    shape: MouthShape::A,
+                },
+                LipSyncCue {
+                    time: Time::new(2, 1),
+                    shape: MouthShape::I,
+                },
+                LipSyncCue {
+                    time: Time::new(3, 1),
+                    shape: MouthShape::Closed,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn lip_sync_text_mapping_handles_small_kana_and_long_vowels() {
+        assert_eq!(
+            vowel_shapes("キャットーA"),
+            vec![MouthShape::A, MouthShape::O, MouthShape::O, MouthShape::A]
+        );
+    }
+
+    #[test]
+    fn character_mouth_assets_and_dialogue_cues_are_undoable() {
+        let mut document = EditorDocument::from_json(VOICEROID, "examples").unwrap();
+
+        document
+            .set_character_lip_sync_asset("akane", MouthShape::A, "akane-default")
+            .unwrap();
+        document
+            .set_character_lip_sync_asset("akane", MouthShape::Closed, "akane-default")
+            .unwrap();
+        document.clear_character_closed_mouth("akane").unwrap();
+        assert!(
+            document.characters()[0]
+                .lip_sync
+                .as_ref()
+                .unwrap()
+                .closed
+                .is_none()
+        );
+        document
+            .set_character_lip_sync_asset("akane", MouthShape::Closed, "akane-default")
+            .unwrap();
+        let cue_count = document
+            .generate_dialogue_lip_sync("dialogue-001", &[0.0, 0.0, 1.0, 1.0, 0.0, 0.0])
+            .unwrap();
+
+        assert!(document.characters()[0].lip_sync.is_some());
+        assert!(cue_count >= 3);
+        assert_eq!(
+            document.tracks()[0].clips[0]
+                .dialogue
+                .as_ref()
+                .unwrap()
+                .lip_sync_cue_count,
+            cue_count
+        );
+        let scene = document.scene_at(Time::new(13, 2)).unwrap();
+        let LayerContent::Group { layers } = &scene.layers[0].content else {
+            panic!("dialogue must render as a group")
+        };
+        assert_eq!(layers.len(), 3);
+
+        assert!(document.undo().unwrap());
+        assert_eq!(
+            document.tracks()[0].clips[0]
+                .dialogue
+                .as_ref()
+                .unwrap()
+                .lip_sync_cue_count,
+            0
+        );
     }
 
     #[test]
@@ -2998,6 +3462,7 @@ mod tests {
                 text: "ゲームを始めるで".to_owned(),
                 audio: Some("voice-001".to_owned()),
                 expression: None,
+                lip_sync_cue_count: 0,
             }
         );
     }

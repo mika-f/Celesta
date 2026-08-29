@@ -9,8 +9,8 @@ use mikan_composition::{
     evaluate_f64, integrate_f64,
 };
 use mikan_project::{
-    Asset, AssetSource, Project, SourceRange, TimelineContent, TimelineItem, Track,
-    ValidationErrors,
+    Asset, AssetSource, LipSyncCue, MouthShape, Project, SourceRange, TimelineContent,
+    TimelineItem, Track, ValidationErrors,
 };
 
 pub struct Evaluator<'project> {
@@ -202,8 +202,9 @@ impl<'project> Evaluator<'project> {
                 character,
                 text,
                 expression,
+                lip_sync,
                 ..
-            } => self.dialogue(character, text, expression.as_deref(), local_time)?,
+            } => self.dialogue(character, text, expression.as_deref(), lip_sync, local_time)?,
             TimelineContent::Component { component, props } => LayerContent::MissingComponent {
                 component: component.clone(),
                 props: props.clone().unwrap_or_default(),
@@ -224,6 +225,7 @@ impl<'project> Evaluator<'project> {
         character_id: &str,
         text: &str,
         expression: Option<&str>,
+        lip_sync_cues: &[LipSyncCue],
         local_time: Time,
     ) -> Result<LayerContent, EvaluationError> {
         let character = self
@@ -249,6 +251,33 @@ impl<'project> Evaluator<'project> {
                     asset: self.asset(asset)?,
                 },
             });
+
+            if let (Some(lip_sync), Some(shape)) = (
+                portrait.lip_sync.as_ref(),
+                mouth_shape_at(lip_sync_cues, local_time)?,
+            ) {
+                let asset = match shape {
+                    MouthShape::Closed => lip_sync.closed.as_ref(),
+                    MouthShape::A => Some(&lip_sync.a),
+                    MouthShape::I => Some(&lip_sync.i),
+                    MouthShape::U => Some(&lip_sync.u),
+                    MouthShape::E => Some(&lip_sync.e),
+                    MouthShape::O => Some(&lip_sync.o),
+                };
+                if let Some(asset) = asset {
+                    layers.push(Layer {
+                        id: "mouth".to_owned(),
+                        transform: evaluate_transform(
+                            lip_sync.transform.as_ref().or(portrait.transform.as_ref()),
+                            local_time,
+                        )?,
+                        opacity: 1.0,
+                        content: LayerContent::Image {
+                            asset: self.asset(asset)?,
+                        },
+                    });
+                }
+            }
         }
 
         if let Some(subtitle) = &character.subtitle {
@@ -299,6 +328,17 @@ impl<'project> Evaluator<'project> {
             location,
         })
     }
+}
+
+fn mouth_shape_at(cues: &[LipSyncCue], local_time: Time) -> Result<Option<MouthShape>, TimeError> {
+    let mut shape = None;
+    for cue in cues {
+        if cue.time.cmp_exact(local_time)?.is_gt() {
+            break;
+        }
+        shape = Some(cue.shape);
+    }
+    Ok(shape)
 }
 
 fn item_has_audio(item: &TimelineItem) -> bool {
@@ -425,7 +465,9 @@ impl From<AnimationError> for EvaluationError {
 #[cfg(test)]
 mod tests {
     use mikan_composition::{LayerContent, Time};
-    use mikan_project::{Project, SourceRange, TimelineContent};
+    use mikan_project::{
+        LipSyncCue, LipSyncDefinition, MouthShape, Project, SourceRange, TimelineContent,
+    };
 
     use super::*;
 
@@ -460,6 +502,82 @@ mod tests {
         assert_eq!(audio.clips.len(), 1);
         assert_eq!(audio.clips[0].id, "dialogue-001:voice");
         assert_eq!(audio.master_volume, 1.0);
+    }
+
+    #[test]
+    fn evaluates_lip_sync_as_a_mouth_overlay_without_replacing_the_expression() {
+        let mut project = example();
+        let portrait = project
+            .characters
+            .get_mut("akane")
+            .unwrap()
+            .portrait
+            .as_mut()
+            .unwrap();
+        portrait.lip_sync = Some(LipSyncDefinition {
+            a: "akane-a".to_owned(),
+            i: "akane-default".to_owned(),
+            u: "akane-default".to_owned(),
+            e: "akane-default".to_owned(),
+            o: "akane-default".to_owned(),
+            closed: Some("akane-default".to_owned()),
+            transform: None,
+        });
+        project.assets.insert(
+            "akane-a".to_owned(),
+            project.assets["akane-default"].clone(),
+        );
+        let TimelineContent::Dialogue { lip_sync, .. } = &mut project.tracks[0].items[0].content
+        else {
+            panic!("example must contain dialogue")
+        };
+        *lip_sync = vec![
+            LipSyncCue {
+                time: Time::ZERO,
+                shape: MouthShape::Closed,
+            },
+            LipSyncCue {
+                time: Time::new(1, 2),
+                shape: MouthShape::A,
+            },
+        ];
+        let evaluator = Evaluator::new(&project).unwrap();
+
+        let closed = evaluator.scene_at(Time::new(21, 4)).unwrap();
+        let open = evaluator.scene_at(Time::new(23, 4)).unwrap();
+        let mouth_asset = |scene: &Scene| {
+            let LayerContent::Group { layers } = &scene.layers[0].content else {
+                panic!("dialogue must expand to a group")
+            };
+            assert_eq!(layers.len(), 3);
+            let LayerContent::Image { asset } = &layers[1].content else {
+                panic!("second dialogue layer must be the mouth")
+            };
+            asset.id.clone()
+        };
+
+        assert_eq!(mouth_asset(&closed), "akane-default");
+        assert_eq!(mouth_asset(&open), "akane-a");
+
+        project
+            .characters
+            .get_mut("akane")
+            .unwrap()
+            .portrait
+            .as_mut()
+            .unwrap()
+            .lip_sync
+            .as_mut()
+            .unwrap()
+            .closed = None;
+        let closed = Evaluator::new(&project)
+            .unwrap()
+            .scene_at(Time::new(21, 4))
+            .unwrap();
+        let LayerContent::Group { layers } = &closed.layers[0].content else {
+            panic!("dialogue must expand to a group")
+        };
+        assert_eq!(layers.len(), 2, "no closed overlay uses the base portrait");
     }
 
     #[test]

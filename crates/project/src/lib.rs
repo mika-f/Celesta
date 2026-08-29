@@ -219,6 +219,52 @@ pub struct PortraitDefinition {
     pub expressions: BTreeMap<String, AssetId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transform: Option<Transform>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lip_sync: Option<LipSyncDefinition>,
+}
+
+/// Transparent mouth overlays used by audio-backed dialogue clips.
+///
+/// Keeping the mouth separate from `expressions` lets lip sync preserve the
+/// currently selected facial expression. `transform` is relative to the
+/// dialogue item; when omitted the portrait transform is reused so full-size
+/// overlays align with the portrait without extra setup.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS))]
+#[cfg_attr(feature = "codegen", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct LipSyncDefinition {
+    pub a: AssetId,
+    pub i: AssetId,
+    pub u: AssetId,
+    pub e: AssetId,
+    pub o: AssetId,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub closed: Option<AssetId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transform: Option<Transform>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS))]
+#[cfg_attr(feature = "codegen", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum MouthShape {
+    Closed,
+    A,
+    I,
+    U,
+    E,
+    O,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS))]
+#[cfg_attr(feature = "codegen", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct LipSyncCue {
+    pub time: Time,
+    pub shape: MouthShape,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -330,6 +376,9 @@ pub enum TimelineContent {
         volume: Option<Animatable<f64>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         expression: Option<String>,
+        /// Frame-aligned mouth shapes generated from this clip's voice waveform.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        lip_sync: Vec<LipSyncCue>,
     },
     Component {
         component: String,
@@ -417,5 +466,84 @@ mod tests {
         let errors = project.validate().unwrap_err();
 
         assert_eq!(errors.as_slice()[0].path, "settings.masterVolume");
+    }
+
+    #[test]
+    fn lip_sync_configuration_and_cues_round_trip() {
+        let mut project =
+            Project::from_json(include_str!("../../../examples/voiceroid.mikan.json")).unwrap();
+        project
+            .characters
+            .get_mut("akane")
+            .unwrap()
+            .portrait
+            .as_mut()
+            .unwrap()
+            .lip_sync = Some(LipSyncDefinition {
+            a: "akane-default".to_owned(),
+            i: "akane-default".to_owned(),
+            u: "akane-default".to_owned(),
+            e: "akane-default".to_owned(),
+            o: "akane-default".to_owned(),
+            closed: Some("akane-default".to_owned()),
+            transform: None,
+        });
+        let TimelineContent::Dialogue { lip_sync, .. } = &mut project.tracks[0].items[0].content
+        else {
+            panic!("example must contain dialogue")
+        };
+        *lip_sync = vec![
+            LipSyncCue {
+                time: Time::ZERO,
+                shape: MouthShape::Closed,
+            },
+            LipSyncCue {
+                time: Time::new(1, 2),
+                shape: MouthShape::A,
+            },
+        ];
+
+        let json = project.to_json().unwrap();
+        let loaded = Project::from_json(&json).unwrap();
+
+        assert_eq!(loaded, project);
+        assert!(json.contains("\"lipSync\""));
+        assert!(json.contains("\"shape\": \"a\""));
+    }
+
+    #[test]
+    fn lip_sync_cues_require_voice_and_strict_time_order() {
+        let mut project =
+            Project::from_json(include_str!("../../../examples/voiceroid.mikan.json")).unwrap();
+        let TimelineContent::Dialogue {
+            audio, lip_sync, ..
+        } = &mut project.tracks[0].items[0].content
+        else {
+            panic!("example must contain dialogue")
+        };
+        *audio = None;
+        *lip_sync = vec![
+            LipSyncCue {
+                time: Time::new(1, 1),
+                shape: MouthShape::I,
+            },
+            LipSyncCue {
+                time: Time::new(1, 1),
+                shape: MouthShape::Closed,
+            },
+        ];
+
+        let errors = project.validate().unwrap_err();
+
+        assert!(
+            errors
+                .as_slice()
+                .iter()
+                .any(|error| error.path.ends_with("content.lipSync"))
+        );
+        assert!(errors.as_slice().iter().any(|error| {
+            error.path.ends_with("content.lipSync[1].time")
+                && error.message.contains("strictly ascending")
+        }));
     }
 }

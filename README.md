@@ -222,6 +222,20 @@ undo/redo. Selecting a Video, Audio, or audio-backed Dialogue clip exposes
 0–200% clip volume plus playhead-relative Add/Update/Remove keyframe and Flatten
 controls in the Inspector; edits immediately update mixing and the displayed
 meter envelope.
+Characters can also use transparent `a` / `i` / `u` / `e` / `o` mouth images
+without replacing their selected portrait expression. A closed-mouth image is
+optional; when omitted, silent frames use the original portrait without a mouth
+overlay. Select each image asset and assign its mouth shape in the Inspector;
+Clear closed mouth removes only that optional overlay. Then select an
+audio-backed Dialogue clip and choose Generate from voice. The
+editor combines an adaptive waveform noise gate with the Dialogue text's
+hiragana, katakana, or Latin vowel sequence to produce compact, frame-aligned
+viseme cues. Small kana replace the preceding vowel and the prolonged sound mark
+repeats it. Cues are stored in project JSON, are undoable, and drive the same
+mouth-overlay layer in editor preview, React project embedding, and MP4 export.
+Regenerate after changing the text or voice asset; Clear removes only the clip's
+cues. Removing a referenced mouth or voice asset also repairs dependent LipSync
+data so the project remains valid.
 Probed metadata and decoded PCM stay in editor-only
 caches: project JSON remains source-authored, while repeated edits can remix
 cached samples without re-decoding every asset again. Decoded PCM and
