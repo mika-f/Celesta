@@ -609,10 +609,7 @@ impl ExportWorker {
             .name("mikan-export".to_owned())
             .spawn(move || {
                 while let Ok(request) = request_rx.recv() {
-                    let exporter = Exporter::new(ExportOptions {
-                        overwrite: true,
-                        ..ExportOptions::default()
-                    });
+                    let exporter = Exporter::new(ExportOptions { overwrite: true });
                     let result = exporter.export_project_cancellable(
                         &request.project,
                         &request.asset_root,

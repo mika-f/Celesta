@@ -21,11 +21,11 @@ The repository currently contains the first foundation:
 - `mikan-evaluator`: deterministic conversion from a project to a scene at a
   given time and to the complete audio graph.
 - `mikan-exporter`: frame-exact H.264/AAC MP4 export using the shared evaluator,
-  GPU renderer, audio graph, and FFmpeg process boundary.
-- `mikan-media`: FFprobe metadata parsing, FFmpeg-backed exact-time RGBA video
+  GPU renderer, audio graph, and the linked FFmpeg libraries (`ez-ffmpeg`).
+- `mikan-media`: metadata probing, FFmpeg-library-backed exact-time RGBA video
   decoding (a clip whose playback outruns its source freezes on the last
   frame rather than failing), and project-rate stereo audio decoding/mixing
-  behind replaceable process boundaries.
+  behind replaceable decoder traits.
 - `mikan-renderer`: a deterministic CPU reference renderer, PNG encoder, and
   shared text rasterizer used to lock down composition behavior.
 - `mikan-gpu-renderer`: the `wgpu` production-renderer foundation with
@@ -96,6 +96,19 @@ The repository currently contains the first foundation:
   be previewed without downloading assets and a generated Japanese system-voice
   WAV fixture for exercising synchronized audio preview.
 
+## Building
+
+`mikan-media` and `mikan-exporter` link the FFmpeg 7.1+ C libraries through
+[`ez-ffmpeg`](https://github.com/YeautyYE/ez-ffmpeg) / `ffmpeg-sys-next` — the
+`ffmpeg`/`ffprobe` binaries are not used. Provide the development libraries
+before building:
+
+- **Windows** (workspace enables `ez-ffmpeg`'s `static` feature):
+  `vcpkg install ffmpeg[x264]:x64-windows-static-md` and set `VCPKG_ROOT`.
+- **macOS**: `brew install ffmpeg pkg-config`.
+- **Linux**: `libav{codec,format,filter,device,util}-dev` and
+  `libsw{scale,resample}-dev` (FFmpeg 7.1+).
+
 ## Validate the foundation
 
 ```sh
@@ -141,7 +154,8 @@ cargo run -p mikan-exporter -- --react packages/react/examples/with-project.tsx 
 
 The exporter renders the exact rational project frame times through the shared
 evaluator and `GpuRenderer`, mixes the complete shared `AudioGraph`, and muxes
-H.264 video with AAC audio through FFmpeg. H.264 4:2:0 output currently requires
+H.264 video with AAC audio through the linked FFmpeg libraries. H.264 4:2:0
+output currently requires
 non-zero even project dimensions. Work is staged beside the destination and is
 removed on failure; a completed file is published atomically, with no-clobber
 behavior unless `--overwrite` is present.
@@ -208,13 +222,13 @@ undo/redo. Selecting a Video, Audio, or audio-backed Dialogue clip exposes
 0–200% clip volume plus playhead-relative Add/Update/Remove keyframe and Flatten
 controls in the Inspector; edits immediately update mixing and the displayed
 meter envelope.
-FFprobe metadata and decoded PCM stay in editor-only
+Probed metadata and decoded PCM stay in editor-only
 caches: project JSON remains source-authored, while repeated edits can remix
-cached samples without launching FFmpeg for every asset again. Decoded PCM and
+cached samples without re-decoding every asset again. Decoded PCM and
 source waveform peaks also use a versioned on-disk cache across editor sessions.
 Entries are keyed by canonical file identity, size, modification time, sample
-rate, and channel count; invalid or corrupt entries fall back to FFmpeg without
-blocking playback. The cache is capped at 1 GiB; successful reads refresh
+rate, and channel count; invalid or corrupt entries fall back to a fresh decode
+without blocking playback. The cache is capped at 1 GiB; successful reads refresh
 recency and saving a new entry evicts least-recently-used files until the cache
 is within the limit.
 
@@ -223,8 +237,8 @@ Construct it with `CpuRenderer::with_asset_root` to resolve project-relative
 paths. Font assets in the evaluated scene are registered before shaping;
 installed system fonts provide fallback for glyphs not covered by the project.
 Attach `FfmpegBackend` through `CpuRenderer::with_video_decoder` to decode local
-video frames. The backend expects `ffmpeg` and `ffprobe` on `PATH` by default,
-or accepts explicit executable paths. Remote URL assets remain a future boundary.
+video frames; it uses the linked FFmpeg libraries directly. Remote URL assets
+remain a future boundary.
 
 `GpuRenderer` accepts the same evaluated `Scene`. Local images and injected
 video frames are uploaded as GPU textures; position, anchor, scale, rotation,

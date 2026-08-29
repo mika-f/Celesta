@@ -45,12 +45,30 @@ async function main(): Promise<void> {
   }
 
   let defaultExport: EntryComponent;
+  let prepare: (() => Promise<void>) | undefined;
   try {
-    defaultExport = await loadEntryDefault(path.resolve(entry));
+    ({ defaultExport, prepare } = await loadEntry(path.resolve(entry)));
   } catch (error) {
     writeLine({ error: describeError(error) });
     process.exitCode = 1;
     return;
+  }
+
+  if (prepare) {
+    // Runs once, before the persistent root is mounted and before any frame
+    // is requested — the one point in this process's lifetime where async
+    // work (e.g. fetching remote data to render with) can happen without
+    // touching the otherwise fully synchronous mount/renderAt/request-loop
+    // path. Whatever `prepare()` stashes into module-level state is then
+    // read synchronously by every `renderAt()` call for the rest of this
+    // process's life, so it is fetched once per export, not once per frame.
+    try {
+      await prepare();
+    } catch (error) {
+      writeLine({ error: describeError(error) });
+      process.exitCode = 1;
+      return;
+    }
   }
 
   let mounted: MountedComposition;
@@ -115,7 +133,13 @@ function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-async function loadEntryDefault(entryPath: string): Promise<EntryComponent> {
+interface LoadedEntry {
+  defaultExport: EntryComponent;
+  /** The entry's named `prepare` export, if it has one — see `main()`. */
+  prepare: (() => Promise<void>) | undefined;
+}
+
+async function loadEntry(entryPath: string): Promise<LoadedEntry> {
   // eslint-disable-next-line global-require -- optional, only needed by this CLI
   const esbuild = require('esbuild') as typeof import('esbuild');
   const result = await esbuild.build({
@@ -166,7 +190,14 @@ async function loadEntryDefault(entryPath: string): Promise<EntryComponent> {
   if (typeof defaultExport !== 'function') {
     throw new Error('the entry module must have a default export that is a React component');
   }
-  return defaultExport as EntryComponent;
+  const prepareExport = mod !== null && typeof mod === 'object' ? (mod as { prepare?: unknown }).prepare : undefined;
+  if (prepareExport !== undefined && typeof prepareExport !== 'function') {
+    throw new Error("the entry module's `prepare` export, if present, must be a function");
+  }
+  return {
+    defaultExport: defaultExport as EntryComponent,
+    prepare: prepareExport as (() => Promise<void>) | undefined,
+  };
 }
 
 main();

@@ -20,7 +20,13 @@ video/audio tracks.
 - The initial implementation is tracked on `main`; track management landed in
   commit `52b13d5` and MP4 export landed in `dfb7f1a`. Inspect
   `git status --short` for newer work before editing or staging.
-- FFmpeg and FFprobe are installed and available on `PATH`.
+- FFmpeg 7.1+ **development libraries** must be available for `ez-ffmpeg` /
+  `ffmpeg-sys-next` to link against — the `ffmpeg`/`ffprobe` binaries are no
+  longer used at runtime. On Windows: `vcpkg install
+  ffmpeg[x264]:x64-windows-static-md` with `VCPKG_ROOT` set (the workspace
+  enables `ez-ffmpeg`'s `static` feature). macOS: `brew install ffmpeg` +
+  `pkg-config`. Linux: the distro `libav{codec,format,filter,device,util}-dev`,
+  `libsw{scale,resample}-dev` packages.
 - GPUI is pinned to crates.io version `0.2.2`.
 - Node.js (>= 18) and pnpm are required for the React composition path
   (`packages/react`, `mikan-react-bridge`). Run `pnpm install && pnpm run
@@ -46,10 +52,10 @@ cargo test --workspace
 | `mikan-composition` | Renderer-independent scene types, exact rational time, transforms, animation evaluation, text styles, and audio graph types. |
 | `mikan-project` | Version 0 JSON project format, loading, semantic validation, references, and duration calculation. |
 | `mikan-evaluator` | Deterministic conversion from `Project` to a visual `Scene` at a time and to the complete `AudioGraph`. |
-| `mikan-media` | FFprobe metadata and FFmpeg exact-time RGBA video-frame decoding behind `VideoFrameDecoder` (source overruns freeze on the final frame). |
+| `mikan-media` | Metadata probing and exact-time RGBA video-frame decoding via the linked FFmpeg libraries (`ez-ffmpeg`) behind `VideoFrameDecoder` (source overruns freeze on the final frame). |
 | `mikan-renderer` | Deterministic CPU reference renderer, PNG output, and the shared text rasterizer. |
 | `mikan-gpu-renderer` | `wgpu` renderer for images, video frames, styled text, nested transforms, opacity, offscreen readback, and renderer-owned surfaces. |
-| `mikan-exporter` | Deterministic frame-exact H.264/AAC MP4 export through the shared evaluator, GPU renderer, audio graph, and FFmpeg. Also exports React entries via `mikan-react-bridge`. |
+| `mikan-exporter` | Deterministic frame-exact H.264/AAC MP4 export through the shared evaluator, GPU renderer, audio graph, and the linked FFmpeg libraries (`ez-ffmpeg` `VideoWriter` for encode, `FfmpegContext` for the AAC mux). Also exports React entries via `mikan-react-bridge`. |
 | `mikan-editor` | GPUI application, editor-owned document state, playback clock, GPU preview bridge, asset panel, timeline, and inspector. |
 | `mikan-react-bridge` | Spawns one long-lived `@mikan/react` Node.js process per composition and requests the evaluated `Scene` (plus that frame's `<Audio>` clips) for each exact frame time over stdin/stdout JSON, or resolves individual registered components for the editor preview. |
 | `packages/react` (`@mikan/react`, Node.js/TypeScript) | Declarative `Composition`/`Sequence`/`Group`/`Image`/`Rect`/`Text`/`Video`/`Audio` components rendered through a real `react-reconciler` host (hooks, including `useCurrentFrame`/`useVideoConfig`, work); `useProject`/`<ProjectTimeline />` embed a companion project's Rust-evaluated layers. The `mikan-react-render` CLI bundles a JSX/TSX entry with esbuild and emits `Scene`-shaped JSON plus per-frame audio declarations. |
@@ -322,6 +328,14 @@ entries, matching the architecture diagram's "React entry" path:
 - `mikan-react-bridge` spawns and owns this Node process for the lifetime of
   an export or preview, mirroring `mikan-media`'s one-process-per-composition
   sequential decoding session rather than spawning Node per frame.
+- An entry can additionally export an async `prepare()`. `cli.ts`'s `main()`
+  awaits it exactly once, before mounting the composition and before the
+  first frame request — the one point in the pipeline where async work (e.g.
+  fetching remote data) is allowed, since `renderAt()` itself and the Rust
+  side's request/response loop are both fully synchronous. Data fetched in
+  `prepare()` should be stashed in module-level state and read synchronously
+  by the rendered components, so it is fetched once per export/preview
+  session rather than once per frame (see `examples/homepage-demo.tsx`).
 - `mikan-exporter --react <entry> <output.mp4>` renders every frame of the
   composition through the same `GpuRenderer` used for projects and encodes it
   with FFmpeg. When the composition has no audio (no `<Audio>` in the entry,
@@ -460,6 +474,18 @@ in any other React host.
    used that name) provides `linear`/`easeIn`/`easeOut`/`easeInOut` plus the
    usual sine/quad/cubic/quart/quint/expo/circ/back/elastic/bounce families
    (expanded 2026-08-26 alongside the `<Sequence>` work).
+  `mikan_composition::Easing` (the project.json-facing enum a `Keyframe`'s
+  own `easing` field uses, applied by `crates/composition/src/animation.rs`'s
+  `apply_easing`/`easing_integral`) was widened to the same easings.net
+  catalogue on 2026-08-28, formula-for-formula matching `Easings` above so a
+  named curve looks the same whether it drives a project keyframe or an
+  `interpolate()` call. `apply_easing` has a hand-derived closed-form
+  antiderivative only for the original four curves (`linear`/`ease-in`/
+  `ease-out`/`ease-in-out`) that `easing_integral` needs for
+  `integrate_f64` (animated-playback-rate integration); every other curve
+  falls back to a composite-Simpson's-rule numeric integral over
+  `apply_easing` itself rather than a hand-verified closed form for
+  trig/exponential/piecewise curves like elastic and bounce.
   `spring({frame, fps, config?, from?, to?, delay?, durationInFrames?})` is
   the closed-form step response of a damped harmonic oscillator (mass-
   spring-damper solved analytically for the underdamped/critically-damped/
