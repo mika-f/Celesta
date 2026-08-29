@@ -37,7 +37,8 @@ export interface GroupProps extends CommonProps {
 }
 
 export interface ImageProps extends CommonProps {
-  src: string;
+  src: AssetInput;
+  name?: string;
 }
 
 export interface TextProps extends CommonProps {
@@ -58,7 +59,8 @@ export interface RectProps extends CommonProps {
 }
 
 export interface VideoProps extends CommonProps {
-  src: string;
+  src: AssetInput;
+  name?: string;
   /**
    * Seconds into the source file playback starts from, at the sequence's own
    * frame 0 — the counterpart of a project timeline clip's trim-in point.
@@ -75,6 +77,74 @@ export interface VideoProps extends CommonProps {
   playbackRate?: number;
 }
 
+export interface AssetReference {
+  readonly id: string;
+  readonly kind: 'character' | 'image' | 'video' | 'audio' | 'font';
+  readonly src?: string;
+}
+
+export type AssetInput = string | AssetReference | React.RefObject<AssetReference>;
+
+export interface AssetsProps {
+  children?: ReactNode;
+}
+
+export interface CharacterProps {
+  name: string;
+  id?: string;
+  children?: ReactNode;
+}
+
+export interface FontProps {
+  src: AssetInput;
+  name?: string;
+}
+
+const AssetsContext = React.createContext(false);
+
+export function Assets(props: AssetsProps): ReturnType<typeof React.createElement> {
+  return React.createElement(
+    AssetsContext.Provider,
+    { value: true },
+    React.createElement('assets', props),
+  );
+}
+
+export const Character = React.forwardRef<AssetReference, CharacterProps>(function Character(
+  props,
+  ref,
+) {
+  const reference = React.useMemo<AssetReference>(
+    () => ({ id: props.id ?? props.name, kind: 'character' }),
+    [props.id, props.name],
+  );
+  assignAssetRef(ref, reference);
+  React.useImperativeHandle(ref, () => reference, [reference]);
+  return React.createElement('asset-character', props);
+});
+
+function assetReference(
+  kind: AssetReference['kind'],
+  src: AssetInput,
+  name?: string,
+): AssetReference {
+  const value = typeof src === 'string' ? src : 'current' in src ? src.current : src;
+  if (!value) {
+    throw new Error('asset references must be declared before they are used');
+  }
+  return {
+    id: name ?? (typeof value === 'string' ? value : value.id),
+    kind,
+    src: typeof value === 'string' ? value : value.src,
+  };
+}
+
+function assignAssetRef(ref: React.ForwardedRef<AssetReference>, value: AssetReference): void {
+  if (ref && typeof ref === 'object') {
+    ref.current = value;
+  }
+}
+
 export function Composition(props: CompositionProps): ReturnType<typeof React.createElement> {
   return React.createElement('composition', props);
 }
@@ -83,9 +153,13 @@ export function Group(props: GroupProps): ReturnType<typeof React.createElement>
   return React.createElement('group', props);
 }
 
-export function Image(props: ImageProps): ReturnType<typeof React.createElement> {
-  return React.createElement('image', props);
-}
+export const Image = React.forwardRef<AssetReference, ImageProps>(function Image(props, ref) {
+  const inAssets = React.useContext(AssetsContext);
+  const reference = React.useMemo(() => assetReference('image', props.src, props.name), [props.src, props.name]);
+  assignAssetRef(ref, reference);
+  React.useImperativeHandle(ref, () => reference, [reference]);
+  return React.createElement(inAssets ? 'asset-image' : 'image', props);
+});
 
 export function Text(props: TextProps): ReturnType<typeof React.createElement> {
   return React.createElement('text', props);
@@ -96,9 +170,23 @@ export function Rect(props: RectProps): ReturnType<typeof React.createElement> {
   return React.createElement('rect', props);
 }
 
-export function Video(props: VideoProps): ReturnType<typeof React.createElement> {
-  return React.createElement('video', props);
-}
+export const Video = React.forwardRef<AssetReference, VideoProps>(function Video(props, ref) {
+  const inAssets = React.useContext(AssetsContext);
+  const reference = React.useMemo(
+    () => assetReference('video', props.src, props.name),
+    [props.name, props.src],
+  );
+  assignAssetRef(ref, reference);
+  React.useImperativeHandle(ref, () => reference, [reference]);
+  return React.createElement(inAssets ? 'asset-video' : 'video', props);
+});
+
+export const Font = React.forwardRef<AssetReference, FontProps>(function Font(props, ref) {
+  const reference = React.useMemo(() => assetReference('font', props.src, props.name), [props.src, props.name]);
+  assignAssetRef(ref, reference);
+  React.useImperativeHandle(ref, () => reference, [reference]);
+  return React.createElement('asset-font', props);
+});
 
 export interface SequenceProps extends CommonProps {
   /**
@@ -160,7 +248,7 @@ export function Sequence(props: SequenceProps): ReturnType<typeof React.createEl
 export type AnimatedNumber = Animatable<number>;
 
 export interface AudioProps extends CommonProps {
-  src: string;
+  src: AssetInput;
   /**
    * Seconds into the source file playback starts from, at the sequence's own
    * frame 0. Defaults to 0.
@@ -193,6 +281,10 @@ export interface AudioProps extends CommonProps {
  * conditional or hook contributes sound on exactly the frames where it
  * renders, with its full audible range derived from any enclosing sequences.
  */
-export function Audio(props: AudioProps): ReturnType<typeof React.createElement> {
-  return React.createElement('audio', props);
-}
+export const Audio = React.forwardRef<AssetReference, AudioProps>(function Audio(props, ref) {
+  const inAssets = React.useContext(AssetsContext);
+  const reference = React.useMemo(() => assetReference('audio', props.src), [props.src]);
+  assignAssetRef(ref, reference);
+  React.useImperativeHandle(ref, () => reference, [reference]);
+  return React.createElement(inAssets ? 'asset-audio' : 'audio', props);
+});

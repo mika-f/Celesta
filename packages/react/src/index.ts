@@ -1,5 +1,7 @@
 export {
   Audio,
+  Assets,
+  Character,
   Composition,
   Group,
   Image,
@@ -7,9 +9,15 @@ export {
   Sequence,
   Text,
   Video,
+  Font,
 } from './components';
 export type {
   AudioProps,
+  AssetInput,
+  AssetReference,
+  AssetsProps,
+  CharacterProps,
+  FontProps,
   AnimatedNumber,
   CommonProps,
   CompositionProps,
@@ -66,7 +74,7 @@ export { loadProject, loadProjectFromString } from './project';
 export type { Project } from './generated/Project';
 export type { Asset } from './generated/Asset';
 export type { AssetSource } from './generated/AssetSource';
-export type { Character } from './generated/Character';
+export type { Character as CharacterDefinition } from './generated/Character';
 export type { LipSyncCue } from './generated/LipSyncCue';
 export type { LipSyncDefinition } from './generated/LipSyncDefinition';
 export type { MouthShape } from './generated/MouthShape';

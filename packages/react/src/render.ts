@@ -30,6 +30,12 @@ import { SECONDS_TIMESCALE, secondsFromTime, secondsToTime } from './time';
 
 const HOST_TYPES = new Set([
   'composition',
+  'assets',
+  'asset-character',
+  'asset-image',
+  'asset-video',
+  'asset-audio',
+  'asset-font',
   'group',
   'image',
   'rect',
@@ -191,10 +197,16 @@ function extractText(children: unknown): string {
 }
 
 function resolveAsset(src: unknown): ResolvedAsset {
-  if (typeof src !== 'string' || src.length === 0) {
+  const reference =
+    src && typeof src === 'object' && 'current' in src
+      ? (src as { current?: unknown }).current
+      : src;
+  const path = typeof reference === 'string' ? reference : (reference as { src?: unknown } | null)?.src;
+  if (typeof path !== 'string' || path.length === 0) {
     throw new Error('components with asset content require a non-empty `src` prop');
   }
-  return { id: src, location: { type: 'file', path: src } };
+  const id = typeof reference === 'string' ? reference : (reference as { id?: unknown }).id;
+  return { id: typeof id === 'string' && id.length > 0 ? id : path, location: { type: 'file', path } };
 }
 
 function isKeyframeAnimation(value: unknown): value is KeyframeAnimation<number> {
@@ -349,10 +361,7 @@ function childSequenceContext(node: HostNode, context: WalkContext): WalkContext
 }
 
 function collectAudioClip(props: Record<string, unknown>, context: WalkContext, results: AudioClipDescriptor[]): void {
-  const src = props.src;
-  if (typeof src !== 'string' || src.length === 0) {
-    throw new Error('<Audio> requires a non-empty `src` prop');
-  }
+  const source = resolveAsset(props.src);
   // An audio clip can play no earlier than its own local zero and not at
   // all outside the enclosing sequence window.
   const startSec = Math.max(context.rangeStartSec, context.originSec);
@@ -369,7 +378,7 @@ function collectAudioClip(props: Record<string, unknown>, context: WalkContext, 
   // amount so the curve stays aligned with what is actually heard.
   const clipped = startSec - context.originSec;
   results.push({
-    src,
+    src: source.location.type === 'file' ? source.location.path : source.location.url,
     sourceStart: startFrom + clipped * firstAnimatedValue(playbackRate),
     playbackRate: shiftAnimated(playbackRate, -clipped),
     volume: shiftAnimated(volume, -clipped),
@@ -390,6 +399,16 @@ function walkNode(
   }
   if (node.type === 'rawLayers') {
     return (node.props.layers as Layer[] | undefined) ?? [];
+  }
+  if (
+    node.type === 'assets' ||
+    node.type === 'asset-character' ||
+    node.type === 'asset-image' ||
+    node.type === 'asset-video' ||
+    node.type === 'asset-audio' ||
+    node.type === 'asset-font'
+  ) {
+    return [];
   }
   if (node.type === 'audio') {
     // <Audio> contributes no visual Layer (there is no LayerContent audio
