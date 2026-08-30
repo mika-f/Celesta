@@ -3242,6 +3242,7 @@ name = "mikan-renderer"
 version = "0.0.0"
 dependencies = [
  "cosmic-text",
+ "dwrote",
  "image",
  "mikan-composition",
  "mikan-evaluator",

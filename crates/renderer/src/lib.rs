@@ -153,8 +153,12 @@ pub struct TextRasterizer {
 
 impl TextRasterizer {
     pub fn new() -> Self {
+        let mut font_system = FontSystem::new();
+        #[cfg(target_os = "windows")]
+        load_directwrite_system_fonts(&mut font_system);
+
         Self {
-            font_system: FontSystem::new(),
+            font_system,
             swash_cache: SwashCache::new(),
             loaded_fonts: HashSet::new(),
         }
@@ -302,6 +306,58 @@ impl TextRasterizer {
             height: frame.height,
             pixels: frame.pixels,
         })
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn load_directwrite_system_fonts(font_system: &mut FontSystem) {
+    use cosmic_text::fontdb::Source;
+
+    let mut loaded_paths = font_system
+        .db()
+        .faces()
+        .filter_map(|face| match &face.source {
+            Source::File(path) | Source::SharedFile(path, _) => Some(path.clone()),
+            Source::Binary(_) => None,
+        })
+        .collect::<HashSet<_>>();
+
+    for family in dwrote::FontCollection::get_system(true).families_iter() {
+        for index in 0..family.get_font_count() {
+            let Ok(font) = family.font(index) else {
+                continue;
+            };
+            let Ok(files) = font.create_font_face().files() else {
+                continue;
+            };
+
+            for file in files {
+                if let Ok(path) = file.font_file_path() {
+                    if loaded_paths.insert(path.clone()) {
+                        let _ = font_system.db_mut().load_font_file(path);
+                    }
+                } else if let Ok(bytes) = file.font_file_bytes() {
+                    font_system.db_mut().load_font_data(bytes);
+                }
+            }
+        }
+    }
+
+    // Adobe keeps synced fonts outside DirectWrite's system collection. Validate
+    // its extensionless cache files with DirectWrite before adding them to fontdb.
+    let Some(app_data) = std::env::var_os("APPDATA") else {
+        return;
+    };
+    let directory = PathBuf::from(app_data).join("Adobe/CoreSync/plugins/livetype/r");
+    let Ok(entries) = fs::read_dir(directory) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if loaded_paths.insert(path.clone()) && dwrote::FontFile::new_from_path(&path).is_some() {
+            let _ = font_system.db_mut().load_font_file(path);
+        }
     }
 }
 
