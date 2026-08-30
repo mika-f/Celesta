@@ -52,8 +52,9 @@ The repository currently contains the first foundation:
   and this package's own `useCurrentFrame()`, `useCurrentTime()`, and
   `useVideoConfig()`. React-authored dialogue uses a `<Character>` declared
   in `<Assets>` with `portrait` and optional `subtitle` settings, then
-  `<Dialogue character={ref} audio={...}>text</Dialogue>` renders the portrait,
-  subtitle, optional voice audio, and an optional lip-sync track together.
+  `<CharacterView ref={view} character={character} />` places the portrait, and
+  `<Dialogue character={view} audio={...}>text</Dialogue>` adds its subtitle,
+  optional voice audio, and an optional lip-sync track.
   `interpolate()` and `spring()` (plus an `Easings` curve set covering the
   usual sine/quad/cubic/.../bounce families) turn a
   frame number into an animated value — `spring()` is a damped harmonic

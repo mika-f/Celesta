@@ -53,10 +53,10 @@ const hostConfig: Reconciler.HostConfig<
 
   // Text content stays on the host props instead of becoming a separate
   // instance, so render.ts can read it back with `extractText`.
-  shouldSetTextContent: (type) => type === 'text' || type === 'dialogue',
+  shouldSetTextContent: (type) => type === 'text',
   createTextInstance: () => {
     throw new Error(
-      'bare text is only supported inside <Text> or <Dialogue>; other elements only accept element children',
+      'bare text is only supported inside <Text>; other elements only accept element children',
     );
   },
 

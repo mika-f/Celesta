@@ -110,6 +110,7 @@ interface WalkContext {
   originSec: number;
   rangeStartSec: number;
   rangeEndSec: number;
+  characterViewOverrides: Map<HostNode, Record<string, unknown>>;
 }
 
 export interface MountedComposition {
@@ -160,6 +161,7 @@ function rootWalkContext(fps: number, durationInFrames: number, time: Time): Wal
     originSec: 0,
     rangeStartSec: 0,
     rangeEndSec: durationInFrames / fps,
+    characterViewOverrides: new Map(),
   };
 }
 
@@ -221,6 +223,13 @@ function resolveReference(value: unknown): unknown {
   return value && typeof value === 'object' && 'current' in value
     ? (value as { current?: unknown }).current
     : value;
+}
+
+function resolveCharacterView(value: unknown): HostNode | null {
+  const node = resolveReference(value);
+  return node !== null && typeof node === 'object' && (node as HostNode).type === 'character-view'
+    ? (node as HostNode)
+    : null;
 }
 
 function isKeyframeAnimation(value: unknown): value is KeyframeAnimation<number> {
@@ -294,6 +303,7 @@ function buildLayer(
   } else if (node.type === 'image') {
     content = { type: 'image', asset: resolveAsset(props.src) };
   } else if (node.type === 'character-view') {
+    const override = context.characterViewOverrides.get(node);
     const character = resolveReference(props.character) as
       | {
           portrait?:
@@ -329,7 +339,8 @@ function buildLayer(
     if (!portrait) {
       throw new Error('<CharacterView> requires a character with a portrait');
     }
-    const mouth = typeof props.mouth === 'string' ? props.mouth : undefined;
+    const mouthValue = override?.mouth ?? props.mouth;
+    const mouth = typeof mouthValue === 'string' ? mouthValue : undefined;
     if (portrait.type === 'psd') {
       const selectedLayer = mouth && portrait.lipSync
         ? mouth === 'closed'
@@ -352,7 +363,8 @@ function buildLayer(
           : {}),
       };
     } else {
-      const expression = typeof props.expression === 'string' ? props.expression : portrait.defaultExpression;
+      const expressionValue = override?.expression ?? props.expression;
+      const expression = typeof expressionValue === 'string' ? expressionValue : portrait.defaultExpression;
       const src = portrait.expressions[expression];
       if (src === undefined) {
         throw new Error(`character has no expression "${expression}"`);
@@ -384,7 +396,8 @@ function buildLayer(
       };
     }
   } else if (node.type === 'dialogue') {
-    const character = resolveReference(props.character) as
+    const view = resolveCharacterView(props.character);
+    const character = resolveReference(view?.props.character) as
       | {
           portrait?: Record<string, unknown>;
           subtitle?: Record<string, unknown>;
@@ -394,31 +407,11 @@ function buildLayer(
       throw new Error('<Dialogue> requires a declared character');
     }
     const layers: Layer[] = [];
-    if (character.portrait) {
-      layers.push(
-        buildLayer(
-          {
-            type: 'character-view',
-            props: {
-              ...character.portrait,
-              character: props.character,
-              expression: props.expression,
-              mouth: props.mouth,
-              id: `${id}.portrait`,
-            },
-            children: [],
-          },
-          `${path}.portrait`,
-          context,
-          audio,
-        ),
-      );
-    }
     layers.push(
       buildLayer(
         {
           type: 'text',
-          props: { ...character.subtitle, id: `${id}.subtitle`, children: props.children },
+          props: { ...character.subtitle, id: `${id}.subtitle`, children: props.text },
           children: [],
         },
         `${path}.subtitle`,
@@ -505,7 +498,24 @@ function childSequenceContext(node: HostNode, context: WalkContext): WalkContext
     originSec,
     rangeStartSec,
     rangeEndSec,
+    characterViewOverrides: context.characterViewOverrides,
   };
+}
+
+function collectCharacterViewOverrides(node: HostNode, context: WalkContext): void {
+  const childContext = node.type === 'sequence' ? childSequenceContext(node, context) : context;
+  if (!childContext) {
+    return;
+  }
+  if (node.type === 'dialogue') {
+    const view = resolveCharacterView(node.props.character);
+    if (view) {
+      context.characterViewOverrides.set(view, node.props);
+    }
+  }
+  for (const child of node.children) {
+    collectCharacterViewOverrides(child, childContext);
+  }
 }
 
 function collectAudioClip(props: Record<string, unknown>, context: WalkContext, results: AudioClipDescriptor[]): void {
@@ -639,10 +649,14 @@ export function mount(defaultExport: EntryComponent): MountedComposition {
       renderTree(time, project, config);
       const instance = findCompositionInstance(container);
       const audio: AudioClipDescriptor[] = [];
+      const context = rootWalkContext(config.frameRate.numerator, config.durationInFrames, time);
+      for (const child of instance.children) {
+        collectCharacterViewOverrides(child, context);
+      }
       const layers = walkChildren(
         instance,
         'root',
-        rootWalkContext(config.frameRate.numerator, config.durationInFrames, time),
+        context,
         audio,
       );
       return {

@@ -25,6 +25,7 @@ export type {
   PsdCharacterLipSync,
   PsdCharacterPortrait,
   CharacterViewProps,
+  CharacterViewReference,
   CharacterSubtitle,
   DialogueProps,
   FontProps,

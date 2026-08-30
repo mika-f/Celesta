@@ -1,9 +1,10 @@
 import * as React from 'react';
 
-import { Assets, Character, Composition, Dialogue } from '@mikan/react';
-import type { AssetReference } from '@mikan/react';
+import { Assets, Character, CharacterView, Composition, Dialogue } from '@mikan/react';
+import type { AssetReference, CharacterViewReference } from '@mikan/react';
 
 const character = React.createRef<AssetReference>();
+const view = React.createRef<CharacterViewReference>();
 
 export default function Root() {
   return (
@@ -15,8 +16,6 @@ export default function Root() {
           portrait={{
             defaultExpression: 'default',
             expressions: { default: './character.png' },
-            x: 840,
-            y: 120,
           }}
           subtitle={{
             x: 640,
@@ -27,7 +26,8 @@ export default function Root() {
           }}
         />
       </Assets>
-      <Dialogue character={character} audio="./voice.wav">
+      <CharacterView ref={view} character={character} x={840} y={120} />
+      <Dialogue character={view} audio="./voice.wav">
         React から Dialogue を表示できます。
       </Dialogue>
     </Composition>

@@ -168,13 +168,20 @@ export interface CharacterViewProps extends CommonProps {
   lipSync?: LipSyncTrack;
 }
 
+declare const characterViewReference: unique symbol;
+
+/** Opaque reference to a mounted `<CharacterView>`. */
+export interface CharacterViewReference {
+  readonly [characterViewReference]: true;
+}
+
 export interface CharacterSubtitle extends CommonProps {
   style?: TextStyle;
   maxWidth?: number;
 }
 
 export interface DialogueProps extends CommonProps {
-  character: AssetInput;
+  character: React.RefObject<CharacterViewReference | null>;
   children: ReactNode;
   expression?: string;
   mouth?: CharacterViewProps['mouth'];
@@ -261,18 +268,24 @@ export function Group(props: GroupProps): ReturnType<typeof React.createElement>
   return React.createElement('group', props);
 }
 
-export function CharacterView(props: CharacterViewProps): ReturnType<typeof React.createElement> {
-  const { lipSync, ...rest } = props;
-  const tracked = useOptionalLipSync(lipSync);
-  const mouth = rest.mouth ?? tracked;
-  return React.createElement('character-view', { ...rest, mouth });
-}
+export const CharacterView = React.forwardRef<CharacterViewReference, CharacterViewProps>(
+  function CharacterView(props, ref) {
+    const { lipSync, ...rest } = props;
+    const tracked = useOptionalLipSync(lipSync);
+    const mouth = rest.mouth ?? tracked;
+    return React.createElement('character-view', { ...rest, mouth, ref });
+  },
+);
 
 /** Renders a character portrait and its configured subtitle as one layer. */
 export function Dialogue(props: DialogueProps): ReturnType<typeof React.createElement> {
-  const { lipSync, ...rest } = props;
+  const { children, lipSync, mouth, ...rest } = props;
   const tracked = useOptionalLipSync(lipSync);
-  return React.createElement('dialogue', { ...rest, mouth: rest.mouth ?? tracked });
+  return React.createElement('dialogue', {
+    ...rest,
+    text: children,
+    mouth: mouth ?? tracked,
+  });
 }
 
 export const Image = React.forwardRef<AssetReference, ImageProps>(function Image(props, ref) {
