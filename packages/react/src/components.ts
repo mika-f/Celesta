@@ -97,6 +97,7 @@ export interface AssetReference {
   readonly kind: 'character' | 'image' | 'video' | 'audio' | 'font';
   readonly src?: string;
   readonly portrait?: CharacterPortrait;
+  readonly subtitle?: CharacterSubtitle;
 }
 
 export type AssetInput = string | AssetReference | React.RefObject<AssetReference>;
@@ -109,17 +110,18 @@ export interface CharacterProps {
   name: string;
   id?: string;
   portrait?: CharacterPortrait;
+  subtitle?: CharacterSubtitle;
   children?: ReactNode;
 }
 
-export interface ImageCharacterPortrait {
+export interface ImageCharacterPortrait extends CommonProps {
   type?: 'image';
   defaultExpression: string;
   expressions: Record<string, AssetInput>;
   lipSync?: CharacterLipSync;
 }
 
-export interface PsdCharacterPortrait {
+export interface PsdCharacterPortrait extends CommonProps {
   type: 'psd';
   src: AssetInput;
   /**
@@ -166,6 +168,24 @@ export interface CharacterViewProps extends CommonProps {
   lipSync?: LipSyncTrack;
 }
 
+export interface CharacterSubtitle extends CommonProps {
+  style?: TextStyle;
+  maxWidth?: number;
+}
+
+export interface DialogueProps extends CommonProps {
+  character: AssetInput;
+  children: ReactNode;
+  expression?: string;
+  mouth?: CharacterViewProps['mouth'];
+  lipSync?: LipSyncTrack;
+  audio?: AssetInput;
+  startFrom?: number;
+  playbackRate?: AnimatedNumber;
+  volume?: AnimatedNumber;
+  muted?: boolean;
+}
+
 export interface FontProps {
   src: AssetInput;
   name?: string;
@@ -186,8 +206,13 @@ export const Character = React.forwardRef<AssetReference, CharacterProps>(functi
   ref,
 ) {
   const reference = React.useMemo<AssetReference>(
-    () => ({ id: props.id ?? props.name, kind: 'character', portrait: props.portrait }),
-    [props.id, props.name, props.portrait],
+    () => ({
+      id: props.id ?? props.name,
+      kind: 'character',
+      portrait: props.portrait,
+      subtitle: props.subtitle,
+    }),
+    [props.id, props.name, props.portrait, props.subtitle],
   );
   assignAssetRef(ref, reference);
   React.useImperativeHandle(ref, () => reference, [reference]);
@@ -241,6 +266,13 @@ export function CharacterView(props: CharacterViewProps): ReturnType<typeof Reac
   const tracked = useOptionalLipSync(lipSync);
   const mouth = rest.mouth ?? tracked;
   return React.createElement('character-view', { ...rest, mouth });
+}
+
+/** Renders a character portrait and its configured subtitle as one layer. */
+export function Dialogue(props: DialogueProps): ReturnType<typeof React.createElement> {
+  const { lipSync, ...rest } = props;
+  const tracked = useOptionalLipSync(lipSync);
+  return React.createElement('dialogue', { ...rest, mouth: rest.mouth ?? tracked });
 }
 
 export const Image = React.forwardRef<AssetReference, ImageProps>(function Image(props, ref) {

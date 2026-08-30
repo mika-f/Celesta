@@ -75,6 +75,30 @@ fn evaluates_a_psd_character_with_one_selected_mouth_layer_when_node_is_availabl
 }
 
 #[test]
+fn evaluates_a_react_dialogue_as_a_character_and_subtitle_when_node_is_available() {
+    let Some((node, cli_script, package_root)) = live_react_runtime() else {
+        return;
+    };
+
+    let entry = package_root.join("examples/with-dialogue.tsx");
+    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let evaluation = bridge.evaluate_at(Time::ZERO, None).unwrap();
+    let layers = all_layers(&evaluation.scene.layers);
+
+    assert!(layers.iter().any(|layer| matches!(
+        &layer.content,
+        LayerContent::Image { asset } if asset.id == "./character.png"
+    )));
+    assert!(layers.iter().any(|layer| matches!(
+        &layer.content,
+        LayerContent::Text { text, max_width, .. }
+            if text == "React から Dialogue を表示できます。" && *max_width == Some(1120.0)
+    )));
+    assert_eq!(evaluation.audio.len(), 1);
+    assert_eq!(evaluation.audio[0].src, "./voice.wav");
+}
+
+#[test]
 fn resolves_a_psd_portrait_preset_into_visible_layers_when_node_is_available() {
     let Some((node, cli_script, package_root)) = live_react_runtime() else {
         return;

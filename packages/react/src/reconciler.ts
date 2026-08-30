@@ -51,14 +51,12 @@ const hostConfig: Reconciler.HostConfig<
   prepareForCommit: () => null,
   resetAfterCommit: () => {},
 
-  // <text>'s string/number children stay on its `children` prop (like DOM
-  // `textContent`) instead of becoming separate child instances, so
-  // render.ts can read them back with `extractText`. Every other host type
-  // only has element children, never bare text.
-  shouldSetTextContent: (type) => type === 'text',
+  // Text content stays on the host props instead of becoming a separate
+  // instance, so render.ts can read it back with `extractText`.
+  shouldSetTextContent: (type) => type === 'text' || type === 'dialogue',
   createTextInstance: () => {
     throw new Error(
-      'bare text is only supported inside <Text>; other elements only accept element children',
+      'bare text is only supported inside <Text> or <Dialogue>; other elements only accept element children',
     );
   },
 

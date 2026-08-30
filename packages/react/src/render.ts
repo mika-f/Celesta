@@ -38,6 +38,7 @@ const HOST_TYPES = new Set([
   'asset-audio',
   'asset-font',
   'character-view',
+  'dialogue',
   'group',
   'image',
   'rect',
@@ -382,6 +383,50 @@ function buildLayer(
         layers,
       };
     }
+  } else if (node.type === 'dialogue') {
+    const character = resolveReference(props.character) as
+      | {
+          portrait?: Record<string, unknown>;
+          subtitle?: Record<string, unknown>;
+        }
+      | null;
+    if (!character) {
+      throw new Error('<Dialogue> requires a declared character');
+    }
+    const layers: Layer[] = [];
+    if (character.portrait) {
+      layers.push(
+        buildLayer(
+          {
+            type: 'character-view',
+            props: {
+              ...character.portrait,
+              character: props.character,
+              expression: props.expression,
+              mouth: props.mouth,
+              id: `${id}.portrait`,
+            },
+            children: [],
+          },
+          `${path}.portrait`,
+          context,
+          audio,
+        ),
+      );
+    }
+    layers.push(
+      buildLayer(
+        {
+          type: 'text',
+          props: { ...character.subtitle, id: `${id}.subtitle`, children: props.children },
+          children: [],
+        },
+        `${path}.subtitle`,
+        context,
+        audio,
+      ),
+    );
+    content = { type: 'group', layers };
   } else if (node.type === 'text') {
     const maxWidth = props.maxWidth;
     content = {
@@ -519,6 +564,9 @@ function walkNode(
     // during this same walk instead.
     collectAudioClip(node.props, context, audio);
     return [];
+  }
+  if (node.type === 'dialogue' && node.props.audio !== undefined) {
+    collectAudioClip({ ...node.props, src: node.props.audio }, context, audio);
   }
   if (node.type === 'sequence') {
     const childContext = childSequenceContext(node, context);

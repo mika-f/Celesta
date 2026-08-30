@@ -50,7 +50,10 @@ The repository currently contains the first foundation:
   (a composition with no audio still publishes a silent MP4). Because the reconciler
   drives real React rendering, ordinary hooks work: `useState`/`useEffect`
   and this package's own `useCurrentFrame()`, `useCurrentTime()`, and
-  `useVideoConfig()`.
+  `useVideoConfig()`. React-authored dialogue uses a `<Character>` declared
+  in `<Assets>` with `portrait` and optional `subtitle` settings, then
+  `<Dialogue character={ref} audio={...}>text</Dialogue>` renders the portrait,
+  subtitle, optional voice audio, and an optional lip-sync track together.
   `interpolate()` and `spring()` (plus an `Easings` curve set covering the
   usual sine/quad/cubic/.../bounce families) turn a
   frame number into an animated value — `spring()` is a damped harmonic
