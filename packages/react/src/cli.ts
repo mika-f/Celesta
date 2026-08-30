@@ -2,6 +2,7 @@ import { Console } from 'node:console';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
+import { pathToFileURL } from 'node:url';
 
 import { createResolver, mount } from './render';
 import type {
@@ -162,10 +163,14 @@ async function loadEntry(entryPath: string): Promise<LoadedEntry> {
     bundle: true,
     write: false,
     platform: 'node',
-    format: 'cjs',
+    format: 'esm',
     jsx: 'automatic',
     absWorkingDir: path.dirname(entryPath),
     logLevel: 'silent',
+    define: {
+      'import.meta.dirname': JSON.stringify(path.dirname(entryPath)),
+      'import.meta.filename': JSON.stringify(entryPath),
+    },
     // `react` must resolve to the exact module instance this process's own
     // react-reconciler is driving, or hooks fail with "Invalid hook call"
     // (the entry's own copy of React would look for a dispatcher the
@@ -181,19 +186,18 @@ async function loadEntry(entryPath: string): Promise<LoadedEntry> {
   });
   const [output] = result.outputFiles;
 
-  // The bundle keeps `require('@mikan/react')` external, which is only
+  // The bundle keeps `@mikan/react` external, which is only
   // resolvable from inside this package's own directory tree (Node's
   // self-reference resolution), so the bundle is written there rather than
   // to the OS temp directory.
   const tempRoot = path.join(__dirname, '..', '.tmp');
   fs.mkdirSync(tempRoot, { recursive: true });
   const bundleDirectory = fs.mkdtempSync(path.join(tempRoot, 'entry-'));
-  const bundlePath = path.join(bundleDirectory, 'entry.cjs');
+  const bundlePath = path.join(bundleDirectory, 'entry.mjs');
   fs.writeFileSync(bundlePath, output.text);
   let mod: unknown;
   try {
-    // eslint-disable-next-line global-require, import/no-dynamic-require -- entry path is only known at runtime
-    mod = require(bundlePath);
+    mod = await import(pathToFileURL(bundlePath).href);
   } finally {
     fs.rmSync(bundleDirectory, { recursive: true, force: true });
   }

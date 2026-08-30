@@ -54,3 +54,26 @@ test('console.log in a composition goes to stderr, leaving stdout pure protocol'
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('composition is loaded as ESM with its original import.meta paths', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'mikan-esm-'));
+  const entry = join(dir, 'entry.tsx');
+  writeFileSync(
+    entry,
+    `import { Composition } from '@mikan/react';\n` +
+      `await Promise.resolve();\n` +
+      `if (import.meta.dirname !== ${JSON.stringify(dir)}) throw new Error('unexpected import.meta.dirname');\n` +
+      `if (import.meta.filename !== ${JSON.stringify(entry)}) throw new Error('unexpected import.meta.filename');\n` +
+      `export default function Root() {\n` +
+      `  return <Composition width={320} height={240} fps={30} durationInFrames={10} />;\n` +
+      `}\n`,
+  );
+
+  try {
+    const result = spawnSync(process.execPath, [cli, entry], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.ok(JSON.parse(result.stdout).config);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
