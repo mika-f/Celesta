@@ -170,6 +170,13 @@ Keep these boundaries intact:
   Export work is staged beside the destination, cleaned after failure, and
   atomically published without clobbering an existing file unless explicitly
   requested. The current yuv420p output requires non-zero even dimensions.
+- `ExportOptions.range` (CLI `--from`/`--to` timecodes; editor In/Out markers,
+  keys `i`/`o`/`shift-x`, shown as a band on the scrubber) exports only a
+  composition-time span. It is clamped to the composition and snapped to frame
+  boundaries, and the encoded output starts at its own 00:00 — video renders
+  `start_frame..start_frame+frames`, and the audio graph is shifted earlier by
+  the window start before mixing over the window length (the mixer is
+  unchanged). The whole-composition path is untouched when `range` is `None`.
 - The editor toolbar and Command-Shift-E open a native MP4 destination prompt,
   snapshot the current `Project`, and invoke `mikan-exporter` on a dedicated
   worker. Frame rendering, audio mixing, and muxing progress is visible while

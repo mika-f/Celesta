@@ -1,9 +1,10 @@
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use mikan_exporter::{
-    CompanionProject, ExportOptions, ExportProgress, Exporter, ReactRuntimeOptions,
+    CompanionProject, ExportOptions, ExportProgress, ExportRange, Exporter, ReactRuntimeOptions,
+    parse_timecode,
 };
 use mikan_project::Project;
 
@@ -17,12 +18,14 @@ fn main() -> ExitCode {
     }
 }
 
-const USAGE: &str = "usage: mikan-exporter [--overwrite] <project.mikan.json> <output.mp4>\n       mikan-exporter [--overwrite] --react <entry.tsx> [--project <project.mikan.json>] <output.mp4>";
+const USAGE: &str = "usage: mikan-exporter [--overwrite] [--from <timecode>] [--to <timecode>] <project.mikan.json> <output.mp4>\n       mikan-exporter [--overwrite] [--from <timecode>] [--to <timecode>] --react <entry.tsx> [--project <project.mikan.json>] <output.mp4>\n\ntimecode is HH:MM:SS(.mmm), MM:SS(.mmm) or SS(.mmm); --from/--to select a\nspan of the composition to export (the output starts at its own 00:00).";
 
 fn run() -> Result<(), String> {
     let mut overwrite = false;
     let mut react = false;
     let mut companion_project_path: Option<OsString> = None;
+    let mut from: Option<OsString> = None;
+    let mut to: Option<OsString> = None;
     let mut paths = Vec::<OsString>::new();
     let mut arguments = std::env::args_os().skip(1);
     while let Some(argument) = arguments.next() {
@@ -32,6 +35,10 @@ fn run() -> Result<(), String> {
             react = true;
         } else if argument == "--project" {
             companion_project_path = Some(arguments.next().ok_or(USAGE)?);
+        } else if argument == "--from" {
+            from = Some(arguments.next().ok_or(USAGE)?);
+        } else if argument == "--to" {
+            to = Some(arguments.next().ok_or(USAGE)?);
         } else {
             paths.push(argument);
         }
@@ -42,7 +49,8 @@ fn run() -> Result<(), String> {
     if companion_project_path.is_some() && !react {
         return Err("--project requires --react".into());
     }
-    let exporter = Exporter::new(ExportOptions { overwrite });
+    let range = export_range(from.as_deref(), to.as_deref())?;
+    let exporter = Exporter::new(ExportOptions { overwrite, range });
     let on_progress = |progress: ExportProgress| match progress {
         ExportProgress::Rendering { frame, total } => {
             eprint!("\rrendering frame {frame}/{total}");
@@ -86,6 +94,38 @@ fn run() -> Result<(), String> {
     }
     eprintln!("export complete: {}", output.to_string_lossy());
     Ok(())
+}
+
+/// Builds an [`ExportRange`] from the `--from` / `--to` timecodes. Returns
+/// `None` when neither is given (export the whole composition). `--to` must
+/// be strictly after `--from`.
+fn export_range(from: Option<&OsStr>, to: Option<&OsStr>) -> Result<Option<ExportRange>, String> {
+    let parse = |flag: &str, value: &OsStr| -> Result<mikan_composition::Time, String> {
+        let text = value
+            .to_str()
+            .ok_or_else(|| format!("{flag} timecode is not valid UTF-8"))?;
+        parse_timecode(text).map_err(|error| format!("{flag}: {error}"))
+    };
+
+    let start = from.map(|value| parse("--from", value)).transpose()?;
+    let end = to.map(|value| parse("--to", value)).transpose()?;
+    if start.is_none() && end.is_none() {
+        return Ok(None);
+    }
+
+    if let (Some(start), Some(end)) = (start, end)
+        && end
+            .cmp_exact(start)
+            .map_err(|error| error.to_string())?
+            .is_le()
+    {
+        return Err("--to must be after --from".into());
+    }
+
+    Ok(Some(ExportRange {
+        start: start.unwrap_or(mikan_composition::Time::ZERO),
+        end,
+    }))
 }
 
 /// Resolves the `@mikan/react` runtime shipped alongside this workspace.

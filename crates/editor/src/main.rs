@@ -16,7 +16,7 @@ use gpui::{
     KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ObjectFit,
     PathPromptOptions, Pixels, Point, PromptButton, PromptLevel, RenderImage, SharedString,
     StyledImage, Window, WindowBounds, WindowOptions, actions, div, img, prelude::*, px, relative,
-    rgb, size,
+    rgb, rgba, size,
 };
 use image::{Frame, ImageBuffer, Rgba};
 use mikan_composition::{
@@ -27,7 +27,9 @@ use mikan_editor::{
     AssetSummary, CharacterSummary, ClipKind, ComponentClipSummary, DialogueClipSummary,
     EditorDocument, TimelineClock, TrackSummary,
 };
-use mikan_exporter::{ExportCancellation, ExportError, ExportOptions, ExportProgress, Exporter};
+use mikan_exporter::{
+    ExportCancellation, ExportError, ExportOptions, ExportProgress, ExportRange, Exporter,
+};
 use mikan_gpu_renderer::{GpuRenderOptions, GpuRenderer, PreviewFrame as GpuPreviewFrame};
 use mikan_media::{
     AudioBuffer, AudioDecoder, FfmpegBackend, MediaError, MediaProbe, mix_audio_graph_cancellable,
@@ -63,6 +65,9 @@ actions!(
         SaveProject,
         SaveProjectAs,
         ExportProject,
+        SetExportIn,
+        SetExportOut,
+        ClearExportRange,
         UndoEdit,
         RedoEdit,
         TogglePlayback,
@@ -584,6 +589,7 @@ struct ExportRequest {
     project: Project,
     asset_root: PathBuf,
     output: PathBuf,
+    range: Option<ExportRange>,
     cancellation: ExportCancellation,
 }
 
@@ -609,7 +615,10 @@ impl ExportWorker {
             .name("mikan-export".to_owned())
             .spawn(move || {
                 while let Ok(request) = request_rx.recv() {
-                    let exporter = Exporter::new(ExportOptions { overwrite: true });
+                    let exporter = Exporter::new(ExportOptions {
+                        overwrite: true,
+                        range: request.range,
+                    });
                     let result = exporter.export_project_cancellable(
                         &request.project,
                         &request.asset_root,
@@ -955,6 +964,12 @@ struct EditorView {
     export_cancelling: bool,
     export_error: Option<SharedString>,
     export_message: Option<SharedString>,
+    /// Optional export in/out points, in composition frames. `out` is
+    /// exclusive (one past the last frame to include). Both set and `in < out`
+    /// means "Export…" renders only that span; otherwise the whole
+    /// composition is exported.
+    export_in_frame: Option<i64>,
+    export_out_frame: Option<i64>,
     choosing_export_path: bool,
     gpu_name: SharedString,
     focus_handle: Option<FocusHandle>,
@@ -1060,6 +1075,8 @@ impl EditorView {
             export_cancelling: false,
             export_error: None,
             export_message: None,
+            export_in_frame: None,
+            export_out_frame: None,
             choosing_export_path: false,
             gpu_name,
             focus_handle: None,
@@ -3079,6 +3096,11 @@ impl EditorView {
             project: self.document.project().clone(),
             asset_root: self.document.asset_root().to_owned(),
             output: output.clone(),
+            range: export_range_for(
+                self.export_in_frame,
+                self.export_out_frame,
+                self.frame_rate_value,
+            ),
             cancellation: cancellation.clone(),
         };
         self.export_path = Some(output);
@@ -3093,6 +3115,89 @@ impl EditorView {
             self.export_cancellation = None;
             self.export_error = Some(error.into());
         }
+    }
+
+    /// Marks the current playhead frame as the export in-point, dropping a
+    /// stale out-point that would now sit at or before it.
+    fn set_export_in(&mut self, cx: &mut Context<Self>) {
+        let frame = self.clock.frame();
+        self.export_in_frame = Some(frame);
+        if self.export_out_frame.is_some_and(|out| out <= frame) {
+            self.export_out_frame = None;
+        }
+        self.export_error = None;
+        cx.notify();
+    }
+
+    /// Marks the frame just after the playhead as the export out-point (so the
+    /// current frame is included), dropping a stale in-point.
+    fn set_export_out(&mut self, cx: &mut Context<Self>) {
+        let frame = self.clock.frame().saturating_add(1);
+        self.export_out_frame = Some(frame);
+        if self.export_in_frame.is_some_and(|start| start >= frame) {
+            self.export_in_frame = None;
+        }
+        self.export_error = None;
+        cx.notify();
+    }
+
+    fn clear_export_range(&mut self, cx: &mut Context<Self>) {
+        self.export_in_frame = None;
+        self.export_out_frame = None;
+        cx.notify();
+    }
+
+    /// `in – out` as timecodes for the toolbar, or `None` when neither marker
+    /// is set. An unset side shows as `—`.
+    fn export_range_label(&self) -> Option<SharedString> {
+        if self.export_in_frame.is_none() && self.export_out_frame.is_none() {
+            return None;
+        }
+        let frame_rate = self.frame_rate_value;
+        let marker = |frame: Option<i64>| {
+            frame
+                .and_then(|frame| Time::frames(frame, frame_rate).ok())
+                .map_or_else(|| "—".to_owned(), format_time)
+        };
+        Some(
+            format!(
+                "{} – {}",
+                marker(self.export_in_frame),
+                marker(self.export_out_frame)
+            )
+            .into(),
+        )
+    }
+
+    /// The `[start, end]` fractions (0..1 of the timeline) to highlight for a
+    /// valid export range, or `None` when no full range is set.
+    fn export_range_band(&self) -> Option<(f32, f32)> {
+        export_range_for(
+            self.export_in_frame,
+            self.export_out_frame,
+            self.frame_rate_value,
+        )?;
+        let span = self.clock.end_frame().max(1) as f32;
+        let start = (self.export_in_frame? as f32 / span).clamp(0.0, 1.0);
+        let end = (self.export_out_frame? as f32 / span).clamp(0.0, 1.0);
+        Some((start, end))
+    }
+
+    fn set_export_in_action(&mut self, _: &SetExportIn, _: &mut Window, cx: &mut Context<Self>) {
+        self.set_export_in(cx);
+    }
+
+    fn set_export_out_action(&mut self, _: &SetExportOut, _: &mut Window, cx: &mut Context<Self>) {
+        self.set_export_out(cx);
+    }
+
+    fn clear_export_range_action(
+        &mut self,
+        _: &ClearExportRange,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.clear_export_range(cx);
     }
 
     fn cancel_export_click(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
@@ -5576,6 +5681,62 @@ impl EditorView {
                                 format_time(self.current_time()),
                                 self.duration
                             )))
+                            .child(
+                                div()
+                                    .id("set-export-in")
+                                    .cursor_pointer()
+                                    .rounded_sm()
+                                    .px_2()
+                                    .py_1()
+                                    .bg(rgb(if self.export_in_frame.is_some() {
+                                        0x3d4a33
+                                    } else {
+                                        0x292c34
+                                    }))
+                                    .hover(|style| style.bg(rgb(0x404550)))
+                                    .text_xs()
+                                    .text_color(rgb(0xb8bbc5))
+                                    .child("In")
+                                    .on_click(cx.listener(|this, _, _, cx| this.set_export_in(cx))),
+                            )
+                            .child(
+                                div()
+                                    .id("set-export-out")
+                                    .cursor_pointer()
+                                    .rounded_sm()
+                                    .px_2()
+                                    .py_1()
+                                    .bg(rgb(if self.export_out_frame.is_some() {
+                                        0x3d4a33
+                                    } else {
+                                        0x292c34
+                                    }))
+                                    .hover(|style| style.bg(rgb(0x404550)))
+                                    .text_xs()
+                                    .text_color(rgb(0xb8bbc5))
+                                    .child("Out")
+                                    .on_click(
+                                        cx.listener(|this, _, _, cx| this.set_export_out(cx)),
+                                    ),
+                            )
+                            .when_some(self.export_range_label(), |controls, label| {
+                                controls
+                                    .child(div().text_xs().text_color(rgb(0xffc46b)).child(label))
+                                    .child(
+                                        div()
+                                            .id("clear-export-range")
+                                            .cursor_pointer()
+                                            .rounded_sm()
+                                            .px_1()
+                                            .text_xs()
+                                            .text_color(rgb(0x9aa0ad))
+                                            .hover(|style| style.text_color(rgb(0xffb7b7)))
+                                            .child("✕")
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.clear_export_range(cx)
+                                            })),
+                                    )
+                            })
                             .when(self.selected_clip_id.is_some(), |controls| {
                                 controls.child(
                                     div()
@@ -5631,6 +5792,20 @@ impl EditorView {
                                     .w(relative(progress))
                                     .bg(rgb(0xffa13b)),
                             )
+                            .when_some(self.export_range_band(), |scrubber, (start, end)| {
+                                scrubber.child(
+                                    div()
+                                        .absolute()
+                                        .top(px(4.0))
+                                        .left(relative(start))
+                                        .w(relative((end - start).max(0.0)))
+                                        .h(px(9.0))
+                                        .rounded_sm()
+                                        .bg(rgba(0xffc46b44))
+                                        .border_1()
+                                        .border_color(rgba(0xffc46baa)),
+                                )
+                            })
                             .child(
                                 div()
                                     .absolute()
@@ -5670,6 +5845,9 @@ impl Render for EditorView {
             .on_action(cx.listener(Self::save_project))
             .on_action(cx.listener(Self::save_project_as))
             .on_action(cx.listener(Self::export_project_action))
+            .on_action(cx.listener(Self::set_export_in_action))
+            .on_action(cx.listener(Self::set_export_out_action))
+            .on_action(cx.listener(Self::clear_export_range_action))
             .on_action(cx.listener(Self::undo_edit))
             .on_action(cx.listener(Self::redo_edit))
             .on_action(cx.listener(Self::toggle_playback_action))
@@ -6130,6 +6308,23 @@ fn export_progress_label(progress: ExportProgress) -> String {
     }
 }
 
+/// Turns the editor's in/out frame markers into an [`ExportRange`]. Returns
+/// `None` (export the whole composition) unless both are set with `in < out`.
+fn export_range_for(
+    in_frame: Option<i64>,
+    out_frame: Option<i64>,
+    frame_rate: Rational,
+) -> Option<ExportRange> {
+    let (start, end) = (in_frame?, out_frame?);
+    if start < 0 || end <= start {
+        return None;
+    }
+    Some(ExportRange::new(
+        Time::frames(start, frame_rate).ok()?,
+        Time::frames(end, frame_rate).ok()?,
+    ))
+}
+
 fn export_suggested_name(path: Option<&Path>, project_name: &str) -> String {
     let name = path
         .and_then(Path::file_name)
@@ -6159,6 +6354,9 @@ fn run() -> Result<(), Box<dyn Error>> {
             KeyBinding::new("cmd-s", SaveProject, Some("MikanEditor")),
             KeyBinding::new("cmd-shift-s", SaveProjectAs, Some("MikanEditor")),
             KeyBinding::new("cmd-shift-e", ExportProject, Some("MikanEditor")),
+            KeyBinding::new("i", SetExportIn, Some("MikanEditor")),
+            KeyBinding::new("o", SetExportOut, Some("MikanEditor")),
+            KeyBinding::new("shift-x", ClearExportRange, Some("MikanEditor")),
             KeyBinding::new("cmd-z", UndoEdit, Some("MikanEditor")),
             KeyBinding::new("cmd-shift-z", RedoEdit, Some("MikanEditor")),
             KeyBinding::new("space", TogglePlayback, Some("MikanEditor")),
@@ -6257,7 +6455,7 @@ mod tests {
     use super::{
         AudioCacheKey, CachedAudioDecoder, ClipDrag, ClipDragKind, ClipKind, DiskAudioCache,
         EDITOR_DEMO_PROJECT, ExportEvent, ExportRequest, ExportWorker, MediaAssetInfo,
-        clip_level_envelope, dragged_clip_range, export_suggested_name,
+        clip_level_envelope, dragged_clip_range, export_range_for, export_suggested_name,
         initial_clip_duration_frames, level_at_time, map_clip_waveform, master_volume_from_drag,
         take_latest, track_accepts_asset, track_accepts_clip, waveform_peaks, waveform_segment,
     };
@@ -6295,6 +6493,7 @@ mod tests {
                 project: Project::from_json(EDITOR_DEMO_PROJECT).unwrap(),
                 asset_root: PathBuf::from("examples"),
                 output: output.clone(),
+                range: None,
                 cancellation,
             })
             .unwrap();
@@ -6309,6 +6508,19 @@ mod tests {
             ExportEvent::Progress(progress) => panic!("unexpected export progress: {progress:?}"),
         }
         assert!(!output.exists());
+    }
+
+    #[test]
+    fn export_range_needs_both_markers_ordered() {
+        let rate = Rational::new(30, 1);
+        assert_eq!(export_range_for(None, Some(30), rate), None);
+        assert_eq!(export_range_for(Some(30), None, rate), None);
+        assert_eq!(export_range_for(Some(30), Some(30), rate), None);
+        assert_eq!(export_range_for(Some(30), Some(20), rate), None);
+
+        let range = export_range_for(Some(30), Some(90), rate).unwrap();
+        assert_eq!(range.start, Time::frames(30, rate).unwrap());
+        assert_eq!(range.end, Some(Time::frames(90, rate).unwrap()));
     }
 
     #[test]

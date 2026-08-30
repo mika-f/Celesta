@@ -39,6 +39,122 @@ const AUDIO_SECONDS_TIMESCALE: u32 = 1_000_000;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ExportOptions {
     pub overwrite: bool,
+    /// When set, only this composition-time span is rendered; the encoded
+    /// output starts at its own `t = 0` (both video and the mixed audio are
+    /// shifted so the span's start becomes the file's start). `None` exports
+    /// the whole composition, byte-for-byte as before.
+    pub range: Option<ExportRange>,
+}
+
+/// A composition-time span to export. `start` is inclusive, `end` exclusive;
+/// both are clamped into `[0, composition duration]` and `start` is snapped
+/// down to a frame boundary. `end: None` means "to the end of the
+/// composition".
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExportRange {
+    pub start: Time,
+    pub end: Option<Time>,
+}
+
+impl ExportRange {
+    /// `[start, end]` with an explicit end.
+    pub fn new(start: Time, end: Time) -> Self {
+        Self {
+            start,
+            end: Some(end),
+        }
+    }
+
+    /// `[start, composition end)`.
+    pub fn from(start: Time) -> Self {
+        Self { start, end: None }
+    }
+
+    /// `[0, end)`.
+    pub fn until(end: Time) -> Self {
+        Self {
+            start: Time::ZERO,
+            end: Some(end),
+        }
+    }
+}
+
+/// The frame-snapped result of resolving an [`ExportRange`] against a concrete
+/// composition duration and frame rate.
+#[derive(Clone, Copy, Debug)]
+struct ExportWindow {
+    /// Snapped composition-time start (the amount video/audio are shifted by).
+    start: Time,
+    /// First composition frame index to render.
+    start_frame: i64,
+    /// Number of frames to render.
+    frames: u64,
+    /// `frames` expressed as a `Time` at the composition frame rate — the
+    /// span the audio mixdown covers.
+    duration: Time,
+}
+
+/// Resolves `range` against the composition's full `duration`/`frame_rate`:
+/// clamps both ends into `[0, duration]`, snaps `start` down to a frame
+/// boundary, and clamps the frame count so it never runs past the
+/// composition. An empty span is [`ExportError::EmptyRange`].
+fn resolve_window(
+    range: &ExportRange,
+    duration: Time,
+    frame_rate: Rational,
+) -> Result<ExportWindow, ExportError> {
+    let total_frames = frame_count(duration, frame_rate)?;
+    let clamp = |time: Time| -> Result<Time, ExportError> {
+        if time
+            .cmp_exact(Time::ZERO)
+            .map_err(ExportError::Time)?
+            .is_lt()
+        {
+            return Ok(Time::ZERO);
+        }
+        if time.cmp_exact(duration).map_err(ExportError::Time)?.is_gt() {
+            return Ok(duration);
+        }
+        Ok(time)
+    };
+
+    let start = clamp(range.start)?;
+    let end = clamp(range.end.unwrap_or(duration))?;
+
+    let start_frame = frame_floor(start, frame_rate)?.min(total_frames as i64);
+    let snapped_start = Time::frames(start_frame, frame_rate).map_err(ExportError::Time)?;
+    let span = end.checked_sub(snapped_start).map_err(ExportError::Time)?;
+    if span
+        .cmp_exact(Time::ZERO)
+        .map_err(ExportError::Time)?
+        .is_le()
+    {
+        return Err(ExportError::EmptyRange);
+    }
+    let frames = frame_count(span, frame_rate)?.min(total_frames - start_frame as u64);
+    if frames == 0 {
+        return Err(ExportError::EmptyRange);
+    }
+
+    Ok(ExportWindow {
+        start: snapped_start,
+        start_frame,
+        frames,
+        duration: Time::frames(frames as i64, frame_rate).map_err(ExportError::Time)?,
+    })
+}
+
+/// Clones `graph`, shifting every clip's `range.start` earlier by `offset` so
+/// a mix over `[0, window]` renders the composition span `[offset, offset +
+/// window]`. Clips that began before the window get a negative `range.start`;
+/// the mixer's `local_time = project_time - clip.range.start` then keeps
+/// advancing them from the correct source position.
+fn shifted_audio_graph(graph: &AudioGraph, offset: Time) -> Result<AudioGraph, TimeError> {
+    let mut shifted = graph.clone();
+    for clip in &mut shifted.clips {
+        clip.range.start = clip.range.start.checked_sub(offset)?;
+    }
+    Ok(shifted)
 }
 
 /// Locates the `@mikan/react` Node.js runtime used to evaluate a React entry.
@@ -68,6 +184,10 @@ pub struct CompanionProject<'a> {
 struct ReactVideoRequest<'a> {
     bridge: &'a mut ReactBridge,
     metadata: &'a ReactCompositionMetadata,
+    /// First composition frame to render (0 unless an export range is set).
+    start_frame: u64,
+    /// Number of frames to render (the whole composition unless a range is set).
+    frame_count: u64,
     asset_root: &'a Path,
     project: Option<(&'a Project, &'a Path)>,
     /// Every frame's reported `<Audio>` clips accumulate here (one entry per
@@ -167,10 +287,22 @@ impl Exporter {
         validate_dimensions(project.settings.width, project.settings.height)?;
 
         let duration = project.effective_duration().map_err(ExportError::Time)?;
-        let frame_count = frame_count(duration, project.settings.frame_rate)?;
-        if frame_count == 0 {
+        let full_frame_count = frame_count(duration, project.settings.frame_rate)?;
+        if full_frame_count == 0 {
             return Err(ExportError::EmptyTimeline);
         }
+        // With no range this is the whole composition; the audio mixdown then
+        // keeps covering the exact `effective_duration` (not its frame-snapped
+        // rounding), so that path stays byte-for-byte unchanged.
+        let window = match self.options.range {
+            Some(range) => resolve_window(&range, duration, project.settings.frame_rate)?,
+            None => ExportWindow {
+                start: Time::ZERO,
+                start_frame: 0,
+                frames: full_frame_count,
+                duration,
+            },
+        };
 
         let parent = output_path.parent().unwrap_or_else(|| Path::new("."));
         fs::create_dir_all(parent).map_err(|source| ExportError::Io {
@@ -197,7 +329,7 @@ impl Exporter {
         self.render_video(
             project,
             asset_root,
-            frame_count,
+            window,
             &video_path,
             cancellation,
             &mut progress,
@@ -206,15 +338,26 @@ impl Exporter {
         progress(ExportProgress::MixingAudio);
         let evaluator = Evaluator::new(project).map_err(ExportError::Evaluation)?;
         let graph = evaluator.audio_graph().map_err(ExportError::Evaluation)?;
+        let (graph, audio_duration) = if self.options.range.is_some() {
+            (
+                shifted_audio_graph(&graph, window.start).map_err(ExportError::Time)?,
+                window.duration,
+            )
+        } else {
+            (graph, duration)
+        };
         let mut audio_decoder = FfmpegBackend::new();
-        let audio =
-            mix_audio_graph_cancellable(&graph, asset_root, duration, &mut audio_decoder, || {
-                cancellation.is_cancelled()
-            })
-            .map_err(|error| match error {
-                AudioMixError::Cancelled => ExportError::Cancelled,
-                error => ExportError::Audio(error),
-            })?;
+        let audio = mix_audio_graph_cancellable(
+            &graph,
+            asset_root,
+            audio_duration,
+            &mut audio_decoder,
+            || cancellation.is_cancelled(),
+        )
+        .map_err(|error| match error {
+            AudioMixError::Cancelled => ExportError::Cancelled,
+            error => ExportError::Audio(error),
+        })?;
 
         ensure_not_cancelled(cancellation)?;
         progress(ExportProgress::Muxing);
@@ -384,6 +527,22 @@ impl Exporter {
             return Err(ExportError::EmptyTimeline);
         }
 
+        let (start_frame, frame_count, window_start) = match self.options.range {
+            None => (0, metadata.duration_in_frames, Time::ZERO),
+            Some(range) => {
+                let full = Time::frames(
+                    i64::try_from(metadata.duration_in_frames)
+                        .map_err(|_| ExportError::TimelineTooLong)?,
+                    metadata.frame_rate,
+                )
+                .map_err(ExportError::Time)?;
+                let window = resolve_window(&range, full, metadata.frame_rate)?;
+                let start_frame =
+                    u64::try_from(window.start_frame).map_err(|_| ExportError::TimelineTooLong)?;
+                (start_frame, window.frames, window.start)
+            }
+        };
+
         // Video frames stream into a staged file first; every frame's
         // response reports the `<Audio>` clips its tree declares (see
         // ReactAudioClipDescriptor), which accumulate into the export's
@@ -407,6 +566,8 @@ impl Exporter {
             ReactVideoRequest {
                 bridge: &mut bridge,
                 metadata: &metadata,
+                start_frame,
+                frame_count,
                 asset_root,
                 project: project_refs,
                 audio: &mut react_audio,
@@ -423,11 +584,11 @@ impl Exporter {
         } else {
             progress(ExportProgress::MixingAudio);
             let duration = Time::frames(
-                i64::try_from(metadata.duration_in_frames)
-                    .map_err(|_| ExportError::TimelineTooLong)?,
+                i64::try_from(frame_count).map_err(|_| ExportError::TimelineTooLong)?,
                 metadata.frame_rate,
             )
             .map_err(ExportError::Time)?;
+            let graph = shifted_audio_graph(&graph, window_start).map_err(ExportError::Time)?;
             let mut audio_decoder = FfmpegBackend::new();
             let audio = mix_audio_graph_cancellable(
                 &graph,
@@ -477,11 +638,16 @@ impl Exporter {
         &self,
         project: &Project,
         asset_root: &Path,
-        frame_count: u64,
+        window: ExportWindow,
         output: &Path,
         cancellation: &ExportCancellation,
         progress: &mut impl FnMut(ExportProgress),
     ) -> Result<(), ExportError> {
+        let ExportWindow {
+            start_frame,
+            frames: frame_count,
+            ..
+        } = window;
         let frame_rate = project.settings.frame_rate;
         let mut writer = open_video_writer(
             project.settings.width,
@@ -503,8 +669,10 @@ impl Exporter {
                     frame: frame_index + 1,
                     total: frame_count,
                 });
-                let frame_index =
-                    i64::try_from(frame_index).map_err(|_| ExportError::TimelineTooLong)?;
+                let frame_index = i64::try_from(frame_index)
+                    .ok()
+                    .and_then(|offset: i64| offset.checked_add(start_frame))
+                    .ok_or(ExportError::TimelineTooLong)?;
                 let time = Time::frames(frame_index, frame_rate).map_err(ExportError::Time)?;
                 let scene = evaluator.scene_at(time).map_err(ExportError::Evaluation)?;
                 // `submit` keeps a few frames in flight on the GPU rather
@@ -533,6 +701,8 @@ impl Exporter {
         let ReactVideoRequest {
             bridge,
             metadata,
+            start_frame,
+            frame_count,
             asset_root,
             project,
             audio: react_audio,
@@ -558,12 +728,8 @@ impl Exporter {
             .map_err(ExportError::Evaluation)?
             .unwrap_or_default();
 
-        let mut writer = open_video_writer(
-            metadata.width,
-            metadata.height,
-            metadata.frame_rate,
-            output,
-        )?;
+        let mut writer =
+            open_video_writer(metadata.width, metadata.height, metadata.frame_rate, output)?;
 
         let result = (|| {
             let mut renderer =
@@ -575,17 +741,16 @@ impl Exporter {
             // renderer's single asset_root either way (see
             // absolutize_layers/absolutize_fonts below for how a project's
             // own, differently-rooted assets still resolve).
-            let video_decoder = FfmpegBackend::new()
-            .with_sequential_video(metadata.frame_rate);
+            let video_decoder = FfmpegBackend::new().with_sequential_video(metadata.frame_rate);
             renderer = renderer.with_video_decoder(video_decoder);
-            for frame_index in 0..metadata.duration_in_frames {
+            for offset in 0..frame_count {
                 ensure_not_cancelled(cancellation)?;
                 progress(ExportProgress::Rendering {
-                    frame: frame_index + 1,
-                    total: metadata.duration_in_frames,
+                    frame: offset + 1,
+                    total: frame_count,
                 });
-                let frame_index =
-                    i64::try_from(frame_index).map_err(|_| ExportError::TimelineTooLong)?;
+                let frame_index = i64::try_from(start_frame + offset)
+                    .map_err(|_| ExportError::TimelineTooLong)?;
                 let time =
                     Time::frames(frame_index, metadata.frame_rate).map_err(ExportError::Time)?;
                 let project_frame = project_evaluator
@@ -650,12 +815,13 @@ impl Exporter {
     ) -> Result<(), ExportError> {
         ensure_not_cancelled(cancellation)?;
         let pcm_path = video.with_extension("pcm");
-        let mut pcm = io::BufWriter::new(fs::File::create(&pcm_path).map_err(|source| {
-            ExportError::Io {
-                operation: "create mixed audio sidecar",
-                source,
-            }
-        })?);
+        let mut pcm =
+            io::BufWriter::new(
+                fs::File::create(&pcm_path).map_err(|source| ExportError::Io {
+                    operation: "create mixed audio sidecar",
+                    source,
+                })?,
+            );
         for sample in &audio.samples {
             pcm.write_all(&sample.to_le_bytes())
                 .map_err(|source| ExportError::Io {
@@ -895,7 +1061,8 @@ fn open_video_writer(
     output: &Path,
 ) -> Result<VideoWriter, ExportError> {
     let fps_num = i32::try_from(frame_rate.numerator).map_err(|_| ExportError::TimelineTooLong)?;
-    let fps_den = i32::try_from(frame_rate.denominator).map_err(|_| ExportError::TimelineTooLong)?;
+    let fps_den =
+        i32::try_from(frame_rate.denominator).map_err(|_| ExportError::TimelineTooLong)?;
     VideoWriter::builder(width, height)
         .pixel_format("rgba")
         .fps(fps_num, fps_den)
@@ -955,6 +1122,20 @@ fn validate_dimensions(width: u32, height: u32) -> Result<(), ExportError> {
     Ok(())
 }
 
+/// Largest frame index whose start time is `<= time` (i.e. `time` snapped
+/// down to a frame boundary). Negative times snap to frame 0.
+fn frame_floor(time: Time, frame_rate: Rational) -> Result<i64, ExportError> {
+    if !time.is_valid() {
+        return Err(ExportError::Time(TimeError::ZeroTimescale));
+    }
+    if !frame_rate.is_valid() {
+        return Err(ExportError::Time(TimeError::InvalidFrameRate));
+    }
+    let numerator = i128::from(time.value.max(0)) * i128::from(frame_rate.numerator);
+    let denominator = i128::from(time.timescale) * i128::from(frame_rate.denominator);
+    i64::try_from(numerator / denominator).map_err(|_| ExportError::TimelineTooLong)
+}
+
 fn frame_count(duration: Time, frame_rate: Rational) -> Result<u64, ExportError> {
     if !duration.is_valid() {
         return Err(ExportError::Time(TimeError::ZeroTimescale));
@@ -995,6 +1176,9 @@ pub enum ExportError {
         height: u32,
     },
     EmptyTimeline,
+    /// The requested export range, once clamped to the composition and
+    /// snapped to frames, covers zero frames.
+    EmptyRange,
     Cancelled,
     TimelineTooLong,
 }
@@ -1025,6 +1209,9 @@ impl fmt::Display for ExportError {
                 "H.264 MP4 export requires non-zero even dimensions, got {width}x{height}"
             ),
             Self::EmptyTimeline => formatter.write_str("cannot export an empty timeline"),
+            Self::EmptyRange => {
+                formatter.write_str("the requested export range does not cover any frames")
+            }
             Self::Cancelled => formatter.write_str("export was cancelled"),
             Self::TimelineTooLong => formatter.write_str("export timeline is too long"),
         }
@@ -1046,11 +1233,98 @@ impl Error for ExportError {
             | Self::UnsupportedOutput(_)
             | Self::UnsupportedDimensions { .. }
             | Self::EmptyTimeline
+            | Self::EmptyRange
             | Self::Cancelled
             | Self::TimelineTooLong => None,
         }
     }
 }
+
+/// Parses a `HH:MM:SS(.mmm)` / `MM:SS(.mmm)` / `SS(.mmm)` timecode into an
+/// exact [`Time`] (millisecond timescale). Every component must be a
+/// non-negative integer; the fractional part is at most three digits.
+pub fn parse_timecode(input: &str) -> Result<Time, TimecodeError> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Err(TimecodeError::Empty);
+    }
+    let malformed = || TimecodeError::Malformed(trimmed.to_owned());
+
+    let components: Vec<&str> = trimmed.split(':').collect();
+    if components.len() > 3 {
+        return Err(malformed());
+    }
+    let (seconds_component, leading) = components.split_last().expect("split is never empty");
+
+    let (whole_seconds, millis) = match seconds_component.split_once('.') {
+        Some((whole, fraction)) => {
+            if fraction.is_empty() || fraction.len() > 3 || !is_ascii_digits(fraction) {
+                return Err(malformed());
+            }
+            let mut padded = fraction.to_owned();
+            while padded.len() < 3 {
+                padded.push('0');
+            }
+            (whole, padded.parse::<i64>().map_err(|_| malformed())?)
+        }
+        None => (*seconds_component, 0),
+    };
+
+    let mut total_ms = parse_component(whole_seconds, &malformed)?
+        .checked_mul(1_000)
+        .and_then(|value| value.checked_add(millis))
+        .ok_or_else(|| TimecodeError::Overflow(trimmed.to_owned()))?;
+
+    let mut unit_ms: i64 = 60_000;
+    for component in leading.iter().rev() {
+        let value = parse_component(component, &malformed)?;
+        total_ms = value
+            .checked_mul(unit_ms)
+            .and_then(|scaled| total_ms.checked_add(scaled))
+            .ok_or_else(|| TimecodeError::Overflow(trimmed.to_owned()))?;
+        unit_ms = unit_ms
+            .checked_mul(60)
+            .ok_or_else(|| TimecodeError::Overflow(trimmed.to_owned()))?;
+    }
+
+    Ok(Time::new(total_ms, 1_000))
+}
+
+fn is_ascii_digits(text: &str) -> bool {
+    !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+fn parse_component(
+    text: &str,
+    malformed: &impl Fn() -> TimecodeError,
+) -> Result<i64, TimecodeError> {
+    if !is_ascii_digits(text) {
+        return Err(malformed());
+    }
+    text.parse::<i64>().map_err(|_| malformed())
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TimecodeError {
+    Empty,
+    Malformed(String),
+    Overflow(String),
+}
+
+impl fmt::Display for TimecodeError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => formatter.write_str("timecode is empty"),
+            Self::Malformed(input) => write!(
+                formatter,
+                "'{input}' is not a HH:MM:SS(.mmm), MM:SS(.mmm) or SS(.mmm) timecode"
+            ),
+            Self::Overflow(input) => write!(formatter, "timecode '{input}' is out of range"),
+        }
+    }
+}
+
+impl Error for TimecodeError {}
 
 #[cfg(test)]
 mod tests {
@@ -1134,6 +1408,85 @@ mod tests {
             Path::new("/entry/root/./voice.wav"),
             "relative sources resolve against the entry's own directory"
         );
+    }
+
+    #[test]
+    fn parses_timecodes_of_every_length() {
+        assert_eq!(parse_timecode("5").unwrap(), Time::new(5_000, 1_000));
+        assert_eq!(parse_timecode("1.5").unwrap(), Time::new(1_500, 1_000));
+        assert_eq!(parse_timecode("0:02").unwrap(), Time::new(2_000, 1_000));
+        assert_eq!(parse_timecode("01:30").unwrap(), Time::new(90_000, 1_000));
+        assert_eq!(
+            parse_timecode("01:02:03.250").unwrap(),
+            Time::new(3_723_250, 1_000)
+        );
+        assert_eq!(
+            parse_timecode(" 00:00:01 ").unwrap(),
+            Time::new(1_000, 1_000)
+        );
+        assert_eq!(parse_timecode(""), Err(TimecodeError::Empty));
+        assert!(matches!(
+            parse_timecode("1:2:3:4"),
+            Err(TimecodeError::Malformed(_))
+        ));
+        assert!(matches!(
+            parse_timecode("-5"),
+            Err(TimecodeError::Malformed(_))
+        ));
+        assert!(matches!(
+            parse_timecode("00:00:01.2500"),
+            Err(TimecodeError::Malformed(_))
+        ));
+    }
+
+    #[test]
+    fn resolve_window_clamps_and_snaps_to_frames() {
+        let rate = Rational::new(30, 1);
+        let duration = Time::new(10, 1);
+
+        // A mid-composition span, start snapped down to the frame boundary.
+        let window = resolve_window(
+            &ExportRange::new(Time::new(1001, 1000), Time::new(3, 1)),
+            duration,
+            rate,
+        )
+        .unwrap();
+        assert_eq!(window.start_frame, 30);
+        assert_eq!(window.start, Time::frames(30, rate).unwrap());
+        assert_eq!(window.frames, 60);
+
+        // `end` past the composition is clamped; `None` means "to the end".
+        let full_tail =
+            resolve_window(&ExportRange::from(Time::new(9, 1)), duration, rate).unwrap();
+        assert_eq!(full_tail.start_frame, 270);
+        assert_eq!(full_tail.frames, 30);
+
+        // A zero-length span is rejected.
+        assert!(matches!(
+            resolve_window(
+                &ExportRange::new(Time::new(5, 1), Time::new(5, 1)),
+                duration,
+                rate
+            ),
+            Err(ExportError::EmptyRange)
+        ));
+    }
+
+    #[test]
+    fn shifted_audio_graph_moves_clip_starts_earlier() {
+        let graph = build_audio_graph(
+            &[static_clip("./a.wav", 5.0, 2.0, 1.0)],
+            Path::new("/root"),
+            None,
+        )
+        .unwrap();
+        let shifted = shifted_audio_graph(&graph, Time::new(3, 1)).unwrap();
+        assert_eq!(shifted.clips[0].range.start.as_seconds().unwrap(), 2.0);
+
+        // A clip that began before the window gets a negative start so the
+        // mixer keeps advancing it from the right source position.
+        let before = shifted_audio_graph(&graph, Time::new(7, 1)).unwrap();
+        assert_eq!(before.clips[0].range.start.as_seconds().unwrap(), -2.0);
     }
 
     #[test]
