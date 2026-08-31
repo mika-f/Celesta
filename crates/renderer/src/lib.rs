@@ -153,9 +153,13 @@ pub struct TextRasterizer {
 
 impl TextRasterizer {
     pub fn new() -> Self {
-        let mut font_system = FontSystem::new();
+        let font_system = FontSystem::new();
         #[cfg(target_os = "windows")]
-        load_directwrite_system_fonts(&mut font_system);
+        let font_system = {
+            let mut font_system = font_system;
+            load_directwrite_system_fonts(&mut font_system);
+            font_system
+        };
 
         Self {
             font_system,
