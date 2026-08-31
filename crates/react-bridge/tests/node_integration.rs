@@ -68,6 +68,37 @@ fn prepare_can_preload_media_metadata_when_node_is_available() {
 }
 
 #[test]
+fn debug_guides_only_render_during_component_preview_when_node_is_available() {
+    let Some((node, cli_script, package_root)) = live_react_runtime() else {
+        return;
+    };
+
+    let entry = package_root.join("examples/with-debug.tsx");
+    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    assert!(bridge.scene_at(Time::new(5, 30)).unwrap().layers.is_empty());
+
+    let props = BTreeMap::new();
+    let resolved = bridge
+        .resolve_components(
+            &[ComponentResolutionRequest {
+                component: "DebugCard",
+                props: &props,
+            }],
+            Time::new(5, 30),
+        )
+        .unwrap();
+    let layers = all_layers(resolved[0].as_deref().unwrap());
+    assert!(layers.iter().any(|layer| matches!(
+        &layer.content,
+        LayerContent::Text { text, .. } if text == "frame 5 · 640×360"
+    )));
+    assert!(layers.iter().any(|layer| matches!(
+        &layer.content,
+        LayerContent::Text { text, .. } if text == "card"
+    )));
+}
+
+#[test]
 fn evaluates_a_psd_character_with_one_selected_mouth_layer_when_node_is_available() {
     let Some((node, cli_script, package_root)) = live_react_runtime() else {
         return;

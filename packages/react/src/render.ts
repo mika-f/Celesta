@@ -65,6 +65,7 @@ const PLACEHOLDER_RUNTIME = {
   height: PLACEHOLDER_CONFIG.height,
   fps: PLACEHOLDER_CONFIG.frameRate.numerator,
   durationInFrames: PLACEHOLDER_CONFIG.durationInFrames,
+  preview: false,
 };
 
 export type EntryComponent = (props: Record<string, unknown>) => React.ReactNode;
@@ -613,6 +614,7 @@ export function mount(defaultExport: EntryComponent): MountedComposition {
       height: config.height,
       fps: config.frameRate.numerator,
       durationInFrames: config.durationInFrames,
+      preview: false,
     };
     const element = React.createElement(
       ProjectLayersContext.Provider,
@@ -692,6 +694,8 @@ export interface ResolutionRuntime {
   fps: number;
   durationInFrames: number;
   time: Time;
+  /** Absent from older bridges, which means export/non-preview mode. */
+  preview?: boolean;
 }
 
 /** One resolution outcome: the component's layers, or null when its name has no registerComponent() match. */
@@ -740,7 +744,7 @@ export function createResolver(): Resolver {
 
   return {
     resolve(items, runtime) {
-      const runtimeValue = runtime ?? PLACEHOLDER_RUNTIME;
+      const runtimeValue = runtime ? { ...runtime, preview: runtime.preview === true } : PLACEHOLDER_RUNTIME;
       const element = React.createElement(
         ProjectLayersContext.Provider,
         { value: [] },

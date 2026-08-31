@@ -11,6 +11,7 @@ export interface VideoConfig {
 
 export interface CompositionRuntimeContextValue extends VideoConfig {
   time: Time;
+  preview: boolean;
 }
 
 // Populated by render.ts around the entry's default export on every frame
@@ -40,4 +41,9 @@ export function useCurrentTime(): Time {
 export function useCurrentFrame(): number {
   const { time, fps } = useRuntimeContext('useCurrentFrame');
   return Math.round((time.value / time.timescale) * fps);
+}
+
+/** True only while the GPUI editor resolves a component for its preview. */
+export function useIsPreview(): boolean {
+  return useRuntimeContext('useIsPreview').preview;
 }

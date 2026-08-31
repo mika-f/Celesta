@@ -311,6 +311,7 @@ impl ReactBridge {
                     / f64::from(self.metadata.frame_rate.denominator),
                 duration_in_frames: self.metadata.duration_in_frames,
                 time,
+                preview: true,
             }),
             components: Some(
                 requests
@@ -372,6 +373,7 @@ struct ResolutionRuntime {
     fps: f64,
     duration_in_frames: u64,
     time: Time,
+    preview: bool,
 }
 
 #[derive(Serialize)]

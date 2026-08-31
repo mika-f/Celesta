@@ -59,7 +59,7 @@ export type {
   Time,
 } from './scene';
 
-export { useCurrentFrame, useCurrentTime, useVideoConfig } from './hooks';
+export { useCurrentFrame, useCurrentTime, useIsPreview, useVideoConfig } from './hooks';
 export type { VideoConfig } from './hooks';
 
 export { timecodeToFrame } from './time';
@@ -87,6 +87,9 @@ export type {
 
 export { mediaDurationInFrames, preloadMedia } from './media';
 export type { MediaAudioInfo, MediaInfo, MediaVideoInfo } from './media';
+
+export { DebugBounds, DebugOverlay } from './debug';
+export type { DebugBoundsProps, DebugOverlayProps } from './debug';
 
 export {
   ProjectProvider,
