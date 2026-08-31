@@ -19,6 +19,8 @@ import { listComponentSchemas } from './registry';
 import type { ComponentPropertySchema } from './registry';
 import { listProjectProperties } from './properties';
 import type { ProjectPropertyField } from './properties';
+import { setMediaProbe } from './media';
+import type { ProbedMediaInfo } from './media';
 import type { CompositionConfig, Scene, Time } from './scene';
 
 // stdout is the JSON request/response channel the Rust bridge
@@ -42,6 +44,11 @@ interface ResolveRequest {
 
 type Request = FrameRequest | ResolveRequest;
 
+interface ProbeMediaResponse {
+  media?: ProbedMediaInfo;
+  error?: string;
+}
+
 function isResolveRequest(request: Request): request is ResolveRequest {
   return Array.isArray((request as ResolveRequest).components);
 }
@@ -59,6 +66,18 @@ async function main(): Promise<void> {
   // resolve relative paths against this, matching how the Rust renderer
   // resolves a relative `<Audio>`/`<Image>` src against the entry directory.
   process.env.MIKAN_REACT_ENTRY_DIR = path.dirname(entryPath);
+
+  const input = readline.createInterface({ input: process.stdin, terminal: false });
+  const lines = input[Symbol.asyncIterator]();
+  let probeQueue = Promise.resolve();
+  setMediaProbe((mediaPath) => {
+    const result = probeQueue.then(() => requestMediaProbe(lines, mediaPath));
+    probeQueue = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  });
 
   let defaultExport: EntryComponent;
   let prepare: (() => Promise<void>) | undefined;
@@ -104,8 +123,12 @@ async function main(): Promise<void> {
 
   let resolver: Resolver | null = null;
 
-  const rl = readline.createInterface({ input: process.stdin, terminal: false });
-  for await (const line of rl) {
+  while (true) {
+    const next = await lines.next();
+    if (next.done) {
+      break;
+    }
+    const line = next.value;
     const trimmed = line.trim();
     if (trimmed.length === 0) {
       continue;
@@ -131,6 +154,30 @@ async function main(): Promise<void> {
   }
 }
 
+async function requestMediaProbe(
+  lines: AsyncIterator<string>,
+  path: string,
+): Promise<ProbedMediaInfo> {
+  writeLine({ probeMedia: { path } });
+  const next = await lines.next();
+  if (next.done) {
+    throw new Error('Mikan closed the media probe channel unexpectedly');
+  }
+  let response: ProbeMediaResponse;
+  try {
+    response = JSON.parse(next.value) as ProbeMediaResponse;
+  } catch (error) {
+    throw new Error(`invalid media probe response: ${describeError(error)}`);
+  }
+  if (response.error) {
+    throw new Error(response.error);
+  }
+  if (!response.media) {
+    throw new Error('Mikan returned an empty media probe response');
+  }
+  return response.media;
+}
+
 function writeLine(
   value:
     | {
@@ -140,6 +187,7 @@ function writeLine(
       }
     | { scene: Scene; audio: AudioClipDescriptor[] }
     | { components: ComponentResolution[] }
+    | { probeMedia: { path: string } }
     | { error: string },
 ): void {
   process.stdout.write(`${JSON.stringify(value)}\n`);

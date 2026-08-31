@@ -85,6 +85,9 @@ export type {
   StackProps,
 } from './layout';
 
+export { mediaDurationInFrames, preloadMedia } from './media';
+export type { MediaAudioInfo, MediaInfo, MediaVideoInfo } from './media';
+
 export {
   ProjectProvider,
   ProjectTimeline,

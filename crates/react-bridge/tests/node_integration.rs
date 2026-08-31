@@ -51,6 +51,23 @@ fn evaluates_the_example_composition_when_node_is_available() {
 }
 
 #[test]
+fn prepare_can_preload_media_metadata_when_node_is_available() {
+    let Some((node, cli_script, package_root)) = live_react_runtime() else {
+        return;
+    };
+
+    let entry = package_root.join("examples/with-media-info.tsx");
+    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    assert!(bridge.metadata().duration_in_frames > 30);
+
+    let scene = bridge.scene_at(Time::ZERO).unwrap();
+    assert!(scene.layers.iter().any(|layer| matches!(
+        &layer.content,
+        LayerContent::Text { text, .. } if text.starts_with("voice: ") && text.ends_with(" Hz")
+    )));
+}
+
+#[test]
 fn evaluates_a_psd_character_with_one_selected_mouth_layer_when_node_is_available() {
     let Some((node, cli_script, package_root)) = live_react_runtime() else {
         return;

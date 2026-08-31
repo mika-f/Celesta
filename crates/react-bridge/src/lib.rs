@@ -14,6 +14,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 use mikan_composition::{Animatable, Layer, Rational, Scene, Time};
+use mikan_media::{AudioStream, FfmpegBackend, MediaProbe, VideoStream};
 use serde::{Deserialize, Serialize};
 
 /// A companion project's layers for one exact frame, evaluated up front by
@@ -175,32 +176,58 @@ impl ReactBridge {
                 executable: node.to_owned(),
                 source,
             })?;
-        let stdin = child.stdin.take().ok_or(ReactBridgeError::MissingPipe)?;
+        let mut stdin = child.stdin.take().ok_or(ReactBridgeError::MissingPipe)?;
         let stdout = child.stdout.take().ok_or(ReactBridgeError::MissingPipe)?;
         let mut stdout = BufReader::new(stdout);
 
-        let mut line = String::new();
-        let read = stdout.read_line(&mut line).map_err(ReactBridgeError::Io)?;
-        if read == 0 {
-            let _ = child.wait();
-            return Err(ReactBridgeError::UnexpectedExit);
-        }
-        let ready: ReadyMessage =
-            serde_json::from_str(line.trim()).map_err(ReactBridgeError::Protocol)?;
-        let metadata = match ready {
-            ReadyMessage::Ready {
-                config,
-                component_schemas,
-                project_property_schema,
-            } => ReactCompositionMetadata {
-                width: config.width,
-                height: config.height,
-                frame_rate: config.frame_rate,
-                duration_in_frames: config.duration_in_frames,
-                component_schemas,
-                project_property_schema,
-            },
-            ReadyMessage::Error { error } => return Err(ReactBridgeError::EntryFailed(error)),
+        let mut media = FfmpegBackend::new();
+        let metadata = loop {
+            let mut line = String::new();
+            let read = stdout.read_line(&mut line).map_err(ReactBridgeError::Io)?;
+            if read == 0 {
+                let _ = child.wait();
+                return Err(ReactBridgeError::UnexpectedExit);
+            }
+            let message: ReadyMessage =
+                serde_json::from_str(line.trim()).map_err(ReactBridgeError::Protocol)?;
+            match message {
+                ReadyMessage::Ready {
+                    config,
+                    component_schemas,
+                    project_property_schema,
+                } => {
+                    break ReactCompositionMetadata {
+                        width: config.width,
+                        height: config.height,
+                        frame_rate: config.frame_rate,
+                        duration_in_frames: config.duration_in_frames,
+                        component_schemas,
+                        project_property_schema,
+                    };
+                }
+                ReadyMessage::ProbeMedia { probe_media } => {
+                    let response = match media.probe(&probe_media.path) {
+                        Ok(probe) => MediaProbeResponse {
+                            media: Some(media_probe_payload(probe)),
+                            error: None,
+                        },
+                        Err(error) => MediaProbeResponse {
+                            media: None,
+                            error: Some(format!(
+                                "could not probe {}: {error}",
+                                probe_media.path.display()
+                            )),
+                        },
+                    };
+                    let payload =
+                        serde_json::to_string(&response).map_err(ReactBridgeError::Protocol)?;
+                    writeln!(stdin, "{payload}").map_err(ReactBridgeError::Io)?;
+                    stdin.flush().map_err(ReactBridgeError::Io)?;
+                }
+                ReadyMessage::Error { error } => {
+                    return Err(ReactBridgeError::EntryFailed(error));
+                }
+            }
         };
 
         Ok(Self {
@@ -388,9 +415,93 @@ enum ReadyMessage {
         #[serde(default, rename = "propertySchema")]
         project_property_schema: Option<BTreeMap<String, ComponentPropertyField>>,
     },
+    ProbeMedia {
+        #[serde(rename = "probeMedia")]
+        probe_media: MediaProbeRequest,
+    },
     Error {
         error: String,
     },
+}
+
+#[derive(Deserialize)]
+struct MediaProbeRequest {
+    path: PathBuf,
+}
+
+#[derive(Serialize)]
+struct MediaProbeResponse<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    media: Option<MediaProbePayload<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MediaProbePayload<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    duration_seconds: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    video: Option<VideoProbePayload<'a>>,
+    audio: Vec<AudioProbePayload<'a>>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VideoProbePayload<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    codec: Option<&'a str>,
+    width: u32,
+    height: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    frame_rate: Option<Rational>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    duration_seconds: Option<f64>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AudioProbePayload<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    codec: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sample_rate: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    channels: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    duration_seconds: Option<f64>,
+}
+
+fn media_probe_payload(probe: &MediaProbe) -> MediaProbePayload<'_> {
+    MediaProbePayload {
+        duration_seconds: seconds(probe.duration),
+        video: probe.video.as_ref().map(video_probe_payload),
+        audio: probe.audio.iter().map(audio_probe_payload).collect(),
+    }
+}
+
+fn video_probe_payload(video: &VideoStream) -> VideoProbePayload<'_> {
+    VideoProbePayload {
+        codec: video.codec.as_deref(),
+        width: video.width,
+        height: video.height,
+        frame_rate: video.frame_rate,
+        duration_seconds: seconds(video.duration),
+    }
+}
+
+fn audio_probe_payload(audio: &AudioStream) -> AudioProbePayload<'_> {
+    AudioProbePayload {
+        codec: audio.codec.as_deref(),
+        sample_rate: audio.sample_rate,
+        channels: audio.channels,
+        duration_seconds: seconds(audio.duration),
+    }
+}
+
+fn seconds(time: Option<Time>) -> Option<f64> {
+    time.and_then(|time| time.as_seconds().ok())
 }
 
 #[derive(Deserialize)]

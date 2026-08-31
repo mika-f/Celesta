@@ -3233,6 +3233,7 @@ name = "mikan-react-bridge"
 version = "0.0.0"
 dependencies = [
  "mikan-composition",
+ "mikan-media",
  "serde",
  "serde_json",
 ]
