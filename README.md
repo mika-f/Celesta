@@ -60,7 +60,15 @@ The repository currently contains the first foundation:
   frame number into an animated value — `spring()` is a damped harmonic
   oscillator's analytic step response, not a physics simulation stepped
   frame by frame, so it evaluates any single frame directly rather than
-  needing the frames before it. A loaded
+  needing the frames before it. `<Transition type="fade|slide|scale">`
+  packages those primitives into small entrance/exit effects. `SafeArea`,
+  `Center`, `Stack`, `Grid`, and `Fit` provide coordinate-based layout without
+  adding a browser/CSS dependency. An entry's async `prepare()` can call
+  `preloadMedia()` to obtain cached video/audio metadata through the same
+  Rust/FFmpeg library probe used elsewhere in Mikan; no `ffprobe` executable
+  is required. `DebugOverlay` and `DebugBounds` draw guides only while the
+  GPUI editor resolves a component preview and are omitted from exported
+  scenes. A loaded
   `.mikan.json` project can also be read into a React entry: `loadProject()`
   plus `<ProjectProvider>`/`useProject()` expose it as plain data,
   `useProjectProperty(key, defaultValue)` reads its editor-set

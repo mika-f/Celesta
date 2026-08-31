@@ -1,6 +1,6 @@
 # Mikan implementation handoff
 
-Last updated: 2026-08-29 (React PSD portrait presets + automatic lip sync)
+Last updated: 2026-08-31 (React transitions, layout, media preload, and debug guides)
 
 ## Goal
 
@@ -1545,12 +1545,46 @@ licensed VOICEROID voice sample.
 - `packages/react/examples/homepage-demo.tsx`: the Remotion-homepage-style
   four-card demo composition described above; not tied to a Rust test, run
   manually via `mikan-exporter --react`.
+- `packages/react/examples/with-media-info.tsx`: calls `preloadMedia()` from
+  `prepare()`, derives the composition duration with
+  `mediaDurationInFrames()`, and displays the probed audio sample rate.
+- `packages/react/examples/with-debug.tsx`: registers a `DebugCard` component
+  using `DebugOverlay` and `DebugBounds`; the guides appear in editor
+  component resolution but are absent from normal composition evaluation.
+
+### React workflow helpers (2026-08-31)
+
+- `Transition` wraps children in the existing `Group` transform and derives a
+  clamped fade, slide, or scale entrance/exit from `useCurrentFrame()`. It
+  follows an enclosing `Sequence`'s local clock and duration; no renderer
+  primitive or dependency was added.
+- `SafeArea` provides reduced layout bounds through React context. Nested
+  `Center` and `Fit` consume those bounds, while `Stack` and `Grid` place child
+  origins at explicit spacing/cell sizes. This stays deterministic because it
+  does not attempt DOM-style child measurement.
+- `preloadMedia(src)` is intended for an entry's async `prepare()`. The Node
+  CLI sends startup probe requests over the existing bridge pipe, and
+  `mikan-react-bridge` answers with `mikan-media::FfmpegBackend::probe`
+  metadata. Results are cached per absolute path in the entry process and
+  include duration, video dimensions/frame rate, and audio stream facts.
+  `mediaDurationInFrames()` rounds a known duration up to the requested
+  composition frame rate. This path continues to use linked FFmpeg libraries,
+  not `ffprobe` or an npm media parser.
+- Component-resolution requests now mark `CompositionRuntimeContext` as a
+  preview runtime. `useIsPreview()` exposes that fact; `DebugOverlay` draws
+  canvas safe-area/center/frame guides and `DebugBounds` adds bounds, local
+  origin, and an optional label. Both omit guide layers from normal React
+  evaluation/export. Live Node integration coverage checks both the preview
+  guides and their export omission.
 
 ## Validation baseline
 
-At this handoff, the workspace has 126 passing tests (125 from the previous
-handoff, plus a `mikan-renderer` color-emoji rasterization test). Before
-that, 125 (124 from the handoff before that, plus a `mikan-gpu-renderer`
+At this handoff, the Rust workspace has 150 passing tests and
+`packages/react` has 15 passing Node tests. This slice adds live bridge tests
+for media metadata preload and preview-only debug guides. The earlier baseline
+had 126 workspace tests (125 from the previous handoff, plus a
+`mikan-renderer` color-emoji rasterization test). Before that, 125 (124 from
+the handoff before that, plus a `mikan-gpu-renderer`
 test for `submit`/`drain` pipelining order/correctness). Before that, 124
 (122 from the handoff before that, plus a `mikan-renderer` `Rect`
 rasterization test and a `mikan-react-bridge` `<Rect>` evaluation
@@ -1569,6 +1603,7 @@ cargo fmt --all -- --check
 git diff --check
 cargo test -p mikan-project -p mikan-composition --features codegen
 cargo clippy -p mikan-composition -p mikan-project --all-targets --features codegen -- -D warnings
+cd packages/react && pnpm run codegen && pnpm run build && pnpm test
 ```
 
 The `codegen`-feature checks add no new test count (the ts-rs-generated
@@ -1622,6 +1657,13 @@ There are future-incompatibility warnings in transitive dependencies
 `block 0.1.6` and `proc-macro-error2 2.0.1`; these are not current Mikan lint or
 test failures.
 
+With the rustfmt installed in this 2026-08-31 macOS environment, the full
+`cargo fmt --all -- --check` reports formatting-only differences in pre-existing
+`crates/composition/src/animation.rs`, media integration/build files, and
+`crates/renderer/build.rs`. Those files were clean at task start and were not
+reformatted. Every Rust file changed by this slice passes an individual
+`rustfmt --edition 2024 --check`; workspace tests and `clippy -D warnings` pass.
+
 The frame-based mutation model and its boundaries are unit-tested. Native
 window startup is verified, but automated pointer-drag testing is not yet
 available because the current environment lacks macOS Accessibility permission
@@ -1643,8 +1685,9 @@ inline in the Inspector. Characters can also be safely removed with reference
 confirmation and undo. Selected images can now be registered as additional
 portrait expressions and chosen per Dialogue clip. Fine-grained
 portrait/subtitle styling is the next VOICEROID-specific editor gap; caption
-file/transcript import and transitions remain later workflow gaps compared with
-Remotion's broader ecosystem.
+file/transcript import remains a later workflow gap compared with Remotion's
+broader ecosystem. Small React fade/slide/scale transitions are now available;
+cross-composition transition orchestration remains deliberately out of scope.
 
 The user has shared a more ambitious design (see git history / conversation
 for the full text) where a React entry does not just describe an independent
