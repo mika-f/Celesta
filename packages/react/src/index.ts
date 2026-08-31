@@ -67,6 +67,14 @@ export { timecodeToFrame } from './time';
 export { Easings, interpolate, spring } from './animation';
 export type { Extrapolate, InterpolateOptions, SpringConfig, SpringOptions } from './animation';
 
+export { Transition } from './transition';
+export type {
+  SlideFrom,
+  TransitionDirection,
+  TransitionProps,
+  TransitionType,
+} from './transition';
+
 export {
   ProjectProvider,
   ProjectTimeline,
