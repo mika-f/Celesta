@@ -14,3 +14,19 @@ export function secondsToTime(seconds: number): Time {
 export function secondsFromTime(time: Time): number {
   return time.value / time.timescale;
 }
+
+/** Converts a `HH:MM:SS(.mmm)`, `MM:SS(.mmm)`, or `SS(.mmm)` timecode to a frame. */
+export function timecodeToFrame(timecode: string, fps: number): number {
+  const trimmed = timecode.trim();
+  if (!/^\d+(?::\d+){0,2}(?:\.\d{1,3})?$/.test(trimmed)) {
+    throw new Error(`Invalid timecode: ${timecode}`);
+  }
+  if (!Number.isFinite(fps) || fps <= 0) {
+    throw new Error('timecodeToFrame() requires a positive fps');
+  }
+
+  const seconds = trimmed
+    .split(':')
+    .reduce((total, component) => total * 60 + Number(component), 0);
+  return Math.round(seconds * fps);
+}
