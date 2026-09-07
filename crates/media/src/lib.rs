@@ -97,6 +97,11 @@ pub struct FfmpegBackend {
     sequential_video_processes_started: u64,
 }
 
+/// How far ahead of the last served frame a request may be while still being
+/// answered by walking the open decode run forward. Beyond this a fresh
+/// container seek is cheaper than decoding every frame in between.
+const MAX_FORWARD_WALK_SECONDS: f64 = 0.5;
+
 /// One long-lived `ez-ffmpeg` decode run held open across a monotonic
 /// sequence of frame requests. Frames are pulled from `frames` at the
 /// source's native cadence; each request walks the iterator forward to the
@@ -207,12 +212,17 @@ impl FfmpegBackend {
                     .clone()
                     .ok_or_else(|| MediaError::NoVideoStream(path.to_owned()));
             }
-            // Forward progress within this session's cadence: keep pulling
-            // from the open decode run instead of re-seeking.
-            let next = session
-                .last_timestamp
-                .map(|last| last + session.step_seconds);
-            if next.is_some_and(|next| timestamps_match(next, source_time_seconds)) {
+            // Forward progress the open run can reach by decoding a short way:
+            // keep pulling from it instead of re-seeking. The window is wider
+            // than one step because only a batch export asks for an exact +1
+            // cadence — an editor preview drops frames to stay with the
+            // playhead, so it asks for +2, +3, … steps, and re-seeking those
+            // would spawn a fresh decode run for nearly every frame.
+            if session.last_timestamp.is_some_and(|last| {
+                source_time_seconds > last
+                    && source_time_seconds - last
+                        <= MAX_FORWARD_WALK_SECONDS.max(session.step_seconds)
+            }) {
                 return session.read_frame(source_time_seconds);
             }
         }
@@ -944,8 +954,7 @@ mod tests {
         // Sequential sessions freeze the same way while playback walks past
         // the end, and repeated tail requests keep returning identical
         // pixels.
-        let mut sequential =
-            FfmpegBackend::new().with_sequential_video(Rational::new(10, 1));
+        let mut sequential = FfmpegBackend::new().with_sequential_video(Rational::new(10, 1));
         let mut previous = sequential.decode_frame_for("clip", &clip, 0.0).unwrap();
         for step in 1..40 {
             previous = sequential

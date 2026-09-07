@@ -1152,6 +1152,13 @@ struct EditorView {
     react_reload_generation: u64,
     preview_worker: PreviewWorker,
     preview_generation: u64,
+    /// Generation of the newest preview frame actually shown. Results are
+    /// accepted while their generation only moves forward, so a slow render
+    /// (a React entry's Node round-trip easily outruns one frame interval)
+    /// keeps the preview tracking the playhead a render behind instead of
+    /// freezing until every queued frame drains — which looked like a long
+    /// delay before playback caught up.
+    preview_shown_generation: u64,
     preview_pending: bool,
     media_probe_worker: MediaProbeWorker,
     media_generation: u64,
@@ -1278,9 +1285,15 @@ impl EditorView {
         let assets = document.assets();
         let tracks = document.tracks();
 
+        // Without `with_sequential_video` every previewed frame opens its own
+        // FFmpeg decode run and seeks from the nearest keyframe, which costs
+        // far more than everything else the preview does put together (~150ms
+        // vs ~2ms of React evaluation on a 1080p source). Sharing one decode
+        // run across the playhead's forward progress is what makes playback
+        // track in real time; a backwards seek or a long jump still re-seeks.
         let renderer = GpuRenderer::new(GpuRenderOptions::default())?
             .with_asset_root(document.asset_root())
-            .with_video_decoder(FfmpegBackend::new());
+            .with_video_decoder(FfmpegBackend::new().with_sequential_video(frame_rate_value));
         let gpu_name = renderer.adapter_info().name.clone().into();
         let preview_worker = PreviewWorker::spawn(renderer)?;
         let media_probe_worker = MediaProbeWorker::spawn()?;
@@ -1295,6 +1308,7 @@ impl EditorView {
             react_reload_generation: 0,
             preview_worker,
             preview_generation: 0,
+            preview_shown_generation: 0,
             preview_pending: false,
             media_probe_worker,
             media_generation: 0,
@@ -1629,10 +1643,18 @@ impl EditorView {
         loop {
             match self.preview_worker.results.try_recv() {
                 Ok(result) => {
-                    if result.generation != self.preview_generation {
+                    // Accept every result whose generation moves forward, not
+                    // just the newest request's: while a render is slower than
+                    // the frame interval the newest request is always still in
+                    // flight, and requiring an exact match would drop every
+                    // frame until playback stopped.
+                    if result.generation <= self.preview_shown_generation {
                         continue;
                     }
-                    self.preview_pending = false;
+                    self.preview_shown_generation = result.generation;
+                    if result.generation == self.preview_generation {
+                        self.preview_pending = false;
+                    }
                     match result.frame {
                         Ok(preview) => {
                             self.preview = Some(preview);

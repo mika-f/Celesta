@@ -1051,7 +1051,11 @@ fn create_pipeline(
 struct DecodedImage {
     width: u32,
     height: u32,
-    pixels: Arc<[u8]>,
+    /// `Arc<Vec<u8>>` rather than `Arc<[u8]>`: the latter cannot take ownership
+    /// of an existing `Vec` and copies it instead, which costs a full 8MB
+    /// memcpy for every 1080p video frame the preview decodes — several
+    /// milliseconds per frame for nothing, since the buffer is already owned.
+    pixels: Arc<Vec<u8>>,
 }
 
 impl DecodedImage {
@@ -1072,7 +1076,7 @@ impl DecodedImage {
         Ok(Self {
             width,
             height,
-            pixels: pixels.into(),
+            pixels: Arc::new(pixels),
         })
     }
 }

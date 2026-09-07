@@ -34,8 +34,10 @@ fn fixture_dir(label: &str) -> std::path::PathBuf {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    let directory =
-        std::env::temp_dir().join(format!("mikan-media-{label}-{}-{suffix}", std::process::id()));
+    let directory = std::env::temp_dir().join(format!(
+        "mikan-media-{label}-{}-{suffix}",
+        std::process::id()
+    ));
     std::fs::create_dir(&directory).unwrap();
     directory
 }
@@ -96,8 +98,7 @@ fn sequential_video_decode_reuses_one_process_and_matches_exact_time_decode() {
     assert_eq!(repeated, exact.decode_frame(&video_path, 0.75).unwrap());
     assert_eq!(sequential.sequential_video_processes_started(), 1);
 
-    let mut offset_sequence =
-        FfmpegBackend::new().with_sequential_video(Rational::new(4, 1));
+    let mut offset_sequence = FfmpegBackend::new().with_sequential_video(Rational::new(4, 1));
     for timestamp in [0.25, 0.5, 0.75] {
         assert_eq!(
             offset_sequence
@@ -108,9 +109,12 @@ fn sequential_video_decode_reuses_one_process_and_matches_exact_time_decode() {
     }
     assert_eq!(offset_sequence.sequential_video_processes_started(), 1);
 
-    let mut double_speed =
-        FfmpegBackend::new().with_sequential_video(Rational::new(4, 1));
-    for timestamp in [0.0, 0.5, 1.0] {
+    // A preview that drops frames to keep up with the playhead asks for more
+    // than one step at a time. As long as the request stays inside the forward
+    // walk window the open run answers it, so the irregular cadence does not
+    // cost a decode run per frame.
+    let mut double_speed = FfmpegBackend::new().with_sequential_video(Rational::new(4, 1));
+    for timestamp in [0.0, 0.5, 0.75, 1.25] {
         assert_eq!(
             double_speed
                 .decode_frame_for("fast-layer", &video_path, timestamp)
@@ -118,7 +122,31 @@ fn sequential_video_decode_reuses_one_process_and_matches_exact_time_decode() {
             exact.decode_frame(&video_path, timestamp).unwrap()
         );
     }
-    assert_eq!(double_speed.sequential_video_processes_started(), 2);
+    assert_eq!(double_speed.sequential_video_processes_started(), 1);
+
+    // Past the walk window, seeking beats decoding everything in between.
+    let mut long_jump = FfmpegBackend::new().with_sequential_video(Rational::new(4, 1));
+    for timestamp in [0.0, 1.25] {
+        assert_eq!(
+            long_jump
+                .decode_frame_for("jump-layer", &video_path, timestamp)
+                .unwrap(),
+            exact.decode_frame(&video_path, timestamp).unwrap()
+        );
+    }
+    assert_eq!(long_jump.sequential_video_processes_started(), 2);
+
+    // An open run can only move forward, so scrubbing back always re-seeks.
+    let mut backwards = FfmpegBackend::new().with_sequential_video(Rational::new(4, 1));
+    for timestamp in [0.75, 0.25] {
+        assert_eq!(
+            backwards
+                .decode_frame_for("back-layer", &video_path, timestamp)
+                .unwrap(),
+            exact.decode_frame(&video_path, timestamp).unwrap()
+        );
+    }
+    assert_eq!(backwards.sequential_video_processes_started(), 2);
 
     std::fs::remove_dir_all(directory).unwrap();
 }
