@@ -16,7 +16,7 @@ use gpui_kit::{
     KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ObjectFit,
     PathPromptOptions, Pixels, Point, PromptButton, PromptLevel, RenderImage, SharedString,
     Stateful, StyledImage, TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div, img,
-    prelude::*, px, relative, rgb, rgba, size,
+    prelude::*, px, relative, rgb, size,
 };
 use image::{Frame, ImageBuffer, Rgba};
 use mikan_composition::{
@@ -48,7 +48,9 @@ mod theme;
 use audio_cache::DiskAudioCache;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::{ActiveTheme as _, Disableable as _, Root, Sizable as _};
+use gpui_kit::component::{
+    ActiveTheme as _, Disableable as _, Root, Selectable as _, Sizable as _,
+};
 
 const EDITOR_DEMO_PROJECT: &str = include_str!("../../../examples/editor-demo.mikan.json");
 
@@ -5765,6 +5767,17 @@ impl EditorView {
         let total_duration = self.document.duration().as_seconds().unwrap_or(0.0);
         let current_time = self.current_time();
         let track_count = self.tracks.len();
+        let t = cx.theme();
+        let row_border = t.border;
+        let row_selected_bg = t.list_active;
+        let drop_ok_bg = t.success.opacity(0.16);
+        let drop_ok_border = t.success;
+        let drop_bad_bg = t.danger.opacity(0.16);
+        let drop_bad_border = t.danger;
+        let clip_label = theme::waveform();
+        let header_text = t.foreground;
+        let muted_text = t.muted_foreground;
+        let meter_track_bg = t.background;
         let rows = self.tracks.iter().enumerate().map(|(track_index, track)| {
             let selected_track = self.selected_track_id.as_deref() == Some(track.id.as_str());
             let clip_drag_hover =
@@ -5782,19 +5795,8 @@ impl EditorView {
                 .fold(0.0_f32, f32::max)
                 .sqrt()
                 .clamp(0.0, 1.0);
-            let meter_color = if track_level >= 0.9 {
-                0xe05d5d
-            } else if track_level >= 0.7 {
-                0xe4b34c
-            } else {
-                0x70d99a
-            };
-            let color = match track.kind {
-                TrackKind::Video => 0x4b7bec,
-                TrackKind::Audio => 0x26a269,
-                TrackKind::Overlay => 0x9b59b6,
-                TrackKind::Dialogue => 0xe58e26,
-            };
+            let meter_color = theme::meter(track_level);
+            let color = theme::clip_fill(track.kind);
             let clips = track.clips.iter().map(|clip| {
                 let start = if total_duration > 0.0 {
                     (clip.start.as_seconds().unwrap_or(0.0) / total_duration).clamp(0.0, 1.0) as f32
@@ -5840,11 +5842,13 @@ impl EditorView {
                     .rounded_sm()
                     .bg(rgb(color))
                     .cursor_pointer()
-                    .when(selected, |clip| clip.border_2().border_color(rgb(0xffd29d)))
+                    .when(selected, |clip| {
+                        clip.border_2().border_color(theme::clip_selected_border())
+                    })
                     .when(!clip.enabled, |clip| clip.opacity(0.4))
                     .px_2()
                     .text_xs()
-                    .text_color(rgb(0xffffff))
+                    .text_color(clip_label)
                     .when(!waveform.is_empty(), |clip| {
                         clip.child(
                             div()
@@ -5861,7 +5865,7 @@ impl EditorView {
                                         .flex_1()
                                         .min_w(px(1.0))
                                         .h(relative(amplitude.clamp(0.04, 1.0)))
-                                        .bg(rgb(0xffffff))
+                                        .bg(clip_label)
                                 })),
                         )
                     })
@@ -5884,7 +5888,7 @@ impl EditorView {
                                         .bottom(px(4.0))
                                         .w(px(3.0))
                                         .rounded_full()
-                                        .bg(rgb(0xffffff)),
+                                        .bg(clip_label),
                                 )
                                 .on_mouse_down(
                                     MouseButton::Left,
@@ -5917,7 +5921,7 @@ impl EditorView {
                                         .bottom(px(4.0))
                                         .w(px(3.0))
                                         .rounded_full()
-                                        .bg(rgb(0xffffff)),
+                                        .bg(clip_label),
                                 )
                                 .on_mouse_down(
                                     MouseButton::Left,
@@ -5978,11 +5982,11 @@ impl EditorView {
                 .h(px(38.0))
                 .w_full()
                 .border_b_1()
-                .border_color(rgb(0x292c34))
-                .when(selected_track, |row| row.bg(rgb(0x252a34)))
-                .when(clip_drag_target, |row| row.bg(rgb(0x294636)))
+                .border_color(row_border)
+                .when(selected_track, |row| row.bg(row_selected_bg))
+                .when(clip_drag_target, |row| row.bg(drop_ok_bg))
                 .when(clip_drag_hover && !clip_drag_target, |row| {
-                    row.bg(rgb(0x4b3032))
+                    row.bg(drop_bad_bg)
                 })
                 .on_mouse_move(cx.listener(move |this, event, _, cx| {
                     this.update_clip_drag_target(&hover_track_id, event, cx);
@@ -6007,7 +6011,7 @@ impl EditorView {
                         .w(px(230.0))
                         .px_3()
                         .text_sm()
-                        .text_color(rgb(0xc8cad2))
+                        .text_color(header_text)
                         .child(div().flex_1().overflow_hidden().child(track_name))
                         .when(track.kind != TrackKind::Overlay, |header| {
                             header.child(
@@ -6018,89 +6022,57 @@ impl EditorView {
                                     .h(px(6.0))
                                     .rounded_full()
                                     .overflow_hidden()
-                                    .bg(rgb(0x15171c))
+                                    .bg(meter_track_bg)
                                     .child(
                                         div()
                                             .h_full()
                                             .w(relative(track_level))
                                             .rounded_full()
-                                            .bg(rgb(meter_color)),
+                                            .bg(meter_color),
                                     ),
                             )
                         })
                         .child(
-                            div()
-                                .id(up_element_id)
-                                .flex_none()
-                                .cursor_pointer()
-                                .px_1()
-                                .text_xs()
-                                .text_color(rgb(if track_index > 0 && !track.locked {
-                                    0xc8cad2
-                                } else {
-                                    0x555964
-                                }))
-                                .child("↑")
-                                .when(track_index > 0 && !track.locked, |button| {
-                                    button.on_click(cx.listener(move |this, _, _, cx| {
-                                        cx.stop_propagation();
-                                        this.move_track(&move_up_track_id, -1, cx);
-                                    }))
-                                }),
+                            Button::new(up_element_id)
+                                .xsmall()
+                                .ghost()
+                                .label("↑")
+                                .disabled(track_index == 0 || track.locked)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    this.move_track(&move_up_track_id, -1, cx);
+                                })),
                         )
                         .child(
-                            div()
-                                .id(down_element_id)
-                                .flex_none()
-                                .cursor_pointer()
-                                .px_1()
-                                .text_xs()
-                                .text_color(rgb(
-                                    if track_index + 1 < track_count && !track.locked {
-                                        0xc8cad2
-                                    } else {
-                                        0x555964
-                                    },
-                                ))
-                                .child("↓")
-                                .when(track_index + 1 < track_count && !track.locked, |button| {
-                                    button.on_click(cx.listener(move |this, _, _, cx| {
-                                        cx.stop_propagation();
-                                        this.move_track(&move_down_track_id, 1, cx);
-                                    }))
-                                }),
+                            Button::new(down_element_id)
+                                .xsmall()
+                                .ghost()
+                                .label("↓")
+                                .disabled(track_index + 1 >= track_count || track.locked)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    this.move_track(&move_down_track_id, 1, cx);
+                                })),
                         )
                         .when(track.kind != TrackKind::Overlay, |header| {
                             header
                                 .child(
-                                    div()
-                                        .id(mute_element_id)
-                                        .flex_none()
-                                        .cursor_pointer()
-                                        .rounded_sm()
-                                        .px_2()
-                                        .py_1()
-                                        .text_xs()
-                                        .bg(rgb(if track.muted { 0xb84c4c } else { 0x292c34 }))
-                                        .hover(|style| style.bg(rgb(0x555b68)))
-                                        .child("M")
+                                    Button::new(mute_element_id)
+                                        .xsmall()
+                                        .ghost()
+                                        .label("M")
+                                        .selected(track.muted)
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             cx.stop_propagation();
                                             this.toggle_track_mute(&mute_track_id, cx);
                                         })),
                                 )
                                 .child(
-                                    div()
-                                        .id(solo_element_id)
-                                        .flex_none()
-                                        .cursor_pointer()
-                                        .rounded_sm()
-                                        .px_2()
-                                        .py_1()
-                                        .text_xs()
-                                        .bg(rgb(if track.solo { 0xb28a2e } else { 0x292c34 }))
-                                        .hover(|style| style.bg(rgb(0x555b68)))
-                                        .child("S")
+                                    Button::new(solo_element_id)
+                                        .xsmall()
+                                        .ghost()
+                                        .label("S")
+                                        .selected(track.solo)
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             cx.stop_propagation();
                                             this.toggle_track_solo(&solo_track_id, cx);
@@ -6116,21 +6088,15 @@ impl EditorView {
                         .mr_2()
                         .overflow_hidden()
                         .drag_over::<AssetDrag>(move |style, asset, _, _| {
-                            if drop_track_locked {
-                                style
-                                    .bg(rgb(0x552b30))
-                                    .border_1()
-                                    .border_color(rgb(0xff747f))
-                            } else if track_accepts_asset(drop_track_kind, asset.kind) {
-                                style
-                                    .bg(rgb(0x294636))
-                                    .border_1()
-                                    .border_color(rgb(0x70d99a))
+                            if !drop_track_locked
+                                && track_accepts_asset(drop_track_kind, asset.kind)
+                            {
+                                style.bg(drop_ok_bg).border_1().border_color(drop_ok_border)
                             } else {
                                 style
-                                    .bg(rgb(0x4b3032))
+                                    .bg(drop_bad_bg)
                                     .border_1()
-                                    .border_color(rgb(0xe27980))
+                                    .border_color(drop_bad_border)
                             }
                         })
                         .on_drop(cx.listener(move |this, asset: &AssetDrag, window, cx| {
@@ -6156,12 +6122,12 @@ impl EditorView {
                         .items_center()
                         .justify_center()
                         .text_sm()
-                        .text_color(rgb(0x737783))
-                        .drag_over::<AssetDrag>(|style, asset, _, _| {
+                        .text_color(muted_text)
+                        .drag_over::<AssetDrag>(move |style, asset, _, _| {
                             if asset.kind == AssetKind::Font {
-                                style.bg(rgb(0x4b3032))
+                                style.bg(drop_bad_bg)
                             } else {
-                                style.bg(rgb(0x294636))
+                                style.bg(drop_ok_bg)
                             }
                         })
                         .on_drop(cx.listener(|this, asset: &AssetDrag, window, cx| {
@@ -6178,9 +6144,9 @@ impl EditorView {
             .flex_none()
             .h(px(230.0))
             .w_full()
-            .bg(rgb(0x181a20))
+            .bg(cx.theme().secondary)
             .border_t_1()
-            .border_color(rgb(0x30333d))
+            .border_color(cx.theme().border)
             .on_mouse_move(cx.listener(Self::continue_clip_drag))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::end_clip_drag))
             .child(
@@ -6195,8 +6161,14 @@ impl EditorView {
                         div()
                             .flex()
                             .items_center()
-                            .gap_2()
-                            .child(div().text_sm().text_color(rgb(0xd8dae2)).child("Timeline"))
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .mr_1()
+                                    .text_color(header_text)
+                                    .child("Timeline"),
+                            )
                             .children(
                                 [
                                     (TrackKind::Video, "+ Video", "add-video-track"),
@@ -6207,17 +6179,10 @@ impl EditorView {
                                 .into_iter()
                                 .map(
                                     |(kind, label, element_id)| {
-                                        div()
-                                            .id(element_id)
-                                            .cursor_pointer()
-                                            .rounded_sm()
-                                            .px_2()
-                                            .py_1()
-                                            .bg(rgb(0x292c34))
-                                            .hover(|style| style.bg(rgb(0x404550)))
-                                            .text_xs()
-                                            .text_color(rgb(0xb8bbc5))
-                                            .child(label)
+                                        Button::new(element_id)
+                                            .xsmall()
+                                            .ghost()
+                                            .label(label)
                                             .on_click(cx.listener(move |this, _, _, cx| {
                                                 this.add_track(kind, cx);
                                             }))
@@ -6229,63 +6194,38 @@ impl EditorView {
                         div()
                             .flex()
                             .items_center()
-                            .gap_3()
-                            .child(div().text_xs().text_color(rgb(0x737783)).child(format!(
+                            .gap_2()
+                            .child(div().text_xs().text_color(muted_text).child(format!(
                                 "{} / {}",
                                 format_time(self.current_time()),
                                 self.duration
                             )))
                             .child(
-                                div()
-                                    .id("set-export-in")
-                                    .cursor_pointer()
-                                    .rounded_sm()
-                                    .px_2()
-                                    .py_1()
-                                    .bg(rgb(if self.export_in_frame.is_some() {
-                                        0x3d4a33
-                                    } else {
-                                        0x292c34
-                                    }))
-                                    .hover(|style| style.bg(rgb(0x404550)))
-                                    .text_xs()
-                                    .text_color(rgb(0xb8bbc5))
-                                    .child("In")
+                                Button::new("set-export-in")
+                                    .xsmall()
+                                    .ghost()
+                                    .label("In")
+                                    .selected(self.export_in_frame.is_some())
                                     .on_click(cx.listener(|this, _, _, cx| this.set_export_in(cx))),
                             )
                             .child(
-                                div()
-                                    .id("set-export-out")
-                                    .cursor_pointer()
-                                    .rounded_sm()
-                                    .px_2()
-                                    .py_1()
-                                    .bg(rgb(if self.export_out_frame.is_some() {
-                                        0x3d4a33
-                                    } else {
-                                        0x292c34
-                                    }))
-                                    .hover(|style| style.bg(rgb(0x404550)))
-                                    .text_xs()
-                                    .text_color(rgb(0xb8bbc5))
-                                    .child("Out")
+                                Button::new("set-export-out")
+                                    .xsmall()
+                                    .ghost()
+                                    .label("Out")
+                                    .selected(self.export_out_frame.is_some())
                                     .on_click(
                                         cx.listener(|this, _, _, cx| this.set_export_out(cx)),
                                     ),
                             )
                             .when_some(self.export_range_label(), |controls, label| {
                                 controls
-                                    .child(div().text_xs().text_color(rgb(0xffc46b)).child(label))
+                                    .child(div().text_xs().text_color(theme::accent()).child(label))
                                     .child(
-                                        div()
-                                            .id("clear-export-range")
-                                            .cursor_pointer()
-                                            .rounded_sm()
-                                            .px_1()
-                                            .text_xs()
-                                            .text_color(rgb(0x9aa0ad))
-                                            .hover(|style| style.text_color(rgb(0xffb7b7)))
-                                            .child("✕")
+                                        Button::new("clear-export-range")
+                                            .xsmall()
+                                            .ghost()
+                                            .label("✕")
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 this.clear_export_range(cx)
                                             })),
@@ -6293,17 +6233,10 @@ impl EditorView {
                             })
                             .when(self.selected_clip_id.is_some(), |controls| {
                                 controls.child(
-                                    div()
-                                        .id("delete-selected-clip")
-                                        .cursor_pointer()
-                                        .rounded_sm()
-                                        .px_2()
-                                        .py_1()
-                                        .bg(rgb(0x4a292c))
-                                        .hover(|style| style.bg(rgb(0x6b363b)))
-                                        .text_xs()
-                                        .text_color(rgb(0xffb7b7))
-                                        .child("Delete")
+                                    Button::new("delete-selected-clip")
+                                        .xsmall()
+                                        .danger()
+                                        .label("Delete")
                                         .on_click(cx.listener(Self::delete_selected_clip_click)),
                                 )
                             }),
@@ -6335,7 +6268,7 @@ impl EditorView {
                                     .left(px(0.0))
                                     .w_full()
                                     .h(px(3.0))
-                                    .bg(rgb(0x30333d)),
+                                    .bg(row_border),
                             )
                             .child(
                                 div()
@@ -6344,7 +6277,7 @@ impl EditorView {
                                     .left(px(0.0))
                                     .h(px(3.0))
                                     .w(relative(progress))
-                                    .bg(rgb(0xffa13b)),
+                                    .bg(theme::accent()),
                             )
                             .when_some(self.export_range_band(), |scrubber, (start, end)| {
                                 scrubber.child(
@@ -6355,9 +6288,9 @@ impl EditorView {
                                         .w(relative((end - start).max(0.0)))
                                         .h(px(9.0))
                                         .rounded_sm()
-                                        .bg(rgba(0xffc46b44))
+                                        .bg(theme::export_range_fill())
                                         .border_1()
-                                        .border_color(rgba(0xffc46baa)),
+                                        .border_color(theme::export_range_border()),
                                 )
                             })
                             .child(
@@ -6368,7 +6301,7 @@ impl EditorView {
                                     .ml(px(-5.0))
                                     .size(px(11.0))
                                     .rounded_full()
-                                    .bg(rgb(0xffa13b)),
+                                    .bg(theme::accent()),
                             ),
                     ),
             )
@@ -6418,7 +6351,7 @@ impl Render for EditorView {
             .flex_col()
             .size_full()
             .overflow_hidden()
-            .bg(rgb(0x14161b))
+            .bg(cx.theme().background)
             .font_family(".SystemUIFont")
             .child(self.toolbar(cx))
             .child(if self.is_react_preview() {
