@@ -951,6 +951,9 @@ enum PropertyEditTarget {
 struct PropertyEdit {
     target: PropertyEditTarget,
     key: String,
+    /// The field is a `Number`, so the committed text is parsed as `f64`
+    /// rather than stored verbatim as a string.
+    numeric: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -2704,12 +2707,14 @@ impl EditorView {
         target: &PropertyEditTarget,
         key: &str,
         current: &str,
+        numeric: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.editing_property = Some(PropertyEdit {
             target: target.clone(),
             key: key.to_owned(),
+            numeric,
         });
         self.edit_error = None;
         if let Some(input) = &self.property_input {
@@ -2734,12 +2739,26 @@ impl EditorView {
             return;
         };
         self.editing_property = None;
-        self.apply_property(
-            &edit.target,
-            &edit.key,
-            serde_json::Value::String(text.to_string()),
-            cx,
-        );
+        let value = if edit.numeric {
+            match text.trim().parse::<f64>() {
+                Ok(number) => match serde_json::Number::from_f64(number) {
+                    Some(number) => serde_json::Value::Number(number),
+                    None => {
+                        self.edit_error = Some("number is out of range".into());
+                        cx.notify();
+                        return;
+                    }
+                },
+                Err(_) => {
+                    self.edit_error = Some(format!("`{text}` is not a number").into());
+                    cx.notify();
+                    return;
+                }
+            }
+        } else {
+            serde_json::Value::String(text.to_string())
+        };
+        self.apply_property(&edit.target, &edit.key, value, cx);
     }
 
     fn cancel_property_edit(&mut self, cx: &mut Context<Self>) {
@@ -5646,63 +5665,83 @@ impl EditorView {
                         let value = current
                             .and_then(serde_json::Value::as_f64)
                             .unwrap_or(*default_value);
-                        let step = step.unwrap_or(1.0);
-                        let (min, max) = (*min, *max);
-                        let down_target = target.clone();
-                        let down_key = key.to_owned();
-                        let up_target = target.clone();
-                        let up_key = key.to_owned();
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                inspector_dynamic_button(
-                                    SharedString::from(format!("{field_id}-down")),
-                                    "−",
-                                    cx,
+                        if editing {
+                            self.property_edit_input(&field_id, cx).into_any_element()
+                        } else {
+                            let step = step.unwrap_or(1.0);
+                            let (min, max) = (*min, *max);
+                            let down_target = target.clone();
+                            let down_key = key.to_owned();
+                            let up_target = target.clone();
+                            let up_key = key.to_owned();
+                            let edit_target = target.clone();
+                            let edit_key = key.to_owned();
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .child(
+                                    inspector_dynamic_button(
+                                        SharedString::from(format!("{field_id}-down")),
+                                        "−",
+                                        cx,
+                                    )
+                                    .on_click(cx.listener(
+                                        move |this, _, _, cx| {
+                                            this.step_property_number(
+                                                &down_target,
+                                                &down_key,
+                                                value,
+                                                -step,
+                                                (min, max),
+                                                cx,
+                                            );
+                                        },
+                                    )),
                                 )
-                                .on_click(cx.listener(
-                                    move |this, _, _, cx| {
-                                        this.step_property_number(
-                                            &down_target,
-                                            &down_key,
-                                            value,
-                                            -step,
-                                            (min, max),
-                                            cx,
-                                        );
-                                    },
-                                )),
-                            )
-                            .child(
-                                div()
+                                .child(
+                                    inspector_dynamic_button(
+                                        SharedString::from(format!("{field_id}-value")),
+                                        format_component_number(value),
+                                        cx,
+                                    )
                                     .w(px(64.0))
+                                    .flex_none()
                                     .text_center()
-                                    .text_sm()
-                                    .text_color(cx.theme().foreground)
-                                    .child(format_component_number(value)),
-                            )
-                            .child(
-                                inspector_dynamic_button(
-                                    SharedString::from(format!("{field_id}-up")),
-                                    "+",
-                                    cx,
+                                    .on_click(cx.listener(
+                                        move |this, _, window, cx| {
+                                            this.begin_property_edit(
+                                                &edit_target,
+                                                &edit_key,
+                                                &format_component_number(value),
+                                                true,
+                                                window,
+                                                cx,
+                                            );
+                                        },
+                                    )),
                                 )
-                                .on_click(cx.listener(
-                                    move |this, _, _, cx| {
-                                        this.step_property_number(
-                                            &up_target,
-                                            &up_key,
-                                            value,
-                                            step,
-                                            (min, max),
-                                            cx,
-                                        );
-                                    },
-                                )),
-                            )
-                            .into_any_element()
+                                .child(
+                                    inspector_dynamic_button(
+                                        SharedString::from(format!("{field_id}-up")),
+                                        "+",
+                                        cx,
+                                    )
+                                    .on_click(cx.listener(
+                                        move |this, _, _, cx| {
+                                            this.step_property_number(
+                                                &up_target,
+                                                &up_key,
+                                                value,
+                                                step,
+                                                (min, max),
+                                                cx,
+                                            );
+                                        },
+                                    )),
+                                )
+                                .into_any_element()
+                        }
                     }
                     ComponentPropertyField::Select {
                         default_value,
@@ -5743,20 +5782,7 @@ impl EditorView {
                             .and_then(serde_json::Value::as_str)
                             .map_or_else(|| default_value.clone(), str::to_owned);
                         if editing {
-                            div()
-                                .id(SharedString::from(format!("{field_id}-input")))
-                                .px_2()
-                                .py_1()
-                                .rounded_sm()
-                                .border_1()
-                                .border_color(theme::accent())
-                                .bg(cx.theme().background)
-                                .text_sm()
-                                .text_color(cx.theme().foreground)
-                                .when_some(self.property_input.clone(), |field, input| {
-                                    field.child(Input::new(&input))
-                                })
-                                .into_any_element()
+                            self.property_edit_input(&field_id, cx).into_any_element()
                         } else {
                             let target = target.clone();
                             let key = key.to_owned();
@@ -5767,6 +5793,7 @@ impl EditorView {
                                         &target,
                                         &key,
                                         &value_for_edit,
+                                        false,
                                         window,
                                         cx,
                                     );
@@ -5776,6 +5803,28 @@ impl EditorView {
                     }
                 }),
         )
+    }
+
+    /// The bordered wrapper around the shared `property_input` shown while a
+    /// String / Color / Number field is being edited inline.
+    fn property_edit_input(
+        &self,
+        field_id: &SharedString,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id(SharedString::from(format!("{field_id}-input")))
+            .px_2()
+            .py_1()
+            .rounded(cx.theme().radius)
+            .border_1()
+            .border_color(theme::accent())
+            .bg(cx.theme().background)
+            .text_sm()
+            .text_color(cx.theme().foreground)
+            .when_some(self.property_input.clone(), |field, input| {
+                field.child(Input::new(&input))
+            })
     }
 
     fn reload_react_click(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
