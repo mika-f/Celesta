@@ -7,7 +7,11 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-gpui = { version = "0.2.2", default-features = false, features = ["font-kit", "runtime_shaders"] }
+# `default-features = false` drops gpui's default `windows-manifest`, so it must be
+# re-listed: it embeds the app manifest that pulls in Common-Controls v6, without which
+# gpui's `TaskDialogIndirect` import fails to bind against the system comctl32 v5.82 and
+# the editor exits at startup with STATUS_ENTRYPOINT_NOT_FOUND (0xc0000139).
+gpui = { version = "0.2.2", default-features = false, features = ["font-kit", "runtime_shaders", "windows-manifest"] }
 image = { version = "0.25.8", default-features = false }
 mikan-composition = { path = "../composition" }
 mikan-evaluator = { path = "../evaluator" }
