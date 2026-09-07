@@ -1,338 +1,160 @@
-# Mikan
+# Frameweave
 
-Mikan is a code-first video editor designed around a shared project and
-composition model. The GUI editor owns project data, while React code may read
-that data and add compositions. Preview and export will ultimately use the same
-Rust renderer.
+Frameweave is a desktop video editor that combines timeline editing with
+React-based compositions. Arrange video, images, text, and audio visually, or
+use React to create animated titles and reusable components. Preview your work
+in the editor and export it as an MP4.
 
-The repository currently contains the first foundation:
+Frameweave is under active development. The instructions below run it from
+source. Existing package names, commands, and the `.mikan.json` project file
+extension still use `mikan` for compatibility.
 
-- `mikan-composition`: exact rational time and shared visual primitives.
-- `mikan-editor`: the first GPUI editor shell with project loading, an asset
-  browser, frame-accurate playback controls, GPU-rendered preview, inspector,
-  and timeline overview. A project can point at a `.tsx` React entry
-  (`react_entry` in `project.json`, set/cleared from the Inspector); the
-  editor spawns the `@mikan/react` Node.js runtime just to read that entry's
-  `registerComponent()` schemas, then renders editable Inspector fields
-  (string/number/boolean/color/select) for a selected `TimelineContent::Component`
-  clip's props.
-- `mikan-project`: the version 0 project format, JSON loading, semantic
-  validation, and timeline duration calculation.
-- `mikan-evaluator`: deterministic conversion from a project to a scene at a
-  given time and to the complete audio graph.
-- `mikan-exporter`: frame-exact H.264/AAC MP4 export using the shared evaluator,
-  GPU renderer, audio graph, and the linked FFmpeg libraries (`ez-ffmpeg`).
-- `mikan-media`: metadata probing, FFmpeg-library-backed exact-time RGBA video
-  decoding (a clip whose playback outruns its source freezes on the last
-  frame rather than failing), and project-rate stereo audio decoding/mixing
-  behind replaceable decoder traits.
-- `mikan-renderer`: a deterministic CPU reference renderer, PNG encoder, and
-  shared text rasterizer used to lock down composition behavior.
-- `mikan-gpu-renderer`: the `wgpu` production-renderer foundation with
-  offscreen image/video/text composition, nested transforms, opacity, painter
-  ordering, and RGBA readback.
-- `mikan-react-bridge`: spawns the `@mikan/react` Node.js runtime as one
-  long-lived process per composition and requests the evaluated `Scene`
-  (plus that frame's `<Audio>` clips) for each exact frame time over a JSON
-  stdin/stdout pipe, or resolves individual registered components for the
-  editor preview.
-- `packages/react` (`@mikan/react`, TypeScript, managed with pnpm): declarative
-  `Composition`, `Sequence`, `Group`, `Image`, `Text`, `Video`, and `Audio`
-  components for authoring a React entry, evaluated through a real
-  `react-reconciler` host, plus the `mikan-react-render` CLI that bundles an
-  entry with esbuild and evaluates it on request. `<Sequence from={frames}
-  durationInFrames={frames}>` shifts its children onto an enclosing
-  timeline's clock (origins add and audible windows intersect when nested),
-  so `<Video>`/`<Audio>` inside play synced to their sequence rather than the
-  whole composition; `mikan-exporter` attaches a sequential FFmpeg decoder to
-  any React export so `<Video>` decodes, same as a project timeline's `Video`
-  content, and mixes every frame-reported `<Audio>` into the exported MP4
-  (a composition with no audio still publishes a silent MP4). Because the reconciler
-  drives real React rendering, ordinary hooks work: `useState`/`useEffect`
-  and this package's own `useCurrentFrame()`, `useCurrentTime()`, and
-  `useVideoConfig()`. React-authored dialogue uses a `<Character>` declared
-  in `<Assets>` with `portrait` and optional `subtitle` settings, then
-  `<CharacterView ref={view} character={character} />` places the portrait, and
-  `<Dialogue character={view} audio={...}>text</Dialogue>` adds its subtitle,
-  optional voice audio, and an optional lip-sync track.
-  `interpolate()` and `spring()` (plus an `Easings` curve set covering the
-  usual sine/quad/cubic/.../bounce families) turn a
-  frame number into an animated value — `spring()` is a damped harmonic
-  oscillator's analytic step response, not a physics simulation stepped
-  frame by frame, so it evaluates any single frame directly rather than
-  needing the frames before it. `<Transition type="fade|slide|scale">`
-  packages those primitives into small entrance/exit effects. `SafeArea`,
-  `Center`, `Stack`, `Grid`, and `Fit` provide coordinate-based layout without
-  adding a browser/CSS dependency. An entry's async `prepare()` can call
-  `preloadMedia()` to obtain cached video/audio metadata through the same
-  Rust/FFmpeg library probe used elsewhere in Mikan; no `ffprobe` executable
-  is required. `DebugOverlay` and `DebugBounds` draw guides only while the
-  GPUI editor resolves a component preview and are omitted from exported
-  scenes. A loaded
-  `.mikan.json` project can also be read into a React entry: `loadProject()`
-  plus `<ProjectProvider>`/`useProject()` expose it as plain data,
-  `useProjectProperty(key, defaultValue)` reads its editor-set
-  `properties` (falling back to `defaultValue` when the key is absent), and
-  `<ProjectTimeline />` embeds its
-  `video`/`image`/`text`/`dialogue`/`component` timeline content —
-  evaluated by `mikan-evaluator` (Rust), not reimplemented in TypeScript —
-  alongside the entry's own React-authored content. A `dialogue` item
-  evaluates to a portrait image plus subtitle text (a plain group layer,
-  the same as any author-placed one), so it needs no dialogue-specific
-  handling here. `component` items
-  (`registerComponent(name, Component, schema?)`) resolve to a real
-  rendered subtree positioned at the project-evaluated transform; an
-  unregistered name is left for `GpuRenderer` to reject rather than
-  silently dropped. The optional `schema` (a `ComponentPropertySchema`
-  declaring each prop's type/default/display hints, retrievable via
-  `getComponentSchema(name)`) is pure metadata for the GPUI editor: a
-  project's `react_entry` setting tells it which Node process to query, and
-  it renders one editable Inspector row per declared field for a selected
-  component clip. Likewise `defineProjectProperties(schema)` declares the
-  entry's project-level properties, which the Inspector renders into
-  `Project.properties`; neither schema plays any part in rendering or
-  evaluation here.
-  `useProjectTrack(trackId)` and `<ProjectTrack id="..." />` give the same
-  access one track at a time — `mikan-evaluator` evaluates every track's
-  layers per frame regardless of which ones the entry actually reads, so no
-  negotiation with Node is needed to know which tracks to send.
-  `mikan-composition` and
-  `mikan-project`'s public types carry `ts-rs` bindings (behind the `codegen`
-  cargo feature) that `pnpm run codegen` regenerates into
-  `packages/react/src/generated`; the package's own `Scene`/`Layer`/...,
-  `Project`/`Track`/... types are built on top of those generated types
-  rather than hand-mirrored.
-- `examples/minimal.mikan.json`: the smallest valid project.
-- `examples/voiceroid.mikan.json`: a small dialogue-oriented project example.
-  It includes a tiny PPM portrait placeholder so the visual dialogue path can
-  be previewed without downloading assets and a generated Japanese system-voice
-  WAV fixture for exercising synchronized audio preview.
+## What you can do
 
-## Building
+- **Edit on a timeline:** import local media, arrange clips on multiple tracks,
+  move and trim clips, and undo or redo edits.
+- **Preview frame by frame:** play your composition with synchronized audio,
+  scrub the timeline, or step through individual frames.
+- **Mix audio:** adjust clip and master volume, add volume keyframes, and mute
+  or solo tracks. Waveforms help you place and trim audio.
+- **Create character dialogue:** combine portraits, expressions, subtitles,
+  and voice recordings. Assign mouth images and generate lip-sync cues from
+  dialogue text and audio.
+- **Compose with React:** use components, hooks, animation helpers, and layouts
+  to build scenes. Expose editable properties in the editor and combine React
+  content with a project timeline.
+- **Export MP4:** render H.264 video with AAC audio, either from the editor or
+  the command line. Export the whole composition or a selected time range.
 
-`mikan-media` and `mikan-exporter` link the FFmpeg 7.1+ C libraries through
-[`ez-ffmpeg`](https://github.com/YeautyYE/ez-ffmpeg) / `ffmpeg-sys-next` — the
-`ffmpeg`/`ffprobe` binaries are not used. Provide the development libraries
-before building:
+## Run from source
 
-- **Windows** (workspace enables `ez-ffmpeg`'s `static` feature):
-  `vcpkg install ffmpeg[x264]:x64-windows-static-md` and set `VCPKG_ROOT`.
-- **macOS**: `brew install ffmpeg pkg-config`.
-- **Linux**: `libav{codec,format,filter,device,util}-dev` and
-  `libsw{scale,resample}-dev` (FFmpeg 7.1+).
+You need Rust 1.89 or later, the native build tools for your platform, and
+FFmpeg 7.1 or later development libraries. React compositions additionally
+require Node.js 18 or later and pnpm.
 
-## Validate the foundation
+### 1. Prepare FFmpeg
+
+Frameweave links to FFmpeg libraries; installing only the `ffmpeg` command-line
+executable is not sufficient.
+
+- **Windows:** install the MSVC C++ build tools and vcpkg, run
+  `vcpkg install ffmpeg[x264]:x64-windows-static-md`, and set `VCPKG_ROOT` to
+  your vcpkg directory.
+- **macOS:** install the Xcode Command Line Tools, then run
+  `brew install ffmpeg pkg-config`.
+- **Linux:** install `pkg-config` and the FFmpeg development packages:
+  `libavcodec-dev`, `libavformat-dev`, `libavfilter-dev`, `libavdevice-dev`,
+  `libavutil-dev`, `libswscale-dev`, and `libswresample-dev`. Your distribution
+  must provide FFmpeg 7.1 or later. Native window-system and graphics development
+  packages may also be required by GPUI.
+
+### 2. Get the source and launch
 
 ```sh
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
+git clone https://github.com/mika-f/mikan.git
+cd mikan
+cargo run -p mikan-editor --release
 ```
 
-Render the standalone smoke-test frame:
+The editor opens a built-in demo. To open an existing project instead, pass its
+path:
 
 ```sh
-cargo run -p mikan-renderer --example hello -- hello.png
+cargo run -p mikan-editor --release -- examples/voiceroid.mikan.json
 ```
 
-Launch the editor with the empty example, or pass a project path:
+## Make your first video
+
+1. **Start with a project.** Launch the demo above, or open the minimal example
+   with `cargo run -p mikan-editor --release -- examples/minimal.mikan.json`.
+   Use **Save As** to save your own copy.
+2. **Import your media.** Choose **Import** in the Assets panel and select local
+   video, image, or audio files.
+3. **Add clips.** Select an asset and choose **Add** to insert it at the playhead,
+   or drag it to a compatible timeline track.
+4. **Arrange and trim.** Drag a clip's body to move it. Select a clip and drag
+   either edge handle to change its start or end. Use the Inspector to edit the
+   selected clip's available properties.
+5. **Preview.** Press Space to play or pause. Use the left and right arrow keys
+   to step one frame at a time, or drag along the timeline ruler to scrub.
+6. **Save and export.** Save your project, then choose **Export** and an MP4
+   destination. Progress appears in the toolbar; **Cancel Export** stops the job.
+
+Project files reference your source media. Keep those files available when
+reopening or sharing a project. If you move a file, select the missing asset in
+the Assets panel and use **Relink** to locate it again.
+
+### Character dialogue
+
+Open `examples/voiceroid.mikan.json` to try a dialogue project with a sample
+portrait and voice recording. In your own project, assign portrait expressions
+and mouth images to a character, then select an audio-backed Dialogue clip and
+choose **Generate from voice** to create lip-sync cues. Regenerate the cues after
+changing the dialogue text or voice recording.
+
+## Use React compositions
+
+Set up the included React package once from the repository root:
 
 ```sh
-cargo run -p mikan-editor
-cargo run -p mikan-editor -- examples/voiceroid.mikan.json
+cd packages/react
+pnpm install
+pnpm run codegen
+pnpm run build
+cd ../..
 ```
 
-Export a project to MP4 without overwriting an existing file:
+Open the sample title composition in the editor:
 
 ```sh
-cargo run -p mikan-exporter -- examples/editor-demo.mikan.json output.mp4
-cargo run -p mikan-exporter -- --overwrite examples/editor-demo.mikan.json output.mp4
+cargo run -p mikan-editor --release -- packages/react/examples/title.tsx
 ```
 
-Export a React composition entry instead of a project (requires a one-time
-`packages/react` setup: install, generate the TypeScript bindings for
-`mikan-composition`/`mikan-project`'s types, then build):
+Use the files in `packages/react/examples` as starting points. They demonstrate
+text, animation, layout, dialogue, and editable project properties. The package
+is currently imported as `@mikan/react`.
+
+To combine an existing timeline with React content, use a composition containing
+`<ProjectTimeline />` and supply the companion project when exporting:
 
 ```sh
-cd packages/react && pnpm install && pnpm run codegen && pnpm run build && cd ../..
-cargo run -p mikan-exporter -- --react packages/react/examples/title.tsx output.mp4
+cargo run -p mikan-exporter --release -- --react packages/react/examples/with-project.tsx --project examples/editor-demo.mikan.json output.mp4
 ```
 
-Add `--project <project.mikan.json>` to also evaluate a companion project and
-give the entry's `<ProjectTimeline />` its `video`/`image`/`text` layers:
+## Export from the command line
+
+Export a project:
 
 ```sh
-cargo run -p mikan-exporter -- --react packages/react/examples/with-project.tsx --project examples/editor-demo.mikan.json output.mp4
+cargo run -p mikan-exporter --release -- examples/editor-demo.mikan.json output.mp4
 ```
 
-The exporter renders the exact rational project frame times through the shared
-evaluator and `GpuRenderer`, mixes the complete shared `AudioGraph`, and muxes
-H.264 video with AAC audio through the linked FFmpeg libraries. H.264 4:2:0
-output currently requires
-non-zero even project dimensions. Work is staged beside the destination and is
-removed on failure; a completed file is published atomically, with no-clobber
-behavior unless `--overwrite` is present.
+Export a React composition after completing the React setup:
 
-With no project argument, the editor opens `examples/editor-demo.mikan.json` so
-the play/pause and single-frame controls can be exercised immediately. The
-playhead is stored as an integer frame in the project's exact rational frame
-rate; each new frame re-evaluates the shared scene and refreshes the GPU
-preview. Timeline clips use their actual project start and duration, and the
-orange ruler supports click-and-drag frame scrubbing. Selecting a clip outlines
-it and shows its type, start, and duration in the inspector. Drag the body of a
-selected clip to move it; drag either white edge handle to trim it. Edits are
-stored as exact project frames with coalesced undo/redo history. Grabbing any
-part of the clip body preserves its pointer offset; only the explicit white
-handles enter trim mode. Command-S and
-Command-Shift-S save atomically, and dirty documents are guarded when closing.
-Assets and Inspector content scroll independently when their rows overflow.
-Use Command-I or the Assets-panel Import button to select multiple local media
-files. Select an imported asset and choose Add (or Command-Return) to place a
-clip at the playhead using its probed source duration, with a five-second
-fallback while metadata is unavailable. Compatible tracks are reused or
-created automatically. Asset rows can also be dragged to an exact timeline
-frame: compatible tracks highlight green, while incompatible or locked targets
-show a rejection state. Clicking a track selects it as the Add target; clicking
-it again returns Add to automatic track selection. The Timeline header creates
-empty Video, Audio, Overlay, or Dialogue tracks; track arrows reorder them, and
-dragging a clip vertically moves it between compatible unlocked tracks. Track
-rows scroll below the fixed ruler when they overflow. Selecting a track exposes
-Enable/Disable, Lock/Unlock, Rename, and Delete controls in the Inspector;
-non-empty deletion requires confirmation and locked tracks protect all edits
-until unlocked. Rename is a native GPUI text field with IME composition,
-selection, grapheme-aware editing, and clipboard shortcuts. Delete the selected
-timeline clip with the Timeline button, Backspace, or Forward Delete. Import
-batches, insertion, and deletion
-all participate in undo/redo, and locked tracks reject destructive clip edits.
-Selected assets can be relinked only to the same media kind. Missing local files
-are called out in the Assets panel. Removing a referenced asset requires an
-explicit confirmation listing its consumers; the editor then updates dependent
-clips, Dialogue audio, and character expressions atomically so undo restores the
-entire operation.
-
-Use the toolbar Export button or Command-Shift-E to choose an MP4 destination.
-The editor snapshots the current project and runs `mikan-exporter` on a
-dedicated worker, so preview and editing remain responsive while frame progress
-is displayed. Cancel Export stops rendering or audio mixing at its next
-cancellation checkpoint and removes staged output. The native save panel owns
-explicit overwrite confirmation; export failures remain recoverable in the
-toolbar.
-
-Audio clips from the shared `AudioGraph` are decoded by FFmpeg, mixed at the
-project sample rate, and played through the system output device in sync with
-the editor transport. Timeline/source offsets, playback-rate and volume
-animation, mute state, and overlapping clips are applied during mixing. GPU
-preview work and audio decoding/mixing run on dedicated workers; rapid playhead
-or document changes coalesce queued requests, discard stale preview results,
-and cancel superseded audio mixing. Audio/dialogue clips display downsampled
-peak waveforms in the timeline. Each waveform follows its source-range
-start/duration and integrated playback-rate curve, so trimmed, sped-up, and
-animated-rate clips remain aligned with the audio that is actually mixed.
-Track headers show live source- and volume-aware level meters. Track Mute/Solo
-and the toolbar's draggable, keyboard-accessible 0–200% master-volume slider are
-persisted in the project, feed the shared audio graph, and participate in
-undo/redo. Selecting a Video, Audio, or audio-backed Dialogue clip exposes
-0–200% clip volume plus playhead-relative Add/Update/Remove keyframe and Flatten
-controls in the Inspector; edits immediately update mixing and the displayed
-meter envelope.
-Characters can also use transparent `a` / `i` / `u` / `e` / `o` mouth images
-without replacing their selected portrait expression. A closed-mouth image is
-optional; when omitted, silent frames use the original portrait without a mouth
-overlay. Select each image asset and assign its mouth shape in the Inspector;
-Clear closed mouth removes only that optional overlay. Then select an
-audio-backed Dialogue clip and choose Generate from voice. The
-editor combines an adaptive waveform noise gate with the Dialogue text's
-hiragana, katakana, or Latin vowel sequence to produce compact, frame-aligned
-viseme cues. Small kana replace the preceding vowel and the prolonged sound mark
-repeats it. Cues are stored in project JSON, are undoable, and drive the same
-mouth-overlay layer in editor preview, React project embedding, and MP4 export.
-Regenerate after changing the text or voice asset; Clear removes only the clip's
-cues. Removing a referenced mouth or voice asset also repairs dependent LipSync
-data so the project remains valid.
-Probed metadata and decoded PCM stay in editor-only
-caches: project JSON remains source-authored, while repeated edits can remix
-cached samples without re-decoding every asset again. Decoded PCM and
-source waveform peaks also use a versioned on-disk cache across editor sessions.
-Entries are keyed by canonical file identity, size, modification time, sample
-rate, and channel count; invalid or corrupt entries fall back to a fresh decode
-without blocking playback. The cache is capped at 1 GiB; successful reads refresh
-recency and saving a new entry evicts least-recently-used files until the cache
-is within the limit.
-
-The CPU renderer currently decodes local PNG, JPEG, WebP, and PNM image assets.
-Construct it with `CpuRenderer::with_asset_root` to resolve project-relative
-paths. Font assets in the evaluated scene are registered before shaping;
-installed system fonts provide fallback for glyphs not covered by the project.
-Attach `FfmpegBackend` through `CpuRenderer::with_video_decoder` to decode local
-video frames; it uses the linked FFmpeg libraries directly. Remote URL assets
-remain a future boundary.
-
-`GpuRenderer` accepts the same evaluated `Scene`. Local images and injected
-video frames are uploaded as GPU textures; position, anchor, scale, rotation,
-group transforms, opacity, and painter order are applied by its WGSL pipeline.
-Text uses the same font loading, shaping, fill, stroke, alignment, and line
-layout rasterizer as the CPU reference renderer before GPU composition.
-
-For a renderer-owned preview window, create the `wgpu::Surface` from the
-window, initialize with `GpuRenderer::request_for_surface`, and call
-`configure_surface` whenever the drawable size changes. `render_to_surface`
-submits and presents without a CPU readback. Its `PreviewFrameStatus`
-distinguishes successful, occluded, timed-out, outdated, and lost frames so the
-UI event loop can recover correctly.
-
-The GPUI editor keeps presentation ownership with GPUI. On macOS, a dedicated
-worker renders offscreen, converts RGBA into IOSurface-backed NV12 CoreVideo
-planes on the GPU, and gives the resulting `CVPixelBuffer` to GPUI's native
-Surface element. Native bridge failure and odd project dimensions fall back to
-the previous GPU readback and `RenderImage` path without changing project
-evaluation or renderer inputs.
-GPUI's runtime-shader feature is enabled on macOS so a separate downloadable
-Xcode Metal Toolchain component is not required for local development builds.
-
-The v0 format deliberately does not persist probed media metadata. Width,
-duration, codecs, and similar facts belong to a separate editor cache so that
-the project file does not become stale.
-
-## Architecture boundaries
-
-```text
-project.json ─┐
-              ├─> Composition model ─> Renderer ─> Export
-React entry ──┘             ▲
-                            │
-                       GPUI editor
+```sh
+cargo run -p mikan-exporter --release -- --react packages/react/examples/title.tsx output.mp4
 ```
 
-The composition and project crates do not depend on React, GPUI, FFmpeg, or a
-GPU backend. Those integrations can evolve without changing the serialized
-project contract.
+Add `--overwrite` to replace an existing output file. To export a section, add
+`--from` and `--to` with times in `HH:MM:SS.mmm`, `MM:SS.mmm`, or seconds:
 
-A React entry evaluates directly to the same `Scene` JSON that the evaluator
-produces from a project, so both sources feed the identical renderer input.
-`mikan-react-bridge` spawns the `@mikan/react` Node.js CLI as one long-lived
-process per composition (mirroring `mikan-media`'s sequential video decoding
-session) and exchanges one JSON request/response pair per exact frame time
-over its stdio pipe, rather than spawning Node once per frame. A project's
-`react_entry` setting also lets the GPUI editor preview resolve
-`component` timeline items against the entry's registered components —
-unresolved ones surface as a warning overlay instead of failing the whole
-preview. `mikan-exporter --react` renders a React entry to an MP4, muxing
-the composition's `<Audio>` clips (plus a companion project's own audio)
-when any exist and publishing a silent MP4 directly when none do.
+```sh
+cargo run -p mikan-exporter --release -- --from 0 --to 1 examples/editor-demo.mikan.json section.mp4
+```
 
-`packages/react` can also read a `.mikan.json` project file directly, through
-`loadProject()`/`loadProjectFromString()` and the generated `Project` type.
-`<ProjectProvider project={...}>` and `useProject()` expose that data as
-plain React context. `<ProjectTimeline />` goes further and embeds the
-project's own evaluated visual content (`video`/`image`/`text`,
-`dialogue`, and `component` items; only `audio` items are dropped from the
-visual path, since they contribute no layer): `mikan-exporter --react <entry> --project <project.mikan.json>`
-evaluates the project once per frame through the same `mikan-evaluator` a
-plain project export uses, and embeds the resulting layers directly in that
-frame's request to Node — `<ProjectTimeline />` cannot ask Rust to evaluate
-mid-render, since this process is synchronously blocked on that very
-request's response, so a call the other way would deadlock. Because the
-project's assets may live in a different directory than the React entry,
-and `GpuRenderer` resolves relative asset paths against a single
-`asset_root`, those evaluated layers' relative paths (and font asset paths)
-are rewritten to absolute before being sent, rather than adding a second
-asset root to the renderer.
+## Current limitations
+
+- Media must be available as local files; remote media URLs are not supported.
+- MP4 export requires non-zero, even-numbered width and height.
+- Lip-sync generation uses dialogue text and the voice waveform. It does not
+  perform speech recognition, so the text should match the recording.
+
+## Report a problem
+
+Open an issue in this repository with your operating system, steps to reproduce
+the problem, and any error message. If possible, include a small project that
+reproduces it, along with media you have permission to share.
+
+## License
+
+Frameweave's packages are declared under MIT OR Apache-2.0.

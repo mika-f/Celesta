@@ -23,7 +23,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             },
             opacity: 1.0,
             content: LayerContent::Text {
-                text: "Mikan へようこそ".to_owned(),
+                text: "Frameweave へようこそ".to_owned(),
                 style: TextStyle {
                     font_size: Some(72.0),
                     align: Some(TextAlign::Center),

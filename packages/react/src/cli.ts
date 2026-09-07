@@ -161,7 +161,7 @@ async function requestMediaProbe(
   writeLine({ probeMedia: { path } });
   const next = await lines.next();
   if (next.done) {
-    throw new Error('Mikan closed the media probe channel unexpectedly');
+    throw new Error('Frameweave closed the media probe channel unexpectedly');
   }
   let response: ProbeMediaResponse;
   try {
@@ -173,7 +173,7 @@ async function requestMediaProbe(
     throw new Error(response.error);
   }
   if (!response.media) {
-    throw new Error('Mikan returned an empty media probe response');
+    throw new Error('Frameweave returned an empty media probe response');
   }
   return response.media;
 }

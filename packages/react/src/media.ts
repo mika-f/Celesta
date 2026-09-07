@@ -28,7 +28,7 @@ export type ProbedMediaInfo = Omit<MediaInfo, 'src'>;
 let probe: ((path: string) => Promise<ProbedMediaInfo>) | undefined;
 const cached = new Map<string, Promise<ProbedMediaInfo>>();
 
-/** @internal Installed by the Mikan CLI before an entry's `prepare()` runs. */
+/** @internal Installed by the Frameweave CLI before an entry's `prepare()` runs. */
 export function setMediaProbe(next: (path: string) => Promise<ProbedMediaInfo>): void {
   probe = next;
   cached.clear();
@@ -40,7 +40,7 @@ export function setMediaProbe(next: (path: string) => Promise<ProbedMediaInfo>):
  */
 export async function preloadMedia(src: string): Promise<MediaInfo> {
   if (!probe) {
-    throw new Error('preloadMedia() requires a Mikan editor or exporter runtime');
+    throw new Error('preloadMedia() requires a Frameweave editor or exporter runtime');
   }
   const path = entryRelativePath(src);
   let pending = cached.get(path);

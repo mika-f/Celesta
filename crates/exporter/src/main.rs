@@ -12,7 +12,7 @@ fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("mikan-export: {error}");
+            eprintln!("Frameweave export: {error}");
             ExitCode::FAILURE
         }
     }
@@ -129,7 +129,7 @@ fn export_range(from: Option<&OsStr>, to: Option<&OsStr>) -> Result<Option<Expor
 }
 
 /// Resolves the `@mikan/react` runtime shipped alongside this workspace.
-/// This assumes a monorepo checkout; a packaged Mikan distribution will need
+/// This assumes a monorepo checkout; a packaged Frameweave distribution will need
 /// to locate the runtime differently.
 fn default_react_runtime() -> ReactRuntimeOptions {
     let cli_script =

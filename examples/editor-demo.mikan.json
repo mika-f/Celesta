@@ -36,7 +36,7 @@
           },
           "content": {
             "type": "text",
-            "text": "Mikan",
+            "text": "Frameweave",
             "style": {
               "fontSize": 96,
               "fill": {
@@ -57,6 +57,6 @@
     }
   ],
   "properties": {
-    "title": "Mikan editor demo"
+    "title": "Frameweave editor demo"
   }
 }

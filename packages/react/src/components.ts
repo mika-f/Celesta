@@ -357,7 +357,7 @@ export function Sequence(props: SequenceProps): ReturnType<typeof React.createEl
   // node regardless of the current time.
   const context = React.useContext(CompositionRuntimeContext);
   if (!context) {
-    throw new Error('<Sequence> must be called from within a Mikan <Composition>');
+    throw new Error('<Sequence> must be called from within a Frameweave <Composition>');
   }
   const fps = context.fps;
   const localSeconds = secondsFromTime(context.time);

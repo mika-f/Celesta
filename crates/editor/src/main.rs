@@ -4159,7 +4159,7 @@ impl EditorView {
                     .flex()
                     .items_center()
                     .gap_3()
-                    .child(div().text_lg().text_color(theme::accent()).child("Mikan"))
+                    .child(div().text_lg().text_color(theme::accent()).child("Frameweave"))
                     .child(div().text_sm().text_color(cx.theme().foreground).child(
                         if self.is_effectively_dirty() {
                             format!("{} *", self.project_name)
@@ -6682,9 +6682,9 @@ impl Render for EditorView {
             window.request_animation_frame();
         }
         let title = if self.is_effectively_dirty() {
-            format!("{} * — Mikan", self.project_name)
+            format!("{} * — Frameweave", self.project_name)
         } else {
-            format!("{} — Mikan", self.project_name)
+            format!("{} — Frameweave", self.project_name)
         };
         window.set_window_title(&title);
         window.set_window_edited(self.is_effectively_dirty());
@@ -7411,7 +7411,7 @@ fn export_suggested_name(path: Option<&Path>, project_name: &str) -> String {
 
 fn main() {
     if let Err(error) = run() {
-        eprintln!("mikan-editor: {error}");
+        eprintln!("Frameweave: {error}");
         std::process::exit(1);
     }
 }
@@ -7454,7 +7454,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 titlebar: Some(TitlebarOptions {
-                    title: Some("Mikan".into()),
+                    title: Some("Frameweave".into()),
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -7534,7 +7534,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                 cx.new(|cx| Root::new(view, window, cx))
             },
         )
-        .expect("could not open the Mikan editor window");
+        .expect("could not open the Frameweave editor window");
         cx.activate(true);
     });
     Ok(())

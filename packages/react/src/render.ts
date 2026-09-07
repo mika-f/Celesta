@@ -1,4 +1,4 @@
-// Mounts a Mikan React composition through react-reconciler (reconciler.ts)
+// Mounts a Frameweave React composition through react-reconciler (reconciler.ts)
 // and evaluates it into the same `Scene` JSON shape that
 // `mikan_composition::Scene` deserializes on the Rust side. The mount is
 // persistent across frames: cli.ts calls `renderAt` once per requested
@@ -554,7 +554,7 @@ function walkNode(
   audio: AudioClipDescriptor[],
 ): Layer[] {
   if (!HOST_TYPES.has(node.type)) {
-    throw new Error(`unsupported element <${node.type}>; use Mikan's built-in components`);
+    throw new Error(`unsupported element <${node.type}>; use Frameweave's built-in components`);
   }
   if (node.type === 'rawLayers') {
     return (node.props.layers as Layer[] | undefined) ?? [];
