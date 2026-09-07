@@ -106,7 +106,7 @@ struct AssetDrag {
 }
 
 impl Render for AssetDrag {
-    fn render(&mut self, _: &mut Window, _: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         div()
             .flex()
             .items_center()
@@ -114,13 +114,13 @@ impl Render for AssetDrag {
             .w(px(180.0))
             .h(px(34.0))
             .px_3()
-            .rounded_sm()
-            .bg(rgb(0x343842))
+            .rounded(cx.theme().radius)
+            .bg(cx.theme().popover)
             .border_1()
-            .border_color(rgb(0xffa13b))
+            .border_color(theme::accent())
             .shadow_md()
             .text_xs()
-            .text_color(rgb(0xf0f1f4))
+            .text_color(cx.theme().foreground)
             .child(format!(
                 "{}  {}",
                 self.kind.to_string().to_uppercase(),
@@ -4155,6 +4155,8 @@ impl EditorView {
                         })
                     })
         });
+        let missing_color = cx.theme().danger;
+        let meta_color = cx.theme().muted_foreground;
         let rows = self.assets.iter().map(|asset| {
             let asset_id = asset.id.clone();
             let drag = AssetDrag {
@@ -4180,15 +4182,15 @@ impl EditorView {
                 .px_3()
                 .py_2()
                 .cursor_pointer()
-                .when(selected, |row| row.bg(rgb(0x343842)))
-                .hover(|style| style.bg(rgb(0x292c34)))
+                .when(selected, |row| row.bg(cx.theme().list_active))
+                .hover(|style| style.bg(cx.theme().list_hover))
                 .text_sm()
-                .text_color(rgb(0xc8cad2))
+                .text_color(cx.theme().foreground)
                 .child(
                     div()
                         .w(px(46.0))
                         .text_xs()
-                        .text_color(rgb(0xffb466))
+                        .text_color(theme::accent())
                         .child(asset.kind.to_string().to_uppercase()),
                 )
                 .child(
@@ -4202,11 +4204,11 @@ impl EditorView {
                             column.child(
                                 div()
                                     .text_xs()
-                                    .text_color(rgb(if asset.missing {
-                                        0xff8b8b
+                                    .text_color(if asset.missing {
+                                        missing_color
                                     } else {
-                                        0x858a96
-                                    }))
+                                        meta_color
+                                    })
                                     .child(detail),
                             )
                         }),
@@ -4234,7 +4236,7 @@ impl EditorView {
                     div()
                         .p_3()
                         .text_sm()
-                        .text_color(rgb(0x737783))
+                        .text_color(cx.theme().muted_foreground)
                         .child("No assets in this project"),
                 )
             })
@@ -4245,149 +4247,68 @@ impl EditorView {
             .flex_none()
             .w(px(230.0))
             .h_full()
-            .bg(rgb(0x1d2027))
+            .bg(cx.theme().sidebar)
             .border_r_1()
-            .border_color(rgb(0x30333d))
-            .child(panel_header("Assets", self.assets.len()))
+            .border_color(cx.theme().border)
+            .child(panel_header("Assets", self.assets.len(), cx))
             .child(
                 div()
                     .flex()
-                    .flex_col()
+                    .flex_wrap()
                     .flex_none()
-                    .h(px(if has_selected { 68.0 } else { 38.0 }))
-                    .justify_center()
+                    .items_center()
                     .gap_1()
-                    .px_3()
+                    .p_2()
                     .border_b_1()
-                    .border_color(rgb(0x30333d))
+                    .border_color(cx.theme().border)
                     .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .id("import-assets")
-                                    .cursor_pointer()
-                                    .rounded_sm()
-                                    .px_2()
-                                    .py_1()
-                                    .bg(rgb(0x343842))
-                                    .hover(|style| style.bg(rgb(0x4a4f5b)))
-                                    .text_xs()
-                                    .text_color(rgb(0xd8dae2))
-                                    .child(if self.importing_assets {
-                                        "Importing…"
-                                    } else {
-                                        "Import…"
-                                    })
-                                    .on_click(cx.listener(Self::import_assets_click)),
-                            )
-                            .child(
-                                div()
-                                    .id("insert-selected-asset")
-                                    .rounded_sm()
-                                    .px_2()
-                                    .py_1()
-                                    .bg(rgb(if can_insert_selected {
-                                        0x3c674d
-                                    } else {
-                                        0x292c34
-                                    }))
-                                    .text_xs()
-                                    .text_color(rgb(if can_insert_selected {
-                                        0xd8f3df
-                                    } else {
-                                        0x737783
-                                    }))
-                                    .child("Add")
-                                    .when(can_insert_selected, |button| {
-                                        button
-                                            .cursor_pointer()
-                                            .hover(|style| style.bg(rgb(0x4c805f)))
-                                            .on_click(
-                                                cx.listener(Self::insert_selected_asset_click),
-                                            )
-                                    }),
-                            )
-                            .when(can_insert_dialogue, |actions| {
-                                actions.child(
-                                    div()
-                                        .id("insert-selected-dialogue")
-                                        .rounded_sm()
-                                        .px_2()
-                                        .py_1()
-                                        .bg(rgb(if can_insert_dialogue {
-                                            0x6b4a2f
-                                        } else {
-                                            0x292c34
-                                        }))
-                                        .text_xs()
-                                        .text_color(rgb(if can_insert_dialogue {
-                                            0xffdbb5
-                                        } else {
-                                            0x737783
-                                        }))
-                                        .child("Dialogue")
-                                        .cursor_pointer()
-                                        .hover(|style| style.bg(rgb(0x865e3d)))
-                                        .on_click(
-                                            cx.listener(Self::insert_selected_dialogue_click),
-                                        ),
-                                )
+                        Button::new("import-assets")
+                            .xsmall()
+                            .label(if self.importing_assets {
+                                "Importing…"
+                            } else {
+                                "Import…"
                             })
-                            .when(can_create_character, |actions| {
-                                actions.child(
-                                    div()
-                                        .id("create-character")
-                                        .rounded_sm()
-                                        .px_2()
-                                        .py_1()
-                                        .bg(rgb(0x6b4a2f))
-                                        .text_xs()
-                                        .text_color(rgb(0xffdbb5))
-                                        .child("Character")
-                                        .cursor_pointer()
-                                        .hover(|style| style.bg(rgb(0x865e3d)))
-                                        .on_click(cx.listener(Self::create_character_click)),
-                                )
-                            }),
+                            .on_click(cx.listener(Self::import_assets_click)),
                     )
-                    .when(has_selected, |actions| {
+                    .child(
+                        Button::new("insert-selected-asset")
+                            .xsmall()
+                            .label("Add")
+                            .disabled(!can_insert_selected)
+                            .on_click(cx.listener(Self::insert_selected_asset_click)),
+                    )
+                    .when(can_insert_dialogue, |actions| {
                         actions.child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap_2()
-                                .child(
-                                    div()
-                                        .id("relink-selected-asset")
-                                        .cursor_pointer()
-                                        .rounded_sm()
-                                        .px_2()
-                                        .py_1()
-                                        .bg(rgb(0x343842))
-                                        .hover(|style| style.bg(rgb(0x4a4f5b)))
-                                        .text_xs()
-                                        .text_color(rgb(0xd8dae2))
-                                        .child("Relink…")
-                                        .on_click(cx.listener(Self::relink_asset_click)),
-                                )
-                                .child(
-                                    div()
-                                        .id("remove-selected-asset")
-                                        .cursor_pointer()
-                                        .rounded_sm()
-                                        .px_2()
-                                        .py_1()
-                                        .bg(rgb(0x4a292c))
-                                        .hover(|style| style.bg(rgb(0x6b363b)))
-                                        .text_xs()
-                                        .text_color(rgb(0xffb7b7))
-                                        .child("Remove")
-                                        .on_click(cx.listener(Self::remove_asset_click)),
-                                ),
+                            Button::new("insert-selected-dialogue")
+                                .xsmall()
+                                .label("Dialogue")
+                                .on_click(cx.listener(Self::insert_selected_dialogue_click)),
                         )
+                    })
+                    .when(can_create_character, |actions| {
+                        actions.child(
+                            Button::new("create-character")
+                                .xsmall()
+                                .label("Character")
+                                .on_click(cx.listener(Self::create_character_click)),
+                        )
+                    })
+                    .when(has_selected, |actions| {
+                        actions
+                            .child(
+                                Button::new("relink-selected-asset")
+                                    .xsmall()
+                                    .label("Relink…")
+                                    .on_click(cx.listener(Self::relink_asset_click)),
+                            )
+                            .child(
+                                Button::new("remove-selected-asset")
+                                    .xsmall()
+                                    .danger()
+                                    .label("Remove")
+                                    .on_click(cx.listener(Self::remove_asset_click)),
+                            )
                     }),
             )
             .child(contents)
@@ -4402,7 +4323,7 @@ impl EditorView {
             .items_center()
             .justify_center()
             .overflow_hidden()
-            .bg(rgb(0x0d0f13))
+            .bg(cx.theme().background)
             .when_some(self.preview.clone(), |canvas, preview| match preview {
                 PreviewPresentation::Image(preview) => {
                     canvas.child(img(preview).size_full().object_fit(ObjectFit::Contain))
@@ -4419,7 +4340,7 @@ impl EditorView {
                     div()
                         .p_4()
                         .text_sm()
-                        .text_color(rgb(0xff8b8b))
+                        .text_color(cx.theme().danger)
                         .child(format!("Preview unavailable: {error}")),
                 )
             })
@@ -4433,16 +4354,18 @@ impl EditorView {
                         .flex()
                         .flex_col()
                         .gap_1()
-                        .rounded_sm()
+                        .rounded(cx.theme().radius)
                         .border_1()
-                        .border_color(rgb(0x6b5327))
-                        .bg(rgb(0x241f14))
+                        .border_color(cx.theme().warning.opacity(0.5))
+                        .bg(cx.theme().warning.opacity(0.12))
                         .p_2()
                         .text_xs()
-                        .text_color(rgb(0xffc46e))
+                        .text_color(cx.theme().warning)
                         .children(self.preview_warnings.iter().cloned()),
                 )
             });
+        let transport_button =
+            |id: &'static str, label: &'static str| Button::new(id).small().ghost().label(label);
         div()
             .flex()
             .flex_col()
@@ -4457,52 +4380,30 @@ impl EditorView {
                     .w_full()
                     .items_center()
                     .justify_center()
-                    .gap_3()
-                    .bg(rgb(0x181a20))
+                    .gap_2()
+                    .bg(cx.theme().secondary)
                     .border_t_1()
-                    .border_color(rgb(0x30333d))
-                    .text_color(rgb(0xc8cad2))
+                    .border_color(cx.theme().border)
+                    .text_color(cx.theme().foreground)
                     .child(
-                        div()
-                            .id("previous-frame")
-                            .cursor_pointer()
-                            .hover(|style| style.bg(rgb(0x404550)))
-                            .px_3()
-                            .py_1()
-                            .rounded_sm()
-                            .bg(rgb(0x292c34))
-                            .child("-1f")
+                        transport_button("previous-frame", "-1f")
                             .on_click(cx.listener(Self::step_backward)),
                     )
                     .child(
-                        div()
-                            .id("toggle-playback")
-                            .cursor_pointer()
-                            .hover(|style| style.bg(rgb(0x4a4f5b)))
-                            .px_3()
-                            .py_1()
-                            .rounded_sm()
-                            .bg(rgb(0x343842))
-                            .child(if self.playing { "Pause" } else { "Play" })
+                        Button::new("toggle-playback")
+                            .small()
+                            .label(if self.playing { "Pause" } else { "Play" })
                             .on_click(cx.listener(Self::toggle_playback)),
                     )
                     .child(
-                        div()
-                            .id("next-frame")
-                            .cursor_pointer()
-                            .hover(|style| style.bg(rgb(0x404550)))
-                            .px_3()
-                            .py_1()
-                            .rounded_sm()
-                            .bg(rgb(0x292c34))
-                            .child("+1f")
+                        transport_button("next-frame", "+1f")
                             .on_click(cx.listener(Self::step_forward)),
                     )
                     .child(
                         div()
                             .w(px(110.0))
                             .text_sm()
-                            .text_color(rgb(0x9da1ad))
+                            .text_color(cx.theme().muted_foreground)
                             .child(format!(
                                 "{} / {}f",
                                 self.clock.frame(),
@@ -4853,7 +4754,7 @@ impl EditorView {
             .bg(rgb(0x1d2027))
             .border_l_1()
             .border_color(rgb(0x30333d))
-            .child(panel_header("Inspector", 0))
+            .child(panel_header("Inspector", 0, cx))
             .child(contents)
     }
 
@@ -5730,14 +5631,16 @@ impl EditorView {
             .as_ref()
             .map(|react| react.entry.display().to_string())
             .unwrap_or_default();
-        let row = |label: &str, value: String| {
+        let label_color = cx.theme().muted_foreground;
+        let value_color = cx.theme().foreground;
+        let row = move |label: &str, value: String| {
             div()
                 .flex()
                 .justify_between()
                 .gap_2()
                 .text_xs()
-                .child(div().text_color(rgb(0x8b8f9b)).child(label.to_owned()))
-                .child(div().text_color(rgb(0xd8dae2)).text_right().child(value))
+                .child(div().text_color(label_color).child(label.to_owned()))
+                .child(div().text_color(value_color).text_right().child(value))
         };
         div()
             .flex()
@@ -5745,18 +5648,18 @@ impl EditorView {
             .w(px(280.0))
             .h_full()
             .flex_col()
-            .bg(rgb(0x181a20))
+            .bg(cx.theme().sidebar)
             .border_l_1()
-            .border_color(rgb(0x30333d))
-            .child(panel_header("React Preview", 0))
+            .border_color(cx.theme().border)
+            .child(panel_header("React Preview", 0, cx))
             .child(
                 div()
                     .flex()
                     .flex_col()
                     .gap_2()
                     .p_3()
-                    .child(div().text_xs().text_color(rgb(0x8b8f9b)).child("Entry"))
-                    .child(div().text_xs().text_color(rgb(0xd8dae2)).child(entry))
+                    .child(div().text_xs().text_color(label_color).child("Entry"))
+                    .child(div().text_xs().text_color(value_color).child(entry))
                     .child(div().h(px(4.0)))
                     .child(row("Size", self.dimensions.to_string()))
                     .child(row("Frame rate", self.frame_rate_label.to_string()))
@@ -5764,18 +5667,10 @@ impl EditorView {
                     .child(row("Renderer", self.gpu_name.to_string()))
                     .child(div().h(px(4.0)))
                     .child(
-                        div()
-                            .id("reload-react-entry")
-                            .cursor_pointer()
-                            .rounded_sm()
-                            .px_2()
-                            .py_1()
-                            .bg(rgb(0x343842))
-                            .hover(|style| style.bg(rgb(0x4a4f5b)))
-                            .text_xs()
-                            .text_center()
-                            .text_color(rgb(0xd8dae2))
-                            .child("Reload composition")
+                        Button::new("reload-react-entry")
+                            .small()
+                            .w_full()
+                            .label("Reload composition")
                             .on_click(cx.listener(Self::reload_react_click)),
                     )
                     .when(!self.preview_warnings.is_empty(), |panel| {
@@ -5785,13 +5680,13 @@ impl EditorView {
                                 .flex_col()
                                 .gap_1()
                                 .mt_2()
-                                .rounded_sm()
+                                .rounded(cx.theme().radius)
                                 .border_1()
-                                .border_color(rgb(0x6b5327))
-                                .bg(rgb(0x241f14))
+                                .border_color(cx.theme().warning.opacity(0.5))
+                                .bg(cx.theme().warning.opacity(0.12))
                                 .p_2()
                                 .text_xs()
-                                .text_color(rgb(0xffc46e))
+                                .text_color(cx.theme().warning)
                                 .children(self.preview_warnings.iter().cloned()),
                         )
                     }),
@@ -6487,7 +6382,7 @@ impl Render for EditorView {
     }
 }
 
-fn panel_header(title: &'static str, count: usize) -> impl IntoElement {
+fn panel_header(title: &'static str, count: usize, cx: &App) -> impl IntoElement {
     div()
         .flex()
         .flex_none()
@@ -6496,15 +6391,15 @@ fn panel_header(title: &'static str, count: usize) -> impl IntoElement {
         .justify_between()
         .px_3()
         .border_b_1()
-        .border_color(rgb(0x30333d))
+        .border_color(cx.theme().border)
         .text_sm()
-        .text_color(rgb(0xd8dae2))
+        .text_color(cx.theme().foreground)
         .child(title)
         .when(count > 0, |header| {
             header.child(
                 div()
                     .text_xs()
-                    .text_color(rgb(0x737783))
+                    .text_color(cx.theme().muted_foreground)
                     .child(count.to_string()),
             )
         })
