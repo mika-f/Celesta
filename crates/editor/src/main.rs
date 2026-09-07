@@ -2076,7 +2076,9 @@ impl EditorView {
         let Some((grab_x, grab_view_start)) = self.timeline_pan else {
             return;
         };
-        if !event.dragging() {
+        // `MouseMoveEvent::dragging()` is Left-button only, so check the middle
+        // button explicitly; the button being released ends the pan.
+        if event.pressed_button != Some(MouseButton::Middle) {
             self.timeline_pan = None;
             return;
         }
