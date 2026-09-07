@@ -1,0 +1,16 @@
+[package]
+name = "mikan-editor-core"
+version = "0.0.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+mikan-composition = { path = "../composition" }
+mikan-evaluator = { path = "../evaluator" }
+mikan-project = { path = "../project" }
+serde_json.workspace = true
+
+[dev-dependencies]
+mikan-gpu-renderer = { path = "../gpu-renderer" }

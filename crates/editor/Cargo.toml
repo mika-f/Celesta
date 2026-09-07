@@ -7,13 +7,16 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-# `default-features = false` drops gpui's default `windows-manifest`, so it must be
-# re-listed: it embeds the app manifest that pulls in Common-Controls v6, without which
-# gpui's `TaskDialogIndirect` import fails to bind against the system comctl32 v5.82 and
-# the editor exits at startup with STATUS_ENTRYPOINT_NOT_FOUND (0xc0000139).
-gpui = { version = "0.2.2", default-features = false, features = ["font-kit", "runtime_shaders", "windows-manifest"] }
+# `gpui-kit` re-exports GPUI (as `gpui_kit::*`) from `gpui-pre` 0.3.x — a newer zed
+# snapshot than the former `gpui 0.2.2` pin. `windows-manifest` is a default feature of
+# `gpui-pre`, so the Common-Controls v6 app manifest (without which gpui's
+# `TaskDialogIndirect` import fails to bind against comctl32 v5.82 and the editor exits at
+# startup with STATUS_ENTRYPOINT_NOT_FOUND, 0xc0000139) stays embedded without re-listing.
+gpui-kit = "0.6"
 image = { version = "0.25.8", default-features = false }
 mikan-composition = { path = "../composition" }
+mikan-editor-core = { path = "../editor-core" }
+mikan-editor-theme = { path = "../editor-theme" }
 mikan-evaluator = { path = "../evaluator" }
 mikan-exporter = { path = "../exporter" }
 mikan-gpu-renderer = { path = "../gpu-renderer" }
