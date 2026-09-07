@@ -13,7 +13,10 @@ use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
-use mikan_composition::{Animatable, Layer, Rational, Scene, Time};
+use mikan_composition::{
+    Animatable, AssetLocation, AudioClip, AudioGraph, Layer, Rational, ResolvedAsset, Scene, Time,
+    TimeRange,
+};
 use mikan_media::{AudioStream, FfmpegBackend, MediaProbe, VideoStream};
 use serde::{Deserialize, Serialize};
 
@@ -330,6 +333,33 @@ impl ReactBridge {
         }
     }
 
+    /// Sweeps every frame of the composition and builds the complete
+    /// `AudioGraph` its `<Audio>` declarations imply — the standalone
+    /// counterpart of what `mikan-exporter` accumulates during its render
+    /// loop. Each frame's `evaluate_at` report lists the `<Audio>` elements
+    /// audible *that* frame (so conditional / sequence-shifted audio is
+    /// captured); [`merge_react_audio_clips`] then collapses the per-frame
+    /// duplicates. Relative `src` paths resolve against `entry_dir` (the
+    /// entry file's own directory, like the renderer's asset root).
+    pub fn collect_audio_graph(
+        &mut self,
+        sample_rate: u32,
+        master_volume: f64,
+        entry_dir: &Path,
+    ) -> Result<AudioGraph, ReactBridgeError> {
+        let frame_rate = self.metadata.frame_rate;
+        let mut reports = Vec::new();
+        for frame in 0..self.metadata.duration_in_frames {
+            let time = Time::frames(frame as i64, frame_rate).map_err(ReactBridgeError::Time)?;
+            reports.extend(self.evaluate_at(time, None)?.audio);
+        }
+        Ok(AudioGraph {
+            sample_rate,
+            master_volume,
+            clips: react_audio_clips(&reports, entry_dir),
+        })
+    }
+
     fn request_response<R: Serialize>(&mut self, request: R) -> Result<Response, ReactBridgeError> {
         let payload = serde_json::to_string(&request).map_err(ReactBridgeError::Protocol)?;
         writeln!(self.stdin, "{payload}").map_err(ReactBridgeError::Io)?;
@@ -345,6 +375,66 @@ impl ReactBridge {
         }
         serde_json::from_str(line.trim()).map_err(ReactBridgeError::Protocol)
     }
+}
+
+/// Timescale seconds-valued `<Audio>` fields are converted at, matching
+/// `packages/react/src/render.ts`'s `SECONDS_TIMESCALE`.
+const REACT_AUDIO_SECONDS_TIMESCALE: u32 = 1_000_000;
+
+fn react_seconds_to_time(seconds: f64) -> Time {
+    Time::new(
+        (seconds * f64::from(REACT_AUDIO_SECONDS_TIMESCALE)).round() as i64,
+        REACT_AUDIO_SECONDS_TIMESCALE,
+    )
+}
+
+/// Collapses per-frame `<Audio>` reports into one entry per distinct clip,
+/// keeping first-seen order and how many frames reported it (its
+/// multiplicity — two identical clips playing at once must stay two clips).
+pub fn merge_react_audio_clips(
+    clips: &[ReactAudioClipDescriptor],
+) -> Vec<(ReactAudioClipDescriptor, usize)> {
+    let mut merged: Vec<(ReactAudioClipDescriptor, usize)> = Vec::new();
+    for clip in clips {
+        match merged.iter_mut().find(|(known, _)| known == clip) {
+            Some((_, count)) => *count += 1,
+            None => merged.push((clip.clone(), 1)),
+        }
+    }
+    merged
+}
+
+/// Turns merged `<Audio>` reports into `AudioClip`s, resolving relative `src`
+/// paths against `entry_dir`. Generated ids are `react-audio:{n}` in
+/// first-seen order.
+pub fn react_audio_clips(clips: &[ReactAudioClipDescriptor], entry_dir: &Path) -> Vec<AudioClip> {
+    merge_react_audio_clips(clips)
+        .into_iter()
+        .enumerate()
+        .map(|(index, (clip, _))| {
+            let path = if Path::new(&clip.src).is_relative() {
+                entry_dir.join(&clip.src).to_string_lossy().into_owned()
+            } else {
+                clip.src.clone()
+            };
+            AudioClip {
+                id: format!("react-audio:{index}"),
+                asset: ResolvedAsset {
+                    id: clip.src.clone(),
+                    location: AssetLocation::File { path },
+                },
+                range: TimeRange {
+                    start: react_seconds_to_time(clip.start),
+                    duration: react_seconds_to_time(clip.duration),
+                },
+                source_start: react_seconds_to_time(clip.source_start),
+                source_duration: None,
+                playback_rate: clip.playback_rate,
+                volume: clip.volume,
+                muted: clip.muted,
+            }
+        })
+        .collect()
 }
 
 #[derive(Serialize)]
@@ -528,6 +618,7 @@ pub enum ReactBridgeError {
     UnexpectedResponse,
     EntryFailed(String),
     Render(String),
+    Time(mikan_composition::TimeError),
 }
 
 impl fmt::Display for ReactBridgeError {
@@ -558,6 +649,7 @@ impl fmt::Display for ReactBridgeError {
                 write!(formatter, "could not load the React composition: {error}")
             }
             Self::Render(error) => write!(formatter, "could not render the composition: {error}"),
+            Self::Time(error) => write!(formatter, "invalid composition time: {error}"),
         }
     }
 }
@@ -572,6 +664,7 @@ impl Error for ReactBridgeError {
             | Self::UnexpectedResponse
             | Self::EntryFailed(_)
             | Self::Render(_) => None,
+            Self::Time(error) => Some(error),
         }
     }
 }
@@ -867,5 +960,57 @@ mod tests {
         let resolved = components[1].as_ref().unwrap();
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].id, "resolved");
+    }
+
+    fn audio_descriptor(src: &str, start: f64) -> ReactAudioClipDescriptor {
+        ReactAudioClipDescriptor {
+            src: src.to_owned(),
+            source_start: 0.0,
+            playback_rate: Animatable::Static(1.0),
+            volume: Animatable::Static(1.0),
+            muted: false,
+            start,
+            duration: 2.0,
+        }
+    }
+
+    #[test]
+    fn merge_react_audio_clips_collapses_identical_per_frame_reports() {
+        let clips = vec![
+            audio_descriptor("a.wav", 0.0),
+            audio_descriptor("a.wav", 0.0),
+            audio_descriptor("b.wav", 1.0),
+            audio_descriptor("a.wav", 0.0),
+        ];
+        let merged = merge_react_audio_clips(&clips);
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[0].0.src, "a.wav");
+        assert_eq!(merged[0].1, 3, "three frames reported the first clip");
+        assert_eq!(merged[1].0.src, "b.wav");
+        assert_eq!(merged[1].1, 1);
+    }
+
+    #[test]
+    fn react_audio_clips_resolve_relative_paths_and_carry_ranges() {
+        let clips = vec![
+            audio_descriptor("./voice.wav", 1.0),
+            audio_descriptor("/abs/music.wav", 0.0),
+        ];
+        let built = react_audio_clips(&clips, Path::new("/entry/dir"));
+        assert_eq!(built.len(), 2);
+        assert_eq!(built[0].id, "react-audio:0");
+        assert_eq!(built[0].range.start.as_seconds().unwrap(), 1.0);
+        assert_eq!(built[0].range.duration.as_seconds().unwrap(), 2.0);
+        let AssetLocation::File { path } = &built[0].asset.location else {
+            panic!("expected a file asset");
+        };
+        assert!(
+            path.replace('\\', "/").ends_with("/entry/dir/./voice.wav"),
+            "relative src joined against the entry dir, got {path}"
+        );
+        let AssetLocation::File { path } = &built[1].asset.location else {
+            panic!("expected a file asset");
+        };
+        assert_eq!(path, "/abs/music.wav", "absolute src left untouched");
     }
 }

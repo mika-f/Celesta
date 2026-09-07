@@ -1577,6 +1577,82 @@ licensed VOICEROID voice sample.
   evaluation/export. Live Node integration coverage checks both the preview
   guides and their export omission.
 
+### Standalone React composition preview in the editor (2026-09-07)
+
+`mikan-editor <entry>.tsx` (also `.ts`/`.jsx`/`.js`/`.mjs`/`.cjs`; a
+`*.mikan.json` is still always a project) opens a standalone React composition
+in a **preview-only** mode: real-time GPU preview following the playhead,
+`<Audio>` playback, auto-reload on source edits, and MP4 export — but no
+timeline/inspector/asset editing (the composition is code, edited in the
+`.tsx`). This is distinct from the existing `project.json` + `react_entry`
+component-resolution path, which is unchanged.
+
+- **Synthetic project.** `EditorDocument::react_preview(entry, width, height,
+  frame_rate, sample_rate, duration_in_frames)` (`crates/editor/src/lib.rs`)
+  builds an in-memory `Project` with no tracks, `settings.duration` =
+  `Time::frames(duration_in_frames, frame_rate)`, and `react_entry` = the
+  entry filename. Composition facts come from a one-shot `ReactBridge::spawn`
+  handshake in `EditorView::open`. This synthetic project drives the existing
+  clock, scrubber, transport, dimension/duration labels, and window title
+  unchanged — only the scene source and a handful of gates differ, avoiding an
+  enum through ~90 `self.document.*` call sites. It is never saved or mutated;
+  `EditorView::is_effectively_dirty()` keeps the title/edited-state/close-guard
+  quiet, and `save`/`save as`/`import assets` early-return in this mode.
+- **Visual.** `EditorView.react_preview: Option<ReactPreview>` flags the mode.
+  `PreviewRequest` gained `react_mode: ReactPreviewMode` (`WholeScene` vs
+  `ResolveComponents`) and `react_reload: u64`. The preview worker, in
+  `WholeScene` mode, calls `bridge.scene_at_with_project(scene.time, None)` and
+  renders that whole scene (`render_whole_react_scene` in `main.rs`), sharing
+  the respawnable `ReactPreviewBridge` (now via `ensure_react_bridge`, factored
+  out of `resolve_preview_components`). Bridge errors surface as
+  `preview_warnings` / `preview_error`; the GPU + native-presentation path is
+  untouched.
+- **Audio.** New `mikan_react_bridge::ReactBridge::collect_audio_graph(
+  sample_rate, master_volume, entry_dir)` sweeps every composition frame via
+  `evaluate_at`, merges the per-frame `<Audio>` reports
+  (`merge_react_audio_clips`, now `pub`), and builds an `AudioGraph`
+  (`react_audio_clips`, `pub`, resolves relative `src` against `entry_dir`).
+  A dedicated `ReactAudioWorker` thread runs the sweep (transient bridge) and
+  its result is forwarded into the **existing** `AudioMixWorker` →
+  `AudioPreview` → rodio pipeline. `refresh_audio_preview` branches on
+  `react_preview`. `mikan-exporter`'s own `build_audio_graph` was left as-is
+  (small duplication of the clip-construction loop; deliberately not
+  refactored to keep the change contained). Default sample rate 48 kHz
+  (`REACT_PREVIEW_SAMPLE_RATE`), matching the exporter.
+- **Auto-reload.** `watch_react_entry` starts one `cx.spawn` loop (only in
+  preview mode) that every ~800 ms diffs `newest_source_mtime(entry_dir)`
+  (recursive, skips `node_modules`/`dist`/`.tmp`/`.git`) against the stored
+  baseline. On a change it calls `request_react_reload`, which re-reads
+  `<Composition>` metadata on a background thread, rebuilds the synthetic
+  document + clock (current frame preserved), bumps `react_reload_generation`
+  (→ preview worker drops its `ReactPreviewBridge` and respawns Node against
+  the re-bundle), and refreshes preview + audio. A **Reload composition**
+  button in the right-hand info panel runs the same path. **Limitation**: the
+  per-frame `collect_audio_graph` sweep is O(frames) Node round trips, so a
+  long composition's audio preview takes a while to (re)build; it runs off the
+  UI thread.
+- **Export.** `ExportRequest.source: ExportSource` is now `Project(Box<Project>)`
+  or `ReactEntry { entry, node, cli_script }`; the export worker branches to
+  `Exporter::export_react_entry_cancellable`. `start_export` picks the variant
+  from `react_preview` (no export range for React).
+- **UI.** `render()` swaps the asset + inspector panels for a compact
+  `react_preview_panel` (entry path, size, fps, duration, renderer, Reload
+  button, warnings) when `is_react_preview()`; the toolbar and the (empty)
+  timeline/scrubber are reused as-is.
+- Verified: `mikan-react-bridge` unit tests
+  (`merge_react_audio_clips_collapses_identical_per_frame_reports`,
+  `react_audio_clips_resolve_relative_paths_and_carry_ranges`); a
+  `mikan-editor` document test
+  (`react_preview_builds_a_synthetic_document_from_composition_facts`); a live
+  `node_integration` test
+  (`collect_audio_graph_sweeps_every_frame_into_one_graph_when_node_is_available`,
+  against `with-audio.tsx` and `with-conditional-audio.tsx`). `cargo build
+  --workspace` and `cargo clippy --workspace --all-targets -D warnings` are
+  clean. The GUI itself (opening a `.tsx`, playback, reload, export) could not
+  be exercised in this environment — GPUI needs a display, and this Windows
+  worktree's Node integration harness hits a pre-existing `EISDIR 'G:'` path
+  bug that also blocks a real editor→bridge spawn here.
+
 ## Validation baseline
 
 At this handoff, the Rust workspace has 150 passing tests and

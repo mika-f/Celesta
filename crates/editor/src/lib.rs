@@ -16,8 +16,8 @@ use mikan_composition::{
 use mikan_evaluator::{EvaluationError, Evaluator};
 use mikan_project::{
     Asset, AssetKind, AssetSource, Character, LipSyncCue, LipSyncDefinition, LoadError, MouthShape,
-    PortraitDefinition, Project, SubtitleDefinition, TimelineContent, TimelineItem, Track,
-    TrackKind,
+    PortraitDefinition, Project, ProjectSettings, ProjectVersion, SubtitleDefinition,
+    TimelineContent, TimelineItem, Track, TrackKind,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -340,6 +340,54 @@ impl EditorDocument {
     ) -> Result<Self, EditorDocumentError> {
         let project = Project::from_json(input).map_err(EditorDocumentError::Load)?;
         Self::new(project, None, asset_root.into())
+    }
+
+    /// Builds a preview-only document backing a standalone React composition
+    /// entry (`.tsx`). No `project.json` exists: the synthetic [`Project`]
+    /// only carries the composition's dimensions, frame rate, sample rate,
+    /// and total duration (read from the entry's `<Composition>` via the
+    /// React bridge handshake) plus `react_entry` pointing back at the file.
+    /// It has no tracks, so nothing evaluates it into a scene — the editor
+    /// renders each frame straight from the bridge instead — and it is never
+    /// saved or mutated.
+    pub fn react_preview(
+        entry: &Path,
+        width: u32,
+        height: u32,
+        frame_rate: Rational,
+        sample_rate: u32,
+        duration_in_frames: u64,
+    ) -> Result<Self, EditorDocumentError> {
+        let entry = fs::canonicalize(entry).unwrap_or_else(|_| entry.to_path_buf());
+        let asset_root = entry
+            .parent()
+            .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+        let duration = Time::frames(
+            i64::try_from(duration_in_frames).unwrap_or(i64::MAX),
+            frame_rate,
+        )
+        .map_err(EditorDocumentError::Duration)?;
+        let project = Project {
+            version: ProjectVersion::V0,
+            settings: ProjectSettings {
+                width,
+                height,
+                frame_rate,
+                sample_rate,
+                master_volume: None,
+                duration: Some(duration),
+                react_entry: Some(
+                    entry
+                        .file_name()
+                        .map_or_else(String::new, |name| name.to_string_lossy().into_owned()),
+                ),
+            },
+            assets: BTreeMap::new(),
+            characters: BTreeMap::new(),
+            tracks: Vec::new(),
+            properties: BTreeMap::new(),
+        };
+        Self::new(project, Some(entry), asset_root)
     }
 
     fn new(
@@ -3357,6 +3405,44 @@ mod tests {
         assert!(document.react_entry().is_none());
         assert!(document.undo().unwrap());
         assert_eq!(document.react_entry(), Some("./react/entry.tsx"));
+    }
+
+    #[test]
+    fn react_preview_builds_a_synthetic_document_from_composition_facts() {
+        let root = std::env::temp_dir().join(format!(
+            "mikan-editor-react-preview-{}-{}",
+            std::process::id(),
+            TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let entry_path = root.join("title.tsx");
+        fs::write(
+            &entry_path,
+            b"export default function Root() { return null; }",
+        )
+        .unwrap();
+
+        let document = EditorDocument::react_preview(
+            &entry_path,
+            1920,
+            1080,
+            Rational::new(30, 1),
+            48_000,
+            150,
+        )
+        .unwrap();
+
+        assert_eq!(document.project().settings.width, 1920);
+        assert_eq!(document.project().settings.height, 1080);
+        assert!(document.project().tracks.is_empty());
+        assert_eq!(document.react_entry(), Some("title.tsx"));
+        assert_eq!(
+            document.react_entry_absolute_path().unwrap(),
+            fs::canonicalize(&entry_path).unwrap()
+        );
+        // 150 frames at 30fps is exactly five seconds.
+        assert_eq!(document.duration().as_seconds().unwrap(), 5.0);
+        assert!(!document.is_dirty());
     }
 
     #[test]
