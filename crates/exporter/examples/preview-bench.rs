@@ -61,6 +61,7 @@ fn main() {
     let mut node_total = 0.0f64;
     let mut gpu_total = 0.0f64;
     let mut rendered = 0i64;
+    let mut window = 0.0f64;
     let mut frame = 0i64;
     let playback_started = Instant::now();
     while frame < frames {
@@ -80,6 +81,13 @@ fn main() {
             gpu.as_secs_f64() * 1000.0,
             (node.as_secs_f64() + gpu.as_secs_f64()) * 1000.0
         );
+        if rendered % 100 == 0 {
+            println!(
+                "  -- {rendered} rendered, playhead at frame {frame}, last 100 avg {:.1}ms",
+                (node_total + gpu_total - window) / 100.0 * 1000.0
+            );
+            window = node_total + gpu_total;
+        }
         frame = if realtime {
             // What the editor actually asks for: the playhead runs on the wall
             // clock, so a render slower than the frame interval skips ahead
