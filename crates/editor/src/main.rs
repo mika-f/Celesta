@@ -43,10 +43,12 @@ use mikan_react_bridge::{
 use rodio::{DeviceSinkBuilder, Player, buffer::SamplesBuffer};
 
 mod audio_cache;
+mod theme;
 
 use audio_cache::DiskAudioCache;
-use gpui_kit::component::Root;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::{ActiveTheme as _, Disableable as _, Root, Sizable as _};
 
 const EDITOR_DEMO_PROJECT: &str = include_str!("../../../examples/editor-demo.mikan.json");
 
@@ -3948,6 +3950,18 @@ impl EditorView {
         let master_volume = self.document.master_volume().clamp(0.0, 2.0);
         let exporting = self.export_cancellation.is_some();
         let export_label = self.export_progress.map(export_progress_label);
+        let danger = cx.theme().danger;
+        let warning = cx.theme().warning;
+        let success = cx.theme().success;
+        let muted = cx.theme().muted_foreground;
+        let error_line = |text: String, color| {
+            div()
+                .max_w(px(520.0))
+                .overflow_hidden()
+                .text_sm()
+                .text_color(color)
+                .child(text)
+        };
         div()
             .id("toolbar")
             .flex()
@@ -3957,9 +3971,9 @@ impl EditorView {
             .px_4()
             .items_center()
             .justify_between()
-            .bg(rgb(0x181a20))
+            .bg(cx.theme().title_bar)
             .border_b_1()
-            .border_color(rgb(0x30333d))
+            .border_color(cx.theme().title_bar_border)
             .on_mouse_move(cx.listener(Self::continue_master_volume_drag))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::end_master_volume_drag))
             .child(
@@ -3967,8 +3981,8 @@ impl EditorView {
                     .flex()
                     .items_center()
                     .gap_3()
-                    .child(div().text_lg().text_color(rgb(0xffa13b)).child("Mikan"))
-                    .child(div().text_sm().text_color(rgb(0xd8dae2)).child(
+                    .child(div().text_lg().text_color(theme::accent()).child("Mikan"))
+                    .child(div().text_sm().text_color(cx.theme().foreground).child(
                         if self.is_effectively_dirty() {
                             format!("{} *", self.project_name)
                         } else {
@@ -3982,57 +3996,22 @@ impl EditorView {
                     .items_center()
                     .gap_3()
                     .when_some(self.save_error.clone(), |toolbar, error| {
-                        toolbar.child(
-                            div()
-                                .max_w(px(520.0))
-                                .overflow_hidden()
-                                .text_sm()
-                                .text_color(rgb(0xff8b8b))
-                                .child(format!("Save failed: {error}")),
-                        )
+                        toolbar.child(error_line(format!("Save failed: {error}"), danger))
                     })
                     .when_some(self.edit_error.clone(), |toolbar, error| {
-                        toolbar.child(
-                            div()
-                                .max_w(px(520.0))
-                                .overflow_hidden()
-                                .text_sm()
-                                .text_color(rgb(0xff8b8b))
-                                .child(format!("Edit failed: {error}")),
-                        )
+                        toolbar.child(error_line(format!("Edit failed: {error}"), danger))
                     })
                     .when_some(self.audio_error.clone(), |toolbar, error| {
-                        toolbar.child(
-                            div()
-                                .max_w(px(520.0))
-                                .overflow_hidden()
-                                .text_sm()
-                                .text_color(rgb(0xffc46b))
-                                .child(format!("Audio unavailable: {error}")),
-                        )
+                        toolbar.child(error_line(format!("Audio unavailable: {error}"), warning))
                     })
                     .when_some(self.export_error.clone(), |toolbar, error| {
-                        toolbar.child(
-                            div()
-                                .max_w(px(520.0))
-                                .overflow_hidden()
-                                .text_sm()
-                                .text_color(rgb(0xff8b8b))
-                                .child(format!("Export failed: {error}")),
-                        )
+                        toolbar.child(error_line(format!("Export failed: {error}"), danger))
                     })
                     .when_some(self.export_message.clone(), |toolbar, message| {
-                        toolbar.child(
-                            div()
-                                .max_w(px(360.0))
-                                .overflow_hidden()
-                                .text_sm()
-                                .text_color(rgb(0x7ee2a8))
-                                .child(message),
-                        )
+                        toolbar.child(error_line(message.to_string(), success))
                     })
                     .when_some(export_label, |toolbar, label| {
-                        toolbar.child(div().text_xs().text_color(rgb(0xffc46b)).child(
+                        toolbar.child(div().text_xs().text_color(warning).child(
                             if self.export_cancelling {
                                 "Cancelling export…".to_owned()
                             } else {
@@ -4040,48 +4019,35 @@ impl EditorView {
                             },
                         ))
                     })
-                    .child(
-                        div()
-                            .id("export-project")
-                            .rounded_sm()
-                            .px_2()
-                            .py_1()
-                            .bg(rgb(if exporting { 0x4a292c } else { 0x343842 }))
-                            .text_xs()
-                            .text_color(rgb(0xd8dae2))
-                            .child(if self.choosing_export_path {
-                                "Choosing…"
-                            } else if self.export_cancelling {
+                    .child(if exporting {
+                        Button::new("export-project")
+                            .small()
+                            .danger()
+                            .label(if self.export_cancelling {
                                 "Cancelling…"
-                            } else if exporting {
+                            } else {
                                 "Cancel Export"
+                            })
+                            .disabled(self.export_cancelling)
+                            .on_click(cx.listener(Self::cancel_export_click))
+                    } else {
+                        Button::new("export-project")
+                            .small()
+                            .label(if self.choosing_export_path {
+                                "Choosing…"
                             } else {
                                 "Export…"
                             })
-                            .when(
-                                !self.choosing_export_path && !self.export_cancelling,
-                                |button| {
-                                    if exporting {
-                                        button
-                                            .cursor_pointer()
-                                            .hover(|style| style.bg(rgb(0x6b363b)))
-                                            .on_click(cx.listener(Self::cancel_export_click))
-                                    } else {
-                                        button
-                                            .cursor_pointer()
-                                            .hover(|style| style.bg(rgb(0x4a4f5b)))
-                                            .on_click(cx.listener(Self::export_project_click))
-                                    }
-                                },
-                            ),
-                    )
+                            .disabled(self.choosing_export_path)
+                            .on_click(cx.listener(Self::export_project_click))
+                    })
                     .child(
                         div()
                             .flex()
                             .items_center()
                             .gap_1()
                             .text_xs()
-                            .text_color(rgb(0xb8bbc5))
+                            .text_color(muted)
                             .child("Master")
                             .child(
                                 div()
@@ -4090,14 +4056,14 @@ impl EditorView {
                                     .w(px(88.0))
                                     .h(px(20.0))
                                     .cursor_pointer()
-                                    .rounded_sm()
-                                    .bg(rgb(0x292c34))
+                                    .rounded(cx.theme().radius)
+                                    .bg(cx.theme().secondary)
                                     .when_some(
                                         self.master_volume_focus.as_ref(),
                                         |slider, focus| slider.track_focus(focus),
                                     )
-                                    .focus(|slider| slider.border_1().border_color(rgb(0xffb466)))
-                                    .hover(|style| style.bg(rgb(0x404550)))
+                                    .focus(|slider| slider.border_1().border_color(cx.theme().ring))
+                                    .hover(|style| style.bg(cx.theme().secondary_hover))
                                     .child(
                                         div()
                                             .absolute()
@@ -4107,13 +4073,13 @@ impl EditorView {
                                             .h(px(4.0))
                                             .rounded_full()
                                             .overflow_hidden()
-                                            .bg(rgb(0x15171c))
+                                            .bg(cx.theme().background)
                                             .child(
                                                 div()
                                                     .h_full()
                                                     .w(relative((master_volume / 2.0) as f32))
                                                     .rounded_full()
-                                                    .bg(rgb(0x70d99a)),
+                                                    .bg(success),
                                             ),
                                     )
                                     .child(
@@ -4123,7 +4089,7 @@ impl EditorView {
                                             .top(px(5.0))
                                             .size(px(10.0))
                                             .rounded_full()
-                                            .bg(rgb(0xf0f1f4)),
+                                            .bg(cx.theme().foreground),
                                     )
                                     .on_mouse_down(
                                         MouseButton::Left,
@@ -4142,16 +4108,16 @@ impl EditorView {
                         div()
                             .px_2()
                             .py_1()
-                            .rounded_sm()
-                            .bg(rgb(0x243b30))
+                            .rounded(cx.theme().radius)
+                            .bg(cx.theme().success.opacity(0.16))
                             .text_xs()
-                            .text_color(rgb(0x7ee2a8))
+                            .text_color(success)
                             .child("GPU PREVIEW"),
                     )
                     .child(
                         div()
                             .text_sm()
-                            .text_color(rgb(0x9da1ad))
+                            .text_color(muted)
                             .child(format_time(self.current_time())),
                     ),
             )
@@ -6992,6 +6958,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     let app = gpui_kit::application().with_assets(gpui_kit::assets::Assets);
     app.run(move |cx: &mut App| {
         gpui_kit::init(cx);
+        theme::init(cx);
         cx.bind_keys([
             KeyBinding::new("escape", CancelInlineEdit, Some("MikanEditor")),
             KeyBinding::new("cmd-s", SaveProject, Some("MikanEditor")),
