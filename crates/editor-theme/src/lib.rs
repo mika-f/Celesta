@@ -6,8 +6,6 @@
 //! Design Guides. The constants here are the documented exception: they color
 //! *data* drawn on the timeline (clip kinds, the audio waveform, level meters,
 //! the playhead), where the hue is the information rather than decoration.
-//!
-//! When this crate is split out (`editor-theme`), this module moves with it.
 
 use gpui_kit::component::{Theme, ThemeMode};
 use gpui_kit::{App, Hsla, rgb, rgba};

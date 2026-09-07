@@ -4292,6 +4292,8 @@ dependencies = [
  "gpui-kit",
  "image",
  "mikan-composition",
+ "mikan-editor-core",
+ "mikan-editor-theme",
  "mikan-evaluator",
  "mikan-exporter",
  "mikan-gpu-renderer",
@@ -4301,6 +4303,25 @@ dependencies = [
  "rodio",
  "serde_json",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "mikan-editor-core"
+version = "0.0.0"
+dependencies = [
+ "mikan-composition",
+ "mikan-evaluator",
+ "mikan-gpu-renderer",
+ "mikan-project",
+ "serde_json",
+]
+
+[[package]]
+name = "mikan-editor-theme"
+version = "0.0.0"
+dependencies = [
+ "gpui-kit",
+ "mikan-project",
 ]
 
 [[package]]

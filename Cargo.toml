@@ -3,6 +3,8 @@ resolver = "3"
 members = [
   "crates/composition",
   "crates/editor",
+  "crates/editor-core",
+  "crates/editor-theme",
   "crates/evaluator",
   "crates/exporter",
   "crates/gpu-renderer",

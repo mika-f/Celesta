@@ -23,7 +23,7 @@ use mikan_composition::{
     Animatable, AssetLocation, AudioClip, AudioGraph, Layer, LayerContent, Rational, Scene, Time,
     evaluate_f64, integrate_f64,
 };
-use mikan_editor::{
+use mikan_editor_core::{
     AssetSummary, CharacterSummary, ClipKind, ComponentClipSummary, DialogueClipSummary,
     EditorDocument, TimelineClock, TrackSummary,
 };
@@ -43,7 +43,6 @@ use mikan_react_bridge::{
 use rodio::{DeviceSinkBuilder, Player, buffer::SamplesBuffer};
 
 mod audio_cache;
-mod theme;
 
 use audio_cache::DiskAudioCache;
 use gpui_kit::component::button::{Button, ButtonGroup, ButtonVariant, ButtonVariants as _};
@@ -57,6 +56,7 @@ use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, IconName, Root, Selectable as _, Sizable as _,
     WindowExt as _,
 };
+use mikan_editor_theme as theme;
 
 const EDITOR_DEMO_PROJECT: &str = include_str!("../../../examples/editor-demo.mikan.json");
 
@@ -2780,7 +2780,7 @@ impl EditorView {
         });
     }
 
-    fn selected_audio_clip(&self) -> Option<mikan_editor::ClipSummary> {
+    fn selected_audio_clip(&self) -> Option<mikan_editor_core::ClipSummary> {
         let selected = self.selected_clip_id.as_deref()?;
         self.tracks
             .iter()
@@ -6696,7 +6696,7 @@ fn master_volume_from_drag(start_volume: f64, delta_pixels: f64) -> f64 {
     ((start_volume + delta_pixels / SLIDER_WIDTH * 2.0).clamp(0.0, 2.0) * 100.0).round() / 100.0
 }
 
-fn level_at_time(levels: &[f32], clip: &mikan_editor::ClipSummary, time: Time) -> f32 {
+fn level_at_time(levels: &[f32], clip: &mikan_editor_core::ClipSummary, time: Time) -> f32 {
     if levels.is_empty() {
         return 0.0;
     }
@@ -6714,7 +6714,7 @@ fn level_at_time(levels: &[f32], clip: &mikan_editor::ClipSummary, time: Time) -
     levels[index.min(levels.len() - 1)]
 }
 
-fn clip_local_time(time: Time, clip: &mikan_editor::ClipSummary) -> Time {
+fn clip_local_time(time: Time, clip: &mikan_editor_core::ClipSummary) -> Time {
     if time
         .cmp_exact(clip.start)
         .is_ok_and(|ordering| !ordering.is_gt())
@@ -7065,7 +7065,7 @@ mod tests {
     use mikan_composition::{
         Animatable, AssetLocation, AudioClip, Rational, ResolvedAsset, Time, TimeRange,
     };
-    use mikan_editor::ClipSummary;
+    use mikan_editor_core::ClipSummary;
     use mikan_exporter::ExportCancellation;
     use mikan_media::{AudioBuffer, AudioDecoder};
     use mikan_project::{AssetKind, Project, TrackKind};
