@@ -9,7 +9,7 @@ use std::sync::{
     mpsc,
 };
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use gpui::{
     App, Application, Bounds, ClickEvent, Context, CursorStyle, Entity, FocusHandle, KeyBinding,
@@ -29,6 +29,7 @@ use mikan_editor::{
 };
 use mikan_exporter::{
     ExportCancellation, ExportError, ExportOptions, ExportProgress, ExportRange, Exporter,
+    ReactRuntimeOptions,
 };
 use mikan_gpu_renderer::{GpuRenderOptions, GpuRenderer, PreviewFrame as GpuPreviewFrame};
 use mikan_media::{
@@ -37,6 +38,7 @@ use mikan_media::{
 use mikan_project::{AssetKind, MouthShape, Project, TrackKind};
 use mikan_react_bridge::{
     ComponentPropertyField, ComponentPropertySchema, ComponentResolutionRequest, ReactBridge,
+    ReactCompositionMetadata,
 };
 use rodio::{DeviceSinkBuilder, Player, buffer::SamplesBuffer};
 
@@ -138,6 +140,14 @@ struct PreviewRequest {
     /// is configured. `None` means component clips have nothing to resolve
     /// against this frame.
     react: Option<ReactPreviewContext>,
+    /// `WholeScene` replaces `scene` entirely with the React entry's own
+    /// evaluation at `scene.time` (standalone `.tsx` preview); the default
+    /// `ResolveComponents` only fills in `TimelineContent::Component` clips.
+    react_mode: ReactPreviewMode,
+    /// Bumped by the reload watcher so the preview worker drops its cached
+    /// `ReactPreviewBridge` and respawns Node, picking up a re-bundle after
+    /// the composition's code changed.
+    react_reload: u64,
 }
 
 struct PreviewResult {
@@ -155,6 +165,86 @@ struct ReactPreviewContext {
     node: PathBuf,
     cli_script: PathBuf,
     entry: PathBuf,
+}
+
+/// How the preview worker should treat this frame's React entry: resolve just
+/// the `TimelineContent::Component` clips a `project.json` placed (the normal
+/// GUI-project case), or render the whole composition the entry describes
+/// (standalone `.tsx` preview mode).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReactPreviewMode {
+    ResolveComponents,
+    WholeScene,
+}
+
+/// Editor state for previewing a standalone React composition entry (`.tsx`).
+/// The [`EditorDocument`] is a synthetic, unsaveable project holding only the
+/// composition's dimensions/frame rate/duration; every previewed frame and the
+/// audio graph come from the React bridge instead of evaluating tracks.
+struct ReactPreview {
+    entry: PathBuf,
+    /// Newest source-file modification time seen under the entry's directory.
+    /// The reload watcher compares against this to notice code edits.
+    watched_mtime: Option<SystemTime>,
+}
+
+/// True when `path` should open as a standalone React composition rather than
+/// a `project.json`. A `*.mikan.json` is always a project; a JS/TS module
+/// extension is a React entry.
+fn is_react_entry(path: &Path) -> bool {
+    if path
+        .file_name()
+        .and_then(OsStr::to_str)
+        .is_some_and(|name| name.ends_with(".mikan.json"))
+    {
+        return false;
+    }
+    matches!(
+        path.extension().and_then(OsStr::to_str),
+        Some("tsx" | "ts" | "jsx" | "js" | "mjs" | "cjs")
+    )
+}
+
+/// Default sample rate for a standalone React entry's audio graph — the entry
+/// has no `project.json` to source one from. Matches `mikan-exporter`'s
+/// `DEFAULT_REACT_AUDIO_SAMPLE_RATE` and every checked-in example project.
+const REACT_PREVIEW_SAMPLE_RATE: u32 = 48_000;
+
+/// Newest mtime among the JS/TS/JSON source files under `dir` (recursively,
+/// skipping `node_modules`, `dist`, and `.tmp`). Used to notice when a React
+/// composition's code — the entry or any module it bundles — changed on disk.
+fn newest_source_mtime(dir: &Path) -> Option<SystemTime> {
+    fn walk(dir: &Path, newest: &mut Option<SystemTime>, depth: u32) {
+        if depth > 8 {
+            return;
+        }
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if file_type.is_dir() {
+                if !matches!(
+                    path.file_name().and_then(OsStr::to_str),
+                    Some("node_modules" | "dist" | ".tmp" | ".git")
+                ) {
+                    walk(&path, newest, depth + 1);
+                }
+            } else if matches!(
+                path.extension().and_then(OsStr::to_str),
+                Some("tsx" | "ts" | "jsx" | "js" | "mjs" | "cjs" | "json" | "css")
+            ) && let Ok(modified) = entry.metadata().and_then(|meta| meta.modified())
+            {
+                *newest = Some(newest.map_or(modified, |current| current.max(modified)));
+            }
+        }
+    }
+    let mut newest = None;
+    walk(dir, &mut newest, 0);
+    newest
 }
 
 struct CpuPreviewFrame {
@@ -324,6 +414,79 @@ impl ComponentSchemaWorker {
     }
 }
 
+struct ReactAudioRequest {
+    generation: u64,
+    node: PathBuf,
+    cli_script: PathBuf,
+    entry: PathBuf,
+    sample_rate: u32,
+    master_volume: f64,
+}
+
+struct ReactAudioResult {
+    generation: u64,
+    graph: Result<AudioGraph, String>,
+}
+
+/// Spawns a transient `@mikan/react` process, sweeps every frame of a
+/// standalone entry for its `<Audio>` declarations, and returns the assembled
+/// [`AudioGraph`] — the standalone-preview counterpart of the audio graph
+/// `mikan-exporter` accumulates while rendering. Runs on its own thread
+/// because `ReactBridge::spawn` and the per-frame sweep both block.
+struct ReactAudioWorker {
+    requests: mpsc::Sender<ReactAudioRequest>,
+    results: mpsc::Receiver<ReactAudioResult>,
+}
+
+impl ReactAudioWorker {
+    fn spawn() -> Result<Self, Box<dyn Error>> {
+        let (request_tx, request_rx) = mpsc::channel::<ReactAudioRequest>();
+        let (result_tx, result_rx) = mpsc::channel::<ReactAudioResult>();
+        thread::Builder::new()
+            .name("mikan-react-audio".to_owned())
+            .spawn(move || {
+                while let Ok(first) = request_rx.recv() {
+                    let request = take_latest(first, &request_rx);
+                    let entry_dir = request
+                        .entry
+                        .parent()
+                        .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+                    let graph =
+                        ReactBridge::spawn(&request.node, &request.cli_script, &request.entry)
+                            .map_err(|error| error.to_string())
+                            .and_then(|mut bridge| {
+                                bridge
+                                    .collect_audio_graph(
+                                        request.sample_rate,
+                                        request.master_volume,
+                                        &entry_dir,
+                                    )
+                                    .map_err(|error| error.to_string())
+                            });
+                    if result_tx
+                        .send(ReactAudioResult {
+                            generation: request.generation,
+                            graph,
+                        })
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            })?;
+        Ok(Self {
+            requests: request_tx,
+            results: result_rx,
+        })
+    }
+
+    fn request(&self, request: ReactAudioRequest) -> Result<(), String> {
+        self.requests
+            .send(request)
+            .map_err(|_| "react audio worker stopped unexpectedly".to_owned())
+    }
+}
+
 /// The preview worker's long-lived connection to a React entry, respawned
 /// whenever the project's `react_entry` (or runtime paths) change. A failed
 /// spawn or a dead connection is remembered per context so a permanent
@@ -342,15 +505,27 @@ impl PreviewWorker {
             .name("mikan-preview".to_owned())
             .spawn(move || {
                 let mut react_bridge: Option<ReactPreviewBridge> = None;
+                let mut react_reload = 0u64;
                 while let Ok(first) = request_rx.recv() {
                     let request = take_latest(first, &request_rx);
                     renderer.set_asset_root(&request.asset_root);
+                    if request.react_reload != react_reload {
+                        react_reload = request.react_reload;
+                        react_bridge = None;
+                    }
                     let mut scene = request.scene;
-                    let warnings = resolve_preview_components(
-                        &mut scene,
-                        &mut react_bridge,
-                        request.react.as_ref(),
-                    );
+                    let warnings = match request.react_mode {
+                        ReactPreviewMode::WholeScene => render_whole_react_scene(
+                            &mut scene,
+                            &mut react_bridge,
+                            request.react.as_ref(),
+                        ),
+                        ReactPreviewMode::ResolveComponents => resolve_preview_components(
+                            &mut scene,
+                            &mut react_bridge,
+                            request.react.as_ref(),
+                        ),
+                    };
                     let frame = renderer
                         .render_preview(&scene)
                         .map_err(|error| error.to_string())
@@ -380,6 +555,69 @@ impl PreviewWorker {
     }
 }
 
+/// Spawns (or reuses) the preview worker's long-lived React connection for
+/// `react`. Respawns only when the entry or runtime paths changed; a spawn
+/// failure is remembered on the returned state so callers do not restart Node
+/// on every frame.
+fn ensure_react_bridge<'a>(
+    react_bridge: &'a mut Option<ReactPreviewBridge>,
+    react: &ReactPreviewContext,
+) -> &'a mut ReactPreviewBridge {
+    if react_bridge
+        .as_ref()
+        .is_none_or(|state| state.context != *react)
+    {
+        *react_bridge = Some(
+            match ReactBridge::spawn(&react.node, &react.cli_script, &react.entry) {
+                Ok(bridge) => ReactPreviewBridge {
+                    context: react.clone(),
+                    bridge: Some(bridge),
+                    failure: None,
+                },
+                Err(error) => ReactPreviewBridge {
+                    context: react.clone(),
+                    bridge: None,
+                    failure: Some(error.to_string()),
+                },
+            },
+        );
+    }
+    react_bridge.as_mut().expect("react bridge was just set")
+}
+
+/// Replaces the whole preview scene with the standalone React entry's own
+/// evaluation at `scene.time` — the editor's synthetic project has no tracks,
+/// so this is the only source of layers in `.tsx` preview mode. A bridge
+/// failure is remembered and surfaced as a warning; the (empty) scene is left
+/// in place so the preview still clears to the composition background.
+fn render_whole_react_scene(
+    scene: &mut Scene,
+    react_bridge: &mut Option<ReactPreviewBridge>,
+    react: Option<&ReactPreviewContext>,
+) -> Vec<String> {
+    let Some(react) = react else {
+        return vec!["React runtime is unavailable for this preview".to_owned()];
+    };
+    let state = ensure_react_bridge(react_bridge, react);
+    match &mut state.bridge {
+        Some(bridge) => match bridge.scene_at_with_project(scene.time, None) {
+            Ok(evaluated) => {
+                *scene = evaluated;
+                Vec::new()
+            }
+            Err(error) => {
+                state.bridge = None;
+                state.failure = Some(error.to_string());
+                vec![format!("React preview failed: {error}")]
+            }
+        },
+        None => vec![format!(
+            "React preview unavailable: {}",
+            state.failure.as_deref().unwrap_or("unknown error")
+        )],
+    }
+}
+
 /// Replaces every `missingComponent` layer in the scene with its registered
 /// component's rendered layers (wrapped in the original layer shell so the
 /// timeline item's evaluated transform and opacity still place it), dropping
@@ -404,33 +642,7 @@ fn resolve_preview_components(
         return warnings;
     };
 
-    // Respawn only when the entry (or runtime) changed; a remembered failure
-    // keeps retrying cheap until then.
-    if react_bridge
-        .as_ref()
-        .is_none_or(|state| state.context != *react)
-    {
-        match ReactBridge::spawn(&react.node, &react.cli_script, &react.entry) {
-            Ok(bridge) => {
-                *react_bridge = Some(ReactPreviewBridge {
-                    context: react.clone(),
-                    bridge: Some(bridge),
-                    failure: None,
-                });
-            }
-            Err(error) => {
-                *react_bridge = Some(ReactPreviewBridge {
-                    context: react.clone(),
-                    bridge: None,
-                    failure: Some(error.to_string()),
-                });
-            }
-        }
-    }
-
-    let Some(state) = react_bridge else {
-        return Vec::new();
-    };
+    let state = ensure_react_bridge(react_bridge, react);
     let mut warnings = Vec::new();
     match &mut state.bridge {
         Some(bridge) => {
@@ -586,11 +798,23 @@ struct AudioMixOutput {
 }
 
 struct ExportRequest {
-    project: Project,
+    source: ExportSource,
     asset_root: PathBuf,
     output: PathBuf,
     range: Option<ExportRange>,
     cancellation: ExportCancellation,
+}
+
+/// What the export worker renders: a normal `project.json`, or a standalone
+/// React composition entry (`.tsx` preview mode). The React path has no
+/// export range (the whole composition is always rendered).
+enum ExportSource {
+    Project(Box<Project>),
+    ReactEntry {
+        entry: PathBuf,
+        node: PathBuf,
+        cli_script: PathBuf,
+    },
 }
 
 enum ExportEvent {
@@ -619,15 +843,29 @@ impl ExportWorker {
                         overwrite: true,
                         range: request.range,
                     });
-                    let result = exporter.export_project_cancellable(
-                        &request.project,
-                        &request.asset_root,
-                        &request.output,
-                        &request.cancellation,
-                        |progress| {
-                            let _ = event_tx.send(ExportEvent::Progress(progress));
-                        },
-                    );
+                    let progress = |progress| {
+                        let _ = event_tx.send(ExportEvent::Progress(progress));
+                    };
+                    let result = match &request.source {
+                        ExportSource::Project(project) => exporter.export_project_cancellable(
+                            project,
+                            &request.asset_root,
+                            &request.output,
+                            &request.cancellation,
+                            progress,
+                        ),
+                        ExportSource::ReactEntry {
+                            entry,
+                            node,
+                            cli_script,
+                        } => exporter.export_react_entry_cancellable(
+                            entry,
+                            &ReactRuntimeOptions::new(node.clone(), cli_script.clone()),
+                            &request.output,
+                            &request.cancellation,
+                            progress,
+                        ),
+                    };
                     let cancelled = matches!(result, Err(ExportError::Cancelled));
                     if event_tx
                         .send(ExportEvent::Finished {
@@ -903,6 +1141,15 @@ impl AudioPreview {
 
 struct EditorView {
     document: EditorDocument,
+    /// `Some` in standalone React composition preview mode: the document is a
+    /// synthetic project and every previewed frame comes from the React
+    /// bridge. Project editing (assets, tracks, inspector, saving) is disabled.
+    react_preview: Option<ReactPreview>,
+    react_audio_worker: ReactAudioWorker,
+    /// Bumped on every reload of the React entry (watcher or manual button);
+    /// threaded into `PreviewRequest::react_reload` so the preview worker
+    /// respawns Node against the freshly re-bundled code.
+    react_reload_generation: u64,
     preview_worker: PreviewWorker,
     preview_generation: u64,
     preview_pending: bool,
@@ -985,9 +1232,37 @@ struct EditorView {
 
 impl EditorView {
     fn open(path: Option<&Path>) -> Result<Self, Box<dyn Error>> {
-        let document = match path {
-            Some(path) => EditorDocument::load(path)?,
-            None => EditorDocument::from_json(EDITOR_DEMO_PROJECT, "examples")?,
+        let (document, react_preview) = match path {
+            Some(path) if is_react_entry(path) => {
+                let (node, cli_script) = react_runtime_paths();
+                let metadata = ReactBridge::spawn(&node, &cli_script, path)?
+                    .metadata()
+                    .clone();
+                let document = EditorDocument::react_preview(
+                    path,
+                    metadata.width,
+                    metadata.height,
+                    metadata.frame_rate,
+                    REACT_PREVIEW_SAMPLE_RATE,
+                    metadata.duration_in_frames,
+                )?;
+                let entry = document
+                    .react_entry_absolute_path()
+                    .unwrap_or_else(|| path.to_owned());
+                let watched_mtime = entry.parent().and_then(newest_source_mtime);
+                (
+                    document,
+                    Some(ReactPreview {
+                        entry,
+                        watched_mtime,
+                    }),
+                )
+            }
+            Some(path) => (EditorDocument::load(path)?, None),
+            None => (
+                EditorDocument::from_json(EDITOR_DEMO_PROJECT, "examples")?,
+                None,
+            ),
         };
         let settings = &document.project().settings;
         let frame_rate_value = settings.frame_rate;
@@ -1012,8 +1287,12 @@ impl EditorView {
         let audio_mix_worker = AudioMixWorker::spawn()?;
         let export_worker = ExportWorker::spawn()?;
         let component_schema_worker = ComponentSchemaWorker::spawn()?;
+        let react_audio_worker = ReactAudioWorker::spawn()?;
         let mut editor = Self {
             document,
+            react_preview,
+            react_audio_worker,
+            react_reload_generation: 0,
             preview_worker,
             preview_generation: 0,
             preview_pending: false,
@@ -1090,10 +1369,23 @@ impl EditorView {
             force_close: false,
         };
         editor.refresh_preview();
-        editor.refresh_media_cache();
         editor.refresh_audio_preview();
-        editor.refresh_component_schemas();
+        if editor.react_preview.is_none() {
+            editor.refresh_media_cache();
+            editor.refresh_component_schemas();
+        }
         Ok(editor)
+    }
+
+    fn is_react_preview(&self) -> bool {
+        self.react_preview.is_some()
+    }
+
+    /// A standalone React composition has no `project.json` to save, so its
+    /// synthetic document never counts as dirty for the window title, the
+    /// macOS edited state, or the unsaved-changes close guard.
+    fn is_effectively_dirty(&self) -> bool {
+        !self.is_react_preview() && self.document.is_dirty()
     }
 
     fn current_time(&self) -> Time {
@@ -1114,6 +1406,11 @@ impl EditorView {
                 entry,
             }
         });
+        let react_mode = if self.is_react_preview() {
+            ReactPreviewMode::WholeScene
+        } else {
+            ReactPreviewMode::ResolveComponents
+        };
         match self.document.scene_at(self.current_time()) {
             Ok(scene) => {
                 self.preview_pending = true;
@@ -1124,6 +1421,8 @@ impl EditorView {
                     scene,
                     asset_root: self.document.asset_root().to_owned(),
                     react,
+                    react_mode,
+                    react_reload: self.react_reload_generation,
                 }) {
                     self.preview_pending = false;
                     self.preview_error = Some(error.into());
@@ -1134,6 +1433,129 @@ impl EditorView {
                 self.preview_error = Some(error.to_string().into());
             }
         }
+    }
+
+    /// Reloads the standalone React composition: re-reads its `<Composition>`
+    /// facts on a background thread (dimensions/fps/duration may have changed),
+    /// then bumps the preview worker's reload generation so it respawns Node
+    /// against the freshly re-bundled code. Used by the reload watcher and the
+    /// manual Reload button.
+    fn request_react_reload(&mut self, cx: &mut Context<Self>) {
+        let Some(react) = self.react_preview.as_ref() else {
+            return;
+        };
+        let entry = react.entry.clone();
+        let (node, cli_script) = react_runtime_paths();
+        let frame = self.clock.frame();
+        cx.spawn(async move |view, cx| {
+            let entry_for_meta = entry.clone();
+            let metadata = cx
+                .background_executor()
+                .spawn(async move {
+                    ReactBridge::spawn(&node, &cli_script, &entry_for_meta)
+                        .map(|bridge| bridge.metadata().clone())
+                        .map_err(|error| error.to_string())
+                })
+                .await;
+            view.update(cx, |this, cx| {
+                this.apply_react_reload(&entry, metadata, frame, cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn apply_react_reload(
+        &mut self,
+        entry: &Path,
+        metadata: Result<ReactCompositionMetadata, String>,
+        frame: i64,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(react) = self.react_preview.as_mut() {
+            react.watched_mtime = entry.parent().and_then(newest_source_mtime);
+        }
+        match metadata {
+            Ok(metadata) => {
+                if let Ok(document) = EditorDocument::react_preview(
+                    entry,
+                    metadata.width,
+                    metadata.height,
+                    metadata.frame_rate,
+                    REACT_PREVIEW_SAMPLE_RATE,
+                    metadata.duration_in_frames,
+                ) {
+                    self.document = document;
+                    self.frame_rate_value = metadata.frame_rate;
+                    if let Ok(mut clock) =
+                        TimelineClock::new(self.document.duration(), self.frame_rate_value)
+                    {
+                        clock.seek(frame);
+                        self.clock = clock;
+                    }
+                    self.dimensions = format!("{} x {}", metadata.width, metadata.height).into();
+                    self.frame_rate_label = format!(
+                        "{:.2} fps",
+                        f64::from(metadata.frame_rate.numerator)
+                            / f64::from(metadata.frame_rate.denominator)
+                    )
+                    .into();
+                    self.duration = format_time(self.document.duration()).into();
+                }
+                self.react_reload_generation = self.react_reload_generation.wrapping_add(1);
+                self.preview_error = None;
+                self.refresh_preview();
+                self.refresh_audio_preview();
+            }
+            Err(error) => {
+                self.preview_error = Some(format!("React reload failed: {error}").into());
+            }
+        }
+        cx.notify();
+    }
+
+    /// The periodic task (started once for a React-preview document) that
+    /// notices source-file edits under the entry's directory and triggers a
+    /// reload. Runs off the render loop so it fires even while the editor is
+    /// idle.
+    fn watch_react_entry(&self, cx: &mut Context<Self>) {
+        cx.spawn(async move |view, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(800))
+                    .await;
+                let Ok(Some(dir)) = view.update(cx, |this, _| {
+                    this.react_preview
+                        .as_ref()
+                        .and_then(|react| react.entry.parent().map(Path::to_path_buf))
+                }) else {
+                    break;
+                };
+                let latest = cx
+                    .background_executor()
+                    .spawn(async move { newest_source_mtime(&dir) })
+                    .await;
+                let changed = view
+                    .update(cx, |this, _| match this.react_preview.as_ref() {
+                        Some(react) => latest.is_some() && latest != react.watched_mtime,
+                        None => false,
+                    })
+                    .unwrap_or(false);
+                if changed
+                    && view
+                        .update(cx, |this, cx| {
+                            if let Some(react) = this.react_preview.as_mut() {
+                                react.watched_mtime = latest;
+                            }
+                            this.request_react_reload(cx);
+                        })
+                        .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
     }
 
     fn refresh_media_cache(&mut self) {
@@ -1279,6 +1701,52 @@ impl EditorView {
                         self.component_schema_pending = false;
                         self.component_schema_error =
                             Some("component schema worker stopped unexpectedly".into());
+                    }
+                    break;
+                }
+            }
+        }
+
+        loop {
+            match self.react_audio_worker.results.try_recv() {
+                Ok(result) => {
+                    if result.generation != self.audio_generation {
+                        continue;
+                    }
+                    match result.graph {
+                        Ok(graph) if graph.clips.is_empty() => {
+                            self.audio_pending = false;
+                            self.audio_preview = None;
+                            self.clip_waveforms.clear();
+                            self.clip_levels.clear();
+                            self.audio_error = None;
+                        }
+                        Ok(graph) => {
+                            if let Err(error) = self.audio_mix_worker.request(AudioMixRequest {
+                                generation: self.audio_generation,
+                                cache_epoch: self.audio_cache_epoch,
+                                graph,
+                                asset_root: self.document.asset_root().to_owned(),
+                                duration: self.document.duration(),
+                            }) {
+                                self.audio_pending = false;
+                                self.audio_error = Some(error.into());
+                            }
+                        }
+                        Err(error) => {
+                            self.audio_pending = false;
+                            self.audio_preview = None;
+                            self.clip_waveforms.clear();
+                            self.clip_levels.clear();
+                            self.audio_error = Some(error.into());
+                        }
+                    }
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    if self.audio_pending {
+                        self.audio_pending = false;
+                        self.audio_error = Some("react audio worker stopped unexpectedly".into());
                     }
                     break;
                 }
@@ -1667,6 +2135,29 @@ impl EditorView {
         self.audio_pending = false;
         self.audio_preview = None;
         self.clip_levels.clear();
+
+        if let Some(react) = &self.react_preview {
+            // No tracks to evaluate: sweep the React entry for its `<Audio>`
+            // declarations on the dedicated worker, then feed the resulting
+            // graph into the shared mix pipeline (see `poll_background_work`).
+            let (node, cli_script) = react_runtime_paths();
+            self.clip_waveforms.clear();
+            self.audio_pending = true;
+            self.audio_error = None;
+            if let Err(error) = self.react_audio_worker.request(ReactAudioRequest {
+                generation,
+                node,
+                cli_script,
+                entry: react.entry.clone(),
+                sample_rate: self.document.project().settings.sample_rate,
+                master_volume: self.document.master_volume(),
+            }) {
+                self.audio_pending = false;
+                self.audio_error = Some(error.into());
+            }
+            return;
+        }
+
         match self.document.audio_graph() {
             Ok(graph) if graph.clips.is_empty() => {
                 self.clip_waveforms.clear();
@@ -2524,7 +3015,7 @@ impl EditorView {
     }
 
     fn request_import_assets(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.importing_assets {
+        if self.importing_assets || self.is_react_preview() {
             return;
         }
         self.importing_assets = true;
@@ -3001,6 +3492,9 @@ impl EditorView {
     }
 
     fn save_project(&mut self, _: &SaveProject, window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_react_preview() {
+            return;
+        }
         if self.document.path().is_none() {
             self.request_save_as(window, cx, false);
             return;
@@ -3013,6 +3507,9 @@ impl EditorView {
     }
 
     fn save_project_as(&mut self, _: &SaveProjectAs, window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_react_preview() {
+            return;
+        }
         self.request_save_as(window, cx, false);
     }
 
@@ -3092,15 +3589,32 @@ impl EditorView {
 
     fn start_export(&mut self, output: PathBuf) {
         let cancellation = ExportCancellation::default();
+        let (source, range) = match &self.react_preview {
+            Some(react) => {
+                let (node, cli_script) = react_runtime_paths();
+                (
+                    ExportSource::ReactEntry {
+                        entry: react.entry.clone(),
+                        node,
+                        cli_script,
+                    },
+                    None,
+                )
+            }
+            None => (
+                ExportSource::Project(Box::new(self.document.project().clone())),
+                export_range_for(
+                    self.export_in_frame,
+                    self.export_out_frame,
+                    self.frame_rate_value,
+                ),
+            ),
+        };
         let request = ExportRequest {
-            project: self.document.project().clone(),
+            source,
             asset_root: self.document.asset_root().to_owned(),
             output: output.clone(),
-            range: export_range_for(
-                self.export_in_frame,
-                self.export_out_frame,
-                self.frame_rate_value,
-            ),
+            range,
             cancellation: cancellation.clone(),
         };
         self.export_path = Some(output);
@@ -3421,7 +3935,7 @@ impl EditorView {
                     .gap_3()
                     .child(div().text_lg().text_color(rgb(0xffa13b)).child("Mikan"))
                     .child(div().text_sm().text_color(rgb(0xd8dae2)).child(
-                        if self.document.is_dirty() {
+                        if self.is_effectively_dirty() {
                             format!("{} *", self.project_name)
                         } else {
                             self.project_name.to_string()
@@ -5202,6 +5716,88 @@ impl EditorView {
         )
     }
 
+    fn reload_react_click(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+        self.request_react_reload(cx);
+        cx.notify();
+    }
+
+    /// Right-hand info panel shown instead of the asset/inspector panels while
+    /// previewing a standalone React composition. Read-only facts plus a
+    /// manual Reload button; live editing happens in the `.tsx` file.
+    fn react_preview_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let entry = self
+            .react_preview
+            .as_ref()
+            .map(|react| react.entry.display().to_string())
+            .unwrap_or_default();
+        let row = |label: &str, value: String| {
+            div()
+                .flex()
+                .justify_between()
+                .gap_2()
+                .text_xs()
+                .child(div().text_color(rgb(0x8b8f9b)).child(label.to_owned()))
+                .child(div().text_color(rgb(0xd8dae2)).text_right().child(value))
+        };
+        div()
+            .flex()
+            .flex_none()
+            .w(px(280.0))
+            .h_full()
+            .flex_col()
+            .bg(rgb(0x181a20))
+            .border_l_1()
+            .border_color(rgb(0x30333d))
+            .child(panel_header("React Preview", 0))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .p_3()
+                    .child(div().text_xs().text_color(rgb(0x8b8f9b)).child("Entry"))
+                    .child(div().text_xs().text_color(rgb(0xd8dae2)).child(entry))
+                    .child(div().h(px(4.0)))
+                    .child(row("Size", self.dimensions.to_string()))
+                    .child(row("Frame rate", self.frame_rate_label.to_string()))
+                    .child(row("Duration", self.duration.to_string()))
+                    .child(row("Renderer", self.gpu_name.to_string()))
+                    .child(div().h(px(4.0)))
+                    .child(
+                        div()
+                            .id("reload-react-entry")
+                            .cursor_pointer()
+                            .rounded_sm()
+                            .px_2()
+                            .py_1()
+                            .bg(rgb(0x343842))
+                            .hover(|style| style.bg(rgb(0x4a4f5b)))
+                            .text_xs()
+                            .text_center()
+                            .text_color(rgb(0xd8dae2))
+                            .child("Reload composition")
+                            .on_click(cx.listener(Self::reload_react_click)),
+                    )
+                    .when(!self.preview_warnings.is_empty(), |panel| {
+                        panel.child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .mt_2()
+                                .rounded_sm()
+                                .border_1()
+                                .border_color(rgb(0x6b5327))
+                                .bg(rgb(0x241f14))
+                                .p_2()
+                                .text_xs()
+                                .text_color(rgb(0xffc46e))
+                                .children(self.preview_warnings.iter().cloned()),
+                        )
+                    }),
+            )
+    }
+
     fn timeline(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let progress = if self.clock.end_frame() == 0 {
             0.0
@@ -5833,13 +6429,13 @@ impl Render for EditorView {
         {
             window.request_animation_frame();
         }
-        let title = if self.document.is_dirty() {
+        let title = if self.is_effectively_dirty() {
             format!("{} * — Mikan", self.project_name)
         } else {
             format!("{} — Mikan", self.project_name)
         };
         window.set_window_title(&title);
-        window.set_window_edited(self.document.is_dirty());
+        window.set_window_edited(self.is_effectively_dirty());
         div()
             .key_context("MikanEditor")
             .on_action(cx.listener(Self::save_project))
@@ -5866,7 +6462,16 @@ impl Render for EditorView {
             .bg(rgb(0x14161b))
             .font_family(".SystemUIFont")
             .child(self.toolbar(cx))
-            .child(
+            .child(if self.is_react_preview() {
+                div()
+                    .flex()
+                    .flex_1()
+                    .w_full()
+                    .overflow_hidden()
+                    .child(self.preview_panel(cx))
+                    .child(self.react_preview_panel(cx))
+                    .into_any_element()
+            } else {
                 div()
                     .flex()
                     .flex_1()
@@ -5874,8 +6479,9 @@ impl Render for EditorView {
                     .overflow_hidden()
                     .child(self.asset_panel(cx))
                     .child(self.preview_panel(cx))
-                    .child(self.inspector_panel(cx)),
-            )
+                    .child(self.inspector_panel(cx))
+                    .into_any_element()
+            })
             .child(self.timeline(cx))
     }
 }
@@ -6431,11 +7037,16 @@ fn run() -> Result<(), Box<dyn Error>> {
                     editor.character_name_input = Some(character_name_input);
                     editor.property_input = Some(property_input);
                     editor.dialogue_text_input = Some(dialogue_text_input);
+                    if editor.is_react_preview() {
+                        editor.watch_react_entry(cx);
+                    }
                     editor
                 });
                 let close_view = view.clone();
                 window.on_window_should_close(cx, move |window, cx| {
-                    if close_view.read(cx).force_close || !close_view.read(cx).document.is_dirty() {
+                    if close_view.read(cx).force_close
+                        || !close_view.read(cx).is_effectively_dirty()
+                    {
                         return true;
                     }
                     close_view.update(cx, |editor, cx| editor.prompt_to_close(window, cx));
@@ -6454,10 +7065,11 @@ fn run() -> Result<(), Box<dyn Error>> {
 mod tests {
     use super::{
         AudioCacheKey, CachedAudioDecoder, ClipDrag, ClipDragKind, ClipKind, DiskAudioCache,
-        EDITOR_DEMO_PROJECT, ExportEvent, ExportRequest, ExportWorker, MediaAssetInfo,
-        clip_level_envelope, dragged_clip_range, export_range_for, export_suggested_name,
-        initial_clip_duration_frames, level_at_time, map_clip_waveform, master_volume_from_drag,
-        take_latest, track_accepts_asset, track_accepts_clip, waveform_peaks, waveform_segment,
+        EDITOR_DEMO_PROJECT, ExportEvent, ExportRequest, ExportSource, ExportWorker,
+        MediaAssetInfo, clip_level_envelope, dragged_clip_range, export_range_for,
+        export_suggested_name, initial_clip_duration_frames, level_at_time, map_clip_waveform,
+        master_volume_from_drag, take_latest, track_accepts_asset, track_accepts_clip,
+        waveform_peaks, waveform_segment,
     };
     use mikan_composition::{
         Animatable, AssetLocation, AudioClip, Rational, ResolvedAsset, Time, TimeRange,
@@ -6490,7 +7102,9 @@ mod tests {
         let _ = fs::remove_file(&output);
         worker
             .request(ExportRequest {
-                project: Project::from_json(EDITOR_DEMO_PROJECT).unwrap(),
+                source: ExportSource::Project(Box::new(
+                    Project::from_json(EDITOR_DEMO_PROJECT).unwrap(),
+                )),
                 asset_root: PathBuf::from("examples"),
                 output: output.clone(),
                 range: None,

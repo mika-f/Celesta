@@ -300,6 +300,44 @@ fn reports_audio_clips_per_frame_when_node_is_available() {
 }
 
 #[test]
+fn collect_audio_graph_sweeps_every_frame_into_one_graph_when_node_is_available() {
+    let Some((node, cli_script, package_root)) = live_react_runtime() else {
+        return;
+    };
+
+    // Bare <Audio>: reported by all 30 frames, merged into a single clip.
+    let entry = package_root.join("examples/with-audio.tsx");
+    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let graph = bridge
+        .collect_audio_graph(48_000, 1.0, entry.parent().unwrap())
+        .unwrap();
+    assert_eq!(graph.sample_rate, 48_000);
+    assert_eq!(graph.clips.len(), 1);
+    assert_eq!(graph.clips[0].id, "react-audio:0");
+    assert_eq!(graph.clips[0].source_start.as_seconds().unwrap(), 1.0);
+    let mikan_composition::AssetLocation::File { path } = &graph.clips[0].asset.location else {
+        panic!("expected a file asset");
+    };
+    assert!(
+        Path::new(path).is_absolute(),
+        "relative <Audio> src is absolutized against the entry dir, got {path}"
+    );
+
+    // Conditionally rendered <Audio> (frame >= 15): still one merged clip,
+    // because collect_audio_graph visits every frame and merges duplicates.
+    let entry = package_root.join("examples/with-conditional-audio.tsx");
+    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let graph = bridge
+        .collect_audio_graph(48_000, 1.0, entry.parent().unwrap())
+        .unwrap();
+    assert_eq!(graph.clips.len(), 1);
+    assert!(matches!(
+        &graph.clips[0].volume,
+        Animatable::Keyframes(_)
+    ));
+}
+
+#[test]
 fn shifts_media_inside_sequences_when_node_is_available() {
     let Some((node, cli_script, package_root)) = live_react_runtime() else {
         return;
