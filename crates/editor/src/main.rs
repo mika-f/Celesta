@@ -1239,6 +1239,8 @@ struct EditorView {
     /// redraws.
     dock_split: Option<Entity<ResizableState>>,
     body_split: Option<Entity<ResizableState>>,
+    /// Which left-dock tab is showing: 0 = Media Pool, 1 = Effects.
+    left_dock_tab: usize,
     saving_as: bool,
     importing_assets: bool,
     asset_operation_active: bool,
@@ -1378,6 +1380,7 @@ impl EditorView {
             master_volume_focus: None,
             dock_split: None,
             body_split: None,
+            left_dock_tab: 0,
             saving_as: false,
             importing_assets: false,
             asset_operation_active: false,
@@ -4126,6 +4129,9 @@ impl EditorView {
                 }
                 (false, None) => None,
             };
+            let thumbnail = (asset.kind == AssetKind::Image && !asset.missing)
+                .then(|| asset.path.clone())
+                .flatten();
             div()
                 .id(element_id)
                 .flex()
@@ -4140,10 +4146,26 @@ impl EditorView {
                 .text_color(cx.theme().foreground)
                 .child(
                     div()
-                        .w(px(46.0))
-                        .text_xs()
-                        .text_color(theme::accent())
-                        .child(asset.kind.to_string().to_uppercase()),
+                        .flex_none()
+                        .w(px(44.0))
+                        .h(px(26.0))
+                        .rounded_sm()
+                        .overflow_hidden()
+                        .bg(cx.theme().background)
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .map(|slot| match thumbnail {
+                            Some(path) => {
+                                slot.child(img(path).size_full().object_fit(ObjectFit::Cover))
+                            }
+                            None => slot.child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme::accent())
+                                    .child(asset.kind.to_string().to_uppercase()),
+                            ),
+                        }),
                 )
                 .child(
                     div()
@@ -6422,8 +6444,8 @@ impl EditorView {
             )
     }
 
-    /// Left dock: a tab bar over the media pool. The Effects tab is a
-    /// placeholder until that browser exists.
+    /// Left dock: a tab bar switching between the media pool and the effects
+    /// browser.
     fn left_dock(&self, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .flex()
@@ -6433,11 +6455,75 @@ impl EditorView {
             .bg(cx.theme().sidebar)
             .child(
                 TabBar::new("mikan-left-dock")
-                    .selected_index(0)
+                    .selected_index(self.left_dock_tab)
                     .child("Media Pool")
-                    .child("Effects"),
+                    .child("Effects")
+                    .on_click(cx.listener(|this, ix: &usize, _, cx| {
+                        this.left_dock_tab = *ix;
+                        cx.notify();
+                    })),
             )
-            .child(self.asset_panel(cx))
+            .child(if self.left_dock_tab == 1 {
+                self.effects_panel(cx).into_any_element()
+            } else {
+                self.asset_panel(cx).into_any_element()
+            })
+    }
+
+    /// Effects browser: the components registered by the project's React entry,
+    /// each draggable onto a track as a `Component` clip. Empty until a React
+    /// entry is set and its schemas have loaded.
+    fn effects_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let names: Vec<SharedString> = self
+            .component_schemas
+            .keys()
+            .map(|name| SharedString::from(name.clone()))
+            .collect();
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h_0()
+            .w_full()
+            .bg(cx.theme().sidebar)
+            .child(panel_header("Effects", names.len(), cx))
+            .child(
+                div()
+                    .id("effects-list-scroll")
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_h_0()
+                    .w_full()
+                    .overflow_x_hidden()
+                    .overflow_y_scroll()
+                    .when(names.is_empty(), |list| {
+                        list.child(
+                            div()
+                                .p_3()
+                                .text_sm()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(if self.document.react_entry().is_some() {
+                                    "Loading components…"
+                                } else {
+                                    "Set a React entry to load components"
+                                }),
+                        )
+                    })
+                    .children(names.into_iter().map(|name| {
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .px_3()
+                            .py_2()
+                            .text_sm()
+                            .text_color(cx.theme().foreground)
+                            .hover(|style| style.bg(cx.theme().list_hover))
+                            .child(div().text_xs().text_color(theme::accent()).child("FX"))
+                            .child(name)
+                    })),
+            )
     }
 
     fn status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
