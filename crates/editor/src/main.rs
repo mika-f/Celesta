@@ -46,10 +46,11 @@ mod audio_cache;
 mod theme;
 
 use audio_cache::DiskAudioCache;
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
+use gpui_kit::component::dialog::DialogButtonProps;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Root, Selectable as _, Sizable as _,
+    ActiveTheme as _, Disableable as _, Root, Selectable as _, Sizable as _, WindowExt as _,
 };
 
 const EDITOR_DEMO_PROJECT: &str = include_str!("../../../examples/editor-demo.mikan.json");
@@ -1229,8 +1230,6 @@ struct EditorView {
     saving_as: bool,
     importing_assets: bool,
     asset_operation_active: bool,
-    track_delete_prompt_active: bool,
-    character_delete_prompt_active: bool,
     close_prompt_active: bool,
     force_close: bool,
 }
@@ -1368,8 +1367,6 @@ impl EditorView {
             saving_as: false,
             importing_assets: false,
             asset_operation_active: false,
-            track_delete_prompt_active: false,
-            character_delete_prompt_active: false,
             close_prompt_active: false,
             force_close: false,
         };
@@ -2369,9 +2366,6 @@ impl EditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.character_delete_prompt_active {
-            return;
-        }
         let references = match self.document.character_references(character_id) {
             Ok(references) => references,
             Err(error) => {
@@ -2385,41 +2379,31 @@ impl EditorView {
             return;
         }
 
-        self.character_delete_prompt_active = true;
         let character_id = character_id.to_owned();
-        let mut detail = format!(
-            "This character has {} dialogue clip(s). Deleting it will also remove:",
-            references.len()
-        );
-        for reference in references.iter().take(4) {
-            detail.push_str(&format!("\n\n• {reference}"));
-        }
-        if references.len() > 4 {
-            detail.push_str(&format!("\n\n• …and {} more", references.len() - 4));
-        }
-        let answer = window.prompt(
-            PromptLevel::Warning,
-            "Delete referenced character?",
-            Some(&detail),
-            &[
-                PromptButton::ok("Delete Character and Dialogue"),
-                PromptButton::cancel("Cancel"),
-            ],
-            cx,
-        );
-        cx.spawn_in(window, async move |view, cx| {
-            let answer = answer.await.unwrap_or(1);
-            view.update_in(cx, |this, _, cx| {
-                this.character_delete_prompt_active = false;
-                if answer == 0 {
-                    this.delete_character_now(&character_id, true, cx);
-                } else {
-                    cx.notify();
-                }
-            })
-            .ok();
-        })
-        .detach();
+        let ok_character_id = character_id.clone();
+        let reference_count = references.len();
+        let weak = cx.weak_entity();
+        window.open_alert_dialog(cx, move |alert, _, _| {
+            let weak = weak.clone();
+            let ok_character_id = ok_character_id.clone();
+            alert
+                .title(format!("Delete character “{character_id}”?"))
+                .description(format!(
+                    "It is used by {reference_count} dialogue clip(s), which are deleted too."
+                ))
+                .button_props(
+                    DialogButtonProps::default()
+                        .ok_text("Delete Character and Dialogue")
+                        .ok_variant(ButtonVariant::Danger),
+                )
+                .on_ok(move |_, _, cx| {
+                    weak.update(cx, |this, cx| {
+                        this.delete_character_now(&ok_character_id, true, cx)
+                    })
+                    .ok();
+                    true
+                })
+        });
         cx.notify();
     }
 
@@ -2788,37 +2772,32 @@ impl EditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.track_delete_prompt_active {
-            return;
-        }
         if item_count == 0 {
             self.delete_track_now(track_id, cx);
             return;
         }
-        self.track_delete_prompt_active = true;
-        let answer = window.prompt(
-            PromptLevel::Warning,
-            "Delete non-empty track?",
-            Some(&format!(
-                "Track `{track_id}` contains {item_count} clip(s). Deleting the track also deletes all of them."
-            )),
-            &[PromptButton::ok("Delete Track"), PromptButton::cancel("Cancel")],
-            cx,
-        );
         let track_id = track_id.to_owned();
-        cx.spawn_in(window, async move |view, cx| {
-            let answer = answer.await.unwrap_or(1);
-            view.update_in(cx, |this, _, cx| {
-                this.track_delete_prompt_active = false;
-                if answer == 0 {
-                    this.delete_track_now(&track_id, cx);
-                } else {
-                    cx.notify();
-                }
-            })
-            .ok();
-        })
-        .detach();
+        let ok_track_id = track_id.clone();
+        let weak = cx.weak_entity();
+        window.open_alert_dialog(cx, move |alert, _, _| {
+            let weak = weak.clone();
+            let ok_track_id = ok_track_id.clone();
+            alert
+                .title(format!("Delete track “{track_id}”?"))
+                .description(format!(
+                    "It has {item_count} clip(s); deleting the track deletes them too."
+                ))
+                .button_props(
+                    DialogButtonProps::default()
+                        .ok_text("Delete Track")
+                        .ok_variant(ButtonVariant::Danger),
+                )
+                .on_ok(move |_, _, cx| {
+                    weak.update(cx, |this, cx| this.delete_track_now(&ok_track_id, cx))
+                        .ok();
+                    true
+                })
+        });
     }
 
     fn selected_audio_clip(&self) -> Option<mikan_editor::ClipSummary> {
@@ -3267,9 +3246,6 @@ impl EditorView {
         let Some(asset_id) = self.selected_asset_id.clone() else {
             return;
         };
-        if self.asset_operation_active {
-            return;
-        }
         let references = match self.document.asset_references(&asset_id) {
             Ok(references) => references,
             Err(error) => {
@@ -3282,40 +3258,30 @@ impl EditorView {
             self.remove_selected_asset_now(&asset_id, false, cx);
             return;
         }
-        self.asset_operation_active = true;
-        let mut detail = format!(
-            "This asset has {} reference(s). Removing it will also update or remove:",
-            references.len()
-        );
-        for reference in references.iter().take(4) {
-            detail.push_str(&format!("\n\n• {reference}"));
-        }
-        if references.len() > 4 {
-            detail.push_str(&format!("\n\n• …and {} more", references.len() - 4));
-        }
-        let answer = window.prompt(
-            PromptLevel::Warning,
-            "Remove referenced asset?",
-            Some(&detail),
-            &[
-                PromptButton::ok("Remove Asset and References"),
-                PromptButton::cancel("Cancel"),
-            ],
-            cx,
-        );
-        cx.spawn_in(window, async move |view, cx| {
-            let answer = answer.await.unwrap_or(1);
-            view.update_in(cx, |this, _, cx| {
-                this.asset_operation_active = false;
-                if answer == 0 {
-                    this.remove_selected_asset_now(&asset_id, true, cx);
-                } else {
-                    cx.notify();
-                }
-            })
-            .ok();
-        })
-        .detach();
+        let reference_count = references.len();
+        let ok_asset_id = asset_id.clone();
+        let weak = cx.weak_entity();
+        window.open_alert_dialog(cx, move |alert, _, _| {
+            let weak = weak.clone();
+            let ok_asset_id = ok_asset_id.clone();
+            alert
+                .title(format!("Remove asset “{asset_id}”?"))
+                .description(format!(
+                    "It has {reference_count} reference(s), which are updated or removed too. The file on disk is kept."
+                ))
+                .button_props(
+                    DialogButtonProps::default()
+                        .ok_text("Remove Asset and References")
+                        .ok_variant(ButtonVariant::Danger),
+                )
+                .on_ok(move |_, _, cx| {
+                    weak.update(cx, |this, cx| {
+                        this.remove_selected_asset_now(&ok_asset_id, true, cx)
+                    })
+                    .ok();
+                    true
+                })
+        });
         cx.notify();
     }
 
@@ -3522,7 +3488,10 @@ impl EditorView {
             return;
         }
         match self.document.save() {
-            Ok(()) => self.save_error = None,
+            Ok(()) => {
+                self.save_error = None;
+                window.push_notification("Project saved", cx);
+            }
             Err(error) => self.save_error = Some(error.to_string().into()),
         }
         cx.notify();
