@@ -49,6 +49,9 @@ use audio_cache::DiskAudioCache;
 use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
 use gpui_kit::component::dialog::DialogButtonProps;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::resizable::{ResizableState, h_resizable, resizable_panel, v_resizable};
+use gpui_kit::component::status_bar::StatusBar;
+use gpui_kit::component::tab::TabBar;
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Root, Selectable as _, Sizable as _, WindowExt as _,
 };
@@ -1227,6 +1230,12 @@ struct EditorView {
     gpu_name: SharedString,
     focus_handle: Option<FocusHandle>,
     master_volume_focus: Option<FocusHandle>,
+    /// Split positions for the workspace shell: `dock_split` is the
+    /// left-dock / monitor / right-dock row, `body_split` is the
+    /// work-area / timeline column. Held here so the drags persist across
+    /// redraws.
+    dock_split: Option<Entity<ResizableState>>,
+    body_split: Option<Entity<ResizableState>>,
     saving_as: bool,
     importing_assets: bool,
     asset_operation_active: bool,
@@ -1364,6 +1373,8 @@ impl EditorView {
             gpu_name,
             focus_handle: None,
             master_volume_focus: None,
+            dock_split: None,
+            body_split: None,
             saving_as: false,
             importing_assets: false,
             asset_operation_active: false,
@@ -4215,12 +4226,10 @@ impl EditorView {
         div()
             .flex()
             .flex_col()
-            .flex_none()
-            .w(px(230.0))
-            .h_full()
+            .flex_1()
+            .min_h_0()
+            .w_full()
             .bg(cx.theme().sidebar)
-            .border_r_1()
-            .border_color(cx.theme().border)
             .child(panel_header("Assets", self.assets.len(), cx))
             .child(
                 div()
@@ -4341,6 +4350,7 @@ impl EditorView {
             .flex()
             .flex_col()
             .flex_1()
+            .min_w_0()
             .h_full()
             .child(canvas)
             .child(
@@ -4738,12 +4748,10 @@ impl EditorView {
         div()
             .flex()
             .flex_col()
-            .flex_none()
-            .w(px(260.0))
-            .h_full()
+            .flex_1()
+            .min_h_0()
+            .w_full()
             .bg(cx.theme().sidebar)
-            .border_l_1()
-            .border_color(cx.theme().border)
             .child(panel_header("Inspector", 0, cx))
             .child(contents)
     }
@@ -5678,13 +5686,11 @@ impl EditorView {
         };
         div()
             .flex()
-            .flex_none()
-            .w(px(280.0))
-            .h_full()
+            .flex_1()
+            .min_h_0()
+            .w_full()
             .flex_col()
             .bg(cx.theme().sidebar)
-            .border_l_1()
-            .border_color(cx.theme().border)
             .child(panel_header("React Preview", 0, cx))
             .child(
                 div()
@@ -6110,8 +6116,8 @@ impl EditorView {
             .id("timeline-panel")
             .flex()
             .flex_col()
-            .flex_none()
-            .h(px(230.0))
+            .flex_1()
+            .min_h_0()
             .w_full()
             .bg(cx.theme().secondary)
             .border_t_1()
@@ -6323,27 +6329,105 @@ impl Render for EditorView {
             .bg(cx.theme().background)
             .font_family(".SystemUIFont")
             .child(self.toolbar(cx))
-            .child(if self.is_react_preview() {
+            .child(self.workspace(cx))
+            .child(self.status_bar(cx))
+    }
+}
+
+impl EditorView {
+    /// The resizable NLE shell: a left dock (Media Pool / Effects), the
+    /// monitor, and a right dock (Inspector), stacked above the timeline.
+    /// In React-preview mode the left dock is hidden and the right dock
+    /// shows composition facts instead of the inspector.
+    fn workspace(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let react = self.is_react_preview();
+        let dock_state = self.dock_split.clone();
+        let body_state = self.body_split.clone();
+        let dock_row = h_resizable("mikan-dock-row")
+            .when_some(dock_state.as_ref(), |group, state| group.with_state(state))
+            .child(
+                resizable_panel()
+                    .size(px(260.0))
+                    .size_range(px(200.0)..px(440.0))
+                    .visible(!react)
+                    .child(self.left_dock(cx)),
+            )
+            .child(resizable_panel().child(self.preview_panel(cx)))
+            .child(
+                resizable_panel()
+                    .size(px(300.0))
+                    .size_range(px(240.0)..px(520.0))
+                    .child(if react {
+                        self.react_preview_panel(cx).into_any_element()
+                    } else {
+                        self.inspector_panel(cx).into_any_element()
+                    }),
+            );
+        div()
+            .flex()
+            .flex_1()
+            .w_full()
+            .min_h_0()
+            .overflow_hidden()
+            .child(
+                v_resizable("mikan-body")
+                    .when_some(body_state.as_ref(), |group, state| group.with_state(state))
+                    .child(resizable_panel().child(dock_row))
+                    .child(
+                        resizable_panel()
+                            .size(px(240.0))
+                            .size_range(px(140.0)..px(560.0))
+                            .child(self.timeline(cx)),
+                    ),
+            )
+    }
+
+    /// Left dock: a tab bar over the media pool. The Effects tab is a
+    /// placeholder until that browser exists.
+    fn left_dock(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .size_full()
+            .min_h_0()
+            .bg(cx.theme().sidebar)
+            .child(
+                TabBar::new("mikan-left-dock")
+                    .selected_index(0)
+                    .child("Media Pool")
+                    .child("Effects"),
+            )
+            .child(self.asset_panel(cx))
+    }
+
+    fn status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let export = self
+            .export_progress
+            .map(export_progress_label)
+            .or_else(|| self.export_message.as_ref().map(ToString::to_string));
+        StatusBar::new()
+            .left(
                 div()
-                    .flex()
-                    .flex_1()
-                    .w_full()
-                    .overflow_hidden()
-                    .child(self.preview_panel(cx))
-                    .child(self.react_preview_panel(cx))
-                    .into_any_element()
-            } else {
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(format!(
+                        "{}  ·  {}  ·  {}",
+                        self.dimensions, self.frame_rate_label, self.gpu_name
+                    )),
+            )
+            .right(
                 div()
-                    .flex()
-                    .flex_1()
-                    .w_full()
-                    .overflow_hidden()
-                    .child(self.asset_panel(cx))
-                    .child(self.preview_panel(cx))
-                    .child(self.inspector_panel(cx))
-                    .into_any_element()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(format!(
+                        "{} / {}f",
+                        self.clock.frame(),
+                        self.clock.end_frame()
+                    )),
+            )
+            .when_some(export, |bar, label| {
+                bar.right(div().text_xs().text_color(cx.theme().warning).child(label))
             })
-            .child(self.timeline(cx))
     }
 }
 
@@ -6919,6 +7003,8 @@ fn run() -> Result<(), Box<dyn Error>> {
                     editor.character_name_input = Some(character_name_input);
                     editor.property_input = Some(property_input);
                     editor.dialogue_text_input = Some(dialogue_text_input);
+                    editor.dock_split = Some(cx.new(|_| ResizableState::default()));
+                    editor.body_split = Some(cx.new(|_| ResizableState::default()));
                     if editor.is_react_preview() {
                         editor.watch_react_entry(cx);
                     }
