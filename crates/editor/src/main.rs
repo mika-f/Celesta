@@ -48,6 +48,7 @@ use audio_cache::DiskAudioCache;
 use gpui_kit::component::button::{Button, ButtonGroup, ButtonVariant, ButtonVariants as _};
 use gpui_kit::component::dialog::DialogButtonProps;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::radio::RadioGroup;
 use gpui_kit::component::resizable::{ResizableState, h_resizable, resizable_panel, v_resizable};
 use gpui_kit::component::status_bar::StatusBar;
 use gpui_kit::component::switch::Switch;
@@ -5179,28 +5180,26 @@ impl EditorView {
                         .text_color(cx.theme().muted_foreground)
                         .child("Character"),
                 )
-                .child(
-                    div()
-                        .flex()
-                        .flex_wrap()
-                        .gap_2()
-                        .children(characters.iter().map(|character| {
-                            let clip_id = clip_id.to_owned();
-                            let character_id = character.id.clone();
-                            let selected = dialogue.character == character.id;
-                            let element_id: SharedString =
-                                format!("dialogue-character-{}", character.id).into();
-                            inspector_dynamic_button(element_id, character.name.clone(), cx)
-                                .when(selected, |button| {
-                                    button
-                                        .bg(cx.theme().primary)
-                                        .text_color(cx.theme().primary_foreground)
-                                })
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.set_dialogue_character(&clip_id, &character_id, cx);
-                                }))
-                        })),
-                ),
+                .child({
+                    let character_ids: Vec<String> = characters
+                        .iter()
+                        .map(|character| character.id.clone())
+                        .collect();
+                    let selected_ix = character_ids
+                        .iter()
+                        .position(|id| *id == dialogue.character);
+                    let pick_clip_id = clip_id.to_owned();
+                    RadioGroup::horizontal(SharedString::from(format!(
+                        "dialogue-character-{clip_id}"
+                    )))
+                    .children(characters.iter().map(|character| character.name.clone()))
+                    .selected_index(selected_ix)
+                    .on_click(cx.listener(move |this, ix: &usize, _, cx| {
+                        if let Some(id) = character_ids.get(*ix) {
+                            this.set_dialogue_character(&pick_clip_id, id, cx);
+                        }
+                    }))
+                }),
         );
         let Some(character) = characters
             .iter()
@@ -5209,11 +5208,30 @@ impl EditorView {
             return panel;
         };
         let default_expression = character.default_expression.as_deref();
-        let default_clip_id = clip_id.to_owned();
-        let default_selected =
-            dialogue.expression.is_none() || dialogue.expression.as_deref() == default_expression;
-        let default_button_id: SharedString =
-            format!("dialogue-expression-default-{clip_id}").into();
+        // Option list: index 0 is "Default" (stored as `None`), the rest are the
+        // character's non-default expressions in declaration order.
+        let expression_ids: Vec<String> = character
+            .expressions
+            .iter()
+            .filter(|expression| Some(expression.as_str()) != default_expression)
+            .cloned()
+            .collect();
+        let expression_selected_ix = match dialogue.expression.as_deref() {
+            None => Some(0),
+            Some(current) if Some(current) == default_expression => Some(0),
+            Some(current) => expression_ids
+                .iter()
+                .position(|id| id == current)
+                .map(|ix| ix + 1),
+        };
+        let expression_labels: Vec<SharedString> = std::iter::once(SharedString::from("Default"))
+            .chain(
+                expression_ids
+                    .iter()
+                    .map(|id| SharedString::from(id.clone())),
+            )
+            .collect();
+        let expression_clip_id = clip_id.to_owned();
         let panel = panel.child(
             div()
                 .flex()
@@ -5230,51 +5248,18 @@ impl EditorView {
                         .child("Expression"),
                 )
                 .child(
-                    div()
-                        .flex()
-                        .flex_wrap()
-                        .gap_2()
-                        .child(
-                            inspector_dynamic_button(default_button_id, "Default", cx)
-                                .when(default_selected, |button| {
-                                    button
-                                        .bg(cx.theme().primary)
-                                        .text_color(cx.theme().primary_foreground)
-                                })
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.set_dialogue_expression(&default_clip_id, None, cx);
-                                })),
-                        )
-                        .children(
-                            character
-                                .expressions
-                                .iter()
-                                .filter(|expression| {
-                                    Some(expression.as_str()) != default_expression
-                                })
-                                .map(|expression| {
-                                    let clip_id = clip_id.to_owned();
-                                    let expression_id = expression.clone();
-                                    let selected =
-                                        dialogue.expression.as_deref() == Some(expression.as_str());
-                                    let button_id: SharedString =
-                                        format!("dialogue-expression-{clip_id}-{expression_id}")
-                                            .into();
-                                    inspector_dynamic_button(button_id, expression.clone(), cx)
-                                        .when(selected, |button| {
-                                            button
-                                                .bg(cx.theme().primary)
-                                                .text_color(cx.theme().primary_foreground)
-                                        })
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.set_dialogue_expression(
-                                                &clip_id,
-                                                Some(&expression_id),
-                                                cx,
-                                            );
-                                        }))
-                                }),
-                        ),
+                    RadioGroup::horizontal(SharedString::from(format!(
+                        "dialogue-expression-{clip_id}"
+                    )))
+                    .children(expression_labels)
+                    .selected_index(expression_selected_ix)
+                    .on_click(cx.listener(move |this, ix: &usize, _, cx| {
+                        let expression = (*ix > 0)
+                            .then(|| expression_ids.get(*ix - 1))
+                            .flatten()
+                            .map(String::as_str);
+                        this.set_dialogue_expression(&expression_clip_id, expression, cx);
+                    })),
                 ),
         );
         if character.lip_sync.is_none() || dialogue.audio.is_none() {
@@ -6286,7 +6271,39 @@ impl EditorView {
                             ),
                     ),
             )
-            .child(track_area)
+            .child(
+                // Track scroll region, with a playhead line drawn over the clip
+                // lanes. The overlay is inset by the 230px header column and the
+                // 8px right gutter so `left(relative(progress))` lands exactly
+                // where a clip at that fraction would. A plain (non-interactive)
+                // div, so clip clicks pass straight through.
+                div()
+                    .relative()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_h_0()
+                    .child(track_area)
+                    .when(!self.tracks.is_empty(), |region| {
+                        region.child(
+                            div()
+                                .absolute()
+                                .top_0()
+                                .bottom_0()
+                                .left(px(230.0))
+                                .right(px(8.0))
+                                .child(
+                                    div()
+                                        .absolute()
+                                        .top_0()
+                                        .bottom_0()
+                                        .w(px(2.0))
+                                        .left(relative(progress))
+                                        .bg(theme::accent().opacity(0.7)),
+                                ),
+                        )
+                    }),
+            )
     }
 }
 
