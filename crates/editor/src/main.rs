@@ -46,11 +46,12 @@ mod audio_cache;
 mod theme;
 
 use audio_cache::DiskAudioCache;
-use gpui_kit::component::button::{Button, ButtonVariant, ButtonVariants as _};
+use gpui_kit::component::button::{Button, ButtonGroup, ButtonVariant, ButtonVariants as _};
 use gpui_kit::component::dialog::DialogButtonProps;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::resizable::{ResizableState, h_resizable, resizable_panel, v_resizable};
 use gpui_kit::component::status_bar::StatusBar;
+use gpui_kit::component::switch::Switch;
 use gpui_kit::component::tab::TabBar;
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, IconName, Root, Selectable as _, Sizable as _,
@@ -2622,16 +2623,6 @@ impl EditorView {
         cx.notify();
     }
 
-    fn toggle_property_boolean(
-        &mut self,
-        target: &PropertyEditTarget,
-        key: &str,
-        current: bool,
-        cx: &mut Context<Self>,
-    ) {
-        self.apply_property(target, key, serde_json::Value::Bool(!current), cx);
-    }
-
     fn step_property_number(
         &mut self,
         target: &PropertyEditTarget,
@@ -2653,29 +2644,6 @@ impl EditorView {
             return;
         };
         self.apply_property(target, key, value, cx);
-    }
-
-    fn cycle_property_select(
-        &mut self,
-        target: &PropertyEditTarget,
-        key: &str,
-        options: &[String],
-        current: &str,
-        cx: &mut Context<Self>,
-    ) {
-        if options.is_empty() {
-            return;
-        }
-        let next_index = options
-            .iter()
-            .position(|option| option == current)
-            .map_or(0, |index| (index + 1) % options.len());
-        self.apply_property(
-            target,
-            key,
-            serde_json::Value::String(options[next_index].clone()),
-            cx,
-        );
     }
 
     fn begin_property_edit(
@@ -5542,9 +5510,15 @@ impl EditorView {
                             .unwrap_or(*default_value);
                         let target = target.clone();
                         let key = key.to_owned();
-                        inspector_dynamic_button(field_id, if value { "True" } else { "False" }, cx)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.toggle_property_boolean(&target, &key, value, cx);
+                        Switch::new(field_id)
+                            .checked(value)
+                            .on_click(cx.listener(move |this, checked: &bool, _, cx| {
+                                this.apply_property(
+                                    &target,
+                                    &key,
+                                    serde_json::Value::Bool(*checked),
+                                    cx,
+                                );
                             }))
                             .into_any_element()
                     }
@@ -5627,9 +5601,25 @@ impl EditorView {
                         let target = target.clone();
                         let key = key.to_owned();
                         let options = options.clone();
-                        inspector_dynamic_button(field_id, value.clone(), cx)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.cycle_property_select(&target, &key, &options, &value, cx);
+                        let click_options = options.clone();
+                        ButtonGroup::new(SharedString::from(format!("{field_id}-group")))
+                            .compact()
+                            .children(options.iter().enumerate().map(|(index, option)| {
+                                Button::new(("prop-option", index))
+                                    .label(option.clone())
+                                    .selected(*option == value)
+                            }))
+                            .on_click(cx.listener(move |this, clicks: &Vec<usize>, _, cx| {
+                                if let Some(option) =
+                                    clicks.first().and_then(|ix| click_options.get(*ix))
+                                {
+                                    this.apply_property(
+                                        &target,
+                                        &key,
+                                        serde_json::Value::String(option.clone()),
+                                        cx,
+                                    );
+                                }
                             }))
                             .into_any_element()
                     }
