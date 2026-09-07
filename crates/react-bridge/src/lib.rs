@@ -20,6 +20,9 @@ use mikan_composition::{
 use mikan_media::{AudioStream, FfmpegBackend, MediaProbe, VideoStream};
 use serde::{Deserialize, Serialize};
 
+mod runtime;
+pub use runtime::runtime_paths;
+
 /// A companion project's layers for one exact frame, evaluated up front by
 /// the caller (see [`ReactBridge::scene_at_with_project`]).
 #[derive(Clone, Copy, Debug)]
@@ -168,7 +171,13 @@ impl ReactBridge {
         entry: impl AsRef<Path>,
     ) -> Result<Self, ReactBridgeError> {
         let node = node.as_ref();
-        let mut child = Command::new(node)
+        let mut command = Command::new(node);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        }
+        let mut child = command
             .arg(cli_script.as_ref())
             .arg(entry.as_ref())
             .stdin(Stdio::piped())

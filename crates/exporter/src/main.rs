@@ -1,5 +1,5 @@
 use std::ffi::{OsStr, OsString};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::ExitCode;
 
 use mikan_exporter::{
@@ -128,11 +128,7 @@ fn export_range(from: Option<&OsStr>, to: Option<&OsStr>) -> Result<Option<Expor
     }))
 }
 
-/// Resolves the `@mikan/react` runtime shipped alongside this workspace.
-/// This assumes a monorepo checkout; a packaged Frameweave distribution will need
-/// to locate the runtime differently.
 fn default_react_runtime() -> ReactRuntimeOptions {
-    let cli_script =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../packages/react/dist/cli.js");
-    ReactRuntimeOptions::new("node", cli_script)
+    let (node, cli_script) = mikan_react_bridge::runtime_paths();
+    ReactRuntimeOptions::new(node, cli_script)
 }

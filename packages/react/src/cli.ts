@@ -1,5 +1,6 @@
 import { Console } from 'node:console';
 import * as fs from 'node:fs';
+import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
 import { pathToFileURL } from 'node:url';
@@ -230,21 +231,24 @@ async function loadEntry(entryPath: string): Promise<LoadedEntry> {
     // the Provider values render.ts sets around it. Both stay external and
     // resolve through Node's own module cache instead of being duplicated
     // into the bundle.
-    external: ['react', 'react/jsx-runtime', 'react/jsx-dev-runtime', '@mikan/react'],
+    plugins: [{
+      name: 'shared-runtime',
+      setup(build) {
+        build.onResolve({ filter: /^(react(?:\/jsx(?:-dev)?-runtime)?|@mikan\/react)$/ }, (args) => ({
+          path: pathToFileURL(require.resolve(args.path)).href,
+          external: true,
+        }));
+      },
+    }],
   });
   const [output] = result.outputFiles;
 
-  // The bundle keeps `@mikan/react` external, which is only
-  // resolvable from inside this package's own directory tree (Node's
-  // self-reference resolution), so the bundle is written there rather than
-  // to the OS temp directory.
-  const tempRoot = path.join(__dirname, '..', '.tmp');
-  fs.mkdirSync(tempRoot, { recursive: true });
-  const bundleDirectory = fs.mkdtempSync(path.join(tempRoot, 'entry-'));
+  // Runtime imports are absolute file URLs, so installed packages stay read-only.
+  const bundleDirectory = fs.mkdtempSync(path.join(tmpdir(), 'frameweave-entry-'));
   const bundlePath = path.join(bundleDirectory, 'entry.mjs');
-  fs.writeFileSync(bundlePath, output.text);
   let mod: unknown;
   try {
+    fs.writeFileSync(bundlePath, output.text);
     mod = await import(pathToFileURL(bundlePath).href);
   } finally {
     fs.rmSync(bundleDirectory, { recursive: true, force: true });

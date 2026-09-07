@@ -1,3 +1,5 @@
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::ffi::OsStr;
@@ -61,16 +63,7 @@ use mikan_editor_theme as theme;
 
 const EDITOR_DEMO_PROJECT: &str = include_str!("../../../examples/editor-demo.mikan.json");
 
-/// The `node` executable and `@mikan/react` CLI script `ComponentSchemaWorker`
-/// spawns to query a `react_entry`'s registered component schemas — the same
-/// `node` on `PATH` and workspace-relative `packages/react/dist/cli.js` that
-/// `mikan-exporter --react` resolves (see its `main.rs`), so a developer only
-/// needs `pnpm install && pnpm run build` in `packages/react` once for both.
-fn react_runtime_paths() -> (PathBuf, PathBuf) {
-    let cli_script =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../packages/react/dist/cli.js");
-    (PathBuf::from("node"), cli_script)
-}
+use mikan_react_bridge::runtime_paths as react_runtime_paths;
 
 actions!(
     mikan_editor,

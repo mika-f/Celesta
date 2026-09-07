@@ -149,6 +149,11 @@ cargo run -p mikan-exporter --release -- --from 0 --to 1 examples/editor-demo.mi
 - Lip-sync generation uses dialogue text and the voice waveform. It does not
   perform speech recognition, so the text should match the recording.
 
+## Build a Windows package
+
+To create a Windows installer or portable ZIP with Node.js included, follow the
+[Windows packaging guide](packaging/windows/README.md).
+
 ## Report a problem
 
 Open an issue in this repository with your operating system, steps to reproduce
