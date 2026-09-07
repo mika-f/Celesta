@@ -138,6 +138,33 @@ impl Render for AssetDrag {
     }
 }
 
+/// Drag payload for a registered React component dragged out of the Effects
+/// browser onto a timeline track.
+#[derive(Clone)]
+struct EffectDrag {
+    component: String,
+}
+
+impl Render for EffectDrag {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .w(px(180.0))
+            .h(px(34.0))
+            .px_3()
+            .rounded(cx.theme().radius)
+            .bg(cx.theme().popover)
+            .border_1()
+            .border_color(theme::accent())
+            .shadow_md()
+            .text_xs()
+            .text_color(cx.theme().foreground)
+            .child(format!("FX  {}", self.component))
+    }
+}
+
 struct AudioPreview {
     _device_sink: rodio::MixerDeviceSink,
     player: Player,
@@ -924,6 +951,9 @@ enum PropertyEditTarget {
 struct PropertyEdit {
     target: PropertyEditTarget,
     key: String,
+    /// The field is a `Number`, so the committed text is parsed as `f64`
+    /// rather than stored verbatim as a string.
+    numeric: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -1248,6 +1278,14 @@ struct EditorView {
     body_split: Option<Entity<ResizableState>>,
     /// Which left-dock tab is showing: 0 = Media Pool, 1 = Effects.
     left_dock_tab: usize,
+    /// Timeline horizontal zoom (>= 1; 1 = whole composition fits) and the
+    /// fraction of the composition at the left edge of the visible window.
+    /// The mouse wheel over the timeline adjusts the zoom about the cursor.
+    timeline_zoom: f64,
+    timeline_view_start: f64,
+    /// Middle-button pan of the timeline: `(pointer x at grab, view_start at
+    /// grab)`. `Some` while the middle button is held over the timeline.
+    timeline_pan: Option<(f32, f64)>,
     saving_as: bool,
     importing_assets: bool,
     asset_operation_active: bool,
@@ -1395,6 +1433,9 @@ impl EditorView {
             dock_split: None,
             body_split: None,
             left_dock_tab: 0,
+            timeline_zoom: 1.0,
+            timeline_view_start: 0.0,
+            timeline_pan: None,
             saving_as: false,
             importing_assets: false,
             asset_operation_active: false,
@@ -1958,14 +1999,100 @@ impl EditorView {
         }
     }
 
+    /// Pixel width of the timeline clip lane (window minus the 230px header
+    /// column and the 8px right gutter).
+    fn timeline_lane_width(window: &Window) -> f32 {
+        (f32::from(window.bounds().size.width) - 230.0 - 8.0).max(1.0)
+    }
+
+    /// Fraction (0..1) of the whole composition at horizontal window position
+    /// `x`, accounting for the 230px track-header column and the current
+    /// timeline zoom / scroll.
+    fn timeline_fraction_at(&self, x: Pixels, window: &Window) -> f64 {
+        let lane_width = Self::timeline_lane_width(window);
+        let local = ((f32::from(x) - 230.0).clamp(0.0, lane_width) / lane_width) as f64;
+        let (zoom, view_start) = self.timeline_view();
+        (view_start + local / zoom).clamp(0.0, 1.0)
+    }
+
     fn frame_for_timeline_position(&self, position: Point<Pixels>, window: &Window) -> i64 {
-        const TRACK_LABEL_WIDTH: f32 = 230.0;
-        const RIGHT_INSET: f32 = 8.0;
-        let window_width = f32::from(window.bounds().size.width);
-        let timeline_width = (window_width - TRACK_LABEL_WIDTH - RIGHT_INSET).max(1.0);
-        let local_x = (f32::from(position.x) - TRACK_LABEL_WIDTH).clamp(0.0, timeline_width);
-        let progress = local_x / timeline_width;
-        self.clock.frame_at_fraction(progress)
+        self.clock
+            .frame_at_fraction(self.timeline_fraction_at(position.x, window) as f32)
+    }
+
+    /// Clamped `(zoom, view_start)` for the timeline: zoom is at least 1, and
+    /// the visible window `[view_start, view_start + 1/zoom]` stays inside
+    /// `[0, 1]`.
+    fn timeline_view(&self) -> (f64, f64) {
+        let zoom = self.timeline_zoom.clamp(1.0, 40.0);
+        let view_start = self
+            .timeline_view_start
+            .clamp(0.0, (1.0 - 1.0 / zoom).max(0.0));
+        (zoom, view_start)
+    }
+
+    /// Mouse wheel over the timeline: zoom about the cursor, keeping the
+    /// composition fraction under the pointer fixed.
+    fn timeline_wheel(
+        &mut self,
+        event: &gpui_kit::ScrollWheelEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let delta = match event.delta {
+            gpui_kit::ScrollDelta::Lines(point) => point.y,
+            gpui_kit::ScrollDelta::Pixels(point) => f32::from(point.y) / 40.0,
+        };
+        if delta == 0.0 {
+            return;
+        }
+        let (zoom, view_start) = self.timeline_view();
+        let cursor = self.timeline_fraction_at(event.position.x, window);
+        let local = ((cursor - view_start) * zoom).clamp(0.0, 1.0);
+        let new_zoom = (zoom * (1.0 + f64::from(delta) * 0.15)).clamp(1.0, 40.0);
+        self.timeline_zoom = new_zoom;
+        self.timeline_view_start = (cursor - local / new_zoom).clamp(0.0, 1.0);
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    /// Middle-button press over the timeline: start a pan.
+    fn begin_timeline_pan(
+        &mut self,
+        event: &MouseDownEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.timeline_pan = Some((f32::from(event.position.x), self.timeline_view().1));
+        cx.stop_propagation();
+    }
+
+    fn continue_timeline_pan(
+        &mut self,
+        event: &MouseMoveEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((grab_x, grab_view_start)) = self.timeline_pan else {
+            return;
+        };
+        // `MouseMoveEvent::dragging()` is Left-button only, so check the middle
+        // button explicitly; the button being released ends the pan.
+        if event.pressed_button != Some(MouseButton::Middle) {
+            self.timeline_pan = None;
+            return;
+        }
+        let (zoom, _) = self.timeline_view();
+        let dx = f64::from(f32::from(event.position.x) - grab_x)
+            / f64::from(Self::timeline_lane_width(window));
+        self.timeline_view_start = (grab_view_start - dx / zoom).clamp(0.0, 1.0);
+        cx.notify();
+    }
+
+    fn end_timeline_pan(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
+        if self.timeline_pan.take().is_some() {
+            cx.notify();
+        }
     }
 
     fn scrub_to(&mut self, position: Point<Pixels>, window: &Window, cx: &mut Context<Self>) {
@@ -2677,12 +2804,14 @@ impl EditorView {
         target: &PropertyEditTarget,
         key: &str,
         current: &str,
+        numeric: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.editing_property = Some(PropertyEdit {
             target: target.clone(),
             key: key.to_owned(),
+            numeric,
         });
         self.edit_error = None;
         if let Some(input) = &self.property_input {
@@ -2707,12 +2836,26 @@ impl EditorView {
             return;
         };
         self.editing_property = None;
-        self.apply_property(
-            &edit.target,
-            &edit.key,
-            serde_json::Value::String(text.to_string()),
-            cx,
-        );
+        let value = if edit.numeric {
+            match text.trim().parse::<f64>() {
+                Ok(number) => match serde_json::Number::from_f64(number) {
+                    Some(number) => serde_json::Value::Number(number),
+                    None => {
+                        self.edit_error = Some("number is out of range".into());
+                        cx.notify();
+                        return;
+                    }
+                },
+                Err(_) => {
+                    self.edit_error = Some(format!("`{text}` is not a number").into());
+                    cx.notify();
+                    return;
+                }
+            }
+        } else {
+            serde_json::Value::String(text.to_string())
+        };
+        self.apply_property(&edit.target, &edit.key, value, cx);
     }
 
     fn cancel_property_edit(&mut self, cx: &mut Context<Self>) {
@@ -3418,6 +3561,64 @@ impl EditorView {
         self.selected_asset_id = Some(asset.id.clone());
         self.selected_track_id = None;
         self.insert_asset_at(&asset.id, None, start, cx);
+    }
+
+    fn insert_effect_at(
+        &mut self,
+        component: &str,
+        target_track_id: Option<&str>,
+        requested_start: i64,
+        cx: &mut Context<Self>,
+    ) {
+        let frame_rate = self.document.project().settings.frame_rate;
+        let mut start = requested_start.max(0);
+        let mut duration = initial_clip_duration_frames(None, frame_rate);
+        if self.document.project().settings.duration.is_some() {
+            if self.clock.end_frame() == 0 {
+                self.edit_error = Some("the fixed project timeline has no available frames".into());
+                cx.notify();
+                return;
+            }
+            start = start.min(self.clock.end_frame() - 1);
+            duration = duration.min(self.clock.end_frame() - start);
+        }
+        match self.document.insert_component_clip_on_track(
+            component,
+            target_track_id,
+            start,
+            duration,
+        ) {
+            Ok(clip_id) => {
+                self.selected_clip_id = Some(clip_id);
+                self.edit_error = None;
+                self.sync_document_state();
+            }
+            Err(error) => self.edit_error = Some(error.to_string().into()),
+        }
+        cx.notify();
+    }
+
+    fn drop_effect_on_track(
+        &mut self,
+        effect: &EffectDrag,
+        track_id: &str,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        let start = self.frame_for_timeline_position(window.mouse_position(), window);
+        self.selected_track_id = Some(track_id.to_owned());
+        self.insert_effect_at(&effect.component, Some(track_id), start, cx);
+    }
+
+    fn drop_effect_without_track(
+        &mut self,
+        effect: &EffectDrag,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        let start = self.frame_for_timeline_position(window.mouse_position(), window);
+        self.selected_track_id = None;
+        self.insert_effect_at(&effect.component, None, start, cx);
     }
 
     fn insert_selected_asset_action(
@@ -5561,63 +5762,83 @@ impl EditorView {
                         let value = current
                             .and_then(serde_json::Value::as_f64)
                             .unwrap_or(*default_value);
-                        let step = step.unwrap_or(1.0);
-                        let (min, max) = (*min, *max);
-                        let down_target = target.clone();
-                        let down_key = key.to_owned();
-                        let up_target = target.clone();
-                        let up_key = key.to_owned();
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                inspector_dynamic_button(
-                                    SharedString::from(format!("{field_id}-down")),
-                                    "−",
-                                    cx,
+                        if editing {
+                            self.property_edit_input(&field_id, cx).into_any_element()
+                        } else {
+                            let step = step.unwrap_or(1.0);
+                            let (min, max) = (*min, *max);
+                            let down_target = target.clone();
+                            let down_key = key.to_owned();
+                            let up_target = target.clone();
+                            let up_key = key.to_owned();
+                            let edit_target = target.clone();
+                            let edit_key = key.to_owned();
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .child(
+                                    inspector_dynamic_button(
+                                        SharedString::from(format!("{field_id}-down")),
+                                        "−",
+                                        cx,
+                                    )
+                                    .on_click(cx.listener(
+                                        move |this, _, _, cx| {
+                                            this.step_property_number(
+                                                &down_target,
+                                                &down_key,
+                                                value,
+                                                -step,
+                                                (min, max),
+                                                cx,
+                                            );
+                                        },
+                                    )),
                                 )
-                                .on_click(cx.listener(
-                                    move |this, _, _, cx| {
-                                        this.step_property_number(
-                                            &down_target,
-                                            &down_key,
-                                            value,
-                                            -step,
-                                            (min, max),
-                                            cx,
-                                        );
-                                    },
-                                )),
-                            )
-                            .child(
-                                div()
+                                .child(
+                                    inspector_dynamic_button(
+                                        SharedString::from(format!("{field_id}-value")),
+                                        format_component_number(value),
+                                        cx,
+                                    )
                                     .w(px(64.0))
+                                    .flex_none()
                                     .text_center()
-                                    .text_sm()
-                                    .text_color(cx.theme().foreground)
-                                    .child(format_component_number(value)),
-                            )
-                            .child(
-                                inspector_dynamic_button(
-                                    SharedString::from(format!("{field_id}-up")),
-                                    "+",
-                                    cx,
+                                    .on_click(cx.listener(
+                                        move |this, _, window, cx| {
+                                            this.begin_property_edit(
+                                                &edit_target,
+                                                &edit_key,
+                                                &format_component_number(value),
+                                                true,
+                                                window,
+                                                cx,
+                                            );
+                                        },
+                                    )),
                                 )
-                                .on_click(cx.listener(
-                                    move |this, _, _, cx| {
-                                        this.step_property_number(
-                                            &up_target,
-                                            &up_key,
-                                            value,
-                                            step,
-                                            (min, max),
-                                            cx,
-                                        );
-                                    },
-                                )),
-                            )
-                            .into_any_element()
+                                .child(
+                                    inspector_dynamic_button(
+                                        SharedString::from(format!("{field_id}-up")),
+                                        "+",
+                                        cx,
+                                    )
+                                    .on_click(cx.listener(
+                                        move |this, _, _, cx| {
+                                            this.step_property_number(
+                                                &up_target,
+                                                &up_key,
+                                                value,
+                                                step,
+                                                (min, max),
+                                                cx,
+                                            );
+                                        },
+                                    )),
+                                )
+                                .into_any_element()
+                        }
                     }
                     ComponentPropertyField::Select {
                         default_value,
@@ -5658,20 +5879,7 @@ impl EditorView {
                             .and_then(serde_json::Value::as_str)
                             .map_or_else(|| default_value.clone(), str::to_owned);
                         if editing {
-                            div()
-                                .id(SharedString::from(format!("{field_id}-input")))
-                                .px_2()
-                                .py_1()
-                                .rounded_sm()
-                                .border_1()
-                                .border_color(theme::accent())
-                                .bg(cx.theme().background)
-                                .text_sm()
-                                .text_color(cx.theme().foreground)
-                                .when_some(self.property_input.clone(), |field, input| {
-                                    field.child(Input::new(&input))
-                                })
-                                .into_any_element()
+                            self.property_edit_input(&field_id, cx).into_any_element()
                         } else {
                             let target = target.clone();
                             let key = key.to_owned();
@@ -5682,6 +5890,7 @@ impl EditorView {
                                         &target,
                                         &key,
                                         &value_for_edit,
+                                        false,
                                         window,
                                         cx,
                                     );
@@ -5691,6 +5900,28 @@ impl EditorView {
                     }
                 }),
         )
+    }
+
+    /// The bordered wrapper around the shared `property_input` shown while a
+    /// String / Color / Number field is being edited inline.
+    fn property_edit_input(
+        &self,
+        field_id: &SharedString,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id(SharedString::from(format!("{field_id}-input")))
+            .px_2()
+            .py_1()
+            .rounded(cx.theme().radius)
+            .border_1()
+            .border_color(theme::accent())
+            .bg(cx.theme().background)
+            .text_sm()
+            .text_color(cx.theme().foreground)
+            .when_some(self.property_input.clone(), |field, input| {
+                field.child(Input::new(&input))
+            })
     }
 
     fn reload_react_click(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
@@ -5776,6 +6007,10 @@ impl EditorView {
         let total_duration = self.document.duration().as_seconds().unwrap_or(0.0);
         let current_time = self.current_time();
         let track_count = self.tracks.len();
+        let (zoom, view_start) = self.timeline_view();
+        // Map a whole-composition fraction / width into the visible window.
+        let vx = move |fraction: f32| ((f64::from(fraction) - view_start) * zoom) as f32;
+        let vw = move |width: f32| (f64::from(width) * zoom) as f32;
         let t = cx.theme();
         let row_border = t.border;
         let row_selected_bg = t.list_active;
@@ -5842,10 +6077,10 @@ impl EditorView {
                 div()
                     .id(element_id)
                     .absolute()
-                    .left(relative(start))
+                    .left(relative(vx(start)))
                     .top(px(5.0))
                     .h(px(28.0))
-                    .w(relative(duration))
+                    .w(relative(vw(duration)))
                     .min_w(px(3.0))
                     .overflow_hidden()
                     .rounded_sm()
@@ -5979,6 +6214,9 @@ impl EditorView {
             let drop_track_id = track.id.clone();
             let drop_track_kind = track.kind;
             let drop_track_locked = track.locked;
+            let effect_drop_track_id = track.id.clone();
+            let effect_drop_kind = track.kind;
+            let effect_drop_locked = track.locked;
             let mute_element_id: SharedString = format!("track-mute-{}", track.id).into();
             let solo_element_id: SharedString = format!("track-solo-{}", track.id).into();
             let up_element_id: SharedString = format!("track-up-{}", track.id).into();
@@ -6091,11 +6329,14 @@ impl EditorView {
                 )
                 .child(
                     div()
+                        .id(SharedString::from(format!("clip-lane-{}", track.id)))
                         .relative()
                         .flex_1()
                         .h_full()
                         .mr_2()
                         .overflow_hidden()
+                        .on_scroll_wheel(cx.listener(Self::timeline_wheel))
+                        .on_mouse_down(MouseButton::Middle, cx.listener(Self::begin_timeline_pan))
                         .drag_over::<AssetDrag>(move |style, asset, _, _| {
                             if !drop_track_locked
                                 && track_accepts_asset(drop_track_kind, asset.kind)
@@ -6110,6 +6351,19 @@ impl EditorView {
                         })
                         .on_drop(cx.listener(move |this, asset: &AssetDrag, window, cx| {
                             this.drop_asset_on_track(asset, &drop_track_id, window, cx);
+                        }))
+                        .drag_over::<EffectDrag>(move |style, _, _, _| {
+                            if !effect_drop_locked && effect_drop_kind == TrackKind::Overlay {
+                                style.bg(drop_ok_bg).border_1().border_color(drop_ok_border)
+                            } else {
+                                style
+                                    .bg(drop_bad_bg)
+                                    .border_1()
+                                    .border_color(drop_bad_border)
+                            }
+                        })
+                        .on_drop(cx.listener(move |this, effect: &EffectDrag, window, cx| {
+                            this.drop_effect_on_track(effect, &effect_drop_track_id, window, cx);
                         }))
                         .children(clips),
                 )
@@ -6143,7 +6397,11 @@ impl EditorView {
                         .on_drop(cx.listener(|this, asset: &AssetDrag, window, cx| {
                             this.drop_asset_without_track(asset, window, cx);
                         }))
-                        .child("No tracks yet — drop an asset here"),
+                        .drag_over::<EffectDrag>(move |style, _, _, _| style.bg(drop_ok_bg))
+                        .on_drop(cx.listener(|this, effect: &EffectDrag, window, cx| {
+                            this.drop_effect_without_track(effect, window, cx);
+                        }))
+                        .child("No tracks yet — drop an asset or effect here"),
                 )
             })
             .children(rows);
@@ -6158,7 +6416,9 @@ impl EditorView {
             .border_t_1()
             .border_color(cx.theme().border)
             .on_mouse_move(cx.listener(Self::continue_clip_drag))
+            .on_mouse_move(cx.listener(Self::continue_timeline_pan))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::end_clip_drag))
+            .on_mouse_up(MouseButton::Middle, cx.listener(Self::end_timeline_pan))
             .child(
                 div()
                     .flex()
@@ -6210,6 +6470,19 @@ impl EditorView {
                                 format_time(self.current_time()),
                                 self.duration
                             )))
+                            .when(zoom > 1.001, |controls| {
+                                controls.child(
+                                    Button::new("timeline-zoom-fit")
+                                        .xsmall()
+                                        .ghost()
+                                        .label(format!("{zoom:.1}× · Fit"))
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.timeline_zoom = 1.0;
+                                            this.timeline_view_start = 0.0;
+                                            cx.notify();
+                                        })),
+                                )
+                            })
                             .child(
                                 Button::new("set-export-in")
                                     .xsmall()
@@ -6256,25 +6529,67 @@ impl EditorView {
                 div()
                     .flex()
                     .flex_none()
-                    .h(px(24.0))
+                    .h(px(34.0))
                     .w_full()
-                    .items_center()
+                    .items_start()
                     .child(div().w(px(230.0)))
                     .child(
                         div()
                             .id("timeline-scrubber")
                             .relative()
                             .flex_1()
-                            .h(px(16.0))
+                            .h(px(34.0))
                             .mr_2()
+                            .overflow_x_hidden()
                             .cursor_pointer()
+                            .on_scroll_wheel(cx.listener(Self::timeline_wheel))
                             .on_mouse_down(MouseButton::Left, cx.listener(Self::begin_scrub))
+                            .on_mouse_down(
+                                MouseButton::Middle,
+                                cx.listener(Self::begin_timeline_pan),
+                            )
                             .on_mouse_move(cx.listener(Self::continue_scrub))
                             .on_mouse_up(MouseButton::Left, cx.listener(Self::end_scrub))
+                            // Ruler band: tick + centred label per mark.
+                            .children(
+                                ruler_marks(total_duration)
+                                    .into_iter()
+                                    .filter_map(|(fraction, labelled)| {
+                                        let x = vx(fraction);
+                                        (0.0..=1.0).contains(&x).then_some((x, fraction, labelled))
+                                    })
+                                    .flat_map(|(x, fraction, labelled)| {
+                                        let tick = div()
+                                            .absolute()
+                                            .top(px(0.0))
+                                            .left(relative(x))
+                                            .w(px(1.0))
+                                            .h(px(4.0))
+                                            .bg(row_border)
+                                            .into_any_element();
+                                        let label = (labelled && x > 0.02 && x < 0.95).then(|| {
+                                            div()
+                                                .absolute()
+                                                .top(px(5.0))
+                                                .left(relative(x))
+                                                .w(px(48.0))
+                                                .ml(px(-24.0))
+                                                .text_center()
+                                                .text_xs()
+                                                .text_color(muted_text)
+                                                .child(format_ruler_label(
+                                                    f64::from(fraction) * total_duration,
+                                                ))
+                                                .into_any_element()
+                                        });
+                                        std::iter::once(tick).chain(label)
+                                    }),
+                            )
+                            // Scrub track along the bottom of the band.
                             .child(
                                 div()
                                     .absolute()
-                                    .top(px(7.0))
+                                    .top(px(24.0))
                                     .left(px(0.0))
                                     .w_full()
                                     .h(px(3.0))
@@ -6283,19 +6598,19 @@ impl EditorView {
                             .child(
                                 div()
                                     .absolute()
-                                    .top(px(7.0))
-                                    .left(px(0.0))
+                                    .top(px(24.0))
+                                    .left(relative(vx(0.0).max(0.0)))
                                     .h(px(3.0))
-                                    .w(relative(progress))
+                                    .w(relative((vx(progress) - vx(0.0).max(0.0)).max(0.0)))
                                     .bg(theme::accent()),
                             )
                             .when_some(self.export_range_band(), |scrubber, (start, end)| {
                                 scrubber.child(
                                     div()
                                         .absolute()
-                                        .top(px(4.0))
-                                        .left(relative(start))
-                                        .w(relative((end - start).max(0.0)))
+                                        .top(px(20.0))
+                                        .left(relative(vx(start)))
+                                        .w(relative(vw((end - start).max(0.0))))
                                         .h(px(9.0))
                                         .rounded_sm()
                                         .bg(theme::export_range_fill())
@@ -6306,8 +6621,8 @@ impl EditorView {
                             .child(
                                 div()
                                     .absolute()
-                                    .top(px(2.0))
-                                    .left(relative(progress))
+                                    .top(px(20.0))
+                                    .left(relative(vx(progress)))
                                     .ml(px(-5.0))
                                     .size(px(11.0))
                                     .rounded_full()
@@ -6318,9 +6633,9 @@ impl EditorView {
             .child(
                 // Track scroll region, with a playhead line drawn over the clip
                 // lanes. The overlay is inset by the 230px header column and the
-                // 8px right gutter so `left(relative(progress))` lands exactly
-                // where a clip at that fraction would. A plain (non-interactive)
-                // div, so clip clicks pass straight through.
+                // 8px right gutter (and clips overflow), so the line tracks the
+                // clips under the current zoom. A plain (non-interactive) div,
+                // so clip clicks pass straight through.
                 div()
                     .relative()
                     .flex()
@@ -6328,25 +6643,29 @@ impl EditorView {
                     .flex_1()
                     .min_h_0()
                     .child(track_area)
-                    .when(!self.tracks.is_empty(), |region| {
-                        region.child(
-                            div()
-                                .absolute()
-                                .top_0()
-                                .bottom_0()
-                                .left(px(230.0))
-                                .right(px(8.0))
-                                .child(
-                                    div()
-                                        .absolute()
-                                        .top_0()
-                                        .bottom_0()
-                                        .w(px(2.0))
-                                        .left(relative(progress))
-                                        .bg(theme::accent().opacity(0.7)),
-                                ),
-                        )
-                    }),
+                    .when(
+                        !self.tracks.is_empty() && (0.0..=1.0).contains(&vx(progress)),
+                        |region| {
+                            region.child(
+                                div()
+                                    .absolute()
+                                    .top_0()
+                                    .bottom_0()
+                                    .left(px(230.0))
+                                    .right(px(8.0))
+                                    .overflow_hidden()
+                                    .child(
+                                        div()
+                                            .absolute()
+                                            .top_0()
+                                            .bottom_0()
+                                            .w(px(2.0))
+                                            .left(relative(vx(progress)))
+                                            .bg(theme::accent().opacity(0.7)),
+                                    ),
+                            )
+                        },
+                    ),
             )
     }
 }
@@ -6534,16 +6853,27 @@ impl EditorView {
                     })
                     .children(names.into_iter().map(|name| {
                         div()
+                            .id(SharedString::from(format!("effect-{name}")))
                             .flex()
                             .items_center()
                             .gap_2()
                             .px_3()
                             .py_2()
+                            .cursor_pointer()
                             .text_sm()
                             .text_color(cx.theme().foreground)
                             .hover(|style| style.bg(cx.theme().list_hover))
                             .child(div().text_xs().text_color(theme::accent()).child("FX"))
-                            .child(name)
+                            .child(name.clone())
+                            .on_drag(
+                                EffectDrag {
+                                    component: name.to_string(),
+                                },
+                                |effect, _, _, cx| {
+                                    let effect = effect.clone();
+                                    cx.new(|_| effect)
+                                },
+                            )
                     })),
             )
     }
@@ -7004,6 +7334,39 @@ fn format_time(time: Time) -> String {
     let minutes = ((total % 3600.0) / 60.0).floor() as u64;
     let seconds = total % 60.0;
     format!("{hours:02}:{minutes:02}:{seconds:06.3}")
+}
+
+/// Compact `m:ss` / `s.s` label for a timeline ruler mark.
+fn format_ruler_label(seconds: f64) -> String {
+    if seconds >= 60.0 {
+        format!("{}:{:02}", (seconds / 60.0) as u64, (seconds % 60.0) as u64)
+    } else if seconds.fract().abs() < f64::EPSILON {
+        format!("{}s", seconds as u64)
+    } else {
+        format!("{seconds:.1}s")
+    }
+}
+
+/// Evenly spaced ruler marks across `total` seconds: `(fraction, is_labelled)`.
+/// The step is chosen so the ruler shows roughly 6–14 marks, and every other
+/// (or every) mark carries a time label.
+fn ruler_marks(total: f64) -> Vec<(f32, bool)> {
+    if total.is_nan() || total <= 0.0 {
+        return Vec::new();
+    }
+    const STEPS: [f64; 8] = [0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0, 300.0];
+    let step = STEPS
+        .into_iter()
+        .find(|step| total / step <= 14.0)
+        .unwrap_or(600.0);
+    let count = (total / step).floor() as u64;
+    let label_every = if (count as f64 / 2.0) > 7.0 { 2 } else { 1 };
+    (0..=count)
+        .map(|i| {
+            let seconds = i as f64 * step;
+            ((seconds / total) as f32, i % label_every == 0)
+        })
+        .collect()
 }
 
 fn export_progress_label(progress: ExportProgress) -> String {

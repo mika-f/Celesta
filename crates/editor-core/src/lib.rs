@@ -1789,6 +1789,102 @@ impl EditorDocument {
         Ok(item_id)
     }
 
+    /// Inserts a `TimelineContent::Component` clip for a registered React
+    /// component. Component clips render onto an overlay track; with no
+    /// `target_track_id` the first unlocked overlay track is used, or a new
+    /// `Overlays` track is created. `props` is left unset — the Inspector
+    /// configures it against the entry's schema afterwards.
+    pub fn insert_component_clip_on_track(
+        &mut self,
+        component: &str,
+        target_track_id: Option<&str>,
+        start_frame: i64,
+        duration_frames: i64,
+    ) -> Result<String, EditorDocumentError> {
+        let range = self.new_clip_range(start_frame, duration_frames)?;
+        if let Some(track_id) = target_track_id {
+            let track = self
+                .project
+                .tracks
+                .iter()
+                .find(|track| track.id == track_id)
+                .ok_or_else(|| EditorDocumentError::MissingTrack(track_id.to_owned()))?;
+            if track.locked == Some(true) {
+                return Err(EditorDocumentError::LockedTrack(track_id.to_owned()));
+            }
+            if track.kind != TrackKind::Overlay {
+                return Err(EditorDocumentError::IncompatibleTrack {
+                    asset: component.to_owned(),
+                    track: track_id.to_owned(),
+                    expected: TrackKind::Overlay,
+                    actual: track.kind,
+                });
+            }
+        }
+
+        let before = self.project.clone();
+        let before_revision = self.current_revision;
+        let item_id = unique_id(
+            &slugify(component),
+            self.project
+                .tracks
+                .iter()
+                .flat_map(|track| &track.items)
+                .map(|item| item.id.as_str()),
+        );
+        let item = TimelineItem {
+            id: item_id.clone(),
+            name: Some(component.to_owned()),
+            range,
+            content: TimelineContent::Component {
+                component: component.to_owned(),
+                props: None,
+            },
+            enabled: None,
+            transform: None,
+            opacity: None,
+        };
+        if let Some(track_id) = target_track_id {
+            self.project
+                .tracks
+                .iter_mut()
+                .find(|track| track.id == track_id)
+                .expect("target track was validated")
+                .items
+                .push(item);
+        } else if let Some(track) = self
+            .project
+            .tracks
+            .iter_mut()
+            .find(|track| track.kind == TrackKind::Overlay && track.locked != Some(true))
+        {
+            track.items.push(item);
+        } else {
+            let track_id = unique_id(
+                "overlays",
+                self.project.tracks.iter().map(|track| track.id.as_str()),
+            );
+            self.project.tracks.push(Track {
+                id: track_id,
+                name: "Overlays".to_owned(),
+                kind: TrackKind::Overlay,
+                enabled: None,
+                locked: None,
+                muted: None,
+                solo: None,
+                items: vec![item],
+            });
+        }
+        if self.project.settings.duration.is_none() {
+            self.duration = self
+                .project
+                .effective_duration()
+                .map_err(EditorDocumentError::Duration)?;
+        }
+        self.record_mutation(before, before_revision);
+        Ok(item_id)
+    }
+
     pub fn set_dialogue_text(
         &mut self,
         clip_id: &str,
