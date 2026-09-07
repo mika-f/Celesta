@@ -138,6 +138,33 @@ impl Render for AssetDrag {
     }
 }
 
+/// Drag payload for a registered React component dragged out of the Effects
+/// browser onto a timeline track.
+#[derive(Clone)]
+struct EffectDrag {
+    component: String,
+}
+
+impl Render for EffectDrag {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .w(px(180.0))
+            .h(px(34.0))
+            .px_3()
+            .rounded(cx.theme().radius)
+            .bg(cx.theme().popover)
+            .border_1()
+            .border_color(theme::accent())
+            .shadow_md()
+            .text_xs()
+            .text_color(cx.theme().foreground)
+            .child(format!("FX  {}", self.component))
+    }
+}
+
 struct AudioPreview {
     _device_sink: rodio::MixerDeviceSink,
     player: Player,
@@ -3420,6 +3447,64 @@ impl EditorView {
         self.insert_asset_at(&asset.id, None, start, cx);
     }
 
+    fn insert_effect_at(
+        &mut self,
+        component: &str,
+        target_track_id: Option<&str>,
+        requested_start: i64,
+        cx: &mut Context<Self>,
+    ) {
+        let frame_rate = self.document.project().settings.frame_rate;
+        let mut start = requested_start.max(0);
+        let mut duration = initial_clip_duration_frames(None, frame_rate);
+        if self.document.project().settings.duration.is_some() {
+            if self.clock.end_frame() == 0 {
+                self.edit_error = Some("the fixed project timeline has no available frames".into());
+                cx.notify();
+                return;
+            }
+            start = start.min(self.clock.end_frame() - 1);
+            duration = duration.min(self.clock.end_frame() - start);
+        }
+        match self.document.insert_component_clip_on_track(
+            component,
+            target_track_id,
+            start,
+            duration,
+        ) {
+            Ok(clip_id) => {
+                self.selected_clip_id = Some(clip_id);
+                self.edit_error = None;
+                self.sync_document_state();
+            }
+            Err(error) => self.edit_error = Some(error.to_string().into()),
+        }
+        cx.notify();
+    }
+
+    fn drop_effect_on_track(
+        &mut self,
+        effect: &EffectDrag,
+        track_id: &str,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        let start = self.frame_for_timeline_position(window.mouse_position(), window);
+        self.selected_track_id = Some(track_id.to_owned());
+        self.insert_effect_at(&effect.component, Some(track_id), start, cx);
+    }
+
+    fn drop_effect_without_track(
+        &mut self,
+        effect: &EffectDrag,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) {
+        let start = self.frame_for_timeline_position(window.mouse_position(), window);
+        self.selected_track_id = None;
+        self.insert_effect_at(&effect.component, None, start, cx);
+    }
+
     fn insert_selected_asset_action(
         &mut self,
         _: &InsertSelectedAsset,
@@ -5979,6 +6064,9 @@ impl EditorView {
             let drop_track_id = track.id.clone();
             let drop_track_kind = track.kind;
             let drop_track_locked = track.locked;
+            let effect_drop_track_id = track.id.clone();
+            let effect_drop_kind = track.kind;
+            let effect_drop_locked = track.locked;
             let mute_element_id: SharedString = format!("track-mute-{}", track.id).into();
             let solo_element_id: SharedString = format!("track-solo-{}", track.id).into();
             let up_element_id: SharedString = format!("track-up-{}", track.id).into();
@@ -6111,6 +6199,19 @@ impl EditorView {
                         .on_drop(cx.listener(move |this, asset: &AssetDrag, window, cx| {
                             this.drop_asset_on_track(asset, &drop_track_id, window, cx);
                         }))
+                        .drag_over::<EffectDrag>(move |style, _, _, _| {
+                            if !effect_drop_locked && effect_drop_kind == TrackKind::Overlay {
+                                style.bg(drop_ok_bg).border_1().border_color(drop_ok_border)
+                            } else {
+                                style
+                                    .bg(drop_bad_bg)
+                                    .border_1()
+                                    .border_color(drop_bad_border)
+                            }
+                        })
+                        .on_drop(cx.listener(move |this, effect: &EffectDrag, window, cx| {
+                            this.drop_effect_on_track(effect, &effect_drop_track_id, window, cx);
+                        }))
                         .children(clips),
                 )
         });
@@ -6143,7 +6244,11 @@ impl EditorView {
                         .on_drop(cx.listener(|this, asset: &AssetDrag, window, cx| {
                             this.drop_asset_without_track(asset, window, cx);
                         }))
-                        .child("No tracks yet — drop an asset here"),
+                        .drag_over::<EffectDrag>(move |style, _, _, _| style.bg(drop_ok_bg))
+                        .on_drop(cx.listener(|this, effect: &EffectDrag, window, cx| {
+                            this.drop_effect_without_track(effect, window, cx);
+                        }))
+                        .child("No tracks yet — drop an asset or effect here"),
                 )
             })
             .children(rows);
@@ -6256,7 +6361,7 @@ impl EditorView {
                 div()
                     .flex()
                     .flex_none()
-                    .h(px(24.0))
+                    .h(px(28.0))
                     .w_full()
                     .items_center()
                     .child(div().w(px(230.0)))
@@ -6265,16 +6370,38 @@ impl EditorView {
                             .id("timeline-scrubber")
                             .relative()
                             .flex_1()
-                            .h(px(16.0))
+                            .h(px(24.0))
                             .mr_2()
                             .cursor_pointer()
                             .on_mouse_down(MouseButton::Left, cx.listener(Self::begin_scrub))
                             .on_mouse_move(cx.listener(Self::continue_scrub))
                             .on_mouse_up(MouseButton::Left, cx.listener(Self::end_scrub))
+                            .children(ruler_marks(total_duration).into_iter().map(
+                                |(fraction, labelled)| {
+                                    div()
+                                        .absolute()
+                                        .top(px(0.0))
+                                        .left(relative(fraction))
+                                        .flex()
+                                        .flex_col()
+                                        .items_start()
+                                        .child(div().w(px(1.0)).h(px(6.0)).bg(row_border))
+                                        .when(labelled, |mark| {
+                                            mark.child(
+                                                div()
+                                                    .text_color(muted_text)
+                                                    .child(format_ruler_label(
+                                                        fraction as f64 * total_duration,
+                                                    ))
+                                                    .text_xs(),
+                                            )
+                                        })
+                                },
+                            ))
                             .child(
                                 div()
                                     .absolute()
-                                    .top(px(7.0))
+                                    .top(px(15.0))
                                     .left(px(0.0))
                                     .w_full()
                                     .h(px(3.0))
@@ -6283,7 +6410,7 @@ impl EditorView {
                             .child(
                                 div()
                                     .absolute()
-                                    .top(px(7.0))
+                                    .top(px(15.0))
                                     .left(px(0.0))
                                     .h(px(3.0))
                                     .w(relative(progress))
@@ -6293,7 +6420,7 @@ impl EditorView {
                                 scrubber.child(
                                     div()
                                         .absolute()
-                                        .top(px(4.0))
+                                        .top(px(12.0))
                                         .left(relative(start))
                                         .w(relative((end - start).max(0.0)))
                                         .h(px(9.0))
@@ -6306,7 +6433,7 @@ impl EditorView {
                             .child(
                                 div()
                                     .absolute()
-                                    .top(px(2.0))
+                                    .top(px(11.0))
                                     .left(relative(progress))
                                     .ml(px(-5.0))
                                     .size(px(11.0))
@@ -6534,16 +6661,27 @@ impl EditorView {
                     })
                     .children(names.into_iter().map(|name| {
                         div()
+                            .id(SharedString::from(format!("effect-{name}")))
                             .flex()
                             .items_center()
                             .gap_2()
                             .px_3()
                             .py_2()
+                            .cursor_pointer()
                             .text_sm()
                             .text_color(cx.theme().foreground)
                             .hover(|style| style.bg(cx.theme().list_hover))
                             .child(div().text_xs().text_color(theme::accent()).child("FX"))
-                            .child(name)
+                            .child(name.clone())
+                            .on_drag(
+                                EffectDrag {
+                                    component: name.to_string(),
+                                },
+                                |effect, _, _, cx| {
+                                    let effect = effect.clone();
+                                    cx.new(|_| effect)
+                                },
+                            )
                     })),
             )
     }
@@ -7004,6 +7142,39 @@ fn format_time(time: Time) -> String {
     let minutes = ((total % 3600.0) / 60.0).floor() as u64;
     let seconds = total % 60.0;
     format!("{hours:02}:{minutes:02}:{seconds:06.3}")
+}
+
+/// Compact `m:ss` / `s.s` label for a timeline ruler mark.
+fn format_ruler_label(seconds: f64) -> String {
+    if seconds >= 60.0 {
+        format!("{}:{:02}", (seconds / 60.0) as u64, (seconds % 60.0) as u64)
+    } else if seconds.fract().abs() < f64::EPSILON {
+        format!("{}s", seconds as u64)
+    } else {
+        format!("{seconds:.1}s")
+    }
+}
+
+/// Evenly spaced ruler marks across `total` seconds: `(fraction, is_labelled)`.
+/// The step is chosen so the ruler shows roughly 6–14 marks, and every other
+/// (or every) mark carries a time label.
+fn ruler_marks(total: f64) -> Vec<(f32, bool)> {
+    if total.is_nan() || total <= 0.0 {
+        return Vec::new();
+    }
+    const STEPS: [f64; 8] = [0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0, 300.0];
+    let step = STEPS
+        .into_iter()
+        .find(|step| total / step <= 14.0)
+        .unwrap_or(600.0);
+    let count = (total / step).floor() as u64;
+    let label_every = if (count as f64 / 2.0) > 7.0 { 2 } else { 1 };
+    (0..=count)
+        .map(|i| {
+            let seconds = i as f64 * step;
+            ((seconds / total) as f32, i % label_every == 0)
+        })
+        .collect()
 }
 
 fn export_progress_label(progress: ExportProgress) -> String {
