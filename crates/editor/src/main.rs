@@ -4436,16 +4436,21 @@ impl EditorView {
             .w_full()
             .overflow_x_hidden()
             .overflow_y_scroll()
-            .child(inspector_row("Canvas", self.dimensions.clone()))
-            .child(inspector_row("Frame rate", self.frame_rate_label.clone()))
-            .child(inspector_row("Duration", self.duration.clone()))
-            .child(inspector_row("Renderer", "wgpu"))
-            .child(inspector_row("Adapter", self.gpu_name.clone()))
+            .child(inspector_row("Canvas", self.dimensions.clone(), cx))
+            .child(inspector_row(
+                "Frame rate",
+                self.frame_rate_label.clone(),
+                cx,
+            ))
+            .child(inspector_row("Duration", self.duration.clone(), cx))
+            .child(inspector_row("Renderer", "wgpu", cx))
+            .child(inspector_row("Adapter", self.gpu_name.clone(), cx))
             .child(inspector_row(
                 "React Entry",
                 self.document
                     .react_entry()
                     .map_or_else(|| "Not set".to_owned(), str::to_owned),
+                cx,
             ))
             .child(
                 div()
@@ -4455,14 +4460,14 @@ impl EditorView {
                     .px_3()
                     .py_2()
                     .border_b_1()
-                    .border_color(rgb(0x292c34))
+                    .border_color(cx.theme().border)
                     .child(
-                        inspector_button("react-entry-set", "Set…")
+                        inspector_button("react-entry-set", "Set…", cx)
                             .on_click(cx.listener(Self::set_react_entry_click)),
                     )
                     .when(self.document.react_entry().is_some(), |controls| {
                         controls.child(
-                            inspector_button("react-entry-clear", "Clear")
+                            inspector_button("react-entry-clear", "Clear", cx)
                                 .on_click(cx.listener(Self::clear_react_entry_click)),
                         )
                     })
@@ -4470,12 +4475,12 @@ impl EditorView {
                         controls.child(
                             div()
                                 .text_xs()
-                                .text_color(rgb(0x8d919c))
+                                .text_color(cx.theme().muted_foreground)
                                 .child("Loading component schemas…"),
                         )
                     })
                     .when_some(self.component_schema_error.clone(), |controls, error| {
-                        controls.child(div().text_xs().text_color(rgb(0xff9a9a)).child(error))
+                        controls.child(div().text_xs().text_color(cx.theme().danger).child(error))
                     }),
             )
             .when(self.document.react_entry().is_some(), |panel| {
@@ -4498,15 +4503,15 @@ impl EditorView {
                             .py_2()
                             .border_t_1()
                             .border_b_1()
-                            .border_color(rgb(0x30333d))
+                            .border_color(cx.theme().border)
                             .text_sm()
-                            .text_color(rgb(0xffb466))
+                            .text_color(theme::accent())
                             .child("Selected track"),
                     )
-                    .child(inspector_row("ID", track.id.clone()))
+                    .child(inspector_row("ID", track.id.clone(), cx))
                     .when(!renaming, |panel| {
                         panel
-                            .child(inspector_row("Name", track.name.clone()))
+                            .child(inspector_row("Name", track.name.clone(), cx))
                             .child(
                                 div()
                                     .flex()
@@ -4515,11 +4520,12 @@ impl EditorView {
                                     .px_3()
                                     .py_2()
                                     .border_b_1()
-                                    .border_color(rgb(0x292c34))
+                                    .border_color(cx.theme().border)
                                     .child(
                                         inspector_button(
                                             "track-enabled",
                                             if track.enabled { "Disable" } else { "Enable" },
+                                            cx,
                                         )
                                         .when(!track.locked, |button| {
                                             button.on_click(cx.listener(move |this, _, _, cx| {
@@ -4532,6 +4538,7 @@ impl EditorView {
                                         inspector_button(
                                             "track-locked",
                                             if track.locked { "Unlock" } else { "Lock" },
+                                            cx,
                                         )
                                         .on_click(
                                             cx.listener(move |this, _, _, cx| {
@@ -4540,7 +4547,7 @@ impl EditorView {
                                         ),
                                     )
                                     .child(
-                                        inspector_button("track-rename", "Rename")
+                                        inspector_button("track-rename", "Rename", cx)
                                             .when(!track.locked, |button| {
                                                 button.on_click(cx.listener(
                                                     move |this, _, window, cx| {
@@ -4555,7 +4562,7 @@ impl EditorView {
                                             .when(track.locked, |button| button.opacity(0.45)),
                                     )
                                     .child(
-                                        inspector_button("track-delete", "Delete")
+                                        inspector_button("track-delete", "Delete", cx)
                                             .text_color(rgb(if track.locked {
                                                 0x777b86
                                             } else {
@@ -4585,7 +4592,7 @@ impl EditorView {
                                 .px_3()
                                 .py_2()
                                 .border_b_1()
-                                .border_color(rgb(0x292c34))
+                                .border_color(cx.theme().border)
                                 .child(
                                     div()
                                         .id("track-name-input")
@@ -4593,10 +4600,10 @@ impl EditorView {
                                         .py_1()
                                         .rounded_sm()
                                         .border_1()
-                                        .border_color(rgb(0xffa13b))
-                                        .bg(rgb(0x17191f))
+                                        .border_color(theme::accent())
+                                        .bg(cx.theme().background)
                                         .text_sm()
-                                        .text_color(rgb(0xffffff))
+                                        .text_color(cx.theme().foreground)
                                         .when_some(
                                             self.track_name_input.clone(),
                                             |field, input| field.child(Input::new(&input)),
@@ -4607,14 +4614,13 @@ impl EditorView {
                                         .flex()
                                         .gap_2()
                                         .child(
-                                            inspector_button("track-rename-save", "Save").on_click(
-                                                cx.listener(|this, _, _, cx| {
+                                            inspector_button("track-rename-save", "Save", cx)
+                                                .on_click(cx.listener(|this, _, _, cx| {
                                                     this.commit_track_rename(cx);
-                                                }),
-                                            ),
+                                                })),
                                         )
                                         .child(
-                                            inspector_button("track-rename-cancel", "Cancel")
+                                            inspector_button("track-rename-cancel", "Cancel", cx)
                                                 .on_click(cx.listener(|this, _, _, cx| {
                                                     this.cancel_track_rename(cx);
                                                 })),
@@ -4632,15 +4638,15 @@ impl EditorView {
                             .py_2()
                             .border_t_1()
                             .border_b_1()
-                            .border_color(rgb(0x30333d))
+                            .border_color(cx.theme().border)
                             .text_sm()
-                            .text_color(rgb(0xffb466))
+                            .text_color(theme::accent())
                             .child("Selected clip"),
                     )
-                    .child(inspector_row("Name", clip.name.clone()))
-                    .child(inspector_row("Type", clip_kind_label(clip.kind)))
-                    .child(inspector_row("Start", format_time(clip.start)))
-                    .child(inspector_row("Length", format_time(clip.duration)))
+                    .child(inspector_row("Name", clip.name.clone(), cx))
+                    .child(inspector_row("Type", clip_kind_label(clip.kind), cx))
+                    .child(inspector_row("Start", format_time(clip.start), cx))
+                    .child(inspector_row("Length", format_time(clip.duration), cx))
                     .when_some(clip.volume.as_ref(), |panel, volume| {
                         let local_time = clip_local_time(self.current_time(), &clip);
                         let current_volume = evaluate_f64(volume, local_time).unwrap_or(1.0);
@@ -4658,11 +4664,11 @@ impl EditorView {
                                 .px_3()
                                 .py_2()
                                 .border_b_1()
-                                .border_color(rgb(0x292c34))
+                                .border_color(cx.theme().border)
                                 .child(
                                     div()
                                         .text_xs()
-                                        .text_color(rgb(0x737783))
+                                        .text_color(cx.theme().muted_foreground)
                                         .child("Clip volume"),
                                 )
                                 .child(
@@ -4670,31 +4676,38 @@ impl EditorView {
                                         .flex()
                                         .items_center()
                                         .gap_2()
-                                        .child(inspector_button("clip-volume-down", "−").on_click(
-                                            cx.listener(Self::decrease_selected_clip_volume),
-                                        ))
+                                        .child(
+                                            inspector_button("clip-volume-down", "−", cx).on_click(
+                                                cx.listener(Self::decrease_selected_clip_volume),
+                                            ),
+                                        )
                                         .child(
                                             div()
                                                 .w(px(64.0))
                                                 .text_center()
                                                 .text_sm()
-                                                .text_color(rgb(0xc8cad2))
+                                                .text_color(cx.theme().foreground)
                                                 .child(format!(
                                                     "{}%",
                                                     (current_volume * 100.0).round() as i32
                                                 )),
                                         )
-                                        .child(inspector_button("clip-volume-up", "+").on_click(
-                                            cx.listener(Self::increase_selected_clip_volume),
-                                        )),
+                                        .child(
+                                            inspector_button("clip-volume-up", "+", cx).on_click(
+                                                cx.listener(Self::increase_selected_clip_volume),
+                                            ),
+                                        ),
                                 )
-                                .child(div().text_xs().text_color(rgb(0x8d919c)).child(
-                                    if animated {
-                                        format!("Automation · {keyframe_count} keyframes")
-                                    } else {
-                                        "Automation · Static".to_owned()
-                                    },
-                                ))
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(cx.theme().muted_foreground)
+                                        .child(if animated {
+                                            format!("Automation · {keyframe_count} keyframes")
+                                        } else {
+                                            "Automation · Static".to_owned()
+                                        }),
+                                )
                                 .child(
                                     div()
                                         .flex()
@@ -4708,6 +4721,7 @@ impl EditorView {
                                                 } else {
                                                     "Add keyframe"
                                                 },
+                                                cx,
                                             )
                                             .on_click(
                                                 cx.listener(
@@ -4720,6 +4734,7 @@ impl EditorView {
                                                 inspector_button(
                                                     "clip-volume-remove-keyframe",
                                                     "Remove",
+                                                    cx,
                                                 )
                                                 .on_click(cx.listener(
                                                     Self::remove_selected_clip_volume_keyframe,
@@ -4728,10 +4743,14 @@ impl EditorView {
                                         })
                                         .when(animated, |controls| {
                                             controls.child(
-                                                inspector_button("clip-volume-flatten", "Flatten")
-                                                    .on_click(cx.listener(
-                                                        Self::flatten_selected_clip_volume,
-                                                    )),
+                                                inspector_button(
+                                                    "clip-volume-flatten",
+                                                    "Flatten",
+                                                    cx,
+                                                )
+                                                .on_click(
+                                                    cx.listener(Self::flatten_selected_clip_volume),
+                                                ),
                                             )
                                         }),
                                 ),
@@ -4751,9 +4770,9 @@ impl EditorView {
             .flex_none()
             .w(px(260.0))
             .h_full()
-            .bg(rgb(0x1d2027))
+            .bg(cx.theme().sidebar)
             .border_l_1()
-            .border_color(rgb(0x30333d))
+            .border_color(cx.theme().border)
             .child(panel_header("Inspector", 0, cx))
             .child(contents)
     }
@@ -4776,9 +4795,9 @@ impl EditorView {
                 .py_2()
                 .border_t_1()
                 .border_b_1()
-                .border_color(rgb(0x30333d))
+                .border_color(cx.theme().border)
                 .text_sm()
-                .text_color(rgb(0xffb466))
+                .text_color(theme::accent())
                 .child(format!("Characters ({})", characters.len())),
         );
         characters.iter().fold(panel, |panel, character| {
@@ -4792,11 +4811,11 @@ impl EditorView {
                         .px_3()
                         .py_2()
                         .border_b_1()
-                        .border_color(rgb(0x292c34))
+                        .border_color(cx.theme().border)
                         .child(
                             div()
                                 .text_xs()
-                                .text_color(rgb(0x737783))
+                                .text_color(cx.theme().muted_foreground)
                                 .child(character.id.clone()),
                         )
                         .child(
@@ -4806,10 +4825,10 @@ impl EditorView {
                                 .py_1()
                                 .rounded_sm()
                                 .border_1()
-                                .border_color(rgb(0xffa13b))
-                                .bg(rgb(0x17191f))
+                                .border_color(theme::accent())
+                                .bg(cx.theme().background)
                                 .text_sm()
-                                .text_color(rgb(0xffffff))
+                                .text_color(cx.theme().foreground)
                                 .when_some(self.character_name_input.clone(), |field, input| {
                                     field.child(Input::new(&input))
                                 }),
@@ -4818,13 +4837,13 @@ impl EditorView {
                             div()
                                 .flex()
                                 .gap_2()
-                                .child(inspector_button("character-rename-save", "Save").on_click(
+                                .child(inspector_button("character-rename-save", "Save", cx).on_click(
                                     cx.listener(|this, _, _, cx| {
                                         this.commit_character_rename(cx);
                                     }),
                                 ))
                                 .child(
-                                    inspector_button("character-rename-cancel", "Cancel").on_click(
+                                    inspector_button("character-rename-cancel", "Cancel", cx).on_click(
                                         cx.listener(|this, _, _, cx| {
                                             this.cancel_character_rename(cx);
                                         }),
@@ -4857,7 +4876,7 @@ impl EditorView {
                         .px_3()
                         .py_2()
                         .border_b_1()
-                        .border_color(rgb(0x292c34))
+                        .border_color(cx.theme().border)
                         .child(
                             div()
                                 .flex()
@@ -4867,10 +4886,10 @@ impl EditorView {
                                 .child(
                                     div()
                                         .text_sm()
-                                        .text_color(rgb(0xc8cad2))
+                                        .text_color(cx.theme().foreground)
                                         .child(character.name.clone()),
                                 )
-                                .child(div().text_xs().text_color(rgb(0x737783)).child(format!(
+                                .child(div().text_xs().text_color(cx.theme().muted_foreground).child(format!(
                                     "{} · {} expression(s)",
                                     character.id,
                                     character.expressions.len()
@@ -4879,7 +4898,7 @@ impl EditorView {
                                     details.child(
                                         div()
                                             .text_xs()
-                                            .text_color(rgb(0x8b91a1))
+                                            .text_color(cx.theme().muted_foreground)
                                             .child(format!(
                                                 "LipSync: a={} i={} u={} e={} o={} closed={}",
                                                 lip_sync.a,
@@ -4906,7 +4925,7 @@ impl EditorView {
                                     )
                                     .into();
                                     actions.child(
-                                        inspector_dynamic_button(button_id, "Add expression")
+                                        inspector_dynamic_button(button_id, "Add expression", cx)
                                             .on_click(cx.listener(move |this, _, _, cx| {
                                                 this.add_selected_image_to_character(
                                                     &expression_character_id,
@@ -4920,6 +4939,7 @@ impl EditorView {
                                                 "character-mouth-closed-{closed_mouth_character_id}-{asset_id}"
                                             )),
                                             "Mouth: closed (optional)",
+                                        cx,
                                         )
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             this.set_selected_image_as_mouth(
@@ -4935,6 +4955,7 @@ impl EditorView {
                                                 "character-mouth-a-{a_mouth_character_id}-{asset_id}"
                                             )),
                                             "Mouth: a",
+                                        cx,
                                         )
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             this.set_selected_image_as_mouth(
@@ -4950,6 +4971,7 @@ impl EditorView {
                                                 "character-mouth-i-{i_mouth_character_id}-{asset_id}"
                                             )),
                                             "Mouth: i",
+                                        cx,
                                         )
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             this.set_selected_image_as_mouth(
@@ -4965,6 +4987,7 @@ impl EditorView {
                                                 "character-mouth-u-{u_mouth_character_id}-{asset_id}"
                                             )),
                                             "Mouth: u",
+                                        cx,
                                         )
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             this.set_selected_image_as_mouth(
@@ -4980,6 +5003,7 @@ impl EditorView {
                                                 "character-mouth-e-{e_mouth_character_id}-{asset_id}"
                                             )),
                                             "Mouth: e",
+                                        cx,
                                         )
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             this.set_selected_image_as_mouth(
@@ -4995,6 +5019,7 @@ impl EditorView {
                                                 "character-mouth-o-{o_mouth_character_id}-{asset_id}"
                                             )),
                                             "Mouth: o",
+                                        cx,
                                         )
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             this.set_selected_image_as_mouth(
@@ -5012,6 +5037,7 @@ impl EditorView {
                                                 "character-lip-sync-clear-{clear_lip_sync_character_id}"
                                             )),
                                             "Clear LipSync",
+                                        cx,
                                         )
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             this.clear_character_lip_sync(
@@ -5034,6 +5060,7 @@ impl EditorView {
                                                     "character-closed-mouth-clear-{clear_closed_mouth_character_id}"
                                                 )),
                                                 "Clear closed mouth",
+                                            cx,
                                             )
                                             .on_click(cx.listener(move |this, _, _, cx| {
                                                 this.clear_character_closed_mouth(
@@ -5045,7 +5072,7 @@ impl EditorView {
                                     },
                                 )
                                 .child(
-                                    inspector_dynamic_button(rename_button_id, "Rename").on_click(
+                                    inspector_dynamic_button(rename_button_id, "Rename", cx).on_click(
                                         cx.listener(move |this, _, window, cx| {
                                             this.begin_character_rename(
                                                 &rename_character_id,
@@ -5057,9 +5084,9 @@ impl EditorView {
                                     ),
                                 )
                                 .child(
-                                    inspector_dynamic_button(delete_button_id, "Delete")
-                                        .bg(rgb(0x512b30))
-                                        .hover(|style| style.bg(rgb(0x713840)))
+                                    inspector_dynamic_button(delete_button_id, "Delete", cx)
+                                        .bg(cx.theme().danger.opacity(0.22))
+                                        .hover(|style| style.bg(cx.theme().danger.opacity(0.32)))
                                         .on_click(cx.listener(move |this, _, window, cx| {
                                             this.request_delete_character(
                                                 &delete_character_id,
@@ -5093,14 +5120,15 @@ impl EditorView {
                     .py_2()
                     .border_t_1()
                     .border_b_1()
-                    .border_color(rgb(0x30333d))
+                    .border_color(cx.theme().border)
                     .text_sm()
-                    .text_color(rgb(0xffb466))
+                    .text_color(theme::accent())
                     .child("Dialogue"),
             )
             .child(inspector_row(
                 "Voice asset",
                 dialogue.audio.clone().unwrap_or_else(|| "None".to_owned()),
+                cx,
             ));
         let panel = if editing {
             panel.child(
@@ -5111,8 +5139,13 @@ impl EditorView {
                     .px_3()
                     .py_2()
                     .border_b_1()
-                    .border_color(rgb(0x292c34))
-                    .child(div().text_xs().text_color(rgb(0x737783)).child("Text"))
+                    .border_color(cx.theme().border)
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("Text"),
+                    )
                     .child(
                         div()
                             .id("dialogue-text-input")
@@ -5120,10 +5153,10 @@ impl EditorView {
                             .py_1()
                             .rounded_sm()
                             .border_1()
-                            .border_color(rgb(0xffa13b))
-                            .bg(rgb(0x17191f))
+                            .border_color(theme::accent())
+                            .bg(cx.theme().background)
                             .text_sm()
-                            .text_color(rgb(0xffffff))
+                            .text_color(cx.theme().foreground)
                             .when_some(self.dialogue_text_input.clone(), |field, input| {
                                 field.child(Input::new(&input))
                             }),
@@ -5132,29 +5165,31 @@ impl EditorView {
                         div()
                             .flex()
                             .gap_2()
-                            .child(inspector_button("dialogue-text-save", "Save").on_click(
+                            .child(inspector_button("dialogue-text-save", "Save", cx).on_click(
                                 cx.listener(|this, _, _, cx| {
                                     this.commit_dialogue_text_edit(cx);
                                 }),
                             ))
-                            .child(inspector_button("dialogue-text-cancel", "Cancel").on_click(
-                                cx.listener(|this, _, _, cx| {
-                                    this.cancel_dialogue_text_edit(cx);
-                                }),
-                            )),
+                            .child(
+                                inspector_button("dialogue-text-cancel", "Cancel", cx).on_click(
+                                    cx.listener(|this, _, _, cx| {
+                                        this.cancel_dialogue_text_edit(cx);
+                                    }),
+                                ),
+                            ),
                     ),
             )
         } else {
             panel
-                .child(inspector_row("Text", dialogue.text.clone()))
+                .child(inspector_row("Text", dialogue.text.clone(), cx))
                 .child(
                     div()
                         .px_3()
                         .py_2()
                         .border_b_1()
-                        .border_color(rgb(0x292c34))
+                        .border_color(cx.theme().border)
                         .child(
-                            inspector_button("dialogue-text-edit", "Edit text").on_click(
+                            inspector_button("dialogue-text-edit", "Edit text", cx).on_click(
                                 cx.listener(move |this, _, window, cx| {
                                     this.begin_dialogue_text_edit(
                                         &edit_clip_id,
@@ -5175,8 +5210,13 @@ impl EditorView {
                 .px_3()
                 .py_2()
                 .border_b_1()
-                .border_color(rgb(0x292c34))
-                .child(div().text_xs().text_color(rgb(0x737783)).child("Character"))
+                .border_color(cx.theme().border)
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("Character"),
+                )
                 .child(
                     div()
                         .flex()
@@ -5188,9 +5228,11 @@ impl EditorView {
                             let selected = dialogue.character == character.id;
                             let element_id: SharedString =
                                 format!("dialogue-character-{}", character.id).into();
-                            inspector_dynamic_button(element_id, character.name.clone())
+                            inspector_dynamic_button(element_id, character.name.clone(), cx)
                                 .when(selected, |button| {
-                                    button.bg(rgb(0x6b4a2f)).text_color(rgb(0xffdbb5))
+                                    button
+                                        .bg(cx.theme().primary)
+                                        .text_color(cx.theme().primary_foreground)
                                 })
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.set_dialogue_character(&clip_id, &character_id, cx);
@@ -5218,11 +5260,11 @@ impl EditorView {
                 .px_3()
                 .py_2()
                 .border_b_1()
-                .border_color(rgb(0x292c34))
+                .border_color(cx.theme().border)
                 .child(
                     div()
                         .text_xs()
-                        .text_color(rgb(0x737783))
+                        .text_color(cx.theme().muted_foreground)
                         .child("Expression"),
                 )
                 .child(
@@ -5231,9 +5273,11 @@ impl EditorView {
                         .flex_wrap()
                         .gap_2()
                         .child(
-                            inspector_dynamic_button(default_button_id, "Default")
+                            inspector_dynamic_button(default_button_id, "Default", cx)
                                 .when(default_selected, |button| {
-                                    button.bg(rgb(0x6b4a2f)).text_color(rgb(0xffdbb5))
+                                    button
+                                        .bg(cx.theme().primary)
+                                        .text_color(cx.theme().primary_foreground)
                                 })
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.set_dialogue_expression(&default_clip_id, None, cx);
@@ -5254,9 +5298,11 @@ impl EditorView {
                                     let button_id: SharedString =
                                         format!("dialogue-expression-{clip_id}-{expression_id}")
                                             .into();
-                                    inspector_dynamic_button(button_id, expression.clone())
+                                    inspector_dynamic_button(button_id, expression.clone(), cx)
                                         .when(selected, |button| {
-                                            button.bg(rgb(0x6b4a2f)).text_color(rgb(0xffdbb5))
+                                            button
+                                                .bg(cx.theme().primary)
+                                                .text_color(cx.theme().primary_foreground)
                                         })
                                         .on_click(cx.listener(move |this, _, _, cx| {
                                             this.set_dialogue_expression(
@@ -5283,15 +5329,23 @@ impl EditorView {
                 .px_3()
                 .py_2()
                 .border_b_1()
-                .border_color(rgb(0x292c34))
-                .child(div().text_xs().text_color(rgb(0x737783)).child("LipSync"))
-                .child(div().text_xs().text_color(rgb(0x8b91a1)).child(
-                    if dialogue.lip_sync_cue_count == 0 {
-                        "Not generated".to_owned()
-                    } else {
-                        format!("{} mouth cue(s)", dialogue.lip_sync_cue_count)
-                    },
-                ))
+                .border_color(cx.theme().border)
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("LipSync"),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(if dialogue.lip_sync_cue_count == 0 {
+                            "Not generated".to_owned()
+                        } else {
+                            format!("{} mouth cue(s)", dialogue.lip_sync_cue_count)
+                        }),
+                )
                 .child(
                     div()
                         .flex()
@@ -5305,6 +5359,7 @@ impl EditorView {
                                 } else {
                                     "Regenerate from voice"
                                 },
+                                cx,
                             )
                             .on_click(cx.listener(
                                 move |this, _, _, cx| {
@@ -5319,6 +5374,7 @@ impl EditorView {
                                         "dialogue-lip-sync-clear-{clip_id}"
                                     )),
                                     "Clear",
+                                    cx,
                                 )
                                 .on_click(cx.listener(
                                     move |this, _, _, cx| {
@@ -5348,12 +5404,12 @@ impl EditorView {
                 .py_2()
                 .border_t_1()
                 .border_b_1()
-                .border_color(rgb(0x30333d))
+                .border_color(cx.theme().border)
                 .text_sm()
-                .text_color(rgb(0xffb466))
+                .text_color(theme::accent())
                 .child("Component"),
         );
-        let panel = panel.child(inspector_row("Registered as", component.name.clone()));
+        let panel = panel.child(inspector_row("Registered as", component.name.clone(), cx));
         let Some(schema) = self.component_schemas.get(&component.name) else {
             let hint = if self.document.react_entry().is_none() {
                 "Set a React Entry to edit this component's properties."
@@ -5367,7 +5423,7 @@ impl EditorView {
                     .px_3()
                     .py_2()
                     .text_xs()
-                    .text_color(rgb(0x8d919c))
+                    .text_color(cx.theme().muted_foreground)
                     .child(hint),
             );
         };
@@ -5395,9 +5451,9 @@ impl EditorView {
                 .py_2()
                 .border_t_1()
                 .border_b_1()
-                .border_color(rgb(0x30333d))
+                .border_color(cx.theme().border)
                 .text_sm()
-                .text_color(rgb(0xffb466))
+                .text_color(theme::accent())
                 .child("Project Properties"),
         );
         if !self.component_schema_pending && self.project_property_schema.is_none() {
@@ -5411,7 +5467,7 @@ impl EditorView {
                     .px_3()
                     .py_2()
                     .text_xs()
-                    .text_color(rgb(0x8d919c))
+                    .text_color(cx.theme().muted_foreground)
                     .child(hint),
             );
         }
@@ -5421,7 +5477,7 @@ impl EditorView {
                     .px_3()
                     .py_2()
                     .text_xs()
-                    .text_color(rgb(0x8d919c))
+                    .text_color(cx.theme().muted_foreground)
                     .child("Loading this entry's project property schema…"),
             );
         };
@@ -5478,8 +5534,13 @@ impl EditorView {
                 .px_3()
                 .py_2()
                 .border_b_1()
-                .border_color(rgb(0x292c34))
-                .child(div().text_xs().text_color(rgb(0x737783)).child(label))
+                .border_color(cx.theme().border)
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(label),
+                )
                 .child(match field {
                     ComponentPropertyField::Boolean { default_value, .. } => {
                         let value = current
@@ -5487,7 +5548,7 @@ impl EditorView {
                             .unwrap_or(*default_value);
                         let target = target.clone();
                         let key = key.to_owned();
-                        inspector_dynamic_button(field_id, if value { "True" } else { "False" })
+                        inspector_dynamic_button(field_id, if value { "True" } else { "False" }, cx)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.toggle_property_boolean(&target, &key, value, cx);
                             }))
@@ -5517,6 +5578,7 @@ impl EditorView {
                                 inspector_dynamic_button(
                                     SharedString::from(format!("{field_id}-down")),
                                     "−",
+                                    cx,
                                 )
                                 .on_click(cx.listener(
                                     move |this, _, _, cx| {
@@ -5536,13 +5598,14 @@ impl EditorView {
                                     .w(px(64.0))
                                     .text_center()
                                     .text_sm()
-                                    .text_color(rgb(0xc8cad2))
+                                    .text_color(cx.theme().foreground)
                                     .child(format_component_number(value)),
                             )
                             .child(
                                 inspector_dynamic_button(
                                     SharedString::from(format!("{field_id}-up")),
                                     "+",
+                                    cx,
                                 )
                                 .on_click(cx.listener(
                                     move |this, _, _, cx| {
@@ -5570,7 +5633,7 @@ impl EditorView {
                         let target = target.clone();
                         let key = key.to_owned();
                         let options = options.clone();
-                        inspector_dynamic_button(field_id, value.clone())
+                        inspector_dynamic_button(field_id, value.clone(), cx)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.cycle_property_select(&target, &key, &options, &value, cx);
                             }))
@@ -5588,10 +5651,10 @@ impl EditorView {
                                 .py_1()
                                 .rounded_sm()
                                 .border_1()
-                                .border_color(rgb(0xffa13b))
-                                .bg(rgb(0x17191f))
+                                .border_color(theme::accent())
+                                .bg(cx.theme().background)
                                 .text_sm()
-                                .text_color(rgb(0xffffff))
+                                .text_color(cx.theme().foreground)
                                 .when_some(self.property_input.clone(), |field, input| {
                                     field.child(Input::new(&input))
                                 })
@@ -5600,7 +5663,7 @@ impl EditorView {
                             let target = target.clone();
                             let key = key.to_owned();
                             let value_for_edit = value.clone();
-                            inspector_dynamic_button(field_id, value)
+                            inspector_dynamic_button(field_id, value, cx)
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.begin_property_edit(
                                         &target,
@@ -6704,7 +6767,11 @@ fn waveform_segment(
         .collect()
 }
 
-fn inspector_row(label: &'static str, value: impl Into<SharedString>) -> impl IntoElement {
+fn inspector_row(
+    label: &'static str,
+    value: impl Into<SharedString>,
+    cx: &App,
+) -> impl IntoElement {
     div()
         .flex()
         .flex_col()
@@ -6712,18 +6779,23 @@ fn inspector_row(label: &'static str, value: impl Into<SharedString>) -> impl In
         .px_3()
         .py_2()
         .border_b_1()
-        .border_color(rgb(0x292c34))
-        .child(div().text_xs().text_color(rgb(0x737783)).child(label))
+        .border_color(cx.theme().border)
+        .child(
+            div()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child(label),
+        )
         .child(
             div()
                 .text_sm()
-                .text_color(rgb(0xc8cad2))
+                .text_color(cx.theme().foreground)
                 .child(value.into()),
         )
 }
 
-fn inspector_button(id: &'static str, label: &'static str) -> Stateful<Div> {
-    inspector_dynamic_button(id, label)
+fn inspector_button(id: &'static str, label: &'static str, cx: &App) -> Stateful<Div> {
+    inspector_dynamic_button(id, label, cx)
 }
 
 /// Same styling as [`inspector_button`], but for a `component_prop_field_id`,
@@ -6732,17 +6804,18 @@ fn inspector_button(id: &'static str, label: &'static str) -> Stateful<Div> {
 fn inspector_dynamic_button(
     id: impl Into<ElementId>,
     label: impl Into<SharedString>,
+    cx: &App,
 ) -> Stateful<Div> {
     div()
         .id(id.into())
         .cursor_pointer()
-        .rounded_sm()
-        .bg(rgb(0x292c34))
-        .hover(|style| style.bg(rgb(0x454a56)))
+        .rounded(cx.theme().radius)
+        .bg(cx.theme().secondary)
+        .hover(|style| style.bg(cx.theme().secondary_hover))
         .px_2()
         .py_1()
         .text_xs()
-        .text_color(rgb(0xc8cad2))
+        .text_color(cx.theme().secondary_foreground)
         .child(label.into())
 }
 
