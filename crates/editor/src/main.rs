@@ -53,7 +53,8 @@ use gpui_kit::component::resizable::{ResizableState, h_resizable, resizable_pane
 use gpui_kit::component::status_bar::StatusBar;
 use gpui_kit::component::tab::TabBar;
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Root, Selectable as _, Sizable as _, WindowExt as _,
+    ActiveTheme as _, Disableable as _, IconName, Root, Selectable as _, Sizable as _,
+    WindowExt as _,
 };
 
 const EDITOR_DEMO_PROJECT: &str = include_str!("../../../examples/editor-demo.mikan.json");
@@ -4210,6 +4211,7 @@ impl EditorView {
             .flex()
             .flex_col()
             .flex_1()
+            .min_h_0()
             .w_full()
             .overflow_x_hidden()
             .overflow_y_scroll()
@@ -4344,8 +4346,6 @@ impl EditorView {
                         .children(self.preview_warnings.iter().cloned()),
                 )
             });
-        let transport_button =
-            |id: &'static str, label: &'static str| Button::new(id).small().ghost().label(label);
         div()
             .flex()
             .flex_col()
@@ -4367,17 +4367,31 @@ impl EditorView {
                     .border_color(cx.theme().border)
                     .text_color(cx.theme().foreground)
                     .child(
-                        transport_button("previous-frame", "-1f")
+                        Button::new("previous-frame")
+                            .small()
+                            .ghost()
+                            .icon(IconName::ChevronLeft)
+                            .tooltip("Previous frame")
                             .on_click(cx.listener(Self::step_backward)),
                     )
                     .child(
                         Button::new("toggle-playback")
                             .small()
+                            .primary()
+                            .icon(if self.playing {
+                                IconName::Pause
+                            } else {
+                                IconName::Play
+                            })
                             .label(if self.playing { "Pause" } else { "Play" })
                             .on_click(cx.listener(Self::toggle_playback)),
                     )
                     .child(
-                        transport_button("next-frame", "+1f")
+                        Button::new("next-frame")
+                            .small()
+                            .ghost()
+                            .icon(IconName::ChevronRight)
+                            .tooltip("Next frame")
                             .on_click(cx.listener(Self::step_forward)),
                     )
                     .child(
@@ -4414,6 +4428,7 @@ impl EditorView {
             .flex()
             .flex_col()
             .flex_1()
+            .min_h_0()
             .w_full()
             .overflow_x_hidden()
             .overflow_y_scroll()
@@ -6085,6 +6100,7 @@ impl EditorView {
             .flex()
             .flex_col()
             .flex_1()
+            .min_h_0()
             .w_full()
             .overflow_x_hidden()
             .overflow_y_scroll()
@@ -6343,6 +6359,7 @@ impl EditorView {
         let react = self.is_react_preview();
         let dock_state = self.dock_split.clone();
         let body_state = self.body_split.clone();
+        let border = cx.theme().border;
         let dock_row = h_resizable("mikan-dock-row")
             .when_some(dock_state.as_ref(), |group, state| group.with_state(state))
             .child(
@@ -6350,18 +6367,34 @@ impl EditorView {
                     .size(px(260.0))
                     .size_range(px(200.0)..px(440.0))
                     .visible(!react)
-                    .child(self.left_dock(cx)),
+                    .child(
+                        div()
+                            .size_full()
+                            .min_h_0()
+                            .overflow_hidden()
+                            .border_r_1()
+                            .border_color(border)
+                            .child(self.left_dock(cx)),
+                    ),
             )
             .child(resizable_panel().child(self.preview_panel(cx)))
             .child(
                 resizable_panel()
                     .size(px(300.0))
                     .size_range(px(240.0)..px(520.0))
-                    .child(if react {
-                        self.react_preview_panel(cx).into_any_element()
-                    } else {
-                        self.inspector_panel(cx).into_any_element()
-                    }),
+                    .child(
+                        div()
+                            .size_full()
+                            .min_h_0()
+                            .overflow_hidden()
+                            .border_l_1()
+                            .border_color(border)
+                            .child(if react {
+                                self.react_preview_panel(cx).into_any_element()
+                            } else {
+                                self.inspector_panel(cx).into_any_element()
+                            }),
+                    ),
             );
         div()
             .flex()
