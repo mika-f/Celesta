@@ -1283,6 +1283,9 @@ struct EditorView {
     /// The mouse wheel over the timeline adjusts the zoom about the cursor.
     timeline_zoom: f64,
     timeline_view_start: f64,
+    /// Middle-button pan of the timeline: `(pointer x at grab, view_start at
+    /// grab)`. `Some` while the middle button is held over the timeline.
+    timeline_pan: Option<(f32, f64)>,
     saving_as: bool,
     importing_assets: bool,
     asset_operation_active: bool,
@@ -1432,6 +1435,7 @@ impl EditorView {
             left_dock_tab: 0,
             timeline_zoom: 1.0,
             timeline_view_start: 0.0,
+            timeline_pan: None,
             saving_as: false,
             importing_assets: false,
             asset_operation_active: false,
@@ -1995,15 +1999,18 @@ impl EditorView {
         }
     }
 
+    /// Pixel width of the timeline clip lane (window minus the 230px header
+    /// column and the 8px right gutter).
+    fn timeline_lane_width(window: &Window) -> f32 {
+        (f32::from(window.bounds().size.width) - 230.0 - 8.0).max(1.0)
+    }
+
     /// Fraction (0..1) of the whole composition at horizontal window position
     /// `x`, accounting for the 230px track-header column and the current
     /// timeline zoom / scroll.
     fn timeline_fraction_at(&self, x: Pixels, window: &Window) -> f64 {
-        const TRACK_LABEL_WIDTH: f32 = 230.0;
-        const RIGHT_INSET: f32 = 8.0;
-        let window_width = f32::from(window.bounds().size.width);
-        let lane_width = (window_width - TRACK_LABEL_WIDTH - RIGHT_INSET).max(1.0);
-        let local = ((f32::from(x) - TRACK_LABEL_WIDTH).clamp(0.0, lane_width) / lane_width) as f64;
+        let lane_width = Self::timeline_lane_width(window);
+        let local = ((f32::from(x) - 230.0).clamp(0.0, lane_width) / lane_width) as f64;
         let (zoom, view_start) = self.timeline_view();
         (view_start + local / zoom).clamp(0.0, 1.0)
     }
@@ -2047,6 +2054,43 @@ impl EditorView {
         self.timeline_view_start = (cursor - local / new_zoom).clamp(0.0, 1.0);
         cx.stop_propagation();
         cx.notify();
+    }
+
+    /// Middle-button press over the timeline: start a pan.
+    fn begin_timeline_pan(
+        &mut self,
+        event: &MouseDownEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.timeline_pan = Some((f32::from(event.position.x), self.timeline_view().1));
+        cx.stop_propagation();
+    }
+
+    fn continue_timeline_pan(
+        &mut self,
+        event: &MouseMoveEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((grab_x, grab_view_start)) = self.timeline_pan else {
+            return;
+        };
+        if !event.dragging() {
+            self.timeline_pan = None;
+            return;
+        }
+        let (zoom, _) = self.timeline_view();
+        let dx = f64::from(f32::from(event.position.x) - grab_x)
+            / f64::from(Self::timeline_lane_width(window));
+        self.timeline_view_start = (grab_view_start - dx / zoom).clamp(0.0, 1.0);
+        cx.notify();
+    }
+
+    fn end_timeline_pan(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
+        if self.timeline_pan.take().is_some() {
+            cx.notify();
+        }
     }
 
     fn scrub_to(&mut self, position: Point<Pixels>, window: &Window, cx: &mut Context<Self>) {
@@ -6290,6 +6334,7 @@ impl EditorView {
                         .mr_2()
                         .overflow_hidden()
                         .on_scroll_wheel(cx.listener(Self::timeline_wheel))
+                        .on_mouse_down(MouseButton::Middle, cx.listener(Self::begin_timeline_pan))
                         .drag_over::<AssetDrag>(move |style, asset, _, _| {
                             if !drop_track_locked
                                 && track_accepts_asset(drop_track_kind, asset.kind)
@@ -6369,7 +6414,9 @@ impl EditorView {
             .border_t_1()
             .border_color(cx.theme().border)
             .on_mouse_move(cx.listener(Self::continue_clip_drag))
+            .on_mouse_move(cx.listener(Self::continue_timeline_pan))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::end_clip_drag))
+            .on_mouse_up(MouseButton::Middle, cx.listener(Self::end_timeline_pan))
             .child(
                 div()
                     .flex()
@@ -6480,66 +6527,67 @@ impl EditorView {
                 div()
                     .flex()
                     .flex_none()
-                    .h(px(30.0))
+                    .h(px(34.0))
                     .w_full()
-                    .items_center()
+                    .items_start()
                     .child(div().w(px(230.0)))
                     .child(
                         div()
                             .id("timeline-scrubber")
                             .relative()
                             .flex_1()
-                            .h(px(26.0))
+                            .h(px(34.0))
                             .mr_2()
-                            .overflow_hidden()
+                            .overflow_x_hidden()
                             .cursor_pointer()
                             .on_scroll_wheel(cx.listener(Self::timeline_wheel))
                             .on_mouse_down(MouseButton::Left, cx.listener(Self::begin_scrub))
+                            .on_mouse_down(
+                                MouseButton::Middle,
+                                cx.listener(Self::begin_timeline_pan),
+                            )
                             .on_mouse_move(cx.listener(Self::continue_scrub))
                             .on_mouse_up(MouseButton::Left, cx.listener(Self::end_scrub))
+                            // Ruler band: tick + centred label per mark.
                             .children(
                                 ruler_marks(total_duration)
                                     .into_iter()
                                     .filter_map(|(fraction, labelled)| {
                                         let x = vx(fraction);
-                                        (-0.01..=1.01)
-                                            .contains(&x)
-                                            .then_some((x, fraction, labelled))
+                                        (0.0..=1.0).contains(&x).then_some((x, fraction, labelled))
                                     })
-                                    .map(|(x, fraction, labelled)| {
-                                        div()
+                                    .flat_map(|(x, fraction, labelled)| {
+                                        let tick = div()
                                             .absolute()
                                             .top(px(0.0))
                                             .left(relative(x))
-                                            .child(
-                                                div()
-                                                    .absolute()
-                                                    .top(px(0.0))
-                                                    .w(px(1.0))
-                                                    .h(px(6.0))
-                                                    .bg(row_border),
-                                            )
-                                            .when(labelled && x > 0.012 && x < 0.97, |mark| {
-                                                mark.child(
-                                                    div()
-                                                        .absolute()
-                                                        .top(px(7.0))
-                                                        .w(px(40.0))
-                                                        .ml(px(-20.0))
-                                                        .text_center()
-                                                        .text_xs()
-                                                        .text_color(muted_text)
-                                                        .child(format_ruler_label(
-                                                            f64::from(fraction) * total_duration,
-                                                        )),
-                                                )
-                                            })
+                                            .w(px(1.0))
+                                            .h(px(4.0))
+                                            .bg(row_border)
+                                            .into_any_element();
+                                        let label = (labelled && x > 0.02 && x < 0.95).then(|| {
+                                            div()
+                                                .absolute()
+                                                .top(px(5.0))
+                                                .left(relative(x))
+                                                .w(px(48.0))
+                                                .ml(px(-24.0))
+                                                .text_center()
+                                                .text_xs()
+                                                .text_color(muted_text)
+                                                .child(format_ruler_label(
+                                                    f64::from(fraction) * total_duration,
+                                                ))
+                                                .into_any_element()
+                                        });
+                                        std::iter::once(tick).chain(label)
                                     }),
                             )
+                            // Scrub track along the bottom of the band.
                             .child(
                                 div()
                                     .absolute()
-                                    .top(px(17.0))
+                                    .top(px(24.0))
                                     .left(px(0.0))
                                     .w_full()
                                     .h(px(3.0))
@@ -6548,7 +6596,7 @@ impl EditorView {
                             .child(
                                 div()
                                     .absolute()
-                                    .top(px(17.0))
+                                    .top(px(24.0))
                                     .left(relative(vx(0.0).max(0.0)))
                                     .h(px(3.0))
                                     .w(relative((vx(progress) - vx(0.0).max(0.0)).max(0.0)))
@@ -6558,7 +6606,7 @@ impl EditorView {
                                 scrubber.child(
                                     div()
                                         .absolute()
-                                        .top(px(13.0))
+                                        .top(px(20.0))
                                         .left(relative(vx(start)))
                                         .w(relative(vw((end - start).max(0.0))))
                                         .h(px(9.0))
@@ -6571,7 +6619,7 @@ impl EditorView {
                             .child(
                                 div()
                                     .absolute()
-                                    .top(px(13.0))
+                                    .top(px(20.0))
                                     .left(relative(vx(progress)))
                                     .ml(px(-5.0))
                                     .size(px(11.0))
