@@ -11,12 +11,12 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
-use gpui::{
-    App, Application, Bounds, ClickEvent, Context, CursorStyle, Entity, FocusHandle, KeyBinding,
+use gpui_kit::{
+    App, Bounds, ClickEvent, Context, CursorStyle, Div, ElementId, Entity, FocusHandle, KeyBinding,
     KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ObjectFit,
     PathPromptOptions, Pixels, Point, PromptButton, PromptLevel, RenderImage, SharedString,
-    StyledImage, Window, WindowBounds, WindowOptions, actions, div, img, prelude::*, px, relative,
-    rgb, rgba, size,
+    Stateful, StyledImage, TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div, img,
+    prelude::*, px, relative, rgb, rgba, size,
 };
 use image::{Frame, ImageBuffer, Rgba};
 use mikan_composition::{
@@ -43,10 +43,10 @@ use mikan_react_bridge::{
 use rodio::{DeviceSinkBuilder, Player, buffer::SamplesBuffer};
 
 mod audio_cache;
-mod text_input;
 
 use audio_cache::DiskAudioCache;
-use text_input::{TextInput, TextInputEvent};
+use gpui_kit::component::Root;
+use gpui_kit::component::input::{Input, InputEvent, InputState};
 
 const EDITOR_DEMO_PROJECT: &str = include_str!("../../../examples/editor-demo.mikan.json");
 
@@ -77,7 +77,8 @@ actions!(
         NextFrame,
         ImportAssets,
         InsertSelectedAsset,
-        DeleteSelectedClip
+        DeleteSelectedClip,
+        CancelInlineEdit
     ]
 );
 
@@ -1178,11 +1179,11 @@ struct EditorView {
     selected_asset_id: Option<String>,
     selected_track_id: Option<String>,
     renaming_track_id: Option<String>,
-    track_name_input: Option<Entity<TextInput>>,
+    track_name_input: Option<Entity<InputState>>,
     renaming_character_id: Option<String>,
-    character_name_input: Option<Entity<TextInput>>,
+    character_name_input: Option<Entity<InputState>>,
     editing_dialogue_clip_id: Option<String>,
-    dialogue_text_input: Option<Entity<TextInput>>,
+    dialogue_text_input: Option<Entity<InputState>>,
     component_schema_worker: ComponentSchemaWorker,
     component_schema_generation: u64,
     component_schema_pending: bool,
@@ -1191,7 +1192,7 @@ struct EditorView {
     project_property_schema: Option<BTreeMap<String, ComponentPropertyField>>,
     component_schema_error: Option<SharedString>,
     editing_property: Option<PropertyEdit>,
-    property_input: Option<Entity<TextInput>>,
+    property_input: Option<Entity<InputState>>,
     project_name: SharedString,
     dimensions: SharedString,
     frame_rate_label: SharedString,
@@ -2242,8 +2243,11 @@ impl EditorView {
         self.renaming_track_id = Some(track_id.to_owned());
         self.edit_error = None;
         if let Some(input) = &self.track_name_input {
-            input.update(cx, |input, cx| input.set_text(track.name.clone(), cx));
-            input.read(cx).focus(window);
+            let name = track.name.clone();
+            input.update(cx, |input, cx| {
+                input.set_value(name, window, cx);
+                input.focus(window, cx);
+            });
         }
         cx.notify();
     }
@@ -2255,7 +2259,7 @@ impl EditorView {
         let Some(name) = self
             .track_name_input
             .as_ref()
-            .map(|input| input.read(cx).text())
+            .map(|input| input.read(cx).value())
         else {
             return;
         };
@@ -2286,8 +2290,11 @@ impl EditorView {
         self.renaming_character_id = Some(character_id.to_owned());
         self.edit_error = None;
         if let Some(input) = &self.character_name_input {
-            input.update(cx, |input, cx| input.set_text(name.to_owned(), cx));
-            input.read(cx).focus(window);
+            let name = name.to_owned();
+            input.update(cx, |input, cx| {
+                input.set_value(name, window, cx);
+                input.focus(window, cx);
+            });
         }
         cx.notify();
     }
@@ -2299,7 +2306,7 @@ impl EditorView {
         let Some(name) = self
             .character_name_input
             .as_ref()
-            .map(|input| input.read(cx).text())
+            .map(|input| input.read(cx).value())
         else {
             return;
         };
@@ -2422,8 +2429,11 @@ impl EditorView {
         self.editing_dialogue_clip_id = Some(clip_id.to_owned());
         self.edit_error = None;
         if let Some(input) = &self.dialogue_text_input {
-            input.update(cx, |input, cx| input.set_text(text.to_owned(), cx));
-            input.read(cx).focus(window);
+            let text = text.to_owned();
+            input.update(cx, |input, cx| {
+                input.set_value(text, window, cx);
+                input.focus(window, cx);
+            });
         }
         cx.notify();
     }
@@ -2435,7 +2445,7 @@ impl EditorView {
         let Some(text) = self
             .dialogue_text_input
             .as_ref()
-            .map(|input| input.read(cx).text())
+            .map(|input| input.read(cx).value())
         else {
             return;
         };
@@ -2682,8 +2692,11 @@ impl EditorView {
         });
         self.edit_error = None;
         if let Some(input) = &self.property_input {
-            input.update(cx, |input, cx| input.set_text(current.to_owned(), cx));
-            input.read(cx).focus(window);
+            let current = current.to_owned();
+            input.update(cx, |input, cx| {
+                input.set_value(current, window, cx);
+                input.focus(window, cx);
+            });
         }
         cx.notify();
     }
@@ -2695,12 +2708,17 @@ impl EditorView {
         let Some(text) = self
             .property_input
             .as_ref()
-            .map(|input| input.read(cx).text())
+            .map(|input| input.read(cx).value())
         else {
             return;
         };
         self.editing_property = None;
-        self.apply_property(&edit.target, &edit.key, serde_json::Value::String(text), cx);
+        self.apply_property(
+            &edit.target,
+            &edit.key,
+            serde_json::Value::String(text.to_string()),
+            cx,
+        );
     }
 
     fn cancel_property_edit(&mut self, cx: &mut Context<Self>) {
@@ -2955,7 +2973,7 @@ impl EditorView {
         cx: &mut Context<Self>,
     ) {
         if let Some(focus) = &self.master_volume_focus {
-            focus.focus(window);
+            focus.focus(window, cx);
         }
         self.document.begin_history_group();
         self.master_volume_drag = Some(MasterVolumeDrag {
@@ -3910,6 +3928,22 @@ impl EditorView {
         cx.notify();
     }
 
+    /// Escape while an inline `Input` (track/character rename, dialogue text,
+    /// or a property value) is focused: the `Input` propagates the key and the
+    /// editor reverts whichever edit is open. Each `cancel_*` is a no-op when
+    /// its own edit is not active, so calling all four is safe.
+    fn cancel_inline_edit_action(
+        &mut self,
+        _: &CancelInlineEdit,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.cancel_track_rename(cx);
+        self.cancel_character_rename(cx);
+        self.cancel_dialogue_text_edit(cx);
+        self.cancel_property_edit(cx);
+    }
+
     fn toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let master_volume = self.document.master_volume().clamp(0.0, 2.0);
         let exporting = self.export_cancellation.is_some();
@@ -4409,7 +4443,7 @@ impl EditorView {
                 }
                 #[cfg(target_os = "macos")]
                 PreviewPresentation::Surface(preview) => canvas.child(
-                    gpui::surface(preview.pixel_buffer())
+                    gpui_kit::surface(preview.pixel_buffer())
                         .size_full()
                         .object_fit(ObjectFit::Contain),
                 ),
@@ -4698,7 +4732,7 @@ impl EditorView {
                                         .text_color(rgb(0xffffff))
                                         .when_some(
                                             self.track_name_input.clone(),
-                                            |field, input| field.child(input),
+                                            |field, input| field.child(Input::new(&input)),
                                         ),
                                 )
                                 .child(
@@ -4910,7 +4944,7 @@ impl EditorView {
                                 .text_sm()
                                 .text_color(rgb(0xffffff))
                                 .when_some(self.character_name_input.clone(), |field, input| {
-                                    field.child(input)
+                                    field.child(Input::new(&input))
                                 }),
                         )
                         .child(
@@ -5224,7 +5258,7 @@ impl EditorView {
                             .text_sm()
                             .text_color(rgb(0xffffff))
                             .when_some(self.dialogue_text_input.clone(), |field, input| {
-                                field.child(input)
+                                field.child(Input::new(&input))
                             }),
                     )
                     .child(
@@ -5692,7 +5726,7 @@ impl EditorView {
                                 .text_sm()
                                 .text_color(rgb(0xffffff))
                                 .when_some(self.property_input.clone(), |field, input| {
-                                    field.child(input)
+                                    field.child(Input::new(&input))
                                 })
                                 .into_any_element()
                         } else {
@@ -6452,6 +6486,7 @@ impl Render for EditorView {
             .on_action(cx.listener(Self::import_assets_action))
             .on_action(cx.listener(Self::insert_selected_asset_action))
             .on_action(cx.listener(Self::delete_selected_clip_action))
+            .on_action(cx.listener(Self::cancel_inline_edit_action))
             .when_some(self.focus_handle.as_ref(), |view, focus_handle| {
                 view.track_focus(focus_handle)
             })
@@ -6826,7 +6861,7 @@ fn inspector_row(label: &'static str, value: impl Into<SharedString>) -> impl In
         )
 }
 
-fn inspector_button(id: &'static str, label: &'static str) -> gpui::Stateful<gpui::Div> {
+fn inspector_button(id: &'static str, label: &'static str) -> Stateful<Div> {
     inspector_dynamic_button(id, label)
 }
 
@@ -6834,9 +6869,9 @@ fn inspector_button(id: &'static str, label: &'static str) -> gpui::Stateful<gpu
 /// derived from a dynamic clip id and prop key, that cannot be a `&'static
 /// str`.
 fn inspector_dynamic_button(
-    id: impl Into<gpui::ElementId>,
+    id: impl Into<ElementId>,
     label: impl Into<SharedString>,
-) -> gpui::Stateful<gpui::Div> {
+) -> Stateful<Div> {
     div()
         .id(id.into())
         .cursor_pointer()
@@ -6954,9 +6989,11 @@ fn run() -> Result<(), Box<dyn Error>> {
     let path = std::env::args_os().nth(1).map(PathBuf::from);
     let mut editor = EditorView::open(path.as_deref())?;
 
-    Application::new().run(move |cx: &mut App| {
-        TextInput::bind_keys(cx);
+    let app = gpui_kit::application().with_assets(gpui_kit::assets::Assets);
+    app.run(move |cx: &mut App| {
+        gpui_kit::init(cx);
         cx.bind_keys([
+            KeyBinding::new("escape", CancelInlineEdit, Some("MikanEditor")),
             KeyBinding::new("cmd-s", SaveProject, Some("MikanEditor")),
             KeyBinding::new("cmd-shift-s", SaveProjectAs, Some("MikanEditor")),
             KeyBinding::new("cmd-shift-e", ExportProject, Some("MikanEditor")),
@@ -6973,7 +7010,7 @@ fn run() -> Result<(), Box<dyn Error>> {
             KeyBinding::new("backspace", DeleteSelectedClip, Some("MikanEditor")),
             KeyBinding::new("delete", DeleteSelectedClip, Some("MikanEditor")),
         ]);
-        cx.on_window_closed(|cx| {
+        cx.on_window_closed(|cx, _| {
             if cx.windows().is_empty() {
                 cx.quit();
             }
@@ -6984,7 +7021,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
-                titlebar: Some(gpui::TitlebarOptions {
+                titlebar: Some(TitlebarOptions {
                     title: Some("Mikan".into()),
                     ..Default::default()
                 }),
@@ -6994,43 +7031,51 @@ fn run() -> Result<(), Box<dyn Error>> {
                 let view = cx.new(|cx| {
                     let focus_handle = cx.focus_handle();
                     let master_volume_focus = cx.focus_handle().tab_stop(true).tab_index(0);
-                    let track_name_input = cx.new(TextInput::new);
-                    cx.subscribe(
+                    let track_name_input = cx.new(|cx| InputState::new(window, cx));
+                    cx.subscribe_in(
                         &track_name_input,
-                        |editor: &mut EditorView, _, event: &TextInputEvent, cx| match event {
-                            TextInputEvent::Submit => editor.commit_track_rename(cx),
-                            TextInputEvent::Cancel => editor.cancel_track_rename(cx),
+                        window,
+                        |editor: &mut EditorView, _, event: &InputEvent, _, cx| {
+                            if let InputEvent::PressEnter { .. } = event {
+                                editor.commit_track_rename(cx);
+                            }
                         },
                     )
                     .detach();
-                    let character_name_input = cx.new(TextInput::new);
-                    cx.subscribe(
+                    let character_name_input = cx.new(|cx| InputState::new(window, cx));
+                    cx.subscribe_in(
                         &character_name_input,
-                        |editor: &mut EditorView, _, event: &TextInputEvent, cx| match event {
-                            TextInputEvent::Submit => editor.commit_character_rename(cx),
-                            TextInputEvent::Cancel => editor.cancel_character_rename(cx),
+                        window,
+                        |editor: &mut EditorView, _, event: &InputEvent, _, cx| {
+                            if let InputEvent::PressEnter { .. } = event {
+                                editor.commit_character_rename(cx);
+                            }
                         },
                     )
                     .detach();
-                    let property_input = cx.new(TextInput::new);
-                    cx.subscribe(
+                    let property_input = cx.new(|cx| InputState::new(window, cx));
+                    cx.subscribe_in(
                         &property_input,
-                        |editor: &mut EditorView, _, event: &TextInputEvent, cx| match event {
-                            TextInputEvent::Submit => editor.commit_property_edit(cx),
-                            TextInputEvent::Cancel => editor.cancel_property_edit(cx),
+                        window,
+                        |editor: &mut EditorView, _, event: &InputEvent, _, cx| {
+                            if let InputEvent::PressEnter { .. } = event {
+                                editor.commit_property_edit(cx);
+                            }
                         },
                     )
                     .detach();
-                    let dialogue_text_input = cx.new(TextInput::new);
-                    cx.subscribe(
+                    let dialogue_text_input = cx.new(|cx| InputState::new(window, cx));
+                    cx.subscribe_in(
                         &dialogue_text_input,
-                        |editor: &mut EditorView, _, event: &TextInputEvent, cx| match event {
-                            TextInputEvent::Submit => editor.commit_dialogue_text_edit(cx),
-                            TextInputEvent::Cancel => editor.cancel_dialogue_text_edit(cx),
+                        window,
+                        |editor: &mut EditorView, _, event: &InputEvent, _, cx| {
+                            if let InputEvent::PressEnter { .. } = event {
+                                editor.commit_dialogue_text_edit(cx);
+                            }
                         },
                     )
                     .detach();
-                    focus_handle.focus(window);
+                    focus_handle.focus(window, cx);
                     editor.focus_handle = Some(focus_handle);
                     editor.master_volume_focus = Some(master_volume_focus);
                     editor.track_name_input = Some(track_name_input);
@@ -7052,7 +7097,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                     close_view.update(cx, |editor, cx| editor.prompt_to_close(window, cx));
                     false
                 });
-                view
+                cx.new(|cx| Root::new(view, window, cx))
             },
         )
         .expect("could not open the Mikan editor window");
