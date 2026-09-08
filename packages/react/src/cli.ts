@@ -205,6 +205,11 @@ interface LoadedEntry {
 }
 
 async function loadEntry(entryPath: string): Promise<LoadedEntry> {
+  const contents = path.resolve(__dirname, '../../..');
+  if (process.platform === 'darwin' && path.basename(contents) === 'Contents') {
+    // Keep native helper executables in the app's code directory for signing.
+    process.env.ESBUILD_BINARY_PATH = path.join(contents, 'Helpers', 'esbuild');
+  }
   // eslint-disable-next-line global-require -- optional, only needed by this CLI
   const esbuild = require('esbuild') as typeof import('esbuild');
   const result = await esbuild.build({

@@ -61,7 +61,7 @@ Re-run it against an extracted package:
 
 ```powershell
 & 'C:\path\to\Frameweave\runtime\node.exe' `
-  scripts/test-windows-package.mjs 'C:\path\to\Frameweave'
+  scripts/test-package.mjs 'C:\path\to\Frameweave'
 ```
 
 GPU access is needed for the MP4 check. Also launch `Frameweave.exe` on a clean

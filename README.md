@@ -154,6 +154,13 @@ cargo run -p mikan-exporter --release -- --from 0 --to 1 examples/editor-demo.mi
 To create a Windows installer or portable ZIP with Node.js included, follow the
 [Windows packaging guide](packaging/windows/README.md).
 
+## Build a macOS package
+
+To create a DMG with `Frameweave.app` and an Applications shortcut for
+drag-and-drop installation, follow the [macOS packaging guide](packaging/macos/README.md).
+Node.js is included. Developer ID signing and notarization are supported for
+distribution outside the Mac App Store.
+
 ## Report a problem
 
 Open an issue in this repository with your operating system, steps to reproduce

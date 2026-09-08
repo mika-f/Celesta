@@ -122,7 +122,7 @@ try {
             $texts | Copy-Item -Destination $destination
         }
     }
-    Invoke-Checked "$runtime/node.exe" @("$PSScriptRoot/test-windows-package.mjs", $package)
+    Invoke-Checked "$runtime/node.exe" @("$PSScriptRoot/test-package.mjs", $package)
     # Cargo registry archives sometimes contain timestamps outside ZIP's range.
     Get-ChildItem -LiteralPath $package -Recurse -File | Where-Object { $_.LastWriteTime.Year -lt 1980 } |
         ForEach-Object { $_.LastWriteTime = [datetime]'1980-01-01' }

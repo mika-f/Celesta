@@ -10,6 +10,15 @@ pub fn runtime_paths() -> (PathBuf, PathBuf) {
 
 fn paths_for(executable: Option<&Path>) -> (PathBuf, PathBuf) {
     if let Some(directory) = executable.and_then(Path::parent) {
+        if directory.file_name().is_some_and(|name| name == "MacOS")
+            && let Some(contents) = directory.parent()
+            && contents.file_name().is_some_and(|name| name == "Contents")
+        {
+            return (
+                contents.join("Helpers/node"),
+                contents.join("Resources/react/dist/cli.js"),
+            );
+        }
         let runtime = directory.join("runtime");
         let packaged_name = executable
             .and_then(Path::file_stem)
@@ -30,6 +39,20 @@ fn paths_for(executable: Option<&Path>) -> (PathBuf, PathBuf) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn app_bundle_paths_are_relative_to_the_installed_app_even_if_files_are_missing() {
+        let contents = Path::new("Applications/Frameweave.app/Contents");
+        for name in ["Frameweave", "Frameweave-export"] {
+            assert_eq!(
+                paths_for(Some(&contents.join("MacOS").join(name))),
+                (
+                    contents.join("Helpers/node"),
+                    contents.join("Resources/react/dist/cli.js"),
+                )
+            );
+        }
+    }
 
     #[test]
     fn incomplete_bundle_does_not_fall_back_to_development_runtime() {

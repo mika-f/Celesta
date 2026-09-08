@@ -9,3 +9,7 @@ rust-version.workspace = true
 [dependencies]
 mikan-composition = { path = "../composition" }
 ez-ffmpeg.workspace = true
+
+# macOS packages bundle Homebrew dylibs; retain static linking elsewhere.
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+ez-ffmpeg = { workspace = true, features = ["static"] }

@@ -5,10 +5,16 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 const packageDirectory = resolve(process.argv[2]);
-const runtime = join(packageDirectory, 'runtime');
+const mac = process.platform === 'darwin';
+const runtime = mac ? join(packageDirectory, 'Contents/Resources') : join(packageDirectory, 'runtime');
+const node = mac ? join(packageDirectory, 'Contents/Helpers/node') : join(runtime, 'node.exe');
+const exporter = join(packageDirectory, mac ? 'Contents/MacOS/Frameweave-export' : 'Frameweave-export.exe');
 const directory = mkdtempSync(join(tmpdir(), 'Frameweave package 日本語 '));
 const entry = join(directory, 'test.tsx');
-const env = { ...process.env, PATH: join(process.env.SystemRoot, 'System32') };
+const env = { ...process.env, PATH: mac ? '/usr/bin:/bin' : join(process.env.SystemRoot, 'System32') };
+for (const name of Object.keys(env)) {
+  if (name.startsWith('DYLD_')) delete env[name];
+}
 delete env.NODE_PATH;
 delete env.NODE_OPTIONS;
 delete env.ESBUILD_BINARY_PATH;
@@ -44,13 +50,13 @@ export default function Root() {
   return <Composition width={64} height={64} fps={1} durationInFrames={1}><Content /></Composition>;
 }
 `);
-  const protocol = run(join(runtime, 'node.exe'), [join(runtime, 'react/dist/cli.js'), entry],
+  const protocol = run(node, [join(runtime, 'react/dist/cli.js'), entry],
     '{"time":{"value":0,"timescale":1}}\n');
   const messages = protocol.trim().split(/\r?\n/).map((line) => JSON.parse(line));
   assert.ok(messages[0].config);
   assert.ok(messages[1].scene);
   const output = join(directory, 'test.mp4');
-  run(join(packageDirectory, 'Frameweave-export.exe'), ['--react', entry, output]);
+  run(exporter, ['--react', entry, output]);
   const mp4 = readFileSync(output);
   assert.equal(mp4.toString('ascii', 4, 8), 'ftyp');
   assert.ok(mp4.length > 100);
