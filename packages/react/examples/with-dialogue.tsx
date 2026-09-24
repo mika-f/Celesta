@@ -12,7 +12,7 @@ export default function Root() {
       <Assets>
         <Character
           ref={character}
-          name="Frameweave"
+          name="Celesta"
           portrait={{
             defaultExpression: 'default',
             expressions: { default: './character.png' },

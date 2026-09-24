@@ -16,14 +16,14 @@ $root = Split-Path $PSScriptRoot -Parent
 $output = Join-Path $root 'target/packages'
 $downloads = Join-Path $root 'target/package-downloads'
 New-Item -ItemType Directory -Force $output, $downloads | Out-Null
-$zipPath = Join-Path $output "Frameweave-$Version-windows-x64.zip"
-$setupPath = Join-Path $output "Frameweave-$Version-windows-x64-setup.exe"
+$zipPath = Join-Path $output "Celesta-$Version-windows-x64.zip"
+$setupPath = Join-Path $output "Celesta-$Version-windows-x64-setup.exe"
 if ((Test-Path -LiteralPath $zipPath) -or (-not $ZipOnly -and (Test-Path -LiteralPath $setupPath))) {
     throw 'Output already exists. Use another -Version or move the previous artifacts.'
 }
 # Unique staging directories avoid deleting previous packages or merging stale files.
 $stage = Join-Path $output ('staging-' + [guid]::NewGuid().ToString('N'))
-$package = Join-Path $stage 'Frameweave'
+$package = Join-Path $stage 'Celesta'
 $runtime = Join-Path $package 'runtime'
 New-Item -ItemType Directory -Force $runtime | Out-Null
 
@@ -69,8 +69,8 @@ try {
         Invoke-Checked cargo @('build', '--release', '--locked', '-p', 'mikan-editor', '-p', 'mikan-exporter')
     }
     $binaries = Join-Path $root 'target/release'
-    Copy-Item -LiteralPath "$binaries/mikan-editor.exe" -Destination "$package/Frameweave.exe"
-    Copy-Item -LiteralPath "$binaries/mikan-exporter.exe" -Destination "$package/Frameweave-export.exe"
+    Copy-Item -LiteralPath "$binaries/mikan-editor.exe" -Destination "$package/Celesta.exe"
+    Copy-Item -LiteralPath "$binaries/mikan-exporter.exe" -Destination "$package/Celesta-export.exe"
     Copy-Item -Path "$VcRedistDirectory/*.dll" -Destination $package
 
     $archiveName = "node-v$NodeVersion-win-x64.zip"
@@ -128,7 +128,7 @@ try {
         ForEach-Object { $_.LastWriteTime = [datetime]'1980-01-01' }
     Compress-Archive -LiteralPath $package -DestinationPath $zipPath
     if (-not $ZipOnly) {
-        Invoke-Checked $IsccPath @('/Qp', "/DPackageDir=$package", "/DOutputDir=$output", "/DAppVersion=$Version", "$root/packaging/windows/Frameweave.iss")
+        Invoke-Checked $IsccPath @('/Qp', "/DPackageDir=$package", "/DOutputDir=$output", "/DAppVersion=$Version", "$root/packaging/windows/Celesta.iss")
     }
     Write-Host "Package: $package"
     Write-Host "ZIP: $zipPath"

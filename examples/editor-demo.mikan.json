@@ -36,7 +36,7 @@
           },
           "content": {
             "type": "text",
-            "text": "Frameweave",
+            "text": "Celesta",
             "style": {
               "fontSize": 96,
               "fill": {
@@ -57,6 +57,6 @@
     }
   ],
   "properties": {
-    "title": "Frameweave editor demo"
+    "title": "Celesta editor demo"
   }
 }

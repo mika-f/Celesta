@@ -25,23 +25,23 @@ class MacPackageValidationTests(unittest.TestCase):
 
     def test_only_system_and_present_bundled_dependencies_are_accepted(self):
         with tempfile.TemporaryDirectory() as directory:
-            contents = Path(directory) / "Frameweave.app/Contents"
+            contents = Path(directory) / "Celesta.app/Contents"
             frameworks = contents / "Frameworks"
             frameworks.mkdir(parents=True)
             (frameworks / "libavcodec.62.dylib").touch()
-            binary = contents / "MacOS/Frameweave"
-            packaging.validate_dependencies(binary, contents, "Frameweave:\n"
+            binary = contents / "MacOS/Celesta"
+            packaging.validate_dependencies(binary, contents, "Celesta:\n"
                 "\t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1.0.0)\n"
                 "\t@executable_path/../Frameworks/libavcodec.62.dylib (compatibility version 1.0.0, current version 1.0.0)\n")
             for dependency in ("/opt/homebrew/lib/libavcodec.62.dylib", "@rpath/libavcodec.62.dylib",
                                "@executable_path/../Frameworks/missing.dylib", "@loader_path/../../../outside.dylib"):
                 with self.subTest(dependency=dependency), self.assertRaises(RuntimeError):
                     packaging.validate_dependencies(binary, contents,
-                        f"Frameweave:\n\t{dependency} (compatibility version 1.0.0, current version 1.0.0)\n")
+                        f"Celesta:\n\t{dependency} (compatibility version 1.0.0, current version 1.0.0)\n")
 
     def test_helpers_resolve_executable_relative_libraries_from_their_own_directory(self):
         with tempfile.TemporaryDirectory() as directory:
-            contents = Path(directory) / "Frameweave.app/Contents"
+            contents = Path(directory) / "Celesta.app/Contents"
             (contents / "Helpers").mkdir(parents=True)
             (contents / "Helpers/libhelper.dylib").touch()
             packaging.validate_dependencies(contents / "Helpers/node", contents,

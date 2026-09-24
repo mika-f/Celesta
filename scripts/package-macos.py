@@ -130,7 +130,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", default="0.0.0")
     parser.add_argument("--node-version", default="24.20.0")
-    parser.add_argument("--bundle-id", default="com.natsuneko.frameweave")
+    parser.add_argument("--bundle-id", default="com.natsuneko.celesta")
     parser.add_argument("--sign-identity", help="Developer ID Application certificate identity")
     parser.add_argument("--notary-profile", help="Existing notarytool Keychain profile; uploads to Apple")
     parser.add_argument("--skip-build", action="store_true", help="Reuse current native release binaries and React dist")
@@ -158,12 +158,12 @@ def main():
 
     output = ROOT / "target/packages"
     output.mkdir(parents=True, exist_ok=True)
-    dmg = output / f"Frameweave-{args.version}-macos-{arch}.dmg"
+    dmg = output / f"Celesta-{args.version}-macos-{arch}.dmg"
     if dmg.exists():
         parser.error(f"Output already exists: {dmg}")
     stage = Path(tempfile.mkdtemp(prefix="macos-", dir=output))
     image = stage / "image"
-    contents = image / "Frameweave.app/Contents"
+    contents = image / "Celesta.app/Contents"
     app = contents.parent
     resources = contents / "Resources"
     helpers = contents / "Helpers"
@@ -181,7 +181,7 @@ def main():
         build_env["RUSTFLAGS"] = build_env.get("RUSTFLAGS", "") + " -C link-arg=-Wl,-headerpad_max_install_names"
         run("cargo", "build", "--release", "--locked", "-p", "mikan-editor", "-p", "mikan-exporter", env=build_env)
     binaries = ROOT / "target" / target / "release"
-    for source, name in (("mikan-editor", "Frameweave"), ("mikan-exporter", "Frameweave-export")):
+    for source, name in (("mikan-editor", "Celesta"), ("mikan-exporter", "Celesta-export")):
         shutil.copy2(binaries / source, executables / name)
 
     downloads = ROOT / "target/package-downloads"
@@ -220,11 +220,11 @@ def main():
 
     frameworks = contents / "Frameworks"
     # Main executables and Node are both one directory below Contents.
-    run("dylibbundler", "-b", "-cd", "-ns", "-i", "/System/Library/", "-x", executables / "Frameweave",
-        "-x", executables / "Frameweave-export", "-x", helpers / "node", "-x", helpers / "esbuild",
+    run("dylibbundler", "-b", "-cd", "-ns", "-i", "/System/Library/", "-x", executables / "Celesta",
+        "-x", executables / "Celesta-export", "-x", helpers / "node", "-x", helpers / "esbuild",
         "-d", frameworks, "-p", "@executable_path/../Frameworks/")
     native = macho_files(app)
-    required = {executables / "Frameweave", executables / "Frameweave-export", helpers / "node", helpers / "esbuild"}
+    required = {executables / "Celesta", executables / "Celesta-export", helpers / "node", helpers / "esbuild"}
     if not required.issubset(native):
         raise RuntimeError("The app, exporter, Node.js, and esbuild must all be Mach-O executables")
     minimum = (0, 0)
@@ -234,8 +234,8 @@ def main():
         minimum = max(minimum, minimum_version(run("otool", "-arch", platform.machine(), "-l", binary, capture=True)))
     with (contents / "Info.plist").open("wb") as file:
         plistlib.dump({
-            "CFBundleIdentifier": args.bundle_id, "CFBundleName": "Frameweave",
-            "CFBundleDisplayName": "Frameweave", "CFBundleExecutable": "Frameweave",
+            "CFBundleIdentifier": args.bundle_id, "CFBundleName": "Celesta",
+            "CFBundleDisplayName": "Celesta", "CFBundleExecutable": "Celesta",
             "CFBundlePackageType": "APPL", "CFBundleVersion": args.version,
             "CFBundleShortVersionString": args.version, "NSHighResolutionCapable": True,
             "LSMinimumSystemVersion": ".".join(map(str, minimum)),
@@ -263,7 +263,7 @@ def main():
     (image / "Applications").symlink_to("/Applications", target_is_directory=True)
     # Only the app and Applications shortcut go on the mounted volume.
     staged_dmg = stage / dmg.name
-    run("hdiutil", "create", "-volname", "Frameweave", "-srcfolder", image,
+    run("hdiutil", "create", "-volname", "Celesta", "-srcfolder", image,
         "-fs", "HFS+", "-format", "UDZO", staged_dmg)
     if args.sign_identity:
         run("codesign", "--sign", identity, "--timestamp", staged_dmg)

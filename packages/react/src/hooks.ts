@@ -24,7 +24,7 @@ export const CompositionRuntimeContext = React.createContext<CompositionRuntimeC
 function useRuntimeContext(hookName: string): CompositionRuntimeContextValue {
   const value = React.useContext(CompositionRuntimeContext);
   if (!value) {
-    throw new Error(`${hookName} must be called from within a Frameweave <Composition>`);
+    throw new Error(`${hookName} must be called from within a Celesta <Composition>`);
   }
   return value;
 }

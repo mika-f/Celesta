@@ -22,7 +22,7 @@ fn paths_for(executable: Option<&Path>) -> (PathBuf, PathBuf) {
         let runtime = directory.join("runtime");
         let packaged_name = executable
             .and_then(Path::file_stem)
-            .is_some_and(|name| name == "Frameweave" || name == "Frameweave-export");
+            .is_some_and(|name| name == "Celesta" || name == "Celesta-export");
         if packaged_name || runtime.is_dir() {
             return (
                 runtime.join(if cfg!(windows) { "node.exe" } else { "node" }),
@@ -42,8 +42,8 @@ mod tests {
 
     #[test]
     fn app_bundle_paths_are_relative_to_the_installed_app_even_if_files_are_missing() {
-        let contents = Path::new("Applications/Frameweave.app/Contents");
-        for name in ["Frameweave", "Frameweave-export"] {
+        let contents = Path::new("Applications/Celesta.app/Contents");
+        for name in ["Celesta", "Celesta-export"] {
             assert_eq!(
                 paths_for(Some(&contents.join("MacOS").join(name))),
                 (
@@ -56,9 +56,9 @@ mod tests {
 
     #[test]
     fn incomplete_bundle_does_not_fall_back_to_development_runtime() {
-        let root = std::env::temp_dir().join(format!("frameweave-runtime-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("celesta-runtime-{}", std::process::id()));
         std::fs::create_dir_all(root.join("runtime")).unwrap();
-        let paths = paths_for(Some(&root.join("Frameweave.exe")));
+        let paths = paths_for(Some(&root.join("Celesta.exe")));
         std::fs::remove_dir_all(&root).unwrap();
         assert_eq!(
             paths,
@@ -75,8 +75,8 @@ mod tests {
 
     #[test]
     fn missing_bundle_does_not_fall_back_to_development_runtime() {
-        let root = Path::new("missing-frameweave-installation");
-        let (_, cli) = paths_for(Some(&root.join("Frameweave-export.exe")));
+        let root = Path::new("missing-celesta-installation");
+        let (_, cli) = paths_for(Some(&root.join("Celesta-export.exe")));
         assert_eq!(cli, root.join("runtime/react/dist/cli.js"));
     }
 }

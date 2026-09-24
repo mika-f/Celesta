@@ -40,7 +40,7 @@ function DemoOverlay({ track }: { track: LipSyncTrack }) {
   return (
     <>
       <Text x={64} y={56} style={{ fontFamily: 'sans-serif', fontSize: 30, fontWeight: 700, fill: { type: 'solid', color: '#ffffff' } }}>
-        Frameweave Character + PSD + Auto LipSync
+        Celesta Character + PSD + Auto LipSync
       </Text>
       <Text x={64} y={102} style={{ fontFamily: 'sans-serif', fontSize: 20, fill: { type: 'solid', color: '#b7c5ff' } }}>
         {`琴葉茜「${NARRATION}」`}

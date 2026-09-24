@@ -162,7 +162,7 @@ async function requestMediaProbe(
   writeLine({ probeMedia: { path } });
   const next = await lines.next();
   if (next.done) {
-    throw new Error('Frameweave closed the media probe channel unexpectedly');
+    throw new Error('Celesta closed the media probe channel unexpectedly');
   }
   let response: ProbeMediaResponse;
   try {
@@ -174,7 +174,7 @@ async function requestMediaProbe(
     throw new Error(response.error);
   }
   if (!response.media) {
-    throw new Error('Frameweave returned an empty media probe response');
+    throw new Error('Celesta returned an empty media probe response');
   }
   return response.media;
 }
@@ -249,7 +249,7 @@ async function loadEntry(entryPath: string): Promise<LoadedEntry> {
   const [output] = result.outputFiles;
 
   // Runtime imports are absolute file URLs, so installed packages stay read-only.
-  const bundleDirectory = fs.mkdtempSync(path.join(tmpdir(), 'frameweave-entry-'));
+  const bundleDirectory = fs.mkdtempSync(path.join(tmpdir(), 'celesta-entry-'));
   const bundlePath = path.join(bundleDirectory, 'entry.mjs');
   let mod: unknown;
   try {

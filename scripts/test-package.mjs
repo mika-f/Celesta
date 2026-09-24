@@ -8,8 +8,8 @@ const packageDirectory = resolve(process.argv[2]);
 const mac = process.platform === 'darwin';
 const runtime = mac ? join(packageDirectory, 'Contents/Resources') : join(packageDirectory, 'runtime');
 const node = mac ? join(packageDirectory, 'Contents/Helpers/node') : join(runtime, 'node.exe');
-const exporter = join(packageDirectory, mac ? 'Contents/MacOS/Frameweave-export' : 'Frameweave-export.exe');
-const directory = mkdtempSync(join(tmpdir(), 'Frameweave package 日本語 '));
+const exporter = join(packageDirectory, mac ? 'Contents/MacOS/Celesta-export' : 'Celesta-export.exe');
+const directory = mkdtempSync(join(tmpdir(), 'Celesta package 日本語 '));
 const entry = join(directory, 'test.tsx');
 const env = { ...process.env, PATH: mac ? '/usr/bin:/bin' : join(process.env.SystemRoot, 'System32') };
 for (const name of Object.keys(env)) {
@@ -42,7 +42,7 @@ try {
 import { useState } from 'react';
 import { Composition, Text, useCurrentFrame } from '@mikan/react';
 function Content() {
-  const [text] = useState('Frameweave');
+  const [text] = useState('Celesta');
   const frame = useCurrentFrame();
   return <Text x={0} y={0}>{text + frame}</Text>;
 }
@@ -63,6 +63,6 @@ export default function Root() {
   assert.ok(!existsSync(join(runtime, 'react/.tmp')), 'Runtime must not write into the install directory');
   console.log('Package smoke test passed: bundled React hooks and MP4 export, without Node.js on PATH.');
 } finally {
-  assert.ok(directory.startsWith(join(tmpdir(), 'Frameweave package 日本語 ')));
+  assert.ok(directory.startsWith(join(tmpdir(), 'Celesta package 日本語 ')));
   rmSync(directory, { recursive: true, force: true });
 }

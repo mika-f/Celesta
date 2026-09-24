@@ -3390,7 +3390,7 @@ mod tests {
         let mut document = EditorDocument::from_json(VOICEROID, "examples").unwrap();
         assert_eq!(
             document.project_properties().get("title"),
-            Some(&serde_json::json!("Frameweave example"))
+            Some(&serde_json::json!("Celesta example"))
         );
         document.set_project_property("title", serde_json::json!("Chapter 1"));
 
@@ -3413,7 +3413,7 @@ mod tests {
         assert!(document.undo().unwrap());
         assert_eq!(
             document.project_properties().get("title"),
-            Some(&serde_json::json!("Frameweave example"))
+            Some(&serde_json::json!("Celesta example"))
         );
     }
 

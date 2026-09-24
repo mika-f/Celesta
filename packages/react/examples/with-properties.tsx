@@ -13,7 +13,7 @@ import type { ProjectPropertySchema } from '@mikan/react';
 // renders one Inspector row per field, writing edits into the project's
 // `properties` map. Values are read back here with `useProjectProperty`.
 const propertySchema: ProjectPropertySchema = {
-  title: { type: 'string', label: 'Title', defaultValue: 'Frameweave' },
+  title: { type: 'string', label: 'Title', defaultValue: 'Celesta' },
   accent: { type: 'color', label: 'Accent', defaultValue: '#ff8800' },
   fontSize: { type: 'number', label: 'Font Size', defaultValue: 48, min: 8, max: 200, step: 2 },
   showSubtitle: { type: 'boolean', label: 'Show Subtitle', defaultValue: false },
@@ -41,7 +41,7 @@ const project = loadProjectFromString(
 );
 
 function Title() {
-  const title = useProjectProperty('title', 'Frameweave');
+  const title = useProjectProperty('title', 'Celesta');
   const fontSize = useProjectProperty('fontSize', 48);
   const accent = useProjectProperty('accent', '#ff8800');
   return (

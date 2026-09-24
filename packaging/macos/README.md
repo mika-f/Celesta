@@ -1,7 +1,7 @@
 # Build a macOS DMG
 
-The DMG contains `Frameweave.app` and a shortcut to Applications. Open the DMG,
-drag Frameweave to Applications, eject the disk image, and launch the installed
+The DMG contains `Celesta.app` and a shortcut to Applications. Open the DMG,
+drag Celesta to Applications, eject the disk image, and launch the installed
 app. This is direct distribution outside the Mac App Store; no `.pkg` installer,
 App Sandbox, or App Store provisioning profile is used.
 
@@ -24,8 +24,8 @@ python3 scripts/package-macos.py --version 0.1.0
 
 Outputs go into `target/packages`:
 
-- Apple Silicon: `Frameweave-0.1.0-macos-arm64.dmg`
-- Intel: `Frameweave-0.1.0-macos-x64.dmg`
+- Apple Silicon: `Celesta-0.1.0-macos-arm64.dmg`
+- Intel: `Celesta-0.1.0-macos-x64.dmg`
 
 The script builds for the current Mac's architecture. Run it on each architecture
 to produce both downloads; it does not create a universal binary. Rust and Node.js
@@ -38,12 +38,12 @@ development DMG. This does not satisfy Gatekeeper for a downloaded public releas
 ## What is included
 
 ```text
-Frameweave.app/
+Celesta.app/
   Contents/
     Info.plist
     MacOS/
-      Frameweave
-      Frameweave-export
+      Celesta
+      Celesta-export
     Helpers/
       node
       esbuild
@@ -81,14 +81,14 @@ Existing DMGs are never overwritten.
 
 For public downloads, use an Apple Developer Program **Developer ID Application**
 certificate with its private key in your Keychain. Keep the bundle identifier
-stable across releases; its default is `com.natsuneko.frameweave`, configurable
+stable across releases; its default is `com.natsuneko.celesta`, configurable
 with `--bundle-id`.
 
 Create a notarytool Keychain profile once. This command prompts for credentials;
 do not put passwords or private keys in the repository:
 
 ```sh
-xcrun notarytool store-credentials Frameweave-notary
+xcrun notarytool store-credentials Celesta-notary
 ```
 
 Build, sign, and submit to Apple's notarization service:
@@ -96,7 +96,7 @@ Build, sign, and submit to Apple's notarization service:
 ```sh
 python3 scripts/package-macos.py --version 0.1.0 \
   --sign-identity 'Developer ID Application: Your Name (TEAMID)' \
-  --notary-profile Frameweave-notary
+  --notary-profile Celesta-notary
 ```
 
 All nested Mach-O files are signed before the app, using the hardened runtime
@@ -117,8 +117,8 @@ DYLD environment overrides.
 After dragging the app into Applications, run that test against the installed copy:
 
 ```sh
-/Applications/Frameweave.app/Contents/Helpers/node \
-  scripts/test-package.mjs /Applications/Frameweave.app
+/Applications/Celesta.app/Contents/Helpers/node \
+  scripts/test-package.mjs /Applications/Celesta.app
 ```
 
 Also check Finder installation, launch, preview, audio, and export on a Mac without

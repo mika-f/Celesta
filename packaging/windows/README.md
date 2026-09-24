@@ -1,7 +1,7 @@
 # Build a Windows package
 
 Run from a Windows x64 checkout using PowerShell 7. The package contains
-`Frameweave.exe`, `Frameweave-export.exe`, Node.js, the React runtime and its
+`Celesta.exe`, `Celesta-export.exe`, Node.js, the React runtime and its
 dependencies (including native esbuild), and the MSVC runtime DLLs.
 Users do not need Node.js, pnpm, Rust, or FFmpeg installed.
 
@@ -39,9 +39,9 @@ version; downloaded archives and checksums are cached in
 
 Outputs are placed in `target/packages`:
 
-- `Frameweave-<version>-windows-x64.zip`
-- `Frameweave-<version>-windows-x64-setup.exe`
-- A unique `staging-*/Frameweave` directory for inspecting the package.
+- `Celesta-<version>-windows-x64.zip`
+- `Celesta-<version>-windows-x64-setup.exe`
+- A unique `staging-*/Celesta` directory for inspecting the package.
 
 Existing output files are never overwritten. `-SkipBuild` reuses already-built
 `target/release` executables and `packages/react/dist`; use it only after building
@@ -60,11 +60,11 @@ Node.js from PATH, and checks that runtime files contain no pnpm symlinks.
 Re-run it against an extracted package:
 
 ```powershell
-& 'C:\path\to\Frameweave\runtime\node.exe' `
-  scripts/test-package.mjs 'C:\path\to\Frameweave'
+& 'C:\path\to\Celesta\runtime\node.exe' `
+  scripts/test-package.mjs 'C:\path\to\Celesta'
 ```
 
-GPU access is needed for the MP4 check. Also launch `Frameweave.exe` on a clean
+GPU access is needed for the MP4 check. Also launch `Celesta.exe` on a clean
 Windows machine and check preview, audio, installation, upgrade, and uninstall
 before publishing. The automated export check does not replace a GUI check.
 

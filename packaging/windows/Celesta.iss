@@ -7,27 +7,27 @@
 
 [Setup]
 AppId={{60C64FD1-8827-468C-A148-6EF371267EF4}
-AppName=Frameweave
+AppName=Celesta
 AppVersion={#AppVersion}
-DefaultDirName={localappdata}\Programs\Frameweave
-DefaultGroupName=Frameweave
+DefaultDirName={localappdata}\Programs\Celesta
+DefaultGroupName=Celesta
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0
 OutputDir={#OutputDir}
-OutputBaseFilename=Frameweave-{#AppVersion}-windows-x64-setup
+OutputBaseFilename=Celesta-{#AppVersion}-windows-x64-setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
-UninstallDisplayIcon={app}\Frameweave.exe
+UninstallDisplayIcon={app}\Celesta.exe
 CloseApplications=yes
 
 [Files]
 Source: "{#PackageDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\Frameweave"; Filename: "{app}\Frameweave.exe"; WorkingDir: "{app}"
+Name: "{group}\Celesta"; Filename: "{app}\Celesta.exe"; WorkingDir: "{app}"
 
 [Run]
-Filename: "{app}\Frameweave.exe"; Description: "Launch Frameweave"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\Celesta.exe"; Description: "Launch Celesta"; Flags: nowait postinstall skipifsilent

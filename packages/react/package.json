@@ -2,7 +2,7 @@
   "name": "@mikan/react",
   "version": "0.0.0",
   "private": true,
-  "description": "Declarative React components for Frameweave compositions, evaluated into the shared Rust Scene model.",
+  "description": "Declarative React components for Celesta compositions, evaluated into the shared Rust Scene model.",
   "license": "MIT OR Apache-2.0",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

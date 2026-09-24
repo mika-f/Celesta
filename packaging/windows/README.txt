@@ -1,13 +1,13 @@
-Frameweave for Windows x64
+Celesta for Windows x64
 
-Launch Frameweave.exe. Keep the runtime directory and DLLs beside the executable.
+Launch Celesta.exe. Keep the runtime directory and DLLs beside the executable.
 Node.js, npm, pnpm, and FFmpeg do not need to be installed separately.
 
 To try React, open a terminal in this directory and run:
-  .\Frameweave.exe .\examples\title.tsx
+  .\Celesta.exe .\examples\title.tsx
 
 To export the example:
-  .\Frameweave-export.exe --react .\examples\title.tsx output.mp4
+  .\Celesta-export.exe --react .\examples\title.tsx output.mp4
 
 Save your projects and media in your own documents directory.
 The examples are starting points; save a copy before editing them.

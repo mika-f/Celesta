@@ -1,11 +1,11 @@
-# Frameweave
+# Celesta
 
-Frameweave is a desktop video editor that combines timeline editing with
+Celesta is a desktop video editor that combines timeline editing with
 React-based compositions. Arrange video, images, text, and audio visually, or
 use React to create animated titles and reusable components. Preview your work
 in the editor and export it as an MP4.
 
-Frameweave is under active development. The instructions below run it from
+Celesta is under active development. The instructions below run it from
 source. Existing package names, commands, and the `.mikan.json` project file
 extension still use `mikan` for compatibility.
 
@@ -34,7 +34,7 @@ require Node.js 18 or later and pnpm.
 
 ### 1. Prepare FFmpeg
 
-Frameweave links to FFmpeg libraries; installing only the `ffmpeg` command-line
+Celesta links to FFmpeg libraries; installing only the `ffmpeg` command-line
 executable is not sufficient.
 
 - **Windows:** install the MSVC C++ build tools and vcpkg, run
@@ -156,7 +156,7 @@ To create a Windows installer or portable ZIP with Node.js included, follow the
 
 ## Build a macOS package
 
-To create a DMG with `Frameweave.app` and an Applications shortcut for
+To create a DMG with `Celesta.app` and an Applications shortcut for
 drag-and-drop installation, follow the [macOS packaging guide](packaging/macos/README.md).
 Node.js is included. Developer ID signing and notarization are supported for
 distribution outside the Mac App Store.
@@ -169,4 +169,4 @@ reproduces it, along with media you have permission to share.
 
 ## License
 
-Frameweave's packages are declared under MIT OR Apache-2.0.
+Celesta's packages are declared under MIT OR Apache-2.0.

@@ -12,7 +12,7 @@ fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("Frameweave export: {error}");
+            eprintln!("Celesta export: {error}");
             ExitCode::FAILURE
         }
     }
