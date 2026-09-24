@@ -72,8 +72,12 @@ before publishing. The automated export check does not replace a GUI check.
 
 These are unsigned development packages. Code signing is not configured.
 The package collects Node.js and JavaScript license texts, native vcpkg notices,
-and available Rust license texts plus a dependency inventory. This collection
-does not establish that all redistribution obligations have been satisfied.
-In particular, the x264-enabled FFmpeg configuration is GPL-licensed; review
-the application license and provide the required corresponding sources and
-build information before distributing a public release.
+and available Rust license texts plus a dependency inventory, and includes the
+repository's root `LICENSE*` files plus `packaging/GPL-SOURCE-OFFER.md`.
+
+The x264-enabled FFmpeg configuration is GPL-2.0-or-later licensed, which makes
+this binary package as a whole GPL-licensed in addition to Celesta's own
+MIT/Apache-2.0 source license; see [`../GPL-SOURCE-OFFER.md`](../GPL-SOURCE-OFFER.md)
+and the root [`README.md`](../../README.md#license) for details. That file's
+written offer, together with `LICENSE-GPL-2.0`, is how this package satisfies
+GPLv2 Section 3 without bundling full FFmpeg/x264 source in every download.

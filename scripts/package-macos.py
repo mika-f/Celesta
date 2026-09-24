@@ -90,6 +90,7 @@ def collect_licenses(resources, target):
     licenses.mkdir()
     for path in ROOT.glob("LICENSE*"):
         shutil.copy2(path, licenses / path.name)
+    shutil.copy2(ROOT / "packaging" / "GPL-SOURCE-OFFER.md", licenses / "GPL-SOURCE-OFFER.md")
     metadata = json.loads(run("cargo", "metadata", "--locked", "--offline", "--format-version", "1",
                               "--filter-platform", target, capture=True))
     inventory = []
