@@ -1,10 +1,12 @@
 import { Composition, ProjectTimeline, registerComponent, Text } from '@celesta/react';
 import type { ComponentPropertySchema } from '@celesta/react';
 
-interface BossIntroductionProps extends Record<string, unknown> {
+// A `type` alias, not an `interface`: registered props must be JSON
+// (`Record<string, JsonValue>`), which interfaces never satisfy.
+type BossIntroductionProps = {
   bossName: string;
   level: number;
-}
+};
 
 function BossIntroduction({ bossName, level }: BossIntroductionProps) {
   return (
@@ -19,7 +21,7 @@ const bossIntroductionSchema: ComponentPropertySchema<BossIntroductionProps> = {
   level: { type: 'number', label: 'Level', defaultValue: 1, min: 1, max: 999 },
 };
 
-registerComponent('BossIntroduction', BossIntroduction as never, bossIntroductionSchema);
+registerComponent('BossIntroduction', BossIntroduction,bossIntroductionSchema);
 
 export default function Root() {
   return (

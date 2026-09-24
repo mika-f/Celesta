@@ -17,7 +17,7 @@ function DebugCard() {
   );
 }
 
-registerComponent('DebugCard', DebugCard as never);
+registerComponent('DebugCard', DebugCard);
 
 export default function Root() {
   return (

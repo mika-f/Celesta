@@ -14,7 +14,7 @@ function FrameCaption() {
   );
 }
 
-registerComponent('FrameCaption', FrameCaption as never);
+registerComponent('FrameCaption', FrameCaption);
 
 export default function Root() {
   return (
