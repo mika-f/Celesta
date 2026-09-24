@@ -1,5 +1,5 @@
 [package]
-name = "mikan-exporter"
+name = "celesta-exporter"
 version = "0.0.0"
 edition.workspace = true
 license.workspace = true
@@ -7,13 +7,13 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-mikan-composition = { path = "../composition" }
-mikan-evaluator = { path = "../evaluator" }
+celesta-composition = { path = "../composition" }
+celesta-evaluator = { path = "../evaluator" }
 ez-ffmpeg.workspace = true
-mikan-gpu-renderer = { path = "../gpu-renderer" }
-mikan-media = { path = "../media" }
-mikan-project = { path = "../project" }
-mikan-react-bridge = { path = "../react-bridge" }
+celesta-gpu-renderer = { path = "../gpu-renderer" }
+celesta-media = { path = "../media" }
+celesta-project = { path = "../project" }
+celesta-react-bridge = { path = "../react-bridge" }
 tempfile = "3.23.0"
 
 [dev-dependencies]

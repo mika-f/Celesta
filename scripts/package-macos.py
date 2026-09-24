@@ -179,9 +179,9 @@ def main():
         build_env["CARGO_TARGET_DIR"] = str(ROOT / "target")
         build_env["CARGO_BUILD_TARGET"] = target
         build_env["RUSTFLAGS"] = build_env.get("RUSTFLAGS", "") + " -C link-arg=-Wl,-headerpad_max_install_names"
-        run("cargo", "build", "--release", "--locked", "-p", "mikan-editor", "-p", "mikan-exporter", env=build_env)
+        run("cargo", "build", "--release", "--locked", "-p", "celesta-editor", "-p", "celesta-exporter", env=build_env)
     binaries = ROOT / "target" / target / "release"
-    for source, name in (("mikan-editor", "Celesta"), ("mikan-exporter", "Celesta-export")):
+    for source, name in (("celesta-editor", "Celesta"), ("celesta-exporter", "Celesta-export")):
         shutil.copy2(binaries / source, executables / name)
 
     downloads = ROOT / "target/package-downloads"
@@ -213,7 +213,7 @@ def main():
     shutil.move(native_esbuild, helpers / "esbuild")
     examples = resources / "examples"
     examples.mkdir()
-    for source in (ROOT / "examples/minimal.mikan.json", ROOT / "examples/editor-demo.mikan.json",
+    for source in (ROOT / "examples/minimal.celesta.json", ROOT / "examples/editor-demo.celesta.json",
                    ROOT / "packages/react/examples/title.tsx"):
         shutil.copy2(source, examples / source.name)
     collect_licenses(resources, target)

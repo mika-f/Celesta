@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::error::Error;
 use std::fmt;
 
-use mikan_composition::{Animatable, Paint, TextStyle, Time, Transform};
+use celesta_composition::{Animatable, Paint, TextStyle, Time, Transform};
 
 use crate::{AssetKind, Character, Project, SourceRange, TimelineContent, TimelineItem};
 

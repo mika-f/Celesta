@@ -2,8 +2,8 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ez_ffmpeg::{FfmpegContext, Input, Output};
-use mikan_composition::Rational;
-use mikan_media::{AudioDecoder, FfmpegBackend, VideoFrameDecoder};
+use celesta_composition::Rational;
+use celesta_media::{AudioDecoder, FfmpegBackend, VideoFrameDecoder};
 
 /// Renders a synthetic `lavfi` source to a lossless fixture through the linked
 /// FFmpeg libraries (`ffv1` in MKV for video, WAV for audio). `fps`, when set,
@@ -35,7 +35,7 @@ fn fixture_dir(label: &str) -> std::path::PathBuf {
         .unwrap()
         .as_nanos();
     let directory = std::env::temp_dir().join(format!(
-        "mikan-media-{label}-{}-{suffix}",
+        "celesta-media-{label}-{}-{suffix}",
         std::process::id()
     ));
     std::fs::create_dir(&directory).unwrap();

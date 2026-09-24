@@ -66,11 +66,11 @@ try {
         Invoke-Checked pnpm @('--dir', 'packages/react', 'install', '--frozen-lockfile')
         Invoke-Checked pnpm @('--dir', 'packages/react', 'run', 'codegen')
         Invoke-Checked pnpm @('--dir', 'packages/react', 'run', 'build')
-        Invoke-Checked cargo @('build', '--release', '--locked', '-p', 'mikan-editor', '-p', 'mikan-exporter')
+        Invoke-Checked cargo @('build', '--release', '--locked', '-p', 'celesta-editor', '-p', 'celesta-exporter')
     }
     $binaries = Join-Path $root 'target/release'
-    Copy-Item -LiteralPath "$binaries/mikan-editor.exe" -Destination "$package/Celesta.exe"
-    Copy-Item -LiteralPath "$binaries/mikan-exporter.exe" -Destination "$package/Celesta-export.exe"
+    Copy-Item -LiteralPath "$binaries/celesta-editor.exe" -Destination "$package/Celesta.exe"
+    Copy-Item -LiteralPath "$binaries/celesta-exporter.exe" -Destination "$package/Celesta-export.exe"
     Copy-Item -Path "$VcRedistDirectory/*.dll" -Destination $package
 
     $archiveName = "node-v$NodeVersion-win-x64.zip"
@@ -100,7 +100,7 @@ try {
 
     Copy-Item -LiteralPath "$root/README.md" -Destination $package
     New-Item -ItemType Directory "$package/examples" | Out-Null
-    Copy-Item -LiteralPath "$root/examples/minimal.mikan.json", "$root/examples/editor-demo.mikan.json", "$root/packages/react/examples/title.tsx" -Destination "$package/examples"
+    Copy-Item -LiteralPath "$root/examples/minimal.celesta.json", "$root/examples/editor-demo.celesta.json", "$root/packages/react/examples/title.tsx" -Destination "$package/examples"
     Copy-Item -LiteralPath "$root/packaging/windows/README.txt" -Destination "$package/START-HERE.txt"
 
     $licenses = Join-Path $package 'licenses'

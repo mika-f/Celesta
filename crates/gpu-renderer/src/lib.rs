@@ -13,11 +13,11 @@ use std::sync::Arc;
 use std::sync::mpsc;
 
 use image::ImageReader;
-use mikan_composition::{
+use celesta_composition::{
     AssetLocation, EvaluatedTransform, Layer, LayerContent, Point, ResolvedAsset, Scene,
 };
-use mikan_media::{MediaError, VideoFrameDecoder};
-use mikan_renderer::{RenderError, TextRasterizer, rasterize_rect};
+use celesta_media::{MediaError, VideoFrameDecoder};
+use celesta_renderer::{RenderError, TextRasterizer, rasterize_rect};
 use wgpu::util::DeviceExt;
 
 #[cfg(target_os = "macos")]
@@ -246,7 +246,7 @@ impl GpuRenderer {
             .map_err(GpuRenderError::RequestAdapter)?;
         let adapter_info = adapter.get_info();
         let descriptor = wgpu::DeviceDescriptor {
-            label: Some("Mikan GPU Renderer"),
+            label: Some("Celesta GPU Renderer"),
             ..Default::default()
         };
         let (device, queue) = adapter
@@ -254,7 +254,7 @@ impl GpuRenderer {
             .await
             .map_err(GpuRenderError::RequestDevice)?;
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Mikan layer bind group layout"),
+            label: Some("Celesta layer bind group layout"),
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
@@ -285,7 +285,7 @@ impl GpuRenderer {
             ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Mikan layer pipeline layout"),
+            label: Some("Celesta layer pipeline layout"),
             bind_group_layouts: &[Some(&bind_group_layout)],
             immediate_size: 0,
         });
@@ -299,7 +299,7 @@ impl GpuRenderer {
         let mut pipelines = HashMap::new();
         pipelines.insert(wgpu::TextureFormat::Rgba8Unorm, pipeline);
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("Mikan layer sampler"),
+            label: Some("Celesta layer sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Nearest,
@@ -382,7 +382,7 @@ impl GpuRenderer {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Mikan preview commands"),
+                label: Some("Celesta preview commands"),
             });
         self.encode_draws(&mut encoder, scene, target, &draws)?;
         self.queue.submit([encoder.finish()]);
@@ -457,7 +457,7 @@ impl GpuRenderer {
             depth_or_array_layers: 1,
         };
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Mikan offscreen frame"),
+            label: Some("Celesta offscreen frame"),
             size,
             mip_level_count: 1,
             sample_count: 1,
@@ -467,7 +467,7 @@ impl GpuRenderer {
             view_formats: &[],
         });
         let output = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Mikan RGBA readback"),
+            label: Some("Celesta RGBA readback"),
             size: layout.buffer_size,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
@@ -475,7 +475,7 @@ impl GpuRenderer {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Mikan offscreen commands"),
+                label: Some("Celesta offscreen commands"),
             });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         self.encode_draws(
@@ -593,7 +593,7 @@ impl GpuRenderer {
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Mikan pipelined offscreen commands"),
+                label: Some("Celesta pipelined offscreen commands"),
             });
         // Cloned out first (a cheap handle clone, not a data copy) so it
         // doesn't keep `self.readback_slots` borrowed across the
@@ -753,7 +753,7 @@ impl GpuRenderer {
         let background = self.options.background.as_wgpu();
         let pipeline = self.pipeline_for(target.format);
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Mikan layer pass"),
+            label: Some("Celesta layer pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: target.view,
                 resolve_target: None,
@@ -908,7 +908,7 @@ impl GpuRenderer {
         );
         if !self.images.contains_key(&key) {
             let path = self.local_asset_path(asset)?;
-            let frame = mikan_renderer::rasterize_psd(
+            let frame = celesta_renderer::rasterize_psd(
                 &asset.id,
                 &path,
                 visible_layers,
@@ -946,7 +946,7 @@ impl GpuRenderer {
         canvas_height: u32,
     ) -> Result<GpuDraw, GpuRenderError> {
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Mikan layer texture"),
+            label: Some("Celesta layer texture"),
             size: wgpu::Extent3d {
                 width: layer.image.width,
                 height: layer.image.height,
@@ -983,12 +983,12 @@ impl GpuRenderer {
         let uniform = self
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Mikan layer uniform"),
+                label: Some("Celesta layer uniform"),
                 contents: &uniform,
                 usage: wgpu::BufferUsages::UNIFORM,
             });
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Mikan layer bind group"),
+            label: Some("Celesta layer bind group"),
             layout: &self.bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry {
@@ -1021,7 +1021,7 @@ fn create_pipeline(
     format: wgpu::TextureFormat,
 ) -> wgpu::RenderPipeline {
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("Mikan layer pipeline"),
+        label: Some("Celesta layer pipeline"),
         layout: Some(layout),
         vertex: wgpu::VertexState {
             module: shader,
@@ -1245,7 +1245,7 @@ impl ReadbackSlot {
     fn new(device: &wgpu::Device, width: u32, height: u32) -> Result<Self, GpuRenderError> {
         let layout = ReadbackLayout::new(width, height)?;
         let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Mikan pipelined offscreen frame"),
+            label: Some("Celesta pipelined offscreen frame"),
             size: wgpu::Extent3d {
                 width,
                 height,
@@ -1260,7 +1260,7 @@ impl ReadbackSlot {
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Mikan pipelined RGBA readback"),
+            label: Some("Celesta pipelined RGBA readback"),
             size: layout.buffer_size,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
@@ -1446,11 +1446,11 @@ impl From<MediaError> for GpuRenderError {
 mod tests {
     use std::path::Path;
 
-    use mikan_composition::{
+    use celesta_composition::{
         AssetLocation, EvaluatedTransform, Layer, LayerContent, MediaTiming, Paint, Point,
         Rational, ResolvedAsset, Scene, Stroke, TextStyle, Time,
     };
-    use mikan_media::{MediaError, VideoFrame, VideoFrameDecoder};
+    use celesta_media::{MediaError, VideoFrame, VideoFrameDecoder};
 
     use super::*;
 
@@ -1620,7 +1620,7 @@ mod tests {
             return;
         };
         let texture = renderer.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Mikan preview test target"),
+            label: Some("Celesta preview test target"),
             size: wgpu::Extent3d {
                 width: 320,
                 height: 240,
@@ -1766,7 +1766,7 @@ mod tests {
             },
             opacity: 0.75,
             content: LayerContent::Text {
-                text: "Mikan".to_owned(),
+                text: "Celesta".to_owned(),
                 style: TextStyle {
                     font_size: Some(32.0),
                     fill: Some(Paint::Solid {
@@ -1813,13 +1813,13 @@ mod tests {
             },
             opacity: 1.0,
             content: LayerContent::Text {
-                text: "Mikan".to_owned(),
+                text: "Celesta".to_owned(),
                 style: TextStyle {
                     font_size: Some(96.0),
                     fill: Some(Paint::Solid {
                         color: "#FFA13BFF".to_owned(),
                     }),
-                    align: Some(mikan_composition::TextAlign::Center),
+                    align: Some(celesta_composition::TextAlign::Center),
                     ..TextStyle::default()
                 },
                 max_width: None,

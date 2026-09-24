@@ -1,4 +1,4 @@
-import { Composition, Text, registerComponent, useCurrentFrame, useVideoConfig } from '@mikan/react';
+import { Composition, Text, registerComponent, useCurrentFrame, useVideoConfig } from '@celesta/react';
 
 // A registered component whose output depends on the composition timeline —
 // the editor's component-resolution path must give its hooks the real

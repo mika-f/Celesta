@@ -12,7 +12,7 @@ use ez_ffmpeg::frame_export::{
 use ez_ffmpeg::stream_info::{StreamInfo, find_all_stream_infos};
 use ez_ffmpeg::{AVRational, Input, container_info};
 
-use mikan_composition::{
+use celesta_composition::{
     AnimationError, AssetLocation, AudioGraph, Rational, Time, TimeError, evaluate_f64,
     integrate_f64,
 };
@@ -867,7 +867,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use ez_ffmpeg::{FfmpegContext, Output};
-    use mikan_composition::{Animatable, AudioClip, ResolvedAsset, TimeRange};
+    use celesta_composition::{Animatable, AudioClip, ResolvedAsset, TimeRange};
 
     use super::*;
 
@@ -896,7 +896,7 @@ mod tests {
             .unwrap()
             .as_nanos();
         let directory = std::env::temp_dir().join(format!(
-            "mikan-media-{label}-{}-{suffix}",
+            "celesta-media-{label}-{}-{suffix}",
             std::process::id()
         ));
         fs::create_dir_all(&directory).unwrap();
@@ -924,7 +924,7 @@ mod tests {
     fn reports_a_missing_source_as_an_ffmpeg_error() {
         let mut backend = FfmpegBackend::new();
         assert!(matches!(
-            backend.probe("/definitely-not-a-real/mikan-media.mkv"),
+            backend.probe("/definitely-not-a-real/celesta-media.mkv"),
             Err(MediaError::Ffmpeg(_))
         ));
     }

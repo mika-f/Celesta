@@ -1,10 +1,10 @@
-//! Spawns the `@mikan/react` Node.js runtime and evaluates a React
-//! composition into the shared `mikan_composition::Scene` model.
+//! Spawns the `@celesta/react` Node.js runtime and evaluates a React
+//! composition into the shared `celesta_composition::Scene` model.
 //!
 //! A single Node process is kept alive for the lifetime of a [`ReactBridge`]
 //! and answers one JSON request per requested frame over its stdin/stdout
 //! pipe, following the same "one long-lived process instead of one process
-//! per frame" shape as `mikan-media`'s sequential video decoding session.
+//! per frame" shape as `celesta-media`'s sequential video decoding session.
 
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -13,11 +13,11 @@ use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
-use mikan_composition::{
+use celesta_composition::{
     Animatable, AssetLocation, AudioClip, AudioGraph, Layer, Rational, ResolvedAsset, Scene, Time,
     TimeRange,
 };
-use mikan_media::{AudioStream, FfmpegBackend, MediaProbe, VideoStream};
+use celesta_media::{AudioStream, FfmpegBackend, MediaProbe, VideoStream};
 use serde::{Deserialize, Serialize};
 
 mod runtime;
@@ -148,7 +148,7 @@ pub struct FrameEvaluation {
     pub audio: Vec<ReactAudioClipDescriptor>,
 }
 
-/// A live connection to the `@mikan/react` CLI evaluating one entry module.
+/// A live connection to the `@celesta/react` CLI evaluating one entry module.
 pub struct ReactBridge {
     child: Child,
     stdin: ChildStdin,
@@ -344,7 +344,7 @@ impl ReactBridge {
 
     /// Sweeps every frame of the composition and builds the complete
     /// `AudioGraph` its `<Audio>` declarations imply — the standalone
-    /// counterpart of what `mikan-exporter` accumulates during its render
+    /// counterpart of what `celesta-exporter` accumulates during its render
     /// loop. Each frame's `evaluate_at` report lists the `<Audio>` elements
     /// audible *that* frame (so conditional / sequence-shifted audio is
     /// captured); [`merge_react_audio_clips`] then collapses the per-frame
@@ -627,7 +627,7 @@ pub enum ReactBridgeError {
     UnexpectedResponse,
     EntryFailed(String),
     Render(String),
-    Time(mikan_composition::TimeError),
+    Time(celesta_composition::TimeError),
 }
 
 impl fmt::Display for ReactBridgeError {
@@ -681,12 +681,12 @@ impl Error for ReactBridgeError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mikan_composition::{Keyframe, KeyframeAnimation, KeyframeAnimationType};
+    use celesta_composition::{Keyframe, KeyframeAnimation, KeyframeAnimationType};
 
     #[test]
     fn reports_a_missing_node_executable() {
         let result = ReactBridge::spawn(
-            "/definitely-not-installed/mikan-node",
+            "/definitely-not-installed/celesta-node",
             "cli.js",
             "entry.tsx",
         );
@@ -777,7 +777,7 @@ mod tests {
             },
             "componentSchemas": {},
             "propertySchema": {
-                "title": {"type": "string", "label": "Title", "defaultValue": "Mikan"},
+                "title": {"type": "string", "label": "Title", "defaultValue": "Celesta"},
                 "accent": {"type": "color", "defaultValue": "#ff8800"},
                 "opacity": {"type": "number", "defaultValue": 1.0, "min": 0.0, "max": 1.0},
                 "visible": {"type": "boolean", "defaultValue": true},
@@ -798,7 +798,7 @@ mod tests {
             schema.get("title"),
             Some(&ComponentPropertyField::String {
                 label: Some("Title".to_owned()),
-                default_value: "Mikan".to_owned(),
+                default_value: "Celesta".to_owned(),
             })
         );
         assert_eq!(

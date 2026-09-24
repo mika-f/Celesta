@@ -1,5 +1,5 @@
-import { Composition, ProjectTimeline, registerComponent, Text } from '@mikan/react';
-import type { ComponentPropertySchema } from '@mikan/react';
+import { Composition, ProjectTimeline, registerComponent, Text } from '@celesta/react';
+import type { ComponentPropertySchema } from '@celesta/react';
 
 interface BossIntroductionProps extends Record<string, unknown> {
   bossName: string;

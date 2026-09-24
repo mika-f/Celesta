@@ -3,12 +3,12 @@ import type { ReactNode } from 'react';
 import type { JsonValue } from './generated/serde_json/JsonValue';
 
 // project.json can place a registered component instance on the timeline
-// (`TimelineContent::Component { component, props }`). mikan-evaluator
+// (`TimelineContent::Component { component, props }`). celesta-evaluator
 // (Rust) has no registry of its own — it always evaluates that content to
 // `LayerContent::MissingComponent { component, props }` — so resolving the
 // name to an actual component is entirely this module's job, done by
 // project-runtime.ts's `<ProjectTimeline />` when it walks the layers Rust
-// evaluated. This registry is process-global: each `mikan-react-render`
+// evaluated. This registry is process-global: each `celesta-react-render`
 // process handles exactly one entry for its whole lifetime, so there is no
 // cross-entry state to worry about.
 

@@ -8,13 +8,13 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use mikan_composition::{
+use celesta_composition::{
     Animatable, AnimatablePoint, AudioGraph, Keyframe, KeyframeAnimation, KeyframeAnimationType,
     Paint, Rational, Scene, Stroke, TextAlign, TextStyle, Time, TimeError, TimeRange, Transform,
     evaluate_f64,
 };
-use mikan_evaluator::{EvaluationError, Evaluator};
-use mikan_project::{
+use celesta_evaluator::{EvaluationError, Evaluator};
+use celesta_project::{
     Asset, AssetKind, AssetSource, Character, LipSyncCue, LipSyncDefinition, LoadError, MouthShape,
     PortraitDefinition, Project, ProjectSettings, ProjectVersion, SubtitleDefinition,
     TimelineContent, TimelineItem, Track, TrackKind,
@@ -2742,7 +2742,7 @@ pub enum EditorDocumentError {
     Serialize(serde_json::Error),
     Save(std::io::Error),
     MissingSavePath,
-    Duration(mikan_composition::TimeError),
+    Duration(celesta_composition::TimeError),
     MissingClip(String),
     MissingTrack(String),
     MissingAsset(String),
@@ -2982,11 +2982,11 @@ impl Error for EditorDocumentError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mikan_composition::LayerContent;
+    use celesta_composition::LayerContent;
 
-    const MINIMAL: &str = include_str!("../../../examples/minimal.mikan.json");
-    const EDITOR_DEMO: &str = include_str!("../../../examples/editor-demo.mikan.json");
-    const VOICEROID: &str = include_str!("../../../examples/voiceroid.mikan.json");
+    const MINIMAL: &str = include_str!("../../../examples/minimal.celesta.json");
+    const EDITOR_DEMO: &str = include_str!("../../../examples/editor-demo.celesta.json");
+    const VOICEROID: &str = include_str!("../../../examples/voiceroid.celesta.json");
 
     #[test]
     fn loads_an_empty_document() {
@@ -3143,7 +3143,7 @@ mod tests {
     #[test]
     fn loads_the_editor_demo_timeline() {
         let document = EditorDocument::from_json(
-            include_str!("../../../examples/editor-demo.mikan.json"),
+            include_str!("../../../examples/editor-demo.celesta.json"),
             "examples",
         )
         .unwrap();
@@ -3158,7 +3158,7 @@ mod tests {
         let asset_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples");
         let document = EditorDocument::from_json(VOICEROID, asset_root).unwrap();
         let Ok(mut renderer) =
-            mikan_gpu_renderer::GpuRenderer::new(mikan_gpu_renderer::GpuRenderOptions::default())
+            celesta_gpu_renderer::GpuRenderer::new(celesta_gpu_renderer::GpuRenderOptions::default())
         else {
             return;
         };
@@ -3174,7 +3174,7 @@ mod tests {
     #[test]
     fn edits_clip_ranges_in_exact_project_frames() {
         let mut document = EditorDocument::from_json(
-            include_str!("../../../examples/editor-demo.mikan.json"),
+            include_str!("../../../examples/editor-demo.celesta.json"),
             "examples",
         )
         .unwrap();
@@ -3192,7 +3192,7 @@ mod tests {
     #[test]
     fn undo_redo_tracks_revisions_and_discards_redo_branches() {
         let mut document = EditorDocument::from_json(
-            include_str!("../../../examples/editor-demo.mikan.json"),
+            include_str!("../../../examples/editor-demo.celesta.json"),
             "examples",
         )
         .unwrap();
@@ -3220,7 +3220,7 @@ mod tests {
     #[test]
     fn coalesces_a_live_clip_drag_into_one_history_entry() {
         let mut document = EditorDocument::from_json(
-            include_str!("../../../examples/editor-demo.mikan.json"),
+            include_str!("../../../examples/editor-demo.celesta.json"),
             "examples",
         )
         .unwrap();
@@ -3475,7 +3475,7 @@ mod tests {
     #[test]
     fn react_entry_path_is_stored_relative_and_resolves_back_to_absolute() {
         let root = std::env::temp_dir().join(format!(
-            "mikan-editor-react-entry-{}-{}",
+            "celesta-editor-react-entry-{}-{}",
             std::process::id(),
             TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed)
         ));
@@ -3486,7 +3486,7 @@ mod tests {
             b"export default function Root() { return null; }",
         )
         .unwrap();
-        let project_path = root.join("project.mikan.json");
+        let project_path = root.join("project.celesta.json");
         fs::write(&project_path, MINIMAL).unwrap();
         let mut document = EditorDocument::load(&project_path).unwrap();
 
@@ -3506,7 +3506,7 @@ mod tests {
     #[test]
     fn react_preview_builds_a_synthetic_document_from_composition_facts() {
         let root = std::env::temp_dir().join(format!(
-            "mikan-editor-react-preview-{}-{}",
+            "celesta-editor-react-preview-{}-{}",
             std::process::id(),
             TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed)
         ));
@@ -3544,17 +3544,17 @@ mod tests {
     #[test]
     fn imports_inserts_and_deletes_assets_through_history() {
         let root = std::env::temp_dir().join(format!(
-            "mikan-editor-import-{}-{}",
+            "celesta-editor-import-{}-{}",
             std::process::id(),
             TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir_all(root.join("media")).unwrap();
         let audio_path = root.join("media/Voice Take.wav");
         fs::write(&audio_path, b"fixture").unwrap();
-        let project_path = root.join("project.mikan.json");
+        let project_path = root.join("project.celesta.json");
         fs::write(
             &project_path,
-            include_str!("../../../examples/editor-demo.mikan.json"),
+            include_str!("../../../examples/editor-demo.celesta.json"),
         )
         .unwrap();
         let mut document = EditorDocument::load(&project_path).unwrap();
@@ -3906,7 +3906,7 @@ mod tests {
     #[test]
     fn rejects_an_import_batch_without_partial_changes() {
         let root = std::env::temp_dir().join(format!(
-            "mikan-editor-import-atomic-{}-{}",
+            "celesta-editor-import-atomic-{}-{}",
             std::process::id(),
             TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed)
         ));
@@ -3927,7 +3927,7 @@ mod tests {
     #[test]
     fn relinks_and_safely_removes_referenced_assets() {
         let root = std::env::temp_dir().join(format!(
-            "mikan-editor-relink-{}-{}",
+            "celesta-editor-relink-{}-{}",
             std::process::id(),
             TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed)
         ));
@@ -3995,14 +3995,14 @@ mod tests {
     #[test]
     fn saves_pretty_json_and_marks_the_saved_revision_clean() {
         let unique = format!(
-            "mikan-editor-save-{}-{}.mikan.json",
+            "celesta-editor-save-{}-{}.celesta.json",
             std::process::id(),
             TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed)
         );
         let path = std::env::temp_dir().join(unique);
         fs::write(
             &path,
-            include_str!("../../../examples/editor-demo.mikan.json"),
+            include_str!("../../../examples/editor-demo.celesta.json"),
         )
         .unwrap();
         let mut document = EditorDocument::load(&path).unwrap();
@@ -4037,13 +4037,13 @@ mod tests {
     #[test]
     fn save_as_assigns_a_path_only_after_a_successful_atomic_write() {
         let unique = format!(
-            "mikan-editor-save-as-{}-{}.mikan.json",
+            "celesta-editor-save-as-{}-{}.celesta.json",
             std::process::id(),
             TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed)
         );
         let path = std::env::temp_dir().join(unique);
         let mut document = EditorDocument::from_json(
-            include_str!("../../../examples/editor-demo.mikan.json"),
+            include_str!("../../../examples/editor-demo.celesta.json"),
             "examples",
         )
         .unwrap();
@@ -4062,8 +4062,8 @@ mod tests {
         fs::remove_file(path).unwrap();
 
         let invalid_path = std::env::temp_dir()
-            .join("missing-mikan-save-as-directory")
-            .join("project.mikan.json");
+            .join("missing-celesta-save-as-directory")
+            .join("project.celesta.json");
         let mut document = EditorDocument::from_json(MINIMAL, ".").unwrap();
         assert!(document.save_as(invalid_path).is_err());
         assert_eq!(document.path(), None);

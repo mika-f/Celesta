@@ -6,8 +6,8 @@ use React to create animated titles and reusable components. Preview your work
 in the editor and export it as an MP4.
 
 Celesta is under active development. The instructions below run it from
-source. Existing package names, commands, and the `.mikan.json` project file
-extension still use `mikan` for compatibility.
+source. Existing package names, commands, and the `.celesta.json` project file
+extension still use `celesta` for compatibility.
 
 ## What you can do
 
@@ -51,22 +51,22 @@ executable is not sufficient.
 ### 2. Get the source and launch
 
 ```sh
-git clone https://github.com/mika-f/mikan.git
-cd mikan
-cargo run -p mikan-editor --release
+git clone https://github.com/mika-f/celesta.git
+cd celesta
+cargo run -p celesta-editor --release
 ```
 
 The editor opens a built-in demo. To open an existing project instead, pass its
 path:
 
 ```sh
-cargo run -p mikan-editor --release -- examples/voiceroid.mikan.json
+cargo run -p celesta-editor --release -- examples/voiceroid.celesta.json
 ```
 
 ## Make your first video
 
 1. **Start with a project.** Launch the demo above, or open the minimal example
-   with `cargo run -p mikan-editor --release -- examples/minimal.mikan.json`.
+   with `cargo run -p celesta-editor --release -- examples/minimal.celesta.json`.
    Use **Save As** to save your own copy.
 2. **Import your media.** Choose **Import** in the Assets panel and select local
    video, image, or audio files.
@@ -86,7 +86,7 @@ the Assets panel and use **Relink** to locate it again.
 
 ### Character dialogue
 
-Open `examples/voiceroid.mikan.json` to try a dialogue project with a sample
+Open `examples/voiceroid.celesta.json` to try a dialogue project with a sample
 portrait and voice recording. In your own project, assign portrait expressions
 and mouth images to a character, then select an audio-backed Dialogue clip and
 choose **Generate from voice** to create lip-sync cues. Regenerate the cues after
@@ -107,18 +107,18 @@ cd ../..
 Open the sample title composition in the editor:
 
 ```sh
-cargo run -p mikan-editor --release -- packages/react/examples/title.tsx
+cargo run -p celesta-editor --release -- packages/react/examples/title.tsx
 ```
 
 Use the files in `packages/react/examples` as starting points. They demonstrate
 text, animation, layout, dialogue, and editable project properties. The package
-is currently imported as `@mikan/react`.
+is currently imported as `@celesta/react`.
 
 To combine an existing timeline with React content, use a composition containing
 `<ProjectTimeline />` and supply the companion project when exporting:
 
 ```sh
-cargo run -p mikan-exporter --release -- --react packages/react/examples/with-project.tsx --project examples/editor-demo.mikan.json output.mp4
+cargo run -p celesta-exporter --release -- --react packages/react/examples/with-project.tsx --project examples/editor-demo.celesta.json output.mp4
 ```
 
 ## Export from the command line
@@ -126,20 +126,20 @@ cargo run -p mikan-exporter --release -- --react packages/react/examples/with-pr
 Export a project:
 
 ```sh
-cargo run -p mikan-exporter --release -- examples/editor-demo.mikan.json output.mp4
+cargo run -p celesta-exporter --release -- examples/editor-demo.celesta.json output.mp4
 ```
 
 Export a React composition after completing the React setup:
 
 ```sh
-cargo run -p mikan-exporter --release -- --react packages/react/examples/title.tsx output.mp4
+cargo run -p celesta-exporter --release -- --react packages/react/examples/title.tsx output.mp4
 ```
 
 Add `--overwrite` to replace an existing output file. To export a section, add
 `--from` and `--to` with times in `HH:MM:SS.mmm`, `MM:SS.mmm`, or seconds:
 
 ```sh
-cargo run -p mikan-exporter --release -- --from 0 --to 1 examples/editor-demo.mikan.json section.mp4
+cargo run -p celesta-exporter --release -- --from 0 --to 1 examples/editor-demo.celesta.json section.mp4
 ```
 
 ## Current limitations

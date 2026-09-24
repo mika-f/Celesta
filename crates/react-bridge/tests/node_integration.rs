@@ -2,10 +2,10 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use mikan_composition::{
+use celesta_composition::{
     Animatable, EvaluatedTransform, Layer, LayerContent, Rational, TextStyle, Time,
 };
-use mikan_react_bridge::{
+use celesta_react_bridge::{
     ComponentPropertyField, ComponentResolutionRequest, ProjectFrame, ReactBridge,
 };
 
@@ -253,14 +253,14 @@ fn evaluates_a_rect_with_fill_stroke_and_corner_radius_when_node_is_available() 
     assert_eq!(*height, 100.0);
     assert_eq!(
         fill,
-        &Some(mikan_composition::Paint::Solid {
+        &Some(celesta_composition::Paint::Solid {
             color: "#3366CC".to_owned()
         })
     );
     let stroke = stroke.as_ref().expect("expected a stroke");
     assert_eq!(
         stroke.paint,
-        mikan_composition::Paint::Solid {
+        celesta_composition::Paint::Solid {
             color: "#FFFFFF".to_owned()
         }
     );
@@ -315,7 +315,7 @@ fn collect_audio_graph_sweeps_every_frame_into_one_graph_when_node_is_available(
     assert_eq!(graph.clips.len(), 1);
     assert_eq!(graph.clips[0].id, "react-audio:0");
     assert_eq!(graph.clips[0].source_start.as_seconds().unwrap(), 1.0);
-    let mikan_composition::AssetLocation::File { path } = &graph.clips[0].asset.location else {
+    let celesta_composition::AssetLocation::File { path } = &graph.clips[0].asset.location else {
         panic!("expected a file asset");
     };
     assert!(
@@ -471,7 +471,7 @@ fn reports_a_declared_project_property_schema_when_node_is_available() {
         schema.get("title"),
         Some(&ComponentPropertyField::String {
             label: Some("Title".to_owned()),
-            default_value: "Mikan".to_owned(),
+            default_value: "Celesta".to_owned(),
         })
     );
     assert_eq!(
@@ -763,7 +763,7 @@ fn embeds_per_track_layers_for_use_project_track_when_node_is_available() {
 }
 
 fn live_react_runtime() -> Option<(PathBuf, PathBuf, PathBuf)> {
-    let Some(node) = find_executable("MIKAN_NODE", "node") else {
+    let Some(node) = find_executable("CELESTA_NODE", "node") else {
         eprintln!("skipping live Node.js test: node was not found");
         return None;
     };

@@ -38,7 +38,7 @@ impl NativePreviewBridge {
         };
         let texture_cache = CVMetalTextureCache::new(None, metal_device, None).map_err(|_| ())?;
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Mikan native preview bind group layout"),
+            label: Some("Celesta native preview bind group layout"),
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
@@ -59,13 +59,13 @@ impl NativePreviewBridge {
             ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Mikan native preview pipeline layout"),
+            label: Some("Celesta native preview pipeline layout"),
             bind_group_layouts: &[Some(&bind_group_layout)],
             immediate_size: 0,
         });
         let shader = device.create_shader_module(wgpu::include_wgsl!("native_preview.wgsl"));
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("Mikan native preview sampler"),
+            label: Some("Celesta native preview sampler"),
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
@@ -137,7 +137,7 @@ impl NativePreviewBridge {
         )?;
 
         let rgba = renderer.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Mikan native preview RGBA intermediate"),
+            label: Some("Celesta native preview RGBA intermediate"),
             size: wgpu::Extent3d {
                 width: scene.width,
                 height: scene.height,
@@ -157,7 +157,7 @@ impl NativePreviewBridge {
         let mut encoder = renderer
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Mikan native preview commands"),
+                label: Some("Celesta native preview commands"),
             });
         renderer.encode_draws(
             &mut encoder,
@@ -173,7 +173,7 @@ impl NativePreviewBridge {
         let bind_group = renderer
             .device
             .create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Mikan native preview bind group"),
+                label: Some("Celesta native preview bind group"),
                 layout: &self.bind_group_layout,
                 entries: &[
                     wgpu::BindGroupEntry {
@@ -209,7 +209,7 @@ impl NativePreviewBridge {
         pipeline: &wgpu::RenderPipeline,
     ) {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Mikan native preview conversion pass"),
+            label: Some("Celesta native preview conversion pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view,
                 resolve_target: None,
@@ -238,7 +238,7 @@ fn create_pipeline(
     entry_point: &'static str,
 ) -> wgpu::RenderPipeline {
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("Mikan native preview conversion pipeline"),
+        label: Some("Celesta native preview conversion pipeline"),
         layout: Some(layout),
         vertex: wgpu::VertexState {
             module: shader,
@@ -320,7 +320,7 @@ fn wrap_texture(
         device.create_texture_from_hal::<wgpu_hal::api::Metal>(
             raw,
             &wgpu::TextureDescriptor {
-                label: Some("Mikan CoreVideo plane"),
+                label: Some("Celesta CoreVideo plane"),
                 size: wgpu::Extent3d {
                     width,
                     height,

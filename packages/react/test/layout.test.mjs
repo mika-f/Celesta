@@ -6,14 +6,14 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
-const cli = fileURLToPath(new URL('../bin/mikan-react-render.js', import.meta.url));
+const cli = fileURLToPath(new URL('../bin/celesta-react-render.js', import.meta.url));
 
 test('layout components position children inside inherited bounds', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'mikan-layout-'));
+  const dir = mkdtempSync(join(tmpdir(), 'celesta-layout-'));
   const entry = join(dir, 'entry.tsx');
   writeFileSync(
     entry,
-    `import { Center, Composition, Fit, Grid, SafeArea, Stack, Text } from '@mikan/react';\n` +
+    `import { Center, Composition, Fit, Grid, SafeArea, Stack, Text } from '@celesta/react';\n` +
       `export default function Root() {\n` +
       `  return (\n` +
       `    <Composition width={300} height={200} fps={30} durationInFrames={1}>\n` +

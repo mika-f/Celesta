@@ -42,7 +42,7 @@ export function useProjectProperty<T extends JsonValue = JsonValue>(key: string,
   return value === undefined ? defaultValue : (value as T);
 }
 
-// `<ProjectTimeline />` does not evaluate the project itself: mikan-evaluator
+// `<ProjectTimeline />` does not evaluate the project itself: celesta-evaluator
 // (Rust) already does that, once per frame, for whatever project a project-
 // aware export/preview call was given. render.ts wraps each render pass in
 // this Provider with those pre-evaluated layers so this component only has
@@ -55,19 +55,19 @@ export function ProjectTimeline(): ReturnType<typeof React.createElement> {
   const layers = React.useContext(ProjectLayersContext);
   if (!layers) {
     throw new Error(
-      '<ProjectTimeline /> requires evaluated project layers; export with a companion project (mikan-exporter --react <entry> --project <project.json>) to provide them',
+      '<ProjectTimeline /> requires evaluated project layers; export with a companion project (celesta-exporter --react <entry> --project <project.json>) to provide them',
     );
   }
   return renderProjectLayers(layers);
 }
 
 // Rust evaluates every track's layers alongside the whole-project ones on
-// every project-aware frame (see mikan-exporter's render_react_video) —
+// every project-aware frame (see celesta-exporter's render_react_video) —
 // it cannot know in advance which track ids, if any, a <ProjectTrack />
 // or useProjectTrack() call in the entry will ask for, so there is no
 // negotiation step; the request just always carries all of them. An id
 // with no matching track (typo, or a track disabled at the project level)
-// evaluates to no layers on the Rust side (mikan-evaluator's
+// evaluates to no layers on the Rust side (celesta-evaluator's
 // `layers_for_track`), so it is absent from this map rather than present
 // with an empty array — both `useProjectTrack` and `<ProjectTrack />`
 // treat "absent" and "empty" the same way, as "nothing to show".
@@ -77,7 +77,7 @@ function useProjectTrackLayers(hookName: string): Record<string, Layer[]> {
   const tracks = React.useContext(ProjectTrackLayersContext);
   if (!tracks) {
     throw new Error(
-      `${hookName} requires evaluated project layers; export with a companion project (mikan-exporter --react <entry> --project <project.json>) to provide them`,
+      `${hookName} requires evaluated project layers; export with a companion project (celesta-exporter --react <entry> --project <project.json>) to provide them`,
     );
   }
   return tracks;
@@ -107,12 +107,12 @@ function renderProjectLayers(layers: Layer[]): ReturnType<typeof React.createEle
 }
 
 // A project.json `TimelineContent::Component` item always evaluates
-// (mikan-evaluator has no component registry of its own) to a
+// (celesta-evaluator has no component registry of its own) to a
 // `LayerContent::MissingComponent { component, props }` layer. This is
 // where that name actually gets resolved against registerComponent()'s
 // registry, on the Node side. Resolved, the registered component renders as
 // a real subtree — its own hooks and state work normally — wrapped in a
-// `group` that carries the transform/opacity mikan-evaluator already
+// `group` that carries the transform/opacity celesta-evaluator already
 // computed for that timeline item (see the `rawTransform`/`rawOpacity`
 // escape hatch in render.ts), so its authored position on the timeline is
 // preserved regardless of what the component itself renders. Unresolved

@@ -3,12 +3,12 @@
 use std::error::Error;
 use std::fmt;
 
-use mikan_composition::{
+use celesta_composition::{
     Animatable, AnimationError, AssetLocation, AudioClip, AudioGraph, EvaluatedTransform, Layer,
     LayerContent, MediaTiming, Point, ResolvedAsset, Scene, TextStyle, Time, TimeError, Transform,
     evaluate_f64, integrate_f64,
 };
-use mikan_project::{
+use celesta_project::{
     Asset, AssetSource, LipSyncCue, MouthShape, Project, SourceRange, TimelineContent,
     TimelineItem, Track, ValidationErrors,
 };
@@ -401,7 +401,7 @@ fn evaluate_transform(
 }
 
 fn evaluate_point(
-    point: Option<&mikan_composition::AnimatablePoint>,
+    point: Option<&celesta_composition::AnimatablePoint>,
     time: Time,
     default: Point,
 ) -> Result<Point, AnimationError> {
@@ -464,15 +464,15 @@ impl From<AnimationError> for EvaluationError {
 
 #[cfg(test)]
 mod tests {
-    use mikan_composition::{LayerContent, Time};
-    use mikan_project::{
+    use celesta_composition::{LayerContent, Time};
+    use celesta_project::{
         LipSyncCue, LipSyncDefinition, MouthShape, Project, SourceRange, TimelineContent,
     };
 
     use super::*;
 
     fn example() -> Project {
-        Project::from_json(include_str!("../../../examples/voiceroid.mikan.json")).unwrap()
+        Project::from_json(include_str!("../../../examples/voiceroid.celesta.json")).unwrap()
     }
 
     #[test]

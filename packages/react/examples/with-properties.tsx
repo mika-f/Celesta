@@ -5,8 +5,8 @@ import {
   defineProjectProperties,
   loadProjectFromString,
   useProjectProperty,
-} from '@mikan/react';
-import type { ProjectPropertySchema } from '@mikan/react';
+} from '@celesta/react';
+import type { ProjectPropertySchema } from '@celesta/react';
 
 // Declared at module scope so it has run before the CLI's startup Ready
 // message is sent — the GPUI editor reads this schema off the handshake and
@@ -22,7 +22,7 @@ const propertySchema: ProjectPropertySchema = {
 
 defineProjectProperties(propertySchema);
 
-// A real entry would `loadProject('./project.mikan.json')`; the string form
+// A real entry would `loadProject('./project.celesta.json')`; the string form
 // keeps this example self-contained.
 const project = loadProjectFromString(
   JSON.stringify({

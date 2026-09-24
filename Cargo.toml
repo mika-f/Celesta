@@ -17,7 +17,7 @@ members = [
 [workspace.package]
 edition = "2024"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/mika-f/mikan"
+repository = "https://github.com/mika-f/celesta"
 rust-version = "1.89"
 
 [workspace.dependencies]

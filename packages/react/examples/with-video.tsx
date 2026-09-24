@@ -1,4 +1,4 @@
-import { Composition, Video } from '@mikan/react';
+import { Composition, Video } from '@celesta/react';
 
 export default function Root() {
   return (

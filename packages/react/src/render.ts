@@ -1,6 +1,6 @@
 // Mounts a Celesta React composition through react-reconciler (reconciler.ts)
 // and evaluates it into the same `Scene` JSON shape that
-// `mikan_composition::Scene` deserializes on the Rust side. The mount is
+// `celesta_composition::Scene` deserializes on the Rust side. The mount is
 // persistent across frames: cli.ts calls `renderAt` once per requested
 // time against the same root, so component state and effects (to the extent
 // a synchronous, un-scheduled reconciler runs them) carry across frames
@@ -174,7 +174,7 @@ function extractTransform(props: Record<string, unknown>): EvaluatedTransform {
   // `rawTransform`/`rawOpacity` (checked here and in buildLayer) are an
   // internal escape hatch: project-runtime.ts's <ProjectTimeline /> uses
   // them to place a resolved registry component's rendered subtree at the
-  // exact transform/opacity mikan-evaluator already computed for that
+  // exact transform/opacity celesta-evaluator already computed for that
   // project timeline item, bypassing the flat x/y/scale/rotation props
   // authored components use. Not part of the public component prop types.
   if (props.rawTransform) {
@@ -448,7 +448,7 @@ function buildLayer(
     // clock from its frame 0: `context.time` here *is* the video's local
     // time. `sourceTimeSeconds` — the only field GpuRenderer actually reads
     // to seek/decode — is `startFrom` plus local time scaled by
-    // `playbackRate`, mirroring how mikan-evaluator derives it for a
+    // `playbackRate`, mirroring how celesta-evaluator derives it for a
     // project TimelineContent::Video at a constant playback rate.
     const startFrom = numberOr(props.startFrom, 0);
     const playbackRate = numberOr(props.playbackRate, 1);

@@ -6,14 +6,14 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
-const cli = fileURLToPath(new URL('../bin/mikan-react-render.js', import.meta.url));
+const cli = fileURLToPath(new URL('../bin/celesta-react-render.js', import.meta.url));
 
 test('Transition evaluates fade, slide, and scale from the local sequence frame', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'mikan-transition-'));
+  const dir = mkdtempSync(join(tmpdir(), 'celesta-transition-'));
   const entry = join(dir, 'entry.tsx');
   writeFileSync(
     entry,
-    `import { Composition, Sequence, Text, Transition } from '@mikan/react';\n` +
+    `import { Composition, Sequence, Text, Transition } from '@celesta/react';\n` +
       `export default function Root() {\n` +
       `  return (\n` +
       `    <Composition width={320} height={240} fps={30} durationInFrames={20}>\n` +

@@ -2,11 +2,11 @@ use std::ffi::{OsStr, OsString};
 use std::path::Path;
 use std::process::ExitCode;
 
-use mikan_exporter::{
+use celesta_exporter::{
     CompanionProject, ExportOptions, ExportProgress, ExportRange, Exporter, ReactRuntimeOptions,
     parse_timecode,
 };
-use mikan_project::Project;
+use celesta_project::Project;
 
 fn main() -> ExitCode {
     match run() {
@@ -18,7 +18,7 @@ fn main() -> ExitCode {
     }
 }
 
-const USAGE: &str = "usage: mikan-exporter [--overwrite] [--from <timecode>] [--to <timecode>] <project.mikan.json> <output.mp4>\n       mikan-exporter [--overwrite] [--from <timecode>] [--to <timecode>] --react <entry.tsx> [--project <project.mikan.json>] <output.mp4>\n\ntimecode is HH:MM:SS(.mmm), MM:SS(.mmm) or SS(.mmm); --from/--to select a\nspan of the composition to export (the output starts at its own 00:00).";
+const USAGE: &str = "usage: celesta-exporter [--overwrite] [--from <timecode>] [--to <timecode>] <project.celesta.json> <output.mp4>\n       celesta-exporter [--overwrite] [--from <timecode>] [--to <timecode>] --react <entry.tsx> [--project <project.celesta.json>] <output.mp4>\n\ntimecode is HH:MM:SS(.mmm), MM:SS(.mmm) or SS(.mmm); --from/--to select a\nspan of the composition to export (the output starts at its own 00:00).";
 
 fn run() -> Result<(), String> {
     let mut overwrite = false;
@@ -100,7 +100,7 @@ fn run() -> Result<(), String> {
 /// `None` when neither is given (export the whole composition). `--to` must
 /// be strictly after `--from`.
 fn export_range(from: Option<&OsStr>, to: Option<&OsStr>) -> Result<Option<ExportRange>, String> {
-    let parse = |flag: &str, value: &OsStr| -> Result<mikan_composition::Time, String> {
+    let parse = |flag: &str, value: &OsStr| -> Result<celesta_composition::Time, String> {
         let text = value
             .to_str()
             .ok_or_else(|| format!("{flag} timecode is not valid UTF-8"))?;
@@ -123,12 +123,12 @@ fn export_range(from: Option<&OsStr>, to: Option<&OsStr>) -> Result<Option<Expor
     }
 
     Ok(Some(ExportRange {
-        start: start.unwrap_or(mikan_composition::Time::ZERO),
+        start: start.unwrap_or(celesta_composition::Time::ZERO),
         end,
     }))
 }
 
 fn default_react_runtime() -> ReactRuntimeOptions {
-    let (node, cli_script) = mikan_react_bridge::runtime_paths();
+    let (node, cli_script) = celesta_react_bridge::runtime_paths();
     ReactRuntimeOptions::new(node, cli_script)
 }

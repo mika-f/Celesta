@@ -1,13 +1,13 @@
-// A Mikan reproduction of Remotion's homepage "Interactive Demo"
+// A Celesta reproduction of Remotion's homepage "Interactive Demo"
 // (https://github.com/remotion-dev/remotion/blob/ee1ae5ea/packages/promo-pages/src/components/homepage/Demo/Comp.tsx),
 // scoped down to what a deterministic frame renderer can reproduce:
 // - Visuals and animation only. The original Player lets a viewer drag cards
-//   around and click buttons; Mikan has no browser-side interactive Player,
+//   around and click buttons; Celesta has no browser-side interactive Player,
 //   so this is a fixed, non-interactive composition instead.
 // - Live GitHub-trending/weather data, fetched once via this module's
 //   `prepare` export (see below) rather than per frame, in place of the
 //   original's `getDataAndProps`.
-// - Mikan-native replacements for Remotion-only packages: `<Rect>` (a Mikan
+// - Celesta-native replacements for Remotion-only packages: `<Rect>` (a Celesta
 //   addition made for this composition — see HANDOFF.md) draws each card's
 //   flat rounded background/border in place of CSS, a plain emoji glyph
 //   `<Text>` replaces `@remotion/animated-emoji`'s Lottie animation, and the
@@ -15,7 +15,7 @@
 
 import type { ReactNode } from 'react';
 
-import { Audio, Composition, Group, Rect, Text, interpolate, spring, useCurrentFrame, useVideoConfig } from '@mikan/react';
+import { Audio, Composition, Group, Rect, Text, interpolate, spring, useCurrentFrame, useVideoConfig } from '@celesta/react';
 
 const WIDTH = 640;
 const HEIGHT = 360;
@@ -89,7 +89,7 @@ const TRENDING_REPO_COUNT = 3;
 
 // Filled in once by `prepare()` below, before the first frame is rendered —
 // see that function for why a plain module-level variable is enough here.
-let trendingRepos: string[] = ['mika-f/mikan', 'octocat/hello-world', 'your-org/your-repo'];
+let trendingRepos: string[] = ['mika-f/celesta', 'octocat/hello-world', 'your-org/your-repo'];
 let temperatureCelsius = 24;
 
 function TrendingReposCard() {
@@ -232,7 +232,7 @@ const WEATHER_LATITUDE = 35.6762;
 const WEATHER_LONGITUDE = 139.6503;
 
 /**
- * `mikan-react-render` (`packages/react/src/cli.ts`) awaits this exact export
+ * `celesta-react-render` (`packages/react/src/cli.ts`) awaits this exact export
  * name exactly once, before mounting the composition and before the first
  * `renderAt()` — see the comment at its call site. That is the one place in
  * the render pipeline async work is allowed: `renderAt()` itself, called once

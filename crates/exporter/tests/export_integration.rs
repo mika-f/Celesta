@@ -2,11 +2,11 @@ use std::path::{Path, PathBuf};
 
 use ez_ffmpeg::stream_info::{StreamInfo, find_audio_stream_info, find_video_stream_info};
 use ez_ffmpeg::{FfmpegContext, Input, Output};
-use mikan_composition::{Rational, Time, TimeRange};
-use mikan_exporter::{ExportCancellation, ExportError, ExportOptions, ExportRange, Exporter};
-use mikan_gpu_renderer::GpuRenderError;
-use mikan_media::{FfmpegBackend, VideoFrameDecoder};
-use mikan_project::{Asset, AssetSource, Project, TimelineContent, TimelineItem, Track, TrackKind};
+use celesta_composition::{Rational, Time, TimeRange};
+use celesta_exporter::{ExportCancellation, ExportError, ExportOptions, ExportRange, Exporter};
+use celesta_gpu_renderer::GpuRenderError;
+use celesta_media::{FfmpegBackend, VideoFrameDecoder};
+use celesta_project::{Asset, AssetSource, Project, TimelineContent, TimelineItem, Track, TrackKind};
 
 /// Renders a synthetic `lavfi` source to a lossless MKV fixture through the
 /// linked FFmpeg libraries, forcing the output frame rate so the container
@@ -34,7 +34,7 @@ fn exports_frame_exact_mp4_with_silent_audio() {
     let source = directory.path().join("source.mkv");
     generate_source(&source, "testsrc2=size=64x64:rate=2:duration=1", (2, 1));
 
-    let mut project = Project::load(workspace_root().join("examples/minimal.mikan.json")).unwrap();
+    let mut project = Project::load(workspace_root().join("examples/minimal.celesta.json")).unwrap();
     project.settings.width = 64;
     project.settings.height = 64;
     project.settings.frame_rate = Rational::new(2, 1);
@@ -140,7 +140,7 @@ fn exports_frame_exact_mp4_with_silent_audio() {
         move |progress| {
             if matches!(
                 progress,
-                mikan_exporter::ExportProgress::Rendering { frame: 1, .. }
+                celesta_exporter::ExportProgress::Rendering { frame: 1, .. }
             ) {
                 cancellation_from_progress.cancel();
             }
@@ -157,7 +157,7 @@ fn exports_only_the_selected_range_shifted_to_zero() {
     // Four distinct frames at 2 fps over two seconds.
     generate_source(&source, "testsrc2=size=64x64:rate=2:duration=2", (2, 1));
 
-    let mut project = Project::load(workspace_root().join("examples/minimal.mikan.json")).unwrap();
+    let mut project = Project::load(workspace_root().join("examples/minimal.celesta.json")).unwrap();
     project.settings.width = 64;
     project.settings.height = 64;
     project.settings.frame_rate = Rational::new(2, 1);
@@ -254,7 +254,7 @@ fn exports_only_the_selected_range_shifted_to_zero() {
 fn rejects_an_empty_export_range() {
     let directory = tempfile::tempdir().unwrap();
     let output = directory.path().join("export.mp4");
-    let mut project = Project::load(workspace_root().join("examples/minimal.mikan.json")).unwrap();
+    let mut project = Project::load(workspace_root().join("examples/minimal.celesta.json")).unwrap();
     project.settings.duration = Some(Time::new(1, 1));
 
     let result = Exporter::new(ExportOptions {
@@ -270,7 +270,7 @@ fn rejects_an_empty_export_range() {
 fn cancellation_before_export_does_not_create_output() {
     let directory = tempfile::tempdir().unwrap();
     let output = directory.path().join("export.mp4");
-    let mut project = Project::load(workspace_root().join("examples/minimal.mikan.json")).unwrap();
+    let mut project = Project::load(workspace_root().join("examples/minimal.celesta.json")).unwrap();
     project.settings.duration = Some(Time::new(1, 1));
     let cancellation = ExportCancellation::default();
     cancellation.cancel();

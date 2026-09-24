@@ -6,6 +6,6 @@
 TS_RS_EXPORT_DIR = { value = "packages/react/src/generated", relative = true }
 # serde_json (de)serializes i64/u64 as plain JSON numbers, and JSON has no
 # bigint literal, so `bigint` bindings would not round-trip through the
-# stdin/stdout JSON protocol mikan-react-bridge uses. Every i64/u64 field in
+# stdin/stdout JSON protocol celesta-react-bridge uses. Every i64/u64 field in
 # the exported types stays well under Number.MAX_SAFE_INTEGER in practice.
 TS_RS_LARGE_INT = "number"

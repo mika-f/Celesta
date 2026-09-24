@@ -16,11 +16,11 @@ use cosmic_text::{
     Weight, Wrap,
 };
 use image::ImageReader;
-use mikan_composition::{
+use celesta_composition::{
     AssetLocation, Layer, LayerContent, MediaTiming, Paint, Point, ResolvedAsset, Scene, Stroke,
     TextAlign, TextStyle,
 };
-use mikan_media::{MediaError, VideoFrameDecoder};
+use celesta_media::{MediaError, VideoFrameDecoder};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Color {
@@ -980,7 +980,7 @@ fn render_image(frame: &mut RgbaFrame, image: &DecodedImage, anchor: Point, stat
 /// shape (width/height/pixels) so it composites through the exact same
 /// `render_image` path text does. Takes the raw `Paint`/`Stroke` composition
 /// types (like `TextRasterizer::rasterize` takes `&TextStyle`) so callers,
-/// including `mikan-gpu-renderer`, never need their own color parsing.
+/// including `celesta-gpu-renderer`, never need their own color parsing.
 pub fn rasterize_rect(
     width: f64,
     height: f64,
@@ -1284,7 +1284,7 @@ pub enum RenderError {
         layer: String,
     },
     Media(MediaError),
-    Time(mikan_composition::TimeError),
+    Time(celesta_composition::TimeError),
     Io(io::Error),
     Png(png::EncodingError),
 }
@@ -1341,8 +1341,8 @@ impl From<MediaError> for RenderError {
     }
 }
 
-impl From<mikan_composition::TimeError> for RenderError {
-    fn from(error: mikan_composition::TimeError) -> Self {
+impl From<celesta_composition::TimeError> for RenderError {
+    fn from(error: celesta_composition::TimeError) -> Self {
         Self::Time(error)
     }
 }
@@ -1351,11 +1351,11 @@ impl From<mikan_composition::TimeError> for RenderError {
 mod tests {
     use std::path::Path;
 
-    use mikan_composition::{
+    use celesta_composition::{
         AssetLocation, EvaluatedTransform, Layer, LayerContent, MediaTiming, Rational,
         ResolvedAsset, Scene, TextStyle, Time,
     };
-    use mikan_media::{MediaError, VideoFrame, VideoFrameDecoder};
+    use celesta_media::{MediaError, VideoFrame, VideoFrameDecoder};
 
     use super::*;
 
@@ -1416,7 +1416,7 @@ mod tests {
                 },
                 opacity: 1.0,
                 content: LayerContent::Text {
-                    text: "Hello, Mikan!".to_owned(),
+                    text: "Hello, Celesta!".to_owned(),
                     style: TextStyle {
                         font_size: Some(24.0),
                         ..TextStyle::default()
@@ -1459,7 +1459,7 @@ mod tests {
                     fill: Some(Paint::Solid {
                         color: "#3366CCFF".to_owned(),
                     }),
-                    stroke: Some(mikan_composition::Stroke {
+                    stroke: Some(celesta_composition::Stroke {
                         paint: Paint::Solid {
                             color: "#FFFFFFFF".to_owned(),
                         },
@@ -1504,13 +1504,13 @@ mod tests {
                 },
                 opacity: 1.0,
                 content: LayerContent::Text {
-                    text: "Mikan".to_owned(),
+                    text: "Celesta".to_owned(),
                     style: TextStyle {
                         font_size: Some(96.0),
                         fill: Some(Paint::Solid {
                             color: "#FFA13BFF".to_owned(),
                         }),
-                        align: Some(mikan_composition::TextAlign::Center),
+                        align: Some(celesta_composition::TextAlign::Center),
                         ..TextStyle::default()
                     },
                     max_width: None,

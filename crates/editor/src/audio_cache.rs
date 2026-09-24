@@ -9,9 +9,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 
-use mikan_media::AudioBuffer;
+use celesta_media::AudioBuffer;
 
-const MAGIC: &[u8; 8] = b"MIKANPCM";
+const MAGIC: &[u8; 8] = b"CELESPCM";
 const VERSION: u32 = 1;
 const HEADER_LEN: u64 = 32;
 const DEFAULT_MAX_BYTES: u64 = 1024 * 1024 * 1024;
@@ -171,19 +171,19 @@ impl DiskAudioCache {
 fn default_cache_root() -> PathBuf {
     #[cfg(target_os = "macos")]
     if let Some(home) = std::env::var_os("HOME") {
-        return PathBuf::from(home).join("Library/Caches/com.natsuneko.mikan/audio-v1");
+        return PathBuf::from(home).join("Library/Caches/com.natsuneko.celesta/audio-v1");
     }
     #[cfg(target_os = "windows")]
     if let Some(local) = std::env::var_os("LOCALAPPDATA") {
-        return PathBuf::from(local).join("Mikan/audio-v1");
+        return PathBuf::from(local).join("Celesta/audio-v1");
     }
     if let Some(cache) = std::env::var_os("XDG_CACHE_HOME") {
-        return PathBuf::from(cache).join("mikan/audio-v1");
+        return PathBuf::from(cache).join("celesta/audio-v1");
     }
     if let Some(home) = std::env::var_os("HOME") {
-        return PathBuf::from(home).join(".cache/mikan/audio-v1");
+        return PathBuf::from(home).join(".cache/celesta/audio-v1");
     }
-    std::env::temp_dir().join("mikan-audio-cache-v1")
+    std::env::temp_dir().join("celesta-audio-cache-v1")
 }
 
 fn encode(writer: &mut impl Write, buffer: &AudioBuffer, waveform: &[f32]) -> io::Result<()> {
@@ -304,7 +304,7 @@ mod tests {
 
     fn fixture_root(label: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
-            "mikan-audio-cache-{label}-{}-{}",
+            "celesta-audio-cache-{label}-{}-{}",
             std::process::id(),
             TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
         ))

@@ -21,24 +21,24 @@ use gpui_kit::{
     prelude::*, px, relative, rgb, size,
 };
 use image::{Frame, ImageBuffer, Rgba};
-use mikan_composition::{
+use celesta_composition::{
     Animatable, AssetLocation, AudioClip, AudioGraph, Layer, LayerContent, Rational, Scene, Time,
     evaluate_f64, integrate_f64,
 };
-use mikan_editor_core::{
+use celesta_editor_core::{
     AssetSummary, CharacterSummary, ClipKind, ComponentClipSummary, DialogueClipSummary,
     EditorDocument, TimelineClock, TrackSummary,
 };
-use mikan_exporter::{
+use celesta_exporter::{
     ExportCancellation, ExportError, ExportOptions, ExportProgress, ExportRange, Exporter,
     ReactRuntimeOptions,
 };
-use mikan_gpu_renderer::{GpuRenderOptions, GpuRenderer, PreviewFrame as GpuPreviewFrame};
-use mikan_media::{
+use celesta_gpu_renderer::{GpuRenderOptions, GpuRenderer, PreviewFrame as GpuPreviewFrame};
+use celesta_media::{
     AudioBuffer, AudioDecoder, FfmpegBackend, MediaError, MediaProbe, mix_audio_graph_cancellable,
 };
-use mikan_project::{AssetKind, MouthShape, Project, TrackKind};
-use mikan_react_bridge::{
+use celesta_project::{AssetKind, MouthShape, Project, TrackKind};
+use celesta_react_bridge::{
     ComponentPropertyField, ComponentPropertySchema, ComponentResolutionRequest, ReactBridge,
     ReactCompositionMetadata,
 };
@@ -59,14 +59,14 @@ use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, IconName, Root, Selectable as _, Sizable as _,
     WindowExt as _,
 };
-use mikan_editor_theme as theme;
+use celesta_editor_theme as theme;
 
-const EDITOR_DEMO_PROJECT: &str = include_str!("../../../examples/editor-demo.mikan.json");
+const EDITOR_DEMO_PROJECT: &str = include_str!("../../../examples/editor-demo.celesta.json");
 
-use mikan_react_bridge::runtime_paths as react_runtime_paths;
+use celesta_react_bridge::runtime_paths as react_runtime_paths;
 
 actions!(
-    mikan_editor,
+    celesta_editor,
     [
         SaveProject,
         SaveProjectAs,
@@ -221,13 +221,13 @@ struct ReactPreview {
 }
 
 /// True when `path` should open as a standalone React composition rather than
-/// a `project.json`. A `*.mikan.json` is always a project; a JS/TS module
+/// a `project.json`. A `*.celesta.json` is always a project; a JS/TS module
 /// extension is a React entry.
 fn is_react_entry(path: &Path) -> bool {
     if path
         .file_name()
         .and_then(OsStr::to_str)
-        .is_some_and(|name| name.ends_with(".mikan.json"))
+        .is_some_and(|name| name.ends_with(".celesta.json"))
     {
         return false;
     }
@@ -238,7 +238,7 @@ fn is_react_entry(path: &Path) -> bool {
 }
 
 /// Default sample rate for a standalone React entry's audio graph — the entry
-/// has no `project.json` to source one from. Matches `mikan-exporter`'s
+/// has no `project.json` to source one from. Matches `celesta-exporter`'s
 /// `DEFAULT_REACT_AUDIO_SAMPLE_RATE` and every checked-in example project.
 const REACT_PREVIEW_SAMPLE_RATE: u32 = 48_000;
 
@@ -289,7 +289,7 @@ struct CpuPreviewFrame {
 enum PreviewPresentation {
     Image(Arc<RenderImage>),
     #[cfg(target_os = "macos")]
-    Surface(mikan_gpu_renderer::NativePreviewFrame),
+    Surface(celesta_gpu_renderer::NativePreviewFrame),
 }
 
 struct PreviewWorker {
@@ -329,7 +329,7 @@ impl MediaProbeWorker {
         let (request_tx, request_rx) = mpsc::channel::<MediaProbeRequest>();
         let (result_tx, result_rx) = mpsc::channel::<MediaProbeResult>();
         thread::Builder::new()
-            .name("mikan-media-probe".to_owned())
+            .name("celesta-media-probe".to_owned())
             .spawn(move || {
                 let mut backend = FfmpegBackend::new();
                 while let Ok(first) = request_rx.recv() {
@@ -383,7 +383,7 @@ struct ComponentSchemaResult {
 }
 
 /// Queries a `.tsx` entry's registered `registerComponent()` schemas by
-/// spawning the same `@mikan/react` Node.js runtime `mikan-exporter --react`
+/// spawning the same `@celesta/react` Node.js runtime `celesta-exporter --react`
 /// uses, reading them off `ReactBridge::metadata` (populated during the
 /// startup handshake, before any frame is requested), then dropping the
 /// process — the editor's own preview never renders React content, so
@@ -401,7 +401,7 @@ impl ComponentSchemaWorker {
         let (request_tx, request_rx) = mpsc::channel::<ComponentSchemaRequest>();
         let (result_tx, result_rx) = mpsc::channel::<ComponentSchemaResult>();
         thread::Builder::new()
-            .name("mikan-component-schema".to_owned())
+            .name("celesta-component-schema".to_owned())
             .spawn(move || {
                 while let Ok(first) = request_rx.recv() {
                     let request = take_latest(first, &request_rx);
@@ -460,10 +460,10 @@ struct ReactAudioResult {
     graph: Result<AudioGraph, String>,
 }
 
-/// Spawns a transient `@mikan/react` process, sweeps every frame of a
+/// Spawns a transient `@celesta/react` process, sweeps every frame of a
 /// standalone entry for its `<Audio>` declarations, and returns the assembled
 /// [`AudioGraph`] — the standalone-preview counterpart of the audio graph
-/// `mikan-exporter` accumulates while rendering. Runs on its own thread
+/// `celesta-exporter` accumulates while rendering. Runs on its own thread
 /// because `ReactBridge::spawn` and the per-frame sweep both block.
 struct ReactAudioWorker {
     requests: mpsc::Sender<ReactAudioRequest>,
@@ -475,7 +475,7 @@ impl ReactAudioWorker {
         let (request_tx, request_rx) = mpsc::channel::<ReactAudioRequest>();
         let (result_tx, result_rx) = mpsc::channel::<ReactAudioResult>();
         thread::Builder::new()
-            .name("mikan-react-audio".to_owned())
+            .name("celesta-react-audio".to_owned())
             .spawn(move || {
                 while let Ok(first) = request_rx.recv() {
                     let request = take_latest(first, &request_rx);
@@ -534,7 +534,7 @@ impl PreviewWorker {
         let (request_tx, request_rx) = mpsc::channel::<PreviewRequest>();
         let (result_tx, result_rx) = mpsc::channel::<PreviewResult>();
         thread::Builder::new()
-            .name("mikan-preview".to_owned())
+            .name("celesta-preview".to_owned())
             .spawn(move || {
                 let mut react_bridge: Option<ReactPreviewBridge> = None;
                 let mut react_reload = 0u64;
@@ -868,7 +868,7 @@ impl ExportWorker {
         let (request_tx, request_rx) = mpsc::channel::<ExportRequest>();
         let (event_tx, event_rx) = mpsc::channel::<ExportEvent>();
         thread::Builder::new()
-            .name("mikan-export".to_owned())
+            .name("celesta-export".to_owned())
             .spawn(move || {
                 while let Ok(request) = request_rx.recv() {
                     let exporter = Exporter::new(ExportOptions {
@@ -1048,7 +1048,7 @@ impl AudioMixWorker {
         let current_generation = Arc::new(AtomicU64::new(0));
         let worker_generation = Arc::clone(&current_generation);
         thread::Builder::new()
-            .name("mikan-audio-mix".to_owned())
+            .name("celesta-audio-mix".to_owned())
             .spawn(move || {
                 let mut decoder = CachedAudioDecoder::new();
                 let mut cache_epoch = 0;
@@ -2942,7 +2942,7 @@ impl EditorView {
         });
     }
 
-    fn selected_audio_clip(&self) -> Option<mikan_editor_core::ClipSummary> {
+    fn selected_audio_clip(&self) -> Option<celesta_editor_core::ClipSummary> {
         let selected = self.selected_clip_id.as_deref()?;
         self.tracks
             .iter()
@@ -3933,7 +3933,7 @@ impl EditorView {
             .path()
             .and_then(Path::file_name)
             .and_then(|name| name.to_str())
-            .unwrap_or("Untitled.mikan.json")
+            .unwrap_or("Untitled.celesta.json")
             .to_owned();
         let selection = cx.prompt_for_new_path(&directory, Some(&suggested_name));
         cx.spawn_in(window, async move |view, cx| {
@@ -4299,7 +4299,7 @@ impl EditorView {
         let can_insert_selected = self.selected_asset_id.as_deref().is_some_and(|selected| {
             self.assets
                 .iter()
-                .any(|asset| asset.id == selected && asset.kind != mikan_project::AssetKind::Font)
+                .any(|asset| asset.id == selected && asset.kind != celesta_project::AssetKind::Font)
         });
         let can_insert_dialogue = self.selected_asset_id.as_deref().is_some_and(|selected| {
             self.assets
@@ -6682,7 +6682,7 @@ impl Render for EditorView {
         window.set_window_title(&title);
         window.set_window_edited(self.is_effectively_dirty());
         div()
-            .key_context("MikanEditor")
+            .key_context("CelestaEditor")
             .on_action(cx.listener(Self::save_project))
             .on_action(cx.listener(Self::save_project_as))
             .on_action(cx.listener(Self::export_project_action))
@@ -6723,7 +6723,7 @@ impl EditorView {
         let dock_state = self.dock_split.clone();
         let body_state = self.body_split.clone();
         let border = cx.theme().border;
-        let dock_row = h_resizable("mikan-dock-row")
+        let dock_row = h_resizable("celesta-dock-row")
             .when_some(dock_state.as_ref(), |group, state| group.with_state(state))
             .child(
                 resizable_panel()
@@ -6766,7 +6766,7 @@ impl EditorView {
             .min_h_0()
             .overflow_hidden()
             .child(
-                v_resizable("mikan-body")
+                v_resizable("celesta-body")
                     .when_some(body_state.as_ref(), |group, state| group.with_state(state))
                     .child(resizable_panel().child(dock_row))
                     .child(
@@ -6788,7 +6788,7 @@ impl EditorView {
             .min_h_0()
             .bg(cx.theme().sidebar)
             .child(
-                TabBar::new("mikan-left-dock")
+                TabBar::new("celesta-left-dock")
                     .selected_index(self.left_dock_tab)
                     .child("Media Pool")
                     .child("Effects")
@@ -7144,7 +7144,7 @@ fn master_volume_from_drag(start_volume: f64, delta_pixels: f64) -> f64 {
     ((start_volume + delta_pixels / SLIDER_WIDTH * 2.0).clamp(0.0, 2.0) * 100.0).round() / 100.0
 }
 
-fn level_at_time(levels: &[f32], clip: &mikan_editor_core::ClipSummary, time: Time) -> f32 {
+fn level_at_time(levels: &[f32], clip: &celesta_editor_core::ClipSummary, time: Time) -> f32 {
     if levels.is_empty() {
         return 0.0;
     }
@@ -7162,7 +7162,7 @@ fn level_at_time(levels: &[f32], clip: &mikan_editor_core::ClipSummary, time: Ti
     levels[index.min(levels.len() - 1)]
 }
 
-fn clip_local_time(time: Time, clip: &mikan_editor_core::ClipSummary) -> Time {
+fn clip_local_time(time: Time, clip: &celesta_editor_core::ClipSummary) -> Time {
     if time
         .cmp_exact(clip.start)
         .is_ok_and(|ordering| !ordering.is_gt())
@@ -7396,7 +7396,7 @@ fn export_suggested_name(path: Option<&Path>, project_name: &str) -> String {
         .and_then(OsStr::to_str)
         .unwrap_or(project_name);
     let stem = name
-        .strip_suffix(".mikan.json")
+        .strip_suffix(".celesta.json")
         .or_else(|| name.strip_suffix(".json"))
         .unwrap_or(name);
     format!("{stem}.mp4")
@@ -7418,22 +7418,22 @@ fn run() -> Result<(), Box<dyn Error>> {
         gpui_kit::init(cx);
         theme::init(cx);
         cx.bind_keys([
-            KeyBinding::new("escape", CancelInlineEdit, Some("MikanEditor")),
-            KeyBinding::new("cmd-s", SaveProject, Some("MikanEditor")),
-            KeyBinding::new("cmd-shift-s", SaveProjectAs, Some("MikanEditor")),
-            KeyBinding::new("cmd-shift-e", ExportProject, Some("MikanEditor")),
-            KeyBinding::new("i", SetExportIn, Some("MikanEditor")),
-            KeyBinding::new("o", SetExportOut, Some("MikanEditor")),
-            KeyBinding::new("shift-x", ClearExportRange, Some("MikanEditor")),
-            KeyBinding::new("cmd-z", UndoEdit, Some("MikanEditor")),
-            KeyBinding::new("cmd-shift-z", RedoEdit, Some("MikanEditor")),
-            KeyBinding::new("space", TogglePlayback, Some("MikanEditor")),
-            KeyBinding::new("left", PreviousFrame, Some("MikanEditor")),
-            KeyBinding::new("right", NextFrame, Some("MikanEditor")),
-            KeyBinding::new("cmd-i", ImportAssets, Some("MikanEditor")),
-            KeyBinding::new("cmd-return", InsertSelectedAsset, Some("MikanEditor")),
-            KeyBinding::new("backspace", DeleteSelectedClip, Some("MikanEditor")),
-            KeyBinding::new("delete", DeleteSelectedClip, Some("MikanEditor")),
+            KeyBinding::new("escape", CancelInlineEdit, Some("CelestaEditor")),
+            KeyBinding::new("cmd-s", SaveProject, Some("CelestaEditor")),
+            KeyBinding::new("cmd-shift-s", SaveProjectAs, Some("CelestaEditor")),
+            KeyBinding::new("cmd-shift-e", ExportProject, Some("CelestaEditor")),
+            KeyBinding::new("i", SetExportIn, Some("CelestaEditor")),
+            KeyBinding::new("o", SetExportOut, Some("CelestaEditor")),
+            KeyBinding::new("shift-x", ClearExportRange, Some("CelestaEditor")),
+            KeyBinding::new("cmd-z", UndoEdit, Some("CelestaEditor")),
+            KeyBinding::new("cmd-shift-z", RedoEdit, Some("CelestaEditor")),
+            KeyBinding::new("space", TogglePlayback, Some("CelestaEditor")),
+            KeyBinding::new("left", PreviousFrame, Some("CelestaEditor")),
+            KeyBinding::new("right", NextFrame, Some("CelestaEditor")),
+            KeyBinding::new("cmd-i", ImportAssets, Some("CelestaEditor")),
+            KeyBinding::new("cmd-return", InsertSelectedAsset, Some("CelestaEditor")),
+            KeyBinding::new("backspace", DeleteSelectedClip, Some("CelestaEditor")),
+            KeyBinding::new("delete", DeleteSelectedClip, Some("CelestaEditor")),
         ]);
         cx.on_window_closed(|cx, _| {
             if cx.windows().is_empty() {
@@ -7543,13 +7543,13 @@ mod tests {
         master_volume_from_drag, take_latest, track_accepts_asset, track_accepts_clip,
         waveform_peaks, waveform_segment,
     };
-    use mikan_composition::{
+    use celesta_composition::{
         Animatable, AssetLocation, AudioClip, Rational, ResolvedAsset, Time, TimeRange,
     };
-    use mikan_editor_core::ClipSummary;
-    use mikan_exporter::ExportCancellation;
-    use mikan_media::{AudioBuffer, AudioDecoder};
-    use mikan_project::{AssetKind, Project, TrackKind};
+    use celesta_editor_core::ClipSummary;
+    use celesta_exporter::ExportCancellation;
+    use celesta_media::{AudioBuffer, AudioDecoder};
+    use celesta_project::{AssetKind, Project, TrackKind};
     use std::fs;
     use std::path::PathBuf;
     use std::sync::mpsc;
@@ -7570,7 +7570,7 @@ mod tests {
         let cancellation = ExportCancellation::default();
         cancellation.cancel();
         let output =
-            std::env::temp_dir().join(format!("mikan-cancelled-export-{}.mp4", std::process::id()));
+            std::env::temp_dir().join(format!("celesta-cancelled-export-{}.mp4", std::process::id()));
         let _ = fs::remove_file(&output);
         worker
             .request(ExportRequest {
@@ -7612,7 +7612,7 @@ mod tests {
     #[test]
     fn export_name_replaces_project_extensions() {
         assert_eq!(
-            export_suggested_name(Some(PathBuf::from("demo.mikan.json").as_path()), "ignored"),
+            export_suggested_name(Some(PathBuf::from("demo.celesta.json").as_path()), "ignored"),
             "demo.mp4"
         );
         assert_eq!(export_suggested_name(None, "Untitled"), "Untitled.mp4");
@@ -7768,7 +7768,7 @@ mod tests {
             .unwrap()
             .as_nanos();
         let root = std::env::temp_dir().join(format!(
-            "mikan-editor-disk-cache-{}-{unique}",
+            "celesta-editor-disk-cache-{}-{unique}",
             std::process::id()
         ));
         fs::create_dir_all(&root).unwrap();

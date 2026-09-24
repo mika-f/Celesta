@@ -1,6 +1,6 @@
 // Resolves a PSDTool layer-visibility preset into the flat list of layer
 // paths a `<Character>` PSD portrait should compose. The Rust rasterizer
-// (`mikan_renderer::rasterize_psd`) renders exactly the leaf layers whose
+// (`celesta_renderer::rasterize_psd`) renders exactly the leaf layers whose
 // full path appears in that list, so this module's job is to turn the
 // formats a PSDTool user already has — a copied layer-state string, or a
 // `.pfv` favorites file — into `string[]`.

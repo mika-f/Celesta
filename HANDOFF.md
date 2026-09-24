@@ -1,10 +1,10 @@
-# Mikan implementation handoff
+# Celesta implementation handoff
 
 Last updated: 2026-08-31 (React transitions, layout, media preload, and debug guides)
 
 ## Goal
 
-Mikan is a code-first video editor. The GPUI editor owns and edits project
+Celesta is a code-first video editor. The GPUI editor owns and edits project
 data. Projects and React compositions are evaluated into the same Rust
 composition model, and preview/export should consume the same renderer inputs.
 
@@ -14,7 +14,7 @@ video/audio tracks.
 
 ## Repository state
 
-- Workspace: `/Users/natsuneko/ghq/github.com/mika-f/mikan`
+- Workspace: `/Users/natsuneko/ghq/github.com/mika-f/celesta`
 - Rust edition: 2024
 - Minimum Rust version: 1.89
 - The initial implementation is tracked on `main`; track management landed in
@@ -29,11 +29,11 @@ video/audio tracks.
   `libsw{scale,resample}-dev` packages.
 - GPUI is pinned to crates.io version `0.2.2`.
 - Node.js (>= 18) and pnpm are required for the React composition path
-  (`packages/react`, `mikan-react-bridge`). Run `pnpm install && pnpm run
+  (`packages/react`, `celesta-react-bridge`). Run `pnpm install && pnpm run
   codegen && pnpm run build` once in `packages/react` before using
-  `mikan-exporter --react` or its tests; `mikan-react-bridge` spawns the
+  `celesta-exporter --react` or its tests; `celesta-react-bridge` spawns the
   compiled `dist/cli.js`, not the TypeScript sources directly. `pnpm run
-  codegen` runs `cargo test -p mikan-project -p mikan-composition --features
+  codegen` runs `cargo test -p celesta-project -p celesta-composition --features
   codegen` to (re)generate `src/generated/*.ts`, which `pnpm run build`
   requires as input; both `src/generated/` and `dist/` are gitignored build
   output, not checked in.
@@ -49,16 +49,16 @@ cargo test --workspace
 
 | Crate | Responsibility |
 | --- | --- |
-| `mikan-composition` | Renderer-independent scene types, exact rational time, transforms, animation evaluation, text styles, and audio graph types. |
-| `mikan-project` | Version 0 JSON project format, loading, semantic validation, references, and duration calculation. |
-| `mikan-evaluator` | Deterministic conversion from `Project` to a visual `Scene` at a time and to the complete `AudioGraph`. |
-| `mikan-media` | Metadata probing and exact-time RGBA video-frame decoding via the linked FFmpeg libraries (`ez-ffmpeg`) behind `VideoFrameDecoder` (source overruns freeze on the final frame). |
-| `mikan-renderer` | Deterministic CPU reference renderer, PNG output, and the shared text rasterizer. |
-| `mikan-gpu-renderer` | `wgpu` renderer for images, video frames, styled text, nested transforms, opacity, offscreen readback, and renderer-owned surfaces. |
-| `mikan-exporter` | Deterministic frame-exact H.264/AAC MP4 export through the shared evaluator, GPU renderer, audio graph, and the linked FFmpeg libraries (`ez-ffmpeg` `VideoWriter` for encode, `FfmpegContext` for the AAC mux). Also exports React entries via `mikan-react-bridge`. |
-| `mikan-editor` | GPUI application, editor-owned document state, playback clock, GPU preview bridge, asset panel, timeline, and inspector. |
-| `mikan-react-bridge` | Spawns one long-lived `@mikan/react` Node.js process per composition and requests the evaluated `Scene` (plus that frame's `<Audio>` clips) for each exact frame time over stdin/stdout JSON, or resolves individual registered components for the editor preview. |
-| `packages/react` (`@mikan/react`, Node.js/TypeScript) | Declarative `Composition`/`Sequence`/`Group`/`Image`/`Rect`/`Text`/`Video`/`Audio` components rendered through a real `react-reconciler` host (hooks, including `useCurrentFrame`/`useVideoConfig`, work); `useProject`/`<ProjectTimeline />` embed a companion project's Rust-evaluated layers. The `mikan-react-render` CLI bundles a JSX/TSX entry with esbuild and emits `Scene`-shaped JSON plus per-frame audio declarations. |
+| `celesta-composition` | Renderer-independent scene types, exact rational time, transforms, animation evaluation, text styles, and audio graph types. |
+| `celesta-project` | Version 0 JSON project format, loading, semantic validation, references, and duration calculation. |
+| `celesta-evaluator` | Deterministic conversion from `Project` to a visual `Scene` at a time and to the complete `AudioGraph`. |
+| `celesta-media` | Metadata probing and exact-time RGBA video-frame decoding via the linked FFmpeg libraries (`ez-ffmpeg`) behind `VideoFrameDecoder` (source overruns freeze on the final frame). |
+| `celesta-renderer` | Deterministic CPU reference renderer, PNG output, and the shared text rasterizer. |
+| `celesta-gpu-renderer` | `wgpu` renderer for images, video frames, styled text, nested transforms, opacity, offscreen readback, and renderer-owned surfaces. |
+| `celesta-exporter` | Deterministic frame-exact H.264/AAC MP4 export through the shared evaluator, GPU renderer, audio graph, and the linked FFmpeg libraries (`ez-ffmpeg` `VideoWriter` for encode, `FfmpegContext` for the AAC mux). Also exports React entries via `celesta-react-bridge`. |
+| `celesta-editor` | GPUI application, editor-owned document state, playback clock, GPU preview bridge, asset panel, timeline, and inspector. |
+| `celesta-react-bridge` | Spawns one long-lived `@celesta/react` Node.js process per composition and requests the evaluated `Scene` (plus that frame's `<Audio>` clips) for each exact frame time over stdin/stdout JSON, or resolves individual registered components for the editor preview. |
+| `packages/react` (`@celesta/react`, Node.js/TypeScript) | Declarative `Composition`/`Sequence`/`Group`/`Image`/`Rect`/`Text`/`Video`/`Audio` components rendered through a real `react-reconciler` host (hooks, including `useCurrentFrame`/`useVideoConfig`, work); `useProject`/`<ProjectTimeline />` embed a companion project's Rust-evaluated layers. The `celesta-react-render` CLI bundles a JSX/TSX entry with esbuild and emits `Scene`-shaped JSON plus per-frame audio declarations. |
 
 Important files:
 
@@ -94,8 +94,8 @@ Keep these boundaries intact:
 
 ## Implemented editor behavior
 
-- Loads a `.mikan.json` path passed on the command line.
-- With no argument, loads `examples/editor-demo.mikan.json`.
+- Loads a `.celesta.json` path passed on the command line.
+- With no argument, loads `examples/editor-demo.celesta.json`.
 - Asset list, GPU preview, inspector, transport controls, and timeline panels.
 - Integer-frame playhead using the project's exact rational frame rate.
 - Play/pause, previous frame, next frame, and stop-at-end behavior.
@@ -164,7 +164,7 @@ Keep these boundaries intact:
   position. Background mixing derives per-clip envelopes from source-mapped
   peaks and animated clip volume; active clips are aggregated per track without
   allocating an additional full-length PCM buffer for every track.
-- The standalone `mikan-exporter` CLI renders every project frame at its exact
+- The standalone `celesta-exporter` CLI renders every project frame at its exact
   rational time through `Evaluator` and `GpuRenderer`, mixes the same complete
   `AudioGraph` used by preview, then creates H.264/AAC MP4 through FFmpeg.
   Export work is staged beside the destination, cleaned after failure, and
@@ -178,7 +178,7 @@ Keep these boundaries intact:
   the window start before mixing over the window length (the mixer is
   unchanged). The whole-composition path is untouched when `range` is `None`.
 - The editor toolbar and Command-Shift-E open a native MP4 destination prompt,
-  snapshot the current `Project`, and invoke `mikan-exporter` on a dedicated
+  snapshot the current `Project`, and invoke `celesta-exporter` on a dedicated
   worker. Frame rendering, audio mixing, and muxing progress is visible while
   the UI remains responsive. Cancellation is checked across rendering and
   audio work, terminates the active FFmpeg stream, and removes staged output;
@@ -290,7 +290,7 @@ Keep these boundaries intact:
   count. Subsequent edits remixes cached samples instead of invoking FFmpeg for
   every audio asset again.
 - Decoded PCM and 512-bucket source peaks are persisted in a versioned binary
-  cache (`~/Library/Caches/com.natsuneko.mikan/audio-v1` on macOS). Keys include
+  cache (`~/Library/Caches/com.natsuneko.celesta/audio-v1` on macOS). Keys include
   canonical path, file identity, size, mtime, sample rate, and channel count.
   Cache corruption, staleness, and read/write failures are recoverable misses;
   the worker falls back to FFmpeg and rewrites the entry without surfacing an
@@ -326,22 +326,22 @@ built-in editor demo has no file path, so its first Command-S opens Save As.
 The first vertical slice from `project.json` to a video also exists for React
 entries, matching the architecture diagram's "React entry" path:
 
-- `packages/react` is a TypeScript package managed with pnpm. `@mikan/react`
+- `packages/react` is a TypeScript package managed with pnpm. `@celesta/react`
   exports `Composition`, `Group`, `Image`, and `Text` components (typed props
   in `src/components.ts`; `src/scene.ts` re-exports the `Scene`/`Layer`/...
   types from `src/generated/`, ts-rs bindings generated from
-  `mikan_composition`, rather than hand-mirroring the JSON shape).
+  `celesta_composition`, rather than hand-mirroring the JSON shape).
 - The entry's default export must render a single root `<Composition width
   height fps durationInFrames>` element. Layer ids default to a
   path-based string (for example `root.0.1`) stable across repeated renders of
   the same tree shape, or an explicit `id` prop.
 - `pnpm run build` compiles `src/*.ts` to `dist/*.js` (plain CommonJS, plus
-  `.d.ts`) with `tsc`; `mikan-react-bridge` and `mikan-exporter` spawn
+  `.d.ts`) with `tsc`; `celesta-react-bridge` and `celesta-exporter` spawn
   `dist/cli.js`, not the TypeScript sources. `dist/` is gitignored like
   `node_modules/` and `.tmp/`, so it must be rebuilt after checkout.
-- `mikan-react-render` (`packages/react/src/cli.ts`, compiled to
+- `celesta-react-render` (`packages/react/src/cli.ts`, compiled to
   `dist/cli.js`) is the Node.js CLI: it bundles the given entry with esbuild
-  (`jsx: automatic`, entry's own `@mikan/react` import kept external so the
+  (`jsx: automatic`, entry's own `@celesta/react` import kept external so the
   same component-marker objects are compared, not a bundled duplicate),
   writes the bundle beside the package under `.tmp/` (self-reference
   resolution needs the bundle to live inside the package directory tree),
@@ -349,10 +349,10 @@ entries, matching the architecture diagram's "React entry" path:
   answers one request per line — `{"time": ...}` frame requests with
   `{"scene": ..., "audio": [...]}` and component-resolution requests with
   `{"components": [...]}` — or `{"error": ...}`. esbuild transpiles the user's entry
-  file directly (TS or TSX) without type-checking it; `@mikan/react`'s own
+  file directly (TS or TSX) without type-checking it; `@celesta/react`'s own
   source is type-checked by `pnpm run build`.
-- `mikan-react-bridge` spawns and owns this Node process for the lifetime of
-  an export or preview, mirroring `mikan-media`'s one-process-per-composition
+- `celesta-react-bridge` spawns and owns this Node process for the lifetime of
+  an export or preview, mirroring `celesta-media`'s one-process-per-composition
   sequential decoding session rather than spawning Node per frame.
 - An entry can additionally export an async `prepare()`. `cli.ts`'s `main()`
   awaits it exactly once, before mounting the composition and before the
@@ -362,7 +362,7 @@ entries, matching the architecture diagram's "React entry" path:
   `prepare()` should be stashed in module-level state and read synchronously
   by the rendered components, so it is fetched once per export/preview
   session rather than once per frame (see `examples/homepage-demo.tsx`).
-- `mikan-exporter --react <entry> <output.mp4>` renders every frame of the
+- `celesta-exporter --react <entry> <output.mp4>` renders every frame of the
   composition through the same `GpuRenderer` used for projects and encodes it
   with FFmpeg. When the composition has no audio (no `<Audio>` in the entry,
   no companion project, or a companion project with no audio of its own), the
@@ -416,12 +416,12 @@ in any other React host.
   its own *output* layers are discarded; only `<Composition>`'s width/
   height/fps/durationInFrames props, which must be static, are read from it.
 - **`external` in `cli.ts`'s esbuild call now also covers `react` and
-  `react/jsx-runtime`/`react/jsx-dev-runtime`, not just `@mikan/react`.**
+  `react/jsx-runtime`/`react/jsx-dev-runtime`, not just `@celesta/react`.**
   Without this, the entry's bundle gets its own copy of React with its own
   internal dispatcher slot, separate from the one this process's
   `react-reconciler` actually sets — hooks then fail at runtime with React's
   "Invalid hook call" warning (reproduced and fixed during this work). All
-  of `react`, its jsx-runtime, and `@mikan/react` need to resolve to the
+  of `react`, its jsx-runtime, and `@celesta/react` need to resolve to the
   exact module instances this process already loaded, which is only
   possible because the entry's bundle is written inside
   `packages/react/`'s own directory tree (Node's package self-reference
@@ -437,17 +437,17 @@ in any other React host.
   splices directly into the output `Layer[]` at that position — no
   transformation, since Rust already fully evaluated them.
   - **Why Rust evaluates instead of Node asking Rust mid-render**: the
-    bridge protocol (`mikan-react-bridge`) is a synchronous one-request-per-
+    bridge protocol (`celesta-react-bridge`) is a synchronous one-request-per-
     line pipe where Rust always initiates and blocks on Node's response. If
     `<ProjectTimeline />` tried to ask Rust to evaluate while rendering,
     Rust would already be blocked waiting for *this* response and could
     never service that nested request — deadlock. Instead,
     `ReactBridge::scene_at_with_project(time, Option<&[Layer]>)`
-    (`mikan-react-bridge`) embeds the already-evaluated layers in the
+    (`celesta-react-bridge`) embeds the already-evaluated layers in the
     request itself: `{"time": ..., "project": {"layers": [...]}}`
     (`project` omitted entirely when there is no companion project, via
     `skip_serializing_if`).
-  - **`mikan-exporter`**: `Exporter::export_react_entry_with_project[
+  - **`celesta-exporter`**: `Exporter::export_react_entry_with_project[
     _and_progress/_cancellable]` take a `CompanionProject { project,
     project_asset_root }` alongside the entry. Internally,
     `visual_only_project()` clones the project and drops `Audio` timeline
@@ -468,14 +468,14 @@ in any other React host.
     (`crates/gpu-renderer/src/lib.rs`'s `local_asset_path`), which stays set
     to the React entry's own directory. A companion project's assets can
     live somewhere else entirely, so `absolutize_layers`/
-    `absolutize_fonts`/`absolutize_asset` (`mikan-exporter`) rewrite the
+    `absolutize_fonts`/`absolutize_asset` (`celesta-exporter`) rewrite the
     project-evaluated `Layer`s' (and `Scene.fonts`') relative `File` paths
     into absolute ones (joined against `project_asset_root`) before they are
     sent to Node — `local_asset_path` already left absolute paths alone, so
     this needed no `GpuRenderer` changes. Project fonts are evaluated once
     (not per frame, since they do not vary by time) and merged into every
     frame's `Scene.fonts` after Node responds.
-  - **CLI**: `mikan-exporter --react <entry> --project <project.mikan.json>
+  - **CLI**: `celesta-exporter --react <entry> --project <project.celesta.json>
     <output.mp4>` loads the project relative to its own path (its parent
     directory becomes `project_asset_root`) and requires `--react`;
     `--project` without `--react` is a usage error.
@@ -496,11 +496,11 @@ in any other React host.
   per-segment `easing`, and `extrapolateLeft`/`extrapolateRight` (`'extend'`
   default, `'clamp'`, `'identity'`) for input outside the given range.
   `Easings` (plural — the generated `Easing` union type from
-  `mikan_composition`, an unrelated project.json-facing concept, already
+  `celesta_composition`, an unrelated project.json-facing concept, already
    used that name) provides `linear`/`easeIn`/`easeOut`/`easeInOut` plus the
    usual sine/quad/cubic/quart/quint/expo/circ/back/elastic/bounce families
    (expanded 2026-08-26 alongside the `<Sequence>` work).
-  `mikan_composition::Easing` (the project.json-facing enum a `Keyframe`'s
+  `celesta_composition::Easing` (the project.json-facing enum a `Keyframe`'s
   own `easing` field uses, applied by `crates/composition/src/animation.rs`'s
   `apply_easing`/`easing_integral`) was widened to the same easings.net
   catalogue on 2026-08-28, formula-for-formula matching `Easings` above so a
@@ -524,7 +524,7 @@ in any other React host.
   exactly that frame (Remotion does the latter; not implemented here).
   Verified manually end to end: a `<Text>` combining `spring()` (scale, with
   reduced damping so the overshoot is visible) and `interpolate()`
-  (position) rendered through `mikan-exporter --react` shows the text
+  (position) rendered through `celesta-exporter --react` shows the text
   entering from the left, bouncing past full scale, and settling — matches
   the JSON values spot-checked in isolation via the CLI's stdin/stdout
   protocol directly (scale reaches ~1.25 at frame 10 before settling near 1
@@ -548,16 +548,16 @@ in any other React host.
 - **Component registry** (`src/registry.ts`, resolved by
   `<ProjectTimeline />` in `src/project-runtime.ts`). A project.json
   `TimelineContent::Component { component, props }` item has no meaning to
-  `mikan-evaluator` — Rust has no registry, so it always evaluates that
+  `celesta-evaluator` — Rust has no registry, so it always evaluates that
   content to `LayerContent::MissingComponent { component, props }` (see
   `crates/evaluator/src/lib.rs`), and `visual_only_project()`
-  (`mikan-exporter`) now keeps `component` items through its filter
+  (`celesta-exporter`) now keeps `component` items through its filter
   (previously dropped, alongside `dialogue`, in the earlier v1 pass — see
   "`dialogue` timeline content" below for when that changed too).
   `registerComponent(name, Component)`
   (called at module scope in the entry, so registration happens before any
   frame renders — the registry is a plain process-global `Map`, safe
-  because one `mikan-react-render` process only ever handles one entry) is
+  because one `celesta-react-render` process only ever handles one entry) is
   how the entry supplies what Rust cannot. `<ProjectTimeline />` walks the
   layers Rust evaluated; for each `missingComponent` layer, it looks up
   `component` in the registry:
@@ -582,7 +582,7 @@ in any other React host.
     `BossIntroduction`) both ways: a project with a registered
     `component: "BossIntroduction"` item renders its resolved `<Text>`
     (`"Golem (Lv.42)"` from `props: {bossName, level}`) through
-    `mikan-exporter --react --project`, and a project with an unregistered
+    `celesta-exporter --react --project`, and a project with an unregistered
     component name fails the export with the expected `GpuRenderError`.
     Also covered by an integration test
     (`crates/react-bridge/tests/node_integration.rs`,
@@ -604,7 +604,7 @@ in any other React host.
   `{type: 'select', label?, defaultValue, options}`. It is pure metadata:
   neither `<ProjectTimeline />`'s resolution nor `GpuRenderer` reads it, and
   a component registered without one resolves and renders exactly as
-  before. `getComponentSchema(name)` (also exported from `@mikan/react`,
+  before. `getComponentSchema(name)` (also exported from `@celesta/react`,
   alongside the `ComponentPropertyField`/`ComponentPropertySchema` types)
   looks it up, returning `undefined` for both an unregistered name and a
   registered one with no schema — callers that need to tell those apart
@@ -614,13 +614,13 @@ in any other React host.
   once, alongside `config`, in the startup `Ready` message — all
   `registerComponent()` calls have already run by module-scope time, so
   nothing is missing.
-  - **GPUI editor integration.** `mikan-project`'s `ProjectSettings` gained
+  - **GPUI editor integration.** `celesta-project`'s `ProjectSettings` gained
     an optional `react_entry: Option<String>` field (relative to the
     project file, like an asset path) — project.json's only pointer to
     which `.tsx` entry a `TimelineContent::Component` item's `component`
-    name resolves against; nothing in `mikan-project`/`mikan-evaluator`
+    name resolves against; nothing in `celesta-project`/`celesta-evaluator`
     reads it, it exists purely so the editor knows which Node process to
-    query. `mikan-react-bridge` gained `ComponentPropertyField`/
+    query. `celesta-react-bridge` gained `ComponentPropertyField`/
     `ComponentPropertySchema` Rust types (a real enum mirroring the
     TypeScript shape field-for-field, `#[serde(tag = "type", rename_all =
     "camelCase", rename_all_fields = "camelCase")]` — the same
@@ -630,9 +630,9 @@ in any other React host.
     new `componentSchemas` field during `ReactBridge::spawn`'s handshake —
     no new request/response round trip needed, since this rides the
     existing startup message.
-  - `mikan-editor` (previously fully Node-independent — confirmed by
+  - `celesta-editor` (previously fully Node-independent — confirmed by
     grepping for zero `Command::new`/`ReactBridge` references before this
-    change) now depends on `mikan-react-bridge`. `EditorDocument` gained
+    change) now depends on `celesta-react-bridge`. `EditorDocument` gained
     `react_entry()`/`react_entry_absolute_path()`/`set_react_entry()`/
     `clear_react_entry()` (mirroring `serialized_asset_path`'s
     relative-path-under-project-root convention) and
@@ -647,7 +647,7 @@ in any other React host.
     channels into a dedicated thread, polled from `poll_background_work`)
     spawns `ReactBridge::spawn(node, cli_script, entry)` — the same `node`
     on `PATH` and workspace-relative `packages/react/dist/cli.js` that
-    `mikan-exporter --react` resolves — purely to read
+    `celesta-exporter --react` resolves — purely to read
     `metadata().component_schemas` off the handshake, then drops the
     connection; the editor's own preview never renders React content, so
     nothing needs the process to stay open. This runs on its own thread
@@ -670,16 +670,16 @@ in any other React host.
     matching schema (not found in `component_schemas`, or `react_entry`
     unset, or still loading) shows an explanatory hint instead of empty
     rows.
-  - Verified: new `mikan-editor` unit tests
+  - Verified: new `celesta-editor` unit tests
     (`react_entry_path_is_stored_relative_and_resolves_back_to_absolute`,
     `react_entry_and_component_props_are_undoable`) cover the document
-    layer end to end including undo; a new `mikan-react-bridge` integration
+    layer end to end including undo; a new `celesta-react-bridge` integration
     test (`reports_a_registered_components_property_schema_when_node_is_available`)
     spawns the real Node runtime against
     `packages/react/examples/with-registered-component.tsx` (which now
     declares a `bossIntroductionSchema`) and asserts
     `bridge.metadata().component_schemas` carries the exact declared
-    fields; two new `mikan-react-bridge` unit tests cover `Ready`-message
+    fields; two new `celesta-react-bridge` unit tests cover `Ready`-message
     deserialization (with and without `componentSchemas` present). The
     full editor UI (native window, click-driven schema fetch and prop
     editing) could not be exercised interactively in this environment — the
@@ -700,7 +700,7 @@ in any other React host.
   hints); the two concepts differ only in where their values live
   (project-level vs per timeline item).
   - `defineProjectProperties(schema)` (`src/properties.ts`, exported from
-    `@mikan/react`) stores a process-global schema — call at module scope,
+    `@celesta/react`) stores a process-global schema — call at module scope,
     like `registerComponent()`. `listProjectProperties()` returns it (or
     `undefined` when never called); `cli.ts` adds it to the startup `Ready`
     message as `propertySchema` — `null` when undeclared, `{}` for a
@@ -731,7 +731,7 @@ in any other React host.
     React entry reads them via its own `loadProject()` of the saved file (or
     `<ProjectTimeline />`'s pre-evaluated layers) — the schema travels only
     to the Inspector, not into rendering.
-  - Verified: two new `mikan-react-bridge` unit tests (`Ready` parsing with
+  - Verified: two new `celesta-react-bridge` unit tests (`Ready` parsing with
     all five field types present / absent-or-null defaulting to None); a new
     integration test (`reports_a_declared_project_property_schema_when_node_
     is_available`, against a new `packages/react/examples/with-properties.tsx`
@@ -739,7 +739,7 @@ in any other React host.
     project) asserting the metadata round-trips exactly, that an entry
     without `defineProjectProperties()` yields `None`, and that the entry's
     own `useProjectProperty()` reads its embedded project's value; a new
-    `mikan-editor` document test covering set/remove/undo semantics. The
+    `celesta-editor` document test covering set/remove/undo semantics. The
     interactive Inspector click-through remains untested for the same
     environment reason noted above; UI wiring is covered by clippy on the
     real `main.rs`.
@@ -748,7 +748,7 @@ in any other React host.
   layers flattened together, which is fine for the whole-composition case
   but gives an entry no way to read or re-embed just one track — needed new
   evaluator-side surface, not just a new React component, since
-  `mikan-evaluator::Evaluator::scene_at` only ever evaluated all tracks
+  `celesta-evaluator::Evaluator::scene_at` only ever evaluated all tracks
   together.
   - `Evaluator::layers_for_track(track_id, time)`
     (`crates/evaluator/src/lib.rs`) evaluates one track's active visual
@@ -757,7 +757,7 @@ in any other React host.
     unknown `track_id`, or a track disabled at the project level, evaluates
     to an empty `Vec` rather than an error — from the caller's perspective
     both are just "nothing to show."
-  - `mikan-exporter`'s `render_react_video` per-frame loop now evaluates
+  - `celesta-exporter`'s `render_react_video` per-frame loop now evaluates
     every track in the filtered companion project unconditionally, into a
     `BTreeMap<String, Vec<Layer>>` (Rust cannot statically know which track
     ids an entry's JSX will reference, so this avoids any negotiation
@@ -784,7 +784,7 @@ in any other React host.
     correctly reported only that track's layer count, `<ProjectTrack
     id="overlays" />` rendered that track's content at its project-evaluated
     position, and neither track's actual layer content leaked into the
-    other — confirmed via `mikan-exporter --react --project` producing an MP4
+    other — confirmed via `celesta-exporter --react --project` producing an MP4
     with the expected on-screen text, and by a Rust integration test
     (`crates/react-bridge/tests/node_integration.rs`,
     `embeds_per_track_layers_for_use_project_track_when_node_is_available`).
@@ -805,12 +805,12 @@ in any other React host.
   cheap explicit skip — `Evaluator::visual_layer` already evaluates those to
   no layer on its own); every other content kind, including `Dialogue`,
   passes through unfiltered.
-  Verified: a new `mikan-exporter` unit test
+  Verified: a new `celesta-exporter` unit test
   (`visual_only_project_keeps_dialogue_and_component_but_drops_audio`)
   constructs a project with one `dialogue` item (with `audio` set) and one
   bare `audio` item, asserting the filter keeps only the former and that
   evaluating it produces the expected portrait+subtitle `Group`. End to end,
-  `mikan-exporter --react packages/react/examples/with-project.tsx
+  `celesta-exporter --react packages/react/examples/with-project.tsx
   --project <a project with one dialogue track item>` produced an MP4 whose
   frame shows the character portrait, the subtitle text, and the entry's own
   `<Text>` overlay all composited together, confirming `<ProjectTimeline />`
@@ -829,22 +829,22 @@ in any other React host.
   didn't need it) and uses it directly as `MediaTiming.localTime`,
   computing the only field `GpuRenderer` actually reads to decode —
   `sourceTimeSeconds` — as `startFrom + localTimeSeconds * playbackRate`,
-  the same formula `mikan-evaluator::visual_layer` uses for a project
+  the same formula `celesta-evaluator::visual_layer` uses for a project
   `TimelineContent::Video` at a constant (non-animated) playback rate.
   `secondsToTime`/`secondsFromTime` (new small helpers) convert between a
   plain seconds number and the generated `Time { value, timescale }` shape,
   using a microsecond timescale so trimming isn't visibly quantized.
-  `mikan-exporter`'s `render_react_video` now attaches a video decoder
+  `celesta-exporter`'s `render_react_video` now attaches a video decoder
   (`FfmpegBackend::with_sequential_video`) unconditionally rather than only
   when a companion project is present — previously a React-only export
   (no `--project`) had no decoder at all, so any `LayerContent::Video`
   layer would have hit `GpuRenderError::MissingVideoDecoder`.
-  Verified: a new `mikan-react-bridge` integration test
+  Verified: a new `celesta-react-bridge` integration test
   (`computes_video_timing_from_the_composition_clock_when_node_is_available`,
   against a new `packages/react/examples/with-video.tsx` declaring
   `startFrom={1} playbackRate={2}`) asserts `sourceTimeSeconds` at frame
   15/30 (0.5s in) comes out to `1 + 0.5 * 2 = 2.0`. End to end, a real
-  `mikan-exporter --react` export against a synthetic `ffmpeg testsrc`
+  `celesta-exporter --react` export against a synthetic `ffmpeg testsrc`
   clip produced an MP4 whose frames actually changed over time (confirming
   real sequential decoding, not a frozen first frame) and correctly seeked
   when `startFrom` was set to a later point in the source, with a `<Text>`
@@ -861,7 +861,7 @@ in any other React host.
   plain static values in this scope, not `Animatable`; per-frame-varying
   volume automation for React-declared audio is not implemented.
   - **Collection, not per-frame evaluation.** `<Audio>` elements produce no
-    `LayerContent` variant (`mikan_composition::Scene`/`LayerContent` stay
+    `LayerContent` variant (`celesta_composition::Scene`/`LayerContent` stay
     render-only, as intended — audio remains a separate top-level
     `AudioGraph`): `render.ts`'s `walkNode` recognizes the `'audio'` host
     type (added to `HOST_TYPES`) but returns no layer for it. Because
@@ -901,9 +901,9 @@ in any other React host.
     no new accessor beyond the existing `metadata()`. Two new unit tests
     cover `Ready`-message deserialization with and without `audioClips`
     present, mirroring the existing `componentSchemas` tests.
-  - **`mikan-exporter`'s audio graph construction**
+  - **`celesta-exporter`'s audio graph construction**
     (`crates/exporter/src/lib.rs`'s new `build_audio_graph`). Builds one
-    `mikan_composition::AudioGraph` per React export: React-declared clips
+    `celesta_composition::AudioGraph` per React export: React-declared clips
     (from `metadata.audio_clips`, always) plus, when a companion project is
     given, that project's own complete `Evaluator::audio_graph()` — called on
     the project *unfiltered* (unlike the visual path's
@@ -947,7 +947,7 @@ in any other React host.
     parameters (previously `render_react_video` spawned the bridge itself),
     since the caller now needs the metadata before deciding which rendering
     path to take.
-  - Verified: two new `mikan-react-bridge` unit tests
+  - Verified: two new `celesta-react-bridge` unit tests
     (`deserializes_audio_clips_from_the_ready_message`,
     `ready_message_without_audio_clips_defaults_to_empty`) cover the
     `Ready`-message parsing; a new integration test
@@ -957,7 +957,7 @@ in any other React host.
     `startFrom={1} playbackRate={2} volume={0.5} muted={false}`) asserts the
     collected `audio_clips` metadata exactly, and that the `<Audio>` element
     contributes no layer to the rendered scene (only the entry's sibling
-    `<Text>` layer appears). End to end, a real `mikan-exporter --react`
+    `<Text>` layer appears). End to end, a real `celesta-exporter --react`
     export of an entry with `<Audio src="<absolute path to
     examples/assets/voices/001.wav>" />` (default `startFrom`/`playbackRate`/
     `volume`/`muted`) against the real Node/FFmpeg toolchain produced an MP4
@@ -1069,12 +1069,12 @@ Verified: new integration tests (`shifts_media_inside_sequences_...`,
 same root report "frame 15 of 640 at 30fps" then "frame 7 of ...", proving
 resolved hooks follow the requested time); exporter unit tests
 for report merging and graph construction; end-to-end
-`mikan-exporter --react packages/react/examples/with-sequence.tsx out.mp4`
+`celesta-exporter --react packages/react/examples/with-sequence.tsx out.mp4`
 produced h264+aac (ffprobe) whose extracted frame 45 shows only the
 sequence-shifted testsrc video and frame 75 shows "frame 15 inside" beside
 it, while `title.tsx` stayed video-only with no mix/mux progress stages.
 
-### `@mikan/react` `x`/`y` place the top-left corner (2026-08-30)
+### `@celesta/react` `x`/`y` place the top-left corner (2026-08-30)
 
 `extractTransform` in `packages/react/src/render.ts` now defaults `anchor` to
 `{ x: 0, y: 0 }` instead of `{ x: 0.5, y: 0.5 }`, so a component's `x`/`y`
@@ -1099,18 +1099,18 @@ only the React default the bridge emits moved.
   y={0}`; `homepage-demo.tsx`'s card captions (centred on each card's local
   origin) and its animated card `<Rect>` add the 0.5 anchors;
   `character-lipsync-demo.tsx` likewise.
-- The `mikan-react-bridge` integration tests assert layer structure/content,
+- The `celesta-react-bridge` integration tests assert layer structure/content,
   not transform values, so they are unaffected.
 
 ### Character portraits, PSD presets, and automatic lip sync (2026-08-29)
 
-`@mikan/react` has `<Character>` / `<CharacterView>` (`src/components.ts`,
+`@celesta/react` has `<Character>` / `<CharacterView>` (`src/components.ts`,
 `src/render.ts`): a `<Character>` inside `<Assets>` declares a reusable
 portrait via a ref, and `<CharacterView character={ref}>` renders it. A
 portrait is either `{ type: 'image', defaultExpression, expressions,
 lipSync? }` (a base image plus optional transparent mouth overlays) or
 `{ type: 'psd', src, layers?, lipSync? }`. The PSD path evaluates to a
-single `LayerContent::Psd`; `mikan_renderer::rasterize_psd` composites it.
+single `LayerContent::Psd`; `celesta_renderer::rasterize_psd` composites it.
 
 - **PSD layer visibility.** Real multi-outfit / multi-expression "tachie"
   PSDs save every folder hidden, so rendering from the PSD's own saved
@@ -1161,7 +1161,7 @@ single `LayerContent::Psd`; `mikan_renderer::rasterize_psd` composites it.
   (`CharacterView` calls the hook internally — always, tolerating a missing
   track). Only WAV is supported; other formats would need a decoder.
 - **Entry-directory resolution** (`src/entry-dir.ts`, `src/cli.ts`).
-  `cli.ts` sets `MIKAN_REACT_ENTRY_DIR` before running `prepare()`, so
+  `cli.ts` sets `CELESTA_REACT_ENTRY_DIR` before running `prepare()`, so
   `loadLipSync` / `loadPsdPreset` resolve relative paths against the entry
   file's directory — matching how the Rust renderer resolves a relative
   `<Audio>` / `<Image>` `src`.
@@ -1188,7 +1188,7 @@ single `LayerContent::Psd`; `mikan_renderer::rasterize_psd` composites it.
   `crates/react-bridge/tests/node_integration.rs` cases
   (`with-psd-preset.tsx`, `with-lip-sync.tsx`) asserting the scene's
   `visibleLayers` and per-frame mouth selection; end-to-end
-  `mikan-exporter --react packages/react/examples/character-lipsync-demo.tsx`
+  `celesta-exporter --react packages/react/examples/character-lipsync-demo.tsx`
   produced an MP4 whose frames show 琴葉茜 fully composited (maid outfit,
   twintails, gentle eyes) with the あいうえお mouth tracking the narration.
 
@@ -1197,8 +1197,8 @@ single `LayerContent::Psd`; `mikan_renderer::rasterize_psd` composites it.
 Requested as a reproduction of Remotion's homepage "Interactive Demo"
 (`packages/promo-pages/.../homepage/Demo/Comp.tsx` upstream). Scoped down
 after confirming with the user: visuals/animation only (no browser-side
-interactive Player — Mikan has none), fixed mock data instead of the
-original's live GitHub-trending/weather fetches, and Mikan-native
+interactive Player — Celesta has none), fixed mock data instead of the
+original's live GitHub-trending/weather fetches, and Celesta-native
 replacements for Remotion-only packages (`@remotion/animated-emoji`,
 `@remotion/media`).
 
@@ -1207,36 +1207,36 @@ replacements for Remotion-only packages (`@remotion/animated-emoji`,
   corner_radius }`, reusing the existing `Paint`/`Stroke` types `TextStyle`
   already has rather than introducing a new color type. Unlike
   `Image`/`Video`, a rect has no natural size, hence the explicit
-  `width`/`height`. This closes a real gap: before this, Mikan had no way to
+  `width`/`height`. This closes a real gap: before this, Celesta had no way to
   draw a flat background or border at all, in a project or a React entry.
 - **Shared rasterizer** (`crates/renderer/src/lib.rs`): `pub fn
   rasterize_rect(width, height, corner_radius, fill: Option<&Paint>, stroke:
   Option<&Stroke>) -> Result<RasterizedText, RenderError>` mirrors
   `TextRasterizer::rasterize`'s shape exactly (same `RasterizedText`
   width/height/pixels output) so it composites through the exact same
-  `render_image` path text does, and so `mikan-gpu-renderer` can call it
+  `render_image` path text does, and so `celesta-gpu-renderer` can call it
   directly without its own color-parsing code (it already depends on
-  `mikan-renderer` for `TextRasterizer`; this is the same precedent). Uses
+  `celesta-renderer` for `TextRasterizer`; this is the same precedent). Uses
   Inigo Quilez's rounded-box signed-distance function, anti-aliased over a
   ~1px edge via `smoothstep`-style clamping; the stroke band is a second SDF
-  evaluation against the fill rect shrunk by the stroke width. `mikan-editor`
+  evaluation against the fill rect shrunk by the stroke width. `celesta-editor`
   needed no changes — its `LayerContent` matches already have wildcard `_ =>`
-  arms. `mikan-exporter`'s `absolutize_layer_content` needed one match arm
+  arms. `celesta-exporter`'s `absolutize_layer_content` needed one match arm
   added (a rect has no asset to absolutize, so it's a no-op alongside
   `Text`/`MissingComponent`).
-- **`<Rect>` in `@mikan/react`** (`src/components.ts`, `src/render.ts`):
+- **`<Rect>` in `@celesta/react`** (`src/components.ts`, `src/render.ts`):
   `{width, height, fill?: string, stroke?: string, strokeWidth?, cornerRadius?}`
   — plain hex color strings rather than requiring authors to build `Paint`/
   `Stroke` JSON objects by hand, converted in `render.ts`'s new `'rect'`
   branch of `buildLayer` (added to `HOST_TYPES` alongside the others).
-- Verified: a new `mikan-renderer` unit test
+- Verified: a new `celesta-renderer` unit test
   (`renders_a_filled_rounded_rect_with_a_stroke`) asserts the fill color at
   the rect's center and that a corner-radius-excluded pixel is neither the
-  fill nor the stroke color; a new `mikan-react-bridge` integration test
+  fill nor the stroke color; a new `celesta-react-bridge` integration test
   (`evaluates_a_rect_with_fill_stroke_and_corner_radius_when_node_is_available`,
   against a new `packages/react/examples/with-rect.tsx`) asserts the
   evaluated `LayerContent::Rect` fields round-trip exactly through the Node
-  bridge. `cargo test -p mikan-project -p mikan-composition --features
+  bridge. `cargo test -p celesta-project -p celesta-composition --features
   codegen` regenerated `packages/react/src/generated/LayerContent.ts` with
   the new `rect` variant; `pnpm run build` type-checks clean against it.
 - **`packages/react/examples/homepage-demo.tsx`**: a 640x360/30fps/120-frame
@@ -1248,7 +1248,7 @@ replacements for Remotion-only packages (`@remotion/animated-emoji`,
   animated emoji. `<Audio src="../../../examples/assets/voices/001.wav">`
   (the repo's existing VOICEROID voice fixture) stands in for
   `@remotion/media`'s reaction sound. Verified end to end: `cargo run -p
-  mikan-exporter -- --react packages/react/examples/homepage-demo.tsx
+  celesta-exporter -- --react packages/react/examples/homepage-demo.tsx
   out.mp4` produced an h264+aac MP4 (ffprobe-confirmed); extracted frames at
   10/60/100 were inspected and show the expected staggered card entrance,
   the weather card's temperature counting up to a settled `24°C`, and the
@@ -1263,7 +1263,7 @@ replacements for Remotion-only packages (`@remotion/animated-emoji`,
 ### Pipelined GPU readback for export (2026-08-28)
 
 Requested as a follow-up: "書き出し速度を速くしたい" (make export faster).
-Profiled first rather than guessing — a temporary `MIKAN_EXPORT_PROFILE=1`
+Profiled first rather than guessing — a temporary `CELESTA_EXPORT_PROFILE=1`
 instrumentation (not committed) around `render_react_video`'s per-frame loop
 showed, for both a tiny 640x360 `<Rect>`-heavy scene
 (`homepage-demo.tsx`) and a 1920x1080 single-`<Text>` scene (`title.tsx`),
@@ -1299,14 +1299,14 @@ per-frame overhead rather than actual rendering work.
   is still in flight, in order, once the caller is done submitting — needed
   since the last `PIPELINE_DEPTH - 1` frames never get returned by `submit`
   itself.
-- **`mikan-exporter`**: `render_video` (plain project export) and
+- **`celesta-exporter`**: `render_video` (plain project export) and
   `render_react_video` (React entry export) both now call `submit` per frame
   (writing its `Some(GpuFrame)` immediately when present) and `drain` after
   the loop (writing the remaining frames). A new `write_frame` helper
   de-duplicates the FFmpeg-stdin write shared by both call sites. Both
   export paths funnel through `GpuRenderer`, so both benefit from the same
   change without duplicating the pipelining logic.
-- Verified: a new `mikan-gpu-renderer` unit test
+- Verified: a new `celesta-gpu-renderer` unit test
   (`submit_and_drain_return_frames_in_submission_order_with_correct_content`)
   submits five distinctly-colored scenes (more than `PIPELINE_DEPTH`, so it
   exercises both the reclaim-while-submitting path and the final `drain`)
@@ -1314,7 +1314,7 @@ per-frame overhead rather than actual rendering work.
   color it was given — the concrete regression this pipelining could have
   introduced (slot mixups) is a shuffled or wrong-content frame, and this
   test is the direct check for that. Full workspace suite still green (125
-  tests, up from 124). End to end: a release-build `mikan-exporter --react`
+  tests, up from 124). End to end: a release-build `celesta-exporter --react`
   A/B (git-stashed old code vs. new, `/usr/bin/time -p`, steady-state median
   of 3 runs) showed real time dropping from ~0.71s to ~0.58s for
   `homepage-demo.tsx` and ~0.84s to ~0.68s for `title.tsx` (~18-19%,
@@ -1325,7 +1325,7 @@ per-frame overhead rather than actual rendering work.
   composition and confirmed byte-identical raw pixel content
   (`ffmpeg -f rawvideo` + `cmp`), confirming the pipelining changed timing,
   not output. A plain (non-React) project export
-  (`cargo run -p mikan-exporter -- examples/editor-demo.mikan.json`, 600
+  (`cargo run -p celesta-exporter -- examples/editor-demo.celesta.json`, 600
   frames) was also re-run end to end and still produces a valid h264+aac MP4.
 - **Not done, deliberately scoped out for this pass**: overlapping the
   FFmpeg pipe *write* itself (currently still a blocking call on the same
@@ -1333,7 +1333,7 @@ per-frame overhead rather than actual rendering work.
   IPC evaluation of frame N+1 with frame N's GPU work are both still
   possible further wins — the profiling data suggests they matter more for
   heavier/longer compositions than the ones measured here. `render_video`'s
-  `mix_audio_graph_cancellable`/FFmpeg audio-mux stages, and `mikan-media`'s
+  `mix_audio_graph_cancellable`/FFmpeg audio-mux stages, and `celesta-media`'s
   video decode path, were not profiled or touched in this pass.
 
 ### Color emoji glyph rendering (2026-08-28)
@@ -1341,7 +1341,7 @@ per-frame overhead rather than actual rendering work.
 Follow-up to the earlier "known limitation" note on the homepage-demo
 composition (an emoji rendered as a flat monochrome silhouette instead of
 full color). Investigated rather than accepted as a hard crate limitation —
-it turned out to be fixable in `mikan-renderer` without touching
+it turned out to be fixable in `celesta-renderer` without touching
 dependencies at all.
 
 - **Root cause**: `cosmic-text`/`swash` (already pinned at `0.18.2`/`0.2.10`)
@@ -1374,7 +1374,7 @@ dependencies at all.
   needed — it already consumes whatever RGBA `TextRasterizer` produces via
   the same `RasterizedText` type, same as the `Rect` work earlier in this
   document.
-- Verified: a new `mikan-renderer` unit test
+- Verified: a new `celesta-renderer` unit test
   (`rasterizes_color_emoji_glyphs_when_a_color_font_is_available`)
   rasterizes 🔥 and asserts its opaque pixels contain more than one distinct
   RGB color — the direct check that would fail if this regressed back to
@@ -1386,25 +1386,25 @@ dependencies at all.
   is pixel-for-pixel unaffected. End to end: re-exporting
   `packages/react/examples/homepage-demo.tsx` now shows the 🔥/🥳/🥲 emoji
   in full color (previously flame/flag/circle silhouettes only), and
-  re-exporting `examples/voiceroid.mikan.json` (stroke+fill subtitle text)
+  re-exporting `examples/voiceroid.celesta.json` (stroke+fill subtitle text)
   confirmed the stroke/fill combination used by VOICEROID-style subtitles is
   visually unaffected.
 
 ### TypeScript type generation and the Project loader
 
-`mikan-composition`'s and `mikan-project`'s public serde types carry
+`celesta-composition`'s and `celesta-project`'s public serde types carry
 `#[cfg_attr(feature = "codegen", derive(ts_rs::TS))]` plus `#[cfg_attr(feature
 = "codegen", ts(export))]`, gated behind a `codegen` cargo feature so `ts-rs`
 is not a dependency of default builds (editor, exporter, etc. build exactly
 as before). `pnpm run codegen` in `packages/react` (or directly, `cargo test
--p mikan-project -p mikan-composition --features codegen`) runs the tests
+-p celesta-project -p celesta-composition --features codegen`) runs the tests
 `ts-rs`'s derive macro generates, one per exported type, each of which writes
 a `.ts` file. `.cargo/config.toml` sets `TS_RS_EXPORT_DIR` so those land in
 `packages/react/src/generated/` (workspace-relative, harmless when `codegen`
 is off) and `TS_RS_LARGE_INT = "number"` so `Time.value` (`i64`) binds to
 `number`, not `bigint` — `serde_json` has no bigint literal, so a `bigint`
 binding would not round-trip through the stdin/stdout JSON protocol
-`mikan-react-bridge` uses. `serde-json-impl` is enabled so `PropertyValue`
+`celesta-react-bridge` uses. `serde-json-impl` is enabled so `PropertyValue`
 (`serde_json::Value`) binds to a `JsonValue` type under
 `generated/serde_json/`. `src/generated/` is gitignored, like `dist/`, and
 regenerated from Rust rather than committed.
@@ -1412,10 +1412,10 @@ regenerated from Rust rather than committed.
 `packages/react/src/scene.ts` now re-exports the render-output side (`Scene`,
 `Layer`, `LayerContent`, `Time`, `Rational`, ...) from `src/generated/`
 instead of hand-mirroring it, and `src/project.ts` adds a
-`loadProject(path)` / `loadProjectFromString(json)` reader for `.mikan.json`
+`loadProject(path)` / `loadProjectFromString(json)` reader for `.celesta.json`
 files, typed against the generated `Project`. This loader is read-only and
 intentionally thin (`JSON.parse` plus a type assertion): the canonical
-validation is `mikan-project`'s `Project::load`/`Project::from_json`, and a
+validation is `celesta-project`'s `Project::load`/`Project::from_json`, and a
 project loaded this way is expected to already be valid. Nothing yet
 connects a loaded `Project` into a `<Composition>` tree — there is no
 `<ProjectTimeline />`, `<ProjectTrack />`, or `useProject()` — so this is
@@ -1438,7 +1438,7 @@ maxWidth>` React prop added earlier in this same session: the JSON sent
 `None`. Fixed by adding `rename_all_fields = "camelCase"` (stable since serde
 1.0.194; this workspace pins 1.0.229) alongside `rename_all` on all six
 affected enums, which renames fields across every variant while `rename_all`
-keeps renaming the tag values. Re-verified end to end: `mikan-exporter
+keeps renaming the tag values. Re-verified end to end: `celesta-exporter
 --react` on an entry using `<Text maxWidth={200}>` now visibly wraps the
 text. No existing test exercised these optional fields through a JSON round
 trip, so nothing else needed updating, but it is worth being alert to
@@ -1487,10 +1487,10 @@ without crashing.
 
 ## Example projects
 
-- `examples/minimal.mikan.json`: smallest valid empty project.
-- `examples/editor-demo.mikan.json`: self-contained 10-second title clip used
+- `examples/minimal.celesta.json`: smallest valid empty project.
+- `examples/editor-demo.celesta.json`: self-contained 10-second title clip used
   by the default editor launch.
-- `examples/voiceroid.mikan.json`: dialogue from 5 to 8 seconds, portrait,
+- `examples/voiceroid.celesta.json`: dialogue from 5 to 8 seconds, portrait,
   subtitle styling, and a voice asset reference.
 - `examples/assets/akane/default.ppm`: tiny built-in portrait placeholder so
   the visual VOICEROID path works without downloads.
@@ -1500,27 +1500,27 @@ from the macOS Kyoko system voice. It is an executable example asset, not a
 licensed VOICEROID voice sample.
 
 - `packages/react/examples/title.tsx`: a five-second, single-`Text` React
-  composition used by `mikan-react-bridge`'s integration test and as the
-  `mikan-exporter --react` example.
+  composition used by `celesta-react-bridge`'s integration test and as the
+  `celesta-exporter --react` example.
 - `packages/react/examples/with-project.tsx`: `<ProjectTimeline />` alongside
-  a React-authored `<Text>`, used by `mikan-react-bridge`'s
-  project-companion integration test and the `mikan-exporter --react
+  a React-authored `<Text>`, used by `celesta-react-bridge`'s
+  project-companion integration test and the `celesta-exporter --react
   --project` example.
 - `packages/react/examples/with-registered-component.tsx`: registers a
   `BossIntroduction` component (with a `ComponentPropertySchema` declaring
   its `bossName`/`level` props) and renders `<ProjectTimeline />`, used by
-  `mikan-react-bridge`'s component-registry integration test.
+  `celesta-react-bridge`'s component-registry integration test.
 - `packages/react/examples/with-project-track.tsx`: reads one track via
   `useProjectTrack('titles')` and renders another whole via `<ProjectTrack
-  id="overlays" />`, used by `mikan-react-bridge`'s per-track integration
+  id="overlays" />`, used by `celesta-react-bridge`'s per-track integration
   test.
 - `packages/react/examples/with-video.tsx`: a `<Video src="./clip.mp4"
-  startFrom={1} playbackRate={2} />`, used by `mikan-react-bridge`'s video
+  startFrom={1} playbackRate={2} />`, used by `celesta-react-bridge`'s video
   timing integration test (no actual `clip.mp4` needed there — Node
   evaluates the layer tree without decoding).
 - `packages/react/examples/with-audio.tsx`: a `<Text>` alongside `<Audio
   src="./voice.wav" startFrom={1} playbackRate={2} volume={0.5}
-  muted={false} />`, used by `mikan-react-bridge`'s per-frame audio
+  muted={false} />`, used by `celesta-react-bridge`'s per-frame audio
   integration test (no actual `voice.wav` needed there, for the same
   reason).
 - `packages/react/examples/with-sequence.tsx`: a `<Sequence>`-shifted
@@ -1540,11 +1540,11 @@ licensed VOICEROID voice sample.
   used by the integration test asserting editor-path component resolution
   sees the requested time.
 - `packages/react/examples/with-rect.tsx`: a single filled, stroked,
-  rounded `<Rect>`, used by `mikan-react-bridge`'s rect-evaluation
+  rounded `<Rect>`, used by `celesta-react-bridge`'s rect-evaluation
   integration test.
 - `packages/react/examples/homepage-demo.tsx`: the Remotion-homepage-style
   four-card demo composition described above; not tied to a Rust test, run
-  manually via `mikan-exporter --react`.
+  manually via `celesta-exporter --react`.
 - `packages/react/examples/with-media-info.tsx`: calls `preloadMedia()` from
   `prepare()`, derives the composition duration with
   `mediaDurationInFrames()`, and displays the probed audio sample rate.
@@ -1564,7 +1564,7 @@ licensed VOICEROID voice sample.
   does not attempt DOM-style child measurement.
 - `preloadMedia(src)` is intended for an entry's async `prepare()`. The Node
   CLI sends startup probe requests over the existing bridge pipe, and
-  `mikan-react-bridge` answers with `mikan-media::FfmpegBackend::probe`
+  `celesta-react-bridge` answers with `celesta-media::FfmpegBackend::probe`
   metadata. Results are cached per absolute path in the entry process and
   include duration, video dimensions/frame rate, and audio stream facts.
   `mediaDurationInFrames()` rounds a known duration up to the requested
@@ -1579,8 +1579,8 @@ licensed VOICEROID voice sample.
 
 ### Standalone React composition preview in the editor (2026-09-07)
 
-`mikan-editor <entry>.tsx` (also `.ts`/`.jsx`/`.js`/`.mjs`/`.cjs`; a
-`*.mikan.json` is still always a project) opens a standalone React composition
+`celesta-editor <entry>.tsx` (also `.ts`/`.jsx`/`.js`/`.mjs`/`.cjs`; a
+`*.celesta.json` is still always a project) opens a standalone React composition
 in a **preview-only** mode: real-time GPU preview following the playhead,
 `<Audio>` playback, auto-reload on source edits, and MP4 export — but no
 timeline/inspector/asset editing (the composition is code, edited in the
@@ -1607,7 +1607,7 @@ component-resolution path, which is unchanged.
   out of `resolve_preview_components`). Bridge errors surface as
   `preview_warnings` / `preview_error`; the GPU + native-presentation path is
   untouched.
-- **Audio.** New `mikan_react_bridge::ReactBridge::collect_audio_graph(
+- **Audio.** New `celesta_react_bridge::ReactBridge::collect_audio_graph(
   sample_rate, master_volume, entry_dir)` sweeps every composition frame via
   `evaluate_at`, merges the per-frame `<Audio>` reports
   (`merge_react_audio_clips`, now `pub`), and builds an `AudioGraph`
@@ -1615,7 +1615,7 @@ component-resolution path, which is unchanged.
   A dedicated `ReactAudioWorker` thread runs the sweep (transient bridge) and
   its result is forwarded into the **existing** `AudioMixWorker` →
   `AudioPreview` → rodio pipeline. `refresh_audio_preview` branches on
-  `react_preview`. `mikan-exporter`'s own `build_audio_graph` was left as-is
+  `react_preview`. `celesta-exporter`'s own `build_audio_graph` was left as-is
   (small duplication of the clip-construction loop; deliberately not
   refactored to keep the change contained). Default sample rate 48 kHz
   (`REACT_PREVIEW_SAMPLE_RATE`), matching the exporter.
@@ -1639,10 +1639,10 @@ component-resolution path, which is unchanged.
   `react_preview_panel` (entry path, size, fps, duration, renderer, Reload
   button, warnings) when `is_react_preview()`; the toolbar and the (empty)
   timeline/scrubber are reused as-is.
-- Verified: `mikan-react-bridge` unit tests
+- Verified: `celesta-react-bridge` unit tests
   (`merge_react_audio_clips_collapses_identical_per_frame_reports`,
   `react_audio_clips_resolve_relative_paths_and_carry_ranges`); a
-  `mikan-editor` document test
+  `celesta-editor` document test
   (`react_preview_builds_a_synthetic_document_from_composition_facts`); a live
   `node_integration` test
   (`collect_audio_graph_sweeps_every_frame_into_one_graph_when_node_is_available`,
@@ -1659,26 +1659,26 @@ At this handoff, the Rust workspace has 150 passing tests and
 `packages/react` has 15 passing Node tests. This slice adds live bridge tests
 for media metadata preload and preview-only debug guides. The earlier baseline
 had 126 workspace tests (125 from the previous handoff, plus a
-`mikan-renderer` color-emoji rasterization test). Before that, 125 (124 from
-the handoff before that, plus a `mikan-gpu-renderer`
+`celesta-renderer` color-emoji rasterization test). Before that, 125 (124 from
+the handoff before that, plus a `celesta-gpu-renderer`
 test for `submit`/`drain` pipelining order/correctness). Before that, 124
-(122 from the handoff before that, plus a `mikan-renderer` `Rect`
-rasterization test and a `mikan-react-bridge` `<Rect>` evaluation
+(122 from the handoff before that, plus a `celesta-renderer` `Rect`
+rasterization test and a `celesta-react-bridge` `<Rect>` evaluation
 integration test). Before that, 122 (110 from the
-handoff before that, a live-FFmpeg `mikan-media` test freezing
+handoff before that, a live-FFmpeg `celesta-media` test freezing
 on the last frame past a source's end, three dialogue-authoring editor
 tests, and two character-creation editor tests, two character-name tests,
 two safe character-deletion tests, and two character-expression tests). The
 media test skips itself when ffmpeg/ffprobe are missing, or locates them via
-`MIKAN_FFMPEG_DIR`. The last checks were:
+`CELESTA_FFMPEG_DIR`. The last checks were:
 
 ```sh
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
 git diff --check
-cargo test -p mikan-project -p mikan-composition --features codegen
-cargo clippy -p mikan-composition -p mikan-project --all-targets --features codegen -- -D warnings
+cargo test -p celesta-project -p celesta-composition --features codegen
+cargo clippy -p celesta-composition -p celesta-project --all-targets --features codegen -- -D warnings
 cd packages/react && pnpm run codegen && pnpm run build && pnpm test
 ```
 
@@ -1687,22 +1687,22 @@ The `codegen`-feature checks add no new test count (the ts-rs-generated
 running whenever composition/project types change, since that is what
 regenerates `packages/react/src/generated/`.
 
-`mikan-react-bridge`'s integration test spawns the real `mikan-react-render`
+`celesta-react-bridge`'s integration test spawns the real `celesta-react-render`
 CLI and skips itself with a message if `node` is not on `PATH` or if
 `packages/react/node_modules` or `packages/react/dist` do not exist yet (run
 `pnpm install && pnpm run codegen && pnpm run build` there first).
-`mikan-media`'s FFmpeg integration tests use the same skip-if-missing pattern
+`celesta-media`'s FFmpeg integration tests use the same skip-if-missing pattern
 for `ffmpeg`/`ffprobe`.
 
 The editor and VOICEROID example were also launched successfully:
 
 ```sh
-cargo run -p mikan-editor
-cargo run -p mikan-editor -- examples/voiceroid.mikan.json
+cargo run -p celesta-editor
+cargo run -p celesta-editor -- examples/voiceroid.celesta.json
 ```
 
 A full React-entry export was also run end to end and its output frame was
-inspected: `cargo run -p mikan-exporter -- --react
+inspected: `cargo run -p celesta-exporter -- --react
 packages/react/examples/title.tsx output.mp4` produced a 150-frame, 1920x1080
 H.264 MP4 whose first decoded frame shows the expected centered white title
 text on the composition's background. A project-companion export (`--react
@@ -1716,13 +1716,13 @@ directly.
 
 This session's sandbox had `node`/`pnpm` on `PATH` but not `ffmpeg`/`ffprobe`
 or an ALSA dev package, so `pnpm install && pnpm run codegen && pnpm run
-build` in `packages/react` and the full `mikan-react-bridge` integration
+build` in `packages/react` and the full `celesta-react-bridge` integration
 suite (real Node, no skip) were run for real; `libasound2-dev`, `ffmpeg`, and
-`mesa-vulkan-drivers`/`libegl1` (software Vulkan, for `mikan-gpu-renderer`'s
-wgpu backend) were installed via `apt-get` to unblock `mikan-editor`'s build
-and a real `mikan-exporter --react` run respectively — neither is a repo
+`mesa-vulkan-drivers`/`libegl1` (software Vulkan, for `celesta-gpu-renderer`'s
+wgpu backend) were installed via `apt-get` to unblock `celesta-editor`'s build
+and a real `celesta-exporter --react` run respectively — neither is a repo
 change, just sandbox setup, and is not guaranteed present in a future
-session. With that in place, a real `mikan-exporter --react` export of an
+session. With that in place, a real `celesta-exporter --react` export of an
 entry declaring `<Audio src="<absolute path to
 examples/assets/voices/001.wav>" />` alongside a `<Text>` was run end to end
 (see "`<Audio>` component and React export audio mixdown" above for the
@@ -1730,7 +1730,7 @@ examples/assets/voices/001.wav>" />` alongside a `<Text>` was run end to end
 title.tsx` (no audio) was re-verified to still skip the mux stage.
 
 There are future-incompatibility warnings in transitive dependencies
-`block 0.1.6` and `proc-macro-error2 2.0.1`; these are not current Mikan lint or
+`block 0.1.6` and `proc-macro-error2 2.0.1`; these are not current Celesta lint or
 test failures.
 
 With the rustfmt installed in this 2026-08-31 macOS environment, the full
@@ -1750,7 +1750,7 @@ for synthetic GUI input. Keep drag behavior easy to exercise manually.
 The initial editor mutation, persistence, audio, background-worker, native
 preview, deterministic export, editor export-control, and sequential-decoding
 export milestones are complete. The minimal React-composition-to-MP4 vertical
-slice (`packages/react`, `mikan-react-bridge`, `mikan-exporter --react`) is
+slice (`packages/react`, `celesta-react-bridge`, `celesta-exporter --react`) is
 also complete, as is Rust-to-TypeScript type generation and a read-only
 `loadProject()` (see "React composition integration" above).
 
@@ -1807,7 +1807,7 @@ Separately, still open from the original slice:
 
 - ~~A `<Video>` component in `packages/react`~~ — done, see "`<Video>`
   component" above.
-- ~~An `AudioGraph` source for React entries so `mikan-exporter --react` can
+- ~~An `AudioGraph` source for React entries so `celesta-exporter --react` can
   mux audio instead of always publishing a silent MP4~~ — done, see
   "`<Audio>` component and React export audio mixdown" above; a composition
   with no audio still publishes a silent MP4 exactly as before.
@@ -1820,7 +1820,7 @@ Separately, still open from the original slice:
   `<ProjectTimeline />`/`<ProjectTrack />` inside a *resolved* component
   still see empty project content there — threading real per-frame layers
   into resolution requests is future work. Media decoding past a source's
-  end no longer fails the frame either (2026-08-26): `mikan-media` clamps
+  end no longer fails the frame either (2026-08-26): `celesta-media` clamps
   requested source times to the probed final frame's presentation time
   (container/stream duration minus one nominal frame period — FFmpeg's input
   seek only emits frames at or after the target) and sequential sessions

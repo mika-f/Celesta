@@ -4,7 +4,7 @@ import {
   DebugOverlay,
   Rect,
   registerComponent,
-} from '@mikan/react';
+} from '@celesta/react';
 
 function DebugCard() {
   return (

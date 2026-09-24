@@ -1,5 +1,5 @@
-import { Audio, Composition, Text, mediaDurationInFrames, preloadMedia } from '@mikan/react';
-import type { MediaInfo } from '@mikan/react';
+import { Audio, Composition, Text, mediaDurationInFrames, preloadMedia } from '@celesta/react';
+import type { MediaInfo } from '@celesta/react';
 
 let voice: MediaInfo;
 

@@ -12,14 +12,14 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
-const cli = fileURLToPath(new URL('../bin/mikan-react-render.js', import.meta.url));
+const cli = fileURLToPath(new URL('../bin/celesta-react-render.js', import.meta.url));
 
 test('console.log in a composition goes to stderr, leaving stdout pure protocol', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'mikan-console-'));
+  const dir = mkdtempSync(join(tmpdir(), 'celesta-console-'));
   const entry = join(dir, 'entry.tsx');
   writeFileSync(
     entry,
-    `import { Composition, Text } from '@mikan/react';\n` +
+    `import { Composition, Text } from '@celesta/react';\n` +
       `console.log('module-scope diagnostic', { a: 1 });\n` +
       `export default function Root() {\n` +
       `  console.log('per-render diagnostic');\n` +
@@ -56,11 +56,11 @@ test('console.log in a composition goes to stderr, leaving stdout pure protocol'
 });
 
 test('composition is loaded as ESM with its original import.meta paths', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'mikan-esm-'));
+  const dir = mkdtempSync(join(tmpdir(), 'celesta-esm-'));
   const entry = join(dir, 'entry.tsx');
   writeFileSync(
     entry,
-    `import { Composition } from '@mikan/react';\n` +
+    `import { Composition } from '@celesta/react';\n` +
       `await Promise.resolve();\n` +
       `if (import.meta.dirname !== ${JSON.stringify(dir)}) throw new Error('unexpected import.meta.dirname');\n` +
       `if (import.meta.filename !== ${JSON.stringify(entry)}) throw new Error('unexpected import.meta.filename');\n` +

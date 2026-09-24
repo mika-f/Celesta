@@ -11,8 +11,8 @@ import {
   loadLipSync,
   loadPsdPreset,
   useLipSync,
-} from '@mikan/react';
-import type { AssetReference, LipSyncTrack } from '@mikan/react';
+} from '@celesta/react';
+import type { AssetReference, LipSyncTrack } from '@celesta/react';
 
 const WIDTH = 1280;
 const HEIGHT = 720;

@@ -1,5 +1,5 @@
 {
-  "name": "@mikan/react",
+  "name": "@celesta/react",
   "version": "0.0.0",
   "private": true,
   "description": "Declarative React components for Celesta compositions, evaluated into the shared Rust Scene model.",
@@ -13,13 +13,13 @@
     }
   },
   "bin": {
-    "mikan-react-render": "./bin/mikan-react-render.js"
+    "celesta-react-render": "./bin/celesta-react-render.js"
   },
   "engines": {
     "node": ">=18"
   },
   "scripts": {
-    "codegen": "cd ../.. && cargo test -p mikan-project -p mikan-composition --features codegen",
+    "codegen": "cd ../.. && cargo test -p celesta-project -p celesta-composition --features codegen",
     "build": "tsc -p tsconfig.json",
     "test": "node --test \"test/**/*.test.mjs\"",
     "clean": "rm -rf dist"

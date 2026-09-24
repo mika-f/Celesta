@@ -1,5 +1,5 @@
 // Shared exact-time helpers. `Time` is the generated `{ value, timescale }`
-// rational from mikan_composition; seconds are converted at a microsecond
+// rational from celesta_composition; seconds are converted at a microsecond
 // timescale — comfortably finer than any frame rate or audio clock — so
 // trimming and sequence offsets are not visibly quantized.
 

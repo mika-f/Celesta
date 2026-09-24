@@ -1,5 +1,5 @@
 // Re-exports the render-output side of the Scene/Layer JSON contract from
-// the bindings ts-rs generates from `mikan_composition` (see ../README.md
+// the bindings ts-rs generates from `celesta_composition` (see ../README.md
 // for the regeneration command). `CompositionConfig` has no Rust
 // counterpart: it is this package's own `{"config": ...}` CLI handshake
 // message, not part of the Scene contract itself.

@@ -912,6 +912,139 @@ dependencies = [
 ]
 
 [[package]]
+name = "celesta-composition"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "ts-rs",
+]
+
+[[package]]
+name = "celesta-editor"
+version = "0.0.0"
+dependencies = [
+ "celesta-composition",
+ "celesta-editor-core",
+ "celesta-editor-theme",
+ "celesta-evaluator",
+ "celesta-exporter",
+ "celesta-gpu-renderer",
+ "celesta-media",
+ "celesta-project",
+ "celesta-react-bridge",
+ "gpui-kit",
+ "image",
+ "rodio",
+ "serde_json",
+ "unicode-segmentation",
+]
+
+[[package]]
+name = "celesta-editor-core"
+version = "0.0.0"
+dependencies = [
+ "celesta-composition",
+ "celesta-evaluator",
+ "celesta-gpu-renderer",
+ "celesta-project",
+ "serde_json",
+]
+
+[[package]]
+name = "celesta-editor-theme"
+version = "0.0.0"
+dependencies = [
+ "celesta-project",
+ "gpui-kit",
+]
+
+[[package]]
+name = "celesta-evaluator"
+version = "0.0.0"
+dependencies = [
+ "celesta-composition",
+ "celesta-project",
+]
+
+[[package]]
+name = "celesta-exporter"
+version = "0.0.0"
+dependencies = [
+ "celesta-composition",
+ "celesta-evaluator",
+ "celesta-gpu-renderer",
+ "celesta-media",
+ "celesta-project",
+ "celesta-react-bridge",
+ "ez-ffmpeg",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "celesta-gpu-renderer"
+version = "0.0.0"
+dependencies = [
+ "celesta-composition",
+ "celesta-media",
+ "celesta-renderer",
+ "core-foundation 0.10.0",
+ "core-video 0.4.3",
+ "foreign-types",
+ "image",
+ "metal 0.29.0",
+ "objc2 0.6.4",
+ "objc2-metal 0.3.2",
+ "pollster 0.4.0",
+ "wgpu 30.0.1",
+ "wgpu-hal 30.0.1",
+]
+
+[[package]]
+name = "celesta-media"
+version = "0.0.0"
+dependencies = [
+ "celesta-composition",
+ "ez-ffmpeg",
+]
+
+[[package]]
+name = "celesta-project"
+version = "0.0.0"
+dependencies = [
+ "celesta-composition",
+ "serde",
+ "serde_json",
+ "ts-rs",
+]
+
+[[package]]
+name = "celesta-react-bridge"
+version = "0.0.0"
+dependencies = [
+ "celesta-composition",
+ "celesta-media",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "celesta-renderer"
+version = "0.0.0"
+dependencies = [
+ "celesta-composition",
+ "celesta-evaluator",
+ "celesta-media",
+ "celesta-project",
+ "cosmic-text 0.18.2",
+ "dwrote",
+ "image",
+ "png 0.18.1",
+ "psd",
+]
+
+[[package]]
 name = "cesu8"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4274,139 +4407,6 @@ dependencies = [
  "log",
  "objc",
  "paste",
-]
-
-[[package]]
-name = "mikan-composition"
-version = "0.0.0"
-dependencies = [
- "serde",
- "serde_json",
- "ts-rs",
-]
-
-[[package]]
-name = "mikan-editor"
-version = "0.0.0"
-dependencies = [
- "gpui-kit",
- "image",
- "mikan-composition",
- "mikan-editor-core",
- "mikan-editor-theme",
- "mikan-evaluator",
- "mikan-exporter",
- "mikan-gpu-renderer",
- "mikan-media",
- "mikan-project",
- "mikan-react-bridge",
- "rodio",
- "serde_json",
- "unicode-segmentation",
-]
-
-[[package]]
-name = "mikan-editor-core"
-version = "0.0.0"
-dependencies = [
- "mikan-composition",
- "mikan-evaluator",
- "mikan-gpu-renderer",
- "mikan-project",
- "serde_json",
-]
-
-[[package]]
-name = "mikan-editor-theme"
-version = "0.0.0"
-dependencies = [
- "gpui-kit",
- "mikan-project",
-]
-
-[[package]]
-name = "mikan-evaluator"
-version = "0.0.0"
-dependencies = [
- "mikan-composition",
- "mikan-project",
-]
-
-[[package]]
-name = "mikan-exporter"
-version = "0.0.0"
-dependencies = [
- "ez-ffmpeg",
- "mikan-composition",
- "mikan-evaluator",
- "mikan-gpu-renderer",
- "mikan-media",
- "mikan-project",
- "mikan-react-bridge",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "mikan-gpu-renderer"
-version = "0.0.0"
-dependencies = [
- "core-foundation 0.10.0",
- "core-video 0.4.3",
- "foreign-types",
- "image",
- "metal 0.29.0",
- "mikan-composition",
- "mikan-media",
- "mikan-renderer",
- "objc2 0.6.4",
- "objc2-metal 0.3.2",
- "pollster 0.4.0",
- "wgpu 30.0.1",
- "wgpu-hal 30.0.1",
-]
-
-[[package]]
-name = "mikan-media"
-version = "0.0.0"
-dependencies = [
- "ez-ffmpeg",
- "mikan-composition",
-]
-
-[[package]]
-name = "mikan-project"
-version = "0.0.0"
-dependencies = [
- "mikan-composition",
- "serde",
- "serde_json",
- "ts-rs",
-]
-
-[[package]]
-name = "mikan-react-bridge"
-version = "0.0.0"
-dependencies = [
- "mikan-composition",
- "mikan-media",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "mikan-renderer"
-version = "0.0.0"
-dependencies = [
- "cosmic-text 0.18.2",
- "dwrote",
- "image",
- "mikan-composition",
- "mikan-evaluator",
- "mikan-media",
- "mikan-project",
- "png 0.18.1",
- "psd",
 ]
 
 [[package]]

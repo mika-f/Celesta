@@ -10,10 +10,10 @@ use std::env;
 use std::path::PathBuf;
 use std::time::Instant;
 
-use mikan_composition::Time;
-use mikan_gpu_renderer::{GpuRenderOptions, GpuRenderer};
-use mikan_media::FfmpegBackend;
-use mikan_react_bridge::ReactBridge;
+use celesta_composition::Time;
+use celesta_gpu_renderer::{GpuRenderOptions, GpuRenderer};
+use celesta_media::FfmpegBackend;
+use celesta_react_bridge::ReactBridge;
 
 fn main() {
     let mut args = env::args().skip(1);

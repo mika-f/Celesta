@@ -1,4 +1,4 @@
-//! mikan editor theme setup and the small set of audited raster/domain colors
+//! celesta editor theme setup and the small set of audited raster/domain colors
 //! the timeline canvas needs.
 //!
 //! Everything that is ordinary interface chrome (panels, text, borders,
@@ -9,7 +9,7 @@
 
 use gpui_kit::component::{Theme, ThemeMode};
 use gpui_kit::{App, Hsla, rgb, rgba};
-use mikan_project::TrackKind;
+use celesta_project::TrackKind;
 
 /// Forces the NLE-standard dark appearance. gpui-component's dark theme still
 /// defines the full light palette, so `cx.theme()` stays valid in both modes;
@@ -18,7 +18,7 @@ pub fn init(cx: &mut App) {
     Theme::change(ThemeMode::Dark, None, cx);
 }
 
-/// mikan's brand accent (the "Mikan" wordmark, the timeline playhead). It is a
+/// celesta's brand accent (the "Celesta" wordmark, the timeline playhead). It is a
 /// raster/identity color, not a semantic role — do not use it for the default
 /// commit action; that is `cx.theme().primary`.
 pub const ACCENT: u32 = 0xff_a1_3b;

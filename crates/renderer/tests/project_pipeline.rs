@@ -1,12 +1,12 @@
-use mikan_composition::Time;
-use mikan_evaluator::Evaluator;
-use mikan_project::{Project, TimelineContent};
-use mikan_renderer::CpuRenderer;
+use celesta_composition::Time;
+use celesta_evaluator::Evaluator;
+use celesta_project::{Project, TimelineContent};
+use celesta_renderer::CpuRenderer;
 
 #[test]
 fn renders_an_evaluated_project_scene() {
     let mut project =
-        Project::from_json(include_str!("../../../examples/voiceroid.mikan.json")).unwrap();
+        Project::from_json(include_str!("../../../examples/voiceroid.celesta.json")).unwrap();
     project.characters.get_mut("akane").unwrap().portrait = None;
     let TimelineContent::Dialogue { expression, .. } = &mut project.tracks[0].items[0].content
     else {

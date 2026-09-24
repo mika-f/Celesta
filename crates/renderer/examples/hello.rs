@@ -1,9 +1,9 @@
 use std::error::Error;
 
-use mikan_composition::{
+use celesta_composition::{
     EvaluatedTransform, Layer, LayerContent, Point, Rational, Scene, TextAlign, TextStyle, Time,
 };
-use mikan_renderer::CpuRenderer;
+use celesta_renderer::CpuRenderer;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let output = std::env::args()

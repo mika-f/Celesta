@@ -13,15 +13,15 @@ use std::sync::{
 };
 
 use ez_ffmpeg::{FfmpegContext, Input, Output, VideoWriter};
-use mikan_composition::{
+use celesta_composition::{
     AssetLocation, AudioClip, AudioGraph, Layer, LayerContent, Rational, ResolvedAsset, Time,
     TimeError, TimeRange,
 };
-use mikan_evaluator::{EvaluationError, Evaluator};
-use mikan_gpu_renderer::{GpuRenderError, GpuRenderOptions, GpuRenderer};
-use mikan_media::{AudioMixError, FfmpegBackend, mix_audio_graph_cancellable};
-use mikan_project::{LoadError, Project, TimelineContent};
-use mikan_react_bridge::{
+use celesta_evaluator::{EvaluationError, Evaluator};
+use celesta_gpu_renderer::{GpuRenderError, GpuRenderOptions, GpuRenderer};
+use celesta_media::{AudioMixError, FfmpegBackend, mix_audio_graph_cancellable};
+use celesta_project::{LoadError, Project, TimelineContent};
+use celesta_react_bridge::{
     ProjectFrame, ReactAudioClipDescriptor, ReactBridge, ReactBridgeError, ReactCompositionMetadata,
 };
 
@@ -157,7 +157,7 @@ fn shifted_audio_graph(graph: &AudioGraph, offset: Time) -> Result<AudioGraph, T
     Ok(shifted)
 }
 
-/// Locates the `@mikan/react` Node.js runtime used to evaluate a React entry.
+/// Locates the `@celesta/react` Node.js runtime used to evaluate a React entry.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReactRuntimeOptions {
     pub node: PathBuf,
@@ -310,7 +310,7 @@ impl Exporter {
             source,
         })?;
         let temporary = tempfile::Builder::new()
-            .prefix(".mikan-export-")
+            .prefix(".celesta-export-")
             .tempdir_in(parent)
             .map_err(|source| ExportError::Io {
                 operation: "create export workspace",
@@ -318,7 +318,7 @@ impl Exporter {
             })?;
         let video_path = temporary.path().join("video.mp4");
         let final_file = tempfile::Builder::new()
-            .prefix(".mikan-export-")
+            .prefix(".celesta-export-")
             .suffix(".mp4")
             .tempfile_in(parent)
             .map_err(|source| ExportError::Io {
@@ -551,7 +551,7 @@ impl Exporter {
         // behavior: the staged video is published directly, no mix/mux
         // stage.
         let final_file = tempfile::Builder::new()
-            .prefix(".mikan-export-")
+            .prefix(".celesta-export-")
             .suffix(".mp4")
             .tempfile_in(parent)
             .map_err(|source| ExportError::Io {
@@ -604,7 +604,7 @@ impl Exporter {
             ensure_not_cancelled(cancellation)?;
             progress(ExportProgress::Muxing);
             let muxed_file = tempfile::Builder::new()
-                .prefix(".mikan-export-")
+                .prefix(".celesta-export-")
                 .suffix(".mp4")
                 .tempfile_in(parent)
                 .map_err(|source| ExportError::Io {
@@ -810,7 +810,7 @@ impl Exporter {
         &self,
         video: &Path,
         output: &Path,
-        audio: &mikan_media::AudioBuffer,
+        audio: &celesta_media::AudioBuffer,
         cancellation: &ExportCancellation,
     ) -> Result<(), ExportError> {
         ensure_not_cancelled(cancellation)?;
@@ -892,7 +892,7 @@ impl Default for Exporter {
 /// `Evaluator::audio_graph()`, so its audio timeline items do play. Every
 /// other visual kind reaches
 /// `<ProjectTimeline />`/`<ProjectTrack />`: `component` items evaluate to
-/// `LayerContent::MissingComponent`, which `@mikan/react` resolves against
+/// `LayerContent::MissingComponent`, which `@celesta/react` resolves against
 /// its own `registerComponent()` registry (falling back to leaving
 /// `missingComponent` layers as-is, which `GpuRenderer` then errors on);
 /// `dialogue` items evaluate to a `LayerContent::Group` of the character's
@@ -1082,7 +1082,7 @@ fn open_video_writer(
 
 fn write_frame(
     writer: &mut VideoWriter,
-    frame: &mikan_gpu_renderer::GpuFrame,
+    frame: &celesta_gpu_renderer::GpuFrame,
 ) -> Result<(), ExportError> {
     writer
         .write(frame.pixels())
@@ -1329,7 +1329,7 @@ impl Error for TimecodeError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mikan_composition::{Animatable, Keyframe, KeyframeAnimation, KeyframeAnimationType};
+    use celesta_composition::{Animatable, Keyframe, KeyframeAnimation, KeyframeAnimationType};
 
     fn static_clip(src: &str, start: f64, duration: f64, volume: f64) -> ReactAudioClipDescriptor {
         ReactAudioClipDescriptor {

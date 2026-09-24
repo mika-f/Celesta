@@ -1,4 +1,4 @@
-import { Audio, Composition, Text } from '@mikan/react';
+import { Audio, Composition, Text } from '@celesta/react';
 
 export default function Root() {
   return (

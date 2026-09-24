@@ -1,4 +1,4 @@
-import { Composition, ProjectTimeline, Text } from '@mikan/react';
+import { Composition, ProjectTimeline, Text } from '@celesta/react';
 
 export default function Root() {
   return (

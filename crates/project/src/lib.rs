@@ -1,4 +1,4 @@
-//! Mikan project format v0.
+//! Celesta project format v0.
 
 mod validation;
 
@@ -8,7 +8,7 @@ use std::fmt;
 use std::fs;
 use std::path::Path;
 
-pub use mikan_composition::{
+pub use celesta_composition::{
     Animatable, AnimatablePoint, Easing, Keyframe, KeyframeAnimation, Paint, Rational, Stroke,
     TextAlign, TextStyle, Time, TimeError, TimeRange, Transform,
 };
@@ -116,10 +116,10 @@ pub struct ProjectSettings {
     pub duration: Option<Time>,
     /// Path (relative to the project file, like an asset's) to the `.tsx`
     /// entry a `TimelineContent::Component` item's `component` name
-    /// resolves against. Nothing in `mikan-project` or `mikan-evaluator`
+    /// resolves against. Nothing in `celesta-project` or `celesta-evaluator`
     /// reads this — it exists so a GUI editor knows which Node process to
     /// query for a registered component's property schema (see
-    /// `@mikan/react`'s `registerComponent`/`ComponentPropertySchema`).
+    /// `@celesta/react`'s `registerComponent`/`ComponentPropertySchema`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub react_entry: Option<String>,
 }
@@ -433,7 +433,7 @@ mod tests {
     #[test]
     fn loads_the_minimal_project() {
         let project =
-            Project::from_json(include_str!("../../../examples/minimal.mikan.json")).unwrap();
+            Project::from_json(include_str!("../../../examples/minimal.celesta.json")).unwrap();
         assert_eq!(project.version, ProjectVersion::V0);
         assert_eq!(project.effective_duration().unwrap(), Time::ZERO);
     }
@@ -441,14 +441,14 @@ mod tests {
     #[test]
     fn calculates_duration_from_the_latest_item_end() {
         let project =
-            Project::from_json(include_str!("../../../examples/voiceroid.mikan.json")).unwrap();
+            Project::from_json(include_str!("../../../examples/voiceroid.celesta.json")).unwrap();
         assert_eq!(project.effective_duration().unwrap(), Time::new(8, 1));
     }
 
     #[test]
     fn pretty_serialization_round_trips() {
         let project =
-            Project::from_json(include_str!("../../../examples/voiceroid.mikan.json")).unwrap();
+            Project::from_json(include_str!("../../../examples/voiceroid.celesta.json")).unwrap();
 
         let json = project.to_json().unwrap();
 
@@ -460,7 +460,7 @@ mod tests {
     #[test]
     fn validates_project_master_volume() {
         let mut project =
-            Project::from_json(include_str!("../../../examples/voiceroid.mikan.json")).unwrap();
+            Project::from_json(include_str!("../../../examples/voiceroid.celesta.json")).unwrap();
         project.settings.master_volume = Some(-0.1);
 
         let errors = project.validate().unwrap_err();
@@ -471,7 +471,7 @@ mod tests {
     #[test]
     fn lip_sync_configuration_and_cues_round_trip() {
         let mut project =
-            Project::from_json(include_str!("../../../examples/voiceroid.mikan.json")).unwrap();
+            Project::from_json(include_str!("../../../examples/voiceroid.celesta.json")).unwrap();
         project
             .characters
             .get_mut("akane")
@@ -514,7 +514,7 @@ mod tests {
     #[test]
     fn lip_sync_cues_require_voice_and_strict_time_order() {
         let mut project =
-            Project::from_json(include_str!("../../../examples/voiceroid.mikan.json")).unwrap();
+            Project::from_json(include_str!("../../../examples/voiceroid.celesta.json")).unwrap();
         let TimelineContent::Dialogue {
             audio, lip_sync, ..
         } = &mut project.tracks[0].items[0].content

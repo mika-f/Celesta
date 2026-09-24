@@ -40,7 +40,7 @@ try {
   assertNoLinks(runtime);
   writeFileSync(entry, `
 import { useState } from 'react';
-import { Composition, Text, useCurrentFrame } from '@mikan/react';
+import { Composition, Text, useCurrentFrame } from '@celesta/react';
 function Content() {
   const [text] = useState('Celesta');
   const frame = useCurrentFrame();

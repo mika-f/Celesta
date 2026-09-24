@@ -1,5 +1,5 @@
 // The directory of the composition entry file currently being rendered.
-// `cli.ts` sets `MIKAN_REACT_ENTRY_DIR` before running the entry's
+// `cli.ts` sets `CELESTA_REACT_ENTRY_DIR` before running the entry's
 // `prepare()`, so helpers that read local files during preparation
 // (`loadLipSync`, `loadPsdPreset`) resolve relative paths the same way the
 // Rust renderer resolves a relative `<Audio>`/`<Image>` `src` — against the
@@ -8,7 +8,7 @@
 import * as path from 'node:path';
 
 export function entryDir(): string {
-  return process.env.MIKAN_REACT_ENTRY_DIR ?? process.cwd();
+  return process.env.CELESTA_REACT_ENTRY_DIR ?? process.cwd();
 }
 
 /** Resolves `src` against the entry directory unless it is already absolute. */

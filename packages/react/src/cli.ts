@@ -57,7 +57,7 @@ function isResolveRequest(request: Request): request is ResolveRequest {
 async function main(): Promise<void> {
   const entry = process.argv[2];
   if (!entry) {
-    process.stderr.write('usage: mikan-react-render <entry-file>\n');
+    process.stderr.write('usage: celesta-react-render <entry-file>\n');
     process.exitCode = 1;
     return;
   }
@@ -66,7 +66,7 @@ async function main(): Promise<void> {
   // Local-file helpers used during `prepare()` (loadLipSync, loadPsdPreset)
   // resolve relative paths against this, matching how the Rust renderer
   // resolves a relative `<Audio>`/`<Image>` src against the entry directory.
-  process.env.MIKAN_REACT_ENTRY_DIR = path.dirname(entryPath);
+  process.env.CELESTA_REACT_ENTRY_DIR = path.dirname(entryPath);
 
   const input = readline.createInterface({ input: process.stdin, terminal: false });
   const lines = input[Symbol.asyncIterator]();
@@ -228,7 +228,7 @@ async function loadEntry(entryPath: string): Promise<LoadedEntry> {
     // `react` must resolve to the exact module instance this process's own
     // react-reconciler is driving, or hooks fail with "Invalid hook call"
     // (the entry's own copy of React would look for a dispatcher the
-    // reconciler never set on it). `@mikan/react`'s React Context objects
+    // reconciler never set on it). `@celesta/react`'s React Context objects
     // (CompositionRuntimeContext, ProjectLayersContext,
     // ProjectTrackLayersContext, ProjectContext) need
     // the same treatment: they must be the exact object identity the
@@ -239,7 +239,7 @@ async function loadEntry(entryPath: string): Promise<LoadedEntry> {
     plugins: [{
       name: 'shared-runtime',
       setup(build) {
-        build.onResolve({ filter: /^(react(?:\/jsx(?:-dev)?-runtime)?|@mikan\/react)$/ }, (args) => ({
+        build.onResolve({ filter: /^(react(?:\/jsx(?:-dev)?-runtime)?|@celesta\/react)$/ }, (args) => ({
           path: pathToFileURL(require.resolve(args.path)).href,
           external: true,
         }));
