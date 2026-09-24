@@ -1,12 +1,45 @@
 # Celesta implementation handoff
 
-Last updated: 2026-08-31 (React transitions, layout, media preload, and debug guides)
+Last updated: 2026-09-25 (the GPUI app is now preview-only)
 
 ## Goal
 
-Celesta is a code-first video editor. The GPUI editor owns and edits project
-data. Projects and React compositions are evaluated into the same Rust
-composition model, and preview/export should consume the same renderer inputs.
+Celesta is a code-first video editor. Projects (`.celesta.json`) and React
+compositions are authored as source files and evaluated into the same Rust
+composition model; preview and export consume the same renderer inputs.
+
+## Preview-only GPUI app (2026-09-25)
+
+The GPUI app (`celesta-editor`) no longer edits projects. Its half-finished
+editing features were removed for the public release: saving, undo/redo, asset
+import/relink/removal, inserting clips and effects, clip move/trim/delete,
+track add/move/rename/enable/lock/delete, character and dialogue editing,
+lip-sync generation, clip volume automation, React entry selection, and
+Inspector property editing. `celesta-editor-core` keeps only the read-only
+`EditorDocument` (load, summaries, scene/audio evaluation) plus track
+mute/solo, which change what the preview and an export from it play but are
+never written back.
+
+What remains:
+
+- File > Open… (Secondary-O) opens a `.celesta.json` or a React entry into
+  the current window; File > Reload (Secondary-R) re-reads it (a React entry
+  re-bundles). Loading runs on a background thread and swaps the view in
+  place, keeping pane sizes and the preview volume. Opening is refused while
+  an export is running. Standalone React entries still hot-reload on save.
+- Menus are set with `cx.set_menus` (native on macOS) and mirrored into
+  `GlobalState::set_app_menus` for the in-window `AppMenuBar` on
+  Windows/Linux. The window uses `TitleBar::window_options()`; the title bar
+  carries the menu bar, file name, status messages, Open…, Export…, and the
+  preview volume.
+- The volume slider is a monitor gain on the rodio `Player`; it does not
+  change the project's `masterVolume` or exports.
+- Asset list, Inspector, and timeline are read-only views with selection.
+  Timeline scrubbing, zoom/pan, export In/Out range, and MP4 export are
+  unchanged.
+
+The "Implemented editor behavior" notes below describe the editing features as
+they existed before this change; treat them as history.
 
 The current milestone is a usable editor foundation for gameplay videos with
 VOICEROID-style portraits, dialogue subtitles, voice assets, and ordinary
@@ -56,16 +89,16 @@ cargo test --workspace
 | `celesta-renderer` | Deterministic CPU reference renderer, PNG output, and the shared text rasterizer. |
 | `celesta-gpu-renderer` | `wgpu` renderer for images, video frames, styled text, nested transforms, opacity, offscreen readback, and renderer-owned surfaces. |
 | `celesta-exporter` | Deterministic frame-exact H.264/AAC MP4 export through the shared evaluator, GPU renderer, audio graph, and the linked FFmpeg libraries (`ez-ffmpeg` `VideoWriter` for encode, `FfmpegContext` for the AAC mux). Also exports React entries via `celesta-react-bridge`. |
-| `celesta-editor` | GPUI application, editor-owned document state, playback clock, GPU preview bridge, asset panel, timeline, and inspector. |
+| `celesta-editor` | Preview-only GPUI application: File menu open/reload, playback clock, GPU preview bridge, read-only asset list, timeline, and inspector, and MP4 export. |
 | `celesta-react-bridge` | Spawns one long-lived `@celesta/react` Node.js process per composition and requests the evaluated `Scene` (plus that frame's `<Audio>` clips) for each exact frame time over stdin/stdout JSON, or resolves individual registered components for the editor preview. |
 | `packages/react` (`@celesta/react`, Node.js/TypeScript) | Declarative `Composition`/`Sequence`/`Group`/`Image`/`Rect`/`Text`/`Video`/`Audio` components rendered through a real `react-reconciler` host (hooks, including `useCurrentFrame`/`useVideoConfig`, work); `useProject`/`<ProjectTimeline />` embed a companion project's Rust-evaluated layers. The `celesta-react-render` CLI bundles a JSX/TSX entry with esbuild and emits `Scene`-shaped JSON plus per-frame audio declarations. |
 
 Important files:
 
-- `crates/editor/src/lib.rs`: `EditorDocument`, clip summaries,
-  `TimelineClock`, frame-based clip mutations, and editor tests.
-- `crates/editor/src/main.rs`: GPUI window, playback, scrubbing, selection,
-  clip dragging/trimming, inspector, and preview refresh.
+- `crates/editor-core/src/lib.rs`: read-only `EditorDocument`, clip
+  summaries, `TimelineClock`, and tests.
+- `crates/editor/src/main.rs`: GPUI window, menus, open/reload, playback,
+  scrubbing, selection, read-only inspector, preview refresh, and export.
 - `crates/project/src/lib.rs`: serialized project contract.
 - `crates/evaluator/src/lib.rs`: project-to-composition behavior.
 - `crates/gpu-renderer/src/lib.rs`: GPU rendering and readback APIs.
