@@ -20,7 +20,7 @@ video/audio tracks.
 - The initial implementation is tracked on `main`; track management landed in
   commit `52b13d5` and MP4 export landed in `dfb7f1a`. Inspect
   `git status --short` for newer work before editing or staging.
-- FFmpeg 7.1+ **development libraries** must be available for `ez-ffmpeg` /
+- FFmpeg 8.1.x **development libraries** must be available for `ez-ffmpeg` /
   `ffmpeg-sys-next` to link against — the `ffmpeg`/`ffprobe` binaries are no
   longer used at runtime. On Windows: `vcpkg install
   ffmpeg[x264]:x64-windows-static-md` with `VCPKG_ROOT` set (the workspace

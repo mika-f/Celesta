@@ -29,8 +29,8 @@ extension still use `celesta` for compatibility.
 ## Run from source
 
 You need Rust 1.89 or later, the native build tools for your platform, and
-FFmpeg 7.1 or later development libraries. React compositions additionally
-require Node.js 18 or later and pnpm.
+FFmpeg 8.1.x development libraries (FFmpeg 9 and later are not supported yet).
+React compositions additionally require Node.js 18 or later and pnpm.
 
 ### 1. Prepare FFmpeg
 
@@ -41,11 +41,13 @@ executable is not sufficient.
   `vcpkg install ffmpeg[x264]:x64-windows-static-md`, and set `VCPKG_ROOT` to
   your vcpkg directory.
 - **macOS:** install the Xcode Command Line Tools, then run
-  `brew install ffmpeg pkg-config`.
+  `brew install ffmpeg@8 pkg-config`. `ffmpeg@8` is keg-only, so point
+  `pkg-config` at it before building:
+  `export PKG_CONFIG_PATH="$(brew --prefix ffmpeg@8)/lib/pkgconfig"`.
 - **Linux:** install `pkg-config` and the FFmpeg development packages:
   `libavcodec-dev`, `libavformat-dev`, `libavfilter-dev`, `libavdevice-dev`,
   `libavutil-dev`, `libswscale-dev`, and `libswresample-dev`. Your distribution
-  must provide FFmpeg 7.1 or later. Native window-system and graphics development
+  must provide FFmpeg 8.1.x. Native window-system and graphics development
   packages may also be required by GPUI.
 
 ### 2. Get the source and launch
