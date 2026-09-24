@@ -1,0 +1,6 @@
+allowBuilds:
+  '@tailwindcss/oxide': false
+  esbuild: true
+  workerd: true
+minimumReleaseAgeExclude:
+  - vite@8.3.1

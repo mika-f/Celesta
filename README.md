@@ -170,6 +170,13 @@ drag-and-drop installation, follow the [macOS packaging guide](packaging/macos/R
 Node.js is included. Developer ID signing and notarization are supported for
 distribution outside the Mac App Store.
 
+## Website
+
+The English product website lives in [`packages/website`](packages/website).
+It uses Vite, React, and Tailwind CSS, with Cloudflare Workers Static Assets
+deployment configured. See the [website guide](packages/website/README.md) for
+local development, production builds, and deployment instructions.
+
 ## Report a problem
 
 Open an issue in this repository with your operating system, steps to reproduce

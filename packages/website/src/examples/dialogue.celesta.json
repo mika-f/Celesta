@@ -1,0 +1,73 @@
+{
+  "version": 0,
+  "settings": {
+    "width": 1920,
+    "height": 1080,
+    "frameRate": { "numerator": 30, "denominator": 1 },
+    "sampleRate": 48000,
+    "duration": { "value": 6, "timescale": 1 }
+  },
+  "assets": {
+    "mira-calm": { "type": "image", "source": { "type": "file", "path": "./mira/calm.png" } },
+    "mira-smile": { "type": "image", "source": { "type": "file", "path": "./mira/smile.png" } },
+    "line-01": { "type": "audio", "source": { "type": "file", "path": "./voices/line-01.wav" } },
+    "line-02": { "type": "audio", "source": { "type": "file", "path": "./voices/line-02.wav" } }
+  },
+  "characters": {
+    "mira": {
+      "name": "Mira",
+      "portrait": {
+        "defaultExpression": "calm",
+        "expressions": { "calm": "mira-calm", "smile": "mira-smile" },
+        "transform": { "position": { "x": 1460, "y": 420 } }
+      },
+      "subtitle": {
+        "style": {
+          "fontSize": 56,
+          "fill": { "type": "solid", "color": "#FFFFFFFF" },
+          "stroke": { "paint": { "type": "solid", "color": "#3A2D52FF" }, "width": 6 },
+          "align": "center"
+        },
+        "transform": { "position": { "x": 960, "y": 940 } },
+        "maxWidth": 1600
+      }
+    }
+  },
+  "tracks": [
+    {
+      "id": "dialogue",
+      "name": "Dialogue",
+      "kind": "dialogue",
+      "items": [
+        {
+          "id": "line-01",
+          "range": {
+            "start": { "value": 0, "timescale": 1 },
+            "duration": { "value": 3, "timescale": 1 }
+          },
+          "content": {
+            "type": "dialogue",
+            "character": "mira",
+            "text": "Welcome back. Shall we begin?",
+            "audio": "line-01"
+          }
+        },
+        {
+          "id": "line-02",
+          "range": {
+            "start": { "value": 3, "timescale": 1 },
+            "duration": { "value": 3, "timescale": 1 }
+          },
+          "content": {
+            "type": "dialogue",
+            "character": "mira",
+            "text": "Every scene starts with a single line.",
+            "audio": "line-02",
+            "expression": "smile"
+          }
+        }
+      ]
+    }
+  ],
+  "properties": {}
+}

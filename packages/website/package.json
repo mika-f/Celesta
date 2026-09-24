@@ -1,0 +1,28 @@
+{
+  "name": "@celesta/website",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.4.2",
+  "engines": { "node": ">=22.12.0" },
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc --noEmit && vite build",
+    "check:examples": "tsc -p tsconfig.examples.json",
+    "preview": "vite preview --host 127.0.0.1",
+    "preview:cloudflare": "pnpm build && wrangler dev",
+    "deploy:check": "pnpm build && wrangler deploy --dry-run",
+    "deploy": "pnpm build && wrangler deploy"
+  },
+  "dependencies": { "react": "^19.3.0", "react-dom": "^19.3.0" },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.1",
+    "wrangler": "^4.0.0"
+  }
+}
