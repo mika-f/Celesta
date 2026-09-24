@@ -69,4 +69,4 @@ jobs:
 
       # Tests that need a GPU adapter skip themselves when none is available.
       - name: Test
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --locked --no-fail-fast
