@@ -20,13 +20,12 @@
   },
   "scripts": {
     "codegen": "cd ../.. && cargo test -p celesta-project -p celesta-composition --features codegen",
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/stage-project-types.mjs",
     "test": "node --test \"test/**/*.test.mjs\"",
     "clean": "rm -rf dist"
   },
-  "dependencies": {},
   "devDependencies": {
-    "@types/node": "^22.10.10",
+    "@types/node": "^24.13.6",
     "@types/react": "^18.3.18",
     "@types/react-reconciler": "^0.28.9",
     "ag-psd": "^31.0.2",

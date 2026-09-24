@@ -61,6 +61,10 @@ export default function Root() {
   assert.equal(mp4.toString('ascii', 4, 8), 'ftyp');
   assert.ok(mp4.length > 100);
   assert.ok(!existsSync(join(runtime, 'react/.tmp')), 'Runtime must not write into the install directory');
+  assert.ok(
+    existsSync(join(runtime, 'react/dist/project-types/version.json')),
+    'Package must include the TypeScript support template',
+  );
   console.log('Package smoke test passed: bundled React hooks and MP4 export, without Node.js on PATH.');
 } finally {
   assert.ok(directory.startsWith(join(tmpdir(), 'Celesta package 日本語 ')));

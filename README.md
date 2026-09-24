@@ -110,6 +110,19 @@ Use the files in `packages/react/examples` as starting points. They demonstrate
 text, animation, layout, dialogue, and editable project properties. The package
 is currently imported as `@celesta/react`.
 
+### Type-check your compositions
+
+Choose **File > Set Up TypeScript** with a React composition open. Celesta
+copies the `@celesta/react`, React, and Node.js type declarations that match
+its bundled runtime into a `.celesta/` folder in your project. If the project
+has no `tsconfig.json`, Celesta creates one that extends
+`./.celesta/tsconfig.json`. If a `tsconfig.json` already exists, add
+`"extends": "./.celesta/tsconfig.json"` to it. You don't need to install
+`@celesta/react`, `react`, or `@types/*` from npm.
+
+Celesta updates `.celesta/` when you open the project in a newer version. The
+folder ignores itself in Git.
+
 To combine an existing timeline with React content, use a composition containing
 `<ProjectTimeline />` and supply the companion project when exporting:
 

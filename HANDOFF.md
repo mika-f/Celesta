@@ -70,6 +70,14 @@ video/audio tracks.
   codegen` to (re)generate `src/generated/*.ts`, which `pnpm run build`
   requires as input; both `src/generated/` and `dist/` are gitignored build
   output, not checked in.
+- `@celesta/react` is not published to npm: user entries always resolve
+  `react` and `@celesta/react` to the bundled runtime. `pnpm run build` also
+  stages `dist/project-types/` (`scripts/stage-project-types.mjs`): the
+  package's declarations plus `@types/react`/`@types/node` and a base
+  tsconfig. File > Set Up TypeScript copies it into a project's `.celesta/`
+  (`celesta_react_bridge::set_up_project_types`), and opening a project
+  re-copies it when its `version.json` content hash differs
+  (`refresh_project_types`).
 
 Before editing, run:
 

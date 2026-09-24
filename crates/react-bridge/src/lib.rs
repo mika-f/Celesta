@@ -20,7 +20,12 @@ use celesta_composition::{
 use celesta_media::{AudioStream, FfmpegBackend, MediaProbe, VideoStream};
 use serde::{Deserialize, Serialize};
 
+mod project_types;
 mod runtime;
+pub use project_types::{
+    PROJECT_TYPES_DIR, ProjectTsconfig, ProjectTypesSetup, project_types_template,
+    refresh_project_types, set_up_project_types,
+};
 pub use runtime::runtime_paths;
 
 /// A companion project's layers for one exact frame, evaluated up front by
