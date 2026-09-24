@@ -105,6 +105,8 @@ try {
 
     $licenses = Join-Path $package 'licenses'
     New-Item -ItemType Directory $licenses | Out-Null
+    Copy-Item -Path "$root/LICENSE*" -Destination $licenses
+    Copy-Item -LiteralPath "$root/packaging/GPL-SOURCE-OFFER.md" -Destination $licenses
     if (-not $env:VCPKG_ROOT) { throw 'VCPKG_ROOT is required to collect native library licenses.' }
     Copy-Item -LiteralPath "$env:VCPKG_ROOT/installed/x64-windows-static-md/share" -Destination "$licenses/native" -Recurse
     $metadataText = & cargo metadata --locked --offline --format-version 1 --filter-platform x86_64-pc-windows-msvc

@@ -185,4 +185,14 @@ reproduces it, along with media you have permission to share.
 
 ## License
 
-Celesta's packages are declared under MIT OR Apache-2.0.
+Celesta's own source code is declared under MIT OR Apache-2.0.
+
+The official Windows and macOS binary packages additionally bundle an FFmpeg
+build with the `x264` encoder enabled, which is GPL-2.0-or-later licensed.
+Distributing that FFmpeg build makes the binary package as a whole subject to
+GPL-2.0-or-later, in addition to Celesta's own MIT/Apache-2.0 source license.
+See [`LICENSE-GPL-2.0`](LICENSE-GPL-2.0) for the license text and
+[`packaging/GPL-SOURCE-OFFER.md`](packaging/GPL-SOURCE-OFFER.md) for the
+corresponding-source offer that accompanies each release. Building Celesta
+yourself from source, or building it with an LGPL-only FFmpeg configuration,
+is not affected.
