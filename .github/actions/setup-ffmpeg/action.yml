@@ -34,8 +34,9 @@ runs:
     # possibly different MSVC, which changes vcpkg's ABI hashes) saves a fresh
     # entry, while restore-keys still reuses every package whose hash is unchanged.
     - name: Restore vcpkg binary cache
+      id: vcpkg-cache
       if: runner.os == 'Windows'
-      uses: actions/cache@v6
+      uses: actions/cache/restore@v6
       with:
         path: ${{ env.VCPKG_BINARY_CACHE_DIR }}
         key: ${{ env.VCPKG_CACHE_KEY_PREFIX }}${{ env.VCPKG_CACHE_KEY_IMAGE }}
@@ -47,6 +48,14 @@ runs:
       run: |
         & "$env:VCPKG_ROOT/vcpkg.exe" install 'ffmpeg[x264]:x64-windows-static-md' --clean-after-build
         if ($LASTEXITCODE -ne 0) { throw 'vcpkg install failed' }
+
+    # Save right away so a later build or test failure does not discard FFmpeg.
+    - name: Save vcpkg binary cache
+      if: runner.os == 'Windows' && steps.vcpkg-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: ${{ env.VCPKG_BINARY_CACHE_DIR }}
+        key: ${{ env.VCPKG_CACHE_KEY_PREFIX }}${{ env.VCPKG_CACHE_KEY_IMAGE }}
 
     - name: Install FFmpeg (Homebrew)
       if: runner.os == 'macOS'
