@@ -1,0 +1,5 @@
+{
+  "//": "Type-checks the playground scene and documentation examples against the real @celesta/react declarations. Build packages/react first.",
+  "extends": "../react/dist/project-types/tsconfig.json",
+  "include": ["src/demo/title-scene.tsx", "src/examples/*.tsx"]
+}
