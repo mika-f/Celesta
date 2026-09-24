@@ -13,14 +13,6 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
-use gpui_kit::{
-    App, Bounds, ClickEvent, Context, CursorStyle, Div, ElementId, Entity, FocusHandle, KeyBinding,
-    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ObjectFit,
-    PathPromptOptions, Pixels, Point, PromptButton, PromptLevel, RenderImage, SharedString,
-    Stateful, StyledImage, TitlebarOptions, Window, WindowBounds, WindowOptions, actions, div, img,
-    prelude::*, px, relative, rgb, size,
-};
-use image::{Frame, ImageBuffer, Rgba};
 use celesta_composition::{
     Animatable, AssetLocation, AudioClip, AudioGraph, Layer, LayerContent, Rational, Scene, Time,
     evaluate_f64, integrate_f64,
@@ -37,131 +29,68 @@ use celesta_gpu_renderer::{GpuRenderOptions, GpuRenderer, PreviewFrame as GpuPre
 use celesta_media::{
     AudioBuffer, AudioDecoder, FfmpegBackend, MediaError, MediaProbe, mix_audio_graph_cancellable,
 };
-use celesta_project::{AssetKind, MouthShape, Project, TrackKind};
+use celesta_project::{AssetKind, Project, TrackKind};
 use celesta_react_bridge::{
     ComponentPropertyField, ComponentPropertySchema, ComponentResolutionRequest, ReactBridge,
     ReactCompositionMetadata,
 };
+use gpui_kit::base::GlobalState;
+use gpui_kit::{
+    App, Bounds, ClickEvent, Context, Entity, FocusHandle, KeyBinding, KeyDownEvent, Menu,
+    MenuItem, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ObjectFit,
+    PathPromptOptions, Pixels, Point, RenderImage, SharedString, StyledImage, Window, WindowBounds,
+    WindowOptions, actions, div, img, prelude::*, px, relative, rgb, size,
+};
+use image::{Frame, ImageBuffer, Rgba};
 use rodio::{DeviceSinkBuilder, Player, buffer::SamplesBuffer};
 
 mod audio_cache;
 
 use audio_cache::DiskAudioCache;
-use gpui_kit::component::button::{Button, ButtonGroup, ButtonVariant, ButtonVariants as _};
-use gpui_kit::component::dialog::DialogButtonProps;
-use gpui_kit::component::input::{Input, InputEvent, InputState};
-use gpui_kit::component::radio::RadioGroup;
+use celesta_editor_theme as theme;
+use gpui_kit::component::button::{Button, ButtonVariants as _};
+#[cfg(not(target_os = "macos"))]
+use gpui_kit::component::menu::AppMenuBar;
 use gpui_kit::component::resizable::{ResizableState, h_resizable, resizable_panel, v_resizable};
 use gpui_kit::component::status_bar::StatusBar;
-use gpui_kit::component::switch::Switch;
-use gpui_kit::component::tab::TabBar;
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, IconName, Root, Selectable as _, Sizable as _,
+    ActiveTheme as _, Disableable as _, IconName, Root, Selectable as _, Sizable as _, TitleBar,
     WindowExt as _,
 };
-use celesta_editor_theme as theme;
 
 const EDITOR_DEMO_PROJECT: &str = include_str!("../../../examples/editor-demo.celesta.json");
 
 use celesta_react_bridge::runtime_paths as react_runtime_paths;
+use celesta_react_bridge::{
+    ProjectTsconfig, project_types_template, refresh_project_types, set_up_project_types,
+};
 
 actions!(
     celesta_editor,
     [
-        SaveProject,
-        SaveProjectAs,
+        OpenProject,
+        ReloadProject,
+        CloseWindow,
+        Quit,
         ExportProject,
         SetExportIn,
         SetExportOut,
         ClearExportRange,
-        UndoEdit,
-        RedoEdit,
+        SetUpTypeScript,
         TogglePlayback,
         PreviousFrame,
-        NextFrame,
-        ImportAssets,
-        InsertSelectedAsset,
-        DeleteSelectedClip,
-        CancelInlineEdit
+        NextFrame
     ]
 );
-
-#[derive(Clone, Copy)]
-enum ClipDragKind {
-    Move,
-    TrimStart,
-    TrimEnd,
-}
-
-struct ClipDrag {
-    clip_id: String,
-    kind: ClipDragKind,
-    pointer_frame: i64,
-    start_frame: i64,
-    duration_frames: i64,
-}
-
-#[derive(Clone)]
-struct AssetDrag {
-    id: String,
-    kind: AssetKind,
-}
-
-impl Render for AssetDrag {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        div()
-            .flex()
-            .items_center()
-            .gap_2()
-            .w(px(180.0))
-            .h(px(34.0))
-            .px_3()
-            .rounded(cx.theme().radius)
-            .bg(cx.theme().popover)
-            .border_1()
-            .border_color(theme::accent())
-            .shadow_md()
-            .text_xs()
-            .text_color(cx.theme().foreground)
-            .child(format!(
-                "{}  {}",
-                self.kind.to_string().to_uppercase(),
-                self.id
-            ))
-    }
-}
-
-/// Drag payload for a registered React component dragged out of the Effects
-/// browser onto a timeline track.
-#[derive(Clone)]
-struct EffectDrag {
-    component: String,
-}
-
-impl Render for EffectDrag {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        div()
-            .flex()
-            .items_center()
-            .gap_2()
-            .w(px(180.0))
-            .h(px(34.0))
-            .px_3()
-            .rounded(cx.theme().radius)
-            .bg(cx.theme().popover)
-            .border_1()
-            .border_color(theme::accent())
-            .shadow_md()
-            .text_xs()
-            .text_color(cx.theme().foreground)
-            .child(format!("FX  {}", self.component))
-    }
-}
 
 struct AudioPreview {
     _device_sink: rodio::MixerDeviceSink,
     player: Player,
     source: SamplesBuffer,
+    /// Monitor gain applied on top of the mixed buffer. Carried here because
+    /// every seek reconnects a fresh `Player`, which starts at unity gain.
+    volume: f32,
 }
 
 struct PreviewRequest {
@@ -235,6 +164,64 @@ fn is_react_entry(path: &Path) -> bool {
         path.extension().and_then(OsStr::to_str),
         Some("tsx" | "ts" | "jsx" | "js" | "mjs" | "cjs")
     )
+}
+
+/// Loads what the viewer shows for `path`: a `project.json`, a standalone React
+/// entry (whose composition facts come from a blocking Node handshake), or the
+/// built-in demo when `path` is `None`. Free of GPUI state so it can run on a
+/// background thread when a file is opened from the menu.
+fn load_source(path: Option<&Path>) -> Result<(EditorDocument, Option<ReactPreview>), String> {
+    let loaded = match path {
+        Some(path) if is_react_entry(path) => {
+            let (node, cli_script) = react_runtime_paths();
+            let metadata = ReactBridge::spawn(&node, &cli_script, path)
+                .map_err(|error| error.to_string())?
+                .metadata()
+                .clone();
+            let document = EditorDocument::react_preview(
+                path,
+                metadata.width,
+                metadata.height,
+                metadata.frame_rate,
+                REACT_PREVIEW_SAMPLE_RATE,
+                metadata.duration_in_frames,
+            )
+            .map_err(|error| error.to_string())?;
+            let entry = document
+                .react_entry_absolute_path()
+                .unwrap_or_else(|| path.to_owned());
+            let watched_mtime = entry.parent().and_then(newest_source_mtime);
+            Ok((
+                document,
+                Some(ReactPreview {
+                    entry,
+                    watched_mtime,
+                }),
+            ))
+        }
+        Some(path) => EditorDocument::load(path)
+            .map(|document| (document, None))
+            .map_err(|error| error.to_string()),
+        None => EditorDocument::from_json(EDITOR_DEMO_PROJECT, "examples")
+            .map(|document| (document, None))
+            .map_err(|error| error.to_string()),
+    };
+    if let Ok((document, _)) = &loaded {
+        refresh_typescript_support(document);
+    }
+    loaded
+}
+
+/// Keeps a project that ran File > Set Up TypeScript on this build's
+/// declarations. Best effort: stale types must not block opening the project.
+fn refresh_typescript_support(document: &EditorDocument) {
+    let Some(entry) = document.react_entry_absolute_path() else {
+        return;
+    };
+    let (_, cli_script) = react_runtime_paths();
+    if let Err(error) = refresh_project_types(&project_types_template(&cli_script), &entry) {
+        eprintln!("Celesta: couldn’t refresh TypeScript support: {error}");
+    }
 }
 
 /// Default sample rate for a standalone React entry's audio graph — the entry
@@ -812,7 +799,6 @@ fn splice_resolved_components(
 
 struct AudioMixRequest {
     generation: u64,
-    cache_epoch: u64,
     graph: AudioGraph,
     asset_root: PathBuf,
     duration: Time,
@@ -929,26 +915,6 @@ struct MasterVolumeDrag {
     start_volume: f64,
 }
 
-/// A `string`- or `color`-typed schema field currently being edited through
-/// `property_input`, one at a time (the same shape as track renaming's
-/// single shared `TextInput`). The target says which value store the commit
-/// goes into: the selected component clip's `props`, or the project-level
-/// `properties` map declared by the entry's `defineProjectProperties()`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum PropertyEditTarget {
-    Project,
-    Clip { clip_id: String },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct PropertyEdit {
-    target: PropertyEditTarget,
-    key: String,
-    /// The field is a `Number`, so the committed text is parsed as `f64`
-    /// rather than stored verbatim as a string.
-    numeric: bool,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct AudioCacheKey {
     path: PathBuf,
@@ -999,11 +965,6 @@ impl CachedAudioDecoder {
             peaks.len(),
         ))
     }
-
-    fn clear(&mut self) {
-        self.buffers.clear();
-        self.waveforms.clear();
-    }
 }
 
 impl AudioDecoder for CachedAudioDecoder {
@@ -1051,13 +1012,8 @@ impl AudioMixWorker {
             .name("celesta-audio-mix".to_owned())
             .spawn(move || {
                 let mut decoder = CachedAudioDecoder::new();
-                let mut cache_epoch = 0;
                 while let Ok(first) = request_rx.recv() {
                     let request = take_latest(first, &request_rx);
-                    if request.cache_epoch != cache_epoch {
-                        decoder.clear();
-                        cache_epoch = request.cache_epoch;
-                    }
                     let output = mix_audio_graph_cancellable(
                         &request.graph,
                         &request.asset_root,
@@ -1140,25 +1096,34 @@ fn take_latest<T>(mut latest: T, receiver: &mpsc::Receiver<T>) -> T {
 }
 
 impl AudioPreview {
-    fn from_buffer(buffer: AudioBuffer) -> Result<Self, Box<dyn Error>> {
+    fn from_buffer(buffer: AudioBuffer, volume: f64) -> Result<Self, Box<dyn Error>> {
         let channels = NonZeroU16::new(buffer.channels).ok_or("audio has zero channels")?;
         let sample_rate =
             NonZeroU32::new(buffer.sample_rate).ok_or("audio has a zero sample rate")?;
         let source = SamplesBuffer::new(channels, sample_rate, buffer.samples);
         let device_sink = DeviceSinkBuilder::open_default_sink()?;
         let player = Player::connect_new(device_sink.mixer());
+        let volume = volume as f32;
+        player.set_volume(volume);
         player.append(source.clone());
         player.pause();
         Ok(Self {
             _device_sink: device_sink,
             player,
             source,
+            volume,
         })
+    }
+
+    fn set_volume(&mut self, volume: f64) {
+        self.volume = volume as f32;
+        self.player.set_volume(self.volume);
     }
 
     fn seek(&mut self, time: Time, playing: bool) -> Result<(), Box<dyn Error>> {
         self.player.stop();
         self.player = Player::connect_new(self._device_sink.mixer());
+        self.player.set_volume(self.volume);
         self.player.append(self.source.clone());
         self.player.pause();
         let seconds = time.as_seconds()?.max(0.0);
@@ -1175,10 +1140,23 @@ impl AudioPreview {
 }
 
 struct EditorView {
+    /// The file this view was opened from (`None` for the built-in demo);
+    /// File > Reload opens it again.
+    source_path: Option<PathBuf>,
+    /// Bumped each time another file replaces this view's contents, so the
+    /// previous React entry's reload watcher knows to stop.
+    session: u64,
+    /// A file picked from File > Open… is loading in the background.
+    opening: bool,
+    open_error: Option<SharedString>,
+    /// The in-window menu bar. macOS shows the same menus natively instead.
+    #[cfg(not(target_os = "macos"))]
+    app_menu_bar: Option<Entity<AppMenuBar>>,
     document: EditorDocument,
     /// `Some` in standalone React composition preview mode: the document is a
     /// synthetic project and every previewed frame comes from the React
-    /// bridge. Project editing (assets, tracks, inspector, saving) is disabled.
+    /// bridge. The asset list, timeline tracks, and inspector have nothing to
+    /// show.
     react_preview: Option<ReactPreview>,
     react_audio_worker: ReactAudioWorker,
     /// Bumped on every reload of the React entry (watcher or manual button);
@@ -1201,7 +1179,6 @@ struct EditorView {
     media_cache: HashMap<String, Result<MediaAssetInfo, String>>,
     audio_mix_worker: AudioMixWorker,
     audio_generation: u64,
-    audio_cache_epoch: u64,
     audio_pending: bool,
     audio_preview: Option<AudioPreview>,
     clip_waveforms: HashMap<String, Vec<f32>>,
@@ -1212,28 +1189,20 @@ struct EditorView {
     playback_started_at: Option<Instant>,
     playback_started_frame: i64,
     scrubbing: bool,
-    clip_drag: Option<ClipDrag>,
-    clip_drag_hover_track_id: Option<String>,
-    clip_drag_target_track_id: Option<String>,
+    /// Playback gain for the preview only (0..=2). It scales the mixed
+    /// buffer at the output device and never touches the project, so it has
+    /// no effect on exports.
+    monitor_volume: f64,
     master_volume_drag: Option<MasterVolumeDrag>,
     selected_clip_id: Option<String>,
     selected_asset_id: Option<String>,
     selected_track_id: Option<String>,
-    renaming_track_id: Option<String>,
-    track_name_input: Option<Entity<InputState>>,
-    renaming_character_id: Option<String>,
-    character_name_input: Option<Entity<InputState>>,
-    editing_dialogue_clip_id: Option<String>,
-    dialogue_text_input: Option<Entity<InputState>>,
     component_schema_worker: ComponentSchemaWorker,
     component_schema_generation: u64,
     component_schema_pending: bool,
-    component_schema_entry: Option<String>,
     component_schemas: BTreeMap<String, ComponentPropertySchema>,
     project_property_schema: Option<BTreeMap<String, ComponentPropertyField>>,
     component_schema_error: Option<SharedString>,
-    editing_property: Option<PropertyEdit>,
-    property_input: Option<Entity<InputState>>,
     project_name: SharedString,
     dimensions: SharedString,
     frame_rate_label: SharedString,
@@ -1243,8 +1212,7 @@ struct EditorView {
     preview: Option<PreviewPresentation>,
     preview_error: Option<SharedString>,
     preview_warnings: Vec<SharedString>,
-    save_error: Option<SharedString>,
-    edit_error: Option<SharedString>,
+    media_error: Option<SharedString>,
     audio_error: Option<SharedString>,
     export_worker: ExportWorker,
     export_progress: Option<ExportProgress>,
@@ -1253,6 +1221,8 @@ struct EditorView {
     export_cancelling: bool,
     export_error: Option<SharedString>,
     export_message: Option<SharedString>,
+    typescript_error: Option<SharedString>,
+    typescript_message: Option<SharedString>,
     /// Optional export in/out points, in composition frames. `out` is
     /// exclusive (one past the last frame to include). Both set and `in < out`
     /// means "Export…" renders only that span; otherwise the whole
@@ -1264,13 +1234,11 @@ struct EditorView {
     focus_handle: Option<FocusHandle>,
     master_volume_focus: Option<FocusHandle>,
     /// Split positions for the workspace shell: `dock_split` is the
-    /// left-dock / monitor / right-dock row, `body_split` is the
+    /// asset-list / monitor / inspector row, `body_split` is the
     /// work-area / timeline column. Held here so the drags persist across
     /// redraws.
     dock_split: Option<Entity<ResizableState>>,
     body_split: Option<Entity<ResizableState>>,
-    /// Which left-dock tab is showing: 0 = Media Pool, 1 = Effects.
-    left_dock_tab: usize,
     /// Timeline horizontal zoom (>= 1; 1 = whole composition fits) and the
     /// fraction of the composition at the left edge of the visible window.
     /// The mouse wheel over the timeline adjusts the zoom about the cursor.
@@ -1279,47 +1247,19 @@ struct EditorView {
     /// Middle-button pan of the timeline: `(pointer x at grab, view_start at
     /// grab)`. `Some` while the middle button is held over the timeline.
     timeline_pan: Option<(f32, f64)>,
-    saving_as: bool,
-    importing_assets: bool,
-    asset_operation_active: bool,
-    close_prompt_active: bool,
-    force_close: bool,
 }
 
 impl EditorView {
     fn open(path: Option<&Path>) -> Result<Self, Box<dyn Error>> {
-        let (document, react_preview) = match path {
-            Some(path) if is_react_entry(path) => {
-                let (node, cli_script) = react_runtime_paths();
-                let metadata = ReactBridge::spawn(&node, &cli_script, path)?
-                    .metadata()
-                    .clone();
-                let document = EditorDocument::react_preview(
-                    path,
-                    metadata.width,
-                    metadata.height,
-                    metadata.frame_rate,
-                    REACT_PREVIEW_SAMPLE_RATE,
-                    metadata.duration_in_frames,
-                )?;
-                let entry = document
-                    .react_entry_absolute_path()
-                    .unwrap_or_else(|| path.to_owned());
-                let watched_mtime = entry.parent().and_then(newest_source_mtime);
-                (
-                    document,
-                    Some(ReactPreview {
-                        entry,
-                        watched_mtime,
-                    }),
-                )
-            }
-            Some(path) => (EditorDocument::load(path)?, None),
-            None => (
-                EditorDocument::from_json(EDITOR_DEMO_PROJECT, "examples")?,
-                None,
-            ),
-        };
+        let (document, react_preview) = load_source(path)?;
+        Self::from_document(path.map(Path::to_path_buf), document, react_preview)
+    }
+
+    fn from_document(
+        source_path: Option<PathBuf>,
+        document: EditorDocument,
+        react_preview: Option<ReactPreview>,
+    ) -> Result<Self, Box<dyn Error>> {
         let settings = &document.project().settings;
         let frame_rate_value = settings.frame_rate;
         let clock = TimelineClock::new(document.duration(), frame_rate_value)?;
@@ -1351,6 +1291,12 @@ impl EditorView {
         let component_schema_worker = ComponentSchemaWorker::spawn()?;
         let react_audio_worker = ReactAudioWorker::spawn()?;
         let mut editor = Self {
+            source_path,
+            session: 0,
+            opening: false,
+            open_error: None,
+            #[cfg(not(target_os = "macos"))]
+            app_menu_bar: None,
             document,
             react_preview,
             react_audio_worker,
@@ -1365,7 +1311,6 @@ impl EditorView {
             media_cache: HashMap::new(),
             audio_mix_worker,
             audio_generation: 0,
-            audio_cache_epoch: 0,
             audio_pending: false,
             audio_preview: None,
             clip_waveforms: HashMap::new(),
@@ -1376,28 +1321,17 @@ impl EditorView {
             playback_started_at: None,
             playback_started_frame: 0,
             scrubbing: false,
-            clip_drag: None,
-            clip_drag_hover_track_id: None,
-            clip_drag_target_track_id: None,
+            monitor_volume: 1.0,
             master_volume_drag: None,
             selected_clip_id: None,
             selected_asset_id: None,
             selected_track_id: None,
-            renaming_track_id: None,
-            track_name_input: None,
-            renaming_character_id: None,
-            character_name_input: None,
-            editing_dialogue_clip_id: None,
-            dialogue_text_input: None,
             component_schema_worker,
             component_schema_generation: 0,
             component_schema_pending: false,
-            component_schema_entry: None,
             component_schemas: BTreeMap::new(),
             project_property_schema: None,
             component_schema_error: None,
-            editing_property: None,
-            property_input: None,
             project_name,
             dimensions,
             frame_rate_label,
@@ -1407,8 +1341,7 @@ impl EditorView {
             preview: None,
             preview_error: None,
             preview_warnings: Vec::new(),
-            save_error: None,
-            edit_error: None,
+            media_error: None,
             audio_error: None,
             export_worker,
             export_progress: None,
@@ -1417,6 +1350,8 @@ impl EditorView {
             export_cancelling: false,
             export_error: None,
             export_message: None,
+            typescript_error: None,
+            typescript_message: None,
             export_in_frame: None,
             export_out_frame: None,
             choosing_export_path: false,
@@ -1425,15 +1360,9 @@ impl EditorView {
             master_volume_focus: None,
             dock_split: None,
             body_split: None,
-            left_dock_tab: 0,
             timeline_zoom: 1.0,
             timeline_view_start: 0.0,
             timeline_pan: None,
-            saving_as: false,
-            importing_assets: false,
-            asset_operation_active: false,
-            close_prompt_active: false,
-            force_close: false,
         };
         editor.refresh_preview();
         editor.refresh_audio_preview();
@@ -1444,15 +1373,191 @@ impl EditorView {
         Ok(editor)
     }
 
-    fn is_react_preview(&self) -> bool {
-        self.react_preview.is_some()
+    /// File > Open…: pick a project or React entry and show it in this window.
+    fn open_project_action(
+        &mut self,
+        _: &OpenProject,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.request_open(window, cx);
     }
 
-    /// A standalone React composition has no `project.json` to save, so its
-    /// synthetic document never counts as dirty for the window title, the
-    /// macOS edited state, or the unsaved-changes close guard.
-    fn is_effectively_dirty(&self) -> bool {
-        !self.is_react_preview() && self.document.is_dirty()
+    fn open_project_click(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
+        self.request_open(window, cx);
+    }
+
+    fn request_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.opening || !self.can_replace_contents(window, cx) {
+            return;
+        }
+        let selection = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Open".into()),
+        });
+        cx.spawn_in(window, async move |view, cx| {
+            let path = match selection.await {
+                Ok(Ok(Some(paths))) => paths.into_iter().next(),
+                Ok(Ok(None)) => None,
+                Ok(Err(error)) => {
+                    view.update_in(cx, |this, _, cx| {
+                        this.open_error =
+                            Some(format!("Couldn’t show the Open dialog: {error}").into());
+                        cx.notify();
+                    })
+                    .ok();
+                    None
+                }
+                Err(_) => None,
+            };
+            if let Some(path) = path {
+                view.update_in(cx, |this, window, cx| {
+                    this.load_path(Some(path), window, cx)
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    /// File > Reload: read the current file again from disk. A standalone
+    /// React entry re-bundles in place; anything else is reopened.
+    fn reload_project_action(
+        &mut self,
+        _: &ReloadProject,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.is_react_preview() {
+            self.request_react_reload(cx);
+            cx.notify();
+            return;
+        }
+        if self.opening || !self.can_replace_contents(window, cx) {
+            return;
+        }
+        self.load_path(self.source_path.clone(), window, cx);
+    }
+
+    /// File > Set Up TypeScript: copies this build's `@celesta/react`, React,
+    /// and Node declarations into the React entry's project as `.celesta/`,
+    /// so editors type-check against the runtime that actually runs the entry.
+    fn set_up_typescript_action(
+        &mut self,
+        _: &SetUpTypeScript,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.typescript_error = None;
+        self.typescript_message = None;
+        let Some(entry) = self.document.react_entry_absolute_path() else {
+            self.typescript_error = Some("Open a React entry to set up TypeScript".into());
+            cx.notify();
+            return;
+        };
+        cx.spawn_in(window, async move |view, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let (_, cli_script) = react_runtime_paths();
+                    set_up_project_types(&project_types_template(&cli_script), &entry)
+                })
+                .await;
+            view.update_in(cx, |this, _, cx| {
+                match result {
+                    Ok(setup) if setup.tsconfig == ProjectTsconfig::MissingExtends => {
+                        this.typescript_error = Some(
+                            "Types installed — add \"extends\": \"./.celesta/tsconfig.json\" to tsconfig.json"
+                                .into(),
+                        );
+                    }
+                    Ok(setup) => {
+                        let name = setup.root.file_name().unwrap_or(setup.root.as_os_str());
+                        this.typescript_message =
+                            Some(format!("TypeScript set up in {}", name.to_string_lossy()).into());
+                    }
+                    Err(error) => {
+                        this.typescript_error =
+                            Some(format!("TypeScript setup failed: {error}").into());
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn close_window_action(&mut self, _: &CloseWindow, window: &mut Window, _: &mut Context<Self>) {
+        window.remove_window();
+    }
+
+    /// Replacing the contents drops the export worker, so a running export
+    /// must be cancelled first.
+    fn can_replace_contents(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.export_cancellation.is_none() {
+            return true;
+        }
+        window.push_notification("Cancel the export before opening another file.", cx);
+        false
+    }
+
+    /// Loads `path` on a background thread (a React entry blocks on a Node
+    /// handshake), then swaps it into this view. On failure the current
+    /// contents stay and the error shows in the title bar.
+    fn load_path(&mut self, path: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
+        self.opening = true;
+        self.open_error = None;
+        self.pause();
+        cx.notify();
+        cx.spawn_in(window, async move |view, cx| {
+            let load_path = path.clone();
+            let loaded = cx
+                .background_executor()
+                .spawn(async move { load_source(load_path.as_deref()) })
+                .await;
+            view.update_in(cx, |this, _, cx| {
+                this.opening = false;
+                let result = loaded.and_then(|(document, react_preview)| {
+                    EditorView::from_document(path, document, react_preview)
+                        .map_err(|error| error.to_string())
+                });
+                match result {
+                    Ok(next) => this.replace_contents(next, cx),
+                    Err(error) => {
+                        this.open_error = Some(format!("Couldn’t open: {error}").into());
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Swaps in a freshly opened view while keeping the window-owned UI state
+    /// (focus, pane sizes, menu bar, and the preview volume).
+    fn replace_contents(&mut self, mut next: EditorView, cx: &mut Context<Self>) {
+        next.session = self.session.wrapping_add(1);
+        next.focus_handle = self.focus_handle.take();
+        next.master_volume_focus = self.master_volume_focus.take();
+        next.dock_split = self.dock_split.take();
+        next.body_split = self.body_split.take();
+        #[cfg(not(target_os = "macos"))]
+        {
+            next.app_menu_bar = self.app_menu_bar.take();
+        }
+        next.monitor_volume = self.monitor_volume;
+        *self = next;
+        if self.is_react_preview() {
+            self.watch_react_entry(cx);
+        }
+    }
+
+    fn is_react_preview(&self) -> bool {
+        self.react_preview.is_some()
     }
 
     fn current_time(&self) -> Time {
@@ -1586,6 +1691,7 @@ impl EditorView {
     /// reload. Runs off the render loop so it fires even while the editor is
     /// idle.
     fn watch_react_entry(&self, cx: &mut Context<Self>) {
+        let session = self.session;
         cx.spawn(async move |view, cx| {
             loop {
                 cx.background_executor()
@@ -1594,6 +1700,7 @@ impl EditorView {
                 let Ok(Some(dir)) = view.update(cx, |this, _| {
                     this.react_preview
                         .as_ref()
+                        .filter(|_| this.session == session)
                         .and_then(|react| react.entry.parent().map(Path::to_path_buf))
                 }) else {
                     break;
@@ -1651,30 +1758,25 @@ impl EditorView {
             .request(MediaProbeRequest { generation, assets })
         {
             self.media_pending = false;
-            self.edit_error = Some(error.into());
+            self.media_error = Some(error.into());
         }
     }
 
-    /// Re-queries the project's `react_entry` for its registered components'
-    /// property schemas. Called whenever the entry changes (on load, and
-    /// after `set_react_entry`/`clear_react_entry`) — the result is cached
-    /// by entry path (`component_schema_entry`) rather than re-fetched on
-    /// every clip selection, since spawning Node is comparatively slow and
-    /// the schemas cannot change without the entry file changing (Node
-    /// isn't re-run to pick up entry edits made after this cache is filled;
-    /// re-select the entry, or reload the project, to refresh it).
+    /// Queries the project's `react_entry` for its registered components'
+    /// property schemas, which the inspector uses to label component props
+    /// and project properties. Runs once per opened project rather than on
+    /// every clip selection, since spawning Node is comparatively slow;
+    /// File > Reload picks up entry edits.
     fn refresh_component_schemas(&mut self) {
         self.component_schema_generation = self.component_schema_generation.wrapping_add(1);
         let generation = self.component_schema_generation;
         let Some(entry) = self.document.react_entry_absolute_path() else {
-            self.component_schema_entry = None;
             self.component_schema_pending = false;
             self.component_schema_error = None;
             self.component_schemas.clear();
             self.project_property_schema = None;
             return;
         };
-        self.component_schema_entry = self.document.react_entry().map(str::to_owned);
         self.component_schema_pending = true;
         self.component_schema_error = None;
         let (node, cli_script) = react_runtime_paths();
@@ -1743,7 +1845,7 @@ impl EditorView {
                 Err(mpsc::TryRecvError::Disconnected) => {
                     if self.media_pending {
                         self.media_pending = false;
-                        self.edit_error = Some("media probe worker stopped unexpectedly".into());
+                        self.media_error = Some("media probe worker stopped unexpectedly".into());
                     }
                     break;
                 }
@@ -1799,7 +1901,6 @@ impl EditorView {
                         Ok(graph) => {
                             if let Err(error) = self.audio_mix_worker.request(AudioMixRequest {
                                 generation: self.audio_generation,
-                                cache_epoch: self.audio_cache_epoch,
                                 graph,
                                 asset_root: self.document.asset_root().to_owned(),
                                 duration: self.document.duration(),
@@ -1838,7 +1939,8 @@ impl EditorView {
                     match result.output.and_then(|output| {
                         self.clip_waveforms = output.clip_waveforms;
                         self.clip_levels = output.clip_levels;
-                        AudioPreview::from_buffer(output.buffer).map_err(|error| error.to_string())
+                        AudioPreview::from_buffer(output.buffer, self.monitor_volume)
+                            .map_err(|error| error.to_string())
                     }) {
                         Ok(mut preview) => {
                             if let Err(error) = preview.seek(self.current_time(), self.playing) {
@@ -2120,175 +2222,6 @@ impl EditorView {
         }
     }
 
-    fn begin_clip_drag(
-        &mut self,
-        clip_id: &str,
-        kind: ClipDragKind,
-        event: &MouseDownEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(source_track) = self
-            .tracks
-            .iter()
-            .find(|track| track.clips.iter().any(|clip| clip.id == clip_id))
-        else {
-            return;
-        };
-        if source_track.locked {
-            self.edit_error = Some(format!("track `{}` is locked", source_track.id).into());
-            cx.notify();
-            return;
-        }
-        let source_track_id = source_track.id.clone();
-        let Some((start, duration)) = self
-            .tracks
-            .iter()
-            .flat_map(|track| &track.clips)
-            .find(|clip| clip.id == clip_id)
-            .and_then(|clip| {
-                Some((
-                    self.clock.frame_for_time(clip.start).ok()?,
-                    self.clock.frame_for_time(clip.duration).ok()?.max(1),
-                ))
-            })
-        else {
-            return;
-        };
-        let pointer_frame = self.frame_for_timeline_position(event.position, window);
-        self.pause();
-        self.scrubbing = false;
-        self.document.begin_history_group();
-        self.selected_clip_id = Some(clip_id.to_owned());
-        self.clip_drag_target_track_id =
-            matches!(kind, ClipDragKind::Move).then_some(source_track_id.clone());
-        self.clip_drag_hover_track_id =
-            matches!(kind, ClipDragKind::Move).then_some(source_track_id);
-        self.clip_drag = Some(ClipDrag {
-            clip_id: clip_id.to_owned(),
-            kind,
-            pointer_frame,
-            start_frame: start,
-            duration_frames: duration,
-        });
-        cx.notify();
-    }
-
-    fn update_clip_drag_target(
-        &mut self,
-        track_id: &str,
-        event: &MouseMoveEvent,
-        cx: &mut Context<Self>,
-    ) {
-        if !event.dragging()
-            || !self
-                .clip_drag
-                .as_ref()
-                .is_some_and(|drag| matches!(drag.kind, ClipDragKind::Move))
-        {
-            return;
-        }
-        let clip_kind = self.clip_drag.as_ref().and_then(|drag| {
-            self.tracks
-                .iter()
-                .flat_map(|track| &track.clips)
-                .find(|clip| clip.id == drag.clip_id)
-                .map(|clip| clip.kind)
-        });
-        let target = self.tracks.iter().find(|track| track.id == track_id);
-        let next = target
-            .filter(|track| {
-                !track.locked && clip_kind.is_some_and(|kind| track_accepts_clip(track.kind, kind))
-            })
-            .map(|track| track.id.clone());
-        if self.clip_drag_target_track_id != next
-            || self.clip_drag_hover_track_id.as_deref() != Some(track_id)
-        {
-            self.clip_drag_target_track_id = next;
-            self.clip_drag_hover_track_id = Some(track_id.to_owned());
-            cx.notify();
-        }
-    }
-
-    fn continue_clip_drag(
-        &mut self,
-        event: &MouseMoveEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if !event.dragging() {
-            return;
-        }
-        let Some(drag) = self.clip_drag.as_ref() else {
-            return;
-        };
-        let pointer_frame = self.frame_for_timeline_position(event.position, window);
-        let (start, duration) = dragged_clip_range(drag, pointer_frame, self.clock.end_frame());
-        let clip_id = drag.clip_id.clone();
-        let unchanged = self
-            .tracks
-            .iter()
-            .flat_map(|track| &track.clips)
-            .find(|clip| clip.id == clip_id)
-            .and_then(|clip| {
-                Some((
-                    self.clock.frame_for_time(clip.start).ok()?,
-                    self.clock.frame_for_time(clip.duration).ok()?,
-                ))
-            })
-            == Some((start, duration));
-        if unchanged {
-            return;
-        }
-        if let Err(error) = self.document.edit_clip_frames(&clip_id, start, duration) {
-            self.preview_error = Some(error.to_string().into());
-            cx.notify();
-            return;
-        }
-        self.tracks = self.document.tracks();
-        self.refresh_preview();
-        cx.notify();
-    }
-
-    fn end_clip_drag(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        let drag = self.clip_drag.take();
-        self.clip_drag_hover_track_id = None;
-        let target = self.clip_drag_target_track_id.take();
-        if let Some(drag) = drag {
-            if matches!(drag.kind, ClipDragKind::Move)
-                && let Some(target) = target
-                && let Err(error) = self.document.move_clip_to_track(&drag.clip_id, &target)
-            {
-                self.edit_error = Some(error.to_string().into());
-            }
-            if self.document.commit_history_group() {
-                self.tracks = self.document.tracks();
-                self.refresh_preview();
-                self.refresh_audio_preview();
-            }
-            cx.notify();
-        }
-    }
-
-    fn sync_document_state(&mut self) {
-        let frame = self.clock.frame();
-        let assets = self.document.assets();
-        let assets_changed = assets != self.assets;
-        self.assets = assets;
-        self.tracks = self.document.tracks();
-        self.duration = format_time(self.document.duration()).into();
-        if let Ok(mut clock) = TimelineClock::new(self.document.duration(), self.frame_rate_value) {
-            clock.seek(frame);
-            self.clock = clock;
-        }
-        self.refresh_preview();
-        if assets_changed {
-            self.audio_cache_epoch = self.audio_cache_epoch.wrapping_add(1);
-            self.refresh_media_cache();
-        }
-        self.refresh_audio_preview();
-    }
-
     fn refresh_audio_preview(&mut self) {
         self.audio_generation = self.audio_generation.wrapping_add(1);
         let generation = self.audio_generation;
@@ -2330,7 +2263,6 @@ impl EditorView {
                 self.audio_error = None;
                 if let Err(error) = self.audio_mix_worker.request(AudioMixRequest {
                     generation,
-                    cache_epoch: self.audio_cache_epoch,
                     graph,
                     asset_root: self.document.asset_root().to_owned(),
                     duration: self.document.duration(),
@@ -2369,724 +2301,16 @@ impl EditorView {
         cx.notify();
     }
 
-    fn add_track(&mut self, kind: TrackKind, cx: &mut Context<Self>) {
-        let track_id = self.document.add_track(kind);
-        self.selected_track_id = Some(track_id);
-        self.edit_error = None;
-        self.tracks = self.document.tracks();
-        cx.notify();
-    }
-
-    fn move_track(&mut self, track_id: &str, offset: isize, cx: &mut Context<Self>) {
-        match self.document.move_track(track_id, offset) {
-            Ok(true) => {
-                self.tracks = self.document.tracks();
-                self.refresh_preview();
-                self.refresh_audio_preview();
-                self.edit_error = None;
-            }
-            Ok(false) => {}
-            Err(error) => self.edit_error = Some(error.to_string().into()),
-        }
-        cx.notify();
-    }
-
-    fn begin_track_rename(&mut self, track_id: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(track) = self.tracks.iter().find(|track| track.id == track_id) else {
-            return;
-        };
-        if track.locked {
-            self.edit_error = Some(format!("track `{track_id}` is locked").into());
-            cx.notify();
-            return;
-        }
-        self.renaming_track_id = Some(track_id.to_owned());
-        self.edit_error = None;
-        if let Some(input) = &self.track_name_input {
-            let name = track.name.clone();
-            input.update(cx, |input, cx| {
-                input.set_value(name, window, cx);
-                input.focus(window, cx);
-            });
-        }
-        cx.notify();
-    }
-
-    fn commit_track_rename(&mut self, cx: &mut Context<Self>) {
-        let Some(track_id) = self.renaming_track_id.clone() else {
-            return;
-        };
-        let Some(name) = self
-            .track_name_input
-            .as_ref()
-            .map(|input| input.read(cx).value())
-        else {
-            return;
-        };
-        match self.document.rename_track(&track_id, &name) {
-            Ok(()) => {
-                self.renaming_track_id = None;
-                self.tracks = self.document.tracks();
-                self.edit_error = None;
-            }
-            Err(error) => self.edit_error = Some(error.to_string().into()),
-        }
-        cx.notify();
-    }
-
-    fn cancel_track_rename(&mut self, cx: &mut Context<Self>) {
-        self.renaming_track_id = None;
-        self.edit_error = None;
-        cx.notify();
-    }
-
-    fn begin_character_rename(
-        &mut self,
-        character_id: &str,
-        name: &str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.renaming_character_id = Some(character_id.to_owned());
-        self.edit_error = None;
-        if let Some(input) = &self.character_name_input {
-            let name = name.to_owned();
-            input.update(cx, |input, cx| {
-                input.set_value(name, window, cx);
-                input.focus(window, cx);
-            });
-        }
-        cx.notify();
-    }
-
-    fn commit_character_rename(&mut self, cx: &mut Context<Self>) {
-        let Some(character_id) = self.renaming_character_id.clone() else {
-            return;
-        };
-        let Some(name) = self
-            .character_name_input
-            .as_ref()
-            .map(|input| input.read(cx).value())
-        else {
-            return;
-        };
-        match self.document.rename_character(&character_id, &name) {
-            Ok(()) => {
-                self.renaming_character_id = None;
-                self.refresh_preview();
-                self.edit_error = None;
-            }
-            Err(error) => self.edit_error = Some(error.to_string().into()),
-        }
-        cx.notify();
-    }
-
-    fn cancel_character_rename(&mut self, cx: &mut Context<Self>) {
-        self.renaming_character_id = None;
-        self.edit_error = None;
-        cx.notify();
-    }
-
-    fn delete_character_now(
-        &mut self,
-        character_id: &str,
-        remove_dialogue_items: bool,
-        cx: &mut Context<Self>,
-    ) {
-        self.pause();
-        match self
-            .document
-            .delete_character(character_id, remove_dialogue_items)
-        {
-            Ok(()) => {
-                if self.renaming_character_id.as_deref() == Some(character_id) {
-                    self.renaming_character_id = None;
-                }
-                self.sync_document_state();
-                if self.selected_clip_id.as_ref().is_some_and(|selected| {
-                    !self
-                        .tracks
-                        .iter()
-                        .flat_map(|track| &track.clips)
-                        .any(|clip| &clip.id == selected)
-                }) {
-                    self.selected_clip_id = None;
-                }
-                self.edit_error = None;
-            }
-            Err(error) => self.edit_error = Some(error.to_string().into()),
-        }
-        cx.notify();
-    }
-
-    fn request_delete_character(
-        &mut self,
-        character_id: &str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let references = match self.document.character_references(character_id) {
-            Ok(references) => references,
-            Err(error) => {
-                self.edit_error = Some(error.to_string().into());
-                cx.notify();
-                return;
-            }
-        };
-        if references.is_empty() {
-            self.delete_character_now(character_id, false, cx);
-            return;
-        }
-
-        let character_id = character_id.to_owned();
-        let ok_character_id = character_id.clone();
-        let reference_count = references.len();
-        let weak = cx.weak_entity();
-        window.open_alert_dialog(cx, move |alert, _, _| {
-            let weak = weak.clone();
-            let ok_character_id = ok_character_id.clone();
-            alert
-                .title(format!("Delete character “{character_id}”?"))
-                .description(format!(
-                    "It is used by {reference_count} dialogue clip(s), which are deleted too."
-                ))
-                .button_props(
-                    DialogButtonProps::default()
-                        .ok_text("Delete Character and Dialogue")
-                        .ok_variant(ButtonVariant::Danger),
-                )
-                .on_ok(move |_, _, cx| {
-                    weak.update(cx, |this, cx| {
-                        this.delete_character_now(&ok_character_id, true, cx)
-                    })
-                    .ok();
-                    true
-                })
-        });
-        cx.notify();
-    }
-
-    fn begin_dialogue_text_edit(
-        &mut self,
-        clip_id: &str,
-        text: &str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.editing_dialogue_clip_id = Some(clip_id.to_owned());
-        self.edit_error = None;
-        if let Some(input) = &self.dialogue_text_input {
-            let text = text.to_owned();
-            input.update(cx, |input, cx| {
-                input.set_value(text, window, cx);
-                input.focus(window, cx);
-            });
-        }
-        cx.notify();
-    }
-
-    fn commit_dialogue_text_edit(&mut self, cx: &mut Context<Self>) {
-        let Some(clip_id) = self.editing_dialogue_clip_id.clone() else {
-            return;
-        };
-        let Some(text) = self
-            .dialogue_text_input
-            .as_ref()
-            .map(|input| input.read(cx).value())
-        else {
-            return;
-        };
-        match self.document.set_dialogue_text(&clip_id, &text) {
-            Ok(()) => {
-                self.editing_dialogue_clip_id = None;
-                self.tracks = self.document.tracks();
-                self.refresh_preview();
-                self.edit_error = None;
-            }
-            Err(error) => self.edit_error = Some(error.to_string().into()),
-        }
-        cx.notify();
-    }
-
-    fn cancel_dialogue_text_edit(&mut self, cx: &mut Context<Self>) {
-        self.editing_dialogue_clip_id = None;
-        self.edit_error = None;
-        cx.notify();
-    }
-
-    fn set_dialogue_character(
-        &mut self,
-        clip_id: &str,
-        character_id: &str,
-        cx: &mut Context<Self>,
-    ) {
-        match self.document.set_dialogue_character(clip_id, character_id) {
-            Ok(()) => {
-                self.tracks = self.document.tracks();
-                self.refresh_preview();
-                self.edit_error = None;
-            }
-            Err(error) => self.edit_error = Some(error.to_string().into()),
-        }
-        cx.notify();
-    }
-
-    fn set_dialogue_expression(
-        &mut self,
-        clip_id: &str,
-        expression_id: Option<&str>,
-        cx: &mut Context<Self>,
-    ) {
-        match self
-            .document
-            .set_dialogue_expression(clip_id, expression_id)
-        {
-            Ok(()) => {
-                self.tracks = self.document.tracks();
-                self.refresh_preview();
-                self.edit_error = None;
-            }
-            Err(error) => self.edit_error = Some(error.to_string().into()),
-        }
-        cx.notify();
-    }
-
-    fn add_selected_image_to_character(&mut self, character_id: &str, cx: &mut Context<Self>) {
-        let Some(asset_id) = self.selected_asset_id.clone() else {
-            return;
-        };
-        match self
-            .document
-            .add_character_expression(character_id, &asset_id)
-        {
-            Ok(_) => {
-                self.refresh_preview();
-                self.edit_error = None;
-            }
-            Err(error) => self.edit_error = Some(error.to_string().into()),
-        }
-        cx.notify();
-    }
-
-    fn set_selected_image_as_mouth(
-        &mut self,
-        character_id: &str,
-        shape: MouthShape,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(asset_id) = self.selected_asset_id.clone() else {
-            return;
-        };
-        match self
-            .document
-            .set_character_lip_sync_asset(character_id, shape, &asset_id)
-        {
-            Ok(()) => {
-                self.refresh_preview();
-                self.edit_error = None;
-            }
-            Err(error) => self.edit_error = Some(error.to_string().into()),
-        }
-        cx.notify();
-    }
-
-    fn clear_character_lip_sync(&mut self, character_id: &str, cx: &mut Context<Self>) {
-        match self.document.clear_character_lip_sync(character_id) {
-            Ok(()) => {
-                self.refresh_preview();
-                self.edit_error = None;
-            }
-            Err(error) => self.edit_error = Some(error.to_string().into()),
-        }
-        cx.notify();
-    }
-
-    fn clear_character_closed_mouth(&mut self, character_id: &str, cx: &mut Context<Self>) {
-        match self.document.clear_character_closed_mouth(character_id) {
-            Ok(()) => {
-                self.refresh_preview();
-                self.edit_error = None;
-            }
-            Err(error) => self.edit_error = Some(error.to_string().into()),
-        }
-        cx.notify();
-    }
-
-    fn generate_dialogue_lip_sync(&mut self, clip_id: &str, cx: &mut Context<Self>) {
-        let Some(waveform) = self.clip_waveforms.get(clip_id).cloned() else {
-            self.edit_error = Some("Voice waveform is still loading; try again shortly.".into());
-            cx.notify();
-            return;
-        };
-        match self.document.generate_dialogue_lip_sync(clip_id, &waveform) {
-            Ok(_) => {
-                self.tracks = self.document.tracks();
-                self.refresh_preview();
-                self.edit_error = None;
-            }
-            Err(error) => self.edit_error = Some(error.to_string().into()),
-        }
-        cx.notify();
-    }
-
-    fn clear_dialogue_lip_sync(&mut self, clip_id: &str, cx: &mut Context<Self>) {
-        match self.document.clear_dialogue_lip_sync(clip_id) {
-            Ok(()) => {
-                self.tracks = self.document.tracks();
-                self.refresh_preview();
-                self.edit_error = None;
-            }
-            Err(error) => self.edit_error = Some(error.to_string().into()),
-        }
-        cx.notify();
-    }
-
-    fn apply_property(
-        &mut self,
-        target: &PropertyEditTarget,
-        key: &str,
-        value: serde_json::Value,
-        cx: &mut Context<Self>,
-    ) {
-        let result = match target {
-            PropertyEditTarget::Project => {
-                self.document.set_project_property(key, value);
-                Ok(())
-            }
-            PropertyEditTarget::Clip { clip_id } => {
-                self.document.set_component_prop(clip_id, key, value)
-            }
-        };
-        match result {
-            Ok(()) => {
-                if matches!(target, PropertyEditTarget::Clip { .. }) {
-                    self.tracks = self.document.tracks();
-                }
-                self.edit_error = None;
-            }
-            Err(error) => self.edit_error = Some(error.to_string().into()),
-        }
-        cx.notify();
-    }
-
-    fn step_property_number(
-        &mut self,
-        target: &PropertyEditTarget,
-        key: &str,
-        current: f64,
-        delta: f64,
-        bounds: (Option<f64>, Option<f64>),
-        cx: &mut Context<Self>,
-    ) {
-        let (min, max) = bounds;
-        let mut next = current + delta;
-        if let Some(min) = min {
-            next = next.max(min);
-        }
-        if let Some(max) = max {
-            next = next.min(max);
-        }
-        let Some(value) = serde_json::Number::from_f64(next).map(serde_json::Value::Number) else {
-            return;
-        };
-        self.apply_property(target, key, value, cx);
-    }
-
-    fn begin_property_edit(
-        &mut self,
-        target: &PropertyEditTarget,
-        key: &str,
-        current: &str,
-        numeric: bool,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.editing_property = Some(PropertyEdit {
-            target: target.clone(),
-            key: key.to_owned(),
-            numeric,
-        });
-        self.edit_error = None;
-        if let Some(input) = &self.property_input {
-            let current = current.to_owned();
-            input.update(cx, |input, cx| {
-                input.set_value(current, window, cx);
-                input.focus(window, cx);
-            });
-        }
-        cx.notify();
-    }
-
-    fn commit_property_edit(&mut self, cx: &mut Context<Self>) {
-        let Some(edit) = self.editing_property.clone() else {
-            return;
-        };
-        let Some(text) = self
-            .property_input
-            .as_ref()
-            .map(|input| input.read(cx).value())
-        else {
-            return;
-        };
-        self.editing_property = None;
-        let value = if edit.numeric {
-            match text.trim().parse::<f64>() {
-                Ok(number) => match serde_json::Number::from_f64(number) {
-                    Some(number) => serde_json::Value::Number(number),
-                    None => {
-                        self.edit_error = Some("number is out of range".into());
-                        cx.notify();
-                        return;
-                    }
-                },
-                Err(_) => {
-                    self.edit_error = Some(format!("`{text}` is not a number").into());
-                    cx.notify();
-                    return;
-                }
-            }
-        } else {
-            serde_json::Value::String(text.to_string())
-        };
-        self.apply_property(&edit.target, &edit.key, value, cx);
-    }
-
-    fn cancel_property_edit(&mut self, cx: &mut Context<Self>) {
-        self.editing_property = None;
-        self.edit_error = None;
-        cx.notify();
-    }
-
-    fn toggle_track_enabled(&mut self, track_id: &str, cx: &mut Context<Self>) {
-        match self.document.toggle_track_enabled(track_id) {
-            Ok(_) => {
-                self.tracks = self.document.tracks();
-                self.refresh_preview();
-                self.refresh_audio_preview();
-                self.edit_error = None;
-            }
-            Err(error) => self.edit_error = Some(error.to_string().into()),
-        }
-        cx.notify();
-    }
-
-    fn toggle_track_locked(&mut self, track_id: &str, cx: &mut Context<Self>) {
-        match self.document.toggle_track_locked(track_id) {
-            Ok(_) => {
-                self.renaming_track_id = None;
-                self.tracks = self.document.tracks();
-                self.edit_error = None;
-            }
-            Err(error) => self.edit_error = Some(error.to_string().into()),
-        }
-        cx.notify();
-    }
-
-    fn delete_track_now(&mut self, track_id: &str, cx: &mut Context<Self>) {
-        self.pause();
-        match self.document.delete_track(track_id, true) {
-            Ok(()) => {
-                if self.selected_track_id.as_deref() == Some(track_id) {
-                    self.selected_track_id = None;
-                }
-                self.renaming_track_id = None;
-                self.sync_document_state();
-                if self.selected_clip_id.as_ref().is_some_and(|selected| {
-                    !self
-                        .tracks
-                        .iter()
-                        .flat_map(|track| &track.clips)
-                        .any(|clip| &clip.id == selected)
-                }) {
-                    self.selected_clip_id = None;
-                }
-                self.edit_error = None;
-            }
-            Err(error) => self.edit_error = Some(error.to_string().into()),
-        }
-        cx.notify();
-    }
-
-    fn request_delete_track(
-        &mut self,
-        track_id: &str,
-        item_count: usize,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if item_count == 0 {
-            self.delete_track_now(track_id, cx);
-            return;
-        }
-        let track_id = track_id.to_owned();
-        let ok_track_id = track_id.clone();
-        let weak = cx.weak_entity();
-        window.open_alert_dialog(cx, move |alert, _, _| {
-            let weak = weak.clone();
-            let ok_track_id = ok_track_id.clone();
-            alert
-                .title(format!("Delete track “{track_id}”?"))
-                .description(format!(
-                    "It has {item_count} clip(s); deleting the track deletes them too."
-                ))
-                .button_props(
-                    DialogButtonProps::default()
-                        .ok_text("Delete Track")
-                        .ok_variant(ButtonVariant::Danger),
-                )
-                .on_ok(move |_, _, cx| {
-                    weak.update(cx, |this, cx| this.delete_track_now(&ok_track_id, cx))
-                        .ok();
-                    true
-                })
-        });
-    }
-
-    fn selected_audio_clip(&self) -> Option<celesta_editor_core::ClipSummary> {
-        let selected = self.selected_clip_id.as_deref()?;
-        self.tracks
-            .iter()
-            .flat_map(|track| &track.clips)
-            .find(|clip| clip.id == selected && clip.volume.is_some())
-            .cloned()
-    }
-
-    fn apply_selected_clip_volume(
-        &mut self,
-        volume: f64,
-        force_keyframe: bool,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(clip) = self.selected_audio_clip() else {
-            return;
-        };
-        let local_time = clip_local_time(self.current_time(), &clip);
-        let animated = matches!(clip.volume, Some(Animatable::Keyframes(_)));
-        let result = if force_keyframe || animated {
-            self.document
-                .set_clip_volume_keyframe(&clip.id, local_time, volume.clamp(0.0, 2.0))
-        } else {
-            self.document
-                .set_clip_volume_static(&clip.id, volume.clamp(0.0, 2.0))
-        };
-        match result {
-            Ok(()) => {
-                self.tracks = self.document.tracks();
-                self.refresh_audio_preview();
-                self.edit_error = None;
-            }
-            Err(error) => self.edit_error = Some(error.to_string().into()),
-        }
-        cx.notify();
-    }
-
-    fn adjust_selected_clip_volume(&mut self, delta_percent: i32, cx: &mut Context<Self>) {
-        let Some(clip) = self.selected_audio_clip() else {
-            return;
-        };
-        let local_time = clip_local_time(self.current_time(), &clip);
-        let current = clip
-            .volume
-            .as_ref()
-            .and_then(|volume| evaluate_f64(volume, local_time).ok())
-            .unwrap_or(1.0);
-        let percent = (current * 100.0).round() as i32;
-        let next = percent.saturating_add(delta_percent).clamp(0, 200);
-        self.apply_selected_clip_volume(f64::from(next) / 100.0, false, cx);
-    }
-
-    fn decrease_selected_clip_volume(
-        &mut self,
-        _: &ClickEvent,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.adjust_selected_clip_volume(-5, cx);
-    }
-
-    fn increase_selected_clip_volume(
-        &mut self,
-        _: &ClickEvent,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.adjust_selected_clip_volume(5, cx);
-    }
-
-    fn set_selected_clip_volume_keyframe(
-        &mut self,
-        _: &ClickEvent,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(clip) = self.selected_audio_clip() else {
-            return;
-        };
-        let local_time = clip_local_time(self.current_time(), &clip);
-        let volume = clip
-            .volume
-            .as_ref()
-            .and_then(|volume| evaluate_f64(volume, local_time).ok())
-            .unwrap_or(1.0);
-        self.apply_selected_clip_volume(volume, true, cx);
-    }
-
-    fn remove_selected_clip_volume_keyframe(
-        &mut self,
-        _: &ClickEvent,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(clip) = self.selected_audio_clip() else {
-            return;
-        };
-        let local_time = clip_local_time(self.current_time(), &clip);
-        match self
-            .document
-            .remove_clip_volume_keyframe(&clip.id, local_time)
-        {
-            Ok(true) => {
-                self.tracks = self.document.tracks();
-                self.refresh_audio_preview();
-                self.edit_error = None;
-            }
-            Ok(false) => {}
-            Err(error) => self.edit_error = Some(error.to_string().into()),
-        }
-        cx.notify();
-    }
-
-    fn flatten_selected_clip_volume(
-        &mut self,
-        _: &ClickEvent,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(clip) = self.selected_audio_clip() else {
-            return;
-        };
-        let local_time = clip_local_time(self.current_time(), &clip);
-        match self.document.flatten_clip_volume(&clip.id, local_time) {
-            Ok(()) => {
-                self.tracks = self.document.tracks();
-                self.refresh_audio_preview();
-                self.edit_error = None;
-            }
-            Err(error) => self.edit_error = Some(error.to_string().into()),
-        }
-        cx.notify();
-    }
-
     fn adjust_master_volume(&mut self, delta_percent: i32, cx: &mut Context<Self>) {
-        let current_percent = (self.document.master_volume() * 100.0).round() as i32;
+        let current_percent = (self.monitor_volume * 100.0).round() as i32;
         let next_percent = current_percent.saturating_add(delta_percent).clamp(0, 200);
         self.set_master_volume(f64::from(next_percent) / 100.0, cx);
     }
 
     fn set_master_volume(&mut self, volume: f64, cx: &mut Context<Self>) {
-        match self.document.set_master_volume(volume.clamp(0.0, 2.0)) {
-            Ok(()) => self.refresh_audio_preview(),
-            Err(error) => self.audio_error = Some(error.to_string().into()),
+        self.monitor_volume = volume.clamp(0.0, 2.0);
+        if let Some(audio) = &mut self.audio_preview {
+            audio.set_volume(self.monitor_volume);
         }
         cx.notify();
     }
@@ -3100,10 +2324,9 @@ impl EditorView {
         if let Some(focus) = &self.master_volume_focus {
             focus.focus(window, cx);
         }
-        self.document.begin_history_group();
         self.master_volume_drag = Some(MasterVolumeDrag {
             pointer_x: event.position.x,
-            start_volume: self.document.master_volume(),
+            start_volume: self.monitor_volume,
         });
         cx.notify();
     }
@@ -3124,14 +2347,13 @@ impl EditorView {
             drag.start_volume,
             f64::from(event.position.x - drag.pointer_x),
         );
-        if (volume - self.document.master_volume()).abs() >= f64::EPSILON {
+        if (volume - self.monitor_volume).abs() >= f64::EPSILON {
             self.set_master_volume(volume, cx);
         }
     }
 
     fn end_master_volume_drag(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
         if self.master_volume_drag.take().is_some() {
-            self.document.commit_history_group();
             cx.notify();
         }
     }
@@ -3155,553 +2377,6 @@ impl EditorView {
             _ => return,
         }
         cx.stop_propagation();
-    }
-
-    fn request_import_assets(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.importing_assets || self.is_react_preview() {
-            return;
-        }
-        self.importing_assets = true;
-        self.edit_error = None;
-        let selection = cx.prompt_for_paths(PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: true,
-            prompt: Some("Import".into()),
-        });
-        cx.spawn_in(window, async move |view, cx| {
-            let selected_paths = match selection.await {
-                Ok(Ok(paths)) => paths,
-                Ok(Err(error)) => {
-                    view.update_in(cx, |this, _, cx| {
-                        this.importing_assets = false;
-                        this.edit_error =
-                            Some(format!("could not open asset picker: {error}").into());
-                        cx.notify();
-                    })
-                    .ok();
-                    return;
-                }
-                Err(error) => {
-                    view.update_in(cx, |this, _, cx| {
-                        this.importing_assets = false;
-                        this.edit_error =
-                            Some(format!("asset picker was interrupted: {error}").into());
-                        cx.notify();
-                    })
-                    .ok();
-                    return;
-                }
-            };
-            view.update_in(cx, |this, _, cx| {
-                this.importing_assets = false;
-                let Some(paths) = selected_paths else {
-                    cx.notify();
-                    return;
-                };
-                match this.document.import_assets(paths) {
-                    Ok(imported) => {
-                        this.selected_asset_id = imported.last().map(|asset| asset.id.clone());
-                        this.assets = this.document.assets();
-                        this.audio_cache_epoch = this.audio_cache_epoch.wrapping_add(1);
-                        this.refresh_media_cache();
-                        this.edit_error = None;
-                    }
-                    Err(error) => this.edit_error = Some(error.to_string().into()),
-                }
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-        cx.notify();
-    }
-
-    fn import_assets_action(
-        &mut self,
-        _: &ImportAssets,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.request_import_assets(window, cx);
-    }
-
-    fn import_assets_click(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
-        self.request_import_assets(window, cx);
-    }
-
-    fn request_relink_asset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(asset_id) = self.selected_asset_id.clone() else {
-            return;
-        };
-        if self.asset_operation_active {
-            return;
-        }
-        self.asset_operation_active = true;
-        self.edit_error = None;
-        let selection = cx.prompt_for_paths(PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: false,
-            prompt: Some("Relink".into()),
-        });
-        cx.spawn_in(window, async move |view, cx| {
-            let selected_paths = match selection.await {
-                Ok(Ok(paths)) => paths,
-                Ok(Err(error)) => {
-                    view.update_in(cx, |this, _, cx| {
-                        this.asset_operation_active = false;
-                        this.edit_error =
-                            Some(format!("could not open relink picker: {error}").into());
-                        cx.notify();
-                    })
-                    .ok();
-                    return;
-                }
-                Err(error) => {
-                    view.update_in(cx, |this, _, cx| {
-                        this.asset_operation_active = false;
-                        this.edit_error =
-                            Some(format!("relink picker was interrupted: {error}").into());
-                        cx.notify();
-                    })
-                    .ok();
-                    return;
-                }
-            };
-            view.update_in(cx, |this, _, cx| {
-                this.asset_operation_active = false;
-                let Some(path) = selected_paths.and_then(|paths| paths.into_iter().next()) else {
-                    cx.notify();
-                    return;
-                };
-                match this.document.relink_asset(&asset_id, path) {
-                    Ok(()) => {
-                        this.edit_error = None;
-                        this.sync_document_state();
-                    }
-                    Err(error) => this.edit_error = Some(error.to_string().into()),
-                }
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-        cx.notify();
-    }
-
-    fn relink_asset_click(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
-        self.request_relink_asset(window, cx);
-    }
-
-    fn request_set_react_entry(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.asset_operation_active {
-            return;
-        }
-        self.asset_operation_active = true;
-        self.edit_error = None;
-        let selection = cx.prompt_for_paths(PathPromptOptions {
-            files: true,
-            directories: false,
-            multiple: false,
-            prompt: Some("Set React Entry".into()),
-        });
-        cx.spawn_in(window, async move |view, cx| {
-            let selected_paths = match selection.await {
-                Ok(Ok(paths)) => paths,
-                Ok(Err(error)) => {
-                    view.update_in(cx, |this, _, cx| {
-                        this.asset_operation_active = false;
-                        this.edit_error =
-                            Some(format!("could not open React entry picker: {error}").into());
-                        cx.notify();
-                    })
-                    .ok();
-                    return;
-                }
-                Err(error) => {
-                    view.update_in(cx, |this, _, cx| {
-                        this.asset_operation_active = false;
-                        this.edit_error =
-                            Some(format!("React entry picker was interrupted: {error}").into());
-                        cx.notify();
-                    })
-                    .ok();
-                    return;
-                }
-            };
-            view.update_in(cx, |this, _, cx| {
-                this.asset_operation_active = false;
-                let Some(path) = selected_paths.and_then(|paths| paths.into_iter().next()) else {
-                    cx.notify();
-                    return;
-                };
-                match this.document.set_react_entry(path) {
-                    Ok(()) => {
-                        this.edit_error = None;
-                        this.refresh_component_schemas();
-                    }
-                    Err(error) => this.edit_error = Some(error.to_string().into()),
-                }
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-        cx.notify();
-    }
-
-    fn set_react_entry_click(
-        &mut self,
-        _: &ClickEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.request_set_react_entry(window, cx);
-    }
-
-    fn clear_react_entry_click(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.document.clear_react_entry();
-        self.refresh_component_schemas();
-        cx.notify();
-    }
-
-    fn remove_selected_asset_now(
-        &mut self,
-        asset_id: &str,
-        remove_references: bool,
-        cx: &mut Context<Self>,
-    ) {
-        match self.document.remove_asset(asset_id, remove_references) {
-            Ok(()) => {
-                self.selected_asset_id = None;
-                self.selected_clip_id = None;
-                self.edit_error = None;
-                self.sync_document_state();
-            }
-            Err(error) => self.edit_error = Some(error.to_string().into()),
-        }
-        cx.notify();
-    }
-
-    fn request_remove_asset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(asset_id) = self.selected_asset_id.clone() else {
-            return;
-        };
-        let references = match self.document.asset_references(&asset_id) {
-            Ok(references) => references,
-            Err(error) => {
-                self.edit_error = Some(error.to_string().into());
-                cx.notify();
-                return;
-            }
-        };
-        if references.is_empty() {
-            self.remove_selected_asset_now(&asset_id, false, cx);
-            return;
-        }
-        let reference_count = references.len();
-        let ok_asset_id = asset_id.clone();
-        let weak = cx.weak_entity();
-        window.open_alert_dialog(cx, move |alert, _, _| {
-            let weak = weak.clone();
-            let ok_asset_id = ok_asset_id.clone();
-            alert
-                .title(format!("Remove asset “{asset_id}”?"))
-                .description(format!(
-                    "It has {reference_count} reference(s), which are updated or removed too. The file on disk is kept."
-                ))
-                .button_props(
-                    DialogButtonProps::default()
-                        .ok_text("Remove Asset and References")
-                        .ok_variant(ButtonVariant::Danger),
-                )
-                .on_ok(move |_, _, cx| {
-                    weak.update(cx, |this, cx| {
-                        this.remove_selected_asset_now(&ok_asset_id, true, cx)
-                    })
-                    .ok();
-                    true
-                })
-        });
-        cx.notify();
-    }
-
-    fn remove_asset_click(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut Context<Self>) {
-        self.request_remove_asset(window, cx);
-    }
-
-    fn insert_asset_at(
-        &mut self,
-        asset_id: &str,
-        target_track_id: Option<&str>,
-        requested_start: i64,
-        cx: &mut Context<Self>,
-    ) {
-        let frame_rate = self.document.project().settings.frame_rate;
-        let mut start = requested_start;
-        let mut duration = initial_clip_duration_frames(self.media_cache.get(asset_id), frame_rate);
-        if self.document.project().settings.duration.is_some() {
-            if self.clock.end_frame() == 0 {
-                self.edit_error = Some("the fixed project timeline has no available frames".into());
-                cx.notify();
-                return;
-            }
-            start = start.min(self.clock.end_frame() - 1);
-            duration = duration.min(self.clock.end_frame() - start);
-        }
-        match self
-            .document
-            .insert_asset_clip_on_track(asset_id, target_track_id, start, duration)
-        {
-            Ok(clip_id) => {
-                self.selected_clip_id = Some(clip_id);
-                self.edit_error = None;
-                self.sync_document_state();
-            }
-            Err(error) => self.edit_error = Some(error.to_string().into()),
-        }
-        cx.notify();
-    }
-
-    fn insert_selected_asset(&mut self, cx: &mut Context<Self>) {
-        let Some(asset_id) = self.selected_asset_id.clone() else {
-            self.edit_error = Some("select an asset before adding it to the timeline".into());
-            cx.notify();
-            return;
-        };
-        let target_track_id = self.selected_track_id.clone();
-        self.insert_asset_at(
-            &asset_id,
-            target_track_id.as_deref(),
-            self.clock.frame(),
-            cx,
-        );
-    }
-
-    fn insert_selected_asset_as_dialogue(&mut self, cx: &mut Context<Self>) {
-        let Some(asset_id) = self.selected_asset_id.clone() else {
-            return;
-        };
-        let Some(character) = self.document.characters().into_iter().next() else {
-            self.edit_error =
-                Some("define at least one project character before adding dialogue".into());
-            cx.notify();
-            return;
-        };
-        let frame_rate = self.document.project().settings.frame_rate;
-        let mut start = self.clock.frame();
-        let mut duration =
-            initial_clip_duration_frames(self.media_cache.get(&asset_id), frame_rate);
-        if self.document.project().settings.duration.is_some() {
-            if self.clock.end_frame() == 0 {
-                self.edit_error = Some("the fixed project timeline has no available frames".into());
-                cx.notify();
-                return;
-            }
-            start = start.min(self.clock.end_frame() - 1);
-            duration = duration.min(self.clock.end_frame() - start);
-        }
-        let target_track_id = self.selected_track_id.clone();
-        match self.document.insert_dialogue_clip(
-            &asset_id,
-            &character.id,
-            target_track_id.as_deref(),
-            start,
-            duration,
-        ) {
-            Ok(clip_id) => {
-                self.selected_clip_id = Some(clip_id);
-                self.edit_error = None;
-                self.sync_document_state();
-            }
-            Err(error) => self.edit_error = Some(error.to_string().into()),
-        }
-        cx.notify();
-    }
-
-    fn create_character_from_selected_image(&mut self, cx: &mut Context<Self>) {
-        let Some(asset_id) = self.selected_asset_id.clone() else {
-            return;
-        };
-        match self.document.create_character_from_image(&asset_id) {
-            Ok(_) => self.edit_error = None,
-            Err(error) => self.edit_error = Some(error.to_string().into()),
-        }
-        cx.notify();
-    }
-
-    fn drop_asset_on_track(
-        &mut self,
-        asset: &AssetDrag,
-        track_id: &str,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) {
-        let start = self.frame_for_timeline_position(window.mouse_position(), window);
-        self.selected_asset_id = Some(asset.id.clone());
-        self.selected_track_id = Some(track_id.to_owned());
-        self.insert_asset_at(&asset.id, Some(track_id), start, cx);
-    }
-
-    fn drop_asset_without_track(
-        &mut self,
-        asset: &AssetDrag,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) {
-        let start = self.frame_for_timeline_position(window.mouse_position(), window);
-        self.selected_asset_id = Some(asset.id.clone());
-        self.selected_track_id = None;
-        self.insert_asset_at(&asset.id, None, start, cx);
-    }
-
-    fn insert_effect_at(
-        &mut self,
-        component: &str,
-        target_track_id: Option<&str>,
-        requested_start: i64,
-        cx: &mut Context<Self>,
-    ) {
-        let frame_rate = self.document.project().settings.frame_rate;
-        let mut start = requested_start.max(0);
-        let mut duration = initial_clip_duration_frames(None, frame_rate);
-        if self.document.project().settings.duration.is_some() {
-            if self.clock.end_frame() == 0 {
-                self.edit_error = Some("the fixed project timeline has no available frames".into());
-                cx.notify();
-                return;
-            }
-            start = start.min(self.clock.end_frame() - 1);
-            duration = duration.min(self.clock.end_frame() - start);
-        }
-        match self.document.insert_component_clip_on_track(
-            component,
-            target_track_id,
-            start,
-            duration,
-        ) {
-            Ok(clip_id) => {
-                self.selected_clip_id = Some(clip_id);
-                self.edit_error = None;
-                self.sync_document_state();
-            }
-            Err(error) => self.edit_error = Some(error.to_string().into()),
-        }
-        cx.notify();
-    }
-
-    fn drop_effect_on_track(
-        &mut self,
-        effect: &EffectDrag,
-        track_id: &str,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) {
-        let start = self.frame_for_timeline_position(window.mouse_position(), window);
-        self.selected_track_id = Some(track_id.to_owned());
-        self.insert_effect_at(&effect.component, Some(track_id), start, cx);
-    }
-
-    fn drop_effect_without_track(
-        &mut self,
-        effect: &EffectDrag,
-        window: &Window,
-        cx: &mut Context<Self>,
-    ) {
-        let start = self.frame_for_timeline_position(window.mouse_position(), window);
-        self.selected_track_id = None;
-        self.insert_effect_at(&effect.component, None, start, cx);
-    }
-
-    fn insert_selected_asset_action(
-        &mut self,
-        _: &InsertSelectedAsset,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.insert_selected_asset(cx);
-    }
-
-    fn insert_selected_asset_click(
-        &mut self,
-        _: &ClickEvent,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.insert_selected_asset(cx);
-    }
-
-    fn insert_selected_dialogue_click(
-        &mut self,
-        _: &ClickEvent,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.insert_selected_asset_as_dialogue(cx);
-    }
-
-    fn create_character_click(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.create_character_from_selected_image(cx);
-    }
-
-    fn delete_selected_clip(&mut self, cx: &mut Context<Self>) {
-        let Some(clip_id) = self.selected_clip_id.clone() else {
-            return;
-        };
-        self.pause();
-        match self.document.delete_clip(&clip_id) {
-            Ok(()) => {
-                self.selected_clip_id = None;
-                self.edit_error = None;
-                self.sync_document_state();
-            }
-            Err(error) => self.edit_error = Some(error.to_string().into()),
-        }
-        cx.notify();
-    }
-
-    fn delete_selected_clip_action(
-        &mut self,
-        _: &DeleteSelectedClip,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.delete_selected_clip(cx);
-    }
-
-    fn delete_selected_clip_click(
-        &mut self,
-        _: &ClickEvent,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.delete_selected_clip(cx);
-    }
-
-    fn save_project(&mut self, _: &SaveProject, window: &mut Window, cx: &mut Context<Self>) {
-        if self.is_react_preview() {
-            return;
-        }
-        if self.document.path().is_none() {
-            self.request_save_as(window, cx, false);
-            return;
-        }
-        match self.document.save() {
-            Ok(()) => {
-                self.save_error = None;
-                window.push_notification("Project saved", cx);
-            }
-            Err(error) => self.save_error = Some(error.to_string().into()),
-        }
-        cx.notify();
-    }
-
-    fn save_project_as(&mut self, _: &SaveProjectAs, window: &mut Window, cx: &mut Context<Self>) {
-        if self.is_react_preview() {
-            return;
-        }
-        self.request_save_as(window, cx, false);
     }
 
     fn export_project_action(
@@ -3913,172 +2588,6 @@ impl EditorView {
         }
     }
 
-    fn request_save_as(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-        close_after_save: bool,
-    ) {
-        if self.saving_as {
-            return;
-        }
-        self.saving_as = true;
-        self.save_error = None;
-        let directory = self.document.path().and_then(Path::parent).map_or_else(
-            || std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
-            Path::to_path_buf,
-        );
-        let suggested_name = self
-            .document
-            .path()
-            .and_then(Path::file_name)
-            .and_then(|name| name.to_str())
-            .unwrap_or("Untitled.celesta.json")
-            .to_owned();
-        let selection = cx.prompt_for_new_path(&directory, Some(&suggested_name));
-        cx.spawn_in(window, async move |view, cx| {
-            let selected_path = match selection.await {
-                Ok(Ok(path)) => path,
-                Ok(Err(error)) => {
-                    view.update_in(cx, |this, _, cx| {
-                        this.saving_as = false;
-                        this.close_prompt_active = false;
-                        this.save_error = Some(format!("could not open Save As: {error}").into());
-                        cx.notify();
-                    })
-                    .ok();
-                    return;
-                }
-                Err(error) => {
-                    view.update_in(cx, |this, _, cx| {
-                        this.saving_as = false;
-                        this.close_prompt_active = false;
-                        this.save_error = Some(format!("Save As was interrupted: {error}").into());
-                        cx.notify();
-                    })
-                    .ok();
-                    return;
-                }
-            };
-            view.update_in(cx, |this, window, cx| {
-                this.saving_as = false;
-                let Some(path) = selected_path else {
-                    this.close_prompt_active = false;
-                    cx.notify();
-                    return;
-                };
-                match this.document.save_as(path) {
-                    Ok(()) => {
-                        this.save_error = None;
-                        this.project_name = this.document.display_name().into();
-                        this.assets = this.document.assets();
-                        this.audio_cache_epoch = this.audio_cache_epoch.wrapping_add(1);
-                        this.refresh_preview();
-                        this.refresh_media_cache();
-                        this.refresh_audio_preview();
-                        if close_after_save {
-                            this.force_close = true;
-                            window.remove_window();
-                        } else {
-                            this.close_prompt_active = false;
-                        }
-                    }
-                    Err(error) => {
-                        this.close_prompt_active = false;
-                        this.save_error = Some(error.to_string().into());
-                    }
-                }
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-        cx.notify();
-    }
-
-    fn prompt_to_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.close_prompt_active {
-            return;
-        }
-        self.close_prompt_active = true;
-        let answer = window.prompt(
-            PromptLevel::Warning,
-            "Save changes before closing?",
-            Some("Unsaved changes will be lost if you choose Don't Save."),
-            &[
-                PromptButton::ok("Save"),
-                PromptButton::new("Don't Save"),
-                PromptButton::cancel("Cancel"),
-            ],
-            cx,
-        );
-        cx.spawn_in(window, async move |view, cx| {
-            let answer = answer.await.unwrap_or(2);
-            view.update_in(cx, move |this, window, cx| match answer {
-                0 if this.document.path().is_some() => match this.document.save() {
-                    Ok(()) => {
-                        this.save_error = None;
-                        this.force_close = true;
-                        window.remove_window();
-                    }
-                    Err(error) => {
-                        this.close_prompt_active = false;
-                        this.save_error = Some(error.to_string().into());
-                        cx.notify();
-                    }
-                },
-                0 => this.request_save_as(window, cx, true),
-                1 => {
-                    this.force_close = true;
-                    window.remove_window();
-                }
-                _ => {
-                    this.close_prompt_active = false;
-                    cx.notify();
-                }
-            })
-            .ok();
-        })
-        .detach();
-        cx.notify();
-    }
-
-    fn undo_edit(&mut self, _: &UndoEdit, _: &mut Window, cx: &mut Context<Self>) {
-        self.pause();
-        self.clip_drag = None;
-        self.clip_drag_hover_track_id = None;
-        self.clip_drag_target_track_id = None;
-        self.renaming_track_id = None;
-        self.renaming_character_id = None;
-        match self.document.undo() {
-            Ok(true) => {
-                self.save_error = None;
-                self.sync_document_state();
-            }
-            Ok(false) => {}
-            Err(error) => self.save_error = Some(error.to_string().into()),
-        }
-        cx.notify();
-    }
-
-    fn redo_edit(&mut self, _: &RedoEdit, _: &mut Window, cx: &mut Context<Self>) {
-        self.pause();
-        self.clip_drag = None;
-        self.clip_drag_hover_track_id = None;
-        self.clip_drag_target_track_id = None;
-        self.renaming_track_id = None;
-        self.renaming_character_id = None;
-        match self.document.redo() {
-            Ok(true) => {
-                self.save_error = None;
-                self.sync_document_state();
-            }
-            Ok(false) => {}
-            Err(error) => self.save_error = Some(error.to_string().into()),
-        }
-        cx.notify();
-    }
-
     fn toggle_playback_action(
         &mut self,
         _: &TogglePlayback,
@@ -4101,243 +2610,193 @@ impl EditorView {
         cx.notify();
     }
 
-    /// Escape while an inline `Input` (track/character rename, dialogue text,
-    /// or a property value) is focused: the `Input` propagates the key and the
-    /// editor reverts whichever edit is open. Each `cancel_*` is a no-op when
-    /// its own edit is not active, so calling all four is safe.
-    fn cancel_inline_edit_action(
-        &mut self,
-        _: &CancelInlineEdit,
-        _: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.cancel_track_rename(cx);
-        self.cancel_character_rename(cx);
-        self.cancel_dialogue_text_edit(cx);
-        self.cancel_property_edit(cx);
-    }
-
-    fn toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let master_volume = self.document.master_volume().clamp(0.0, 2.0);
+    /// The window's title bar: the menu bar (outside macOS, which shows it
+    /// natively), the open file, status messages, and the window-wide
+    /// commands — Open…, Export…, and the preview volume.
+    fn title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let volume = self.monitor_volume.clamp(0.0, 2.0);
         let exporting = self.export_cancellation.is_some();
-        let export_label = self.export_progress.map(export_progress_label);
         let danger = cx.theme().danger;
         let warning = cx.theme().warning;
         let success = cx.theme().success;
         let muted = cx.theme().muted_foreground;
-        let error_line = |text: String, color| {
+        let message = |text: String, color| {
             div()
-                .max_w(px(520.0))
+                .max_w(px(420.0))
                 .overflow_hidden()
-                .text_sm()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .text_xs()
                 .text_color(color)
                 .child(text)
         };
-        div()
-            .id("toolbar")
+        let leading = div()
             .flex()
-            .flex_none()
-            .h(px(48.0))
-            .w_full()
-            .px_4()
             .items_center()
-            .justify_between()
-            .bg(cx.theme().title_bar)
-            .border_b_1()
-            .border_color(cx.theme().title_bar_border)
-            .on_mouse_move(cx.listener(Self::continue_master_volume_drag))
-            .on_mouse_up(MouseButton::Left, cx.listener(Self::end_master_volume_drag))
+            .gap_2()
+            .min_w_0()
+            .overflow_hidden();
+        #[cfg(not(target_os = "macos"))]
+        let leading = leading.when_some(self.app_menu_bar.clone(), |leading, menu_bar| {
+            leading.child(menu_bar)
+        });
+        let leading = leading
             .child(
                 div()
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .child(div().text_lg().text_color(theme::accent()).child("Celesta"))
-                    .child(div().text_sm().text_color(cx.theme().foreground).child(
-                        if self.is_effectively_dirty() {
-                            format!("{} *", self.project_name)
+                    .text_sm()
+                    .text_color(cx.theme().foreground)
+                    .whitespace_nowrap()
+                    .child(self.project_name.clone()),
+            )
+            .when(self.is_react_preview(), |leading| {
+                leading.child(
+                    div()
+                        .text_xs()
+                        .text_color(muted)
+                        .whitespace_nowrap()
+                        .child("React composition"),
+                )
+            });
+        TitleBar::new().child(leading).child(
+            div()
+                .id("title-bar-actions")
+                .flex()
+                .items_center()
+                .gap_2()
+                .pr_2()
+                .on_mouse_move(cx.listener(Self::continue_master_volume_drag))
+                .on_mouse_up(MouseButton::Left, cx.listener(Self::end_master_volume_drag))
+                .when_some(self.open_error.clone(), |bar, error| {
+                    bar.child(message(error.to_string(), danger))
+                })
+                .when_some(self.media_error.clone(), |bar, error| {
+                    bar.child(message(format!("Media probe failed: {error}"), danger))
+                })
+                .when_some(self.audio_error.clone(), |bar, error| {
+                    bar.child(message(format!("Audio unavailable: {error}"), warning))
+                })
+                .when_some(self.export_error.clone(), |bar, error| {
+                    bar.child(message(format!("Export failed: {error}"), danger))
+                })
+                .when_some(self.export_message.clone(), |bar, text| {
+                    bar.child(message(text.to_string(), success))
+                })
+                .when_some(self.typescript_error.clone(), |bar, error| {
+                    bar.child(message(error.to_string(), warning))
+                })
+                .when_some(self.typescript_message.clone(), |bar, text| {
+                    bar.child(message(text.to_string(), success))
+                })
+                .child(
+                    Button::new("open-project")
+                        .small()
+                        .ghost()
+                        .icon(IconName::FolderOpen)
+                        .label(if self.opening {
+                            "Opening…"
                         } else {
-                            self.project_name.to_string()
-                        },
-                    )),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .when_some(self.save_error.clone(), |toolbar, error| {
-                        toolbar.child(error_line(format!("Save failed: {error}"), danger))
-                    })
-                    .when_some(self.edit_error.clone(), |toolbar, error| {
-                        toolbar.child(error_line(format!("Edit failed: {error}"), danger))
-                    })
-                    .when_some(self.audio_error.clone(), |toolbar, error| {
-                        toolbar.child(error_line(format!("Audio unavailable: {error}"), warning))
-                    })
-                    .when_some(self.export_error.clone(), |toolbar, error| {
-                        toolbar.child(error_line(format!("Export failed: {error}"), danger))
-                    })
-                    .when_some(self.export_message.clone(), |toolbar, message| {
-                        toolbar.child(error_line(message.to_string(), success))
-                    })
-                    .when_some(export_label, |toolbar, label| {
-                        toolbar.child(div().text_xs().text_color(warning).child(
-                            if self.export_cancelling {
-                                "Cancelling export…".to_owned()
-                            } else {
-                                label
-                            },
-                        ))
-                    })
-                    .child(if exporting {
-                        Button::new("export-project")
-                            .small()
-                            .danger()
-                            .label(if self.export_cancelling {
-                                "Cancelling…"
-                            } else {
-                                "Cancel Export"
-                            })
-                            .disabled(self.export_cancelling)
-                            .on_click(cx.listener(Self::cancel_export_click))
-                    } else {
-                        Button::new("export-project")
-                            .small()
-                            .label(if self.choosing_export_path {
-                                "Choosing…"
-                            } else {
-                                "Export…"
-                            })
-                            .disabled(self.choosing_export_path)
-                            .on_click(cx.listener(Self::export_project_click))
-                    })
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_1()
-                            .text_xs()
-                            .text_color(muted)
-                            .child("Master")
-                            .child(
-                                div()
-                                    .id("master-volume-slider")
-                                    .relative()
-                                    .w(px(88.0))
-                                    .h(px(20.0))
-                                    .cursor_pointer()
-                                    .rounded(cx.theme().radius)
-                                    .bg(cx.theme().secondary)
-                                    .when_some(
-                                        self.master_volume_focus.as_ref(),
-                                        |slider, focus| slider.track_focus(focus),
-                                    )
-                                    .focus(|slider| slider.border_1().border_color(cx.theme().ring))
-                                    .hover(|style| style.bg(cx.theme().secondary_hover))
-                                    .child(
-                                        div()
-                                            .absolute()
-                                            .left(px(5.0))
-                                            .right(px(5.0))
-                                            .top(px(8.0))
-                                            .h(px(4.0))
-                                            .rounded_full()
-                                            .overflow_hidden()
-                                            .bg(cx.theme().background)
-                                            .child(
-                                                div()
-                                                    .h_full()
-                                                    .w(relative((master_volume / 2.0) as f32))
-                                                    .rounded_full()
-                                                    .bg(success),
-                                            ),
-                                    )
-                                    .child(
-                                        div()
-                                            .absolute()
-                                            .left(px((master_volume / 2.0 * 78.0) as f32))
-                                            .top(px(5.0))
-                                            .size(px(10.0))
-                                            .rounded_full()
-                                            .bg(cx.theme().foreground),
-                                    )
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(Self::begin_master_volume_drag),
-                                    )
-                                    .on_key_down(cx.listener(Self::master_volume_key_down)),
-                            )
-                            .child(
-                                div()
-                                    .w(px(38.0))
-                                    .text_center()
-                                    .child(format!("{}%", (master_volume * 100.0).round() as i32)),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .px_2()
-                            .py_1()
-                            .rounded(cx.theme().radius)
-                            .bg(cx.theme().success.opacity(0.16))
-                            .text_xs()
-                            .text_color(success)
-                            .child("GPU PREVIEW"),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(muted)
-                            .child(format_time(self.current_time())),
-                    ),
-            )
+                            "Open…"
+                        })
+                        .loading(self.opening)
+                        .disabled(self.opening || exporting)
+                        .on_click(cx.listener(Self::open_project_click)),
+                )
+                .child(if exporting {
+                    Button::new("export-project")
+                        .small()
+                        .danger()
+                        .label(if self.export_cancelling {
+                            "Cancelling…"
+                        } else {
+                            "Cancel export"
+                        })
+                        .disabled(self.export_cancelling)
+                        .on_click(cx.listener(Self::cancel_export_click))
+                } else {
+                    Button::new("export-project")
+                        .small()
+                        .outline()
+                        .label("Export…")
+                        .disabled(self.choosing_export_path || self.opening)
+                        .on_click(cx.listener(Self::export_project_click))
+                })
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_1()
+                        .text_xs()
+                        .text_color(muted)
+                        .child("Volume")
+                        .child(
+                            div()
+                                .id("preview-volume-slider")
+                                .relative()
+                                .w(px(88.0))
+                                .h(px(20.0))
+                                .rounded(cx.theme().radius)
+                                .bg(cx.theme().secondary)
+                                .tooltip(|window, cx| {
+                                    Tooltip::new("Preview volume (doesn’t affect exports)")
+                                        .build(window, cx)
+                                })
+                                .when_some(self.master_volume_focus.as_ref(), |slider, focus| {
+                                    slider.track_focus(focus)
+                                })
+                                .focus(|slider| slider.border_1().border_color(cx.theme().ring))
+                                .hover(|style| style.bg(cx.theme().secondary_hover))
+                                .child(
+                                    div()
+                                        .absolute()
+                                        .left(px(5.0))
+                                        .right(px(5.0))
+                                        .top(px(8.0))
+                                        .h(px(4.0))
+                                        .rounded_full()
+                                        .overflow_hidden()
+                                        .bg(cx.theme().background)
+                                        .child(
+                                            div()
+                                                .h_full()
+                                                .w(relative((volume / 2.0) as f32))
+                                                .rounded_full()
+                                                .bg(cx.theme().primary),
+                                        ),
+                                )
+                                .child(
+                                    div()
+                                        .absolute()
+                                        .left(px((volume / 2.0 * 78.0) as f32))
+                                        .top(px(5.0))
+                                        .size(px(10.0))
+                                        .rounded_full()
+                                        .bg(cx.theme().foreground),
+                                )
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(Self::begin_master_volume_drag),
+                                )
+                                .on_key_down(cx.listener(Self::master_volume_key_down)),
+                        )
+                        .child(
+                            div()
+                                .w(px(38.0))
+                                .text_right()
+                                .child(format!("{}%", (volume * 100.0).round() as i32)),
+                        ),
+                ),
+        )
     }
 
     fn asset_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let has_selected = self.selected_asset_id.is_some();
-        let can_insert_selected = self.selected_asset_id.as_deref().is_some_and(|selected| {
-            self.assets
-                .iter()
-                .any(|asset| asset.id == selected && asset.kind != celesta_project::AssetKind::Font)
-        });
-        let can_insert_dialogue = self.selected_asset_id.as_deref().is_some_and(|selected| {
-            self.assets
-                .iter()
-                .any(|asset| asset.id == selected && asset.kind == AssetKind::Audio)
-        }) && !self.document.characters().is_empty()
-            && self.selected_track_id.as_deref().is_none_or(|selected| {
-                self.tracks.iter().any(|track| {
-                    track.id == selected && track.kind == TrackKind::Dialogue && !track.locked
-                })
-            });
-        let can_create_character = self.selected_asset_id.as_deref().is_some_and(|selected| {
-            self.assets
-                .iter()
-                .any(|asset| asset.id == selected && asset.kind == AssetKind::Image)
-                && !self
-                    .document
-                    .project()
-                    .characters
-                    .values()
-                    .any(|character| {
-                        character.portrait.as_ref().is_some_and(|portrait| {
-                            portrait.expressions.values().any(|id| id == selected)
-                        })
-                    })
-        });
         let missing_color = cx.theme().danger;
         let meta_color = cx.theme().muted_foreground;
         let rows = self.assets.iter().map(|asset| {
             let asset_id = asset.id.clone();
-            let drag = AssetDrag {
-                id: asset.id.clone(),
-                kind: asset.kind,
-            };
             let selected = self.selected_asset_id.as_deref() == Some(asset.id.as_str());
             let element_id: SharedString = format!("asset-row-{}", asset.id).into();
             let media_detail = match (asset.missing, self.media_cache.get(&asset.id)) {
-                (true, _) => Some("Missing file — Relink required".to_owned()),
+                (true, _) => Some("File not found".to_owned()),
                 (false, Some(Ok(info))) => Some(format_media_asset_info(info)),
                 (false, Some(Err(_))) => Some("Probe failed".to_owned()),
                 (false, None) if matches!(asset.kind, AssetKind::Video | AssetKind::Audio) => {
@@ -4403,13 +2862,8 @@ impl EditorView {
                             )
                         }),
                 )
-                .on_drag(drag, |asset, _, _, cx| {
-                    let asset = asset.clone();
-                    cx.new(|_| asset)
-                })
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.selected_asset_id = Some(asset_id.clone());
-                    this.edit_error = None;
                     cx.notify();
                 }))
         });
@@ -4440,66 +2894,6 @@ impl EditorView {
             .w_full()
             .bg(cx.theme().sidebar)
             .child(panel_header("Assets", self.assets.len(), cx))
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .flex_none()
-                    .items_center()
-                    .gap_1()
-                    .p_2()
-                    .border_b_1()
-                    .border_color(cx.theme().border)
-                    .child(
-                        Button::new("import-assets")
-                            .xsmall()
-                            .label(if self.importing_assets {
-                                "Importing…"
-                            } else {
-                                "Import…"
-                            })
-                            .on_click(cx.listener(Self::import_assets_click)),
-                    )
-                    .child(
-                        Button::new("insert-selected-asset")
-                            .xsmall()
-                            .label("Add")
-                            .disabled(!can_insert_selected)
-                            .on_click(cx.listener(Self::insert_selected_asset_click)),
-                    )
-                    .when(can_insert_dialogue, |actions| {
-                        actions.child(
-                            Button::new("insert-selected-dialogue")
-                                .xsmall()
-                                .label("Dialogue")
-                                .on_click(cx.listener(Self::insert_selected_dialogue_click)),
-                        )
-                    })
-                    .when(can_create_character, |actions| {
-                        actions.child(
-                            Button::new("create-character")
-                                .xsmall()
-                                .label("Character")
-                                .on_click(cx.listener(Self::create_character_click)),
-                        )
-                    })
-                    .when(has_selected, |actions| {
-                        actions
-                            .child(
-                                Button::new("relink-selected-asset")
-                                    .xsmall()
-                                    .label("Relink…")
-                                    .on_click(cx.listener(Self::relink_asset_click)),
-                            )
-                            .child(
-                                Button::new("remove-selected-asset")
-                                    .xsmall()
-                                    .danger()
-                                    .label("Remove")
-                                    .on_click(cx.listener(Self::remove_asset_click)),
-                            )
-                    }),
-            )
             .child(contents)
     }
 
@@ -4615,8 +3009,16 @@ impl EditorView {
             )
     }
 
+    /// Read-only facts about the composition and whatever is selected. The
+    /// project is edited in its source file; File > Reload picks up changes.
     fn inspector_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let characters = self.document.characters();
+        let selected_asset = self.selected_asset_id.as_deref().and_then(|selected| {
+            self.assets
+                .iter()
+                .find(|asset| asset.id == selected)
+                .cloned()
+        });
         let selected_track = self.selected_track_id.as_deref().and_then(|selected| {
             self.tracks
                 .iter()
@@ -4646,325 +3048,92 @@ impl EditorView {
                 cx,
             ))
             .child(inspector_row("Duration", self.duration.clone(), cx))
-            .child(inspector_row("Renderer", "wgpu", cx))
-            .child(inspector_row("Adapter", self.gpu_name.clone(), cx))
-            .child(inspector_row(
-                "React Entry",
-                self.document
-                    .react_entry()
-                    .map_or_else(|| "Not set".to_owned(), str::to_owned),
-                cx,
-            ))
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .gap_2()
-                    .px_3()
-                    .py_2()
-                    .border_b_1()
-                    .border_color(cx.theme().border)
-                    .child(
-                        inspector_button("react-entry-set", "Set…", cx)
-                            .on_click(cx.listener(Self::set_react_entry_click)),
-                    )
-                    .when(self.document.react_entry().is_some(), |controls| {
-                        controls.child(
-                            inspector_button("react-entry-clear", "Clear", cx)
-                                .on_click(cx.listener(Self::clear_react_entry_click)),
-                        )
-                    })
-                    .when(self.component_schema_pending, |controls| {
-                        controls.child(
-                            div()
-                                .text_xs()
-                                .text_color(cx.theme().muted_foreground)
-                                .child("Loading component schemas…"),
-                        )
-                    })
-                    .when_some(self.component_schema_error.clone(), |controls, error| {
-                        controls.child(div().text_xs().text_color(cx.theme().danger).child(error))
-                    }),
-            )
+            .when_some(self.document.react_entry(), |panel, entry| {
+                panel.child(inspector_row("React entry", entry.to_owned(), cx))
+            })
+            .when_some(self.component_schema_error.clone(), |panel, error| {
+                panel.child(
+                    div()
+                        .px_3()
+                        .py_2()
+                        .text_xs()
+                        .text_color(cx.theme().danger)
+                        .child(format!("Couldn’t load component schemas: {error}")),
+                )
+            })
             .when(self.document.react_entry().is_some(), |panel| {
                 self.render_project_properties(panel, cx)
             })
             .when(!characters.is_empty(), |panel| {
                 self.render_characters(panel, &characters, cx)
             })
-            .when_some(selected_track, |panel, track| {
-                let rename_track_id = track.id.clone();
-                let enabled_track_id = track.id.clone();
-                let locked_track_id = track.id.clone();
-                let delete_track_id = track.id.clone();
-                let renaming = self.renaming_track_id.as_deref() == Some(track.id.as_str());
+            .when_some(selected_asset, |panel, asset| {
+                let media = match (asset.missing, self.media_cache.get(&asset.id)) {
+                    (true, _) => Some("File not found".to_owned()),
+                    (false, Some(Ok(info))) => Some(format_media_asset_info(info)),
+                    (false, Some(Err(error))) => Some(format!("Probe failed: {error}")),
+                    (false, None) => None,
+                };
                 panel
-                    .child(
-                        div()
-                            .mt_3()
-                            .px_3()
-                            .py_2()
-                            .border_t_1()
-                            .border_b_1()
-                            .border_color(cx.theme().border)
-                            .text_sm()
-                            .text_color(theme::accent())
-                            .child("Selected track"),
-                    )
+                    .child(inspector_section("Asset", cx))
+                    .child(inspector_row("ID", asset.id.clone(), cx))
+                    .child(inspector_row("Type", asset.kind.to_string(), cx))
+                    .when_some(asset.path.clone(), |panel, path| {
+                        panel.child(inspector_row("File", path.display().to_string(), cx))
+                    })
+                    .when_some(media, |panel, media| {
+                        panel.child(inspector_row("Media", media, cx))
+                    })
+            })
+            .when_some(selected_track, |panel, track| {
+                let mut state = vec![if track.enabled { "Enabled" } else { "Disabled" }];
+                if track.locked {
+                    state.push("Locked");
+                }
+                if track.muted {
+                    state.push("Muted");
+                }
+                if track.solo {
+                    state.push("Solo");
+                }
+                panel
+                    .child(inspector_section("Track", cx))
+                    .child(inspector_row("Name", track.name.clone(), cx))
                     .child(inspector_row("ID", track.id.clone(), cx))
-                    .when(!renaming, |panel| {
-                        panel
-                            .child(inspector_row("Name", track.name.clone(), cx))
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_wrap()
-                                    .gap_2()
-                                    .px_3()
-                                    .py_2()
-                                    .border_b_1()
-                                    .border_color(cx.theme().border)
-                                    .child(
-                                        inspector_button(
-                                            "track-enabled",
-                                            if track.enabled { "Disable" } else { "Enable" },
-                                            cx,
-                                        )
-                                        .when(!track.locked, |button| {
-                                            button.on_click(cx.listener(move |this, _, _, cx| {
-                                                this.toggle_track_enabled(&enabled_track_id, cx);
-                                            }))
-                                        })
-                                        .when(track.locked, |button| button.opacity(0.45)),
-                                    )
-                                    .child(
-                                        inspector_button(
-                                            "track-locked",
-                                            if track.locked { "Unlock" } else { "Lock" },
-                                            cx,
-                                        )
-                                        .on_click(
-                                            cx.listener(move |this, _, _, cx| {
-                                                this.toggle_track_locked(&locked_track_id, cx);
-                                            }),
-                                        ),
-                                    )
-                                    .child(
-                                        inspector_button("track-rename", "Rename", cx)
-                                            .when(!track.locked, |button| {
-                                                button.on_click(cx.listener(
-                                                    move |this, _, window, cx| {
-                                                        this.begin_track_rename(
-                                                            &rename_track_id,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    },
-                                                ))
-                                            })
-                                            .when(track.locked, |button| button.opacity(0.45)),
-                                    )
-                                    .child(
-                                        inspector_button("track-delete", "Delete", cx)
-                                            .text_color(rgb(if track.locked {
-                                                0x777b86
-                                            } else {
-                                                0xff9a9a
-                                            }))
-                                            .when(!track.locked, |button| {
-                                                button.on_click(cx.listener(
-                                                    move |this, _, window, cx| {
-                                                        this.request_delete_track(
-                                                            &delete_track_id,
-                                                            track.item_count,
-                                                            window,
-                                                            cx,
-                                                        );
-                                                    },
-                                                ))
-                                            }),
-                                    ),
-                            )
-                    })
-                    .when(renaming, |panel| {
-                        panel.child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap_2()
-                                .px_3()
-                                .py_2()
-                                .border_b_1()
-                                .border_color(cx.theme().border)
-                                .child(
-                                    div()
-                                        .id("track-name-input")
-                                        .px_2()
-                                        .py_1()
-                                        .rounded_sm()
-                                        .border_1()
-                                        .border_color(theme::accent())
-                                        .bg(cx.theme().background)
-                                        .text_sm()
-                                        .text_color(cx.theme().foreground)
-                                        .when_some(
-                                            self.track_name_input.clone(),
-                                            |field, input| field.child(Input::new(&input)),
-                                        ),
-                                )
-                                .child(
-                                    div()
-                                        .flex()
-                                        .gap_2()
-                                        .child(
-                                            inspector_button("track-rename-save", "Save", cx)
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    this.commit_track_rename(cx);
-                                                })),
-                                        )
-                                        .child(
-                                            inspector_button("track-rename-cancel", "Cancel", cx)
-                                                .on_click(cx.listener(|this, _, _, cx| {
-                                                    this.cancel_track_rename(cx);
-                                                })),
-                                        ),
-                                ),
-                        )
-                    })
+                    .child(inspector_row("Type", format!("{:?}", track.kind), cx))
+                    .child(inspector_row("State", state.join(" · "), cx))
+                    .child(inspector_row("Clips", track.item_count.to_string(), cx))
             })
             .when_some(selected_clip, |panel, clip| {
                 panel
-                    .child(
-                        div()
-                            .mt_3()
-                            .px_3()
-                            .py_2()
-                            .border_t_1()
-                            .border_b_1()
-                            .border_color(cx.theme().border)
-                            .text_sm()
-                            .text_color(theme::accent())
-                            .child("Selected clip"),
-                    )
+                    .child(inspector_section("Clip", cx))
                     .child(inspector_row("Name", clip.name.clone(), cx))
                     .child(inspector_row("Type", clip_kind_label(clip.kind), cx))
                     .child(inspector_row("Start", format_time(clip.start), cx))
                     .child(inspector_row("Length", format_time(clip.duration), cx))
+                    .when(!clip.enabled, |panel| {
+                        panel.child(inspector_row("State", "Disabled", cx))
+                    })
                     .when_some(clip.volume.as_ref(), |panel, volume| {
                         let local_time = clip_local_time(self.current_time(), &clip);
-                        let current_volume = evaluate_f64(volume, local_time).unwrap_or(1.0);
-                        let keyframe_count = match volume {
-                            Animatable::Static(_) => 0,
-                            Animatable::Keyframes(animation) => animation.keyframes.len(),
-                        };
-                        let animated = keyframe_count > 0;
-                        let has_keyframe = volume_keyframe_at(volume, local_time);
-                        panel.child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .gap_2()
-                                .px_3()
-                                .py_2()
-                                .border_b_1()
-                                .border_color(cx.theme().border)
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(cx.theme().muted_foreground)
-                                        .child("Clip volume"),
-                                )
-                                .child(
-                                    div()
-                                        .flex()
-                                        .items_center()
-                                        .gap_2()
-                                        .child(
-                                            inspector_button("clip-volume-down", "−", cx).on_click(
-                                                cx.listener(Self::decrease_selected_clip_volume),
-                                            ),
-                                        )
-                                        .child(
-                                            div()
-                                                .w(px(64.0))
-                                                .text_center()
-                                                .text_sm()
-                                                .text_color(cx.theme().foreground)
-                                                .child(format!(
-                                                    "{}%",
-                                                    (current_volume * 100.0).round() as i32
-                                                )),
-                                        )
-                                        .child(
-                                            inspector_button("clip-volume-up", "+", cx).on_click(
-                                                cx.listener(Self::increase_selected_clip_volume),
-                                            ),
-                                        ),
-                                )
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(cx.theme().muted_foreground)
-                                        .child(if animated {
-                                            format!("Automation · {keyframe_count} keyframes")
-                                        } else {
-                                            "Automation · Static".to_owned()
-                                        }),
-                                )
-                                .child(
-                                    div()
-                                        .flex()
-                                        .flex_wrap()
-                                        .gap_2()
-                                        .child(
-                                            inspector_button(
-                                                "clip-volume-keyframe",
-                                                if has_keyframe {
-                                                    "Update keyframe"
-                                                } else {
-                                                    "Add keyframe"
-                                                },
-                                                cx,
-                                            )
-                                            .on_click(
-                                                cx.listener(
-                                                    Self::set_selected_clip_volume_keyframe,
-                                                ),
-                                            ),
-                                        )
-                                        .when(has_keyframe, |controls| {
-                                            controls.child(
-                                                inspector_button(
-                                                    "clip-volume-remove-keyframe",
-                                                    "Remove",
-                                                    cx,
-                                                )
-                                                .on_click(cx.listener(
-                                                    Self::remove_selected_clip_volume_keyframe,
-                                                )),
-                                            )
-                                        })
-                                        .when(animated, |controls| {
-                                            controls.child(
-                                                inspector_button(
-                                                    "clip-volume-flatten",
-                                                    "Flatten",
-                                                    cx,
-                                                )
-                                                .on_click(
-                                                    cx.listener(Self::flatten_selected_clip_volume),
-                                                ),
-                                            )
-                                        }),
-                                ),
-                        )
+                        let current = evaluate_f64(volume, local_time).unwrap_or(1.0);
+                        let current = format!("{}%", (current * 100.0).round() as i32);
+                        panel.child(inspector_row(
+                            "Volume",
+                            match volume {
+                                Animatable::Keyframes(animation) => {
+                                    format!("{current} · {} keyframes", animation.keyframes.len())
+                                }
+                                Animatable::Static(_) => current,
+                            },
+                            cx,
+                        ))
                     })
                     .when_some(clip.component.clone(), |panel, component| {
-                        self.render_component_props(panel, &clip.id, &component, cx)
+                        self.render_component_props(panel, &component, cx)
                     })
                     .when_some(clip.dialogue.clone(), |panel, dialogue| {
-                        let characters = self.document.characters();
-                        self.render_dialogue_fields(panel, &clip.id, &dialogue, &characters, cx)
+                        self.render_dialogue_fields(panel, &dialogue, &characters, cx)
                     })
             });
         div()
@@ -4984,937 +3153,145 @@ impl EditorView {
         characters: &[CharacterSummary],
         cx: &mut Context<Self>,
     ) -> E {
-        let selected_image_asset_id = self.selected_asset_id.as_ref().filter(|selected| {
-            self.assets
-                .iter()
-                .any(|asset| asset.id == **selected && asset.kind == AssetKind::Image)
-        });
-        let panel = panel.child(
-            div()
-                .mt_3()
-                .px_3()
-                .py_2()
-                .border_t_1()
-                .border_b_1()
-                .border_color(cx.theme().border)
-                .text_sm()
-                .text_color(theme::accent())
-                .child(format!("Characters ({})", characters.len())),
-        );
+        let panel = panel.child(inspector_section(
+            format!("Characters ({})", characters.len()),
+            cx,
+        ));
         characters.iter().fold(panel, |panel, character| {
-            let renaming = self.renaming_character_id.as_deref() == Some(character.id.as_str());
-            if renaming {
-                panel.child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_2()
-                        .px_3()
-                        .py_2()
-                        .border_b_1()
-                        .border_color(cx.theme().border)
-                        .child(
+            panel.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .px_3()
+                    .py_2()
+                    .border_b_1()
+                    .border_color(cx.theme().border)
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().foreground)
+                            .child(character.name.clone()),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(format!(
+                                "{} · {} expression(s)",
+                                character.id,
+                                character.expressions.len()
+                            )),
+                    )
+                    .when_some(character.lip_sync.clone(), |details, lip_sync| {
+                        details.child(
                             div()
                                 .text_xs()
                                 .text_color(cx.theme().muted_foreground)
-                                .child(character.id.clone()),
+                                .child(format!(
+                                    "Lip sync: a={} i={} u={} e={} o={} closed={}",
+                                    lip_sync.a,
+                                    lip_sync.i,
+                                    lip_sync.u,
+                                    lip_sync.e,
+                                    lip_sync.o,
+                                    lip_sync.closed.as_deref().unwrap_or("portrait")
+                                )),
                         )
-                        .child(
-                            div()
-                                .id("character-name-input")
-                                .px_2()
-                                .py_1()
-                                .rounded_sm()
-                                .border_1()
-                                .border_color(theme::accent())
-                                .bg(cx.theme().background)
-                                .text_sm()
-                                .text_color(cx.theme().foreground)
-                                .when_some(self.character_name_input.clone(), |field, input| {
-                                    field.child(Input::new(&input))
-                                }),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .gap_2()
-                                .child(inspector_button("character-rename-save", "Save", cx).on_click(
-                                    cx.listener(|this, _, _, cx| {
-                                        this.commit_character_rename(cx);
-                                    }),
-                                ))
-                                .child(
-                                    inspector_button("character-rename-cancel", "Cancel", cx).on_click(
-                                        cx.listener(|this, _, _, cx| {
-                                            this.cancel_character_rename(cx);
-                                        }),
-                                    ),
-                                ),
-                        ),
-                )
-            } else {
-                let rename_character_id = character.id.clone();
-                let delete_character_id = character.id.clone();
-                let expression_character_id = character.id.clone();
-                let closed_mouth_character_id = character.id.clone();
-                let a_mouth_character_id = character.id.clone();
-                let i_mouth_character_id = character.id.clone();
-                let u_mouth_character_id = character.id.clone();
-                let e_mouth_character_id = character.id.clone();
-                let o_mouth_character_id = character.id.clone();
-                let clear_lip_sync_character_id = character.id.clone();
-                let clear_closed_mouth_character_id = character.id.clone();
-                let name = character.name.clone();
-                let rename_button_id: SharedString =
-                    format!("character-rename-{rename_character_id}").into();
-                let delete_button_id: SharedString =
-                    format!("character-delete-{delete_character_id}").into();
-                panel.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .px_3()
-                        .py_2()
-                        .border_b_1()
-                        .border_color(cx.theme().border)
-                        .child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .flex_1()
-                                .overflow_hidden()
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .text_color(cx.theme().foreground)
-                                        .child(character.name.clone()),
-                                )
-                                .child(div().text_xs().text_color(cx.theme().muted_foreground).child(format!(
-                                    "{} · {} expression(s)",
-                                    character.id,
-                                    character.expressions.len()
-                                )))
-                                .when_some(character.lip_sync.clone(), |details, lip_sync| {
-                                    details.child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(cx.theme().muted_foreground)
-                                            .child(format!(
-                                                "LipSync: a={} i={} u={} e={} o={} closed={}",
-                                                lip_sync.a,
-                                                lip_sync.i,
-                                                lip_sync.u,
-                                                lip_sync.e,
-                                                lip_sync.o,
-                                                lip_sync
-                                                    .closed
-                                                    .as_deref()
-                                                    .unwrap_or("original portrait")
-                                            )),
-                                    )
-                                }),
-                        )
-                        .child(
-                            div()
-                                .flex()
-                                .flex_wrap()
-                                .gap_2()
-                                .when_some(selected_image_asset_id, |actions, asset_id| {
-                                    let button_id: SharedString = format!(
-                                        "character-expression-{expression_character_id}-{asset_id}"
-                                    )
-                                    .into();
-                                    actions.child(
-                                        inspector_dynamic_button(button_id, "Add expression", cx)
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                this.add_selected_image_to_character(
-                                                    &expression_character_id,
-                                                    cx,
-                                                );
-                                            })),
-                                    )
-                                    .child(
-                                        inspector_dynamic_button(
-                                            SharedString::from(format!(
-                                                "character-mouth-closed-{closed_mouth_character_id}-{asset_id}"
-                                            )),
-                                            "Mouth: closed (optional)",
-                                        cx,
-                                        )
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.set_selected_image_as_mouth(
-                                                &closed_mouth_character_id,
-                                                MouthShape::Closed,
-                                                cx,
-                                            );
-                                        })),
-                                    )
-                                    .child(
-                                        inspector_dynamic_button(
-                                            SharedString::from(format!(
-                                                "character-mouth-a-{a_mouth_character_id}-{asset_id}"
-                                            )),
-                                            "Mouth: a",
-                                        cx,
-                                        )
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.set_selected_image_as_mouth(
-                                                &a_mouth_character_id,
-                                                MouthShape::A,
-                                                cx,
-                                            );
-                                        })),
-                                    )
-                                    .child(
-                                        inspector_dynamic_button(
-                                            SharedString::from(format!(
-                                                "character-mouth-i-{i_mouth_character_id}-{asset_id}"
-                                            )),
-                                            "Mouth: i",
-                                        cx,
-                                        )
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.set_selected_image_as_mouth(
-                                                &i_mouth_character_id,
-                                                MouthShape::I,
-                                                cx,
-                                            );
-                                        })),
-                                    )
-                                    .child(
-                                        inspector_dynamic_button(
-                                            SharedString::from(format!(
-                                                "character-mouth-u-{u_mouth_character_id}-{asset_id}"
-                                            )),
-                                            "Mouth: u",
-                                        cx,
-                                        )
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.set_selected_image_as_mouth(
-                                                &u_mouth_character_id,
-                                                MouthShape::U,
-                                                cx,
-                                            );
-                                        })),
-                                    )
-                                    .child(
-                                        inspector_dynamic_button(
-                                            SharedString::from(format!(
-                                                "character-mouth-e-{e_mouth_character_id}-{asset_id}"
-                                            )),
-                                            "Mouth: e",
-                                        cx,
-                                        )
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.set_selected_image_as_mouth(
-                                                &e_mouth_character_id,
-                                                MouthShape::E,
-                                                cx,
-                                            );
-                                        })),
-                                    )
-                                    .child(
-                                        inspector_dynamic_button(
-                                            SharedString::from(format!(
-                                                "character-mouth-o-{o_mouth_character_id}-{asset_id}"
-                                            )),
-                                            "Mouth: o",
-                                        cx,
-                                        )
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.set_selected_image_as_mouth(
-                                                &o_mouth_character_id,
-                                                MouthShape::O,
-                                                cx,
-                                            );
-                                        })),
-                                    )
-                                })
-                                .when(character.lip_sync.is_some(), |actions| {
-                                    actions.child(
-                                        inspector_dynamic_button(
-                                            SharedString::from(format!(
-                                                "character-lip-sync-clear-{clear_lip_sync_character_id}"
-                                            )),
-                                            "Clear LipSync",
-                                        cx,
-                                        )
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            this.clear_character_lip_sync(
-                                                &clear_lip_sync_character_id,
-                                                cx,
-                                            );
-                                        })),
-                                    )
-                                })
-                                .when(
-                                    character
-                                        .lip_sync
-                                        .as_ref()
-                                        .and_then(|lip_sync| lip_sync.closed.as_ref())
-                                        .is_some(),
-                                    |actions| {
-                                        actions.child(
-                                            inspector_dynamic_button(
-                                                SharedString::from(format!(
-                                                    "character-closed-mouth-clear-{clear_closed_mouth_character_id}"
-                                                )),
-                                                "Clear closed mouth",
-                                            cx,
-                                            )
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                this.clear_character_closed_mouth(
-                                                    &clear_closed_mouth_character_id,
-                                                    cx,
-                                                );
-                                            })),
-                                        )
-                                    },
-                                )
-                                .child(
-                                    inspector_dynamic_button(rename_button_id, "Rename", cx).on_click(
-                                        cx.listener(move |this, _, window, cx| {
-                                            this.begin_character_rename(
-                                                &rename_character_id,
-                                                &name,
-                                                window,
-                                                cx,
-                                            );
-                                        }),
-                                    ),
-                                )
-                                .child(
-                                    inspector_dynamic_button(delete_button_id, "Delete", cx)
-                                        .bg(cx.theme().danger.opacity(0.22))
-                                        .hover(|style| style.bg(cx.theme().danger.opacity(0.32)))
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            this.request_delete_character(
-                                                &delete_character_id,
-                                                window,
-                                                cx,
-                                            );
-                                        })),
-                                ),
-                        ),
-                )
-            }
+                    }),
+            )
         })
     }
 
     fn render_dialogue_fields<E: ParentElement + Sized>(
         &self,
         panel: E,
-        clip_id: &str,
         dialogue: &DialogueClipSummary,
         characters: &[CharacterSummary],
         cx: &mut Context<Self>,
     ) -> E {
-        let editing = self.editing_dialogue_clip_id.as_deref() == Some(clip_id);
-        let edit_clip_id = clip_id.to_owned();
-        let edit_text = dialogue.text.clone();
-        let panel = panel
-            .child(
-                div()
-                    .mt_3()
-                    .px_3()
-                    .py_2()
-                    .border_t_1()
-                    .border_b_1()
-                    .border_color(cx.theme().border)
-                    .text_sm()
-                    .text_color(theme::accent())
-                    .child("Dialogue"),
-            )
+        let character = characters
+            .iter()
+            .find(|character| character.id == dialogue.character);
+        let expression = dialogue
+            .expression
+            .clone()
+            .or_else(|| character.and_then(|character| character.default_expression.clone()))
+            .unwrap_or_else(|| "Default".to_owned());
+        panel
+            .child(inspector_section("Dialogue", cx))
+            .child(inspector_row("Text", dialogue.text.clone(), cx))
             .child(inspector_row(
-                "Voice asset",
+                "Character",
+                character.map_or_else(
+                    || dialogue.character.clone(),
+                    |character| character.name.clone(),
+                ),
+                cx,
+            ))
+            .child(inspector_row("Expression", expression, cx))
+            .child(inspector_row(
+                "Voice",
                 dialogue.audio.clone().unwrap_or_else(|| "None".to_owned()),
                 cx,
-            ));
-        let panel = if editing {
-            panel.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .px_3()
-                    .py_2()
-                    .border_b_1()
-                    .border_color(cx.theme().border)
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(cx.theme().muted_foreground)
-                            .child("Text"),
-                    )
-                    .child(
-                        div()
-                            .id("dialogue-text-input")
-                            .px_2()
-                            .py_1()
-                            .rounded_sm()
-                            .border_1()
-                            .border_color(theme::accent())
-                            .bg(cx.theme().background)
-                            .text_sm()
-                            .text_color(cx.theme().foreground)
-                            .when_some(self.dialogue_text_input.clone(), |field, input| {
-                                field.child(Input::new(&input))
-                            }),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .gap_2()
-                            .child(inspector_button("dialogue-text-save", "Save", cx).on_click(
-                                cx.listener(|this, _, _, cx| {
-                                    this.commit_dialogue_text_edit(cx);
-                                }),
-                            ))
-                            .child(
-                                inspector_button("dialogue-text-cancel", "Cancel", cx).on_click(
-                                    cx.listener(|this, _, _, cx| {
-                                        this.cancel_dialogue_text_edit(cx);
-                                    }),
-                                ),
-                            ),
-                    ),
-            )
-        } else {
-            panel
-                .child(inspector_row("Text", dialogue.text.clone(), cx))
-                .child(
-                    div()
-                        .px_3()
-                        .py_2()
-                        .border_b_1()
-                        .border_color(cx.theme().border)
-                        .child(
-                            inspector_button("dialogue-text-edit", "Edit text", cx).on_click(
-                                cx.listener(move |this, _, window, cx| {
-                                    this.begin_dialogue_text_edit(
-                                        &edit_clip_id,
-                                        &edit_text,
-                                        window,
-                                        cx,
-                                    );
-                                }),
-                            ),
-                        ),
+            ))
+            .children(dialogue.audio.is_some().then(|| {
+                inspector_row(
+                    "Lip sync",
+                    if dialogue.lip_sync_cue_count == 0 {
+                        "None".to_owned()
+                    } else {
+                        format!("{} mouth cues", dialogue.lip_sync_cue_count)
+                    },
+                    cx,
                 )
-        };
-        let panel = panel.child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .px_3()
-                .py_2()
-                .border_b_1()
-                .border_color(cx.theme().border)
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(cx.theme().muted_foreground)
-                        .child("Character"),
-                )
-                .child({
-                    let character_ids: Vec<String> = characters
-                        .iter()
-                        .map(|character| character.id.clone())
-                        .collect();
-                    let selected_ix = character_ids
-                        .iter()
-                        .position(|id| *id == dialogue.character);
-                    let pick_clip_id = clip_id.to_owned();
-                    RadioGroup::horizontal(SharedString::from(format!(
-                        "dialogue-character-{clip_id}"
-                    )))
-                    .children(characters.iter().map(|character| character.name.clone()))
-                    .selected_index(selected_ix)
-                    .on_click(cx.listener(move |this, ix: &usize, _, cx| {
-                        if let Some(id) = character_ids.get(*ix) {
-                            this.set_dialogue_character(&pick_clip_id, id, cx);
-                        }
-                    }))
-                }),
-        );
-        let Some(character) = characters
-            .iter()
-            .find(|character| character.id == dialogue.character)
-        else {
-            return panel;
-        };
-        let default_expression = character.default_expression.as_deref();
-        // Option list: index 0 is "Default" (stored as `None`), the rest are the
-        // character's non-default expressions in declaration order.
-        let expression_ids: Vec<String> = character
-            .expressions
-            .iter()
-            .filter(|expression| Some(expression.as_str()) != default_expression)
-            .cloned()
-            .collect();
-        let expression_selected_ix = match dialogue.expression.as_deref() {
-            None => Some(0),
-            Some(current) if Some(current) == default_expression => Some(0),
-            Some(current) => expression_ids
-                .iter()
-                .position(|id| id == current)
-                .map(|ix| ix + 1),
-        };
-        let expression_labels: Vec<SharedString> = std::iter::once(SharedString::from("Default"))
-            .chain(
-                expression_ids
-                    .iter()
-                    .map(|id| SharedString::from(id.clone())),
-            )
-            .collect();
-        let expression_clip_id = clip_id.to_owned();
-        let panel = panel.child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .px_3()
-                .py_2()
-                .border_b_1()
-                .border_color(cx.theme().border)
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(cx.theme().muted_foreground)
-                        .child("Expression"),
-                )
-                .child(
-                    RadioGroup::horizontal(SharedString::from(format!(
-                        "dialogue-expression-{clip_id}"
-                    )))
-                    .children(expression_labels)
-                    .selected_index(expression_selected_ix)
-                    .on_click(cx.listener(move |this, ix: &usize, _, cx| {
-                        let expression = (*ix > 0)
-                            .then(|| expression_ids.get(*ix - 1))
-                            .flatten()
-                            .map(String::as_str);
-                        this.set_dialogue_expression(&expression_clip_id, expression, cx);
-                    })),
-                ),
-        );
-        if character.lip_sync.is_none() || dialogue.audio.is_none() {
-            return panel;
-        }
-
-        let generate_clip_id = clip_id.to_owned();
-        let clear_clip_id = clip_id.to_owned();
-        panel.child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .px_3()
-                .py_2()
-                .border_b_1()
-                .border_color(cx.theme().border)
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(cx.theme().muted_foreground)
-                        .child("LipSync"),
-                )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(cx.theme().muted_foreground)
-                        .child(if dialogue.lip_sync_cue_count == 0 {
-                            "Not generated".to_owned()
-                        } else {
-                            format!("{} mouth cue(s)", dialogue.lip_sync_cue_count)
-                        }),
-                )
-                .child(
-                    div()
-                        .flex()
-                        .flex_wrap()
-                        .gap_2()
-                        .child(
-                            inspector_dynamic_button(
-                                SharedString::from(format!("dialogue-lip-sync-generate-{clip_id}")),
-                                if dialogue.lip_sync_cue_count == 0 {
-                                    "Generate from voice"
-                                } else {
-                                    "Regenerate from voice"
-                                },
-                                cx,
-                            )
-                            .on_click(cx.listener(
-                                move |this, _, _, cx| {
-                                    this.generate_dialogue_lip_sync(&generate_clip_id, cx);
-                                },
-                            )),
-                        )
-                        .when(dialogue.lip_sync_cue_count > 0, |actions| {
-                            actions.child(
-                                inspector_dynamic_button(
-                                    SharedString::from(format!(
-                                        "dialogue-lip-sync-clear-{clip_id}"
-                                    )),
-                                    "Clear",
-                                    cx,
-                                )
-                                .on_click(cx.listener(
-                                    move |this, _, _, cx| {
-                                        this.clear_dialogue_lip_sync(&clear_clip_id, cx);
-                                    },
-                                )),
-                            )
-                        }),
-                ),
-        )
+            }))
     }
 
-    /// Renders one editable row per field of a registered component's
-    /// `ComponentPropertySchema`, or an explanatory fallback when no schema
-    /// is available yet (or ever, for a component registered without one).
+    /// One row per field of a registered component's property schema, or the
+    /// raw configured props when no schema is available.
     fn render_component_props<E: ParentElement + Sized>(
         &self,
         panel: E,
-        clip_id: &str,
         component: &ComponentClipSummary,
         cx: &mut Context<Self>,
     ) -> E {
-        let panel = panel.child(
-            div()
-                .mt_3()
-                .px_3()
-                .py_2()
-                .border_t_1()
-                .border_b_1()
-                .border_color(cx.theme().border)
-                .text_sm()
-                .text_color(theme::accent())
-                .child("Component"),
-        );
-        let panel = panel.child(inspector_row("Registered as", component.name.clone(), cx));
-        let Some(schema) = self.component_schemas.get(&component.name) else {
-            let hint = if self.document.react_entry().is_none() {
-                "Set a React Entry to edit this component's properties."
-            } else if self.component_schema_pending {
-                "Loading this component's property schema…"
-            } else {
-                "This component has no declared property schema."
-            };
-            return panel.child(
-                div()
-                    .px_3()
-                    .py_2()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(hint),
-            );
-        };
-        let target = PropertyEditTarget::Clip {
-            clip_id: clip_id.to_owned(),
-        };
-        schema.iter().fold(panel, |panel, (key, field)| {
-            self.render_property_field(panel, &target, key, field, component.props.get(key), cx)
-        })
+        let panel = panel
+            .child(inspector_section("Component", cx))
+            .child(inspector_row("Registered as", component.name.clone(), cx));
+        match self.component_schemas.get(&component.name) {
+            Some(schema) => schema.iter().fold(panel, |panel, (key, field)| {
+                let (label, value) = property_display(key, field, component.props.get(key));
+                panel.child(inspector_row(label, value, cx))
+            }),
+            None if self.component_schema_pending => {
+                panel.child(inspector_note("Loading property schema…", cx))
+            }
+            None => component.props.iter().fold(panel, |panel, (key, value)| {
+                panel.child(inspector_row(key.clone(), json_display(value), cx))
+            }),
+        }
     }
 
-    /// Renders the entry-declared project property schema as one editable
-    /// row per field, writing into the project-level `properties` map.
-    /// Values not yet set fall back to each field's declared default — the
-    /// same rule `useProjectProperty` applies when React reads them.
+    /// The entry-declared project properties with their current values.
+    /// Values not set in the project fall back to each field's declared
+    /// default — the same rule `useProjectProperty` applies in React.
     fn render_project_properties<E: ParentElement + Sized>(
         &self,
         panel: E,
         cx: &mut Context<Self>,
     ) -> E {
-        let panel = panel.child(
-            div()
-                .mt_3()
-                .px_3()
-                .py_2()
-                .border_t_1()
-                .border_b_1()
-                .border_color(cx.theme().border)
-                .text_sm()
-                .text_color(theme::accent())
-                .child("Project Properties"),
-        );
-        if !self.component_schema_pending && self.project_property_schema.is_none() {
-            let hint = if self.component_schema_error.is_some() {
-                "Project properties could not be loaded; see the error above."
-            } else {
-                "This React entry has not declared any project properties."
-            };
-            return panel.child(
-                div()
-                    .px_3()
-                    .py_2()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(hint),
-            );
+        match self.project_property_schema.as_ref() {
+            Some(schema) if !schema.is_empty() => schema.iter().fold(
+                panel.child(inspector_section("Project properties", cx)),
+                |panel, (key, field)| {
+                    let (label, value) =
+                        property_display(key, field, self.document.project_properties().get(key));
+                    panel.child(inspector_row(label, value, cx))
+                },
+            ),
+            _ => panel,
         }
-        let Some(schema) = self.project_property_schema.as_ref() else {
-            return panel.child(
-                div()
-                    .px_3()
-                    .py_2()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child("Loading this entry's project property schema…"),
-            );
-        };
-        let target = PropertyEditTarget::Project;
-        schema.iter().fold(panel, |panel, (key, field)| {
-            self.render_property_field(
-                panel,
-                &target,
-                key,
-                field,
-                self.document.project_properties().get(key),
-                cx,
-            )
-        })
-    }
-
-    fn render_property_field<E: ParentElement + Sized>(
-        &self,
-        panel: E,
-        target: &PropertyEditTarget,
-        key: &str,
-        field: &ComponentPropertyField,
-        current: Option<&serde_json::Value>,
-        cx: &mut Context<Self>,
-    ) -> E {
-        let label: SharedString = match field {
-            ComponentPropertyField::String { label, .. }
-            | ComponentPropertyField::Number { label, .. }
-            | ComponentPropertyField::Boolean { label, .. }
-            | ComponentPropertyField::Color { label, .. }
-            | ComponentPropertyField::Select { label, .. } => label
-                .clone()
-                .map_or_else(|| key.to_owned().into(), Into::into),
-        };
-        let editing = self
-            .editing_property
-            .as_ref()
-            .is_some_and(|edit| edit.target == *target && edit.key == key);
-        let id_prefix = match target {
-            PropertyEditTarget::Project => "project-prop",
-            PropertyEditTarget::Clip { .. } => "component-prop",
-        };
-        let field_id: SharedString = match target {
-            PropertyEditTarget::Project => format!("{id_prefix}-project-{key}"),
-            PropertyEditTarget::Clip { clip_id } => format!("{id_prefix}-{clip_id}-{key}"),
-        }
-        .into();
-
-        panel.child(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .px_3()
-                .py_2()
-                .border_b_1()
-                .border_color(cx.theme().border)
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(cx.theme().muted_foreground)
-                        .child(label),
-                )
-                .child(match field {
-                    ComponentPropertyField::Boolean { default_value, .. } => {
-                        let value = current
-                            .and_then(serde_json::Value::as_bool)
-                            .unwrap_or(*default_value);
-                        let target = target.clone();
-                        let key = key.to_owned();
-                        Switch::new(field_id)
-                            .checked(value)
-                            .on_click(cx.listener(move |this, checked: &bool, _, cx| {
-                                this.apply_property(
-                                    &target,
-                                    &key,
-                                    serde_json::Value::Bool(*checked),
-                                    cx,
-                                );
-                            }))
-                            .into_any_element()
-                    }
-                    ComponentPropertyField::Number {
-                        default_value,
-                        min,
-                        max,
-                        step,
-                        ..
-                    } => {
-                        let value = current
-                            .and_then(serde_json::Value::as_f64)
-                            .unwrap_or(*default_value);
-                        if editing {
-                            self.property_edit_input(&field_id, cx).into_any_element()
-                        } else {
-                            let step = step.unwrap_or(1.0);
-                            let (min, max) = (*min, *max);
-                            let down_target = target.clone();
-                            let down_key = key.to_owned();
-                            let up_target = target.clone();
-                            let up_key = key.to_owned();
-                            let edit_target = target.clone();
-                            let edit_key = key.to_owned();
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap_2()
-                                .child(
-                                    inspector_dynamic_button(
-                                        SharedString::from(format!("{field_id}-down")),
-                                        "−",
-                                        cx,
-                                    )
-                                    .on_click(cx.listener(
-                                        move |this, _, _, cx| {
-                                            this.step_property_number(
-                                                &down_target,
-                                                &down_key,
-                                                value,
-                                                -step,
-                                                (min, max),
-                                                cx,
-                                            );
-                                        },
-                                    )),
-                                )
-                                .child(
-                                    inspector_dynamic_button(
-                                        SharedString::from(format!("{field_id}-value")),
-                                        format_component_number(value),
-                                        cx,
-                                    )
-                                    .w(px(64.0))
-                                    .flex_none()
-                                    .text_center()
-                                    .on_click(cx.listener(
-                                        move |this, _, window, cx| {
-                                            this.begin_property_edit(
-                                                &edit_target,
-                                                &edit_key,
-                                                &format_component_number(value),
-                                                true,
-                                                window,
-                                                cx,
-                                            );
-                                        },
-                                    )),
-                                )
-                                .child(
-                                    inspector_dynamic_button(
-                                        SharedString::from(format!("{field_id}-up")),
-                                        "+",
-                                        cx,
-                                    )
-                                    .on_click(cx.listener(
-                                        move |this, _, _, cx| {
-                                            this.step_property_number(
-                                                &up_target,
-                                                &up_key,
-                                                value,
-                                                step,
-                                                (min, max),
-                                                cx,
-                                            );
-                                        },
-                                    )),
-                                )
-                                .into_any_element()
-                        }
-                    }
-                    ComponentPropertyField::Select {
-                        default_value,
-                        options,
-                        ..
-                    } => {
-                        let value = current
-                            .and_then(serde_json::Value::as_str)
-                            .map_or_else(|| default_value.clone(), str::to_owned);
-                        let target = target.clone();
-                        let key = key.to_owned();
-                        let options = options.clone();
-                        let click_options = options.clone();
-                        ButtonGroup::new(SharedString::from(format!("{field_id}-group")))
-                            .compact()
-                            .children(options.iter().enumerate().map(|(index, option)| {
-                                Button::new(("prop-option", index))
-                                    .label(option.clone())
-                                    .selected(*option == value)
-                            }))
-                            .on_click(cx.listener(move |this, clicks: &Vec<usize>, _, cx| {
-                                if let Some(option) =
-                                    clicks.first().and_then(|ix| click_options.get(*ix))
-                                {
-                                    this.apply_property(
-                                        &target,
-                                        &key,
-                                        serde_json::Value::String(option.clone()),
-                                        cx,
-                                    );
-                                }
-                            }))
-                            .into_any_element()
-                    }
-                    ComponentPropertyField::String { default_value, .. }
-                    | ComponentPropertyField::Color { default_value, .. } => {
-                        let value = current
-                            .and_then(serde_json::Value::as_str)
-                            .map_or_else(|| default_value.clone(), str::to_owned);
-                        if editing {
-                            self.property_edit_input(&field_id, cx).into_any_element()
-                        } else {
-                            let target = target.clone();
-                            let key = key.to_owned();
-                            let value_for_edit = value.clone();
-                            inspector_dynamic_button(field_id, value, cx)
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.begin_property_edit(
-                                        &target,
-                                        &key,
-                                        &value_for_edit,
-                                        false,
-                                        window,
-                                        cx,
-                                    );
-                                }))
-                                .into_any_element()
-                        }
-                    }
-                }),
-        )
-    }
-
-    /// The bordered wrapper around the shared `property_input` shown while a
-    /// String / Color / Number field is being edited inline.
-    fn property_edit_input(
-        &self,
-        field_id: &SharedString,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        div()
-            .id(SharedString::from(format!("{field_id}-input")))
-            .px_2()
-            .py_1()
-            .rounded(cx.theme().radius)
-            .border_1()
-            .border_color(theme::accent())
-            .bg(cx.theme().background)
-            .text_sm()
-            .text_color(cx.theme().foreground)
-            .when_some(self.property_input.clone(), |field, input| {
-                field.child(Input::new(&input))
-            })
     }
 
     fn reload_react_click(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
@@ -5999,7 +3376,6 @@ impl EditorView {
         };
         let total_duration = self.document.duration().as_seconds().unwrap_or(0.0);
         let current_time = self.current_time();
-        let track_count = self.tracks.len();
         let (zoom, view_start) = self.timeline_view();
         // Map a whole-composition fraction / width into the visible window.
         let vx = move |fraction: f32| ((f64::from(fraction) - view_start) * zoom) as f32;
@@ -6007,20 +3383,12 @@ impl EditorView {
         let t = cx.theme();
         let row_border = t.border;
         let row_selected_bg = t.list_active;
-        let drop_ok_bg = t.success.opacity(0.16);
-        let drop_ok_border = t.success;
-        let drop_bad_bg = t.danger.opacity(0.16);
-        let drop_bad_border = t.danger;
         let clip_label = theme::waveform();
         let header_text = t.foreground;
         let muted_text = t.muted_foreground;
         let meter_track_bg = t.background;
-        let rows = self.tracks.iter().enumerate().map(|(track_index, track)| {
+        let rows = self.tracks.iter().map(|track| {
             let selected_track = self.selected_track_id.as_deref() == Some(track.id.as_str());
-            let clip_drag_hover =
-                self.clip_drag_hover_track_id.as_deref() == Some(track.id.as_str());
-            let clip_drag_target =
-                self.clip_drag_target_track_id.as_deref() == Some(track.id.as_str());
             let track_level = track
                 .clips
                 .iter()
@@ -6055,11 +3423,6 @@ impl EditorView {
                     ClipKind::Component => "COMPONENT",
                 };
                 let clip_id = clip.id.clone();
-                let drag_clip_id = clip_id.clone();
-                let trim_start_clip_id = clip_id.clone();
-                let trim_end_clip_id = clip_id.clone();
-                let trim_start_element_id: SharedString = format!("trim-start-{clip_id}").into();
-                let trim_end_element_id: SharedString = format!("trim-end-{clip_id}").into();
                 let element_id: SharedString = format!("timeline-clip-{clip_id}").into();
                 let selected = self.selected_clip_id.as_deref() == Some(clip.id.as_str());
                 let waveform = self
@@ -6078,7 +3441,6 @@ impl EditorView {
                     .overflow_hidden()
                     .rounded_sm()
                     .bg(rgb(color))
-                    .cursor_pointer()
                     .when(selected, |clip| {
                         clip.border_2().border_color(theme::clip_selected_border())
                     })
@@ -6107,88 +3469,10 @@ impl EditorView {
                         )
                     })
                     .child(div().relative().child(format!("{kind}  {}", clip.name)))
-                    .when(selected, |clip| {
-                        clip.child(
-                            div()
-                                .id(trim_start_element_id)
-                                .absolute()
-                                .left(px(0.0))
-                                .top(px(0.0))
-                                .bottom(px(0.0))
-                                .w(px(8.0))
-                                .cursor(CursorStyle::ResizeLeftRight)
-                                .child(
-                                    div()
-                                        .absolute()
-                                        .left(px(1.0))
-                                        .top(px(4.0))
-                                        .bottom(px(4.0))
-                                        .w(px(3.0))
-                                        .rounded_full()
-                                        .bg(clip_label),
-                                )
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(move |this, event, window, cx| {
-                                        cx.stop_propagation();
-                                        this.begin_clip_drag(
-                                            &trim_start_clip_id,
-                                            ClipDragKind::TrimStart,
-                                            event,
-                                            window,
-                                            cx,
-                                        );
-                                    }),
-                                ),
-                        )
-                        .child(
-                            div()
-                                .id(trim_end_element_id)
-                                .absolute()
-                                .right(px(0.0))
-                                .top(px(0.0))
-                                .bottom(px(0.0))
-                                .w(px(8.0))
-                                .cursor(CursorStyle::ResizeLeftRight)
-                                .child(
-                                    div()
-                                        .absolute()
-                                        .right(px(1.0))
-                                        .top(px(4.0))
-                                        .bottom(px(4.0))
-                                        .w(px(3.0))
-                                        .rounded_full()
-                                        .bg(clip_label),
-                                )
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(move |this, event, window, cx| {
-                                        cx.stop_propagation();
-                                        this.begin_clip_drag(
-                                            &trim_end_clip_id,
-                                            ClipDragKind::TrimEnd,
-                                            event,
-                                            window,
-                                            cx,
-                                        );
-                                    }),
-                                ),
-                        )
-                    })
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |this, event, window, cx| {
-                            this.begin_clip_drag(
-                                &drag_clip_id,
-                                ClipDragKind::Move,
-                                event,
-                                window,
-                                cx,
-                            );
-                        }),
-                    )
                     .on_click(cx.listener(move |this, _, _, cx| {
+                        cx.stop_propagation();
                         this.selected_clip_id = Some(clip_id.clone());
+                        this.selected_asset_id = None;
                         cx.notify();
                     }))
             });
@@ -6201,19 +3485,8 @@ impl EditorView {
             let mute_track_id = track.id.clone();
             let solo_track_id = track.id.clone();
             let select_track_id = track.id.clone();
-            let hover_track_id = track.id.clone();
-            let move_up_track_id = track.id.clone();
-            let move_down_track_id = track.id.clone();
-            let drop_track_id = track.id.clone();
-            let drop_track_kind = track.kind;
-            let drop_track_locked = track.locked;
-            let effect_drop_track_id = track.id.clone();
-            let effect_drop_kind = track.kind;
-            let effect_drop_locked = track.locked;
             let mute_element_id: SharedString = format!("track-mute-{}", track.id).into();
             let solo_element_id: SharedString = format!("track-solo-{}", track.id).into();
-            let up_element_id: SharedString = format!("track-up-{}", track.id).into();
-            let down_element_id: SharedString = format!("track-down-{}", track.id).into();
             let track_element_id: SharedString = format!("timeline-track-{}", track.id).into();
             div()
                 .id(track_element_id)
@@ -6224,23 +3497,13 @@ impl EditorView {
                 .border_b_1()
                 .border_color(row_border)
                 .when(selected_track, |row| row.bg(row_selected_bg))
-                .when(clip_drag_target, |row| row.bg(drop_ok_bg))
-                .when(clip_drag_hover && !clip_drag_target, |row| {
-                    row.bg(drop_bad_bg)
-                })
-                .on_mouse_move(cx.listener(move |this, event, _, cx| {
-                    this.update_clip_drag_target(&hover_track_id, event, cx);
-                }))
                 .on_click(cx.listener(move |this, _, _, cx| {
-                    if this.renaming_track_id.as_deref() != Some(select_track_id.as_str()) {
-                        this.renaming_track_id = None;
-                    }
                     if this.selected_track_id.as_deref() == Some(select_track_id.as_str()) {
                         this.selected_track_id = None;
                     } else {
                         this.selected_track_id = Some(select_track_id.clone());
+                        this.selected_asset_id = None;
                     }
-                    this.edit_error = None;
                     cx.notify();
                 }))
                 .child(
@@ -6272,28 +3535,6 @@ impl EditorView {
                                     ),
                             )
                         })
-                        .child(
-                            Button::new(up_element_id)
-                                .xsmall()
-                                .ghost()
-                                .label("↑")
-                                .disabled(track_index == 0 || track.locked)
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    cx.stop_propagation();
-                                    this.move_track(&move_up_track_id, -1, cx);
-                                })),
-                        )
-                        .child(
-                            Button::new(down_element_id)
-                                .xsmall()
-                                .ghost()
-                                .label("↓")
-                                .disabled(track_index + 1 >= track_count || track.locked)
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    cx.stop_propagation();
-                                    this.move_track(&move_down_track_id, 1, cx);
-                                })),
-                        )
                         .when(track.kind != TrackKind::Overlay, |header| {
                             header
                                 .child(
@@ -6330,34 +3571,6 @@ impl EditorView {
                         .overflow_hidden()
                         .on_scroll_wheel(cx.listener(Self::timeline_wheel))
                         .on_mouse_down(MouseButton::Middle, cx.listener(Self::begin_timeline_pan))
-                        .drag_over::<AssetDrag>(move |style, asset, _, _| {
-                            if !drop_track_locked
-                                && track_accepts_asset(drop_track_kind, asset.kind)
-                            {
-                                style.bg(drop_ok_bg).border_1().border_color(drop_ok_border)
-                            } else {
-                                style
-                                    .bg(drop_bad_bg)
-                                    .border_1()
-                                    .border_color(drop_bad_border)
-                            }
-                        })
-                        .on_drop(cx.listener(move |this, asset: &AssetDrag, window, cx| {
-                            this.drop_asset_on_track(asset, &drop_track_id, window, cx);
-                        }))
-                        .drag_over::<EffectDrag>(move |style, _, _, _| {
-                            if !effect_drop_locked && effect_drop_kind == TrackKind::Overlay {
-                                style.bg(drop_ok_bg).border_1().border_color(drop_ok_border)
-                            } else {
-                                style
-                                    .bg(drop_bad_bg)
-                                    .border_1()
-                                    .border_color(drop_bad_border)
-                            }
-                        })
-                        .on_drop(cx.listener(move |this, effect: &EffectDrag, window, cx| {
-                            this.drop_effect_on_track(effect, &effect_drop_track_id, window, cx);
-                        }))
                         .children(clips),
                 )
         });
@@ -6370,31 +3583,16 @@ impl EditorView {
             .w_full()
             .overflow_x_hidden()
             .overflow_y_scroll()
-            .when(self.tracks.is_empty(), |area| {
+            .when(self.tracks.is_empty() && !self.is_react_preview(), |area| {
                 area.child(
                     div()
-                        .id("empty-timeline-drop-target")
                         .flex()
                         .flex_1()
                         .items_center()
                         .justify_center()
                         .text_sm()
                         .text_color(muted_text)
-                        .drag_over::<AssetDrag>(move |style, asset, _, _| {
-                            if asset.kind == AssetKind::Font {
-                                style.bg(drop_bad_bg)
-                            } else {
-                                style.bg(drop_ok_bg)
-                            }
-                        })
-                        .on_drop(cx.listener(|this, asset: &AssetDrag, window, cx| {
-                            this.drop_asset_without_track(asset, window, cx);
-                        }))
-                        .drag_over::<EffectDrag>(move |style, _, _, _| style.bg(drop_ok_bg))
-                        .on_drop(cx.listener(|this, effect: &EffectDrag, window, cx| {
-                            this.drop_effect_without_track(effect, window, cx);
-                        }))
-                        .child("No tracks yet — drop an asset or effect here"),
+                        .child("This project has no tracks"),
                 )
             })
             .children(rows);
@@ -6408,9 +3606,7 @@ impl EditorView {
             .bg(cx.theme().secondary)
             .border_t_1()
             .border_color(cx.theme().border)
-            .on_mouse_move(cx.listener(Self::continue_clip_drag))
             .on_mouse_move(cx.listener(Self::continue_timeline_pan))
-            .on_mouse_up(MouseButton::Left, cx.listener(Self::end_clip_drag))
             .on_mouse_up(MouseButton::Middle, cx.listener(Self::end_timeline_pan))
             .child(
                 div()
@@ -6421,37 +3617,13 @@ impl EditorView {
                     .px_3()
                     .justify_between()
                     .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .mr_1()
-                                    .text_color(header_text)
-                                    .child("Timeline"),
-                            )
-                            .children(
-                                [
-                                    (TrackKind::Video, "+ Video", "add-video-track"),
-                                    (TrackKind::Audio, "+ Audio", "add-audio-track"),
-                                    (TrackKind::Overlay, "+ Overlay", "add-overlay-track"),
-                                    (TrackKind::Dialogue, "+ Dialogue", "add-dialogue-track"),
-                                ]
-                                .into_iter()
-                                .map(
-                                    |(kind, label, element_id)| {
-                                        Button::new(element_id)
-                                            .xsmall()
-                                            .ghost()
-                                            .label(label)
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                this.add_track(kind, cx);
-                                            }))
-                                    },
-                                ),
-                            ),
+                        div().flex().items_center().gap_1().child(
+                            div()
+                                .text_sm()
+                                .mr_1()
+                                .text_color(header_text)
+                                .child("Timeline"),
+                        ),
                     )
                     .child(
                         div()
@@ -6481,6 +3653,7 @@ impl EditorView {
                                     .xsmall()
                                     .ghost()
                                     .label("In")
+                                    .tooltip("Mark export start (I)")
                                     .selected(self.export_in_frame.is_some())
                                     .on_click(cx.listener(|this, _, _, cx| this.set_export_in(cx))),
                             )
@@ -6489,6 +3662,7 @@ impl EditorView {
                                     .xsmall()
                                     .ghost()
                                     .label("Out")
+                                    .tooltip("Mark export end (O)")
                                     .selected(self.export_out_frame.is_some())
                                     .on_click(
                                         cx.listener(|this, _, _, cx| this.set_export_out(cx)),
@@ -6502,19 +3676,11 @@ impl EditorView {
                                             .xsmall()
                                             .ghost()
                                             .label("✕")
+                                            .tooltip("Clear export range (Shift+X)")
                                             .on_click(cx.listener(|this, _, _, cx| {
                                                 this.clear_export_range(cx)
                                             })),
                                     )
-                            })
-                            .when(self.selected_clip_id.is_some(), |controls| {
-                                controls.child(
-                                    Button::new("delete-selected-clip")
-                                        .xsmall()
-                                        .danger()
-                                        .label("Delete")
-                                        .on_click(cx.listener(Self::delete_selected_clip_click)),
-                                )
                             }),
                     ),
             )
@@ -6674,30 +3840,20 @@ impl Render for EditorView {
         {
             window.request_animation_frame();
         }
-        let title = if self.is_effectively_dirty() {
-            format!("{} * — Celesta", self.project_name)
-        } else {
-            format!("{} — Celesta", self.project_name)
-        };
-        window.set_window_title(&title);
-        window.set_window_edited(self.is_effectively_dirty());
+        window.set_window_title(&format!("{} — Celesta", self.project_name));
         div()
             .key_context("CelestaEditor")
-            .on_action(cx.listener(Self::save_project))
-            .on_action(cx.listener(Self::save_project_as))
+            .on_action(cx.listener(Self::open_project_action))
+            .on_action(cx.listener(Self::reload_project_action))
+            .on_action(cx.listener(Self::close_window_action))
             .on_action(cx.listener(Self::export_project_action))
             .on_action(cx.listener(Self::set_export_in_action))
             .on_action(cx.listener(Self::set_export_out_action))
             .on_action(cx.listener(Self::clear_export_range_action))
-            .on_action(cx.listener(Self::undo_edit))
-            .on_action(cx.listener(Self::redo_edit))
+            .on_action(cx.listener(Self::set_up_typescript_action))
             .on_action(cx.listener(Self::toggle_playback_action))
             .on_action(cx.listener(Self::previous_frame_action))
             .on_action(cx.listener(Self::next_frame_action))
-            .on_action(cx.listener(Self::import_assets_action))
-            .on_action(cx.listener(Self::insert_selected_asset_action))
-            .on_action(cx.listener(Self::delete_selected_clip_action))
-            .on_action(cx.listener(Self::cancel_inline_edit_action))
             .when_some(self.focus_handle.as_ref(), |view, focus_handle| {
                 view.track_focus(focus_handle)
             })
@@ -6707,17 +3863,17 @@ impl Render for EditorView {
             .overflow_hidden()
             .bg(cx.theme().background)
             .font_family(".SystemUIFont")
-            .child(self.toolbar(cx))
+            .child(self.title_bar(cx))
             .child(self.workspace(cx))
             .child(self.status_bar(cx))
     }
 }
 
 impl EditorView {
-    /// The resizable NLE shell: a left dock (Media Pool / Effects), the
-    /// monitor, and a right dock (Inspector), stacked above the timeline.
-    /// In React-preview mode the left dock is hidden and the right dock
-    /// shows composition facts instead of the inspector.
+    /// The resizable shell: the asset list, the monitor, and the inspector,
+    /// stacked above the timeline. In React-preview mode the asset list is
+    /// hidden and the right dock shows composition facts instead of the
+    /// inspector.
     fn workspace(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let react = self.is_react_preview();
         let dock_state = self.dock_split.clone();
@@ -6737,7 +3893,7 @@ impl EditorView {
                             .overflow_hidden()
                             .border_r_1()
                             .border_color(border)
-                            .child(self.left_dock(cx)),
+                            .child(self.asset_panel(cx)),
                     ),
             )
             .child(resizable_panel().child(self.preview_panel(cx)))
@@ -6778,104 +3934,7 @@ impl EditorView {
             )
     }
 
-    /// Left dock: a tab bar switching between the media pool and the effects
-    /// browser.
-    fn left_dock(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .flex()
-            .flex_col()
-            .size_full()
-            .min_h_0()
-            .bg(cx.theme().sidebar)
-            .child(
-                TabBar::new("celesta-left-dock")
-                    .selected_index(self.left_dock_tab)
-                    .child("Media Pool")
-                    .child("Effects")
-                    .on_click(cx.listener(|this, ix: &usize, _, cx| {
-                        this.left_dock_tab = *ix;
-                        cx.notify();
-                    })),
-            )
-            .child(if self.left_dock_tab == 1 {
-                self.effects_panel(cx).into_any_element()
-            } else {
-                self.asset_panel(cx).into_any_element()
-            })
-    }
-
-    /// Effects browser: the components registered by the project's React entry,
-    /// each draggable onto a track as a `Component` clip. Empty until a React
-    /// entry is set and its schemas have loaded.
-    fn effects_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let names: Vec<SharedString> = self
-            .component_schemas
-            .keys()
-            .map(|name| SharedString::from(name.clone()))
-            .collect();
-        div()
-            .flex()
-            .flex_col()
-            .flex_1()
-            .min_h_0()
-            .w_full()
-            .bg(cx.theme().sidebar)
-            .child(panel_header("Effects", names.len(), cx))
-            .child(
-                div()
-                    .id("effects-list-scroll")
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_h_0()
-                    .w_full()
-                    .overflow_x_hidden()
-                    .overflow_y_scroll()
-                    .when(names.is_empty(), |list| {
-                        list.child(
-                            div()
-                                .p_3()
-                                .text_sm()
-                                .text_color(cx.theme().muted_foreground)
-                                .child(if self.document.react_entry().is_some() {
-                                    "Loading components…"
-                                } else {
-                                    "Set a React entry to load components"
-                                }),
-                        )
-                    })
-                    .children(names.into_iter().map(|name| {
-                        div()
-                            .id(SharedString::from(format!("effect-{name}")))
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .px_3()
-                            .py_2()
-                            .cursor_pointer()
-                            .text_sm()
-                            .text_color(cx.theme().foreground)
-                            .hover(|style| style.bg(cx.theme().list_hover))
-                            .child(div().text_xs().text_color(theme::accent()).child("FX"))
-                            .child(name.clone())
-                            .on_drag(
-                                EffectDrag {
-                                    component: name.to_string(),
-                                },
-                                |effect, _, _, cx| {
-                                    let effect = effect.clone();
-                                    cx.new(|_| effect)
-                                },
-                            )
-                    })),
-            )
-    }
-
     fn status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let export = self
-            .export_progress
-            .map(export_progress_label)
-            .or_else(|| self.export_message.as_ref().map(ToString::to_string));
         StatusBar::new()
             .left(
                 div()
@@ -6886,19 +3945,17 @@ impl EditorView {
                         self.dimensions, self.frame_rate_label, self.gpu_name
                     )),
             )
-            .right(
-                div()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(format!(
-                        "{} / {}f",
-                        self.clock.frame(),
-                        self.clock.end_frame()
-                    )),
+            .when_some(
+                self.export_progress.map(export_progress_label),
+                |bar, label| {
+                    bar.right(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().foreground)
+                            .child(label),
+                    )
+                },
             )
-            .when_some(export, |bar, label| {
-                bar.right(div().text_xs().text_color(cx.theme().warning).child(label))
-            })
     }
 }
 
@@ -6923,74 +3980,6 @@ fn panel_header(title: &'static str, count: usize, cx: &App) -> impl IntoElement
                     .child(count.to_string()),
             )
         })
-}
-
-fn dragged_clip_range(drag: &ClipDrag, pointer_frame: i64, timeline_end: i64) -> (i64, i64) {
-    let delta = pointer_frame.saturating_sub(drag.pointer_frame);
-    let original_end = drag.start_frame.saturating_add(drag.duration_frames);
-    match drag.kind {
-        ClipDragKind::Move => {
-            let latest_start = timeline_end.saturating_sub(drag.duration_frames);
-            (
-                drag.start_frame
-                    .saturating_add(delta)
-                    .clamp(0, latest_start),
-                drag.duration_frames,
-            )
-        }
-        ClipDragKind::TrimStart => {
-            let start = drag
-                .start_frame
-                .saturating_add(delta)
-                .clamp(0, original_end.saturating_sub(1));
-            (start, original_end.saturating_sub(start))
-        }
-        ClipDragKind::TrimEnd => {
-            let end = original_end
-                .saturating_add(delta)
-                .clamp(drag.start_frame.saturating_add(1), timeline_end);
-            (drag.start_frame, end.saturating_sub(drag.start_frame))
-        }
-    }
-}
-
-fn initial_clip_duration_frames(
-    media: Option<&Result<MediaAssetInfo, String>>,
-    frame_rate: Rational,
-) -> i64 {
-    let fallback = (u64::from(frame_rate.numerator) * 5)
-        .div_ceil(u64::from(frame_rate.denominator))
-        .max(1)
-        .min(i64::MAX as u64) as i64;
-    media
-        .and_then(|info| info.as_ref().ok())
-        .and_then(|info| info.duration)
-        .and_then(|duration| TimelineClock::new(duration, frame_rate).ok())
-        .map(TimelineClock::end_frame)
-        .filter(|frames| *frames > 0)
-        .unwrap_or(fallback)
-}
-
-fn track_accepts_asset(track: TrackKind, asset: AssetKind) -> bool {
-    matches!(
-        (track, asset),
-        (TrackKind::Video, AssetKind::Video)
-            | (TrackKind::Audio, AssetKind::Audio)
-            | (TrackKind::Overlay, AssetKind::Image)
-    )
-}
-
-fn track_accepts_clip(track: TrackKind, clip: ClipKind) -> bool {
-    matches!(
-        (track, clip),
-        (TrackKind::Video, ClipKind::Video)
-            | (TrackKind::Audio, ClipKind::Audio)
-            | (
-                TrackKind::Overlay,
-                ClipKind::Image | ClipKind::Text | ClipKind::Component
-            )
-            | (TrackKind::Dialogue, ClipKind::Dialogue)
-    )
 }
 
 fn waveform_peaks(buffer: &AudioBuffer, requested_buckets: usize) -> Vec<f32> {
@@ -7180,18 +4169,6 @@ fn clip_local_time(time: Time, clip: &celesta_editor_core::ClipSummary) -> Time 
     }
 }
 
-fn volume_keyframe_at(volume: &Animatable<f64>, time: Time) -> bool {
-    let Animatable::Keyframes(animation) = volume else {
-        return false;
-    };
-    animation.keyframes.iter().any(|keyframe| {
-        keyframe
-            .time
-            .cmp_exact(time)
-            .is_ok_and(|ordering| ordering.is_eq())
-    })
-}
-
 fn time_fraction(duration: Time, numerator: usize, denominator: usize) -> Option<Time> {
     let value = i128::from(duration.value).checked_mul(i128::try_from(numerator).ok()?)?;
     let timescale = u64::from(duration.timescale).checked_mul(u64::try_from(denominator).ok()?)?;
@@ -7225,7 +4202,7 @@ fn waveform_segment(
 }
 
 fn inspector_row(
-    label: &'static str,
+    label: impl Into<SharedString>,
     value: impl Into<SharedString>,
     cx: &App,
 ) -> impl IntoElement {
@@ -7241,7 +4218,7 @@ fn inspector_row(
             div()
                 .text_xs()
                 .text_color(cx.theme().muted_foreground)
-                .child(label),
+                .child(label.into()),
         )
         .child(
             div()
@@ -7251,29 +4228,93 @@ fn inspector_row(
         )
 }
 
-fn inspector_button(id: &'static str, label: &'static str, cx: &App) -> Stateful<Div> {
-    inspector_dynamic_button(id, label, cx)
+fn inspector_section(title: impl Into<SharedString>, cx: &App) -> impl IntoElement {
+    div()
+        .mt_3()
+        .px_3()
+        .py_2()
+        .border_t_1()
+        .border_b_1()
+        .border_color(cx.theme().border)
+        .text_sm()
+        .text_color(cx.theme().foreground)
+        .child(title.into())
 }
 
-/// Same styling as [`inspector_button`], but for a `component_prop_field_id`,
-/// derived from a dynamic clip id and prop key, that cannot be a `&'static
-/// str`.
-fn inspector_dynamic_button(
-    id: impl Into<ElementId>,
-    label: impl Into<SharedString>,
-    cx: &App,
-) -> Stateful<Div> {
+fn inspector_note(text: &'static str, cx: &App) -> impl IntoElement {
     div()
-        .id(id.into())
-        .cursor_pointer()
-        .rounded(cx.theme().radius)
-        .bg(cx.theme().secondary)
-        .hover(|style| style.bg(cx.theme().secondary_hover))
-        .px_2()
-        .py_1()
+        .px_3()
+        .py_2()
         .text_xs()
-        .text_color(cx.theme().secondary_foreground)
-        .child(label.into())
+        .text_color(cx.theme().muted_foreground)
+        .child(text)
+}
+
+/// The label and current value of one schema-described property, falling
+/// back to the field's declared default when the value is unset.
+fn property_display(
+    key: &str,
+    field: &ComponentPropertyField,
+    current: Option<&serde_json::Value>,
+) -> (SharedString, String) {
+    let (label, value) = match field {
+        ComponentPropertyField::Boolean {
+            label,
+            default_value,
+            ..
+        } => {
+            let value = current
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(*default_value);
+            (label, if value { "On" } else { "Off" }.to_owned())
+        }
+        ComponentPropertyField::Number {
+            label,
+            default_value,
+            ..
+        } => (
+            label,
+            format_component_number(
+                current
+                    .and_then(serde_json::Value::as_f64)
+                    .unwrap_or(*default_value),
+            ),
+        ),
+        ComponentPropertyField::String {
+            label,
+            default_value,
+            ..
+        }
+        | ComponentPropertyField::Color {
+            label,
+            default_value,
+            ..
+        }
+        | ComponentPropertyField::Select {
+            label,
+            default_value,
+            ..
+        } => (
+            label,
+            current
+                .and_then(serde_json::Value::as_str)
+                .map_or_else(|| default_value.clone(), str::to_owned),
+        ),
+    };
+    (
+        label
+            .clone()
+            .map_or_else(|| key.to_owned().into(), Into::into),
+        value,
+    )
+}
+
+/// A prop value without a schema: strings unquoted, everything else as JSON.
+fn json_display(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(text) => text.clone(),
+        other => other.to_string(),
+    }
 }
 
 fn format_component_number(value: f64) -> String {
@@ -7418,23 +4459,24 @@ fn run() -> Result<(), Box<dyn Error>> {
         gpui_kit::init(cx);
         theme::init(cx);
         cx.bind_keys([
-            KeyBinding::new("escape", CancelInlineEdit, Some("CelestaEditor")),
-            KeyBinding::new("cmd-s", SaveProject, Some("CelestaEditor")),
-            KeyBinding::new("cmd-shift-s", SaveProjectAs, Some("CelestaEditor")),
-            KeyBinding::new("cmd-shift-e", ExportProject, Some("CelestaEditor")),
+            KeyBinding::new("secondary-o", OpenProject, Some("CelestaEditor")),
+            KeyBinding::new("secondary-r", ReloadProject, Some("CelestaEditor")),
+            KeyBinding::new("secondary-w", CloseWindow, Some("CelestaEditor")),
+            KeyBinding::new("secondary-q", Quit, None),
+            KeyBinding::new("secondary-shift-e", ExportProject, Some("CelestaEditor")),
             KeyBinding::new("i", SetExportIn, Some("CelestaEditor")),
             KeyBinding::new("o", SetExportOut, Some("CelestaEditor")),
             KeyBinding::new("shift-x", ClearExportRange, Some("CelestaEditor")),
-            KeyBinding::new("cmd-z", UndoEdit, Some("CelestaEditor")),
-            KeyBinding::new("cmd-shift-z", RedoEdit, Some("CelestaEditor")),
             KeyBinding::new("space", TogglePlayback, Some("CelestaEditor")),
             KeyBinding::new("left", PreviousFrame, Some("CelestaEditor")),
             KeyBinding::new("right", NextFrame, Some("CelestaEditor")),
-            KeyBinding::new("cmd-i", ImportAssets, Some("CelestaEditor")),
-            KeyBinding::new("cmd-return", InsertSelectedAsset, Some("CelestaEditor")),
-            KeyBinding::new("backspace", DeleteSelectedClip, Some("CelestaEditor")),
-            KeyBinding::new("delete", DeleteSelectedClip, Some("CelestaEditor")),
         ]);
+        cx.on_action(|_: &Quit, cx| cx.quit());
+        // macOS shows these in the system menu bar; elsewhere the title bar's
+        // `AppMenuBar` renders the same list.
+        cx.set_menus(app_menus());
+        GlobalState::global_mut(cx)
+            .set_app_menus(app_menus().into_iter().map(Menu::owned).collect());
         cx.on_window_closed(|cx, _| {
             if cx.windows().is_empty() {
                 cx.quit();
@@ -7446,102 +4488,68 @@ fn run() -> Result<(), Box<dyn Error>> {
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
-                titlebar: Some(TitlebarOptions {
-                    title: Some("Celesta".into()),
-                    ..Default::default()
-                }),
-                ..Default::default()
+                window_min_size: Some(size(px(960.0), px(600.0))),
+                ..TitleBar::window_options()
             },
             |window, cx| {
                 let view = cx.new(|cx| {
                     let focus_handle = cx.focus_handle();
                     let master_volume_focus = cx.focus_handle().tab_stop(true).tab_index(0);
-                    let track_name_input = cx.new(|cx| InputState::new(window, cx));
-                    cx.subscribe_in(
-                        &track_name_input,
-                        window,
-                        |editor: &mut EditorView, _, event: &InputEvent, _, cx| {
-                            if let InputEvent::PressEnter { .. } = event {
-                                editor.commit_track_rename(cx);
-                            }
-                        },
-                    )
-                    .detach();
-                    let character_name_input = cx.new(|cx| InputState::new(window, cx));
-                    cx.subscribe_in(
-                        &character_name_input,
-                        window,
-                        |editor: &mut EditorView, _, event: &InputEvent, _, cx| {
-                            if let InputEvent::PressEnter { .. } = event {
-                                editor.commit_character_rename(cx);
-                            }
-                        },
-                    )
-                    .detach();
-                    let property_input = cx.new(|cx| InputState::new(window, cx));
-                    cx.subscribe_in(
-                        &property_input,
-                        window,
-                        |editor: &mut EditorView, _, event: &InputEvent, _, cx| {
-                            if let InputEvent::PressEnter { .. } = event {
-                                editor.commit_property_edit(cx);
-                            }
-                        },
-                    )
-                    .detach();
-                    let dialogue_text_input = cx.new(|cx| InputState::new(window, cx));
-                    cx.subscribe_in(
-                        &dialogue_text_input,
-                        window,
-                        |editor: &mut EditorView, _, event: &InputEvent, _, cx| {
-                            if let InputEvent::PressEnter { .. } = event {
-                                editor.commit_dialogue_text_edit(cx);
-                            }
-                        },
-                    )
-                    .detach();
                     focus_handle.focus(window, cx);
                     editor.focus_handle = Some(focus_handle);
                     editor.master_volume_focus = Some(master_volume_focus);
-                    editor.track_name_input = Some(track_name_input);
-                    editor.character_name_input = Some(character_name_input);
-                    editor.property_input = Some(property_input);
-                    editor.dialogue_text_input = Some(dialogue_text_input);
                     editor.dock_split = Some(cx.new(|_| ResizableState::default()));
                     editor.body_split = Some(cx.new(|_| ResizableState::default()));
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        editor.app_menu_bar = Some(AppMenuBar::new(cx));
+                    }
                     if editor.is_react_preview() {
                         editor.watch_react_entry(cx);
                     }
                     editor
                 });
-                let close_view = view.clone();
-                window.on_window_should_close(cx, move |window, cx| {
-                    if close_view.read(cx).force_close
-                        || !close_view.read(cx).is_effectively_dirty()
-                    {
-                        return true;
-                    }
-                    close_view.update(cx, |editor, cx| editor.prompt_to_close(window, cx));
-                    false
-                });
                 cx.new(|cx| Root::new(view, window, cx))
             },
         )
-        .expect("could not open the Celesta editor window");
+        .expect("could not open the Celesta window");
         cx.activate(true);
     });
     Ok(())
 }
 
+fn app_menus() -> Vec<Menu> {
+    vec![
+        Menu::new("Celesta").items([MenuItem::action("Quit Celesta", Quit)]),
+        Menu::new("File").items([
+            MenuItem::action("Open…", OpenProject),
+            MenuItem::action("Reload", ReloadProject),
+            MenuItem::separator(),
+            MenuItem::action("Export…", ExportProject),
+            MenuItem::separator(),
+            MenuItem::action("Set Up TypeScript", SetUpTypeScript),
+            MenuItem::separator(),
+            MenuItem::action("Close Window", CloseWindow),
+        ]),
+        Menu::new("Playback").items([
+            MenuItem::action("Play/Pause", TogglePlayback),
+            MenuItem::action("Previous Frame", PreviousFrame),
+            MenuItem::action("Next Frame", NextFrame),
+            MenuItem::separator(),
+            MenuItem::action("Mark Export Start", SetExportIn),
+            MenuItem::action("Mark Export End", SetExportOut),
+            MenuItem::action("Clear Export Range", ClearExportRange),
+        ]),
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        AudioCacheKey, CachedAudioDecoder, ClipDrag, ClipDragKind, ClipKind, DiskAudioCache,
-        EDITOR_DEMO_PROJECT, ExportEvent, ExportRequest, ExportSource, ExportWorker,
-        MediaAssetInfo, clip_level_envelope, dragged_clip_range, export_range_for,
-        export_suggested_name, initial_clip_duration_frames, level_at_time, map_clip_waveform,
-        master_volume_from_drag, take_latest, track_accepts_asset, track_accepts_clip,
-        waveform_peaks, waveform_segment,
+        AudioCacheKey, CachedAudioDecoder, ClipKind, DiskAudioCache, EDITOR_DEMO_PROJECT,
+        ExportEvent, ExportRequest, ExportSource, ExportWorker, clip_level_envelope,
+        export_range_for, export_suggested_name, is_react_entry, level_at_time, map_clip_waveform,
+        master_volume_from_drag, take_latest, waveform_peaks, waveform_segment,
     };
     use celesta_composition::{
         Animatable, AssetLocation, AudioClip, Rational, ResolvedAsset, Time, TimeRange,
@@ -7549,7 +4557,7 @@ mod tests {
     use celesta_editor_core::ClipSummary;
     use celesta_exporter::ExportCancellation;
     use celesta_media::{AudioBuffer, AudioDecoder};
-    use celesta_project::{AssetKind, Project, TrackKind};
+    use celesta_project::Project;
     use std::fs;
     use std::path::PathBuf;
     use std::sync::mpsc;
@@ -7569,8 +4577,10 @@ mod tests {
         let worker = ExportWorker::spawn().unwrap();
         let cancellation = ExportCancellation::default();
         cancellation.cancel();
-        let output =
-            std::env::temp_dir().join(format!("celesta-cancelled-export-{}.mp4", std::process::id()));
+        let output = std::env::temp_dir().join(format!(
+            "celesta-cancelled-export-{}.mp4",
+            std::process::id()
+        ));
         let _ = fs::remove_file(&output);
         worker
             .request(ExportRequest {
@@ -7597,6 +4607,16 @@ mod tests {
     }
 
     #[test]
+    fn open_recognizes_react_entries_but_not_projects() {
+        assert!(is_react_entry(PathBuf::from("title.tsx").as_path()));
+        assert!(is_react_entry(PathBuf::from("scene.mjs").as_path()));
+        assert!(!is_react_entry(
+            PathBuf::from("demo.celesta.json").as_path()
+        ));
+        assert!(!is_react_entry(PathBuf::from("notes.txt").as_path()));
+    }
+
+    #[test]
     fn export_range_needs_both_markers_ordered() {
         let rate = Rational::new(30, 1);
         assert_eq!(export_range_for(None, Some(30), rate), None);
@@ -7612,7 +4632,10 @@ mod tests {
     #[test]
     fn export_name_replaces_project_extensions() {
         assert_eq!(
-            export_suggested_name(Some(PathBuf::from("demo.celesta.json").as_path()), "ignored"),
+            export_suggested_name(
+                Some(PathBuf::from("demo.celesta.json").as_path()),
+                "ignored"
+            ),
             "demo.mp4"
         );
         assert_eq!(export_suggested_name(None, "Untitled"), "Untitled.mp4");
@@ -7692,52 +4715,6 @@ mod tests {
         assert_eq!(master_volume_from_drag(1.0, 22.0), 1.5);
         assert_eq!(master_volume_from_drag(1.0, -100.0), 0.0);
         assert_eq!(master_volume_from_drag(1.0, 100.0), 2.0);
-    }
-
-    #[test]
-    fn body_drag_preserves_the_clip_center_from_every_grab_position() {
-        let move_from = |pointer_frame| ClipDrag {
-            clip_id: "clip".to_owned(),
-            kind: ClipDragKind::Move,
-            pointer_frame,
-            start_frame: 100,
-            duration_frames: 60,
-        };
-
-        assert_eq!(dragged_clip_range(&move_from(100), 110, 1_000), (110, 60));
-        assert_eq!(dragged_clip_range(&move_from(130), 140, 1_000), (110, 60));
-        assert_eq!(dragged_clip_range(&move_from(159), 169, 1_000), (110, 60));
-    }
-
-    #[test]
-    fn probed_duration_replaces_the_five_second_insertion_default() {
-        let info = Ok(MediaAssetInfo {
-            duration: Some(Time::new(961_104, 1_000_000)),
-            video_size: None,
-            has_audio: true,
-        });
-
-        assert_eq!(
-            initial_clip_duration_frames(Some(&info), Rational::new(60, 1)),
-            58
-        );
-        assert_eq!(
-            initial_clip_duration_frames(None, Rational::new(60, 1)),
-            300
-        );
-    }
-
-    #[test]
-    fn assets_only_highlight_compatible_timeline_tracks() {
-        assert!(track_accepts_asset(TrackKind::Video, AssetKind::Video));
-        assert!(track_accepts_asset(TrackKind::Audio, AssetKind::Audio));
-        assert!(track_accepts_asset(TrackKind::Overlay, AssetKind::Image));
-        assert!(!track_accepts_asset(TrackKind::Audio, AssetKind::Video));
-        assert!(!track_accepts_asset(TrackKind::Dialogue, AssetKind::Audio));
-        assert!(!track_accepts_asset(TrackKind::Overlay, AssetKind::Font));
-        assert!(track_accepts_clip(TrackKind::Audio, ClipKind::Audio));
-        assert!(track_accepts_clip(TrackKind::Overlay, ClipKind::Text));
-        assert!(!track_accepts_clip(TrackKind::Video, ClipKind::Audio));
     }
 
     #[test]

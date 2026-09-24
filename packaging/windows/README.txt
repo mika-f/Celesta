@@ -9,8 +9,9 @@ To try React, open a terminal in this directory and run:
 To export the example:
   .\Celesta-export.exe --react .\examples\title.tsx output.mp4
 
-Save your projects and media in your own documents directory.
-The examples are starting points; save a copy before editing them.
+Choose File > Open... in Celesta to preview a project or React composition.
+Keep your projects and media in your own documents directory. The examples
+are starting points; copy them before editing them in a text editor.
 
 This is an unsigned development package. Windows signing and public release
 license/source-distribution review are separate release steps. Native library

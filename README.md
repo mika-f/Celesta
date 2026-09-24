@@ -1,9 +1,8 @@
 # Celesta
 
-Celesta is a desktop video editor that combines timeline editing with
-React-based compositions. Arrange video, images, text, and audio visually, or
-use React to create animated titles and reusable components. Preview your work
-in the editor and export it as an MP4.
+Celesta is a code-first video tool. Describe a timeline of video, images,
+text, and audio in a `.celesta.json` project, or build animated scenes with
+React. Preview your work in the Celesta app and export it as an MP4.
 
 Celesta is under active development. The instructions below run it from
 source. Existing package names, commands, and the `.celesta.json` project file
@@ -11,19 +10,19 @@ extension still use `celesta` for compatibility.
 
 ## What you can do
 
-- **Edit on a timeline:** import local media, arrange clips on multiple tracks,
-  move and trim clips, and undo or redo edits.
-- **Preview frame by frame:** play your composition with synchronized audio,
-  scrub the timeline, or step through individual frames.
-- **Mix audio:** adjust clip and master volume, add volume keyframes, and mute
-  or solo tracks. Waveforms help you place and trim audio.
+- **Describe a timeline:** list local media and place clips on multiple video,
+  audio, overlay, and dialogue tracks in a project file.
+- **Preview frame by frame:** open a project or React composition, play it
+  with synchronized audio, scrub the timeline, or step through frames. The
+  timeline, asset list, and Inspector show what the project contains.
+- **Check audio:** see waveforms and track levels, mute or solo tracks, and
+  set the preview volume.
 - **Create character dialogue:** combine portraits, expressions, subtitles,
-  and voice recordings. Assign mouth images and generate lip-sync cues from
-  dialogue text and audio.
+  voice recordings, and lip-sync cues.
 - **Compose with React:** use components, hooks, animation helpers, and layouts
-  to build scenes. Expose editable properties in the editor and combine React
-  content with a project timeline.
-- **Export MP4:** render H.264 video with AAC audio, either from the editor or
+  to build scenes, and combine React content with a project timeline. The
+  preview reloads when you save the composition.
+- **Export MP4:** render H.264 video with AAC audio, either from the app or
   the command line. Export the whole composition or a selected time range.
 
 ## Run from source
@@ -58,41 +57,36 @@ cd celesta
 cargo run -p celesta-editor --release
 ```
 
-The editor opens a built-in demo. To open an existing project instead, pass its
-path:
+The app opens a built-in demo. Choose **File › Open…** (Command-O on macOS,
+Ctrl-O elsewhere) to open a project or React composition, or pass its path:
 
 ```sh
 cargo run -p celesta-editor --release -- examples/voiceroid.celesta.json
 ```
 
-## Make your first video
+## Preview and export
 
-1. **Start with a project.** Launch the demo above, or open the minimal example
-   with `cargo run -p celesta-editor --release -- examples/minimal.celesta.json`.
-   Use **Save As** to save your own copy.
-2. **Import your media.** Choose **Import** in the Assets panel and select local
-   video, image, or audio files.
-3. **Add clips.** Select an asset and choose **Add** to insert it at the playhead,
-   or drag it to a compatible timeline track.
-4. **Arrange and trim.** Drag a clip's body to move it. Select a clip and drag
-   either edge handle to change its start or end. Use the Inspector to edit the
-   selected clip's available properties.
-5. **Preview.** Press Space to play or pause. Use the left and right arrow keys
+1. **Open a project.** Choose **File › Open…** and select a `.celesta.json`
+   project or a React composition (`.tsx`, `.jsx`, `.ts`, or `.js`).
+   `examples/minimal.celesta.json` is a small starting point.
+2. **Edit the source file.** Change the project or composition in your text
+   editor. React compositions reload automatically when you save; for a
+   project, choose **File › Reload** (Command-R on macOS, Ctrl-R elsewhere).
+3. **Preview.** Press Space to play or pause. Use the left and right arrow keys
    to step one frame at a time, or drag along the timeline ruler to scrub.
-6. **Save and export.** Save your project, then choose **Export** and an MP4
-   destination. Progress appears in the toolbar; **Cancel Export** stops the job.
+   Select an asset, track, or clip to see its details in the Inspector.
+4. **Export.** Choose **Export…** and an MP4 destination. To export a section,
+   press I and O to mark its start and end. Progress appears in the status
+   bar; **Cancel export** stops the job.
 
 Project files reference your source media. Keep those files available when
-reopening or sharing a project. If you move a file, select the missing asset in
-the Assets panel and use **Relink** to locate it again.
+reopening or sharing a project. Assets whose files cannot be found are marked
+in the Assets panel.
 
 ### Character dialogue
 
 Open `examples/voiceroid.celesta.json` to try a dialogue project with a sample
-portrait and voice recording. In your own project, assign portrait expressions
-and mouth images to a character, then select an audio-backed Dialogue clip and
-choose **Generate from voice** to create lip-sync cues. Regenerate the cues after
-changing the dialogue text or voice recording.
+portrait and voice recording.
 
 ## Use React compositions
 
@@ -148,8 +142,8 @@ cargo run -p celesta-exporter --release -- --from 0 --to 1 examples/editor-demo.
 
 - Media must be available as local files; remote media URLs are not supported.
 - MP4 export requires non-zero, even-numbered width and height.
-- Lip-sync generation uses dialogue text and the voice waveform. It does not
-  perform speech recognition, so the text should match the recording.
+- The Celesta app previews projects but does not edit them. Change projects
+  and compositions in their source files.
 
 ## Build a Windows package
 
