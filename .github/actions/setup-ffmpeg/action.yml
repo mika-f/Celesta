@@ -1,0 +1,57 @@
+name: Set up FFmpeg 8.1
+description: >
+  Installs the FFmpeg 8.1.x development libraries Celesta links against:
+  vcpkg ffmpeg[x264]:x64-windows-static-md on Windows (VCPKG_ROOT is exported)
+  and Homebrew ffmpeg@8 on macOS (PKG_CONFIG_PATH is exported).
+
+runs:
+  using: composite
+  steps:
+    # vcpkg and Homebrew master both ship FFmpeg 9, which Celesta does not
+    # support yet, so Windows pins a vcpkg release whose ffmpeg port is 8.1.x.
+    - name: Check out vcpkg
+      if: runner.os == 'Windows'
+      shell: pwsh
+      env:
+        VCPKG_TAG: '2026.07.29'
+      run: |
+        $root = Join-Path $env:RUNNER_TEMP 'vcpkg'
+        git clone --quiet --depth 1 --branch $env:VCPKG_TAG https://github.com/microsoft/vcpkg $root
+        if ($LASTEXITCODE -ne 0) { throw 'git clone failed' }
+        & "$root/bootstrap-vcpkg.bat" -disableMetrics
+        if ($LASTEXITCODE -ne 0) { throw 'vcpkg bootstrap failed' }
+        "VCPKG_ROOT=$root" >> $env:GITHUB_ENV
+        # Building FFmpeg and x264 from source takes a long time; keep vcpkg's
+        # binary packages in a cached directory.
+        $cache = Join-Path $env:RUNNER_TEMP 'vcpkg-binary-cache'
+        New-Item -ItemType Directory -Force $cache | Out-Null
+        "VCPKG_BINARY_CACHE_DIR=$cache" >> $env:GITHUB_ENV
+        "VCPKG_BINARY_SOURCES=clear;files,$cache,readwrite" >> $env:GITHUB_ENV
+        "VCPKG_CACHE_KEY_PREFIX=vcpkg-$env:VCPKG_TAG-ffmpeg-x264-x64-windows-static-md-$env:ImageOS-" >> $env:GITHUB_ENV
+        "VCPKG_CACHE_KEY_IMAGE=$env:ImageVersion" >> $env:GITHUB_ENV
+
+    # The runner image version is part of the key so a new image (and with it a
+    # possibly different MSVC, which changes vcpkg's ABI hashes) saves a fresh
+    # entry, while restore-keys still reuses every package whose hash is unchanged.
+    - name: Restore vcpkg binary cache
+      if: runner.os == 'Windows'
+      uses: actions/cache@v6
+      with:
+        path: ${{ env.VCPKG_BINARY_CACHE_DIR }}
+        key: ${{ env.VCPKG_CACHE_KEY_PREFIX }}${{ env.VCPKG_CACHE_KEY_IMAGE }}
+        restore-keys: ${{ env.VCPKG_CACHE_KEY_PREFIX }}
+
+    - name: Install FFmpeg (vcpkg)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        & "$env:VCPKG_ROOT/vcpkg.exe" install 'ffmpeg[x264]:x64-windows-static-md' --clean-after-build
+        if ($LASTEXITCODE -ne 0) { throw 'vcpkg install failed' }
+
+    - name: Install FFmpeg (Homebrew)
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        brew install ffmpeg@8 pkg-config
+        # ffmpeg@8 is keg-only.
+        echo "PKG_CONFIG_PATH=$(brew --prefix ffmpeg@8)/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}" >> "$GITHUB_ENV"

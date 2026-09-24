@@ -9,7 +9,8 @@ Users do not need Node.js, pnpm, Rust, or FFmpeg installed.
 
 - The `x86_64-pc-windows-msvc` Rust toolchain and Visual Studio C++ build tools.
 - FFmpeg built with `vcpkg install ffmpeg[x264]:x64-windows-static-md` and
-  `VCPKG_ROOT` pointing to that installation.
+  `VCPKG_ROOT` pointing to that installation. Use a vcpkg release whose
+  `ffmpeg` port is 8.1.x, such as `2026.07.29`.
 - Node.js and pnpm for building the React package.
 - [Inno Setup 6.3 or later](https://jrsoftware.org/isdl.php) for the setup EXE.
   Use `-ZipOnly` if you only need a portable ZIP.

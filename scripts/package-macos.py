@@ -17,6 +17,8 @@ import tempfile
 import urllib.request
 
 ROOT = Path(__file__).resolve().parent.parent
+# Homebrew's unversioned ffmpeg formula is FFmpeg 9, which Celesta does not support yet.
+FFMPEG_FORMULA = "ffmpeg@8"
 MACHO_MAGIC = {
     b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa\xcf",
     b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca",
@@ -108,7 +110,7 @@ def collect_licenses(resources, target):
                 shutil.copy2(path, destination / path.name)
     (licenses / "rust-packages.json").write_text(json.dumps(inventory, indent=2), encoding="utf-8")
     # Include the installed FFmpeg dependency closure's notices, including static dependencies.
-    formulas = ["ffmpeg", *run("brew", "deps", "--installed", "ffmpeg", capture=True).splitlines()]
+    formulas = [FFMPEG_FORMULA, *run("brew", "deps", "--installed", FFMPEG_FORMULA, capture=True).splitlines()]
     (licenses / "homebrew.json").write_text(
         run("brew", "info", "--json=v2", *formulas, capture=True), encoding="utf-8")
     for formula in formulas:

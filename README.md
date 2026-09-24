@@ -38,7 +38,8 @@ executable is not sufficient.
 
 - **Windows:** install the MSVC C++ build tools and vcpkg, run
   `vcpkg install ffmpeg[x264]:x64-windows-static-md`, and set `VCPKG_ROOT` to
-  your vcpkg directory.
+  your vcpkg directory. Use a vcpkg release whose `ffmpeg` port is 8.1.x, such
+  as `2026.07.29`; newer releases provide FFmpeg 9.
 - **macOS:** install the Xcode Command Line Tools, then run
   `brew install ffmpeg@8 pkg-config`. `ffmpeg@8` is keg-only, so point
   `pkg-config` at it before building:
