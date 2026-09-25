@@ -589,6 +589,30 @@ function walkNode(
   return [buildLayer(node, path, context, audio)];
 }
 
+/**
+ * Gathers every `<Font>` in the tree, wherever it is declared (inside
+ * `<Assets>` or anywhere else), into the scene's font list so text layout
+ * can use it. A relative `src` resolves against the entry's directory, like
+ * every other asset. Declarations repeating the same id and path are merged.
+ */
+function collectFonts(node: HostNode, fonts: ResolvedAsset[]): void {
+  if (node.type === 'asset-font') {
+    const asset = resolveAsset(node.props.src);
+    const name = node.props.name;
+    const font = typeof name === 'string' && name.length > 0 ? { ...asset, id: name } : asset;
+    if (!fonts.some((existing) => existing.id === font.id && sameLocation(existing, font))) {
+      fonts.push(font);
+    }
+  }
+  for (const child of node.children) {
+    collectFonts(child, fonts);
+  }
+}
+
+function sameLocation(left: ResolvedAsset, right: ResolvedAsset): boolean {
+  return JSON.stringify(left.location) === JSON.stringify(right.location);
+}
+
 function walkChildren(
   node: HostNode,
   parentPath: string,
@@ -661,12 +685,15 @@ export function mount(defaultExport: EntryComponent): MountedComposition {
         context,
         audio,
       );
+      const fonts: ResolvedAsset[] = [];
+      collectFonts(instance, fonts);
       return {
         scene: {
           width: config.width,
           height: config.height,
           frameRate: config.frameRate,
           time,
+          ...(fonts.length > 0 ? { fonts } : {}),
           layers,
         },
         audio,
