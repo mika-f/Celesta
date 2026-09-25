@@ -141,9 +141,8 @@ kbd { display: inline-block; border: 1px solid #d8cddd; border-radius: 4px; back
   .doc-code-bar { font-size: 9px; padding-inline: 10px; }
 }
 .doc-section ol { list-style-type: decimal; padding-left: 22px; }
-.doc-download { margin-bottom: 5px; }
 .docs-article .doc-download:hover { color: white; }
-.doc-downloads { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
+.doc-downloads { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 18px; }
 .docs-article .doc-downloads .button-secondary { color: #4d3f59; }
 .docs-article .doc-small { font-size: 12px; color: #7a6e82; margin-top: 10px; }
 .doc-api th:first-child, .doc-api td:first-child { width: 38%; }
