@@ -36,7 +36,7 @@ runs:
     - name: Restore vcpkg binary cache
       id: vcpkg-cache
       if: runner.os == 'Windows'
-      uses: actions/cache/restore@v6
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ env.VCPKG_BINARY_CACHE_DIR }}
         key: ${{ env.VCPKG_CACHE_KEY_PREFIX }}${{ env.VCPKG_CACHE_KEY_IMAGE }}
@@ -52,7 +52,7 @@ runs:
     # Save right away so a later build or test failure does not discard FFmpeg.
     - name: Save vcpkg binary cache
       if: runner.os == 'Windows' && steps.vcpkg-cache.outputs.cache-hit != 'true'
-      uses: actions/cache/save@v6
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ env.VCPKG_BINARY_CACHE_DIR }}
         key: ${{ env.VCPKG_CACHE_KEY_PREFIX }}${{ env.VCPKG_CACHE_KEY_IMAGE }}
