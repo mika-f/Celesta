@@ -19,6 +19,10 @@ use celesta_composition::AssetLocation;
 use ureq::Agent;
 use ureq::tls::{RootCerts, TlsConfig};
 
+mod stylesheet;
+
+pub use stylesheet::{StylesheetFontFace, is_font_stylesheet, stylesheet_font_faces};
+
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_FILE_NAME_LEN: usize = 96;
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);

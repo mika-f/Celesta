@@ -14,6 +14,7 @@ celesta-remote = { path = "../remote" }
 celesta-media = { path = "../media" }
 png = "0.18.1"
 psd = "0.3.5"
+wuff = "0.2.9"
 
 [target.'cfg(windows)'.dependencies]
 dwrote = { version = "0.11.5", default-features = false }
@@ -21,6 +22,7 @@ dwrote = { version = "0.11.5", default-features = false }
 [dev-dependencies]
 celesta-evaluator = { path = "../evaluator" }
 celesta-project = { path = "../project" }
+tempfile = "3.23.0"
 
 [[example]]
 name = "hello"

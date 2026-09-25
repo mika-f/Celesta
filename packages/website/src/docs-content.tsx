@@ -151,7 +151,7 @@ export const sections: DocSection[] = [
     </>,
   },
   {
-    id: 'layout', title: 'Shapes, text & layout', description: 'Position layers, style text, and arrange a scene.', keywords: 'Rect Text Group style font Font fontFamily fontWeight stroke outline lineHeight maxWidth wrap align anchor rotation scale Center SafeArea Stack Grid Fit layout', content: <>
+    id: 'layout', title: 'Shapes, text & layout', description: 'Position layers, style text, and arrange a scene.', keywords: 'Rect Text Group style font Font webfont woff woff2 Google Fonts css fontFamily fontWeight stroke outline lineHeight maxWidth wrap align anchor rotation scale Center SafeArea Stack Grid Fit layout', content: <>
       <h3>Coordinates and anchors</h3><p>The canvas origin is the top-left corner, measured in pixels. A layer’s <code>x</code> and <code>y</code> place its <strong>anchor</strong>, which is the top-left corner by default. Set <code>anchorX</code> and <code>anchorY</code> between 0 and 1 to move it: <code>0.5</code> is the center and <code>1</code> the right or bottom edge. Rotation (in degrees) and scale turn around the anchor too.</p>
       <DocCode label="Centered, rotated, and scaled" language="tsx" code={'<Rect x={960} y={540} anchorX={0.5} anchorY={0.5}\n  width={400} height={400} cornerRadius={48}\n  rotation={12} scale={0.8} opacity={0.9} fill="#a68bbf" />'} />
       <p><code>scaleX</code> and <code>scaleY</code> override <code>scale</code> on one axis. <code>opacity</code> multiplies down through groups.</p>
@@ -161,8 +161,10 @@ export const sections: DocSection[] = [
       <ul>
         <li><code>fontFamily</code> names a font installed on the computer, or one loaded with <code>{'<Font>'}</code>. Characters the font lacks, such as emoji, fall back to another installed font. A JSON project can also bundle a font file as a <code>font</code> asset.</li>
       </ul>
-      <p>To use a font file that is not installed, declare it with <code>{'<Font>'}</code>. A relative <code>src</code> is resolved against the entry file’s folder, and <code>fontFamily</code> uses the family name stored inside the file, not the file name. Fonts must be local files.</p>
+      <p>To use a font file that is not installed, declare it with <code>{'<Font>'}</code>. A relative <code>src</code> is resolved against the entry file’s folder, and <code>fontFamily</code> uses the family name stored inside the file, not the file name. TrueType, OpenType, WOFF, and WOFF2 files all work, and <code>src</code> can be an <code>http://</code> or <code>https://</code> URL.</p>
       <DocCode label="Load a font file next to the entry" language="tsx" code={"<Composition width={1920} height={1080} fps={30} durationInFrames={90}>\n  <Assets>\n    <Font src=\"./fonts/MPLUSRounded1c-Bold.ttf\" />\n  </Assets>\n  <Text style={{ fontFamily: 'M PLUS Rounded 1c', fontWeight: 700, fontSize: 96 }}>\n    Hello\n  </Text>\n</Composition>"} />
+      <p><code>src</code> can also be a web font stylesheet, such as a Google Fonts CSS link. Celesta loads every font file its <code>@font-face</code> rules list, and <code>fontFamily</code> can use the stylesheet’s family name. Include every weight you use in the link: a weight the stylesheet does not provide falls back to another font.</p>
+      <DocCode label="Load a Google Fonts family" language="tsx" code={"<Assets>\n  <Font src=\"https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;700\" />\n</Assets>\n<Text style={{ fontFamily: 'M PLUS Rounded 1c', fontWeight: 700, fontSize: 96 }}>\n  こんにちは\n</Text>"} />
       <ul>
         <li><code>maxWidth</code> wraps text at word boundaries, and <code>align</code> positions each line within that width. Use <code>\n</code> in a string to break a line yourself.</li>
         <li>Single-line text is anchored by its visible glyphs, so <code>anchorY={'{0.5}'}</code> centers the letters themselves rather than an invisible line box.</li>

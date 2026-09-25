@@ -10,6 +10,7 @@ use std::fmt;
 use std::fs::{self, File};
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use celesta_composition::{
     Layer, LayerContent, MediaTiming, Paint, Point, ResolvedAsset, Scene, Stroke, TextAlign,
@@ -17,6 +18,7 @@ use celesta_composition::{
 };
 use celesta_media::{MediaError, VideoFrameDecoder};
 use celesta_remote::{RemoteAssetError, resolve_asset_path};
+use cosmic_text::fontdb;
 use cosmic_text::{
     Align, Attrs, Buffer, Color as CosmicColor, Family, FontSystem, Metrics, Shaping, SwashCache,
     Weight, Wrap,
@@ -181,14 +183,79 @@ impl TextRasterizer {
             if self.loaded_fonts.contains(&path) {
                 continue;
             }
-            self.font_system
-                .db_mut()
-                .load_font_file(&path)
-                .map_err(|source| RenderError::AssetIo {
-                    asset: font.id.clone(),
-                    source,
-                })?;
+            let data = read_asset(&font.id, &path)?;
+            if !is_sfnt_or_woff(&data) && celesta_remote::is_font_stylesheet(&data) {
+                // A web font stylesheet (e.g. Google Fonts): load every face
+                // its `@font-face` rules point to, under their CSS family too.
+                let css = String::from_utf8_lossy(&data);
+                let faces = celesta_remote::stylesheet_font_faces(&css, &font.location);
+                if faces.is_empty() {
+                    return Err(RenderError::InvalidFont {
+                        asset: font.id.clone(),
+                        reason: "the stylesheet has no @font-face url()",
+                    });
+                }
+                for face in faces {
+                    let face_asset = ResolvedAsset {
+                        id: font.id.clone(),
+                        location: face.location,
+                    };
+                    let face_path = local_asset_path(asset_root, &face_asset)?;
+                    if !self.loaded_fonts.contains(&face_path) {
+                        let face_data = read_asset(&font.id, &face_path)?;
+                        self.load_font_data(&font.id, face_data, face.family)?;
+                        self.loaded_fonts.insert(face_path);
+                    }
+                }
+            } else {
+                self.load_font_data(&font.id, data, None)?;
+            }
             self.loaded_fonts.insert(path);
+        }
+        Ok(())
+    }
+
+    /// Loads a TrueType/OpenType font, or a WOFF/WOFF2 one after unpacking it.
+    /// `alias` adds a family name the faces also match, besides the ones
+    /// stored in the file.
+    fn load_font_data(
+        &mut self,
+        asset: &str,
+        data: Vec<u8>,
+        alias: Option<String>,
+    ) -> Result<(), RenderError> {
+        let invalid = |reason| RenderError::InvalidFont {
+            asset: asset.to_owned(),
+            reason,
+        };
+        let data = match data.get(..4) {
+            Some(b"wOFF") => {
+                wuff::decompress_woff1(&data).map_err(|_| invalid("invalid WOFF data"))?
+            }
+            Some(b"wOF2") => {
+                wuff::decompress_woff2(&data).map_err(|_| invalid("invalid WOFF2 data"))?
+            }
+            _ => data,
+        };
+        let database = self.font_system.db_mut();
+        let ids = database.load_font_source(fontdb::Source::Binary(Arc::new(data)));
+        if ids.is_empty() {
+            return Err(invalid("no font faces found"));
+        }
+        let Some(alias) = alias else {
+            return Ok(());
+        };
+        for id in ids {
+            let Some(mut face) = database.face(id).cloned() else {
+                continue;
+            };
+            if face.families.iter().any(|(family, _)| *family == alias) {
+                continue;
+            }
+            face.families
+                .push((alias.clone(), fontdb::Language::English_UnitedStates));
+            database.remove_face(id);
+            database.push_face_info(face);
         }
         Ok(())
     }
@@ -714,6 +781,21 @@ impl CpuRenderer {
     fn local_asset_path(&self, asset: &ResolvedAsset) -> Result<PathBuf, RenderError> {
         local_asset_path(&self.asset_root, asset)
     }
+}
+
+fn read_asset(asset: &str, path: &Path) -> Result<Vec<u8>, RenderError> {
+    fs::read(path).map_err(|source| RenderError::AssetIo {
+        asset: asset.to_owned(),
+        source,
+    })
+}
+
+/// TrueType, OpenType, collection, WOFF, or WOFF2 magic.
+fn is_sfnt_or_woff(data: &[u8]) -> bool {
+    matches!(
+        data.get(..4),
+        Some(b"\0\x01\0\0" | b"OTTO" | b"true" | b"ttcf" | b"wOFF" | b"wOF2")
+    )
 }
 
 fn local_asset_path(asset_root: &Path, asset: &ResolvedAsset) -> Result<PathBuf, RenderError> {
@@ -1274,6 +1356,10 @@ pub enum RenderError {
         asset: String,
         source: psd::PsdError,
     },
+    InvalidFont {
+        asset: String,
+        reason: &'static str,
+    },
     MissingPsdLayer {
         asset: String,
         layer: String,
@@ -1316,6 +1402,9 @@ impl fmt::Display for RenderError {
             }
             Self::MissingPsdLayer { asset, layer } => {
                 write!(formatter, "PSD asset `{asset}` has no layer `{layer}`")
+            }
+            Self::InvalidFont { asset, reason } => {
+                write!(formatter, "could not load font `{asset}`: {reason}")
             }
             Self::Media(error) => write!(formatter, "could not decode video frame: {error}"),
             Self::Time(error) => write!(formatter, "could not calculate video time: {error}"),
@@ -1704,5 +1793,187 @@ mod tests {
         assert_ne!(pixel_at(&with, 120, 150), pixel_at(&without, 120, 150));
         // With the mouth suppressed the pixel is the bare skin base.
         assert_eq!(pixel_at(&without, 120, 150), [250, 224, 205, 255]);
+    }
+}
+
+#[cfg(test)]
+mod font_tests {
+    use celesta_composition::{AssetLocation, ResolvedAsset};
+
+    use super::*;
+
+    const FAMILY: &str = "Celesta Web Font Test";
+
+    /// A minimal sfnt holding only a `name` table: enough for fontdb to list
+    /// a face under `FAMILY`.
+    fn sfnt() -> Vec<u8> {
+        let utf16 =
+            |text: &str| -> Vec<u8> { text.encode_utf16().flat_map(u16::to_be_bytes).collect() };
+        let family = utf16(FAMILY);
+        let post_script = utf16("CelestaWebFontTest");
+        let mut name = Vec::new();
+        for value in [0_u16, 2, 6 + 2 * 12] {
+            name.extend(value.to_be_bytes());
+        }
+        // Windows / Unicode BMP / en-US records for family (1) and PostScript (6) names.
+        for (name_id, length, offset) in [
+            (1_u16, family.len(), 0),
+            (6, post_script.len(), family.len()),
+        ] {
+            for value in [3_u16, 1, 0x409, name_id, length as u16, offset as u16] {
+                name.extend(value.to_be_bytes());
+            }
+        }
+        name.extend(&family);
+        name.extend(&post_script);
+
+        let mut font = Vec::new();
+        font.extend(0x0001_0000_u32.to_be_bytes());
+        for value in [1_u16, 16, 0, 0] {
+            font.extend(value.to_be_bytes());
+        }
+        font.extend(b"name");
+        font.extend(0_u32.to_be_bytes());
+        font.extend(28_u32.to_be_bytes());
+        font.extend((name.len() as u32).to_be_bytes());
+        font.extend(&name);
+        font.resize(font.len().next_multiple_of(4), 0);
+        font
+    }
+
+    /// The `name` table bytes of `sfnt()`.
+    fn name_table() -> Vec<u8> {
+        let font = sfnt();
+        let length = u32::from_be_bytes(font[24..28].try_into().unwrap()) as usize;
+        font[28..28 + length].to_vec()
+    }
+
+    /// `sfnt()` as an uncompressed WOFF 1.0 file.
+    fn woff1() -> Vec<u8> {
+        let table = name_table();
+        let padded = table.len().next_multiple_of(4);
+        let mut woff = Vec::new();
+        woff.extend(b"wOFF");
+        woff.extend(0x0001_0000_u32.to_be_bytes());
+        woff.extend(((44 + 20 + padded) as u32).to_be_bytes());
+        woff.extend(1_u16.to_be_bytes());
+        woff.extend(0_u16.to_be_bytes());
+        woff.extend(((12 + 16 + padded) as u32).to_be_bytes());
+        woff.extend(1_u16.to_be_bytes());
+        woff.extend(0_u16.to_be_bytes());
+        woff.extend([0; 20]);
+        woff.extend(b"name");
+        woff.extend(64_u32.to_be_bytes());
+        woff.extend((table.len() as u32).to_be_bytes());
+        woff.extend((table.len() as u32).to_be_bytes());
+        woff.extend(0_u32.to_be_bytes());
+        woff.extend(&table);
+        woff.resize(44 + 20 + padded, 0);
+        woff
+    }
+
+    /// `sfnt()` as a WOFF 2.0 file whose Brotli stream is one uncompressed
+    /// meta-block.
+    fn woff2() -> Vec<u8> {
+        let table = name_table();
+        // WBITS=16 (0), ISLAST=0, MNIBBLES=4 (00), MLEN-1 (16 bits),
+        // ISUNCOMPRESSED=1, then byte-aligned raw bytes and an empty last block.
+        let bits = ((table.len() as u32 - 1) << 4) | (1 << 20);
+        let mut brotli = bits.to_le_bytes()[..3].to_vec();
+        brotli.extend(&table);
+        brotli.push(0b11);
+        let mut woff = Vec::new();
+        woff.extend(b"wOF2");
+        woff.extend(0x0001_0000_u32.to_be_bytes());
+        let length_at = woff.len();
+        woff.extend(0_u32.to_be_bytes());
+        woff.extend(1_u16.to_be_bytes());
+        woff.extend(0_u16.to_be_bytes());
+        woff.extend(((12 + 16 + table.len().next_multiple_of(4)) as u32).to_be_bytes());
+        woff.extend((brotli.len() as u32).to_be_bytes());
+        woff.extend(1_u16.to_be_bytes());
+        woff.extend(0_u16.to_be_bytes());
+        woff.extend([0; 20]);
+        // Arbitrary tag (63) with the null transform, then UIntBase128 length.
+        woff.push(63);
+        woff.extend(b"name");
+        assert!(table.len() < 128, "one UIntBase128 byte");
+        woff.push(table.len() as u8);
+        woff.extend(&brotli);
+        woff.resize(woff.len().next_multiple_of(4), 0);
+        let total = woff.len() as u32;
+        woff[length_at..length_at + 4].copy_from_slice(&total.to_be_bytes());
+        woff
+    }
+
+    fn has_family(rasterizer: &TextRasterizer, name: &str) -> bool {
+        rasterizer
+            .font_system
+            .db()
+            .faces()
+            .any(|face| face.families.iter().any(|(family, _)| family == name))
+    }
+
+    fn file_font(path: &str) -> ResolvedAsset {
+        ResolvedAsset {
+            id: "brand".to_owned(),
+            location: AssetLocation::File {
+                path: path.to_owned(),
+            },
+        }
+    }
+
+    #[test]
+    fn loads_truetype_woff_and_woff2_fonts() {
+        for (name, data) in [("a.ttf", sfnt()), ("a.woff", woff1()), ("a.woff2", woff2())] {
+            let directory = tempfile::tempdir().unwrap();
+            fs::write(directory.path().join(name), data).unwrap();
+            let mut rasterizer = TextRasterizer::new();
+            rasterizer
+                .load_fonts(&[file_font(name)], directory.path())
+                .unwrap_or_else(|error| panic!("{name}: {error}"));
+            assert!(has_family(&rasterizer, FAMILY), "{name} was not loaded");
+        }
+    }
+
+    #[test]
+    fn loads_stylesheet_faces_under_their_css_family() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::create_dir(directory.path().join("css")).unwrap();
+        fs::create_dir(directory.path().join("files")).unwrap();
+        fs::write(directory.path().join("files/brand.woff2"), woff2()).unwrap();
+        fs::write(
+            directory.path().join("css/brand.css"),
+            "@font-face {\n  font-family: 'Brand';\n  src: local('Brand'), url('../files/brand.woff2?v=1') format('woff2');\n}\n",
+        )
+        .unwrap();
+        let mut rasterizer = TextRasterizer::new();
+        rasterizer
+            .load_fonts(&[file_font("css/brand.css")], directory.path())
+            .unwrap();
+        // Under the family stored in the file and the stylesheet's CSS name.
+        assert!(has_family(&rasterizer, FAMILY));
+        assert!(has_family(&rasterizer, "Brand"));
+    }
+
+    #[test]
+    fn rejects_files_that_hold_no_font() {
+        let directory = tempfile::tempdir().unwrap();
+        let cases: [(&str, &[u8], &str); 3] = [
+            ("broken.woff2", b"wOF2 not really", "invalid WOFF2 data"),
+            ("notes.txt", b"not a font", "no font faces found"),
+            (
+                "empty.css",
+                b"@font-face { font-family: X }",
+                "no @font-face url()",
+            ),
+        ];
+        for (name, data, reason) in cases {
+            fs::write(directory.path().join(name), data).unwrap();
+            let error = TextRasterizer::new()
+                .load_fonts(&[file_font(name)], directory.path())
+                .unwrap_err();
+            assert!(error.to_string().contains(reason), "{name}: {error}");
+        }
     }
 }
