@@ -75,10 +75,24 @@ impl Default for GpuRenderOptions {
     }
 }
 
+/// The pixel layout `GpuRenderer::submit`/`drain` read frames back in.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ReadbackFormat {
+    /// Tightly packed RGBA8 rows, 4 bytes per pixel.
+    #[default]
+    Rgba8,
+    /// Planar I420 converted on the GPU: the full-size Y plane followed by
+    /// the quarter-size U and V planes, 1.5 bytes per pixel. BT.601 limited
+    /// range with 2x2-averaged chroma, the same matrix libswscale applies to
+    /// untagged RGB input. Both dimensions must be even.
+    Yuv420p,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GpuFrame {
     width: u32,
     height: u32,
+    format: ReadbackFormat,
     pixels: Vec<u8>,
 }
 
@@ -111,6 +125,11 @@ impl GpuFrame {
 
     pub const fn height(&self) -> u32 {
         self.height
+    }
+
+    /// How [`Self::pixels`] is laid out.
+    pub const fn format(&self) -> ReadbackFormat {
+        self.format
     }
 
     pub fn pixels(&self) -> &[u8] {
@@ -203,6 +222,10 @@ pub struct GpuRenderer {
     readback_slots: Vec<ReadbackSlot>,
     readback_order: VecDeque<usize>,
     readback_free: Vec<usize>,
+    /// The layout newly submitted frames are read back in.
+    readback_format: ReadbackFormat,
+    /// Created by the first switch to [`ReadbackFormat::Yuv420p`].
+    yuv_converter: Option<YuvConverter>,
     /// GPU textures for layer content that is identical from one frame to
     /// the next (images, PSD composites, text, and rects), keyed by what
     /// produced them. A cache hit skips re-rasterizing the text/rect on the
@@ -340,6 +363,8 @@ impl GpuRenderer {
             readback_slots: Vec::new(),
             readback_order: VecDeque::new(),
             readback_free: Vec::new(),
+            readback_format: ReadbackFormat::Rgba8,
+            yuv_converter: None,
             textures: HashMap::new(),
             texture_generation: 0,
             text_font_count: 0,
@@ -352,6 +377,37 @@ impl GpuRenderer {
 
     pub const fn adapter_info(&self) -> &wgpu::AdapterInfo {
         &self.adapter_info
+    }
+
+    /// Whether this GPU can convert frames to [`ReadbackFormat::Yuv420p`]
+    /// (it renders the U and V planes as two render targets at once).
+    pub fn supports_yuv420p_readback(&self) -> bool {
+        self.device.limits().max_color_attachments >= 2
+    }
+
+    /// Whether the adapter is a software renderer (e.g. lavapipe or WARP)
+    /// running on the CPU rather than a hardware GPU.
+    pub fn is_software(&self) -> bool {
+        self.adapter_info.device_type == wgpu::DeviceType::Cpu
+    }
+
+    /// The layout `submit` and `drain` currently return new frames in.
+    pub const fn readback_format(&self) -> ReadbackFormat {
+        self.readback_format
+    }
+
+    /// Chooses the layout `submit` and `drain` return frames in; `render`
+    /// always returns RGBA. Frames already in flight keep the format they
+    /// were submitted with.
+    pub fn set_readback_format(&mut self, format: ReadbackFormat) -> Result<(), GpuRenderError> {
+        if format == ReadbackFormat::Yuv420p && self.yuv_converter.is_none() {
+            if !self.supports_yuv420p_readback() {
+                return Err(GpuRenderError::UnsupportedReadbackFormat(format));
+            }
+            self.yuv_converter = Some(YuvConverter::new(&self.device));
+        }
+        self.readback_format = format;
+        Ok(())
     }
 
     pub fn with_asset_root(mut self, asset_root: impl Into<PathBuf>) -> Self {
@@ -544,6 +600,7 @@ impl GpuRenderer {
         Ok(GpuFrame {
             width: scene.width,
             height: scene.height,
+            format: ReadbackFormat::Rgba8,
             pixels,
         })
     }
@@ -566,6 +623,15 @@ impl GpuRenderer {
                 height: scene.height,
             });
         }
+        let format = self.readback_format;
+        if format == ReadbackFormat::Yuv420p
+            && (!scene.width.is_multiple_of(2) || !scene.height.is_multiple_of(2))
+        {
+            return Err(GpuRenderError::OddYuv420pSize {
+                width: scene.width,
+                height: scene.height,
+            });
+        }
         let draws = self.prepare_draws(scene)?;
 
         let ready = if self.readback_free.is_empty() && self.readback_order.len() >= PIPELINE_DEPTH
@@ -577,20 +643,18 @@ impl GpuRenderer {
 
         let slot_index = match self.readback_free.pop() {
             Some(index) => {
-                if self.readback_slots[index].width != scene.width
-                    || self.readback_slots[index].height != scene.height
+                let slot = &self.readback_slots[index];
+                if slot.width != scene.width
+                    || slot.height != scene.height
+                    || slot.format() != format
                 {
-                    self.readback_slots[index] =
-                        ReadbackSlot::new(&self.device, scene.width, scene.height)?;
+                    self.readback_slots[index] = self.readback_slot(scene.width, scene.height)?;
                 }
                 index
             }
             None => {
-                self.readback_slots.push(ReadbackSlot::new(
-                    &self.device,
-                    scene.width,
-                    scene.height,
-                )?);
+                let slot = self.readback_slot(scene.width, scene.height)?;
+                self.readback_slots.push(slot);
                 self.readback_slots.len() - 1
             }
         };
@@ -615,9 +679,9 @@ impl GpuRenderer {
             },
             &draws,
         )?;
-        {
-            let slot = &self.readback_slots[slot_index];
-            encoder.copy_texture_to_buffer(
+        let slot = &self.readback_slots[slot_index];
+        match &slot.readback {
+            SlotReadback::Rgba8(layout) => encoder.copy_texture_to_buffer(
                 wgpu::TexelCopyTextureInfo {
                     texture: &slot.texture,
                     mip_level: 0,
@@ -628,7 +692,7 @@ impl GpuRenderer {
                     buffer: &slot.buffer,
                     layout: wgpu::TexelCopyBufferLayout {
                         offset: 0,
-                        bytes_per_row: Some(slot.layout.padded_bytes_per_row),
+                        bytes_per_row: Some(layout.padded_bytes_per_row),
                         rows_per_image: Some(scene.height),
                     },
                 },
@@ -637,7 +701,28 @@ impl GpuRenderer {
                     height: scene.height,
                     depth_or_array_layers: 1,
                 },
-            );
+            ),
+            SlotReadback::Yuv420p(yuv) => {
+                let converter = self
+                    .yuv_converter
+                    .as_ref()
+                    .expect("a yuv420p slot is only created with a converter");
+                converter.encode(&mut encoder, yuv);
+                for plane in &yuv.planes {
+                    encoder.copy_texture_to_buffer(
+                        plane.texture.as_image_copy(),
+                        wgpu::TexelCopyBufferInfo {
+                            buffer: &slot.buffer,
+                            layout: wgpu::TexelCopyBufferLayout {
+                                offset: plane.offset,
+                                bytes_per_row: Some(plane.layout.padded_bytes_per_row),
+                                rows_per_image: Some(plane.height),
+                            },
+                        },
+                        plane.texture.size(),
+                    );
+                }
+            }
         }
         let submission = self.queue.submit([encoder.finish()]);
 
@@ -694,17 +779,33 @@ impl GpuRenderer {
 
             let slice = slot.buffer.slice(..);
             let mapped = slice.get_mapped_range().map_err(GpuRenderError::MapRange)?;
-            let pixels = slot.layout.unpad(&mapped, slot.width, slot.height)?;
+            let pixels = match &slot.readback {
+                SlotReadback::Rgba8(layout) => layout.unpad(&mapped, slot.width, slot.height)?,
+                SlotReadback::Yuv420p(yuv) => yuv.unpad(&mapped),
+            };
             drop(mapped);
             slot.buffer.unmap();
             GpuFrame {
                 width: slot.width,
                 height: slot.height,
+                format: slot.format(),
                 pixels,
             }
         };
         self.readback_free.push(slot_index);
         Ok(frame)
+    }
+
+    fn readback_slot(&self, width: u32, height: u32) -> Result<ReadbackSlot, GpuRenderError> {
+        let converter = match self.readback_format {
+            ReadbackFormat::Rgba8 => None,
+            ReadbackFormat::Yuv420p => Some(
+                self.yuv_converter
+                    .as_ref()
+                    .expect("set_readback_format creates the converter"),
+            ),
+        };
+        ReadbackSlot::new(&self.device, width, height, converter)
     }
 
     pub fn render_preview(&mut self, scene: &Scene) -> Result<PreviewFrame, GpuRenderError> {
@@ -1300,8 +1401,16 @@ struct ReadbackLayout {
 
 impl ReadbackLayout {
     fn new(width: u32, height: u32) -> Result<Self, GpuRenderError> {
+        Self::with_bytes_per_pixel(width, height, BYTES_PER_PIXEL)
+    }
+
+    fn with_bytes_per_pixel(
+        width: u32,
+        height: u32,
+        bytes_per_pixel: u32,
+    ) -> Result<Self, GpuRenderError> {
         let unpadded_bytes_per_row = width
-            .checked_mul(BYTES_PER_PIXEL)
+            .checked_mul(bytes_per_pixel)
             .ok_or(GpuRenderError::SurfaceTooLarge { width, height })?;
         let alignment = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
         let padded_bytes_per_row = unpadded_bytes_per_row
@@ -1318,22 +1427,30 @@ impl ReadbackLayout {
         })
     }
 
-    /// Copies a mapped readback buffer into tightly packed RGBA rows. When
+    /// Copies a mapped readback buffer into tightly packed rows. When
     /// the row width is already aligned (e.g. 1920 or 1280 pixels wide) the
     /// buffer has no padding and is copied in one go.
     fn unpad(&self, mapped: &[u8], width: u32, height: u32) -> Result<Vec<u8>, GpuRenderError> {
-        let row = self.unpadded_bytes_per_row as usize;
-        let capacity = row
+        let capacity = (self.unpadded_bytes_per_row as usize)
             .checked_mul(height as usize)
             .ok_or(GpuRenderError::SurfaceTooLarge { width, height })?;
-        if self.padded_bytes_per_row == self.unpadded_bytes_per_row {
-            return Ok(mapped[..capacity].to_vec());
-        }
         let mut pixels = Vec::with_capacity(capacity);
+        self.unpad_into(mapped, &mut pixels);
+        Ok(pixels)
+    }
+
+    /// Appends the tightly packed rows of `mapped`, a region of exactly
+    /// `buffer_size` bytes, to `pixels`.
+    fn unpad_into(&self, mapped: &[u8], pixels: &mut Vec<u8>) {
+        let mapped = &mapped[..self.buffer_size as usize];
+        if self.padded_bytes_per_row == self.unpadded_bytes_per_row {
+            pixels.extend_from_slice(mapped);
+            return;
+        }
+        let row = self.unpadded_bytes_per_row as usize;
         for padded in mapped.chunks_exact(self.padded_bytes_per_row as usize) {
             pixels.extend_from_slice(&padded[..row]);
         }
-        Ok(pixels)
     }
 }
 
@@ -1346,16 +1463,77 @@ struct ReadbackSlot {
     buffer: wgpu::Buffer,
     width: u32,
     height: u32,
-    layout: ReadbackLayout,
+    readback: SlotReadback,
     pending: Option<(
         wgpu::SubmissionIndex,
         mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>,
     )>,
 }
 
+/// How a slot's rendered texture reaches its mapped `buffer`.
+enum SlotReadback {
+    /// Copied as is, rows padded to the copy alignment.
+    Rgba8(ReadbackLayout),
+    /// Converted into Y, U, and V plane textures by two render passes, whose
+    /// rows are then copied, padded, one plane after the other.
+    Yuv420p(Box<YuvReadback>),
+}
+
+/// The plane textures one yuv420p slot converts into, and where each lands
+/// in the slot's readback buffer.
+struct YuvReadback {
+    /// Samples the slot's RGBA texture.
+    bind_group: wgpu::BindGroup,
+    /// Y, U, and V, in the order they are packed.
+    planes: [YuvPlane; 3],
+}
+
+struct YuvPlane {
+    texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    height: u32,
+    layout: ReadbackLayout,
+    /// Byte offset of this plane's padded rows in the readback buffer.
+    offset: u64,
+}
+
+impl YuvReadback {
+    /// Total size of the three padded planes.
+    fn buffer_size(&self) -> u64 {
+        let last = &self.planes[2];
+        last.offset + last.layout.buffer_size
+    }
+
+    /// Packs the three padded planes of a mapped readback buffer into one
+    /// tightly packed I420 frame.
+    fn unpad(&self, mapped: &[u8]) -> Vec<u8> {
+        let capacity = self
+            .planes
+            .iter()
+            .map(|plane| plane.layout.unpadded_bytes_per_row as usize * plane.height as usize)
+            .sum();
+        let mut pixels = Vec::with_capacity(capacity);
+        for plane in &self.planes {
+            let start = plane.offset as usize;
+            let region = &mapped[start..start + plane.layout.buffer_size as usize];
+            plane.layout.unpad_into(region, &mut pixels);
+        }
+        pixels
+    }
+}
+
 impl ReadbackSlot {
-    fn new(device: &wgpu::Device, width: u32, height: u32) -> Result<Self, GpuRenderError> {
+    fn new(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        yuv_converter: Option<&YuvConverter>,
+    ) -> Result<Self, GpuRenderError> {
         let layout = ReadbackLayout::new(width, height)?;
+        let mut usage = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC;
+        if yuv_converter.is_some() {
+            usage |= wgpu::TextureUsages::TEXTURE_BINDING;
+        }
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Celesta pipelined offscreen frame"),
             size: wgpu::Extent3d {
@@ -1367,13 +1545,24 @@ impl ReadbackSlot {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            usage,
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let (readback, buffer_size) = match yuv_converter {
+            None => {
+                let size = layout.buffer_size;
+                (SlotReadback::Rgba8(layout), size)
+            }
+            Some(converter) => {
+                let yuv = converter.readback(device, &view, width, height)?;
+                let size = yuv.buffer_size();
+                (SlotReadback::Yuv420p(Box::new(yuv)), size)
+            }
+        };
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Celesta pipelined RGBA readback"),
-            size: layout.buffer_size,
+            label: Some("Celesta pipelined readback"),
+            size: buffer_size,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
@@ -1383,9 +1572,185 @@ impl ReadbackSlot {
             buffer,
             width,
             height,
-            layout,
+            readback,
             pending: None,
         })
+    }
+
+    const fn format(&self) -> ReadbackFormat {
+        match self.readback {
+            SlotReadback::Rgba8(_) => ReadbackFormat::Rgba8,
+            SlotReadback::Yuv420p(_) => ReadbackFormat::Yuv420p,
+        }
+    }
+}
+
+/// The render pipelines behind [`ReadbackFormat::Yuv420p`] (`yuv420p.wgsl`).
+struct YuvConverter {
+    luma: wgpu::RenderPipeline,
+    chroma: wgpu::RenderPipeline,
+    bind_group_layout: wgpu::BindGroupLayout,
+}
+
+impl YuvConverter {
+    const PLANE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
+
+    fn new(device: &wgpu::Device) -> Self {
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Celesta yuv420p bind group layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            }],
+        });
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Celesta yuv420p pipeline layout"),
+            bind_group_layouts: &[Some(&bind_group_layout)],
+            immediate_size: 0,
+        });
+        let shader = device.create_shader_module(wgpu::include_wgsl!("yuv420p.wgsl"));
+        let target = Some(wgpu::ColorTargetState {
+            format: Self::PLANE_FORMAT,
+            blend: None,
+            write_mask: wgpu::ColorWrites::ALL,
+        });
+        let pipeline = |label, entry_point, targets: &[Option<wgpu::ColorTargetState>]| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vertex"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    buffers: &[],
+                },
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some(entry_point),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    targets,
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        Self {
+            luma: pipeline(
+                "Celesta yuv420p luma",
+                "luma",
+                std::slice::from_ref(&target),
+            ),
+            chroma: pipeline(
+                "Celesta yuv420p chroma",
+                "chroma",
+                &[target.clone(), target],
+            ),
+            bind_group_layout,
+        }
+    }
+
+    /// The plane textures and bind group converting one `width`x`height`
+    /// slot whose RGBA texture is `frame`.
+    fn readback(
+        &self,
+        device: &wgpu::Device,
+        frame: &wgpu::TextureView,
+        width: u32,
+        height: u32,
+    ) -> Result<YuvReadback, GpuRenderError> {
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Celesta yuv420p bind group"),
+            layout: &self.bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(frame),
+            }],
+        });
+        let mut offset = 0;
+        let mut plane = |label, width: u32, height: u32| -> Result<YuvPlane, GpuRenderError> {
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: Self::PLANE_FORMAT,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            });
+            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let layout = ReadbackLayout::with_bytes_per_pixel(width, height, 1)?;
+            // Each plane's size is a whole number of aligned rows, so every
+            // plane starts at an offset the copy accepts.
+            let plane_offset = offset;
+            offset += layout.buffer_size;
+            Ok(YuvPlane {
+                texture,
+                view,
+                height,
+                layout,
+                offset: plane_offset,
+            })
+        };
+        let planes = [
+            plane("Celesta yuv420p Y plane", width, height)?,
+            plane("Celesta yuv420p U plane", width / 2, height / 2)?,
+            plane("Celesta yuv420p V plane", width / 2, height / 2)?,
+        ];
+        Ok(YuvReadback { bind_group, planes })
+    }
+
+    /// Renders the slot's RGBA texture into its Y, U, and V planes.
+    fn encode(&self, encoder: &mut wgpu::CommandEncoder, yuv: &YuvReadback) {
+        fn attachment(plane: &YuvPlane) -> Option<wgpu::RenderPassColorAttachment<'_>> {
+            Some(wgpu::RenderPassColorAttachment {
+                view: &plane.view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            })
+        }
+        let [luma, u, v] = &yuv.planes;
+        for (label, pipeline, targets) in [
+            (
+                "Celesta yuv420p luma pass",
+                &self.luma,
+                vec![attachment(luma)],
+            ),
+            (
+                "Celesta yuv420p chroma pass",
+                &self.chroma,
+                vec![attachment(u), attachment(v)],
+            ),
+        ] {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some(label),
+                color_attachments: &targets,
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, &yuv.bind_group, &[]);
+            pass.draw(0..3, 0..1);
+        }
     }
 }
 
@@ -1439,6 +1804,14 @@ pub enum GpuRenderError {
         height: u32,
     },
     NativePreview(i32),
+    /// The GPU cannot produce frames in this [`ReadbackFormat`].
+    UnsupportedReadbackFormat(ReadbackFormat),
+    /// [`ReadbackFormat::Yuv420p`] subsamples chroma 2x2, so it needs even
+    /// dimensions.
+    OddYuv420pSize {
+        width: u32,
+        height: u32,
+    },
 }
 
 impl fmt::Display for GpuRenderError {
@@ -1515,6 +1888,13 @@ impl fmt::Display for GpuRenderError {
                     "could not create native preview surface ({status})"
                 )
             }
+            Self::UnsupportedReadbackFormat(format) => {
+                write!(formatter, "this GPU cannot read frames back as {format:?}")
+            }
+            Self::OddYuv420pSize { width, height } => write!(
+                formatter,
+                "yuv420p readback requires even dimensions, got {width}x{height}"
+            ),
         }
     }
 }
@@ -1543,7 +1923,9 @@ impl Error for GpuRenderError {
             | Self::SurfaceNotConfigured
             | Self::SurfaceValidation
             | Self::SurfaceTooLarge { .. }
-            | Self::NativePreview(_) => None,
+            | Self::NativePreview(_)
+            | Self::UnsupportedReadbackFormat(_)
+            | Self::OddYuv420pSize { .. } => None,
         }
     }
 }
@@ -1643,7 +2025,10 @@ mod tests {
         };
         let pixel = |frame: &GpuFrame, x: usize| frame.pixels()[x * 4..x * 4 + 4].to_vec();
 
-        let first = scene(vec![rect("red", 1.0, "#ff0000"), rect("blue", 3.0, "#0000ff")]);
+        let first = scene(vec![
+            rect("red", 1.0, "#ff0000"),
+            rect("blue", 3.0, "#0000ff"),
+        ]);
         let frame = renderer.render(&first).unwrap();
         assert_eq!(pixel(&frame, 0), [255, 0, 0, 255]);
         assert_eq!(pixel(&frame, 3), [0, 0, 255, 255]);
@@ -1651,7 +2036,10 @@ mod tests {
 
         // The same rect geometry with another fill is a different texture;
         // the blue one this frame no longer uses is dropped.
-        let second = scene(vec![rect("red", 1.0, "#ff0000"), rect("blue", 3.0, "#00ff00")]);
+        let second = scene(vec![
+            rect("red", 1.0, "#ff0000"),
+            rect("blue", 3.0, "#00ff00"),
+        ]);
         let frame = renderer.render(&second).unwrap();
         assert_eq!(pixel(&frame, 0), [255, 0, 0, 255]);
         assert_eq!(pixel(&frame, 3), [0, 255, 0, 255]);
@@ -1667,6 +2055,124 @@ mod tests {
         let empty = scene(Vec::new());
         renderer.render(&empty).unwrap();
         assert!(renderer.textures.is_empty());
+    }
+
+    fn solid_rect(id: &str, x: f64, width: f64, height: f64, color: &str) -> Layer {
+        Layer {
+            id: id.to_owned(),
+            transform: EvaluatedTransform {
+                position: Point { x, y: height / 2.0 },
+                ..EvaluatedTransform::default()
+            },
+            opacity: 1.0,
+            content: LayerContent::Rect {
+                width,
+                height,
+                fill: Some(Paint::Solid {
+                    color: color.to_owned(),
+                }),
+                stroke: None,
+                corner_radius: 0.0,
+            },
+        }
+    }
+
+    #[test]
+    fn converts_frames_to_the_same_yuv420p_values_as_libswscale() {
+        let Some(mut renderer) = renderer(GpuRenderOptions {
+            background: Color::rgba(0, 0, 0, 255),
+        }) else {
+            return;
+        };
+        if !renderer.supports_yuv420p_readback() {
+            eprintln!("skipping yuv420p test: the GPU cannot convert to yuv420p");
+            return;
+        }
+        renderer
+            .set_readback_format(ReadbackFormat::Yuv420p)
+            .unwrap();
+        // Red, blue, white, and black columns, two pixels wide each.
+        let mut scene = empty_scene(8, 4);
+        for (index, color) in ["#ff0000", "#0000ff", "#ffffff", "#000000"]
+            .into_iter()
+            .enumerate()
+        {
+            let x = index as f64 * 2.0 + 1.0;
+            scene
+                .layers
+                .push(solid_rect(&format!("column-{index}"), x, 2.0, 4.0, color));
+        }
+
+        assert!(renderer.submit(&scene).unwrap().is_none());
+        let frame = renderer.drain().unwrap().remove(0);
+        assert_eq!(frame.format(), ReadbackFormat::Yuv420p);
+        assert_eq!(frame.pixels().len(), 8 * 4 * 3 / 2);
+        let (luma, chroma) = frame.pixels().split_at(32);
+        let (u, v) = chroma.split_at(8);
+        // `ffmpeg -f rawvideo -pix_fmt rgba -i … -pix_fmt yuv420p` output
+        // for the same pixels.
+        for row in luma.chunks_exact(8) {
+            assert_eq!(row, [81, 81, 41, 41, 235, 235, 16, 16]);
+        }
+        for row in u.chunks_exact(4) {
+            assert_eq!(row, [90, 240, 128, 128]);
+        }
+        for row in v.chunks_exact(4) {
+            assert_eq!(row, [240, 110, 128, 128]);
+        }
+    }
+
+    #[test]
+    fn pipelines_yuv420p_frames_with_padded_plane_rows() {
+        let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+            return;
+        };
+        if !renderer.supports_yuv420p_readback() {
+            eprintln!("skipping yuv420p test: the GPU cannot convert to yuv420p");
+            return;
+        }
+        renderer
+            .set_readback_format(ReadbackFormat::Yuv420p)
+            .unwrap();
+        // 6x2 packs into 18 bytes: 12 of luma and a 3x1 U and V plane each,
+        // every plane row padded to the copy alignment on the GPU.
+        let colors = [
+            (Color::rgba(255, 0, 0, 255), [81, 90, 240]),
+            (Color::rgba(0, 0, 255, 255), [41, 240, 110]),
+            (Color::rgba(255, 255, 255, 255), [235, 128, 128]),
+            (Color::rgba(0, 0, 0, 255), [16, 128, 128]),
+            (Color::rgba(128, 128, 128, 255), [126, 128, 128]),
+        ];
+        let mut frames = Vec::new();
+        for (color, _) in colors {
+            renderer.options.background = color;
+            frames.extend(renderer.submit(&empty_scene(6, 2)).unwrap());
+        }
+        frames.extend(renderer.drain().unwrap());
+
+        assert_eq!(frames.len(), colors.len());
+        for (frame, (_, [y, u, v])) in frames.iter().zip(colors) {
+            let mut expected = vec![y; 12];
+            expected.extend([u; 3]);
+            expected.extend([v; 3]);
+            assert_eq!(frame.pixels(), expected);
+        }
+
+        assert!(matches!(
+            renderer.submit(&empty_scene(6, 3)),
+            Err(GpuRenderError::OddYuv420pSize {
+                width: 6,
+                height: 3
+            })
+        ));
+
+        // Switching back reads RGBA again, reusing the freed slots.
+        renderer.set_readback_format(ReadbackFormat::Rgba8).unwrap();
+        renderer.options.background = Color::rgba(1, 2, 3, 255);
+        assert!(renderer.submit(&empty_scene(6, 2)).unwrap().is_none());
+        let frame = renderer.drain().unwrap().remove(0);
+        assert_eq!(frame.format(), ReadbackFormat::Rgba8);
+        assert_eq!(frame.pixels(), [1, 2, 3, 255].repeat(12));
     }
 
     #[test]

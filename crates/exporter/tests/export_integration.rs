@@ -3,7 +3,10 @@ use std::path::{Path, PathBuf};
 use ez_ffmpeg::stream_info::{StreamInfo, find_audio_stream_info, find_video_stream_info};
 use ez_ffmpeg::{FfmpegContext, Input, Output};
 use celesta_composition::{Rational, Time, TimeRange};
-use celesta_exporter::{ExportCancellation, ExportError, ExportOptions, ExportRange, Exporter};
+use celesta_exporter::{
+    ColorConversion, EncoderPreset, ExportCancellation, ExportError, ExportOptions, ExportRange,
+    Exporter, VideoEncoding,
+};
 use celesta_gpu_renderer::GpuRenderError;
 use celesta_media::{FfmpegBackend, VideoFrameDecoder};
 use celesta_project::{Asset, AssetSource, Project, TimelineContent, TimelineItem, Track, TrackKind};
@@ -299,4 +302,96 @@ fn workspace_root() -> PathBuf {
         .parent()
         .unwrap()
         .to_owned()
+}
+
+#[test]
+fn converting_colors_on_the_gpu_matches_the_encoder_conversion() {
+    let directory = tempfile::tempdir().unwrap();
+    let source = directory.path().join("source.mkv");
+    generate_source(&source, "testsrc2=size=64x64:rate=2:duration=1", (2, 1));
+
+    let mut project = Project::load(workspace_root().join("examples/minimal.celesta.json")).unwrap();
+    project.settings.width = 64;
+    project.settings.height = 64;
+    project.settings.frame_rate = Rational::new(2, 1);
+    project.settings.sample_rate = 8_000;
+    project.settings.duration = Some(Time::new(1, 1));
+    project.assets.insert(
+        "source".to_owned(),
+        Asset::Video {
+            name: None,
+            source: AssetSource::File {
+                path: "source.mkv".to_owned(),
+            },
+        },
+    );
+    project.tracks.push(Track {
+        id: "video".to_owned(),
+        name: "Video".to_owned(),
+        kind: TrackKind::Video,
+        enabled: None,
+        locked: None,
+        muted: None,
+        solo: None,
+        items: vec![TimelineItem {
+            id: "video-clip".to_owned(),
+            name: None,
+            range: TimeRange {
+                start: Time::ZERO,
+                duration: Time::new(1, 1),
+            },
+            content: TimelineContent::Video {
+                asset: "source".to_owned(),
+                source_range: None,
+                playback_rate: None,
+                volume: None,
+                muted: None,
+            },
+            enabled: None,
+            transform: None,
+            opacity: None,
+        }],
+    });
+
+    // Lossless encodes, so any difference comes from the conversion itself.
+    let export = |color_conversion, name: &str| {
+        let output = directory.path().join(name);
+        let result = Exporter::new(ExportOptions {
+            video: VideoEncoding {
+                preset: EncoderPreset::Ultrafast,
+                crf: 0,
+                color_conversion,
+            },
+            ..ExportOptions::default()
+        })
+        .export_project(&project, directory.path(), &output);
+        result.map(|()| output)
+    };
+    let on_gpu = match export(ColorConversion::Gpu, "gpu.mp4") {
+        Ok(output) => output,
+        Err(ExportError::Render(
+            GpuRenderError::RequestAdapter(_) | GpuRenderError::UnsupportedReadbackFormat(_),
+        )) => {
+            eprintln!("skipping GPU color conversion test: not supported here");
+            return;
+        }
+        Err(error) => panic!("GPU conversion export failed: {error}"),
+    };
+    let in_encoder = export(ColorConversion::Encoder, "encoder.mp4").unwrap();
+
+    let mut decoder = FfmpegBackend::new();
+    for time in [0.0, 0.5] {
+        let gpu = decoder.decode_frame(&on_gpu, time).unwrap();
+        let encoder = decoder.decode_frame(&in_encoder, time).unwrap();
+        assert_eq!(gpu.pixels.len(), encoder.pixels.len());
+        let difference: u64 = gpu
+            .pixels
+            .iter()
+            .zip(encoder.pixels.iter())
+            .map(|(left, right)| u64::from(left.abs_diff(*right)))
+            .sum();
+        let mean = difference as f64 / gpu.pixels.len() as f64;
+        // The two differ only in how chroma is filtered at color edges.
+        assert!(mean < 2.0, "mean difference {mean} at {time}s");
+    }
 }

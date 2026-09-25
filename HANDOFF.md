@@ -233,6 +233,21 @@ Keep these boundaries intact:
   a CPU-only lavapipe box, a 1080p30 10s project with 15 static text layers
   went from 21.6s to 5.0s, and the video + text project from about 10.8s to
   9.2s. Frame and audio hashes match the previous output.
+- GPU yuv420p readback (2026-09-25): `GpuRenderer::set_readback_format(
+  ReadbackFormat::Yuv420p)` makes `submit`/`drain` return packed I420 frames.
+  `yuv420p.wgsl` renders the slot's RGBA texture into R8 Y/U/V plane textures
+  (one luma pass, one two-target chroma pass), and the planes are copied into
+  one readback buffer. That is 1.5 instead of 4 bytes per pixel, and the
+  `VideoWriter` takes `yuv420p` input without a libswscale pass. The matrix is
+  BT.601 limited range, like swscale's for untagged RGB input, and the stream
+  tags are unchanged. Chroma is a 2x2 average where swscale filters
+  bicubically. In a lossless 1080p comparison, luma is within 1 code value and
+  96-99.6% of chroma samples are within 1; the largest differences (up to 25)
+  are at hard color edges. `VideoEncoding.color_conversion` (CLI
+  `--color-conversion auto|gpu|encoder`) picks the side; `auto` uses the GPU
+  unless `GpuRenderer::is_software()`. On lavapipe the two passes cost about
+  13 ms per 1080p frame, slower than swscale, while the smaller readback alone
+  saved about 1.3 ms. Hardware GPU numbers are not measured yet.
 - The editor toolbar and Command-Shift-E open a native MP4 destination prompt,
   snapshot the current `Project`, and invoke `celesta-exporter` on a dedicated
   worker. Frame rendering, audio mixing, and muxing progress is visible while

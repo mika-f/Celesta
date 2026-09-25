@@ -161,6 +161,12 @@ to 51. Lower values give higher quality and larger files:
 cargo run -p celesta-exporter --release -- --preset veryfast examples/editor-demo.celesta.json draft.mp4
 ```
 
+On a hardware GPU, frames are converted from RGB to the video's YUV colors
+on the GPU. The exporter then reads less data back from the GPU, and the
+encoder has less work to do. `--color-conversion encoder` does the conversion
+in the encoder instead, which is how software renderers are always handled.
+`--color-conversion gpu` forces the GPU conversion.
+
 ## Current limitations
 
 - Media must be available as local files; remote media URLs are not supported.

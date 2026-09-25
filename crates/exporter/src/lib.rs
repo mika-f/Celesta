@@ -20,7 +20,7 @@ use celesta_composition::{
     TimeError, TimeRange,
 };
 use celesta_evaluator::{EvaluationError, Evaluator};
-use celesta_gpu_renderer::{GpuRenderError, GpuRenderOptions, GpuRenderer};
+use celesta_gpu_renderer::{GpuRenderError, GpuRenderOptions, GpuRenderer, ReadbackFormat};
 use celesta_media::{AudioMixError, FfmpegBackend, mix_audio_graph_cancellable};
 use celesta_project::{LoadError, Project, TimelineContent};
 use celesta_react_bridge::{
@@ -50,7 +50,7 @@ pub struct ExportOptions {
     pub video: VideoEncoding,
 }
 
-/// libx264 settings for the exported video stream.
+/// Settings for the exported H.264 video stream.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VideoEncoding {
     /// Speed/compression trade-off. Faster presets encode much faster at the
@@ -58,6 +58,8 @@ pub struct VideoEncoding {
     pub preset: EncoderPreset,
     /// Constant rate factor, `0..=51`; lower is higher quality and larger.
     pub crf: u8,
+    /// Where the rendered RGBA frames become the encoder's yuv420p.
+    pub color_conversion: ColorConversion,
 }
 
 impl VideoEncoding {
@@ -70,6 +72,7 @@ impl Default for VideoEncoding {
         Self {
             preset: EncoderPreset::Medium,
             crf: 18,
+            color_conversion: ColorConversion::Auto,
         }
     }
 }
@@ -153,6 +156,70 @@ impl fmt::Display for UnknownEncoderPreset {
 }
 
 impl Error for UnknownEncoderPreset {}
+
+/// Where rendered RGBA frames are converted to yuv420p for the encoder.
+///
+/// On the GPU, only 1.5 instead of 4 bytes per pixel are read back and the
+/// encoder skips its own conversion. Both use the BT.601 limited-range
+/// matrix; the GPU averages each 2x2 block for chroma where libswscale
+/// filters bicubically, a difference of a few code values at hard color
+/// edges.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ColorConversion {
+    /// On the GPU when it is a hardware GPU that supports it, otherwise in
+    /// the encoder: a software renderer (lavapipe, WARP) runs the
+    /// conversion passes slower than libswscale converts.
+    #[default]
+    Auto,
+    /// Always on the GPU; the export fails if the GPU cannot.
+    Gpu,
+    /// Always in the encoder (libswscale), reading RGBA back.
+    Encoder,
+}
+
+impl ColorConversion {
+    pub const ALL: [Self; 3] = [Self::Auto, Self::Gpu, Self::Encoder];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Gpu => "gpu",
+            Self::Encoder => "encoder",
+        }
+    }
+}
+
+impl fmt::Display for ColorConversion {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl FromStr for ColorConversion {
+    type Err = UnknownColorConversion;
+
+    fn from_str(name: &str) -> Result<Self, Self::Err> {
+        Self::ALL
+            .into_iter()
+            .find(|conversion| conversion.as_str() == name)
+            .ok_or_else(|| UnknownColorConversion(name.to_owned()))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UnknownColorConversion(pub String);
+
+impl fmt::Display for UnknownColorConversion {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "unknown color conversion '{}' (expected auto, gpu, or encoder)",
+            self.0
+        )
+    }
+}
+
+impl Error for UnknownColorConversion {}
 
 /// A composition-time span to export. `start` is inclusive, `end` exclusive;
 /// both are clamped into `[0, composition duration]` and `start` is snapped
@@ -773,21 +840,19 @@ impl Exporter {
             ..
         } = window;
         let frame_rate = project.settings.frame_rate;
+        let mut renderer =
+            export_renderer(asset_root, frame_rate, self.options.video.color_conversion)?;
         let mut writer = open_video_writer(
             project.settings.width,
             project.settings.height,
             frame_rate,
             self.options.video,
+            renderer.readback_format(),
             output,
         )?;
 
         let result = (|| {
             let evaluator = Evaluator::new(project).map_err(ExportError::Evaluation)?;
-            let video_decoder = FfmpegBackend::new().with_sequential_video(frame_rate);
-            let mut renderer = GpuRenderer::new(GpuRenderOptions::default())
-                .map_err(ExportError::Render)?
-                .with_asset_root(asset_root)
-                .with_video_decoder(video_decoder);
             for frame_index in 0..frame_count {
                 ensure_not_cancelled(cancellation)?;
                 progress(ExportProgress::Rendering {
@@ -853,26 +918,27 @@ impl Exporter {
             .map_err(ExportError::Evaluation)?
             .unwrap_or_default();
 
+        // The video decoder is attached unconditionally: the React entry's
+        // own <Video> elements need decoding just as much as a companion
+        // project's Video content does, and the React entry's asset_root
+        // stays the renderer's single asset_root either way (see
+        // absolutize_layers/absolutize_fonts below for how a project's own,
+        // differently-rooted assets still resolve).
+        let mut renderer = export_renderer(
+            asset_root,
+            metadata.frame_rate,
+            self.options.video.color_conversion,
+        )?;
         let mut writer = open_video_writer(
             metadata.width,
             metadata.height,
             metadata.frame_rate,
             self.options.video,
+            renderer.readback_format(),
             output,
         )?;
 
         let result = (|| {
-            let mut renderer =
-                GpuRenderer::new(GpuRenderOptions::default()).map_err(ExportError::Render)?;
-            renderer = renderer.with_asset_root(asset_root);
-            // Attached unconditionally: the React entry's own <Video>
-            // elements need decoding just as much as a companion project's
-            // Video content does, and the React entry's asset_root stays the
-            // renderer's single asset_root either way (see
-            // absolutize_layers/absolutize_fonts below for how a project's
-            // own, differently-rooted assets still resolve).
-            let video_decoder = FfmpegBackend::new().with_sequential_video(metadata.frame_rate);
-            renderer = renderer.with_video_decoder(video_decoder);
             for offset in 0..frame_count {
                 ensure_not_cancelled(cancellation)?;
                 progress(ExportProgress::Rendering {
@@ -1181,15 +1247,41 @@ fn path_to_url(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
-/// Opens a constant-frame-rate H.264 `VideoWriter` for pushed RGBA frames —
-/// the library-linked equivalent of piping `rawvideo` into
+/// The renderer an export draws its frames with, reading them back as
+/// yuv420p when `color_conversion` puts that conversion on the GPU.
+fn export_renderer(
+    asset_root: &Path,
+    frame_rate: Rational,
+    color_conversion: ColorConversion,
+) -> Result<GpuRenderer, ExportError> {
+    let mut renderer = GpuRenderer::new(GpuRenderOptions::default())
+        .map_err(ExportError::Render)?
+        .with_asset_root(asset_root)
+        .with_video_decoder(FfmpegBackend::new().with_sequential_video(frame_rate));
+    let on_gpu = match color_conversion {
+        ColorConversion::Auto => renderer.supports_yuv420p_readback() && !renderer.is_software(),
+        ColorConversion::Gpu => true,
+        ColorConversion::Encoder => false,
+    };
+    if on_gpu {
+        renderer
+            .set_readback_format(ReadbackFormat::Yuv420p)
+            .map_err(ExportError::Render)?;
+    }
+    Ok(renderer)
+}
+
+/// Opens a constant-frame-rate H.264 `VideoWriter` for pushed frames in
+/// `input` layout — the library-linked equivalent of piping `rawvideo` into
 /// `ffmpeg -c:v libx264 -preset <preset> -crf <crf> -pix_fmt yuv420p -movflags +faststart`
-/// (`-preset medium -crf 18` by default).
+/// (`-preset medium -crf 18` by default). yuv420p input reaches the encoder
+/// without a conversion.
 fn open_video_writer(
     width: u32,
     height: u32,
     frame_rate: Rational,
     encoding: VideoEncoding,
+    input: ReadbackFormat,
     output: &Path,
 ) -> Result<VideoWriter, ExportError> {
     if encoding.crf > VideoEncoding::MAX_CRF {
@@ -1199,7 +1291,10 @@ fn open_video_writer(
     let fps_den =
         i32::try_from(frame_rate.denominator).map_err(|_| ExportError::TimelineTooLong)?;
     VideoWriter::builder(width, height)
-        .pixel_format("rgba")
+        .pixel_format(match input {
+            ReadbackFormat::Rgba8 => "rgba",
+            ReadbackFormat::Yuv420p => "yuv420p",
+        })
         .fps(fps_num, fps_den)
         .open(
             Output::from(path_to_url(output))
@@ -1585,12 +1680,22 @@ mod tests {
     }
 
     #[test]
-    fn encoder_presets_round_trip_through_their_libx264_names() {
+    fn encoder_presets_and_color_conversions_round_trip_through_their_names() {
         for preset in EncoderPreset::ALL {
             assert_eq!(preset.as_str().parse::<EncoderPreset>(), Ok(preset));
         }
         assert_eq!(VideoEncoding::default().preset, EncoderPreset::Medium);
         assert_eq!(VideoEncoding::default().crf, 18);
+        for conversion in ColorConversion::ALL {
+            assert_eq!(
+                conversion.as_str().parse::<ColorConversion>(),
+                Ok(conversion)
+            );
+        }
+        assert_eq!(
+            VideoEncoding::default().color_conversion,
+            ColorConversion::Auto
+        );
         assert_eq!(
             "Medium".parse::<EncoderPreset>(),
             Err(UnknownEncoderPreset("Medium".to_owned()))
@@ -1608,6 +1713,7 @@ mod tests {
                 crf: VideoEncoding::MAX_CRF + 1,
                 ..VideoEncoding::default()
             },
+            ReadbackFormat::Rgba8,
             &directory.path().join("video.mp4"),
         );
         assert!(matches!(result, Err(ExportError::InvalidCrf(52))));
