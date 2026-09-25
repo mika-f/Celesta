@@ -219,6 +219,20 @@ Keep these boundaries intact:
   `start_frame..start_frame+frames`, and the audio graph is shifted earlier by
   the window start before mixing over the window length (the mixer is
   unchanged). The whole-composition path is untouched when `range` is `None`.
+- Export speed (2026-09-25): `GpuRenderer` caches layer textures across
+  frames (images, PSD composites, text, rects; keyed by their inputs, text
+  also by `TextRasterizer::loaded_font_count`), so unchanged layers are
+  neither re-rasterized nor re-uploaded; entries a frame does not use are
+  dropped. `submit`'s reclaim waits on the oldest slot's own
+  `SubmissionIndex`, not the latest submission. Decoded video frames share
+  their pixels (`VideoFrame.pixels: Arc<Vec<u8>>`) and the exporter hands
+  readback buffers to the encoder with `write_owned`, which removes two 8MB
+  copies per 1080p frame. Project exports mix audio on a scoped thread while
+  frames render. `ExportOptions.video` (CLI `--preset`/`--crf`) sets the
+  libx264 preset and CRF (default `medium`/18, the previous fixed values). On
+  a CPU-only lavapipe box, a 1080p30 10s project with 15 static text layers
+  went from 21.6s to 5.0s, and the video + text project from about 10.8s to
+  9.2s. Frame and audio hashes match the previous output.
 - The editor toolbar and Command-Shift-E open a native MP4 destination prompt,
   snapshot the current `Project`, and invoke `celesta-exporter` on a dedicated
   worker. Frame rendering, audio mixing, and muxing progress is visible while

@@ -171,6 +171,13 @@ impl TextRasterizer {
         }
     }
 
+    /// How many font files have been loaded so far. It only grows, so a
+    /// caller caching rasterized text can compare it across frames to tell
+    /// when a newly loaded font may change how existing text lays out.
+    pub fn loaded_font_count(&self) -> usize {
+        self.loaded_fonts.len()
+    }
+
     pub fn load_fonts(
         &mut self,
         fonts: &[ResolvedAsset],
@@ -774,7 +781,7 @@ impl CpuRenderer {
         Ok(DecodedImage {
             width: frame.width,
             height: frame.height,
-            pixels: frame.pixels,
+            pixels: Arc::unwrap_or_clone(frame.pixels),
         })
     }
 
@@ -1678,7 +1685,7 @@ mod tests {
                 Ok(VideoFrame {
                     width: 1,
                     height: 1,
-                    pixels: vec![12, 34, 56, 255],
+                    pixels: vec![12, 34, 56, 255].into(),
                 })
             }
         }

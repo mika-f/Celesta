@@ -861,6 +861,7 @@ impl ExportWorker {
                     let exporter = Exporter::new(ExportOptions {
                         overwrite: true,
                         range: request.range,
+                        ..ExportOptions::default()
                     });
                     let progress = |progress| {
                         let _ = event_tx.send(ExportEvent::Progress(progress));

@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use ez_ffmpeg::frame_export::{
     Channels, FrameExtractor, FrameIter, PixelLayout, SampleExtractor, VideoFrame as EzVideoFrame,
@@ -47,7 +48,10 @@ pub struct AudioStream {
 pub struct VideoFrame {
     pub width: u32,
     pub height: u32,
-    pub pixels: Vec<u8>,
+    /// Shared so a decoder can keep the frame it last served (to answer a
+    /// repeat request or freeze past the source end) without copying a full
+    /// RGBA frame — 8MB at 1080p — for every frame it hands out.
+    pub pixels: Arc<Vec<u8>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -364,7 +368,7 @@ fn convert_frame(
     Ok(VideoFrame {
         width,
         height,
-        pixels,
+        pixels: Arc::new(pixels),
     })
 }
 

@@ -80,6 +80,7 @@ fn exports_frame_exact_mp4_with_silent_audio() {
     let exporter = Exporter::new(ExportOptions {
         overwrite: false,
         range: None,
+        ..ExportOptions::default()
     });
     match exporter.export_project(&project, directory.path(), &output) {
         Ok(()) => {}
@@ -204,6 +205,7 @@ fn exports_only_the_selected_range_shifted_to_zero() {
     let full = Exporter::new(ExportOptions {
         overwrite: false,
         range: None,
+        ..ExportOptions::default()
     });
     match full.export_project(&project, directory.path(), &full_output) {
         Ok(()) => {}
@@ -219,6 +221,7 @@ fn exports_only_the_selected_range_shifted_to_zero() {
     Exporter::new(ExportOptions {
         overwrite: false,
         range: Some(ExportRange::new(Time::new(1, 1), Time::new(2, 1))),
+        ..ExportOptions::default()
     })
     .export_project(&project, directory.path(), &windowed_output)
     .expect("windowed export");
@@ -260,6 +263,7 @@ fn rejects_an_empty_export_range() {
     let result = Exporter::new(ExportOptions {
         overwrite: false,
         range: Some(ExportRange::new(Time::new(2, 1), Time::new(3, 1))),
+        ..ExportOptions::default()
     })
     .export_project(&project, directory.path(), &output);
     assert!(matches!(result, Err(ExportError::EmptyRange)));

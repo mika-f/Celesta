@@ -203,6 +203,19 @@ pub struct GpuRenderer {
     readback_slots: Vec<ReadbackSlot>,
     readback_order: VecDeque<usize>,
     readback_free: Vec<usize>,
+    /// GPU textures for layer content that is identical from one frame to
+    /// the next (images, PSD composites, text, and rects), keyed by what
+    /// produced them. A cache hit skips re-rasterizing the text/rect on the
+    /// CPU and re-uploading the pixels, which otherwise dominates the cost of
+    /// a mostly static frame. Entries a frame does not use are dropped at
+    /// the end of that frame's `prepare_draws`.
+    textures: HashMap<String, CachedTexture>,
+    /// Incremented by every `prepare_draws`; a cache entry's `last_used`
+    /// equals it when the frame being prepared uses that entry.
+    texture_generation: u64,
+    /// `TextRasterizer::loaded_font_count` when the cached text textures
+    /// were rasterized; a newly loaded font can change their layout.
+    text_font_count: usize,
 }
 
 impl GpuRenderer {
@@ -327,6 +340,9 @@ impl GpuRenderer {
             readback_slots: Vec::new(),
             readback_order: VecDeque::new(),
             readback_free: Vec::new(),
+            textures: HashMap::new(),
+            texture_generation: 0,
+            text_font_count: 0,
         })
     }
 
@@ -521,17 +537,7 @@ impl GpuRenderer {
             .map_err(GpuRenderError::Map)?;
 
         let mapped = slice.get_mapped_range().map_err(GpuRenderError::MapRange)?;
-        let capacity = usize::try_from(layout.unpadded_bytes_per_row)
-            .ok()
-            .and_then(|row| row.checked_mul(scene.height as usize))
-            .ok_or(GpuRenderError::SurfaceTooLarge {
-                width: scene.width,
-                height: scene.height,
-            })?;
-        let mut pixels = Vec::with_capacity(capacity);
-        for row in mapped.chunks_exact(layout.padded_bytes_per_row as usize) {
-            pixels.extend_from_slice(&row[..layout.unpadded_bytes_per_row as usize]);
-        }
+        let pixels = layout.unpad(&mapped, scene.width, scene.height)?;
         drop(mapped);
         output.unmap();
 
@@ -633,7 +639,7 @@ impl GpuRenderer {
                 },
             );
         }
-        self.queue.submit([encoder.finish()]);
+        let submission = self.queue.submit([encoder.finish()]);
 
         let slot = &mut self.readback_slots[slot_index];
         let (sender, receiver) = mpsc::sync_channel(1);
@@ -642,7 +648,7 @@ impl GpuRenderer {
             .map_async(wgpu::MapMode::Read, move |result| {
                 let _ = sender.send(result);
             });
-        slot.pending = Some(receiver);
+        slot.pending = Some((submission, receiver));
         self.readback_order.push_back(slot_index);
 
         Ok(ready)
@@ -667,12 +673,19 @@ impl GpuRenderer {
             .expect("reclaim_oldest called with no in-flight frame");
         let frame = {
             let slot = &mut self.readback_slots[slot_index];
-            let receiver = slot
+            let (submission, receiver) = slot
                 .pending
                 .take()
                 .expect("in-flight slot always has a pending readback");
+            // Wait for this slot's own submission only. Waiting for the most
+            // recent one (`wait_indefinitely`) would also block on every
+            // younger frame still in flight, draining the GPU queue on each
+            // reclaim and defeating the pipelining.
             self.device
-                .poll(wgpu::PollType::wait_indefinitely())
+                .poll(wgpu::PollType::Wait {
+                    submission_index: Some(submission),
+                    timeout: None,
+                })
                 .map_err(GpuRenderError::Poll)?;
             receiver
                 .recv()
@@ -681,17 +694,7 @@ impl GpuRenderer {
 
             let slice = slot.buffer.slice(..);
             let mapped = slice.get_mapped_range().map_err(GpuRenderError::MapRange)?;
-            let capacity = usize::try_from(slot.layout.unpadded_bytes_per_row)
-                .ok()
-                .and_then(|row| row.checked_mul(slot.height as usize))
-                .ok_or(GpuRenderError::SurfaceTooLarge {
-                    width: slot.width,
-                    height: slot.height,
-                })?;
-            let mut pixels = Vec::with_capacity(capacity);
-            for row in mapped.chunks_exact(slot.layout.padded_bytes_per_row as usize) {
-                pixels.extend_from_slice(&row[..slot.layout.unpadded_bytes_per_row as usize]);
-            }
+            let pixels = slot.layout.unpad(&mapped, slot.width, slot.height)?;
             drop(mapped);
             slot.buffer.unmap();
             GpuFrame {
@@ -730,10 +733,24 @@ impl GpuRenderer {
         self.text_rasterizer
             .load_fonts(&scene.fonts, &self.asset_root)
             .map_err(GpuRenderError::Text)?;
-        let mut layers = Vec::new();
-        for layer in &scene.layers {
-            self.prepare_layer(layer, LayerState::default(), &mut layers)?;
+        let font_count = self.text_rasterizer.loaded_font_count();
+        if font_count != self.text_font_count {
+            self.textures
+                .retain(|key, _| !key.starts_with(TEXT_TEXTURE_PREFIX));
+            self.text_font_count = font_count;
         }
+        self.texture_generation += 1;
+        let mut layers = Vec::new();
+        let prepared = scene
+            .layers
+            .iter()
+            .try_for_each(|layer| self.prepare_layer(layer, LayerState::default(), &mut layers));
+        // Evict what this frame did not use, also when it failed part way
+        // (the entries it did reach are still marked as used).
+        let generation = self.texture_generation;
+        self.textures
+            .retain(|_, cached| cached.last_used == generation);
+        prepared?;
         layers
             .iter()
             .map(|layer| self.create_draw(layer, scene.width, scene.height))
@@ -806,8 +823,10 @@ impl GpuRenderer {
                 }
             }
             LayerContent::Image { asset } => {
-                let image = self.load_image(asset)?.clone();
-                output.push(PreparedLayer::new(image, layer.transform.anchor, state));
+                let texture = self.cached_texture(format!("image\0{}", asset.id), |renderer| {
+                    renderer.load_image(asset).cloned()
+                })?;
+                output.push(PreparedLayer::new(texture, layer.transform.anchor, state));
             }
             LayerContent::Psd {
                 asset,
@@ -815,10 +834,15 @@ impl GpuRenderer {
                 enabled_layers,
                 disabled_layers,
             } => {
-                let image = self
-                    .load_psd(asset, visible_layers, enabled_layers, disabled_layers)?
-                    .clone();
-                output.push(PreparedLayer::new(image, layer.transform.anchor, state));
+                let texture = self.cached_texture(
+                    psd_key(asset, visible_layers, enabled_layers, disabled_layers),
+                    |renderer| {
+                        renderer
+                            .load_psd(asset, visible_layers, enabled_layers, disabled_layers)
+                            .cloned()
+                    },
+                )?;
+                output.push(PreparedLayer::new(texture, layer.transform.anchor, state));
             }
             LayerContent::Video { asset, timing } => {
                 let path = self.local_asset_path(asset)?;
@@ -828,20 +852,27 @@ impl GpuRenderer {
                     .ok_or_else(|| GpuRenderError::MissingVideoDecoder(layer.id.clone()))?;
                 let frame =
                     decoder.decode_frame_for(&layer.id, &path, timing.source_time_seconds)?;
-                let image = DecodedImage::new(frame.width, frame.height, frame.pixels)?;
-                output.push(PreparedLayer::new(image, layer.transform.anchor, state));
+                let image = DecodedImage::shared(frame.width, frame.height, frame.pixels)?;
+                // Every frame brings new pixels, so video is never cached.
+                let texture = self.upload_texture(&image);
+                output.push(PreparedLayer::new(texture, layer.transform.anchor, state));
             }
             LayerContent::Text {
                 text,
                 style,
                 max_width,
             } => {
-                let text = self
-                    .text_rasterizer
-                    .rasterize(text, style, *max_width, 1.0)
-                    .map_err(GpuRenderError::Text)?;
-                let image = DecodedImage::new(text.width(), text.height(), text.into_pixels())?;
-                output.push(PreparedLayer::new(image, layer.transform.anchor, state));
+                // `{:?}` spells out every style field and prints floats
+                // exactly, so equal keys always mean equal rasterizer input.
+                let key = format!("{TEXT_TEXTURE_PREFIX}{text}\0{style:?}\0{max_width:?}");
+                let texture = self.cached_texture(key, |renderer| {
+                    let text = renderer
+                        .text_rasterizer
+                        .rasterize(text, style, *max_width, 1.0)
+                        .map_err(GpuRenderError::Text)?;
+                    DecodedImage::new(text.width(), text.height(), text.into_pixels())
+                })?;
+                output.push(PreparedLayer::new(texture, layer.transform.anchor, state));
             }
             LayerContent::Rect {
                 width,
@@ -850,16 +881,20 @@ impl GpuRenderer {
                 stroke,
                 corner_radius,
             } => {
-                let rect = rasterize_rect(
-                    *width,
-                    *height,
-                    *corner_radius,
-                    fill.as_ref(),
-                    stroke.as_ref(),
-                )
-                .map_err(GpuRenderError::Text)?;
-                let image = DecodedImage::new(rect.width(), rect.height(), rect.into_pixels())?;
-                output.push(PreparedLayer::new(image, layer.transform.anchor, state));
+                let key =
+                    format!("rect\0{width:?}\0{height:?}\0{corner_radius:?}\0{fill:?}\0{stroke:?}");
+                let texture = self.cached_texture(key, |_| {
+                    let rect = rasterize_rect(
+                        *width,
+                        *height,
+                        *corner_radius,
+                        fill.as_ref(),
+                        stroke.as_ref(),
+                    )
+                    .map_err(GpuRenderError::Text)?;
+                    DecodedImage::new(rect.width(), rect.height(), rect.into_pixels())
+                })?;
+                output.push(PreparedLayer::new(texture, layer.transform.anchor, state));
             }
             LayerContent::MissingComponent { .. } => {
                 return Err(GpuRenderError::UnsupportedContent {
@@ -900,13 +935,7 @@ impl GpuRenderer {
         enabled_layers: &[String],
         disabled_layers: &[String],
     ) -> Result<&DecodedImage, GpuRenderError> {
-        let key = format!(
-            "psd\0{}\0{}\0{}\0{}",
-            asset.id,
-            visible_layers.join("\0"),
-            enabled_layers.join("\0"),
-            disabled_layers.join("\0")
-        );
+        let key = psd_key(asset, visible_layers, enabled_layers, disabled_layers);
         if !self.images.contains_key(&key) {
             let path = self.local_asset_path(asset)?;
             let frame = celesta_renderer::rasterize_psd(
@@ -932,17 +961,36 @@ impl GpuRenderer {
         })
     }
 
-    fn create_draw(
-        &self,
-        layer: &PreparedLayer,
-        canvas_width: u32,
-        canvas_height: u32,
-    ) -> Result<GpuDraw, GpuRenderError> {
+    /// Returns the texture cached under `key`, marking it used by the frame
+    /// being prepared, or produces and uploads it on a miss.
+    fn cached_texture(
+        &mut self,
+        key: String,
+        produce: impl FnOnce(&mut Self) -> Result<DecodedImage, GpuRenderError>,
+    ) -> Result<LayerTexture, GpuRenderError> {
+        let generation = self.texture_generation;
+        if let Some(cached) = self.textures.get_mut(&key) {
+            cached.last_used = generation;
+            return Ok(cached.texture.clone());
+        }
+        let image = produce(self)?;
+        let texture = self.upload_texture(&image);
+        self.textures.insert(
+            key,
+            CachedTexture {
+                texture: texture.clone(),
+                last_used: generation,
+            },
+        );
+        Ok(texture)
+    }
+
+    fn upload_texture(&self, image: &DecodedImage) -> LayerTexture {
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Celesta layer texture"),
             size: wgpu::Extent3d {
-                width: layer.image.width,
-                height: layer.image.height,
+                width: image.width,
+                height: image.height,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -959,19 +1007,33 @@ impl GpuRenderer {
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
-            &layer.image.pixels,
+            &image.pixels,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(layer.image.width * BYTES_PER_PIXEL),
-                rows_per_image: Some(layer.image.height),
+                bytes_per_row: Some(image.width * BYTES_PER_PIXEL),
+                rows_per_image: Some(image.height),
             },
             wgpu::Extent3d {
-                width: layer.image.width,
-                height: layer.image.height,
+                width: image.width,
+                height: image.height,
                 depth_or_array_layers: 1,
             },
         );
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        LayerTexture {
+            _texture: texture,
+            view,
+            width: image.width,
+            height: image.height,
+        }
+    }
+
+    fn create_draw(
+        &self,
+        layer: &PreparedLayer,
+        canvas_width: u32,
+        canvas_height: u32,
+    ) -> Result<GpuDraw, GpuRenderError> {
         let uniform = layer.uniform(canvas_width, canvas_height);
         let uniform = self
             .device
@@ -990,7 +1052,7 @@ impl GpuRenderer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&view),
+                    resource: wgpu::BindingResource::TextureView(&layer.texture.view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
@@ -999,12 +1061,30 @@ impl GpuRenderer {
             ],
         });
         Ok(GpuDraw {
-            _texture: texture,
-            _view: view,
+            _texture: layer.texture.clone(),
             _uniform: uniform,
             bind_group,
         })
     }
+}
+
+/// Prefix of every cached text texture's key, so a newly loaded font can drop
+/// just those.
+const TEXT_TEXTURE_PREFIX: &str = "text\0";
+
+fn psd_key(
+    asset: &ResolvedAsset,
+    visible_layers: &[String],
+    enabled_layers: &[String],
+    disabled_layers: &[String],
+) -> String {
+    format!(
+        "psd\0{}\0{}\0{}\0{}",
+        asset.id,
+        visible_layers.join("\0"),
+        enabled_layers.join("\0"),
+        disabled_layers.join("\0")
+    )
 }
 
 fn create_pipeline(
@@ -1053,6 +1133,10 @@ struct DecodedImage {
 
 impl DecodedImage {
     fn new(width: u32, height: u32, pixels: Vec<u8>) -> Result<Self, GpuRenderError> {
+        Self::shared(width, height, Arc::new(pixels))
+    }
+
+    fn shared(width: u32, height: u32, pixels: Arc<Vec<u8>>) -> Result<Self, GpuRenderError> {
         let expected = u64::from(width)
             .checked_mul(u64::from(height))
             .and_then(|pixels| pixels.checked_mul(u64::from(BYTES_PER_PIXEL)))
@@ -1069,21 +1153,36 @@ impl DecodedImage {
         Ok(Self {
             width,
             height,
-            pixels: Arc::new(pixels),
+            pixels,
         })
     }
 }
 
+/// An uploaded layer texture. Cloning it clones the `wgpu` handles, not the
+/// pixels, so a cached texture can back draws in several in-flight frames.
+#[derive(Clone)]
+struct LayerTexture {
+    _texture: wgpu::Texture,
+    view: wgpu::TextureView,
+    width: u32,
+    height: u32,
+}
+
+struct CachedTexture {
+    texture: LayerTexture,
+    last_used: u64,
+}
+
 struct PreparedLayer {
-    image: DecodedImage,
+    texture: LayerTexture,
     anchor: Point,
     state: LayerState,
 }
 
 impl PreparedLayer {
-    const fn new(image: DecodedImage, anchor: Point, state: LayerState) -> Self {
+    const fn new(texture: LayerTexture, anchor: Point, state: LayerState) -> Self {
         Self {
-            image,
+            texture,
             anchor,
             state,
         }
@@ -1097,8 +1196,8 @@ impl PreparedLayer {
             self.state.transform.d,
             self.state.transform.tx,
             self.state.transform.ty,
-            self.image.width as f32,
-            self.image.height as f32,
+            self.texture.width as f32,
+            self.texture.height as f32,
             self.anchor.x as f32,
             self.anchor.y as f32,
             self.state.opacity,
@@ -1113,8 +1212,7 @@ impl PreparedLayer {
 }
 
 struct GpuDraw {
-    _texture: wgpu::Texture,
-    _view: wgpu::TextureView,
+    _texture: LayerTexture,
     _uniform: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
 }
@@ -1219,6 +1317,24 @@ impl ReadbackLayout {
             buffer_size,
         })
     }
+
+    /// Copies a mapped readback buffer into tightly packed RGBA rows. When
+    /// the row width is already aligned (e.g. 1920 or 1280 pixels wide) the
+    /// buffer has no padding and is copied in one go.
+    fn unpad(&self, mapped: &[u8], width: u32, height: u32) -> Result<Vec<u8>, GpuRenderError> {
+        let row = self.unpadded_bytes_per_row as usize;
+        let capacity = row
+            .checked_mul(height as usize)
+            .ok_or(GpuRenderError::SurfaceTooLarge { width, height })?;
+        if self.padded_bytes_per_row == self.unpadded_bytes_per_row {
+            return Ok(mapped[..capacity].to_vec());
+        }
+        let mut pixels = Vec::with_capacity(capacity);
+        for padded in mapped.chunks_exact(self.padded_bytes_per_row as usize) {
+            pixels.extend_from_slice(&padded[..row]);
+        }
+        Ok(pixels)
+    }
 }
 
 /// One reusable texture/readback-buffer pair behind `GpuRenderer::submit`'s
@@ -1231,7 +1347,10 @@ struct ReadbackSlot {
     width: u32,
     height: u32,
     layout: ReadbackLayout,
-    pending: Option<mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>>,
+    pending: Option<(
+        wgpu::SubmissionIndex,
+        mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>,
+    )>,
 }
 
 impl ReadbackSlot {
@@ -1478,6 +1597,79 @@ mod tests {
     }
 
     #[test]
+    fn unpads_aligned_and_padded_readback_rows() {
+        let aligned = ReadbackLayout::new(64, 2).unwrap();
+        let mapped: Vec<u8> = (0..=255).cycle().take(512).collect();
+        assert_eq!(aligned.unpad(&mapped, 64, 2).unwrap(), mapped);
+
+        let padded = ReadbackLayout::new(3, 2).unwrap();
+        let mut mapped = vec![0; 512];
+        mapped[..12].fill(1);
+        mapped[256..268].fill(2);
+        let pixels = padded.unpad(&mapped, 3, 2).unwrap();
+        assert_eq!(pixels.len(), 24);
+        assert!(pixels[..12].iter().all(|byte| *byte == 1));
+        assert!(pixels[12..].iter().all(|byte| *byte == 2));
+    }
+
+    #[test]
+    fn reuses_unchanged_layer_textures_across_frames_and_evicts_unused_ones() {
+        let Some(mut renderer) = renderer(GpuRenderOptions {
+            background: Color::rgba(0, 0, 0, 255),
+        }) else {
+            return;
+        };
+        let rect = |id: &str, x: f64, color: &str| Layer {
+            id: id.to_owned(),
+            transform: EvaluatedTransform {
+                position: Point { x, y: 1.0 },
+                ..EvaluatedTransform::default()
+            },
+            opacity: 1.0,
+            content: LayerContent::Rect {
+                width: 2.0,
+                height: 2.0,
+                fill: Some(Paint::Solid {
+                    color: color.to_owned(),
+                }),
+                stroke: None,
+                corner_radius: 0.0,
+            },
+        };
+        let scene = |layers: Vec<Layer>| {
+            let mut scene = empty_scene(4, 2);
+            scene.layers = layers;
+            scene
+        };
+        let pixel = |frame: &GpuFrame, x: usize| frame.pixels()[x * 4..x * 4 + 4].to_vec();
+
+        let first = scene(vec![rect("red", 1.0, "#ff0000"), rect("blue", 3.0, "#0000ff")]);
+        let frame = renderer.render(&first).unwrap();
+        assert_eq!(pixel(&frame, 0), [255, 0, 0, 255]);
+        assert_eq!(pixel(&frame, 3), [0, 0, 255, 255]);
+        assert_eq!(renderer.textures.len(), 2);
+
+        // The same rect geometry with another fill is a different texture;
+        // the blue one this frame no longer uses is dropped.
+        let second = scene(vec![rect("red", 1.0, "#ff0000"), rect("blue", 3.0, "#00ff00")]);
+        let frame = renderer.render(&second).unwrap();
+        assert_eq!(pixel(&frame, 0), [255, 0, 0, 255]);
+        assert_eq!(pixel(&frame, 3), [0, 255, 0, 255]);
+        assert_eq!(renderer.textures.len(), 2);
+
+        // Cached textures render the same frame again, including through
+        // the pipelined readback path.
+        let again = renderer.render(&second).unwrap();
+        assert_eq!(again, frame);
+        assert!(renderer.submit(&second).unwrap().is_none());
+        assert_eq!(renderer.drain().unwrap(), vec![frame]);
+
+        let empty = scene(Vec::new());
+        renderer.render(&empty).unwrap();
+        assert!(renderer.textures.is_empty());
+    }
+
+    #[test]
     fn fits_a_widescreen_scene_inside_a_square_preview() {
         let viewport = PreviewViewport::fit(1920, 1080, 1000, 1000).unwrap();
         assert!((viewport.x - 0.0).abs() < 0.001);
@@ -1703,7 +1895,7 @@ mod tests {
                 Ok(VideoFrame {
                     width: 1,
                     height: 1,
-                    pixels: vec![12, 34, 56, 255],
+                    pixels: vec![12, 34, 56, 255].into(),
                 })
             }
         }

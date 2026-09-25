@@ -7,10 +7,12 @@ use std::fmt;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
 };
+use std::thread;
 
 use ez_ffmpeg::{FfmpegContext, Input, Output, VideoWriter};
 use celesta_composition::{
@@ -44,7 +46,113 @@ pub struct ExportOptions {
     /// shifted so the span's start becomes the file's start). `None` exports
     /// the whole composition, byte-for-byte as before.
     pub range: Option<ExportRange>,
+    /// H.264 encoder settings; the default matches the historical output.
+    pub video: VideoEncoding,
 }
+
+/// libx264 settings for the exported video stream.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VideoEncoding {
+    /// Speed/compression trade-off. Faster presets encode much faster at the
+    /// cost of a larger file for the same `crf`; they do not lower quality.
+    pub preset: EncoderPreset,
+    /// Constant rate factor, `0..=51`; lower is higher quality and larger.
+    pub crf: u8,
+}
+
+impl VideoEncoding {
+    /// Highest CRF libx264 accepts for 8-bit output.
+    pub const MAX_CRF: u8 = 51;
+}
+
+impl Default for VideoEncoding {
+    fn default() -> Self {
+        Self {
+            preset: EncoderPreset::Medium,
+            crf: 18,
+        }
+    }
+}
+
+/// libx264's `-preset` values, fastest first.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum EncoderPreset {
+    Ultrafast,
+    Superfast,
+    Veryfast,
+    Faster,
+    Fast,
+    #[default]
+    Medium,
+    Slow,
+    Slower,
+    Veryslow,
+}
+
+impl EncoderPreset {
+    pub const ALL: [Self; 9] = [
+        Self::Ultrafast,
+        Self::Superfast,
+        Self::Veryfast,
+        Self::Faster,
+        Self::Fast,
+        Self::Medium,
+        Self::Slow,
+        Self::Slower,
+        Self::Veryslow,
+    ];
+
+    /// The name libx264 (and `ffmpeg -preset`) uses.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Ultrafast => "ultrafast",
+            Self::Superfast => "superfast",
+            Self::Veryfast => "veryfast",
+            Self::Faster => "faster",
+            Self::Fast => "fast",
+            Self::Medium => "medium",
+            Self::Slow => "slow",
+            Self::Slower => "slower",
+            Self::Veryslow => "veryslow",
+        }
+    }
+}
+
+impl fmt::Display for EncoderPreset {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl FromStr for EncoderPreset {
+    type Err = UnknownEncoderPreset;
+
+    fn from_str(name: &str) -> Result<Self, Self::Err> {
+        Self::ALL
+            .into_iter()
+            .find(|preset| preset.as_str() == name)
+            .ok_or_else(|| UnknownEncoderPreset(name.to_owned()))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UnknownEncoderPreset(pub String);
+
+impl fmt::Display for UnknownEncoderPreset {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "unknown encoder preset '{}' (expected one of",
+            self.0
+        )?;
+        for preset in EncoderPreset::ALL {
+            write!(formatter, " {preset}")?;
+        }
+        formatter.write_str(")")
+    }
+}
+
+impl Error for UnknownEncoderPreset {}
 
 /// A composition-time span to export. `start` is inclusive, `end` exclusive;
 /// both are clamped into `[0, composition duration]` and `start` is snapped
@@ -326,16 +434,6 @@ impl Exporter {
                 source,
             })?;
 
-        self.render_video(
-            project,
-            asset_root,
-            window,
-            &video_path,
-            cancellation,
-            &mut progress,
-        )?;
-        ensure_not_cancelled(cancellation)?;
-        progress(ExportProgress::MixingAudio);
         let evaluator = Evaluator::new(project).map_err(ExportError::Evaluation)?;
         let graph = evaluator.audio_graph().map_err(ExportError::Evaluation)?;
         let (graph, audio_duration) = if self.options.range.is_some() {
@@ -346,18 +444,44 @@ impl Exporter {
         } else {
             (graph, duration)
         };
-        let mut audio_decoder = FfmpegBackend::new();
-        let audio = mix_audio_graph_cancellable(
-            &graph,
-            asset_root,
-            audio_duration,
-            &mut audio_decoder,
-            || cancellation.is_cancelled(),
-        )
-        .map_err(|error| match error {
-            AudioMixError::Cancelled => ExportError::Cancelled,
-            error => ExportError::Audio(error),
-        })?;
+
+        // The audio mixdown does not depend on the rendered video, so it runs
+        // on its own thread while the frames render instead of after them.
+        // `abandon_audio` stops it early when rendering fails.
+        let abandon_audio = AtomicBool::new(false);
+        let (video, audio) = thread::scope(|scope| {
+            let audio = scope.spawn(|| {
+                let mut audio_decoder = FfmpegBackend::new();
+                mix_audio_graph_cancellable(
+                    &graph,
+                    asset_root,
+                    audio_duration,
+                    &mut audio_decoder,
+                    || cancellation.is_cancelled() || abandon_audio.load(Ordering::Acquire),
+                )
+            });
+            let video = self.render_video(
+                project,
+                asset_root,
+                window,
+                &video_path,
+                cancellation,
+                &mut progress,
+            );
+            if video.is_err() {
+                abandon_audio.store(true, Ordering::Release);
+            }
+            (video, audio.join())
+        });
+        video?;
+        ensure_not_cancelled(cancellation)?;
+        progress(ExportProgress::MixingAudio);
+        let audio = audio
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+            .map_err(|error| match error {
+                AudioMixError::Cancelled => ExportError::Cancelled,
+                error => ExportError::Audio(error),
+            })?;
 
         ensure_not_cancelled(cancellation)?;
         progress(ExportProgress::Muxing);
@@ -653,6 +777,7 @@ impl Exporter {
             project.settings.width,
             project.settings.height,
             frame_rate,
+            self.options.video,
             output,
         )?;
 
@@ -680,11 +805,11 @@ impl Exporter {
                 // wait (when there is one) overlaps with evaluating and
                 // encoding other frames instead of stalling every frame.
                 if let Some(frame) = renderer.submit(&scene).map_err(ExportError::Render)? {
-                    write_frame(&mut writer, &frame)?;
+                    write_frame(&mut writer, frame)?;
                 }
             }
             for frame in renderer.drain().map_err(ExportError::Render)? {
-                write_frame(&mut writer, &frame)?;
+                write_frame(&mut writer, frame)?;
             }
             Ok(())
         })();
@@ -728,8 +853,13 @@ impl Exporter {
             .map_err(ExportError::Evaluation)?
             .unwrap_or_default();
 
-        let mut writer =
-            open_video_writer(metadata.width, metadata.height, metadata.frame_rate, output)?;
+        let mut writer = open_video_writer(
+            metadata.width,
+            metadata.height,
+            metadata.frame_rate,
+            self.options.video,
+            output,
+        )?;
 
         let result = (|| {
             let mut renderer =
@@ -791,11 +921,11 @@ impl Exporter {
                 // frame's GPU work with the *next* frame's Node IPC round
                 // trip and project evaluation instead of blocking here.
                 if let Some(frame) = renderer.submit(&scene).map_err(ExportError::Render)? {
-                    write_frame(&mut writer, &frame)?;
+                    write_frame(&mut writer, frame)?;
                 }
             }
             for frame in renderer.drain().map_err(ExportError::Render)? {
-                write_frame(&mut writer, &frame)?;
+                write_frame(&mut writer, frame)?;
             }
             Ok(())
         })();
@@ -1053,13 +1183,18 @@ fn path_to_url(path: &Path) -> String {
 
 /// Opens a constant-frame-rate H.264 `VideoWriter` for pushed RGBA frames —
 /// the library-linked equivalent of piping `rawvideo` into
-/// `ffmpeg -c:v libx264 -preset medium -crf 18 -pix_fmt yuv420p -movflags +faststart`.
+/// `ffmpeg -c:v libx264 -preset <preset> -crf <crf> -pix_fmt yuv420p -movflags +faststart`
+/// (`-preset medium -crf 18` by default).
 fn open_video_writer(
     width: u32,
     height: u32,
     frame_rate: Rational,
+    encoding: VideoEncoding,
     output: &Path,
 ) -> Result<VideoWriter, ExportError> {
+    if encoding.crf > VideoEncoding::MAX_CRF {
+        return Err(ExportError::InvalidCrf(encoding.crf));
+    }
     let fps_num = i32::try_from(frame_rate.numerator).map_err(|_| ExportError::TimelineTooLong)?;
     let fps_den =
         i32::try_from(frame_rate.denominator).map_err(|_| ExportError::TimelineTooLong)?;
@@ -1069,8 +1204,8 @@ fn open_video_writer(
         .open(
             Output::from(path_to_url(output))
                 .set_video_codec("libx264")
-                .set_video_codec_opt("preset", "medium")
-                .set_video_codec_opt("crf", "18")
+                .set_video_codec_opt("preset", encoding.preset.as_str())
+                .set_video_codec_opt("crf", encoding.crf.to_string())
                 .set_pix_fmt("yuv420p")
                 .set_format_opt("movflags", "+faststart"),
         )
@@ -1080,15 +1215,17 @@ fn open_video_writer(
         })
 }
 
+/// Hands the frame's pixel buffer to the encoder as is (`write_owned`), rather
+/// than having `write` copy all of it first.
 fn write_frame(
     writer: &mut VideoWriter,
-    frame: &celesta_gpu_renderer::GpuFrame,
+    frame: celesta_gpu_renderer::GpuFrame,
 ) -> Result<(), ExportError> {
     writer
-        .write(frame.pixels())
+        .write_owned(frame.into_pixels())
         .map_err(|error| ExportError::Ffmpeg {
             stage: "video encoding",
-            source: error.into(),
+            source: error.into_parts().1.into(),
         })
 }
 
@@ -1175,6 +1312,8 @@ pub enum ExportError {
         width: u32,
         height: u32,
     },
+    /// [`VideoEncoding::crf`] is above [`VideoEncoding::MAX_CRF`].
+    InvalidCrf(u8),
     EmptyTimeline,
     /// The requested export range, once clamped to the composition and
     /// snapped to frames, covers zero frames.
@@ -1208,6 +1347,11 @@ impl fmt::Display for ExportError {
                 formatter,
                 "H.264 MP4 export requires non-zero even dimensions, got {width}x{height}"
             ),
+            Self::InvalidCrf(crf) => write!(
+                formatter,
+                "H.264 CRF must be between 0 and {}, got {crf}",
+                VideoEncoding::MAX_CRF
+            ),
             Self::EmptyTimeline => formatter.write_str("cannot export an empty timeline"),
             Self::EmptyRange => {
                 formatter.write_str("the requested export range does not cover any frames")
@@ -1232,6 +1376,7 @@ impl Error for ExportError {
             Self::OutputExists(_)
             | Self::UnsupportedOutput(_)
             | Self::UnsupportedDimensions { .. }
+            | Self::InvalidCrf(_)
             | Self::EmptyTimeline
             | Self::EmptyRange
             | Self::Cancelled
@@ -1437,6 +1582,35 @@ mod tests {
             parse_timecode("00:00:01.2500"),
             Err(TimecodeError::Malformed(_))
         ));
+    }
+
+    #[test]
+    fn encoder_presets_round_trip_through_their_libx264_names() {
+        for preset in EncoderPreset::ALL {
+            assert_eq!(preset.as_str().parse::<EncoderPreset>(), Ok(preset));
+        }
+        assert_eq!(VideoEncoding::default().preset, EncoderPreset::Medium);
+        assert_eq!(VideoEncoding::default().crf, 18);
+        assert_eq!(
+            "Medium".parse::<EncoderPreset>(),
+            Err(UnknownEncoderPreset("Medium".to_owned()))
+        );
+    }
+
+    #[test]
+    fn rejects_an_out_of_range_crf_before_encoding() {
+        let directory = tempfile::tempdir().unwrap();
+        let result = open_video_writer(
+            64,
+            64,
+            Rational::new(30, 1),
+            VideoEncoding {
+                crf: VideoEncoding::MAX_CRF + 1,
+                ..VideoEncoding::default()
+            },
+            &directory.path().join("video.mp4"),
+        );
+        assert!(matches!(result, Err(ExportError::InvalidCrf(52))));
     }
 
     #[test]
