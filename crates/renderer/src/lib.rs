@@ -148,7 +148,7 @@ impl RasterizedText {
 pub struct TextRasterizer {
     font_system: FontSystem,
     swash_cache: SwashCache,
-    loaded_fonts: HashSet<String>,
+    loaded_fonts: HashSet<PathBuf>,
 }
 
 impl TextRasterizer {
@@ -174,10 +174,12 @@ impl TextRasterizer {
         asset_root: &Path,
     ) -> Result<(), RenderError> {
         for font in fonts {
-            if self.loaded_fonts.contains(&font.id) {
+            // Keyed by the resolved file, not the id: a React `<Font>` keeps
+            // its `name` when its `src` changes across a reload.
+            let path = local_asset_path(asset_root, font)?;
+            if self.loaded_fonts.contains(&path) {
                 continue;
             }
-            let path = local_asset_path(asset_root, font)?;
             self.font_system
                 .db_mut()
                 .load_font_file(&path)
@@ -185,7 +187,7 @@ impl TextRasterizer {
                     asset: font.id.clone(),
                     source,
                 })?;
-            self.loaded_fonts.insert(font.id.clone());
+            self.loaded_fonts.insert(path);
         }
         Ok(())
     }

@@ -151,7 +151,7 @@ export const sections: DocSection[] = [
     </>,
   },
   {
-    id: 'layout', title: 'Shapes, text & layout', description: 'Position layers, style text, and arrange a scene.', keywords: 'Rect Text Group style font fontFamily fontWeight stroke outline lineHeight maxWidth wrap align anchor rotation scale Center SafeArea Stack Grid Fit layout', content: <>
+    id: 'layout', title: 'Shapes, text & layout', description: 'Position layers, style text, and arrange a scene.', keywords: 'Rect Text Group style font Font fontFamily fontWeight stroke outline lineHeight maxWidth wrap align anchor rotation scale Center SafeArea Stack Grid Fit layout', content: <>
       <h3>Coordinates and anchors</h3><p>The canvas origin is the top-left corner, measured in pixels. A layer’s <code>x</code> and <code>y</code> place its <strong>anchor</strong>, which is the top-left corner by default. Set <code>anchorX</code> and <code>anchorY</code> between 0 and 1 to move it: <code>0.5</code> is the center and <code>1</code> the right or bottom edge. Rotation (in degrees) and scale turn around the anchor too.</p>
       <DocCode label="Centered, rotated, and scaled" language="tsx" code={'<Rect x={960} y={540} anchorX={0.5} anchorY={0.5}\n  width={400} height={400} cornerRadius={48}\n  rotation={12} scale={0.8} opacity={0.9} fill="#a68bbf" />'} />
       <p><code>scaleX</code> and <code>scaleY</code> override <code>scale</code> on one axis. <code>opacity</code> multiplies down through groups.</p>
@@ -159,7 +159,11 @@ export const sections: DocSection[] = [
       <h3>Text</h3><p><code>Text</code> renders its children, which must be strings or numbers. Style it with <code>style</code>:</p>
       <DocCode label="An outlined, wrapping caption" language="tsx" code={"<Text x={960} y={900} anchorX={0.5} anchorY={0.5} maxWidth={1400}\n  style={{\n    fontFamily: 'Hiragino Sans',\n    fontSize: 64,\n    fontWeight: 700,\n    lineHeight: 80,\n    align: 'center',\n    fill: { type: 'solid', color: '#ffffff' },\n    stroke: { paint: { type: 'solid', color: '#57456c' }, width: 8 },\n  }}>\n  Words that wrap onto a second line when they reach maxWidth.\n</Text>"} />
       <ul>
-        <li><code>fontFamily</code> names a font installed on the computer. Characters the font lacks, such as emoji, fall back to another installed font. A JSON project can also bundle a font file as a <code>font</code> asset.</li>
+        <li><code>fontFamily</code> names a font installed on the computer, or one loaded with <code>{'<Font>'}</code>. Characters the font lacks, such as emoji, fall back to another installed font. A JSON project can also bundle a font file as a <code>font</code> asset.</li>
+      </ul>
+      <p>To use a font file that is not installed, declare it with <code>{'<Font>'}</code>. A relative <code>src</code> is resolved against the entry file’s folder, and <code>fontFamily</code> uses the family name stored inside the file, not the file name. Fonts must be local files.</p>
+      <DocCode label="Load a font file next to the entry" language="tsx" code={"<Composition width={1920} height={1080} fps={30} durationInFrames={90}>\n  <Assets>\n    <Font src=\"./fonts/MPLUSRounded1c-Bold.ttf\" />\n  </Assets>\n  <Text style={{ fontFamily: 'M PLUS Rounded 1c', fontWeight: 700, fontSize: 96 }}>\n    Hello\n  </Text>\n</Composition>"} />
+      <ul>
         <li><code>maxWidth</code> wraps text at word boundaries, and <code>align</code> positions each line within that width. Use <code>\n</code> in a string to break a line yourself.</li>
         <li>Single-line text is anchored by its visible glyphs, so <code>anchorY={'{0.5}'}</code> centers the letters themselves rather than an invisible line box.</li>
       </ul>
@@ -255,7 +259,7 @@ export const sections: DocSection[] = [
     </>,
   },
   {
-    id: 'reference', title: 'React essentials', description: 'A compact reference for everything in @celesta/react.', keywords: 'api props Composition Rect Text Group Image Video Audio Sequence Transition Character CharacterView Dialogue hooks reference', content: <>
+    id: 'reference', title: 'React essentials', description: 'A compact reference for everything in @celesta/react.', keywords: 'api props Composition Rect Text Group Image Video Audio Font Sequence Transition Character CharacterView Dialogue hooks reference', content: <>
       <p>Import these APIs from <code>@celesta/react</code>. Celesta’s TypeScript declarations provide the complete prop types and editor completions.</p>
       <Api caption="Layers" rows={[
         [<code>Composition</code>, <>Set <code>width</code>, <code>height</code>, <code>fps</code>, and <code>durationInFrames</code>. Return exactly one from your default export.</>],
@@ -263,6 +267,7 @@ export const sections: DocSection[] = [
         [<code>Text</code>, <>Text from string or number children, styled with <code>style</code> and wrapped with <code>maxWidth</code>. See <a href="#layout">Shapes, text & layout</a>.</>],
         [<code>Group</code>, <>Applies a shared position, scale, rotation, and opacity to child layers.</>],
         [<><code>Image</code> / <code>Video</code> / <code>Audio</code></>, <>Local media through <code>src</code>. See <a href="#media">Images, video & sound</a>.</>],
+        [<code>Font</code>, <>Loads a local font file through <code>src</code> so <code>Text</code> can use its family. See <a href="#layout">Shapes, text & layout</a>.</>],
       ]} />
       <Api caption="Time and motion" rows={[
         [<code>Sequence</code>, <>Places children at a frame offset with <code>from</code> and an optional <code>durationInFrames</code>.</>],
@@ -312,7 +317,7 @@ export const sections: DocSection[] = [
       <details className="doc-details"><summary>A source build cannot find FFmpeg</summary><p>Confirm that the 8.1.x development libraries are installed, not just the executable. On macOS, set <code>PKG_CONFIG_PATH</code> in the same shell where you run Cargo. On Windows, check <code>VCPKG_ROOT</code> and the MSVC build tools. See <a href="#build-from-source">source-build setup</a>.</p></details>
       <details className="doc-details"><summary>My media is missing</summary><p>Celesta currently supports local media files, not remote media URLs. Check the paths in your project, keep the referenced files alongside the project when sharing it, and look for missing-asset indicators in the Assets panel.</p></details>
       <details className="doc-details"><summary>The preview did not change after saving</summary><p>React compositions reload automatically. For JSON projects, use <strong>File → Reload</strong>. Make sure you saved the file you actually opened in Celesta; the app itself does not edit the source.</p></details>
-      <details className="doc-details"><summary>My text uses the wrong font</summary><p><code>fontFamily</code> must match the name of a font installed on the computer that renders the video. When it does not, Celesta falls back to another font. Check the exact family name in your system’s font manager, and install the font on every machine that exports the project.</p></details>
+      <details className="doc-details"><summary>My text uses the wrong font</summary><p><code>fontFamily</code> must match the family name of a font installed on the computer that renders the video, or of a font file loaded with <code>{'<Font>'}</code>. When it does not, Celesta falls back to another font. Check the exact family name in your system’s font manager. To avoid installing the font on every machine that exports the project, keep the font file next to the entry and load it with <code>{'<Font>'}</code>.</p></details>
       <details className="doc-details"><summary>The mouth does not move</summary><p>Lip sync needs an uncompressed WAV voice and a transcript with readable vowels (kana or romaji). Check that <code>loadLipSync()</code> runs in <code>prepare()</code>, that the track is passed as <code>lipSync</code>, and that each mouth path matches a layer in the PSD exactly. For a PSD that shows nothing, set <code>layers</code> from a PSDTool preset.</p></details>
       <details className="doc-details"><summary>My editor cannot resolve @celesta/react</summary><p>Open the composition in Celesta and choose <strong>File → Set Up TypeScript</strong>. Check that your <code>tsconfig.json</code> extends <code>./.celesta/tsconfig.json</code>. When building from source, also complete the React package’s install, codegen, and build steps.</p></details>
       <details className="doc-details"><summary>MP4 export will not start</summary><p>Use non-zero, even-numbered dimensions and confirm that all local media is available. If the destination file already exists, choose another path or explicitly add <code>--overwrite</code> to the CLI command.</p></details>
