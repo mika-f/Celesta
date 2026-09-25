@@ -51,7 +51,7 @@ impl DiskAudioCache {
         channels: u16,
     ) -> io::Result<Option<CachedAudio>> {
         let path = self.entry_path(source, sample_rate, channels)?;
-        let file = match File::open(path) {
+        let file = match File::open(&path) {
             Ok(file) => file,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error),
@@ -60,7 +60,11 @@ impl DiskAudioCache {
         if cached.buffer.sample_rate != sample_rate || cached.buffer.channels != channels {
             return Err(invalid_cache("cache format does not match its key"));
         }
-        let _ = file.set_times(FileTimes::new().set_modified(SystemTime::now()));
+        // Windows only updates timestamps through a handle opened with write access.
+        let _ = OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .and_then(|file| file.set_times(FileTimes::new().set_modified(SystemTime::now())));
         Ok(Some(cached))
     }
 

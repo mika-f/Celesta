@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Test (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-latest
+          - name: macOS arm64
+            os: macos-latest
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        # bash -e stops at the first failing command; Windows pwsh steps would not.
+        shell: bash
+    # The first Windows run builds FFmpeg and x264 with vcpkg before the cache exists.
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/setup-ffmpeg
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 12.4.2
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: packages/react/pnpm-lock.yaml
+
+      # celesta-react-bridge and celesta-exporter tests spawn the compiled
+      # packages/react/dist/cli.js, so build the React package first.
+      - name: Build @celesta/react
+        run: |
+          pnpm --dir packages/react install --frozen-lockfile
+          pnpm --dir packages/react run codegen
+          pnpm --dir packages/react run build
+
+      - name: Test @celesta/react
+        run: pnpm --dir packages/react run test
+
+      - name: Build
+        run: cargo build --workspace --locked
+
+      # Tests that need a GPU adapter skip themselves when none is available.
+      - name: Test
+        run: cargo test --workspace --locked --no-fail-fast

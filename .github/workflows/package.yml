@@ -1,0 +1,132 @@
+name: Package
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Package version (x.y.z)
+        required: true
+        default: 0.0.0
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  VERSION: ${{ github.event_name == 'push' && github.ref_name || inputs.version }}
+
+jobs:
+  windows:
+    name: Windows x64
+    runs-on: windows-latest
+    # The first run builds FFmpeg and x264 with vcpkg before the cache exists.
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/setup-ffmpeg
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 12.4.2
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: packages/react/pnpm-lock.yaml
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          choco install innosetup --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup installation failed' }
+          $iscc = Get-ChildItem -Path "${env:ProgramFiles(x86)}/Inno Setup*/ISCC.exe", "$env:ProgramFiles/Inno Setup*/ISCC.exe" -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if (-not $iscc) { throw 'ISCC.exe was not found' }
+          "ISCC_PATH=$($iscc.FullName)" >> $env:GITHUB_ENV
+
+      - name: Build package
+        shell: pwsh
+        run: |
+          $version = $env:VERSION -replace '^v', ''
+          pwsh -File scripts/package-windows.ps1 -Version $version -IsccPath $env:ISCC_PATH
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: celesta-windows-x64
+          path: |
+            target/packages/Celesta-*-windows-x64.zip
+            target/packages/Celesta-*-windows-x64-setup.exe
+          if-no-files-found: error
+
+  macos:
+    name: macOS ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            os: macos-latest
+          - arch: x64
+            os: macos-15-intel
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/setup-ffmpeg
+
+      - name: Install dylibbundler
+        run: brew install dylibbundler
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 12.4.2
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: packages/react/pnpm-lock.yaml
+
+      # Without signing options the script produces an ad-hoc signed development DMG.
+      - name: Build package
+        run: python3 scripts/package-macos.py --version "${VERSION#v}"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: celesta-macos-${{ matrix.arch }}
+          path: target/packages/Celesta-*-macos-${{ matrix.arch }}.dmg
+          if-no-files-found: error
+
+  release:
+    name: Draft release
+    if: github.event_name == 'push'
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" --draft --verify-tag --generate-notes \
+            --title "Celesta ${GITHUB_REF_NAME#v}"

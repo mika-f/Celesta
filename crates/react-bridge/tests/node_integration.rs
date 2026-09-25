@@ -782,10 +782,14 @@ fn live_react_runtime() -> Option<(PathBuf, PathBuf, PathBuf)> {
 }
 
 fn react_package_root() -> PathBuf {
+    // Not `canonicalize()`: on Windows it returns a `\\?\` verbatim path, and
+    // the CLI then imports `@celesta/react` as a second module instance whose
+    // React contexts the entry's hooks cannot see.
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../packages/react")
-        .canonicalize()
-        .expect("packages/react must exist next to the crates/ workspace")
+        .ancestors()
+        .nth(2)
+        .expect("crates/react-bridge lives two levels below the workspace root")
+        .join("packages/react")
 }
 
 fn find_executable(environment: &str, command: &str) -> Option<PathBuf> {

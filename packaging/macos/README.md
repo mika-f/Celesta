@@ -13,8 +13,12 @@ and packaging dependencies:
 
 ```sh
 xcode-select --install
-brew install ffmpeg pkg-config dylibbundler
+brew install ffmpeg@8 pkg-config dylibbundler
+export PKG_CONFIG_PATH="$(brew --prefix ffmpeg@8)/lib/pkgconfig"
 ```
+
+`ffmpeg@8` is keg-only, so `PKG_CONFIG_PATH` must point at it for the build.
+Homebrew's unversioned `ffmpeg` formula is FFmpeg 9, which is not supported yet.
 
 From the repository root:
 
@@ -137,7 +141,7 @@ The bundle includes available Rust and Homebrew license notices and dependency
 inventories, plus the repository's root `LICENSE*` files (copied automatically)
 and `packaging/GPL-SOURCE-OFFER.md`.
 
-Homebrew's `ffmpeg` formula enables the `x264` encoder by default, which is
+Homebrew's `ffmpeg@8` formula enables the `x264` encoder by default, which is
 GPL-2.0-or-later licensed and makes this binary package as a whole
 GPL-licensed in addition to Celesta's own MIT/Apache-2.0 source license; see
 [`../GPL-SOURCE-OFFER.md`](../GPL-SOURCE-OFFER.md) and the root
