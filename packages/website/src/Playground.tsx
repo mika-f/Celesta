@@ -1,7 +1,8 @@
-import { createElement, useEffect, useRef, useState, type ReactNode } from 'react';
+import { createElement, useEffect, useRef, useState } from 'react';
 import sceneSource from './demo/title-scene.tsx?raw';
 import Root, { Scene } from './demo/title-scene';
 import { compositionConfig, drawScene } from './demo/celesta-browser';
+import { highlight } from './highlight';
 
 const palettes = [
   { name: 'Lilac', background: '#e4daf0', ink: '#57456c', accent: '#a68bbf' },
@@ -21,22 +22,6 @@ function sourceFor(title: string, { background, ink, accent }: typeof palettes[n
   return sceneSource
     .replace(/^const TITLE = .*$/m, `const TITLE = ${quote(title)};`)
     .replace(/^  background: .*$/m, `  background: '${background}', ink: '${ink}', accent: '${accent}',`);
-}
-
-const tokenPattern = /(\/\/.*$)|('(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|"(?:\\.|[^"\\])*")|\b(import|from|export|default|function|return|const|let|typeof)\b|(<\/?[A-Z][A-Za-z]*|<\/?>|\/>|(?<![=\s])>|^\s*>)|\b(\d+(?:\.\d+)?)\b/g;
-const tokenClasses = ['code-comment', 'code-string', 'code-keyword', 'code-tag', 'code-number'];
-
-function highlight(line: string): ReactNode[] {
-  const parts: ReactNode[] = [];
-  let last = 0;
-  for (const match of line.matchAll(tokenPattern)) {
-    const group = match.slice(1).findIndex(Boolean);
-    if (match.index > last) parts.push(line.slice(last, match.index));
-    parts.push(<span key={match.index} className={tokenClasses[group]}>{match[0]}</span>);
-    last = match.index + match[0].length;
-  }
-  if (last < line.length) parts.push(line.slice(last));
-  return parts;
 }
 
 function timecode(frame: number) {

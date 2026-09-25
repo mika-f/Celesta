@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { highlight } from './highlight';
 
 export function DocCode({ code, label, language = 'shell' }: { code: string; label: string; language?: string }) {
   const [status, setStatus] = useState('');
@@ -19,7 +20,7 @@ export function DocCode({ code, label, language = 'shell' }: { code: string; lab
 
   return <div className="doc-code">
     <div className="doc-code-bar"><span>{label}</span><button onClick={copy} aria-label={`Copy ${label}`}>Copy <span aria-hidden="true">⧉</span></button></div>
-    <pre tabIndex={0} aria-label={label}><code className={`language-${language}`}>{code}</code></pre>
+    <pre tabIndex={0} aria-label={label}><code className={`language-${language}`}>{code.split('\n').map((line, i) => <span className="code-line" key={i}>{highlight(line)}</span>)}</code></pre>
     <span className="doc-copy-status" role="status">{status}</span>
   </div>;
 }
