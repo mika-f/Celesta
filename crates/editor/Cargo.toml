@@ -21,6 +21,7 @@ celesta-evaluator = { path = "../evaluator" }
 celesta-exporter = { path = "../exporter" }
 celesta-gpu-renderer = { path = "../gpu-renderer" }
 celesta-media = { path = "../media" }
+celesta-remote = { path = "../remote" }
 celesta-project = { path = "../project" }
 celesta-react-bridge = { path = "../react-bridge" }
 rodio = { version = "0.22.2", default-features = false, features = ["playback"] }

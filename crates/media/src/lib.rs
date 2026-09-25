@@ -13,9 +13,9 @@ use ez_ffmpeg::stream_info::{StreamInfo, find_all_stream_infos};
 use ez_ffmpeg::{AVRational, Input, container_info};
 
 use celesta_composition::{
-    AnimationError, AssetLocation, AudioGraph, Rational, Time, TimeError, evaluate_f64,
-    integrate_f64,
+    AnimationError, AudioGraph, Rational, Time, TimeError, evaluate_f64, integrate_f64,
 };
+use celesta_remote::{RemoteAssetError, resolve_asset_path};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MediaProbe {
@@ -579,22 +579,12 @@ pub fn mix_audio_graph_cancellable(
         if clip.muted {
             continue;
         }
-        let path = match &clip.asset.location {
-            AssetLocation::File { path } => {
-                let path = Path::new(path);
-                if path.is_absolute() {
-                    path.to_owned()
-                } else {
-                    asset_root.join(path)
-                }
+        let path = resolve_asset_path(asset_root, &clip.asset.location).map_err(|source| {
+            AudioMixError::RemoteAsset {
+                asset: clip.asset.id.clone(),
+                source,
             }
-            AssetLocation::Url { url } => {
-                return Err(AudioMixError::UnsupportedAssetUrl {
-                    asset: clip.asset.id.clone(),
-                    url: url.clone(),
-                });
-            }
-        };
+        })?;
         if !decoded.contains_key(&path) {
             let audio = decoder.decode_audio(&path, graph.sample_rate, CHANNELS)?;
             if is_cancelled() {
@@ -791,8 +781,14 @@ pub enum AudioMixError {
     InvalidSampleRate,
     InvalidMasterVolume(f64),
     TimelineTooLong,
-    UnsupportedAssetUrl { asset: String, url: String },
-    UnexpectedDecodedFormat { sample_rate: u32, channels: u16 },
+    RemoteAsset {
+        asset: String,
+        source: RemoteAssetError,
+    },
+    UnexpectedDecodedFormat {
+        sample_rate: u32,
+        channels: u16,
+    },
     Media(MediaError),
     Animation(AnimationError),
     Time(TimeError),
@@ -807,11 +803,8 @@ impl fmt::Display for AudioMixError {
                 write!(formatter, "audio graph has invalid master volume {volume}")
             }
             Self::TimelineTooLong => formatter.write_str("audio timeline is too long to mix"),
-            Self::UnsupportedAssetUrl { asset, url } => {
-                write!(
-                    formatter,
-                    "audio asset `{asset}` uses unsupported URL `{url}`"
-                )
+            Self::RemoteAsset { asset, source } => {
+                write!(formatter, "could not load audio asset `{asset}`: {source}")
             }
             Self::UnexpectedDecodedFormat {
                 sample_rate,
@@ -833,11 +826,11 @@ impl Error for AudioMixError {
             Self::Media(error) => Some(error),
             Self::Animation(error) => Some(error),
             Self::Time(error) => Some(error),
+            Self::RemoteAsset { source, .. } => Some(source),
             Self::Cancelled
             | Self::InvalidSampleRate
             | Self::InvalidMasterVolume(_)
             | Self::TimelineTooLong
-            | Self::UnsupportedAssetUrl { .. }
             | Self::UnexpectedDecodedFormat { .. } => None,
         }
     }
@@ -866,8 +859,8 @@ mod tests {
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    use celesta_composition::{Animatable, AssetLocation, AudioClip, ResolvedAsset, TimeRange};
     use ez_ffmpeg::{FfmpegContext, Output};
-    use celesta_composition::{Animatable, AudioClip, ResolvedAsset, TimeRange};
 
     use super::*;
 

@@ -9,6 +9,7 @@ rust-version.workspace = true
 [dependencies]
 image = { version = "0.25.8", default-features = false, features = ["jpeg", "png", "pnm", "webp"] }
 celesta-composition = { path = "../composition" }
+celesta-remote = { path = "../remote" }
 celesta-media = { path = "../media" }
 celesta-renderer = { path = "../renderer" }
 pollster = "0.4.0"

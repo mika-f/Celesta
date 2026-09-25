@@ -11,6 +11,7 @@ members = [
   "crates/media",
   "crates/project",
   "crates/react-bridge",
+  "crates/remote",
   "crates/renderer",
 ]
 

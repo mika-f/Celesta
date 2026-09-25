@@ -18,6 +18,7 @@ use celesta_composition::{
     TimeRange,
 };
 use celesta_media::{AudioStream, FfmpegBackend, MediaProbe, VideoStream};
+use celesta_remote::{RemoteAssetCache, is_remote_url};
 use serde::{Deserialize, Serialize};
 
 mod project_types;
@@ -223,17 +224,23 @@ impl ReactBridge {
                     };
                 }
                 ReadyMessage::ProbeMedia { probe_media } => {
-                    let response = match media.probe(&probe_media.path) {
+                    let path = probe_media.path;
+                    let probed = if is_remote_url(&path) {
+                        RemoteAssetCache::standard()
+                            .fetch(&path)
+                            .map_err(|error| error.to_string())
+                    } else {
+                        Ok(PathBuf::from(&path))
+                    }
+                    .and_then(|local| media.probe(local).map_err(|error| error.to_string()));
+                    let response = match probed {
                         Ok(probe) => MediaProbeResponse {
                             media: Some(media_probe_payload(probe)),
                             error: None,
                         },
                         Err(error) => MediaProbeResponse {
                             media: None,
-                            error: Some(format!(
-                                "could not probe {}: {error}",
-                                probe_media.path.display()
-                            )),
+                            error: Some(format!("could not probe {path}: {error}")),
                         },
                     };
                     let payload =
@@ -419,23 +426,31 @@ pub fn merge_react_audio_clips(
 }
 
 /// Turns merged `<Audio>` reports into `AudioClip`s, resolving relative `src`
-/// paths against `entry_dir`. Generated ids are `react-audio:{n}` in
-/// first-seen order.
+/// paths against `entry_dir` and keeping `http`/`https` URLs as URLs.
+/// Generated ids are `react-audio:{n}` in first-seen order.
 pub fn react_audio_clips(clips: &[ReactAudioClipDescriptor], entry_dir: &Path) -> Vec<AudioClip> {
     merge_react_audio_clips(clips)
         .into_iter()
         .enumerate()
         .map(|(index, (clip, _))| {
-            let path = if Path::new(&clip.src).is_relative() {
-                entry_dir.join(&clip.src).to_string_lossy().into_owned()
+            let location = if is_remote_url(&clip.src) {
+                AssetLocation::Url {
+                    url: clip.src.clone(),
+                }
+            } else if Path::new(&clip.src).is_relative() {
+                AssetLocation::File {
+                    path: entry_dir.join(&clip.src).to_string_lossy().into_owned(),
+                }
             } else {
-                clip.src.clone()
+                AssetLocation::File {
+                    path: clip.src.clone(),
+                }
             };
             AudioClip {
                 id: format!("react-audio:{index}"),
                 asset: ResolvedAsset {
                     id: clip.src.clone(),
-                    location: AssetLocation::File { path },
+                    location,
                 },
                 range: TimeRange {
                     start: react_seconds_to_time(clip.start),
@@ -532,7 +547,8 @@ enum ReadyMessage {
 
 #[derive(Deserialize)]
 struct MediaProbeRequest {
-    path: PathBuf,
+    /// A local path, or an `http`/`https` URL.
+    path: String,
 }
 
 #[derive(Serialize)]
@@ -1009,9 +1025,10 @@ mod tests {
         let clips = vec![
             audio_descriptor("./voice.wav", 1.0),
             audio_descriptor("/abs/music.wav", 0.0),
+            audio_descriptor("https://example.com/bgm.mp3", 0.0),
         ];
         let built = react_audio_clips(&clips, Path::new("/entry/dir"));
-        assert_eq!(built.len(), 2);
+        assert_eq!(built.len(), 3);
         assert_eq!(built[0].id, "react-audio:0");
         assert_eq!(built[0].range.start.as_seconds().unwrap(), 1.0);
         assert_eq!(built[0].range.duration.as_seconds().unwrap(), 2.0);
@@ -1026,5 +1043,12 @@ mod tests {
             panic!("expected a file asset");
         };
         assert_eq!(path, "/abs/music.wav", "absolute src left untouched");
+        assert_eq!(
+            built[2].asset.location,
+            AssetLocation::Url {
+                url: "https://example.com/bgm.mp3".to_owned()
+            },
+            "URL src kept as a URL"
+        );
     }
 }
