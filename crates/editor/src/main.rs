@@ -14,8 +14,8 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime};
 
 use celesta_composition::{
-    Animatable, AssetLocation, AudioClip, AudioGraph, Layer, LayerContent, Rational, Scene, Time,
-    evaluate_f64, integrate_f64,
+    Animatable, AudioClip, AudioGraph, Layer, LayerContent, Rational, Scene, Time, evaluate_f64,
+    integrate_f64,
 };
 use celesta_editor_core::{
     AssetSummary, CharacterSummary, ClipKind, ComponentClipSummary, DialogueClipSummary,
@@ -34,6 +34,7 @@ use celesta_react_bridge::{
     ComponentPropertyField, ComponentPropertySchema, ComponentResolutionRequest, ReactBridge,
     ReactCompositionMetadata,
 };
+use celesta_remote::resolve_asset_path;
 use gpui_kit::base::GlobalState;
 use gpui_kit::{
     App, Bounds, ClickEvent, Context, Entity, FocusHandle, KeyBinding, KeyDownEvent, Menu,
@@ -1026,10 +1027,10 @@ impl AudioMixWorker {
                         let mut clip_levels = HashMap::new();
                         for clip in &request.graph.clips {
                             let Some((clip_id, waveform)) = (|| {
-                                let path = resolve_asset_location(
-                                    &clip.asset.location,
-                                    &request.asset_root,
-                                )?;
+                                // The mix above already downloaded any URL.
+                                let path =
+                                    resolve_asset_path(&request.asset_root, &clip.asset.location)
+                                        .ok()?;
                                 let waveform = decoder.clip_waveform(
                                     &path,
                                     request.graph.sample_rate,
@@ -3998,20 +3999,6 @@ fn waveform_peaks(buffer: &AudioBuffer, requested_buckets: usize) -> Vec<f32> {
         peaks[bucket] = peaks[bucket].max(amplitude);
     }
     peaks
-}
-
-fn resolve_asset_location(location: &AssetLocation, asset_root: &Path) -> Option<PathBuf> {
-    match location {
-        AssetLocation::File { path } => {
-            let path = Path::new(path);
-            Some(if path.is_absolute() {
-                path.to_owned()
-            } else {
-                asset_root.join(path)
-            })
-        }
-        AssetLocation::Url { .. } => None,
-    }
 }
 
 fn media_asset_info(probe: &MediaProbe) -> MediaAssetInfo {

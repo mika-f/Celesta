@@ -10,8 +10,8 @@ extension still use `celesta` for compatibility.
 
 ## What you can do
 
-- **Describe a timeline:** list local media and place clips on multiple video,
-  audio, overlay, and dialogue tracks in a project file.
+- **Describe a timeline:** list local or `http(s)` media and place clips on
+  multiple video, audio, overlay, and dialogue tracks in a project file.
 - **Preview frame by frame:** open a project or React composition, play it
   with synchronized audio, scrub the timeline, or step through frames. The
   timeline, asset list, and Inspector show what the project contains.

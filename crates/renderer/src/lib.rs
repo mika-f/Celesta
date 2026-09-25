@@ -11,16 +11,17 @@ use std::fs::{self, File};
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 
+use celesta_composition::{
+    Layer, LayerContent, MediaTiming, Paint, Point, ResolvedAsset, Scene, Stroke, TextAlign,
+    TextStyle,
+};
+use celesta_media::{MediaError, VideoFrameDecoder};
+use celesta_remote::{RemoteAssetError, resolve_asset_path};
 use cosmic_text::{
     Align, Attrs, Buffer, Color as CosmicColor, Family, FontSystem, Metrics, Shaping, SwashCache,
     Weight, Wrap,
 };
 use image::ImageReader;
-use celesta_composition::{
-    AssetLocation, Layer, LayerContent, MediaTiming, Paint, Point, ResolvedAsset, Scene, Stroke,
-    TextAlign, TextStyle,
-};
-use celesta_media::{MediaError, VideoFrameDecoder};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Color {
@@ -637,7 +638,9 @@ impl CpuRenderer {
     fn load_image(&mut self, asset: &ResolvedAsset) -> Result<&DecodedImage, RenderError> {
         if !self.images.contains_key(&asset.id) {
             let path = self.local_asset_path(asset)?;
+            // Sniff the format: a downloaded file's name may lack an extension.
             let image = ImageReader::open(&path)
+                .and_then(ImageReader::with_guessed_format)
                 .map_err(|source| RenderError::AssetIo {
                     asset: asset.id.clone(),
                     source,
@@ -714,20 +717,10 @@ impl CpuRenderer {
 }
 
 fn local_asset_path(asset_root: &Path, asset: &ResolvedAsset) -> Result<PathBuf, RenderError> {
-    match &asset.location {
-        AssetLocation::File { path } => {
-            let path = Path::new(path);
-            Ok(if path.is_absolute() {
-                path.to_owned()
-            } else {
-                asset_root.join(path)
-            })
-        }
-        AssetLocation::Url { url } => Err(RenderError::RemoteAsset {
-            asset: asset.id.clone(),
-            url: url.clone(),
-        }),
-    }
+    resolve_asset_path(asset_root, &asset.location).map_err(|source| RenderError::RemoteAsset {
+        asset: asset.id.clone(),
+        source,
+    })
 }
 
 fn psd_cache_key(
@@ -1267,7 +1260,7 @@ pub enum RenderError {
     },
     RemoteAsset {
         asset: String,
-        url: String,
+        source: RemoteAssetError,
     },
     AssetIo {
         asset: String,
@@ -1306,11 +1299,8 @@ impl fmt::Display for RenderError {
                 formatter,
                 "CPU reference renderer does not support non-uniform text scale ({x}, {y})"
             ),
-            Self::RemoteAsset { asset, url } => {
-                write!(
-                    formatter,
-                    "remote asset `{asset}` is not available locally: {url}"
-                )
+            Self::RemoteAsset { asset, source } => {
+                write!(formatter, "could not load remote asset `{asset}`: {source}")
             }
             Self::AssetIo { asset, source } => {
                 write!(formatter, "could not read asset `{asset}`: {source}")

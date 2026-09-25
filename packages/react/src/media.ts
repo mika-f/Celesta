@@ -1,4 +1,4 @@
-import { entryRelativePath } from './entry-dir';
+import { entryRelativePath, isRemoteUrl } from './entry-dir';
 import type { Rational } from './scene';
 
 export interface MediaVideoInfo {
@@ -35,14 +35,15 @@ export function setMediaProbe(next: (path: string) => Promise<ProbedMediaInfo>):
 }
 
 /**
- * Probes and caches local media metadata during an entry's async `prepare()`.
- * Relative paths resolve from the entry file, matching `<Video>` and `<Audio>`.
+ * Probes and caches media metadata during an entry's async `prepare()`.
+ * Relative paths resolve from the entry file, matching `<Video>` and `<Audio>`;
+ * an `http`/`https` URL is downloaded into Celesta's cache first.
  */
 export async function preloadMedia(src: string): Promise<MediaInfo> {
   if (!probe) {
     throw new Error('preloadMedia() requires a Celesta editor or exporter runtime');
   }
-  const path = entryRelativePath(src);
+  const path = isRemoteUrl(src) ? src : entryRelativePath(src);
   let pending = cached.get(path);
   if (!pending) {
     pending = probe(path);

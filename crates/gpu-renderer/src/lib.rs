@@ -8,16 +8,15 @@ use std::collections::{HashMap, VecDeque};
 use std::error::Error;
 use std::fmt;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc;
 
-use image::ImageReader;
-use celesta_composition::{
-    AssetLocation, EvaluatedTransform, Layer, LayerContent, Point, ResolvedAsset, Scene,
-};
+use celesta_composition::{EvaluatedTransform, Layer, LayerContent, Point, ResolvedAsset, Scene};
 use celesta_media::{MediaError, VideoFrameDecoder};
+use celesta_remote::{RemoteAssetError, resolve_asset_path};
 use celesta_renderer::{RenderError, TextRasterizer, rasterize_rect};
+use image::ImageReader;
 use wgpu::util::DeviceExt;
 
 #[cfg(target_os = "macos")]
@@ -875,7 +874,9 @@ impl GpuRenderer {
     fn load_image(&mut self, asset: &ResolvedAsset) -> Result<&DecodedImage, GpuRenderError> {
         if !self.images.contains_key(&asset.id) {
             let path = self.local_asset_path(asset)?;
+            // Sniff the format: a downloaded file's name may lack an extension.
             let image = ImageReader::open(&path)
+                .and_then(ImageReader::with_guessed_format)
                 .map_err(|source| GpuRenderError::AssetIo {
                     asset: asset.id.clone(),
                     source,
@@ -923,20 +924,12 @@ impl GpuRenderer {
     }
 
     fn local_asset_path(&self, asset: &ResolvedAsset) -> Result<PathBuf, GpuRenderError> {
-        match &asset.location {
-            AssetLocation::File { path } => {
-                let path = Path::new(path);
-                Ok(if path.is_absolute() {
-                    path.to_owned()
-                } else {
-                    self.asset_root.join(path)
-                })
-            }
-            AssetLocation::Url { url } => Err(GpuRenderError::UnsupportedAssetUrl {
+        resolve_asset_path(&self.asset_root, &asset.location).map_err(|source| {
+            GpuRenderError::RemoteAsset {
                 asset: asset.id.clone(),
-                url: url.clone(),
-            }),
-        }
+                source,
+            }
+        })
     }
 
     fn create_draw(
@@ -1302,9 +1295,9 @@ pub enum GpuRenderError {
         expected: usize,
         actual: usize,
     },
-    UnsupportedAssetUrl {
+    RemoteAsset {
         asset: String,
-        url: String,
+        source: RemoteAssetError,
     },
     MissingVideoDecoder(String),
     UnsupportedContent {
@@ -1358,8 +1351,8 @@ impl fmt::Display for GpuRenderError {
                 formatter,
                 "invalid {width}x{height} RGBA image: expected {expected} bytes, got {actual}"
             ),
-            Self::UnsupportedAssetUrl { asset, url } => {
-                write!(formatter, "GPU asset {asset} uses unsupported URL {url}")
+            Self::RemoteAsset { asset, source } => {
+                write!(formatter, "could not load remote asset `{asset}`: {source}")
             }
             Self::MissingVideoDecoder(layer) => {
                 write!(
@@ -1417,12 +1410,12 @@ impl Error for GpuRenderError {
             Self::MapRange(error) => Some(error),
             Self::AssetIo { source, .. } => Some(source),
             Self::ImageDecode { source, .. } => Some(source),
+            Self::RemoteAsset { source, .. } => Some(source),
             Self::Psd(error) => Some(error),
             Self::Media(error) => Some(error),
             Self::Text(error) => Some(error),
             Self::MapCallbackDropped
             | Self::InvalidImageData { .. }
-            | Self::UnsupportedAssetUrl { .. }
             | Self::MissingVideoDecoder(_)
             | Self::UnsupportedContent { .. }
             | Self::InvalidSurfaceSize { .. }

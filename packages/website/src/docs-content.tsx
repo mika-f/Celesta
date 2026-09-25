@@ -180,8 +180,9 @@ export const sections: DocSection[] = [
     </>,
   },
   {
-    id: 'media', title: 'Images, video & sound', description: 'Bring your own pictures, footage, music, and voices.', keywords: 'Image Video Audio media src startFrom playbackRate volume muted keyframes fade music preloadMedia mediaDurationInFrames png jpeg webp mp4 wav', content: <>
-      <p><code>Image</code>, <code>Video</code>, and <code>Audio</code> read local files through <code>src</code>. Relative paths start from the composition file, so keep media beside it in your project folder. Remote URLs are not supported yet.</p>
+    id: 'media', title: 'Images, video & sound', description: 'Bring your own pictures, footage, music, and voices.', keywords: 'Image Video Audio media src url remote download startFrom playbackRate volume muted keyframes fade music preloadMedia mediaDurationInFrames png jpeg webp mp4 wav', content: <>
+      <p><code>Image</code>, <code>Video</code>, and <code>Audio</code> read files through <code>src</code>. Relative paths start from the composition file, so keep media beside it in your project folder.</p>
+      <p><code>src</code> can also be an <code>http://</code> or <code>https://</code> URL. Celesta downloads the file the first time it is used and reuses that copy afterwards, including offline. The copy is never refreshed, so change the URL when the remote file changes. <code>preloadMedia()</code> accepts URLs as well. In a JSON project, use <code>{'"source": { "type": "url", "url": "https://…" }'}</code> instead of a file path.</p>
       <DocCode label="media.tsx" language="tsx" code={mediaScene.trim()} />
       <ul>
         <li>An <code>Image</code> or <code>Video</code> is drawn at its own pixel size. Position it with <code>x</code>/<code>y</code> and anchors, and resize it with <code>scale</code> or a <code>Fit</code>. Images can be PNG, JPEG, WebP, or PNM.</li>

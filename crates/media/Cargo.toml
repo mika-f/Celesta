@@ -8,6 +8,7 @@ rust-version.workspace = true
 
 [dependencies]
 celesta-composition = { path = "../composition" }
+celesta-remote = { path = "../remote" }
 ez-ffmpeg.workspace = true
 
 # macOS packages bundle Homebrew dylibs; retain static linking elsewhere.

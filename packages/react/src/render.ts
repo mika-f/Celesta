@@ -8,6 +8,7 @@
 
 import * as React from 'react';
 
+import { isRemoteUrl } from './entry-dir';
 import { CompositionRuntimeContext } from './hooks';
 import { ProjectLayersContext, ProjectTrackLayersContext } from './project-runtime';
 import { resolveVisibleLayers } from './psd-preset';
@@ -217,7 +218,10 @@ function resolveAsset(src: unknown): ResolvedAsset {
     throw new Error('components with asset content require a non-empty `src` prop');
   }
   const id = typeof reference === 'string' ? reference : (reference as { id?: unknown }).id;
-  return { id: typeof id === 'string' && id.length > 0 ? id : path, location: { type: 'file', path } };
+  return {
+    id: typeof id === 'string' && id.length > 0 ? id : path,
+    location: isRemoteUrl(path) ? { type: 'url', url: path } : { type: 'file', path },
+  };
 }
 
 function resolveReference(value: unknown): unknown {
