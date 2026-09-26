@@ -167,6 +167,29 @@ encoder has less work to do. `--color-conversion encoder` does the conversion
 in the encoder instead, which is how software renderers are always handled.
 `--color-conversion gpu` forces the GPU conversion.
 
+## Use with AI agents
+
+[`skills/celesta`](skills/celesta) is an [Agent Skill](https://agentskills.io)
+that teaches coding agents such as Claude Code and Codex to write React
+compositions and `.celesta.json` projects, check them without the GUI, and
+export them. Install it with the `skills` CLI:
+
+```sh
+npx skills add mika-f/celesta
+```
+
+Or copy the `skills/celesta` folder into your agent's skills directory, for
+example `~/.claude/skills/` or a project's `.claude/skills/`.
+
+The skill includes `scripts/inspect.mjs`, which loads a React composition
+with Celesta's bundled runtime and prints the layers and audio of selected
+frames, and lists PSD layer paths for character portraits:
+
+```sh
+node skills/celesta/scripts/inspect.mjs packages/react/examples/title.tsx --frames 0,-1
+node skills/celesta/scripts/inspect.mjs --psd-layers examples/assets/lipsync-fixture.psd
+```
+
 ## Current limitations
 
 - Media must be available as local files; remote media URLs are not supported.
