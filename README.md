@@ -152,6 +152,21 @@ Add `--overwrite` to replace an existing output file. To export a section, add
 cargo run -p celesta-exporter --release -- --from 0 --to 1 examples/editor-demo.celesta.json section.mp4
 ```
 
+The video is encoded with libx264 using `--preset medium --crf 18` by default.
+For faster exports, pass a faster preset such as `--preset veryfast`. The file
+will be larger, but quality stays about the same. `--crf` takes a value from 0
+to 51. Lower values give higher quality and larger files:
+
+```sh
+cargo run -p celesta-exporter --release -- --preset veryfast examples/editor-demo.celesta.json draft.mp4
+```
+
+On a hardware GPU, frames are converted from RGB to the video's YUV colors
+on the GPU. The exporter then reads less data back from the GPU, and the
+encoder has less work to do. `--color-conversion encoder` does the conversion
+in the encoder instead, which is how software renderers are always handled.
+`--color-conversion gpu` forces the GPU conversion.
+
 ## Current limitations
 
 - Media must be available as local files; remote media URLs are not supported.
