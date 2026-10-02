@@ -26,7 +26,8 @@ also uses for a glockenspiel ting.
 
 - `chara/*.png`: Celesta-chan's portraits. They were generated with ChatGPT's
   image generation (through Codex) from one character sheet, on a chroma-key
-  background that was then removed.
+  background that was then removed. The character settings, every prompt, and
+  the steps are in [`chara/README.md`](./chara/README.md).
 - `music.wav` and `hits.json`: an original kawaii future bass cue (chiptune
   lead, glockenspiel, side-chained supersaw stabs, formant vocal chops, and a
   celesta-like bell), synthesised with Python's standard library:
