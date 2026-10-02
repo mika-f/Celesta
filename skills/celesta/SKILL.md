@@ -113,6 +113,9 @@ produces a video that differs between preview and export.
    music, `useCue` for things that change at given frames, `TextReveal`,
    `useTypewriter`, `useCountUp`, `Camera`, `Line`/`Polyline`/`Path` (one
    layer per stroke: draw line art as paths, not as many thin `Rect`s).
+   Effects (`blur`, `glow`, `shadow`) and blend modes cost GPU passes per
+   layer. Put one effect on a `Group` rather than one on each of dozens of
+   layers. See [Rendering cost](references/react-api.md#rendering-cost).
 3. **Check it without the GUI.** You cannot see the preview window, so
    verify with the tools in [references/verify-and-export.md](references/verify-and-export.md):
    - `node scripts/inspect.mjs scene.tsx` (in this skill's folder) loads a
@@ -143,8 +146,8 @@ Load the one you need; each is self-contained.
 - [references/react-api.md](references/react-api.md): every `@celesta/react`
   component, prop, hook, and helper (layers, text and fonts, animation,
   `Sequence`/`Transition`, layout helpers, media, `prepare()`, project
-  properties, `registerComponent`, debug guides), plus the `@celesta/math`
-  random, noise, and math helpers.
+  properties, `registerComponent`, rendering cost, debug guides), plus the
+  `@celesta/math` random, noise, and math helpers.
 - [references/project-json.md](references/project-json.md): the complete
   `.celesta.json` schema, validation rules, keyframes and easing names, and
   a full example.
@@ -154,4 +157,4 @@ Load the one you need; each is self-contained.
   React and JSON.
 - [references/verify-and-export.md](references/verify-and-export.md):
   finding the Celesta executables, `inspect.mjs`, export flags, frame
-  extraction, and a table of error messages with fixes.
+  extraction, finding slow parts, and a table of error messages with fixes.

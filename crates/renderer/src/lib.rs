@@ -1985,6 +1985,18 @@ pub struct GradientStop {
     premultiplied: [f64; 4],
 }
 
+impl GradientStop {
+    /// Where the stop sits along the gradient.
+    pub const fn offset(&self) -> f64 {
+        self.offset
+    }
+
+    /// The stop's color, premultiplied, with channels in 0..=255.
+    pub const fn premultiplied(&self) -> [f64; 4] {
+        self.premultiplied
+    }
+}
+
 impl ResolvedPaint {
     pub fn from_paint(paint: &Paint) -> Result<Self, RenderError> {
         Ok(match paint {
