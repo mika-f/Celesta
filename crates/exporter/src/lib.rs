@@ -24,13 +24,13 @@ use celesta_composition::{
 use celesta_evaluator::{EvaluationError, Evaluator};
 use celesta_gpu_renderer::{GpuRenderError, GpuRenderOptions, GpuRenderer, ReadbackFormat};
 pub use celesta_gpu_renderer::{RenderQuality, UnknownRenderQuality};
-pub use stills::{ContactSheet, FrameSelection, MAX_PNG_FRAMES, PngExport};
 use celesta_media::{AudioMixError, FfmpegBackend, mix_audio_graph_cancellable};
 use celesta_project::{LoadError, Project, TimelineContent};
 use celesta_react_bridge::{
     ProjectFrame, ReactAudioClipDescriptor, ReactBridge, ReactBridgeError, ReactCompositionMetadata,
 };
 use ez_ffmpeg::{FfmpegContext, Input, Output, VideoWriter};
+pub use stills::{ContactSheet, FrameSelection, MAX_PNG_FRAMES, PngExport};
 
 /// Sample rate used to mix a React export's audio when no companion project
 /// supplies its own `AudioGraph.sample_rate` (the project format has no
@@ -51,7 +51,8 @@ pub struct ExportOptions {
     /// shifted so the span's start becomes the file's start). `None` exports
     /// the whole composition, byte-for-byte as before.
     pub range: Option<ExportRange>,
-    /// H.264 encoder settings; the default matches the historical output.
+    /// Video encoder settings; the default (H.264) matches the historical
+    /// output.
     pub video: VideoEncoding,
     /// How carefully scaled and rotated layers are drawn. Exports default to
     /// [`RenderQuality::Final`]; this is independent of the encoder preset,
@@ -59,9 +60,11 @@ pub struct ExportOptions {
     pub render_quality: RenderQuality,
 }
 
-/// Settings for the exported H.264 video stream.
+/// Settings for the exported video stream.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct VideoEncoding {
+    /// Which codec the MP4's video stream is encoded with.
+    pub codec: VideoCodec,
     /// Speed/compression trade-off. Faster presets encode much faster at the
     /// cost of a larger file for the same `crf`; they do not lower quality.
     pub preset: EncoderPreset,
@@ -72,13 +75,14 @@ pub struct VideoEncoding {
 }
 
 impl VideoEncoding {
-    /// Highest CRF libx264 accepts for 8-bit output.
+    /// Highest CRF libx264 and libx265 accept for 8-bit output.
     pub const MAX_CRF: u8 = 51;
 }
 
 impl Default for VideoEncoding {
     fn default() -> Self {
         Self {
+            codec: VideoCodec::H264,
             preset: EncoderPreset::Medium,
             crf: 18,
             color_conversion: ColorConversion::Auto,
@@ -86,7 +90,95 @@ impl Default for VideoEncoding {
     }
 }
 
-/// libx264's `-preset` values, fastest first.
+/// The video codec of an MP4 export.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum VideoCodec {
+    /// H.264 / AVC via libx264; plays nearly everywhere.
+    #[default]
+    H264,
+    /// H.265 / HEVC via libx265; smaller files for the same `crf`, at a
+    /// slower encode and narrower playback support.
+    H265,
+}
+
+impl VideoCodec {
+    pub const ALL: [Self; 2] = [Self::H264, Self::H265];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::H264 => "h264",
+            Self::H265 => "h265",
+        }
+    }
+
+    /// The name shown to people, e.g. in progress output.
+    pub const fn display_name(self) -> &'static str {
+        match self {
+            Self::H264 => "H.264",
+            Self::H265 => "H.265",
+        }
+    }
+
+    /// The FFmpeg encoder this codec is encoded with.
+    pub const fn encoder(self) -> &'static str {
+        match self {
+            Self::H264 => "libx264",
+            Self::H265 => "libx265",
+        }
+    }
+
+    /// Whether the linked FFmpeg build includes [`Self::encoder`].
+    pub fn is_available(self) -> bool {
+        ez_ffmpeg::capabilities::is_encoder_available(self.encoder())
+    }
+
+    /// The MP4 sample entry FourCC to write. HEVC defaults to `hev1`, which
+    /// QuickTime and Apple devices refuse to play; `hvc1` plays everywhere.
+    const fn mp4_tag(self) -> Option<&'static str> {
+        match self {
+            Self::H264 => None,
+            Self::H265 => Some("hvc1"),
+        }
+    }
+}
+
+impl fmt::Display for VideoCodec {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl FromStr for VideoCodec {
+    type Err = UnknownVideoCodec;
+
+    fn from_str(name: &str) -> Result<Self, Self::Err> {
+        match name {
+            "hevc" => Ok(Self::H265),
+            "avc" => Ok(Self::H264),
+            _ => Self::ALL
+                .into_iter()
+                .find(|codec| codec.as_str() == name)
+                .ok_or_else(|| UnknownVideoCodec(name.to_owned())),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UnknownVideoCodec(pub String);
+
+impl fmt::Display for UnknownVideoCodec {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "unknown video codec '{}' (expected h264 or h265)",
+            self.0
+        )
+    }
+}
+
+impl Error for UnknownVideoCodec {}
+
+/// The `-preset` values libx264 and libx265 share, fastest first.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum EncoderPreset {
     Ultrafast,
@@ -114,7 +206,7 @@ impl EncoderPreset {
         Self::Veryslow,
     ];
 
-    /// The name libx264 (and `ffmpeg -preset`) uses.
+    /// The name libx264, libx265 (and `ffmpeg -preset`) use.
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Ultrafast => "ultrafast",
@@ -1061,6 +1153,17 @@ impl Exporter {
             })?;
         ensure_not_cancelled(cancellation)?;
 
+        let mut muxed = Output::from(path_to_url(output))
+            .add_stream_map_with_copy("0:v:0")
+            .add_stream_map("1:a:0")
+            .set_audio_codec("aac")
+            .set_audio_codec_opt("b", "192k")
+            .set_shortest(true)
+            .set_format_opt("movflags", "+faststart");
+        // A stream copy does not carry the staged file's FourCC over.
+        if let Some(tag) = self.options.video.codec.mp4_tag() {
+            muxed = muxed.set_video_codec_tag(tag);
+        }
         let context = FfmpegContext::builder()
             .input(Input::from(path_to_url(video)))
             .input(
@@ -1069,15 +1172,7 @@ impl Exporter {
                     .set_format_opt("sample_rate", audio.sample_rate.to_string())
                     .set_format_opt("ch_layout", format!("{}c", audio.channels)),
             )
-            .output(
-                Output::from(path_to_url(output))
-                    .add_stream_map_with_copy("0:v:0")
-                    .add_stream_map("1:a:0")
-                    .set_audio_codec("aac")
-                    .set_audio_codec_opt("b", "192k")
-                    .set_shortest(true)
-                    .set_format_opt("movflags", "+faststart"),
-            )
+            .output(muxed)
             .build()
             .map_err(|source| ExportError::Ffmpeg {
                 stage: "audio muxing",
@@ -1298,11 +1393,11 @@ fn export_renderer(
     Ok(renderer)
 }
 
-/// Opens a constant-frame-rate H.264 `VideoWriter` for pushed frames in
-/// `input` layout — the library-linked equivalent of piping `rawvideo` into
+/// Opens a constant-frame-rate `VideoWriter` for pushed frames in `input`
+/// layout — the library-linked equivalent of piping `rawvideo` into
 /// `ffmpeg -c:v libx264 -preset <preset> -crf <crf> -pix_fmt yuv420p -movflags +faststart`
-/// (`-preset medium -crf 18` by default). yuv420p input reaches the encoder
-/// without a conversion.
+/// (`-preset medium -crf 18` by default; libx265 with `-tag:v hvc1` for
+/// H.265). yuv420p input reaches the encoder without a conversion.
 fn open_video_writer(
     width: u32,
     height: u32,
@@ -1314,23 +1409,33 @@ fn open_video_writer(
     if encoding.crf > VideoEncoding::MAX_CRF {
         return Err(ExportError::InvalidCrf(encoding.crf));
     }
+    if !encoding.codec.is_available() {
+        return Err(ExportError::EncoderUnavailable(encoding.codec));
+    }
     let fps_num = i32::try_from(frame_rate.numerator).map_err(|_| ExportError::TimelineTooLong)?;
     let fps_den =
         i32::try_from(frame_rate.denominator).map_err(|_| ExportError::TimelineTooLong)?;
+    let mut output = Output::from(path_to_url(output))
+        .set_video_codec(encoding.codec.encoder())
+        .set_video_codec_opt("preset", encoding.preset.as_str())
+        .set_video_codec_opt("crf", encoding.crf.to_string())
+        .set_pix_fmt("yuv420p")
+        .set_format_opt("movflags", "+faststart");
+    if encoding.codec == VideoCodec::H265 {
+        // x265 prints its own banner and per-encode statistics straight to
+        // stderr, past FFmpeg's logger, which would tear the progress UI.
+        output = output.set_video_codec_opt("x265-params", "log-level=error");
+    }
+    if let Some(tag) = encoding.codec.mp4_tag() {
+        output = output.set_video_codec_tag(tag);
+    }
     VideoWriter::builder(width, height)
         .pixel_format(match input {
             ReadbackFormat::Rgba8 => "rgba",
             ReadbackFormat::Yuv420p => "yuv420p",
         })
         .fps(fps_num, fps_den)
-        .open(
-            Output::from(path_to_url(output))
-                .set_video_codec("libx264")
-                .set_video_codec_opt("preset", encoding.preset.as_str())
-                .set_video_codec_opt("crf", encoding.crf.to_string())
-                .set_pix_fmt("yuv420p")
-                .set_format_opt("movflags", "+faststart"),
-        )
+        .open(output)
         .map_err(|source| ExportError::Ffmpeg {
             stage: "video encoding",
             source,
@@ -1484,6 +1589,8 @@ pub enum ExportError {
     },
     /// [`VideoEncoding::crf`] is above [`VideoEncoding::MAX_CRF`].
     InvalidCrf(u8),
+    /// The linked FFmpeg build has no encoder for the requested codec.
+    EncoderUnavailable(VideoCodec),
     EmptyTimeline,
     /// The requested export range, once clamped to the composition and
     /// snapped to frames, covers zero frames.
@@ -1515,12 +1622,18 @@ impl fmt::Display for ExportError {
             ),
             Self::UnsupportedDimensions { width, height } => write!(
                 formatter,
-                "H.264 MP4 export requires non-zero even dimensions, got {width}x{height}"
+                "MP4 export requires non-zero even dimensions, got {width}x{height}"
             ),
             Self::InvalidCrf(crf) => write!(
                 formatter,
-                "H.264 CRF must be between 0 and {}, got {crf}",
+                "CRF must be between 0 and {}, got {crf}",
                 VideoEncoding::MAX_CRF
+            ),
+            Self::EncoderUnavailable(codec) => write!(
+                formatter,
+                "{} export needs FFmpeg built with {}, which this build does not include",
+                codec.display_name(),
+                codec.encoder()
             ),
             Self::EmptyTimeline => formatter.write_str("cannot export an empty timeline"),
             Self::EmptyRange => {
@@ -1547,6 +1660,7 @@ impl Error for ExportError {
             | Self::UnsupportedOutput(_)
             | Self::UnsupportedDimensions { .. }
             | Self::InvalidCrf(_)
+            | Self::EncoderUnavailable(_)
             | Self::EmptyTimeline
             | Self::EmptyRange
             | Self::Cancelled
@@ -1774,6 +1888,19 @@ mod tests {
         assert_eq!(
             "Medium".parse::<EncoderPreset>(),
             Err(UnknownEncoderPreset("Medium".to_owned()))
+        );
+    }
+
+    #[test]
+    fn video_codecs_round_trip_through_their_names() {
+        for codec in VideoCodec::ALL {
+            assert_eq!(codec.as_str().parse::<VideoCodec>(), Ok(codec));
+        }
+        assert_eq!("hevc".parse::<VideoCodec>(), Ok(VideoCodec::H265));
+        assert_eq!(VideoEncoding::default().codec, VideoCodec::H264);
+        assert_eq!(
+            "vp9".parse::<VideoCodec>(),
+            Err(UnknownVideoCodec("vp9".to_owned()))
         );
     }
 

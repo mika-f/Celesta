@@ -342,9 +342,9 @@ fn render(frame: &mut Frame, settings: &Settings<'_>, state: &State) {
                 ),
                 Span::styled(
                     if settings.png {
-                        "PNG / LOSSLESS"
+                        "PNG / LOSSLESS".to_owned()
                     } else {
-                        "MP4 / H.264 + AAC"
+                        format!("MP4 / {} + AAC", settings.video.codec.display_name())
                     },
                     Style::new().fg(MUTED),
                 ),
@@ -442,7 +442,12 @@ fn render(frame: &mut Frame, settings: &Settings<'_>, state: &State) {
     let encoding = if settings.png {
         "Lossless RGBA".into()
     } else {
-        format!("{} / CRF {}", settings.video.preset, settings.video.crf)
+        format!(
+            "{} {} / CRF {}",
+            settings.video.codec.display_name(),
+            settings.video.preset,
+            settings.video.crf
+        )
     };
     frame.render_widget(
         Paragraph::new(vec![
@@ -622,8 +627,11 @@ fn render_compact(frame: &mut Frame, settings: &Settings<'_>, state: &State) {
         "PNG stills".to_owned()
     } else {
         format!(
-            "H.264 / AAC  •  {}  •  CRF {}  •  color {}",
-            settings.video.preset, settings.video.crf, settings.video.color_conversion
+            "{} / AAC  •  {}  •  CRF {}  •  color {}",
+            settings.video.codec.display_name(),
+            settings.video.preset,
+            settings.video.crf,
+            settings.video.color_conversion
         )
     };
     frame.render_widget(

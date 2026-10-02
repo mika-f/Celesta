@@ -20,7 +20,7 @@ fn main() -> ExitCode {
     }
 }
 
-const USAGE: &str = "PNG: --frame <n>, --frames <n,n,...> or --every <n> [--from <timecode>] [--to <timecode>] [--output-format png] <output.png>\nMultiple frames use output-000090.png names; frame numbers are zero-based.\n--every <n> picks frames 0, n, 2n, ... of the --from/--to span (or the whole\ncomposition) plus its last frame. --contact-sheet [--columns <n>] [--tile-width <px>]\nwrites the selection as one labelled grid image instead (default 5 columns, 320 px tiles).\nusage: celesta-exporter [--overwrite] [--from <timecode>] [--to <timecode>] [--preset <preset>] [--crf <crf>] [--color-conversion <where>] [--render-quality <quality>] <project.celesta.json> <output.mp4>\n       celesta-exporter [--overwrite] [--from <timecode>] [--to <timecode>] [--preset <preset>] [--crf <crf>] [--color-conversion <where>] [--render-quality <quality>] --react <entry.tsx> [--project <project.celesta.json>] <output.mp4>\n\ntimecode is HH:MM:SS(.mmm), MM:SS(.mmm) or SS(.mmm); --from/--to select a\nspan of the composition to export (the output starts at its own 00:00).\n--preset is a libx264 preset (ultrafast … veryslow, default medium): faster\npresets encode faster but produce larger files. --crf is 0-51 (default 18);\nlower is higher quality. --color-conversion (auto, gpu, or encoder; default\nauto) picks where RGB frames become YUV: auto uses the GPU unless it is a\nsoftware renderer. --render-quality (draft or final, default final) sets how\ncarefully scaled and rotated layers are drawn; draft skips re-rasterizing\nscaled text and is meant for quick checks of timing, not of pixels.";
+const USAGE: &str = "PNG: --frame <n>, --frames <n,n,...> or --every <n> [--from <timecode>] [--to <timecode>] [--output-format png] <output.png>\nMultiple frames use output-000090.png names; frame numbers are zero-based.\n--every <n> picks frames 0, n, 2n, ... of the --from/--to span (or the whole\ncomposition) plus its last frame. --contact-sheet [--columns <n>] [--tile-width <px>]\nwrites the selection as one labelled grid image instead (default 5 columns, 320 px tiles).\nusage: celesta-exporter [--overwrite] [--from <timecode>] [--to <timecode>] [--codec <codec>] [--preset <preset>] [--crf <crf>] [--color-conversion <where>] [--render-quality <quality>] <project.celesta.json> <output.mp4>\n       celesta-exporter [--overwrite] [--from <timecode>] [--to <timecode>] [--codec <codec>] [--preset <preset>] [--crf <crf>] [--color-conversion <where>] [--render-quality <quality>] --react <entry.tsx> [--project <project.celesta.json>] <output.mp4>\n\ntimecode is HH:MM:SS(.mmm), MM:SS(.mmm) or SS(.mmm); --from/--to select a\nspan of the composition to export (the output starts at its own 00:00).\n--codec is h264 (default) or h265; h265 makes smaller files but encodes\nslower and plays on fewer devices. --preset is an x264/x265 preset (ultrafast … veryslow, default medium): faster\npresets encode faster but produce larger files. --crf is 0-51 (default 18);\nlower is higher quality. --color-conversion (auto, gpu, or encoder; default\nauto) picks where RGB frames become YUV: auto uses the GPU unless it is a\nsoftware renderer. --render-quality (draft or final, default final) sets how\ncarefully scaled and rotated layers are drawn; draft skips re-rasterizing\nscaled text and is meant for quick checks of timing, not of pixels.";
 
 fn run() -> Result<(), String> {
     let mut no_ui = false;
@@ -103,6 +103,13 @@ fn run() -> Result<(), String> {
             from = Some(arguments.next().ok_or(USAGE)?);
         } else if argument == "--to" {
             to = Some(arguments.next().ok_or(USAGE)?);
+        } else if argument == "--codec" {
+            let value = arguments.next().ok_or(USAGE)?;
+            video.codec = value
+                .to_str()
+                .ok_or("--codec is not valid UTF-8")?
+                .parse()
+                .map_err(|error| format!("--codec: {error}"))?;
         } else if argument == "--preset" {
             let value = arguments.next().ok_or(USAGE)?;
             video.preset = value

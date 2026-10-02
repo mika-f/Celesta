@@ -1,15 +1,17 @@
 use std::path::{Path, PathBuf};
 
-use ez_ffmpeg::stream_info::{StreamInfo, find_audio_stream_info, find_video_stream_info};
-use ez_ffmpeg::{FfmpegContext, Input, Output};
 use celesta_composition::{Rational, Time, TimeRange};
 use celesta_exporter::{
     ColorConversion, EncoderPreset, ExportCancellation, ExportError, ExportOptions, ExportRange,
-    Exporter, VideoEncoding,
+    Exporter, VideoCodec, VideoEncoding,
 };
 use celesta_gpu_renderer::GpuRenderError;
 use celesta_media::{FfmpegBackend, VideoFrameDecoder};
-use celesta_project::{Asset, AssetSource, Project, TimelineContent, TimelineItem, Track, TrackKind};
+use celesta_project::{
+    Asset, AssetSource, Project, TimelineContent, TimelineItem, Track, TrackKind,
+};
+use ez_ffmpeg::stream_info::{StreamInfo, find_audio_stream_info, find_video_stream_info};
+use ez_ffmpeg::{FfmpegContext, Input, Output};
 
 /// Renders a synthetic `lavfi` source to a lossless MKV fixture through the
 /// linked FFmpeg libraries, forcing the output frame rate so the container
@@ -37,7 +39,8 @@ fn exports_frame_exact_mp4_with_silent_audio() {
     let source = directory.path().join("source.mkv");
     generate_source(&source, "testsrc2=size=64x64:rate=2:duration=1", (2, 1));
 
-    let mut project = Project::load(workspace_root().join("examples/minimal.celesta.json")).unwrap();
+    let mut project =
+        Project::load(workspace_root().join("examples/minimal.celesta.json")).unwrap();
     project.settings.width = 64;
     project.settings.height = 64;
     project.settings.frame_rate = Rational::new(2, 1);
@@ -163,7 +166,8 @@ fn exports_only_the_selected_range_shifted_to_zero() {
     // Four distinct frames at 2 fps over two seconds.
     generate_source(&source, "testsrc2=size=64x64:rate=2:duration=2", (2, 1));
 
-    let mut project = Project::load(workspace_root().join("examples/minimal.celesta.json")).unwrap();
+    let mut project =
+        Project::load(workspace_root().join("examples/minimal.celesta.json")).unwrap();
     project.settings.width = 64;
     project.settings.height = 64;
     project.settings.frame_rate = Rational::new(2, 1);
@@ -261,10 +265,110 @@ fn exports_only_the_selected_range_shifted_to_zero() {
 }
 
 #[test]
+fn exports_h265_tagged_hvc1_for_apple_players() {
+    if !VideoCodec::H265.is_available() {
+        eprintln!("skipping H.265 export test: FFmpeg was built without libx265");
+        return;
+    }
+    let directory = tempfile::tempdir().unwrap();
+    let output = directory.path().join("export.mp4");
+    let source = directory.path().join("source.mkv");
+    generate_source(&source, "testsrc2=size=64x64:rate=2:duration=1", (2, 1));
+
+    let mut project =
+        Project::load(workspace_root().join("examples/minimal.celesta.json")).unwrap();
+    project.settings.width = 64;
+    project.settings.height = 64;
+    project.settings.frame_rate = Rational::new(2, 1);
+    project.settings.sample_rate = 8_000;
+    project.settings.duration = Some(Time::new(1, 1));
+    project.assets.insert(
+        "source".to_owned(),
+        Asset::Video {
+            name: None,
+            source: AssetSource::File {
+                path: "source.mkv".to_owned(),
+            },
+        },
+    );
+    project.tracks.push(Track {
+        id: "video".to_owned(),
+        name: "Video".to_owned(),
+        kind: TrackKind::Video,
+        enabled: None,
+        locked: None,
+        muted: None,
+        solo: None,
+        items: vec![TimelineItem {
+            id: "video-clip".to_owned(),
+            name: None,
+            range: TimeRange {
+                start: Time::ZERO,
+                duration: Time::new(1, 1),
+            },
+            content: TimelineContent::Video {
+                asset: "source".to_owned(),
+                source_range: None,
+                playback_rate: None,
+                volume: None,
+                muted: None,
+            },
+            enabled: None,
+            transform: None,
+            opacity: None,
+            blend_mode: None,
+            effects: None,
+        }],
+    });
+
+    let result = Exporter::new(ExportOptions {
+        video: VideoEncoding {
+            codec: VideoCodec::H265,
+            preset: EncoderPreset::Ultrafast,
+            ..VideoEncoding::default()
+        },
+        ..ExportOptions::default()
+    })
+    .export_project(&project, directory.path(), &output);
+    match result {
+        Ok(()) => {}
+        Err(ExportError::Render(GpuRenderError::RequestAdapter(error))) => {
+            eprintln!("skipping H.265 export test: no GPU adapter is available: {error}");
+            return;
+        }
+        Err(error) => panic!("H.265 export failed: {error}"),
+    }
+
+    let url = output.to_string_lossy().into_owned();
+    let Some(StreamInfo::Video {
+        codec_name,
+        width,
+        height,
+        ..
+    }) = find_video_stream_info(&url).unwrap()
+    else {
+        panic!("exported file has no video stream");
+    };
+    assert_eq!(codec_name, "hevc");
+    assert_eq!((width, height), (64, 64));
+    assert!(find_audio_stream_info(&url).unwrap().is_some());
+    // The sample entry survives the audio mux's stream copy as hvc1.
+    let bytes = std::fs::read(&output).unwrap();
+    assert!(bytes.windows(4).any(|fourcc| fourcc == b"hvc1"));
+    assert!(!bytes.windows(4).any(|fourcc| fourcc == b"hev1"));
+
+    let mut decoder = FfmpegBackend::new();
+    let first_frame = decoder.decode_frame(&output, 0.0).unwrap();
+    let second_frame = decoder.decode_frame(&output, 0.5).unwrap();
+    assert_ne!(first_frame.pixels, second_frame.pixels);
+}
+
+#[test]
 fn rejects_an_empty_export_range() {
     let directory = tempfile::tempdir().unwrap();
     let output = directory.path().join("export.mp4");
-    let mut project = Project::load(workspace_root().join("examples/minimal.celesta.json")).unwrap();
+    let mut project =
+        Project::load(workspace_root().join("examples/minimal.celesta.json")).unwrap();
     project.settings.duration = Some(Time::new(1, 1));
 
     let result = Exporter::new(ExportOptions {
@@ -281,7 +385,8 @@ fn rejects_an_empty_export_range() {
 fn cancellation_before_export_does_not_create_output() {
     let directory = tempfile::tempdir().unwrap();
     let output = directory.path().join("export.mp4");
-    let mut project = Project::load(workspace_root().join("examples/minimal.celesta.json")).unwrap();
+    let mut project =
+        Project::load(workspace_root().join("examples/minimal.celesta.json")).unwrap();
     project.settings.duration = Some(Time::new(1, 1));
     let cancellation = ExportCancellation::default();
     cancellation.cancel();
@@ -368,6 +473,7 @@ fn converting_colors_on_the_gpu_matches_the_encoder_conversion() {
                 preset: EncoderPreset::Ultrafast,
                 crf: 0,
                 color_conversion,
+                ..VideoEncoding::default()
             },
             ..ExportOptions::default()
         })
