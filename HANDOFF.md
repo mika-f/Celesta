@@ -1310,14 +1310,15 @@ portrait via a ref, and `<CharacterView character={ref}>` renders it. A
 portrait is either `{ type: 'image', defaultExpression, expressions,
 lipSync? }` (a base image plus optional transparent mouth overlays) or
 `{ type: 'psd', src, layers?, lipSync? }`. The PSD path evaluates to a
-single `LayerContent::Psd`; `celesta_renderer::rasterize_psd` composites it.
+single `LayerContent::Psd`; `celesta_renderer::psd_source::PsdSources`
+composites it for both renderers (`rasterize_psd` is a full-size wrapper).
 
 - **PSD layer visibility.** Real multi-outfit / multi-expression "tachie"
   PSDs save every folder hidden, so rendering from the PSD's own saved
   visibility composes nothing but force-enabled layers. `LayerContent::Psd`
   now carries `visible_layers` (`crates/composition/src/model.rs`) alongside
   the existing `enabled_layers` / `disabled_layers`. `rasterize_psd`
-  (`crates/renderer/src/lib.rs`) resolves each leaf layer as: `disabled`
+  (`crates/renderer/src/psd_source.rs`) resolves each leaf layer as: `disabled`
   hides, then `enabled` shows (ignoring saved/ancestor visibility — this is
   the current lip-sync mouth), then when `visible_layers` is non-empty
   exactly those paths compose (a preset; saved visibility ignored),
@@ -1332,8 +1333,19 @@ single `LayerContent::Psd`; `celesta_renderer::rasterize_psd` composites it.
   PSDTool's `*` (radio) / `!` (force-on) name conventions are **not**
   interpreted: a preset is a resolved layer list, so a real PSDTool file
   (all folders hidden, or `*` radio siblings all left visible) needs one.
-  GPU path mirrors all this in `crates/gpu-renderer/src/lib.rs`'s
-  `load_psd`; the cache key includes `visible_layers`.
+  The GPU renderer uses the same `PsdSources`; its texture key includes
+  `visible_layers` and the composite's size.
+- **PSD caching** (issue #65). A full-size composite per layer combination
+  (expression × mouth × blink) of a large PSD reaches gigabytes, so
+  `PsdSources` parses each PSD once, decodes each layer once per resolution
+  (cropped to its bounds), and composites a combination at the smallest
+  power-of-two reduction still at least as dense as it is drawn
+  (`level_for`: drawn at scale 0.15 → 1/4; scale ≥ 1 → full size), box
+  filtering layers with premultiplied alpha. Documents, layers, and
+  composites share one LRU bounded by bytes (`DEFAULT_BUDGET`, 1 GiB; the
+  entry just inserted is always kept). Reductions of the layers are
+  composited, rather than a reduction of the full composite, so non-normal
+  blend modes can differ slightly at edges from a full-size render.
 - **PSDTool presets** (`src/psd-preset.ts`). `resolveVisibleLayers(state)`
   parses a PSDTool layer-state string (the "copy layer state" output — both
   the `/`-prefixed "all layer" form and the compact form), percent-decoding

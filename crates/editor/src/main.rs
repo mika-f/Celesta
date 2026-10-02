@@ -1,10 +1,12 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::ffi::OsStr;
 use std::num::{NonZeroU16, NonZeroU32};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::{
     Arc,
     atomic::{AtomicU64, Ordering},
@@ -31,7 +33,7 @@ use celesta_gpu_renderer::{
 use celesta_media::{
     AudioBuffer, AudioDecoder, FfmpegBackend, MediaError, MediaProbe, mix_audio_graph_cancellable,
 };
-use celesta_project::{AssetKind, Project, TrackKind};
+use celesta_project::{AssetKind, Project};
 use celesta_react_bridge::{
     ComponentPropertyField, ComponentPropertySchema, ComponentResolutionRequest, ReactBridge,
     ReactCompositionMetadata,
@@ -41,13 +43,18 @@ use gpui_kit::base::GlobalState;
 use gpui_kit::{
     App, Bounds, ClickEvent, Context, Entity, FocusHandle, KeyBinding, KeyDownEvent, Menu,
     MenuItem, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ObjectFit,
-    PathPromptOptions, Pixels, Point, RenderImage, SharedString, StyledImage, Window, WindowBounds,
-    WindowOptions, actions, div, img, prelude::*, px, relative, rgb, size,
+    PathPromptOptions, Pixels, RenderImage, SharedString, StyledImage, Window, WindowBounds,
+    WindowOptions, actions, div, img, prelude::*, px, size,
 };
 use image::{Frame, ImageBuffer, Rgba};
 use rodio::{DeviceSinkBuilder, Player, buffer::SamplesBuffer};
 
 mod audio_cache;
+mod icons;
+mod meter;
+mod timecode;
+mod timeline;
+mod viewer;
 
 use audio_cache::DiskAudioCache;
 use celesta_editor_theme as theme;
@@ -55,12 +62,14 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 #[cfg(not(target_os = "macos"))]
 use gpui_kit::component::menu::AppMenuBar;
 use gpui_kit::component::resizable::{ResizableState, h_resizable, resizable_panel, v_resizable};
+use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::status_bar::StatusBar;
-use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, IconName, Root, Selectable as _, Sizable as _, TitleBar,
-    WindowExt as _,
+    ActiveTheme as _, Disableable as _, IconName, Root, Sizable as _, TitleBar, WindowExt as _,
 };
+use icons::CelestaAssets;
+use meter::MasterLevels;
+use timecode::format_timecode;
 
 const EDITOR_DEMO_PROJECT: &str = include_str!("../../../examples/editor-demo.celesta.json");
 
@@ -82,8 +91,23 @@ actions!(
         ClearExportRange,
         SetUpTypeScript,
         TogglePlayback,
+        PlayForward,
+        PausePlayback,
         PreviousFrame,
-        NextFrame
+        NextFrame,
+        JumpBackward,
+        JumpForward,
+        GoToStart,
+        GoToEnd,
+        PreviousEditPoint,
+        NextEditPoint,
+        GoToIn,
+        GoToOut,
+        ToggleLoop,
+        ToggleSafeAreas,
+        ZoomTimelineIn,
+        ZoomTimelineOut,
+        ZoomTimelineToFit
     ]
 );
 
@@ -558,6 +582,7 @@ impl PreviewWorker {
                         .map_err(|error| error.to_string())
                         .map(prepare_preview_frame);
                     warnings.extend(renderer.font_fallbacks().iter().map(ToString::to_string));
+                    warnings.extend(renderer.missing_glyphs().iter().map(ToString::to_string));
                     if result_tx
                         .send(PreviewResult {
                             generation: request.generation,
@@ -829,6 +854,7 @@ struct AudioMixResult {
 struct AudioMixOutput {
     clip_waveforms: HashMap<String, Vec<f32>>,
     clip_levels: HashMap<String, Vec<f32>>,
+    master_levels: MasterLevels,
     buffer: AudioBuffer,
 }
 
@@ -1072,6 +1098,7 @@ impl AudioMixWorker {
                         AudioMixOutput {
                             clip_waveforms,
                             clip_levels,
+                            master_levels: MasterLevels::from_buffer(&buffer),
                             buffer,
                         }
                     })
@@ -1199,6 +1226,8 @@ struct EditorView {
     audio_generation: u64,
     audio_pending: bool,
     audio_preview: Option<AudioPreview>,
+    /// Peak envelope of the mixed preview audio for the master meter.
+    master_levels: Option<MasterLevels>,
     clip_waveforms: HashMap<String, Vec<f32>>,
     clip_levels: HashMap<String, Vec<f32>>,
     clock: TimelineClock,
@@ -1206,6 +1235,14 @@ struct EditorView {
     playing: bool,
     playback_started_at: Option<Instant>,
     playback_started_frame: i64,
+    /// Playback wraps from the end (or the Out mark) back to the start (or
+    /// the In mark) instead of stopping.
+    loop_playback: bool,
+    /// Play was pressed while the preview audio was still being prepared;
+    /// playback starts once it is ready.
+    play_when_audio_ready: bool,
+    /// Draws action-safe and title-safe frames over the viewer.
+    show_safe_areas: bool,
     scrubbing: bool,
     /// Playback gain for the preview only (0..=2). It scales the mixed
     /// buffer at the output device and never touches the project, so it has
@@ -1224,7 +1261,6 @@ struct EditorView {
     project_name: SharedString,
     dimensions: SharedString,
     frame_rate_label: SharedString,
-    duration: SharedString,
     assets: Vec<AssetSummary>,
     tracks: Vec<TrackSummary>,
     preview: Option<PreviewPresentation>,
@@ -1265,6 +1301,16 @@ struct EditorView {
     /// Middle-button pan of the timeline: `(pointer x at grab, view_start at
     /// grab)`. `Some` while the middle button is held over the timeline.
     timeline_pan: Option<(f32, f64)>,
+    /// Drag of the overview bar's thumb: `(pointer x at grab, view_start at
+    /// grab)`.
+    timeline_overview_drag: Option<(f32, f64)>,
+    /// Window bounds of the clip lanes and the overview bar as last painted,
+    /// for mapping pointer positions onto the composition.
+    timeline_lane_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
+    timeline_overview_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
+    /// Width of the transport bar as last painted; a narrow viewer drops its
+    /// secondary controls (they stay in the menus and on the keyboard).
+    transport_width: Rc<Cell<Option<Pixels>>>,
 }
 
 impl EditorView {
@@ -1288,7 +1334,6 @@ impl EditorView {
             f64::from(settings.frame_rate.numerator) / f64::from(settings.frame_rate.denominator)
         )
         .into();
-        let duration = format_time(document.duration()).into();
         let assets = document.assets();
         let tracks = document.tracks();
 
@@ -1331,6 +1376,7 @@ impl EditorView {
             audio_generation: 0,
             audio_pending: false,
             audio_preview: None,
+            master_levels: None,
             clip_waveforms: HashMap::new(),
             clip_levels: HashMap::new(),
             clock,
@@ -1338,6 +1384,9 @@ impl EditorView {
             playing: false,
             playback_started_at: None,
             playback_started_frame: 0,
+            loop_playback: false,
+            play_when_audio_ready: false,
+            show_safe_areas: false,
             scrubbing: false,
             monitor_volume: 1.0,
             master_volume_drag: None,
@@ -1353,7 +1402,6 @@ impl EditorView {
             project_name,
             dimensions,
             frame_rate_label,
-            duration,
             assets,
             tracks,
             preview: None,
@@ -1381,6 +1429,10 @@ impl EditorView {
             timeline_zoom: 1.0,
             timeline_view_start: 0.0,
             timeline_pan: None,
+            timeline_overview_drag: None,
+            timeline_lane_bounds: Rc::default(),
+            timeline_overview_bounds: Rc::default(),
+            transport_width: Rc::default(),
         };
         editor.refresh_preview();
         editor.refresh_audio_preview();
@@ -1568,10 +1620,20 @@ impl EditorView {
             next.app_menu_bar = self.app_menu_bar.take();
         }
         next.monitor_volume = self.monitor_volume;
+        next.loop_playback = self.loop_playback;
+        next.show_safe_areas = self.show_safe_areas;
         *self = next;
         if self.is_react_preview() {
             self.watch_react_entry(cx);
         }
+    }
+
+    /// `HH:MM:SS:FF` for a composition time, rounded to the nearest frame.
+    fn timecode_for(&self, time: Time) -> String {
+        self.clock.frame_for_time(time).map_or_else(
+            |_| format_time(time),
+            |frame| format_timecode(frame, self.frame_rate_value),
+        )
     }
 
     fn is_react_preview(&self) -> bool {
@@ -1695,7 +1757,6 @@ impl EditorView {
                             / f64::from(metadata.frame_rate.denominator)
                     )
                     .into();
-                    self.duration = format_time(self.document.duration()).into();
                 }
                 self.react_reload_generation = self.react_reload_generation.wrapping_add(1);
                 self.preview_error = None;
@@ -1962,6 +2023,7 @@ impl EditorView {
                     match result.output.and_then(|output| {
                         self.clip_waveforms = output.clip_waveforms;
                         self.clip_levels = output.clip_levels;
+                        self.master_levels = Some(output.master_levels);
                         AudioPreview::from_buffer(output.buffer, self.monitor_volume)
                             .map_err(|error| error.to_string())
                     }) {
@@ -1977,6 +2039,7 @@ impl EditorView {
                         Err(error) => {
                             self.clip_waveforms.clear();
                             self.clip_levels.clear();
+                            self.master_levels = None;
                             self.audio_preview = None;
                             self.audio_error = Some(error.into());
                         }
@@ -2049,6 +2112,7 @@ impl EditorView {
     fn pause(&mut self) {
         let was_playing = self.playing;
         self.playing = false;
+        self.play_when_audio_ready = false;
         self.playback_started_at = None;
         if let Some(audio) = &self.audio_preview {
             audio.pause();
@@ -2072,37 +2136,51 @@ impl EditorView {
     }
 
     fn toggle_playback_state(&mut self) {
-        if self.playing {
+        if self.playing || self.play_when_audio_ready {
             self.pause();
-        } else if self.clock.end_frame() > 0 {
-            if self.clock.is_at_end() {
-                self.seek_frame(0);
-            }
-            self.playing = true;
-            self.playback_started_at = Some(Instant::now());
-            self.playback_started_frame = self.clock.frame();
-            if let Some(audio) = &mut self.audio_preview
-                && let Err(error) = audio.seek(self.clock.time().unwrap_or(Time::ZERO), true)
-            {
-                self.audio_error = Some(error.to_string().into());
-                self.audio_preview = None;
-            }
+        } else {
+            self.start_playback();
         }
     }
 
-    fn step_backward(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.pause();
-        self.seek_frame(self.clock.frame().saturating_sub(1));
-        cx.notify();
-    }
-
-    fn step_forward(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
-        self.pause();
-        self.seek_frame(self.clock.frame().saturating_add(1));
-        cx.notify();
+    /// Starts playback, or — while the preview audio is still being prepared
+    /// (a React entry's `<Audio>` sweep and the mix take a moment after
+    /// opening) — waits for it, so the soundtrack starts with the picture
+    /// instead of joining part-way through.
+    fn start_playback(&mut self) {
+        if self.playing || self.clock.end_frame() <= 0 {
+            return;
+        }
+        if self.audio_pending {
+            self.play_when_audio_ready = true;
+            return;
+        }
+        self.play_when_audio_ready = false;
+        if self.clock.is_at_end() {
+            // Looping restarts where the loop does, as the wrap in
+            // `update_playback` would.
+            let restart = if self.loop_playback {
+                self.loop_range().0
+            } else {
+                0
+            };
+            self.seek_frame(restart);
+        }
+        self.playing = true;
+        self.playback_started_at = Some(Instant::now());
+        self.playback_started_frame = self.clock.frame();
+        if let Some(audio) = &mut self.audio_preview
+            && let Err(error) = audio.seek(self.clock.time().unwrap_or(Time::ZERO), true)
+        {
+            self.audio_error = Some(error.to_string().into());
+            self.audio_preview = None;
+        }
     }
 
     fn update_playback(&mut self, window: &mut Window) {
+        if self.play_when_audio_ready && !self.audio_pending {
+            self.start_playback();
+        }
         if !self.playing {
             return;
         }
@@ -2114,141 +2192,162 @@ impl EditorView {
             / f64::from(self.frame_rate_value.denominator);
         let elapsed_frames = (started_at.elapsed().as_secs_f64() * frames_per_second) as i64;
         let target = self.playback_started_frame.saturating_add(elapsed_frames);
-        if target != self.clock.frame() {
+        let (loop_start, loop_end) = self.loop_range();
+        if self.loop_playback && target >= loop_end {
+            self.restart_playback_at(loop_start);
+        } else if target != self.clock.frame() {
             self.seek_frame(target);
         }
-        if self.clock.is_at_end() {
+        self.keep_playhead_visible();
+        if self.clock.is_at_end() && !self.loop_playback {
             self.pause();
         } else {
             window.request_animation_frame();
         }
     }
 
-    /// Pixel width of the timeline clip lane (window minus the 230px header
-    /// column and the 8px right gutter).
-    fn timeline_lane_width(window: &Window) -> f32 {
-        (f32::from(window.bounds().size.width) - 230.0 - 8.0).max(1.0)
+    /// `[start, end)` frames looped playback repeats: the In/Out range when
+    /// both marks are set in order, else the whole composition.
+    fn loop_range(&self) -> (i64, i64) {
+        loop_range_for(
+            self.export_in_frame,
+            self.export_out_frame,
+            self.clock.end_frame(),
+        )
     }
 
-    /// Fraction (0..1) of the whole composition at horizontal window position
-    /// `x`, accounting for the 230px track-header column and the current
-    /// timeline zoom / scroll.
-    fn timeline_fraction_at(&self, x: Pixels, window: &Window) -> f64 {
-        let lane_width = Self::timeline_lane_width(window);
-        let local = ((f32::from(x) - 230.0).clamp(0.0, lane_width) / lane_width) as f64;
-        let (zoom, view_start) = self.timeline_view();
-        (view_start + local / zoom).clamp(0.0, 1.0)
-    }
-
-    fn frame_for_timeline_position(&self, position: Point<Pixels>, window: &Window) -> i64 {
-        self.clock
-            .frame_at_fraction(self.timeline_fraction_at(position.x, window) as f32)
-    }
-
-    /// Clamped `(zoom, view_start)` for the timeline: zoom is at least 1, and
-    /// the visible window `[view_start, view_start + 1/zoom]` stays inside
-    /// `[0, 1]`.
-    fn timeline_view(&self) -> (f64, f64) {
-        let zoom = self.timeline_zoom.clamp(1.0, 40.0);
-        let view_start = self
-            .timeline_view_start
-            .clamp(0.0, (1.0 - 1.0 / zoom).max(0.0));
-        (zoom, view_start)
-    }
-
-    /// Mouse wheel over the timeline: zoom about the cursor, keeping the
-    /// composition fraction under the pointer fixed.
-    fn timeline_wheel(
-        &mut self,
-        event: &gpui_kit::ScrollWheelEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let delta = match event.delta {
-            gpui_kit::ScrollDelta::Lines(point) => point.y,
-            gpui_kit::ScrollDelta::Pixels(point) => f32::from(point.y) / 40.0,
-        };
-        if delta == 0.0 {
-            return;
+    /// Restarts the playback clock (and audio) from `frame` while playing.
+    fn restart_playback_at(&mut self, frame: i64) {
+        self.seek_frame(frame);
+        self.playback_started_at = Some(Instant::now());
+        self.playback_started_frame = self.clock.frame();
+        let time = self.current_time();
+        if let Some(audio) = &mut self.audio_preview
+            && let Err(error) = audio.seek(time, true)
+        {
+            self.audio_error = Some(error.to_string().into());
+            self.audio_preview = None;
         }
-        let (zoom, view_start) = self.timeline_view();
-        let cursor = self.timeline_fraction_at(event.position.x, window);
-        let local = ((cursor - view_start) * zoom).clamp(0.0, 1.0);
-        let new_zoom = (zoom * (1.0 + f64::from(delta) * 0.15)).clamp(1.0, 40.0);
-        self.timeline_zoom = new_zoom;
-        self.timeline_view_start = (cursor - local / new_zoom).clamp(0.0, 1.0);
-        cx.stop_propagation();
+    }
+
+    /// Frames from the playhead to the next (`forward`) or previous edit
+    /// point: a clip start or end, or the composition's first or last frame.
+    fn adjacent_edit_point(&self, forward: bool) -> Option<i64> {
+        let clock = self.clock;
+        let points = timeline::edit_points(
+            &self.tracks,
+            |time| clock.frame_for_time(time).ok(),
+            clock.end_frame(),
+        );
+        let current = clock.frame();
+        if forward {
+            points.into_iter().find(|point| *point > current)
+        } else {
+            points.into_iter().rev().find(|point| *point < current)
+        }
+    }
+
+    fn play_forward_action(&mut self, _: &PlayForward, _: &mut Window, cx: &mut Context<Self>) {
+        self.start_playback();
         cx.notify();
     }
 
-    /// Middle-button press over the timeline: start a pan.
-    fn begin_timeline_pan(
+    fn pause_playback_action(&mut self, _: &PausePlayback, _: &mut Window, cx: &mut Context<Self>) {
+        self.pause();
+        cx.notify();
+    }
+
+    fn jump_backward_action(&mut self, _: &JumpBackward, _: &mut Window, cx: &mut Context<Self>) {
+        self.step_frames(-timecode::nominal_fps(self.frame_rate_value), cx);
+    }
+
+    fn jump_forward_action(&mut self, _: &JumpForward, _: &mut Window, cx: &mut Context<Self>) {
+        self.step_frames(timecode::nominal_fps(self.frame_rate_value), cx);
+    }
+
+    fn go_to_start_action(&mut self, _: &GoToStart, _: &mut Window, cx: &mut Context<Self>) {
+        self.go_to_frame(0, cx);
+    }
+
+    fn go_to_end_action(&mut self, _: &GoToEnd, _: &mut Window, cx: &mut Context<Self>) {
+        self.go_to_frame(self.clock.end_frame(), cx);
+    }
+
+    fn previous_edit_point_action(
         &mut self,
-        event: &MouseDownEvent,
+        _: &PreviousEditPoint,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.timeline_pan = Some((f32::from(event.position.x), self.timeline_view().1));
-        cx.stop_propagation();
+        if let Some(frame) = self.adjacent_edit_point(false) {
+            self.go_to_frame(frame, cx);
+        }
     }
 
-    fn continue_timeline_pan(
+    fn next_edit_point_action(
         &mut self,
-        event: &MouseMoveEvent,
-        window: &mut Window,
+        _: &NextEditPoint,
+        _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some((grab_x, grab_view_start)) = self.timeline_pan else {
-            return;
-        };
-        // `MouseMoveEvent::dragging()` is Left-button only, so check the middle
-        // button explicitly; the button being released ends the pan.
-        if event.pressed_button != Some(MouseButton::Middle) {
-            self.timeline_pan = None;
-            return;
+        if let Some(frame) = self.adjacent_edit_point(true) {
+            self.go_to_frame(frame, cx);
         }
-        let (zoom, _) = self.timeline_view();
-        let dx = f64::from(f32::from(event.position.x) - grab_x)
-            / f64::from(Self::timeline_lane_width(window));
-        self.timeline_view_start = (grab_view_start - dx / zoom).clamp(0.0, 1.0);
-        cx.notify();
     }
 
-    fn end_timeline_pan(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn go_to_in_action(&mut self, _: &GoToIn, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(frame) = self.export_in_frame {
+            self.go_to_frame(frame, cx);
+        }
+    }
+
+    /// The Out mark is exclusive, so its last included frame is one before.
+    fn go_to_out_action(&mut self, _: &GoToOut, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(frame) = self.export_out_frame {
+            self.go_to_frame(frame.saturating_sub(1), cx);
+        }
+    }
+
+    fn toggle_loop_action(&mut self, _: &ToggleLoop, _: &mut Window, cx: &mut Context<Self>) {
+        self.toggle_loop(cx);
+    }
+
+    fn toggle_safe_areas_action(
+        &mut self,
+        _: &ToggleSafeAreas,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.toggle_safe_areas(cx);
+    }
+
+    /// Pointer moves anywhere in the window continue whichever drag is in
+    /// progress, so a drag that leaves its control keeps tracking.
+    fn drag_move(&mut self, event: &MouseMoveEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let position = event.position;
+        let handled = if event.dragging() {
+            self.continue_scrub(position) || self.continue_overview_drag(position)
+        } else {
+            false
+        };
+        let handled = self.continue_timeline_pan(position, event.pressed_button) || handled;
+        if handled {
+            cx.notify();
+        }
+        self.continue_master_volume_drag(event, window, cx);
+    }
+
+    fn drag_end(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
+        let ended = self.end_scrub() | self.end_overview_drag();
+        let ended = self.master_volume_drag.take().is_some() | ended;
+        if ended {
+            cx.notify();
+        }
+    }
+
+    fn middle_drag_end(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
         if self.timeline_pan.take().is_some() {
             cx.notify();
-        }
-    }
-
-    fn scrub_to(&mut self, position: Point<Pixels>, window: &Window, cx: &mut Context<Self>) {
-        self.pause();
-        let frame = self.frame_for_timeline_position(position, window);
-        if frame != self.clock.frame() {
-            self.seek_frame(frame);
-            cx.notify();
-        }
-    }
-
-    fn begin_scrub(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        self.scrubbing = true;
-        self.scrub_to(event.position, window, cx);
-    }
-
-    fn continue_scrub(
-        &mut self,
-        event: &MouseMoveEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.scrubbing && event.dragging() {
-            self.scrub_to(event.position, window, cx);
-        }
-    }
-
-    fn end_scrub(&mut self, event: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
-        if self.scrubbing {
-            self.scrub_to(event.position, window, cx);
-            self.scrubbing = false;
         }
     }
 
@@ -2258,6 +2357,7 @@ impl EditorView {
         self.audio_mix_worker.cancel_before(generation);
         self.audio_pending = false;
         self.audio_preview = None;
+        self.master_levels = None;
         self.clip_levels.clear();
 
         if let Some(react) = &self.react_preview {
@@ -2379,12 +2479,6 @@ impl EditorView {
         );
         if (volume - self.monitor_volume).abs() >= f64::EPSILON {
             self.set_master_volume(volume, cx);
-        }
-    }
-
-    fn end_master_volume_drag(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
-        if self.master_volume_drag.take().is_some() {
-            cx.notify();
         }
     }
 
@@ -2557,42 +2651,6 @@ impl EditorView {
         cx.notify();
     }
 
-    /// `in – out` as timecodes for the toolbar, or `None` when neither marker
-    /// is set. An unset side shows as `—`.
-    fn export_range_label(&self) -> Option<SharedString> {
-        if self.export_in_frame.is_none() && self.export_out_frame.is_none() {
-            return None;
-        }
-        let frame_rate = self.frame_rate_value;
-        let marker = |frame: Option<i64>| {
-            frame
-                .and_then(|frame| Time::frames(frame, frame_rate).ok())
-                .map_or_else(|| "—".to_owned(), format_time)
-        };
-        Some(
-            format!(
-                "{} – {}",
-                marker(self.export_in_frame),
-                marker(self.export_out_frame)
-            )
-            .into(),
-        )
-    }
-
-    /// The `[start, end]` fractions (0..1 of the timeline) to highlight for a
-    /// valid export range, or `None` when no full range is set.
-    fn export_range_band(&self) -> Option<(f32, f32)> {
-        export_range_for(
-            self.export_in_frame,
-            self.export_out_frame,
-            self.frame_rate_value,
-        )?;
-        let span = self.clock.end_frame().max(1) as f32;
-        let start = (self.export_in_frame? as f32 / span).clamp(0.0, 1.0);
-        let end = (self.export_out_frame? as f32 / span).clamp(0.0, 1.0);
-        Some((start, end))
-    }
-
     fn set_export_in_action(&mut self, _: &SetExportIn, _: &mut Window, cx: &mut Context<Self>) {
         self.set_export_in(cx);
     }
@@ -2629,22 +2687,17 @@ impl EditorView {
     }
 
     fn previous_frame_action(&mut self, _: &PreviousFrame, _: &mut Window, cx: &mut Context<Self>) {
-        self.pause();
-        self.seek_frame(self.clock.frame().saturating_sub(1));
-        cx.notify();
+        self.step_frames(-1, cx);
     }
 
     fn next_frame_action(&mut self, _: &NextFrame, _: &mut Window, cx: &mut Context<Self>) {
-        self.pause();
-        self.seek_frame(self.clock.frame().saturating_add(1));
-        cx.notify();
+        self.step_frames(1, cx);
     }
 
     /// The window's title bar: the menu bar (outside macOS, which shows it
     /// natively), the open file, status messages, and the window-wide
     /// commands — Open…, Export…, and the preview volume.
     fn title_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let volume = self.monitor_volume.clamp(0.0, 2.0);
         let exporting = self.export_cancellation.is_some();
         let danger = cx.theme().danger;
         let warning = cx.theme().warning;
@@ -2694,8 +2747,6 @@ impl EditorView {
                 .items_center()
                 .gap_2()
                 .pr_2()
-                .on_mouse_move(cx.listener(Self::continue_master_volume_drag))
-                .on_mouse_up(MouseButton::Left, cx.listener(Self::end_master_volume_drag))
                 .when_some(self.open_error.clone(), |bar, error| {
                     bar.child(message(error.to_string(), danger))
                 })
@@ -2749,72 +2800,7 @@ impl EditorView {
                         .label("Export…")
                         .disabled(self.choosing_export_path || self.opening)
                         .on_click(cx.listener(Self::export_project_click))
-                })
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_1()
-                        .text_xs()
-                        .text_color(muted)
-                        .child("Volume")
-                        .child(
-                            div()
-                                .id("preview-volume-slider")
-                                .relative()
-                                .w(px(88.0))
-                                .h(px(20.0))
-                                .rounded(cx.theme().radius)
-                                .bg(cx.theme().secondary)
-                                .tooltip(|window, cx| {
-                                    Tooltip::new("Preview volume (doesn’t affect exports)")
-                                        .build(window, cx)
-                                })
-                                .when_some(self.master_volume_focus.as_ref(), |slider, focus| {
-                                    slider.track_focus(focus)
-                                })
-                                .focus(|slider| slider.border_1().border_color(cx.theme().ring))
-                                .hover(|style| style.bg(cx.theme().secondary_hover))
-                                .child(
-                                    div()
-                                        .absolute()
-                                        .left(px(5.0))
-                                        .right(px(5.0))
-                                        .top(px(8.0))
-                                        .h(px(4.0))
-                                        .rounded_full()
-                                        .overflow_hidden()
-                                        .bg(cx.theme().background)
-                                        .child(
-                                            div()
-                                                .h_full()
-                                                .w(relative((volume / 2.0) as f32))
-                                                .rounded_full()
-                                                .bg(cx.theme().primary),
-                                        ),
-                                )
-                                .child(
-                                    div()
-                                        .absolute()
-                                        .left(px((volume / 2.0 * 78.0) as f32))
-                                        .top(px(5.0))
-                                        .size(px(10.0))
-                                        .rounded_full()
-                                        .bg(cx.theme().foreground),
-                                )
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(Self::begin_master_volume_drag),
-                                )
-                                .on_key_down(cx.listener(Self::master_volume_key_down)),
-                        )
-                        .child(
-                            div()
-                                .w(px(38.0))
-                                .text_right()
-                                .child(format!("{}%", (volume * 100.0).round() as i32)),
-                        ),
-                ),
+                }),
         )
     }
 
@@ -2927,118 +2913,6 @@ impl EditorView {
             .child(contents)
     }
 
-    fn preview_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let canvas = div()
-            .relative()
-            .flex()
-            .flex_1()
-            .w_full()
-            .items_center()
-            .justify_center()
-            .overflow_hidden()
-            .bg(cx.theme().background)
-            .when_some(self.preview.clone(), |canvas, preview| match preview {
-                PreviewPresentation::Image(preview) => {
-                    canvas.child(img(preview).size_full().object_fit(ObjectFit::Contain))
-                }
-                #[cfg(target_os = "macos")]
-                PreviewPresentation::Surface(preview) => canvas.child(
-                    gpui_kit::surface(preview.pixel_buffer())
-                        .size_full()
-                        .object_fit(ObjectFit::Contain),
-                ),
-            })
-            .when_some(self.preview_error.clone(), |canvas, error| {
-                canvas.child(
-                    div()
-                        .p_4()
-                        .text_sm()
-                        .text_color(cx.theme().danger)
-                        .child(format!("Preview unavailable: {error}")),
-                )
-            })
-            .when(!self.preview_warnings.is_empty(), |canvas| {
-                canvas.child(
-                    div()
-                        .absolute()
-                        .bottom(px(8.0))
-                        .left(px(8.0))
-                        .right(px(8.0))
-                        .flex()
-                        .flex_col()
-                        .gap_1()
-                        .rounded(cx.theme().radius)
-                        .border_1()
-                        .border_color(cx.theme().warning.opacity(0.5))
-                        .bg(cx.theme().warning.opacity(0.12))
-                        .p_2()
-                        .text_xs()
-                        .text_color(cx.theme().warning)
-                        .children(self.preview_warnings.iter().cloned()),
-                )
-            });
-        div()
-            .flex()
-            .flex_col()
-            .flex_1()
-            .min_w_0()
-            .h_full()
-            .child(canvas)
-            .child(
-                div()
-                    .flex()
-                    .flex_none()
-                    .h(px(44.0))
-                    .w_full()
-                    .items_center()
-                    .justify_center()
-                    .gap_2()
-                    .bg(cx.theme().secondary)
-                    .border_t_1()
-                    .border_color(cx.theme().border)
-                    .text_color(cx.theme().foreground)
-                    .child(
-                        Button::new("previous-frame")
-                            .small()
-                            .ghost()
-                            .icon(IconName::ChevronLeft)
-                            .tooltip("Previous frame")
-                            .on_click(cx.listener(Self::step_backward)),
-                    )
-                    .child(
-                        Button::new("toggle-playback")
-                            .small()
-                            .primary()
-                            .icon(if self.playing {
-                                IconName::Pause
-                            } else {
-                                IconName::Play
-                            })
-                            .label(if self.playing { "Pause" } else { "Play" })
-                            .on_click(cx.listener(Self::toggle_playback)),
-                    )
-                    .child(
-                        Button::new("next-frame")
-                            .small()
-                            .ghost()
-                            .icon(IconName::ChevronRight)
-                            .tooltip("Next frame")
-                            .on_click(cx.listener(Self::step_forward)),
-                    )
-                    .child(
-                        div()
-                            .w(px(110.0))
-                            .text_sm()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(format!(
-                                "{} / {}f",
-                                self.clock.frame(),
-                                self.clock.end_frame()
-                            )),
-                    ),
-            )
-    }
-
     /// Read-only facts about the composition and whatever is selected. The
     /// project is edited in its source file; File > Reload picks up changes.
     fn inspector_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -3077,7 +2951,11 @@ impl EditorView {
                 self.frame_rate_label.clone(),
                 cx,
             ))
-            .child(inspector_row("Duration", self.duration.clone(), cx))
+            .child(inspector_row(
+                "Duration",
+                format_timecode(self.clock.end_frame(), self.frame_rate_value),
+                cx,
+            ))
             .when_some(self.document.react_entry(), |panel, entry| {
                 panel.child(inspector_row("React entry", entry.to_owned(), cx))
             })
@@ -3139,8 +3017,12 @@ impl EditorView {
                     .child(inspector_section("Clip", cx))
                     .child(inspector_row("Name", clip.name.clone(), cx))
                     .child(inspector_row("Type", clip_kind_label(clip.kind), cx))
-                    .child(inspector_row("Start", format_time(clip.start), cx))
-                    .child(inspector_row("Length", format_time(clip.duration), cx))
+                    .child(inspector_row("Start", self.timecode_for(clip.start), cx))
+                    .child(inspector_row(
+                        "Length",
+                        self.timecode_for(clip.duration),
+                        cx,
+                    ))
                     .when(!clip.enabled, |panel| {
                         panel.child(inspector_row("State", "Disabled", cx))
                     })
@@ -3368,7 +3250,10 @@ impl EditorView {
                     .child(div().h(px(4.0)))
                     .child(row("Size", self.dimensions.to_string()))
                     .child(row("Frame rate", self.frame_rate_label.to_string()))
-                    .child(row("Duration", self.duration.to_string()))
+                    .child(row(
+                        "Duration",
+                        format_timecode(self.clock.end_frame(), self.frame_rate_value),
+                    ))
                     .child(row("Renderer", self.gpu_name.to_string()))
                     .child(div().h(px(4.0)))
                     .child(
@@ -3397,466 +3282,6 @@ impl EditorView {
                     }),
             )
     }
-
-    fn timeline(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let progress = if self.clock.end_frame() == 0 {
-            0.0
-        } else {
-            self.clock.frame() as f32 / self.clock.end_frame() as f32
-        };
-        let total_duration = self.document.duration().as_seconds().unwrap_or(0.0);
-        let current_time = self.current_time();
-        let (zoom, view_start) = self.timeline_view();
-        // Map a whole-composition fraction / width into the visible window.
-        let vx = move |fraction: f32| ((f64::from(fraction) - view_start) * zoom) as f32;
-        let vw = move |width: f32| (f64::from(width) * zoom) as f32;
-        let t = cx.theme();
-        let row_border = t.border;
-        let row_selected_bg = t.list_active;
-        let clip_label = theme::waveform();
-        let header_text = t.foreground;
-        let muted_text = t.muted_foreground;
-        let meter_track_bg = t.background;
-        let rows = self.tracks.iter().map(|track| {
-            let selected_track = self.selected_track_id.as_deref() == Some(track.id.as_str());
-            let track_level = track
-                .clips
-                .iter()
-                .filter_map(|clip| {
-                    self.clip_levels
-                        .get(&clip.id)
-                        .map(|levels| level_at_time(levels, clip, current_time))
-                })
-                .fold(0.0_f32, f32::max)
-                .sqrt()
-                .clamp(0.0, 1.0);
-            let meter_color = theme::meter(track_level);
-            let color = theme::clip_fill(track.kind);
-            let clips = track.clips.iter().map(|clip| {
-                let start = if total_duration > 0.0 {
-                    (clip.start.as_seconds().unwrap_or(0.0) / total_duration).clamp(0.0, 1.0) as f32
-                } else {
-                    0.0
-                };
-                let duration = if total_duration > 0.0 {
-                    (clip.duration.as_seconds().unwrap_or(0.0) / total_duration).clamp(0.0, 1.0)
-                        as f32
-                } else {
-                    0.0
-                };
-                let kind = match clip.kind {
-                    ClipKind::Video => "VIDEO",
-                    ClipKind::Audio => "AUDIO",
-                    ClipKind::Image => "IMAGE",
-                    ClipKind::Text => "TEXT",
-                    ClipKind::Dialogue => "DIALOGUE",
-                    ClipKind::Component => "COMPONENT",
-                };
-                let clip_id = clip.id.clone();
-                let element_id: SharedString = format!("timeline-clip-{clip_id}").into();
-                let selected = self.selected_clip_id.as_deref() == Some(clip.id.as_str());
-                let waveform = self
-                    .clip_waveforms
-                    .get(&clip.id)
-                    .map(|peaks| waveform_segment(peaks, 0.0, 1.0, 48))
-                    .unwrap_or_default();
-                div()
-                    .id(element_id)
-                    .absolute()
-                    .left(relative(vx(start)))
-                    .top(px(5.0))
-                    .h(px(28.0))
-                    .w(relative(vw(duration)))
-                    .min_w(px(3.0))
-                    .overflow_hidden()
-                    .rounded_sm()
-                    .bg(rgb(color))
-                    .when(selected, |clip| {
-                        clip.border_2().border_color(theme::clip_selected_border())
-                    })
-                    .when(!clip.enabled, |clip| clip.opacity(0.4))
-                    .px_2()
-                    .text_xs()
-                    .text_color(clip_label)
-                    .when(!waveform.is_empty(), |clip| {
-                        clip.child(
-                            div()
-                                .absolute()
-                                .left(px(2.0))
-                                .right(px(2.0))
-                                .top(px(4.0))
-                                .bottom(px(4.0))
-                                .flex()
-                                .items_center()
-                                .opacity(0.48)
-                                .children(waveform.into_iter().map(|amplitude| {
-                                    div()
-                                        .flex_1()
-                                        .min_w(px(1.0))
-                                        .h(relative(amplitude.clamp(0.04, 1.0)))
-                                        .bg(clip_label)
-                                })),
-                        )
-                    })
-                    .child(div().relative().child(format!("{kind}  {}", clip.name)))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        cx.stop_propagation();
-                        this.selected_clip_id = Some(clip_id.clone());
-                        this.selected_asset_id = None;
-                        cx.notify();
-                    }))
-            });
-            let track_name = match (track.enabled, track.locked) {
-                (false, true) => format!("{}  [off, locked]", track.name),
-                (false, false) => format!("{}  [off]", track.name),
-                (true, true) => format!("{}  [locked]", track.name),
-                (true, false) => track.name.clone(),
-            };
-            let mute_track_id = track.id.clone();
-            let solo_track_id = track.id.clone();
-            let select_track_id = track.id.clone();
-            let mute_element_id: SharedString = format!("track-mute-{}", track.id).into();
-            let solo_element_id: SharedString = format!("track-solo-{}", track.id).into();
-            let track_element_id: SharedString = format!("timeline-track-{}", track.id).into();
-            div()
-                .id(track_element_id)
-                .flex()
-                .flex_none()
-                .h(px(38.0))
-                .w_full()
-                .border_b_1()
-                .border_color(row_border)
-                .when(selected_track, |row| row.bg(row_selected_bg))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    if this.selected_track_id.as_deref() == Some(select_track_id.as_str()) {
-                        this.selected_track_id = None;
-                    } else {
-                        this.selected_track_id = Some(select_track_id.clone());
-                        this.selected_asset_id = None;
-                    }
-                    cx.notify();
-                }))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .w(px(230.0))
-                        .px_3()
-                        .text_sm()
-                        .text_color(header_text)
-                        .child(div().flex_1().overflow_hidden().child(track_name))
-                        .when(track.kind != TrackKind::Overlay, |header| {
-                            header.child(
-                                div()
-                                    .relative()
-                                    .flex_none()
-                                    .w(px(34.0))
-                                    .h(px(6.0))
-                                    .rounded_full()
-                                    .overflow_hidden()
-                                    .bg(meter_track_bg)
-                                    .child(
-                                        div()
-                                            .h_full()
-                                            .w(relative(track_level))
-                                            .rounded_full()
-                                            .bg(meter_color),
-                                    ),
-                            )
-                        })
-                        .when(track.kind != TrackKind::Overlay, |header| {
-                            header
-                                .child(
-                                    Button::new(mute_element_id)
-                                        .xsmall()
-                                        .ghost()
-                                        .label("M")
-                                        .selected(track.muted)
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            cx.stop_propagation();
-                                            this.toggle_track_mute(&mute_track_id, cx);
-                                        })),
-                                )
-                                .child(
-                                    Button::new(solo_element_id)
-                                        .xsmall()
-                                        .ghost()
-                                        .label("S")
-                                        .selected(track.solo)
-                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                            cx.stop_propagation();
-                                            this.toggle_track_solo(&solo_track_id, cx);
-                                        })),
-                                )
-                        }),
-                )
-                .child(
-                    div()
-                        .id(SharedString::from(format!("clip-lane-{}", track.id)))
-                        .relative()
-                        .flex_1()
-                        .h_full()
-                        .mr_2()
-                        .overflow_hidden()
-                        .on_scroll_wheel(cx.listener(Self::timeline_wheel))
-                        .on_mouse_down(MouseButton::Middle, cx.listener(Self::begin_timeline_pan))
-                        .children(clips),
-                )
-        });
-        let track_area = div()
-            .id("timeline-tracks-scroll")
-            .flex()
-            .flex_col()
-            .flex_1()
-            .min_h_0()
-            .w_full()
-            .overflow_x_hidden()
-            .overflow_y_scroll()
-            .when(self.tracks.is_empty() && !self.is_react_preview(), |area| {
-                area.child(
-                    div()
-                        .flex()
-                        .flex_1()
-                        .items_center()
-                        .justify_center()
-                        .text_sm()
-                        .text_color(muted_text)
-                        .child("This project has no tracks"),
-                )
-            })
-            .children(rows);
-        div()
-            .id("timeline-panel")
-            .flex()
-            .flex_col()
-            .flex_1()
-            .min_h_0()
-            .w_full()
-            .bg(cx.theme().secondary)
-            .border_t_1()
-            .border_color(cx.theme().border)
-            .on_mouse_move(cx.listener(Self::continue_timeline_pan))
-            .on_mouse_up(MouseButton::Middle, cx.listener(Self::end_timeline_pan))
-            .child(
-                div()
-                    .flex()
-                    .flex_none()
-                    .h(px(38.0))
-                    .items_center()
-                    .px_3()
-                    .justify_between()
-                    .child(
-                        div().flex().items_center().gap_1().child(
-                            div()
-                                .text_sm()
-                                .mr_1()
-                                .text_color(header_text)
-                                .child("Timeline"),
-                        ),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_2()
-                            .child(div().text_xs().text_color(muted_text).child(format!(
-                                "{} / {}",
-                                format_time(self.current_time()),
-                                self.duration
-                            )))
-                            .when(zoom > 1.001, |controls| {
-                                controls.child(
-                                    Button::new("timeline-zoom-fit")
-                                        .xsmall()
-                                        .ghost()
-                                        .label(format!("{zoom:.1}× · Fit"))
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.timeline_zoom = 1.0;
-                                            this.timeline_view_start = 0.0;
-                                            cx.notify();
-                                        })),
-                                )
-                            })
-                            .child(
-                                Button::new("set-export-in")
-                                    .xsmall()
-                                    .ghost()
-                                    .label("In")
-                                    .tooltip("Mark export start (I)")
-                                    .selected(self.export_in_frame.is_some())
-                                    .on_click(cx.listener(|this, _, _, cx| this.set_export_in(cx))),
-                            )
-                            .child(
-                                Button::new("set-export-out")
-                                    .xsmall()
-                                    .ghost()
-                                    .label("Out")
-                                    .tooltip("Mark export end (O)")
-                                    .selected(self.export_out_frame.is_some())
-                                    .on_click(
-                                        cx.listener(|this, _, _, cx| this.set_export_out(cx)),
-                                    ),
-                            )
-                            .when_some(self.export_range_label(), |controls, label| {
-                                controls
-                                    .child(div().text_xs().text_color(theme::accent()).child(label))
-                                    .child(
-                                        Button::new("clear-export-range")
-                                            .xsmall()
-                                            .ghost()
-                                            .label("✕")
-                                            .tooltip("Clear export range (Shift+X)")
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.clear_export_range(cx)
-                                            })),
-                                    )
-                            }),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_none()
-                    .h(px(34.0))
-                    .w_full()
-                    .items_start()
-                    .child(div().w(px(230.0)))
-                    .child(
-                        div()
-                            .id("timeline-scrubber")
-                            .relative()
-                            .flex_1()
-                            .h(px(34.0))
-                            .mr_2()
-                            .overflow_x_hidden()
-                            .cursor_pointer()
-                            .on_scroll_wheel(cx.listener(Self::timeline_wheel))
-                            .on_mouse_down(MouseButton::Left, cx.listener(Self::begin_scrub))
-                            .on_mouse_down(
-                                MouseButton::Middle,
-                                cx.listener(Self::begin_timeline_pan),
-                            )
-                            .on_mouse_move(cx.listener(Self::continue_scrub))
-                            .on_mouse_up(MouseButton::Left, cx.listener(Self::end_scrub))
-                            // Ruler band: tick + centred label per mark.
-                            .children(
-                                ruler_marks(total_duration)
-                                    .into_iter()
-                                    .filter_map(|(fraction, labelled)| {
-                                        let x = vx(fraction);
-                                        (0.0..=1.0).contains(&x).then_some((x, fraction, labelled))
-                                    })
-                                    .flat_map(|(x, fraction, labelled)| {
-                                        let tick = div()
-                                            .absolute()
-                                            .top(px(0.0))
-                                            .left(relative(x))
-                                            .w(px(1.0))
-                                            .h(px(4.0))
-                                            .bg(row_border)
-                                            .into_any_element();
-                                        let label = (labelled && x > 0.02 && x < 0.95).then(|| {
-                                            div()
-                                                .absolute()
-                                                .top(px(5.0))
-                                                .left(relative(x))
-                                                .w(px(48.0))
-                                                .ml(px(-24.0))
-                                                .text_center()
-                                                .text_xs()
-                                                .text_color(muted_text)
-                                                .child(format_ruler_label(
-                                                    f64::from(fraction) * total_duration,
-                                                ))
-                                                .into_any_element()
-                                        });
-                                        std::iter::once(tick).chain(label)
-                                    }),
-                            )
-                            // Scrub track along the bottom of the band.
-                            .child(
-                                div()
-                                    .absolute()
-                                    .top(px(24.0))
-                                    .left(px(0.0))
-                                    .w_full()
-                                    .h(px(3.0))
-                                    .bg(row_border),
-                            )
-                            .child(
-                                div()
-                                    .absolute()
-                                    .top(px(24.0))
-                                    .left(relative(vx(0.0).max(0.0)))
-                                    .h(px(3.0))
-                                    .w(relative((vx(progress) - vx(0.0).max(0.0)).max(0.0)))
-                                    .bg(theme::accent()),
-                            )
-                            .when_some(self.export_range_band(), |scrubber, (start, end)| {
-                                scrubber.child(
-                                    div()
-                                        .absolute()
-                                        .top(px(20.0))
-                                        .left(relative(vx(start)))
-                                        .w(relative(vw((end - start).max(0.0))))
-                                        .h(px(9.0))
-                                        .rounded_sm()
-                                        .bg(theme::export_range_fill())
-                                        .border_1()
-                                        .border_color(theme::export_range_border()),
-                                )
-                            })
-                            .child(
-                                div()
-                                    .absolute()
-                                    .top(px(20.0))
-                                    .left(relative(vx(progress)))
-                                    .ml(px(-5.0))
-                                    .size(px(11.0))
-                                    .rounded_full()
-                                    .bg(theme::accent()),
-                            ),
-                    ),
-            )
-            .child(
-                // Track scroll region, with a playhead line drawn over the clip
-                // lanes. The overlay is inset by the 230px header column and the
-                // 8px right gutter (and clips overflow), so the line tracks the
-                // clips under the current zoom. A plain (non-interactive) div,
-                // so clip clicks pass straight through.
-                div()
-                    .relative()
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_h_0()
-                    .child(track_area)
-                    .when(
-                        !self.tracks.is_empty() && (0.0..=1.0).contains(&vx(progress)),
-                        |region| {
-                            region.child(
-                                div()
-                                    .absolute()
-                                    .top_0()
-                                    .bottom_0()
-                                    .left(px(230.0))
-                                    .right(px(8.0))
-                                    .overflow_hidden()
-                                    .child(
-                                        div()
-                                            .absolute()
-                                            .top_0()
-                                            .bottom_0()
-                                            .w(px(2.0))
-                                            .left(relative(vx(progress)))
-                                            .bg(theme::accent().opacity(0.7)),
-                                    ),
-                            )
-                        },
-                    ),
-            )
-    }
 }
 
 impl Render for EditorView {
@@ -3866,6 +3291,7 @@ impl Render for EditorView {
         if self.preview_pending
             || self.media_pending
             || self.audio_pending
+            || self.component_schema_pending
             || self.export_cancellation.is_some()
         {
             window.request_animation_frame();
@@ -3882,11 +3308,29 @@ impl Render for EditorView {
             .on_action(cx.listener(Self::clear_export_range_action))
             .on_action(cx.listener(Self::set_up_typescript_action))
             .on_action(cx.listener(Self::toggle_playback_action))
+            .on_action(cx.listener(Self::play_forward_action))
+            .on_action(cx.listener(Self::pause_playback_action))
             .on_action(cx.listener(Self::previous_frame_action))
             .on_action(cx.listener(Self::next_frame_action))
+            .on_action(cx.listener(Self::jump_backward_action))
+            .on_action(cx.listener(Self::jump_forward_action))
+            .on_action(cx.listener(Self::go_to_start_action))
+            .on_action(cx.listener(Self::go_to_end_action))
+            .on_action(cx.listener(Self::previous_edit_point_action))
+            .on_action(cx.listener(Self::next_edit_point_action))
+            .on_action(cx.listener(Self::go_to_in_action))
+            .on_action(cx.listener(Self::go_to_out_action))
+            .on_action(cx.listener(Self::toggle_loop_action))
+            .on_action(cx.listener(Self::toggle_safe_areas_action))
+            .on_action(cx.listener(Self::zoom_timeline_in_action))
+            .on_action(cx.listener(Self::zoom_timeline_out_action))
+            .on_action(cx.listener(Self::zoom_timeline_to_fit_action))
             .when_some(self.focus_handle.as_ref(), |view, focus_handle| {
                 view.track_focus(focus_handle)
             })
+            .on_mouse_move(cx.listener(Self::drag_move))
+            .on_mouse_up(MouseButton::Left, cx.listener(Self::drag_end))
+            .on_mouse_up(MouseButton::Middle, cx.listener(Self::middle_drag_end))
             .flex()
             .flex_col()
             .size_full()
@@ -3900,10 +3344,10 @@ impl Render for EditorView {
 }
 
 impl EditorView {
-    /// The resizable shell: the asset list, the monitor, and the inspector,
-    /// stacked above the timeline. In React-preview mode the asset list is
-    /// hidden and the right dock shows composition facts instead of the
-    /// inspector.
+    /// The resizable shell: the asset list, the viewer, and the inspector,
+    /// stacked above the timeline and its master audio meter. In
+    /// React-preview mode the asset list is hidden and the right dock shows
+    /// composition facts instead of the inspector.
     fn workspace(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let react = self.is_react_preview();
         let dock_state = self.dock_split.clone();
@@ -3917,7 +3361,11 @@ impl EditorView {
                     .size_range(px(200.0)..px(440.0))
                     .visible(!react)
                     .child(
+                        // A flex column, so the panel's `flex_1` / `min_h_0`
+                        // bound its height and its list scrolls.
                         div()
+                            .flex()
+                            .flex_col()
                             .size_full()
                             .min_h_0()
                             .overflow_hidden()
@@ -3926,13 +3374,17 @@ impl EditorView {
                             .child(self.asset_panel(cx)),
                     ),
             )
-            .child(resizable_panel().child(self.preview_panel(cx)))
+            .child(resizable_panel().child(self.viewer_panel(cx)))
             .child(
                 resizable_panel()
                     .size(px(300.0))
                     .size_range(px(240.0)..px(520.0))
                     .child(
+                        // A flex column, so the panel's `flex_1` / `min_h_0`
+                        // bound its height and its list scrolls.
                         div()
+                            .flex()
+                            .flex_col()
                             .size_full()
                             .min_h_0()
                             .overflow_hidden()
@@ -3957,11 +3409,37 @@ impl EditorView {
                     .child(resizable_panel().child(dock_row))
                     .child(
                         resizable_panel()
-                            .size(px(240.0))
-                            .size_range(px(140.0)..px(560.0))
-                            .child(self.timeline(cx)),
+                            .size(px(300.0))
+                            .size_range(px(180.0)..px(640.0))
+                            .child(
+                                div()
+                                    .flex()
+                                    .size_full()
+                                    .border_t_1()
+                                    .border_color(border)
+                                    .child(self.timeline(cx))
+                                    .child(self.audio_panel(cx)),
+                            ),
                     ),
             )
+    }
+
+    /// What is still loading in the background, for the status bar:
+    /// `Preparing audio · Loading assets…`, or `None` once everything is in.
+    fn loading_label(&self) -> Option<String> {
+        let tasks: Vec<&str> = [
+            (self.opening, "Opening file"),
+            (self.audio_pending, "Preparing audio"),
+            (self.media_pending, "Loading assets"),
+            (
+                self.component_schema_pending,
+                "Loading component properties",
+            ),
+        ]
+        .into_iter()
+        .filter_map(|(pending, label)| pending.then_some(label))
+        .collect();
+        (!tasks.is_empty()).then(|| format!("{}…", tasks.join(" · ")))
     }
 
     fn status_bar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -3975,6 +3453,16 @@ impl EditorView {
                         self.dimensions, self.frame_rate_label, self.gpu_name
                     )),
             )
+            .when_some(self.loading_label(), |bar, label| {
+                bar.right(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_1()
+                        .child(Spinner::new().xsmall())
+                        .child(label),
+                )
+            })
             .when_some(
                 self.export_progress.as_ref().map(export_progress_label),
                 |bar, label| {
@@ -4145,8 +3633,8 @@ fn clip_level_envelope(waveform: &[f32], clip: &AudioClip) -> Vec<f32> {
 }
 
 fn master_volume_from_drag(start_volume: f64, delta_pixels: f64) -> f64 {
-    const SLIDER_WIDTH: f64 = 88.0;
-    ((start_volume + delta_pixels / SLIDER_WIDTH * 2.0).clamp(0.0, 2.0) * 100.0).round() / 100.0
+    let slider_width = f64::from(viewer::VOLUME_SLIDER_WIDTH);
+    ((start_volume + delta_pixels / slider_width * 2.0).clamp(0.0, 2.0) * 100.0).round() / 100.0
 }
 
 fn level_at_time(levels: &[f32], clip: &celesta_editor_core::ClipSummary, time: Time) -> f32 {
@@ -4386,39 +3874,6 @@ fn format_time(time: Time) -> String {
     format!("{hours:02}:{minutes:02}:{seconds:06.3}")
 }
 
-/// Compact `m:ss` / `s.s` label for a timeline ruler mark.
-fn format_ruler_label(seconds: f64) -> String {
-    if seconds >= 60.0 {
-        format!("{}:{:02}", (seconds / 60.0) as u64, (seconds % 60.0) as u64)
-    } else if seconds.fract().abs() < f64::EPSILON {
-        format!("{}s", seconds as u64)
-    } else {
-        format!("{seconds:.1}s")
-    }
-}
-
-/// Evenly spaced ruler marks across `total` seconds: `(fraction, is_labelled)`.
-/// The step is chosen so the ruler shows roughly 6–14 marks, and every other
-/// (or every) mark carries a time label.
-fn ruler_marks(total: f64) -> Vec<(f32, bool)> {
-    if total.is_nan() || total <= 0.0 {
-        return Vec::new();
-    }
-    const STEPS: [f64; 8] = [0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0, 300.0];
-    let step = STEPS
-        .into_iter()
-        .find(|step| total / step <= 14.0)
-        .unwrap_or(600.0);
-    let count = (total / step).floor() as u64;
-    let label_every = if (count as f64 / 2.0) > 7.0 { 2 } else { 1 };
-    (0..=count)
-        .map(|i| {
-            let seconds = i as f64 * step;
-            ((seconds / total) as f32, i % label_every == 0)
-        })
-        .collect()
-}
-
 fn export_progress_label(progress: &ExportProgress) -> String {
     match progress {
         ExportProgress::Rendering { frame: 0, total: 0 } => "Starting export…".to_owned(),
@@ -4428,6 +3883,17 @@ fn export_progress_label(progress: &ExportProgress) -> String {
         ExportProgress::MixingAudio => "Mixing export audio…".to_owned(),
         ExportProgress::Muxing => "Muxing MP4…".to_owned(),
         ExportProgress::Warning(warning) => warning.clone(),
+    }
+}
+
+/// `[start, end)` frames looped playback repeats: the In/Out marks clamped to
+/// the composition (a React reload can shorten it under them) when they
+/// still enclose at least a frame, else the whole composition.
+fn loop_range_for(in_frame: Option<i64>, out_frame: Option<i64>, end_frame: i64) -> (i64, i64) {
+    let clamp = |frame: i64| frame.clamp(0, end_frame);
+    match (in_frame.map(clamp), out_frame.map(clamp)) {
+        (Some(start), Some(end)) if start < end => (start, end),
+        _ => (0, end_frame),
     }
 }
 
@@ -4471,7 +3937,7 @@ fn run() -> Result<(), Box<dyn Error>> {
     let path = std::env::args_os().nth(1).map(PathBuf::from);
     let mut editor = EditorView::open(path.as_deref())?;
 
-    let app = gpui_kit::application().with_assets(gpui_kit::assets::Assets);
+    let app = gpui_kit::application().with_assets(CelestaAssets);
     app.run(move |cx: &mut App| {
         gpui_kit::init(cx);
         theme::init(cx);
@@ -4484,9 +3950,24 @@ fn run() -> Result<(), Box<dyn Error>> {
             KeyBinding::new("i", SetExportIn, Some("CelestaEditor")),
             KeyBinding::new("o", SetExportOut, Some("CelestaEditor")),
             KeyBinding::new("shift-x", ClearExportRange, Some("CelestaEditor")),
+            KeyBinding::new("shift-i", GoToIn, Some("CelestaEditor")),
+            KeyBinding::new("shift-o", GoToOut, Some("CelestaEditor")),
             KeyBinding::new("space", TogglePlayback, Some("CelestaEditor")),
+            KeyBinding::new("k", PausePlayback, Some("CelestaEditor")),
+            KeyBinding::new("l", PlayForward, Some("CelestaEditor")),
             KeyBinding::new("left", PreviousFrame, Some("CelestaEditor")),
             KeyBinding::new("right", NextFrame, Some("CelestaEditor")),
+            KeyBinding::new("shift-left", JumpBackward, Some("CelestaEditor")),
+            KeyBinding::new("shift-right", JumpForward, Some("CelestaEditor")),
+            KeyBinding::new("home", GoToStart, Some("CelestaEditor")),
+            KeyBinding::new("end", GoToEnd, Some("CelestaEditor")),
+            KeyBinding::new("up", PreviousEditPoint, Some("CelestaEditor")),
+            KeyBinding::new("down", NextEditPoint, Some("CelestaEditor")),
+            KeyBinding::new("secondary-/", ToggleLoop, Some("CelestaEditor")),
+            KeyBinding::new("'", ToggleSafeAreas, Some("CelestaEditor")),
+            KeyBinding::new("=", ZoomTimelineIn, Some("CelestaEditor")),
+            KeyBinding::new("-", ZoomTimelineOut, Some("CelestaEditor")),
+            KeyBinding::new("shift-z", ZoomTimelineToFit, Some("CelestaEditor")),
         ]);
         cx.on_action(|_: &Quit, cx| cx.quit());
         // macOS shows these in the system menu bar; elsewhere the title bar's
@@ -4550,12 +4031,34 @@ fn app_menus() -> Vec<Menu> {
         ]),
         Menu::new("Playback").items([
             MenuItem::action("Play/Pause", TogglePlayback),
+            MenuItem::action("Play", PlayForward),
+            MenuItem::action("Stop", PausePlayback),
+            MenuItem::action("Loop", ToggleLoop),
+            MenuItem::separator(),
             MenuItem::action("Previous Frame", PreviousFrame),
             MenuItem::action("Next Frame", NextFrame),
+            MenuItem::action("Back One Second", JumpBackward),
+            MenuItem::action("Forward One Second", JumpForward),
             MenuItem::separator(),
-            MenuItem::action("Mark Export Start", SetExportIn),
-            MenuItem::action("Mark Export End", SetExportOut),
-            MenuItem::action("Clear Export Range", ClearExportRange),
+            MenuItem::action("Previous Edit", PreviousEditPoint),
+            MenuItem::action("Next Edit", NextEditPoint),
+            MenuItem::action("Go to Start", GoToStart),
+            MenuItem::action("Go to End", GoToEnd),
+        ]),
+        Menu::new("Mark").items([
+            MenuItem::action("Mark In", SetExportIn),
+            MenuItem::action("Mark Out", SetExportOut),
+            MenuItem::action("Clear In and Out", ClearExportRange),
+            MenuItem::separator(),
+            MenuItem::action("Go to In", GoToIn),
+            MenuItem::action("Go to Out", GoToOut),
+        ]),
+        Menu::new("View").items([
+            MenuItem::action("Safe Areas", ToggleSafeAreas),
+            MenuItem::separator(),
+            MenuItem::action("Zoom In", ZoomTimelineIn),
+            MenuItem::action("Zoom Out", ZoomTimelineOut),
+            MenuItem::action("Zoom to Fit", ZoomTimelineToFit),
         ]),
     ]
 }
@@ -4565,8 +4068,8 @@ mod tests {
     use super::{
         AudioCacheKey, CachedAudioDecoder, ClipKind, DiskAudioCache, EDITOR_DEMO_PROJECT,
         ExportEvent, ExportRequest, ExportSource, ExportWorker, clip_level_envelope,
-        export_range_for, export_suggested_name, is_react_entry, level_at_time, map_clip_waveform,
-        master_volume_from_drag, take_latest, waveform_peaks, waveform_segment,
+        export_range_for, export_suggested_name, is_react_entry, level_at_time, loop_range_for,
+        map_clip_waveform, master_volume_from_drag, take_latest, waveform_peaks, waveform_segment,
     };
     use celesta_composition::{
         Animatable, AssetLocation, AudioClip, Rational, ResolvedAsset, Time, TimeRange,
@@ -4644,6 +4147,16 @@ mod tests {
         let range = export_range_for(Some(30), Some(90), rate).unwrap();
         assert_eq!(range.start, Time::frames(30, rate).unwrap());
         assert_eq!(range.end, Some(Time::frames(90, rate).unwrap()));
+    }
+
+    #[test]
+    fn loop_range_falls_back_when_marks_leave_the_composition() {
+        assert_eq!(loop_range_for(Some(10), Some(20), 100), (10, 20));
+        assert_eq!(loop_range_for(Some(10), Some(200), 100), (10, 100));
+        // A reload shortened the composition under both marks.
+        assert_eq!(loop_range_for(Some(150), Some(200), 100), (0, 100));
+        assert_eq!(loop_range_for(Some(20), Some(10), 100), (0, 100));
+        assert_eq!(loop_range_for(Some(10), None, 100), (0, 100));
     }
 
     #[test]

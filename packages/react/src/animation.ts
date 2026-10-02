@@ -88,7 +88,9 @@ export function progress(
 }
 
 /**
- * Common easing curves for `interpolate()`'s `easing` option. Named `Easings`
+ * Common easing curves for `interpolate()`'s `easing` option. Every curve
+ * returns exactly 0 at 0 and exactly 1 at 1, so `progress()` is exactly 0
+ * before its span and exactly 1 after it. Named `Easings`
  * (not `Easing`) to avoid colliding with the generated `Easing` union type
  * used by the project's own `Animatable<T>`/`Keyframe<T>` model, which is an
  * unrelated, project.json-facing concept.
@@ -98,7 +100,7 @@ export const Easings = {
   easeIn: (t: number): number => t * t,
   easeOut: (t: number): number => t * (2 - t),
   easeInOut: (t: number): number => (t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t),
-  easeInSine: (t: number): number => 1 - Math.cos((t * Math.PI) / 2),
+  easeInSine: (t: number): number => (t === 1 ? 1 : 1 - Math.cos((t * Math.PI) / 2)),
   easeOutSine: (t: number): number => Math.sin((t * Math.PI) / 2),
   easeInOutSine: (t: number): number => -(Math.cos(Math.PI * t) - 1) / 2,
   easeInQuad: (t: number): number => t * t,
@@ -124,12 +126,12 @@ export const Easings = {
   easeInBack: (t: number): number => {
     const c1 = 1.70158;
     const c3 = c1 + 1;
-    return c3 * t * t * t - c1 * t * t;
+    return t === 1 ? 1 : c3 * t * t * t - c1 * t * t;
   },
   easeOutBack: (t: number): number => {
     const c1 = 1.70158;
     const c3 = c1 + 1;
-    return 1 + c3 * --t * t * t + c1 * t * t;
+    return t === 0 ? 0 : 1 + c3 * --t * t * t + c1 * t * t;
   },
   easeInOutBack: (t: number): number => {
     const c1 = 1.70158;

@@ -21,9 +21,12 @@ export type {
   CharacterProps,
   CharacterLipSync,
   CharacterPortrait,
+  ImageCharacterBlink,
   ImageCharacterPortrait,
+  PsdCharacterBlink,
   PsdCharacterLipSync,
   PsdCharacterPortrait,
+  PsdExpression,
   CharacterViewProps,
   CharacterViewReference,
   CharacterSubtitle,
@@ -68,11 +71,25 @@ export type { VideoConfig } from './hooks';
 
 export { frameToTimecode, timecodeToFrame } from './time';
 
+export { blinkPhase } from './blink';
+export type { BlinkPhase, BlinkTiming } from './blink';
+
 export { beatAt, cueAt, useBeat, useCue } from './timing';
 export type { ActiveCue, Beat, BeatOptions, Cue } from './timing';
 
 export { Series, Stagger, computeSeries } from './series';
 export type { SeriesItem, SeriesProps, SeriesSequenceProps, SeriesTiming, StaggerProps } from './series';
+
+export { DialogueSeries, planDialogue } from './dialogue-series';
+export type {
+  DialogueLine,
+  DialoguePlan,
+  DialogueRange,
+  DialogueScene,
+  DialogueSeriesProps,
+  PlanDialogueOptions,
+  PlannedDialogueLine,
+} from './dialogue-series';
 
 export { Line, Path, Polyline, pointOnPolyline } from './shapes';
 export type {
@@ -141,11 +158,19 @@ export {
   buildEnvelope,
   decodeWav,
   loadLipSync,
+  lipSyncFromKeyframes,
   lipSyncTimeline,
   useLipSync,
   vowelShapes,
 } from './lipsync';
-export type { LipSyncOptions, LipSyncTrack, WavAudio } from './lipsync';
+export type { LipSyncOptions, LipSyncTrack, MouthKeyframe, WavAudio } from './lipsync';
+export { lipSyncFromVoicevox, voicevoxVowelShape } from './lipsync-voicevox';
+export type {
+  VoicevoxAccentPhrase,
+  VoicevoxAudioQuery,
+  VoicevoxLipSyncOptions,
+  VoicevoxMora,
+} from './lipsync-voicevox';
 
 export { loadPsdPreset, parsePfv, resolveVisibleLayers } from './psd-preset';
 export type { LoadPsdPresetOptions, ParsedPfv, PfvFavorite } from './psd-preset';

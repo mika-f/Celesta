@@ -64,6 +64,17 @@ test('progress clamps, eases, and rejects an empty span', () => {
   assert.throws(() => progress(0, 0, 0), /positive durationInFrames/);
 });
 
+test('every easing starts at exactly 0 and ends at exactly 1', () => {
+  for (const [name, easing] of Object.entries(Easings)) {
+    // `===` rather than Object.is: -0 at the start is fine.
+    assert.ok(easing(0) === 0, `${name}(0) = ${easing(0)}`);
+    assert.ok(easing(1) === 1, `${name}(1) = ${easing(1)}`);
+  }
+  // Before its span, an overshooting curve must not leak a tiny positive value.
+  assert.equal(progress(0, 10, 20, Easings.easeOutBack), 0);
+  assert.equal(progress(40, 10, 20, Easings.easeInBack), 1);
+});
+
 test('entries import random and noise from @celesta/math', () => {
   assert.equal(celesta.random, undefined);
   assert.equal(celesta.noise, undefined);

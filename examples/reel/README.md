@@ -1,6 +1,6 @@
 # Celesta — "Code is the cut." reel
 
-Open [`celesta-reel.tsx`](./celesta-reel.tsx) in Celesta to preview a
+Open [`film.tsx`](./film.tsx) in Celesta to preview a
 32-second, 1920×1080, 30 fps kinetic-type reel cut to a 120 BPM score (one
 beat = 15 frames). Chapters: a one-bar cold open, a one-word-per-beat
 manifesto, a formula-driven cell field, a code editor whose preview reloads on

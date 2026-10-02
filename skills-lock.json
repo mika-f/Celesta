@@ -5,13 +5,13 @@
       "source": "longbridge/gpui-kit",
       "sourceType": "github",
       "skillPath": "skills/gpui-kit/SKILL.md",
-      "computedHash": "152209c86970afe373e62484ba510928406d86d4dec40f0e25d0bcfa8ff2c329"
+      "computedHash": "711da6fe691b91a77b5bf91fd1db63993d98d334b4c67acb0d280025d18ba92a"
     },
     "gpui-kit-design-guides": {
       "source": "longbridge/gpui-kit",
       "sourceType": "github",
       "skillPath": "skills/gpui-kit-design-guides/SKILL.md",
-      "computedHash": "24289c455dfd0e89d0bc3f52c1df9118586b8b630b5ecf14b33f6d4fc01948d5"
+      "computedHash": "f5e085823154439a093fbfb947d522213c40842e1d06ebc611e033a854127c0b"
     },
     "ponytail": {
       "source": "dietrichgebert/ponytail",
@@ -23,7 +23,7 @@
       "source": "apollographql/skills",
       "sourceType": "github",
       "skillPath": "skills/rust-best-practices/SKILL.md",
-      "computedHash": "5ae68ae0241d65dac8a73f06139457206dde55912aecd4c36cd462fa85570513"
+      "computedHash": "a3db351ec552ed9d36b59e547d6c1d94077867eb5bcb98b3f802dfebb0a8a248"
     }
   }
 }

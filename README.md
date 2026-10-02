@@ -26,7 +26,7 @@ for more examples, see the [examples directory](examples) and the [gallery](docs
 - **Check audio:** see waveforms and track levels, mute or solo tracks, and
   set the preview volume.
 - **Create character dialogue:** combine portraits, expressions, subtitles,
-  voice recordings, and lip-sync cues.
+  voice recordings, lip-sync cues, and blinking.
 - **Compose with React:** use components, hooks, animation helpers, and layouts
   to build scenes, and combine React content with a project timeline. The
   preview reloads when you save the composition.
@@ -81,9 +81,16 @@ cargo run -p celesta-editor --release -- examples/voiceroid.celesta.json
 2. **Edit the source file.** Change the project or composition in your text
    editor. React compositions reload automatically when you save; for a
    project, choose **File › Reload** (Command-R on macOS, Ctrl-R elsewhere).
-3. **Preview.** Press Space to play or pause. Use the left and right arrow keys
-   to step one frame at a time, or drag along the timeline ruler to scrub.
-   Select an asset, track, or clip to see its details in the Inspector.
+3. **Preview.** Press Space to play or pause (L plays, K stops). Use the left
+   and right arrow keys to step one frame at a time, Shift with them to move
+   one second, the up and down arrow keys to jump between clip edges, and Home
+   and End to go to the start and end. Drag along the timeline ruler to scrub.
+   Press = and - to zoom the timeline and Shift-Z to fit it; scroll sideways or
+   drag the bar under the tracks to move along it. Loop playback (Command-/ on
+   macOS, Ctrl-/ elsewhere) repeats the In–Out range when one is marked, and
+   ' shows safe areas over the viewer. The Master meter beside the timeline
+   shows the preview's audio levels. Select an asset, track, or clip to see its
+   details in the Inspector.
 4. **Export.** Choose **Export…** and an MP4 destination. To export a section,
    press I and O to mark its start and end. Progress appears in the status
    bar; **Cancel export** stops the job.
@@ -167,6 +174,16 @@ Export a project:
 cargo run -p celesta-exporter --release -- examples/editor-demo.celesta.json output.mp4
 ```
 
+In a terminal, exports show a [Ratatui](https://github.com/ratatui/ratatui)
+dashboard with a timed pipeline, rendered-frame progress, a throughput history
+graph, FPS, elapsed time, estimated rendering time remaining, export settings,
+and warnings. Smaller terminals use a compact layout. The dashboard stays
+in your terminal's scrollback after the export finishes. The rendering bar
+can reach 100% while audio mixing and MP4 muxing are still running.
+
+Use `--no-ui` for text progress. Redirected output, CI without a terminal,
+and `TERM=dumb` automatically use text progress without terminal control codes.
+
 Export a React composition after completing the React setup:
 
 ```sh
@@ -194,6 +211,17 @@ on the GPU. The exporter then reads less data back from the GPU, and the
 encoder has less work to do. `--color-conversion encoder` does the conversion
 in the encoder instead, which is how software renderers are always handled.
 `--color-conversion gpu` forces the GPU conversion.
+
+To check frames as PNG instead of encoding a video, select zero-based frames
+with `--frame`/`--frames`, or every *n*th frame (plus the last one) with
+`--every`, which can be narrowed with `--from`/`--to`. Add `--contact-sheet`
+to lay the selection out as labelled tiles on one image (`--columns`,
+`--tile-width`):
+
+```sh
+cargo run -p celesta-exporter --release -- --frames 0,90 examples/editor-demo.celesta.json check.png
+cargo run -p celesta-exporter --release -- --every 60 --contact-sheet examples/editor-demo.celesta.json sheet.png
+```
 
 ## Use with AI agents
 

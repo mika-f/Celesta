@@ -23,8 +23,11 @@ use cosmic_text::{
     Align, Attrs, Buffer, Color as CosmicColor, Family, FontSystem, Metrics, Shaping, SwashCache,
     Weight, Wrap,
 };
+use unicode_properties::{EmojiStatus, GeneralCategory, UnicodeEmoji, UnicodeGeneralCategory};
+use unicode_segmentation::UnicodeSegmentation;
 pub mod image_source;
 mod path;
+pub mod psd_source;
 
 pub use path::{
     PathDraw, PathShape, PathTransform, RasterizedPath, rasterize_path, rasterize_paths,
@@ -135,9 +138,55 @@ pub struct RasterizedText {
     /// Pixel row of the first line's baseline, from the top edge.
     baseline: f32,
     pixels: Vec<u8>,
+    /// The box a layer's anchor refers to, in image pixels. For text it is the
+    /// layout box (the advance width, and the line boxes or the visible rows
+    /// of a single line), which a stroke can reach past, so the image may be
+    /// larger. For everything else it is the whole image.
+    anchor_box: AnchorBox,
+}
+
+/// A rectangle in image pixels; see [`RasterizedText::anchor_in_image`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct AnchorBox {
+    left: u32,
+    top: u32,
+    width: u32,
+    height: u32,
 }
 
 impl RasterizedText {
+    /// An image whose anchor box is the whole image.
+    pub(crate) fn whole(width: u32, height: u32, baseline: f32, pixels: Vec<u8>) -> Self {
+        Self {
+            width,
+            height,
+            baseline,
+            pixels,
+            anchor_box: AnchorBox {
+                left: 0,
+                top: 0,
+                width,
+                height,
+            },
+        }
+    }
+
+    /// Converts an anchor normalized to the anchor box (what a layer's
+    /// `anchor` means) into one normalized to the whole image, which is what
+    /// placing the image needs. The identity when the two are the same.
+    pub fn anchor_in_image(&self, x: f64, y: f64) -> (f64, f64) {
+        let AnchorBox {
+            left,
+            top,
+            width,
+            height,
+        } = self.anchor_box;
+        (
+            (f64::from(left) + x * f64::from(width)) / f64::from(self.width),
+            (f64::from(top) + y * f64::from(height)) / f64::from(self.height),
+        )
+    }
+
     pub const fn width(&self) -> u32 {
         self.width
     }
@@ -210,6 +259,47 @@ impl fmt::Display for FontFallback {
     }
 }
 
+/// Characters of a `Text` layer that its `fontFamily` has no glyph for, so
+/// they are drawn with another font (or as a missing-glyph box) while the
+/// rest of the text uses the family.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MissingGlyphs {
+    pub layer: String,
+    pub family: String,
+    pub weight: u16,
+    /// Each missing character once, in the order they first appear.
+    pub characters: Vec<char>,
+}
+
+impl MissingGlyphs {
+    /// How many characters the message spells out before summarizing the rest.
+    const LISTED: usize = 10;
+}
+
+impl fmt::Display for MissingGlyphs {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let listed = self
+            .characters
+            .iter()
+            .take(Self::LISTED)
+            .collect::<String>();
+        write!(
+            formatter,
+            "font family \"{}\" (weight {}) has no glyph for \"{listed}\"",
+            self.family, self.weight
+        )?;
+        if self.characters.len() > Self::LISTED {
+            let more = self.characters.len() - Self::LISTED;
+            write!(formatter, " and {more} more characters")?;
+        }
+        write!(
+            formatter,
+            "; text layer \"{}\" draws them with a fallback font",
+            self.layer
+        )
+    }
+}
+
 pub struct TextRasterizer {
     font_system: FontSystem,
     swash_cache: SwashCache,
@@ -217,7 +307,26 @@ pub struct TextRasterizer {
     /// `matched_weight` results by family and requested weight, cleared
     /// whenever a font is loaded.
     matched_weights: HashMap<(String, u16), Option<u16>>,
+    /// `color_emoji_family`'s result once looked up, cleared whenever a
+    /// font is loaded.
+    color_emoji_family: Option<Option<String>>,
+    /// `missing_characters` results by text, family, and weight, cleared
+    /// whenever a font is loaded.
+    missing_characters: HashMap<(String, String, u16), Vec<char>>,
 }
+
+/// Families of color emoji fonts, most preferred first: the ones macOS and
+/// Windows ship, then the ones Linux distributions and apps commonly carry.
+const COLOR_EMOJI_FAMILIES: &[&str] = &[
+    "Apple Color Emoji",
+    "Segoe UI Emoji",
+    "Noto Color Emoji",
+    "Twemoji Mozilla",
+    "Twemoji",
+    "Twitter Color Emoji",
+    "JoyPixels",
+    "EmojiOne Color",
+];
 
 impl TextRasterizer {
     pub fn new() -> Self {
@@ -234,6 +343,8 @@ impl TextRasterizer {
             swash_cache: SwashCache::new(),
             loaded_fonts: HashSet::new(),
             matched_weights: HashMap::new(),
+            color_emoji_family: None,
+            missing_characters: HashMap::new(),
         }
     }
 
@@ -316,6 +427,8 @@ impl TextRasterizer {
             return Err(invalid("no font faces found"));
         }
         self.matched_weights.clear();
+        self.color_emoji_family = None;
+        self.missing_characters.clear();
         let Some(alias) = alias else {
             return Ok(());
         };
@@ -368,6 +481,95 @@ impl TextRasterizer {
             })
     }
 
+    /// The first of [`COLOR_EMOJI_FAMILIES`] with a loaded or installed face.
+    fn color_emoji_family(&mut self) -> Option<String> {
+        let database = self.font_system.db();
+        self.color_emoji_family
+            .get_or_insert_with(|| {
+                COLOR_EMOJI_FAMILIES
+                    .iter()
+                    .find(|family| {
+                        database
+                            .faces()
+                            .any(|face| face.families.iter().any(|(name, _)| name == *family))
+                    })
+                    .map(|family| (*family).to_owned())
+            })
+            .clone()
+    }
+
+    /// The characters of `text` that `style`'s `fontFamily` has no glyph
+    /// for, drawn on `layer` with another font instead; `None` when the
+    /// family draws all of them, names no family, or has no face at all
+    /// (which [`Self::font_fallback`] reports). Emoji that another font
+    /// draws are left out, since they are meant to come from a color emoji
+    /// font, and so are whitespace and invisible characters. Characters no
+    /// font has, emoji included, are drawn as a missing-glyph box and
+    /// always reported.
+    pub fn missing_glyphs(
+        &mut self,
+        layer: &str,
+        text: &str,
+        style: &TextStyle,
+    ) -> Option<MissingGlyphs> {
+        let family = style.font_family.as_deref()?;
+        let weight = style.font_weight.unwrap_or(400);
+        self.matched_weight(family, weight)?;
+        let key = (text.to_owned(), family.to_owned(), weight);
+        let characters = match self.missing_characters.get(&key) {
+            Some(characters) => characters.clone(),
+            None => {
+                let characters = self.missing_characters(text, style, family);
+                // Text that changes every frame (a counter, a subtitle)
+                // would otherwise grow this without bound.
+                if self.missing_characters.len() >= 4096 {
+                    self.missing_characters.clear();
+                }
+                self.missing_characters.insert(key, characters.clone());
+                characters
+            }
+        };
+        (!characters.is_empty()).then(|| MissingGlyphs {
+            layer: layer.to_owned(),
+            family: family.to_owned(),
+            weight,
+            characters,
+        })
+    }
+
+    fn missing_characters(&mut self, text: &str, style: &TextStyle, family: &str) -> Vec<char> {
+        // The font each character is drawn with does not depend on the
+        // wrap width or the size, so shape on one unwrapped line at scale 1.
+        let buffer = self.shaped_buffer(text, style, None, 1.0);
+        let database = self.font_system.db();
+        let mut characters = Vec::new();
+        for run in buffer.layout_runs() {
+            for glyph in run.glyphs {
+                // Glyph 0 is `.notdef`: no font had the character, and the
+                // missing-glyph box is drawn.
+                let drawn = glyph.glyph_id != 0;
+                let from_family = drawn
+                    && database
+                        .face(glyph.font_id)
+                        .is_some_and(|face| face.families.iter().any(|(name, _)| name == family));
+                let Some(cluster) = run.text.get(glyph.start..glyph.end) else {
+                    continue;
+                };
+                // An emoji drawn from a color emoji font is expected; one no
+                // font has is a box like any other missing character.
+                if from_family || (drawn && is_emoji_cluster(cluster)) {
+                    continue;
+                }
+                for character in cluster.chars().filter(|&c| is_visible_character(c)) {
+                    if !characters.contains(&character) {
+                        characters.push(character);
+                    }
+                }
+            }
+        }
+        characters
+    }
+
     /// Shapes `text` into a laid-out buffer. `width` and `scale` are in
     /// output pixels: `scale` multiplies the style's font size and line height.
     fn shaped_buffer(
@@ -411,6 +613,22 @@ impl TextRasterizer {
             TextAlign::Center => Align::Center,
             TextAlign::Right => Align::Right,
         });
+        // cosmic-text falls back per character to the first font with a
+        // glyph, trying the color emoji font only after text fonts, so an
+        // emoji that a text font also has (❤️, a keycap, a flag's letters)
+        // came out as a plain glyph. Ask for the color emoji font first for
+        // the graphemes meant to look like emoji, unless the family asked
+        // for is a color emoji font itself.
+        let emoji_family = if style
+            .font_family
+            .as_deref()
+            .is_some_and(|family| COLOR_EMOJI_FAMILIES.contains(&family))
+            || emoji_presentation_spans(text).is_empty()
+        {
+            None
+        } else {
+            self.color_emoji_family()
+        };
         buffer.set_text(
             &mut self.font_system,
             text,
@@ -418,6 +636,29 @@ impl TextRasterizer {
             Shaping::Advanced,
             alignment,
         );
+        if let Some(emoji_family) = emoji_family {
+            let emoji_weight = self
+                .matched_weight(&emoji_family, requested_weight)
+                .unwrap_or(requested_weight);
+            let emoji_attrs = attrs
+                .clone()
+                .family(Family::Name(&emoji_family))
+                .weight(Weight(emoji_weight));
+            // Added to the lines `set_text` made rather than passed to
+            // `set_rich_text`, which splits lines differently (dropping
+            // the empty line after a trailing newline).
+            for line in &mut buffer.lines {
+                let spans = emoji_presentation_spans(line.text());
+                if spans.is_empty() {
+                    continue;
+                }
+                let mut attrs_list = line.attrs_list().clone();
+                for range in spans {
+                    attrs_list.add_span(range, &emoji_attrs);
+                }
+                line.set_attrs_list(attrs_list);
+            }
+        }
         buffer.shape_until_scroll(&mut self.font_system, false);
         buffer
     }
@@ -477,8 +718,17 @@ impl TextRasterizer {
             height.max(run.line_top + run.line_height)
         });
         let baseline = buffer.layout_runs().next().map_or(0.0, |run| run.line_y);
-        let mask_width = width.unwrap_or(measured_width).ceil().max(1.0) as u32;
-        let mask_height = measured_height.ceil().max(1.0) as u32;
+        let layout_width = width.unwrap_or(measured_width).ceil().max(1.0) as u32;
+        let layout_height = measured_height.ceil().max(1.0) as u32;
+        // The stroke grows the glyphs by its width in every direction, which
+        // reaches past the layout box at the first and last glyph (and above
+        // and below tall or low glyphs), so leave that much room around it.
+        let stroke_radius = style.stroke.as_ref().map_or(0, |stroke| {
+            (stroke.width * f64::from(scale)).round().max(0.0) as u32
+        });
+        let pad = stroke_radius;
+        let mask_width = layout_width + 2 * pad;
+        let mask_height = layout_height + 2 * pad;
         let fill_paint =
             resolve_paint(style.fill.as_ref())?.map(|paint| paint.scaled(f64::from(scale)));
         // A gradient is painted over white glyphs below.
@@ -507,8 +757,8 @@ impl TextRasterizer {
             |x, y, width, height, color| {
                 for offset_y in 0..height as i32 {
                     for offset_x in 0..width as i32 {
-                        let pixel_x = x + offset_x;
-                        let pixel_y = y + offset_y;
+                        let pixel_x = x + offset_x + pad as i32;
+                        let pixel_y = y + offset_y + pad as i32;
                         if pixel_x < 0
                             || pixel_y < 0
                             || pixel_x >= mask_width as i32
@@ -536,8 +786,9 @@ impl TextRasterizer {
                 if pixel[3] == 0 || pixel[..3] != [255, 255, 255] {
                     continue;
                 }
-                let x = f64::from((index % mask_width as usize) as u32) + 0.5;
-                let y = f64::from((index / mask_width as usize) as u32) + 0.5;
+                // Gradient coordinates are relative to the layout box.
+                let x = f64::from((index % mask_width as usize) as u32) - f64::from(pad) + 0.5;
+                let y = f64::from((index / mask_width as usize) as u32) - f64::from(pad) + 0.5;
                 let color = gradient.color_at(x, y);
                 pixel[..3].copy_from_slice(&[color.red, color.green, color.blue]);
                 pixel[3] = (f64::from(pixel[3]) * f64::from(color.alpha) / 255.0).round() as u8;
@@ -550,30 +801,50 @@ impl TextRasterizer {
             height: mask_height,
             pixels: vec![0; pixel_count],
         };
-        if let Some(stroke) = &style.stroke {
-            let radius = (stroke.width * f64::from(scale)).round().max(0.0) as u32;
-            if radius > 0 {
-                let stroke_mask = dilate_mask(&mask, mask_width, mask_height, radius);
-                let stroke_paint =
-                    ResolvedPaint::from_paint(&stroke.paint)?.scaled(f64::from(scale));
-                composite_mask_with(&mut frame, &stroke_mask, mask_width, |x, y| {
-                    stroke_paint.color_at(f64::from(x) + 0.5, f64::from(y) + 0.5)
-                });
-            }
+        if let Some(stroke) = &style.stroke
+            && stroke_radius > 0
+        {
+            let stroke_mask = dilate_mask(&mask, mask_width, mask_height, stroke_radius);
+            let stroke_paint = ResolvedPaint::from_paint(&stroke.paint)?.scaled(f64::from(scale));
+            composite_mask_with(&mut frame, &stroke_mask, mask_width, |x, y| {
+                stroke_paint.color_at(
+                    f64::from(x) - f64::from(pad) + 0.5,
+                    f64::from(y) - f64::from(pad) + 0.5,
+                )
+            });
         }
         composite_rgba(&mut frame, &glyph_pixels, mask_width, mask_height, 0, 0);
         // Single-line text keeps its advance width, so leading and trailing
         // spaces still take up room, but drops the empty rows above and below
         // its ink: `anchorY` 0.5 centers the letters, not the line box.
         let mut top = 0;
-        if !text.contains('\n') {
+        let single_line = !text.contains('\n');
+        if single_line {
             (frame, top) = trim_transparent_rows(frame);
         }
+        // A single line is anchored by its visible rows, stroke included;
+        // several lines by their line boxes.
+        let anchor_box = if single_line {
+            AnchorBox {
+                left: pad,
+                top: 0,
+                width: layout_width,
+                height: frame.height,
+            }
+        } else {
+            AnchorBox {
+                left: pad,
+                top: pad,
+                width: layout_width,
+                height: layout_height,
+            }
+        };
         Ok(RasterizedText {
             width: frame.width,
             height: frame.height,
-            baseline: baseline - top as f32,
+            baseline: baseline + pad as f32 - top as f32,
             pixels: frame.pixels,
+            anchor_box,
         })
     }
 }
@@ -666,11 +937,72 @@ impl Default for TextRasterizer {
     }
 }
 
+/// The byte ranges of `text`'s graphemes that are meant to be drawn as
+/// emoji, with runs of adjacent ones merged: an emoji that is one by default
+/// (Emoji_Presentation, which covers flags' regional indicators), or any
+/// character followed by the emoji presentation selector U+FE0F (❤️, 1️⃣).
+/// The text presentation selector U+FE0E keeps a grapheme text.
+fn emoji_presentation_spans(text: &str) -> Vec<std::ops::Range<usize>> {
+    let mut spans: Vec<std::ops::Range<usize>> = Vec::new();
+    for (start, grapheme) in text.grapheme_indices(true) {
+        // Any character of the grapheme, not only the first: one may start
+        // with a prepended character (U+0600 before an emoji, say).
+        let emoji = !grapheme.contains('\u{FE0E}')
+            && (grapheme.contains('\u{FE0F}')
+                || grapheme.chars().any(|character| {
+                    matches!(
+                        character.emoji_status(),
+                        EmojiStatus::EmojiPresentation
+                            | EmojiStatus::EmojiPresentationAndModifierBase
+                            | EmojiStatus::EmojiPresentationAndEmojiComponent
+                            | EmojiStatus::EmojiPresentationAndModifierAndEmojiComponent
+                    )
+                }));
+        if !emoji {
+            continue;
+        }
+        let end = start + grapheme.len();
+        match spans.last_mut() {
+            Some(span) if span.end == start => span.end = end,
+            _ => spans.push(start..end),
+        }
+    }
+    spans
+}
+
+/// Whether a shaped cluster is (part of) an emoji, which is meant to be
+/// drawn with a color emoji font rather than the layer's family.
+fn is_emoji_cluster(cluster: &str) -> bool {
+    cluster.chars().any(|character| {
+        matches!(
+            character,
+            // Zero width joiner, combining keycap, emoji presentation
+            // selector, and emoji tag characters.
+            '\u{200D}' | '\u{20E3}' | '\u{FE0F}' | '\u{E0020}'..='\u{E007F}'
+        ) || matches!(
+            character.emoji_status(),
+            EmojiStatus::EmojiPresentation
+                | EmojiStatus::EmojiPresentationAndModifierBase
+                | EmojiStatus::EmojiPresentationAndEmojiComponent
+                | EmojiStatus::EmojiPresentationAndModifierAndEmojiComponent
+        )
+    })
+}
+
+/// Whether `character` draws something by itself: not whitespace, a control
+/// or format character, or a variation selector.
+fn is_visible_character(character: char) -> bool {
+    !character.is_whitespace()
+        && !character.is_control()
+        && character.general_category() != GeneralCategory::Format
+        && !matches!(character, '\u{FE00}'..='\u{FE0F}' | '\u{E0100}'..='\u{E01EF}')
+}
+
 pub struct CpuRenderer {
     options: RenderOptions,
     asset_root: PathBuf,
     text_rasterizer: TextRasterizer,
-    images: HashMap<String, DecodedImage>,
+    psd_sources: psd_source::PsdSources,
     image_sources: image_source::ImageSources,
     video_decoder: Option<Box<dyn VideoFrameDecoder>>,
 }
@@ -681,7 +1013,7 @@ impl CpuRenderer {
             options,
             asset_root: PathBuf::from("."),
             text_rasterizer: TextRasterizer::new(),
-            images: HashMap::new(),
+            psd_sources: Default::default(),
             image_sources: Default::default(),
             video_decoder: None,
         }
@@ -878,9 +1210,26 @@ impl CpuRenderer {
                 enabled_layers,
                 disabled_layers,
             } => {
-                let image =
-                    self.load_psd(asset, visible_layers, enabled_layers, disabled_layers)?;
-                render_image(frame, image, layer.transform.anchor, &state);
+                let path = self.local_asset_path(asset)?;
+                let image = self.psd_sources.render(
+                    &asset.id,
+                    &path,
+                    visible_layers,
+                    enabled_layers,
+                    disabled_layers,
+                    state.scale.x.abs().max(state.scale.y.abs()),
+                )?;
+                let mut state = state.clone();
+                state.scale.x *= f64::from(image.canvas_width) / f64::from(image.width);
+                state.scale.y *= f64::from(image.canvas_height) / f64::from(image.height);
+                render_image_pixels(
+                    frame,
+                    image.width,
+                    image.height,
+                    &image.pixels,
+                    layer.transform.anchor,
+                    &state,
+                );
             }
             LayerContent::Rect {
                 width,
@@ -1056,9 +1405,13 @@ impl CpuRenderer {
         let text = self
             .text_rasterizer
             .rasterize(text, style, max_width, scale)?;
-        if baseline_anchor {
-            anchor.y = text.baseline_anchor();
-        }
+        let (anchor_x, anchor_y) = text.anchor_in_image(anchor.x, anchor.y);
+        anchor.x = anchor_x;
+        anchor.y = if baseline_anchor {
+            text.baseline_anchor()
+        } else {
+            anchor_y
+        };
         let image = DecodedImage {
             width: text.width,
             height: text.height,
@@ -1074,35 +1427,6 @@ impl CpuRenderer {
             },
         );
         Ok(())
-    }
-
-    fn load_psd(
-        &mut self,
-        asset: &ResolvedAsset,
-        visible_layers: &[String],
-        enabled_layers: &[String],
-        disabled_layers: &[String],
-    ) -> Result<&DecodedImage, RenderError> {
-        let key = psd_cache_key(asset, visible_layers, enabled_layers, disabled_layers);
-        if !self.images.contains_key(&key) {
-            let path = self.local_asset_path(asset)?;
-            let image = rasterize_psd(
-                &asset.id,
-                &path,
-                visible_layers,
-                enabled_layers,
-                disabled_layers,
-            )?;
-            self.images.insert(
-                key.clone(),
-                DecodedImage {
-                    width: image.width,
-                    height: image.height,
-                    pixels: image.pixels,
-                },
-            );
-        }
-        Ok(self.images.get(&key).expect("PSD image was cached"))
     }
 
     fn decode_video_frame(
@@ -1151,31 +1475,8 @@ fn local_asset_path(asset_root: &Path, asset: &ResolvedAsset) -> Result<PathBuf,
     })
 }
 
-fn psd_cache_key(
-    asset: &ResolvedAsset,
-    visible_layers: &[String],
-    enabled_layers: &[String],
-    disabled_layers: &[String],
-) -> String {
-    format!(
-        "psd\0{}\0{}\0{}\0{}",
-        asset.id,
-        visible_layers.join("\0"),
-        enabled_layers.join("\0"),
-        disabled_layers.join("\0")
-    )
-}
-
-/// Rasterizes a PSD portrait into a full-canvas RGBA frame.
-///
-/// Layer visibility is resolved as: `disabled_layers` always hide, then
-/// `enabled_layers` always show (the current lip-sync mouth), then — when
-/// `visible_layers` is non-empty — exactly the listed layer paths compose
-/// (a portrait preset; the PSD's own saved visibility is ignored), otherwise
-/// the PSD's saved per-layer/-folder visibility drives the composite. Each
-/// layer is placed at its real PSD coordinates (via [`psd::PsdLayer::rgba`],
-/// which returns canvas-sized pixels). Per-layer opacity is applied; group
-/// opacity is not (the `psd` crate misreads it as 0 for real PSDTool files).
+/// Rasterizes a PSD portrait into a full-canvas RGBA frame, with layer
+/// visibility resolved as [`psd_source::PsdSources::render`] describes.
 pub fn rasterize_psd(
     asset: &str,
     path: &Path,
@@ -1183,118 +1484,19 @@ pub fn rasterize_psd(
     enabled_layers: &[String],
     disabled_layers: &[String],
 ) -> Result<RgbaFrame, RenderError> {
-    let bytes = fs::read(path).map_err(|source| RenderError::AssetIo {
-        asset: asset.to_owned(),
-        source,
-    })?;
-    let psd = psd::Psd::from_bytes(&bytes).map_err(|source| RenderError::PsdDecode {
-        asset: asset.to_owned(),
-        source,
-    })?;
-    let visible: HashSet<String> = visible_layers
-        .iter()
-        .map(|path| normalize_psd_path(path))
-        .collect();
-    let enabled: HashSet<String> = enabled_layers
-        .iter()
-        .map(|path| normalize_psd_path(path))
-        .collect();
-    let disabled: HashSet<String> = disabled_layers
-        .iter()
-        .map(|path| normalize_psd_path(path))
-        .collect();
-    let layer_paths: Vec<String> = psd
-        .layers()
-        .iter()
-        .map(|layer| psd_layer_path(&psd, layer))
-        .collect();
-    // `enabled`/`disabled` come straight from the character's lip-sync
-    // configuration, so a typo there should surface rather than silently do
-    // nothing. `visible_layers` is a preset that may target a slightly
-    // different build of the PSD, so unknown entries there are ignored.
-    for requested in enabled.iter().chain(disabled.iter()) {
-        if !layer_paths.iter().any(|path| path == requested) {
-            return Err(RenderError::MissingPsdLayer {
-                asset: asset.to_owned(),
-                layer: requested.clone(),
-            });
-        }
-    }
-    let use_preset = !visible.is_empty();
-
-    let mut pixels = vec![0; psd.width() as usize * psd.height() as usize * 4];
-    for (layer, path) in psd.layers().iter().zip(layer_paths).rev() {
-        let shown = if disabled.contains(&path) {
-            false
-        } else if enabled.contains(&path) {
-            true
-        } else if use_preset {
-            visible.contains(&path)
-        } else {
-            layer.visible() && psd_ancestors_visible(&psd, layer.parent_id())
-        };
-        if !shown {
-            continue;
-        }
-        // Group opacity is deliberately not applied: the `psd` crate reads it
-        // from the wrong ("bounding section") record and reports 0 for every
-        // folder in real PSDTool files. Per-layer opacity is read correctly.
-        let opacity = f64::from(layer.opacity()) / 255.0;
-        for (destination, source) in pixels.chunks_exact_mut(4).zip(layer.rgba().chunks_exact(4)) {
-            blend(
-                destination,
-                Color::rgba(source[0], source[1], source[2], source[3]),
-                opacity,
-            );
-        }
-    }
+    let image = psd_source::PsdSources::default().render(
+        asset,
+        path,
+        visible_layers,
+        enabled_layers,
+        disabled_layers,
+        1.0,
+    )?;
     Ok(RgbaFrame {
-        width: psd.width(),
-        height: psd.height(),
-        pixels,
+        width: image.width,
+        height: image.height,
+        pixels: Arc::unwrap_or_clone(image.pixels),
     })
-}
-
-fn normalize_psd_path(path: &str) -> String {
-    path.split('/')
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join("/")
-}
-
-fn psd_layer_path(psd: &psd::Psd, layer: &psd::PsdLayer) -> String {
-    let mut names = vec![layer.name()];
-    let mut parent = layer.parent_id();
-    let mut visited = HashSet::new();
-    while let Some(id) = parent {
-        if !visited.insert(id) {
-            break;
-        }
-        let Some(group) = psd.groups().get(&id) else {
-            break;
-        };
-        names.push(group.name());
-        parent = group.parent_id();
-    }
-    names.reverse();
-    names.join("/")
-}
-
-fn psd_ancestors_visible(psd: &psd::Psd, mut parent: Option<u32>) -> bool {
-    let mut visited = HashSet::new();
-    while let Some(id) = parent {
-        if !visited.insert(id) {
-            break;
-        }
-        let Some(group) = psd.groups().get(&id) else {
-            break;
-        };
-        if !group.visible() {
-            return false;
-        }
-        parent = group.parent_id();
-    }
-    true
 }
 
 impl Default for CpuRenderer {
@@ -1641,12 +1843,7 @@ fn rasterize_rect_pixels(
         }
     }
 
-    RasterizedText {
-        width: pixel_width,
-        height: pixel_height,
-        baseline: 0.0,
-        pixels,
-    }
+    RasterizedText::whole(pixel_width, pixel_height, 0.0, pixels)
 }
 
 /// Inigo Quilez's rounded-box signed distance function: negative inside the
@@ -2096,6 +2293,15 @@ fn blend_with_mode(destination: &mut [u8], source: Color, opacity: f64, mode: Bl
     if mode.is_normal() {
         return blend(destination, source, opacity);
     }
+    blend_mixed(destination, source, opacity, |backdrop, source| {
+        mode.blend_channel(backdrop, source)
+    });
+}
+
+/// Source-over compositing with a separable mixing function `mix(backdrop,
+/// source)` per channel, all in 0–1 (W3C Compositing, "simple alpha
+/// compositing" with blending).
+fn blend_mixed(destination: &mut [u8], source: Color, opacity: f64, mix: impl Fn(f64, f64) -> f64) {
     let source_alpha = (f64::from(source.alpha) / 255.0) * opacity.clamp(0.0, 1.0);
     if source_alpha == 0.0 {
         return;
@@ -2106,7 +2312,7 @@ fn blend_with_mode(destination: &mut [u8], source: Color, opacity: f64, mode: Bl
         let source_value = f64::from([source.red, source.green, source.blue][channel]) / 255.0;
         let backdrop_value = f64::from(destination[channel]) / 255.0;
         let mixed = (1.0 - backdrop_alpha) * source_value
-            + backdrop_alpha * mode.blend_channel(backdrop_value, source_value);
+            + backdrop_alpha * mix(backdrop_value, source_value);
         let output = (source_alpha * mixed
             + backdrop_alpha * backdrop_value * (1.0 - source_alpha))
             / output_alpha;
@@ -2132,6 +2338,99 @@ fn blend(destination: &mut [u8], source: Color, opacity: f64) {
         destination[channel] = output.round().clamp(0.0, 255.0) as u8;
     }
     destination[3] = (output_alpha * 255.0).round().clamp(0.0, 255.0) as u8;
+}
+
+/// The per-channel mixing function `B(backdrop, source)` of a PSD layer's
+/// blend mode, all in 0–1, for the modes that blend each channel on its own.
+/// `None` for normal, and for the modes drawn as normal because they mix
+/// whole colors (hue, saturation, color, luminosity, darker and lighter
+/// color) or noise (dissolve).
+fn psd_blend_channel(mode: &str) -> Option<fn(f64, f64) -> f64> {
+    fn screen(b: f64, s: f64) -> f64 {
+        b + s - b * s
+    }
+    fn color_burn(b: f64, s: f64) -> f64 {
+        if b >= 1.0 {
+            1.0
+        } else if s <= 0.0 {
+            0.0
+        } else {
+            1.0 - ((1.0 - b) / s).min(1.0)
+        }
+    }
+    fn color_dodge(b: f64, s: f64) -> f64 {
+        if b <= 0.0 {
+            0.0
+        } else if s >= 1.0 {
+            1.0
+        } else {
+            (b / (1.0 - s)).min(1.0)
+        }
+    }
+    fn hard_light(b: f64, s: f64) -> f64 {
+        if s <= 0.5 {
+            b * 2.0 * s
+        } else {
+            screen(b, 2.0 * s - 1.0)
+        }
+    }
+    fn soft_light(b: f64, s: f64) -> f64 {
+        if s <= 0.5 {
+            b - (1.0 - 2.0 * s) * b * (1.0 - b)
+        } else {
+            let d = if b <= 0.25 {
+                ((16.0 * b - 12.0) * b + 4.0) * b
+            } else {
+                b.sqrt()
+            };
+            b + (2.0 * s - 1.0) * (d - b)
+        }
+    }
+    fn vivid_light(b: f64, s: f64) -> f64 {
+        if s <= 0.5 {
+            color_burn(b, 2.0 * s)
+        } else {
+            color_dodge(b, 2.0 * s - 1.0)
+        }
+    }
+    fn pin_light(b: f64, s: f64) -> f64 {
+        if s <= 0.5 {
+            b.min(2.0 * s)
+        } else {
+            b.max(2.0 * s - 1.0)
+        }
+    }
+
+    Some(match mode {
+        "Darken" => f64::min,
+        "Multiply" => |b, s| b * s,
+        "ColorBurn" => color_burn,
+        "LinearBurn" => |b, s| (b + s - 1.0).max(0.0),
+        "Lighten" => f64::max,
+        "Screen" => screen,
+        "ColorDodge" => color_dodge,
+        "LinearDodge" => |b, s| (b + s).min(1.0),
+        "Overlay" => |b, s| hard_light(s, b),
+        "SoftLight" => soft_light,
+        "HardLight" => hard_light,
+        "VividLight" => vivid_light,
+        "LinearLight" => |b, s| (b + 2.0 * s - 1.0).clamp(0.0, 1.0),
+        "PinLight" => pin_light,
+        "HardMix" => |b, s| if b + s >= 1.0 { 1.0 } else { 0.0 },
+        "Difference" => |b, s| (b - s).abs(),
+        "Exclusion" => |b, s| b + s - 2.0 * b * s,
+        "Subtract" => |b, s| (b - s).max(0.0),
+        "Divide" => |b, s| {
+            if s <= 0.0 {
+                if b <= 0.0 { 0.0 } else { 1.0 }
+            } else {
+                (b / s).min(1.0)
+            }
+        },
+        // PassThrough, Normal, Dissolve, DarkerColor, LighterColor, Hue,
+        // Saturation, Color, Luminosity.
+        _ => return None,
+    })
 }
 
 #[derive(Debug)]
@@ -2761,6 +3060,106 @@ mod tests {
     }
 
     #[test]
+    fn a_text_stroke_reaches_past_both_ends_of_the_line() {
+        let plain_style = TextStyle {
+            font_size: Some(96.0),
+            ..TextStyle::default()
+        };
+        let stroked_style = TextStyle {
+            stroke: Some(celesta_composition::Stroke {
+                paint: Paint::Solid {
+                    color: "#000000FF".to_owned(),
+                },
+                width: 16.0,
+            }),
+            ..plain_style.clone()
+        };
+        let mut rasterizer = TextRasterizer::new();
+        let plain = rasterizer.rasterize("MW", &plain_style, None, 1.0).unwrap();
+        let stroked = rasterizer
+            .rasterize("MW", &stroked_style, None, 1.0)
+            .unwrap();
+
+        assert_eq!(stroked.width(), plain.width() + 32);
+        let column_has_ink = |x: u32| {
+            (0..stroked.height())
+                .any(|y| stroked.pixels()[((y * stroked.width() + x) * 4 + 3) as usize] > 0)
+        };
+        // Before, the stroke was cut off at the advance box on both sides.
+        assert!((0..16).any(column_has_ink), "no stroke left of the line");
+        assert!(
+            (stroked.width() - 16..stroked.width()).any(column_has_ink),
+            "no stroke right of the line"
+        );
+        // Anchors still refer to the advance box, not the padded image.
+        let (left, _) = stroked.anchor_in_image(0.0, 0.0);
+        let (right, _) = stroked.anchor_in_image(1.0, 0.0);
+        assert!((left - 16.0 / f64::from(stroked.width())).abs() < 1e-9);
+        assert!(
+            (right - f64::from(stroked.width() - 16) / f64::from(stroked.width())).abs() < 1e-9
+        );
+        assert_eq!(plain.anchor_in_image(0.25, 0.75), (0.25, 0.75));
+    }
+
+    #[test]
+    fn a_text_stroke_does_not_move_the_text() {
+        let ink_center = |stroke: Option<celesta_composition::Stroke>| {
+            let scene = Scene {
+                width: 640,
+                height: 360,
+                frame_rate: Rational::new(30, 1),
+                time: Time::ZERO,
+                fonts: Vec::new(),
+                layers: vec![Layer {
+                    id: "title".to_owned(),
+                    transform: EvaluatedTransform {
+                        position: Point { x: 320.0, y: 180.0 },
+                        ..EvaluatedTransform::default()
+                    },
+                    opacity: 1.0,
+                    blend_mode: BlendMode::Normal,
+                    effects: Default::default(),
+                    content: LayerContent::Text {
+                        text: "Celesta".to_owned(),
+                        style: TextStyle {
+                            font_size: Some(72.0),
+                            fill: Some(Paint::Solid {
+                                color: "#FFFFFFFF".to_owned(),
+                            }),
+                            stroke,
+                            ..TextStyle::default()
+                        },
+                        max_width: None,
+                        baseline_anchor: false,
+                    },
+                }],
+            };
+            let frame = CpuRenderer::default().render(&scene).unwrap();
+            // The white fill only: the stroke is black.
+            let (mut min_x, mut max_x) = (u32::MAX, 0);
+            for (index, pixel) in frame.pixels().chunks_exact(4).enumerate() {
+                if pixel[0] > 200 && pixel[1] > 200 {
+                    let x = index as u32 % frame.width();
+                    min_x = min_x.min(x);
+                    max_x = max_x.max(x);
+                }
+            }
+            f64::from(min_x + max_x) / 2.0
+        };
+        let plain = ink_center(None);
+        let stroked = ink_center(Some(celesta_composition::Stroke {
+            paint: Paint::Solid {
+                color: "#000000FF".to_owned(),
+            },
+            width: 12.0,
+        }));
+        assert!(
+            (plain - stroked).abs() <= 1.0,
+            "plain {plain}, stroked {stroked}"
+        );
+    }
+
+    #[test]
     fn single_line_text_keeps_the_width_of_its_spaces() {
         let mut rasterizer = TextRasterizer::new();
         let style = TextStyle {
@@ -3247,6 +3646,54 @@ mod tests {
     }
 
     #[test]
+    fn rasterize_psd_applies_each_layer_blend_mode() {
+        // 3×1: an opaque rgb(200, 100, 50) base; over it, one pixel each of a
+        // multiply layer of rgb(128, 128, 255), a screen layer of
+        // rgb(128, 128, 128), and a normal layer of rgb(10, 20, 30).
+        // Written with ag-psd, whose layers the `psd` crate reads as hidden,
+        // so they are listed as the visible set.
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/blend-modes.psd");
+        let layers = ["base", "multiply", "screen", "normal"].map(str::to_owned);
+        let frame = rasterize_psd("fixture", &fixture, &layers, &[], &[]).unwrap();
+        let close = |actual: [u8; 4], expected: [u8; 4]| {
+            actual.iter().zip(expected).all(|(a, e)| a.abs_diff(e) <= 1)
+        };
+        let multiply = pixel_at(&frame, 0, 0);
+        assert!(
+            close(multiply, [100, 50, 50, 255]),
+            "multiply: {multiply:?}"
+        );
+        let screen = pixel_at(&frame, 1, 0);
+        assert!(close(screen, [228, 178, 153, 255]), "screen: {screen:?}");
+        assert_eq!(pixel_at(&frame, 2, 0), [10, 20, 30, 255]);
+    }
+
+    #[test]
+    fn psd_blend_modes_mix_like_photoshop() {
+        let mix = |mode| psd_blend_channel(mode).unwrap();
+        let close = |a: f64, b: f64| (a - b).abs() < 1e-9;
+        assert!(psd_blend_channel("Normal").is_none());
+        assert!(psd_blend_channel("Hue").is_none());
+        assert!(close(mix("Multiply")(0.5, 0.5), 0.25));
+        assert!(close(mix("Screen")(0.5, 0.5), 0.75));
+        assert!(close(mix("Overlay")(0.25, 0.5), 0.25));
+        assert!(close(mix("Darken")(0.3, 0.6), 0.3));
+        assert!(close(mix("Lighten")(0.3, 0.6), 0.6));
+        assert!(close(mix("LinearDodge")(0.7, 0.6), 1.0));
+        assert!(close(mix("Subtract")(0.3, 0.6), 0.0));
+        assert!(close(mix("Difference")(0.3, 0.8), 0.5));
+        assert!(close(mix("ColorDodge")(0.25, 0.5), 0.5));
+        assert!(close(mix("ColorBurn")(0.75, 0.5), 0.5));
+        // White and black are neutral where Photoshop says they are.
+        for mode in ["Multiply", "ColorBurn", "LinearBurn"] {
+            assert!(close(mix(mode)(0.4, 1.0), 0.4), "{mode:?} with white");
+        }
+        for mode in ["Screen", "ColorDodge", "LinearDodge"] {
+            assert!(close(mix(mode)(0.4, 0.0), 0.4), "{mode:?} with black");
+        }
+    }
+
+    #[test]
     fn rasterize_psd_disabled_layers_win_over_enabled() {
         let mouth = "face/mouth/a".to_owned();
         let with = rasterize_psd(
@@ -3500,6 +3947,219 @@ mod font_tests {
             rasterizer.font_fallback("title", &TextStyle::default()),
             None
         );
+    }
+
+    fn bebas_style() -> TextStyle {
+        TextStyle {
+            font_family: Some("Bebas Neue".to_owned()),
+            font_size: Some(48.0),
+            ..TextStyle::default()
+        }
+    }
+
+    #[test]
+    fn reports_characters_the_family_has_no_glyph_for() {
+        let mut rasterizer = regular_only_rasterizer();
+        // Bebas Neue has Latin glyphs only: the kana and kanji come from
+        // another font, once each and in order.
+        let missing = rasterizer
+            .missing_glyphs("title", "CELESTA ずんだもん 2026 だ", &bebas_style())
+            .unwrap();
+        assert_eq!(
+            missing,
+            MissingGlyphs {
+                layer: "title".to_owned(),
+                family: "Bebas Neue".to_owned(),
+                weight: 400,
+                characters: "ずんだも".chars().collect(),
+            }
+        );
+        assert_eq!(
+            missing.to_string(),
+            "font family \"Bebas Neue\" (weight 400) has no glyph for \"ずんだも\"; text layer \"title\" draws them with a fallback font"
+        );
+
+        // A long list is cut short.
+        let missing = rasterizer
+            .missing_glyphs("title", "あいうえおかきくけこさしすせそ", &bebas_style())
+            .unwrap();
+        assert_eq!(missing.characters.len(), 15);
+        assert_eq!(
+            missing.to_string(),
+            "font family \"Bebas Neue\" (weight 400) has no glyph for \"あいうえおかきくけこ\" and 5 more characters; text layer \"title\" draws them with a fallback font"
+        );
+    }
+
+    #[test]
+    fn does_not_report_glyphs_the_family_has_or_emoji() {
+        let mut rasterizer = regular_only_rasterizer();
+        for text in [
+            "CELESTA 2026",
+            // Whitespace and control characters draw nothing.
+            "CELESTA\n\tSTUDIO\u{3000}",
+            // Emoji are meant to come from a color emoji font.
+            "🎉",
+            "CELESTA 🎉👍🏽",
+            "❤\u{FE0F}",
+            "1\u{FE0F}\u{20E3}",
+            "👩\u{200D}💻",
+            "🇯🇵",
+        ] {
+            assert_eq!(
+                rasterizer.missing_glyphs("title", text, &bebas_style()),
+                None,
+                "{text:?}"
+            );
+        }
+        // Not when the text names no family, either.
+        assert_eq!(
+            rasterizer.missing_glyphs("title", "ずんだもん", &TextStyle::default()),
+            None
+        );
+    }
+
+    #[test]
+    fn reports_emoji_no_font_has_a_glyph_for() {
+        // Only Bebas Neue, without the system's fonts: there is no color
+        // emoji font to fall back to, so the emoji is drawn as a missing
+        // glyph box and is reported like any other character.
+        let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/prism");
+        let mut rasterizer = TextRasterizer::new();
+        rasterizer.font_system =
+            FontSystem::new_with_locale_and_db("en-US".to_owned(), fontdb::Database::new());
+        rasterizer
+            .load_fonts(
+                &[file_font("assets/fonts/BebasNeue-Regular.ttf")],
+                &examples,
+            )
+            .unwrap();
+        let missing = rasterizer
+            .missing_glyphs("title", "CELESTA 🎉 ず ❤\u{FE0F}", &bebas_style())
+            .unwrap();
+        assert_eq!(missing.characters, ['🎉', 'ず', '❤']);
+    }
+
+    #[test]
+    fn leaves_a_family_with_no_face_to_the_font_fallback() {
+        let mut rasterizer = regular_only_rasterizer();
+        let style = TextStyle {
+            font_family: Some("Celesta Missing Family".to_owned()),
+            ..TextStyle::default()
+        };
+        assert!(rasterizer.font_fallback("title", &style).is_some());
+        assert_eq!(
+            rasterizer.missing_glyphs("title", "ずんだもん", &style),
+            None
+        );
+    }
+
+    #[test]
+    fn marks_graphemes_meant_as_emoji() {
+        let spans = |text: &str| {
+            emoji_presentation_spans(text)
+                .into_iter()
+                .map(|range| text[range].to_owned())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(spans("CELESTA ずんだもん 2026"), Vec::<String>::new());
+        // Emoji by default, with a skin tone, and ZWJ sequences.
+        assert_eq!(spans("A🎉B👍🏽C👩\u{200D}💻"), ["🎉", "👍🏽", "👩\u{200D}💻"]);
+        // Text by default, emoji with U+FE0F: a heart and a keycap.
+        assert_eq!(
+            spans("❤ ❤\u{FE0F} 1 1\u{FE0F}\u{20E3}"),
+            ["❤\u{FE0F}", "1\u{FE0F}\u{20E3}"]
+        );
+        // U+FE0E keeps an emoji-by-default character text.
+        assert_eq!(spans("☔\u{FE0E}"), Vec::<String>::new());
+        // An emoji in a grapheme that starts with a prepended character.
+        assert_eq!(spans("\u{600}🎉"), ["\u{600}🎉"]);
+        // A flag's regional indicators, and adjacent emoji, share one span.
+        assert_eq!(spans("🇯🇵🎉 x"), ["🇯🇵🎉"]);
+    }
+
+    /// The family of the face each glyph cluster of `text` is drawn with.
+    fn cluster_families(
+        rasterizer: &mut TextRasterizer,
+        text: &str,
+        style: &TextStyle,
+    ) -> Vec<(String, String)> {
+        let buffer = rasterizer.shaped_buffer(text, style, None, 1.0);
+        let database = rasterizer.font_system.db();
+        let mut clusters = Vec::new();
+        for run in buffer.layout_runs() {
+            for glyph in run.glyphs {
+                let family = database
+                    .face(glyph.font_id)
+                    .and_then(|face| face.families.first())
+                    .map_or_else(String::new, |(family, _)| family.clone());
+                clusters.push((run.text[glyph.start..glyph.end].to_owned(), family));
+            }
+        }
+        clusters
+    }
+
+    #[test]
+    fn draws_emoji_presentation_with_the_color_emoji_font() {
+        let mut rasterizer = regular_only_rasterizer();
+        let Some(emoji_family) = rasterizer.color_emoji_family() else {
+            eprintln!("skipping: no color emoji font is installed");
+            return;
+        };
+        for weight in [None, Some(700)] {
+            let style = TextStyle {
+                font_family: Some("Bebas Neue".to_owned()),
+                font_size: Some(48.0),
+                font_weight: weight,
+                ..TextStyle::default()
+            };
+            // Text fonts have a plain heart, keycap, and regional indicator
+            // letters too; these still come from the color emoji font.
+            for emoji in ["❤\u{FE0F}", "1\u{FE0F}\u{20E3}", "🇯🇵", "🎉"] {
+                let text = format!("A{emoji}B");
+                let clusters = cluster_families(&mut rasterizer, &text, &style);
+                let families = clusters
+                    .iter()
+                    .map(|(_, family)| family.as_str())
+                    .collect::<Vec<_>>();
+                assert_eq!(families.first(), Some(&"Bebas Neue"), "{clusters:?}");
+                assert_eq!(families.last(), Some(&"Bebas Neue"), "{clusters:?}");
+                assert!(
+                    families[1..families.len() - 1]
+                        .iter()
+                        .all(|family| *family == emoji_family),
+                    "{weight:?} {emoji:?} was not drawn with {emoji_family}: {clusters:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn keeps_the_line_structure_of_text_with_emoji() {
+        let mut rasterizer = regular_only_rasterizer();
+        if rasterizer.color_emoji_family().is_none() {
+            eprintln!("skipping: no color emoji font is installed");
+            return;
+        }
+        let style = TextStyle {
+            font_family: Some("Bebas Neue".to_owned()),
+            font_size: Some(48.0),
+            line_height: Some(60.0),
+            ..TextStyle::default()
+        };
+        // A trailing newline adds an empty last line, emoji or not.
+        for (plain, emoji) in [
+            ("A\n", "A❤\u{FE0F}\n"),
+            ("A\nB", "A🎉\nB"),
+            ("A\r\nB\r\n", "A🎉\r\nB🇯🇵\r\n"),
+        ] {
+            let plain_metrics = rasterizer.measure(plain, &style, None);
+            let emoji_metrics = rasterizer.measure(emoji, &style, None);
+            assert_eq!(
+                (emoji_metrics.lines, emoji_metrics.height),
+                (plain_metrics.lines, plain_metrics.height),
+                "{emoji:?}"
+            );
+        }
     }
 
     #[test]

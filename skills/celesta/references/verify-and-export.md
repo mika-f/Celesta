@@ -11,6 +11,7 @@ type-check, then direct PNG export (real pixels), and MP4 for audio/timing.
 - [Type-check](#type-check)
 - [Export](#export)
 - [Look at real frames](#look-at-real-frames)
+- [Contact sheets](#contact-sheets)
 - [Error messages](#error-messages)
 
 ## Find the Celesta tools
@@ -154,21 +155,62 @@ composition's frame count minus one. Negative, duplicate and out-of-range
 frames are rejected. All selections and existing destination files are checked
 before rendering; `--overwrite` permits replacement.
 
+`--every <n>` selects frames at an interval instead: 0, n, 2n, … and always
+the last frame, even when it is not on the interval (`--every 30` on a
+100-frame composition gives 0, 30, 60, 90, 99). Unlike `--frame`/`--frames`,
+it can be narrowed with `--from`/`--to`; counting then starts at the span's
+first frame and ends on its last (`--to` is exclusive), and the files are
+still named by composition frame number. `--every` cannot be combined with
+`--frame`/`--frames`.
+
+```sh
+Celesta-export --react scene.tsx --every 15 --from 4 --to 6 /tmp/celesta-span.png
+```
+
+One export writes at most 1000 separate PNGs; use a larger interval, a
+shorter span, or a contact sheet.
+
 Read the resulting PNGs to check font fallback, glyph bounds, transforms,
 and overlap. PNG rendering uses the same GPU renderer and `final` quality by
 default, with lossless RGBA output, including transparency. It reuses one React
 runtime and `prepare()` call for all selected frames. It skips audio mixing,
 H.264/AAC encoding, and requires no external FFmpeg executable. Video assets
 still use the linked media decoder. Odd canvas dimensions are supported.
-`--from`/`--to` cannot be combined with PNG selection.
+`--from`/`--to` cannot be combined with `--frame`/`--frames`.
 
-Contact sheets and selection by time/interval are not currently supported;
-choose individual frames at scene boundaries. For audio validation, export MP4
-and optionally inspect its streams with `ffprobe`:
+For audio validation, export MP4 and optionally inspect its streams with
+`ffprobe`:
 
 ```sh
 ffprobe -v error -show_entries format=duration:stream=codec_type -of compact /tmp/celesta-check.mp4
 ```
+
+## Contact sheets
+
+To check a whole video at once, add `--contact-sheet`: the selected frames are
+reduced and laid out on a grid in one PNG, written to the exact output
+filename. Under each tile is a label with the frame number and timecode
+(`#90 00:00:03:00`, `HH:MM:SS:FF`); on narrow tiles only the frame number fits.
+
+```sh
+# A 2-minute, 30 fps video: one tile every 5 seconds, 25 tiles.
+Celesta-export --react scene.tsx --every 150 --contact-sheet /tmp/celesta-sheet.png
+# Closer look at one span, bigger tiles:
+Celesta-export project.celesta.json --every 10 --from 20 --to 30 \
+  --contact-sheet --columns 4 --tile-width 480 /tmp/celesta-sheet.png
+```
+
+| Option | Meaning |
+| --- | --- |
+| `--contact-sheet` | Write one grid image instead of one PNG per frame. Works with `--frame`, `--frames` (tiles in the given order) or `--every`. |
+| `--columns <n>` | Tiles per row (default 5; fewer frames use one row). |
+| `--tile-width <px>` | Tile width (default 320); the height keeps the composition's aspect ratio. |
+
+Tiles are separated by 8 px on a dark background; transparent areas show a
+checkerboard. Tiles are reduced by averaging every covered pixel, so thin
+lines and small text blur rather than vanish, but read text and fine details
+in a full-size `--frame` export. A sheet holds at most 400 frames and is at
+most 16384 px on each side; the error says which limit was hit.
 
 ## Error messages
 
@@ -190,6 +232,7 @@ ffprobe -v error -show_entries format=duration:stream=codec_type -of compact /tm
 | `H.264 MP4 export requires non-zero even dimensions, got 1921x1080` | Make width and height even. |
 | `output already exists: …` | Choose another path, or add `--overwrite` if replacing it is intended. |
 | `… missing component` | A JSON `component` item has no matching `registerComponent`, or the project was exported without its React entry. |
+| `warning: font family "X" (weight 400) has no glyph for "…"; text layer "y" draws them with a fallback font` | The family lacks those characters, so they are drawn in another font. With a Google Fonts `text=` subset, add the characters to `text=`; otherwise pick a family that covers them. Emoji are reported only when no font has them (they are drawn as boxes); then load an emoji font with `<Font>`. |
 | `favorite "x" not found in y.pfv (have: …)` | Use one of the listed favorites. |
 | `not a RIFF/WAVE file` / `unsupported WAV sample size` | `loadLipSync` needs uncompressed WAV; convert with `ffmpeg -i in.mp3 -c:a pcm_s16le out.wav`. |
 | `Could not find the Celesta React runtime` (inspect.mjs) | Pass `--runtime`, or build the runtime in a source checkout. |

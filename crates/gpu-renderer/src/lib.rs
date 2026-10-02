@@ -19,8 +19,10 @@ use celesta_composition::{
 use celesta_media::{MediaError, VideoFrameDecoder};
 use celesta_remote::{RemoteAssetError, resolve_asset_path};
 use celesta_renderer::{
-    Color as CpuColor, FontFallback, PathDraw, PathShape, PathTransform, RectPaint, RenderError,
-    TextRasterizer, rasterize_path, rasterize_paths, resolve_rect_paint,
+    Color as CpuColor, FontFallback, MissingGlyphs, PathDraw, PathShape, PathTransform, RectPaint,
+    RenderError, TextRasterizer,
+    image_source::{fit_within, resize_rgba},
+    rasterize_path, rasterize_paths, resolve_rect_paint,
 };
 
 use wgpu::util::DeviceExt;
@@ -302,8 +304,11 @@ pub struct GpuRenderer {
     /// Bound for draws that shade their content (rects) instead of sampling.
     placeholder_texture: LayerTexture,
     asset_root: PathBuf,
-    images: HashMap<String, DecodedImage>,
+    psd_sources: celesta_renderer::psd_source::PsdSources,
     image_sources: celesta_renderer::image_source::ImageSources,
+    /// The device's largest 2D texture side. Layer content larger than this
+    /// is shrunk before upload and enlarged again by the draw's filtering.
+    max_texture_dimension: u32,
     video_decoder: Option<Box<dyn VideoFrameDecoder>>,
     text_rasterizer: TextRasterizer,
     #[cfg(target_os = "macos")]
@@ -335,6 +340,9 @@ pub struct GpuRenderer {
     /// The last prepared frame's text layers that use a fallback font, one
     /// per family and weight.
     font_fallbacks: Vec<FontFallback>,
+    /// The last prepared frame's text layers with characters their family
+    /// has no glyph for, one per family, weight, and set of characters.
+    missing_glyphs: Vec<MissingGlyphs>,
 }
 
 impl GpuRenderer {
@@ -478,6 +486,7 @@ impl GpuRenderer {
         );
         #[cfg(target_os = "macos")]
         let native_preview = native_preview::NativePreviewBridge::new(&device).ok();
+        let max_texture_dimension = device.limits().max_texture_dimension_2d;
         Ok(Self {
             adapter,
             device,
@@ -501,8 +510,9 @@ impl GpuRenderer {
             clip_entries: Vec::new(),
             placeholder_texture,
             asset_root: PathBuf::from("."),
-            images: HashMap::new(),
+            psd_sources: Default::default(),
             image_sources: Default::default(),
+            max_texture_dimension,
             video_decoder: None,
             text_rasterizer: TextRasterizer::new(),
             #[cfg(target_os = "macos")]
@@ -516,6 +526,7 @@ impl GpuRenderer {
             texture_generation: 0,
             text_font_count: 0,
             font_fallbacks: Vec::new(),
+            missing_glyphs: Vec::new(),
         })
     }
 
@@ -524,6 +535,14 @@ impl GpuRenderer {
     /// font. Each family and weight is listed once, with its first layer.
     pub fn font_fallbacks(&self) -> &[FontFallback] {
         &self.font_fallbacks
+    }
+
+    /// Text layers in the most recently rendered or submitted frame with
+    /// characters their `fontFamily` has no glyph for, so those characters
+    /// use a fallback font. Layers missing the same characters of the same
+    /// family and weight are listed once, with the first of them.
+    pub fn missing_glyphs(&self) -> &[MissingGlyphs] {
+        &self.missing_glyphs
     }
 
     pub const fn options(&self) -> GpuRenderOptions {
@@ -1014,6 +1033,7 @@ impl GpuRenderer {
         self.texture_generation += 1;
         self.clip_entries.clear();
         self.font_fallbacks.clear();
+        self.missing_glyphs.clear();
         let mut items = Vec::new();
         let prepared = scene
             .layers
@@ -1056,18 +1076,31 @@ impl GpuRenderer {
         let mut depth = 0;
         let mut canvases = 1;
         let mut index = 0_u32;
+        // What each open canvas has drawn so far, in canvas pixels, so an
+        // effect only filters the part of its canvas its layers cover.
+        let mut covered: Vec<Option<PixelBounds>> = vec![None];
+        let cover = |covered: &mut Vec<Option<PixelBounds>>, bounds: Option<PixelBounds>| {
+            let top = covered.last_mut().expect("the root canvas is always open");
+            *top = PixelBounds::union(*top, bounds);
+        };
         for item in items {
             let layer = match item {
-                PreparedItem::Layer(layer) => layer,
+                PreparedItem::Layer(layer) => {
+                    cover(&mut covered, Some(layer.bounds()));
+                    layer
+                }
                 PreparedItem::Paths(_) => unreachable!("paths are rasterized into layers"),
                 PreparedItem::BeginGroup => {
                     depth += 1;
                     canvases = canvases.max(depth + 1);
+                    covered.push(None);
                     steps.push(GpuStep::BeginGroup);
                     continue;
                 }
                 PreparedItem::EndGroup(layer) => {
                     depth -= 1;
+                    let inner = covered.pop().flatten();
+                    cover(&mut covered, inner);
                     layer.write_instance(scene.width, scene.height, &mut instances);
                     steps.push(GpuStep::EndGroup {
                         instance: index,
@@ -1078,6 +1111,11 @@ impl GpuRenderer {
                 }
                 PreparedItem::EndEffect(layer, effects) => {
                     depth -= 1;
+                    let content = covered.pop().flatten();
+                    cover(
+                        &mut covered,
+                        content.map(|content| effects.output_bounds(content)),
+                    );
                     PreparedLayer::canvas(LayerState::default(), BlendMode::Normal, true)
                         .write_instance(scene.width, scene.height, &mut instances);
                     layer.write_instance(scene.width, scene.height, &mut instances);
@@ -1086,6 +1124,7 @@ impl GpuRenderer {
                         final_instance: index + 1,
                         blend_mode: layer.blend_mode,
                         effects,
+                        content,
                     });
                     index += 2;
                     continue;
@@ -1319,10 +1358,15 @@ impl GpuRenderer {
                     final_instance,
                     blend_mode,
                     effects,
+                    content,
                 } => {
                     depth -= 1;
+                    // Layers that drew nothing leave nothing to filter.
+                    let Some(content) = *content else {
+                        continue;
+                    };
                     let source = &self.canvases[depth + 1];
-                    let result = canvas_texture(
+                    let result = self.effects.take_canvas(
                         &self.device,
                         &self.texture_bind_group_layout,
                         scene.width,
@@ -1339,6 +1383,7 @@ impl GpuRenderer {
                             encoder,
                             source,
                             &self.texture_bind_group_layout,
+                            content,
                             shadow.blur,
                             shadow.offset,
                             Some(shadow.color),
@@ -1350,6 +1395,7 @@ impl GpuRenderer {
                             *inner_instance..*inner_instance + 1,
                             BlendMode::Normal,
                         );
+                        self.effects.recycle(filtered);
                     }
                     let filtered = (effects.blur > 0.0).then(|| {
                         self.effects.apply(
@@ -1357,6 +1403,7 @@ impl GpuRenderer {
                             encoder,
                             source,
                             &self.texture_bind_group_layout,
+                            content,
                             effects.blur,
                             [0.0, 0.0],
                             None,
@@ -1369,6 +1416,9 @@ impl GpuRenderer {
                         *inner_instance..*inner_instance + 1,
                         BlendMode::Normal,
                     );
+                    if let Some(filtered) = filtered {
+                        self.effects.recycle(filtered);
+                    }
                     draw(
                         encoder,
                         &self.canvases[depth],
@@ -1376,6 +1426,7 @@ impl GpuRenderer {
                         *final_instance..*final_instance + 1,
                         *blend_mode,
                     );
+                    self.effects.recycle(result);
                 }
             }
         }
@@ -1561,30 +1612,47 @@ impl GpuRenderer {
                         asset: asset.id.clone(),
                         source,
                     })?;
+                let (texture_width, texture_height) = fit_within(
+                    display.pixels.width(),
+                    display.pixels.height(),
+                    self.max_texture_dimension,
+                );
                 let mut state = state;
-                state.transform.a *= (display.width / display.pixels.width() as f64) as f32;
-                state.transform.b *= (display.width / display.pixels.width() as f64) as f32;
-                state.transform.c *= (display.height / display.pixels.height() as f64) as f32;
-                state.transform.d *= (display.height / display.pixels.height() as f64) as f32;
+                state.transform.a *= (display.width / f64::from(texture_width)) as f32;
+                state.transform.b *= (display.width / f64::from(texture_width)) as f32;
+                state.transform.c *= (display.height / f64::from(texture_height)) as f32;
+                state.transform.d *= (display.height / f64::from(texture_height)) as f32;
                 let texture = self.cached_texture(
+                    // Both sizes: SVG rasterized at different densities can
+                    // shrink to the same texture size from different pixels.
                     format!(
-                        "image\0{}\0{:?}\0{:?}\0{:?}\0{}x{}",
+                        "image\0{}\0{:?}\0{:?}\0{:?}\0{}x{}\0{}x{}",
                         asset.id,
                         width,
                         height,
                         fit,
                         display.pixels.width(),
-                        display.pixels.height()
+                        display.pixels.height(),
+                        texture_width,
+                        texture_height
                     ),
                     // SVG is already rasterized for this draw; mipmaps blur
                     // its downscaled edges relative to the CPU renderer.
                     !display.is_svg,
                     |_| {
-                        DecodedImage::new(
-                            display.pixels.width(),
-                            display.pixels.height(),
-                            display.pixels.as_ref().clone().into_raw(),
-                        )
+                        let pixels =
+                            if (texture_width, texture_height) == display.pixels.dimensions() {
+                                display.pixels.as_ref().clone()
+                            } else {
+                                resize_rgba(
+                                    display.pixels.width(),
+                                    display.pixels.height(),
+                                    display.pixels.as_raw(),
+                                    texture_width,
+                                    texture_height,
+                                )
+                            };
+                        DecodedImage::new(texture_width, texture_height, pixels.into_raw())
                     },
                 )?;
                 output.push(PreparedItem::Layer(PreparedLayer::new(
@@ -1600,14 +1668,40 @@ impl GpuRenderer {
                 enabled_layers,
                 disabled_layers,
             } => {
+                let path = self.local_asset_path(asset)?;
+                let density = f64::from(state.transform.stretch().0);
+                let image = self
+                    .psd_sources
+                    .render_within(
+                        &asset.id,
+                        &path,
+                        visible_layers,
+                        enabled_layers,
+                        disabled_layers,
+                        density,
+                        self.max_texture_dimension,
+                    )
+                    .map_err(GpuRenderError::Psd)?;
+                let mut state = state;
+                let x = (f64::from(image.canvas_width) / f64::from(image.width)) as f32;
+                let y = (f64::from(image.canvas_height) / f64::from(image.height)) as f32;
+                state.transform.a *= x;
+                state.transform.b *= x;
+                state.transform.c *= y;
+                state.transform.d *= y;
                 let texture = self.cached_texture(
-                    psd_key(asset, visible_layers, enabled_layers, disabled_layers),
+                    // Keyed like the composite: a composite shrunk to the
+                    // limit can match another level's size with other pixels.
+                    format!(
+                        "{}\0{}\0{}\0{}x{}",
+                        psd_key(asset, visible_layers, enabled_layers, disabled_layers),
+                        celesta_renderer::psd_source::level_for(density),
+                        self.max_texture_dimension,
+                        image.width,
+                        image.height
+                    ),
                     true,
-                    |renderer| {
-                        renderer
-                            .load_psd(asset, visible_layers, enabled_layers, disabled_layers)
-                            .cloned()
-                    },
+                    |_| DecodedImage::shared(image.width, image.height, image.pixels.clone()),
                 )?;
                 output.push(PreparedItem::Layer(PreparedLayer::new(
                     texture,
@@ -1624,7 +1718,22 @@ impl GpuRenderer {
                     .ok_or_else(|| GpuRenderError::MissingVideoDecoder(layer.id.clone()))?;
                 let frame =
                     decoder.decode_frame_for(&layer.id, &path, timing.source_time_seconds)?;
-                let image = DecodedImage::shared(frame.width, frame.height, frame.pixels)?;
+                let (width, height) =
+                    fit_within(frame.width, frame.height, self.max_texture_dimension);
+                // Checked against its size before anything reads it.
+                let mut image = DecodedImage::shared(frame.width, frame.height, frame.pixels)?;
+                if (width, height) != (frame.width, frame.height) {
+                    let pixels =
+                        resize_rgba(frame.width, frame.height, &image.pixels, width, height);
+                    image = DecodedImage::new(width, height, pixels.into_raw())?;
+                }
+                let mut state = state;
+                let x = (f64::from(frame.width) / f64::from(width)) as f32;
+                let y = (f64::from(frame.height) / f64::from(height)) as f32;
+                state.transform.a *= x;
+                state.transform.b *= x;
+                state.transform.c *= y;
+                state.transform.d *= y;
                 // Every frame brings new pixels, so video is never cached,
                 // and its mipmaps would be rebuilt every frame: only a final
                 // render of a frame shrunk to half size or less pays for them.
@@ -1644,12 +1753,21 @@ impl GpuRenderer {
                 max_width,
                 baseline_anchor,
             } => {
-                if let Some(fallback) = self.text_rasterizer.font_fallback(&layer.id, style)
-                    && !self.font_fallbacks.iter().any(|reported| {
+                if let Some(fallback) = self.text_rasterizer.font_fallback(&layer.id, style) {
+                    if !self.font_fallbacks.iter().any(|reported| {
                         reported.family == fallback.family && reported.weight == fallback.weight
+                    }) {
+                        self.font_fallbacks.push(fallback);
+                    }
+                } else if let Some(missing) =
+                    self.text_rasterizer.missing_glyphs(&layer.id, text, style)
+                    && !self.missing_glyphs.iter().any(|reported| {
+                        reported.family == missing.family
+                            && reported.weight == missing.weight
+                            && reported.characters == missing.characters
                     })
                 {
-                    self.font_fallbacks.push(fallback);
+                    self.missing_glyphs.push(missing);
                 }
                 let raster_scale = match self.render_quality {
                     RenderQuality::Draft => 1.0,
@@ -1661,7 +1779,7 @@ impl GpuRenderer {
                     "{TEXT_TEXTURE_PREFIX}{text}\0{style:?}\0{max_width:?}\0{raster_scale:?}"
                 );
                 let texture = self.cached_texture(key, false, |renderer| {
-                    let limit = renderer.device.limits().max_texture_dimension_2d;
+                    let limit = renderer.max_texture_dimension;
                     let mut scale = raster_scale;
                     let text = loop {
                         let text = renderer
@@ -1677,16 +1795,23 @@ impl GpuRenderer {
                         scale = (scale * limit as f32 / largest as f32 * 0.99).max(1.0);
                     };
                     let baseline = text.baseline_anchor();
+                    let origin = text.anchor_in_image(0.0, 0.0);
+                    let end = text.anchor_in_image(1.0, 1.0);
                     let mut image =
                         DecodedImage::new(text.width(), text.height(), text.into_pixels())?;
                     image.baseline_anchor = baseline;
+                    image.anchor_origin = origin;
+                    image.anchor_span = (end.0 - origin.0, end.1 - origin.1);
                     image.raster_scale = scale;
                     Ok(image)
                 })?;
                 let mut anchor = layer.transform.anchor;
-                if *baseline_anchor {
-                    anchor.y = texture.baseline_anchor;
-                }
+                anchor.x = texture.anchor_origin.0 + anchor.x * texture.anchor_span.0;
+                anchor.y = if *baseline_anchor {
+                    texture.baseline_anchor
+                } else {
+                    texture.anchor_origin.1 + anchor.y * texture.anchor_span.1
+                };
                 output.push(PreparedItem::Layer(PreparedLayer::new(
                     texture, anchor, state, blend_mode,
                 )));
@@ -1888,30 +2013,6 @@ impl GpuRenderer {
         Ok(index)
     }
 
-    fn load_psd(
-        &mut self,
-        asset: &ResolvedAsset,
-        visible_layers: &[String],
-        enabled_layers: &[String],
-        disabled_layers: &[String],
-    ) -> Result<&DecodedImage, GpuRenderError> {
-        let key = psd_key(asset, visible_layers, enabled_layers, disabled_layers);
-        if !self.images.contains_key(&key) {
-            let path = self.local_asset_path(asset)?;
-            let frame = celesta_renderer::rasterize_psd(
-                &asset.id,
-                &path,
-                visible_layers,
-                enabled_layers,
-                disabled_layers,
-            )
-            .map_err(GpuRenderError::Psd)?;
-            let image = DecodedImage::new(frame.width(), frame.height(), frame.pixels().to_vec())?;
-            self.images.insert(key.clone(), image);
-        }
-        Ok(self.images.get(&key).expect("PSD image was cached"))
-    }
-
     fn local_asset_path(&self, asset: &ResolvedAsset) -> Result<PathBuf, GpuRenderError> {
         resolve_asset_path(&self.asset_root, &asset.location).map_err(|source| {
             GpuRenderError::RemoteAsset {
@@ -2024,6 +2125,8 @@ fn upload_texture(
         width: image.width,
         height: image.height,
         baseline_anchor: image.baseline_anchor,
+        anchor_origin: image.anchor_origin,
+        anchor_span: image.anchor_span,
         raster_scale: image.raster_scale,
     }
 }
@@ -2156,6 +2259,11 @@ struct DecodedImage {
     pixels: Arc<Vec<u8>>,
     /// Normalized anchor `y` of the first text baseline; 0 for non-text images.
     baseline_anchor: f64,
+    /// Maps a layer anchor onto the image: `origin + anchor * span`, both
+    /// normalized. Text can be larger than the box its anchor refers to (a
+    /// stroke reaches past it); everything else is `(0, 0)` and `(1, 1)`.
+    anchor_origin: (f64, f64),
+    anchor_span: (f64, f64),
     /// Texels per layer unit: the scale text was rasterized at, else 1.
     raster_scale: f32,
 }
@@ -2184,6 +2292,8 @@ impl DecodedImage {
             height,
             pixels,
             baseline_anchor: 0.0,
+            anchor_origin: (0.0, 0.0),
+            anchor_span: (1.0, 1.0),
             raster_scale: 1.0,
         })
     }
@@ -2200,6 +2310,9 @@ struct LayerTexture {
     height: u32,
     /// See `DecodedImage::baseline_anchor`.
     baseline_anchor: f64,
+    /// See `DecodedImage::anchor_origin`.
+    anchor_origin: (f64, f64),
+    anchor_span: (f64, f64),
     /// See `DecodedImage::raster_scale`.
     raster_scale: f32,
 }
@@ -2252,9 +2365,63 @@ fn canvas_texture(
     }
 }
 
+/// An axis-aligned rectangle in canvas pixels: `[left, top, right, bottom]`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct PixelBounds([f32; 4]);
+
+impl PixelBounds {
+    fn union(a: Option<Self>, b: Option<Self>) -> Option<Self> {
+        match (a, b) {
+            (Some(Self(a)), Some(Self(b))) => Some(Self([
+                a[0].min(b[0]),
+                a[1].min(b[1]),
+                a[2].max(b[2]),
+                a[3].max(b[3]),
+            ])),
+            (a, None) => a,
+            (None, b) => b,
+        }
+    }
+
+    fn expand(self, x: f32, y: f32) -> Self {
+        let [left, top, right, bottom] = self.0;
+        Self([left - x, top - y, right + x, bottom + y])
+    }
+
+    fn offset(self, [x, y]: [f32; 2]) -> Self {
+        let [left, top, right, bottom] = self.0;
+        Self([left + x, top + y, right + x, bottom + y])
+    }
+
+    /// The whole pixels the rectangle touches, clipped to `size`, as a
+    /// scissor rect; `None` when nothing of it is on the canvas.
+    fn scissor(self, size: wgpu::Extent3d) -> Option<[u32; 4]> {
+        let [left, top, right, bottom] = self.0;
+        let clamp = |value: f32, limit: u32| value.clamp(0.0, limit as f32);
+        let left = clamp(left.floor(), size.width) as u32;
+        let top = clamp(top.floor(), size.height) as u32;
+        let right = clamp(right.ceil(), size.width) as u32;
+        let bottom = clamp(bottom.ceil(), size.height) as u32;
+        (right > left && bottom > top).then(|| [left, top, right - left, bottom - top])
+    }
+}
+
+/// How far, in pixels, a blur of `radius` (the Gaussian's sigma in
+/// `effect.wgsl`) can carry a pixel: its kernel's extent, plus one pixel for
+/// the bilinear tap a fractional shadow offset reads.
+fn blur_reach(radius: f32) -> f32 {
+    let sigma = radius.clamp(0.0, 64.0);
+    (sigma * 3.0).ceil() + 1.0
+}
+
 struct EffectProcessor {
     layout: wgpu::BindGroupLayout,
     pipeline: wgpu::RenderPipeline,
+    /// Scene-sized canvases effects filter through, kept across effects and
+    /// frames instead of allocating two or three per effect every frame. A
+    /// canvas goes back to the pool once the commands that read it are
+    /// encoded; the queue runs them in order, so reusing it later is safe.
+    pool: Vec<CanvasTexture>,
 }
 
 impl EffectProcessor {
@@ -2315,30 +2482,62 @@ impl EffectProcessor {
             multiview_mask: None,
             cache: None,
         });
-        Self { layout, pipeline }
+        Self {
+            layout,
+            pipeline,
+            pool: Vec::new(),
+        }
     }
 
+    /// A transparent-or-stale `width`x`height` canvas from the pool, or a new
+    /// one. Every user clears it before drawing.
+    fn take_canvas(
+        &mut self,
+        device: &wgpu::Device,
+        layer_layout: &wgpu::BindGroupLayout,
+        width: u32,
+        height: u32,
+    ) -> CanvasTexture {
+        self.pool.retain(|canvas| {
+            let size = canvas.texture.size();
+            size.width == width && size.height == height
+        });
+        self.pool
+            .pop()
+            .unwrap_or_else(|| canvas_texture(device, layer_layout, width, height))
+    }
+
+    fn recycle(&mut self, canvas: CanvasTexture) {
+        self.pool.push(canvas);
+    }
+
+    /// Blurs (and, with `color`, shifts and tints) `source`, whose layers
+    /// cover `content`. Each pass only shades the pixels its result can be
+    /// non-transparent at, so a small glow costs a small area, not the canvas.
     #[allow(clippy::too_many_arguments)]
     fn apply(
-        &self,
+        &mut self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         source: &CanvasTexture,
         layer_layout: &wgpu::BindGroupLayout,
+        content: PixelBounds,
         radius: f32,
         offset: [f32; 2],
         color: Option<[f32; 4]>,
     ) -> CanvasTexture {
         let size = source.texture.size();
+        let reach = blur_reach(radius);
         let horizontal =
-            (radius > 0.0).then(|| canvas_texture(device, layer_layout, size.width, size.height));
-        let vertical = canvas_texture(device, layer_layout, size.width, size.height);
+            (radius > 0.0).then(|| self.take_canvas(device, layer_layout, size.width, size.height));
+        let vertical = self.take_canvas(device, layer_layout, size.width, size.height);
         if let Some(horizontal) = &horizontal {
             self.pass(
                 device,
                 encoder,
                 &source.view,
-                &horizontal.view,
+                horizontal,
+                content.expand(reach, 0.0),
                 [1.0, 0.0],
                 radius,
                 [0.0, 0.0],
@@ -2349,12 +2548,16 @@ impl EffectProcessor {
             device,
             encoder,
             &horizontal.as_ref().unwrap_or(source).view,
-            &vertical.view,
+            &vertical,
+            content.expand(reach, reach).offset(offset),
             [0.0, 1.0],
             radius,
             offset,
             color,
         );
+        if let Some(horizontal) = horizontal {
+            self.recycle(horizontal);
+        }
         vertical
     }
 
@@ -2364,7 +2567,8 @@ impl EffectProcessor {
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         source: &wgpu::TextureView,
-        target: &wgpu::TextureView,
+        target: &CanvasTexture,
+        region: PixelBounds,
         direction: [f32; 2],
         radius: f32,
         offset: [f32; 2],
@@ -2407,9 +2611,14 @@ impl EffectProcessor {
         });
         let mut pass = begin_pass(
             encoder,
-            target,
+            &target.view,
             wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
         );
+        // Outside `region` the result is transparent, which the clear wrote.
+        let Some([x, y, width, height]) = region.scissor(target.texture.size()) else {
+            return;
+        };
+        pass.set_scissor_rect(x, y, width, height);
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &bind_group, &[]);
         pass.draw(0..3, 0..1);
@@ -2689,6 +2898,33 @@ impl PreparedLayer {
         output.extend(values.flat_map(f32::to_ne_bytes));
     }
 
+    /// Canvas pixels the layer's quad can touch: its transformed corners,
+    /// grown by a pixel for the filtered edge and the exact-copy rounding.
+    fn bounds(&self) -> PixelBounds {
+        let (texel_width, texel_height) = match &self.content {
+            PreparedContent::Texture(texture) => (texture.width, texture.height),
+            PreparedContent::Rect(rect) => (rect.pixel_width, rect.pixel_height),
+            PreparedContent::Canvas { .. } => unreachable!("only a group's end draws a canvas"),
+        };
+        let width = texel_width as f32 / self.raster_scale;
+        let height = texel_height as f32 / self.raster_scale;
+        let transform = self.state.transform;
+        let anchor = [self.anchor.x as f32, self.anchor.y as f32];
+        let corners = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]].map(|[u, v]| {
+            let x = (u - anchor[0]) * width;
+            let y = (v - anchor[1]) * height;
+            (
+                transform.a * x + transform.c * y + transform.tx,
+                transform.b * x + transform.d * y + transform.ty,
+            )
+        });
+        let xs = corners.map(|(x, _)| x);
+        let ys = corners.map(|(_, y)| y);
+        let min = |values: [f32; 4]| values.into_iter().fold(f32::INFINITY, f32::min);
+        let max = |values: [f32; 4]| values.into_iter().fold(f32::NEG_INFINITY, f32::max);
+        PixelBounds([min(xs), min(ys), max(xs), max(ys)]).expand(2.0, 2.0)
+    }
+
     /// The translation of a layer drawn texel for texel, moved so its
     /// top-left corner lands on a whole canvas pixel, as
     /// `celesta_renderer::render_image` places it. On a half pixel every pixel
@@ -2777,6 +3013,9 @@ enum GpuStep {
         final_instance: u32,
         blend_mode: BlendMode,
         effects: EffectSpec,
+        /// The part of the effect's canvas its layers drew on; `None` when
+        /// they drew nothing.
+        content: Option<PixelBounds>,
     },
 }
 
@@ -2795,6 +3034,21 @@ struct EffectSpec {
 }
 
 impl EffectSpec {
+    /// The canvas pixels the filtered result of layers covering `content`
+    /// can touch: the content itself, its blur, and each shifted shadow.
+    fn output_bounds(&self, content: PixelBounds) -> PixelBounds {
+        let mut bounds = content.expand(blur_reach(self.blur), blur_reach(self.blur));
+        for shadow in [self.shadow, self.glow].into_iter().flatten() {
+            let reach = blur_reach(shadow.blur);
+            bounds = PixelBounds::union(
+                Some(bounds),
+                Some(content.expand(reach, reach).offset(shadow.offset)),
+            )
+            .expect("both are some");
+        }
+        bounds
+    }
+
     fn parse(effects: &LayerEffects) -> Result<Self, GpuRenderError> {
         let parse_color = |color: &str| -> Result<[f32; 4], GpuRenderError> {
             let color = CpuColor::from_hex(color).map_err(GpuRenderError::Effects)?;
@@ -4139,6 +4393,81 @@ mod tests {
         );
     }
 
+    /// Effects filter only around what their layers cover; small, nested,
+    /// empty, and edge-crossing effects must still match the CPU
+    /// renderer, frame after frame as the pooled canvases are reused.
+    #[test]
+    fn effects_on_small_layers_match_cpu() {
+        use celesta_composition::{LayerEffects, LayerGlow, LayerShadow};
+
+        let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+            return;
+        };
+        let effect = |id: &str, effects: LayerEffects, layers: Vec<Layer>| Layer {
+            id: id.to_owned(),
+            transform: EvaluatedTransform::default(),
+            opacity: 1.0,
+            blend_mode: BlendMode::Normal,
+            effects,
+            content: LayerContent::Group { layers, clip: None },
+        };
+        let glow = |color: &str, blur: f64| LayerEffects {
+            glow: Some(LayerGlow {
+                color: color.to_owned(),
+                blur,
+            }),
+            ..LayerEffects::default()
+        };
+        let mut hidden = corner_rect("hidden", 40.0, 40.0, 8.0, 8.0, "#ffffff");
+        hidden.opacity = 0.0;
+        let mut nested = effect(
+            "nested",
+            LayerEffects::default(),
+            vec![corner_rect("inner", 84.0, 6.0, 8.0, 10.0, "#ff60c0")],
+        );
+        nested.blend_mode = BlendMode::Screen;
+        let mut scene = empty_scene(96, 64);
+        scene.layers = vec![
+            corner_rect("backdrop", 0.0, 0.0, 96.0, 64.0, "#203040"),
+            effect(
+                "small",
+                glow("#ffd060c0", 4.0),
+                vec![corner_rect("small", 18.0, 30.0, 10.0, 6.0, "#80ffa0")],
+            ),
+            effect(
+                "edge",
+                LayerEffects {
+                    blur: 1.0,
+                    shadow: Some(LayerShadow {
+                        color: "#000000a0".to_owned(),
+                        blur: 3.0,
+                        offset_x: 7.5,
+                        offset_y: -4.25,
+                    }),
+                    glow: None,
+                },
+                vec![nested],
+            ),
+            effect("empty", glow("#ff0000ff", 6.0), vec![hidden]),
+            effect(
+                "second",
+                glow("#60a0ffff", 2.5),
+                vec![corner_rect("dot", 50.0, 50.0, 4.0, 4.0, "#ffffff")],
+            ),
+        ];
+        let cpu = celesta_renderer::CpuRenderer::default()
+            .render(&scene)
+            .unwrap();
+        for frame in 0..3 {
+            let gpu = renderer.render(&scene).unwrap();
+            let difference = max_channel_difference(&gpu, &cpu);
+            assert!(
+                difference <= 5,
+                "frame {frame}: effect channels differ by up to {difference}"
+            );
+        }
+    }
+
     #[test]
     fn clips_groups_like_the_cpu_renderer() {
         let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
@@ -4973,6 +5302,249 @@ mod tests {
         assert_eq!(frame.pixels(), &[0, 0, 0, 255, 6, 17, 28, 255]);
     }
 
+    /// 8x4 pixels: red on the left half, blue on the right.
+    fn split_pixels() -> Vec<u8> {
+        (0..4)
+            .flat_map(|_| {
+                [[255, 0, 0, 255]; 4]
+                    .into_iter()
+                    .chain([[0, 0, 255, 255]; 4])
+            })
+            .flatten()
+            .collect()
+    }
+
+    /// Drawn over the whole 8x4 frame from a texture half that size, each
+    /// half keeps its color. Shrinking and enlarging blur the seam a little,
+    /// and the outermost pixels soften into the transparent surroundings as
+    /// any enlarged layer's do, so inner pixels are read for their hue.
+    fn assert_split(frame: &GpuFrame) {
+        let pixel = |x: usize, y: usize| &frame.pixels()[(y * 8 + x) * 4..][..4];
+        let red = |p: &[u8]| p[0] > 200 && p[1] == 0 && p[2] < 50 && p[3] == 255;
+        let blue = |p: &[u8]| p[0] < 50 && p[1] == 0 && p[2] > 200 && p[3] == 255;
+        for y in 1..3 {
+            for x in [1, 2] {
+                assert!(red(pixel(x, y)), "({x}, {y}): {:?}", pixel(x, y));
+            }
+            for x in [5, 6] {
+                assert!(blue(pixel(x, y)), "({x}, {y}): {:?}", pixel(x, y));
+            }
+        }
+    }
+
+    #[test]
+    fn shrinks_images_and_video_frames_larger_than_the_texture_limit() {
+        struct Decoder;
+
+        impl VideoFrameDecoder for Decoder {
+            fn decode_frame(&mut self, _: &Path, _: f64) -> Result<VideoFrame, MediaError> {
+                Ok(VideoFrame {
+                    width: 8,
+                    height: 4,
+                    pixels: split_pixels().into(),
+                })
+            }
+        }
+
+        let Some(renderer) = renderer(GpuRenderOptions {
+            background: Color::rgba(0, 0, 0, 255),
+        }) else {
+            return;
+        };
+        let mut renderer = renderer.with_video_decoder(Decoder);
+        renderer.max_texture_dimension = 4;
+        let transform = EvaluatedTransform {
+            position: Point { x: 4.0, y: 2.0 },
+            ..EvaluatedTransform::default()
+        };
+        let asset = |id: &str, path: &str| ResolvedAsset {
+            id: id.to_owned(),
+            location: AssetLocation::File {
+                path: path.to_owned(),
+            },
+        };
+
+        renderer.image_sources.insert_raster(
+            "split",
+            image::RgbaImage::from_raw(8, 4, split_pixels()).unwrap(),
+        );
+        let mut scene = empty_scene(8, 4);
+        scene.layers.push(Layer {
+            id: "image".to_owned(),
+            transform,
+            opacity: 1.0,
+            blend_mode: BlendMode::Normal,
+            effects: Default::default(),
+            content: LayerContent::Image {
+                width: None,
+                height: None,
+                fit: None,
+                asset: asset("split", "split.png"),
+            },
+        });
+        // Uploaded as is, the 8x4 image would exceed the 4-texel limit.
+        assert_split(&renderer.render(&scene).unwrap());
+        let texture = &renderer.textures.values().next().unwrap().texture;
+        assert_eq!((texture.width, texture.height), (4, 2));
+
+        scene.layers[0].content = LayerContent::Video {
+            asset: asset("clip", "clip.mp4"),
+            timing: MediaTiming {
+                local_time: Time::ZERO,
+                source_start: Time::ZERO,
+                source_time_seconds: 0.0,
+                playback_rate: 1.0,
+            },
+        };
+        assert_split(&renderer.render(&scene).unwrap());
+    }
+
+    #[test]
+    fn rejects_a_malformed_video_frame_larger_than_the_texture_limit() {
+        struct Decoder;
+
+        impl VideoFrameDecoder for Decoder {
+            fn decode_frame(&mut self, _: &Path, _: f64) -> Result<VideoFrame, MediaError> {
+                // One pixel short of 8x4.
+                Ok(VideoFrame {
+                    width: 8,
+                    height: 4,
+                    pixels: vec![0; 31 * 4].into(),
+                })
+            }
+        }
+
+        let Some(renderer) = renderer(GpuRenderOptions::default()) else {
+            return;
+        };
+        let mut renderer = renderer.with_video_decoder(Decoder);
+        renderer.max_texture_dimension = 4;
+        let mut scene = empty_scene(8, 4);
+        scene.layers.push(Layer {
+            id: "video".to_owned(),
+            transform: EvaluatedTransform::default(),
+            opacity: 1.0,
+            blend_mode: BlendMode::Normal,
+            effects: Default::default(),
+            content: LayerContent::Video {
+                asset: ResolvedAsset {
+                    id: "clip".to_owned(),
+                    location: AssetLocation::File {
+                        path: "clip.mp4".to_owned(),
+                    },
+                },
+                timing: MediaTiming {
+                    local_time: Time::ZERO,
+                    source_start: Time::ZERO,
+                    source_time_seconds: 0.0,
+                    playback_rate: 1.0,
+                },
+            },
+        });
+        assert!(matches!(
+            renderer.render(&scene),
+            Err(GpuRenderError::InvalidImageData { .. })
+        ));
+    }
+
+    #[test]
+    fn keeps_psd_composites_of_different_levels_apart_at_the_same_size() {
+        let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+            return;
+        };
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/assets/lipsync-fixture.psd");
+        renderer.max_texture_dimension = 80;
+        let portrait = |id: &str, scale: f64| Layer {
+            id: id.to_owned(),
+            transform: EvaluatedTransform {
+                position: Point { x: 120.0, y: 160.0 },
+                scale: Point { x: scale, y: scale },
+                ..EvaluatedTransform::default()
+            },
+            opacity: 1.0,
+            blend_mode: BlendMode::Normal,
+            effects: Default::default(),
+            content: LayerContent::Psd {
+                asset: ResolvedAsset {
+                    id: "fixture".to_owned(),
+                    location: AssetLocation::File {
+                        path: fixture.to_string_lossy().into_owned(),
+                    },
+                },
+                visible_layers: vec!["body".to_owned(), "body/base".to_owned()],
+                enabled_layers: Vec::new(),
+                disabled_layers: Vec::new(),
+            },
+        };
+        // At full size the 240x320 canvas is composited at 120x160 and
+        // shrunk to 60x80; at a quarter it is composited at 60x80 directly.
+        let mut scene = empty_scene(240, 320);
+        scene.layers = vec![portrait("full", 1.0), portrait("quarter", 0.25)];
+        renderer.render(&scene).unwrap();
+        assert_eq!(renderer.textures.len(), 2);
+        assert!(
+            renderer
+                .textures
+                .values()
+                .all(|cached| (cached.texture.width, cached.texture.height) == (60, 80))
+        );
+    }
+
+    #[test]
+    fn composites_a_psd_larger_than_the_texture_limit_at_the_limit() {
+        let Some(mut renderer) = renderer(GpuRenderOptions {
+            background: Color::TRANSPARENT,
+        }) else {
+            return;
+        };
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/assets/lipsync-fixture.psd");
+        renderer.max_texture_dimension = 100;
+        let preset: Vec<String> = ["body", "body/base", "body/outfit-navy"]
+            .map(str::to_owned)
+            .to_vec();
+        let mut scene = empty_scene(240, 320);
+        scene.layers.push(Layer {
+            id: "portrait".to_owned(),
+            transform: EvaluatedTransform {
+                position: Point { x: 120.0, y: 160.0 },
+                ..EvaluatedTransform::default()
+            },
+            opacity: 1.0,
+            blend_mode: BlendMode::Normal,
+            effects: Default::default(),
+            content: LayerContent::Psd {
+                asset: ResolvedAsset {
+                    id: "fixture".to_owned(),
+                    location: AssetLocation::File {
+                        path: fixture.to_string_lossy().into_owned(),
+                    },
+                },
+                visible_layers: preset.clone(),
+                enabled_layers: Vec::new(),
+                disabled_layers: Vec::new(),
+            },
+        });
+        let frame = renderer.render(&scene).unwrap();
+        let texture = &renderer.textures.values().next().unwrap().texture;
+        assert_eq!((texture.width, texture.height), (75, 100));
+
+        // Drawn at the PSD's full size: the shrunk composite is enlarged
+        // back over the whole canvas, so its solid areas match it.
+        let full = celesta_renderer::psd_source::PsdSources::default()
+            .render("fixture", &fixture, &preset, &[], &[], 1.0)
+            .unwrap();
+        for (x, y) in [(120, 236), (70, 190), (170, 280), (10, 10)] {
+            let index = (y * 240 + x) * 4;
+            assert_eq!(
+                frame.pixels()[index..index + 4],
+                full.pixels[index..index + 4],
+                "pixel ({x}, {y})"
+            );
+        }
+    }
+
     #[test]
     fn rasterizes_and_rotates_styled_text_on_the_gpu() {
         let Some(mut renderer) = renderer(GpuRenderOptions {
@@ -5062,6 +5634,66 @@ mod tests {
         scene.layers.clear();
         renderer.render(&scene).unwrap();
         assert!(renderer.font_fallbacks().is_empty());
+    }
+
+    #[test]
+    fn lists_text_layers_with_characters_their_family_has_no_glyph_for() {
+        let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+            return;
+        };
+        renderer.set_asset_root(concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/prism"));
+        let text = |id: &str, family: &str, value: &str| {
+            let mut layer = text_layer(id, Point { x: 0.0, y: 0.0 }, 1.0, 24.0);
+            if let LayerContent::Text { text, style, .. } = &mut layer.content {
+                *text = value.to_owned();
+                style.font_family = Some(family.to_owned());
+            }
+            layer
+        };
+        let mut scene = empty_scene(320, 80);
+        scene.fonts = vec![ResolvedAsset {
+            id: "bebas".to_owned(),
+            location: AssetLocation::File {
+                path: "assets/fonts/BebasNeue-Regular.ttf".to_owned(),
+            },
+        }];
+        scene.layers = vec![
+            text("title", "Bebas Neue", "CELESTA ずんだもん"),
+            // The same characters again: listed once, with the first layer.
+            text("subtitle", "Bebas Neue", "ずんだもん"),
+            text("caption", "Bebas Neue", "めたん"),
+            text("complete", "Bebas Neue", "CELESTA 2026"),
+            text("emoji", "Bebas Neue", "CELESTA 🎉"),
+            // A family with no face gets only the font fallback warning.
+            text("missing", "Celesta Missing Family", "ずんだもん"),
+        ];
+        renderer.render(&scene).unwrap();
+        let listed = renderer
+            .missing_glyphs()
+            .iter()
+            .map(|missing| {
+                (
+                    missing.layer.as_str(),
+                    missing.characters.iter().collect::<String>(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            listed,
+            [
+                ("title", "ずんだも".to_owned()),
+                ("caption", "めたん".to_owned()),
+            ]
+        );
+        assert_eq!(renderer.font_fallbacks().len(), 1);
+
+        // A cached text texture still reports its missing glyphs.
+        renderer.render(&scene).unwrap();
+        assert_eq!(renderer.missing_glyphs().len(), 2);
+
+        scene.layers.clear();
+        renderer.render(&scene).unwrap();
+        assert!(renderer.missing_glyphs().is_empty());
     }
 
     #[test]
@@ -5425,6 +6057,78 @@ mod tests {
             assert_eq!(quality.as_str().parse::<RenderQuality>(), Ok(quality));
         }
         assert!("best".parse::<RenderQuality>().is_err());
+    }
+
+    #[test]
+    fn a_stroked_text_layer_keeps_its_place_and_its_whole_stroke() {
+        let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+            return;
+        };
+        // Columns that differ from the black background, and the columns of
+        // the white fill on its own.
+        let mut extent = |stroke: Option<Stroke>| {
+            let mut scene = empty_scene(640, 240);
+            scene.layers.push(Layer {
+                id: "title".to_owned(),
+                transform: EvaluatedTransform {
+                    position: Point { x: 320.0, y: 120.0 },
+                    ..EvaluatedTransform::default()
+                },
+                opacity: 1.0,
+                blend_mode: BlendMode::Normal,
+                effects: Default::default(),
+                content: LayerContent::Text {
+                    text: "MW".to_owned(),
+                    style: TextStyle {
+                        font_size: Some(96.0),
+                        fill: Some(Paint::Solid {
+                            color: "#FFFFFFFF".to_owned(),
+                        }),
+                        stroke,
+                        ..TextStyle::default()
+                    },
+                    max_width: None,
+                    baseline_anchor: false,
+                },
+            });
+            let frame = renderer.render(&scene).unwrap();
+            let (mut ink, mut fill) = ((u32::MAX, 0), (u32::MAX, 0));
+            for (index, pixel) in frame.pixels().chunks_exact(4).enumerate() {
+                let x = index as u32 % frame.width();
+                if pixel[0] > 40 || pixel[1] > 40 {
+                    ink = (ink.0.min(x), ink.1.max(x));
+                }
+                if pixel[0] > 200 && pixel[2] > 200 {
+                    fill = (fill.0.min(x), fill.1.max(x));
+                }
+            }
+            (ink, fill)
+        };
+        let (plain_ink, plain_fill) = extent(None);
+        let (stroked_ink, stroked_fill) = extent(Some(Stroke {
+            paint: Paint::Solid {
+                color: "#FF0000FF".to_owned(),
+            },
+            width: 16.0,
+        }));
+        // The fill sits where it did without a stroke...
+        assert!(
+            plain_fill.0.abs_diff(stroked_fill.0) <= 1,
+            "{plain_fill:?} {stroked_fill:?}"
+        );
+        assert!(
+            plain_fill.1.abs_diff(stroked_fill.1) <= 1,
+            "{plain_fill:?} {stroked_fill:?}"
+        );
+        // ...and the stroke reaches its full width past both ends of it.
+        assert!(
+            plain_ink.0 - stroked_ink.0 >= 14,
+            "{plain_ink:?} {stroked_ink:?}"
+        );
+        assert!(
+            stroked_ink.1 - plain_ink.1 >= 14,
+            "{plain_ink:?} {stroked_ink:?}"
+        );
     }
 
     #[test]

@@ -7,7 +7,7 @@ a pure function of the frame. Original, locally synthesized 120 BPM score whose
 arrangement follows the picture; every cut lands on a beat.
 1920 × 1080 / 30 fps / 60 s.
 
-The composition is `film.tsx`; `poster.jpg` is a frame from the finished film.
+The composition is `film.tsx` (scenes in `scenes/`, shared pieces in `components/`); `poster.jpg` is a frame from the finished film.
 From the repository root:
 
 ```sh

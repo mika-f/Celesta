@@ -1,4 +1,4 @@
-export const repository = 'https://github.com/mika-f/Frameweave';
+export const repository = 'https://github.com/mika-f/Celesta';
 
 // Download links are injected at build time (see README → Download links).
 const env = import.meta.env;

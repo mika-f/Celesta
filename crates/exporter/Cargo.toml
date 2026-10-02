@@ -7,6 +7,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
 png = "0.18.1"
 celesta-composition = { path = "../composition" }
 celesta-evaluator = { path = "../evaluator" }

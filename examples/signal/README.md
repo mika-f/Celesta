@@ -5,7 +5,7 @@ accelerate into an animated signal; source code gives way to a live preview,
 a rotating radial composition, frame-accurate scrubbing, and a hard-cut
 title. Original, locally synthesized 120 BPM score. 1920 × 1080 / 30 fps.
 
-The composition is `film.tsx`; `poster.jpg` is a frame from the finished film.
+The composition is `film.tsx` (scenes in `scenes/`, shared pieces in `components/`); `poster.jpg` is a frame from the finished film.
 From the repository root:
 
 ```sh

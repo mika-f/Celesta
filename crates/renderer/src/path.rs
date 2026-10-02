@@ -182,12 +182,7 @@ pub fn rasterize_paths(
     Ok(Some(RasterizedPath {
         left: region.left,
         top: region.top,
-        image: RasterizedText {
-            width: region.width,
-            height: region.height,
-            baseline: 0.0,
-            pixels,
-        },
+        image: RasterizedText::whole(region.width, region.height, 0.0, pixels),
     }))
 }
 

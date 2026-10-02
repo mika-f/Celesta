@@ -1,5 +1,6 @@
 //! Frame-exact project export through the shared evaluator and renderers.
 
+mod contact_sheet;
 mod stills;
 
 use std::collections::{BTreeMap, HashSet};
@@ -23,6 +24,7 @@ use celesta_composition::{
 use celesta_evaluator::{EvaluationError, Evaluator};
 use celesta_gpu_renderer::{GpuRenderError, GpuRenderOptions, GpuRenderer, ReadbackFormat};
 pub use celesta_gpu_renderer::{RenderQuality, UnknownRenderQuality};
+pub use stills::{ContactSheet, FrameSelection, MAX_PNG_FRAMES, PngExport};
 use celesta_media::{AudioMixError, FfmpegBackend, mix_audio_graph_cancellable};
 use celesta_project::{LoadError, Project, TimelineContent};
 use celesta_react_bridge::{
@@ -868,7 +870,7 @@ impl Exporter {
             output,
         )?;
 
-        let mut reported_fallbacks = HashSet::new();
+        let mut reported_fallbacks = ReportedFontWarnings::default();
         let result = (|| {
             let evaluator = Evaluator::new(project).map_err(ExportError::Evaluation)?;
             for frame_index in 0..frame_count {
@@ -958,7 +960,7 @@ impl Exporter {
             output,
         )?;
 
-        let mut reported_fallbacks = HashSet::new();
+        let mut reported_fallbacks = ReportedFontWarnings::default();
         let result = (|| {
             for offset in 0..frame_count {
                 ensure_not_cancelled(cancellation)?;
@@ -1335,16 +1337,50 @@ fn open_video_writer(
         })
 }
 
+/// The font warnings an export has already reported, so a warning that holds
+/// on every frame is reported once.
+#[derive(Default)]
+struct ReportedFontWarnings {
+    /// Families and weights with no face.
+    fallbacks: HashSet<(String, u16)>,
+    /// Characters that a family and weight has no glyph for.
+    missing_glyphs: HashSet<(String, u16, char)>,
+}
+
 /// Reports each font family and weight the frame `renderer` last submitted
-/// draws with a fallback font, unless an earlier frame already did.
+/// draws with a fallback font, and each character it draws with a fallback
+/// font because its family has no glyph for it, unless an earlier frame
+/// already did.
 fn report_font_fallbacks(
     renderer: &GpuRenderer,
-    reported: &mut HashSet<(String, u16)>,
+    reported: &mut ReportedFontWarnings,
     progress: &mut impl FnMut(ExportProgress),
 ) {
     for fallback in renderer.font_fallbacks() {
-        if reported.insert((fallback.family.clone(), fallback.weight)) {
+        if reported
+            .fallbacks
+            .insert((fallback.family.clone(), fallback.weight))
+        {
             progress(ExportProgress::Warning(fallback.to_string()));
+        }
+    }
+    for missing in renderer.missing_glyphs() {
+        // Only the characters no earlier warning named: text that changes
+        // over time (subtitles) still reports each character once.
+        let characters = missing
+            .characters
+            .iter()
+            .copied()
+            .filter(|&character| {
+                reported
+                    .missing_glyphs
+                    .insert((missing.family.clone(), missing.weight, character))
+            })
+            .collect::<Vec<_>>();
+        if !characters.is_empty() {
+            let mut missing = missing.clone();
+            missing.characters = characters;
+            progress(ExportProgress::Warning(missing.to_string()));
         }
     }
 }
