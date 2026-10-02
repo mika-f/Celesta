@@ -353,9 +353,9 @@ fn exports_h265_tagged_hvc1_for_apple_players() {
     assert_eq!((width, height), (64, 64));
     assert!(find_audio_stream_info(&url).unwrap().is_some());
     // The sample entry survives the audio mux's stream copy as hvc1.
-    let bytes = std::fs::read(&output).unwrap();
-    assert!(bytes.windows(4).any(|fourcc| fourcc == b"hvc1"));
-    assert!(!bytes.windows(4).any(|fourcc| fourcc == b"hev1"));
+    let mut entries = sample_entry_types(&std::fs::read(&output).unwrap());
+    entries.sort();
+    assert_eq!(entries, [*b"hvc1", *b"mp4a"]);
 
     let mut decoder = FfmpegBackend::new();
     let first_frame = decoder.decode_frame(&output, 0.0).unwrap();
@@ -402,6 +402,48 @@ fn cancellation_before_export_does_not_create_output() {
         Err(ExportError::Cancelled)
     ));
     assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+}
+
+/// The sample entry FourCC of every track in an MP4, read from each
+/// `moov/trak/mdia/minf/stbl/stsd` box rather than by scanning the whole
+/// file, whose media data could hold any byte sequence.
+fn sample_entry_types(mp4: &[u8]) -> Vec<[u8; 4]> {
+    fn boxes(data: &[u8]) -> Vec<([u8; 4], &[u8])> {
+        let mut found = Vec::new();
+        let mut rest = data;
+        while rest.len() >= 8 {
+            let size = u32::from_be_bytes(rest[0..4].try_into().unwrap()) as u64;
+            let kind: [u8; 4] = rest[4..8].try_into().unwrap();
+            let (header, size) = match size {
+                0 => (8, rest.len() as u64),
+                1 => (16, u64::from_be_bytes(rest[8..16].try_into().unwrap())),
+                size => (8, size),
+            };
+            let size = usize::try_from(size).unwrap().min(rest.len());
+            found.push((kind, &rest[header..size]));
+            rest = &rest[size..];
+        }
+        found
+    }
+    fn child<'a>(data: &'a [u8], kind: &[u8; 4]) -> Option<&'a [u8]> {
+        boxes(data)
+            .into_iter()
+            .find_map(|(found, payload)| (&found == kind).then_some(payload))
+    }
+
+    let moov = child(mp4, b"moov").expect("MP4 has no moov box");
+    boxes(moov)
+        .into_iter()
+        .filter(|(kind, _)| kind == b"trak")
+        .flat_map(|(_, trak)| {
+            let stsd = [b"mdia", b"minf", b"stbl", b"stsd"]
+                .into_iter()
+                .try_fold(trak, |parent, kind| child(parent, kind))
+                .expect("track has no stsd box");
+            // stsd: version/flags and entry count precede the entries.
+            boxes(&stsd[8..]).into_iter().map(|(kind, _)| kind)
+        })
+        .collect()
 }
 
 fn workspace_root() -> PathBuf {

@@ -142,13 +142,13 @@ inventories, plus the repository's root `LICENSE*` files (copied automatically)
 and `packaging/GPL-SOURCE-OFFER.md`.
 
 Homebrew's `ffmpeg@8` formula enables the `x264` and `x265` encoders by
-default, which are GPL-2.0-or-later licensed and makes this binary package as a whole
-GPL-licensed in addition to Celesta's own MIT/Apache-2.0 source license; see
-[`../GPL-SOURCE-OFFER.md`](../GPL-SOURCE-OFFER.md) and the root
+default, which are GPL-2.0-or-later licensed and make this binary package as a
+whole GPL-licensed in addition to Celesta's own MIT/Apache-2.0 source license;
+see [`../GPL-SOURCE-OFFER.md`](../GPL-SOURCE-OFFER.md) and the root
 [`README.md`](../../README.md#license). That file's written offer, together
 with `LICENSE-GPL-2.0`, is how this package satisfies GPLv2 Section 3 without
-bundling full FFmpeg/x264/x265 source in every download. This is the same release
-concern described in the Windows packaging guide.
+bundling full FFmpeg/x264/x265 source in every download. This is the same
+release concern described in the Windows packaging guide.
 
 References: [Apple's notarization guide](https://developer.apple.com/documentation/security/notarizing-macos-software-before-distribution),
 [code signing in depth](https://developer.apple.com/library/archive/technotes/tn2206/),

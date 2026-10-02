@@ -286,12 +286,12 @@ export const sections: DocSection[] = [
     </>,
   },
   {
-    id: 'export', title: 'Export a video', description: 'Take your composition from the preview to an MP4.', keywords: 'mp4 H264 AAC render cli command line from to overwrite export', content: <>
+    id: 'export', title: 'Export a video', description: 'Take your composition from the preview to an MP4.', keywords: 'mp4 H264 H265 HEVC codec AAC render cli command line from to overwrite export', content: <>
       <h3>In your browser</h3><p>Open the <a href="/#playground">web editor</a>, change or open a TSX composition, and choose <strong>Export MP4</strong>. The source, preview, and export use Celesta’s React scene evaluator. Add local media files by name with <strong>Add media</strong>. The browser needs H.264 WebCodecs support; audio also needs AAC encoding. The browser preview is silent, while the exported MP4 includes constant-rate audio clips. For PSDs, project timelines, <code>prepare()</code>, third-party imports, animated audio automation, and native-renderer output, use the installed app or CLI.</p>
-      <h3>From the app</h3><p>Choose <strong>Export…</strong> and select an MP4 destination. For a section of the composition, press <kbd>I</kbd> and <kbd>O</kbd> to mark the start and end. The status bar shows progress; <strong>Cancel export</strong> stops the job.</p>
+      <h3>From the app</h3><p>Pick <strong>H.264</strong> or <strong>H.265</strong> in the codec menu next to <strong>Export…</strong>, then choose <strong>Export…</strong> and select an MP4 destination. For a section of the composition, press <kbd>I</kbd> and <kbd>O</kbd> to mark the start and end. The status bar shows progress; <strong>Cancel export</strong> stops the job.</p>
       <h3>From the command line</h3><ExportCommands />
-      <p>Time values accept seconds, <code>MM:SS.mmm</code>, or <code>HH:MM:SS.mmm</code>. The selected span becomes a new video starting at its own 00:00.</p>
-      <Note title="Before you render">MP4 output uses H.264 video and AAC audio. Width and height must be non-zero, even numbers. Keep every referenced local media file available during export.</Note>
+      <p>Time values accept seconds, <code>MM:SS.mmm</code>, or <code>HH:MM:SS.mmm</code>. The selected span becomes a new video starting at its own 00:00. Add <code>--codec h265</code> for H.265 (HEVC): smaller files at the same <code>--crf</code>, but slower to encode and not playable on some older devices and browsers.</p>
+      <Note title="Before you render">MP4 output uses AAC audio with H.264 video, or H.265 when chosen in the app or CLI; browser exports are always H.264. Width and height must be non-zero, even numbers. Keep every referenced local media file available during export.</Note>
     </>,
   },
   {
