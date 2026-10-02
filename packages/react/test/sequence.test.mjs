@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import { test } from 'vitest';
 import * as React from 'react';
 
 import { Audio, Composition, Sequence, Series, Text, useCurrentFrame, useVideoConfig } from '../dist/index.js';
