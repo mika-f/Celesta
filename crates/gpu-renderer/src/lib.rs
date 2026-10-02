@@ -20,12 +20,11 @@ use celesta_media::{MediaError, VideoFrameDecoder};
 use celesta_remote::{RemoteAssetError, resolve_asset_path};
 use celesta_renderer::{
     Color as CpuColor, FontFallback, MissingGlyphs, PathDraw, PathShape, PathTransform, RectPaint,
-    RenderError, TextRasterizer,
+    RenderError, ResolvedPaint, TextRasterizer,
     image_source::{fit_within, resize_rgba},
     rasterize_path, rasterize_paths, resolve_rect_paint,
 };
 
-use wgpu::util::DeviceExt;
 
 #[cfg(target_os = "macos")]
 mod native_preview;
@@ -282,10 +281,10 @@ pub struct GpuRenderer {
     texture_bind_group_layout: wgpu::BindGroupLayout,
     backdrop_bind_group_layout: wgpu::BindGroupLayout,
     render_quality: RenderQuality,
-    /// Scene-sized textures a frame that uses blend modes composites in: the
-    /// root canvas first, then one per level of isolated-group nesting.
-    /// Reused across frames of the same size.
-    canvases: Vec<CanvasTexture>,
+    /// The scene-sized texture a frame that uses blend modes or effects
+    /// composites in. Isolated groups and effects draw onto smaller canvases
+    /// from `effects`' pool. Reused across frames of the same size.
+    canvas: Option<CanvasTexture>,
     /// What a blended draw reads its backdrop from: a copy of the canvas it
     /// draws onto, taken just before the draw.
     backdrop: Option<BackdropTexture>,
@@ -301,6 +300,11 @@ pub struct GpuRenderer {
     clip_bind_group: wgpu::BindGroup,
     /// The clips the frame being prepared has entered so far.
     clip_entries: Vec<ClipEntry>,
+    /// Every gradient a rect of the frame being prepared is painted with,
+    /// laid out as `layer.wgsl`'s `paints` reads them; shares the clips'
+    /// bind group and is reused like them.
+    paints: wgpu::Buffer,
+    paint_entries: Vec<[f32; 4]>,
     /// Bound for draws that shade their content (rects) instead of sampling.
     placeholder_texture: LayerTexture,
     asset_root: PathBuf,
@@ -428,8 +432,9 @@ impl GpuRenderer {
         let clip_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Celesta layer clip bind group layout"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
+                // The clips, then the gradient paints.
+                entries: &[0, 1].map(|binding| wgpu::BindGroupLayoutEntry {
+                    binding,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: true },
@@ -437,7 +442,7 @@ impl GpuRenderer {
                         min_binding_size: None,
                     },
                     count: None,
-                }],
+                }),
             });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Celesta layer pipeline layout"),
@@ -461,7 +466,7 @@ impl GpuRenderer {
                 immediate_size: 0,
             });
         let shader = device.create_shader_module(wgpu::include_wgsl!("layer.wgsl"));
-        let effects = EffectProcessor::new(&device);
+        let effects = EffectProcessor::new(&device, &texture_bind_group_layout);
         let pipeline = create_pipeline(
             &device,
             &pipeline_layout,
@@ -476,7 +481,8 @@ impl GpuRenderer {
         );
         let instances = instance_buffer(&device, 1024 * LAYER_INSTANCE_SIZE);
         let clips = clip_buffer(&device, 64 * CLIP_ENTRY_SIZE);
-        let clip_bind_group = clip_bind_group(&device, &clip_bind_group_layout, &clips);
+        let paints = clip_buffer(&device, 64 * 16);
+        let clip_bind_group = clip_bind_group(&device, &clip_bind_group_layout, &clips, &paints);
         let placeholder_texture = upload_texture(
             &device,
             &queue,
@@ -500,7 +506,7 @@ impl GpuRenderer {
             texture_bind_group_layout,
             backdrop_bind_group_layout,
             render_quality: RenderQuality::default(),
-            canvases: Vec::new(),
+            canvas: None,
             backdrop: None,
             effects,
             instances,
@@ -508,6 +514,8 @@ impl GpuRenderer {
             clips,
             clip_bind_group,
             clip_entries: Vec::new(),
+            paints,
+            paint_entries: Vec::new(),
             placeholder_texture,
             asset_root: PathBuf::from("."),
             psd_sources: Default::default(),
@@ -1032,6 +1040,7 @@ impl GpuRenderer {
         }
         self.texture_generation += 1;
         self.clip_entries.clear();
+        self.paint_entries.clear();
         self.font_fallbacks.clear();
         self.missing_glyphs.clear();
         let mut items = Vec::new();
@@ -1071,67 +1080,71 @@ impl GpuRenderer {
         if size > self.device.limits().max_buffer_size || u32::try_from(instance_count).is_err() {
             return Err(GpuRenderError::TooManyLayers(instance_count));
         }
+        let root = CanvasRegion::scene(scene.width, scene.height);
+        let mut groups = plan_groups(&items, root).into_iter();
         let mut instances = Vec::with_capacity(size as usize);
         let mut steps: Vec<GpuStep> = Vec::new();
-        let mut depth = 0;
-        let mut canvases = 1;
         let mut index = 0_u32;
-        // What each open canvas has drawn so far, in canvas pixels, so an
-        // effect only filters the part of its canvas its layers cover.
-        let mut covered: Vec<Option<PixelBounds>> = vec![None];
-        let cover = |covered: &mut Vec<Option<PixelBounds>>, bounds: Option<PixelBounds>| {
-            let top = covered.last_mut().expect("the root canvas is always open");
-            *top = PixelBounds::union(*top, bounds);
-        };
+        // The canvas each open group draws onto, the root canvas first.
+        let mut open = vec![GroupPlan {
+            canvas: root,
+            content: None,
+            drawn: true,
+        }];
         for item in items {
+            let target = open.last().expect("the root canvas is always open").canvas;
             let layer = match item {
-                PreparedItem::Layer(layer) => {
-                    cover(&mut covered, Some(layer.bounds()));
-                    layer
-                }
+                PreparedItem::Layer(layer) => layer,
                 PreparedItem::Paths(_) => unreachable!("paths are rasterized into layers"),
                 PreparedItem::BeginGroup => {
-                    depth += 1;
-                    canvases = canvases.max(depth + 1);
-                    covered.push(None);
-                    steps.push(GpuStep::BeginGroup);
+                    let group = groups.next().expect("plan_groups plans every group");
+                    steps.push(GpuStep::BeginGroup {
+                        canvas: group.canvas,
+                    });
+                    open.push(group);
                     continue;
                 }
                 PreparedItem::EndGroup(layer) => {
-                    depth -= 1;
-                    let inner = covered.pop().flatten();
-                    cover(&mut covered, inner);
-                    layer.write_instance(scene.width, scene.height, &mut instances);
+                    let group = open.pop().expect("every group was begun");
+                    let target = open.last().expect("the root canvas is always open").canvas;
+                    layer.write_instance(target, group.canvas, &mut instances);
                     steps.push(GpuStep::EndGroup {
                         instance: index,
                         blend_mode: layer.blend_mode,
+                        area: group
+                            .drawn
+                            .then(|| target.local_area(group.canvas.bounds()))
+                            .flatten(),
                     });
                     index += 1;
                     continue;
                 }
                 PreparedItem::EndEffect(layer, effects) => {
-                    depth -= 1;
-                    let content = covered.pop().flatten();
-                    cover(
-                        &mut covered,
-                        content.map(|content| effects.output_bounds(content)),
-                    );
+                    let group = open.pop().expect("every group was begun");
+                    let target = open.last().expect("the root canvas is always open").canvas;
                     PreparedLayer::canvas(LayerState::default(), BlendMode::Normal, true)
-                        .write_instance(scene.width, scene.height, &mut instances);
-                    layer.write_instance(scene.width, scene.height, &mut instances);
+                        .write_instance(group.canvas, group.canvas, &mut instances);
+                    layer.write_instance(target, group.canvas, &mut instances);
                     steps.push(GpuStep::EndEffect {
                         inner_instance: index,
                         final_instance: index + 1,
                         blend_mode: layer.blend_mode,
                         effects,
-                        content,
+                        content: group
+                            .content
+                            .filter(|_| group.drawn)
+                            .map(|content| group.canvas.local(content)),
+                        area: target.local_area(group.canvas.bounds()),
                     });
                     index += 2;
                     continue;
                 }
             };
-            layer.write_instance(scene.width, scene.height, &mut instances);
+            layer.write_instance(target, target, &mut instances);
             let blend_mode = layer.blend_mode;
+            let area = (!blend_mode.is_normal())
+                .then(|| target.local_area(layer.bounds()))
+                .flatten();
             let texture = match layer.content {
                 PreparedContent::Texture(texture) => texture,
                 PreparedContent::Rect(_) => self.placeholder_texture.clone(),
@@ -1142,7 +1155,11 @@ impl GpuRenderer {
                 instances: index..index + 1,
             };
             if !blend_mode.is_normal() {
-                steps.push(GpuStep::Blend { draw, blend_mode });
+                steps.push(GpuStep::Blend {
+                    draw,
+                    blend_mode,
+                    area,
+                });
             } else {
                 match steps.last_mut() {
                     Some(GpuStep::Draw(last))
@@ -1158,10 +1175,9 @@ impl GpuRenderer {
         let composite =
             composited.then(|| {
                 PreparedLayer::canvas(LayerState::default(), BlendMode::Normal, false)
-                    .write_instance(scene.width, scene.height, &mut instances);
+                    .write_instance(root, root, &mut instances);
                 CompositePlan {
                     blit_instance: index,
-                    canvases,
                 }
             });
         if size > self.instances.size() {
@@ -1174,12 +1190,32 @@ impl GpuRenderer {
             self.queue.write_buffer(&self.instances, 0, &instances);
         }
 
-        // The clips the layers above point into, uploaded like the instances.
+        // The clips and paints the layers above point into, uploaded like
+        // the instances.
         let clip_size = self.clip_entries.len() as u64 * CLIP_ENTRY_SIZE;
-        if clip_size > self.clips.size() {
-            self.clips = clip_buffer(&self.device, clip_size.next_power_of_two());
-            self.clip_bind_group =
-                clip_bind_group(&self.device, &self.clip_bind_group_layout, &self.clips);
+        let paint_size = self.paint_entries.len() as u64 * 16;
+        if clip_size > self.clips.size() || paint_size > self.paints.size() {
+            if clip_size > self.clips.size() {
+                self.clips = clip_buffer(&self.device, clip_size.next_power_of_two());
+            }
+            if paint_size > self.paints.size() {
+                self.paints = clip_buffer(&self.device, paint_size.next_power_of_two());
+            }
+            self.clip_bind_group = clip_bind_group(
+                &self.device,
+                &self.clip_bind_group_layout,
+                &self.clips,
+                &self.paints,
+            );
+        }
+        if !self.paint_entries.is_empty() {
+            let bytes: Vec<u8> = self
+                .paint_entries
+                .iter()
+                .flatten()
+                .flat_map(|value| value.to_ne_bytes())
+                .collect();
+            self.queue.write_buffer(&self.paints, 0, &bytes);
         }
         if !self.clip_entries.is_empty() {
             let bytes: Vec<u8> = self
@@ -1208,8 +1244,8 @@ impl GpuRenderer {
         let viewport =
             PreviewViewport::fit(scene.width, scene.height, target.width, target.height)?;
         let background = self.options.background.as_wgpu();
-        if let Some(plan) = &draws.composite {
-            self.encode_composited(encoder, scene, draws, plan);
+        if draws.composite.is_some() {
+            self.encode_composited(encoder, scene, draws);
         }
         let kind = if draws.composite.is_some() {
             PipelineKind::Blit
@@ -1231,7 +1267,8 @@ impl GpuRenderer {
         pass.set_vertex_buffer(0, draws.instances.slice(..));
         pass.set_bind_group(2, &draws.clips, &[]);
         if let Some(plan) = &draws.composite {
-            pass.set_bind_group(0, &self.canvases[0].bind_group, &[]);
+            let canvas = self.canvas.as_ref().expect("encode_composited creates it");
+            pass.set_bind_group(0, &canvas.bind_group, &[]);
             pass.draw(0..6, plan.blit_instance..plan.blit_instance + 1);
             return Ok(());
         }
@@ -1245,234 +1282,66 @@ impl GpuRenderer {
         Ok(())
     }
 
-    /// Draws a frame that uses blend modes or isolated groups onto scene-sized
-    /// canvases, leaving the result in `self.canvases[0]` for `encode_draws`
-    /// to copy onto the target. Canvases hold premultiplied alpha, which is
-    /// what source-over blending onto a cleared texture produces.
+    /// Draws a frame that uses blend modes, isolated groups or effects onto
+    /// the scene-sized root canvas (each group through a canvas of its own),
+    /// leaving the result in `self.canvas` for `encode_draws` to copy onto
+    /// the target. Canvases hold premultiplied alpha, which is what
+    /// source-over blending onto a cleared texture produces.
     fn encode_composited(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         scene: &Scene,
         draws: &PreparedDraws,
-        plan: &CompositePlan,
     ) {
         const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
-        self.prepare_canvases(scene.width, scene.height, plan.canvases);
+        self.prepare_canvases(scene.width, scene.height);
         self.ensure_pipeline(FORMAT, PipelineKind::Layer);
         self.ensure_pipeline(FORMAT, PipelineKind::Blend);
-        let layer_pipeline = &self.pipelines[&(FORMAT, PipelineKind::Layer)];
-        let blend_pipeline = &self.pipelines[&(FORMAT, PipelineKind::Blend)];
-        let backdrop = self.backdrop.as_ref().expect("prepare_canvases creates it");
-        let size = wgpu::Extent3d {
-            width: scene.width,
-            height: scene.height,
-            depth_or_array_layers: 1,
+        // Each effect filters through at most two passes per shadow, glow
+        // and blur.
+        let effects = draws
+            .steps
+            .iter()
+            .filter(|step| matches!(step, GpuStep::EndEffect { .. }))
+            .count();
+        self.effects.begin_frame(&self.device, effects * 6);
+        let root = self.canvas.clone().expect("prepare_canvases creates it");
+        let mut compositor = Compositor {
+            device: &self.device,
+            texture_layout: &self.texture_bind_group_layout,
+            layer_pipeline: &self.pipelines[&(FORMAT, PipelineKind::Layer)],
+            blend_pipeline: &self.pipelines[&(FORMAT, PipelineKind::Blend)],
+            backdrop: self.backdrop.as_ref().expect("prepare_canvases creates it"),
+            draws,
+            effects: &mut self.effects,
         };
-        // Draws `instances` onto `canvas`, blending through `blend_mode`.
-        let draw = |encoder: &mut wgpu::CommandEncoder,
-                    canvas: &CanvasTexture,
-                    bind_group: &wgpu::BindGroup,
-                    instances: std::ops::Range<u32>,
-                    blend_mode: BlendMode| {
-            if blend_mode.is_normal() {
-                let mut pass = begin_pass(encoder, &canvas.view, wgpu::LoadOp::Load);
-                pass.set_pipeline(layer_pipeline);
-                pass.set_vertex_buffer(0, draws.instances.slice(..));
-                pass.set_bind_group(0, bind_group, &[]);
-                pass.set_bind_group(2, &draws.clips, &[]);
-                pass.draw(0..6, instances);
-                return;
-            }
-            encoder.copy_texture_to_texture(
-                canvas.texture.as_image_copy(),
-                backdrop.texture.as_image_copy(),
-                size,
-            );
-            let mut pass = begin_pass(encoder, &canvas.view, wgpu::LoadOp::Load);
-            pass.set_pipeline(blend_pipeline);
-            pass.set_vertex_buffer(0, draws.instances.slice(..));
-            pass.set_bind_group(0, bind_group, &[]);
-            pass.set_bind_group(1, &backdrop.bind_group, &[]);
-            pass.set_bind_group(2, &draws.clips, &[]);
-            pass.draw(0..6, instances);
-        };
-
-        let background = self.options.background.as_wgpu();
-        drop(begin_pass(
+        compositor.draw_canvas(
             encoder,
-            &self.canvases[0].view,
-            wgpu::LoadOp::Clear(background),
-        ));
-        let mut depth = 0;
-        let mut steps = draws.steps.iter().peekable();
-        while let Some(step) = steps.next() {
-            let canvas = &self.canvases[depth];
-            match step {
-                GpuStep::Draw(first) => {
-                    // One pass for the whole run of source-over draws.
-                    let mut pass = begin_pass(encoder, &canvas.view, wgpu::LoadOp::Load);
-                    pass.set_pipeline(layer_pipeline);
-                    pass.set_vertex_buffer(0, draws.instances.slice(..));
-                    pass.set_bind_group(0, &first.texture.bind_group, &[]);
-                    pass.set_bind_group(2, &draws.clips, &[]);
-                    pass.draw(0..6, first.instances.clone());
-                    while let Some(GpuStep::Draw(next)) = steps.peek() {
-                        pass.set_bind_group(0, &next.texture.bind_group, &[]);
-                        pass.draw(0..6, next.instances.clone());
-                        steps.next();
-                    }
-                }
-                GpuStep::Blend {
-                    draw: layer,
-                    blend_mode,
-                } => draw(
-                    encoder,
-                    canvas,
-                    &layer.texture.bind_group,
-                    layer.instances.clone(),
-                    *blend_mode,
-                ),
-                GpuStep::BeginGroup => {
-                    depth += 1;
-                    drop(begin_pass(
-                        encoder,
-                        &self.canvases[depth].view,
-                        wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                    ));
-                }
-                GpuStep::EndGroup {
-                    instance,
-                    blend_mode,
-                } => {
-                    depth -= 1;
-                    draw(
-                        encoder,
-                        &self.canvases[depth],
-                        &canvas.bind_group,
-                        *instance..*instance + 1,
-                        *blend_mode,
-                    );
-                }
-                GpuStep::EndEffect {
-                    inner_instance,
-                    final_instance,
-                    blend_mode,
-                    effects,
-                    content,
-                } => {
-                    depth -= 1;
-                    // Layers that drew nothing leave nothing to filter.
-                    let Some(content) = *content else {
-                        continue;
-                    };
-                    let source = &self.canvases[depth + 1];
-                    let result = self.effects.take_canvas(
-                        &self.device,
-                        &self.texture_bind_group_layout,
-                        scene.width,
-                        scene.height,
-                    );
-                    drop(begin_pass(
-                        encoder,
-                        &result.view,
-                        wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                    ));
-                    for shadow in [effects.shadow, effects.glow].into_iter().flatten() {
-                        let filtered = self.effects.apply(
-                            &self.device,
-                            encoder,
-                            source,
-                            &self.texture_bind_group_layout,
-                            content,
-                            shadow.blur,
-                            shadow.offset,
-                            Some(shadow.color),
-                        );
-                        draw(
-                            encoder,
-                            &result,
-                            &filtered.bind_group,
-                            *inner_instance..*inner_instance + 1,
-                            BlendMode::Normal,
-                        );
-                        self.effects.recycle(filtered);
-                    }
-                    let filtered = (effects.blur > 0.0).then(|| {
-                        self.effects.apply(
-                            &self.device,
-                            encoder,
-                            source,
-                            &self.texture_bind_group_layout,
-                            content,
-                            effects.blur,
-                            [0.0, 0.0],
-                            None,
-                        )
-                    });
-                    draw(
-                        encoder,
-                        &result,
-                        &filtered.as_ref().unwrap_or(source).bind_group,
-                        *inner_instance..*inner_instance + 1,
-                        BlendMode::Normal,
-                    );
-                    if let Some(filtered) = filtered {
-                        self.effects.recycle(filtered);
-                    }
-                    draw(
-                        encoder,
-                        &self.canvases[depth],
-                        &result.bind_group,
-                        *final_instance..*final_instance + 1,
-                        *blend_mode,
-                    );
-                    self.effects.recycle(result);
-                }
-            }
-        }
+            &root,
+            self.options.background.as_wgpu(),
+            &draws.steps,
+        );
+        self.effects.end_frame(&self.queue);
     }
 
-    /// Makes sure `count` canvases and the backdrop exist at `width`x`height`.
-    fn prepare_canvases(&mut self, width: u32, height: u32, count: usize) {
+    /// Makes sure the root canvas and the backdrop exist at `width`x`height`.
+    fn prepare_canvases(&mut self, width: u32, height: u32) {
         let size = wgpu::Extent3d {
             width,
             height,
             depth_or_array_layers: 1,
         };
         if self
-            .canvases
-            .first()
-            .is_some_and(|canvas| canvas.texture.size() != size)
+            .canvas
+            .as_ref()
+            .is_none_or(|canvas| canvas.texture.size() != size)
         {
-            self.canvases.clear();
-        }
-        while self.canvases.len() < count {
-            let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("Celesta canvas"),
-                size,
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8Unorm,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING
-                    | wgpu::TextureUsages::COPY_SRC,
-                view_formats: &[],
-            });
-            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-            let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Celesta canvas bind group"),
-                layout: &self.texture_bind_group_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                }],
-            });
-            self.canvases.push(CanvasTexture {
-                texture,
-                view,
-                bind_group,
-            });
+            self.canvas = Some(canvas_texture(
+                &self.device,
+                &self.texture_bind_group_layout,
+                width,
+                height,
+            ));
         }
         if self
             .backdrop
@@ -1824,55 +1693,24 @@ impl GpuRenderer {
                 corner_radius,
             } => {
                 // Shaded on the GPU rather than rasterized into a texture:
-                // animated rects change size every frame, and a texture per
-                // rect per frame dominates the cost of dense geometry.
+                // animated rects change size (and gradients colors) every
+                // frame, and a texture per rect per frame dominates the cost
+                // of dense geometry and of full-screen gradients alike.
                 let paint = resolve_rect_paint(fill.as_ref(), stroke.as_ref())
                     .map_err(GpuRenderError::Text)?;
-                let flat = paint
-                    .fill
-                    .as_ref()
-                    .is_none_or(|fill| fill.solid().is_some())
-                    && paint
-                        .stroke
-                        .as_ref()
-                        .is_none_or(|(stroke, _)| stroke.solid().is_some());
-                if flat {
-                    output.push(PreparedItem::Layer(PreparedLayer {
-                        content: PreparedContent::Rect(RectShape::new(
-                            *width,
-                            *height,
-                            *corner_radius,
-                            paint,
-                        )),
-                        anchor: layer.transform.anchor,
-                        state,
-                        blend_mode,
-                        raster_scale: 1.0,
-                    }));
-                } else {
-                    // The shader only knows flat colors; a gradient goes
-                    // through the CPU rasterizer, which the shader matches
-                    // texel for texel for flat rects.
-                    let key =
-                        format!("rect\0{width}\0{height}\0{corner_radius}\0{fill:?}\0{stroke:?}");
-                    let texture = self.cached_texture(key, true, |_| {
-                        let rect = celesta_renderer::rasterize_rect(
-                            *width,
-                            *height,
-                            *corner_radius,
-                            fill.as_ref(),
-                            stroke.as_ref(),
-                        )
-                        .map_err(GpuRenderError::Text)?;
-                        DecodedImage::new(rect.width(), rect.height(), rect.into_pixels())
-                    })?;
-                    output.push(PreparedItem::Layer(PreparedLayer::new(
-                        texture,
-                        layer.transform.anchor,
-                        state,
-                        blend_mode,
-                    )));
-                }
+                output.push(PreparedItem::Layer(PreparedLayer {
+                    content: PreparedContent::Rect(RectShape::new(
+                        *width,
+                        *height,
+                        *corner_radius,
+                        paint,
+                        &mut self.paint_entries,
+                    )),
+                    anchor: layer.transform.anchor,
+                    state,
+                    blend_mode,
+                    raster_scale: 1.0,
+                }));
             }
             LayerContent::Path { .. } => {
                 // Rasterized later, in output pixels with the whole transform
@@ -2322,6 +2160,7 @@ struct CachedTexture {
     last_used: u64,
 }
 
+#[derive(Clone)]
 struct CanvasTexture {
     texture: wgpu::Texture,
     view: wgpu::TextureView,
@@ -2336,7 +2175,7 @@ fn canvas_texture(
     height: u32,
 ) -> CanvasTexture {
     let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("Celesta effect canvas"),
+        label: Some("Celesta canvas"),
         size: wgpu::Extent3d {
             width,
             height,
@@ -2346,12 +2185,15 @@ fn canvas_texture(
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Rgba8Unorm,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        // Copied from when a blended draw takes its backdrop.
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("Celesta effect layer bind group"),
+        label: Some("Celesta canvas bind group"),
         layout,
         entries: &[wgpu::BindGroupEntry {
             binding: 0,
@@ -2406,6 +2248,85 @@ impl PixelBounds {
     }
 }
 
+/// The part of the scene a canvas covers, in whole scene pixels: its
+/// top-left corner and the size of its texture.
+///
+/// The root canvas covers the whole scene. An isolated group or an effect
+/// draws onto a canvas that only covers what its layers can touch, so a
+/// small glow composites through a small texture rather than several
+/// scene-sized ones (each render pass loads and stores its whole target).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CanvasRegion {
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+}
+
+impl CanvasRegion {
+    /// Group canvases are sized in steps of this many pixels, so a region
+    /// that moves or grows a little from frame to frame reuses its texture.
+    const STEP: u32 = 128;
+
+    const fn scene(width: u32, height: u32) -> Self {
+        Self {
+            x: 0,
+            y: 0,
+            width,
+            height,
+        }
+    }
+
+    /// A canvas inside the `scene` that covers `bounds` (clipped to the
+    /// scene), or `None` when nothing of `bounds` is on it. The canvas never
+    /// reaches past the scene, so what is drawn onto it is exactly what a
+    /// scene-sized canvas would hold there.
+    fn covering(bounds: Option<PixelBounds>, scene: Self) -> Option<Self> {
+        let [left, top, width, height] = bounds?.scissor(wgpu::Extent3d {
+            width: scene.width,
+            height: scene.height,
+            depth_or_array_layers: 1,
+        })?;
+        let step = |extent: u32, limit: u32| (extent.div_ceil(Self::STEP) * Self::STEP).min(limit);
+        let width = step(width, scene.width);
+        let height = step(height, scene.height);
+        Some(Self {
+            x: left.min(scene.width - width),
+            y: top.min(scene.height - height),
+            width,
+            height,
+        })
+    }
+
+    /// `bounds`, in scene pixels, in this canvas's own pixels.
+    fn local(self, bounds: PixelBounds) -> PixelBounds {
+        bounds.offset([-(self.x as f32), -(self.y as f32)])
+    }
+
+    /// `bounds`, in scene pixels, in this canvas's pixels and clipped to
+    /// it, as `[x, y, width, height]`; `None` when it misses the canvas.
+    fn local_area(self, bounds: PixelBounds) -> Option<[u32; 4]> {
+        self.local(bounds).scissor(self.extent())
+    }
+
+    const fn extent(self) -> wgpu::Extent3d {
+        wgpu::Extent3d {
+            width: self.width,
+            height: self.height,
+            depth_or_array_layers: 1,
+        }
+    }
+
+    fn bounds(self) -> PixelBounds {
+        PixelBounds([
+            self.x as f32,
+            self.y as f32,
+            (self.x + self.width) as f32,
+            (self.y + self.height) as f32,
+        ])
+    }
+}
+
 /// How far, in pixels, a blur of `radius` (the Gaussian's sigma in
 /// `effect.wgsl`) can carry a pixel: its kernel's extent, plus one pixel for
 /// the bilinear tap a fractional shadow offset reads.
@@ -2415,45 +2336,49 @@ fn blur_reach(radius: f32) -> f32 {
 }
 
 struct EffectProcessor {
-    layout: wgpu::BindGroupLayout,
+    params_layout: wgpu::BindGroupLayout,
     pipeline: wgpu::RenderPipeline,
-    /// Scene-sized canvases effects filter through, kept across effects and
-    /// frames instead of allocating two or three per effect every frame. A
-    /// canvas goes back to the pool once the commands that read it are
-    /// encoded; the queue runs them in order, so reusing it later is safe.
-    pool: Vec<CanvasTexture>,
+    /// Canvases groups draw onto and effects filter through, kept across
+    /// effects and frames instead of allocating several per effect every
+    /// frame, each with the frame it was last taken in. A canvas goes back
+    /// to the pool once the commands that read it are encoded; the queue
+    /// runs them in order, so reusing it later is safe.
+    pool: Vec<(CanvasTexture, u64)>,
+    /// Counts composited frames; see `end_frame`.
+    frame: u64,
+    /// Every filter pass's `Params` of the frame being encoded, one per
+    /// `params_stride` bytes, written to `params` once the frame is encoded
+    /// and read with a dynamic offset: a dense frame has hundreds of passes,
+    /// and a buffer and a bind group each would dominate their cost.
+    params: wgpu::Buffer,
+    params_bind_group: wgpu::BindGroup,
+    params_data: Vec<u8>,
+    params_stride: u32,
 }
 
+/// Bytes of `Params` in `effect.wgsl`: three `vec4<f32>`s.
+const EFFECT_PARAMS_SIZE: u64 = 3 * 4 * 4;
+
 impl EffectProcessor {
-    fn new(device: &wgpu::Device) -> Self {
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Celesta effect bind group layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
+    /// Reads its source through `texture_layout` (`layer.wgsl`'s), so a
+    /// canvas's own bind group serves both shaders.
+    fn new(device: &wgpu::Device, texture_layout: &wgpu::BindGroupLayout) -> Self {
+        let params_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Celesta effect parameters bind group layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: true,
+                    min_binding_size: wgpu::BufferSize::new(EFFECT_PARAMS_SIZE),
                 },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
+                count: None,
+            }],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Celesta effect pipeline layout"),
-            bind_group_layouts: &[Some(&layout)],
+            bind_group_layouts: &[Some(texture_layout), Some(&params_layout)],
             immediate_size: 0,
         });
         let shader = device.create_shader_module(wgpu::include_wgsl!("effect.wgsl"));
@@ -2482,11 +2407,72 @@ impl EffectProcessor {
             multiview_mask: None,
             cache: None,
         });
+        let params_stride = device
+            .limits()
+            .min_uniform_buffer_offset_alignment
+            .max(EFFECT_PARAMS_SIZE as u32);
+        let (params, params_bind_group) =
+            Self::params_buffer(device, &params_layout, u64::from(params_stride) * 64);
         Self {
-            layout,
+            params_layout,
             pipeline,
             pool: Vec::new(),
+            frame: 0,
+            params,
+            params_bind_group,
+            params_data: Vec::new(),
+            params_stride,
         }
+    }
+
+    fn params_buffer(
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        size: u64,
+    ) -> (wgpu::Buffer, wgpu::BindGroup) {
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Celesta effect parameters"),
+            size,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Celesta effect parameters"),
+            layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                    buffer: &buffer,
+                    offset: 0,
+                    size: wgpu::BufferSize::new(EFFECT_PARAMS_SIZE),
+                }),
+            }],
+        });
+        (buffer, bind_group)
+    }
+
+    /// Starts a frame that runs at most `passes` filter passes.
+    fn begin_frame(&mut self, device: &wgpu::Device, passes: usize) {
+        self.frame += 1;
+        self.params_data.clear();
+        let size = u64::from(self.params_stride) * passes as u64;
+        if size > self.params.size() {
+            // In-flight frames keep the old buffer alive until they finish.
+            (self.params, self.params_bind_group) =
+                Self::params_buffer(device, &self.params_layout, size.next_power_of_two());
+        }
+    }
+
+    /// Uploads the frame's filter parameters, and drops the canvases neither
+    /// this frame nor the one before took, so sizes a scene stopped using do
+    /// not pile up. Queued writes land after previously submitted work, so
+    /// frames still in flight keep reading their own parameters.
+    fn end_frame(&mut self, queue: &wgpu::Queue) {
+        if !self.params_data.is_empty() {
+            queue.write_buffer(&self.params, 0, &self.params_data);
+        }
+        let frame = self.frame;
+        self.pool.retain(|(_, used)| used + 1 >= frame);
     }
 
     /// A transparent-or-stale `width`x`height` canvas from the pool, or a new
@@ -2498,17 +2484,18 @@ impl EffectProcessor {
         width: u32,
         height: u32,
     ) -> CanvasTexture {
-        self.pool.retain(|canvas| {
+        let fits = |(canvas, _): &(CanvasTexture, u64)| {
             let size = canvas.texture.size();
             size.width == width && size.height == height
-        });
-        self.pool
-            .pop()
-            .unwrap_or_else(|| canvas_texture(device, layer_layout, width, height))
+        };
+        match self.pool.iter().rposition(fits) {
+            Some(index) => self.pool.swap_remove(index).0,
+            None => canvas_texture(device, layer_layout, width, height),
+        }
     }
 
     fn recycle(&mut self, canvas: CanvasTexture) {
-        self.pool.push(canvas);
+        self.pool.push((canvas, self.frame));
     }
 
     /// Blurs (and, with `color`, shifts and tints) `source`, whose layers
@@ -2533,9 +2520,8 @@ impl EffectProcessor {
         let vertical = self.take_canvas(device, layer_layout, size.width, size.height);
         if let Some(horizontal) = &horizontal {
             self.pass(
-                device,
                 encoder,
-                &source.view,
+                source,
                 horizontal,
                 content.expand(reach, 0.0),
                 [1.0, 0.0],
@@ -2545,9 +2531,8 @@ impl EffectProcessor {
             );
         }
         self.pass(
-            device,
             encoder,
-            &horizontal.as_ref().unwrap_or(source).view,
+            horizontal.as_ref().unwrap_or(source),
             &vertical,
             content.expand(reach, reach).offset(offset),
             [0.0, 1.0],
@@ -2563,10 +2548,9 @@ impl EffectProcessor {
 
     #[allow(clippy::too_many_arguments)]
     fn pass(
-        &self,
-        device: &wgpu::Device,
+        &mut self,
         encoder: &mut wgpu::CommandEncoder,
-        source: &wgpu::TextureView,
+        source: &CanvasTexture,
         target: &CanvasTexture,
         region: PixelBounds,
         direction: [f32; 2],
@@ -2589,26 +2573,14 @@ impl EffectProcessor {
             tint[2],
             tint[3],
         ];
-        let bytes: Vec<u8> = params.into_iter().flat_map(f32::to_ne_bytes).collect();
-        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Celesta effect parameters"),
-            contents: &bytes,
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Celesta effect input"),
-            layout: &self.layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(source),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: buffer.as_entire_binding(),
-                },
-            ],
-        });
+        let at = self.params_data.len();
+        assert!(
+            (at + self.params_stride as usize) as u64 <= self.params.size(),
+            "begin_frame reserves every pass's parameters"
+        );
+        self.params_data
+            .extend(params.into_iter().flat_map(f32::to_ne_bytes));
+        self.params_data.resize(at + self.params_stride as usize, 0);
         let mut pass = begin_pass(
             encoder,
             &target.view,
@@ -2620,9 +2592,280 @@ impl EffectProcessor {
         };
         pass.set_scissor_rect(x, y, width, height);
         pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, &bind_group, &[]);
+        pass.set_bind_group(0, &source.bind_group, &[]);
+        pass.set_bind_group(1, &self.params_bind_group, &[at as u32]);
         pass.draw(0..3, 0..1);
     }
+}
+
+/// Encodes the steps of a frame that composites through canvases.
+struct Compositor<'a> {
+    device: &'a wgpu::Device,
+    texture_layout: &'a wgpu::BindGroupLayout,
+    layer_pipeline: &'a wgpu::RenderPipeline,
+    blend_pipeline: &'a wgpu::RenderPipeline,
+    backdrop: &'a BackdropTexture,
+    draws: &'a PreparedDraws,
+    effects: &'a mut EffectProcessor,
+}
+
+/// One draw onto a canvas, in painter's order.
+struct CanvasDraw<'s> {
+    /// The texture drawn: a layer's, or (`Err`) the finished group canvas
+    /// at that index of `draw_canvas`'s `groups`.
+    texture: Result<&'s wgpu::BindGroup, usize>,
+    instances: std::ops::Range<u32>,
+    blend_mode: BlendMode,
+    /// For blended draws, the canvas pixels the draw can change.
+    area: Option<[u32; 4]>,
+}
+
+impl Compositor<'_> {
+    /// Clears `canvas` to `clear` and draws `steps` onto it. The groups
+    /// among the steps are composited onto canvases of their own first, so
+    /// that `canvas` itself is drawn in as few render passes as possible: a
+    /// pass loads and stores its whole target, and the root canvas is
+    /// scene-sized. Only a blended draw, which reads a copy of what is
+    /// beneath it, ends a pass.
+    fn draw_canvas(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        canvas: &CanvasTexture,
+        clear: wgpu::Color,
+        steps: &[GpuStep],
+    ) {
+        let mut groups: Vec<CanvasTexture> = Vec::new();
+        let mut list: Vec<CanvasDraw<'_>> = Vec::new();
+        let mut index = 0;
+        while index < steps.len() {
+            match &steps[index] {
+                GpuStep::Draw(draw) => list.push(CanvasDraw {
+                    texture: Ok(&draw.texture.bind_group),
+                    instances: draw.instances.clone(),
+                    blend_mode: BlendMode::Normal,
+                    area: None,
+                }),
+                GpuStep::Blend {
+                    draw,
+                    blend_mode,
+                    area,
+                } => {
+                    if area.is_some() {
+                        list.push(CanvasDraw {
+                            texture: Ok(&draw.texture.bind_group),
+                            instances: draw.instances.clone(),
+                            blend_mode: *blend_mode,
+                            area: *area,
+                        });
+                    }
+                }
+                GpuStep::BeginGroup { .. } => {
+                    let end = group_end(steps, index);
+                    let (instance, blend_mode, area) = match &steps[end] {
+                        GpuStep::EndGroup {
+                            instance,
+                            blend_mode,
+                            area,
+                        } => (*instance, *blend_mode, *area),
+                        GpuStep::EndEffect {
+                            final_instance,
+                            blend_mode,
+                            area,
+                            ..
+                        } => (*final_instance, *blend_mode, *area),
+                        _ => unreachable!("group_end returns a group's end"),
+                    };
+                    match self.draw_group(encoder, &steps[index..=end]) {
+                        Some(group) if area.is_some() => {
+                            list.push(CanvasDraw {
+                                texture: Err(groups.len()),
+                                instances: instance..instance + 1,
+                                blend_mode,
+                                area,
+                            });
+                            groups.push(group);
+                        }
+                        Some(group) => self.effects.recycle(group),
+                        None => {}
+                    }
+                    index = end;
+                }
+                GpuStep::EndGroup { .. } | GpuStep::EndEffect { .. } => {
+                    unreachable!("draw_group consumes every group's end")
+                }
+            }
+            index += 1;
+        }
+
+        let mut load = wgpu::LoadOp::Clear(clear);
+        let texture = |draw: &CanvasDraw<'_>| -> wgpu::BindGroup {
+            match draw.texture {
+                Ok(texture) => texture.clone(),
+                Err(group) => groups[group].bind_group.clone(),
+            }
+        };
+        let mut draws = list.iter().peekable();
+        while let Some(draw) = draws.next() {
+            if draw.blend_mode.is_normal() {
+                // One pass for the whole run of source-over draws.
+                let mut pass = begin_pass(encoder, &canvas.view, load);
+                pass.set_pipeline(self.layer_pipeline);
+                pass.set_vertex_buffer(0, self.draws.instances.slice(..));
+                pass.set_bind_group(2, &self.draws.clips, &[]);
+                pass.set_bind_group(0, &texture(draw), &[]);
+                pass.draw(0..6, draw.instances.clone());
+                while let Some(next) = draws.next_if(|next| next.blend_mode.is_normal()) {
+                    pass.set_bind_group(0, &texture(next), &[]);
+                    pass.draw(0..6, next.instances.clone());
+                }
+            } else {
+                if let wgpu::LoadOp::Clear(_) = load {
+                    drop(begin_pass(encoder, &canvas.view, load));
+                }
+                let [x, y, width, height] = draw.area.expect("blended draws have an area");
+                // `fs_blend` reads the backdrop only under the draw, so only
+                // that part of the canvas needs copying.
+                let origin = wgpu::Origin3d { x, y, z: 0 };
+                encoder.copy_texture_to_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        origin,
+                        ..canvas.texture.as_image_copy()
+                    },
+                    wgpu::TexelCopyTextureInfo {
+                        origin,
+                        ..self.backdrop.texture.as_image_copy()
+                    },
+                    wgpu::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: 1,
+                    },
+                );
+                let mut pass = begin_pass(encoder, &canvas.view, wgpu::LoadOp::Load);
+                pass.set_pipeline(self.blend_pipeline);
+                pass.set_vertex_buffer(0, self.draws.instances.slice(..));
+                pass.set_bind_group(0, &texture(draw), &[]);
+                pass.set_bind_group(1, &self.backdrop.bind_group, &[]);
+                pass.set_bind_group(2, &self.draws.clips, &[]);
+                pass.draw(0..6, draw.instances.clone());
+            }
+            load = wgpu::LoadOp::Load;
+        }
+        if let wgpu::LoadOp::Clear(_) = load {
+            drop(begin_pass(encoder, &canvas.view, load));
+        }
+        for group in groups {
+            self.effects.recycle(group);
+        }
+    }
+
+    /// Composites the group `steps` (from its `BeginGroup` to its end) onto
+    /// a canvas of its own and applies its effect, returning the canvas to
+    /// draw onto the group's parent, or `None` when it holds nothing.
+    fn draw_group(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        steps: &[GpuStep],
+    ) -> Option<CanvasTexture> {
+        let (Some(GpuStep::BeginGroup { canvas: region }), Some(end)) =
+            (steps.first(), steps.last())
+        else {
+            unreachable!("a group runs from its BeginGroup to its end");
+        };
+        let canvas = self.effects.take_canvas(
+            self.device,
+            self.texture_layout,
+            region.width,
+            region.height,
+        );
+        self.draw_canvas(
+            encoder,
+            &canvas,
+            wgpu::Color::TRANSPARENT,
+            &steps[1..steps.len() - 1],
+        );
+        let GpuStep::EndEffect {
+            inner_instance,
+            effects,
+            content,
+            ..
+        } = end
+        else {
+            return Some(canvas);
+        };
+        // Layers that drew nothing leave nothing to filter.
+        let Some(content) = *content else {
+            self.effects.recycle(canvas);
+            return None;
+        };
+        let result = self.effects.take_canvas(
+            self.device,
+            self.texture_layout,
+            region.width,
+            region.height,
+        );
+        let mut filtered = Vec::new();
+        for shadow in [effects.shadow, effects.glow].into_iter().flatten() {
+            filtered.push(self.effects.apply(
+                self.device,
+                encoder,
+                &canvas,
+                self.texture_layout,
+                content,
+                shadow.blur,
+                shadow.offset,
+                Some(shadow.color),
+            ));
+        }
+        let blurred = (effects.blur > 0.0).then(|| {
+            self.effects.apply(
+                self.device,
+                encoder,
+                &canvas,
+                self.texture_layout,
+                content,
+                effects.blur,
+                [0.0, 0.0],
+                None,
+            )
+        });
+        // Shadows, then the glow, then the (blurred) layers on top.
+        let mut pass = begin_pass(
+            encoder,
+            &result.view,
+            wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+        );
+        pass.set_pipeline(self.layer_pipeline);
+        pass.set_vertex_buffer(0, self.draws.instances.slice(..));
+        pass.set_bind_group(2, &self.draws.clips, &[]);
+        for texture in filtered.iter().chain([blurred.as_ref().unwrap_or(&canvas)]) {
+            pass.set_bind_group(0, &texture.bind_group, &[]);
+            pass.draw(0..6, *inner_instance..*inner_instance + 1);
+        }
+        drop(pass);
+        for texture in filtered.into_iter().chain(blurred).chain([canvas]) {
+            self.effects.recycle(texture);
+        }
+        Some(result)
+    }
+}
+
+/// The index of the step that ends the group `steps[begin]` begins.
+fn group_end(steps: &[GpuStep], begin: usize) -> usize {
+    let mut depth = 0;
+    for (index, step) in steps.iter().enumerate().skip(begin) {
+        match step {
+            GpuStep::BeginGroup { .. } => depth += 1,
+            GpuStep::EndGroup { .. } | GpuStep::EndEffect { .. } => {
+                depth -= 1;
+                if depth == 0 {
+                    return index;
+                }
+            }
+            GpuStep::Draw(_) | GpuStep::Blend { .. } => {}
+        }
+    }
+    unreachable!("every group has an end")
 }
 
 struct BackdropTexture {
@@ -2654,10 +2897,10 @@ fn begin_pass<'a>(
     })
 }
 
-/// Bytes of `LayerInstance` in `layer.wgsl`: eight `vec4<f32>`s.
-const LAYER_INSTANCE_SIZE: u64 = 8 * 4 * 4;
+/// Bytes of `LayerInstance` in `layer.wgsl`: nine `vec4<f32>`s.
+const LAYER_INSTANCE_SIZE: u64 = 9 * 4 * 4;
 
-const LAYER_INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 8] = wgpu::vertex_attr_array![
+const LAYER_INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 9] = wgpu::vertex_attr_array![
     0 => Float32x4,
     1 => Float32x4,
     2 => Float32x4,
@@ -2666,6 +2909,7 @@ const LAYER_INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 8] = wgpu::vertex_attr_
     5 => Float32x4,
     6 => Float32x4,
     7 => Float32x4,
+    8 => Float32x4,
 ];
 
 fn instance_buffer(device: &wgpu::Device, size: u64) -> wgpu::Buffer {
@@ -2677,6 +2921,7 @@ fn instance_buffer(device: &wgpu::Device, size: u64) -> wgpu::Buffer {
     })
 }
 
+/// A storage buffer for the frame's clips or paints.
 fn clip_buffer(device: &wgpu::Device, size: u64) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("Celesta layer clips"),
@@ -2690,14 +2935,21 @@ fn clip_bind_group(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
     clips: &wgpu::Buffer,
+    paints: &wgpu::Buffer,
 ) -> wgpu::BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("Celesta layer clip bind group"),
         layout,
-        entries: &[wgpu::BindGroupEntry {
-            binding: 0,
-            resource: clips.as_entire_binding(),
-        }],
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: clips.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: paints.as_entire_binding(),
+            },
+        ],
     })
 }
 
@@ -2713,20 +2965,22 @@ struct RectShape {
     radius: f32,
     /// 0 without a stroke.
     stroke_width: f32,
+    /// See `encode_paint`.
     fill: [f32; 4],
     stroke: [f32; 4],
 }
 
 impl RectShape {
-    fn new(width: f64, height: f64, corner_radius: f64, paint: RectPaint) -> Self {
+    /// The shape of a rect painted with `paint`, whose gradients are
+    /// appended to `paints`.
+    fn new(
+        width: f64,
+        height: f64,
+        corner_radius: f64,
+        paint: RectPaint,
+        paints: &mut Vec<[f32; 4]>,
+    ) -> Self {
         let RectPaint { fill, stroke } = paint;
-        let fill = fill.and_then(|fill| fill.solid());
-        let stroke = stroke.and_then(|(stroke, width)| Some((stroke.solid()?, width)));
-        let color = |color: Option<celesta_renderer::Color>| {
-            color.map_or([0.0; 4], |color| {
-                [color.red, color.green, color.blue, color.alpha].map(f32::from)
-            })
-        };
         let (stroke, stroke_width) = match stroke {
             Some((stroke, width)) if width > 0.0 => (Some(stroke), width),
             _ => (None, 0.0),
@@ -2740,10 +2994,48 @@ impl RectShape {
             half_height: half_height as f32,
             radius: corner_radius.max(0.0).min(half_width.min(half_height)) as f32,
             stroke_width: stroke_width as f32,
-            fill: color(fill),
-            stroke: color(stroke),
+            fill: encode_paint(fill.as_ref(), paints),
+            stroke: encode_paint(stroke.as_ref(), paints),
         }
     }
+}
+
+/// A rect's fill or stroke as `layer.wgsl`'s `paint_color` reads it: a flat
+/// color is its straight-alpha RGBA in 0-255 code values (transparent
+/// without a paint); a gradient is `(index, 0, 0, -1)`, where `index` is
+/// the first of its entries in `paints`:
+///
+/// - kind (1 linear, 2 radial), stop count, unused, unused
+/// - linear: start x, start y, end x, end y; radial: center x, center y,
+///   radius, unused (the rect's local pixels)
+/// - per stop: offset, unused, unused, unused; then its premultiplied RGBA
+///   in 0-255
+///
+/// Shading a gradient instead of rasterizing it keeps a gradient whose
+/// colors change every frame as cheap as a flat one.
+fn encode_paint(paint: Option<&ResolvedPaint>, paints: &mut Vec<[f32; 4]>) -> [f32; 4] {
+    let index = paints.len() as f32;
+    let (kind, geometry, stops) = match paint {
+        None => return [0.0; 4],
+        Some(ResolvedPaint::Solid(color)) => {
+            return [color.red, color.green, color.blue, color.alpha].map(f32::from);
+        }
+        Some(ResolvedPaint::Linear { start, end, stops }) => {
+            (1.0, [start.0, start.1, end.0, end.1], stops)
+        }
+        Some(ResolvedPaint::Radial {
+            center,
+            radius,
+            stops,
+        }) => (2.0, [center.0, center.1, *radius, 0.0], stops),
+    };
+    paints.push([kind, stops.len() as f32, 0.0, 0.0]);
+    paints.push(geometry.map(|value| value as f32));
+    for stop in stops {
+        paints.push([stop.offset() as f32, 0.0, 0.0, 0.0]);
+        paints.push(stop.premultiplied().map(|value| value as f32));
+    }
+    [index, 0.0, 0.0, -1.0]
 }
 
 enum PreparedContent {
@@ -2819,12 +3111,14 @@ impl PreparedLayer {
         }
     }
 
-    /// Appends this layer's `LayerInstance` (`LAYER_INSTANCE_SIZE` bytes).
-    fn write_instance(&self, canvas_width: u32, canvas_height: u32, output: &mut Vec<u8>) {
+    /// Appends this layer's `LayerInstance` (`LAYER_INSTANCE_SIZE` bytes),
+    /// drawn onto the canvas covering `target`. A `Canvas` layer draws the
+    /// canvas covering `canvas`; other layers ignore it.
+    fn write_instance(&self, target: CanvasRegion, canvas: CanvasRegion, output: &mut Vec<u8>) {
         let (texel_width, texel_height, kind) = match &self.content {
             PreparedContent::Texture(texture) => (texture.width, texture.height, 0.0),
             PreparedContent::Rect(rect) => (rect.pixel_width, rect.pixel_height, 1.0),
-            PreparedContent::Canvas { .. } => (canvas_width, canvas_height, 0.0),
+            PreparedContent::Canvas { .. } => (canvas.width, canvas.height, 0.0),
         };
         let premultiplied = matches!(
             self.content,
@@ -2847,12 +3141,17 @@ impl PreparedLayer {
                 rect.stroke,
             ),
         };
-        let transform = self.state.transform;
+        let mut transform = self.state.transform;
+        if let PreparedContent::Canvas { .. } = self.content {
+            // A canvas is drawn untransformed, where it sits in the scene.
+            transform.tx += canvas.x as f32;
+            transform.ty += canvas.y as f32;
+        }
         // A layer whose texels land one to one on canvas pixels is copied
         // exactly; anything scaled or rotated is filtered.
         let exact = transform.is_uniform_scale(self.raster_scale);
         let (tx, ty) = if exact {
-            self.pixel_aligned_translation(texel_width, texel_height)
+            self.pixel_aligned_translation(transform, texel_width, texel_height)
         } else {
             (transform.tx, transform.ty)
         };
@@ -2877,8 +3176,8 @@ impl PreparedLayer {
             self.anchor.y as f32,
             self.state.opacity,
             kind,
-            canvas_width as f32,
-            canvas_height as f32,
+            target.width as f32,
+            target.height as f32,
             blend_mode_index(self.blend_mode),
             f32::from(u8::from(premultiplied)),
         ]
@@ -2894,7 +3193,8 @@ impl PreparedLayer {
             f32::from(u8::from(!exact)),
             level_of_detail,
             self.raster_scale,
-        ]);
+        ])
+        .chain([target.x as f32, target.y as f32, 0.0, 0.0]);
         output.extend(values.flat_map(f32::to_ne_bytes));
     }
 
@@ -2930,14 +3230,19 @@ impl PreparedLayer {
     /// `celesta_renderer::render_image` places it. On a half pixel every pixel
     /// centre would sit exactly on a texel boundary, and f32 rounding would
     /// pick the left or right texel per column, notching glyph stems.
-    fn pixel_aligned_translation(&self, texel_width: u32, texel_height: u32) -> (f32, f32) {
+    fn pixel_aligned_translation(
+        &self,
+        transform: Affine,
+        texel_width: u32,
+        texel_height: u32,
+    ) -> (f32, f32) {
         let align = |translation: f32, texels: u32, anchor: f64| {
             let offset = f64::from(texels) * anchor;
             ((f64::from(translation) - offset).round() + offset) as f32
         };
         (
-            align(self.state.transform.tx, texel_width, self.anchor.x),
-            align(self.state.transform.ty, texel_height, self.anchor.y),
+            align(transform.tx, texel_width, self.anchor.x),
+            align(transform.ty, texel_height, self.anchor.y),
         )
     }
 }
@@ -2989,8 +3294,66 @@ struct PreparedDraws {
 struct CompositePlan {
     /// The instance that copies the root canvas onto the target.
     blit_instance: u32,
-    /// The root canvas plus the deepest isolated-group nesting.
-    canvases: usize,
+}
+
+/// The canvas an isolated group or an effect draws its layers onto.
+#[derive(Clone, Copy)]
+struct GroupPlan {
+    canvas: CanvasRegion,
+    /// What the group's layers cover, in scene pixels.
+    content: Option<PixelBounds>,
+    /// Whether anything of the group (or its effect) reaches the scene.
+    /// When not, its layers still draw onto `canvas`, a single pixel none
+    /// of them can touch, and the group draws nothing onto its parent.
+    drawn: bool,
+}
+
+/// Plans the canvas of every isolated group and effect in `items`, in the
+/// order they begin, from the bounds of what their layers draw.
+fn plan_groups(items: &[PreparedItem], scene: CanvasRegion) -> Vec<GroupPlan> {
+    let mut plans: Vec<GroupPlan> = Vec::new();
+    // Each open group's index in `plans` and what its layers cover so far.
+    let mut open: Vec<(usize, Option<PixelBounds>)> = Vec::new();
+    let cover = |open: &mut Vec<(usize, Option<PixelBounds>)>, bounds: Option<PixelBounds>| {
+        if let Some((_, covered)) = open.last_mut() {
+            *covered = PixelBounds::union(*covered, bounds);
+        }
+    };
+    let plan = |content: Option<PixelBounds>, output: Option<PixelBounds>| {
+        let canvas = CanvasRegion::covering(output, scene);
+        GroupPlan {
+            canvas: canvas.unwrap_or(CanvasRegion {
+                x: 0,
+                y: 0,
+                width: 1,
+                height: 1,
+            }),
+            content,
+            drawn: canvas.is_some(),
+        }
+    };
+    for item in items {
+        match item {
+            PreparedItem::Layer(layer) => cover(&mut open, Some(layer.bounds())),
+            PreparedItem::Paths(_) => unreachable!("paths are rasterized into layers"),
+            PreparedItem::BeginGroup => {
+                open.push((plans.len(), None));
+                plans.push(plan(None, None));
+            }
+            PreparedItem::EndGroup(_) => {
+                let (index, content) = open.pop().expect("every group was begun");
+                plans[index] = plan(content, content);
+                cover(&mut open, content);
+            }
+            PreparedItem::EndEffect(_, effects) => {
+                let (index, content) = open.pop().expect("every group was begun");
+                let output = content.map(|content| effects.output_bounds(content));
+                plans[index] = plan(content, output);
+                cover(&mut open, output);
+            }
+        }
+    }
+    plans
 }
 
 enum GpuStep {
@@ -3000,22 +3363,30 @@ enum GpuStep {
     Blend {
         draw: GpuDraw,
         blend_mode: BlendMode,
+        /// The canvas pixels the draw can change, `[x, y, width, height]`;
+        /// `None` when it misses the canvas.
+        area: Option<[u32; 4]>,
     },
-    /// Starts drawing onto a fresh transparent canvas.
-    BeginGroup,
+    /// Starts drawing onto a fresh transparent canvas covering `canvas`.
+    BeginGroup { canvas: CanvasRegion },
     /// Draws the finished group canvas onto its parent with `instance`.
     EndGroup {
         instance: u32,
         blend_mode: BlendMode,
+        /// The parent canvas pixels the group's canvas covers; `None` when
+        /// it draws nothing there.
+        area: Option<[u32; 4]>,
     },
     EndEffect {
         inner_instance: u32,
         final_instance: u32,
         blend_mode: BlendMode,
         effects: EffectSpec,
-        /// The part of the effect's canvas its layers drew on; `None` when
-        /// they drew nothing.
+        /// The part of the effect's canvas its layers drew on, in that
+        /// canvas's pixels; `None` when they drew nothing.
         content: Option<PixelBounds>,
+        /// As for `EndGroup`.
+        area: Option<[u32; 4]>,
     },
 }
 
@@ -4094,12 +4465,7 @@ mod tests {
         };
         let scene = blend_scene();
         let draws = renderer.prepare_draws(&scene).unwrap();
-        assert!(
-            draws
-                .composite
-                .as_ref()
-                .is_some_and(|plan| plan.canvases == 3)
-        );
+        assert!(draws.composite.is_some());
 
         let expected = celesta_renderer::CpuRenderer::new(celesta_renderer::RenderOptions {
             background: celesta_renderer::Color::rgba(10, 20, 30, 255),
@@ -4176,6 +4542,29 @@ mod tests {
                 color: color.to_owned(),
             })
         };
+        let stops = |stops: &[(f64, &str)]| -> Vec<celesta_composition::GradientStop> {
+            stops
+                .iter()
+                .map(|(offset, color)| celesta_composition::GradientStop {
+                    offset: *offset,
+                    color: (*color).to_owned(),
+                })
+                .collect()
+        };
+        let linear = |(x1, y1, x2, y2): (f64, f64, f64, f64), list: &[(f64, &str)]| {
+            Some(Paint::Linear {
+                start: Point { x: x1, y: y1 },
+                end: Point { x: x2, y: y2 },
+                stops: stops(list),
+            })
+        };
+        let radial = |(x, y, radius): (f64, f64, f64), list: &[(f64, &str)]| {
+            Some(Paint::Radial {
+                center: Point { x, y },
+                radius,
+                stops: stops(list),
+            })
+        };
         // (width, height, corner radius, fill, stroke, rotation, scale, opacity)
         let cases = [
             (12.0, 7.0, 0.0, fill("#ff8000"), None, 0.0, 1.0, 1.0),
@@ -4203,6 +4592,72 @@ mod tests {
                 1.0,
             ),
             (0.4, 9.0, 0.0, fill("#ffff00"), None, 45.0, 3.0, 1.0),
+            // Gradients, shaded from the stops rather than rasterized.
+            (
+                40.0,
+                24.0,
+                6.0,
+                linear(
+                    (0.0, 0.0, 0.0, 24.0),
+                    &[(0.0, "#102040"), (0.6, "#c07090"), (1.0, "#f0c090")],
+                ),
+                None,
+                0.0,
+                1.0,
+                1.0,
+            ),
+            (
+                30.0,
+                30.0,
+                15.0,
+                radial(
+                    (12.0, 10.0, 18.0),
+                    &[(0.0, "#ffe8c0ff"), (0.3, "#ffb07880"), (1.0, "#ffb07800")],
+                ),
+                None,
+                30.0,
+                1.5,
+                0.8,
+            ),
+            (
+                36.0,
+                20.0,
+                4.0,
+                linear(
+                    (0.0, 0.0, 36.0, 20.0),
+                    &[(0.0, "#2060ff"), (1.0, "#ff6020")],
+                ),
+                Some(Stroke {
+                    paint: linear(
+                        (36.0, 0.0, 0.0, 0.0),
+                        &[(0.0, "#ffffffc0"), (1.0, "#00ff8040")],
+                    )
+                    .unwrap(),
+                    width: 3.0,
+                }),
+                -12.0,
+                1.0,
+                0.9,
+            ),
+            (
+                // A hard edge: two stops at one offset, and stops out of order.
+                24.0,
+                12.0,
+                0.0,
+                linear(
+                    (0.0, 0.0, 24.0, 0.0),
+                    &[
+                        (1.0, "#0000ff"),
+                        (0.5, "#00ff00"),
+                        (0.5, "#ff0000"),
+                        (0.0, "#000000"),
+                    ],
+                ),
+                None,
+                0.0,
+                1.0,
+                1.0,
+            ),
         ];
         for (index, (width, height, corner_radius, fill, stroke, rotation, scale, opacity)) in
             cases.into_iter().enumerate()
@@ -4828,7 +5283,7 @@ mod tests {
     }
 
     #[test]
-    fn renders_a_gradient_filled_rect_through_the_texture_path() {
+    fn renders_a_gradient_filled_rect() {
         let Some(mut renderer) = renderer(GpuRenderOptions {
             background: Color::rgba(0, 0, 0, 255),
         }) else {

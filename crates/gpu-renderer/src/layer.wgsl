@@ -11,13 +11,17 @@ struct LayerInstance {
     @location(3) canvas: vec4<f32>,
     // half width, half height, corner radius, stroke width (0 without one)
     @location(4) rect: vec4<f32>,
-    // Straight-alpha RGBA in 0-255 code values.
+    // Straight-alpha RGBA in 0-255 code values, or a gradient in `paints`
+    // (see `paint_color`).
     @location(5) fill: vec4<f32>,
     @location(6) stroke: vec4<f32>,
     // The index of the innermost clip the layer is drawn through (-1 without
     // one); 1 to filter (the layer is scaled or rotated) or 0 to copy texel
     // for texel; the mip level to filter at; texels per layer unit.
     @location(7) clip_sampling: vec4<f32>,
+    // The scene position of the canvas's top-left pixel (a group's canvas
+    // only covers the part of the scene its layers draw on); unused, unused.
+    @location(8) origin: vec4<f32>,
 };
 
 // Read with `textureLoad` only: `layer_color` filters by hand.
@@ -36,6 +40,14 @@ var backdrop_texture: texture_2d<f32>;
 @group(2) @binding(0)
 var<storage, read> clips: array<vec4<f32>>;
 
+// The gradients rects of the frame are painted with. Each starts with
+//   kind (1 linear, 2 radial), stop count, unused, unused
+//   linear: start.xy, end.xy; radial: center.xy, radius, unused
+// then two vec4s per stop: (offset, unused...), premultiplied RGBA in 0-255.
+// Mirrors `encode_paint` in lib.rs.
+@group(2) @binding(1)
+var<storage, read> paints: array<vec4<f32>>;
+
 // Mirrors `MAX_CLIP_DEPTH` in lib.rs.
 const MAX_CLIP_DEPTH: i32 = 8;
 
@@ -49,7 +61,7 @@ struct VertexOutput {
     @location(4) @interpolate(flat) stroke: vec4<f32>,
     // blend mode index, premultiplied source
     @location(5) @interpolate(flat) blend: vec2<f32>,
-    // The canvas position of the fragment and the innermost clip it is drawn through.
+    // The scene position of the fragment and the innermost clip it is drawn through.
     @location(6) world: vec2<f32>,
     @location(7) @interpolate(flat) clip: f32,
     // filter, mip level, texels per layer unit (see `LayerInstance`)
@@ -80,9 +92,10 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32, layer: LayerInstance) -> Ve
         layer.matrix.x * local.x + layer.matrix.z * local.y + layer.translation_size.x,
         layer.matrix.y * local.x + layer.matrix.w * local.y + layer.translation_size.y,
     );
+    let canvas_position = world - layer.origin.xy;
     let clip = vec2<f32>(
-        world.x / layer.canvas.x * 2.0 - 1.0,
-        1.0 - world.y / layer.canvas.y * 2.0,
+        canvas_position.x / layer.canvas.x * 2.0 - 1.0,
+        1.0 - canvas_position.y / layer.canvas.y * 2.0,
     );
     return VertexOutput(
         vec4<f32>(clip, 0.0, 1.0),
@@ -104,6 +117,66 @@ fn rounded_box(p: vec2<f32>, half_size: vec2<f32>, radius: f32) -> f32 {
     return length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0) - radius;
 }
 
+// `celesta_renderer::sample_stops`: the stops from `paints[first]` at `t`,
+// interpolated premultiplied, as straight-alpha RGBA in whole 0-255 codes.
+fn sample_stops(first: u32, count: u32, t: f32) -> vec4<f32> {
+    if count == 0u {
+        return vec4<f32>(0.0);
+    }
+    let last = first + 2u * (count - 1u);
+    var value = paints[first + 1u];
+    if t <= paints[first].x {
+        // `value` is the first stop's color.
+    } else if t >= paints[last].x {
+        value = paints[last + 1u];
+    } else {
+        // The first stop past `t`; the one before it is at or below `t`.
+        var next = first + 2u;
+        while paints[next].x <= t {
+            next += 2u;
+        }
+        let from_offset = paints[next - 2u].x;
+        let span = paints[next].x - from_offset;
+        var f = 1.0;
+        if span > 0.0 {
+            f = (t - from_offset) / span;
+        }
+        let from_color = paints[next - 1u];
+        value = from_color + (paints[next + 1u] - from_color) * f;
+    }
+    let alpha = value.a;
+    if alpha <= 0.0 {
+        return vec4<f32>(0.0);
+    }
+    // `floor(x + 0.5)` rounds halves up like Rust's `f64::round` here.
+    return vec4<f32>(
+        clamp(floor(value.rgb * 255.0 / alpha + 0.5), vec3<f32>(0.0), vec3<f32>(255.0)),
+        clamp(floor(alpha + 0.5), 0.0, 255.0),
+    );
+}
+
+// `ResolvedPaint::color_at`: a rect's fill or stroke at `point` in its local
+// pixels, straight-alpha RGBA in 0-255 code values.
+fn paint_color(paint: vec4<f32>, point: vec2<f32>) -> vec4<f32> {
+    if paint.w >= 0.0 {
+        return paint;
+    }
+    let base = u32(paint.x);
+    let header = paints[base];
+    let geometry = paints[base + 1u];
+    var t = 0.0;
+    if header.x == 1.0 {
+        let direction = geometry.zw - geometry.xy;
+        let length_squared = dot(direction, direction);
+        if length_squared > 0.0 {
+            t = dot(point - geometry.xy, direction) / length_squared;
+        }
+    } else if geometry.z > 0.0 {
+        t = distance(point, geometry.xy) / geometry.z;
+    }
+    return sample_stops(base + 2u, u32(header.y), t);
+}
+
 // The texel `celesta_renderer::rasterize_rect` would have produced at
 // `coordinate`, straight alpha, so drawing a rect here matches uploading its
 // rasterized texture and reading it the same way.
@@ -114,8 +187,9 @@ fn rect_texel(input: VertexOutput, coordinate: vec2<i32>) -> vec4<f32> {
     let stroke_width = input.rect.w;
     let p = texel - half_size;
     let outer = clamp(0.5 - rounded_box(p, half_size, radius), 0.0, 1.0);
-    var color = input.fill;
+    var color = paint_color(input.fill, texel);
     if stroke_width > 0.0 {
+        let stroke = paint_color(input.stroke, texel);
         let inner = clamp(
             0.5 - rounded_box(
                 p,
@@ -128,7 +202,7 @@ fn rect_texel(input: VertexOutput, coordinate: vec2<i32>) -> vec4<f32> {
         // `floor(x + 0.5)` rounds like Rust's `f64::round` for these
         // non-negative values; WGSL's `round` rounds halves to even, and
         // lerped channels often land exactly on a half.
-        color = floor(input.stroke + (color - input.stroke) * inner + 0.5);
+        color = floor(stroke + (color - stroke) * inner + 0.5);
     }
     return vec4<f32>(color.rgb, floor(color.a * outer + 0.5)) / 255.0;
 }

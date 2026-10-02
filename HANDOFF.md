@@ -179,10 +179,21 @@ Keep these boundaries intact:
   normal is isolated: its children composite onto a transparent layer, and
   its opacity applies to that layer as a whole. The CPU renderer does this with
   a scene-sized `RgbaFrame`. The GPU renderer keeps its single-pass path for
-  scenes without blending; a scene with blending draws onto scene-sized
-  canvases (premultiplied alpha), copies the canvas to a backdrop texture
-  before each blended draw (`fs_blend` in `layer.wgsl`), and finally copies
-  the root canvas onto the target.
+  scenes without blending or effects. A scene with them draws onto a
+  scene-sized root canvas (premultiplied alpha). Each isolated group or
+  effect draws onto a pooled canvas that covers only its bounds
+  (`CanvasRegion`, sized in 128 px steps and kept inside the scene); every
+  instance carries the origin of the canvas it draws on. `Compositor`
+  composites each group's canvas before its parent's draws, so a canvas is
+  drawn in as few passes as possible: a pass loads and stores its whole
+  target. Only a blended draw ends a pass, because it copies the area under
+  it to a backdrop texture (`fs_blend` in `layer.wgsl`) first. Finally the
+  root canvas is copied onto the target.
+- `Rect` fills and strokes, flat or gradient, are shaded in `layer.wgsl`
+  (`rect_texel`, `paint_color`) and never rasterized into textures, so an
+  animated gradient costs no more than a static one. Gradients are passed
+  in a `paints` storage buffer next to the clips (`encode_paint`), and the
+  shader matches `celesta_renderer::rasterize_rect` within one code value.
 - Audio preview evaluates the shared `AudioGraph`, decodes assets through
   FFmpeg to project-rate stereo PCM, mixes timeline/source offsets, animated
   playback rate and volume, mute state, and overlapping clips, then plays the
