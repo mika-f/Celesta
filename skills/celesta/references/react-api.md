@@ -1,8 +1,9 @@
 # @celesta/react API reference
 
-Everything is imported from `@celesta/react`. The runtime bundled with
-Celesta provides both `react` (18.x) and `@celesta/react`; do not install
-them from npm.
+Everything is imported from `@celesta/react`, except the random, noise, and
+math helpers, which come from `@celesta/math`. The runtime bundled with
+Celesta provides `react` (18.x), `@celesta/react`, and `@celesta/math`; do
+not install them from npm.
 
 ## Contents
 
@@ -11,7 +12,8 @@ them from npm.
 - [Layers](#layers): Composition, Rect, Path, Text, Group, Image, Video, Audio, Font, Assets
 - [Text styles and fonts](#text-styles-and-fonts)
 - [Time and animation](#time-and-animation): hooks, interpolate, Easings, spring, Sequence, Transition, timecodeToFrame
-- [Motion helpers](#motion-helpers): progress, Series, Stagger, useBeat, useCue, TextReveal, useTypewriter, useCountUp, Camera, Line, Polyline, random, noise, frameToTimecode
+- [Motion helpers](#motion-helpers): progress, Series, Stagger, useBeat, useCue, TextReveal, useTypewriter, useCountUp, Camera, Line, Polyline, frameToTimecode
+- [@celesta/math](#celestamath): random, noise, noise2D/3D, fbm, clamp, lerp, remap, smoothstep, waves, angles, points
 - [Layout helpers](#layout-helpers): Center, SafeArea, Stack, Grid, Fit
 - [Media helpers](#media-helpers): preloadMedia, mediaDurationInFrames, measureText, useTextMetrics
 - [Project data](#project-data): ProjectProvider, useProjectProperty, defineProjectProperties, ProjectTimeline, ProjectTrack, registerComponent
@@ -451,7 +453,7 @@ A number that counts to `to` (default 30 frames, `easeOutExpo`), rounded to
 Shows the world point (`x`, `y`) at the center of the current area (canvas,
 `SafeArea`, or `Fit`), magnified by `zoom` about that point. Defaults look at
 the center, so `<Camera zoom={1.05}>` is a slow push-in. `shake` is the
-largest drift in world pixels, smoothed by `noise()`.
+largest drift in world pixels, smoothed by `@celesta/math`'s `noise()`.
 
 ### `<Line x1 y1 x2 y2>` and `<Polyline points progress?>`
 
@@ -462,12 +464,72 @@ round caps, else miter), plus `Path`'s transform, `opacity`, and
 draws the first `progress` (0–1) of its length; `pointOnPolyline(points, t)`
 gives the tip, for a marker or a label that rides the line.
 
-### `random(seed)` and `noise(seed, t)`
+## @celesta/math
 
-`random` returns `[0, 1)`, the same for the same number or string seed; use
-distinct seeds per property (`` `star-${i}-x` ``). `noise` is smooth value
-noise in `[-1, 1]` over `t` (feed it `frame / 20` or so). Use these, never
-`Math.random()`.
+```tsx
+import { noise, random, randomRange } from '@celesta/math';
+```
+
+Pure functions with no React; they work in components, `prepare()`, and
+module scope alike. Everything seeded takes a number or string `seed` and
+returns the same value for the same seed on every render. Use these, never
+`Math.random()`; give each property its own seed (`` `star-${i}-x` ``).
+
+### Random
+
+| Function | Returns |
+| --- | --- |
+| `random(seed)` | `[0, 1)` |
+| `randomRange(seed, min, max)` | `[min, max)` |
+| `randomInt(seed, min, max)` | a whole number, both ends included |
+| `randomBool(seed, probability = 0.5)` | `true` with that probability |
+| `randomSign(seed)` | `-1` or `1` |
+| `randomPick(seed, items)` | one element (throws on an empty array) |
+| `shuffle(seed, items)` | a reordered copy |
+| `randomGaussian(seed, mean = 0, stdDev = 1)` | a normally distributed number |
+| `randomInCircle(seed, radius = 1, center = {x: 0, y: 0})` | an evenly spread point in a disc |
+
+### Noise
+
+All return smooth values in `[-1, 1]`; different seeds give unrelated fields.
+
+- `noise(seed, t)`: 1D value noise; feed it `frame / 20` or so for drift and
+  wobble.
+- `noise2D(seed, x, y)` / `noise3D(seed, x, y, z)`: gradient (Perlin) noise,
+  `0` on whole-number coordinates. Scale positions down (`x / 200`); use the
+  third coordinate as time to animate a 2D field.
+- `fbm(seed, t, opts?)`, `fbm2D(seed, x, y, opts?)`, `fbm3D(seed, x, y, z,
+  opts?)`: layered noise with detail at several scales. `opts` are
+  `octaves` (4), `lacunarity` (2), and `gain` (0.5).
+
+### Numbers
+
+`clamp(v, min, max)`, `clamp01(v)`, `lerp(a, b, t)`, `inverseLerp(a, b, v)`,
+`remap(v, inMin, inMax, outMin, outMax)` (unclamped), `remapClamped(...)`,
+`step(edge, x)`, `smoothstep(e0, e1, x)`, `smootherstep(e0, e1, x)`,
+`fract(x)`, `mod(v, n)` (never negative for positive `n`), `wrap(v, min,
+max)`, `pingPong(v, length)`, `snap(v, increment)`, `roundTo(v, decimals)`,
+`approxEqual(a, b, epsilon = 1e-6)`. For frame-to-value mappings with easing,
+prefer `interpolate`.
+
+### Waves
+
+`sineWave(t)`, `triangleWave(t)`, `squareWave(t)`, `sawtoothWave(t)`: period
+1, range `[-1, 1]`, all starting at 0 and rising. Pass
+`frame / framesPerCycle`.
+
+### Angles and points
+
+Angles are **radians** (`degToRad`/`radToDeg` convert a layer's `rotation`);
+with y pointing down, a positive angle turns clockwise. `TAU`,
+`normalizeAngle(a)` (to `[-π, π)`), `angleDifference(from, to)`,
+`lerpAngle(a, b, t)` (the short way round).
+
+Points are `{ x, y }` (`Vec2`): `distance(a, b)`, `angleBetween(from, to)`,
+`lerpPoint(a, b, t)`, `midpoint(a, b)`, `rotatePoint(p, angle, origin?)`,
+`polarToCartesian(angle, radius, center?)`, `cartesianToPolar(p, center?)`,
+`quadraticBezierPoint(p0, p1, p2, t)`, and `cubicBezierPoint(p0, p1, p2, p3,
+t)` (the curves a `Path`'s `quadTo`/`cubicTo` draw).
 
 ## Layout helpers
 

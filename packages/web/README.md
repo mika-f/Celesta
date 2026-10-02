@@ -48,7 +48,7 @@ try {
 
 Pass local media as `new SceneCanvas(new Map<string, File>([['clip.mp4', file]]))`. Use the same file name in a composition's `src`. Remote media must allow CORS. `exportMp4` returns a `video/mp4` Blob and reports completed frames. Abort its signal to cancel.
 
-The source string accepts runtime imports from `@celesta/react` and `react` only. It needs a default component returning `<Composition>`. `prepare()`, companion JSON projects, PSD portraits, npm imports, and custom fonts are not supported by this browser runtime. Preview has no audio playback. MP4 export mixes constant rate and volume audio; animated audio values produce an error. H.264 WebCodecs support is required, and AAC support is required when the composition contains audio. Output is buffered in memory. Browser Canvas text and video rendering can differ from Celesta's native renderer.
+The source string accepts runtime imports from `@celesta/react`, `@celesta/math`, and `react` only. It needs a default component returning `<Composition>`. `prepare()`, companion JSON projects, PSD portraits, npm imports, and custom fonts are not supported by this browser runtime. Preview has no audio playback. MP4 export mixes constant rate and volume audio; animated audio values produce an error. H.264 WebCodecs support is required, and AAC support is required when the composition contains audio. Output is buffered in memory. Browser Canvas text and video rendering can differ from Celesta's native renderer.
 
 The worker evaluates author-provided JavaScript. Run only code you trust; a Worker separates it from the page DOM but is not a security boundary for untrusted code.
 

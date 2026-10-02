@@ -68,8 +68,6 @@ export type { VideoConfig } from './hooks';
 
 export { frameToTimecode, timecodeToFrame } from './time';
 
-export { noise, random } from './random';
-
 export { beatAt, cueAt, useBeat, useCue } from './timing';
 export type { ActiveCue, Beat, BeatOptions, Cue } from './timing';
 

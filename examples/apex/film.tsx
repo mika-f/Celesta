@@ -1,6 +1,7 @@
+import { noise, random } from '@celesta/math';
 import {
   Assets, Audio, Camera, Composition, Font, Grid, Group, Line, Polyline, Rect, Series, Text,
-  TextReveal, computeSeries, Easings, frameToTimecode, interpolate, noise, progress, random,
+  TextReveal, computeSeries, Easings, frameToTimecode, interpolate, progress,
   useBeat, useCountUp, useCue, useCurrentFrame, useTypewriter,
 } from '@celesta/react';
 

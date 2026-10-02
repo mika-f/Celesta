@@ -3,6 +3,7 @@
 // one bar is 60, and every scene starts on a downbeat.
 // Open this file in Celesta, or export it with:
 //   Celesta-export --react examples/36-days/film.tsx 36-days.mp4
+import { noise, random } from '@celesta/math';
 import type { ReactNode } from 'react';
 
 import {
@@ -25,10 +26,8 @@ import {
   cueAt,
   frameToTimecode,
   interpolate,
-  noise,
   pointOnPolyline,
   progress,
-  random,
   useBeat,
   useCountUp,
   useCue,
