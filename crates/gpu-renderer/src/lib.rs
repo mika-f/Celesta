@@ -25,7 +25,6 @@ use celesta_renderer::{
     rasterize_path, rasterize_paths, resolve_rect_paint,
 };
 
-
 #[cfg(target_os = "macos")]
 mod native_preview;
 
@@ -3198,8 +3197,9 @@ impl PreparedLayer {
         output.extend(values.flat_map(f32::to_ne_bytes));
     }
 
-    /// Canvas pixels the layer's quad can touch: its transformed corners,
-    /// grown by a pixel for the filtered edge and the exact-copy rounding.
+    /// Scene pixels the layer's quad can touch: the corners of the quad
+    /// `vs_main` draws (a filtered layer's reaches one texel past its edge),
+    /// grown by two pixels for the exact-copy rounding.
     fn bounds(&self) -> PixelBounds {
         let (texel_width, texel_height) = match &self.content {
             PreparedContent::Texture(texture) => (texture.width, texture.height),
@@ -3210,7 +3210,20 @@ impl PreparedLayer {
         let height = texel_height as f32 / self.raster_scale;
         let transform = self.state.transform;
         let anchor = [self.anchor.x as f32, self.anchor.y as f32];
-        let corners = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [1.0, 1.0]].map(|[u, v]| {
+        let (margin_u, margin_v) = if transform.is_uniform_scale(self.raster_scale) {
+            (0.0, 0.0)
+        } else {
+            (1.0 / texel_width as f32, 1.0 / texel_height as f32)
+        };
+        let (low_u, high_u) = (-margin_u, 1.0 + margin_u);
+        let (low_v, high_v) = (-margin_v, 1.0 + margin_v);
+        let corners = [
+            [low_u, low_v],
+            [high_u, low_v],
+            [low_u, high_v],
+            [high_u, high_v],
+        ]
+        .map(|[u, v]| {
             let x = (u - anchor[0]) * width;
             let y = (v - anchor[1]) * height;
             (
@@ -4395,6 +4408,58 @@ mod tests {
             },
             ..solid_rect(id, 0.0, size, size, color)
         }
+    }
+
+    /// A blended draw copies only the part of its canvas under it to the
+    /// backdrop, so that part must cover every pixel its quad shades: a
+    /// filtered (scaled or rotated) layer's quad reaches one source texel
+    /// past its edge, which is several pixels once it is magnified. A
+    /// renderer whose backdrop still holds an earlier frame must draw the
+    /// same frame as a fresh one.
+    #[test]
+    fn blends_a_magnified_layer_against_its_whole_backdrop() {
+        let options = GpuRenderOptions {
+            background: Color::rgba(10, 20, 30, 255),
+        };
+        let (Some(mut fresh), Some(mut reused)) = (renderer(options), renderer(options)) else {
+            return;
+        };
+        let mut earlier = empty_scene(64, 64);
+        earlier.layers = vec![blend_rect(
+            "white",
+            0.0,
+            0.0,
+            64.0,
+            "#ffffff",
+            BlendMode::Screen,
+        )];
+        reused.render(&earlier).unwrap();
+
+        let mut scene = empty_scene(64, 64);
+        let mut magnified =
+            blend_rect("magnified", 0.0, 0.0, 4.0, "#40a0ff", BlendMode::Difference);
+        magnified.transform = EvaluatedTransform {
+            position: Point { x: 32.0, y: 32.0 },
+            anchor: Point { x: 0.5, y: 0.5 },
+            rotation: 20.0,
+            scale: Point { x: 6.0, y: 6.0 },
+        };
+        scene.layers = vec![
+            blend_rect("left", 0.0, 0.0, 32.0, "#203040", BlendMode::Normal),
+            blend_rect("right", 32.0, 0.0, 32.0, "#c08040", BlendMode::Normal),
+            blend_rect("bottom", 0.0, 32.0, 64.0, "#608060", BlendMode::Normal),
+            magnified,
+        ];
+        let expected = fresh.render(&scene).unwrap();
+        let frame = reused.render(&scene).unwrap();
+        let difference = frame
+            .pixels()
+            .iter()
+            .zip(expected.pixels())
+            .map(|(a, b)| a.abs_diff(*b))
+            .max()
+            .unwrap();
+        assert_eq!(difference, 0, "the earlier frame's backdrop shows through");
     }
 
     fn blend_group(opacity: f64, blend_mode: BlendMode, layers: Vec<Layer>) -> Layer {

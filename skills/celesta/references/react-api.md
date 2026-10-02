@@ -715,8 +715,8 @@ registerComponent<LowerThirdProps>('LowerThird', LowerThird, {
 ## Rendering cost
 
 Preview and export draw every frame on the GPU. A frame's cost depends on
-what its layers ask the renderer to do, not on how many layers there are.
-Thousands of flat `Rect`s are cheap; a few dozen effects are not. Export
+how many layers there are, and far more on what they ask the renderer to
+do. Thousands of flat `Rect`s are cheap; a few dozen effects are not. Export
 prints its speed as it goes (`rendering frame 300/1530  58.5 fps`). To find
 the slow part of a video, see
 [verify-and-export.md](verify-and-export.md#find-slow-parts).

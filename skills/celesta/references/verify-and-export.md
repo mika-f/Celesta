@@ -218,7 +218,9 @@ most 16384 px on each side; the error says which limit was hit.
 Export prints its speed as it renders, as in
 `rendering frame 300/1530  58.5 fps`. To find which part of a video is slow,
 export spans of a few seconds and compare the last `fps` each one prints.
-`--preset ultrafast` keeps encoding time out of the measurement:
+`--preset ultrafast` keeps encoding time out of the measurement. Choose
+start times that fit inside the video. This example is for one that is at
+least 44 s long:
 
 ```sh
 for t in 0 10 20 30 40; do
