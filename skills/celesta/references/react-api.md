@@ -15,6 +15,7 @@ them from npm.
 - [Layout helpers](#layout-helpers): Center, SafeArea, Stack, Grid, Fit
 - [Media helpers](#media-helpers): preloadMedia, mediaDurationInFrames, measureText, useTextMetrics
 - [Project data](#project-data): ProjectProvider, useProjectProperty, defineProjectProperties, ProjectTimeline, ProjectTrack, registerComponent
+- [Rendering cost](#rendering-cost): what makes preview and export slow, and cheaper ways to get the same picture
 - [Preview-only debug guides](#preview-only-debug-guides)
 - [Keyframe values](#keyframe-values)
 
@@ -710,6 +711,42 @@ registerComponent<LowerThirdProps>('LowerThird', LowerThird, {
   role: { type: 'string', defaultValue: 'Host' },
 });
 ```
+
+## Rendering cost
+
+Preview and export draw every frame on the GPU. A frame's cost depends on
+how many layers there are, and far more on what they ask the renderer to
+do. Thousands of flat `Rect`s are cheap; a few dozen effects are not. Export
+prints its speed as it goes (`rendering frame 300/1530  58.5 fps`). To find
+the slow part of a video, see
+[verify-and-export.md](verify-and-export.md#find-slow-parts).
+
+| Cheap | Costs more |
+| --- | --- |
+| `Rect`, flat or gradient, including a gradient whose colors change every frame | `blur`, `glow`, `shadow`: each layer with an effect is drawn onto a canvas of its own and filtered in several extra GPU passes over the area it covers |
+| `x`/`y`, `scale`, `rotation`, `opacity` | A `blendMode` other than `'normal'`: every blended layer reads what is beneath it, which takes a copy and a GPU pass of its own |
+| Text, images and SVGs whose content and drawn size stay the same: rasterized once and reused | `Path`, `Line`, `Polyline`: rasterized on the CPU every frame at their drawn size, so a large filled path costs per pixel |
+| | Text whose string or style (including a gradient `fill`'s colors) changes every frame: rasterized again each frame. Text drawn at a changing scale is rasterized again in steps of about 9% |
+
+To get the same picture for less:
+
+- **Put one effect on a `Group`, not one on each layer.** A `Group`'s effect
+  filters all its children together. Letters that fade one by one can
+  share one `glow` on their `Group`; it follows each letter's opacity.
+- **Draw many small lights as gradients.** For dozens of glowing points
+  (stars, windows, sparks), draw a radial-gradient `Rect` that fades to
+  transparent instead of using `glow`. Animate it with `opacity` and
+  `scale`:
+
+  ```tsx
+  <Rect x={x} y={y} width={40} height={40} anchorX={0.5} anchorY={0.5} opacity={brightness}
+    fill={{ type: 'radial', center: { x: 20, y: 20 }, radius: 20,
+      stops: [{ offset: 0, color: '#FFE8C0' }, { offset: 1, color: '#FFE8C000' }] }} />
+  ```
+
+- **Blend a few large layers rather than many small ones.** Layers that use
+  the same mode and do not overlap one another can go in one
+  `<Group blendMode="add">`. The group then blends once.
 
 ## Preview-only debug guides
 
