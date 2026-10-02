@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
-import { Rect, random, useBeat } from '@celesta/react';
+import { random } from '@celesta/math';
+import { Rect, useBeat } from '@celesta/react';
 import { BPM, C } from '../constants';
 
 export function DotGrid() {

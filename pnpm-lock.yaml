@@ -197,7 +197,17 @@ importers:
         specifier: ^8.3.1
         version: 8.3.1(@types/node@24.19.0)(esbuild@0.28.1)(jiti@2.7.0)
 
+  packages/math:
+    devDependencies:
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
   packages/react:
+    dependencies:
+      '@celesta/math':
+        specifier: workspace:*
+        version: link:../math
     devDependencies:
       '@types/node':
         specifier: ^24.13.6

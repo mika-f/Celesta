@@ -107,7 +107,7 @@ assets and runs `pnpm run deploy`. It needs the `CLOUDFLARE_API_TOKEN` and
   with one star). It is separate from the app logos in `packages/logos`.
 
 The web editor accepts one self-contained TSX file. Runtime imports are limited
-to `@celesta/react` and `react`; `prepare()`, companion JSON projects, PSD
+to `@celesta/react`, `@celesta/math`, and `react`; `prepare()`, companion JSON projects, PSD
 portraits, and other npm imports still require the desktop/CLI workflow. Add
 local image, video, or audio files with **Add media** and refer to them by file
 name in `src`. Remote media needs CORS access. The web preview is silent;

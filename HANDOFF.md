@@ -1,6 +1,6 @@
 # Celesta implementation handoff
 
-Last updated: 2026-09-25 (the GPUI app is now preview-only)
+Last updated: 2026-10-02 (`random`/`noise` moved to `@celesta/math`)
 
 ## Goal
 
@@ -86,6 +86,25 @@ git status --short
 cargo test --workspace
 ```
 
+## `@celesta/math` (2026-10-02)
+
+`random` and `noise` moved out of `@celesta/react` into the new
+`packages/math` (`@celesta/math`), which also adds more random, noise, scalar,
+wave, angle, and point helpers. `@celesta/react` no longer exports `random` or
+`noise`; entries import them from `@celesta/math`. Their output is unchanged
+(pinned by `packages/math/test`).
+
+- `@celesta/react`'s `build` is `tsc -b`: its tsconfig references
+  `../math`, so one `pnpm run build` in `packages/react` builds both. Both keep
+  their `.tsbuildinfo` in `dist/`, so `pnpm run clean` forces a full rebuild.
+- `cli.ts`'s `shared-runtime` esbuild plugin resolves `@celesta/math` from
+  the runtime like `@celesta/react` (an entry's folder has no copy of it).
+- `scripts/stage-react-runtime.mjs` copies `@celesta/math` into the packaged
+  runtime; `stage-project-types.mjs` stages its declarations and maps it in
+  the `.celesta/tsconfig.json` `paths`.
+- The web editor worker (`packages/web/src/engine.worker.ts`) imports
+  `packages/math/src` directly and serves it for `require('@celesta/math')`.
+
 ## Workspace map
 
 | Crate | Responsibility |
@@ -100,6 +119,7 @@ cargo test --workspace
 | `celesta-editor` | Preview-only GPUI application: File menu open/reload, playback clock, GPU preview bridge, read-only asset list, timeline, and inspector, and MP4 export. |
 | `celesta-remote` | Resolves asset locations to local files: relative paths join the asset root, and `http`/`https` URLs download once into a per-user cache (`<cache dir>/remote-v1/<url hash>/<file name>`, never revalidated). Used by both renderers, the audio mixer, the editor's waveforms, and React `preloadMedia()` probes. Also reads `@font-face` stylesheets (`stylesheet_font_faces`), e.g. Google Fonts CSS links; `TextRasterizer::load_fonts` loads each face, unpacks WOFF/WOFF2 with `wuff`, and registers the CSS `font-family` as an extra family name. |
 | `celesta-react-bridge` | Spawns one long-lived `@celesta/react` Node.js process per composition and requests the evaluated `Scene` (plus that frame's `<Audio>` clips) for each exact frame time over stdin/stdout JSON, or resolves individual registered components for the editor preview. |
+| `packages/math` (`@celesta/math`, TypeScript) | Pure, React-free math for compositions: seeded `random` helpers, `noise`/`noise2D`/`noise3D`/`fbm*`, scalar shaping (`clamp`, `lerp`, `remap`, `smoothstep`, ...), waves, angles, and `{x, y}` point helpers. `@celesta/react` depends on it (`workspace:*`) and builds it through a TypeScript project reference. |
 | `packages/react` (`@celesta/react`, Node.js/TypeScript) | Declarative `Composition`/`Sequence`/`Group`/`Image`/`Rect`/`Path`/`Text`/`Video`/`Audio` components rendered through a real `react-reconciler` host (hooks, including `useCurrentFrame`/`useVideoConfig`, work); `useProject`/`<ProjectTimeline />` embed a companion project's Rust-evaluated layers. The `celesta-react-render` CLI bundles a JSX/TSX entry with esbuild and emits `Scene`-shaped JSON plus per-frame audio declarations. |
 
 Important files:

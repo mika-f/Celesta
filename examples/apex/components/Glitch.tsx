@@ -1,4 +1,4 @@
-import { random } from '@celesta/react';
+import { random } from '@celesta/math';
 import { Label } from './Label';
 import { BONE, CYAN, MAG } from '../constants';
 

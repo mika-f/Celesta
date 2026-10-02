@@ -124,7 +124,8 @@ cargo run -p celesta-editor --release -- packages/react/examples/title.tsx
 
 Use the files in `packages/react/examples` as starting points. They demonstrate
 text, animation, layout, dialogue, and editable project properties. The package
-is currently imported as `@celesta/react`.
+is currently imported as `@celesta/react`; deterministic random numbers, noise,
+and other math helpers are imported from `@celesta/math`.
 
 Visual layers and groups accept `blur`, `shadow`, and `glow`. Radii and shadow
 offsets use output pixels. All three can change each frame through React props:
@@ -147,12 +148,13 @@ effects under `effects`, with keyframes for numeric properties and colors.
 ### Type-check your compositions
 
 Choose **File > Set Up TypeScript** with a React composition open. Celesta
-copies the `@celesta/react`, React, and Node.js type declarations that match
-its bundled runtime into a `.celesta/` folder in your project. If the project
+copies the `@celesta/react`, `@celesta/math`, React, and Node.js type
+declarations that match its bundled runtime into a `.celesta/` folder in your
+project. If the project
 has no `tsconfig.json`, Celesta creates one that extends
 `./.celesta/tsconfig.json`. If a `tsconfig.json` already exists, add
 `"extends": "./.celesta/tsconfig.json"` to it. You don't need to install
-`@celesta/react`, `react`, or `@types/*` from npm.
+`@celesta/react`, `@celesta/math`, `react`, or `@types/*` from npm.
 
 Celesta updates `.celesta/` when you open the project in a newer version. The
 folder ignores itself in Git.

@@ -76,7 +76,8 @@ produces a video that differs between preview and export.
    `useCurrentFrame()` / `useCurrentTime()`. Never use `Math.random()`,
    `Date.now()`, timers, `useEffect`, or state that accumulates across
    renders: frames are rendered out of order when scrubbing and exporting. For
-   "random" values, use `random(seed)` and `noise(seed, t)`.
+   "random" values, use `random(seed)` and `noise(seed, t)` from
+   `@celesta/math`.
 6. **Async work goes in `prepare()`.** Rendering is synchronous. Fetching,
    file reads, `preloadMedia()`, `loadLipSync()`, and `loadPsdPreset()` belong
    in `export async function prepare()`, which runs once before the first
@@ -86,8 +87,8 @@ produces a video that differs between preview and export.
    `loadLipSync`, `loadPsdPreset`, and `preloadMedia`. JSON project asset
    paths resolve from the project file's folder. `http(s)://` URLs are
    downloaded once and cached forever; change the URL to refresh.
-8. **Imports.** `react` and `@celesta/react` always resolve to the runtime
-   bundled with Celesta; never `npm install` them. Other relative imports
+8. **Imports.** `react`, `@celesta/react`, and `@celesta/math` always
+   resolve to the runtime bundled with Celesta; never `npm install` them. Other relative imports
    (including `import data from './data.json'`) are bundled normally.
 9. **Draw order is source order.** Later siblings draw on top. In JSON, later
    tracks draw on top of earlier ones.
@@ -145,7 +146,8 @@ Load the one you need; each is self-contained.
 - [references/react-api.md](references/react-api.md): every `@celesta/react`
   component, prop, hook, and helper (layers, text and fonts, animation,
   `Sequence`/`Transition`, layout helpers, media, `prepare()`, project
-  properties, `registerComponent`, rendering cost, debug guides).
+  properties, `registerComponent`, rendering cost, debug guides), plus the
+  `@celesta/math` random, noise, and math helpers.
 - [references/project-json.md](references/project-json.md): the complete
   `.celesta.json` schema, validation rules, keyframes and easing names, and
   a full example.
