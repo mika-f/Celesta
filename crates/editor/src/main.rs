@@ -23,7 +23,7 @@ use celesta_editor_core::{
 };
 use celesta_exporter::{
     ExportCancellation, ExportError, ExportOptions, ExportProgress, ExportRange, Exporter,
-    ReactRuntimeOptions,
+    ReactRuntimeOptions, VideoCodec, VideoEncoding,
 };
 use celesta_gpu_renderer::{
     GpuRenderOptions, GpuRenderer, PreviewFrame as GpuPreviewFrame, RenderQuality,
@@ -55,11 +55,12 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 #[cfg(not(target_os = "macos"))]
 use gpui_kit::component::menu::AppMenuBar;
 use gpui_kit::component::resizable::{ResizableState, h_resizable, resizable_panel, v_resizable};
+use gpui_kit::component::select::{Select, SelectItem, SelectState};
 use gpui_kit::component::status_bar::StatusBar;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, IconName, Root, Selectable as _, Sizable as _, TitleBar,
-    WindowExt as _,
+    ActiveTheme as _, Disableable as _, IconName, IndexPath, Root, Selectable as _, Sizable as _,
+    TitleBar, WindowExt as _,
 };
 
 const EDITOR_DEMO_PROJECT: &str = include_str!("../../../examples/editor-demo.celesta.json");
@@ -838,8 +839,52 @@ struct ExportRequest {
     asset_root: PathBuf,
     output: PathBuf,
     range: Option<ExportRange>,
+    video: VideoEncoding,
     cancellation: ExportCancellation,
 }
+
+/// One row of the title bar's export codec picker. A codec the linked
+/// FFmpeg build cannot encode stays listed, disabled, so the option is
+/// discoverable rather than silently missing.
+#[derive(Clone)]
+struct ExportCodecOption {
+    codec: VideoCodec,
+    available: bool,
+}
+
+impl ExportCodecOption {
+    fn all() -> Vec<Self> {
+        VideoCodec::ALL
+            .into_iter()
+            .map(|codec| Self {
+                codec,
+                available: codec.is_available(),
+            })
+            .collect()
+    }
+}
+
+impl SelectItem for ExportCodecOption {
+    type Value = VideoCodec;
+
+    fn title(&self) -> SharedString {
+        if self.available {
+            self.codec.display_name().into()
+        } else {
+            format!("{} (unavailable)", self.codec.display_name()).into()
+        }
+    }
+
+    fn value(&self) -> &Self::Value {
+        &self.codec
+    }
+
+    fn disabled(&self) -> bool {
+        !self.available
+    }
+}
+
+type ExportCodecSelect = Entity<SelectState<Vec<ExportCodecOption>>>;
 
 /// What the export worker renders: a normal `project.json`, or a standalone
 /// React composition entry (`.tsx` preview mode). The React path has no
@@ -878,6 +923,7 @@ impl ExportWorker {
                     let exporter = Exporter::new(ExportOptions {
                         overwrite: true,
                         range: request.range,
+                        video: request.video,
                         ..ExportOptions::default()
                     });
                     let progress = |progress| {
@@ -1252,6 +1298,9 @@ struct EditorView {
     gpu_name: SharedString,
     focus_handle: Option<FocusHandle>,
     master_volume_focus: Option<FocusHandle>,
+    /// The video codec the next export encodes with; window-owned like the
+    /// focus handles, so it survives opening another project.
+    export_codec: Option<ExportCodecSelect>,
     /// Split positions for the workspace shell: `dock_split` is the
     /// asset-list / monitor / inspector row, `body_split` is the
     /// work-area / timeline column. Held here so the drags persist across
@@ -1377,6 +1426,7 @@ impl EditorView {
             gpu_name,
             focus_handle: None,
             master_volume_focus: None,
+            export_codec: None,
             dock_split: None,
             body_split: None,
             timeline_zoom: 1.0,
@@ -1562,6 +1612,7 @@ impl EditorView {
         next.session = self.session.wrapping_add(1);
         next.focus_handle = self.focus_handle.take();
         next.master_volume_focus = self.master_volume_focus.take();
+        next.export_codec = self.export_codec.take();
         next.dock_split = self.dock_split.take();
         next.body_split = self.body_split.take();
         #[cfg(not(target_os = "macos"))]
@@ -2475,7 +2526,7 @@ impl EditorView {
                 if output.extension() != Some(OsStr::new("mp4")) {
                     output.set_extension("mp4");
                 }
-                this.start_export(output);
+                this.start_export(output, cx);
                 cx.notify();
             })
             .ok();
@@ -2484,7 +2535,7 @@ impl EditorView {
         cx.notify();
     }
 
-    fn start_export(&mut self, output: PathBuf) {
+    fn start_export(&mut self, output: PathBuf, cx: &App) {
         let cancellation = ExportCancellation::default();
         let (source, range) = match &self.react_preview {
             Some(react) => {
@@ -2512,6 +2563,10 @@ impl EditorView {
             asset_root: self.document.asset_root().to_owned(),
             output: output.clone(),
             range,
+            video: VideoEncoding {
+                codec: self.export_codec(cx),
+                ..VideoEncoding::default()
+            },
             cancellation: cancellation.clone(),
         };
         self.export_path = Some(output);
@@ -2526,6 +2581,13 @@ impl EditorView {
             self.export_cancellation = None;
             self.export_error = Some(error.into());
         }
+    }
+
+    fn export_codec(&self, cx: &App) -> VideoCodec {
+        self.export_codec
+            .as_ref()
+            .and_then(|select| select.read(cx).selected_value().copied())
+            .unwrap_or_default()
     }
 
     /// Marks the current playhead frame as the export in-point, dropping a
@@ -2732,6 +2794,22 @@ impl EditorView {
                         .disabled(self.opening || exporting)
                         .on_click(cx.listener(Self::open_project_click)),
                 )
+                .when_some(self.export_codec.as_ref(), |bar, codec| {
+                    bar.child(
+                        div()
+                            .id("export-codec")
+                            .tooltip(|window, cx| {
+                                Tooltip::new("Video codec for exports").build(window, cx)
+                            })
+                            .child(
+                                Select::new(codec)
+                                    .small()
+                                    .w_24()
+                                    .accessibility_label("Export video codec")
+                                    .disabled(exporting || self.choosing_export_path),
+                            ),
+                    )
+                })
                 .child(if exporting {
                     Button::new("export-project")
                         .small()
@@ -4516,6 +4594,14 @@ fn run() -> Result<(), Box<dyn Error>> {
                     focus_handle.focus(window, cx);
                     editor.focus_handle = Some(focus_handle);
                     editor.master_volume_focus = Some(master_volume_focus);
+                    editor.export_codec = Some(cx.new(|cx| {
+                        SelectState::new(
+                            ExportCodecOption::all(),
+                            Some(IndexPath::new(0)),
+                            window,
+                            cx,
+                        )
+                    }));
                     editor.dock_split = Some(cx.new(|_| ResizableState::default()));
                     editor.body_split = Some(cx.new(|_| ResizableState::default()));
                     #[cfg(not(target_os = "macos"))]
@@ -4573,7 +4659,7 @@ mod tests {
         Animatable, AssetLocation, AudioClip, Rational, ResolvedAsset, Time, TimeRange,
     };
     use celesta_editor_core::ClipSummary;
-    use celesta_exporter::ExportCancellation;
+    use celesta_exporter::{ExportCancellation, VideoEncoding};
     use celesta_media::{AudioBuffer, AudioDecoder};
     use celesta_project::Project;
     use std::fs;
@@ -4608,6 +4694,7 @@ mod tests {
                 asset_root: PathBuf::from("examples"),
                 output: output.clone(),
                 range: None,
+                video: VideoEncoding::default(),
                 cancellation,
             })
             .unwrap();
