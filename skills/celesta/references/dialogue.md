@@ -225,6 +225,14 @@ export async function prepare() {
   mouth layers hidden, so list all of them in `lipSync`.
 - Large PSDs are big: set `scale` on the `<CharacterView>` (0.2–0.5 is
   common for full-body tachie in 1080p).
+- Layer opacity and the PSD layer blend modes **normal, multiply, screen,
+  overlay, linear dodge (add), and difference** are applied in native preview
+  and export. All other layer modes (including soft light, hard light, and
+  hue/saturation/color/luminosity) fall back to normal compositing.
+- Folder blend modes and folder opacity are not applied. The `psd` reader
+  reports incorrect folder opacity for real PSDTool files; children composite
+  directly onto the portrait canvas. PSDs relying on isolated folder blending
+  need to be flattened into supported pixel layers first.
 
 ## JSON projects
 

@@ -1176,6 +1176,9 @@ fn psd_cache_key(
 /// layer is placed at its real PSD coordinates (via [`psd::PsdLayer::rgba`],
 /// which returns canvas-sized pixels). Per-layer opacity is applied; group
 /// opacity is not (the `psd` crate misreads it as 0 for real PSDTool files).
+/// Layer blend modes normal, multiply, screen, overlay, linear dodge (add),
+/// and difference are supported; other modes fall back to normal. Group
+/// blend modes are not applied.
 pub fn rasterize_psd(
     asset: &str,
     path: &Path,
@@ -1240,11 +1243,13 @@ pub fn rasterize_psd(
         // from the wrong ("bounding section") record and reports 0 for every
         // folder in real PSDTool files. Per-layer opacity is read correctly.
         let opacity = f64::from(layer.opacity()) / 255.0;
+        let blend_mode = psd_blend_mode(layer);
         for (destination, source) in pixels.chunks_exact_mut(4).zip(layer.rgba().chunks_exact(4)) {
-            blend(
+            blend_with_mode(
                 destination,
                 Color::rgba(source[0], source[1], source[2], source[3]),
                 opacity,
+                blend_mode,
             );
         }
     }
@@ -1253,6 +1258,23 @@ pub fn rasterize_psd(
         height: psd.height(),
         pixels,
     })
+}
+
+fn psd_blend_mode(layer: &psd::PsdLayer) -> BlendMode {
+    // psd 0.3.5 returns BlendMode but does not re-export its type. These are
+    // its explicit enum discriminants, not PSD file keys. The fixture tests
+    // exercise decoding each supported mode to guard this dependency boundary.
+    match layer.blend_mode() as u8 {
+        1 => BlendMode::Normal,
+        4 => BlendMode::Multiply,
+        9 => BlendMode::Screen,
+        13 => BlendMode::Overlay,
+        11 => BlendMode::Add, // LinearDodge
+        20 => BlendMode::Difference,
+        // Keep unsupported PSD modes renderable; this fallback is documented
+        // in the PSD portrait authoring guide and rasterize_psd's API docs.
+        _ => BlendMode::Normal,
+    }
 }
 
 fn normalize_psd_path(path: &str) -> String {
@@ -3203,6 +3225,118 @@ mod tests {
     fn pixel_at(frame: &RgbaFrame, x: u32, y: u32) -> [u8; 4] {
         let index = ((y * frame.width + x) * 4) as usize;
         frame.pixels[index..index + 4].try_into().unwrap()
+    }
+
+    // Regenerate with packages/react/scripts/make-psd-blend-fixture.mjs.
+    // Rows: normal, multiply, screen, overlay, linear dodge, difference,
+    // and unsupported soft light. Every source layer has opacity 128/255.
+    fn psd_blend_fixture() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/assets/psd-blend-fixture.psd")
+    }
+
+    const PSD_BLEND_LAYERS: [&str; 8] = [
+        "base",
+        "normal",
+        "multiply",
+        "screen",
+        "overlay",
+        "linear dodge",
+        "difference",
+        "soft light",
+    ];
+
+    #[test]
+    fn rasterize_psd_applies_layer_blend_modes_and_opacity() {
+        let frame = rasterize_psd(
+            "blend",
+            &psd_blend_fixture(),
+            &PSD_BLEND_LAYERS.map(str::to_owned),
+            &[],
+            &[],
+        )
+        .unwrap();
+        // Opaque backdrop (64,128,192) and source (192,128,64).
+        let expected = [
+            [128, 128, 128, 255],
+            [56, 96, 120, 255],
+            [136, 160, 200, 255],
+            [80, 128, 176, 255],
+            [160, 192, 224, 255],
+            [96, 64, 160, 255],
+            [128, 128, 128, 255], // Unsupported soft light falls back to normal.
+        ];
+        for (row, pixel) in expected.into_iter().enumerate() {
+            assert_eq!(pixel_at(&frame, 0, row as u32), pixel, "row {row}");
+        }
+    }
+
+    #[test]
+    fn rasterize_psd_blends_partial_alpha_without_premultiplying_twice() {
+        let frame = rasterize_psd(
+            "blend",
+            &psd_blend_fixture(),
+            &PSD_BLEND_LAYERS.map(str::to_owned),
+            &[],
+            &[],
+        )
+        .unwrap();
+        // Both pixel alphas are 128/255; the source also has layer opacity.
+        let expected = [
+            [115, 128, 141, 160],
+            [86, 115, 137, 160],
+            [119, 141, 170, 160],
+            [96, 128, 160, 160],
+            [128, 154, 179, 160],
+            [103, 102, 153, 160],
+            [115, 128, 141, 160],
+        ];
+        for (row, pixel) in expected.into_iter().enumerate() {
+            assert_eq!(pixel_at(&frame, 1, row as u32), pixel, "row {row}");
+        }
+    }
+
+    #[test]
+    fn rasterize_psd_preserves_source_color_over_a_transparent_backdrop() {
+        let frame = rasterize_psd(
+            "blend",
+            &psd_blend_fixture(),
+            &PSD_BLEND_LAYERS.map(str::to_owned),
+            &[],
+            &[],
+        )
+        .unwrap();
+        for row in 0..7 {
+            assert_eq!(pixel_at(&frame, 2, row), [192, 128, 64, 128], "row {row}");
+        }
+    }
+
+    #[test]
+    fn rasterize_psd_transparent_blended_pixels_leave_the_backdrop_unchanged() {
+        let frame = rasterize_psd(
+            "blend",
+            &psd_blend_fixture(),
+            &PSD_BLEND_LAYERS.map(str::to_owned),
+            &[],
+            &[],
+        )
+        .unwrap();
+        for row in 0..7 {
+            assert_eq!(pixel_at(&frame, 3, row), [64, 128, 192, 255], "row {row}");
+        }
+    }
+
+    #[test]
+    fn rasterize_psd_blended_layers_respect_preset_and_lip_sync_overrides() {
+        let preset = ["base".to_owned()];
+        let multiply = ["multiply".to_owned()];
+        let enabled =
+            rasterize_psd("blend", &psd_blend_fixture(), &preset, &multiply, &[]).unwrap();
+        assert_eq!(pixel_at(&enabled, 0, 1), [56, 96, 120, 255]);
+        assert_eq!(pixel_at(&enabled, 0, 2), [64, 128, 192, 255]);
+
+        let disabled =
+            rasterize_psd("blend", &psd_blend_fixture(), &preset, &multiply, &multiply).unwrap();
+        assert_eq!(pixel_at(&disabled, 0, 1), [64, 128, 192, 255]);
     }
 
     #[test]
