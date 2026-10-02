@@ -106,6 +106,8 @@ test('random helpers cover their ranges and stay deterministic', () => {
   assert.equal(randomBool('x', 1), true);
   assert.equal(randomInt('x', 3, 3), 3);
   assert.throws(() => randomInt('x', 1.2, 1.8), /no whole number/);
+  assert.throws(() => randomInt('x', 0, Number.POSITIVE_INFINITY), /randomInt\(\) requires a finite max/);
+  assert.throws(() => randomInt('x', Number.NaN, 3), /randomInt\(\) requires a finite min/);
 
   assert.equal(randomPick('a', ['only']), 'only');
   assert.equal(randomPick(9, ['a', 'b', 'c']), randomPick(9, ['a', 'b', 'c']));
@@ -166,6 +168,10 @@ test('fbm layers octaves and keeps the first octave', () => {
     assert.ok(value >= -1 && value <= 1);
   }
   assert.throws(() => fbm('s', 1, { octaves: 0 }), /whole number of octaves/);
+  assert.throws(() => fbm('s', 1, { octaves: 2, gain: -1 }), /non-negative gain/);
+  assert.throws(() => fbm2D('s', 1, 1, { gain: Number.NaN }), /non-negative gain/);
+  assert.throws(() => fbm3D('s', 1, 1, 1, { lacunarity: Number.POSITIVE_INFINITY }), /finite lacunarity/);
+  assert.equal(fbm('s', 1.7, { octaves: 3, gain: 0 }), noise('s', 1.7));
 });
 
 test('scalar helpers', () => {
@@ -208,12 +214,16 @@ test('angle helpers work in radians and turn the short way', () => {
   close(lerpAngle(degToRad(350), degToRad(10), 0.5), degToRad(360));
 });
 
-test('waves share a period of 1 and start at 0 rising', () => {
-  for (const wave of [sineWave, triangleWave, sawtoothWave]) {
-    close(wave(0), 0);
-    assert.ok(wave(0.1) > 0);
+test('waves share a period of 1 and are positive for its first half', () => {
+  for (const wave of [sineWave, triangleWave, sawtoothWave, squareWave]) {
+    assert.ok(wave(0.1) > 0 && wave(0.4) > 0, wave.name);
+    assert.ok(wave(0.6) < 0 && wave(0.9) < 0, wave.name);
     close(wave(1.37), wave(0.37));
   }
+  for (const wave of [sineWave, triangleWave, sawtoothWave]) {
+    close(wave(0), 0);
+  }
+  assert.equal(squareWave(0), 1);
   close(sineWave(0.25), 1);
   close(triangleWave(0.25), 1);
   close(triangleWave(0.75), -1);

@@ -1,7 +1,7 @@
 // Deterministic randomness. Every frame must be a pure function of the frame
 // number, so `Math.random()` is off limits in a composition; these return the
 // same value for the same seed on every render, in preview and in export.
-import { UINT32_RANGE, mix32, seedToInt, streamValue } from './hash';
+import { UINT32_RANGE, mix32, requireFinite, seedToInt, streamValue } from './hash';
 import type { Seed } from './hash';
 import type { Vec2 } from './vector';
 
@@ -21,6 +21,7 @@ export function randomRange(seed: Seed, min: number, max: number): number {
 
 /** A pseudo-random whole number from `min` to `max`, both included, for `seed`. */
 export function randomInt(seed: Seed, min: number, max: number): number {
+  requireFinite('randomInt', { min, max });
   const low = Math.ceil(min);
   const high = Math.floor(max);
   if (high < low) {

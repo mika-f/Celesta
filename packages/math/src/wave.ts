@@ -1,5 +1,6 @@
 // Periodic waves in `[-1, 1]` with a period of 1: pass `frame / framesPerCycle`.
-// All four start at 0 and rise, so they can be swapped for one another.
+// All four are in phase, positive for the first half of each period and
+// negative for the second, so they can be swapped for one another.
 import { fract } from './scalar';
 
 /** A sine wave: `sin(2πt)`. */

@@ -543,7 +543,9 @@ prefer `interpolate`.
 ### Waves
 
 `sineWave(t)`, `triangleWave(t)`, `squareWave(t)`, `sawtoothWave(t)`: period
-1, range `[-1, 1]`, all starting at 0 and rising. Pass
+1, range `[-1, 1]`, all in phase: positive for the first half of each period
+and negative for the second (sine, triangle, and sawtooth start at 0; the
+square wave starts at 1). Pass
 `frame / framesPerCycle`.
 
 ### Angles and points

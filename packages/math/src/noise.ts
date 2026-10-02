@@ -109,6 +109,11 @@ function fractal(caller: string, options: FbmOptions, sample: (octave: number, f
   if (!Number.isInteger(octaves) || octaves < 1) {
     throw new Error(`${caller}() requires a whole number of octaves of at least 1`);
   }
+  // A negative gain can cancel the summed amplitudes to zero.
+  if (!Number.isFinite(gain) || gain < 0) {
+    throw new Error(`${caller}() requires a finite, non-negative gain`);
+  }
+  requireFinite(caller, { lacunarity });
   let sum = 0;
   let total = 0;
   let amplitude = 1;

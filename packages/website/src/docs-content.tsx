@@ -184,7 +184,7 @@ export const sections: DocSection[] = [
         [<><code>sineWave</code>, <code>triangleWave</code>, <code>squareWave</code>, <code>sawtoothWave</code></>, <>Repeating waves in <code>[-1, 1]</code> with a period of 1.</>],
         [<><code>degToRad</code>, <code>lerpAngle</code>, <code>rotatePoint</code>, <code>polarToCartesian</code>, <code>cubicBezierPoint</code></>, <>Angles in radians and <code>{'{ x, y }'}</code> points.</>],
       ]} />
-      <h3>Timecodes</h3><p><code>frameToTimecode(frame, fps)</code> formats <code>HH:MM:SS:FF</code> for an on-screen clock.</p>
+      <h3>Timecodes</h3><p><code>frameToTimecode(frame, fps)</code>, from <code>@celesta/react</code>, formats <code>HH:MM:SS:FF</code> for an on-screen clock.</p>
     </>,
   },
   {
