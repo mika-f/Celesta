@@ -8,7 +8,7 @@ Users do not need Node.js, pnpm, Rust, or FFmpeg installed.
 ## Prerequisites
 
 - The `x86_64-pc-windows-msvc` Rust toolchain and Visual Studio C++ build tools.
-- FFmpeg built with `vcpkg install ffmpeg[x264]:x64-windows-static-md` and
+- FFmpeg built with `vcpkg install ffmpeg[x264,x265]:x64-windows-static-md` and
   `VCPKG_ROOT` pointing to that installation. Use a vcpkg release whose
   `ffmpeg` port is 8.1.x, such as `2026.07.29`.
 - Node.js and pnpm for building the React package.
@@ -76,9 +76,9 @@ The package collects Node.js and JavaScript license texts, native vcpkg notices,
 and available Rust license texts plus a dependency inventory, and includes the
 repository's root `LICENSE*` files plus `packaging/GPL-SOURCE-OFFER.md`.
 
-The x264-enabled FFmpeg configuration is GPL-2.0-or-later licensed, which makes
+The x264- and x265-enabled FFmpeg configuration is GPL-2.0-or-later licensed, which makes
 this binary package as a whole GPL-licensed in addition to Celesta's own
 MIT/Apache-2.0 source license; see [`../GPL-SOURCE-OFFER.md`](../GPL-SOURCE-OFFER.md)
 and the root [`README.md`](../../README.md#license) for details. That file's
 written offer, together with `LICENSE-GPL-2.0`, is how this package satisfies
-GPLv2 Section 3 without bundling full FFmpeg/x264 source in every download.
+GPLv2 Section 3 without bundling full FFmpeg/x264/x265 source in every download.

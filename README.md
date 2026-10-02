@@ -30,8 +30,9 @@ for more examples, see the [examples directory](examples) and the [gallery](docs
 - **Compose with React:** use components, hooks, animation helpers, and layouts
   to build scenes, and combine React content with a project timeline. The
   preview reloads when you save the composition.
-- **Export MP4:** render H.264 video with AAC audio, either from the app or
-  the command line. Export the whole composition or a selected time range.
+- **Export MP4:** render H.264 or H.265 video with AAC audio, either from the
+  app or the command line. Export the whole composition or a selected time
+  range.
 
 ## Run from source
 
@@ -45,7 +46,7 @@ Celesta links to FFmpeg libraries; installing only the `ffmpeg` command-line
 executable is not sufficient.
 
 - **Windows:** install the MSVC C++ build tools and vcpkg, run
-  `vcpkg install ffmpeg[x264]:x64-windows-static-md`, and set `VCPKG_ROOT` to
+  `vcpkg install ffmpeg[x264,x265]:x64-windows-static-md`, and set `VCPKG_ROOT` to
   your vcpkg directory. Use a vcpkg release whose `ffmpeg` port is 8.1.x, such
   as `2026.07.29`; newer releases provide FFmpeg 9.
 - **macOS:** install the Xcode Command Line Tools, then run
@@ -197,6 +198,15 @@ to 51. Lower values give higher quality and larger files:
 cargo run -p celesta-exporter --release -- --preset veryfast examples/editor-demo.celesta.json draft.mp4
 ```
 
+Pass `--codec h265` to encode H.265 (HEVC) with libx265 instead. At the same
+`--crf`, files are noticeably smaller, but encoding is slower and some older
+devices and browsers cannot play them. `--preset` and `--crf` take the same
+values for both codecs:
+
+```sh
+cargo run -p celesta-exporter --release -- --codec h265 examples/editor-demo.celesta.json small.mp4
+```
+
 On a hardware GPU, frames are converted from RGB to the video's YUV colors
 on the GPU. The exporter then reads less data back from the GPU, and the
 encoder has less work to do. `--color-conversion encoder` does the conversion
@@ -279,7 +289,8 @@ reproduces it, along with media you have permission to share.
 Celesta's own source code is declared under MIT OR Apache-2.0.
 
 The official Windows and macOS binary packages additionally bundle an FFmpeg
-build with the `x264` encoder enabled, which is GPL-2.0-or-later licensed.
+build with the `x264` and `x265` encoders enabled, which are GPL-2.0-or-later
+licensed.
 Distributing that FFmpeg build makes the binary package as a whole subject to
 GPL-2.0-or-later, in addition to Celesta's own MIT/Apache-2.0 source license.
 See [`LICENSE-GPL-2.0`](LICENSE-GPL-2.0) for the license text and

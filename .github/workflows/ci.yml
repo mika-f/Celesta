@@ -35,7 +35,7 @@ jobs:
       run:
         # bash -e stops at the first failing command; Windows pwsh steps would not.
         shell: bash
-    # The first Windows run builds FFmpeg and x264 with vcpkg before the cache exists.
+    # The first Windows run builds FFmpeg, x264, and x265 with vcpkg before the cache exists.
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

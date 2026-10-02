@@ -43,7 +43,7 @@ jobs:
     name: Windows x64
     needs: validate
     runs-on: windows-latest
-    # The first run builds FFmpeg and x264 with vcpkg before the cache exists.
+    # The first run builds FFmpeg, x264, and x265 with vcpkg before the cache exists.
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
