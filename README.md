@@ -82,9 +82,16 @@ cargo run -p celesta-editor --release -- examples/voiceroid.celesta.json
 2. **Edit the source file.** Change the project or composition in your text
    editor. React compositions reload automatically when you save; for a
    project, choose **File › Reload** (Command-R on macOS, Ctrl-R elsewhere).
-3. **Preview.** Press Space to play or pause. Use the left and right arrow keys
-   to step one frame at a time, or drag along the timeline ruler to scrub.
-   Select an asset, track, or clip to see its details in the Inspector.
+3. **Preview.** Press Space to play or pause (L plays, K stops). Use the left
+   and right arrow keys to step one frame at a time, Shift with them to move
+   one second, the up and down arrow keys to jump between clip edges, and Home
+   and End to go to the start and end. Drag along the timeline ruler to scrub.
+   Press = and - to zoom the timeline and Shift-Z to fit it; scroll sideways or
+   drag the bar under the tracks to move along it. Loop playback (Command-/ on
+   macOS, Ctrl-/ elsewhere) repeats the In–Out range when one is marked, and
+   ' shows safe areas over the viewer. The Master meter beside the timeline
+   shows the preview's audio levels. Select an asset, track, or clip to see its
+   details in the Inspector.
 4. **Export.** Choose **Export…** and an MP4 destination. To export a section,
    press I and O to mark its start and end. Progress appears in the status
    bar; **Cancel export** stops the job.

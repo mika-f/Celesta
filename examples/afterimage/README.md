@@ -11,7 +11,7 @@ to decay beneath the closing title.
 ## Watch / edit
 
 - `afterimage.mp4` — finished film, 1920 × 1080, 30 fps, stereo.
-- `film.tsx` — open in Celesta to preview; edit in your text editor.
+- `film.tsx` — open in Celesta to preview; edit in your text editor. The entry file only sequences the scenes in `scenes/`; shared pieces live in `components/`.
 - `poster.jpg` — a rendered still from the film.
 - `make-score.py` — deterministic, original soundtrack synthesizer.
 - `render.py` — optional: exports one-second batches in parallel and joins
@@ -72,5 +72,5 @@ copyright notices are included beside each font:
 - [IBM Plex Mono](https://github.com/google/fonts/tree/main/ofl/ibmplexmono),
   by IBM — captions.
 
-Change the palette, scene timing, projection, and text in `film.tsx`.
+Change the palette in `constants.ts`, the projection in `components/Ribbon.tsx`, and the scene timing and text in `film.tsx` and `scenes/`.
 Cut times are in frames; one beat is 15 frames at the film's 120 BPM.

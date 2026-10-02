@@ -5,7 +5,7 @@ Celesta の機能を、9 つのチャプターで紹介する 52 秒のモーシ
 和文の Noto Sans JP を 120 BPM のオリジナルスコアに合わせて展開します。
 各チャプターは見出し・日本語の説明・それを実現する API・その場で動くデモの 4 つで構成されています。
 
-- `film.tsx` — Celesta の File → Open… で開く React ソース。映像はこの 1 ファイルだけ。
+- `film.tsx` — Celesta の File → Open… で開く React ソース（エントリ）。冒頭とインデックスとアウトロは `scenes/`、9 つのチャプターは `chapters/`（`chapters/index.ts` に一覧、デモは 1 ファイル 1 チャプター）、共通部品は `components/` にあります。
 - `make-score.py` — BGM を生成する Python スクリプト。標準ライブラリのみ。
 - `poster.jpg` — 書き出した映像から抽出した静止画。
 
@@ -62,7 +62,7 @@ Celesta-export --react examples/feature-tour/film.tsx examples/feature-tour/feat
 ## 素材
 
 立ち絵と音声は既存のサンプル素材を相対パスで参照しています。
-`feature-tour/` を単独で移動するときは次の素材も一緒に移し、`film.tsx` の `PSD` / `PRESET` / `VOICE` を更新してください。
+`feature-tour/` を単独で移動するときは次の素材も一緒に移し、`voice.ts` の `PSD` / `PRESET` / `VOICE` を更新してください。
 
 - `../assets/illust/琴葉姉妹_SD立ち絵.psd`
 - `../assets/illust/琴葉茜.pfv`

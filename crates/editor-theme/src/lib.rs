@@ -7,9 +7,9 @@
 //! *data* drawn on the timeline (clip kinds, the audio waveform, level meters,
 //! the playhead), where the hue is the information rather than decoration.
 
+use celesta_project::TrackKind;
 use gpui_kit::component::{Theme, ThemeMode};
 use gpui_kit::{App, Hsla, rgb, rgba};
-use celesta_project::TrackKind;
 
 /// Forces the NLE-standard dark appearance. gpui-component's dark theme still
 /// defines the full light palette, so `cx.theme()` stays valid in both modes;
@@ -27,8 +27,9 @@ pub const ACCENT: u32 = 0xff_a1_3b;
 pub const EXPORT_RANGE_FILL: u32 = 0xff_c4_6b_44;
 pub const EXPORT_RANGE_BORDER: u32 = 0xff_c4_6b_aa;
 
-/// Outline of the currently selected clip.
-pub const CLIP_SELECTED_BORDER: u32 = 0xff_d2_9d;
+/// Outline of the currently selected clip. White reads against every clip
+/// fill color.
+pub const CLIP_SELECTED_BORDER: u32 = 0xff_ff_ff;
 
 /// Audio waveform bars, painted at low opacity inside a clip.
 pub const WAVEFORM: u32 = 0xff_ff_ff;
