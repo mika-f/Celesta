@@ -81,6 +81,9 @@ jobs:
           pnpm --dir packages/code run test
           pnpm --dir packages/code run check:examples
 
+      - name: Test @celesta/math
+        run: pnpm --dir packages/math run test
+
       - name: Build
         # Compile normal binaries and test targets together so Cargo can schedule
         # them in parallel; the Test step reuses the compiled test targets.

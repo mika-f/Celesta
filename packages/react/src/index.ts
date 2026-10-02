@@ -71,8 +71,6 @@ export type { VideoConfig } from './hooks';
 
 export { frameToTimecode, timecodeToFrame } from './time';
 
-export { noise, random } from './random';
-
 export { blinkPhase } from './blink';
 export type { BlinkPhase, BlinkTiming } from './blink';
 

@@ -6,16 +6,15 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
+import * as celesta from '../dist/index.js';
 import {
   Easings,
   beatAt,
   computeSeries,
   cueAt,
   frameToTimecode,
-  noise,
   pointOnPolyline,
   progress,
-  random,
 } from '../dist/index.js';
 
 const cli = fileURLToPath(new URL('../bin/celesta-react-render.js', import.meta.url));
@@ -76,20 +75,16 @@ test('every easing starts at exactly 0 and ends at exactly 1', () => {
   assert.equal(progress(40, 10, 20, Easings.easeInBack), 1);
 });
 
-test('random and noise are deterministic and stay in range', () => {
-  assert.equal(random(7), random(7));
-  assert.equal(random('star-3-x'), random('star-3-x'));
-  assert.notEqual(random(1), random(2));
-  assert.notEqual(random(0.5), random(0));
-  for (let i = 0; i < 500; i += 1) {
-    const r = random(i);
-    assert.ok(r >= 0 && r < 1, `random(${i}) = ${r}`);
-    const n = noise('seed', i / 7);
-    assert.ok(n >= -1 && n <= 1, `noise(${i / 7}) = ${n}`);
-  }
-  // Smooth: tiny steps in t make tiny steps in the value.
-  assert.ok(Math.abs(noise(3, 2.5) - noise(3, 2.501)) < 0.01);
-  assert.equal(noise(3, 4.25), noise(3, 4.25));
+test('entries import random and noise from @celesta/math', () => {
+  assert.equal(celesta.random, undefined);
+  assert.equal(celesta.noise, undefined);
+  const [layers] = render(
+    `import { noise, random } from '@celesta/math';\n` +
+      `function Body() {\n` +
+      `  return <C.Text>{String(random(7)) + ' ' + String(noise(3, 2.5))}</C.Text>;\n` +
+      `}`,
+  );
+  assert.deepEqual(texts(layers), ['0.3443175407592207 -0.1304047736339271']);
 });
 
 test('frameToTimecode formats hours, minutes, seconds, and frames', () => {

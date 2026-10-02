@@ -44,7 +44,7 @@ function copyPackage(name, parent) {
   }
 }
 
-for (const name of ['react', 'react-reconciler', 'esbuild', 'ag-psd']) {
+for (const name of ['@celesta/math', 'react', 'react-reconciler', 'esbuild', 'ag-psd']) {
   copyPackage(name, source);
 }
 // Confirm the platform-specific binary was included, even if optional deps were disabled.

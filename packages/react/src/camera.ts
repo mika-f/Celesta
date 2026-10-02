@@ -1,10 +1,10 @@
+import { noise } from '@celesta/math';
 import * as React from 'react';
 import type { ReactNode } from 'react';
 
 import { Group } from './components';
 import { useCurrentFrame, useVideoConfig } from './hooks';
 import { useLayoutBounds } from './layout';
-import { noise } from './random';
 import type { BlendMode } from './scene';
 
 export interface CameraProps {

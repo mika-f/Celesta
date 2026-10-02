@@ -280,11 +280,12 @@ async function loadEntry(entryPath: string): Promise<LoadedEntry> {
     // entry's `useCurrentFrame()`/`useProject()`/etc. read from, matching
     // the Provider values render.ts sets around it. Both stay external and
     // resolve through Node's own module cache instead of being duplicated
-    // into the bundle.
+    // into the bundle. `@celesta/math` is stateless, but the entry's own
+    // directory has no copy of it either, so it resolves the same way.
     plugins: [{
       name: 'shared-runtime',
       setup(build) {
-        build.onResolve({ filter: /^(react(?:\/jsx(?:-dev)?-runtime)?|@celesta\/react)$/ }, (args) => ({
+        build.onResolve({ filter: /^(react(?:\/jsx(?:-dev)?-runtime)?|@celesta\/(?:react|math))$/ }, (args) => ({
           path: pathToFileURL(require.resolve(args.path)).href,
           external: true,
         }));
