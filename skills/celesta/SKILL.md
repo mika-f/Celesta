@@ -123,8 +123,9 @@ produces a video that differs between preview and export.
      frames, and reports every layer, audio clip, and missing media file.
      Use `--frames` to check the moments you changed.
      For `useTextMetrics()` or `measureText()`, add `--native <Celesta-export>`
-     to use real font shaping. Node-only inspection reports this limitation
-     as `UNSUPPORTED inspection` (exit code 2), not a scene error. If the
+     to use real font shaping. If a measurement error is not caught by the
+     entry, Node-only inspection reports `UNSUPPORTED inspection` (exit code 2).
+     Caught errors can use the entry's fallback and complete normally. If the
      installed exporter lacks `--inspect`, verify with PNG frames or a
      contact sheet instead.
    - If the project has a `tsconfig.json` extending `./.celesta/tsconfig.json`,

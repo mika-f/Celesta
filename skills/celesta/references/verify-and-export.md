@@ -85,7 +85,9 @@ Limits:
   `--native <Celesta-export>` to inspect with the same bridge and fonts as
   the editor/exporter, without allocating a GPU or rendering pixels. It also
   handles `preloadMedia()` with the linked media backend, without `ffprobe`.
-  `--runtime` and `--node` overrides apply in this mode too.
+  Native inspection uses the exporter's own runtime discovery, so source
+  builds also work when the entry and current directory are outside the
+  checkout. `--runtime` and `--node` overrides apply in this mode too.
   For a source build, pass `--native <repo>/target/debug/celesta-exporter`
   (`.exe` on Windows), after `cargo build -p celesta-exporter`.
   This requires an exporter supporting `--inspect`; older installs can
@@ -105,6 +107,11 @@ Limits:
   also checks missing files, which exit with code **1**.
   A caught measurement error can use the entry's fallback, but its placement
   still needs native inspection or PNG verification.
+  Native JSON errors distinguish `requestError`, `sceneError` and
+  `runtimeError`; runtime errors include `fatal: true` and stop inspection.
+  The native exporter exits with code **1** if any request failed, even if
+  later requests succeeded. Export-only flags are rejected with `--inspect`;
+  select frames with the inspection script's `--frames` / `--every` instead.
 - `preloadMedia()` is answered with `ffprobe` when it is installed;
   otherwise `prepare()` fails with a clear message in Node-only mode.
 - Entries that render `<ProjectTimeline />`, `<ProjectTrack />`, or

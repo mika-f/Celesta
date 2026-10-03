@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { test } from 'vitest';
 
 const inspector = fileURLToPath(new URL('../../../skills/celesta/scripts/inspect.mjs', import.meta.url));
@@ -64,6 +64,52 @@ test('Node-only inspection distinguishes unsupported metrics, fallbacks and scen
     const fallback = inspect('--json');
     assert.equal(fallback.status, 0, fallback.stderr);
     assert.equal(JSON.parse(fallback.stdout).frames[0].scene.layers[0].content.text, 'Celesta');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('native startup without a handshake explains exporter compatibility and PNG fallback', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'celesta-legacy-inspect-'));
+  try {
+    const entry = join(dir, 'entry.tsx');
+    writeFileSync(entry, '');
+    // Node rejects the exporter arguments, like an older native exporter,
+    // exiting without emitting a protocol handshake or structured error.
+    const result = spawnSync(process.execPath, [inspector, entry, '--native', process.execPath], {
+      cwd: dir, encoding: 'utf8', timeout: 15000,
+    });
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /supports --inspect/);
+    assert.match(result.stderr, /PNG frames \/ a contact sheet/);
+    assert.doesNotMatch(result.stderr, /the Celesta runtime exited unexpectedly/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('timeout still exits cleanly when the native process group is already gone', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'celesta-inspect-timeout-'));
+  try {
+    const entry = join(dir, 'entry.tsx');
+    const preload = join(dir, 'preload.mjs');
+    writeFileSync(entry, '');
+    writeFileSync(preload, `
+      import childProcess from 'node:child_process';
+      import { EventEmitter } from 'node:events';
+      import { PassThrough } from 'node:stream';
+      import { syncBuiltinESMExports } from 'node:module';
+      Object.defineProperty(process, 'platform', { value: 'linux' });
+      process.kill = () => { throw Object.assign(new Error('process group already gone'), { code: 'ESRCH' }); };
+      childProcess.spawn = () => Object.assign(new EventEmitter(), { pid: 12345, stdin: new PassThrough(), stdout: new PassThrough() });
+      syncBuiltinESMExports();
+    `);
+    const result = spawnSync(process.execPath, ['--import', pathToFileURL(preload).href, inspector, entry, '--native', 'gone-exporter', '--timeout', '0.01'], {
+      encoding: 'utf8', timeout: 15000,
+    });
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /timed out after 0.01s/);
+    assert.doesNotMatch(result.stderr, /Error:|ESRCH|at process/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

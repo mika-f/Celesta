@@ -64,11 +64,6 @@ function findRuntime(options, startDirs) {
   const explicit = options.runtime ?? process.env.CELESTA_REACT_CLI;
   const candidates = [];
   if (explicit) candidates.push(path.resolve(explicit));
-  if (options.native) {
-    const directory = path.dirname(path.resolve(options.native));
-    candidates.push(path.join(directory, '../Resources/react/dist/cli.js'));
-    candidates.push(path.join(directory, 'runtime/react/dist/cli.js'));
-  }
   // A source checkout: <repo>/packages/react/dist/cli.js above the entry or cwd.
   for (const start of startDirs) {
     for (let dir = path.resolve(start); ; dir = path.dirname(dir)) {
@@ -145,12 +140,17 @@ async function inspectEntry(options) {
   const entry = path.resolve(options.entry);
   if (!existsSync(entry)) fail(`entry not found: ${entry}`);
   const entryDir = path.dirname(entry);
-  const { cli, node } = findRuntime(options, [entryDir, process.cwd()]);
-  if (!options.json) console.log(`runtime: ${cli}\nnode:    ${node}\nentry:   ${entry}\n`);
+  const { cli, node } = options.native
+    ? { cli: options.runtime ?? process.env.CELESTA_REACT_CLI, node: options.node ?? process.env.CELESTA_NODE }
+    : findRuntime(options, [entryDir, process.cwd()]);
+  if (!options.json) console.log(`runtime: ${cli ?? 'exporter default'}\nnode:    ${node ?? 'exporter default'}\nentry:   ${entry}\n`);
 
   if (!options.json && options.native) console.log(`native:  ${options.native}\n`);
+  const nativeArgs = ['--inspect', '--react', entry];
+  if (cli) nativeArgs.push('--runtime', cli);
+  if (node) nativeArgs.push('--node', node);
   const child = options.native
-    ? spawn(options.native, ['--inspect', '--react', entry, '--runtime', cli, '--node', node], { stdio: ['pipe', 'pipe', 'inherit'], detached: process.platform !== 'win32' })
+    ? spawn(options.native, nativeArgs, { stdio: ['pipe', 'pipe', 'inherit'], detached: process.platform !== 'win32' })
     : spawn(node, [cli, entry], { stdio: ['pipe', 'pipe', 'inherit'] });
   const exited = new Promise((resolve) => child.once('close', resolve));
   const timer = setTimeout(() => {
@@ -158,15 +158,22 @@ async function inspectEntry(options) {
     // Native inspection owns a second process (Node); terminate both on timeout.
     if (options.native && child.pid) {
       if (process.platform === 'win32') spawnSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' });
-      else process.kill(-child.pid);
+      else {
+        try { process.kill(-child.pid); }
+        catch (error) { if (error.code !== 'ESRCH') console.error(`could not terminate native inspection: ${error.message}`); }
+      }
     } else child.kill();
     process.exit(1);
   }, options.timeout * 1000);
   child.on('error', (error) => fail(`could not start ${options.native ?? node}: ${error.message}`));
   const lines = readline.createInterface({ input: child.stdout })[Symbol.asyncIterator]();
+  let ready;
   const next = async () => {
     const { value, done } = await lines.next();
-    if (done) throw new Error('the Celesta runtime exited unexpectedly (see the messages above)');
+    if (done) {
+      if (options.native && !ready) throw new Error('the native exporter exited before the inspection handshake; check that it supports --inspect (update Celesta or use Celesta-export to export PNG frames / a contact sheet); see the messages above');
+      throw new Error('the Celesta runtime exited unexpectedly (see the messages above)');
+    }
     return JSON.parse(value);
   };
   const send = (message) => child.stdin.write(`${JSON.stringify(message)}\n`);
@@ -191,7 +198,6 @@ async function inspectEntry(options) {
 
   let problems = 0;
   let unsupported = 0;
-  let ready;
   for (;;) {
     const message = await receive();
     if (message.error) {
@@ -227,7 +233,9 @@ async function inspectEntry(options) {
     const results = [];
     for (const frame of frames) {
       send({ time: { value: frame * config.frameRate.denominator, timescale: config.frameRate.numerator } });
-      results.push({ frame, ...(await receive()) });
+      const response = await receive();
+      results.push({ frame, ...response });
+      if (response.fatal) break;
     }
     console.log(JSON.stringify({ ready, frames: results }, null, 2));
     problems += results.filter((result) => result.error && result.status !== 'unsupported').length;
@@ -255,6 +263,7 @@ async function inspectEntry(options) {
         if (response.status === 'unsupported') unsupported += 1;
         else problems += 1;
         console.log(`${response.status === 'unsupported' ? 'UNSUPPORTED inspection' : 'ERROR'}: ${response.error}`);
+        if (response.fatal) break;
         continue;
       }
       const { scene, audio } = response;
@@ -282,8 +291,10 @@ async function inspectEntry(options) {
 
   child.stdin.end();
   // Let the native process drop its bridge and reap the Node child on EOF.
-  if (options.native) await exited;
-  else child.kill();
+  if (options.native) {
+    const code = await exited;
+    if (code !== 0) problems = Math.max(problems, 1);
+  } else child.kill();
   clearTimeout(timer);
   process.exit(problems ? 1 : unsupported ? 2 : 0);
 }

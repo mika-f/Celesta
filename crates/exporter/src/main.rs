@@ -42,7 +42,15 @@ struct Cli {
     #[arg(required_unless_present = "inspect", conflicts_with = "inspect")]
     output: Option<PathBuf>,
     /// Inspect a React entry over stdin/stdout JSON lines without rendering pixels.
-    #[arg(long, requires = "react", conflicts_with = "project")]
+    #[arg(
+        long,
+        requires = "react",
+        conflicts_with_all = [
+            "project", "overwrite", "from", "to", "frames", "every",
+            "contact_sheet", "columns", "tile_width", "output_format",
+            "preset", "crf", "color_conversion", "render_quality", "no_ui"
+        ]
+    )]
     inspect: bool,
     /// React CLI script for inspection (defaults to the bundled runtime).
     #[arg(long, requires = "inspect")]
