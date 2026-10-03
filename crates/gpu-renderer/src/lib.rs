@@ -406,14 +406,16 @@ impl GpuRenderer {
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Celesta layer texture bind group layout"),
                 entries: &[
-                    // Read with `textureLoad`: `layer.wgsl` filters by hand,
-                    // so it can treat texels outside the layer as transparent
-                    // and interpolate premultiplied colors.
+                    // `layer.wgsl` reads with `textureLoad` and filters by
+                    // hand, so it can treat texels outside the layer as
+                    // transparent and interpolate premultiplied colors.
+                    // Filterable for `effect.wgsl`, whose blur lets the
+                    // sampler interpolate between taps.
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
                         visibility: wgpu::ShaderStages::FRAGMENT,
                         ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
                             view_dimension: wgpu::TextureViewDimension::D2,
                             multisampled: false,
                         },
@@ -2335,6 +2337,9 @@ fn blur_reach(radius: f32) -> f32 {
 
 struct EffectProcessor {
     params_layout: wgpu::BindGroupLayout,
+    /// The bilinear sampler `effect.wgsl` pairs taps through, bound beside
+    /// the parameters.
+    sampler: wgpu::Sampler,
     pipeline: wgpu::RenderPipeline,
     /// Canvases groups draw onto and effects filter through, kept across
     /// effects and frames instead of allocating several per effect every
@@ -2363,16 +2368,30 @@ impl EffectProcessor {
     fn new(device: &wgpu::Device, texture_layout: &wgpu::BindGroupLayout) -> Self {
         let params_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Celesta effect parameters bind group layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: true,
-                    min_binding_size: wgpu::BufferSize::new(EFFECT_PARAMS_SIZE),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: true,
+                        min_binding_size: wgpu::BufferSize::new(EFFECT_PARAMS_SIZE),
+                    },
+                    count: None,
                 },
-                count: None,
-            }],
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Celesta effect sampler"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Celesta effect pipeline layout"),
@@ -2409,10 +2428,15 @@ impl EffectProcessor {
             .limits()
             .min_uniform_buffer_offset_alignment
             .max(EFFECT_PARAMS_SIZE as u32);
-        let (params, params_bind_group) =
-            Self::params_buffer(device, &params_layout, u64::from(params_stride) * 64);
+        let (params, params_bind_group) = Self::params_buffer(
+            device,
+            &params_layout,
+            &sampler,
+            u64::from(params_stride) * 64,
+        );
         Self {
             params_layout,
+            sampler,
             pipeline,
             pool: Vec::new(),
             frame: 0,
@@ -2426,6 +2450,7 @@ impl EffectProcessor {
     fn params_buffer(
         device: &wgpu::Device,
         layout: &wgpu::BindGroupLayout,
+        sampler: &wgpu::Sampler,
         size: u64,
     ) -> (wgpu::Buffer, wgpu::BindGroup) {
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -2437,14 +2462,20 @@ impl EffectProcessor {
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Celesta effect parameters"),
             layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &buffer,
-                    offset: 0,
-                    size: wgpu::BufferSize::new(EFFECT_PARAMS_SIZE),
-                }),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &buffer,
+                        offset: 0,
+                        size: wgpu::BufferSize::new(EFFECT_PARAMS_SIZE),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                },
+            ],
         });
         (buffer, bind_group)
     }
@@ -2456,8 +2487,12 @@ impl EffectProcessor {
         let size = u64::from(self.params_stride) * passes as u64;
         if size > self.params.size() {
             // In-flight frames keep the old buffer alive until they finish.
-            (self.params, self.params_bind_group) =
-                Self::params_buffer(device, &self.params_layout, size.next_power_of_two());
+            (self.params, self.params_bind_group) = Self::params_buffer(
+                device,
+                &self.params_layout,
+                &self.sampler,
+                size.next_power_of_two(),
+            );
         }
     }
 
@@ -4996,6 +5031,86 @@ mod tests {
             assert!(
                 difference <= 5,
                 "frame {frame}: effect channels differ by up to {difference}"
+            );
+        }
+    }
+
+    /// Large blurs pair their taps into bilinear fetches; the result must
+    /// stay within the CPU renderer's exact Gaussian, including where the
+    /// kernel runs off the canvas and under a fractional shadow offset.
+    #[test]
+    fn large_blurs_match_cpu() {
+        use celesta_composition::{LayerEffects, LayerGlow, LayerShadow};
+
+        let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+            return;
+        };
+        let blob = |id: &str, effects: LayerEffects, layers: Vec<Layer>| Layer {
+            id: id.to_owned(),
+            transform: EvaluatedTransform::default(),
+            opacity: 0.55,
+            blend_mode: BlendMode::Screen,
+            effects,
+            content: LayerContent::Group { layers, clip: None },
+        };
+        let mut scene = empty_scene(160, 112);
+        scene.layers = vec![
+            corner_rect("backdrop", 0.0, 0.0, 160.0, 112.0, "#101828"),
+            blob(
+                "blur",
+                LayerEffects {
+                    blur: 24.0,
+                    ..LayerEffects::default()
+                },
+                vec![corner_rect("blur", 30.0, 20.0, 70.0, 50.0, "#ff40a0")],
+            ),
+            blob(
+                "edge",
+                LayerEffects {
+                    blur: 13.5,
+                    shadow: Some(LayerShadow {
+                        color: "#40c0ffd0".to_owned(),
+                        blur: 17.0,
+                        offset_x: -9.5,
+                        offset_y: 6.75,
+                    }),
+                    glow: Some(LayerGlow {
+                        color: "#ffe060ff".to_owned(),
+                        blur: 64.0,
+                    }),
+                },
+                vec![corner_rect("edge", 120.0, 70.0, 40.0, 42.0, "#a0ff60")],
+            ),
+        ];
+        let gpu = renderer.render(&scene).unwrap();
+        let cpu = celesta_renderer::CpuRenderer::default()
+            .render(&scene)
+            .unwrap();
+        let difference = max_channel_difference(&gpu, &cpu);
+        assert!(
+            difference <= 5,
+            "large blur channels differ by up to {difference}"
+        );
+
+        // Tiny radii, where the Gaussian's tail underflows.
+        for radius in [0.05, 0.3] {
+            for layer in &mut scene.layers[1..] {
+                layer.effects.blur = radius;
+                if let Some(shadow) = &mut layer.effects.shadow {
+                    shadow.blur = radius;
+                }
+                if let Some(glow) = &mut layer.effects.glow {
+                    glow.blur = radius;
+                }
+            }
+            let gpu = renderer.render(&scene).unwrap();
+            let cpu = celesta_renderer::CpuRenderer::default()
+                .render(&scene)
+                .unwrap();
+            let difference = max_channel_difference(&gpu, &cpu);
+            assert!(
+                difference <= 5,
+                "radius {radius}: channels differ by up to {difference}"
             );
         }
     }
