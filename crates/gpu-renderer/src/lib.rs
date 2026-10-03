@@ -1223,7 +1223,14 @@ impl GpuRenderer {
         let clip_size = self.clip_entries.len() as u64 * CLIP_ENTRY_SIZE;
         let paint_size = self.paint_entries.len() as u64 * 16;
         let path_size = self.path_entries.len() as u64 * 16;
-        if path_size > self.device.limits().max_storage_buffer_binding_size {
+        // The largest path buffer the device can create and bind, in whole
+        // entries.
+        let limits = self.device.limits();
+        let path_limit = limits
+            .max_storage_buffer_binding_size
+            .min(limits.max_buffer_size)
+            & !15;
+        if path_size > path_limit {
             return Err(GpuRenderError::PathsTooComplex(self.path_entries.len()));
         }
         if clip_size > self.clips.size()
@@ -1237,7 +1244,8 @@ impl GpuRenderer {
                 self.paints = clip_buffer(&self.device, paint_size.next_power_of_two());
             }
             if path_size > self.paths.size() {
-                self.paths = clip_buffer(&self.device, path_size.next_power_of_two());
+                self.paths =
+                    clip_buffer(&self.device, path_size.next_power_of_two().min(path_limit));
             }
             self.clip_bind_group = clip_bind_group(
                 &self.device,
@@ -6166,6 +6174,45 @@ mod tests {
             pixel.swap(0, 2);
         }
         assert_eq!(previewed, rendered.pixels());
+    }
+
+    /// More edges than the shader sorts in registers can cross one pixel;
+    /// it then steps through them instead, still winding by winding.
+    #[test]
+    fn measures_pixels_crossed_by_many_edges_exactly() {
+        use celesta_composition::PathCommand;
+
+        let Some(mut renderer) = renderer(GpuRenderOptions {
+            background: Color::TRANSPARENT,
+        }) else {
+            return;
+        };
+        let rect = |commands: &mut Vec<PathCommand>, left: f64, right: f64, clockwise: bool| {
+            let mut corners = [(left, 4.0), (right, 4.0), (right, 28.0), (left, 28.0)];
+            if !clockwise {
+                corners.reverse();
+            }
+            commands.extend(polyline(&corners, true));
+        };
+        let mut commands = Vec::new();
+        // Five slivers 0.06 px wide inside pixel column 10: ten crossings,
+        // covering 0.3 of each pixel.
+        for sliver in 0..5 {
+            let left = 10.05 + f64::from(sliver) * 0.18;
+            rect(&mut commands, left, left + 0.06, true);
+        }
+        // The same square five times each way inside column 20: twenty
+        // crossings whose windings cancel.
+        for _ in 0..5 {
+            rect(&mut commands, 20.1, 20.9, true);
+            rect(&mut commands, 20.1, 20.9, false);
+        }
+        let mut scene = empty_scene(32, 32);
+        scene.layers = vec![path_layer("crowded", commands, Some(solid("#FFFFFF")), None)];
+        let frame = renderer.render(&scene).unwrap();
+        let alpha = |x| pixel_at(&frame, x, 16)[3];
+        assert!(alpha(10).abs_diff(77) <= 2, "slivers cover {}", alpha(10));
+        assert_eq!(alpha(20), 0);
     }
 
     /// An animated path changes shape every frame; what the GPU holds for

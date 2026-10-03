@@ -383,9 +383,9 @@ Keep these boundaries intact:
   mean 0.5 / at most 1% of channels over 16 against the CPU renderer (or
   its rasterizer, for rotations), and the GPU is the closer of the two to
   an 8x supersampled rendering. Apple M4, 1080p: the 24 NEBULA rings went
-  from 5.7 to about 1.5 ms/frame (submit/drain with readback; the CPU part
-  is about 0.2 ms), the 217-layer path ribbons of `dense-geometry-bench`
-  from 6.0 to 2.8 ms/frame. See `docs/performance/gpu-path-coverage.md`.
+  from 6.46 to 1.94 ms/frame (medians of submit/drain with readback;
+  stroking and flattening take 0.27 ms of it), the 217-layer path ribbons of
+  `dense-geometry-bench` from 8.11 to 2.84 ms/frame. See `docs/performance/gpu-path-coverage.md`.
 - Export speed (2026-09-25): `GpuRenderer` caches layer textures across
   frames (images, PSD composites, text; keyed by their inputs, text
   also by `TextRasterizer::loaded_font_count`), so unchanged layers are

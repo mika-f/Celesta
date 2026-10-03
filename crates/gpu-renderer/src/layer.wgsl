@@ -249,9 +249,51 @@ fn rect_texel(input: VertexOutput, coordinate: vec2<i32>) -> vec4<f32> {
 // Scanlines sampled per pixel row, as `tiny_skia`'s anti-aliasing does.
 const PATH_SUBSCANLINES: i32 = 4;
 
-// The most edges one scanline crosses inside one pixel that are sorted
-// exactly; a pixel crossed by more counts as covered on that scanline.
+// The most edges one scanline crosses inside one pixel that are sorted in
+// registers; a scanline crossed by more is measured by `covered_by_steps`.
 const PATH_MAX_CROSSINGS: i32 = 8;
+
+// The length of [`left`, `left` + 1) that the nonzero fill of the edges
+// `paths[first..first + count]` covers on the scanline at `y`, given the
+// winding at `left`: crossing by crossing, nearest first, so it needs no
+// storage however many edges cross the pixel. Edges crossing at the same x
+// count together, so coincident opposite contours cancel.
+fn covered_by_steps(first: u32, count: u32, y: f32, left: f32, winding_at_left: i32) -> f32 {
+    let right = left + 1.0;
+    var winding = winding_at_left;
+    var at = left;
+    var covered = 0.0;
+    loop {
+        var next = right;
+        var change = 0;
+        for (var index = first; index < first + count; index++) {
+            let edge = paths[index];
+            if (y < edge.y) == (y < edge.w) {
+                continue;
+            }
+            let x = edge.x + (y - edge.y) * (edge.z - edge.x) / (edge.w - edge.y);
+            if x <= at || x >= right {
+                continue;
+            }
+            let direction = select(-1, 1, edge.w > edge.y);
+            if x < next {
+                next = x;
+                change = direction;
+            } else if x == next {
+                change += direction;
+            }
+        }
+        if winding != 0 {
+            covered += next - at;
+        }
+        if next >= right {
+            break;
+        }
+        winding += change;
+        at = next;
+    }
+    return covered;
+}
 
 // How much of the pixel whose top-left corner is `pixel` the nonzero fill of
 // the outline whose entry for the tile there is `tile` covers: the length of
@@ -300,7 +342,7 @@ fn nonzero_coverage(tile: vec4<f32>, pixel: vec2<f32>) -> f32 {
             crossed++;
         }
         if crossed > PATH_MAX_CROSSINGS {
-            coverage += 1.0;
+            coverage += covered_by_steps(first, count, y, pixel.x, winding);
             continue;
         }
         var covered = 0.0;

@@ -1,7 +1,7 @@
 workload,version,run,frames,metric,value,unit
 rings,before,1,120,cpu_raster,4.55,ms/frame
 rings,before,1,120,gpu_submit_drain,5.77,ms/frame
-rings,after,1,120,cpu_raster,5.43,ms/frame
+rings,after,1,120,cpu_raster_reference,5.43,ms/frame
 rings,after,1,120,cpu_outline,0.24,ms/frame
 rings,after,1,120,gpu_submit_drain,1.83,ms/frame
 rings,after,1,120,gpu_submit_drain_empty,0.31,ms/frame
@@ -9,7 +9,7 @@ rings,after,1,120,gpu_render,5.38,ms/frame
 rings,after,1,120,gpu_render_empty,2.54,ms/frame
 rings,before,2,120,cpu_raster,4.36,ms/frame
 rings,before,2,120,gpu_submit_drain,6.55,ms/frame
-rings,after,2,120,cpu_raster,5.77,ms/frame
+rings,after,2,120,cpu_raster_reference,5.77,ms/frame
 rings,after,2,120,cpu_outline,0.27,ms/frame
 rings,after,2,120,gpu_submit_drain,1.98,ms/frame
 rings,after,2,120,gpu_submit_drain_empty,0.34,ms/frame
@@ -17,7 +17,7 @@ rings,after,2,120,gpu_render,6.35,ms/frame
 rings,after,2,120,gpu_render_empty,2.26,ms/frame
 rings,before,3,120,cpu_raster,4.80,ms/frame
 rings,before,3,120,gpu_submit_drain,6.46,ms/frame
-rings,after,3,120,cpu_raster,5.95,ms/frame
+rings,after,3,120,cpu_raster_reference,5.95,ms/frame
 rings,after,3,120,cpu_outline,0.27,ms/frame
 rings,after,3,120,gpu_submit_drain,1.94,ms/frame
 rings,after,3,120,gpu_submit_drain_empty,0.33,ms/frame

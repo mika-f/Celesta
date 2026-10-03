@@ -220,6 +220,14 @@ pub struct LineSegment {
 /// Well under the 1/4 pixel `tiny_skia` resolves edges to.
 const FLATTEN_TOLERANCE: f32 = 0.05;
 
+/// The most edges one curve is flattened into. That honors
+/// `FLATTEN_TOLERANCE` for any cubic whose control polygon bends by up to
+/// 0.05 * 65536^2 / 0.75, about 286 million output pixels; only a curve
+/// thousands of times larger than any output exceeds it, and then strays
+/// from the true curve by `FLATTEN_TOLERANCE` times how much more it bends.
+/// The cap keeps non-finite or absurd geometry from allocating without end.
+const MAX_CURVE_STEPS: f32 = 65536.0;
+
 /// The outlines [`rasterize_path`] would fill for `shape`, flattened into
 /// line segments, or `None` when it would draw nothing.
 pub fn flatten_path(
@@ -317,7 +325,8 @@ fn curve_points(
     let steps = (factor * bend / FLATTEN_TOLERANCE)
         .sqrt()
         .ceil()
-        .clamp(1.0, 1024.0) as u32;
+        .max(1.0)
+        .min(MAX_CURVE_STEPS) as u32;
     let last = *points.last().expect("a curve has control points");
     (1..=steps).map(move |step| {
         if step == steps {

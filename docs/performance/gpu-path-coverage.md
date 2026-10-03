@@ -3,7 +3,7 @@
 The GPU renderer used to rasterize every `LayerContent::Path` on the CPU
 (the CPU renderer's tiny-skia rasterizer) and upload the RGBA result each
 frame. It now computes coverage and paint per pixel in `layer.wgsl`; the CPU
-only strokes and flattens the outline. The CPU renderer is unchanged and
+only strokes and flattens the outline and sorts its edges into tiles. The CPU renderer is unchanged and
 remains the reference the GPU output is compared with.
 
 ## How it works
@@ -82,7 +82,7 @@ The 24 NEBULA rings alone (`path-bench`, 120 frames at 1920x1080):
 
 | Stage | Before | After |
 | --- | ---: | ---: |
-| CPU work per frame | 4.55 ms rasterization | 0.27 ms stroking and flattening |
+| CPU work per frame | 4.55 ms rasterization | 0.27 ms stroking and flattening, plus tile binning (timed with the line below) |
 | GPU submit/drain, readback included | 6.46 ms/frame | 1.94 ms/frame |
 | Same for empty frames (clear, copy, readback) | — | 0.33 ms/frame |
 | One frame at a time (`render`), rings / empty | — | 6.18 / 2.54 ms |
@@ -91,8 +91,13 @@ The pipelined frames went from 6.46 to 1.94 ms (3.3x). The CPU no longer
 fills coverage masks or converts RGBA, and no texture is uploaded: the frame's
 tiles and edges are 0.72 MB (in a buffer that settles at 1 MiB), where the
 rings' batch was uploaded as an RGBA texture of up to 8.3 MB, the whole
-frame. The remaining time beyond the empty
-frame's readback is the shading itself plus `bin_tiles`.
+frame. The time beyond the empty frame's is the rings' whole end-to-end
+cost: stroking, flattening and binning on the CPU, the upload, and the
+shading.
+
+`path-bench` still times the CPU renderer's rasterizer as well, which this
+change does not touch; the CSV labels those runs of the new build
+`cpu_raster_reference`.
 
 The dense path ribbons of `dense-geometry-bench` (217 path layers, the
 AFTERIMAGE-style geometry) went from 8.11 to 2.84 ms/frame (2.9x); its rect
