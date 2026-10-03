@@ -1,17 +1,165 @@
-use std::ffi::{OsStr, OsString};
-use std::path::Path;
+use std::num::{NonZeroU32, NonZeroU64};
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+
+use clap::builder::{PossibleValuesParser, TypedValueParser};
+use clap::error::ErrorKind;
+use clap::{CommandFactory, Parser, ValueEnum};
 
 mod progress;
 
+use celesta_composition::Time;
 use celesta_exporter::{
-    CompanionProject, ContactSheet, ExportOptions, ExportProgress, ExportRange, Exporter,
-    FrameSelection, PngExport, ReactRuntimeOptions, RenderQuality, VideoEncoding, parse_timecode,
+    ColorConversion, CompanionProject, ContactSheet, EncoderPreset, ExportOptions, ExportProgress,
+    ExportRange, Exporter, FrameSelection, PngExport, ReactRuntimeOptions, RenderQuality,
+    VideoEncoding, parse_timecode,
 };
 use celesta_project::Project;
 
+const AFTER_HELP: &str = "\
+Timecodes are HH:MM:SS(.mmm), MM:SS(.mmm) or SS(.mmm); --from/--to select a
+span of the composition to export (the output starts at its own 00:00).
+
+PNG output is selected by --frame/--frames or --every. Multiple frames use
+output-000090.png names; frame numbers are zero-based. --every <n> picks
+frames 0, n, 2n, ... of the --from/--to span (or the whole composition) plus
+its last frame. --contact-sheet writes the selection as one labelled grid
+image instead.";
+
+/// Exports a Celesta project or React composition to MP4 video or PNG stills.
+#[derive(Parser)]
+#[command(
+    name = "celesta-exporter",
+    version,
+    after_help = AFTER_HELP,
+    args_override_self = true
+)]
+struct Cli {
+    /// The project (.celesta.json), or with --react the entry (.tsx), to export.
+    source: PathBuf,
+    /// The .mp4 file to write, or the .png file for frame exports.
+    output: PathBuf,
+    /// Export a React composition instead of a JSON project.
+    #[arg(long)]
+    react: bool,
+    /// Companion JSON project for <ProjectTimeline />/<ProjectTrack />.
+    #[arg(long, value_name = "PROJECT", requires = "react")]
+    project: Option<PathBuf>,
+    /// Replace an existing output file.
+    #[arg(long)]
+    overwrite: bool,
+    /// Export from this timecode.
+    #[arg(long, value_name = "TIMECODE", value_parser = parse_timecode)]
+    from: Option<Time>,
+    /// Export up to (excluding) this timecode.
+    #[arg(long, value_name = "TIMECODE", value_parser = parse_timecode)]
+    to: Option<Time>,
+    /// Export these zero-based frames as PNG; repeatable and comma-separated.
+    #[arg(
+        long = "frame",
+        visible_alias = "frames",
+        value_name = "N,...",
+        value_delimiter = ',',
+        conflicts_with_all = ["every", "from", "to"]
+    )]
+    frames: Vec<u64>,
+    /// Export every n-th frame (and the last one) as PNG.
+    #[arg(long, value_name = "N")]
+    every: Option<NonZeroU64>,
+    /// Write the selected frames as one labelled grid image.
+    #[arg(long)]
+    contact_sheet: bool,
+    /// Contact sheet columns.
+    #[arg(
+        long,
+        value_name = "N",
+        requires = "contact_sheet",
+        default_value_t = non_zero(ContactSheet::DEFAULT_COLUMNS)
+    )]
+    columns: NonZeroU32,
+    /// Contact sheet tile width in pixels.
+    #[arg(
+        long,
+        value_name = "PX",
+        requires = "contact_sheet",
+        default_value_t = non_zero(ContactSheet::DEFAULT_TILE_WIDTH)
+    )]
+    tile_width: NonZeroU32,
+    /// Output format; PNG is implied by a frame selection.
+    #[arg(long, value_enum)]
+    output_format: Option<OutputFormat>,
+    /// libx264 preset: faster presets encode faster but produce larger files.
+    #[arg(
+        long,
+        default_value_t = EncoderPreset::default(),
+        value_parser = names(&EncoderPreset::ALL, EncoderPreset::as_str)
+    )]
+    preset: EncoderPreset,
+    /// Constant rate factor, 0-51; lower is higher quality.
+    #[arg(
+        long,
+        default_value_t = VideoEncoding::default().crf,
+        value_parser = clap::value_parser!(u8).range(..=i64::from(VideoEncoding::MAX_CRF))
+    )]
+    crf: u8,
+    /// Where RGB frames become YUV: auto uses the GPU unless it is a software renderer.
+    #[arg(
+        long,
+        value_name = "WHERE",
+        default_value_t = ColorConversion::default(),
+        value_parser = names(&ColorConversion::ALL, ColorConversion::as_str)
+    )]
+    color_conversion: ColorConversion,
+    /// How carefully scaled and rotated layers are drawn; draft skips
+    /// re-rasterizing scaled text and is meant for quick timing checks.
+    #[arg(
+        long,
+        value_name = "QUALITY",
+        default_value_t = RenderQuality::default(),
+        value_parser = names(&RenderQuality::ALL, RenderQuality::as_str)
+    )]
+    render_quality: RenderQuality,
+    /// Disable the terminal progress dashboard (automatic outside a terminal).
+    #[arg(long)]
+    no_ui: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum OutputFormat {
+    Png,
+    Mp4,
+}
+
+/// A parser accepting exactly `name` of each of `all`, listed in `--help`.
+fn names<T: Copy + Send + Sync + 'static>(
+    all: &'static [T],
+    name: fn(T) -> &'static str,
+) -> impl TypedValueParser<Value = T> {
+    PossibleValuesParser::new(all.iter().map(|&value| name(value))).map(move |text| {
+        all.iter()
+            .copied()
+            .find(|&value| name(value) == text)
+            .expect("PossibleValuesParser only accepts listed names")
+    })
+}
+
+fn non_zero(value: u32) -> NonZeroU32 {
+    NonZeroU32::new(value).expect("contact sheet defaults are positive")
+}
+
 fn main() -> ExitCode {
-    match run() {
+    let cli = Cli::parse();
+    let png = png_output(&cli).unwrap_or_else(|error| {
+        Cli::command()
+            .error(ErrorKind::ArgumentConflict, error)
+            .exit()
+    });
+    let range = export_range(cli.from, cli.to).unwrap_or_else(|error| {
+        Cli::command()
+            .error(ErrorKind::ValueValidation, error)
+            .exit()
+    });
+    match run(cli, png, range) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("Celesta export: {error}");
@@ -20,163 +168,54 @@ fn main() -> ExitCode {
     }
 }
 
-const USAGE: &str = "PNG: --frame <n>, --frames <n,n,...> or --every <n> [--from <timecode>] [--to <timecode>] [--output-format png] <output.png>\nMultiple frames use output-000090.png names; frame numbers are zero-based.\n--every <n> picks frames 0, n, 2n, ... of the --from/--to span (or the whole\ncomposition) plus its last frame. --contact-sheet [--columns <n>] [--tile-width <px>]\nwrites the selection as one labelled grid image instead (default 5 columns, 320 px tiles).\nusage: celesta-exporter [--overwrite] [--from <timecode>] [--to <timecode>] [--preset <preset>] [--crf <crf>] [--color-conversion <where>] [--render-quality <quality>] <project.celesta.json> <output.mp4>\n       celesta-exporter [--overwrite] [--from <timecode>] [--to <timecode>] [--preset <preset>] [--crf <crf>] [--color-conversion <where>] [--render-quality <quality>] --react <entry.tsx> [--project <project.celesta.json>] <output.mp4>\n\ntimecode is HH:MM:SS(.mmm), MM:SS(.mmm) or SS(.mmm); --from/--to select a\nspan of the composition to export (the output starts at its own 00:00).\n--preset is a libx264 preset (ultrafast … veryslow, default medium): faster\npresets encode faster but produce larger files. --crf is 0-51 (default 18);\nlower is higher quality. --color-conversion (auto, gpu, or encoder; default\nauto) picks where RGB frames become YUV: auto uses the GPU unless it is a\nsoftware renderer. --render-quality (draft or final, default final) sets how\ncarefully scaled and rotated layers are drawn; draft skips re-rasterizing\nscaled text and is meant for quick checks of timing, not of pixels.";
-
-fn run() -> Result<(), String> {
-    let mut no_ui = false;
-    let mut frames = Vec::<u64>::new();
-    let mut every: Option<u64> = None;
-    let mut contact_sheet = false;
-    let mut columns: Option<u32> = None;
-    let mut tile_width: Option<u32> = None;
-    let mut output_format = None;
-    let mut overwrite = false;
-    let mut react = false;
-    let mut companion_project_path: Option<OsString> = None;
-    let mut from: Option<OsString> = None;
-    let mut to: Option<OsString> = None;
-    let mut video = VideoEncoding::default();
-    let mut render_quality = RenderQuality::default();
-    let mut paths = Vec::<OsString>::new();
-    let mut arguments = std::env::args_os().skip(1);
-    while let Some(argument) = arguments.next() {
-        if argument == "--frame" || argument == "--frames" {
-            let value = arguments.next().ok_or(USAGE)?;
-            for item in value
-                .to_str()
-                .ok_or("frame selection is not valid UTF-8")?
-                .split(',')
-            {
-                frames.push(item.parse().map_err(|_| {
-                    format!("invalid frame {item:?}; use zero-based non-negative integers")
-                })?);
-            }
-        } else if argument == "--every" {
-            let value = arguments.next().ok_or(USAGE)?;
-            every = Some(
-                value
-                    .to_str()
-                    .and_then(|value| value.parse().ok())
-                    .filter(|step| *step >= 1)
-                    .ok_or("--every must be a positive integer number of frames")?,
-            );
-        } else if argument == "--contact-sheet" {
-            contact_sheet = true;
-        } else if argument == "--columns" {
-            let value = arguments.next().ok_or(USAGE)?;
-            columns = Some(
-                value
-                    .to_str()
-                    .and_then(|value| value.parse().ok())
-                    .filter(|columns| *columns >= 1)
-                    .ok_or("--columns must be a positive integer")?,
-            );
-        } else if argument == "--tile-width" {
-            let value = arguments.next().ok_or(USAGE)?;
-            tile_width = Some(
-                value
-                    .to_str()
-                    .and_then(|value| value.parse().ok())
-                    .filter(|width| *width >= 1)
-                    .ok_or("--tile-width must be a positive integer number of pixels")?,
-            );
-        } else if argument == "--output-format" {
-            let value = arguments.next().ok_or(USAGE)?;
-            if value != "png" && value != "mp4" {
-                return Err("--output-format must be png or mp4".into());
-            }
-            output_format = Some(value);
-        } else if argument == "--no-ui" {
-            no_ui = true;
-        } else if argument == "--help" || argument == "-h" {
-            println!(
-                "{USAGE}\n\n--no-ui disables the terminal progress dashboard (automatic outside a terminal)."
-            );
-            return Ok(());
-        } else if argument == "--overwrite" {
-            overwrite = true;
-        } else if argument == "--react" {
-            react = true;
-        } else if argument == "--project" {
-            companion_project_path = Some(arguments.next().ok_or(USAGE)?);
-        } else if argument == "--from" {
-            from = Some(arguments.next().ok_or(USAGE)?);
-        } else if argument == "--to" {
-            to = Some(arguments.next().ok_or(USAGE)?);
-        } else if argument == "--preset" {
-            let value = arguments.next().ok_or(USAGE)?;
-            video.preset = value
-                .to_str()
-                .ok_or("--preset is not valid UTF-8")?
-                .parse()
-                .map_err(|error| format!("--preset: {error}"))?;
-        } else if argument == "--color-conversion" {
-            let value = arguments.next().ok_or(USAGE)?;
-            video.color_conversion = value
-                .to_str()
-                .ok_or("--color-conversion is not valid UTF-8")?
-                .parse()
-                .map_err(|error| format!("--color-conversion: {error}"))?;
-        } else if argument == "--render-quality" {
-            let value = arguments.next().ok_or(USAGE)?;
-            render_quality = value
-                .to_str()
-                .ok_or("--render-quality is not valid UTF-8")?
-                .parse()
-                .map_err(|error| format!("--render-quality: {error}"))?;
-        } else if argument == "--crf" {
-            let value = arguments.next().ok_or(USAGE)?;
-            video.crf = value
-                .to_str()
-                .and_then(|value| value.parse().ok())
-                .filter(|crf| *crf <= VideoEncoding::MAX_CRF)
-                .ok_or_else(|| {
-                    format!(
-                        "--crf must be an integer from 0 to {}",
-                        VideoEncoding::MAX_CRF
-                    )
-                })?;
-        } else {
-            paths.push(argument);
-        }
+/// Whether `cli` asks for PNG stills rather than a video, checking the
+/// combinations of selection and format flags clap cannot express.
+fn png_output(cli: &Cli) -> Result<bool, &'static str> {
+    let selected = !cli.frames.is_empty() || cli.every.is_some();
+    if (selected || cli.contact_sheet) && cli.output_format == Some(OutputFormat::Mp4) {
+        return Err("--frame/--frames/--every/--contact-sheet require PNG output");
     }
-    let [source, output] = paths.as_slice() else {
-        return Err(USAGE.into());
-    };
-    if companion_project_path.is_some() && !react {
-        return Err("--project requires --react".into());
-    }
-    if every.is_some() && !frames.is_empty() {
-        return Err("--every cannot be combined with --frame/--frames".into());
-    }
-    if !contact_sheet && (columns.is_some() || tile_width.is_some()) {
-        return Err("--columns/--tile-width require --contact-sheet".into());
-    }
-    let selected = !frames.is_empty() || every.is_some();
-    if (selected || contact_sheet) && output_format.as_deref() == Some(OsStr::new("mp4")) {
-        return Err("--frame/--frames/--every/--contact-sheet require PNG output".into());
-    }
-    let png = selected || contact_sheet || output_format.as_deref() == Some(OsStr::new("png"));
+    let png = selected || cli.contact_sheet || cli.output_format == Some(OutputFormat::Png);
     if png && !selected {
-        return Err("PNG output requires --frame, --frames or --every".into());
+        return Err("PNG output requires --frame, --frames or --every");
     }
-    if !frames.is_empty() && (from.is_some() || to.is_some()) {
-        return Err(
-            "--frame/--frames cannot be combined with --from/--to; use --every to sample a span"
-                .into(),
-        );
-    }
+    Ok(png)
+}
+
+fn run(cli: Cli, png: bool, range: Option<ExportRange>) -> Result<(), String> {
+    let Cli {
+        source,
+        output,
+        react,
+        project: companion_project_path,
+        overwrite,
+        frames,
+        every,
+        contact_sheet,
+        columns,
+        tile_width,
+        preset,
+        crf,
+        color_conversion,
+        render_quality,
+        no_ui,
+        ..
+    } = cli;
+    let video = VideoEncoding {
+        preset,
+        crf,
+        color_conversion,
+    };
     let png_export = PngExport {
         frames: match every {
-            Some(step) => FrameSelection::Every(step),
+            Some(step) => FrameSelection::Every(step.get()),
             None => FrameSelection::Frames(frames),
         },
-        contact_sheet: contact_sheet.then(|| ContactSheet {
-            columns: columns.unwrap_or(ContactSheet::DEFAULT_COLUMNS),
-            tile_width: tile_width.unwrap_or(ContactSheet::DEFAULT_TILE_WIDTH),
+        contact_sheet: contact_sheet.then_some(ContactSheet {
+            columns: columns.get(),
+            tile_width: tile_width.get(),
         }),
     };
-    let range = export_range(from.as_deref(), to.as_deref())?;
     let exporter = Exporter::new(ExportOptions {
         overwrite,
         range,
@@ -185,8 +224,8 @@ fn run() -> Result<(), String> {
     });
     progress::run(
         progress::Settings {
-            source: Path::new(source),
-            output: Path::new(output),
+            source: &source,
+            output: &output,
             react,
             png,
             video,
@@ -198,18 +237,17 @@ fn run() -> Result<(), String> {
                 let project_path = if react {
                     companion_project_path.as_deref()
                 } else {
-                    Some(source.as_os_str())
+                    Some(source.as_path())
                 };
                 let project = project_path
-                    .map(|path| Project::load(Path::new(path)))
+                    .map(Project::load)
                     .transpose()
                     .map_err(|e| e.to_string())?;
-                let root = project_path
-                    .map(|path| Path::new(path).parent().unwrap_or_else(|| Path::new(".")));
+                let root = project_path.map(|path| path.parent().unwrap_or_else(|| Path::new(".")));
                 if react {
                     exporter
                         .export_react_png_with(
-                            Path::new(source),
+                            &source,
                             &default_react_runtime(),
                             project
                                 .as_ref()
@@ -219,7 +257,7 @@ fn run() -> Result<(), String> {
                                     project_asset_root,
                                 }),
                             &png_export,
-                            Path::new(output),
+                            &output,
                             on_progress,
                         )
                         .map_err(|e| e.to_string())?;
@@ -229,7 +267,7 @@ fn run() -> Result<(), String> {
                             project.as_ref().ok_or("missing project")?,
                             root.ok_or("missing asset root")?,
                             &png_export,
-                            Path::new(output),
+                            &output,
                             on_progress,
                         )
                         .map_err(|e| e.to_string())?;
@@ -238,55 +276,50 @@ fn run() -> Result<(), String> {
                 let runtime = default_react_runtime();
                 match companion_project_path {
                     Some(project_path) => {
-                        let project_path = Path::new(&project_path);
                         let project =
-                            Project::load(project_path).map_err(|error| error.to_string())?;
+                            Project::load(&project_path).map_err(|error| error.to_string())?;
                         let project_asset_root =
                             project_path.parent().unwrap_or_else(|| Path::new("."));
                         exporter
                             .export_react_entry_with_project_and_progress(
-                                source,
+                                &source,
                                 &runtime,
                                 CompanionProject {
                                     project: &project,
                                     project_asset_root,
                                 },
-                                output,
+                                &output,
                                 on_progress,
                             )
                             .map_err(|error| error.to_string())?;
                     }
                     None => {
                         exporter
-                            .export_react_entry_with_progress(source, &runtime, output, on_progress)
+                            .export_react_entry_with_progress(
+                                &source,
+                                &runtime,
+                                &output,
+                                on_progress,
+                            )
                             .map_err(|error| error.to_string())?;
                     }
                 }
             } else {
                 exporter
-                    .export_file_with_progress(source, output, on_progress)
+                    .export_file_with_progress(&source, &output, on_progress)
                     .map_err(|error| error.to_string())?;
             }
             Ok(())
         },
     )?;
-    eprintln!("export complete: {}", output.to_string_lossy());
+    eprintln!("export complete: {}", output.display());
     Ok(())
 }
 
 /// Builds an [`ExportRange`] from the `--from` / `--to` timecodes. Returns
 /// `None` when neither is given (export the whole composition). `--to` must
 /// be strictly after `--from`.
-fn export_range(from: Option<&OsStr>, to: Option<&OsStr>) -> Result<Option<ExportRange>, String> {
-    let parse = |flag: &str, value: &OsStr| -> Result<celesta_composition::Time, String> {
-        let text = value
-            .to_str()
-            .ok_or_else(|| format!("{flag} timecode is not valid UTF-8"))?;
-        parse_timecode(text).map_err(|error| format!("{flag}: {error}"))
-    };
-
-    let start = from.map(|value| parse("--from", value)).transpose()?;
-    let end = to.map(|value| parse("--to", value)).transpose()?;
+fn export_range(start: Option<Time>, end: Option<Time>) -> Result<Option<ExportRange>, String> {
     if start.is_none() && end.is_none() {
         return Ok(None);
     }
@@ -301,7 +334,7 @@ fn export_range(from: Option<&OsStr>, to: Option<&OsStr>) -> Result<Option<Expor
     }
 
     Ok(Some(ExportRange {
-        start: start.unwrap_or(celesta_composition::Time::ZERO),
+        start: start.unwrap_or(Time::ZERO),
         end,
     }))
 }
