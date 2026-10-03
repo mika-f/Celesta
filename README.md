@@ -157,7 +157,9 @@ effects under `effects`, with keyframes for numeric properties and colors.
 Choose **File > Set Up TypeScript** with a React composition open. Celesta
 copies the `@celesta/react`, `@celesta/math`, `@celesta/code`, React, and Node.js type
 declarations that match its bundled runtime into a `.celesta/` folder in your
-project. If the project
+project. To start a new
+project before writing its first composition, choose **File > Set Up TypeScript
+in Folder…** and pick the project folder instead. If the project
 has no `tsconfig.json`, Celesta creates one that extends
 `./.celesta/tsconfig.json`. If a `tsconfig.json` already exists, add
 `"extends": "./.celesta/tsconfig.json"` to it. You don't need to install

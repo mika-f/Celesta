@@ -132,6 +132,8 @@ export interface MountedComposition {
    * frames where it actually renders.
    */
   renderAt(time: Time, project: ProjectFrame | null): { scene: Scene; audio: AudioClipDescriptor[] };
+  /** Sweeps every frame without constructing visual layers; hooks and font measurements still run. */
+  collectAudio(): AudioClipDescriptor[];
 }
 
 function findCompositionInstance(container: RootContainer): HostNode {
@@ -806,12 +808,13 @@ function walkNode(
   path: string,
   context: WalkContext,
   audio: AudioClipDescriptor[],
+  audioOnly = false,
 ): Layer[] {
   if (!HOST_TYPES.has(node.type)) {
     throw new Error(`unsupported element <${node.type}>; use Celesta's built-in components`);
   }
   if (node.type === 'rawLayers') {
-    return (node.props.layers as Layer[] | undefined) ?? [];
+    return audioOnly ? [] : (node.props.layers as Layer[] | undefined) ?? [];
   }
   if (
     node.type === 'assets' ||
@@ -838,7 +841,12 @@ function walkNode(
     if (!childContext) {
       return [];
     }
-    return [buildLayer(node, path, childContext, audio)];
+    return audioOnly
+      ? walkChildren(node, path, childContext, audio, true)
+      : [buildLayer(node, path, childContext, audio)];
+  }
+  if (audioOnly) {
+    return node.type === 'group' ? walkChildren(node, path, context, audio, true) : [];
   }
   return [buildLayer(node, path, context, audio)];
 }
@@ -872,7 +880,14 @@ function walkChildren(
   parentPath: string,
   context: WalkContext,
   audio: AudioClipDescriptor[],
+  audioOnly = false,
 ): Layer[] {
+  if (audioOnly) {
+    // Audio has no layer ids: avoid allocating paths and flattening empty
+    // layer arrays for every visual node in a dense composition.
+    for (const child of node.children) walkNode(child, '', context, audio, true);
+    return [];
+  }
   return node.children.flatMap((child, index) =>
     walkNode(child, `${parentPath}.${index}`, context, audio),
   );
@@ -931,43 +946,56 @@ export function mount(defaultExport: EntryComponent): MountedComposition {
   collectFonts(compositionInstance, initialFonts);
   fonts = initialFonts;
 
-  return {
-    config,
-    get fonts() { return fonts; },
-    renderAt(time, project) {
+  const renderFrame = (time: Time, project: ProjectFrame | null, audioOnly = false) => {
+    renderTree(time, project, config);
+    let instance = findCompositionInstance(container);
+    const nextFonts: ResolvedAsset[] = [];
+    collectFonts(instance, nextFonts);
+    if (JSON.stringify(nextFonts) !== JSON.stringify(fonts)) {
+      fonts = nextFonts;
+      // A declaration can appear after its consumer, or change this frame.
+      // Reconcile again with the complete font list before emitting layers.
       renderTree(time, project, config);
-      let instance = findCompositionInstance(container);
-      const nextFonts: ResolvedAsset[] = [];
-      collectFonts(instance, nextFonts);
-      if (JSON.stringify(nextFonts) !== JSON.stringify(fonts)) {
-        fonts = nextFonts;
-        // A declaration can appear after its consumer, or change this frame.
-        // Reconcile again with the complete font list before emitting layers.
-        renderTree(time, project, config);
-        instance = findCompositionInstance(container);
-      }
-      const audio: AudioClipDescriptor[] = [];
-      const context = rootWalkContext(config.frameRate.numerator, config.durationInFrames, time);
+      instance = findCompositionInstance(container);
+    }
+    const audio: AudioClipDescriptor[] = [];
+    const context = rootWalkContext(config.frameRate.numerator, config.durationInFrames, time);
+    if (!audioOnly) {
       for (const child of instance.children) {
         collectCharacterViewOverrides(child, context);
       }
-      const layers = walkChildren(
-        instance,
-        'root',
-        context,
-        audio,
-      );
-      return {
-        scene: {
-          width: config.width,
-          height: config.height,
-          frameRate: config.frameRate,
-          time,
-          ...(fonts.length > 0 ? { fonts } : {}),
-          layers,
-        },
-        audio,
-      };
+    }
+    const layers = walkChildren(
+      instance,
+      'root',
+      context,
+      audio,
+      audioOnly,
+    );
+    return {
+      scene: {
+        width: config.width,
+        height: config.height,
+        frameRate: config.frameRate,
+        time,
+        ...(fonts.length > 0 ? { fonts } : {}),
+        layers,
+      },
+      audio,
+    };
+  };
+
+  return {
+    config,
+    get fonts() { return fonts; },
+    renderAt: renderFrame,
+    collectAudio() {
+      const audio: AudioClipDescriptor[] = [];
+      for (let frame = 0; frame < config.durationInFrames; frame++) {
+        const time = { value: frame * config.frameRate.denominator, timescale: config.frameRate.numerator };
+        for (const clip of renderFrame(time, null, true).audio) audio.push(clip);
+      }
+      return audio;
     },
   };
 }

@@ -7,6 +7,7 @@ use celesta_composition::{
 };
 use celesta_react_bridge::{
     ComponentPropertyField, ComponentResolutionRequest, ProjectFrame, ReactBridge,
+    react_audio_clips,
 };
 
 fn no_tracks() -> BTreeMap<String, Vec<Layer>> {
@@ -433,6 +434,54 @@ fn reports_audio_clips_per_frame_when_node_is_available() {
     // Bare <Audio> spans the whole composition.
     assert_eq!(clip.start, 0.0);
     assert_eq!(clip.duration, 1.0);
+}
+
+#[test]
+fn batched_audio_graph_matches_full_frame_evaluation_when_node_is_available() {
+    let Some((node, cli_script, package_root)) = live_react_runtime() else {
+        return;
+    };
+    for fixture in [
+        "examples/title.tsx",
+        "examples/with-audio.tsx",
+        "examples/with-conditional-audio.tsx",
+        "examples/with-sequence.tsx",
+        "test/fixtures/audio-collection.tsx",
+    ] {
+        let entry = package_root.join(fixture);
+        let entry_dir = entry.parent().unwrap();
+        let mut reference = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+        let mut batched = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+        let metadata = reference.metadata().clone();
+        // Repeat on the same roots to exercise retained hook state and seeking
+        // back from the final frame to the start of the next sweep.
+        for _ in 0..2 {
+            let mut reports = Vec::new();
+            for frame in 0..metadata.duration_in_frames {
+                let time = Time::frames(frame as i64, metadata.frame_rate).unwrap();
+                reports.extend(reference.evaluate_at(time, None).unwrap().audio);
+            }
+            let expected = celesta_composition::AudioGraph {
+                sample_rate: 44_100,
+                master_volume: 0.75,
+                clips: react_audio_clips(&reports, entry_dir),
+            };
+            let actual = batched
+                .collect_audio_graph(44_100, 0.75, entry_dir)
+                .unwrap();
+            assert_eq!(actual, expected, "{fixture}");
+        }
+        let actual = batched.evaluate_at(Time::ZERO, None).unwrap();
+        let expected = reference.evaluate_at(Time::ZERO, None).unwrap();
+        assert_eq!(
+            actual.scene, expected.scene,
+            "rendering after collection: {fixture}"
+        );
+        assert_eq!(
+            actual.audio, expected.audio,
+            "audio after collection: {fixture}"
+        );
+    }
 }
 
 #[test]

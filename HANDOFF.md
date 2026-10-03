@@ -75,7 +75,9 @@ video/audio tracks.
   stages `dist/project-types/` (`scripts/stage-project-types.mjs`): the
   package's declarations plus `@types/react`/`@types/node` and a base
   tsconfig. File > Set Up TypeScript copies it into a project's `.celesta/`
-  (`celesta_react_bridge::set_up_project_types`), and opening a project
+  (`celesta_react_bridge::set_up_project_types`); File > Set Up TypeScript
+  in Folder… installs it into a picked folder as-is, for a project with no
+  entry yet (`set_up_project_types_in`). Opening a project
   re-copies it when its `version.json` content hash differs
   (`refresh_project_types`).
 - `@celesta/code` stays separate from the React module and its dependencies.

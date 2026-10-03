@@ -26,7 +26,7 @@ mod project_types;
 mod runtime;
 pub use project_types::{
     PROJECT_TYPES_DIR, ProjectTsconfig, ProjectTypesSetup, project_types_template,
-    refresh_project_types, set_up_project_types,
+    refresh_project_types, set_up_project_types, set_up_project_types_in,
 };
 pub use runtime::runtime_paths;
 
@@ -173,6 +173,8 @@ impl Drop for ReactBridge {
 
 impl ReactBridge {
     /// Spawns `node <cli_script> <entry>` and reads its startup configuration.
+    /// Release builds default to production React; an explicit `NODE_ENV`
+    /// is preserved so callers can opt into development diagnostics.
     pub fn spawn(
         node: impl AsRef<Path>,
         cli_script: impl AsRef<Path>,
@@ -180,6 +182,9 @@ impl ReactBridge {
     ) -> Result<Self, ReactBridgeError> {
         let node = node.as_ref();
         let mut command = Command::new(node);
+        if !cfg!(debug_assertions) && std::env::var_os("NODE_ENV").is_none() {
+            command.env("NODE_ENV", "production");
+        }
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -316,6 +321,7 @@ impl ReactBridge {
         match self.request_response(request)? {
             Response::Ok { scene, audio } => Ok(FrameEvaluation { scene, audio }),
             Response::Components { .. } => Err(ReactBridgeError::UnexpectedResponse),
+            Response::CollectedAudio { .. } => Err(ReactBridgeError::UnexpectedResponse),
             Response::Err { error } => Err(ReactBridgeError::Render(error)),
             Response::MeasureText { .. } => Err(ReactBridgeError::UnexpectedResponse),
         }
@@ -361,6 +367,7 @@ impl ReactBridge {
         match self.request_response(request)? {
             Response::Components { components } => Ok(components),
             Response::Ok { .. } => Err(ReactBridgeError::UnexpectedResponse),
+            Response::CollectedAudio { .. } => Err(ReactBridgeError::UnexpectedResponse),
             Response::Err { error } => Err(ReactBridgeError::Render(error)),
             Response::MeasureText { .. } => Err(ReactBridgeError::UnexpectedResponse),
         }
@@ -369,23 +376,22 @@ impl ReactBridge {
     /// Sweeps every frame of the composition and builds the complete
     /// `AudioGraph` its `<Audio>` declarations imply — the standalone
     /// counterpart of what `celesta-exporter` accumulates during its render
-    /// loop. Each frame's `evaluate_at` report lists the `<Audio>` elements
-    /// audible *that* frame (so conditional / sequence-shifted audio is
-    /// captured); [`merge_react_audio_clips`] then collapses the per-frame
-    /// duplicates. Relative `src` paths resolve against `entry_dir` (the
-    /// entry file's own directory, like the renderer's asset root).
+    /// loop. Node evaluates all frames in one request, retaining hooks and
+    /// text measurements but omitting visual layers and per-frame scene JSON.
+    /// Conditional / sequence-shifted audio is still captured exactly;
+    /// [`merge_react_audio_clips`] collapses the per-frame duplicates.
+    /// Relative `src` paths resolve against `entry_dir`.
     pub fn collect_audio_graph(
         &mut self,
         sample_rate: u32,
         master_volume: f64,
         entry_dir: &Path,
     ) -> Result<AudioGraph, ReactBridgeError> {
-        let frame_rate = self.metadata.frame_rate;
-        let mut reports = Vec::new();
-        for frame in 0..self.metadata.duration_in_frames {
-            let time = Time::frames(frame as i64, frame_rate).map_err(ReactBridgeError::Time)?;
-            reports.extend(self.evaluate_at(time, None)?.audio);
-        }
+        let reports = match self.request_response(serde_json::json!({ "collectAudio": true }))? {
+            Response::CollectedAudio { collected_audio } => collected_audio,
+            Response::Err { error } => return Err(ReactBridgeError::Render(error)),
+            _ => return Err(ReactBridgeError::UnexpectedResponse),
+        };
         Ok(AudioGraph {
             sample_rate,
             master_volume,
@@ -534,6 +540,10 @@ struct ComponentRequest<'a> {
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum Response {
+    CollectedAudio {
+        #[serde(rename = "collectedAudio")]
+        collected_audio: Vec<ReactAudioClipDescriptor>,
+    },
     MeasureText {
         #[serde(rename = "measureText")]
         measure_text: MeasureTextRequest,
