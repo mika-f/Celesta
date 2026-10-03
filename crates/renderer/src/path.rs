@@ -7,6 +7,7 @@
 //! identical.
 
 use celesta_composition::{LineCap, LineJoin, Paint, PathCommand, Stroke};
+use rayon::prelude::*;
 use resvg::tiny_skia;
 
 use crate::{Color, RasterizedText, RenderError, ResolvedPaint};
@@ -97,14 +98,14 @@ pub fn rasterize_path(
 /// Each path's coverage is rasterized over its own bounds, exactly as
 /// [`rasterize_path`] would, so a path's pixels do not depend on what it is
 /// batched with. Paths are rasterized in parallel, and composited in
-/// parallel by bands of rows.
+/// parallel by bands of rows, using a shared worker pool across frames.
 pub fn rasterize_paths(
     draws: &[PathDraw<'_>],
     width: u32,
     height: u32,
 ) -> Result<Option<RasterizedPath>, RenderError> {
     // Outlines and coverage: the expensive part, independent per path.
-    let threads = std::thread::available_parallelism().map_or(1, |count| count.get());
+    let threads = rayon::current_num_threads();
     let prepare = |draws: &[PathDraw<'_>]| {
         let mut prepared = Vec::with_capacity(draws.len());
         for draw in draws {
@@ -115,21 +116,17 @@ pub fn rasterize_paths(
         }
         Ok::<_, RenderError>(prepared)
     };
-    let prepared = if draws.len() == 1 || threads == 1 {
+    let prepared = if draws.len() <= 1 || threads == 1 {
         prepare(draws)?
     } else {
         let chunk = draws.len().div_ceil(threads);
-        std::thread::scope(|scope| {
-            let workers: Vec<_> = draws
-                .chunks(chunk)
-                .map(|chunk| scope.spawn(move || prepare(chunk)))
-                .collect();
-            let mut prepared = Vec::with_capacity(draws.len());
-            for worker in workers {
-                prepared.extend(worker.join().expect("path thread panicked")?);
-            }
-            Ok::<_, RenderError>(prepared)
-        })?
+        draws
+            .par_chunks(chunk)
+            .map(prepare)
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .flatten()
+            .collect()
     };
     let Some(region) = prepared
         .iter()
@@ -139,46 +136,43 @@ pub fn rasterize_paths(
         return Ok(None);
     };
 
-    // Compositing, in painter's order within each band of rows.
+    // Composite and convert to straight RGBA within each band. Keeping the
+    // float scratch space local avoids a full-frame allocation/zeroing and
+    // a serial conversion pass, even for a single large path.
     let row = region.width as usize * 4;
-    let mut accumulated = vec![0.0_f32; row * region.height as usize];
-    let band_rows = if prepared.len() == 1 {
+    let mut pixels = vec![0_u8; row * region.height as usize];
+    let band_rows = if region.width as usize * (region.height as usize) < MIN_PARALLEL_PIXELS {
         region.height
     } else {
         region.height.div_ceil(threads as u32).max(MIN_BAND_ROWS)
     } as usize;
-    let composite = |top: usize, band: &mut [f32]| {
+    let composite = |top: usize, pixels: &mut [u8]| {
+        let mut band = vec![0.0_f32; pixels.len()];
         for (outline, coverage) in &prepared {
-            outline.composite(coverage, region, top, band);
+            outline.composite(coverage, region, top, &mut band);
+        }
+        for (source, destination) in band.chunks_exact(4).zip(pixels.chunks_exact_mut(4)) {
+            let alpha = source[3];
+            if alpha <= 0.0 {
+                continue;
+            }
+            let channel = |value: f32| (value * 255.0).round().clamp(0.0, 255.0) as u8;
+            destination.copy_from_slice(&[
+                channel(source[0] / alpha),
+                channel(source[1] / alpha),
+                channel(source[2] / alpha),
+                channel(alpha),
+            ]);
         }
     };
     if band_rows >= region.height as usize {
-        composite(0, &mut accumulated);
+        composite(0, &mut pixels);
     } else {
-        std::thread::scope(|scope| {
-            for (index, band) in accumulated.chunks_mut(row * band_rows).enumerate() {
-                let composite = &composite;
-                scope.spawn(move || composite(index * band_rows, band));
-            }
-        });
+        pixels
+            .par_chunks_mut(row * band_rows)
+            .enumerate()
+            .for_each(|(index, band)| composite(index * band_rows, band));
     }
-
-    let pixels = accumulated
-        .chunks_exact(4)
-        .flat_map(|pixel| {
-            let alpha = pixel[3];
-            if alpha <= 0.0 {
-                return [0; 4];
-            }
-            let channel = |value: f32| (value * 255.0).round().clamp(0.0, 255.0) as u8;
-            [
-                channel(pixel[0] / alpha),
-                channel(pixel[1] / alpha),
-                channel(pixel[2] / alpha),
-                channel(alpha),
-            ]
-        })
-        .collect();
     Ok(Some(RasterizedPath {
         left: region.left,
         top: region.top,
@@ -192,6 +186,9 @@ const SKIP_RUN: usize = 16;
 /// Rows below which compositing a band on its own thread costs more than
 /// it saves.
 const MIN_BAND_ROWS: u32 = 32;
+
+/// Small images do not amortize scheduling and scratch allocation per band.
+const MIN_PARALLEL_PIXELS: usize = 128 * 1024;
 
 /// A path's fill and stroke as outlines in output pixels, ready to paint.
 struct Outline {
@@ -842,6 +839,62 @@ mod tests {
         let fill_under_stroke = &batch.image.pixels()
             [((2 - batch.top as usize) * width + (30 - batch.left as usize)) * 4..][..4];
         assert!(fill_under_stroke[2] < 0x60, "{fill_under_stroke:?}");
+    }
+
+    #[test]
+    fn parallel_bands_match_serial_pixels_for_single_and_overlapping_paths() {
+        let commands = polyline(&[(7.5, 11.25), (583.5, 20.5), (350.25, 389.75)], true);
+        let fill = Paint::Linear {
+            start: Point { x: 0.0, y: 0.0 },
+            end: Point { x: 600.0, y: 400.0 },
+            stops: vec![
+                celesta_composition::GradientStop {
+                    offset: 0.0,
+                    color: "#2050FF80".to_owned(),
+                },
+                celesta_composition::GradientStop {
+                    offset: 1.0,
+                    color: "#FFFFFF".to_owned(),
+                },
+            ],
+        };
+        let stroke = Stroke {
+            paint: solid("#EF402B90"),
+            width: 3.0,
+        };
+        let shape = PathShape {
+            commands: &commands,
+            fill: Some(&fill),
+            stroke: Some(&stroke),
+            line_cap: LineCap::Round,
+            line_join: LineJoin::Round,
+            miter_limit: DEFAULT_MITER_LIMIT,
+        };
+        let draws: Vec<_> = [0.0, 15.5, -12.25]
+            .into_iter()
+            .map(|offset| PathDraw {
+                shape,
+                transform: PathTransform::scale_translate(1.0, 1.0, offset, offset),
+                opacity: 0.6,
+            })
+            .collect();
+        let pool = |threads| {
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .unwrap()
+        };
+        let serial = pool(1);
+        let parallel = pool(4);
+        for draws in [&draws[..1], &draws[..]] {
+            let render = || rasterize_paths(draws, 600, 400).unwrap().unwrap();
+            assert_eq!(serial.install(render), parallel.install(render));
+        }
+    }
+
+    #[test]
+    fn an_empty_batch_draws_nothing() {
+        assert_eq!(rasterize_paths(&[], 600, 400).unwrap(), None);
     }
 
     #[test]

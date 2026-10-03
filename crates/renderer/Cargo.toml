@@ -14,6 +14,7 @@ celesta-composition = { path = "../composition" }
 celesta-remote = { path = "../remote" }
 celesta-media = { path = "../media" }
 png = "0.18.1"
+rayon = "1.12.0"
 psd = "0.3.5"
 wuff = "0.2.9"
 unicode-properties = "0.1.4"
