@@ -1546,6 +1546,7 @@ impl EditorView {
     ) {
         self.typescript_error = None;
         self.typescript_message = None;
+        cx.notify();
         let selection = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,
