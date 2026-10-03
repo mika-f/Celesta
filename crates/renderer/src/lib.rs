@@ -303,6 +303,10 @@ impl fmt::Display for MissingGlyphs {
 
 pub struct TextRasterizer {
     font_system: FontSystem,
+    /// The database `font_system` was constructed from, before any font was
+    /// loaded into it: `FontSystem` derives fallback state from its initial
+    /// database, so [`Self::fork`] rebuilds from this one.
+    initial_db: fontdb::Database,
     swash_cache: SwashCache,
     loaded_fonts: HashSet<PathBuf>,
     /// `matched_weight` results by family and requested weight, cleared
@@ -332,6 +336,7 @@ const COLOR_EMOJI_FAMILIES: &[&str] = &[
 impl TextRasterizer {
     pub fn new() -> Self {
         let font_system = FontSystem::new();
+        let initial_db = font_system.db().clone();
         #[cfg(target_os = "windows")]
         let font_system = {
             let mut font_system = font_system;
@@ -341,8 +346,32 @@ impl TextRasterizer {
 
         Self {
             font_system,
+            initial_db,
             swash_cache: SwashCache::new(),
             loaded_fonts: HashSet::new(),
+            matched_weights: HashMap::new(),
+            color_emoji_family: None,
+            missing_characters: HashMap::new(),
+        }
+    }
+
+    /// An independent rasterizer with the same fonts loaded, which draws
+    /// any text exactly as this one does, so several can rasterize on
+    /// separate threads. Built from the same initial database and then
+    /// given this one's current database (face ids included) rather than
+    /// reloading the fonts, which would also pick up loaded fonts as
+    /// fallback candidates.
+    pub fn fork(&self) -> Self {
+        let mut font_system = FontSystem::new_with_locale_and_db(
+            self.font_system.locale().to_owned(),
+            self.initial_db.clone(),
+        );
+        *font_system.db_mut() = self.font_system.db().clone();
+        Self {
+            font_system,
+            initial_db: self.initial_db.clone(),
+            swash_cache: SwashCache::new(),
+            loaded_fonts: self.loaded_fonts.clone(),
             matched_weights: HashMap::new(),
             color_emoji_family: None,
             missing_characters: HashMap::new(),
@@ -3260,6 +3289,26 @@ mod tests {
         let (left_red, left_blue) = opaque(0, width / 4);
         let (right_red, right_blue) = opaque(width * 3 / 4, width);
         assert!(left_red > right_red && right_blue > left_blue);
+    }
+
+    #[test]
+    fn a_fork_rasterizes_text_exactly_like_the_original() {
+        let mut original = TextRasterizer::new();
+        let mut fork = original.fork();
+        for (text, letter_spacing) in [("Celesta", None), ("CH07 +42.125", Some(3.5))] {
+            let style = TextStyle {
+                font_size: Some(36.0),
+                letter_spacing,
+                ..TextStyle::default()
+            };
+            let expected = original.rasterize(text, &style, None, 1.5).unwrap();
+            let actual = fork.rasterize(text, &style, None, 1.5).unwrap();
+            assert_eq!(
+                (actual.width(), actual.height()),
+                (expected.width(), expected.height())
+            );
+            assert!(actual.into_pixels() == expected.into_pixels(), "{text}");
+        }
     }
 
     #[test]
