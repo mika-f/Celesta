@@ -538,7 +538,7 @@ struct ComponentRequest<'a> {
 }
 
 #[derive(Deserialize)]
-#[serde(untagged)]
+#[serde(try_from = "RawResponse")]
 enum Response {
     CollectedAudio {
         #[serde(rename = "collectedAudio")]
@@ -559,6 +559,45 @@ enum Response {
     Err {
         error: String,
     },
+}
+
+/// Every key a [`Response`] can carry, read in one pass. An untagged enum
+/// would buffer the whole message (a frame's scene is hundreds of KiB) and
+/// replay it against each variant in turn, more than doubling parse time.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RawResponse {
+    collected_audio: Option<Vec<ReactAudioClipDescriptor>>,
+    measure_text: Option<MeasureTextRequest>,
+    scene: Option<Scene>,
+    #[serde(default)]
+    audio: Vec<ReactAudioClipDescriptor>,
+    components: Option<Vec<Option<Vec<Layer>>>>,
+    error: Option<String>,
+}
+
+impl TryFrom<RawResponse> for Response {
+    type Error = &'static str;
+
+    fn try_from(raw: RawResponse) -> Result<Self, Self::Error> {
+        // The order the untagged enum used to try its variants in.
+        if let Some(collected_audio) = raw.collected_audio {
+            Ok(Self::CollectedAudio { collected_audio })
+        } else if let Some(measure_text) = raw.measure_text {
+            Ok(Self::MeasureText { measure_text })
+        } else if let Some(scene) = raw.scene {
+            Ok(Self::Ok {
+                scene,
+                audio: raw.audio,
+            })
+        } else if let Some(components) = raw.components {
+            Ok(Self::Components { components })
+        } else if let Some(error) = raw.error {
+            Ok(Self::Err { error })
+        } else {
+            Err("response has none of collectedAudio, measureText, scene, components or error")
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -1115,6 +1154,15 @@ mod tests {
         let resolved = components[1].as_ref().unwrap();
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].id, "resolved");
+    }
+
+    #[test]
+    fn deserializes_errors_and_rejects_unknown_responses() {
+        let Response::Err { error } = serde_json::from_str(r#"{"error":"boom"}"#).unwrap() else {
+            panic!("expected an Err response");
+        };
+        assert_eq!(error, "boom");
+        assert!(serde_json::from_str::<Response>(r#"{"unexpected":1}"#).is_err());
     }
 
     fn audio_descriptor(src: &str, start: f64) -> ReactAudioClipDescriptor {
