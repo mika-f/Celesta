@@ -1896,20 +1896,27 @@ impl GpuRenderer {
         let images: Vec<_> = if jobs.len() == 1 {
             vec![rasterize_text(&mut self.text_rasterizer, jobs[0], limit)]
         } else {
-            let workers = jobs.len().min(rayon::current_num_threads());
+            let workers = jobs
+                .len()
+                .min(rayon::current_num_threads())
+                .min(MAX_TEXT_WORKERS);
             while self.text_workers.len() < workers {
                 self.text_workers.push(self.text_rasterizer.fork());
             }
             let chunk = jobs.len().div_ceil(workers);
-            self.text_workers
+            // One result list per chunk, in chunk order, so the flattened
+            // images line up with `jobs`.
+            let chunks: Vec<Vec<_>> = self
+                .text_workers
                 .par_iter_mut()
                 .zip(jobs.par_chunks(chunk))
-                .flat_map_iter(|(rasterizer, jobs)| {
+                .map(|(rasterizer, jobs)| {
                     jobs.iter()
                         .map(|job| rasterize_text(rasterizer, job, limit))
-                        .collect::<Vec<_>>()
+                        .collect()
                 })
-                .collect()
+                .collect();
+            chunks.into_iter().flatten().collect()
         };
         let generation = self.texture_generation;
         for (job, image) in jobs.iter().zip(images) {
@@ -2065,6 +2072,11 @@ fn downsample(width: u32, height: u32, pixels: &[u8]) -> (u32, u32, Vec<u8>) {
 /// Prefix of every cached text texture's key, so a newly loaded font can drop
 /// just those.
 const TEXT_TEXTURE_PREFIX: &str = "text\0";
+
+/// Most forks of the text rasterizer kept for parallel text. Each holds its
+/// own font database and glyph cache, so more cores should not mean more of
+/// them; a frame's slowest text bounds the time anyway.
+const MAX_TEXT_WORKERS: usize = 8;
 
 fn psd_key(
     asset: &ResolvedAsset,
