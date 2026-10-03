@@ -180,6 +180,241 @@ pub fn rasterize_paths(
     }))
 }
 
+/// A path's fill and stroke outlines as straight line segments in output
+/// pixels, for a renderer that computes their coverage itself (the GPU
+/// renderer shades it per pixel). The outlines are exactly the ones
+/// [`rasterize_path`] fills, stroked by the same stroker.
+#[derive(Clone, Debug)]
+pub struct FlattenedPath {
+    /// The output pixels the outlines touch, cut to the output, like the
+    /// image [`rasterize_path`] returns.
+    pub left: i32,
+    pub top: i32,
+    pub width: u32,
+    pub height: u32,
+    pub fill: Option<(ResolvedPaint, Vec<LineSegment>)>,
+    pub stroke: Option<(ResolvedPaint, Vec<LineSegment>)>,
+    /// Output pixels relative to (`left`, `top`) back to the layer's own
+    /// coordinates, for gradients.
+    pub inverse: PathTransform,
+}
+
+/// A directed edge of an outline, `(x0, y0)` to `(x1, y1)`, in pixels
+/// relative to the [`FlattenedPath`]'s top-left corner. Every pixel of the
+/// region is covered by the nonzero winding of its outline's edges.
+///
+/// Edges never leave the region's rows. What lies left of the region is
+/// moved onto its left edge (`x = 0`), which keeps the winding of every
+/// pixel inside; what lies right of it is dropped. The edges inside stay
+/// connected end to end exactly, horizontal ones included, so the winding
+/// along any vertical line inside only changes where an edge crosses it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LineSegment {
+    pub x0: f32,
+    pub y0: f32,
+    pub x1: f32,
+    pub y1: f32,
+}
+
+/// How far a flattened curve may stray from the true one, in output pixels.
+/// Well under the 1/4 pixel `tiny_skia` resolves edges to.
+const FLATTEN_TOLERANCE: f32 = 0.05;
+
+/// The outlines [`rasterize_path`] would fill for `shape`, flattened into
+/// line segments, or `None` when it would draw nothing.
+pub fn flatten_path(
+    shape: &PathShape<'_>,
+    transform: PathTransform,
+    width: u32,
+    height: u32,
+) -> Result<Option<FlattenedPath>, RenderError> {
+    let draw = PathDraw {
+        shape: *shape,
+        transform,
+        opacity: 1.0,
+    };
+    let Some(outline) = Outline::new(&draw, width, height)? else {
+        return Ok(None);
+    };
+    let region = outline.region;
+    let flatten = |outline: Option<(ResolvedPaint, tiny_skia::Path)>| {
+        outline.map(|(paint, path)| {
+            let mut segments = Vec::new();
+            flatten_outline(&path, region, &mut segments);
+            (paint, segments)
+        })
+    };
+    let (left, top) = (f64::from(region.left), f64::from(region.top));
+    let inverse = outline.inverse;
+    Ok(Some(FlattenedPath {
+        left: region.left,
+        top: region.top,
+        width: region.width,
+        height: region.height,
+        fill: flatten(outline.fill),
+        stroke: flatten(outline.stroke),
+        inverse: PathTransform {
+            tx: inverse.a * left + inverse.c * top + inverse.tx,
+            ty: inverse.b * left + inverse.d * top + inverse.ty,
+            ..inverse
+        },
+    }))
+}
+
+/// Appends `path`'s contours, closed as a fill closes them, as edges
+/// relative to and cut to `region`.
+fn flatten_outline(path: &tiny_skia::Path, region: PixelRegion, output: &mut Vec<LineSegment>) {
+    let origin = tiny_skia::Point::from_xy(region.left as f32, region.top as f32);
+    let size = (region.width as f32, region.height as f32);
+    let mut edge = |from: tiny_skia::Point, to: tiny_skia::Point| {
+        clip_edge(from - origin, to - origin, size, output);
+    };
+    let (mut start, mut last) = (tiny_skia::Point::zero(), tiny_skia::Point::zero());
+    for segment in path.segments() {
+        match segment {
+            tiny_skia::PathSegment::MoveTo(point) => {
+                edge(last, start);
+                (start, last) = (point, point);
+            }
+            tiny_skia::PathSegment::LineTo(point) => {
+                edge(last, point);
+                last = point;
+            }
+            tiny_skia::PathSegment::QuadTo(control, point) => {
+                let begin = last;
+                for next in curve_points(&[begin, control, point], 0.25) {
+                    edge(last, next);
+                    last = next;
+                }
+            }
+            tiny_skia::PathSegment::CubicTo(first, second, point) => {
+                let begin = last;
+                for next in curve_points(&[begin, first, second, point], 0.75) {
+                    edge(last, next);
+                    last = next;
+                }
+            }
+            tiny_skia::PathSegment::Close => {
+                edge(last, start);
+                last = start;
+            }
+        }
+    }
+    edge(last, start);
+}
+
+/// Points along the Bézier curve with control points `points` (a quadratic
+/// or a cubic), after the first, ending exactly at the last. Wang's formula
+/// picks how many: `factor` is d(d-1)/8 for degree d.
+fn curve_points(
+    points: &[tiny_skia::Point],
+    factor: f32,
+) -> impl Iterator<Item = tiny_skia::Point> + '_ {
+    let bend = points
+        .windows(3)
+        .map(|w| (w[0].x - 2.0 * w[1].x + w[2].x).hypot(w[0].y - 2.0 * w[1].y + w[2].y))
+        .fold(0.0_f32, f32::max);
+    let steps = (factor * bend / FLATTEN_TOLERANCE)
+        .sqrt()
+        .ceil()
+        .clamp(1.0, 1024.0) as u32;
+    let last = *points.last().expect("a curve has control points");
+    (1..=steps).map(move |step| {
+        if step == steps {
+            return last;
+        }
+        // De Casteljau.
+        let t = step as f32 / steps as f32;
+        let mut level = [tiny_skia::Point::zero(); 4];
+        level[..points.len()].copy_from_slice(points);
+        for count in (1..points.len()).rev() {
+            for i in 0..count {
+                level[i] = tiny_skia::Point::from_xy(
+                    level[i].x + (level[i + 1].x - level[i].x) * t,
+                    level[i].y + (level[i + 1].y - level[i].y) * t,
+                );
+            }
+        }
+        level[0]
+    })
+}
+
+/// Appends the part of the edge `from`-`to` that matters to pixels of a
+/// `size` region: within its rows, with what lies left of it moved onto
+/// `x = 0` and what lies right of it dropped (see [`LineSegment`]).
+fn clip_edge(
+    from: tiny_skia::Point,
+    to: tiny_skia::Point,
+    (width, height): (f32, f32),
+    output: &mut Vec<LineSegment>,
+) {
+    if from == to || !(from.is_finite() && to.is_finite()) {
+        return;
+    }
+    // Where along the edge (0 at `from`, 1 at `to`) it is inside the rows,
+    // and where it crosses the region's sides.
+    let (enter, leave) = if from.y == to.y {
+        if !(0.0..=height).contains(&from.y) {
+            return;
+        }
+        (0.0, 1.0)
+    } else {
+        let along_y = |y: f32| (y - from.y) / (to.y - from.y);
+        let (a, b) = (along_y(0.0), along_y(height));
+        (a.min(b).max(0.0), a.max(b).min(1.0))
+    };
+    if enter >= leave {
+        return;
+    }
+    // The edge's ends inside the rows and where it crosses the region's
+    // sides, in order along it. Each cut lands exactly on the row or side it
+    // cuts at, and the edge's own ends stay exact, so the pieces meet end to
+    // end with the edges before and after them.
+    let at = |t: f32| {
+        tiny_skia::Point::from_xy(from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t)
+    };
+    let on_row = |t: f32| {
+        let y = if at(t).y < height / 2.0 { 0.0 } else { height };
+        tiny_skia::Point::from_xy(at(t).x, y)
+    };
+    let mut cuts = [(0.0, from); 4];
+    cuts[0] = (enter, if enter == 0.0 { from } else { on_row(enter) });
+    let mut count = 1;
+    for x in [0.0, width] {
+        let t = (x - from.x) / (to.x - from.x);
+        if t > enter && t < leave {
+            cuts[count] = (t, tiny_skia::Point::from_xy(x, at(t).y));
+            count += 1;
+        }
+    }
+    cuts[count] = (leave, if leave == 1.0 { to } else { on_row(leave) });
+    let cuts = &mut cuts[..=count];
+    cuts.sort_by(|a, b| a.0.total_cmp(&b.0));
+    for pair in cuts.windows(2) {
+        let ((_, a), (_, b)) = (pair[0], pair[1]);
+        let middle = (a.x + b.x) / 2.0;
+        if middle >= width {
+            continue;
+        }
+        let x = |x: f32| {
+            if middle <= 0.0 {
+                0.0
+            } else {
+                x.clamp(0.0, width)
+            }
+        };
+        let edge = LineSegment {
+            x0: x(a.x),
+            y0: a.y,
+            x1: x(b.x),
+            y1: b.y,
+        };
+        if (edge.x0, edge.y0) != (edge.x1, edge.y1) {
+            output.push(edge);
+        }
+    }
+}
+
 /// Pixels of coverage checked together when skipping uncovered ones.
 const SKIP_RUN: usize = 16;
 
@@ -547,6 +782,83 @@ mod tests {
 
     fn alpha(frame: &RgbaFrame, x: u32, y: u32) -> u8 {
         frame.pixels()[((y * frame.width() + x) * 4 + 3) as usize]
+    }
+
+    /// The GPU renderer relies on flattened edges meeting end to end, so the
+    /// winding along a line through the region only changes where an edge
+    /// crosses it: edges may only end unmatched where they leave through
+    /// the region's top or bottom row, or its right side.
+    #[test]
+    fn flattens_outlines_into_edges_that_meet_inside_the_region() {
+        use std::collections::HashMap;
+
+        let ring = vec![
+            PathCommand::MoveTo { x: 60.0, y: 0.0 },
+            PathCommand::CubicTo {
+                x1: 60.0,
+                y1: 14.0,
+                x2: 33.0,
+                y2: 25.0,
+                x: 0.0,
+                y: 25.0,
+            },
+            PathCommand::QuadTo {
+                x1: -60.0,
+                y1: 25.0,
+                x: -60.0,
+                y: 0.0,
+            },
+            PathCommand::LineTo { x: 0.0, y: -25.0 },
+            PathCommand::Close,
+        ];
+        let paint = solid("#FFFFFF");
+        let stroke = Stroke {
+            paint: paint.clone(),
+            width: 3.0,
+        };
+        let (width, height) = (64, 48);
+        for step in 0..48 {
+            let angle = f64::from(step) * 7.37_f64.to_radians();
+            let (sin, cos) = angle.sin_cos();
+            let transform = PathTransform {
+                a: cos * 1.3,
+                b: sin * 1.3,
+                c: -sin,
+                d: cos,
+                tx: 31.7,
+                ty: 23.9,
+            };
+            let shape = PathShape {
+                commands: &ring,
+                fill: Some(&paint),
+                stroke: Some(&stroke),
+                line_cap: LineCap::Butt,
+                line_join: LineJoin::Round,
+                miter_limit: DEFAULT_MITER_LIMIT,
+            };
+            let path = flatten_path(&shape, transform, width, height)
+                .unwrap()
+                .expect("the ring overhangs the output but crosses it");
+            let size = (path.width as f32, path.height as f32);
+            for (_, edges) in [path.fill, path.stroke].into_iter().flatten() {
+                let mut ends: HashMap<(u32, u32), i32> = HashMap::new();
+                for edge in &edges {
+                    for (x, y) in [(edge.x0, edge.y0), (edge.x1, edge.y1)] {
+                        assert!((0.0..=size.0).contains(&x) && (0.0..=size.1).contains(&y));
+                    }
+                    let key = |x: f32, y: f32| ((x + 0.0).to_bits(), (y + 0.0).to_bits());
+                    *ends.entry(key(edge.x0, edge.y0)).or_default() += 1;
+                    *ends.entry(key(edge.x1, edge.y1)).or_default() -= 1;
+                }
+                for ((x, y), count) in ends {
+                    let (x, y) = (f32::from_bits(x), f32::from_bits(y));
+                    assert!(
+                        count == 0 || y == 0.0 || y == size.1 || x == size.0,
+                        "step {step}: edges end unmatched at ({x}, {y})"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

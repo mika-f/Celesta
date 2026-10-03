@@ -23,10 +23,12 @@ spends that time in an incremental `cargo build --release`.
 fframes renders fastest. Celesta exports about 2.4× faster than Remotion.
 Reusing Path worker threads and parallelizing the final RGBA conversion reduced
 Celesta's export from 25.9 s to 19.0 s, about 26%, with identical MP4 output.
-The 24 rotating ellipses still use CPU Path coverage; moving that work to the
-GPU remains an optimization opportunity. See the
-[Path measurements](../../docs/performance/path-rasterization.md) for the
-isolated benchmark and pixel-equivalence checks.
+See the [Path measurements](../../docs/performance/path-rasterization.md) for
+that change's isolated benchmark and pixel-equivalence checks. Since then the
+GPU renderer shades Path coverage itself instead of uploading CPU-rasterized
+paths ([GPU Path coverage](../../docs/performance/gpu-path-coverage.md), issue
+#116); the table above predates that change and has not yet been remeasured on
+this machine.
 
 ## Layout
 

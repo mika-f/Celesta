@@ -1,0 +1,133 @@
+# GPU Path coverage: issue #116
+
+The GPU renderer used to rasterize every `LayerContent::Path` on the CPU
+(the CPU renderer's tiny-skia rasterizer) and upload the RGBA result each
+frame. It now computes coverage and paint per pixel in `layer.wgsl`; the CPU
+only strokes and flattens the outline. The CPU renderer is unchanged and
+remains the reference the GPU output is compared with.
+
+## How it works
+
+1. `celesta_renderer::flatten_path` builds the same outlines
+   `rasterize_path` fills: the stroke is made by the same tiny-skia stroker in
+   the layer's own coordinates (so a non-uniform scale stretches it, and
+   caps, joins and the miter limit are tiny-skia's), then everything is
+   transformed to output pixels and cut to the same region of the frame.
+   Curves become straight edges within 0.05 px. What lies left of the region
+   moves onto its left side and what lies right is dropped, which keeps the
+   winding of every pixel inside; every cut lands exactly on its row or side,
+   so the edges meet end to end.
+2. `ShadedPath` / `bin_tiles` sort the edges into 8x8-pixel tiles, as Vello
+   does: each tile keeps the parts of edges at or right of its left side,
+   cut to its rows, a vertical edge down its left side wherever an edge
+   crosses that side, and a backdrop, the winding just left of its top-left
+   corner. Only tiles with edges or a nonzero backdrop are stored and drawn,
+   so the empty inside of a thin ring costs nothing.
+3. The vertex shader places one quad per stored tile. The fragment shader
+   measures the nonzero coverage of the fill and of the stroke on four
+   scanlines per pixel row (the scanlines tiny-skia samples), each span
+   measured exactly. It paints the stroke over the fill (solid colors or
+   gradients, evaluated at the pixel center mapped back to the layer's
+   coordinates), then the ordinary layer path applies the layer's opacity,
+   clip and blend mode once to the composited result.
+
+So a translucent stroke that crosses itself is painted once, the fill does
+not show through the stroke, and each path composites as one layer through
+the existing clip, group, blend-mode and effect order. Each frame's tiles and
+edges go into one storage buffer that is rebuilt every frame and only grows
+to the largest frame (to the next power of two), like the instance buffer;
+nothing is cached per shape, so continuously changing shapes cannot
+accumulate GPU resources.
+
+## Pixel comparison with the CPU renderer
+
+tiny-skia rounds where scanlines cross edges to quarter pixels and flattens
+curves more coarsely, so edge pixels can differ by a few 1/16 samples. The
+GPU tests (`crates/gpu-renderer/src/lib.rs`) compare against the CPU renderer
+(or, for rotated layers, which the CPU renderer does not draw, against its
+rasterizer composited by hand) and allow at most 64 in any channel, 0.5 on
+average, and at most 1% of channels differing by more than 16:
+
+| Case | Max | Mean | Channels > 16 |
+| --- | ---: | ---: | ---: |
+| Curves, closed path seam, open path | 59 | 0.321 | 0.586% |
+| Acute miter and bevel joins, repeated point, zero-length segments (round, square, butt caps) | 21 | 0.110 | 0.008% |
+| Thin diagonals (0.5–1 px), 0.4 px curve, non-uniform and mirrored scale | 44 | 0.401 | 0.281% |
+| Translucent self-intersecting stroke, translucent fill + stroke, layer opacity | 7 | 0.101 | 0% |
+| Linear and radial gradients in scaled groups | 44 | 0.244 | 0.439% |
+| Rounded clip, multiply blend, blurred group | 15 | 0.128 | 0% |
+| 8 rotated rings overhanging the frame | 49 | 0.429 | 0.323% |
+
+Where they differ, the GPU is closer to exact. Against an 8x supersampled
+CPU rendering box-filtered to 1x, the curves case differs by up to 28 (0.175
+on average) on the GPU and up to 52 (0.541) on the CPU.
+
+Other tests check that the crossings in a translucent self-intersecting
+stroke have the color of a single layer, that `render`, the pipelined export
+(`submit`/`drain`) and the BGRA preview target produce identical pixels, that
+the path buffer stays the same size through 200 frames of an animated shape,
+and that flattened edges meet end to end at many rotations (`celesta-renderer`).
+
+## Measurements
+
+Apple M4 (10 cores), macOS 26.6.2, Metal, Rust 1.95.0, Homebrew FFmpeg 8.1.3,
+release builds, October 3, 2026. "Before" is `main` at `0c72c5d`; runs
+alternate before/after, three each, and the tables give medians. Raw
+observations are in [gpu-path-coverage.csv](gpu-path-coverage.csv). These
+were not measured on the Core i7-13700F / RTX 4070 machine of
+[path-rasterization.md](path-rasterization.md), so the two sets of numbers
+should not be compared with each other.
+
+The 24 NEBULA rings alone (`path-bench`, 120 frames at 1920x1080):
+
+| Stage | Before | After |
+| --- | ---: | ---: |
+| CPU work per frame | 4.55 ms rasterization | 0.27 ms stroking and flattening |
+| GPU submit/drain, readback included | 6.46 ms/frame | 1.94 ms/frame |
+| Same for empty frames (clear, copy, readback) | — | 0.33 ms/frame |
+| One frame at a time (`render`), rings / empty | — | 6.18 / 2.54 ms |
+
+The pipelined frames went from 6.46 to 1.94 ms (3.3x). The CPU no longer
+fills coverage masks or converts RGBA, and no texture is uploaded: the frame's
+tiles and edges are 0.72 MB (in a buffer that settles at 1 MiB), where the
+rings' batch was uploaded as an RGBA texture of up to 8.3 MB, the whole
+frame. The remaining time beyond the empty
+frame's readback is the shading itself plus `bin_tiles`.
+
+The dense path ribbons of `dense-geometry-bench` (217 path layers, the
+AFTERIMAGE-style geometry) went from 8.11 to 2.84 ms/frame (2.9x); its rect
+version, which this change does not touch, measured 1.69 and 1.36 ms.
+
+The whole NEBULA export (600 frames, libx264 `medium` CRF 18, CLI start to
+exit) measured 47.07 s before and 47.46 s after: no change in wall time on
+this machine. The same exports used 139.9 s of user CPU before and 121.0 s
+after, and their peak resident memory dropped from 998 MB to 830 MB (peak
+footprint 1,482 MB to 1,336 MB). Sampling the main thread during an
+export shows why the wall time did not move: on the M4 the export is
+GPU-bound. About half of the main thread's samples wait in
+`reclaim_oldest` for the GPU, the libx264 thread mostly waits for frames,
+and path preparation is about 5%. The rings add about 1.6 ms (1.94 − 0.33 above) to a
+roughly 78 ms frame; most of the rest is presumably the full-frame σ48 blurs
+and σ24 glow. Frame 300 as a PNG took 0.39 s both before and after.
+
+Each version's three MP4s are byte-identical (SHA-256 `d0eb8dd8021dcaa4…`
+before, `36ddf7872c14ab2f…` after; H.264, 1920x1080, 600 frames). Frame 300
+differs between them at 56.4 dB PSNR; the MP4s at 44.0 dB, which also
+includes the encoder making different decisions.
+
+`examples/versus/bench/results.json`, `loop.json` and the comparison film
+keep the RTX 4070 measurements: the film compares Celesta with Remotion and
+fframes measured on that machine, so these M4 numbers do not belong there.
+They need a new measurement on the reference machine.
+
+## Reproduce
+
+```sh
+cargo run --release --locked -p celesta-gpu-renderer --example path-bench -- 120
+cargo run --release --locked -p celesta-gpu-renderer --example dense-geometry-bench
+cargo build --release --locked -p celesta-exporter --bin celesta-exporter
+/usr/bin/time -l target/release/celesta-exporter --no-ui --overwrite --react examples/versus/bench/celesta/nebula.tsx target/nebula.mp4
+```
+
+On macOS with Homebrew's FFmpeg 9 installed as the default, point
+`PKG_CONFIG_PATH` at `$(brew --prefix ffmpeg@8)/lib/pkgconfig` first.

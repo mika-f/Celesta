@@ -1,6 +1,6 @@
 # Celesta implementation handoff
 
-Last updated: 2026-10-02 (`random`/`noise` moved to `@celesta/math`)
+Last updated: 2026-10-03 (GPU renderer shades `Path` coverage, issue #116)
 
 ## Goal
 
@@ -329,8 +329,9 @@ Keep these boundaries intact:
   stroke), and rasterizes anti-aliased coverage masks over the outline's
   bounds cut to the frame; paint is applied per pixel with the same
   `ResolvedPaint::color_at` rects use. Both renderers composite the result
-  unscaled at its pixel corner — the GPU's exact texel-for-texel path — so a
-  lone path is identical on CPU and GPU. The GPU batches consecutive path
+  unscaled at its pixel corner. (Until issue #116, below, the GPU renderer
+  uploaded this rasterization too, so a lone path was identical on CPU and
+  GPU.) The GPU batched consecutive path
   layers that composite plainly through the same clip (across plain groups)
   into one `PreparedItem::Paths`, rasterized after the frame is prepared by
   `rasterize_paths`: coverage per path in parallel (each over its own
@@ -355,6 +356,36 @@ Keep these boundaries intact:
   layers costs more than the rasterization saves. A depth-banded path ribbon
   quantizes opacity/width to its bands where the rects vary per segment.
   `examples/afterimage/film.tsx` still uses its rect `Line`.
+- GPU path shading (2026-10-03, issue #116): the GPU renderer no longer
+  rasterizes paths on the CPU or uploads them. `celesta_renderer::flatten_path`
+  builds the same outlines `rasterize_path` fills (same tiny-skia stroker and
+  resolution scale, transformed to output pixels, same region cut to the
+  frame) and flattens them into `LineSegment`s relative to the region:
+  curves to 0.05 px, edges cut to its rows, what lies left of it moved onto
+  `x = 0`, what lies right dropped, horizontal edges kept and every cut
+  landing exactly on its row or side so the edges meet end to end.
+  `ShadedPath`/`bin_tiles` sort them into 8x8-pixel tiles, Vello-style: a
+  tile lists the edge parts at or right of its left side, plus a vertical
+  edge down that side wherever an edge crosses it, and a backdrop (the
+  winding just left of its top-left corner). Only tiles with edges or a
+  nonzero backdrop are stored (in a per-frame storage buffer, binding 2 of
+  the clip bind group, rebuilt every frame and grown to the largest frame
+  like the instance buffer, no caches) and drawn: `vs_main` places one quad
+  per listed tile (`GpuDraw::vertices` is `0..6 * tiles` for a path, so path
+  draws never merge) and passes the tile's entry to the fragment.
+  `layer.wgsl`'s `path_texel` measures nonzero coverage on four scanlines per
+  pixel row (tiny-skia's sampling) with exact horizontal spans, paints stroke
+  over fill with `paint_color` at the pixel centre mapped back to layer
+  coordinates, and leaves the layer opacity, clip and blend mode to the
+  ordinary layer path, so each path composites as one layer. tiny-skia
+  rounds crossings to quarter pixels and flattens curves more coarsely, so
+  edge pixels can differ by a few 1/16 samples: the GPU tests pin max 64 /
+  mean 0.5 / at most 1% of channels over 16 against the CPU renderer (or
+  its rasterizer, for rotations), and the GPU is the closer of the two to
+  an 8x supersampled rendering. Apple M4, 1080p: the 24 NEBULA rings went
+  from 5.7 to about 1.5 ms/frame (submit/drain with readback; the CPU part
+  is about 0.2 ms), the 217-layer path ribbons of `dense-geometry-bench`
+  from 6.0 to 2.8 ms/frame. See `docs/performance/gpu-path-coverage.md`.
 - Export speed (2026-09-25): `GpuRenderer` caches layer textures across
   frames (images, PSD composites, text; keyed by their inputs, text
   also by `TextRasterizer::loaded_font_count`), so unchanged layers are

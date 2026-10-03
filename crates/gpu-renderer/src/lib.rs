@@ -19,10 +19,10 @@ use celesta_composition::{
 use celesta_media::{MediaError, VideoFrameDecoder};
 use celesta_remote::{RemoteAssetError, resolve_asset_path};
 use celesta_renderer::{
-    Color as CpuColor, FontFallback, MissingGlyphs, PathDraw, PathShape, PathTransform, RectPaint,
-    RenderError, ResolvedPaint, TextRasterizer,
+    Color as CpuColor, FlattenedPath, FontFallback, LineSegment, MissingGlyphs, PathShape,
+    PathTransform, RectPaint, RenderError, ResolvedPaint, TextRasterizer, flatten_path,
     image_source::{fit_within, resize_rgba},
-    rasterize_path, rasterize_paths, resolve_rect_paint,
+    resolve_rect_paint,
 };
 
 #[cfg(target_os = "macos")]
@@ -311,6 +311,13 @@ pub struct GpuRenderer {
     /// bind group and is reused like them.
     paints: wgpu::Buffer,
     paint_entries: Vec<[f32; 4]>,
+    /// The edges of every path of the frame being prepared, laid out as
+    /// `layer.wgsl`'s `paths` reads them (see `ShadedPath`); shares the
+    /// clips' bind group and is reused like them.
+    paths: wgpu::Buffer,
+    path_entries: Vec<[f32; 4]>,
+    /// The size of the scene being prepared, which paths are cut to.
+    scene_size: (u32, u32),
     /// Bound for draws that shade their content (rects) instead of sampling.
     placeholder_texture: LayerTexture,
     asset_root: PathBuf,
@@ -438,10 +445,11 @@ impl GpuRenderer {
         let clip_bind_group_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("Celesta layer clip bind group layout"),
-                // The clips, then the gradient paints.
-                entries: &[0, 1].map(|binding| wgpu::BindGroupLayoutEntry {
+                // The clips, the gradient paints, then the path edges.
+                // `vs_main` reads a path's tiles to place them.
+                entries: &[0, 1, 2].map(|binding| wgpu::BindGroupLayoutEntry {
                     binding,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
@@ -488,7 +496,9 @@ impl GpuRenderer {
         let instances = instance_buffer(&device, 1024 * LAYER_INSTANCE_SIZE);
         let clips = clip_buffer(&device, 64 * CLIP_ENTRY_SIZE);
         let paints = clip_buffer(&device, 64 * 16);
-        let clip_bind_group = clip_bind_group(&device, &clip_bind_group_layout, &clips, &paints);
+        let paths = clip_buffer(&device, 1024 * 16);
+        let clip_bind_group =
+            clip_bind_group(&device, &clip_bind_group_layout, &clips, &paints, &paths);
         let placeholder_texture = upload_texture(
             &device,
             &queue,
@@ -522,6 +532,9 @@ impl GpuRenderer {
             clip_entries: Vec::new(),
             paints,
             paint_entries: Vec::new(),
+            paths,
+            path_entries: Vec::new(),
+            scene_size: (0, 0),
             placeholder_texture,
             asset_root: PathBuf::from("."),
             psd_sources: Default::default(),
@@ -1047,6 +1060,8 @@ impl GpuRenderer {
         self.texture_generation += 1;
         self.clip_entries.clear();
         self.paint_entries.clear();
+        self.path_entries.clear();
+        self.scene_size = (scene.width, scene.height);
         self.font_fallbacks.clear();
         self.missing_glyphs.clear();
         let mut items = Vec::new();
@@ -1060,7 +1075,6 @@ impl GpuRenderer {
         self.textures
             .retain(|_, cached| cached.last_used == generation);
         prepared?;
-        let items = self.rasterize_paths(items, scene.width, scene.height)?;
 
         // A frame that blends anything but source-over composites through
         // scene-sized canvases, so its layers need one more instance: the
@@ -1101,7 +1115,6 @@ impl GpuRenderer {
             let target = open.last().expect("the root canvas is always open").canvas;
             let layer = match item {
                 PreparedItem::Layer(layer) => layer,
-                PreparedItem::Paths(_) => unreachable!("paths are rasterized into layers"),
                 PreparedItem::BeginGroup => {
                     let group = groups.next().expect("plan_groups plans every group");
                     steps.push(GpuStep::BeginGroup {
@@ -1151,13 +1164,20 @@ impl GpuRenderer {
             let area = (!blend_mode.is_normal())
                 .then(|| target.local_area(layer.bounds()))
                 .flatten();
+            let vertices = match &layer.content {
+                PreparedContent::Path(path) => 0..path.tiles * 6,
+                _ => 0..6,
+            };
             let texture = match layer.content {
                 PreparedContent::Texture(texture) => texture,
-                PreparedContent::Rect(_) => self.placeholder_texture.clone(),
+                PreparedContent::Rect(_) | PreparedContent::Path(_) => {
+                    self.placeholder_texture.clone()
+                }
                 PreparedContent::Canvas { .. } => unreachable!("only a group's end draws a canvas"),
             };
             let draw = GpuDraw {
                 texture,
+                vertices,
                 instances: index..index + 1,
             };
             if !blend_mode.is_normal() {
@@ -1169,7 +1189,9 @@ impl GpuRenderer {
             } else {
                 match steps.last_mut() {
                     Some(GpuStep::Draw(last))
-                        if last.texture.bind_group == draw.texture.bind_group =>
+                        if last.texture.bind_group == draw.texture.bind_group
+                            && last.vertices == (0..6)
+                            && draw.vertices == (0..6) =>
                     {
                         last.instances.end = index + 1;
                     }
@@ -1200,19 +1222,34 @@ impl GpuRenderer {
         // the instances.
         let clip_size = self.clip_entries.len() as u64 * CLIP_ENTRY_SIZE;
         let paint_size = self.paint_entries.len() as u64 * 16;
-        if clip_size > self.clips.size() || paint_size > self.paints.size() {
+        let path_size = self.path_entries.len() as u64 * 16;
+        if path_size > self.device.limits().max_storage_buffer_binding_size {
+            return Err(GpuRenderError::PathsTooComplex(self.path_entries.len()));
+        }
+        if clip_size > self.clips.size()
+            || paint_size > self.paints.size()
+            || path_size > self.paths.size()
+        {
             if clip_size > self.clips.size() {
                 self.clips = clip_buffer(&self.device, clip_size.next_power_of_two());
             }
             if paint_size > self.paints.size() {
                 self.paints = clip_buffer(&self.device, paint_size.next_power_of_two());
             }
+            if path_size > self.paths.size() {
+                self.paths = clip_buffer(&self.device, path_size.next_power_of_two());
+            }
             self.clip_bind_group = clip_bind_group(
                 &self.device,
                 &self.clip_bind_group_layout,
                 &self.clips,
                 &self.paints,
+                &self.paths,
             );
+        }
+        if !self.path_entries.is_empty() {
+            self.queue
+                .write_buffer(&self.paths, 0, bytemuck::cast_slice(&self.path_entries));
         }
         if !self.paint_entries.is_empty() {
             let bytes: Vec<u8> = self
@@ -1283,7 +1320,7 @@ impl GpuRenderer {
                 unreachable!("a frame with blend steps is composited");
             };
             pass.set_bind_group(0, &draw.texture.bind_group, &[]);
-            pass.draw(0..6, draw.instances.clone());
+            pass.draw(draw.vertices.clone(), draw.instances.clone());
         }
         Ok(())
     }
@@ -1718,31 +1755,53 @@ impl GpuRenderer {
                     raster_scale: 1.0,
                 }));
             }
-            LayerContent::Path { .. } => {
-                // Rasterized later, in output pixels with the whole transform
-                // applied to the geometry (the CPU renderer's rasterizer), and
-                // copied texel for texel. Consecutive paths that composite
-                // plainly through the same clip share one texture: a ribbon
-                // of a hundred paths is one rasterization and one upload.
-                let path = PendingPath {
-                    content: layer.content.clone(),
-                    transform: state.transform.into(),
-                    opacity: state.opacity,
+            LayerContent::Path {
+                commands,
+                fill,
+                stroke,
+                line_cap,
+                line_join,
+                miter_limit,
+            } => {
+                // Outlined and flattened on the CPU, with the whole
+                // transform applied to the geometry exactly as the CPU
+                // renderer's rasterizer does; the coverage of every output
+                // pixel is then shaded by `layer.wgsl`, so an animated path
+                // costs neither a rasterization nor an upload per frame.
+                let shape = PathShape {
+                    commands,
+                    fill: fill.as_ref(),
+                    stroke: stroke.as_ref(),
+                    line_cap: *line_cap,
+                    line_join: *line_join,
+                    miter_limit: *miter_limit,
                 };
-                match output.last_mut() {
-                    Some(PreparedItem::Paths(batch))
-                        if blend_mode.is_normal()
-                            && batch.blend_mode.is_normal()
-                            && batch.clip == state.clip =>
-                    {
-                        batch.paths.push(path);
-                    }
-                    _ => output.push(PreparedItem::Paths(PathBatch {
-                        paths: vec![path],
-                        clip: state.clip,
-                        blend_mode,
-                    })),
+                let (width, height) = self.scene_size;
+                let Some(path) = flatten_path(&shape, state.transform.into(), width, height)
+                    .map_err(GpuRenderError::Text)?
+                else {
+                    return Ok(());
+                };
+                let (left, top) = (path.left as f32, path.top as f32);
+                let shaded =
+                    ShadedPath::new(&path, &mut self.paint_entries, &mut self.path_entries);
+                if shaded.tiles == 0 {
+                    return Ok(());
                 }
+                output.push(PreparedItem::Layer(PreparedLayer {
+                    content: PreparedContent::Path(shaded),
+                    anchor: Point { x: 0.0, y: 0.0 },
+                    state: LayerState {
+                        transform: Affine {
+                            tx: left,
+                            ty: top,
+                            ..Affine::IDENTITY
+                        },
+                        ..state
+                    },
+                    blend_mode,
+                    raster_scale: 1.0,
+                }));
             }
             LayerContent::MissingComponent { .. } => {
                 return Err(GpuRenderError::UnsupportedContent {
@@ -1752,84 +1811,6 @@ impl GpuRenderer {
             }
         }
         Ok(())
-    }
-
-    /// Replaces each batch of paths with a layer drawing its pixels, or
-    /// drops it when nothing of it is visible.
-    fn rasterize_paths(
-        &self,
-        items: Vec<PreparedItem>,
-        width: u32,
-        height: u32,
-    ) -> Result<Vec<PreparedItem>, GpuRenderError> {
-        let mut output = Vec::with_capacity(items.len());
-        for item in items {
-            let PreparedItem::Paths(batch) = item else {
-                output.push(item);
-                continue;
-            };
-            let draws: Vec<_> = batch
-                .paths
-                .iter()
-                .map(|path| {
-                    let LayerContent::Path {
-                        commands,
-                        fill,
-                        stroke,
-                        line_cap,
-                        line_join,
-                        miter_limit,
-                    } = &path.content
-                    else {
-                        unreachable!("only paths are batched");
-                    };
-                    PathDraw {
-                        shape: PathShape {
-                            commands,
-                            fill: fill.as_ref(),
-                            stroke: stroke.as_ref(),
-                            line_cap: *line_cap,
-                            line_join: *line_join,
-                            miter_limit: *miter_limit,
-                        },
-                        transform: path.transform,
-                        opacity: f64::from(path.opacity),
-                    }
-                })
-                .collect();
-            // A lone path keeps its opacity on the layer, exactly like the
-            // CPU renderer; a batch has each path's opacity painted in.
-            let (rasterized, opacity) = match draws.as_slice() {
-                [draw] => (
-                    rasterize_path(&draw.shape, draw.transform, width, height),
-                    batch.paths[0].opacity,
-                ),
-                _ => (rasterize_paths(&draws, width, height), 1.0),
-            };
-            let Some(path) = rasterized.map_err(GpuRenderError::Text)? else {
-                continue;
-            };
-            let image = DecodedImage::new(
-                path.image.width(),
-                path.image.height(),
-                path.image.into_pixels(),
-            )?;
-            output.push(PreparedItem::Layer(PreparedLayer::new(
-                self.upload_texture(&image, false),
-                Point { x: 0.0, y: 0.0 },
-                LayerState {
-                    transform: Affine {
-                        tx: path.left as f32,
-                        ty: path.top as f32,
-                        ..Affine::IDENTITY
-                    },
-                    opacity,
-                    clip: batch.clip,
-                },
-                batch.blend_mode,
-            )));
-        }
-        Ok(output)
     }
 
     /// Enters `clip`, defined in the frame `state` describes (the group's
@@ -2612,6 +2593,7 @@ struct CanvasDraw<'s> {
     /// The texture drawn: a layer's, or (`Err`) the finished group canvas
     /// at that index of `draw_canvas`'s `groups`.
     texture: Result<&'s wgpu::BindGroup, usize>,
+    vertices: std::ops::Range<u32>,
     instances: std::ops::Range<u32>,
     blend_mode: BlendMode,
     /// For blended draws, the canvas pixels the draw can change.
@@ -2639,6 +2621,7 @@ impl Compositor<'_> {
             match &steps[index] {
                 GpuStep::Draw(draw) => list.push(CanvasDraw {
                     texture: Ok(&draw.texture.bind_group),
+                    vertices: draw.vertices.clone(),
                     instances: draw.instances.clone(),
                     blend_mode: BlendMode::Normal,
                     area: None,
@@ -2651,6 +2634,7 @@ impl Compositor<'_> {
                     if area.is_some() {
                         list.push(CanvasDraw {
                             texture: Ok(&draw.texture.bind_group),
+                            vertices: draw.vertices.clone(),
                             instances: draw.instances.clone(),
                             blend_mode: *blend_mode,
                             area: *area,
@@ -2677,6 +2661,7 @@ impl Compositor<'_> {
                         Some(group) if area.is_some() => {
                             list.push(CanvasDraw {
                                 texture: Err(groups.len()),
+                                vertices: 0..6,
                                 instances: instance..instance + 1,
                                 blend_mode,
                                 area,
@@ -2711,10 +2696,10 @@ impl Compositor<'_> {
                 pass.set_vertex_buffer(0, self.draws.instances.slice(..));
                 pass.set_bind_group(2, &self.draws.clips, &[]);
                 pass.set_bind_group(0, &texture(draw), &[]);
-                pass.draw(0..6, draw.instances.clone());
+                pass.draw(draw.vertices.clone(), draw.instances.clone());
                 while let Some(next) = draws.next_if(|next| next.blend_mode.is_normal()) {
                     pass.set_bind_group(0, &texture(next), &[]);
-                    pass.draw(0..6, next.instances.clone());
+                    pass.draw(next.vertices.clone(), next.instances.clone());
                 }
             } else {
                 if let wgpu::LoadOp::Clear(_) = load {
@@ -2745,7 +2730,7 @@ impl Compositor<'_> {
                 pass.set_bind_group(0, &texture(draw), &[]);
                 pass.set_bind_group(1, &self.backdrop.bind_group, &[]);
                 pass.set_bind_group(2, &self.draws.clips, &[]);
-                pass.draw(0..6, draw.instances.clone());
+                pass.draw(draw.vertices.clone(), draw.instances.clone());
             }
             load = wgpu::LoadOp::Load;
         }
@@ -2934,6 +2919,7 @@ fn clip_bind_group(
     layout: &wgpu::BindGroupLayout,
     clips: &wgpu::Buffer,
     paints: &wgpu::Buffer,
+    paths: &wgpu::Buffer,
 ) -> wgpu::BindGroup {
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("Celesta layer clip bind group"),
@@ -2946,6 +2932,10 @@ fn clip_bind_group(
             wgpu::BindGroupEntry {
                 binding: 1,
                 resource: paints.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: paths.as_entire_binding(),
             },
         ],
     })
@@ -3036,9 +3026,286 @@ fn encode_paint(paint: Option<&ResolvedPaint>, paints: &mut Vec<[f32; 4]>) -> [f
     [index, 0.0, 0.0, -1.0]
 }
 
+/// The pixels of a path's region that share one list of edges in `paths`.
+/// Mirrors `PATH_TILE_COLUMNS` and `PATH_TILE_ROWS` in `layer.wgsl`.
+const PATH_TILE_COLUMNS: u32 = 8;
+const PATH_TILE_ROWS: u32 = 8;
+
+/// A path drawn by `layer.wgsl`'s `path_texel`, which shades the coverage of
+/// its outlines' edges (`celesta_renderer::flatten_path`) into the pixels
+/// `celesta_renderer::rasterize_path` would have produced: texel for texel,
+/// as a quad per `PATH_TILE_COLUMNS`x`PATH_TILE_ROWS` tile of its region
+/// that either outline covers any of.
+struct ShadedPath {
+    width: u32,
+    height: u32,
+    /// The index of its first entry in `paths`:
+    ///
+    /// - the inverse transform's a, b, c, d (region pixels to layer
+    ///   coordinates, for gradients)
+    /// - the inverse transform's tx, ty; the number of tile columns; how many
+    ///   entries each tile drawn has, one per outline
+    /// - which of a tile's entries is the fill's, then the stroke's (-1
+    ///   without one); the index of the first tile's; unused
+    ///
+    /// then the tiles drawn, each outline's entry for each: the tile's index
+    /// in the region (row by row), the index and count of the edges the
+    /// outline has there, and its backdrop (see `bin_tiles`). The edges, x0,
+    /// y0, x1, y1 in region pixels, follow. Indices are whole numbers in f32,
+    /// exact below 2^24 entries, which the storage buffer binding limit keeps
+    /// them under.
+    base: f32,
+    /// How many tiles it draws.
+    tiles: u32,
+    /// See `encode_paint`.
+    fill: [f32; 4],
+    stroke: [f32; 4],
+}
+
+impl ShadedPath {
+    fn new(path: &FlattenedPath, paints: &mut Vec<[f32; 4]>, entries: &mut Vec<[f32; 4]>) -> Self {
+        let base = entries.len();
+        let inverse = path.inverse;
+        let columns = path.width.div_ceil(PATH_TILE_COLUMNS);
+        let outlines: Vec<_> = [&path.fill, &path.stroke]
+            .into_iter()
+            .map(|outline| {
+                outline
+                    .as_ref()
+                    .map(|(_, edges)| bin_tiles(edges, path.width, path.height))
+            })
+            .collect();
+        // Each tile's entries: the fill's, then the stroke's, if it has them.
+        let mut stride = 0;
+        let mut slots = [-1.0; 2];
+        for (slot, outline) in slots.iter_mut().zip(&outlines) {
+            if outline.is_some() {
+                *slot = stride as f32;
+                stride += 1;
+            }
+        }
+        // Every tile either outline covers, in order.
+        let mut tiles: Vec<u32> = outlines
+            .iter()
+            .flatten()
+            .flat_map(|bins| bins.tiles.iter().map(|tile| tile.index))
+            .collect();
+        tiles.sort_unstable();
+        tiles.dedup();
+        let first_tile = base + 3;
+        entries.push([inverse.a, inverse.b, inverse.c, inverse.d].map(|value| value as f32));
+        entries.push([
+            inverse.tx as f32,
+            inverse.ty as f32,
+            columns as f32,
+            stride as f32,
+        ]);
+        entries.push([slots[0], slots[1], first_tile as f32, 0.0]);
+        entries.resize(first_tile + tiles.len() * stride, [0.0; 4]);
+        for (slot, bins) in outlines.iter().flatten().enumerate() {
+            let edges = entries.len();
+            let mut own = bins.tiles.iter().peekable();
+            for (position, &index) in tiles.iter().enumerate() {
+                let entry = &mut entries[first_tile + position * stride + slot];
+                *entry = [index as f32, 0.0, 0.0, 0.0];
+                if let Some(tile) = own.next_if(|tile| tile.index == index) {
+                    *entry = [
+                        index as f32,
+                        (edges + tile.edges.start) as f32,
+                        tile.edges.len() as f32,
+                        tile.backdrop as f32,
+                    ];
+                }
+            }
+            entries.extend_from_slice(&bins.edges);
+        }
+        Self {
+            width: path.width,
+            height: path.height,
+            base: base as f32,
+            tiles: tiles.len() as u32,
+            fill: encode_paint(path.fill.as_ref().map(|(paint, _)| paint), paints),
+            stroke: encode_paint(path.stroke.as_ref().map(|(paint, _)| paint), paints),
+        }
+    }
+}
+
+/// An outline's edges sorted into the tiles of its region that it covers
+/// any of: those its edges reach, and those inside it.
+struct TileBins {
+    /// In order of their index.
+    tiles: Vec<CoveredTile>,
+    edges: Vec<[f32; 4]>,
+}
+
+struct CoveredTile {
+    /// Row by row.
+    index: u32,
+    /// The winding just left of the tile's top-left corner.
+    backdrop: i32,
+    /// What it needs of `TileBins::edges`.
+    edges: std::ops::Range<usize>,
+}
+
+/// Sorts `edges` into the `PATH_TILE_COLUMNS`x`PATH_TILE_ROWS` tiles of a
+/// `width`x`height` region.
+///
+/// A tile gets only the parts of `edges` at or right of its left side, cut
+/// to its rows. What lies left of it is summed up by its backdrop, plus a
+/// vertical edge down the tile's left side from wherever an edge crosses
+/// it, since the winding along that side only changes there. A tile no edge
+/// reaches is uniformly covered or not, as its backdrop says, and costs the
+/// shader no edges at all.
+fn bin_tiles(edges: &[LineSegment], width: u32, height: u32) -> TileBins {
+    let columns = width.div_ceil(PATH_TILE_COLUMNS) as usize;
+    let rows = height.div_ceil(PATH_TILE_ROWS) as usize;
+    let tile_width = PATH_TILE_COLUMNS as f32;
+    let tile_height = PATH_TILE_ROWS as f32;
+    let column_of = |x: f32| ((x / tile_width).floor().max(0.0) as usize).min(columns - 1);
+    let mut pieces: Vec<(usize, [f32; 4])> = Vec::with_capacity(edges.len() * 2);
+    // Where along a tile row the backdrop changes, and by how much.
+    let mut backdrops: Vec<(usize, i32)> = Vec::new();
+    for edge in edges {
+        let LineSegment { x0, y0, x1, y1 } = *edge;
+        if y0 == y1 {
+            // Its crossings of tile sides, where it does not sit on a tile
+            // row's top (whose backdrop already counts what it connects).
+            let row = (y0 / tile_height).floor() as usize;
+            if row >= rows || y0 == row as f32 * tile_height {
+                continue;
+            }
+            let bottom = (row + 1) as f32 * tile_height;
+            let direction = if x0 > x1 { [y0, bottom] } else { [bottom, y0] };
+            let (low, high) = (x0.min(x1), x0.max(x1));
+            for column in column_of(low) + 1..=column_of(high) {
+                let side = column as f32 * tile_width;
+                if low < side && side <= high {
+                    pieces.push((
+                        row * columns + column,
+                        [side, direction[0], side, direction[1]],
+                    ));
+                }
+            }
+            continue;
+        }
+        let first_row = ((y0.min(y1) / tile_height).floor() as usize).min(rows - 1);
+        let last_row = ((y0.max(y1) / tile_height).ceil() as usize).clamp(first_row + 1, rows);
+        for row in first_row..last_row {
+            let (top, bottom) = (row as f32 * tile_height, (row + 1) as f32 * tile_height);
+            // The edge within the row, in its own direction.
+            let at = |y: f32| x0 + (x1 - x0) * ((y - y0) / (y1 - y0));
+            let clip = |x: f32, y: f32| {
+                if y < top {
+                    (at(top), top)
+                } else if y > bottom {
+                    (at(bottom), bottom)
+                } else {
+                    (x, y)
+                }
+            };
+            let (ax, ay) = clip(x0, y0);
+            let (bx, by) = clip(x1, y1);
+            if ay == by {
+                continue;
+            }
+            let (top_x, low, high) = if ay < by { (ax, ax, bx) } else { (bx, bx, ax) };
+            let (low, high) = (low.min(high), low.max(high));
+            let direction = if by > ay { 1 } else { -1 };
+            let tiles = row * columns..(row + 1) * columns;
+            // Where the edge starts on the row's top, the tiles whose left
+            // side is right of it count it in their backdrop.
+            if ay.min(by) == top {
+                let first = (top_x / tile_width).floor() as usize + 1;
+                if first < columns {
+                    backdrops.push((tiles.start + first, direction));
+                }
+            }
+            for column in column_of(low)..=column_of(high) {
+                let side = column as f32 * tile_width;
+                let tile = tiles.start + column;
+                if low >= side {
+                    pieces.push((tile, [ax, ay, bx, by]));
+                    continue;
+                }
+                // Cut where it crosses the tile's left side: the part left
+                // of it is the backdrop's business, plus a vertical edge
+                // from the crossing down the side.
+                let t = (side - ax) / (bx - ax);
+                let cross = if t <= 0.0 {
+                    ay
+                } else if t >= 1.0 {
+                    by
+                } else {
+                    ay + (by - ay) * t
+                };
+                let piece = if ax < side {
+                    [side, cross, bx, by]
+                } else {
+                    [ax, ay, side, cross]
+                };
+                if piece[1] != piece[3] {
+                    pieces.push((tile, piece));
+                }
+                if cross < bottom {
+                    // Leaving the left side downwards (left part above) takes
+                    // the edge's winding away below the crossing; entering
+                    // it adds it.
+                    let leaves = (ax < side) == (ay < by);
+                    let sign = if leaves { -direction } else { direction };
+                    let side_edge = if sign > 0 {
+                        [side, cross, side, bottom]
+                    } else {
+                        [side, bottom, side, cross]
+                    };
+                    pieces.push((tile, side_edge));
+                }
+            }
+        }
+    }
+    pieces.sort_unstable_by_key(|(tile, _)| *tile);
+    backdrops.sort_unstable_by_key(|(tile, _)| *tile);
+    let mut bins = TileBins {
+        tiles: Vec::new(),
+        edges: Vec::with_capacity(pieces.len()),
+    };
+    let mut pieces = pieces.into_iter().peekable();
+    let mut backdrops = backdrops.into_iter().peekable();
+    for row in 0..rows {
+        let end = (row + 1) * columns;
+        let mut backdrop = 0;
+        let mut tile = row * columns;
+        while tile < end {
+            while let Some((_, change)) = backdrops.next_if(|(index, _)| *index == tile) {
+                backdrop += change;
+            }
+            let start = bins.edges.len();
+            while let Some((_, piece)) = pieces.next_if(|(index, _)| *index == tile) {
+                bins.edges.push(piece);
+            }
+            let edges = start..bins.edges.len();
+            if backdrop != 0 || !edges.is_empty() {
+                bins.tiles.push(CoveredTile {
+                    index: tile as u32,
+                    backdrop,
+                    edges,
+                });
+            }
+            tile += 1;
+            if backdrop == 0 {
+                // Nothing to draw up to the next tile with edges or a change.
+                let next_piece = pieces.peek().map_or(end, |(index, _)| *index);
+                let next_change = backdrops.peek().map_or(end, |(index, _)| *index);
+                tile = tile.max(next_piece.min(next_change).min(end));
+            }
+        }
+    }
+    bins
+}
+
 enum PreparedContent {
     Texture(LayerTexture),
     Rect(RectShape),
+    Path(ShadedPath),
     /// A whole scene-sized canvas: a finished isolated group, or the root
     /// canvas being copied onto the target.
     Canvas {
@@ -3057,24 +3324,6 @@ enum PreparedItem {
     /// Draws the finished group's canvas onto its parent.
     EndGroup(PreparedLayer),
     EndEffect(PreparedLayer, EffectSpec),
-    /// Consecutive path layers, rasterized together into one layer once the
-    /// whole frame is prepared.
-    Paths(PathBatch),
-}
-
-struct PathBatch {
-    paths: Vec<PendingPath>,
-    /// Shared by every path in the batch.
-    clip: Option<u32>,
-    /// `Normal` unless the batch is a single path.
-    blend_mode: BlendMode,
-}
-
-struct PendingPath {
-    /// A `LayerContent::Path`.
-    content: LayerContent,
-    transform: PathTransform,
-    opacity: f32,
 }
 
 struct PreparedLayer {
@@ -3116,6 +3365,7 @@ impl PreparedLayer {
         let (texel_width, texel_height, kind) = match &self.content {
             PreparedContent::Texture(texture) => (texture.width, texture.height, 0.0),
             PreparedContent::Rect(rect) => (rect.pixel_width, rect.pixel_height, 1.0),
+            PreparedContent::Path(path) => (path.width, path.height, 2.0),
             PreparedContent::Canvas { .. } => (canvas.width, canvas.height, 0.0),
         };
         let premultiplied = matches!(
@@ -3138,6 +3388,7 @@ impl PreparedLayer {
                 rect.fill,
                 rect.stroke,
             ),
+            PreparedContent::Path(path) => ([path.base, 0.0, 0.0, 0.0], path.fill, path.stroke),
         };
         let mut transform = self.state.transform;
         if let PreparedContent::Canvas { .. } = self.content {
@@ -3203,6 +3454,7 @@ impl PreparedLayer {
         let (texel_width, texel_height) = match &self.content {
             PreparedContent::Texture(texture) => (texture.width, texture.height),
             PreparedContent::Rect(rect) => (rect.pixel_width, rect.pixel_height),
+            PreparedContent::Path(path) => (path.width, path.height),
             PreparedContent::Canvas { .. } => unreachable!("only a group's end draws a canvas"),
         };
         let width = texel_width as f32 / self.raster_scale;
@@ -3347,7 +3599,6 @@ fn plan_groups(items: &[PreparedItem], scene: CanvasRegion) -> Vec<GroupPlan> {
     for item in items {
         match item {
             PreparedItem::Layer(layer) => cover(&mut open, Some(layer.bounds())),
-            PreparedItem::Paths(_) => unreachable!("paths are rasterized into layers"),
             PreparedItem::BeginGroup => {
                 open.push((plans.len(), None));
                 plans.push(plan(None, None));
@@ -3468,6 +3719,9 @@ impl EffectSpec {
 
 struct GpuDraw {
     texture: LayerTexture,
+    /// `0..6` (one quad) except for a path, which draws a quad per tile it
+    /// covers.
+    vertices: std::ops::Range<u32>,
     instances: std::ops::Range<u32>,
 }
 
@@ -4085,6 +4339,8 @@ pub enum GpuRenderError {
     TooManyLayers(usize),
     /// Clipped groups are nested deeper than the shader walks.
     ClipsNestedTooDeep(u32),
+    /// A frame's paths have more edges than one GPU buffer can hold.
+    PathsTooComplex(usize),
 }
 
 impl fmt::Display for GpuRenderError {
@@ -4176,6 +4432,10 @@ impl fmt::Display for GpuRenderError {
                 formatter,
                 "clipped groups are nested {depth} deep, more than the GPU renderer's limit of {MAX_CLIP_DEPTH}"
             ),
+            Self::PathsTooComplex(entries) => write!(
+                formatter,
+                "frame's paths have too many edges for the GPU: {entries} entries"
+            ),
         }
     }
 }
@@ -4198,6 +4458,7 @@ impl Error for GpuRenderError {
             Self::MapCallbackDropped
             | Self::TooManyLayers(_)
             | Self::ClipsNestedTooDeep(_)
+            | Self::PathsTooComplex(_)
             | Self::InvalidImageData { .. }
             | Self::MissingVideoDecoder(_)
             | Self::UnsupportedContent { .. }
@@ -5112,124 +5373,837 @@ mod tests {
                 miter_limit: 4.0,
             },
         };
+        renderer.scene_size = (64, 64);
         let mut items = Vec::new();
         renderer
             .prepare_layer(&layer, LayerState::default(), &mut items)
             .unwrap();
-        let [PreparedItem::Paths(batch)] = items.as_slice() else {
-            panic!("expected one path batch");
+        let [
+            PreparedItem::Layer(PreparedLayer {
+                content: PreparedContent::Path(_),
+                ..
+            }),
+        ] = items.as_slice()
+        else {
+            panic!("expected one path layer");
         };
-        assert_eq!(path_transform(&layer.transform), batch.paths[0].transform);
+        let LayerContent::Path {
+            commands,
+            fill,
+            stroke,
+            line_cap,
+            line_join,
+            miter_limit,
+        } = &layer.content
+        else {
+            unreachable!("the layer is a path");
+        };
+        let shape = PathShape {
+            commands,
+            fill: fill.as_ref(),
+            stroke: stroke.as_ref(),
+            line_cap: *line_cap,
+            line_join: *line_join,
+            miter_limit: *miter_limit,
+        };
+        let path = flatten_path(&shape, path_transform(&layer.transform), 64, 64)
+            .unwrap()
+            .expect("the path is visible");
+        let mut entries = Vec::new();
+        ShadedPath::new(&path, &mut Vec::new(), &mut entries);
+        assert_eq!(renderer.path_entries, entries);
+    }
+
+    /// How far a path shaded on the GPU may stray from the CPU renderer's.
+    /// Both sample four scanlines per pixel row, but the CPU renderer rounds
+    /// where they cross edges to quarter pixels and flattens curves more
+    /// coarsely, so a pixel on an edge can be off by a few samples of 1/16
+    /// of its coverage. On the high-contrast, sub-pixel strokes and curves
+    /// below that is up to `PATH_MAX_DIFFERENCE` in a channel (59 at most
+    /// when measured), while across a frame the channels differ by under
+    /// `PATH_MEAN_DIFFERENCE` on average (0.43) and at most `PATH_FAR_SHARE`
+    /// of them by more than `PATH_CLOSE_DIFFERENCE` (0.59%). The GPU's are
+    /// the closer to exact: against an 8x supersampled CPU rendering, the
+    /// curves case differs by up to 28 (0.18 on average) on the GPU and 52
+    /// (0.54) on the CPU.
+    const PATH_MAX_DIFFERENCE: u8 = 64;
+    const PATH_MEAN_DIFFERENCE: f64 = 0.5;
+    const PATH_CLOSE_DIFFERENCE: u8 = 16;
+    const PATH_FAR_SHARE: f64 = 0.01;
+
+    fn assert_paths_match(case: &str, gpu: &[u8], cpu: &[u8]) {
+        assert_eq!(gpu.len(), cpu.len());
+        let differences: Vec<u8> = gpu.iter().zip(cpu).map(|(a, b)| a.abs_diff(*b)).collect();
+        let max = differences.iter().copied().max().unwrap_or(0);
+        let mean =
+            differences.iter().map(|&d| f64::from(d)).sum::<f64>() / differences.len() as f64;
+        let far = differences
+            .iter()
+            .filter(|&&d| d > PATH_CLOSE_DIFFERENCE)
+            .count() as f64
+            / differences.len() as f64;
+        assert!(
+            max <= PATH_MAX_DIFFERENCE && mean <= PATH_MEAN_DIFFERENCE && far <= PATH_FAR_SHARE,
+            "{case}: channels differ by up to {max}, {mean:.3} on average, \
+             {:.3}% by more than {PATH_CLOSE_DIFFERENCE}",
+            far * 100.0
+        );
+    }
+
+    fn assert_paths_match_cpu(renderer: &mut GpuRenderer, case: &str, layers: Vec<Layer>) {
+        let mut scene = empty_scene(96, 64);
+        scene.layers = layers;
+        let gpu = renderer.render(&scene).unwrap();
+        let cpu = celesta_renderer::CpuRenderer::default()
+            .render(&scene)
+            .unwrap();
+        assert_paths_match(case, gpu.pixels(), cpu.pixels());
+    }
+
+    fn polyline(points: &[(f64, f64)], closed: bool) -> Vec<celesta_composition::PathCommand> {
+        use celesta_composition::PathCommand;
+
+        let mut commands: Vec<_> = points
+            .iter()
+            .enumerate()
+            .map(|(index, &(x, y))| match index {
+                0 => PathCommand::MoveTo { x, y },
+                _ => PathCommand::LineTo { x, y },
+            })
+            .collect();
+        if closed {
+            commands.push(PathCommand::Close);
+        }
+        commands
+    }
+
+    fn solid(color: &str) -> Paint {
+        Paint::Solid {
+            color: color.to_owned(),
+        }
+    }
+
+    fn path_layer(
+        id: &str,
+        commands: Vec<celesta_composition::PathCommand>,
+        fill: Option<Paint>,
+        stroke: Option<(Paint, f64)>,
+    ) -> Layer {
+        Layer {
+            id: id.to_owned(),
+            transform: EvaluatedTransform::default(),
+            opacity: 1.0,
+            blend_mode: BlendMode::Normal,
+            effects: Default::default(),
+            content: LayerContent::Path {
+                commands,
+                fill,
+                stroke: stroke.map(|(paint, width)| Stroke { paint, width }),
+                line_cap: celesta_composition::LineCap::Butt,
+                line_join: celesta_composition::LineJoin::Miter,
+                miter_limit: celesta_composition::DEFAULT_MITER_LIMIT,
+            },
+        }
+    }
+
+    fn styled(
+        mut layer: Layer,
+        cap: celesta_composition::LineCap,
+        join: celesta_composition::LineJoin,
+        limit: f64,
+    ) -> Layer {
+        if let LayerContent::Path {
+            line_cap,
+            line_join,
+            miter_limit,
+            ..
+        } = &mut layer.content
+        {
+            (*line_cap, *line_join, *miter_limit) = (cap, join, limit);
+        }
+        layer
+    }
+
+    fn group(transform: EvaluatedTransform, layers: Vec<Layer>) -> Layer {
+        Layer {
+            id: "group".to_owned(),
+            transform,
+            opacity: 1.0,
+            blend_mode: BlendMode::Normal,
+            effects: Default::default(),
+            content: LayerContent::Group { layers, clip: None },
+        }
     }
 
     #[test]
-    fn draws_paths_like_the_cpu_renderer() {
+    fn shades_curves_and_closed_paths_like_the_cpu_renderer() {
         use celesta_composition::{LineCap, LineJoin, PathCommand};
 
         let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
             return;
         };
-        let path = |id: &str, transform, opacity, commands, color: &str, width, join| Layer {
-            id: id.to_owned(),
-            transform,
-            opacity,
-            blend_mode: BlendMode::Normal,
-            effects: Default::default(),
-            content: LayerContent::Path {
-                commands,
-                fill: None,
-                stroke: Some(Stroke {
-                    paint: Paint::Solid {
-                        color: color.to_owned(),
-                    },
-                    width,
-                }),
-                line_cap: LineCap::Round,
-                line_join: join,
-                miter_limit: 4.0,
+        let blob = vec![
+            PathCommand::MoveTo { x: 8.0, y: 32.0 },
+            PathCommand::CubicTo {
+                x1: 8.0,
+                y1: 4.0,
+                x2: 50.0,
+                y2: 2.0,
+                x: 56.0,
+                y: 28.0,
             },
-        };
-        let points = |points: &[(f64, f64)], closed: bool| {
-            let mut commands: Vec<_> = points
-                .iter()
-                .enumerate()
-                .map(|(index, &(x, y))| match index {
-                    0 => PathCommand::MoveTo { x, y },
-                    _ => PathCommand::LineTo { x, y },
-                })
-                .collect();
-            if closed {
-                commands.push(PathCommand::Close);
-            }
-            commands
-        };
-        let mut scene = empty_scene(64, 64);
-        scene.layers = vec![
-            // An acute miter join and a translucent stroke crossing itself.
-            path(
-                "spike",
-                EvaluatedTransform::default(),
-                0.8,
-                points(&[(4.0, 6.0), (60.0, 12.0), (4.0, 18.0), (40.0, 2.0)], false),
-                "#FF000099",
-                3.0,
-                LineJoin::Miter,
-            ),
-            // A closed outline in a scaled, translated group.
-            Layer {
-                id: "group".to_owned(),
-                transform: EvaluatedTransform {
-                    position: Point { x: 10.5, y: 24.25 },
-                    scale: Point { x: 2.5, y: 1.5 },
-                    ..EvaluatedTransform::default()
-                },
-                opacity: 1.0,
-                blend_mode: BlendMode::Normal,
-                effects: Default::default(),
-                content: LayerContent::Group {
-                    layers: vec![path(
-                        "ring",
-                        EvaluatedTransform::default(),
-                        1.0,
-                        points(&[(0.0, 0.0), (16.0, 2.0), (12.0, 14.0), (2.0, 10.0)], true),
-                        "#33CC66",
-                        1.5,
-                        LineJoin::Round,
-                    )],
-                    clip: None,
-                },
+            PathCommand::QuadTo {
+                x1: 62.0,
+                y1: 60.0,
+                x: 30.0,
+                y: 58.0,
             },
-            // A thin diagonal curve.
-            path(
-                "hair",
-                EvaluatedTransform::default(),
-                1.0,
-                vec![
-                    PathCommand::MoveTo { x: 2.0, y: 62.0 },
-                    PathCommand::CubicTo {
-                        x1: 20.0,
-                        y1: 20.0,
-                        x2: 40.0,
-                        y2: 70.0,
-                        x: 62.0,
-                        y: 30.0,
-                    },
-                ],
-                "#FFFFFF",
-                0.4,
-                LineJoin::Bevel,
-            ),
+            PathCommand::Close,
         ];
+        assert_paths_match_cpu(
+            &mut renderer,
+            "curves",
+            vec![
+                styled(
+                    path_layer(
+                        "blob",
+                        blob,
+                        Some(solid("#3366FFAA")),
+                        Some((solid("#FFCC00"), 2.5)),
+                    ),
+                    LineCap::Butt,
+                    LineJoin::Round,
+                    4.0,
+                ),
+                // A closed square's seam joins like its other corners.
+                path_layer(
+                    "square",
+                    polyline(
+                        &[(66.0, 8.0), (90.0, 8.0), (90.0, 32.0), (66.0, 32.0)],
+                        true,
+                    ),
+                    None,
+                    Some((solid("#66FF99"), 3.0)),
+                ),
+                // The same square left open shows its butt ends instead.
+                path_layer(
+                    "open",
+                    polyline(
+                        &[
+                            (66.0, 40.0),
+                            (90.0, 40.0),
+                            (90.0, 60.0),
+                            (66.0, 60.0),
+                            (66.0, 40.0),
+                        ],
+                        false,
+                    ),
+                    None,
+                    Some((solid("#FF6699"), 3.0)),
+                ),
+            ],
+        );
+    }
+
+    #[test]
+    fn shades_joins_caps_and_zero_length_segments_like_the_cpu_renderer() {
+        use celesta_composition::{LineCap, LineJoin};
+
+        let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+            return;
+        };
+        let spike = |id: &str, y: f64, limit: f64| {
+            styled(
+                path_layer(
+                    id,
+                    polyline(&[(4.0, y), (60.0, y + 6.0), (4.0, y + 12.0)], false),
+                    None,
+                    Some((solid("#FF4040"), 3.0)),
+                ),
+                LineCap::Butt,
+                LineJoin::Miter,
+                limit,
+            )
+        };
+        let dot = |id: &str, x: f64, cap: LineCap| {
+            styled(
+                path_layer(
+                    id,
+                    polyline(&[(x, 54.0), (x, 54.0)], false),
+                    None,
+                    Some((solid("#40C0FF"), 6.0)),
+                ),
+                cap,
+                LineJoin::Miter,
+                4.0,
+            )
+        };
+        assert_paths_match_cpu(
+            &mut renderer,
+            "joins and caps",
+            vec![
+                // Past the miter limit, an acute join is beveled; within a
+                // high one, it comes to a point.
+                spike("beveled", 2.0, 4.0),
+                spike("mitered", 18.0, 40.0),
+                // A repeated point in the middle of a polyline.
+                styled(
+                    path_layer(
+                        "repeated",
+                        polyline(
+                            &[(66.0, 4.0), (80.0, 20.0), (80.0, 20.0), (92.0, 6.0)],
+                            false,
+                        ),
+                        None,
+                        Some((solid("#C0FF40"), 4.0)),
+                    ),
+                    LineCap::Square,
+                    LineJoin::Round,
+                    4.0,
+                ),
+                // Zero-length segments: round and square caps draw a dot,
+                // butt caps nothing.
+                dot("round", 70.0, LineCap::Round),
+                dot("square", 80.0, LineCap::Square),
+                dot("butt", 90.0, LineCap::Butt),
+            ],
+        );
+    }
+
+    #[test]
+    fn shades_thin_lines_and_scaled_strokes_like_the_cpu_renderer() {
+        use celesta_composition::{LineCap, LineJoin, PathCommand};
+
+        let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+            return;
+        };
+        let line = |id: &str, from: (f64, f64), to: (f64, f64), width: f64| {
+            path_layer(
+                id,
+                polyline(&[from, to], false),
+                None,
+                Some((solid("#FFFFFF"), width)),
+            )
+        };
+        assert_paths_match_cpu(
+            &mut renderer,
+            "thin and scaled",
+            vec![
+                line("shallow", (2.0, 4.0), (60.0, 14.0), 0.5),
+                line("diagonal", (2.0, 16.0), (40.0, 60.0), 1.0),
+                line("steep", (50.0, 20.0), (56.0, 62.0), 0.75),
+                styled(
+                    path_layer(
+                        "hair",
+                        vec![
+                            PathCommand::MoveTo { x: 2.0, y: 62.0 },
+                            PathCommand::CubicTo {
+                                x1: 20.0,
+                                y1: 20.0,
+                                x2: 40.0,
+                                y2: 70.0,
+                                x: 62.0,
+                                y: 30.0,
+                            },
+                        ],
+                        None,
+                        Some((solid("#FFFFFF"), 0.4)),
+                    ),
+                    LineCap::Round,
+                    LineJoin::Bevel,
+                    4.0,
+                ),
+                // A non-uniform scale stretches the stroke with the layer,
+                // and a negative one mirrors it.
+                group(
+                    EvaluatedTransform {
+                        position: Point { x: 64.5, y: 10.25 },
+                        scale: Point { x: 2.5, y: 0.75 },
+                        ..EvaluatedTransform::default()
+                    },
+                    vec![path_layer(
+                        "stretched",
+                        polyline(&[(0.0, 0.0), (10.0, 4.0), (6.0, 20.0), (1.0, 12.0)], true),
+                        None,
+                        Some((solid("#33CC66"), 1.5)),
+                    )],
+                ),
+                group(
+                    EvaluatedTransform {
+                        position: Point { x: 92.0, y: 40.0 },
+                        scale: Point { x: -1.0, y: 1.5 },
+                        ..EvaluatedTransform::default()
+                    },
+                    vec![path_layer(
+                        "mirrored",
+                        polyline(&[(0.0, 0.0), (20.0, 4.0), (4.0, 14.0)], false),
+                        None,
+                        Some((solid("#FF9933"), 1.25)),
+                    )],
+                ),
+            ],
+        );
+    }
+
+    #[test]
+    fn composites_translucent_strokes_and_fills_once_like_the_cpu_renderer() {
+        use celesta_composition::{LineCap, LineJoin};
+
+        let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+            return;
+        };
+        let mut eight = styled(
+            path_layer(
+                "eight",
+                polyline(&[(4.0, 4.0), (40.0, 40.0), (40.0, 4.0), (4.0, 40.0)], true),
+                None,
+                Some((solid("#FF000080"), 6.0)),
+            ),
+            LineCap::Butt,
+            LineJoin::Round,
+            4.0,
+        );
+        eight.opacity = 0.7;
+        let mut badge = path_layer(
+            "badge",
+            polyline(
+                &[(52.0, 8.0), (90.0, 8.0), (90.0, 56.0), (52.0, 56.0)],
+                true,
+            ),
+            Some(solid("#2060FFC0")),
+            Some((solid("#FFFFFF80"), 8.0)),
+        );
+        badge.opacity = 0.6;
+        let layers = vec![eight, badge];
+        assert_paths_match_cpu(&mut renderer, "translucent", layers.clone());
+
+        // The overlaps are drawn once: where the strokes cross, and where
+        // the stroke covers the fill, the color is what one layer gives.
+        let mut scene = empty_scene(96, 64);
+        scene.layers = layers;
         let gpu = renderer.render(&scene).unwrap();
-        let cpu = celesta_renderer::CpuRenderer::default()
-            .render(&scene)
+        let mut single = empty_scene(96, 64);
+        single.layers = vec![path_layer(
+            "plain",
+            polyline(&[(4.0, 4.0), (8.0, 4.0), (8.0, 8.0), (4.0, 8.0)], true),
+            Some(solid("#FF000080")),
+            None,
+        )];
+        single.layers[0].opacity = 0.7;
+        let plain = renderer.render(&single).unwrap();
+        // The diagonals cross at (22, 22).
+        assert_eq!(pixel_at(&gpu, 22, 22), pixel_at(&plain, 6, 6));
+    }
+
+    #[test]
+    fn paints_gradients_in_local_coordinates_like_the_cpu_renderer() {
+        use celesta_composition::{GradientStop, PathCommand};
+
+        let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+            return;
+        };
+        let stops = |from: &str, to: &str| {
+            vec![
+                GradientStop {
+                    offset: 0.0,
+                    color: from.to_owned(),
+                },
+                GradientStop {
+                    offset: 1.0,
+                    color: to.to_owned(),
+                },
+            ]
+        };
+        let ring = vec![
+            PathCommand::MoveTo { x: 20.0, y: 10.0 },
+            PathCommand::CubicTo {
+                x1: 20.0,
+                y1: 16.0,
+                x2: 16.0,
+                y2: 20.0,
+                x: 10.0,
+                y: 20.0,
+            },
+            PathCommand::CubicTo {
+                x1: 4.0,
+                y1: 20.0,
+                x2: 0.0,
+                y2: 16.0,
+                x: 0.0,
+                y: 10.0,
+            },
+            PathCommand::CubicTo {
+                x1: 0.0,
+                y1: 4.0,
+                x2: 4.0,
+                y2: 0.0,
+                x: 10.0,
+                y: 0.0,
+            },
+            PathCommand::CubicTo {
+                x1: 16.0,
+                y1: 0.0,
+                x2: 20.0,
+                y2: 4.0,
+                x: 20.0,
+                y: 10.0,
+            },
+            PathCommand::Close,
+        ];
+        assert_paths_match_cpu(
+            &mut renderer,
+            "gradients",
+            vec![
+                group(
+                    EvaluatedTransform {
+                        position: Point { x: 4.0, y: 6.0 },
+                        scale: Point { x: 2.0, y: 2.5 },
+                        ..EvaluatedTransform::default()
+                    },
+                    vec![path_layer(
+                        "linear",
+                        ring.clone(),
+                        Some(Paint::Linear {
+                            start: Point { x: 0.0, y: 0.0 },
+                            end: Point { x: 20.0, y: 20.0 },
+                            stops: stops("#FF0000", "#0000FF80"),
+                        }),
+                        Some((
+                            Paint::Radial {
+                                center: Point { x: 10.0, y: 10.0 },
+                                radius: 12.0,
+                                stops: stops("#FFFFFF", "#00FF00"),
+                            },
+                            2.0,
+                        )),
+                    )],
+                ),
+                group(
+                    EvaluatedTransform {
+                        position: Point { x: 56.0, y: 10.0 },
+                        scale: Point { x: 1.5, y: 1.5 },
+                        ..EvaluatedTransform::default()
+                    },
+                    vec![path_layer(
+                        "radial",
+                        ring,
+                        Some(Paint::Radial {
+                            center: Point { x: 6.0, y: 6.0 },
+                            radius: 16.0,
+                            stops: stops("#FFE080", "#8000FF"),
+                        }),
+                        None,
+                    )],
+                ),
+            ],
+        );
+    }
+
+    #[test]
+    fn clips_blends_and_filters_paths_like_the_cpu_renderer() {
+        let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+            return;
+        };
+        let star = |id: &str| {
+            path_layer(
+                id,
+                polyline(
+                    &[
+                        (16.0, 2.0),
+                        (21.0, 12.0),
+                        (32.0, 13.0),
+                        (24.0, 21.0),
+                        (26.0, 32.0),
+                        (16.0, 27.0),
+                        (6.0, 32.0),
+                        (8.0, 21.0),
+                        (0.0, 13.0),
+                        (11.0, 12.0),
+                    ],
+                    true,
+                ),
+                Some(solid("#FFCC33")),
+                Some((solid("#C04020"), 1.5)),
+            )
+        };
+        let mut multiplied = star("multiplied");
+        multiplied.transform.position = Point { x: 32.0, y: 4.0 };
+        multiplied.blend_mode = BlendMode::Multiply;
+        let mut blurred = group(
+            EvaluatedTransform {
+                position: Point { x: 62.0, y: 28.0 },
+                ..EvaluatedTransform::default()
+            },
+            vec![star("blurred")],
+        );
+        blurred.effects.blur = 1.5;
+        assert_paths_match_cpu(
+            &mut renderer,
+            "clips, blends and effects",
+            vec![
+                corner_rect("backdrop", 30.0, 0.0, 40.0, 40.0, "#40A0FF"),
+                clipped_group(
+                    EvaluatedTransform {
+                        position: Point { x: 2.0, y: 2.0 },
+                        ..EvaluatedTransform::default()
+                    },
+                    Clip {
+                        x: 4.0,
+                        y: 4.0,
+                        width: 22.0,
+                        height: 20.0,
+                        corner_radius: 6.0,
+                    },
+                    vec![star("clipped")],
+                ),
+                multiplied,
+                blurred,
+            ],
+        );
+    }
+
+    /// The CPU renderer draws no rotated layers, so rotated paths are
+    /// compared with its rasterizer's pixels composited by hand.
+    #[test]
+    fn shades_rotated_paths_like_the_cpu_rasterizer() {
+        use celesta_composition::{LineCap, LineJoin, PathCommand};
+        use celesta_renderer::{PathDraw, PathShape, rasterize_paths};
+
+        let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+            return;
+        };
+        let ellipse = |rx: f64, ry: f64| {
+            let k = 0.5523;
+            vec![
+                PathCommand::MoveTo { x: rx, y: 0.0 },
+                PathCommand::CubicTo {
+                    x1: rx,
+                    y1: ry * k,
+                    x2: rx * k,
+                    y2: ry,
+                    x: 0.0,
+                    y: ry,
+                },
+                PathCommand::CubicTo {
+                    x1: -rx * k,
+                    y1: ry,
+                    x2: -rx,
+                    y2: ry * k,
+                    x: -rx,
+                    y: 0.0,
+                },
+                PathCommand::CubicTo {
+                    x1: -rx,
+                    y1: -ry * k,
+                    x2: -rx * k,
+                    y2: -ry,
+                    x: 0.0,
+                    y: -ry,
+                },
+                PathCommand::CubicTo {
+                    x1: rx * k,
+                    y1: -ry,
+                    x2: rx,
+                    y2: -ry * k,
+                    x: rx,
+                    y: 0.0,
+                },
+                PathCommand::Close,
+            ]
+        };
+        let mut scene = empty_scene(320, 180);
+        // Rings like NEBULA's, overhanging the frame on every side.
+        scene.layers = (0..8)
+            .map(|k| {
+                let mut ring = path_layer(
+                    &format!("ring-{k}"),
+                    ellipse(40.0 + f64::from(k) * 22.0, 15.0 + f64::from(k) * 9.0),
+                    (k == 0).then(|| solid("#20408080")),
+                    Some((solid("#8FB8FF"), 1.5)),
+                );
+                ring.transform = EvaluatedTransform {
+                    position: Point { x: 160.0, y: 90.0 },
+                    rotation: f64::from(k) * 23.0 + 7.0,
+                    ..EvaluatedTransform::default()
+                };
+                ring.opacity = 0.3 + 0.08 * f64::from(k);
+                styled(ring, LineCap::Butt, LineJoin::Miter, 4.0)
+            })
+            .collect();
+        let gpu = renderer.render(&scene).unwrap();
+
+        let draws: Vec<_> = scene
+            .layers
+            .iter()
+            .map(|layer| {
+                let LayerContent::Path {
+                    commands,
+                    fill,
+                    stroke,
+                    line_cap,
+                    line_join,
+                    miter_limit,
+                } = &layer.content
+                else {
+                    unreachable!("the scene is paths");
+                };
+                PathDraw {
+                    shape: PathShape {
+                        commands,
+                        fill: fill.as_ref(),
+                        stroke: stroke.as_ref(),
+                        line_cap: *line_cap,
+                        line_join: *line_join,
+                        miter_limit: *miter_limit,
+                    },
+                    transform: path_transform(&layer.transform),
+                    opacity: layer.opacity,
+                }
+            })
+            .collect();
+        let rasterized = rasterize_paths(&draws, scene.width, scene.height)
+            .unwrap()
             .unwrap();
-        let difference = max_channel_difference(&gpu, &cpu);
-        assert!(difference <= 1, "channels differ by up to {difference}");
-        // The consecutive paths, in and out of the plain group, are one
-        // texture and one draw, however many segments they have.
-        let draws = renderer.prepare_draws(&scene).unwrap();
-        assert_eq!(draws.steps.len(), 1);
+        let background = GpuRenderOptions::default().background;
+        let mut cpu: Vec<u8> = (0..scene.width * scene.height)
+            .flat_map(|_| [background.red, background.green, background.blue, 255])
+            .collect();
+        let image = &rasterized.image;
+        for (index, texel) in image.pixels().chunks_exact(4).enumerate() {
+            let x = rasterized.left + (index as u32 % image.width()) as i32;
+            let y = rasterized.top + (index as u32 / image.width()) as i32;
+            let pixel = &mut cpu[(y as usize * scene.width as usize + x as usize) * 4..][..3];
+            let alpha = f64::from(texel[3]) / 255.0;
+            for (channel, value) in pixel.iter_mut().zip(texel) {
+                *channel =
+                    (f64::from(*value) * alpha + f64::from(*channel) * (1.0 - alpha)).round() as u8;
+            }
+        }
+        assert_paths_match("rotated", gpu.pixels(), &cpu);
+    }
+
+    #[test]
+    fn exports_and_previews_paths_with_the_same_pixels() {
+        let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+            return;
+        };
+        let mut scene = empty_scene(96, 64);
+        let mut ring = path_layer(
+            "ring",
+            polyline(
+                &[(10.0, 10.0), (80.0, 20.0), (60.0, 56.0), (14.0, 44.0)],
+                true,
+            ),
+            Some(solid("#3060FF80")),
+            Some((solid("#FFE080"), 2.0)),
+        );
+        ring.opacity = 0.75;
+        ring.transform.rotation = 9.0;
+        scene.layers = vec![ring];
+        let rendered = renderer.render(&scene).unwrap();
+        // Pipelined, as an export renders.
+        assert!(renderer.submit(&scene).unwrap().is_none());
+        let exported = renderer.drain().unwrap();
+        assert_eq!(exported[0].pixels(), rendered.pixels());
+        // Onto a BGRA target, as the preview renders.
+        let texture = renderer.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Celesta preview test target"),
+            size: wgpu::Extent3d {
+                width: scene.width,
+                height: scene.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Bgra8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        renderer
+            .render_to_target(
+                &scene,
+                GpuRenderTarget {
+                    view: &view,
+                    format: wgpu::TextureFormat::Bgra8Unorm,
+                    width: scene.width,
+                    height: scene.height,
+                },
+            )
+            .unwrap();
+        let layout = ReadbackLayout::new(scene.width, scene.height).unwrap();
+        let buffer = renderer.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Celesta preview test readback"),
+            size: layout.buffer_size,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = renderer
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        encoder.copy_texture_to_buffer(
+            texture.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(layout.padded_bytes_per_row),
+                    rows_per_image: Some(scene.height),
+                },
+            },
+            texture.size(),
+        );
+        renderer.queue.submit([encoder.finish()]);
+        buffer.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+        renderer
+            .device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .unwrap();
+        let mapped = buffer.slice(..).get_mapped_range().unwrap();
+        let mut previewed = layout.unpad(&mapped, scene.width, scene.height).unwrap();
+        for pixel in previewed.chunks_exact_mut(4) {
+            pixel.swap(0, 2);
+        }
+        assert_eq!(previewed, rendered.pixels());
+    }
+
+    /// An animated path changes shape every frame; what the GPU holds for
+    /// paths is sized by the largest frame, not by how many were drawn.
+    #[test]
+    fn keeps_path_buffers_bounded_while_shapes_animate() {
+        let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+            return;
+        };
+        let frame = |frame: u32| {
+            let mut scene = empty_scene(96, 64);
+            let t = f64::from(frame) * 0.37;
+            scene.layers = vec![path_layer(
+                "wobble",
+                polyline(
+                    &(0..24)
+                        .map(|i| {
+                            let angle = f64::from(i) / 24.0 * std::f64::consts::TAU;
+                            let radius = 20.0 + 8.0 * (angle * 3.0 + t).sin();
+                            (48.0 + radius * angle.cos(), 32.0 + radius * angle.sin())
+                        })
+                        .collect::<Vec<_>>(),
+                    true,
+                ),
+                Some(solid("#80C0FF")),
+                Some((solid("#FFFFFF"), 1.0 + (t * 0.5).sin().abs())),
+            )];
+            scene
+        };
+        let mut sizes = Vec::new();
+        for index in 0..200 {
+            renderer.submit(&frame(index)).unwrap();
+            sizes.push(renderer.paths.size());
+        }
+        renderer.drain().unwrap();
+        let largest = renderer.path_entries.capacity() as u64 * 16;
+        assert!(sizes.iter().all(|&size| size == sizes[20]), "{sizes:?}");
+        assert!(sizes[20] <= (largest * 2).next_power_of_two(), "{sizes:?}");
     }
 
     #[test]
