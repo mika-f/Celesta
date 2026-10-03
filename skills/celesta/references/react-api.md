@@ -135,7 +135,7 @@ Coordinates are the path's own pixels: `x`/`y` move their origin and
 | --- | --- |
 | children | Strings or numbers only (arrays of them are joined). Use template literals to combine values. `\n` breaks a line. |
 | `style` | A `TextStyle`, see below. |
-| `maxWidth` | Wrap lines to fit this width; `style.align` positions each line inside it. Lines break where Unicode line breaking (UAX #14) allows: at spaces in Latin text, and between most characters in Japanese and Chinese, which keeps punctuation such as `、` and `。` off the start of a line. A word wider than `maxWidth` is not split; the part past `maxWidth` is cut off. |
+| `maxWidth` | Wrap lines to fit this width; `style.align` positions each line inside it. Lines break where Unicode line breaking (UAX #14) allows: at spaces in Latin text, and between most characters in Japanese and Chinese, which keeps punctuation such as `、` and `。` off the start of a line. A word wider than `maxWidth` is not split; the part past `maxWidth` is cut off. With `style.lineBreak: 'phrase'`, Japanese wraps only between phrases instead (see Text styles). |
 
 Single-line text is anchored vertically by its visible glyph bounds, so
 `anchorY={0.5}` centers the letters themselves. Horizontally it keeps its
@@ -246,8 +246,18 @@ type TextStyle = {
   align?: 'left' | 'center' | 'right';
   lineHeight?: number;     // px, > 0
   letterSpacing?: number;  // px added after each glyph; may be negative
+  lineBreak?: 'normal' | 'phrase';  // where maxWidth may wrap; default 'normal'
 };
 ```
+
+- `lineBreak: 'phrase'` wraps Japanese only between phrases (文節), found
+  with [BudouX](https://github.com/google/budoux)'s Japanese model, so a
+  word such as `フレーム` or a trailing `の。` is not split across lines.
+  Lines still break at spaces and at `\n`. A phrase wider than `maxWidth`
+  wraps inside itself as `'normal'` text would. `measureText()` and `useTextMetrics()` lay out the same
+  way, given the same style. It works the same for `<Text>`, character
+  subtitles (`subtitle={{ maxWidth, style: { lineBreak: 'phrase' } }}`),
+  and `.celesta.json` text styles.
 
 - Weights match within the family first: when `fontFamily` has no face at
   the requested `fontWeight`, its nearest weight is used, picked as CSS font

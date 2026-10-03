@@ -1001,6 +1001,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "celesta-budoux"
+version = "0.2.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "celesta-composition"
 version = "0.2.0"
 dependencies = [
@@ -1140,6 +1147,7 @@ dependencies = [
 name = "celesta-renderer"
 version = "0.2.0"
 dependencies = [
+ "celesta-budoux",
  "celesta-composition",
  "celesta-evaluator",
  "celesta-media",
@@ -1152,6 +1160,7 @@ dependencies = [
  "psd",
  "resvg 0.45.1",
  "tempfile",
+ "unicode-linebreak",
  "unicode-properties",
  "unicode-segmentation",
  "wuff",

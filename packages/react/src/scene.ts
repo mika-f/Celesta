@@ -19,6 +19,7 @@ export type { LayerEffects } from './generated/LayerEffects';
 export type { LayerShadow } from './generated/LayerShadow';
 export type { LayerGlow } from './generated/LayerGlow';
 export type { LayerContent } from './generated/LayerContent';
+export type { LineBreak } from './generated/LineBreak';
 export type { LineCap } from './generated/LineCap';
 export type { LineJoin } from './generated/LineJoin';
 export type { MediaTiming } from './generated/MediaTiming';

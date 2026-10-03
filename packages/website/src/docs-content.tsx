@@ -189,7 +189,7 @@ export const sections: DocSection[] = [
     </>,
   },
   {
-    id: 'layout', title: 'Shapes, text & layout', description: 'Position layers, style text, and arrange a scene.', keywords: 'Rect Text Group blendMode blend mode multiply screen overlay difference style font Font webfont woff woff2 Google Fonts css fontFamily fontWeight stroke outline lineHeight maxWidth wrap align anchor rotation scale Center SafeArea Stack Grid Fit layout', content: <>
+    id: 'layout', title: 'Shapes, text & layout', description: 'Position layers, style text, and arrange a scene.', keywords: 'Rect Text Group blendMode blend mode multiply screen overlay difference style font Font webfont woff woff2 Google Fonts css fontFamily fontWeight stroke outline lineHeight maxWidth wrap lineBreak phrase BudouX Japanese align anchor rotation scale Center SafeArea Stack Grid Fit layout', content: <>
       <h3>Coordinates and anchors</h3><p>The canvas origin is the top-left corner, measured in pixels. A layer’s <code>x</code> and <code>y</code> place its <strong>anchor</strong>, which is the top-left corner by default. Set <code>anchorX</code> and <code>anchorY</code> between 0 and 1 to move it: <code>0.5</code> is the center and <code>1</code> the right or bottom edge. Rotation (in degrees) and scale turn around the anchor too.</p>
       <DocCode label="Centered, rotated, and scaled" language="tsx" code={'<Rect x={960} y={540} anchorX={0.5} anchorY={0.5}\n  width={400} height={400} cornerRadius={48}\n  rotation={12} scale={0.8} opacity={0.9} fill="#a68bbf" />'} />
       <p><code>scaleX</code> and <code>scaleY</code> override <code>scale</code> on one axis. <code>opacity</code> multiplies down through groups.</p>
@@ -205,6 +205,7 @@ export const sections: DocSection[] = [
       <DocCode label="Load a Google Fonts family" language="tsx" code={"<Assets>\n  <Font src=\"https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;700\" />\n</Assets>\n<Text style={{ fontFamily: 'M PLUS Rounded 1c', fontWeight: 700, fontSize: 96 }}>\n  こんにちは\n</Text>"} />
       <ul>
         <li><code>maxWidth</code> wraps text at word boundaries, and <code>align</code> positions each line within that width. Use <code>\n</code> in a string to break a line yourself.</li>
+        <li>Japanese can wrap between any two characters, splitting a word such as フレーム. Set <code>lineBreak: 'phrase'</code> in the style to wrap only between phrases, found with <a href="https://github.com/google/budoux">BudouX</a>; a phrase wider than <code>maxWidth</code> still wraps inside itself.</li>
         <li>Single-line text is anchored vertically by its visible glyphs, so <code>anchorY={'{0.5}'}</code> centers the letters themselves rather than an invisible line box. Its width is the advance width, so leading and trailing spaces still take up room.</li>
         <li><code>anchorY="baseline"</code> anchors text on its first line’s baseline instead. Text layers with the same <code>y</code> then share a baseline, whatever their letters or font sizes.</li>
       </ul>

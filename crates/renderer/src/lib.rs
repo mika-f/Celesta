@@ -13,16 +13,17 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use celesta_composition::{
-    BlendMode, Clip, Layer, LayerContent, MediaTiming, Paint, Point, ResolvedAsset, Scene, Stroke,
-    TextAlign, TextStyle,
+    BlendMode, Clip, Layer, LayerContent, LineBreak, MediaTiming, Paint, Point, ResolvedAsset,
+    Scene, Stroke, TextAlign, TextStyle,
 };
 use celesta_media::{MediaError, VideoFrameDecoder};
 use celesta_remote::{RemoteAssetError, resolve_asset_path};
 use cosmic_text::fontdb;
 use cosmic_text::{
-    Align, Attrs, Buffer, Color as CosmicColor, Family, FontSystem, Metrics, Shaping, SwashCache,
-    Weight, Wrap,
+    Align, Attrs, AttrsList, Buffer, BufferLine, Color as CosmicColor, Family, FontSystem, Metrics,
+    Shaping, SwashCache, Weight, Wrap,
 };
+use unicode_linebreak::BreakOpportunity;
 use unicode_properties::{EmojiStatus, GeneralCategory, UnicodeEmoji, UnicodeGeneralCategory};
 use unicode_segmentation::UnicodeSegmentation;
 pub mod image_source;
@@ -636,28 +637,70 @@ impl TextRasterizer {
             Shaping::Advanced,
             alignment,
         );
-        if let Some(emoji_family) = emoji_family {
-            let emoji_weight = self
-                .matched_weight(&emoji_family, requested_weight)
-                .unwrap_or(requested_weight);
-            let emoji_attrs = attrs
-                .clone()
-                .family(Family::Name(&emoji_family))
-                .weight(Weight(emoji_weight));
-            // Added to the lines `set_text` made rather than passed to
-            // `set_rich_text`, which splits lines differently (dropping
-            // the empty line after a trailing newline).
-            for line in &mut buffer.lines {
-                let spans = emoji_presentation_spans(line.text());
-                if spans.is_empty() {
-                    continue;
-                }
-                let mut attrs_list = line.attrs_list().clone();
-                for range in spans {
-                    attrs_list.add_span(range, &emoji_attrs);
-                }
-                line.set_attrs_list(attrs_list);
+        let emoji_weight = emoji_family.as_deref().map(|family| {
+            self.matched_weight(family, requested_weight)
+                .unwrap_or(requested_weight)
+        });
+        let emoji_attrs = emoji_family
+            .as_deref()
+            .zip(emoji_weight)
+            .map(|(family, weight)| {
+                attrs
+                    .clone()
+                    .family(Family::Name(family))
+                    .weight(Weight(weight))
+            });
+        // Added to the lines `set_text` made rather than passed to
+        // `set_rich_text`, which splits lines differently (dropping the
+        // empty line after a trailing newline).
+        let add_emoji_spans = |line: &mut BufferLine| {
+            let Some(emoji_attrs) = &emoji_attrs else {
+                return;
+            };
+            let spans = emoji_presentation_spans(line.text());
+            if spans.is_empty() {
+                return;
             }
+            let mut attrs_list = line.attrs_list().clone();
+            for range in spans {
+                attrs_list.add_span(range, emoji_attrs);
+            }
+            line.set_attrs_list(attrs_list);
+        };
+        for line in &mut buffer.lines {
+            add_emoji_spans(line);
+        }
+
+        // Without a width nothing wraps, so phrases need no joining.
+        if style.line_break == Some(LineBreak::Phrase)
+            && let Some(width) = width
+        {
+            // Lay the lines out unwrapped first, to see how wide each
+            // phrase is: one wider than the line is left to wrap as
+            // `normal` text does.
+            buffer.set_size(&mut self.font_system, None, None);
+            buffer.shape_until_scroll(&mut self.font_system, false);
+            let mut glyphs = vec![Vec::new(); buffer.lines.len()];
+            for run in buffer.layout_runs() {
+                glyphs[run.line_i].extend(run.glyphs.iter().map(|glyph| (glyph.start, glyph.w)));
+            }
+            for (line, glyphs) in buffer.lines.iter_mut().zip(glyphs) {
+                let joined = join_phrases(line.text(), |phrase| {
+                    let phrase_width: f32 = glyphs
+                        .iter()
+                        .filter(|(start, _)| phrase.contains(start))
+                        .map(|(_, width)| width)
+                        .sum();
+                    phrase_width <= width
+                });
+                if joined != line.text() {
+                    let ending = line.ending();
+                    line.set_text(joined, ending, AttrsList::new(&attrs));
+                    line.set_align(alignment);
+                    add_emoji_spans(line);
+                }
+            }
+            buffer.set_size(&mut self.font_system, Some(width), None);
         }
         buffer.shape_until_scroll(&mut self.font_system, false);
         buffer
@@ -689,8 +732,17 @@ impl TextRasterizer {
                 let Some(cluster) = run.text.get(glyph.start..glyph.end) else {
                     continue;
                 };
+                // The word joiners `lineBreak: phrase` adds are not text.
+                let cluster = if style.line_break == Some(LineBreak::Phrase) {
+                    cluster.replace(WORD_JOINER, "")
+                } else {
+                    cluster.to_owned()
+                };
+                if cluster.is_empty() {
+                    continue;
+                }
                 metrics.glyphs.push(GlyphMetrics {
-                    text: cluster.to_owned(),
+                    text: cluster,
                     x: f64::from(glyph.x),
                     width: f64::from(glyph.w),
                     line: metrics.lines - 1,
@@ -935,6 +987,43 @@ impl Default for TextRasterizer {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// U+2060 WORD JOINER: a line never breaks on either side of it, and it
+/// draws nothing.
+const WORD_JOINER: char = '\u{2060}';
+
+/// `line` (one line of text, without its line ending) with a word joiner
+/// wherever it could break inside one of its BudouX phrases that
+/// `keep_together` accepts (given the phrase's byte range), so cosmic-text
+/// wraps only between those phrases. A break after whitespace stays, as
+/// BudouX's own markup (`word-break: keep-all`) keeps it.
+fn join_phrases(line: &str, keep_together: impl Fn(std::ops::Range<usize>) -> bool) -> String {
+    let boundaries = celesta_budoux::Parser::japanese().parse_boundaries(line);
+    let phrases: Vec<std::ops::Range<usize>> = std::iter::once(0)
+        .chain(boundaries.iter().copied())
+        .zip(boundaries.iter().copied().chain([line.len()]))
+        .map(|(start, end)| start..end)
+        .filter(|phrase| keep_together(phrase.clone()))
+        .collect();
+
+    let mut joined = String::with_capacity(line.len() * 2);
+    let mut copied = 0;
+    // The same line breaking (UAX #14) cosmic-text wraps with.
+    for (offset, opportunity) in unicode_linebreak::linebreaks(line) {
+        let phrase = phrases.partition_point(|phrase| phrase.start < offset);
+        let inside_a_phrase = phrase > 0 && offset < phrases[phrase - 1].end;
+        if opportunity == BreakOpportunity::Allowed
+            && inside_a_phrase
+            && !line[..offset].ends_with(char::is_whitespace)
+        {
+            joined.push_str(&line[copied..offset]);
+            joined.push(WORD_JOINER);
+            copied = offset;
+        }
+    }
+    joined.push_str(&line[copied..]);
+    joined
 }
 
 /// The byte ranges of `text`'s graphemes that are meant to be drawn as
@@ -3278,6 +3367,127 @@ mod tests {
         let (base, wide, tight) = (width(None), width(Some(10.0)), width(Some(-4.0)));
         assert!(wide > base + 30, "wide {wide}, base {base}");
         assert!(tight < base - 10, "tight {tight}, base {base}");
+    }
+
+    #[test]
+    fn joins_the_characters_of_each_phrase() {
+        // BudouX splits this into "Google の" and "使命は、"; a line may
+        // still break after the space, and "、" never starts a line anyway.
+        assert_eq!(
+            join_phrases("Google の使命は、", |_| true),
+            "Google の使\u{2060}命\u{2060}は、"
+        );
+        // A phrase left apart keeps every break.
+        assert_eq!(
+            join_phrases("Google の使命は、", |phrase| phrase.start == 0),
+            "Google の使命は、"
+        );
+    }
+
+    /// Each line of `text` as `measure` lays it out with `line_break`.
+    fn measured_lines(
+        rasterizer: &mut TextRasterizer,
+        text: &str,
+        line_break: LineBreak,
+        max_width: f64,
+    ) -> Vec<String> {
+        let style = TextStyle {
+            font_size: Some(40.0),
+            line_break: Some(line_break),
+            ..TextStyle::default()
+        };
+        let metrics = rasterizer.measure(text, &style, Some(max_width));
+        let mut lines = vec![String::new(); metrics.lines];
+        for glyph in metrics.glyphs {
+            lines[glyph.line].push_str(&glyph.text);
+        }
+        lines
+    }
+
+    /// The width of `characters` average characters of `text`, in the
+    /// font `measured_lines` uses: tests cannot rely on which font the
+    /// system draws Japanese with.
+    fn characters_wide(rasterizer: &mut TextRasterizer, text: &str, characters: f64) -> f64 {
+        let style = TextStyle {
+            font_size: Some(40.0),
+            ..TextStyle::default()
+        };
+        let unwrapped = rasterizer.measure(text, &style, None);
+        unwrapped.width / text.chars().count() as f64 * characters
+    }
+
+    /// The byte offsets where each line but the first starts.
+    fn line_starts(lines: &[String]) -> Vec<usize> {
+        lines
+            .iter()
+            .scan(0, |start, line| {
+                *start += line.len();
+                Some(*start)
+            })
+            .take(lines.len().saturating_sub(1))
+            .collect()
+    }
+
+    #[test]
+    fn phrase_line_break_wraps_only_between_phrases() {
+        let text = "フレームは時刻の関数なので、どのフレームからでも描き直せるのだ。";
+        let phrases = celesta_budoux::Parser::japanese().parse(text);
+        let phrase_starts = celesta_budoux::Parser::japanese().parse_boundaries(text);
+        let mut rasterizer = TextRasterizer::new();
+        // Just wider than the longest phrase.
+        let longest = phrases
+            .iter()
+            .map(|phrase| phrase.chars().count())
+            .max()
+            .unwrap();
+        let max_width = characters_wide(&mut rasterizer, text, longest as f64 + 1.5);
+
+        let normal = measured_lines(&mut rasterizer, text, LineBreak::Normal, max_width);
+        assert!(
+            line_starts(&normal)
+                .iter()
+                .any(|start| !phrase_starts.contains(start)),
+            "{normal:?}"
+        );
+
+        let phrase = measured_lines(&mut rasterizer, text, LineBreak::Phrase, max_width);
+        // The word joiners are not in the measured glyphs.
+        assert_eq!(phrase.concat(), text);
+        assert!(phrase.len() > 1, "{phrase:?}");
+        assert!(
+            line_starts(&phrase)
+                .iter()
+                .all(|start| phrase_starts.contains(start)),
+            "{phrase:?}"
+        );
+    }
+
+    #[test]
+    fn phrase_line_break_wraps_a_phrase_wider_than_the_line_as_normal_text() {
+        let text = "関数なので、";
+        assert_eq!(celesta_budoux::Parser::japanese().parse(text), [text]);
+        let mut rasterizer = TextRasterizer::new();
+        // Room for "関数なので" but not "、", which must not start a line.
+        let max_width = characters_wide(&mut rasterizer, text, 5.5);
+        let normal = measured_lines(&mut rasterizer, text, LineBreak::Normal, max_width);
+        let phrase = measured_lines(&mut rasterizer, text, LineBreak::Phrase, max_width);
+        assert!(phrase.len() > 1, "{phrase:?}");
+        assert_eq!(phrase, normal);
+    }
+
+    #[test]
+    fn phrase_line_break_still_wraps_at_spaces() {
+        let text = "Celesta renders every frame";
+        let mut rasterizer = TextRasterizer::new();
+        let style = TextStyle {
+            font_size: Some(40.0),
+            ..TextStyle::default()
+        };
+        let max_width = rasterizer.measure("Celesta renders", &style, None).width + 1.0;
+        assert_eq!(
+            measured_lines(&mut rasterizer, text, LineBreak::Phrase, max_width),
+            measured_lines(&mut rasterizer, text, LineBreak::Normal, max_width)
+        );
     }
 
     #[test]

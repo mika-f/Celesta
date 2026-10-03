@@ -1,6 +1,6 @@
 # Celesta implementation handoff
 
-Last updated: 2026-10-02 (`random`/`noise` moved to `@celesta/math`)
+Last updated: 2026-10-03 (`TextStyle.lineBreak: 'phrase'` with `celesta-budoux`)
 
 ## Goal
 
@@ -98,6 +98,36 @@ git status --short
 cargo test --workspace
 ```
 
+## Phrase line breaking (2026-10-03)
+
+`TextStyle.lineBreak` (`'normal'`, the default, or `'phrase'`) chooses where
+`maxWidth` may wrap (issue #84). `'phrase'` keeps Japanese phrases (文節)
+together, so `フレーム` or a trailing `の。` is not split across lines.
+
+- `crates/budoux` (`celesta-budoux`, Apache-2.0 like upstream) ports
+  google/budoux's parser (`budoux/parser.py`, by Unicode scalar value) and
+  bundles upstream's `ja.json` model unchanged. It matched the Python
+  parser on upstream's `tests/quality/ja.tsv` and on 5,000 random strings
+  over the model's characters.
+- `TextRasterizer::shaped_buffer` applies it, so the CPU renderer, the GPU
+  renderer (which rasterizes text with `TextRasterizer`), `measureText()`
+  through the React bridge, and `.celesta.json` text all wrap alike.
+  `join_phrases` inserts U+2060 WORD JOINER at each UAX #14 break
+  opportunity (`unicode-linebreak`, as cosmic-text uses) inside a phrase,
+  except after whitespace, so Latin words keep their spacing breaks and are
+  not split into shaping runs. With a width, the lines are first shaped
+  unwrapped to measure each phrase; one wider than the line gets no joiners
+  and wraps as `normal` text (UAX #14, so `、`/`。` still never start a
+  line). `Wrap::WordOrGlyph` was tried and rejected: its glyph fallback
+  left `。` alone on a line. Without a width nothing is joined.
+- The joiners never leave the rasterizer: `measure` drops them from
+  `glyphs`, and the missing-glyph warning already skips format characters.
+  A family without a U+2060 glyph draws it (zero width) from a fallback
+  font, which is not reported.
+- Only the Japanese model ships; Chinese and Thai (upstream's other models)
+  would need a language choice in the style. The browser canvas renderer
+  (`packages/web`) ignores `lineBreak`; it wraps only at whitespace.
+
 ## `@celesta/math` (2026-10-02)
 
 `random` and `noise` moved out of `@celesta/react` into the new
@@ -125,6 +155,7 @@ wave, angle, and point helpers. `@celesta/react` no longer exports `random` or
 | `celesta-project` | Version 0 JSON project format, loading, semantic validation, references, and duration calculation. |
 | `celesta-evaluator` | Deterministic conversion from `Project` to a visual `Scene` at a time and to the complete `AudioGraph`. |
 | `celesta-media` | Metadata probing and exact-time RGBA video-frame decoding via the linked FFmpeg libraries (`ez-ffmpeg`) behind `VideoFrameDecoder` (source overruns freeze on the final frame). |
+| `celesta-budoux` | Rust port of google/budoux with its Japanese model: splits text into phrases for `lineBreak: 'phrase'`. |
 | `celesta-renderer` | Deterministic CPU reference renderer, PNG output, and the shared text rasterizer. |
 | `celesta-gpu-renderer` | `wgpu` renderer for images, video frames, styled text, nested transforms, opacity, offscreen readback, and renderer-owned surfaces. |
 | `celesta-exporter` | Deterministic frame-exact H.264/AAC MP4 export through the shared evaluator, GPU renderer, audio graph, and the linked FFmpeg libraries (`ez-ffmpeg` `VideoWriter` for encode, `FfmpegContext` for the AAC mux). Also exports React entries via `celesta-react-bridge`. |

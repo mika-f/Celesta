@@ -351,6 +351,9 @@ pub struct TextStyle {
     /// Extra space after each glyph, in px. Negative values tighten.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub letter_spacing: Option<f64>,
+    /// Where a line may wrap when the text has a `maxWidth`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_break: Option<LineBreak>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -370,6 +373,22 @@ pub enum TextAlign {
     Left,
     Center,
     Right,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS))]
+#[cfg_attr(feature = "codegen", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum LineBreak {
+    /// Between any two characters a line may break between (UAX #14), such
+    /// as any two Japanese characters.
+    #[default]
+    Normal,
+    /// Only between phrases ([BudouX](https://github.com/google/budoux)'s
+    /// Japanese model) and at spaces, so a Japanese word or a particle is
+    /// not split across lines. A phrase wider than `maxWidth` wraps inside
+    /// itself as `Normal` text does.
+    Phrase,
 }
 
 #[cfg(test)]

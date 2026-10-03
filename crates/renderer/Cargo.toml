@@ -10,12 +10,14 @@ rust-version.workspace = true
 resvg = "0.45.1"
 cosmic-text = "0.18.2"
 image = { version = "0.25.8", default-features = false, features = ["jpeg", "png", "pnm", "webp"] }
+celesta-budoux = { path = "../budoux" }
 celesta-composition = { path = "../composition" }
 celesta-remote = { path = "../remote" }
 celesta-media = { path = "../media" }
 png = "0.18.1"
 psd = "0.3.5"
 wuff = "0.2.9"
+unicode-linebreak = "0.1.5"
 unicode-properties = "0.1.4"
 unicode-segmentation = "1.13.3"
 

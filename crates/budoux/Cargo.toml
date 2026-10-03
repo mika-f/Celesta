@@ -1,0 +1,12 @@
+[package]
+name = "celesta-budoux"
+description = "A Rust port of BudouX, which splits Japanese text into phrases for line breaking"
+version.workspace = true
+edition.workspace = true
+# A port of google/budoux, whose code and models are Apache-2.0 only.
+license = "Apache-2.0"
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde_json.workspace = true
