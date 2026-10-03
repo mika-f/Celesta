@@ -47,8 +47,11 @@ For a CI runner outside Cloudflare, authenticate Wrangler with the
 `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets. Keep tokens out of Git.
 
 Run `pnpm preview:cloudflare` to build and serve the site through local Wrangler.
-Vite builds separate HTML entries for `/` and `/docs/`, so documentation deep
-links such as `/docs/#export` work on direct visits without an SPA fallback.
+Vite builds separate HTML entries for `/` and `/docs/`. A small plugin in
+`vite.config.ts` then copies the docs entry to `dist/docs/<slug>/index.html` for
+every page in `src/docs-nav.ts` (with that page's title and description), so
+deep links such as `/docs/export/` work on direct visits without an SPA
+fallback. The dev server and `vite preview` answer for those paths too.
 The included `404.html` handles unknown routes; `public/_headers` defines response
 headers and immutable caching for Vite's hashed assets.
 
@@ -81,11 +84,15 @@ assets and runs `pnpm run deploy`. It needs the `CLOUDFLARE_API_TOKEN` and
 - `src/App.tsx`: product copy, navigation, documentation and repository links.
 - `src/links.ts` and `src/Download.tsx`: repository and download links, and the
   platform-aware download buttons.
-- `/docs/`: the on-site English user guide, built from `docs/index.html`.
-  `src/Docs.tsx` provides the responsive table of contents and topic search;
-  `src/docs-content.tsx` contains setup, preview, React, animation, layout,
-  media, JSON timeline, dialogue and lip sync, data, export, API, example, and
-  troubleshooting chapters.
+- `/docs/`: the on-site English user guide, one page per chapter at
+  `/docs/<slug>/`, all built from `docs/index.html`. `src/docs-nav.ts` is the
+  single list of groups and pages (slug, title, description, search keywords);
+  add a page there, then add its content under the same slug in
+  `src/docs-content.tsx` (app, React, and guides) or `src/docs-packages.tsx`
+  (`@celesta/math` and `@celesta/code`). `src/Docs.tsx` renders the grouped
+  sidebar, topic search, previous/next links, and the overview. Old
+  `/docs/#<chapter>` links redirect to the matching page. Link between pages
+  with `/docs/<slug>/`; `src/docs-shared.tsx` has the `Note` and `Api` helpers.
   `src/DocCode.tsx` supplies accessible copy controls for code examples.
   `src/syntax.ts` highlights code with [twinkleplop](https://twinkleplop.pngwn.at)
   (TSX, JSON, and shell); the playground editor uses it too, layering a
@@ -144,6 +151,6 @@ the MP4 codecs, frame count, and an actual decoded frame. Test
 
 For documentation changes, verify topic search (including no results), OS
 selection, code copying, mobile contents navigation, and direct visits to
-`/docs/#export` using both Vite and local Wrangler. Keep guide instructions in
+`/docs/export/` and the legacy `/docs/#export` using both Vite and local Wrangler. Keep guide instructions in
 sync with the root README and the React API, and run `pnpm check:examples`
 after changing any example.

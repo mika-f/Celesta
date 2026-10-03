@@ -12,7 +12,7 @@
 .docs-search button { font-size: 16px; line-height: 1; padding: 2px 4px; color: var(--muted); }
 .docs-search:focus-within { border-color: var(--text); }
 .docs-search input:focus-visible { outline: none; }
-.docs-nav-label { font-family: var(--font-mono); font-size: 12px; color: var(--dim); margin: 32px 0 10px 16px; }
+.docs-nav-label { font-family: var(--font-mono); font-size: 12px; color: var(--dim); margin: 28px 0 8px 16px; }
 .docs-contents nav { display: flex; flex-direction: column; }
 .docs-contents nav a { position: relative; display: block; padding: 6px 0 6px 16px; color: var(--muted); font-size: 14px; line-height: 1.45; }
 .docs-contents nav a:hover { color: var(--text); }
@@ -48,8 +48,13 @@
 .docs-workflow i { font-style: normal; color: var(--dim); }
 .docs-article .docs-development-note { font-size: 14px; line-height: 1.6; color: var(--muted); }
 .doc-section { padding-top: 18px; margin-top: 120px; border-top: 1px solid var(--line-strong); }
+.doc-page { margin-top: 0; padding-top: 0; border-top: 0; }
+.doc-page .docs-breadcrumb { margin-bottom: 40px; }
+.docs-breadcrumb a:hover { color: var(--text); }
+.docs-crumb { color: var(--muted); }
+.doc-page h1 { margin: 0; letter-spacing: -.03em; line-height: 1.05; }
 .doc-section .eyebrow { margin: 0 0 48px; }
-.doc-section h2 { font-size: clamp(32px, 3.6vw, 48px); }
+.doc-section h1, .doc-section h2 { font-size: clamp(32px, 3.6vw, 48px); }
 .doc-section h2 a { display: inline; }
 .doc-heading-anchor { font-size: .5em; color: var(--dim); margin-left: 12px; opacity: 0; vertical-align: middle; }
 .doc-section h2 a:hover .doc-heading-anchor, .doc-section h2 a:focus-visible .doc-heading-anchor { opacity: 1; }
@@ -98,6 +103,20 @@ kbd { display: inline-block; border: 1px solid var(--line-strong); padding: 0 6p
 .doc-example-grid strong { display: block; font-size: 16px; margin-top: 18px; line-height: 1.35; }
 .doc-example-grid > a:hover strong { color: var(--accent); }
 .doc-example-grid p { font-size: 14px; line-height: 1.55; margin-bottom: 0; color: var(--muted); }
+.docs-index { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 48px 32px; margin-top: 64px; padding-top: 32px; border-top: 1px solid var(--line-strong); }
+.docs-index h2 { font-family: var(--font-mono); font-size: 12px; font-weight: 400; color: var(--dim); letter-spacing: 0; margin-bottom: 8px; }
+.docs-index ul { list-style: none; padding: 0; margin: 0; }
+.docs-index li { margin: 0; border-bottom: 1px solid var(--line); }
+.docs-index li a { display: block; padding: 12px 0; }
+.docs-index li strong { display: block; font-size: 16px; font-weight: 500; color: var(--text); }
+.docs-index li span { display: block; font-size: 13.5px; line-height: 1.5; color: var(--muted); margin-top: 2px; }
+.docs-index li a:hover strong { color: var(--accent); }
+.docs-pager { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 96px; }
+.docs-pager a { display: block; border-top: 1px solid var(--line-strong); padding: 16px 0 4px; }
+.docs-pager-next { text-align: right; grid-column: 2; }
+.docs-pager span { display: block; font-family: var(--font-mono); font-size: 12px; color: var(--dim); }
+.docs-pager strong { display: block; font-size: 17px; font-weight: 500; letter-spacing: -.01em; color: var(--text); margin-top: 6px; }
+.docs-pager a:hover strong { color: var(--accent); }
 .docs-end { margin-top: 120px; padding: 18px 0 0; border-top: 1px solid var(--line-strong); }
 .docs-end h2 { font-size: clamp(32px, 3.6vw, 48px); }
 .docs-end p { font-size: 16px; color: var(--muted); margin: 16px 0 28px; }
@@ -111,6 +130,7 @@ kbd { display: inline-block; border: 1px solid var(--line-strong); padding: 0 6p
 @media (max-width: 1024px) {
   .docs-layout { grid-template-columns: 200px minmax(0, 1fr); gap: 48px; }
   .doc-example-grid { grid-template-columns: 1fr; }
+  .docs-index { grid-template-columns: 1fr; }
   .doc-example-grid > a + a { padding-left: 0; border-left: 0; margin-top: 16px; border-top: 1px solid var(--line); }
 }
 @media (max-width: 760px) {
@@ -131,6 +151,9 @@ kbd { display: inline-block; border: 1px solid var(--line-strong); padding: 0 6p
   .docs-paths > a + a { padding-left: 0; border-left: 0; margin-top: 12px; border-top: 1px solid var(--line); }
   .docs-workflow { justify-content: start; gap: 12px; }
   .doc-section { margin-top: 88px; }
+  .doc-page { margin-top: 0; }
+  .docs-pager { grid-template-columns: 1fr; }
+  .docs-pager-next { grid-column: 1; text-align: left; }
   .doc-section .eyebrow { margin-bottom: 32px; }
   .doc-heading-anchor { opacity: 1; }
   .doc-code pre { font-size: 12.5px; padding: 14px; }
