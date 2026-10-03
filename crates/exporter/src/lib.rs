@@ -1007,10 +1007,11 @@ impl Exporter {
             // Node evaluates (and this side parses) the next frame on its own
             // thread while this one prepares and submits the current frame;
             // both take milliseconds of CPU per frame and would otherwise
-            // run back to back. Frames arrive in order, at most one ahead.
-            // Leaving early drops `frames`, which stops the evaluator at its
-            // next send.
-            let (sender, frames) = mpsc::sync_channel(1);
+            // run back to back. Frames arrive in order. The channel holds
+            // none, so the evaluator waits with its frame until this thread
+            // takes it and stays at most one frame ahead. Leaving early
+            // drops `frames`, which stops the evaluator at its next send.
+            let (sender, frames) = mpsc::sync_channel(0);
             scope.spawn(move || {
                 let mut evaluate = evaluate;
                 for offset in 0..frame_count {
