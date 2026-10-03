@@ -113,8 +113,10 @@ together, so `フレーム` or a trailing `の。` is not split across lines.
   renderer (which rasterizes text with `TextRasterizer`), `measureText()`
   through the React bridge, and `.celesta.json` text all wrap alike.
   `phrase_segments` splits each line into keep-together segments: BudouX
-  phrases, cut again at breaks the text asks for (after a space, ZWSP, or
-  (soft) hyphen; `is_explicit_break`, like CSS `word-break: keep-all`), so
+  phrases, cut again at breaks the text asks for (`is_explicit_break`, like
+  CSS `word-break: keep-all`: after UAX #14 classes SP, ZW, BA, HY, and B2,
+  such as a space, ZWSP, (soft) hyphen, ideographic space, or em dash, and
+  before BB and B2), so
   `第一章　はじめに` is measured as `第一章　` and `はじめに`. A U+2060 WORD
   JOINER goes at each UAX #14 break opportunity (`unicode-linebreak`, as
   cosmic-text uses) inside a segment; Latin words keep their spacing breaks
