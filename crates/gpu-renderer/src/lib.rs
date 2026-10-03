@@ -4,7 +4,7 @@
 //! transforms, opacity, painter ordering, and deterministic RGBA readback.
 //! Unsupported content returns an error instead of silently disappearing.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::error::Error;
 use std::fmt;
 use std::io;
@@ -14,10 +14,11 @@ use std::sync::mpsc;
 
 use celesta_composition::{
     BlendMode, Clip, EvaluatedTransform, Layer, LayerContent, LayerEffects, Point, ResolvedAsset,
-    Scene,
+    Scene, TextStyle,
 };
 use celesta_media::{MediaError, VideoFrameDecoder};
 use celesta_remote::{RemoteAssetError, resolve_asset_path};
+use rayon::prelude::*;
 use celesta_renderer::{
     Color as CpuColor, FlattenedPath, FontFallback, LineSegment, MissingGlyphs, PathShape,
     PathTransform, RectPaint, RenderError, ResolvedPaint, TextRasterizer, flatten_path,
@@ -328,6 +329,11 @@ pub struct GpuRenderer {
     max_texture_dimension: u32,
     video_decoder: Option<Box<dyn VideoFrameDecoder>>,
     text_rasterizer: TextRasterizer,
+    /// Forks of `text_rasterizer` that rasterize a frame's new text in
+    /// parallel, rebuilt whenever it loads another font.
+    text_workers: Vec<TextRasterizer>,
+    /// This frame's text layers waiting for `resolve_pending_texts`.
+    pending_texts: Vec<PendingText>,
     #[cfg(target_os = "macos")]
     native_preview: Option<native_preview::NativePreviewBridge>,
     /// Ring of reusable offscreen texture/readback-buffer pairs behind
@@ -544,6 +550,8 @@ impl GpuRenderer {
             max_texture_dimension,
             video_decoder: None,
             text_rasterizer: TextRasterizer::new(),
+            text_workers: Vec::new(),
+            pending_texts: Vec::new(),
             #[cfg(target_os = "macos")]
             native_preview,
             readback_slots: Vec::new(),
@@ -1057,8 +1065,10 @@ impl GpuRenderer {
         if font_count != self.text_font_count {
             self.textures
                 .retain(|key, _| !key.starts_with(TEXT_TEXTURE_PREFIX));
+            self.text_workers.clear();
             self.text_font_count = font_count;
         }
+        self.pending_texts.clear();
         self.texture_generation += 1;
         self.clip_entries.clear();
         self.paint_entries.clear();
@@ -1077,6 +1087,7 @@ impl GpuRenderer {
         self.textures
             .retain(|_, cached| cached.last_used == generation);
         prepared?;
+        self.resolve_pending_texts(&mut items)?;
 
         // A frame that blends anything but source-over composites through
         // scene-sized canvases, so its layers need one more instance: the
@@ -1117,6 +1128,7 @@ impl GpuRenderer {
             let target = open.last().expect("the root canvas is always open").canvas;
             let layer = match item {
                 PreparedItem::Layer(layer) => layer,
+                PreparedItem::PendingText => unreachable!("pending text is resolved"),
                 PreparedItem::BeginGroup => {
                     let group = groups.next().expect("plan_groups plans every group");
                     steps.push(GpuStep::BeginGroup {
@@ -1700,43 +1712,33 @@ impl GpuRenderer {
                 let key = format!(
                     "{TEXT_TEXTURE_PREFIX}{text}\0{style:?}\0{max_width:?}\0{raster_scale:?}"
                 );
-                let texture = self.cached_texture(key, false, |renderer| {
-                    let limit = renderer.max_texture_dimension;
-                    let mut scale = raster_scale;
-                    let text = loop {
-                        let text = renderer
-                            .text_rasterizer
-                            .rasterize(text, style, *max_width, scale)
-                            .map_err(GpuRenderError::Text)?;
-                        let largest = text.width().max(text.height());
-                        if largest <= limit || scale <= 1.0 {
-                            break text;
-                        }
-                        // Too large for one texture: rasterize smaller and
-                        // let the filter enlarge it.
-                        scale = (scale * limit as f32 / largest as f32 * 0.99).max(1.0);
-                    };
-                    let baseline = text.baseline_anchor();
-                    let origin = text.anchor_in_image(0.0, 0.0);
-                    let end = text.anchor_in_image(1.0, 1.0);
-                    let mut image =
-                        DecodedImage::new(text.width(), text.height(), text.into_pixels())?;
-                    image.baseline_anchor = baseline;
-                    image.anchor_origin = origin;
-                    image.anchor_span = (end.0 - origin.0, end.1 - origin.1);
-                    image.raster_scale = scale;
-                    Ok(image)
-                })?;
-                let mut anchor = layer.transform.anchor;
-                anchor.x = texture.anchor_origin.0 + anchor.x * texture.anchor_span.0;
-                anchor.y = if *baseline_anchor {
-                    texture.baseline_anchor
+                let generation = self.texture_generation;
+                if let Some(cached) = self.textures.get_mut(&key) {
+                    cached.last_used = generation;
+                    output.push(PreparedItem::Layer(text_layer(
+                        cached.texture.clone(),
+                        layer.transform.anchor,
+                        *baseline_anchor,
+                        state,
+                        blend_mode,
+                    )));
                 } else {
-                    texture.anchor_origin.1 + anchor.y * texture.anchor_span.1
-                };
-                output.push(PreparedItem::Layer(PreparedLayer::new(
-                    texture, anchor, state, blend_mode,
-                )));
+                    // Rasterized with the frame's other new text once every
+                    // layer is prepared; see `resolve_pending_texts`.
+                    self.pending_texts.push(PendingText {
+                        item: output.len(),
+                        key,
+                        text: text.clone(),
+                        style: style.clone(),
+                        max_width: *max_width,
+                        raster_scale,
+                        anchor: layer.transform.anchor,
+                        baseline_anchor: *baseline_anchor,
+                        state,
+                        blend_mode,
+                    });
+                    output.push(PreparedItem::PendingText);
+                }
             }
             LayerContent::Rect {
                 width,
@@ -1875,6 +1877,71 @@ impl GpuRenderer {
         Ok(texture)
     }
 
+    /// Rasterizes the text `prepare_layer` found missing from the cache and
+    /// puts its layers in place of their `PendingText` items. A frame whose
+    /// labels or scale change each frame misses on dozens of texts, and each
+    /// rasterization is independent, so they spread over rayon's threads,
+    /// each with its own fork of the text rasterizer.
+    fn resolve_pending_texts(&mut self, items: &mut [PreparedItem]) -> Result<(), GpuRenderError> {
+        let pending = std::mem::take(&mut self.pending_texts);
+        if pending.is_empty() {
+            return Ok(());
+        }
+        let mut seen = HashSet::new();
+        let jobs: Vec<&PendingText> = pending
+            .iter()
+            .filter(|text| seen.insert(text.key.as_str()))
+            .collect();
+        let limit = self.max_texture_dimension;
+        let images: Vec<_> = if jobs.len() == 1 {
+            vec![rasterize_text(&mut self.text_rasterizer, jobs[0], limit)]
+        } else {
+            let workers = jobs
+                .len()
+                .min(rayon::current_num_threads())
+                .min(MAX_TEXT_WORKERS);
+            while self.text_workers.len() < workers {
+                self.text_workers.push(self.text_rasterizer.fork());
+            }
+            let chunk = jobs.len().div_ceil(workers);
+            // One result list per chunk, in chunk order, so the flattened
+            // images line up with `jobs`.
+            let chunks: Vec<Vec<_>> = self
+                .text_workers
+                .par_iter_mut()
+                .zip(jobs.par_chunks(chunk))
+                .map(|(rasterizer, jobs)| {
+                    jobs.iter()
+                        .map(|job| rasterize_text(rasterizer, job, limit))
+                        .collect()
+                })
+                .collect();
+            chunks.into_iter().flatten().collect()
+        };
+        let generation = self.texture_generation;
+        for (job, image) in jobs.iter().zip(images) {
+            let texture = self.upload_texture(&image?, false);
+            self.textures.insert(
+                job.key.clone(),
+                CachedTexture {
+                    texture,
+                    last_used: generation,
+                },
+            );
+        }
+        for text in pending {
+            let texture = self.textures[&text.key].texture.clone();
+            items[text.item] = PreparedItem::Layer(text_layer(
+                texture,
+                text.anchor,
+                text.baseline_anchor,
+                text.state,
+                text.blend_mode,
+            ));
+        }
+        Ok(())
+    }
+
     fn upload_texture(&self, image: &DecodedImage, mipmaps: bool) -> LayerTexture {
         upload_texture(
             &self.device,
@@ -2005,6 +2072,11 @@ fn downsample(width: u32, height: u32, pixels: &[u8]) -> (u32, u32, Vec<u8>) {
 /// Prefix of every cached text texture's key, so a newly loaded font can drop
 /// just those.
 const TEXT_TEXTURE_PREFIX: &str = "text\0";
+
+/// Most forks of the text rasterizer kept for parallel text. Each holds its
+/// own font database and glyph cache, so more cores should not mean more of
+/// them; a frame's slowest text bounds the time anyway.
+const MAX_TEXT_WORKERS: usize = 8;
 
 fn psd_key(
     asset: &ResolvedAsset,
@@ -3367,6 +3439,9 @@ enum PreparedItem {
     /// Draws the finished group's canvas onto its parent.
     EndGroup(PreparedLayer),
     EndEffect(PreparedLayer, EffectSpec),
+    /// A text layer `resolve_pending_texts` replaces with a `Layer` before
+    /// anything else reads the items.
+    PendingText,
 }
 
 struct PreparedLayer {
@@ -3554,6 +3629,71 @@ impl PreparedLayer {
     }
 }
 
+/// A text layer whose texture was not cached when `prepare_layer` reached
+/// it, holding what is needed to rasterize it and to replace `item`.
+struct PendingText {
+    /// Index of its `PreparedItem::PendingText` in the frame's items.
+    item: usize,
+    key: String,
+    text: String,
+    style: TextStyle,
+    max_width: Option<f64>,
+    raster_scale: f32,
+    anchor: Point,
+    baseline_anchor: bool,
+    state: LayerState,
+    blend_mode: BlendMode,
+}
+
+/// Rasterizes `job` at its scale, or smaller when that would exceed `limit`
+/// on either side (the draw's filtering then enlarges it).
+fn rasterize_text(
+    rasterizer: &mut TextRasterizer,
+    job: &PendingText,
+    limit: u32,
+) -> Result<DecodedImage, GpuRenderError> {
+    let mut scale = job.raster_scale;
+    let text = loop {
+        let text = rasterizer
+            .rasterize(&job.text, &job.style, job.max_width, scale)
+            .map_err(GpuRenderError::Text)?;
+        let largest = text.width().max(text.height());
+        if largest <= limit || scale <= 1.0 {
+            break text;
+        }
+        scale = (scale * limit as f32 / largest as f32 * 0.99).max(1.0);
+    };
+    let baseline = text.baseline_anchor();
+    let origin = text.anchor_in_image(0.0, 0.0);
+    let end = text.anchor_in_image(1.0, 1.0);
+    let mut image = DecodedImage::new(text.width(), text.height(), text.into_pixels())?;
+    image.baseline_anchor = baseline;
+    image.anchor_origin = origin;
+    image.anchor_span = (end.0 - origin.0, end.1 - origin.1);
+    image.raster_scale = scale;
+    Ok(image)
+}
+
+/// The layer drawing a text `texture`, its normalized `anchor` mapped onto
+/// the texture's text box (or its first baseline).
+fn text_layer(
+    texture: LayerTexture,
+    anchor: Point,
+    baseline_anchor: bool,
+    state: LayerState,
+    blend_mode: BlendMode,
+) -> PreparedLayer {
+    let anchor = Point {
+        x: texture.anchor_origin.0 + anchor.x * texture.anchor_span.0,
+        y: if baseline_anchor {
+            texture.baseline_anchor
+        } else {
+            texture.anchor_origin.1 + anchor.y * texture.anchor_span.1
+        },
+    };
+    PreparedLayer::new(texture, anchor, state, blend_mode)
+}
+
 /// The scale to rasterize text at so it is drawn at most slightly shrunk:
 /// the largest factor `transform` stretches it by, rounded up to the next
 /// eighth of an octave. An animated scale then reuses a few textures (about
@@ -3642,6 +3782,7 @@ fn plan_groups(items: &[PreparedItem], scene: CanvasRegion) -> Vec<GroupPlan> {
     for item in items {
         match item {
             PreparedItem::Layer(layer) => cover(&mut open, Some(layer.bounds())),
+            PreparedItem::PendingText => unreachable!("pending text is resolved"),
             PreparedItem::BeginGroup => {
                 open.push((plans.len(), None));
                 plans.push(plan(None, None));
@@ -4610,6 +4751,70 @@ mod tests {
                 },
             },
         }
+    }
+
+    #[test]
+    fn rasterizes_a_frames_new_text_in_parallel_like_one_at_a_time() {
+        let text_layer = |index: usize, text: &str| Layer {
+            id: format!("label-{index}"),
+            transform: EvaluatedTransform {
+                position: Point {
+                    x: 8.0,
+                    y: 4.0 + index as f64 * 32.0,
+                },
+                anchor: Point { x: 0.0, y: 0.0 },
+                ..EvaluatedTransform::default()
+            },
+            opacity: 1.0,
+            blend_mode: BlendMode::Normal,
+            effects: Default::default(),
+            content: LayerContent::Text {
+                text: text.to_owned(),
+                style: TextStyle {
+                    font_size: Some(16.0),
+                    fill: Some(Paint::Solid {
+                        color: "#ffffff".to_owned(),
+                    }),
+                    ..TextStyle::default()
+                },
+                max_width: None,
+                baseline_anchor: false,
+            },
+        };
+        // The repeat shares a texture with the first label.
+        let labels = ["CH00 +1.000", "CH01 -2.500", "CH02 +3.750", "CH00 +1.000"];
+        let scene = |labels: &[(usize, &str)]| {
+            let mut scene = empty_scene(160, 136);
+            scene.layers = labels
+                .iter()
+                .map(|&(index, text)| text_layer(index, text))
+                .collect();
+            scene
+        };
+        let all: Vec<_> = labels.iter().copied().enumerate().collect();
+        let Some(mut renderer) = renderer(GpuRenderOptions {
+            background: Color::rgba(0, 0, 0, 255),
+        }) else {
+            return;
+        };
+
+        // Every label is new here, so they rasterize on forks in parallel.
+        let together = renderer.render(&scene(&all)).unwrap();
+        // White labels on black that do not overlap: drawn one per frame,
+        // each by the renderer's own rasterizer, the brightest of the frames
+        // is the frame with all of them.
+        let mut one_at_a_time = vec![0_u8; together.pixels().len()];
+        for label in &all {
+            // An empty frame evicts every cached text texture first.
+            renderer.render(&scene(&[])).unwrap();
+            let frame = renderer.render(&scene(std::slice::from_ref(label))).unwrap();
+            for (merged, &value) in one_at_a_time.iter_mut().zip(frame.pixels()) {
+                *merged = (*merged).max(value);
+            }
+        }
+
+        assert!(together.pixels().contains(&255));
+        assert!(together.pixels() == one_at_a_time.as_slice());
     }
 
     #[test]

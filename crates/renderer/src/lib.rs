@@ -304,6 +304,10 @@ impl fmt::Display for MissingGlyphs {
 
 pub struct TextRasterizer {
     font_system: FontSystem,
+    /// The database `font_system` was constructed from, before any font was
+    /// loaded into it: `FontSystem` derives fallback state from its initial
+    /// database, so [`Self::fork`] rebuilds from this one.
+    initial_db: fontdb::Database,
     swash_cache: SwashCache,
     loaded_fonts: HashSet<PathBuf>,
     /// `matched_weight` results by family and requested weight, cleared
@@ -333,6 +337,7 @@ const COLOR_EMOJI_FAMILIES: &[&str] = &[
 impl TextRasterizer {
     pub fn new() -> Self {
         let font_system = FontSystem::new();
+        let initial_db = font_system.db().clone();
         #[cfg(target_os = "windows")]
         let font_system = {
             let mut font_system = font_system;
@@ -342,8 +347,32 @@ impl TextRasterizer {
 
         Self {
             font_system,
+            initial_db,
             swash_cache: SwashCache::new(),
             loaded_fonts: HashSet::new(),
+            matched_weights: HashMap::new(),
+            color_emoji_family: None,
+            missing_characters: HashMap::new(),
+        }
+    }
+
+    /// An independent rasterizer with the same fonts loaded, which draws
+    /// any text exactly as this one does, so several can rasterize on
+    /// separate threads. Built from the same initial database and then
+    /// given this one's current database (face ids included) rather than
+    /// reloading the fonts, which would also pick up loaded fonts as
+    /// fallback candidates.
+    pub fn fork(&self) -> Self {
+        let mut font_system = FontSystem::new_with_locale_and_db(
+            self.font_system.locale().to_owned(),
+            self.initial_db.clone(),
+        );
+        *font_system.db_mut() = self.font_system.db().clone();
+        Self {
+            font_system,
+            initial_db: self.initial_db.clone(),
+            swash_cache: SwashCache::new(),
+            loaded_fonts: self.loaded_fonts.clone(),
             matched_weights: HashMap::new(),
             color_emoji_family: None,
             missing_characters: HashMap::new(),
@@ -4428,6 +4457,54 @@ mod font_tests {
             font_family: Some("Bebas Neue".to_owned()),
             font_size: Some(48.0),
             ..TextStyle::default()
+        }
+    }
+
+    #[test]
+    fn a_fork_rasterizes_text_exactly_like_the_original() {
+        let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/prism");
+        let mut original = TextRasterizer::new();
+        original
+            .load_fonts(
+                &[file_font("assets/fonts/BebasNeue-Regular.ttf")],
+                &examples,
+            )
+            .unwrap();
+        let mut fork = original.fork();
+        assert_eq!(fork.loaded_font_count(), original.loaded_font_count());
+        let plain = TextStyle {
+            font_size: Some(36.0),
+            ..TextStyle::default()
+        };
+        let cases = [
+            ("Celesta", plain.clone(), None),
+            (
+                "CH07 +42.125",
+                TextStyle {
+                    letter_spacing: Some(3.5),
+                    ..plain.clone()
+                },
+                None,
+            ),
+            // A loaded family, with characters it lacks falling back to
+            // system fonts.
+            ("CELESTA 日本語 🎉", bebas_style(), None),
+            // Wrapped onto several lines.
+            (
+                "Celesta renders every frame of a composition",
+                plain,
+                Some(160.0),
+            ),
+        ];
+        for (text, style, max_width) in cases {
+            let expected = original.rasterize(text, &style, max_width, 1.5).unwrap();
+            let actual = fork.rasterize(text, &style, max_width, 1.5).unwrap();
+            assert_eq!(
+                (actual.width(), actual.height()),
+                (expected.width(), expected.height()),
+                "{text}"
+            );
+            assert!(actual.into_pixels() == expected.into_pixels(), "{text}");
         }
     }
 
