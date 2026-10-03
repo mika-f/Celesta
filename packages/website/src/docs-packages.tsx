@@ -26,7 +26,7 @@ export const packageContents: Record<string, ReactNode> = {
     )} />
     <ul>
       <li>Reusing a seed reuses the value. <code>random('a')</code> called twice is the same number, so <code>x</code> and <code>y</code> need different seeds or the stars line up on a diagonal.</li>
-      <li>Whole numbers, fractions, and strings are all different seeds: <code>0.5</code> does not collide with <code>0</code> or <code>1</code>.</li>
+      <li>A fractional number is its own seed: <code>0.5</code> does not collide with <code>0</code> or <code>1</code>. A number and a string that spells it, such as <code>0.5</code> and <code>'0.5'</code>, are the same seed.</li>
       <li>A seed must be a string or a finite number. <code>NaN</code> and <code>Infinity</code> throw an error that names the function.</li>
       <li>To make a value change over time, put time in the seed: <code>random(Math.floor(frame / 4))</code> jumps to a new value every four frames, which suits flicker and glitch effects. For smooth change, use <a href="/docs/math-noise/"><code>noise</code></a>.</li>
     </ul>
@@ -348,13 +348,13 @@ export const packageContents: Record<string, ReactNode> = {
     <p>The whole source is tokenized once, when the source or language changes, and typing only reveals the result. Colors therefore reflect the <strong>finished</strong> code: a half-typed string is already colored as a string, and nothing flickers as a quote is closed.</p>
     <h3>What visibleCharacters counts</h3>
     <ul>
-      <li>Unicode <strong>code points of the original source</strong>, matching <code>useTypewriter().length</code>. An emoji counts once.</li>
+      <li>Unicode <strong>code points of the original source</strong>, matching <code>useTypewriter().length</code>. A single-code-point emoji counts once; a joined, flag, or skin-tone sequence counts once per code point.</li>
       <li>A tab costs one character and an LF costs one. A <strong>CRLF costs two</strong>.</li>
       <li>Fractions round down, a negative count shows nothing, and the default <code>Infinity</code> shows everything.</li>
     </ul>
 
     <h3>A caret that follows the typing</h3>
-    <p><code>useCodePoint(source, {'{ line, column }'}, style?, tabSize?)</code> measures a position in the source with the same font and tab expansion as <code>Code</code>, so you can place a caret, underline, or callout there. Lines and columns are <strong>one-based</strong>, and columns count original characters (a tab or an emoji is one column). The column may be one past the last character, to sit at a line’s end. An invalid position throws.</p>
+    <p><code>useCodePoint(source, {'{ line, column }'}, style?, tabSize?)</code> measures a position in the source with the same font and tab expansion as <code>Code</code>, so you can place a caret, underline, or callout there. Lines and columns are <strong>one-based</strong>, and columns count original characters (a tab or a single-code-point emoji is one column). The column may be one past the last character, to sit at a line’s end. An invalid position throws.</p>
     <DocCode label="A blinking caret at the end of the typed text" language="tsx" code={lines(
       "import { Group, Rect, useTypewriter } from '@celesta/react';",
       "import { Code, useCodePoint } from '@celesta/code';",

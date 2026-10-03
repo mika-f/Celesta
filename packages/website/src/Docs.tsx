@@ -6,6 +6,8 @@ import { packageContents } from './docs-packages';
 
 const pageContents = { ...contents, ...packageContents };
 
+const overviewTopic = { slug: 'overview', title: 'Overview', description: 'What Celesta is and how the workflow fits together.', keywords: 'introduction start overview welcome' };
+
 /** The page for the current address: `/docs/` is the overview, `/docs/<slug>/` a chapter. */
 function currentSlug(): string {
   const slug = window.location.pathname.replace(/^\/docs\/?/, '').replace(/\/+$/, '');
@@ -22,7 +24,7 @@ export function Docs() {
   const previous = docPages[index - 1];
   const next = docPages[index + 1];
   const normalizedQuery = query.trim().toLowerCase();
-  const results = docPages.filter(topic => `${topic.title} ${topic.description} ${topic.keywords}`.toLowerCase().includes(normalizedQuery));
+  const results = [overviewTopic, ...docPages].filter(topic => `${topic.title} ${topic.description} ${topic.keywords}`.toLowerCase().includes(normalizedQuery));
 
   useEffect(() => {
     // The guide used to be one page with `/docs/#<chapter>` anchors. Keep those links working.
@@ -77,8 +79,8 @@ export function Docs() {
           <p className="doc-section-description">{page.description}</p>
           {pageContents[page.slug]}
           <nav className="docs-pager" aria-label="Previous and next page">
-            {previous ? <a className="docs-pager-prev" href={docPath(previous.slug)}><span>Previous</span><strong>{previous.title}</strong></a> : <span />}
-            {next ? <a className="docs-pager-next" href={docPath(next.slug)}><span>Next</span><strong>{next.title}</strong></a> : <span />}
+            {previous && <a className="docs-pager-prev" href={docPath(previous.slug)}><span>Previous</span><strong>{previous.title}</strong></a>}
+            {next && <a className="docs-pager-next" href={docPath(next.slug)}><span>Next</span><strong>{next.title}</strong></a>}
           </nav>
         </article> : <Overview />}
         <div className="docs-end"><h2>Try it <em>without installing.</em></h2><p>The playground runs Celesta in your browser, export included.</p><a className="button button-primary" href="/#playground">Open the playground <span aria-hidden="true">→</span></a></div>

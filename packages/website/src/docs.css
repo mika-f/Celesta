@@ -51,7 +51,7 @@
 .doc-page { margin-top: 0; padding-top: 0; border-top: 0; }
 .doc-page .docs-breadcrumb { margin-bottom: 40px; }
 .docs-breadcrumb a:hover { color: var(--text); }
-.docs-crumb { color: var(--muted); }
+.docs-breadcrumb > span.docs-crumb { color: var(--muted); }
 .doc-page h1 { margin: 0; letter-spacing: -.03em; line-height: 1.05; }
 .doc-section .eyebrow { margin: 0 0 48px; }
 .doc-section h1, .doc-section h2 { font-size: clamp(32px, 3.6vw, 48px); }
