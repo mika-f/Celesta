@@ -166,7 +166,8 @@ pairing taps through bilinear filtering (about half the reads, nearly the
 same result) or blurring large σ at reduced resolution (far fewer reads, but
 the CPU renderer's exact Gaussian would have to change too, or the GPU
 would stop matching it within the effect tests' tolerance of 5). That is
-beyond this change.
+beyond this change; PR #120 has since paired the taps, see
+[gaussian-blur-pairing.md](gaussian-blur-pairing.md).
 
 ## Reproduce
 
