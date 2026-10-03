@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from 'react';
 import { DocCode } from './DocCode';
+import { Api, Note } from './docs-shared';
 import { allDownloads, downloads, repository } from './links';
 import firstScene from './examples/first-scene.tsx?raw';
 import dialogueScene from './examples/dialogue.tsx?raw';
@@ -11,10 +12,6 @@ import withProject from '../../react/examples/with-project.tsx?raw';
 
 export { repository };
 
-function Note({ title, children }: { title: string; children: ReactNode }) {
-  return <aside className="doc-note"><strong>{title}</strong><div>{children}</div></aside>;
-}
-
 function SourceBuild() {
   const [platform, setPlatform] = useState('macOS');
   return <>
@@ -25,7 +22,7 @@ function SourceBuild() {
     <div className="platform-guide">
       {platform === 'macOS' && <><h4>macOS</h4><p>Install the Xcode Command Line Tools and Homebrew. Then install the libraries and point <code>pkg-config</code> at the keg-only FFmpeg package in the shell where you build Celesta.</p><DocCode label="macOS dependencies" code={'xcode-select --install\nbrew install ffmpeg@8 pkg-config\nexport PKG_CONFIG_PATH="$(brew --prefix ffmpeg@8)/lib/pkgconfig"'} /></>}
       {platform === 'Windows' && <><h4>Windows</h4><p>Install the MSVC C++ build tools and vcpkg. Set <code>VCPKG_ROOT</code> to your vcpkg checkout, then install the FFmpeg package below. Run Cargo from a shell configured for the MSVC toolchain.</p><DocCode label="Windows dependencies" code={'vcpkg install ffmpeg[x264]:x64-windows-static-md'} /><p>Your vcpkg checkout must provide the supported FFmpeg 8.1.x version.</p></>}
-      {platform === 'Linux' && <><h4>Linux</h4><p>Most distributions, including Ubuntu 24.04 LTS, do not package FFmpeg 8.1.x, so build it from source with the repository’s <code>scripts/build-ffmpeg-linux.sh</code> after you get the source in step 2. It builds static libraries with <code>libx264</code> into <code>/opt/ffmpeg8</code>, which takes about 5 minutes on 4 cores. Cargo uses <code>libclang-dev</code> to generate the FFmpeg bindings. On Debian and Ubuntu, run these from the repository root:</p><DocCode label="Linux dependencies" code={'sudo apt-get install -y build-essential nasm pkg-config curl xz-utils zlib1g-dev libx264-dev libclang-dev\nsudo apt-get install -y libasound2-dev libxkbcommon-x11-dev libfontconfig-dev\nsudo scripts/build-ffmpeg-linux.sh /opt/ffmpeg8\nexport PKG_CONFIG_PATH=/opt/ffmpeg8/lib/pkgconfig'} /><p>Set <code>PKG_CONFIG_PATH</code> in every shell where you run Cargo. FFmpeg is linked into Celesta’s executables, so <code>LD_LIBRARY_PATH</code> is not needed. If your distribution does provide FFmpeg 8.1.x, install <code>pkg-config</code> and its <code>libavcodec</code>, <code>libavformat</code>, <code>libavfilter</code>, <code>libavdevice</code>, <code>libavutil</code>, <code>libswscale</code>, and <code>libswresample</code> development packages instead of running the script. To export without a GPU, see <a href="#export">Export a video</a>.</p></>}
+      {platform === 'Linux' && <><h4>Linux</h4><p>Most distributions, including Ubuntu 24.04 LTS, do not package FFmpeg 8.1.x, so build it from source with the repository’s <code>scripts/build-ffmpeg-linux.sh</code> after you get the source in step 2. It builds static libraries with <code>libx264</code> into <code>/opt/ffmpeg8</code>, which takes about 5 minutes on 4 cores. Cargo uses <code>libclang-dev</code> to generate the FFmpeg bindings. On Debian and Ubuntu, run these from the repository root:</p><DocCode label="Linux dependencies" code={'sudo apt-get install -y build-essential nasm pkg-config curl xz-utils zlib1g-dev libx264-dev libclang-dev\nsudo apt-get install -y libasound2-dev libxkbcommon-x11-dev libfontconfig-dev\nsudo scripts/build-ffmpeg-linux.sh /opt/ffmpeg8\nexport PKG_CONFIG_PATH=/opt/ffmpeg8/lib/pkgconfig'} /><p>Set <code>PKG_CONFIG_PATH</code> in every shell where you run Cargo. FFmpeg is linked into Celesta’s executables, so <code>LD_LIBRARY_PATH</code> is not needed. If your distribution does provide FFmpeg 8.1.x, install <code>pkg-config</code> and its <code>libavcodec</code>, <code>libavformat</code>, <code>libavfilter</code>, <code>libavdevice</code>, <code>libavutil</code>, <code>libswscale</code>, and <code>libswresample</code> development packages instead of running the script. To export without a GPU, see <a href="/docs/export/">Export a video</a>.</p></>}
     </div>
     <h3>2. Get the source</h3>
     <DocCode label="Clone Celesta" code={`git clone ${repository}.git celesta\ncd celesta`} />
@@ -37,7 +34,7 @@ function SourceBuild() {
     <DocCode label="Build the React runtime from source" code={'cd packages/react\npnpm install\npnpm run codegen\npnpm run build\ncd ../..'} />
     <DocCode label="Preview React from source" code="cargo run -p celesta-editor --release -- packages/react/examples/title.tsx" />
     <DocCode label="Export React from source" code="cargo run -p celesta-exporter --release -- --react packages/react/examples/title.tsx output.mp4" />
-    <p>Run Cargo commands from the repository root. Packaged-app users can skip this entire section and go straight to their <a href="#react-compositions">first React composition</a>.</p>
+    <p>Run Cargo commands from the repository root. Packaged-app users can skip this entire section and go straight to their <a href="/docs/react-compositions/">first React composition</a>.</p>
   </>;
 }
 
@@ -54,13 +51,13 @@ function Installation() {
     <div className="platform-guide">
       {platform === 'macOS' && <><h4>macOS</h4><ol><li>Choose the <code>macos-arm64.dmg</code> package for Apple Silicon, or <code>macos-x64.dmg</code> for an Intel Mac. The full filename includes the release version.</li><li>Open the disk image and drag <strong>Celesta</strong> into <strong>Applications</strong>.</li><li>Eject the disk image, then open Celesta from Applications.</li></ol></>}
       {platform === 'Windows' && <><h4>Windows x64</h4><p>Download the <code>windows-x64-setup.exe</code> installer, run it, and open Celesta from the Start menu. The full filename includes the release version.</p><p>Prefer a portable app? Download the <code>windows-x64.zip</code> package, extract the entire archive, and launch <code>Celesta.exe</code>. Keep the runtime directory and DLLs beside the executable.</p></>}
-      {platform === 'Linux' && <><h4>Linux</h4><p>Use the <a href="#build-from-source">source-build instructions</a> for Linux. Check the release assets for any additional platform packages provided with a release.</p></>}
+      {platform === 'Linux' && <><h4>Linux</h4><p>Use the <a href="/docs/build-from-source/">source-build instructions</a> for Linux. Check the release assets for any additional platform packages provided with a release.</p></>}
     </div>
     <h3>2. Create a place for your project</h3><p>Make a folder in your Documents directory, such as <code>my-video</code>. Keep your composition files and media there, separate from the installed app.</p>
-    <h3>3. Open your first scene</h3><p>Celesta opens a built-in demo on launch. To make your own, save the <a href="#react-compositions">React title example</a> as <code>first-scene.tsx</code> in your project folder, then choose <strong>File → Open…</strong> in Celesta and select it.</p>
-    <p>Prefer an existing example? The app package includes <code>title.tsx</code>, <code>editor-demo.celesta.json</code>, and <code>minimal.celesta.json</code>. See <a href="#examples">where to find them</a>.</p>
+    <h3>3. Open your first scene</h3><p>Celesta opens a built-in demo on launch. To make your own, save the <a href="/docs/react-compositions/">React title example</a> as <code>first-scene.tsx</code> in your project folder, then choose <strong>File → Open…</strong> in Celesta and select it.</p>
+    <p>Prefer an existing example? The app package includes <code>title.tsx</code>, <code>editor-demo.celesta.json</code>, and <code>minimal.celesta.json</code>. See <a href="/docs/examples/">where to find them</a>.</p>
     <h3>Updating Celesta</h3><p>Quit Celesta and install the newer release package. For portable Windows builds, extract the new version into its own folder and launch it from there. Keep your projects and media in your Documents directory so they stay separate from app updates.</p>
-    <p>Working on Celesta itself? See <a href="#build-from-source">Build from source</a> for the developer setup.</p>
+    <p>Working on Celesta itself? See <a href="/docs/build-from-source/">Build from source</a> for the developer setup.</p>
   </>;
 }
 
@@ -77,26 +74,15 @@ function ExportCommands() {
     <DocCode label="Export a JSON project" code={`${executable} project.celesta.json output.mp4`} />
     <p>Add <code>--overwrite</code> to replace an existing output file. Use <code>--from</code> and <code>--to</code> to select a time range:</p>
     <DocCode label="Export the first second" code={`${executable} --from 0 --to 1 --react first-scene.tsx section.mp4`} />
-    <p>To combine React with the <a href="#timelines">JSON timeline example</a>, save both files in your project folder and pass the companion project:</p>
+    <p>To combine React with the <a href="/docs/timelines/">JSON timeline example</a>, save both files in your project folder and pass the companion project:</p>
     <DocCode label="Export a combined composition" code={`${executable} --react with-project.tsx --project project.celesta.json output.mp4`} />
-    <p>Using a source build? The <a href="#build-from-source">developer instructions</a> include the equivalent Cargo command.</p>
+    <p>Using a source build? The <a href="/docs/build-from-source/">developer instructions</a> include the equivalent Cargo command.</p>
   </>;
 }
 
-export interface DocSection { id: string; title: string; description: string; keywords: string; content: ReactNode }
-
-function Api({ rows, caption }: { caption: string; rows: [ReactNode, ReactNode][] }) {
-  return <div className="doc-table-wrap doc-api" tabIndex={0} aria-label={caption}><table><caption>{caption}</caption><thead><tr><th>API</th><th>Use it for</th></tr></thead><tbody>
-    {rows.map(([name, use], i) => <tr key={i}><td>{name}</td><td>{use}</td></tr>)}
-  </tbody></table></div>;
-}
-
-export const sections: DocSection[] = [
-  {
-    id: 'installation', title: 'Install & get started', description: 'Packages for macOS and Windows, with the runtime included.', keywords: 'setup download installer binary macOS Windows Linux dmg portable zip updates' , content: <Installation />,
-  },
-  {
-    id: 'preview', title: 'Preview your work', description: 'Open, reload, play, and scrub in the desktop app.', keywords: 'keyboard shortcuts open reload play pause scrub inspector audio mute solo', content: <>
+export const contents: Record<string, ReactNode> = {
+  'installation': <Installation />,
+  'preview': <>
       <p>Choose <strong>File → Open…</strong> to open a <code>.celesta.json</code> project or a React composition (<code>.tsx</code>, <code>.jsx</code>, <code>.ts</code>, or <code>.js</code>). Select an asset, track, or clip to inspect its details.</p>
       <Note title="Your source is your canvas">Edit projects and compositions in your text editor. The Celesta app previews and exports them; it does not edit the project itself.</Note>
       <p>React compositions reload when you save. For a JSON project, choose <strong>File → Reload</strong> after changing the source. Keep referenced media files available; missing assets are marked in the Assets panel.</p>
@@ -110,9 +96,7 @@ export const sections: DocSection[] = [
       <h3>Listen as you look</h3><p>Playback synchronizes the picture and audio. Use waveforms and track levels to check timing, mute or solo tracks to isolate a sound, and adjust the preview volume. Drag along the timeline ruler to scrub to a specific moment.</p>
       <h3>Preview-only guides</h3><p><code>{'<DebugOverlay />'}</code> draws the frame edge, a safe-area inset, and the center point, and <code>{'<DebugBounds>'}</code> outlines a group of layers. Both appear only in the Celesta preview and add nothing to an export, so you can leave them in while you work. <code>useIsPreview()</code> tells your own components the same thing.</p>
     </>,
-  },
-  {
-    id: 'react-compositions', title: 'Your first React composition', description: 'A five-second title card with Composition, Text, and useCurrentFrame.', keywords: 'tsx jsx components typescript setup codegen build title', content: <>
+  'react-compositions': <>
       <p>The installed app already includes the React runtime. There is no package installation or build step for your composition: just save a file and open it in Celesta.</p>
       <h3>Make your first scene</h3><p>Create <code>first-scene.tsx</code> in your own project folder. This example creates a 1920 × 1080 composition at 30 fps. The title fades in over 30 frames, then holds until the five-second composition ends.</p>
       <DocCode label="first-scene.tsx" language="tsx" code={firstScene.trim()} />
@@ -123,7 +107,7 @@ export const sections: DocSection[] = [
         <li>The file’s <strong>default export</strong> returns a single <code>{'<Composition>'}</code> with its size, frame rate, and length.</li>
         <li>Everything inside it is drawn in order: later layers appear on top of earlier ones.</li>
         <li>Your own components are ordinary React function components. Use props, <code>.map()</code>, and conditionals as you would anywhere else.</li>
-        <li>An optional named export, <code>prepare()</code>, runs once before the first frame. See <a href="#data">Data, properties & components</a>.</li>
+        <li>An optional named export, <code>prepare()</code>, runs once before the first frame. See <a href="/docs/data/">Data, properties & components</a>.</li>
       </ul>
       <h3>Set up TypeScript in your editor</h3><p>With a React composition open, choose <strong>File → Set Up TypeScript</strong>. Celesta copies matching declarations for <code>@celesta/react</code>, <code>@celesta/math</code>, <code>@celesta/code</code>, React, and Node.js into a local <code>.celesta/</code> directory.</p>
       <p>Starting a new project with no composition yet? Choose <strong>File → Set Up TypeScript in Folder…</strong> and pick the project folder, so your first component is written with types in place.</p>
@@ -131,9 +115,7 @@ export const sections: DocSection[] = [
       <DocCode label="tsconfig.json" language="json" code={'{\n  "extends": "./.celesta/tsconfig.json"\n}'} />
       <p>You do not need to install those declaration packages from npm for this editor setup. Celesta refreshes <code>.celesta/</code> when you open the project in a newer app version; that directory ignores itself in Git.</p>
     </>,
-  },
-  {
-    id: 'animation', title: 'Frames, timing & animation', description: 'Make motion a function of the frame.', keywords: 'interpolate easing spring transition sequence hooks useCurrentFrame duration fps opacity animation', content: <>
+  'animation': <>
       <p>A composition’s duration in seconds is <code>durationInFrames / fps</code>. At 30 fps, 150 frames make five seconds, with frame indices from 0 through 149. Use <code>useCurrentFrame()</code> inside a composition to calculate animated values.</p>
       <h3>Interpolate between values</h3><p>The title example uses <code>Math.min(frame / 30, 1)</code> for opacity. For easing and more control, import <code>interpolate</code> and <code>Easings</code> from <code>@celesta/react</code>, then replace the calculation with:</p>
       <DocCode label="An eased fade (inside a component)" language="tsx" code={"const opacity = interpolate(frame, [0, 30], [0, 1], {\n  easing: Easings.easeOut,\n  extrapolateLeft: 'clamp',\n  extrapolateRight: 'clamp',\n});"} />
@@ -148,12 +130,10 @@ export const sections: DocSection[] = [
       <h3>Ready-made entrances and exits</h3><p><code>{'<Transition>'}</code> fades, slides, or scales its children at the start (<code>direction="in"</code>, the default) or end (<code>direction="out"</code>) of the enclosing sequence:</p>
       <DocCode label="Slide a caption in, fade it out" language="tsx" code={'<Sequence from={30} durationInFrames={120}>\n  <Transition type="slide" slideFrom="bottom" durationInFrames={15}\n    easing={Easings.easeOutCubic}>\n    <Transition type="fade" direction="out" durationInFrames={20}>\n      <Caption />\n    </Transition>\n  </Transition>\n</Sequence>'} />
       <p>Slides travel <code>distance</code> pixels (64 by default); scales start from <code>scaleFrom</code> (0.8 by default). Pass several types to combine them, such as <code>{"type={['fade', 'slide']}"}</code>.</p>
-      <Note title="Keep animation tied to the frame">Compute visual changes from frame or time values so scrubbing and exporting can reproduce each moment. A browser timer or <code>Math.random()</code> is not the composition’s clock; derive “random” values from the frame or an index instead, with <a href="#motion-toolkit"><code>@celesta/math</code></a>’s seeded <code>random</code> and <code>noise</code>.</Note>
+      <Note title="Keep animation tied to the frame">Compute visual changes from frame or time values so scrubbing and exporting can reproduce each moment. A browser timer or <code>Math.random()</code> is not the composition’s clock; derive “random” values from the frame or an index instead, with <a href="/docs/math/"><code>@celesta/math</code></a>’s seeded <code>random</code> and <code>noise</code>.</Note>
     </>,
-  },
-  {
-    id: 'motion-toolkit', title: 'Scenes, cues & motion helpers', description: 'Sequencing, staggering, beat sync, and text effects.', keywords: 'Series Stagger computeSeries progress useBeat beatAt bpm music useCue cueAt TextReveal useTypewriter useCountUp Camera Line Polyline Path pointOnPolyline random noise fbm math @celesta/math frameToTimecode timecode scenes cascade counter typewriter chart', content: <>
-      <p>These helpers cover the patterns that come up in almost every video: scenes in a row, lists that cascade in, cuts on the beat, and titles that reveal themselves. Each is built on <code>Sequence</code>, <code>Group</code>, and the frame, so everything stays scrubbable and deterministic.</p>
+  'motion-toolkit': <>
+      <p>These helpers cover the patterns that come up in almost every video: scenes in a row, lists that cascade in, and cuts on the beat. Each is built on <code>Sequence</code>, <code>Group</code>, and the frame, so everything stays scrubbable and deterministic. Text effects, the camera, and line drawing are on <a href="/docs/text-camera-lines/">the next page</a>; seeded randomness and noise are in <a href="/docs/math/"><code>@celesta/math</code></a>.</p>
       <h3>Scenes back to back</h3><p><code>{'<Series>'}</code> plays its <code>{'<Series.Sequence>'}</code> children one after another, so you write each scene’s length instead of its start frame. A negative <code>offset</code> overlaps a scene with the one before it. <code>computeSeries()</code> does the same arithmetic without rendering, which is handy for the composition’s total length:</p>
       <DocCode label="Three scenes, sized from their lengths" language="tsx" code={"const SCENES = [\n  { name: 'intro', durationInFrames: 90, Scene: Intro },\n  { name: 'body', durationInFrames: 240, Scene: Body },\n  { name: 'outro', durationInFrames: 60, Scene: Outro },\n];\nconst { durationInFrames } = computeSeries(SCENES);\n\nexport default function Root() {\n  return (\n    <Composition width={1920} height={1080} fps={30} durationInFrames={durationInFrames}>\n      <Series>\n        {SCENES.map(({ name, durationInFrames, Scene }) => (\n          <Series.Sequence key={name} durationInFrames={durationInFrames}>\n            <Scene />\n          </Series.Sequence>\n        ))}\n      </Series>\n    </Composition>\n  );\n}"} />
       <h3>Cascades and entrances</h3><p><code>progress(frame, start, durationInFrames, easing?)</code> is a clamped 0–1 value for “how far through this span are we”: the building block of most entrances. <code>{'<Stagger each={n}>'}</code> starts each child <code>n</code> frames after the previous one, so an entrance written for frame 0 cascades down a list:</p>
@@ -162,6 +142,10 @@ export const sections: DocSection[] = [
       <DocCode label="A dot that pulses with the music" language="tsx" code={"const { pulse } = useBeat({ bpm: 120 });\nreturn <Rect width={40} height={40} cornerRadius={20} scale={1 + 0.3 * pulse} fill=\"#7cf29c\" />;"} />
       <h3>Cues</h3><p><code>useCue(cues)</code> takes a list of <code>{'{ at, …data }'}</code> objects sorted by <code>at</code> and returns the one in effect, its <code>index</code>, the <code>frame</code> since it started, and the <code>previous</code> and <code>next</code> cues. Swapping captions, a camera moving between stops, or a chart callout that changes are all a list of cues. <code>cueAt(cues, frame)</code> is the same outside a component.</p>
       <DocCode label="Captions that swap and fade in" language="tsx" code={"const active = useCue([\n  { at: 0, text: 'Write it.' },\n  { at: 45, text: 'Preview it.' },\n  { at: 90, text: 'Ship it.' },\n]);\nif (!active) return null;\nreturn <Text opacity={progress(active.frame, 0, 10)}>{active.cue.text}</Text>;"} />
+      <h3>Timecodes</h3><p><code>frameToTimecode(frame, fps)</code>, from <code>@celesta/react</code>, formats <code>HH:MM:SS:FF</code> for an on-screen clock.</p>
+    </>,
+  'text-camera-lines': <>
+      <p>Titles that reveal themselves, a camera that travels, and lines that draw on. Like the helpers on the previous page, these are built on the frame, so scrubbing and exporting reproduce every moment.</p>
       <h3>Text effects</h3>
       <Api caption="Text helpers" rows={[
         [<code>TextReveal</code>, <>Lines of a string slide up from behind their own masks, one after another. Set <code>lineHeight</code>, <code>from</code>, <code>stagger</code>, and <code>durationInFrames</code>; <code>align</code> pivots each line.</>],
@@ -174,41 +158,12 @@ export const sections: DocSection[] = [
       <DocCode label="Travel along a long timeline" language="tsx" code={"<Camera x={interpolate(frame, [0, 120], [0, 4000], { extrapolateRight: 'clamp' })}\n  y={540} zoom={1.1} shake={4}>\n  <TimelineWorld />\n</Camera>"} />
       <h3>Lines and charts</h3><p><code>{'<Line x1 y1 x2 y2>'}</code> draws a segment and <code>{'<Polyline points>'}</code> connects several; both take <code>stroke</code>, <code>strokeWidth</code>, <code>cap</code> (<code>round</code> by default), and <code>join</code>. Animate a polyline’s <code>progress</code> from 0 to 1 to draw it on, and use <code>pointOnPolyline(points, t)</code> to put a marker on its tip.</p>
       <p>For other shapes, <code>{'<Path>'}</code> takes <code>points</code> (with <code>closed</code>) or SVG-like <code>commands</code> (<code>moveTo</code>, <code>lineTo</code>, <code>quadTo</code>, <code>cubicTo</code>, <code>close</code>), a <code>stroke</code> and/or <code>fill</code>, and <code>cap</code>/<code>join</code>/<code>miterLimit</code>. Each is one layer however many segments it has, stays sharp when scaled, and paints a translucent stroke that crosses itself only once, so draw procedural line art as a few paths rather than many thin rects.</p>
-      <h3>Randomness, noise & math</h3><p>Import these from <code>@celesta/math</code>, which the runtime bundles alongside <code>@celesta/react</code>. <code>random(seed)</code> returns the same number in <code>[0, 1)</code> for the same seed, and <code>noise(seed, t)</code> is a smooth curve in <code>[-1, 1]</code> for drift and wobble. Use them instead of <code>Math.random()</code> so every frame renders the same way twice. Give each property its own seed, such as <code>{'`star-${i}-x`'}</code>.</p>
-      <DocCode label="A seeded starfield that drifts" language="tsx" code={"import { noise, randomRange } from '@celesta/math';\n\nconst stars = Array.from({ length: 80 }, (_, i) => (\n  <Rect key={i} width={4} height={4} cornerRadius={2} fill=\"#ffffff\"\n    x={randomRange(`star-${i}-x`, 0, 1920) + noise(i, frame / 40) * 30}\n    y={randomRange(`star-${i}-y`, 0, 1080)}\n    opacity={randomRange(`star-${i}-o`, 0.2, 0.8)} />\n));"} />
-      <Api caption="@celesta/math" rows={[
-        [<><code>random</code>, <code>randomRange</code>, <code>randomInt</code>, <code>randomBool</code>, <code>randomSign</code></>, <>Seeded numbers, whole numbers, and coin flips.</>],
-        [<><code>randomPick</code>, <code>shuffle</code>, <code>randomGaussian</code>, <code>randomInCircle</code></>, <>Pick or reorder items, bell-curve values, and points in a disc.</>],
-        [<><code>noise</code>, <code>noise2D</code>, <code>noise3D</code></>, <>Smooth noise over time, a plane, or a plane changing over time.</>],
-        [<><code>fbm</code>, <code>fbm2D</code>, <code>fbm3D</code></>, <>Layered noise with detail at several scales, for clouds, smoke, and terrain.</>],
-        [<><code>clamp</code>, <code>lerp</code>, <code>inverseLerp</code>, <code>remap</code>, <code>smoothstep</code>, <code>wrap</code>, <code>pingPong</code>, <code>snap</code></>, <>Shape and limit numbers.</>],
-        [<><code>sineWave</code>, <code>triangleWave</code>, <code>squareWave</code>, <code>sawtoothWave</code></>, <>Repeating waves in <code>[-1, 1]</code> with a period of 1.</>],
-        [<><code>degToRad</code>, <code>lerpAngle</code>, <code>rotatePoint</code>, <code>polarToCartesian</code>, <code>cubicBezierPoint</code></>, <>Angles in radians and <code>{'{ x, y }'}</code> points.</>],
-      ]} />
-      <h3>Timecodes</h3><p><code>frameToTimecode(frame, fps)</code>, from <code>@celesta/react</code>, formats <code>HH:MM:SS:FF</code> for an on-screen clock.</p>
     </>,
-  },
-  {
-    id: 'layout', title: 'Shapes, text & layout', description: 'Position layers, style text, and arrange a scene.', keywords: 'Rect Text Group blendMode blend mode multiply screen overlay difference style font Font webfont woff woff2 Google Fonts css fontFamily fontWeight stroke outline lineHeight maxWidth wrap lineBreak phrase BudouX Japanese align anchor rotation scale Center SafeArea Stack Grid Fit layout', content: <>
+  'layout': <>
       <h3>Coordinates and anchors</h3><p>The canvas origin is the top-left corner, measured in pixels. A layer’s <code>x</code> and <code>y</code> place its <strong>anchor</strong>, which is the top-left corner by default. Set <code>anchorX</code> and <code>anchorY</code> between 0 and 1 to move it: <code>0.5</code> is the center and <code>1</code> the right or bottom edge. Rotation (in degrees) and scale turn around the anchor too.</p>
       <DocCode label="Centered, rotated, and scaled" language="tsx" code={'<Rect x={960} y={540} anchorX={0.5} anchorY={0.5}\n  width={400} height={400} cornerRadius={48}\n  rotation={12} scale={0.8} opacity={0.9} fill="#a68bbf" />'} />
       <p><code>scaleX</code> and <code>scaleY</code> override <code>scale</code> on one axis. <code>opacity</code> multiplies down through groups.</p>
       <h3>Shapes</h3><p><code>Rect</code> draws a rectangle with an optional <code>cornerRadius</code>, <code>fill</code>, and inner <code>stroke</code> with <code>strokeWidth</code>. Colors are hex strings, with an optional alpha channel: <code>#RRGGBB</code> or <code>#RRGGBBAA</code>. A square with a corner radius of half its size makes a circle.</p>
-      <h3>Text</h3><p><code>Text</code> renders its children, which must be strings or numbers. Style it with <code>style</code>:</p>
-      <DocCode label="An outlined, wrapping caption" language="tsx" code={"<Text x={960} y={900} anchorX={0.5} anchorY={0.5} maxWidth={1400}\n  style={{\n    fontFamily: 'Hiragino Sans',\n    fontSize: 64,\n    fontWeight: 700,\n    lineHeight: 80,\n    align: 'center',\n    fill: { type: 'solid', color: '#ffffff' },\n    stroke: { paint: { type: 'solid', color: '#57456c' }, width: 8 },\n  }}>\n  Words that wrap onto a second line when they reach maxWidth.\n</Text>"} />
-      <ul>
-        <li><code>fontFamily</code> names a font installed on the computer, or one loaded with <code>{'<Font>'}</code>. When the family has no face at the requested <code>fontWeight</code>, Celesta uses its nearest weight, as CSS does. Characters the font lacks, such as emoji, fall back to another installed font. A JSON project can also bundle a font file as a <code>font</code> asset.</li>
-      </ul>
-      <p>To use a font file that is not installed, declare it with <code>{'<Font>'}</code>. A relative <code>src</code> is resolved against the entry file’s folder, and <code>fontFamily</code> uses the family name stored inside the file, not the file name. TrueType, OpenType, WOFF, and WOFF2 files all work, and <code>src</code> can be an <code>http://</code> or <code>https://</code> URL.</p>
-      <DocCode label="Load a font file next to the entry" language="tsx" code={"<Composition width={1920} height={1080} fps={30} durationInFrames={90}>\n  <Assets>\n    <Font src=\"./fonts/MPLUSRounded1c-Bold.ttf\" />\n  </Assets>\n  <Text style={{ fontFamily: 'M PLUS Rounded 1c', fontWeight: 700, fontSize: 96 }}>\n    Hello\n  </Text>\n</Composition>"} />
-      <p><code>src</code> can also be a web font stylesheet, such as a Google Fonts CSS link. Celesta loads every font file its <code>@font-face</code> rules list, and <code>fontFamily</code> can use the stylesheet’s family name. Include every weight you use in the link: a weight the stylesheet does not provide is drawn with the nearest weight it does.</p>
-      <DocCode label="Load a Google Fonts family" language="tsx" code={"<Assets>\n  <Font src=\"https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;700\" />\n</Assets>\n<Text style={{ fontFamily: 'M PLUS Rounded 1c', fontWeight: 700, fontSize: 96 }}>\n  こんにちは\n</Text>"} />
-      <ul>
-        <li><code>maxWidth</code> wraps text at word boundaries, and <code>align</code> positions each line within that width. Use <code>\n</code> in a string to break a line yourself.</li>
-        <li>Japanese normally wraps between most characters, splitting a word such as フレーム, while line-break rules keep punctuation such as 、 and 。 off the start of a line. Set <code>lineBreak: 'phrase'</code> in the style to wrap only between phrases, found with <a href="https://github.com/google/budoux">BudouX</a>; a phrase wider than <code>maxWidth</code> wraps inside itself as normal text does. The browser preview ignores <code>lineBreak</code> and wraps only at whitespace.</li>
-        <li>Single-line text is anchored vertically by its visible glyphs, so <code>anchorY={'{0.5}'}</code> centers the letters themselves rather than an invisible line box. Its width is the advance width, so leading and trailing spaces still take up room.</li>
-        <li><code>anchorY="baseline"</code> anchors text on its first line’s baseline instead. Text layers with the same <code>y</code> then share a baseline, whatever their letters or font sizes.</li>
-      </ul>
       <h3>Blend modes</h3><p>Set <code>blendMode</code> on any layer to change how it combines with what is beneath it, as CSS <code>mix-blend-mode</code> does: <code>normal</code> (the default), <code>multiply</code>, <code>screen</code>, <code>overlay</code>, <code>add</code>, or <code>difference</code>. On a <code>Group</code>, any mode other than <code>normal</code> draws the children together first, then blends the result as one layer.</p>
       <DocCode label="A HUD that stays readable on light and dark scenes" language="tsx" code={'<Group blendMode="difference" opacity={0.8}>\n  <Text x={48} y={48} style={{ fill: { type: \'solid\', color: \'#ffffff\' } }}>\n    REC 00:00:12\n  </Text>\n</Group>'} />
       <h3>Group and arrange</h3><p><code>Group</code> has no size of its own. Its children are placed relative to its <code>x</code>/<code>y</code>, and its rotation, scale, and opacity apply to all of them. The layout helpers build on it:</p>
@@ -224,9 +179,24 @@ export const sections: DocSection[] = [
       <h3>Clip a group</h3><p>Give a <code>Group</code> a <code>clip</code> to draw its children only inside a rectangle, <code>{'{ x, y, width, height, cornerRadius }'}</code>, in the group’s own coordinates. Use it for a mask reveal, a wipe, or content that scrolls inside a panel. The clip moves, scales, and rotates with the group, its edge is anti-aliased, and clips nested inside one another intersect.</p>
       <DocCode label="Text sliding up from behind an edge" language="tsx" code={"<Group x={120} y={200} clip={{ width: 720, height: 96 }}>\n  <Text y={96 * (1 - reveal)}\n    style={{ fontSize: 88, fill: { type: 'solid', color: '#332f3b' } }}>\n    Layer it.\n  </Text>\n</Group>"} />
     </>,
-  },
-  {
-    id: 'media', title: 'Images, video & sound', description: 'Image, Video, and Audio layers from local or remote files.', keywords: 'Image Video Audio media src url remote download startFrom playbackRate volume muted keyframes fade music preloadMedia mediaDurationInFrames png jpeg webp mp4 wav', content: <>
+  'text-fonts': <>
+      <h3>Text</h3><p><code>Text</code> renders its children, which must be strings or numbers. Style it with <code>style</code>:</p>
+      <DocCode label="An outlined, wrapping caption" language="tsx" code={"<Text x={960} y={900} anchorX={0.5} anchorY={0.5} maxWidth={1400}\n  style={{\n    fontFamily: 'Hiragino Sans',\n    fontSize: 64,\n    fontWeight: 700,\n    lineHeight: 80,\n    align: 'center',\n    fill: { type: 'solid', color: '#ffffff' },\n    stroke: { paint: { type: 'solid', color: '#57456c' }, width: 8 },\n  }}>\n  Words that wrap onto a second line when they reach maxWidth.\n</Text>"} />
+      <ul>
+        <li><code>fontFamily</code> names a font installed on the computer, or one loaded with <code>{'<Font>'}</code>. When the family has no face at the requested <code>fontWeight</code>, Celesta uses its nearest weight, as CSS does. Characters the font lacks, such as emoji, fall back to another installed font. A JSON project can also bundle a font file as a <code>font</code> asset.</li>
+      </ul>
+      <p>To use a font file that is not installed, declare it with <code>{'<Font>'}</code>. A relative <code>src</code> is resolved against the entry file’s folder, and <code>fontFamily</code> uses the family name stored inside the file, not the file name. TrueType, OpenType, WOFF, and WOFF2 files all work, and <code>src</code> can be an <code>http://</code> or <code>https://</code> URL.</p>
+      <DocCode label="Load a font file next to the entry" language="tsx" code={"<Composition width={1920} height={1080} fps={30} durationInFrames={90}>\n  <Assets>\n    <Font src=\"./fonts/MPLUSRounded1c-Bold.ttf\" />\n  </Assets>\n  <Text style={{ fontFamily: 'M PLUS Rounded 1c', fontWeight: 700, fontSize: 96 }}>\n    Hello\n  </Text>\n</Composition>"} />
+      <p><code>src</code> can also be a web font stylesheet, such as a Google Fonts CSS link. Celesta loads every font file its <code>@font-face</code> rules list, and <code>fontFamily</code> can use the stylesheet’s family name. Include every weight you use in the link: a weight the stylesheet does not provide is drawn with the nearest weight it does.</p>
+      <DocCode label="Load a Google Fonts family" language="tsx" code={"<Assets>\n  <Font src=\"https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;700\" />\n</Assets>\n<Text style={{ fontFamily: 'M PLUS Rounded 1c', fontWeight: 700, fontSize: 96 }}>\n  こんにちは\n</Text>"} />
+      <ul>
+        <li><code>maxWidth</code> wraps text at word boundaries, and <code>align</code> positions each line within that width. Use <code>\n</code> in a string to break a line yourself.</li>
+        <li>Japanese normally wraps between most characters, splitting a word such as フレーム, while line-break rules keep punctuation such as 、 and 。 off the start of a line. Set <code>lineBreak: 'phrase'</code> in the style to wrap only between phrases, found with <a href="https://github.com/google/budoux">BudouX</a>; a phrase wider than <code>maxWidth</code> wraps inside itself as normal text does. The browser preview ignores <code>lineBreak</code> and wraps only at whitespace.</li>
+        <li>Single-line text is anchored vertically by its visible glyphs, so <code>anchorY={'{0.5}'}</code> centers the letters themselves rather than an invisible line box. Its width is the advance width, so leading and trailing spaces still take up room.</li>
+        <li><code>anchorY="baseline"</code> anchors text on its first line’s baseline instead. Text layers with the same <code>y</code> then share a baseline, whatever their letters or font sizes.</li>
+      </ul>
+    </>,
+  'media': <>
       <p><code>Image</code>, <code>Video</code>, and <code>Audio</code> read files through <code>src</code>. Relative paths start from the composition file, so keep media beside it in your project folder.</p>
       <p><code>src</code> can also be an <code>http://</code> or <code>https://</code> URL. Celesta downloads the file the first time it is used and reuses that copy afterwards, including offline. The copy is never refreshed, so change the URL when the remote file changes. <code>preloadMedia()</code> accepts URLs as well. In a JSON project, use <code>{'"source": { "type": "url", "url": "https://…" }'}</code> instead of a file path.</p>
       <DocCode label="media.tsx" language="tsx" code={mediaScene.trim()} />
@@ -238,9 +208,7 @@ export const sections: DocSection[] = [
       </ul>
       <h3>Size a scene to its media</h3><p>The optional <code>prepare()</code> export runs once before rendering and may be <code>async</code>. In the example, <code>preloadMedia()</code> reads the clip’s length and <code>mediaDurationInFrames()</code> converts it to frames, so the end card always follows the footage.</p>
     </>,
-  },
-  {
-    id: 'timelines', title: 'JSON project timelines', description: 'Deprecated. Kept for existing projects.', keywords: 'json schema project assets tracks settings range time timescale properties keyframes easing ProjectTimeline', content: <>
+  'timelines': <>
       <Note title="Deprecated">JSON projects are deprecated. Use React compositions for new work. This chapter remains for existing <code>.celesta.json</code> projects.</Note>
       <p>A <code>.celesta.json</code> file describes project settings, assets, characters, tracks, and properties. Use JSON when you want an explicit timeline, or combine it with React for generated content.</p>
       <ul><li><code>settings</code> defines dimensions, frame rate, audio sample rate, and optional duration.</li><li><code>assets</code> registers source media by id: <code>video</code>, <code>audio</code>, <code>image</code>, or <code>font</code>. Media files must be local.</li><li><code>tracks</code> contains video, audio, overlay, or dialogue tracks and their items.</li><li>Each item has a <code>range</code> with a start and duration, plus its content and optional <code>transform</code>, <code>opacity</code>, and <code>blendMode</code>.</li></ul>
@@ -251,11 +219,9 @@ export const sections: DocSection[] = [
       <DocCode label="Fade an item in over half a second" language="json" code={'"opacity": {\n  "type": "keyframes",\n  "keyframes": [\n    { "time": { "value": 0, "timescale": 30 }, "value": 0 },\n    { "time": { "value": 15, "timescale": 30 }, "value": 1, "easing": "ease-out" }\n  ]\n}'} />
       <p>Easing names match the React <code>Easings</code> in kebab case, such as <code>ease-in-out-cubic</code> or <code>ease-out-back</code>.</p>
       <h3>Combine a project with React</h3><p>A React composition can include <code>{'<ProjectTimeline />'}</code>. Pass its companion JSON project when exporting so Celesta can resolve the timeline:</p>
-      <details className="doc-details"><summary>View the companion React composition</summary><DocCode label="with-project.tsx" language="tsx" code={withProject.trim()} /></details><p>Save this as <code>with-project.tsx</code> beside your JSON file, then use the combined-composition command in <a href="#export">Export a video</a>. To draw a single track instead of the whole timeline, use <code>{'<ProjectTrack id="…" />'}</code>.</p>
+      <details className="doc-details"><summary>View the companion React composition</summary><DocCode label="with-project.tsx" language="tsx" code={withProject.trim()} /></details><p>Save this as <code>with-project.tsx</code> beside your JSON file, then use the combined-composition command in <a href="/docs/export/">Export a video</a>. To draw a single track instead of the whole timeline, use <code>{'<ProjectTrack id="…" />'}</code>.</p>
     </>,
-  },
-  {
-    id: 'dialogue', title: 'Character dialogue', description: 'Portraits, subtitles, voices, and lip sync.', keywords: 'dialogue character CharacterView portrait expressions subtitles voice lip sync lipsync mouth psd pfv PSDTool voiceroid talk conversation', content: <>
+  'dialogue': <>
       <p>Dialogue scenes are built from three pieces. Each works in React and in JSON projects:</p>
       <ul>
         <li>A <strong>character</strong> defines a portrait (one image per expression, or a layered PSD), optional lip-sync mouths, and how that character’s subtitles look.</li>
@@ -284,9 +250,7 @@ export const sections: DocSection[] = [
       <p>JSON lines can lip-sync as well: add mouth-image asset ids under the portrait’s <code>lipSync</code>, and list timed shapes on the line, such as <code>{'"lipSync": [{ "time": { "value": 0, "timescale": 30 }, "shape": "a" }]'}</code>. Cue times are relative to the line’s start. For automatic timing from the recording, use React’s <code>loadLipSync()</code>.</p>
       <h3>See it with real artwork</h3><p>The repository’s <code>examples/voiceroid.celesta.json</code> is a complete JSON dialogue project with a sample portrait and voice, and <code>packages/react/examples/character-lipsync-demo.tsx</code> animates a full PSD character with automatic lip sync. On <a href={repository}>GitHub</a>, choose <strong>Code → Download ZIP</strong>, extract the archive, and open either file with <strong>File → Open…</strong>. You do not need to build the source.</p>
     </>,
-  },
-  {
-    id: 'data', title: 'Data, properties & components', description: 'Load data once, expose settings, and reuse components from JSON.', keywords: 'prepare async fetch data defineProjectProperties useProjectProperty ProjectProvider loadProject registerComponent component inspector schema', content: <>
+  'data': <>
       <h3>Load data before rendering</h3><p>Each frame is rendered synchronously, so a component cannot wait for a file or a network request. Do that work in an <code>async prepare()</code> export instead. It runs once, before the first frame, in both the preview and exports. Store the results in module-level variables, then read them while rendering:</p>
       <DocCode label="Fetch once, use on every frame" language="tsx" code={"let headlines: string[] = ['Hello from Celesta'];\n\nexport async function prepare() {\n  try {\n    const response = await fetch('https://example.com/headlines.json');\n    headlines = (await response.json()) as string[];\n  } catch (error) {\n    console.error('Using the fallback headline', error);\n  }\n}"} />
       <p>Keep a fallback value so the scene still renders offline. <code>loadLipSync()</code>, <code>loadPsdPreset()</code>, and <code>preloadMedia()</code> belong in <code>prepare()</code> for the same reason.</p>
@@ -297,14 +261,12 @@ export const sections: DocSection[] = [
       <DocCode label="Register a component" language="tsx" code={"type LowerThirdProps = { name: string; role: string };\n\nfunction LowerThird({ name, role }: LowerThirdProps) {\n  return <Text style={{ fontSize: 48 }}>{`${name} · ${role}`}</Text>;\n}\n\nregisterComponent<LowerThirdProps>('LowerThird', LowerThird, {\n  name: { type: 'string', defaultValue: 'Mira' },\n  role: { type: 'string', defaultValue: 'Host' },\n});"} />
       <p>Call <code>registerComponent()</code> at the top level of your file. The item’s <code>range</code>, <code>transform</code>, and <code>opacity</code> still come from the JSON timeline. Component props must be plain JSON values; use a <code>type</code> alias rather than an <code>interface</code> for them.</p>
     </>,
-  },
-  {
-    id: 'export', title: 'Export a video', description: 'Take your composition from the preview to an MP4.', keywords: 'mp4 H264 AAC render cli command line from to overwrite export Linux headless GPU software Vulkan lavapipe Mesa Docker container CI png frame', content: <>
+  'export': <>
       <h3>In your browser</h3><p>Open the <a href="/#playground">web editor</a>, change or open a TSX composition, and choose <strong>Export MP4</strong>. The source, preview, and export use Celesta’s React scene evaluator. Add local media files by name with <strong>Add media</strong>. The browser needs H.264 WebCodecs support; audio also needs AAC encoding. The browser preview is silent, while the exported MP4 includes constant-rate audio clips. For PSDs, project timelines, <code>prepare()</code>, third-party imports, animated audio automation, and native-renderer output, use the installed app or CLI.</p>
       <h3>From the app</h3><p>Choose <strong>Export…</strong> and select an MP4 destination. For a section of the composition, press <kbd>I</kbd> and <kbd>O</kbd> to mark the start and end. The status bar shows progress; <strong>Cancel export</strong> stops the job.</p>
       <h3>From the command line</h3><ExportCommands />
       <p>Time values accept seconds, <code>MM:SS.mmm</code>, or <code>HH:MM:SS.mmm</code>. The selected span becomes a new video starting at its own 00:00.</p>
-      <h3>On Linux without a GPU</h3><p>On Linux, the exporter renders through Vulkan. On machines without a GPU, such as CI runners and cloud containers, install Mesa’s software Vulkan driver (lavapipe), which renders on the CPU. This works with a <a href="#build-from-source">source build</a>:</p>
+      <h3>On Linux without a GPU</h3><p>On Linux, the exporter renders through Vulkan. On machines without a GPU, such as CI runners and cloud containers, install Mesa’s software Vulkan driver (lavapipe), which renders on the CPU. This works with a <a href="/docs/build-from-source/">source build</a>:</p>
       <DocCode label="Install software Vulkan" code="sudo apt-get install -y mesa-vulkan-drivers" />
       <p>Software rendering is much slower than a GPU: with 4 CPU cores, 1080p compositions render at roughly 10 to 60 frames per second, depending on the scene. Check a single frame as a PNG before exporting the whole video. From the repository root:</p>
       <DocCode label="Export one frame" code="cargo run -p celesta-exporter --release -- --react packages/react/examples/title.tsx --frame 0 frame.png" />
@@ -314,22 +276,20 @@ export const sections: DocSection[] = [
       <DocCode label="Export in a container" code={'docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" celesta-exporter --react first-scene.tsx output.mp4'} />
       <Note title="Before you render">MP4 output uses H.264 video and AAC audio. Width and height must be non-zero, even numbers. Keep every referenced local media file available during export.</Note>
     </>,
-  },
-  {
-    id: 'reference', title: 'React essentials', description: 'A compact reference for everything in @celesta/react.', keywords: 'api props Composition Rect Text Group Image Video Audio Font Sequence Series Stagger Transition Camera Line Polyline Path TextReveal useBeat useCue Character CharacterView Dialogue hooks reference', content: <>
-      <p>Import these APIs from <code>@celesta/react</code>. Random numbers, noise, and other math helpers come from <code>@celesta/math</code>; see <a href="#motion-toolkit">motion helpers</a>. Celesta’s TypeScript declarations provide the complete prop types and editor completions.</p>
+  'reference': <>
+      <p>Import these APIs from <code>@celesta/react</code>. Random numbers, noise, and other math helpers come from <code>@celesta/math</code> (see <a href="/docs/math/">its guide</a>), and syntax-highlighted code from <code>@celesta/code</code> (see <a href="/docs/code/">its guide</a>). Celesta’s TypeScript declarations provide the complete prop types and editor completions.</p>
       <Api caption="Layers" rows={[
         [<code>Composition</code>, <>Set <code>width</code>, <code>height</code>, <code>fps</code>, and <code>durationInFrames</code>. Return exactly one from your default export.</>],
         [<code>Rect</code>, <>A rectangle with <code>width</code>, <code>height</code>, and optional <code>fill</code>, <code>stroke</code>, <code>strokeWidth</code>, and <code>cornerRadius</code>.</>],
-        [<code>Text</code>, <>Text from string or number children, styled with <code>style</code> and wrapped with <code>maxWidth</code>. See <a href="#layout">Shapes, text & layout</a>.</>],
+        [<code>Text</code>, <>Text from string or number children, styled with <code>style</code> and wrapped with <code>maxWidth</code>. See <a href="/docs/text-fonts/">Text & fonts</a>.</>],
         [<code>Group</code>, <>Applies a shared position, scale, rotation, and opacity to child layers.</>],
-        [<><code>Image</code> / <code>Video</code> / <code>Audio</code></>, <>Local media through <code>src</code>. See <a href="#media">Images, video & sound</a>.</>],
-        [<code>Font</code>, <>Loads a local font file through <code>src</code> so <code>Text</code> can use its family. See <a href="#layout">Shapes, text & layout</a>.</>],
+        [<><code>Image</code> / <code>Video</code> / <code>Audio</code></>, <>Local media through <code>src</code>. See <a href="/docs/media/">Images, video & sound</a>.</>],
+        [<code>Font</code>, <>Loads a local font file through <code>src</code> so <code>Text</code> can use its family. See <a href="/docs/text-fonts/">Text & fonts</a>.</>],
       ]} />
       <Api caption="Time and motion" rows={[
         [<code>Sequence</code>, <>Places children at a frame offset with <code>from</code> and an optional <code>durationInFrames</code>.</>],
         [<code>Transition</code>, <>A fade, slide, or scale (or several at once) at the start or end of the enclosing sequence.</>],
-        [<><code>Series</code> / <code>computeSeries</code></>, <>Scenes back to back, by length. See <a href="#motion-toolkit">motion helpers</a>.</>],
+        [<><code>Series</code> / <code>computeSeries</code></>, <>Scenes back to back, by length. See <a href="/docs/motion-toolkit/">Scenes, cues & beats</a>.</>],
         [<code>Stagger</code>, <>Starts each child a fixed number of frames after the previous one.</>],
         [<code>progress</code>, <>A clamped, eased 0–1 value for a span of frames.</>],
         [<><code>useBeat()</code> / <code>beatAt</code></>, <>Beats, bars, and a pulse for a tempo in BPM.</>],
@@ -351,7 +311,7 @@ export const sections: DocSection[] = [
         [<code>loadPsdPreset</code>, <>Load visible PSD layers from a PSDTool <code>.pfv</code> favorite.</>],
       ]} />
       <Api caption="Layout, data, and tools" rows={[
-        [<><code>Center</code>, <code>SafeArea</code>, <code>Stack</code>, <code>Grid</code>, <code>Fit</code></>, <>Arrange child layers. See <a href="#layout">layout helpers</a>.</>],
+        [<><code>Center</code>, <code>SafeArea</code>, <code>Stack</code>, <code>Grid</code>, <code>Fit</code></>, <>Arrange child layers. See <a href="/docs/layout/">layout helpers</a>.</>],
         [<><code>preloadMedia</code> / <code>mediaDurationInFrames</code></>, <>Read a media file’s length and size in <code>prepare()</code>.</>],
         [<><code>loadProject</code>, <code>ProjectProvider</code>, <code>useProjectProperty</code></>, <>Read values from a JSON project.</>],
         [<><code>ProjectTimeline</code> / <code>ProjectTrack</code></>, <>Draw a companion JSON project’s timeline, or one of its tracks.</>],
@@ -359,27 +319,21 @@ export const sections: DocSection[] = [
         [<><code>DebugOverlay</code> / <code>DebugBounds</code> / <code>useIsPreview()</code></>, <>Preview-only guides that never appear in an export.</>],
       ]} />
     </>,
-  },
-  {
-    id: 'examples', title: 'Examples to build on', description: 'Complete files you can copy, run, and change.', keywords: 'examples samples inspiration title layout animation dialogue project properties', content: <>
+  'examples': <>
       <div className="doc-example-grid">
-        <a href="#react-compositions"><span>01 / REACT</span><strong>A title in motion</strong><p>Follow the complete fading-title example in this guide.</p></a>
-        <a href="#media"><span>02 / MEDIA</span><strong>Footage and sound</strong><p>Combine Image, Video, and Audio layers in one scene.</p></a>
-        <a href="#dialogue"><span>03 / DIALOGUE</span><strong>Give it a voice</strong><p>Pair a portrait, subtitles, and a voice with lip sync.</p></a>
+        <a href="/docs/react-compositions/"><span>01 / REACT</span><strong>A title in motion</strong><p>Follow the complete fading-title example in this guide.</p></a>
+        <a href="/docs/media/"><span>02 / MEDIA</span><strong>Footage and sound</strong><p>Combine Image, Video, and Audio layers in one scene.</p></a>
+        <a href="/docs/dialogue/"><span>03 / DIALOGUE</span><strong>Give it a voice</strong><p>Pair a portrait, subtitles, and a voice with lip sync.</p></a>
       </div>
       <h3>Included with the app</h3><p>Copy an example into your own project folder before editing it.</p><ul><li><strong>macOS:</strong> in Finder, right-click Celesta in Applications, choose <strong>Show Package Contents</strong>, then open <code>Contents/Resources/examples</code>.</li><li><strong>Windows:</strong> open the <code>examples</code> folder beside <code>Celesta.exe</code> in the installed or portable app folder.</li></ul>
       <p>The repository’s <code>packages/react/examples</code> directory contains more scenes covering text, animation, layout, dialogue, lip sync, and editable project properties. Download the source archive, extract it, and open a supported entry through <strong>File → Open…</strong> in the installed app; no source build is needed.</p>
       <a className="doc-text-link" href={`${repository}/tree/main/packages/react/examples`}>Browse all source examples on GitHub ↗</a>
       <p>You can also <a href="/#playground">open the web editor</a>, edit or import a self-contained <code>.tsx</code> composition, preview frames, and export MP4 directly. Download the source to keep editing it in Celesta.</p>
     </>,
-  },
-  {
-    id: 'build-from-source', title: 'Build from source', description: 'For contributors, custom builds, and Linux users.', keywords: 'developer source code clone cargo Rust FFmpeg Node pnpm codegen macOS Windows Linux Ubuntu apt pkg-config PKG_CONFIG_PATH', content: <SourceBuild />,
-  },
-  {
-    id: 'troubleshooting', title: 'Troubleshooting', description: 'Common errors and how to fix them.', keywords: 'errors missing media build FFmpeg npm typescript black blank reload limitations help lip sync font subtitle', content: <>
+  'build-from-source': <SourceBuild />,
+  'troubleshooting': <>
       <details className="doc-details" open><summary>The app cannot find its bundled runtime</summary><p>On macOS, copy the complete app into Applications before launching it. For a portable Windows build, extract the entire archive and keep <code>runtime</code> and the DLLs beside <code>Celesta.exe</code>. If files are missing, extract or install the package again.</p></details>
-      <details className="doc-details"><summary>A source build cannot find FFmpeg</summary><p>Confirm that the 8.1.x development libraries are installed, not just the executable. On macOS, set <code>PKG_CONFIG_PATH</code> in the same shell where you run Cargo. On Windows, check <code>VCPKG_ROOT</code> and the MSVC build tools. On Linux, point <code>PKG_CONFIG_PATH</code> at the FFmpeg you built, such as <code>/opt/ffmpeg8/lib/pkgconfig</code>. See <a href="#build-from-source">source-build setup</a>.</p></details>
+      <details className="doc-details"><summary>A source build cannot find FFmpeg</summary><p>Confirm that the 8.1.x development libraries are installed, not just the executable. On macOS, set <code>PKG_CONFIG_PATH</code> in the same shell where you run Cargo. On Windows, check <code>VCPKG_ROOT</code> and the MSVC build tools. On Linux, point <code>PKG_CONFIG_PATH</code> at the FFmpeg you built, such as <code>/opt/ffmpeg8/lib/pkgconfig</code>. See <a href="/docs/build-from-source/">source-build setup</a>.</p></details>
       <details className="doc-details"><summary>My media is missing</summary><p>Celesta currently supports local media files, not remote media URLs. Check the paths in your project, keep the referenced files alongside the project when sharing it, and look for missing-asset indicators in the Assets panel.</p></details>
       <details className="doc-details"><summary>The preview did not change after saving</summary><p>React compositions reload automatically. For JSON projects, use <strong>File → Reload</strong>. Make sure you saved the file you actually opened in Celesta; the app itself does not edit the source.</p></details>
       <details className="doc-details"><summary>My text uses the wrong font</summary><p><code>fontFamily</code> must match the family name of a font installed on the computer that renders the video, or of a font file loaded with <code>{'<Font>'}</code>. When it does not, Celesta falls back to another font and warns: the app lists the family with the preview’s warnings, and <code>celesta-export</code> prints a warning that names the family, weight, and text layer. Check the exact family name in your system’s font manager. To avoid installing the font on every machine that exports the project, keep the font file next to the entry and load it with <code>{'<Font>'}</code>.</p></details>
@@ -389,5 +343,4 @@ export const sections: DocSection[] = [
       <h3>Still stuck?</h3><p>Open an issue with your operating system, reproduction steps, and the exact error message. Include a small project and media you have permission to share when possible.</p>
       <a className="doc-text-link" href={`${repository}/issues`}>Report a problem on GitHub ↗</a>
     </>,
-  },
-];
+};
