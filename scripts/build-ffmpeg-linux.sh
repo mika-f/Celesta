@@ -18,7 +18,8 @@
 set -euo pipefail
 
 version="${FFMPEG_VERSION:-8.1.3}"
-prefix="${1:-/opt/ffmpeg8}"
+# Absolute, because configure and make install run from the temporary source tree.
+prefix="$(realpath -m "${1:-/opt/ffmpeg8}")"
 url="${FFMPEG_URL:-https://ffmpeg.org/releases/ffmpeg-$version.tar.xz}"
 
 work="$(mktemp -d)"

@@ -308,9 +308,9 @@ export const sections: DocSection[] = [
       <p>Software rendering is much slower than a GPU: with 4 CPU cores, 1080p compositions render at roughly 10 to 60 frames per second, depending on the scene. Check a single frame as a PNG before exporting the whole video. From the repository root:</p>
       <DocCode label="Export one frame" code="cargo run -p celesta-exporter --release -- --react packages/react/examples/title.tsx --frame 0 frame.png" />
       <p>Minimal containers often have no fonts installed, and text cannot be drawn without at least one. Install some, such as <code>fonts-dejavu-core</code> (and <code>fonts-noto-cjk</code> for Japanese), or load font files with <code>{'<Font>'}</code>.</p>
-      <p>On a software renderer, <code>--color-conversion auto</code> leaves the RGB-to-YUV conversion to the encoder. <code>--render-quality draft</code> is quicker for checking timing, but not pixels. To export in a container without building Celesta yourself, build the <a href={`${repository}/tree/main/packaging/linux`}>Linux container image</a> from the repository root, then run it from your project folder, which is mounted at <code>/work</code>:</p>
+      <p>On a software renderer, <code>--color-conversion auto</code> leaves the RGB-to-YUV conversion to the encoder. <code>--render-quality draft</code> is quicker for checking timing, but not pixels. To export in a container without building Celesta yourself, build the <a href={`${repository}/tree/main/packaging/linux`}>Linux container image</a> from the repository root, then run it from your project folder, which is mounted at <code>/work</code>. <code>--user</code> makes the output belong to you instead of root:</p>
       <DocCode label="Build the container image" code="docker build -f packaging/linux/Dockerfile -t celesta-exporter ." />
-      <DocCode label="Export in a container" code={'docker run --rm -v "$PWD:/work" celesta-exporter --react first-scene.tsx output.mp4'} />
+      <DocCode label="Export in a container" code={'docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" celesta-exporter --react first-scene.tsx output.mp4'} />
       <Note title="Before you render">MP4 output uses H.264 video and AAC audio. Width and height must be non-zero, even numbers. Keep every referenced local media file available during export.</Note>
     </>,
   },

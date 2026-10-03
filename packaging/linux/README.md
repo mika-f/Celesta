@@ -23,24 +23,24 @@ another 8.1.x release or download FFmpeg's source from a mirror, pass
 
 Mount the folder that contains your composition and its media at `/work`. The
 image's entry point is `celesta-exporter`, so the arguments are the same as in
-[Export from the command line](../../README.md#export-from-the-command-line):
+[Export from the command line](../../README.md#export-from-the-command-line).
+`--user` makes the output files belong to you instead of root:
 
 ```sh
-docker run --rm -v "$PWD:/work" celesta-exporter --react film.tsx film.mp4
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" celesta-exporter --react film.tsx film.mp4
 ```
 
 Check a single frame first; it is much faster than a full export:
 
 ```sh
-docker run --rm -v "$PWD:/work" celesta-exporter --react film.tsx --frame 0 frame.png
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/work" celesta-exporter --react film.tsx --frame 0 frame.png
 ```
 
 The image includes the DejaVu and Noto CJK fonts. To use other fonts, keep the
 font files in the mounted folder and load them with `<Font>`.
 
 Without a terminal attached, the exporter prints text progress. Add `-t` to
-`docker run` for the interactive dashboard. Files are written as root unless
-you add `--user "$(id -u):$(id -g)"`.
+`docker run` for the interactive dashboard.
 
 Software rendering is much slower than a GPU; see
 [Export without a GPU](../../README.md#export-without-a-gpu-on-linux).

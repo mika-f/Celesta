@@ -89,6 +89,8 @@ runs:
         # The prefix ends up in cached build output, so expose the version for
         # the Rust cache key (rust-cache `env-vars`).
         echo "FFMPEG_VERSION=$FFMPEG_VERSION" >> "$GITHUB_ENV"
+        # ImageOS is a runner process variable, which the env context omits.
+        echo "FFMPEG_IMAGE_OS=$ImageOS" >> "$GITHUB_ENV"
         echo "FFMPEG_PREFIX=$RUNNER_TEMP/ffmpeg-$FFMPEG_VERSION" >> "$GITHUB_ENV"
 
     - name: Restore FFmpeg build cache
@@ -97,7 +99,7 @@ runs:
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ env.FFMPEG_PREFIX }}
-        key: ffmpeg-${{ env.FFMPEG_VERSION }}-${{ env.ImageOS }}-${{ hashFiles('scripts/build-ffmpeg-linux.sh') }}
+        key: ffmpeg-${{ env.FFMPEG_VERSION }}-${{ env.FFMPEG_IMAGE_OS }}-${{ hashFiles('scripts/build-ffmpeg-linux.sh') }}
 
     - name: Build FFmpeg
       if: runner.os == 'Linux' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
@@ -110,7 +112,7 @@ runs:
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ env.FFMPEG_PREFIX }}
-        key: ffmpeg-${{ env.FFMPEG_VERSION }}-${{ env.ImageOS }}-${{ hashFiles('scripts/build-ffmpeg-linux.sh') }}
+        key: ffmpeg-${{ env.FFMPEG_VERSION }}-${{ env.FFMPEG_IMAGE_OS }}-${{ hashFiles('scripts/build-ffmpeg-linux.sh') }}
 
     - name: Use FFmpeg
       if: runner.os == 'Linux'
