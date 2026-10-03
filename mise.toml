@@ -1,0 +1,4 @@
+[tools]
+mr-boxington = "1.21.1"
+node = "26.10.0"
+rust = { version = "1.99.0", mr_boxington = true }
