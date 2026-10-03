@@ -14,8 +14,8 @@ fn main() {
 }
 
 /// With `ffmpeg[x265]` installed, the static avcodec.lib references
-/// `x265_api_get_*`, but the vcpkg lookup ffmpeg-sys-next does leaves x265's
-/// library off the link line (unlike x264's). Link it here when it is
+/// `x265_api_get_*`, but ffmpeg-sys-next's vcpkg lookup leaves x265's library
+/// off the link line (unlike x264's). Link it here when it is
 /// installed; an FFmpeg built without x265 needs nothing extra.
 fn link_vcpkg_x265() {
     println!("cargo:rerun-if-env-changed=VCPKG_ROOT");

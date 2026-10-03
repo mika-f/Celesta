@@ -267,6 +267,12 @@ fn exports_only_the_selected_range_shifted_to_zero() {
 #[test]
 fn exports_h265_tagged_hvc1_for_apple_players() {
     if !VideoCodec::H265.is_available() {
+        // CI installs x265 on every runner, so a missing encoder there is a
+        // broken setup rather than an unsupported local build.
+        assert!(
+            std::env::var_os("CELESTA_REQUIRE_H265").is_none(),
+            "CELESTA_REQUIRE_H265 is set but FFmpeg was built without libx265"
+        );
         eprintln!("skipping H.265 export test: FFmpeg was built without libx265");
         return;
     }

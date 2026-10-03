@@ -913,6 +913,17 @@ impl SelectItem for ExportCodecOption {
 
 type ExportCodecSelect = Entity<SelectState<Vec<ExportCodecOption>>>;
 
+/// The video settings an export queued from the editor encodes with: the
+/// codec picked in the title bar, otherwise the exporter's defaults.
+fn export_video_encoding(codec: Option<&ExportCodecSelect>, cx: &App) -> VideoEncoding {
+    VideoEncoding {
+        codec: codec
+            .and_then(|select| select.read(cx).selected_value().copied())
+            .unwrap_or_default(),
+        ..VideoEncoding::default()
+    }
+}
+
 /// What the export worker renders: a normal `project.json`, or a standalone
 /// React composition entry (`.tsx` preview mode). The React path has no
 /// export range (the whole composition is always rendered).
@@ -2658,10 +2669,7 @@ impl EditorView {
             asset_root: self.document.asset_root().to_owned(),
             output: output.clone(),
             range,
-            video: VideoEncoding {
-                codec: self.export_codec(cx),
-                ..VideoEncoding::default()
-            },
+            video: export_video_encoding(self.export_codec.as_ref(), cx),
             cancellation: cancellation.clone(),
         };
         self.export_path = Some(output);
@@ -2676,13 +2684,6 @@ impl EditorView {
             self.export_cancellation = None;
             self.export_error = Some(error.into());
         }
-    }
-
-    fn export_codec(&self, cx: &App) -> VideoCodec {
-        self.export_codec
-            .as_ref()
-            .and_then(|select| select.read(cx).selected_value().copied())
-            .unwrap_or_default()
     }
 
     /// Marks the current playhead frame as the export in-point, dropping a
@@ -4155,21 +4156,57 @@ fn app_menus() -> Vec<Menu> {
 mod tests {
     use super::{
         AudioCacheKey, CachedAudioDecoder, ClipKind, DiskAudioCache, EDITOR_DEMO_PROJECT,
-        ExportEvent, ExportRequest, ExportSource, ExportWorker, clip_level_envelope,
-        export_range_for, export_suggested_name, is_react_entry, level_at_time, loop_range_for,
-        map_clip_waveform, master_volume_from_drag, take_latest, waveform_peaks, waveform_segment,
+        ExportCodecOption, ExportEvent, ExportRequest, ExportSource, ExportWorker,
+        clip_level_envelope, export_range_for, export_suggested_name, export_video_encoding,
+        is_react_entry, level_at_time, loop_range_for, map_clip_waveform, master_volume_from_drag,
+        take_latest, waveform_peaks, waveform_segment,
     };
     use celesta_composition::{
         Animatable, AssetLocation, AudioClip, Rational, ResolvedAsset, Time, TimeRange,
     };
     use celesta_editor_core::ClipSummary;
-    use celesta_exporter::{ExportCancellation, VideoEncoding};
+    use celesta_exporter::{ExportCancellation, VideoCodec, VideoEncoding};
     use celesta_media::{AudioBuffer, AudioDecoder};
     use celesta_project::Project;
+    use gpui_kit::component::IndexPath;
+    use gpui_kit::component::select::SelectState;
+    use gpui_kit::{AppContext as _, TestAppContext};
     use std::fs;
     use std::path::PathBuf;
     use std::sync::mpsc;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    #[gpui_kit::test]
+    fn export_encodes_with_the_codec_picked_in_the_title_bar(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        let cx = cx.add_empty_window();
+        cx.update(|window, cx| {
+            let select = cx.new(|cx| {
+                SelectState::new(
+                    ExportCodecOption::all(),
+                    Some(IndexPath::new(0)),
+                    window,
+                    cx,
+                )
+            });
+            assert_eq!(export_video_encoding(None, cx), VideoEncoding::default());
+            assert_eq!(
+                export_video_encoding(Some(&select), cx),
+                VideoEncoding::default()
+            );
+
+            select.update(cx, |state, cx| {
+                state.set_selected_value(&VideoCodec::H265, window, cx);
+            });
+            assert_eq!(
+                export_video_encoding(Some(&select), cx),
+                VideoEncoding {
+                    codec: VideoCodec::H265,
+                    ..VideoEncoding::default()
+                }
+            );
+        });
+    }
 
     #[test]
     fn background_workers_coalesce_queued_requests() {
