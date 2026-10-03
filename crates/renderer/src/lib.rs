@@ -23,7 +23,7 @@ use cosmic_text::{
     Align, Attrs, AttrsList, Buffer, BufferLine, Color as CosmicColor, Family, FontSystem, Metrics,
     Shaping, SwashCache, Weight, Wrap,
 };
-use unicode_linebreak::BreakOpportunity;
+use unicode_linebreak::{BreakClass, BreakOpportunity, break_property};
 use unicode_properties::{EmojiStatus, GeneralCategory, UnicodeEmoji, UnicodeGeneralCategory};
 use unicode_segmentation::UnicodeSegmentation;
 pub mod image_source;
@@ -671,27 +671,38 @@ impl TextRasterizer {
             add_emoji_spans(line);
         }
 
-        // Without a width nothing wraps, so phrases need no joining.
+        // Without a width nothing wraps, so phrases need no joining; nor do
+        // lines that could only break where a phrase ends anyway.
         if style.line_break == Some(LineBreak::Phrase)
             && let Some(width) = width
+            && buffer
+                .lines
+                .iter()
+                .any(|line| join_phrases(line.text(), |_| true) != line.text())
         {
             // Lay the lines out unwrapped first, to see how wide each
             // phrase is: one wider than the line is left to wrap as
-            // `normal` text does.
+            // `normal` text does. The lines' shaping is kept for the
+            // wrapped layout, except for those that get joiners.
             buffer.set_size(&mut self.font_system, None, None);
             buffer.shape_until_scroll(&mut self.font_system, false);
             let mut glyphs = vec![Vec::new(); buffer.lines.len()];
             for run in buffer.layout_runs() {
                 glyphs[run.line_i].extend(run.glyphs.iter().map(|glyph| (glyph.start, glyph.w)));
             }
-            for (line, glyphs) in buffer.lines.iter_mut().zip(glyphs) {
+            for (line, mut glyphs) in buffer.lines.iter_mut().zip(glyphs) {
+                glyphs.sort_by_key(|&(start, _)| start);
+                // `advances[i]` is the width of the line's first `i` glyphs.
+                let advances: Vec<f32> = std::iter::once(0.0)
+                    .chain(glyphs.iter().scan(0.0, |advance, &(_, width)| {
+                        *advance += width;
+                        Some(*advance)
+                    }))
+                    .collect();
+                let advance_to =
+                    |offset| advances[glyphs.partition_point(|&(start, _)| start < offset)];
                 let joined = join_phrases(line.text(), |phrase| {
-                    let phrase_width: f32 = glyphs
-                        .iter()
-                        .filter(|(start, _)| phrase.contains(start))
-                        .map(|(_, width)| width)
-                        .sum();
-                    phrase_width <= width
+                    advance_to(phrase.end) - advance_to(phrase.start) <= width
                 });
                 if joined != line.text() {
                     let ending = line.ending();
@@ -996,8 +1007,9 @@ const WORD_JOINER: char = '\u{2060}';
 /// `line` (one line of text, without its line ending) with a word joiner
 /// wherever it could break inside one of its BudouX phrases that
 /// `keep_together` accepts (given the phrase's byte range), so cosmic-text
-/// wraps only between those phrases. A break after whitespace stays, as
-/// BudouX's own markup (`word-break: keep-all`) keeps it.
+/// wraps only between those phrases. As with BudouX's own markup (CSS
+/// `word-break: keep-all`), only breaks between two letters are removed:
+/// those after a space, a zero width space, or a (soft) hyphen stay.
 fn join_phrases(line: &str, keep_together: impl Fn(std::ops::Range<usize>) -> bool) -> String {
     let boundaries = celesta_budoux::Parser::japanese().parse_boundaries(line);
     let phrases: Vec<std::ops::Range<usize>> = std::iter::once(0)
@@ -1015,7 +1027,7 @@ fn join_phrases(line: &str, keep_together: impl Fn(std::ops::Range<usize>) -> bo
         let inside_a_phrase = phrase > 0 && offset < phrases[phrase - 1].end;
         if opportunity == BreakOpportunity::Allowed
             && inside_a_phrase
-            && !line[..offset].ends_with(char::is_whitespace)
+            && !is_explicit_break(&line[..offset], &line[offset..])
         {
             joined.push_str(&line[copied..offset]);
             joined.push(WORD_JOINER);
@@ -1024,6 +1036,28 @@ fn join_phrases(line: &str, keep_together: impl Fn(std::ops::Range<usize>) -> bo
     }
     joined.push_str(&line[copied..]);
     joined
+}
+
+/// Whether a line break between `before` and `after` is one the text asks
+/// for (UAX #14 classes SP, ZW, BA, HY, B2 before it, or BB, B2 after),
+/// rather than one between two letters.
+fn is_explicit_break(before: &str, after: &str) -> bool {
+    let class = |character: char| break_property(u32::from(character));
+    before.chars().next_back().is_some_and(|character| {
+        matches!(
+            class(character),
+            BreakClass::Space
+                | BreakClass::ZeroWidthSpace
+                | BreakClass::After
+                | BreakClass::Hyphen
+                | BreakClass::BeforeAndAfter
+        )
+    }) || after.chars().next().is_some_and(|character| {
+        matches!(
+            class(character),
+            BreakClass::Before | BreakClass::BeforeAndAfter
+        )
+    })
 }
 
 /// The byte ranges of `text`'s graphemes that are meant to be drawn as
@@ -3382,6 +3416,19 @@ mod tests {
             join_phrases("Google の使命は、", |phrase| phrase.start == 0),
             "Google の使命は、"
         );
+    }
+
+    #[test]
+    fn keeps_breaks_the_text_asks_for_inside_a_phrase() {
+        // A zero width space, a soft hyphen, and an ideographic space.
+        let joined = join_phrases("世界\u{200B}中の情\u{00AD}報を整\u{3000}理し", |_| true);
+        assert!(joined.contains(WORD_JOINER), "{joined:?}");
+        for character in ['\u{200B}', '\u{00AD}', '\u{3000}'] {
+            assert!(
+                !joined.contains(&format!("{character}{WORD_JOINER}")),
+                "{joined:?}"
+            );
+        }
     }
 
     /// Each line of `text` as `measure` lays it out with `line_break`.

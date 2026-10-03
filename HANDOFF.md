@@ -113,10 +113,13 @@ together, so `フレーム` or a trailing `の。` is not split across lines.
   renderer (which rasterizes text with `TextRasterizer`), `measureText()`
   through the React bridge, and `.celesta.json` text all wrap alike.
   `join_phrases` inserts U+2060 WORD JOINER at each UAX #14 break
-  opportunity (`unicode-linebreak`, as cosmic-text uses) inside a phrase,
-  except after whitespace, so Latin words keep their spacing breaks and are
-  not split into shaping runs. With a width, the lines are first shaped
-  unwrapped to measure each phrase; one wider than the line gets no joiners
+  opportunity (`unicode-linebreak`, as cosmic-text uses) between two
+  letters inside a phrase; breaks after a space, ZWSP, or (soft) hyphen stay
+  (`is_explicit_break`, like CSS `word-break: keep-all`), so Latin words
+  keep their spacing breaks and are not split into shaping runs. With a
+  width, and only when some line would get a joiner, the lines are first
+  laid out unwrapped to measure each phrase (prefix sums of glyph
+  advances); one wider than the line gets no joiners
   and wraps as `normal` text (UAX #14, so `、`/`。` still never start a
   line). `Wrap::WordOrGlyph` was tried and rejected: its glyph fallback
   left `。` alone on a line. Without a width nothing is joined.

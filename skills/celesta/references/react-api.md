@@ -257,7 +257,8 @@ type TextStyle = {
   wraps inside itself as `'normal'` text would. `measureText()` and `useTextMetrics()` lay out the same
   way, given the same style. It works the same for `<Text>`, character
   subtitles (`subtitle={{ maxWidth, style: { lineBreak: 'phrase' } }}`),
-  and `.celesta.json` text styles.
+  and `.celesta.json` text styles. The browser canvas renderer
+  (`@celesta/web`) ignores it and wraps only at whitespace.
 
 - Weights match within the family first: when `fontFamily` has no face at
   the requested `fontWeight`, its nearest weight is used, picked as CSS font

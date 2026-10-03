@@ -36,7 +36,9 @@ const TW4: usize = 12;
 /// A BudouX model: each feature's weight for the characters around a
 /// position.
 pub struct Parser {
-    weights: [HashMap<String, i64>; 13],
+    /// `i32`, so neither the model's total nor a position's score can
+    /// overflow the `i64` they are summed in.
+    weights: [HashMap<String, i32>; 13],
     /// Twice upstream's base score (minus half the sum of every weight), so
     /// the score stays an integer.
     base_score: i64,
@@ -44,12 +46,17 @@ pub struct Parser {
 
 impl Parser {
     /// Reads a model in upstream's JSON format:
-    /// `{ "UW1": { "あ": 123, … }, … }`.
+    /// `{ "UW1": { "あ": 123, … }, … }`. Weights must fit in an `i32`, as
+    /// upstream's models' do.
     pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
-        let mut model: HashMap<String, HashMap<String, i64>> = serde_json::from_str(json)?;
+        let mut model: HashMap<String, HashMap<String, i32>> = serde_json::from_str(json)?;
         // Every group counts towards the base score, including any this
         // parser does not read, as upstream sums the whole model.
-        let total: i64 = model.values().flat_map(HashMap::values).sum();
+        let total: i64 = model
+            .values()
+            .flat_map(HashMap::values)
+            .map(|&weight| i64::from(weight))
+            .sum();
         let weights = FEATURES.map(|feature| model.remove(feature).unwrap_or_default());
         Ok(Self {
             weights,
@@ -93,8 +100,7 @@ impl Parser {
         let weight = |feature: usize, from: usize, to: usize| {
             self.weights[feature]
                 .get(&sentence[offsets[from]..offsets[to]])
-                .copied()
-                .unwrap_or(0)
+                .map_or(0, |&weight| i64::from(weight))
         };
 
         let mut boundaries = Vec::new();
@@ -161,6 +167,11 @@ mod tests {
     fn splits_even_if_the_first_character_is_a_phrase_by_itself() {
         let parser = Parser::from_json(r#"{ "UW4": { "b": 10000 } }"#).unwrap();
         assert_eq!(parser.parse("abcdeabcd"), ["a", "bcdea", "bcd"]);
+    }
+
+    #[test]
+    fn rejects_weights_outside_i32() {
+        assert!(Parser::from_json(r#"{ "UW4": { "a": 9223372036854775807 } }"#).is_err());
     }
 
     #[test]
