@@ -6,6 +6,7 @@ use clap::builder::{PossibleValuesParser, TypedValueParser};
 use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser, ValueEnum};
 
+mod inspect;
 mod progress;
 
 use celesta_composition::Time;
@@ -38,7 +39,25 @@ struct Cli {
     /// The project (.celesta.json), or with --react the entry (.tsx), to export.
     source: PathBuf,
     /// The .mp4 file to write, or the .png file for frame exports.
-    output: PathBuf,
+    #[arg(required_unless_present = "inspect", conflicts_with = "inspect")]
+    output: Option<PathBuf>,
+    /// Inspect a React entry over stdin/stdout JSON lines without rendering pixels.
+    #[arg(
+        long,
+        requires = "react",
+        conflicts_with_all = [
+            "project", "overwrite", "from", "to", "frames", "every",
+            "contact_sheet", "columns", "tile_width", "output_format",
+            "preset", "crf", "color_conversion", "render_quality", "no_ui"
+        ]
+    )]
+    inspect: bool,
+    /// React CLI script for inspection (defaults to the bundled runtime).
+    #[arg(long, requires = "inspect")]
+    runtime: Option<PathBuf>,
+    /// Node.js executable for inspection (defaults to the bundled runtime).
+    #[arg(long, requires = "inspect")]
+    node: Option<PathBuf>,
     /// Export a React composition instead of a JSON project.
     #[arg(long)]
     react: bool,
@@ -149,6 +168,20 @@ fn non_zero(value: u32) -> NonZeroU32 {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    if cli.inspect {
+        let runtime = default_react_runtime();
+        return match inspect::run(
+            &cli.source,
+            cli.node.as_deref().unwrap_or(&runtime.node),
+            cli.runtime.as_deref().unwrap_or(&runtime.cli_script),
+        ) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("Celesta inspection: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     let png = png_output(&cli).unwrap_or_else(|error| {
         Cli::command()
             .error(ErrorKind::ArgumentConflict, error)
@@ -201,6 +234,7 @@ fn run(cli: Cli, png: bool, range: Option<ExportRange>) -> Result<(), String> {
         no_ui,
         ..
     } = cli;
+    let output = output.ok_or("missing output path")?;
     let video = VideoEncoding {
         preset,
         crf,
