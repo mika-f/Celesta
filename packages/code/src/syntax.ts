@@ -8,7 +8,7 @@ export type CodeLanguage = 'tsx' | 'ts' | 'json' | 'bash' | 'text';
 export interface CodeToken {
   /** Original source, including whitespace. */
   text: string;
-  /** twinkleplop token name; unclassified text is `plain`. */
+  /** twinkleplop token name; JSON keys are `property`, unclassified text is `plain`. */
   type: string;
   /** Start (inclusive) and end (exclusive), in UTF-16 source offsets. */
   start: number;
@@ -40,6 +40,23 @@ export function tokenizeCode(source: string, language: CodeLanguage = 'text'): C
     offset = end;
   }
   append('plain', offset, source.length);
+  if (language === 'json') {
+    for (let start = 0; start < result.length; start++) {
+      if (result[start].type !== 'string' || !result[start].text.startsWith('"')) continue;
+      // Escapes split a JSON string into multiple tokens. Color the entire key,
+      // including those fragments, after identifying its closing quote and colon.
+      let end = start + 1;
+      while (end < result.length && (result[end].type === 'string' || result[end].type === 'string_escape')) end++;
+      const last = result[end - 1];
+      let next = end;
+      while (next < result.length && /^[ \t\r\n]*$/.test(result[next].text)) next++;
+      if (last.type === 'string' && last.text.endsWith('"') && last.end > result[start].start + 1
+        && result[next]?.text.startsWith(':')) {
+        for (let i = start; i < end; i++) result[i].type = 'property';
+      }
+      start = end - 1;
+    }
+  }
   return result;
 }
 

@@ -15,7 +15,7 @@ function CodeDemo() {
     line: typedLines.length, column: Array.from(typedLines[typedLines.length - 1]).length + 1,
   }, style);
   return <Group x={64} y={64}>
-    <Code language="tsx" style={style} visibleCharacters={length} highlightLines={[4]}>{source}</Code>
+    <Code language="tsx" style={style} visibleCharacters={length} highlightLines={[4]} highlightWidth={1152}>{source}</Code>
     {caretVisible && <Rect x={caret.x} y={caret.y} width={2} height={caret.lineHeight} fill="#a68bbf" />}
   </Group>;
 }

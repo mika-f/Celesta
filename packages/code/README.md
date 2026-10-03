@@ -23,6 +23,24 @@ workspace; it has not been published to npm. It depends on the matching
 optional package from the composition's dependencies while sharing its own
 React and Celesta runtime instances.
 
+Repository compositions under `examples/<name>` are outside the pnpm
+workspace. To use `@celesta/code` there, add this dependency to the example's
+own `package.json` and run `pnpm install --ignore-workspace` in that directory
+after building the package:
+
+```json
+{
+  "dependencies": {
+    "@celesta/code": "link:../../packages/code"
+  }
+}
+```
+
+Other external packages also need dependencies in the composition's project.
+Official package resolution, example dependency setup, and a possible
+`celesta-editor --init` command are tracked in
+[#107](https://github.com/mika-f/Celesta/issues/107).
+
 The browser playground currently only accepts `@celesta/react` and `react`
 imports, and does not support this optional package. Browser integration is
 tracked in [#100](https://github.com/mika-f/Celesta/issues/100).
@@ -46,6 +64,7 @@ function Example() {
       theme={codeThemes.dark}
       visibleCharacters={length}
       highlightLines={[1]}
+      highlightWidth={1152}
     >
       {source}
     </Code>
@@ -68,6 +87,9 @@ fallback. The example loads the repository's IBM Plex Mono font explicitly.
   and the default `Infinity` shows everything.
 - `highlightLines` uses one-based line numbers. Bands occupy an entire line
   box and the full source width, even when only a prefix is visible.
+- `highlightWidth` overrides the band width in pixels, for example to reach
+  the edge of a surrounding panel. It must be finite and non-negative; zero
+  gives the band no width. It does not change text positioning or wrapping.
 - `tabSize` defaults to 2. Tabs advance to the next tab stop, counted in code
   points rather than pixels; LF, CRLF, and CR are supported as line separators.
 - Group props are supported: `x`/`y`, `scale`/`scaleX`/`scaleY`, `rotation`,
@@ -97,7 +119,9 @@ const theme = {
 ```
 
 Token names are twinkleplop's names, such as `keyword`, `string`, `comment`,
-`number`, `tag_name`, and `attr_name`. Unspecified names use `foreground`.
+`number`, `tag_name`, and `attr_name`. JSON object keys use `property`, including
+their escaped fragments; string values retain `string` and `string_escape`.
+Unspecified names use `foreground`.
 
 ## Carets and annotations
 
@@ -119,6 +143,23 @@ return <Group x={64} y={64}>
 The hook returns `x`, the line box's top `y`, the absolute `baseline` within
 Code, and `lineHeight`, all relative to Code's top-left before group transforms.
 See `examples/highlight.tsx` for a moving caret driven by `useTypewriter()`.
+
+`codeCharacterCount(source, { line, column })` converts the same one-based
+source position into the number of original code points before that position.
+It is a plain function and can be used outside React. For example, to reveal
+the first three lines when the source has a fourth line:
+
+```tsx
+import { Code, codeCharacterCount } from '@celesta/code';
+
+const count = codeCharacterCount(source, { line: 4, column: 1 });
+return <Code language="ts" visibleCharacters={count}>{source}</Code>;
+```
+
+Tabs and emoji each count once, LF and CR each count once, and CRLF counts
+twice. A position at line end excludes its following newline. To include
+that newline, use column 1 of the next line. Empty sources and trailing empty
+lines accept column 1; invalid positions throw as they do in `useCodePoint()`.
 
 `tokenizeCode(source, language?)` also exposes the original token text, type,
 and UTF-16 `[start, end)` offsets for custom rendering or analysis. It preserves

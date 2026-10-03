@@ -10,7 +10,7 @@ import React from 'react';
 import { Composition, Font, Rect, useCurrentFrame } from '@celesta/react';
 import { mount } from '../../react/dist/render.js';
 import { setTextMeasurer } from '../../react/dist/text-measure.js';
-import { Code, codeThemes, tokenizeCode, useCodePoint } from '../dist/index.js';
+import { Code, codeCharacterCount, codeThemes, tokenizeCode, useCodePoint } from '../dist/index.js';
 
 function metrics(request) {
   const lines = request.text.split('\n');
@@ -136,6 +136,79 @@ test('code-point positions use original columns, tab stops and CRLF lines', () =
   assert.deepEqual([second.x, second.y, second.content.height], [50, 70, 40]);
 });
 
+test('highlightWidth spans a panel independently of text width and visibility', () => {
+  const requests = [];
+  setTextMeasurer(async request => metrics(request), request => {
+    requests.push(request);
+    return metrics(request);
+  });
+  function Root() {
+    const frame = useCurrentFrame();
+    return React.createElement(Composition, { width: 800, height: 300, fps: 30, durationInFrames: 4 },
+      React.createElement(Code, {
+        x: 20, y: 30, children: 'abc\nx', highlightLines: [1, 2],
+        highlightWidth: [undefined, 200, 0, 500][frame],
+        visibleCharacters: frame === 1 ? 1 : Infinity,
+      }));
+  }
+  const mounted = mount(Root);
+  const first = layers(frameAt(mounted, 0));
+  assert.deepEqual(first.filter(layer => layer.content.type === 'rect').map(layer => layer.content.width), [30, 30]);
+  const measurements = requests.length;
+  for (const [frame, width] of [[1, 200], [2, 0], [3, 500]]) {
+    const scene = frameAt(mounted, frame);
+    const rects = layers(scene).filter(layer => layer.content.type === 'rect');
+    assert.deepEqual(rects.map(layer => [layer.x, layer.y, layer.content.width]), [[20, 30, width], [20, 66, width]]);
+    assert.equal(renderedText(scene, 20), frame === 1 ? 'a' : 'abc\nx');
+  }
+  assert.equal(requests.length, measurements, 'band width changes must reuse text measurements');
+});
+
+test('JSON property keys include escaped fragments and differ from string values', () => {
+  const keys = ['id', 'a"b\\c', 'nested', '', 'array'];
+  const source = `{ "id": "broll: value", ${JSON.stringify(keys[1])} \r\n : ${JSON.stringify('value\ntext')}, "nested": { "": "😀" }, "array": ["item"] }`;
+  const tokens = tokenizeCode(source, 'json');
+  assert.equal(tokens.map(token => token.text).join(''), source);
+  for (const key of keys) {
+    const text = JSON.stringify(key);
+    const start = source.indexOf(text);
+    const fragments = tokens.filter(token => token.start >= start && token.end <= start + text.length);
+    assert.equal(fragments.map(token => token.text).join(''), text);
+    assert.ok(fragments.every(token => token.type === 'property'), text);
+  }
+  for (const value of ['"broll: value"', '"😀"', '"item"']) {
+    assert.equal(tokens.find(token => token.text === value).type, 'string', value);
+  }
+  assert.ok(tokens.some(token => token.type === 'string_escape' && token.text === '\\n'));
+  assert.ok(tokenizeCode('"incomplete', 'json').every(token => token.type !== 'property'));
+  setTextMeasurer(async request => metrics(request), metrics);
+  const Root = () => React.createElement(Composition, { width: 800, height: 300, fps: 30, durationInFrames: 1 },
+    React.createElement(Code, { language: 'json', children: source }));
+  const textLayers = layers(frameAt(mount(Root), 0)).filter(layer => layer.content.type === 'text');
+  assert.ok(textLayers.some(layer => layer.content.text === JSON.stringify(keys[1]) && layer.content.style.fill.color === codeThemes.dark.tokens.property));
+  assert.ok(textLayers.some(layer => layer.content.text === '"broll: value"' && layer.content.style.fill.color === codeThemes.dark.tokens.string));
+});
+
+test('codeCharacterCount converts source positions into visible code points', () => {
+  const source = '😀\tX\r\n\tあ\nZ\r';
+  const positions = [
+    [1, 1, 0], [1, 2, 1], [1, 3, 2], [1, 4, 3],
+    [2, 1, 5], [2, 3, 7], [3, 1, 8], [3, 2, 9], [4, 1, 10],
+  ];
+  for (const [line, column, expected] of positions) {
+    assert.equal(codeCharacterCount(source, { line, column }), expected);
+  }
+  assert.equal(codeCharacterCount('', { line: 1, column: 1 }), 0);
+  assert.equal(codeCharacterCount('é', { line: 1, column: 3 }), 2);
+  setTextMeasurer(async request => metrics(request), metrics);
+  const Root = () => React.createElement(Composition, { width: 800, height: 300, fps: 30, durationInFrames: 1 },
+    React.createElement(Code, {
+      children: source, tabSize: 4,
+      visibleCharacters: codeCharacterCount(source, { line: 2, column: 3 }),
+    }));
+  assert.equal(renderedText(frameAt(mount(Root), 0)), '😀   X\n    あ');
+});
+
 test('source and grammar changes refresh colors and geometry; unknown theme tokens use foreground', () => {
   setTextMeasurer(async request => metrics(request), metrics);
   const theme = { foreground: '#abcdef', highlightLine: '#112233', tokens: { keyword: '#ff0000' } };
@@ -168,8 +241,18 @@ test('invalid layout inputs fail before rendering', () => {
   }
   assert.throws(() => Code({ children: '', style: { align: 'center' } }), /left alignment/);
   assert.throws(() => Code({ children: '', visibleCharacters: NaN }), /visibleCharacters/);
-  assert.throws(() => useCodePoint('abc', { line: 0, column: 1 }), /line is out of range/);
-  assert.throws(() => useCodePoint('abc', { line: 1, column: 5 }), /column is out of range/);
+  for (const highlightWidth of [-1, Infinity, NaN, '100']) {
+    assert.throws(() => Code({ children: '', highlightWidth }), /highlightWidth/);
+  }
+  for (const convert of [codeCharacterCount, useCodePoint]) {
+    assert.throws(() => convert(null, { line: 1, column: 1 }), /source must be a string/);
+    for (const line of [0, -1, 2, 1.5, Infinity, NaN]) {
+      assert.throws(() => convert('abc', { line, column: 1 }), /line is out of range/);
+    }
+    for (const column of [0, -1, 5, 1.5, Infinity, NaN]) {
+      assert.throws(() => convert('abc', { line: 1, column }), /column is out of range/);
+    }
+  }
 });
 
 test('standalone optional package bundles through the CLI and shares the runtime with useTypewriter', { timeout: 15000 }, async t => {

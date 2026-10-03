@@ -45,8 +45,10 @@ export interface CodeProps extends CommonProps {
   theme?: CodeTheme;
   /** Code points from the original source, including newlines and tabs. */
   visibleCharacters?: number;
-  /** One-based line numbers. Bands span the full source width during typing. */
+  /** One-based line numbers. Bands stay at full width during typing. */
   highlightLines?: readonly number[];
+  /** Line highlight width in pixels. Defaults to the full source width. */
+  highlightWidth?: number;
   /** Width of a tab stop in code points. Defaults to 2. */
   tabSize?: number;
 }
@@ -79,10 +81,13 @@ function TokenRun({ run, visible, style, color, tabSize }: {
 /** Syntax-highlighted code built from Celesta's Text and Rect primitives. */
 export function Code({
   children, language = 'text', style, theme = codeThemes.dark,
-  visibleCharacters = Infinity, highlightLines = [], tabSize = 2, ...groupProps
+  visibleCharacters = Infinity, highlightLines = [], highlightWidth, tabSize = 2, ...groupProps
 }: CodeProps): React.ReactElement {
   validateTabSize(tabSize);
   if (typeof visibleCharacters !== 'number' || Number.isNaN(visibleCharacters)) throw new Error('Code visibleCharacters must be a number');
+  if (highlightWidth !== undefined && (!Number.isFinite(highlightWidth) || highlightWidth < 0)) {
+    throw new Error('Code highlightWidth must be a finite non-negative number');
+  }
   const resolvedStyle = codeStyle(style);
   const tokens = React.useMemo(() => tokenizeCode(children, language), [children, language]);
   const lines = React.useMemo(() => codeLines(tokens, tabSize), [tokens, tabSize]);
@@ -109,7 +114,7 @@ export function Code({
   return React.createElement(Group, groupProps, coloredLines.map((runs, index) => React.createElement(
     Group, { key: index, y: index * lineHeight },
     highlighted.has(index + 1) ? React.createElement(Rect, {
-      width: metrics.width, height: lineHeight, fill: theme.highlightLine,
+      width: highlightWidth ?? metrics.width, height: lineHeight, fill: theme.highlightLine,
     }) : null,
     React.createElement(Group, { y: baseline }, runs.map(run => React.createElement(TokenRun, {
       key: run.start, run, visible, style: resolvedStyle, tabSize,
@@ -132,17 +137,30 @@ export interface CodePoint {
   lineHeight: number;
 }
 
+function codePositionParts(source: string, { line, column }: CodePosition) {
+  if (typeof source !== 'string') throw new Error('Code source must be a string');
+  // Keep separators so CRLF still counts as two original source code points.
+  const parts = source.split(/(\r\n|\r|\n)/);
+  const index = (line - 1) * 2;
+  if (!Number.isSafeInteger(line) || line < 1 || index >= parts.length) throw new Error('Code line is out of range');
+  const characters = Array.from(parts[index]);
+  if (!Number.isSafeInteger(column) || column < 1 || column > characters.length + 1) throw new Error('Code column is out of range');
+  return { parts, index, characters };
+}
+
+/** Original source code points before a position, for Code.visibleCharacters. */
+export function codeCharacterCount(source: string, position: CodePosition): number {
+  const { parts, index } = codePositionParts(source, position);
+  return Array.from(parts.slice(0, index).join('')).length + position.column - 1;
+}
+
 /** Measures a caret/annotation position using the same style and tabs as Code. */
 export function useCodePoint(
   source: string, position: CodePosition, style?: TextStyle, tabSize = 2,
 ): CodePoint {
-  if (typeof source !== 'string') throw new Error('Code source must be a string');
   validateTabSize(tabSize);
-  const lines = source.split(/\r\n|\r|\n/);
+  const { characters } = codePositionParts(source, position);
   const { line, column } = position;
-  if (!Number.isSafeInteger(line) || line < 1 || line > lines.length) throw new Error('Code line is out of range');
-  const characters = Array.from(lines[line - 1]);
-  if (!Number.isSafeInteger(column) || column < 1 || column > characters.length + 1) throw new Error('Code column is out of range');
   const resolvedStyle = codeStyle(style);
   const prefix = expandTabs(characters.slice(0, column - 1).join(''), tabSize);
   const { width } = useTextMetrics(prefix, resolvedStyle);
