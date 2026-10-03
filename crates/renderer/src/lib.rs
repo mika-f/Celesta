@@ -20,8 +20,8 @@ use celesta_media::{MediaError, VideoFrameDecoder};
 use celesta_remote::{RemoteAssetError, resolve_asset_path};
 use cosmic_text::fontdb;
 use cosmic_text::{
-    Align, Attrs, AttrsList, Buffer, BufferLine, Color as CosmicColor, Family, FontSystem, Metrics,
-    Shaping, SwashCache, Weight, Wrap,
+    Align, Attrs, AttrsList, Buffer, BufferLine, Color as CosmicColor, Family, FontSystem,
+    LineIter, Metrics, Shaping, SwashCache, Weight, Wrap,
 };
 use unicode_linebreak::{BreakClass, BreakOpportunity, break_property};
 use unicode_properties::{EmojiStatus, GeneralCategory, UnicodeEmoji, UnicodeGeneralCategory};
@@ -614,6 +614,28 @@ impl TextRasterizer {
             TextAlign::Center => Align::Center,
             TextAlign::Right => Align::Right,
         });
+        // `lineBreak: phrase` joins every phrase segment before the text is
+        // shaped, so the joined text, as it is laid out, is shaped once. Each
+        // line's original text and segments are kept to measure them below.
+        // Without a width nothing wraps, so nothing is joined.
+        let mut phrase_lines: Vec<(&str, Vec<PhraseSegment>)> = Vec::new();
+        let joined;
+        let text = if style.line_break == Some(LineBreak::Phrase) && width.is_some() {
+            let mut joined_text = String::with_capacity(text.len() * 2);
+            // The lines `Buffer::set_text` makes.
+            for (range, ending) in LineIter::new(text) {
+                let line = &text[range];
+                let segments = phrase_segments(line);
+                let joiners = segments.iter().flat_map(|segment| &segment.joiners);
+                joined_text.push_str(&insert_joiners(line, joiners.copied()));
+                joined_text.push_str(ending.as_str());
+                phrase_lines.push((line, segments));
+            }
+            joined = joined_text;
+            joined.as_str()
+        } else {
+            text
+        };
         // cosmic-text falls back per character to the first font with a
         // glyph, trying the color emoji font only after text fonts, so an
         // emoji that a text font also has (❤️, a keycap, a flag's letters)
@@ -646,84 +668,59 @@ impl TextRasterizer {
                 .family(Family::Name(family))
                 .weight(Weight(weight))
         });
+        // A word joiner draws nothing, so it gets no letter spacing either.
+        // Letter spacing does not split a shaping run, so the span leaves the
+        // shaping as it is.
+        let joiner_attrs = style
+            .letter_spacing
+            .map(|_| attrs.clone().letter_spacing(0.0));
         // Added to the lines `set_text` made rather than passed to
         // `set_rich_text`, which splits lines differently (dropping the
         // empty line after a trailing newline).
-        let add_emoji_spans = |line: &mut BufferLine| {
-            let Some(emoji_attrs) = &emoji_attrs else {
-                return;
-            };
-            let spans = emoji_presentation_spans(line.text());
+        let add_spans = |line: &mut BufferLine| {
+            let mut spans: Vec<(std::ops::Range<usize>, &Attrs)> = Vec::new();
+            if let Some(emoji_attrs) = &emoji_attrs {
+                for range in emoji_presentation_spans(line.text()) {
+                    spans.push((range, emoji_attrs));
+                }
+            }
+            if let Some(joiner_attrs) = &joiner_attrs {
+                for (start, joiner) in line.text().match_indices(WORD_JOINER) {
+                    spans.push((start..start + joiner.len(), joiner_attrs));
+                }
+            }
             if spans.is_empty() {
                 return;
             }
             let mut attrs_list = line.attrs_list().clone();
-            for range in spans {
-                attrs_list.add_span(range, emoji_attrs);
+            for (range, attrs) in spans {
+                attrs_list.add_span(range, attrs);
             }
             line.set_attrs_list(attrs_list);
         };
         for line in &mut buffer.lines {
-            add_emoji_spans(line);
+            add_spans(line);
         }
 
-        // Without a width nothing wraps, so phrases need no joining; nor do
-        // lines that could only break where a phrase ends anyway.
-        let segments: Vec<Vec<PhraseSegment>> =
-            if style.line_break == Some(LineBreak::Phrase) && width.is_some() {
-                buffer
-                    .lines
-                    .iter()
-                    .map(|line| phrase_segments(line.text()))
-                    .collect()
-            } else {
-                Vec::new()
-            };
         if let Some(width) = width
-            && segments.iter().any(|segments| !segments.is_empty())
+            && phrase_lines
+                .iter()
+                .any(|(_, segments)| !segments.is_empty())
         {
-            // A word joiner draws nothing, so it gets no letter spacing
-            // either. Letter spacing does not split a shaping run, so the
-            // span leaves the shaping as it is.
-            let joiner_attrs = attrs.clone().letter_spacing(0.0);
-            let set_line_text = |line: &mut BufferLine, text: &str| {
-                let mut attrs_list = AttrsList::new(&attrs);
-                for (start, joiner) in text.match_indices(WORD_JOINER) {
-                    attrs_list.add_span(start..start + joiner.len(), &joiner_attrs);
-                }
-                let ending = line.ending();
-                line.set_text(text, ending, attrs_list);
-                line.set_align(alignment);
-                add_emoji_spans(line);
-            };
-            // Join every segment and lay the lines out unwrapped, to see
-            // how wide each segment is as the joined text is shaped:
-            // joining makes a phrase one word, which can change its
-            // kerning and fallback fonts. A segment wider than the line
-            // loses its joiners and wraps as `normal` text does. The
-            // shaping is kept for the wrapped layout, except on lines
-            // whose joiners change.
-            let mut originals = Vec::with_capacity(buffer.lines.len());
-            for (line, segments) in buffer.lines.iter_mut().zip(&segments) {
-                let original = line.text().to_owned();
-                if !segments.is_empty() {
-                    let joiners = segments.iter().flat_map(|segment| &segment.joiners);
-                    set_line_text(line, &insert_joiners(&original, joiners.copied()));
-                }
-                originals.push(original);
-            }
+            // Lay the joined lines out unwrapped, to see how wide each
+            // segment is as it is shaped: joining makes a phrase one word,
+            // which can change its kerning and fallback fonts. A segment
+            // wider than the line loses its joiners and wraps as `normal`
+            // text does. Laying out again keeps the shaping, so only lines
+            // whose joiners change are shaped again.
             buffer.set_size(&mut self.font_system, None, None);
             buffer.shape_until_scroll(&mut self.font_system, false);
             let mut glyphs = vec![Vec::new(); buffer.lines.len()];
             for run in buffer.layout_runs() {
                 glyphs[run.line_i].extend(run.glyphs.iter().map(|glyph| (glyph.start, glyph.w)));
             }
-            for (((line, segments), original), mut glyphs) in buffer
-                .lines
-                .iter_mut()
-                .zip(&segments)
-                .zip(&originals)
-                .zip(glyphs)
+            for ((line, (original, segments)), mut glyphs) in
+                buffer.lines.iter_mut().zip(&phrase_lines).zip(glyphs)
             {
                 if segments.is_empty() {
                     continue;
@@ -761,7 +758,14 @@ impl TextRasterizer {
                         .iter()
                         .filter(fits)
                         .flat_map(|segment| segment.joiners.iter().copied());
-                    set_line_text(line, &insert_joiners(original, joiners));
+                    let ending = line.ending();
+                    line.set_text(
+                        insert_joiners(original, joiners),
+                        ending,
+                        AttrsList::new(&attrs),
+                    );
+                    line.set_align(alignment);
+                    add_spans(line);
                 }
             }
             buffer.set_size(&mut self.font_system, Some(width), None);

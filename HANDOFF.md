@@ -120,9 +120,10 @@ together, so `フレーム` or a trailing `の。` is not split across lines.
   `第一章　はじめに` is measured as `第一章　` and `はじめに`. A U+2060 WORD
   JOINER goes at each UAX #14 break opportunity (`unicode-linebreak`, as
   cosmic-text uses) inside a segment; Latin words keep their spacing breaks
-  and get no joiners. With a width, every segment is joined first and the
-  lines are laid out unwrapped, so each segment is measured as the joined
-  text is shaped (one word: kerning and fallback fonts can differ from the
+  and get no joiners. With a width, every segment is joined before
+  `Buffer::set_text` (lines split with cosmic-text's `LineIter`, as
+  `set_text` does), so the text is shaped once, joined; the lines are laid
+  out unwrapped and each segment is measured as the joined text is shaped (one word: kerning and fallback fonts can differ from the
   unjoined text by a few pixels); a segment wider than the line loses its
   joiners and wraps as `normal` text (UAX #14, so `、`/`。` still never
   start a line). Only lines whose joiners change are reshaped. Joiners get
