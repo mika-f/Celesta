@@ -106,9 +106,9 @@ footprint 1,482 MB to 1,336 MB). Sampling the main thread during an
 export shows why the wall time did not move: on the M4 the export is
 GPU-bound. About half of the main thread's samples wait in
 `reclaim_oldest` for the GPU, the libx264 thread mostly waits for frames,
-and path preparation is about 5%. The rings add about 1.6 ms (1.94 − 0.33 above) to a
-roughly 78 ms frame; most of the rest is presumably the full-frame σ48 blurs
-and σ24 glow. Frame 300 as a PNG took 0.39 s both before and after.
+and path preparation is about 5%.
+
+Frame 300 as a PNG took 0.39 s both before and after.
 
 Each version's three MP4s are byte-identical (SHA-256 `d0eb8dd8021dcaa4…`
 before, `36ddf7872c14ab2f…` after; H.264, 1920x1080, 600 frames). Frame 300
@@ -119,6 +119,46 @@ includes the encoder making different decisions.
 keep the RTX 4070 measurements: the film compares Celesta with Remotion and
 fframes measured on that machine, so these M4 numbers do not belong there.
 They need a new measurement on the reference machine.
+
+### Where NEBULA's GPU time goes
+
+To find out, NEBULA's real scenes were taken from the React bridge (60
+frames spread over the 600) and rendered with the export's settings
+(pipelined `submit`/`drain`, yuv420p readback, final quality), with one
+group of layers removed or changed at a time. Variants alternate within one
+process, five rounds each, because the M4's GPU speed drifts with
+temperature (the full scene measured 59 ms/frame in one session and
+71 ms/frame in a later one). Medians from the later session:
+
+| Scene | GPU ms/frame |
+| --- | ---: |
+| Full | 70.7 |
+| Blobs without blur | 4.9 |
+| Blobs blurred with σ 24 / 12 / 6 instead of 48 | 30.2 / 16.9 / 11.7 |
+| Title without glow | 70.3 |
+| Without the 24 rings | within the noise (0.9 less in a single earlier run) |
+| Background only | 0.5 |
+
+The six blobs' σ48 blurs take about 66 of the 71 ms, over 90% of the
+frame. The blobs are not full-frame: they are circles of 405–630 px, but a
+σ48 blur reads 3σ = 144 px on each side of every pixel in both passes, so
+each blob's two passes cover about 1.1 million pixels at 289 taps each,
+about 2 billion texel reads per frame for the six. The time follows that
+tap count: halving σ to 24 cuts the predicted taps to 0.37 and the measured
+blur time to 0.38 (0.16 and 0.18 at σ 12). Screen blending costs nothing
+measurable, the title's σ24 glow about 1.5–2 ms, removing the particles,
+the spectrum or the HUD made no measurable difference, and React evaluation, which overlaps the GPU,
+about 5 ms of CPU per frame.
+
+Micro-optimizing the blur loop does not change this: computing the
+Gaussian weights incrementally instead of with `exp` per tap, and loading
+whole-pixel taps directly, measured 54–56 ms against the original's 59 ms
+in separate runs, within the drift above. Making blurs of this size cheaper takes fewer taps, for example
+pairing taps through bilinear filtering (about half the reads, nearly the
+same result) or blurring large σ at reduced resolution (far fewer reads, but
+the CPU renderer's exact Gaussian would have to change too, or the GPU
+would stop matching it within the effect tests' tolerance of 5). That is
+beyond this change.
 
 ## Reproduce
 
