@@ -75,7 +75,8 @@ const EDITOR_DEMO_PROJECT: &str = include_str!("../../../examples/editor-demo.ce
 
 use celesta_react_bridge::runtime_paths as react_runtime_paths;
 use celesta_react_bridge::{
-    ProjectTsconfig, project_types_template, refresh_project_types, set_up_project_types,
+    ProjectTsconfig, ProjectTypesSetup, project_types_template, refresh_project_types,
+    set_up_project_types, set_up_project_types_in,
 };
 
 actions!(
@@ -90,6 +91,7 @@ actions!(
         SetExportOut,
         ClearExportRange,
         SetUpTypeScript,
+        SetUpTypeScriptInFolder,
         TogglePlayback,
         PlayForward,
         PausePlayback,
@@ -1523,16 +1525,74 @@ impl EditorView {
         self.typescript_error = None;
         self.typescript_message = None;
         let Some(entry) = self.document.react_entry_absolute_path() else {
-            self.typescript_error = Some("Open a React entry to set up TypeScript".into());
+            self.typescript_error = Some(
+                "Open a React entry, or use Set Up TypeScript in Folder… for a new project".into(),
+            );
             cx.notify();
             return;
         };
+        self.run_typescript_setup(window, cx, move |template| {
+            set_up_project_types(template, &entry)
+        });
+    }
+
+    /// File > Set Up TypeScript in Folder…: installs `.celesta/` into a folder
+    /// picked by the user, so a new project has types before its first entry.
+    fn set_up_typescript_in_folder_action(
+        &mut self,
+        _: &SetUpTypeScriptInFolder,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.typescript_error = None;
+        self.typescript_message = None;
+        cx.notify();
+        let selection = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Set Up TypeScript".into()),
+        });
+        cx.spawn_in(window, async move |view, cx| {
+            let folder = match selection.await {
+                Ok(Ok(Some(paths))) => paths.into_iter().next(),
+                Ok(Ok(None)) | Err(_) => None,
+                Ok(Err(error)) => {
+                    view.update_in(cx, |this, _, cx| {
+                        this.typescript_error =
+                            Some(format!("Couldn’t show the folder dialog: {error}").into());
+                        cx.notify();
+                    })
+                    .ok();
+                    None
+                }
+            };
+            if let Some(folder) = folder {
+                view.update_in(cx, |this, window, cx| {
+                    this.run_typescript_setup(window, cx, move |template| {
+                        set_up_project_types_in(template, &folder)
+                    });
+                })
+                .ok();
+            }
+        })
+        .detach();
+    }
+
+    /// Runs `set_up` against this build's support template on a background
+    /// thread and reports the outcome in the title bar.
+    fn run_typescript_setup(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        set_up: impl FnOnce(&Path) -> std::io::Result<ProjectTypesSetup> + Send + 'static,
+    ) {
         cx.spawn_in(window, async move |view, cx| {
             let result = cx
                 .background_executor()
                 .spawn(async move {
                     let (_, cli_script) = react_runtime_paths();
-                    set_up_project_types(&project_types_template(&cli_script), &entry)
+                    set_up(&project_types_template(&cli_script))
                 })
                 .await;
             view.update_in(cx, |this, _, cx| {
@@ -3307,6 +3367,7 @@ impl Render for EditorView {
             .on_action(cx.listener(Self::set_export_out_action))
             .on_action(cx.listener(Self::clear_export_range_action))
             .on_action(cx.listener(Self::set_up_typescript_action))
+            .on_action(cx.listener(Self::set_up_typescript_in_folder_action))
             .on_action(cx.listener(Self::toggle_playback_action))
             .on_action(cx.listener(Self::play_forward_action))
             .on_action(cx.listener(Self::pause_playback_action))
@@ -4026,6 +4087,7 @@ fn app_menus() -> Vec<Menu> {
             MenuItem::action("Export…", ExportProject),
             MenuItem::separator(),
             MenuItem::action("Set Up TypeScript", SetUpTypeScript),
+            MenuItem::action("Set Up TypeScript in Folder…", SetUpTypeScriptInFolder),
             MenuItem::separator(),
             MenuItem::action("Close Window", CloseWindow),
         ]),

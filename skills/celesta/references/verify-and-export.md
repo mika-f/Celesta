@@ -91,8 +91,8 @@ Limits:
 ## Type-check
 
 If the project folder has a `tsconfig.json` that extends
-`./.celesta/tsconfig.json` (created by **File → Set Up TypeScript** in the
-app), run `npx tsc --noEmit -p .` in that folder. The `.celesta/` folder
+`./.celesta/tsconfig.json` (created by **File → Set Up TypeScript**, or **File → Set Up TypeScript in
+Folder…** for a project with no entry yet, in the app), run `npx tsc --noEmit -p .` in that folder. The `.celesta/` folder
 contains the matching `@celesta/react`, React, and Node.js declarations, so
 nothing else needs installing. Without it, rely on `inspect.mjs`.
 

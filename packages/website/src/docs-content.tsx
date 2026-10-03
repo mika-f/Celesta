@@ -126,6 +126,7 @@ export const sections: DocSection[] = [
         <li>An optional named export, <code>prepare()</code>, runs once before the first frame. See <a href="#data">Data, properties & components</a>.</li>
       </ul>
       <h3>Set up TypeScript in your editor</h3><p>With a React composition open, choose <strong>File → Set Up TypeScript</strong>. Celesta copies matching declarations for <code>@celesta/react</code>, <code>@celesta/math</code>, React, and Node.js into a local <code>.celesta/</code> directory.</p>
+      <p>Starting a new project with no composition yet? Choose <strong>File → Set Up TypeScript in Folder…</strong> and pick the project folder, so your first component is written with types in place.</p>
       <p>If there is no <code>tsconfig.json</code>, Celesta creates one. If you already have a configuration, add this <code>extends</code> property while preserving your other settings:</p>
       <DocCode label="tsconfig.json" language="json" code={'{\n  "extends": "./.celesta/tsconfig.json"\n}'} />
       <p>You do not need to install those declaration packages from npm for this editor setup. Celesta refreshes <code>.celesta/</code> when you open the project in a newer app version; that directory ignores itself in Git.</p>

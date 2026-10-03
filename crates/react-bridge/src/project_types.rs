@@ -54,6 +54,21 @@ pub fn set_up_project_types(template: &Path, entry: &Path) -> io::Result<Project
         .find(|dir| dir.join("tsconfig.json").is_file() || dir.join("package.json").is_file())
         .unwrap_or(&directory)
         .to_owned();
+    set_up_project_types_in(template, &root)
+}
+
+/// Installs `.celesta/` directly in `root` and writes a `tsconfig.json`
+/// there when there is none — for a project that has no entry yet, so its
+/// first component is written with types already in place. A later entry
+/// anywhere under `root` is refreshed by [`refresh_project_types`].
+pub fn set_up_project_types_in(template: &Path, root: &Path) -> io::Result<ProjectTypesSetup> {
+    let root = std::path::absolute(root)?;
+    if !root.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("{} is not a folder", root.display()),
+        ));
+    }
     install(template, &root)?;
     let path = root.join("tsconfig.json");
     let tsconfig = match fs::read_to_string(&path) {
@@ -237,6 +252,47 @@ mod tests {
             fs::read_to_string(project.join("tsconfig.json")).unwrap(),
             "{ \"compilerOptions\": {} }"
         );
+    }
+
+    #[test]
+    fn set_up_in_installs_into_the_chosen_folder_without_an_entry() {
+        let scratch = Scratch::new("folder");
+        let old = template(&scratch.0.join("old"), "v1");
+        let project = scratch.0.join("video");
+        // A package root above the chosen folder must not redirect it.
+        write(&scratch.0.join("package.json"), "{}");
+        fs::create_dir_all(&project).unwrap();
+
+        let setup = set_up_project_types_in(&old, &project).unwrap();
+
+        assert_eq!(
+            setup,
+            ProjectTypesSetup {
+                root: project.clone(),
+                tsconfig: ProjectTsconfig::Created,
+            }
+        );
+        assert!(project.join(PROJECT_TYPES_DIR).join(STAMP).is_file());
+        assert!(
+            fs::read_to_string(project.join("tsconfig.json"))
+                .unwrap()
+                .contains(EXTENDS)
+        );
+
+        // An entry written there later is kept up to date like any other.
+        let new = template(&scratch.0.join("new"), "v2");
+        assert_eq!(
+            refresh_project_types(&new, &project.join("src/main.tsx")).unwrap(),
+            Some(project.clone())
+        );
+    }
+
+    #[test]
+    fn set_up_in_rejects_a_missing_folder() {
+        let scratch = Scratch::new("missing-folder");
+        let template = template(&scratch.0, "v1");
+        let error = set_up_project_types_in(&template, &scratch.0.join("nope")).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
     }
 
     #[test]
