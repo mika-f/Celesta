@@ -44,7 +44,7 @@ interface ResolveRequest {
   runtime?: ResolutionRuntime;
 }
 
-type Request = FrameRequest | ResolveRequest;
+type Request = FrameRequest | ResolveRequest | { collectAudio: true };
 
 interface ProbeMediaResponse {
   media?: ProbedMediaInfo;
@@ -155,7 +155,10 @@ async function main(): Promise<void> {
       continue;
     }
     try {
-      if (isResolveRequest(request)) {
+      if ('collectAudio' in request) {
+        if (request.collectAudio !== true) throw new Error('collectAudio must be true');
+        writeLine({ collectedAudio: mounted.collectAudio() });
+      } else if (isResolveRequest(request)) {
         resolver ??= createResolver();
         writeLine({ components: resolver.resolve(request.components, request.runtime, mounted.fonts) });
       } else {
@@ -227,6 +230,7 @@ function writeLine(
         propertySchema: Record<string, ProjectPropertyField> | null;
       }
     | { scene: Scene; audio: AudioClipDescriptor[] }
+    | { collectedAudio: AudioClipDescriptor[] }
     | { components: ComponentResolution[] }
     | { probeMedia: { path: string } }
     | { measureText: MeasureTextRequest }
