@@ -1,0 +1,290 @@
+[
+  {
+    "date": "2026-10-03T09:18:50.556Z",
+    "machine": {
+      "cpu": "13th Gen Intel(R) Core(TM) i7-13700F",
+      "threads": 24,
+      "memoryGiB": 128,
+      "gpu": "NVIDIA GeForce RTX 4070, 610.88",
+      "os": "Windows_NT 10.0.26200",
+      "node": "v24.21.0"
+    },
+    "scene": "1920x1080, 60 fps, 600 frames, H.264 (libx264 medium, CRF 18), no audio",
+    "remotionFlags": "",
+    "results": [
+      {
+        "name": "celesta",
+        "label": "Celesta (wgpu)",
+        "run": 1,
+        "seconds": 25.863,
+        "fps": 23.2,
+        "bytes": 24831383,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "celesta",
+        "label": "Celesta (wgpu)",
+        "run": 2,
+        "seconds": 24.401,
+        "fps": 24.6,
+        "bytes": 24831383,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "celesta",
+        "label": "Celesta (wgpu)",
+        "run": 3,
+        "seconds": 26.71,
+        "fps": 22.5,
+        "bytes": 24831383,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "remotion",
+        "label": "Remotion (Chromium)",
+        "run": 1,
+        "seconds": 46.015,
+        "fps": 13,
+        "bytes": 34975873,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuvj420p",
+          "nb_read_frames": "600",
+          "side_data_list": [
+            {}
+          ]
+        }
+      },
+      {
+        "name": "remotion",
+        "label": "Remotion (Chromium)",
+        "run": 2,
+        "seconds": 43.832,
+        "fps": 13.7,
+        "bytes": 34975873,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuvj420p",
+          "nb_read_frames": "600",
+          "side_data_list": [
+            {}
+          ]
+        }
+      },
+      {
+        "name": "remotion",
+        "label": "Remotion (Chromium)",
+        "run": 3,
+        "seconds": 47.896,
+        "fps": 12.5,
+        "bytes": 34975873,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuvj420p",
+          "nb_read_frames": "600",
+          "side_data_list": [
+            {}
+          ]
+        }
+      },
+      {
+        "name": "fframes",
+        "label": "fframes (Skia Vulkan)",
+        "run": 1,
+        "seconds": 13.975,
+        "fps": 42.9,
+        "bytes": 30715073,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "fframes",
+        "label": "fframes (Skia Vulkan)",
+        "run": 2,
+        "seconds": 13.682,
+        "fps": 43.9,
+        "bytes": 30715073,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "fframes",
+        "label": "fframes (Skia Vulkan)",
+        "run": 3,
+        "seconds": 13.089,
+        "fps": 45.8,
+        "bytes": 30715073,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      }
+    ]
+  },
+  {
+    "date": "2026-10-03T09:21:38.161Z",
+    "machine": {
+      "cpu": "13th Gen Intel(R) Core(TM) i7-13700F",
+      "threads": 24,
+      "memoryGiB": 128,
+      "gpu": "NVIDIA GeForce RTX 4070, 610.88",
+      "os": "Windows_NT 10.0.26200",
+      "node": "v24.21.0"
+    },
+    "scene": "1920x1080, 60 fps, 600 frames, H.264 (libx264 medium, CRF 18), no audio",
+    "remotionFlags": "--gl=angle --concurrency=100%",
+    "results": [
+      {
+        "name": "remotion",
+        "label": "Remotion (Chromium)",
+        "run": 1,
+        "seconds": 60.727,
+        "fps": 9.9,
+        "bytes": 35402429,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuvj420p",
+          "nb_read_frames": "600",
+          "side_data_list": [
+            {}
+          ]
+        }
+      },
+      {
+        "name": "remotion",
+        "label": "Remotion (Chromium)",
+        "run": 2,
+        "seconds": 48.278,
+        "fps": 12.4,
+        "bytes": 35398575,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuvj420p",
+          "nb_read_frames": "600",
+          "side_data_list": [
+            {}
+          ]
+        }
+      },
+      {
+        "name": "remotion",
+        "label": "Remotion (Chromium)",
+        "run": 3,
+        "seconds": 39.903,
+        "fps": 15,
+        "bytes": 35379297,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuvj420p",
+          "nb_read_frames": "600",
+          "side_data_list": [
+            {}
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "date": "2026-10-03T10:53:57.694Z",
+    "machine": {
+      "cpu": "13th Gen Intel(R) Core(TM) i7-13700F",
+      "threads": 24,
+      "memoryGiB": 128,
+      "gpu": "NVIDIA GeForce RTX 4070, 610.88",
+      "os": "Windows_NT 10.0.26200",
+      "node": "v24.21.0"
+    },
+    "scene": "1920x1080, 60 fps, 600 frames, H.264 (libx264 medium, CRF 18), no audio",
+    "remotionFlags": "",
+    "results": [
+      {
+        "name": "celesta",
+        "label": "Celesta (wgpu)",
+        "run": 1,
+        "seconds": 18.377,
+        "fps": 32.6,
+        "bytes": 24831383,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "celesta",
+        "label": "Celesta (wgpu)",
+        "run": 2,
+        "seconds": 19.041,
+        "fps": 31.5,
+        "bytes": 24831383,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "celesta",
+        "label": "Celesta (wgpu)",
+        "run": 3,
+        "seconds": 21.306,
+        "fps": 28.2,
+        "bytes": 24831383,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      }
+    ]
+  }
+]

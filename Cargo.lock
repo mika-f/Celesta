@@ -1009,7 +1009,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-composition"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -1018,7 +1018,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-editor"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "celesta-composition",
  "celesta-editor-core",
@@ -1039,7 +1039,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-editor-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "celesta-composition",
  "celesta-evaluator",
@@ -1050,7 +1050,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-editor-theme"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "celesta-project",
  "gpui-kit",
@@ -1058,7 +1058,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-evaluator"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "celesta-composition",
  "celesta-project",
@@ -1066,7 +1066,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-exporter"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "celesta-composition",
  "celesta-evaluator",
@@ -1084,7 +1084,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-gpu-renderer"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "celesta-composition",
  "celesta-media",
@@ -1105,7 +1105,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-media"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "celesta-composition",
  "celesta-remote",
@@ -1114,7 +1114,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-project"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "celesta-composition",
  "serde",
@@ -1124,7 +1124,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-react-bridge"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "celesta-composition",
  "celesta-media",
@@ -1136,7 +1136,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-remote"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "celesta-composition",
  "tempfile",
@@ -1145,7 +1145,7 @@ dependencies = [
 
 [[package]]
 name = "celesta-renderer"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "celesta-budoux",
  "celesta-composition",
@@ -1158,6 +1158,7 @@ dependencies = [
  "image",
  "png 0.18.1",
  "psd",
+ "rayon",
  "resvg 0.45.1",
  "tempfile",
  "unicode-linebreak",
