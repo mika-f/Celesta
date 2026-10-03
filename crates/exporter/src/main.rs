@@ -28,7 +28,12 @@ image instead.";
 
 /// Exports a Celesta project or React composition to MP4 video or PNG stills.
 #[derive(Parser)]
-#[command(name = "celesta-exporter", version, after_help = AFTER_HELP)]
+#[command(
+    name = "celesta-exporter",
+    version,
+    after_help = AFTER_HELP,
+    args_override_self = true
+)]
 struct Cli {
     /// The project (.celesta.json), or with --react the entry (.tsx), to export.
     source: PathBuf,
