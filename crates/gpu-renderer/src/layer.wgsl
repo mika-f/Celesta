@@ -249,33 +249,38 @@ fn rect_texel(input: VertexOutput, coordinate: vec2<i32>) -> vec4<f32> {
 // Scanlines sampled per pixel row, as `tiny_skia`'s anti-aliasing does.
 const PATH_SUBSCANLINES: i32 = 4;
 
-// The most edges one scanline crosses inside one pixel that are sorted in
-// registers; a scanline crossed by more is measured by `covered_by_steps`.
-const PATH_MAX_CROSSINGS: i32 = 8;
-
 // The length of [`left`, `left` + 1) that the nonzero fill of the edges
-// `paths[first..first + count]` covers on the scanline at `y`, given the
-// winding at `left`: crossing by crossing, nearest first, so it needs no
-// storage however many edges cross the pixel. Edges crossing at the same x
-// count together, so coincident opposite contours cancel.
-fn covered_by_steps(first: u32, count: u32, y: f32, left: f32, winding_at_left: i32) -> f32 {
+// `paths[first..first + count]` covers on the scanline at `y`, starting from
+// `backdrop`, the winding left of the tile: crossing by crossing, nearest
+// first. The first pass also sums the edges left of the pixel; each further
+// pass finds the next crossing inside it, so most pixels take one pass and
+// nothing needs storage: no local array, which DX12's shader compilers
+// handle poorly in loops. Edges crossing at the same x count together, so
+// coincident opposite contours cancel.
+fn scanline_coverage(first: u32, count: u32, y: f32, left: f32, backdrop: i32) -> f32 {
     let right = left + 1.0;
-    var winding = winding_at_left;
+    var winding = backdrop;
     var at = left;
     var covered = 0.0;
+    var first_pass = true;
     loop {
         var next = right;
         var change = 0;
         for (var index = first; index < first + count; index++) {
             let edge = paths[index];
+            // Half open, so an edge's shared end counts once.
             if (y < edge.y) == (y < edge.w) {
                 continue;
             }
             let x = edge.x + (y - edge.y) * (edge.z - edge.x) / (edge.w - edge.y);
+            let direction = select(-1, 1, edge.w > edge.y);
+            if first_pass && x <= left {
+                winding += direction;
+                continue;
+            }
             if x <= at || x >= right {
                 continue;
             }
-            let direction = select(-1, 1, edge.w > edge.y);
             if x < next {
                 next = x;
                 change = direction;
@@ -283,6 +288,7 @@ fn covered_by_steps(first: u32, count: u32, y: f32, left: f32, winding_at_left: 
                 change += direction;
             }
         }
+        first_pass = false;
         if winding != 0 {
             covered += next - at;
         }
@@ -308,57 +314,9 @@ fn nonzero_coverage(tile: vec4<f32>, pixel: vec2<f32>) -> f32 {
         return select(0.0, 1.0, backdrop != 0);
     }
     var coverage = 0.0;
-    let right = pixel.x + 1.0;
     for (var line = 0; line < PATH_SUBSCANLINES; line++) {
         let y = pixel.y + (f32(line) + 0.5) / f32(PATH_SUBSCANLINES);
-        // The winding at the pixel's left edge, and the crossings inside it.
-        var winding = backdrop;
-        var crossings: array<vec2<f32>, PATH_MAX_CROSSINGS>;
-        var crossed = 0;
-        for (var index = first; index < first + count; index++) {
-            let edge = paths[index];
-            // Half open, so an edge's shared end counts once.
-            if (y < edge.y) == (y < edge.w) {
-                continue;
-            }
-            let x = edge.x + (y - edge.y) * (edge.z - edge.x) / (edge.w - edge.y);
-            if x >= right {
-                continue;
-            }
-            let direction = select(-1, 1, edge.w > edge.y);
-            if x <= pixel.x {
-                winding += direction;
-                continue;
-            }
-            if crossed < PATH_MAX_CROSSINGS {
-                // Insertion sort by x.
-                var slot = crossed;
-                while slot > 0 && crossings[slot - 1].x > x {
-                    crossings[slot] = crossings[slot - 1];
-                    slot--;
-                }
-                crossings[slot] = vec2<f32>(x, f32(direction));
-            }
-            crossed++;
-        }
-        if crossed > PATH_MAX_CROSSINGS {
-            coverage += covered_by_steps(first, count, y, pixel.x, winding);
-            continue;
-        }
-        var covered = 0.0;
-        var start = pixel.x;
-        for (var crossing = 0; crossing < crossed; crossing++) {
-            let x = crossings[crossing].x;
-            if winding != 0 {
-                covered += x - start;
-            }
-            start = x;
-            winding += i32(crossings[crossing].y);
-        }
-        if winding != 0 {
-            covered += right - start;
-        }
-        coverage += covered;
+        coverage += scanline_coverage(first, count, y, pixel.x, backdrop);
     }
     return coverage / f32(PATH_SUBSCANLINES);
 }

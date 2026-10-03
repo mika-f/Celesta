@@ -6176,8 +6176,8 @@ mod tests {
         assert_eq!(previewed, rendered.pixels());
     }
 
-    /// More edges than the shader sorts in registers can cross one pixel;
-    /// it then steps through them instead, still winding by winding.
+    /// Many edges can cross one pixel on one scanline; the shader steps
+    /// through every crossing, winding by winding.
     #[test]
     fn measures_pixels_crossed_by_many_edges_exactly() {
         use celesta_composition::PathCommand;
