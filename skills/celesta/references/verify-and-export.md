@@ -41,6 +41,7 @@ node <skill>/scripts/inspect.mjs scene.tsx                  # frames 0, middle, 
 node <skill>/scripts/inspect.mjs scene.tsx --frames 0,45,-1 # -1 is the last frame
 node <skill>/scripts/inspect.mjs scene.tsx --every 15       # every 15th frame
 node <skill>/scripts/inspect.mjs scene.tsx --json           # raw Scene JSON
+node <skill>/scripts/inspect.mjs scene.tsx --native /path/to/Celesta-export # real text metrics
 node <skill>/scripts/inspect.mjs --psd-layers hana.psd      # PSD layer paths
 ```
 
@@ -80,13 +81,37 @@ nested groups indented, positions in canvas pixels. Check that:
 
 Limits:
 
+- `useTextMetrics()` and `measureText()` require native text shaping. Add
+  `--native <Celesta-export>` to inspect with the same bridge and fonts as
+  the editor/exporter, without allocating a GPU or rendering pixels. It also
+  handles `preloadMedia()` with the linked media backend, without `ffprobe`.
+  `--runtime` and `--node` overrides apply in this mode too.
+  For a source build, pass `--native <repo>/target/debug/celesta-exporter`
+  (`.exe` on Windows), after `cargo build -p celesta-exporter`.
+  This requires an exporter supporting `--inspect`; older installs can
+  still verify real fonts with PNG export:
+
+  ```sh
+  Celesta-export --react scene.tsx --frames 0,15,29 /tmp/celesta-check.png
+  Celesta-export --react scene.tsx --every 15 --contact-sheet /tmp/celesta-sheet.png
+  ```
+
+  Node-only inspection refuses measurement requests. If the entry does not
+  catch that refusal, it reports `UNSUPPORTED inspection` and exits with
+  code **2**. JSON output includes `status: "unsupported"` alongside the
+  error on the affected frame (or startup response for `prepare()`). This
+  does not mean the composition fails in Celesta. Scene errors still exit
+  with code **1**, including when other frames are unsupported. Text output
+  also checks missing files, which exit with code **1**.
+  A caught measurement error can use the entry's fallback, but its placement
+  still needs native inspection or PNG verification.
 - `preloadMedia()` is answered with `ffprobe` when it is installed;
-  otherwise `prepare()` fails with a clear message.
+  otherwise `prepare()` fails with a clear message in Node-only mode.
 - Entries that render `<ProjectTimeline />`, `<ProjectTrack />`, or
   `useProjectTrack()` need the Rust evaluator and fail here by design;
   verify those with a short export using `--project`.
-- It cannot tell whether a font is installed, how wrapped text measures, or
-  what an image looks like. Use a still frame for that.
+- Inspection does not verify rendered pixels or font fallback. Use a still
+  frame to check how the fonts and images actually look.
 
 ## Type-check
 
@@ -259,3 +284,4 @@ same thing.
 | `favorite "x" not found in y.pfv (have: …)` | Use one of the listed favorites. |
 | `not a RIFF/WAVE file` / `unsupported WAV sample size` | `loadLipSync` needs uncompressed WAV; convert with `ffmpeg -i in.mp3 -c:a pcm_s16le out.wav`. |
 | `Could not find the Celesta React runtime` (inspect.mjs) | Pass `--runtime`, or build the runtime in a source checkout. |
+| `UNSUPPORTED inspection: inspect.mjs cannot shape text` | Use `--native <Celesta-export>` for `useTextMetrics()` / `measureText()`, or verify with PNG frames / a contact sheet. This is an inspector limitation, not a scene error. |

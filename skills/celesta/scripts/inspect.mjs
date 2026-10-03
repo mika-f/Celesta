@@ -10,8 +10,9 @@
 //
 // Options: --runtime <cli.js> and --node <node> override runtime discovery
 // (also CELESTA_REACT_CLI / CELESTA_NODE). --timeout <seconds> (default 180).
+// --native <Celesta-export> uses native text shaping, without rendering pixels.
 // Exit code 1 means the entry failed to load, a frame failed, or a
-// referenced local file is missing.
+// referenced local file is missing. Exit code 2 means inspection is unsupported.
 
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
@@ -22,10 +23,12 @@ import * as readline from 'node:readline';
 
 const USAGE = `usage: node inspect.mjs <entry.tsx> [--frames 0,45,-1] [--every N] [--json]
        node inspect.mjs --psd-layers <file.psd>
-options: --runtime <cli.js>  --node <node>  --timeout <seconds>`;
+options: --native <Celesta-export>  --runtime <cli.js>  --node <node>  --timeout <seconds>`;
+
+const TEXT_UNSUPPORTED = 'inspect.mjs cannot shape text; use --native <Celesta-export> or export PNG frames with Celesta-export';
 
 function parseArgs(argv) {
-  const options = { frames: null, every: null, json: false, psd: null, runtime: null, node: null, timeout: 180, entry: null };
+  const options = { frames: null, every: null, json: false, psd: null, native: null, runtime: null, node: null, timeout: 180, entry: null };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     const value = () => {
@@ -37,6 +40,7 @@ function parseArgs(argv) {
     else if (arg === '--json') options.json = true;
     else if (arg === '--psd-layers') options.psd = value();
     else if (arg === '--runtime') options.runtime = value();
+    else if (arg === '--native') options.native = value();
     else if (arg === '--node') options.node = value();
     else if (arg === '--timeout') options.timeout = Number(value());
     else if (arg === '-h' || arg === '--help') { console.log(USAGE); process.exit(0); }
@@ -60,6 +64,11 @@ function findRuntime(options, startDirs) {
   const explicit = options.runtime ?? process.env.CELESTA_REACT_CLI;
   const candidates = [];
   if (explicit) candidates.push(path.resolve(explicit));
+  if (options.native) {
+    const directory = path.dirname(path.resolve(options.native));
+    candidates.push(path.join(directory, '../Resources/react/dist/cli.js'));
+    candidates.push(path.join(directory, 'runtime/react/dist/cli.js'));
+  }
   // A source checkout: <repo>/packages/react/dist/cli.js above the entry or cwd.
   for (const start of startDirs) {
     for (let dir = path.resolve(start); ; dir = path.dirname(dir)) {
@@ -139,13 +148,21 @@ async function inspectEntry(options) {
   const { cli, node } = findRuntime(options, [entryDir, process.cwd()]);
   if (!options.json) console.log(`runtime: ${cli}\nnode:    ${node}\nentry:   ${entry}\n`);
 
-  const child = spawn(node, [cli, entry], { stdio: ['pipe', 'pipe', 'inherit'] });
+  if (!options.json && options.native) console.log(`native:  ${options.native}\n`);
+  const child = options.native
+    ? spawn(options.native, ['--inspect', '--react', entry, '--runtime', cli, '--node', node], { stdio: ['pipe', 'pipe', 'inherit'], detached: process.platform !== 'win32' })
+    : spawn(node, [cli, entry], { stdio: ['pipe', 'pipe', 'inherit'] });
+  const exited = new Promise((resolve) => child.once('close', resolve));
   const timer = setTimeout(() => {
     console.error(`timed out after ${options.timeout}s; is prepare() waiting on something?`);
-    child.kill();
+    // Native inspection owns a second process (Node); terminate both on timeout.
+    if (options.native && child.pid) {
+      if (process.platform === 'win32') spawnSync('taskkill', ['/pid', String(child.pid), '/t', '/f'], { stdio: 'ignore' });
+      else process.kill(-child.pid);
+    } else child.kill();
     process.exit(1);
   }, options.timeout * 1000);
-  child.on('error', (error) => fail(`could not start ${node}: ${error.message}`));
+  child.on('error', (error) => fail(`could not start ${options.native ?? node}: ${error.message}`));
   const lines = readline.createInterface({ input: child.stdout })[Symbol.asyncIterator]();
   const next = async () => {
     const { value, done } = await lines.next();
@@ -154,11 +171,8 @@ async function inspectEntry(options) {
   };
   const send = (message) => child.stdin.write(`${JSON.stringify(message)}\n`);
 
-  // `prepare()` may open a side channel before the handshake, and an entry that
-  // does is still loadable: answer what can be answered here and let it fall
-  // back. Text shaping is not one of those things — it lives in the renderer,
-  // which inspect.mjs has no access to — so measurements are refused and the
-  // entry's own offline fallback path takes over.
+  // The native bridge handles these side channels itself. In Node-only mode,
+  // prepare() can catch an unsupported measurement and use its own fallback.
   const receive = async () => {
     for (;;) {
       const message = await next();
@@ -167,23 +181,27 @@ async function inspectEntry(options) {
         continue;
       }
       if (message.measureText) {
-        send({
-          error: 'inspect.mjs cannot shape text; open the entry in Celesta or use Celesta-export to measure with real fonts',
-        });
+        send({ error: TEXT_UNSUPPORTED });
         continue;
       }
+      if (message.error?.includes(TEXT_UNSUPPORTED)) message.status = 'unsupported';
       return message;
     }
   };
 
   let problems = 0;
+  let unsupported = 0;
   let ready;
   for (;;) {
     const message = await receive();
     if (message.error) {
-      console.error(`ERROR loading entry: ${message.error}`);
-      child.kill();
-      process.exit(1);
+      if (options.json) console.log(JSON.stringify(message, null, 2));
+      else console.error(`${message.status === 'unsupported' ? 'UNSUPPORTED inspection' : 'ERROR loading entry'}: ${message.error}`);
+      child.stdin.end();
+      if (options.native) await exited;
+      else child.kill();
+      clearTimeout(timer);
+      process.exit(message.status === 'unsupported' ? 2 : 1);
     }
     ready = message;
     break;
@@ -212,7 +230,8 @@ async function inspectEntry(options) {
       results.push({ frame, ...(await receive()) });
     }
     console.log(JSON.stringify({ ready, frames: results }, null, 2));
-    problems += results.filter((result) => result.error).length;
+    problems += results.filter((result) => result.error && result.status !== 'unsupported').length;
+    unsupported += results.filter((result) => result.status === 'unsupported').length;
   } else {
     console.log(`composition: ${config.width}×${config.height} @ ${fmt(fps)} fps, ${total} frames (${fmt(total / fps)} s)`);
     const schemas = Object.keys(ready.componentSchemas ?? {});
@@ -233,8 +252,9 @@ async function inspectEntry(options) {
       const response = await receive();
       console.log(`\n── frame ${frame} (${fmt(frame / fps)} s) ──`);
       if (response.error) {
-        problems += 1;
-        console.log(`ERROR: ${response.error}`);
+        if (response.status === 'unsupported') unsupported += 1;
+        else problems += 1;
+        console.log(`${response.status === 'unsupported' ? 'UNSUPPORTED inspection' : 'ERROR'}: ${response.error}`);
         continue;
       }
       const { scene, audio } = response;
@@ -257,13 +277,15 @@ async function inspectEntry(options) {
     console.log('');
     for (const warning of new Set(warnings)) console.log(`warning: ${warning}`);
     for (const src of missing) console.log(`missing: ${src} (relative paths resolve from ${entryDir})`);
-    console.log(problems ? `${problems} problem(s) found` : 'OK: entry loads and every inspected frame evaluates');
+    console.log(problems ? `${problems} problem(s) found` : unsupported ? `${unsupported} frame(s) could not be inspected; use native inspection or PNG export` : 'OK: entry loads and every inspected frame evaluates');
   }
 
-  clearTimeout(timer);
   child.stdin.end();
-  child.kill();
-  process.exit(problems ? 1 : 0);
+  // Let the native process drop its bridge and reap the Node child on EOF.
+  if (options.native) await exited;
+  else child.kill();
+  clearTimeout(timer);
+  process.exit(problems ? 1 : unsupported ? 2 : 0);
 }
 
 function fmt(value) {

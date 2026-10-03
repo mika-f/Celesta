@@ -122,6 +122,11 @@ produces a video that differs between preview and export.
      React entry exactly like Celesta does, runs `prepare()`, evaluates
      frames, and reports every layer, audio clip, and missing media file.
      Use `--frames` to check the moments you changed.
+     For `useTextMetrics()` or `measureText()`, add `--native <Celesta-export>`
+     to use real font shaping. Node-only inspection reports this limitation
+     as `UNSUPPORTED inspection` (exit code 2), not a scene error. If the
+     installed exporter lacks `--inspect`, verify with PNG frames or a
+     contact sheet instead.
    - If the project has a `tsconfig.json` extending `./.celesta/tsconfig.json`,
      type-check with `npx tsc --noEmit -p .`.
    - For JSON projects, or to check actual pixels, run a short export with
