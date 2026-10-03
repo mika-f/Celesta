@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import { test } from 'vitest';
 import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -59,7 +59,7 @@ test('render metrics cache by value and refresh for text, style, wrapping and co
 });
 
 
-test('CLI shares prepare and render RPCs, handles large UTF-8 replies, and forwards measurement errors', { timeout: 15000 }, async (t) => {
+test('CLI shares prepare and render RPCs, handles large UTF-8 replies, and forwards measurement errors', { timeout: 15000 }, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'celesta-metrics-'));
   const entry = join(dir, 'entry.tsx');
   writeFileSync(entry, `
@@ -79,7 +79,6 @@ test('CLI shares prepare and render RPCs, handles large UTF-8 replies, and forwa
   `);
   const cli = fileURLToPath(new URL('../bin/celesta-react-render.js', import.meta.url));
   const child = spawn(process.execPath, [cli, entry], { stdio: ['pipe', 'pipe', 'pipe'] });
-  t.signal.addEventListener('abort', () => child.kill(), { once: true });
   let stderr = '';
   child.stderr.on('data', (chunk) => { stderr += chunk; });
   const exited = new Promise((resolve, reject) => {
