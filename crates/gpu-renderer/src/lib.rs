@@ -6291,6 +6291,40 @@ mod tests {
         assert_eq!(previewed, rendered.pixels());
     }
 
+    #[test]
+    fn shades_paths_alongside_changing_filtered_and_unfiltered_images() {
+        let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+            return;
+        };
+        for (index, rgba) in [[0, 255, 0, 255], [0, 0, 255, 255]].into_iter().enumerate() {
+            let image = seeded_image(&mut renderer, &format!("image-{index}"), 1.0, rgba);
+            let mut filtered = seeded_image(&mut renderer, &format!("filtered-{index}"), 6.0, rgba);
+            filtered.transform.position.y = 2.0;
+            filtered.transform.scale = Point { x: 2.0, y: 2.0 };
+            let mut scene = empty_scene(16, 8);
+            scene.layers = vec![
+                image,
+                filtered,
+                path_layer(
+                    "triangle",
+                    polyline(&[(9.0, 1.0), (15.0, 1.0), (9.0, 7.0)], true),
+                    Some(solid("#FF0000")),
+                    None,
+                ),
+            ];
+            let frame = renderer.render(&scene).unwrap();
+            assert_eq!(
+                [
+                    pixel_at(&frame, 0, 0),
+                    pixel_at(&frame, 6, 2),
+                    pixel_at(&frame, 10, 2)
+                ],
+                [rgba, rgba, [255, 0, 0, 255]],
+                "frame {index} must shade paths and both image sampling modes"
+            );
+        }
+    }
+
     /// Many edges can cross one pixel on one scanline; the shader steps
     /// through every crossing, winding by winding.
     #[test]

@@ -395,9 +395,6 @@ fn texel(input: VertexOutput, coordinate: vec2<i32>, level: i32) -> vec4<f32> {
     if input.size_opacity_kind.w == 1.0 {
         return rect_texel(input, coordinate);
     }
-    if input.size_opacity_kind.w == 2.0 {
-        return path_texel(input, coordinate);
-    }
     let color = textureLoad(source_texture, coordinate, level);
     if input.blend.y == 1.0 && color.a > 0.0 {
         return vec4<f32>(color.rgb / color.a, color.a);
@@ -441,6 +438,14 @@ fn bilinear(input: VertexOutput, uv: vec2<f32>, level: i32) -> vec4<f32> {
 
 // The layer's non-premultiplied color under `input.uv`.
 fn layer_color(input: VertexOutput) -> vec4<f32> {
+    // Paths are already outlined in canvas pixels and never filtered. Keep
+    // their coverage loops out of `texel`, which is inlined for every tap
+    // of the image filter by DX12's FXC compiler.
+    if input.size_opacity_kind.w == 2.0 {
+        let size = texel_size(input, 0);
+        let coordinate = min(vec2<i32>(floor(input.uv * vec2<f32>(size))), size - vec2<i32>(1));
+        return path_texel(input, coordinate);
+    }
     if input.sampling.x == 0.0 {
         // Texels land one to one on pixels: copy the one under the pixel.
         let size = texel_size(input, 0);
