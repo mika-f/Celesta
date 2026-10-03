@@ -637,19 +637,15 @@ impl TextRasterizer {
             Shaping::Advanced,
             alignment,
         );
-        let emoji_weight = emoji_family.as_deref().map(|family| {
-            self.matched_weight(family, requested_weight)
-                .unwrap_or(requested_weight)
+        let emoji_attrs = emoji_family.as_deref().map(|family| {
+            let weight = self
+                .matched_weight(family, requested_weight)
+                .unwrap_or(requested_weight);
+            attrs
+                .clone()
+                .family(Family::Name(family))
+                .weight(Weight(weight))
         });
-        let emoji_attrs = emoji_family
-            .as_deref()
-            .zip(emoji_weight)
-            .map(|(family, weight)| {
-                attrs
-                    .clone()
-                    .family(Family::Name(family))
-                    .weight(Weight(weight))
-            });
         // Added to the lines `set_text` made rather than passed to
         // `set_rich_text`, which splits lines differently (dropping the
         // empty line after a trailing newline).
@@ -673,24 +669,65 @@ impl TextRasterizer {
 
         // Without a width nothing wraps, so phrases need no joining; nor do
         // lines that could only break where a phrase ends anyway.
-        if style.line_break == Some(LineBreak::Phrase)
-            && let Some(width) = width
-            && buffer
-                .lines
-                .iter()
-                .any(|line| join_phrases(line.text(), |_| true) != line.text())
+        let segments: Vec<Vec<PhraseSegment>> =
+            if style.line_break == Some(LineBreak::Phrase) && width.is_some() {
+                buffer
+                    .lines
+                    .iter()
+                    .map(|line| phrase_segments(line.text()))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+        if let Some(width) = width
+            && segments.iter().any(|segments| !segments.is_empty())
         {
-            // Lay the lines out unwrapped first, to see how wide each
-            // phrase is: one wider than the line is left to wrap as
-            // `normal` text does. The lines' shaping is kept for the
-            // wrapped layout, except for those that get joiners.
+            // A word joiner draws nothing, so it gets no letter spacing
+            // either. Letter spacing does not split a shaping run, so the
+            // span leaves the shaping as it is.
+            let joiner_attrs = attrs.clone().letter_spacing(0.0);
+            let set_line_text = |line: &mut BufferLine, text: &str| {
+                let mut attrs_list = AttrsList::new(&attrs);
+                for (start, joiner) in text.match_indices(WORD_JOINER) {
+                    attrs_list.add_span(start..start + joiner.len(), &joiner_attrs);
+                }
+                let ending = line.ending();
+                line.set_text(text, ending, attrs_list);
+                line.set_align(alignment);
+                add_emoji_spans(line);
+            };
+            // Join every segment and lay the lines out unwrapped, to see
+            // how wide each segment is as the joined text is shaped:
+            // joining makes a phrase one word, which can change its
+            // kerning and fallback fonts. A segment wider than the line
+            // loses its joiners and wraps as `normal` text does. The
+            // shaping is kept for the wrapped layout, except on lines
+            // whose joiners change.
+            let mut originals = Vec::with_capacity(buffer.lines.len());
+            for (line, segments) in buffer.lines.iter_mut().zip(&segments) {
+                let original = line.text().to_owned();
+                if !segments.is_empty() {
+                    let joiners = segments.iter().flat_map(|segment| &segment.joiners);
+                    set_line_text(line, &insert_joiners(&original, joiners.copied()));
+                }
+                originals.push(original);
+            }
             buffer.set_size(&mut self.font_system, None, None);
             buffer.shape_until_scroll(&mut self.font_system, false);
             let mut glyphs = vec![Vec::new(); buffer.lines.len()];
             for run in buffer.layout_runs() {
                 glyphs[run.line_i].extend(run.glyphs.iter().map(|glyph| (glyph.start, glyph.w)));
             }
-            for (line, mut glyphs) in buffer.lines.iter_mut().zip(glyphs) {
+            for (((line, segments), original), mut glyphs) in buffer
+                .lines
+                .iter_mut()
+                .zip(&segments)
+                .zip(&originals)
+                .zip(glyphs)
+            {
+                if segments.is_empty() {
+                    continue;
+                }
                 glyphs.sort_by_key(|&(start, _)| start);
                 // `advances[i]` is the width of the line's first `i` glyphs.
                 let advances: Vec<f32> = std::iter::once(0.0)
@@ -699,16 +736,32 @@ impl TextRasterizer {
                         Some(*advance)
                     }))
                     .collect();
-                let advance_to =
-                    |offset| advances[glyphs.partition_point(|&(start, _)| start < offset)];
-                let joined = join_phrases(line.text(), |phrase| {
-                    advance_to(phrase.end) - advance_to(phrase.start) <= width
-                });
-                if joined != line.text() {
-                    let ending = line.ending();
-                    line.set_text(joined, ending, AttrsList::new(&attrs));
-                    line.set_align(alignment);
-                    add_emoji_spans(line);
+                let joiners: Vec<usize> = segments
+                    .iter()
+                    .flat_map(|segment| segment.joiners.iter().copied())
+                    .collect();
+                // Where `offset` in the original line is in the joined one.
+                let joined_offset = |offset: usize| {
+                    offset
+                        + WORD_JOINER.len_utf8()
+                            * joiners.partition_point(|&joiner| joiner < offset)
+                };
+                let advance_to = |offset: usize| {
+                    let offset = joined_offset(offset);
+                    advances[glyphs.partition_point(|&(start, _)| start < offset)]
+                };
+                let fits = |segment: &&PhraseSegment| {
+                    // Whitespace at the end of a line hangs past its width.
+                    let text = &original[segment.range.clone()];
+                    let end = segment.range.start + text.trim_end().len();
+                    advance_to(end) - advance_to(segment.range.start) <= width
+                };
+                if !segments.iter().all(|segment| fits(&segment)) {
+                    let joiners = segments
+                        .iter()
+                        .filter(fits)
+                        .flat_map(|segment| segment.joiners.iter().copied());
+                    set_line_text(line, &insert_joiners(original, joiners));
                 }
             }
             buffer.set_size(&mut self.font_system, Some(width), None);
@@ -1004,35 +1057,65 @@ impl Default for TextRasterizer {
 /// draws nothing.
 const WORD_JOINER: char = '\u{2060}';
 
-/// `line` (one line of text, without its line ending) with a word joiner
-/// wherever it could break inside one of its BudouX phrases that
-/// `keep_together` accepts (given the phrase's byte range), so cosmic-text
-/// wraps only between those phrases. As with BudouX's own markup (CSS
-/// `word-break: keep-all`), only breaks between two letters are removed:
-/// those after a space, a zero width space, or a (soft) hyphen stay.
-fn join_phrases(line: &str, keep_together: impl Fn(std::ops::Range<usize>) -> bool) -> String {
-    let boundaries = celesta_budoux::Parser::japanese().parse_boundaries(line);
-    let phrases: Vec<std::ops::Range<usize>> = std::iter::once(0)
-        .chain(boundaries.iter().copied())
-        .zip(boundaries.iter().copied().chain([line.len()]))
-        .map(|(start, end)| start..end)
-        .filter(|phrase| keep_together(phrase.clone()))
-        .collect();
+/// A part of a line that `lineBreak: phrase` keeps on one line: a BudouX
+/// phrase, or the part of one between breaks the text asks for.
+struct PhraseSegment {
+    range: std::ops::Range<usize>,
+    /// The byte offsets inside `range` where the line could otherwise
+    /// break, ascending: where word joiners go.
+    joiners: Vec<usize>,
+}
 
-    let mut joined = String::with_capacity(line.len() * 2);
-    let mut copied = 0;
+/// The segments of `line` (one line of text, without its line ending) that
+/// a line could break inside. As with BudouX's own markup (CSS
+/// `word-break: keep-all`), only breaks between two letters are removed:
+/// those after a space, a zero width space, or a (soft) hyphen stay, and
+/// end a segment.
+fn phrase_segments(line: &str) -> Vec<PhraseSegment> {
+    let mut cuts = celesta_budoux::Parser::japanese().parse_boundaries(line);
+    let mut joiners = Vec::new();
     // The same line breaking (UAX #14) cosmic-text wraps with.
     for (offset, opportunity) in unicode_linebreak::linebreaks(line) {
-        let phrase = phrases.partition_point(|phrase| phrase.start < offset);
-        let inside_a_phrase = phrase > 0 && offset < phrases[phrase - 1].end;
+        if offset == line.len() {
+            continue;
+        }
         if opportunity == BreakOpportunity::Allowed
-            && inside_a_phrase
             && !is_explicit_break(&line[..offset], &line[offset..])
         {
-            joined.push_str(&line[copied..offset]);
-            joined.push(WORD_JOINER);
-            copied = offset;
+            joiners.push(offset);
+        } else {
+            cuts.push(offset);
         }
+    }
+    cuts.sort_unstable();
+    cuts.dedup();
+    joiners.retain(|offset| cuts.binary_search(offset).is_err());
+
+    let bounds: Vec<usize> = std::iter::once(0).chain(cuts).chain([line.len()]).collect();
+    let mut joiners = joiners.into_iter().peekable();
+    let mut segments = Vec::new();
+    for bound in bounds.windows(2) {
+        let segment_joiners: Vec<usize> =
+            std::iter::from_fn(|| joiners.next_if(|&offset| offset < bound[1])).collect();
+        if !segment_joiners.is_empty() {
+            segments.push(PhraseSegment {
+                range: bound[0]..bound[1],
+                joiners: segment_joiners,
+            });
+        }
+    }
+    segments
+}
+
+/// `line` with a word joiner at each of `offsets`, ascending: a line never
+/// breaks on either side of one.
+fn insert_joiners(line: &str, offsets: impl IntoIterator<Item = usize>) -> String {
+    let mut joined = String::with_capacity(line.len() * 2);
+    let mut copied = 0;
+    for offset in offsets {
+        joined.push_str(&line[copied..offset]);
+        joined.push(WORD_JOINER);
+        copied = offset;
     }
     joined.push_str(&line[copied..]);
     joined
@@ -3403,25 +3486,45 @@ mod tests {
         assert!(tight < base - 10, "tight {tight}, base {base}");
     }
 
+    /// `line` with every phrase segment joined.
+    fn join_phrases(line: &str) -> String {
+        let segments = phrase_segments(line);
+        insert_joiners(
+            line,
+            segments
+                .iter()
+                .flat_map(|segment| segment.joiners.iter().copied()),
+        )
+    }
+
     #[test]
     fn joins_the_characters_of_each_phrase() {
         // BudouX splits this into "Google の" and "使命は、"; a line may
         // still break after the space, and "、" never starts a line anyway.
         assert_eq!(
-            join_phrases("Google の使命は、", |_| true),
+            join_phrases("Google の使命は、"),
             "Google の使\u{2060}命\u{2060}は、"
         );
-        // A phrase left apart keeps every break.
-        assert_eq!(
-            join_phrases("Google の使命は、", |phrase| phrase.start == 0),
-            "Google の使命は、"
-        );
+        // Nothing to join when a line can only break between phrases.
+        assert!(phrase_segments("Celesta renders every frame").is_empty());
+    }
+
+    #[test]
+    fn splits_a_phrase_at_breaks_the_text_asks_for() {
+        // BudouX keeps "第一章　はじめに" as one phrase; the line may break
+        // after the ideographic space, so "はじめに" is measured by itself.
+        let line = "第一章　はじめに";
+        let segments: Vec<&str> = phrase_segments(line)
+            .iter()
+            .map(|segment| &line[segment.range.clone()])
+            .collect();
+        assert!(segments.contains(&"はじめに"), "{segments:?}");
     }
 
     #[test]
     fn keeps_breaks_the_text_asks_for_inside_a_phrase() {
         // A zero width space, a soft hyphen, and an ideographic space.
-        let joined = join_phrases("世界\u{200B}中の情\u{00AD}報を整\u{3000}理し", |_| true);
+        let joined = join_phrases("世界\u{200B}中の情\u{00AD}報を整\u{3000}理し");
         assert!(joined.contains(WORD_JOINER), "{joined:?}");
         for character in ['\u{200B}', '\u{00AD}', '\u{3000}'] {
             assert!(
@@ -3534,6 +3637,103 @@ mod tests {
         assert_eq!(
             measured_lines(&mut rasterizer, text, LineBreak::Phrase, max_width),
             measured_lines(&mut rasterizer, text, LineBreak::Normal, max_width)
+        );
+    }
+
+    fn measure_text(
+        rasterizer: &mut TextRasterizer,
+        text: &str,
+        line_break: LineBreak,
+        letter_spacing: Option<f64>,
+        max_width: f64,
+    ) -> TextMetrics {
+        let style = TextStyle {
+            font_size: Some(40.0),
+            letter_spacing,
+            line_break: Some(line_break),
+            ..TextStyle::default()
+        };
+        rasterizer.measure(text, &style, Some(max_width))
+    }
+
+    #[test]
+    fn phrase_line_break_keeps_the_width_of_unwrapped_text() {
+        let text = "フレームは時刻の関数なので、どのフレームからでも描き直せるのだ。";
+        let mut rasterizer = TextRasterizer::new();
+        for letter_spacing in [None, Some(10.0)] {
+            let normal = measure_text(
+                &mut rasterizer,
+                text,
+                LineBreak::Normal,
+                letter_spacing,
+                1e5,
+            );
+            let phrase = measure_text(
+                &mut rasterizer,
+                text,
+                LineBreak::Phrase,
+                letter_spacing,
+                1e5,
+            );
+            assert_eq!((normal.lines, phrase.lines), (1, 1));
+            // Word joiners add no letter spacing. A joined phrase is shaped
+            // as one word, so kerning and fallback fonts inside it may move
+            // it by a few pixels, never by a glyph.
+            assert!(
+                (normal.width - phrase.width).abs() < 20.0,
+                "{letter_spacing:?}: normal {}, phrase {}",
+                normal.width,
+                phrase.width
+            );
+        }
+    }
+
+    #[test]
+    fn phrase_line_break_overflows_no_further_than_normal() {
+        let mut rasterizer = TextRasterizer::new();
+        for text in [
+            "フレームは時刻の関数なので、どのフレームからでも描き直せるのだ。",
+            "第一章　はじめに読むべきこと",
+            "Google の使命は、世界中の情報を整理し、世界中の人がアクセスできて使えるようにすることです。",
+        ] {
+            for letter_spacing in [None, Some(10.0)] {
+                for characters in [4.5, 6.5, 9.5, 14.0] {
+                    let max_width = characters_wide(&mut rasterizer, text, characters);
+                    let [normal, phrase] =
+                        [LineBreak::Normal, LineBreak::Phrase].map(|line_break| {
+                            measure_text(
+                                &mut rasterizer,
+                                text,
+                                line_break,
+                                letter_spacing,
+                                max_width,
+                            )
+                        });
+                    // A word that cannot break ("Google") overflows either
+                    // way; a phrase never makes a line overflow further.
+                    assert!(
+                        phrase.width <= max_width.max(normal.width) + 0.01,
+                        "{text:?} {letter_spacing:?} at {max_width}: normal {}, phrase {}",
+                        normal.width,
+                        phrase.width
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn phrase_line_break_measures_each_part_of_a_phrase_with_a_space() {
+        let text = "第一章　はじめに読むべきこと";
+        let mut rasterizer = TextRasterizer::new();
+        // Room for "はじめに" but not for "第一章　はじめに".
+        let max_width = characters_wide(&mut rasterizer, text, 5.5);
+        let lines = measured_lines(&mut rasterizer, text, LineBreak::Phrase, max_width);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.trim() == "はじめに" || line.starts_with("はじめに")),
+            "{lines:?}"
         );
     }
 

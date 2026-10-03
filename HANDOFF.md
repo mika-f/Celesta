@@ -112,17 +112,22 @@ together, so `フレーム` or a trailing `の。` is not split across lines.
 - `TextRasterizer::shaped_buffer` applies it, so the CPU renderer, the GPU
   renderer (which rasterizes text with `TextRasterizer`), `measureText()`
   through the React bridge, and `.celesta.json` text all wrap alike.
-  `join_phrases` inserts U+2060 WORD JOINER at each UAX #14 break
-  opportunity (`unicode-linebreak`, as cosmic-text uses) between two
-  letters inside a phrase; breaks after a space, ZWSP, or (soft) hyphen stay
-  (`is_explicit_break`, like CSS `word-break: keep-all`), so Latin words
-  keep their spacing breaks and are not split into shaping runs. With a
-  width, and only when some line would get a joiner, the lines are first
-  laid out unwrapped to measure each phrase (prefix sums of glyph
-  advances); one wider than the line gets no joiners
-  and wraps as `normal` text (UAX #14, so `、`/`。` still never start a
-  line). `Wrap::WordOrGlyph` was tried and rejected: its glyph fallback
-  left `。` alone on a line. Without a width nothing is joined.
+  `phrase_segments` splits each line into keep-together segments: BudouX
+  phrases, cut again at breaks the text asks for (after a space, ZWSP, or
+  (soft) hyphen; `is_explicit_break`, like CSS `word-break: keep-all`), so
+  `第一章　はじめに` is measured as `第一章　` and `はじめに`. A U+2060 WORD
+  JOINER goes at each UAX #14 break opportunity (`unicode-linebreak`, as
+  cosmic-text uses) inside a segment; Latin words keep their spacing breaks
+  and get no joiners. With a width, every segment is joined first and the
+  lines are laid out unwrapped, so each segment is measured as the joined
+  text is shaped (one word: kerning and fallback fonts can differ from the
+  unjoined text by a few pixels); a segment wider than the line loses its
+  joiners and wraps as `normal` text (UAX #14, so `、`/`。` still never
+  start a line). Only lines whose joiners change are reshaped. Joiners get
+  an attrs span with zero `letter_spacing`, which does not split cosmic-text's
+  shaping run, so `letterSpacing` adds nothing for them.
+  `Wrap::WordOrGlyph` was tried and rejected: its glyph fallback left `。`
+  alone on a line. Without a width nothing is joined.
 - The joiners never leave the rasterizer: `measure` drops them from
   `glyphs`, and the missing-glyph warning already skips format characters.
   A family without a U+2060 glyph draws it (zero width) from a fallback
