@@ -286,5 +286,194 @@
         }
       }
     ]
+  },
+  {
+    "date": "2026-10-03T14:01:35.223Z",
+    "machine": {
+      "cpu": "13th Gen Intel(R) Core(TM) i7-13700F",
+      "threads": 24,
+      "memoryGiB": 128,
+      "gpu": "NVIDIA GeForce RTX 4070, 610.88",
+      "os": "Windows_NT 10.0.26200",
+      "node": "v24.21.0"
+    },
+    "scene": "1920x1080, 60 fps, 600 frames, H.264 (libx264 medium, CRF 18), no audio",
+    "remotionFlags": "",
+    "results": [
+      {
+        "name": "celesta",
+        "label": "Celesta (wgpu)",
+        "run": 1,
+        "seconds": 19.516,
+        "fps": 30.7,
+        "bytes": 24776930,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "celesta",
+        "label": "Celesta (wgpu)",
+        "run": 2,
+        "seconds": 17.607,
+        "fps": 34.1,
+        "bytes": 24776930,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "celesta",
+        "label": "Celesta (wgpu)",
+        "run": 3,
+        "seconds": 15.663,
+        "fps": 38.3,
+        "bytes": 24776930,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      }
+    ]
+  },
+  {
+    "date": "2026-10-03T14:06:01.892Z",
+    "machine": {
+      "cpu": "13th Gen Intel(R) Core(TM) i7-13700F",
+      "threads": 24,
+      "memoryGiB": 128,
+      "gpu": "NVIDIA GeForce RTX 4070, 610.88",
+      "os": "Windows_NT 10.0.26200",
+      "node": "v24.21.0"
+    },
+    "scene": "1920x1080, 60 fps, 600 frames, H.264 (libx264 medium, CRF 18), no audio",
+    "remotionFlags": "",
+    "results": [
+      {
+        "name": "remotion",
+        "label": "Remotion (Chromium)",
+        "run": 1,
+        "seconds": 56.252,
+        "fps": 10.7,
+        "bytes": 34975873,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuvj420p",
+          "nb_read_frames": "600",
+          "side_data_list": [
+            {}
+          ]
+        }
+      },
+      {
+        "name": "remotion",
+        "label": "Remotion (Chromium)",
+        "run": 2,
+        "seconds": 46.089,
+        "fps": 13,
+        "bytes": 34975873,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuvj420p",
+          "nb_read_frames": "600",
+          "side_data_list": [
+            {}
+          ]
+        }
+      },
+      {
+        "name": "remotion",
+        "label": "Remotion (Chromium)",
+        "run": 3,
+        "seconds": 41.273,
+        "fps": 14.5,
+        "bytes": 34975873,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuvj420p",
+          "nb_read_frames": "600",
+          "side_data_list": [
+            {}
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "date": "2026-10-03T14:08:57.853Z",
+    "machine": {
+      "cpu": "13th Gen Intel(R) Core(TM) i7-13700F",
+      "threads": 24,
+      "memoryGiB": 128,
+      "gpu": "NVIDIA GeForce RTX 4070, 610.88",
+      "os": "Windows_NT 10.0.26200",
+      "node": "v24.21.0"
+    },
+    "scene": "1920x1080, 60 fps, 600 frames, H.264 (libx264 medium, CRF 18), no audio",
+    "remotionFlags": "",
+    "results": [
+      {
+        "name": "fframes",
+        "label": "fframes (Skia Vulkan)",
+        "run": 1,
+        "seconds": 12.696,
+        "fps": 47.3,
+        "bytes": 30715073,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "fframes",
+        "label": "fframes (Skia Vulkan)",
+        "run": 2,
+        "seconds": 11.202,
+        "fps": 53.6,
+        "bytes": 30715073,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "fframes",
+        "label": "fframes (Skia Vulkan)",
+        "run": 3,
+        "seconds": 11.395,
+        "fps": 52.7,
+        "bytes": 30715073,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      }
+    ]
   }
 ]

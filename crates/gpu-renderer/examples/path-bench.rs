@@ -1,6 +1,13 @@
 //! The 24 rotating, thin ellipses from PR #113's NEBULA scene, isolated from
-//! text, effects, React evaluation, and encoding. Measures the shared CPU
-//! rasterizer and the GPU export's submit/drain pipeline separately.
+//! text, effects, React evaluation, and encoding. Measures separately:
+//!
+//! - `raster`: the CPU renderer's rasterizer, the reference the GPU matches
+//! - `outline`: the CPU part of the GPU renderer's paths, stroking and
+//!   flattening the outlines it then shades per pixel
+//! - `gpu submit/drain`: the GPU export's pipelined frames, readback included
+//! - `gpu submit/drain, empty`: the same for frames without the ellipses,
+//!   the floor that clearing, copying, and reading back a frame costs
+//! - `gpu render`, `gpu render, empty`: one frame at a time, waiting for each
 //!
 //! cargo run --release -p celesta-gpu-renderer --example path-bench -- [frames]
 
@@ -13,7 +20,7 @@ use celesta_composition::{
     Point, Rational, Scene, Stroke, Time,
 };
 use celesta_gpu_renderer::{GpuRenderOptions, GpuRenderer, path_transform};
-use celesta_renderer::{PathDraw, PathShape, rasterize_paths};
+use celesta_renderer::{PathDraw, PathShape, flatten_path, rasterize_paths};
 
 const WIDTH: u32 = 1920;
 const HEIGHT: u32 = 1080;
@@ -50,25 +57,64 @@ fn main() {
         checksum.finish()
     );
 
+    let outline = |scene: &Scene| {
+        let edges: usize = scene
+            .layers
+            .iter()
+            .map(draw)
+            .filter_map(|draw| {
+                flatten_path(&draw.shape, draw.transform, WIDTH, HEIGHT).expect("paths flatten")
+            })
+            .map(|path| path.stroke.map_or(0, |(_, edges)| edges.len()))
+            .sum();
+        edges
+    };
+    for scene in &scenes[..WARMUP] {
+        std::hint::black_box(outline(scene));
+    }
+    let started = Instant::now();
+    let edges: usize = scenes[..frames].iter().map(outline).sum();
+    report("outline", frames, started.elapsed());
+    println!("outline edges: {} per frame", edges / frames);
+
     let mut renderer = GpuRenderer::new(GpuRenderOptions::default()).expect("GPU renderer");
     println!(
         "gpu: {} ({:?})",
         renderer.adapter_info().name,
         renderer.adapter_info().backend
     );
-    for scene in &scenes[..WARMUP] {
-        renderer.submit(scene).expect("warmup renders");
+    let empty: Vec<_> = scenes
+        .iter()
+        .map(|scene| Scene {
+            layers: Vec::new(),
+            ..scene.clone()
+        })
+        .collect();
+    for (name, scenes) in [("", &scenes), (", empty", &empty)] {
+        for scene in &scenes[..WARMUP] {
+            renderer.submit(scene).expect("warmup renders");
+        }
+        renderer.drain().expect("warmup drains");
+        let started = Instant::now();
+        let mut rendered = 0;
+        for scene in &scenes[..frames] {
+            rendered += usize::from(renderer.submit(scene).expect("frame renders").is_some());
+        }
+        rendered += renderer.drain().expect("frames drain").len();
+        let elapsed = started.elapsed();
+        assert_eq!(rendered, frames);
+        report(&format!("gpu submit/drain{name}"), frames, elapsed);
     }
-    renderer.drain().expect("warmup drains");
-    let started = Instant::now();
-    let mut rendered = 0;
-    for scene in &scenes[..frames] {
-        rendered += usize::from(renderer.submit(scene).expect("frame renders").is_some());
+    for (name, scenes) in [("", &scenes), (", empty", &empty)] {
+        for scene in &scenes[..WARMUP] {
+            renderer.render(scene).expect("warmup renders");
+        }
+        let started = Instant::now();
+        for scene in &scenes[..frames] {
+            std::hint::black_box(renderer.render(scene).expect("frame renders"));
+        }
+        report(&format!("gpu render{name}"), frames, started.elapsed());
     }
-    rendered += renderer.drain().expect("frames drain").len();
-    let elapsed = started.elapsed();
-    assert_eq!(rendered, frames);
-    report("gpu submit/drain", frames, elapsed);
 }
 
 fn report(name: &str, frames: usize, elapsed: Duration) {

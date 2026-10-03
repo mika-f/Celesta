@@ -30,7 +30,8 @@ mod path;
 pub mod psd_source;
 
 pub use path::{
-    PathDraw, PathShape, PathTransform, RasterizedPath, rasterize_path, rasterize_paths,
+    FlattenedPath, LineSegment, PathDraw, PathShape, PathTransform, RasterizedPath, flatten_path,
+    rasterize_path, rasterize_paths,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
