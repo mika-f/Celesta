@@ -1,8 +1,9 @@
 // Copy the installed, lockfile-resolved runtime closure without pnpm symlinks.
-import { cpSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolvePackageManifest } from './resolve-package-manifest.mjs';
 
 const source = fileURLToPath(new URL('../packages/react/', import.meta.url));
 const destination = resolve(process.argv[2]);
@@ -12,8 +13,7 @@ cpSync(join(source, 'dist'), join(destination, 'dist'), { recursive: true });
 cpSync(join(source, 'package.json'), join(destination, 'package.json'));
 
 function copyPackage(name, parent) {
-  const require = createRequire(join(parent, 'package.json'));
-  const manifest = realpathSync(require.resolve(`${name}/package.json`));
+  const manifest = resolvePackageManifest(name, parent);
   const directory = dirname(manifest);
   const metadata = JSON.parse(readFileSync(manifest, 'utf8'));
   if (copied.has(name)) {
@@ -44,7 +44,10 @@ function copyPackage(name, parent) {
   }
 }
 
-for (const name of ['react', 'react-reconciler', 'esbuild', 'ag-psd']) {
+// Ship Code and its tokenizer closure alongside the core runtime, without
+// making the React package depend on or load syntax highlighting itself.
+copyPackage('@celesta/code', join(source, '../code'));
+for (const name of ['@celesta/math', 'react', 'react-reconciler', 'esbuild', 'ag-psd']) {
   copyPackage(name, source);
 }
 // Confirm the platform-specific binary was included, even if optional deps were disabled.

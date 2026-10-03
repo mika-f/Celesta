@@ -1,4 +1,5 @@
-import { Camera, Easings, Group, Rect, TextReveal, noise, progress, random, useBeat, useCurrentFrame, useTypewriter, useVideoConfig } from '@celesta/react';
+import { noise, random } from '@celesta/math';
+import { Camera, Easings, Group, Rect, TextReveal, progress, useBeat, useCurrentFrame, useTypewriter, useVideoConfig } from '@celesta/react';
 import { Caret } from '../components/Caret';
 import { Label, textStyle } from '../components/Label';
 import { BEAT, BPM, C, H, MONO_ADVANCE, W } from '../constants';

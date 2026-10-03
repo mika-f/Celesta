@@ -1,8 +1,9 @@
 name: Set up FFmpeg 8.1
 description: >
   Installs the FFmpeg 8.1.x development libraries Celesta links against:
-  vcpkg ffmpeg[x264,x265]:x64-windows-static-md on Windows (VCPKG_ROOT is exported)
-  and Homebrew ffmpeg@8 on macOS (PKG_CONFIG_PATH is exported).
+  vcpkg ffmpeg[x264,x265]:x64-windows-static-md on Windows (VCPKG_ROOT is exported),
+  Homebrew ffmpeg@8 on macOS, and a source build by scripts/build-ffmpeg-linux.sh
+  on Linux (PKG_CONFIG_PATH is exported on both).
 
 runs:
   using: composite
@@ -73,3 +74,47 @@ runs:
         echo "FFMPEG_VERSION=$(brew list --versions ffmpeg@8)" >> "$GITHUB_ENV"
         # ffmpeg@8 is keg-only.
         echo "PKG_CONFIG_PATH=$(brew --prefix ffmpeg@8)/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}" >> "$GITHUB_ENV"
+
+    # Ubuntu's FFmpeg is 6.1, so Linux builds FFmpeg 8.1.x from source and
+    # caches the installed libraries.
+    - name: Install FFmpeg build dependencies (apt)
+      if: runner.os == 'Linux'
+      shell: bash
+      env:
+        FFMPEG_VERSION: '8.1.3'
+      run: |
+        sudo apt-get update
+        # libclang-dev is for bindgen in ffmpeg-sys-next, not for FFmpeg itself.
+        sudo apt-get install -y --no-install-recommends nasm zlib1g-dev libx264-dev libx265-dev libclang-dev
+        # The prefix ends up in cached build output, so expose the version for
+        # the Rust cache key (rust-cache `env-vars`).
+        echo "FFMPEG_VERSION=$FFMPEG_VERSION" >> "$GITHUB_ENV"
+        # ImageOS is a runner process variable, which the env context omits.
+        echo "FFMPEG_IMAGE_OS=$ImageOS" >> "$GITHUB_ENV"
+        echo "FFMPEG_PREFIX=$RUNNER_TEMP/ffmpeg-$FFMPEG_VERSION" >> "$GITHUB_ENV"
+
+    - name: Restore FFmpeg build cache
+      id: ffmpeg-cache
+      if: runner.os == 'Linux'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ env.FFMPEG_PREFIX }}
+        key: ffmpeg-${{ env.FFMPEG_VERSION }}-${{ env.FFMPEG_IMAGE_OS }}-${{ hashFiles('scripts/build-ffmpeg-linux.sh') }}
+
+    - name: Build FFmpeg
+      if: runner.os == 'Linux' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: '"$GITHUB_WORKSPACE/scripts/build-ffmpeg-linux.sh" "$FFMPEG_PREFIX"'
+
+    # Save right away so a later build or test failure does not discard FFmpeg.
+    - name: Save FFmpeg build cache
+      if: runner.os == 'Linux' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ env.FFMPEG_PREFIX }}
+        key: ffmpeg-${{ env.FFMPEG_VERSION }}-${{ env.FFMPEG_IMAGE_OS }}-${{ hashFiles('scripts/build-ffmpeg-linux.sh') }}
+
+    - name: Use FFmpeg
+      if: runner.os == 'Linux'
+      shell: bash
+      run: echo "PKG_CONFIG_PATH=$FFMPEG_PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}" >> "$GITHUB_ENV"

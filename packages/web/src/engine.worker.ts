@@ -1,5 +1,6 @@
 import * as esbuild from 'esbuild-wasm';
 import wasmURL from 'esbuild-wasm/esbuild.wasm?url';
+import * as math from '../../math/src/index';
 import * as celesta from '../../react/src/browser';
 import type { MountedComposition } from '../../react/src/render';
 
@@ -20,8 +21,9 @@ self.onmessage = async (event: MessageEvent<{ id: number; type: 'compile' | 'fra
       const module: { exports: Record<string, unknown> } = { exports: {} };
       const require = (name: string): unknown => {
         if (name === '@celesta/react') return celesta;
+        if (name === '@celesta/math') return math;
         if (name === 'react') return celesta.React;
-        throw new Error(`Import ${JSON.stringify(name)} is unavailable in the web editor. Use @celesta/react and react.`);
+        throw new Error(`Import ${JSON.stringify(name)} is unavailable in the web editor. Use @celesta/react, @celesta/math, and react.`);
       };
       // Visitor-authored code runs in a dedicated worker, away from the page DOM.
       new Function('module', 'exports', 'require', 'React', code)(module, module.exports, require, celesta.React);

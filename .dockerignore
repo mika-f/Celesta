@@ -1,0 +1,5 @@
+# Keep build output and installed packages out of the Docker build context.
+.git
+target
+**/node_modules
+**/dist

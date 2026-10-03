@@ -53,11 +53,37 @@ executable is not sufficient.
   `brew install ffmpeg@8 pkg-config`. `ffmpeg@8` is keg-only, so point
   `pkg-config` at it before building:
   `export PKG_CONFIG_PATH="$(brew --prefix ffmpeg@8)/lib/pkgconfig"`.
-- **Linux:** install `pkg-config` and the FFmpeg development packages:
-  `libavcodec-dev`, `libavformat-dev`, `libavfilter-dev`, `libavdevice-dev`,
-  `libavutil-dev`, `libswscale-dev`, and `libswresample-dev`. Your distribution
-  must provide FFmpeg 8.1.x. Native window-system and graphics development
-  packages may also be required by GPUI.
+- **Linux:** most distributions, including Ubuntu 24.04 LTS (FFmpeg 6.1), do
+  not package FFmpeg 8.1.x, so build it from source with
+  [`scripts/build-ffmpeg-linux.sh`](scripts/build-ffmpeg-linux.sh) after
+  cloning the repository (step 2). On Debian and Ubuntu:
+
+  ```sh
+  sudo apt-get install -y build-essential nasm pkg-config curl xz-utils zlib1g-dev libx264-dev libx265-dev libclang-dev
+  sudo scripts/build-ffmpeg-linux.sh /opt/ffmpeg8
+  export PKG_CONFIG_PATH=/opt/ffmpeg8/lib/pkgconfig
+  ```
+
+  The script downloads the FFmpeg source from ffmpeg.org and builds static
+  libraries with `libx264` and `libx265` into `/opt/ffmpeg8` (about 5 minutes
+  on 4 cores). Celesta links them into its executables, so `LD_LIBRARY_PATH` is
+  not needed; only `libx264` and `libx265` stay shared libraries. With them the
+  FFmpeg build is GPL-licensed (see [License](#license)). `libclang-dev` is for Cargo, which
+  generates the FFmpeg bindings with it. Set `PKG_CONFIG_PATH` in every shell
+  where you run Cargo. If your distribution does provide FFmpeg 8.1.x, install
+  `pkg-config` and its `libavcodec`, `libavformat`, `libavfilter`,
+  `libavdevice`, `libavutil`, `libswscale`, and `libswresample` development
+  packages instead.
+
+  The Celesta app also needs the ALSA, xkbcommon, and Fontconfig development
+  packages:
+
+  ```sh
+  sudo apt-get install -y libasound2-dev libxkbcommon-x11-dev libfontconfig-dev
+  ```
+
+  These steps are tested on Ubuntu 24.04 in CI. To export on a machine without
+  a GPU, see [Export without a GPU on Linux](#export-without-a-gpu-on-linux).
 
 ### 2. Get the source and launch
 
@@ -125,7 +151,15 @@ cargo run -p celesta-editor --release -- packages/react/examples/title.tsx
 
 Use the files in `packages/react/examples` as starting points. They demonstrate
 text, animation, layout, dialogue, and editable project properties. The package
-is currently imported as `@celesta/react`.
+is currently imported as `@celesta/react`; deterministic random numbers, noise,
+and other math helpers are imported from `@celesta/math`.
+
+Syntax-highlighted code is available separately in [`@celesta/code`](packages/code/README.md).
+The React build also builds it, and the desktop app bundles it separately.
+Import `Code` from `@celesta/code`. It supports TSX, TypeScript, JSON,
+Bash, line highlights, and measured caret positions. For typing animations,
+combine it with `useTypewriter()` from `@celesta/react`.
+It is optional and does not add highlighting dependencies to `@celesta/react`.
 
 Visual layers and groups accept `blur`, `shadow`, and `glow`. Radii and shadow
 offsets use output pixels. All three can change each frame through React props:
@@ -148,12 +182,15 @@ effects under `effects`, with keyframes for numeric properties and colors.
 ### Type-check your compositions
 
 Choose **File > Set Up TypeScript** with a React composition open. Celesta
-copies the `@celesta/react`, React, and Node.js type declarations that match
-its bundled runtime into a `.celesta/` folder in your project. If the project
+copies the `@celesta/react`, `@celesta/math`, `@celesta/code`, React, and Node.js type
+declarations that match its bundled runtime into a `.celesta/` folder in your
+project. To start a new
+project before writing its first composition, choose **File > Set Up TypeScript
+in Folder…** and pick the project folder instead. If the project
 has no `tsconfig.json`, Celesta creates one that extends
 `./.celesta/tsconfig.json`. If a `tsconfig.json` already exists, add
 `"extends": "./.celesta/tsconfig.json"` to it. You don't need to install
-`@celesta/react`, `react`, or `@types/*` from npm.
+`@celesta/react`, `@celesta/math`, `@celesta/code`, `react`, or `@types/*` from npm.
 
 Celesta updates `.celesta/` when you open the project in a newer version. The
 folder ignores itself in Git.
@@ -231,6 +268,35 @@ cargo run -p celesta-exporter --release -- --frames 0,90 examples/editor-demo.ce
 cargo run -p celesta-exporter --release -- --every 60 --contact-sheet examples/editor-demo.celesta.json sheet.png
 ```
 
+### Export without a GPU on Linux
+
+The exporter renders through Vulkan on Linux. On machines without a GPU, such
+as CI runners and cloud containers, install Mesa's software Vulkan driver
+(lavapipe), which renders on the CPU:
+
+```sh
+sudo apt-get install -y mesa-vulkan-drivers
+```
+
+Software rendering is much slower than a GPU: with 4 CPU cores, 1080p
+compositions render at roughly 10 to 60 frames per second, depending on the
+scene. Check a single frame before exporting the whole video:
+
+```sh
+cargo run -p celesta-exporter --release -- --react packages/react/examples/title.tsx --frame 0 frame.png
+```
+
+Minimal containers often have no fonts installed, and text cannot be drawn
+without at least one. Install some, such as `fonts-dejavu-core` (and
+`fonts-noto-cjk` for Japanese), or load font files with `<Font>`.
+
+On a software renderer, `--color-conversion auto` leaves the RGB-to-YUV
+conversion to the encoder. `--render-quality draft` skips re-rasterizing scaled
+text, which is quicker for checking timing but not for checking pixels.
+
+To export in a container without building Celesta on the host, use the
+[Linux container image](packaging/linux/README.md).
+
 ## Use with AI agents
 
 [`skills/celesta`](skills/celesta) is an [Agent Skill](https://agentskills.io)
@@ -272,6 +338,12 @@ To create a DMG with `Celesta.app` and an Applications shortcut for
 drag-and-drop installation, follow the [macOS packaging guide](packaging/macos/README.md).
 Node.js is included. Developer ID signing and notarization are supported for
 distribution outside the Mac App Store.
+
+## Build a Linux container image
+
+To export in Docker on a machine without a GPU, such as a CI runner, build the
+headless exporter image described in the
+[Linux container guide](packaging/linux/README.md).
 
 ## Website
 

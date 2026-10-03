@@ -12,6 +12,7 @@ type-check, then direct PNG export (real pixels), and MP4 for audio/timing.
 - [Export](#export)
 - [Look at real frames](#look-at-real-frames)
 - [Contact sheets](#contact-sheets)
+- [Find slow parts](#find-slow-parts)
 - [Error messages](#error-messages)
 
 ## Find the Celesta tools
@@ -90,8 +91,8 @@ Limits:
 ## Type-check
 
 If the project folder has a `tsconfig.json` that extends
-`./.celesta/tsconfig.json` (created by **File → Set Up TypeScript** in the
-app), run `npx tsc --noEmit -p .` in that folder. The `.celesta/` folder
+`./.celesta/tsconfig.json` (created by **File → Set Up TypeScript**, or **File → Set Up TypeScript in
+Folder…** for a project with no entry yet, in the app), run `npx tsc --noEmit -p .` in that folder. The `.celesta/` folder
 contains the matching `@celesta/react`, React, and Node.js declarations, so
 nothing else needs installing. Without it, rely on `inspect.mjs`.
 
@@ -211,6 +212,28 @@ checkerboard. Tiles are reduced by averaging every covered pixel, so thin
 lines and small text blur rather than vanish, but read text and fine details
 in a full-size `--frame` export. A sheet holds at most 400 frames and is at
 most 16384 px on each side; the error says which limit was hit.
+
+## Find slow parts
+
+Export prints its speed as it renders, as in
+`rendering frame 300/1530  58.5 fps`. To find which part of a video is slow,
+export spans of a few seconds and compare the last `fps` each one prints.
+`--preset ultrafast` keeps encoding time out of the measurement. Choose
+start times that fit inside the video. This example is for one that is at
+least 44 s long:
+
+```sh
+for t in 0 10 20 30 40; do
+  Celesta-export --overwrite --preset ultrafast --from $t --to $((t + 4)) \
+    --react scene.tsx /tmp/celesta-speed.mp4
+done
+```
+
+Startup is counted too, so a very short span reads slower than it renders.
+Then look at what the slow span draws. The usual causes are dozens of
+effects, many blended layers, and large paths. See
+[react-api.md](react-api.md#rendering-cost) for cheaper ways to draw the
+same thing.
 
 ## Error messages
 

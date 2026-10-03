@@ -1,6 +1,7 @@
 import { Console } from 'node:console';
 import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
+import { createRequire } from 'node:module';
 import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -44,7 +45,7 @@ interface ResolveRequest {
   runtime?: ResolutionRuntime;
 }
 
-type Request = FrameRequest | ResolveRequest;
+type Request = FrameRequest | ResolveRequest | { collectAudio: true };
 
 interface ProbeMediaResponse {
   media?: ProbedMediaInfo;
@@ -155,7 +156,10 @@ async function main(): Promise<void> {
       continue;
     }
     try {
-      if (isResolveRequest(request)) {
+      if ('collectAudio' in request) {
+        if (request.collectAudio !== true) throw new Error('collectAudio must be true');
+        writeLine({ collectedAudio: mounted.collectAudio() });
+      } else if (isResolveRequest(request)) {
         resolver ??= createResolver();
         writeLine({ components: resolver.resolve(request.components, request.runtime, mounted.fonts) });
       } else {
@@ -227,6 +231,7 @@ function writeLine(
         propertySchema: Record<string, ProjectPropertyField> | null;
       }
     | { scene: Scene; audio: AudioClipDescriptor[] }
+    | { collectedAudio: AudioClipDescriptor[] }
     | { components: ComponentResolution[] }
     | { probeMedia: { path: string } }
     | { measureText: MeasureTextRequest }
@@ -280,11 +285,25 @@ async function loadEntry(entryPath: string): Promise<LoadedEntry> {
     // entry's `useCurrentFrame()`/`useProject()`/etc. read from, matching
     // the Provider values render.ts sets around it. Both stay external and
     // resolve through Node's own module cache instead of being duplicated
-    // into the bundle.
+    // into the bundle. `@celesta/math` is stateless, but the entry's own
+    // directory has no copy of it either, so it resolves the same way.
     plugins: [{
       name: 'shared-runtime',
       setup(build) {
-        build.onResolve({ filter: /^(react(?:\/jsx(?:-dev)?-runtime)?|@celesta\/react)$/ }, (args) => ({
+        build.onResolve({ filter: /^@celesta\/code$/ }, () => {
+          let codePath: string;
+          try {
+            codePath = require.resolve('@celesta/code');
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'MODULE_NOT_FOUND') throw error;
+            // Source builds keep Code beside React rather than in its deps.
+            codePath = createRequire(path.join(__dirname, '../../code/package.json')).resolve('@celesta/code');
+          }
+          // Bundle Code, so its React and Celesta imports share the externals
+          // below instead of loading peer copies or requiring a project install.
+          return { path: codePath };
+        });
+        build.onResolve({ filter: /^(react(?:\/jsx(?:-dev)?-runtime)?|@celesta\/(?:react|math))$/ }, (args) => ({
           path: pathToFileURL(require.resolve(args.path)).href,
           external: true,
         }));

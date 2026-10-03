@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { highlight } from './syntax';
 
-export function DocCode({ code, label, language = 'shell' }: { code: string; label: string; language?: string }) {
+export function DocCode({ code: source, label, language = 'shell' }: { code: string; label: string; language?: string }) {
+  // Raw example files have CRLF line endings in a Windows checkout, which would render as blank lines.
+  const code = useMemo(() => source.replace(/\r\n?/g, '\n'), [source]);
   const [status, setStatus] = useState('');
   const html = useMemo(() => highlight(code, language, { class_name: `twinkleplop language-${language}`, attributes: { tabindex: 0, 'aria-label': label } }), [code, label, language]);
   useEffect(() => {

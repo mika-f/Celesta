@@ -7,7 +7,11 @@
 //! combination is composited from those layers at the smallest power-of-two
 //! reduction that is still at least as dense as it is drawn. Everything is
 //! kept in one cache bounded by bytes, dropping the least recently used.
-use super::{Color, RenderError, blend, blend_mixed, psd_blend_channel};
+use super::{
+    Color, RenderError, blend, blend_mixed,
+    image_source::{fit_within, resize_rgba},
+    psd_blend_channel,
+};
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -106,10 +110,35 @@ impl PsdSources {
         disabled_layers: &[String],
         density: f64,
     ) -> Result<PsdImage, RenderError> {
+        self.render_within(
+            asset,
+            path,
+            visible_layers,
+            enabled_layers,
+            disabled_layers,
+            density,
+            u32::MAX,
+        )
+    }
+
+    /// [`Self::render`], shrunk as needed so neither side of the composite
+    /// exceeds `max_dimension` (a GPU's largest texture). The drawn density
+    /// is then lower than asked for, and the draw enlarges the composite.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_within(
+        &mut self,
+        asset: &str,
+        path: &Path,
+        visible_layers: &[String],
+        enabled_layers: &[String],
+        disabled_layers: &[String],
+        density: f64,
+        max_dimension: u32,
+    ) -> Result<PsdImage, RenderError> {
         self.tick += 1;
-        let level = level_for(density);
+        let requested = level_for(density);
         let key = format!(
-            "composite\0{level}\0{asset}\0{}\0{}\0{}",
+            "composite\0{requested}\0{max_dimension}\0{asset}\0{}\0{}\0{}",
             visible_layers.join("\0"),
             enabled_layers.join("\0"),
             disabled_layers.join("\0")
@@ -145,6 +174,14 @@ impl PsdSources {
         let use_preset = !visible.is_empty();
 
         let psd = &document.psd;
+        // A level that would still exceed `max_dimension` after one more
+        // halving is skipped, so the composite is at most 2x too large and
+        // the resampling below shrinks it no more than it has to.
+        let largest_at = |level: u32| psd.width().max(psd.height()).div_ceil(1 << level);
+        let mut level = requested;
+        while level < MAX_LEVEL && largest_at(level + 1) > max_dimension {
+            level += 1;
+        }
         let factor = 1 << level;
         let width = psd.width().div_ceil(factor);
         let height = psd.height().div_ceil(factor);
@@ -192,10 +229,16 @@ impl PsdSources {
                 }
             }
         }
+        let (fit_width, fit_height) = fit_within(width, height, max_dimension);
+        let pixels = if (fit_width, fit_height) == (width, height) {
+            pixels
+        } else {
+            resize_rgba(width, height, &pixels, fit_width, fit_height).into_raw()
+        };
         let image = PsdImage {
             pixels: Arc::new(pixels),
-            width,
-            height,
+            width: fit_width,
+            height: fit_height,
             canvas_width: psd.width(),
             canvas_height: psd.height(),
         };
@@ -461,6 +504,35 @@ mod tests {
         // Inside the navy outfit, (56,176)..(184,296), and clear of it.
         assert_eq!(pixel_at(&quarter, 30, 55), pixel_at(&full, 120, 220));
         assert_eq!(pixel_at(&quarter, 1, 1), [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn shrinks_a_composite_to_fit_the_largest_texture() {
+        let mut sources = PsdSources::default();
+        let full = sources
+            .render("fixture", &fixture(), &preset(), &[], &[], 1.0)
+            .unwrap();
+        // 320 halves to 160, which fits exactly: no resampling.
+        let halved = sources
+            .render_within("fixture", &fixture(), &preset(), &[], &[], 1.0, 160)
+            .unwrap();
+        assert_eq!((halved.width, halved.height), (120, 160));
+        assert_eq!(pixel_at(&halved, 60, 118), pixel_at(&full, 120, 236));
+        // 160 is still too tall, so the 120x160 level shrinks to 75x100
+        // rather than halving again to 60x80.
+        let fitted = sources
+            .render_within("fixture", &fixture(), &preset(), &[], &[], 1.0, 100)
+            .unwrap();
+        assert_eq!((fitted.width, fitted.height), (75, 100));
+        assert_eq!((fitted.canvas_width, fitted.canvas_height), (240, 320));
+        assert_eq!(fitted.pixels.len(), 75 * 100 * 4);
+        assert_eq!(pixel_at(&fitted, 37, 73), pixel_at(&full, 120, 236));
+        assert_eq!(pixel_at(&fitted, 1, 1), [0, 0, 0, 0]);
+        // A smaller drawn size that already fits is not affected.
+        let quarter = sources
+            .render_within("fixture", &fixture(), &preset(), &[], &[], 0.25, 100)
+            .unwrap();
+        assert_eq!((quarter.width, quarter.height), (60, 80));
     }
 
     #[test]
