@@ -23,5 +23,7 @@ Drawn back to front:
 | Title | 2 texts | Group at (960, 470) scaled `1 + 0.03 sin(2t)`, glow `#7B5CFF` σ 24. "NEBULA" in Bebas Neue 220 px, white, letter spacing `20 + 10 sin t`, centered; a subtitle in IBM Plex Mono 24 px `#C8D6FF` 150 px below. |
 | HUD | 49 texts | IBM Plex Mono 18 px `#9EC9FF` at 0.8 opacity: `CHjj ±v.vvv` with `v = 100 sin(t (1 + 0.13j) + j)`, 24 per column at x = 40 and x = 1720 from y = 60, every 30 px; `FRAME nnnn / 600` at the bottom right. |
 
-About 1,660 layers per frame. Every value changes every frame except the
-subtitle, so nothing can be cached between frames as a whole.
+About 1,660 layers per frame. Every group of layers moves or changes every
+frame (positions, rotations, opacities, heights, colors or text), so no frame
+can be reused as a whole, though some properties stay fixed: particle sizes
+and colors, ring radii, and the subtitle text.

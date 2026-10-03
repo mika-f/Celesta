@@ -44,10 +44,23 @@ Build Celesta's exporter and React runtime as described in the root
 ```sh
 # Remotion
 cd examples/versus/bench/remotion && npm install && cd -
-# fframes (Windows: FFMPEG_DIR pointing at an FFmpeg 9.0 shared build, its bin/ on
-# PATH, and LIBCLANG_PATH; see the fframes README)
+# fframes
 cd examples/versus/bench/fframes && cargo build --release && cd -
 ```
+
+On Windows, fframes links a prebuilt FFmpeg 9.0 shared build (for example
+`ffmpeg-n9.0-latest-win64-gpl-shared-9.0.zip` from
+[BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds/releases/tag/latest))
+and needs LLVM for bindgen. Before building and running it, set:
+
+```powershell
+$env:FFMPEG_DIR = "C:\path\to\ffmpeg-n9.0-latest-win64-gpl-shared-9.0"
+$env:LIBCLANG_PATH = "C:\Program Files\LLVM\bin"
+$env:PATH = "$env:FFMPEG_DIR\bin;$env:PATH"   # the DLLs are loaded at build and run time
+```
+
+macOS and Linux need the system libraries listed in the
+[fframes README](https://github.com/dmtrKovalenko/fframes#installation).
 
 Run the benchmarks from the repository root. They write the three MP4s to
 `bench/out/`, which the film plays:

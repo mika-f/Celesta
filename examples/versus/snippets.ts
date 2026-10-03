@@ -77,6 +77,6 @@ export const FILES: Record<ToolId, { files: [string, string][]; command: string 
   },
   celesta: {
     files: [['nebula.tsx', 'scene + <Composition>']],
-    command: 'celesta-export --react nebula.tsx out.mp4',
+    command: 'celesta-exporter --react nebula.tsx out.mp4',
   },
 };

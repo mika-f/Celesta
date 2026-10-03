@@ -8,7 +8,7 @@ import { progress } from '../helpers';
 
 const NEEDS: Record<ToolId, string[]> = {
   remotion: ['Node.js', `npm install (${SETUP.remotion.seconds} s)`, 'Chrome Headless Shell, fetched on first render'],
-  fframes: ['Rust toolchain + LLVM (libclang)', 'FFmpeg 9 shared build, DLLs on PATH', 'Vulkan GPU',
+  fframes: ['Rust toolchain + LLVM (libclang)', 'FFmpeg 9 shared build: FFMPEG_DIR, DLLs on PATH', 'Vulkan GPU',
     `${SETUP.fframes.install} (${SETUP.fframes.seconds} s)`],
   celesta: ['Install the app. Node.js is bundled.'],
 };

@@ -24,6 +24,7 @@ const option = (name, fallback) => {
   return i >= 0 ? args[i + 1] : fallback;
 };
 const runs = Number(option('runs', '3'));
+if (!Number.isInteger(runs) || runs < 1) throw new Error(`--runs must be a positive integer, got ${option('runs', '3')}`);
 const only = option('only', 'celesta,remotion,fframes').split(',');
 const out = path.resolve(option('out', path.join(here, 'out')));
 mkdirSync(out, { recursive: true });
@@ -66,6 +67,7 @@ for (const name of only) {
     const start = process.hrtime.bigint();
     const r = spawnSync(p.cmd, p.args(file), { cwd: p.cwd, stdio: ['ignore', 'ignore', 'pipe'], encoding: 'utf8' });
     const seconds = Number(process.hrtime.bigint() - start) / 1e9;
+    if (r.error) throw new Error(`could not start ${name} (${p.cmd}): ${r.error.message}`);
     if (r.status !== 0) {
       console.error(r.stderr);
       throw new Error(`${name} failed with exit code ${r.status}`);

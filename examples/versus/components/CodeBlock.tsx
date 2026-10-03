@@ -92,6 +92,3 @@ export function CodeBlock({ source, lang, size = 24, lineHeight = size * 1.5, re
     </Group>
   );
 }
-
-export const codeWidth = (source: string, size: number) =>
-  Math.max(...source.split('\n').map((l) => l.length)) * size * 0.6;

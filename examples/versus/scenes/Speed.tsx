@@ -51,7 +51,7 @@ export function Speed() {
             <Rect x={TRACK_X + Math.max(44, TRACK_W * p) - 22} y={22} anchorX={0.5} anchorY={0.5} width={30} height={30}
               cornerRadius={15} fill="#FFFFFF" glow={{ color, blur: 14 }} opacity={elapsed > 0 ? 1 : 0.4} />
             <Label x={TRACK_X + 4} y={62} size={16} font="mono" weight={400} color={C.grey}>
-              {`frame ${String(frame).padStart(3, '0')} / ${FRAMES}`}
+              {`${String(frame).padStart(3, '0')} / ${FRAMES} frames rendered`}
             </Label>
             <Group x={TRACK_X + TRACK_W + 40} y={-4}>
               <Label size={44} font="mono" weight={700} color={done ? color : C.soft}>
@@ -72,7 +72,7 @@ export function Speed() {
         </Group>
         <Label x={250} y={22} size={34} weight={700}>faster than Remotion</Label>
         <Label x={250} y={70} size={21} weight={400} color={C.soft}>
-          {`fframes is the raw-speed winner. Tuning Remotion (--gl=angle, 100% concurrency) gave ${TUNED.min.toFixed(0)}–${TUNED.max.toFixed(0)} s: no faster.`}
+          {`fframes is the raw-speed winner.${TUNED ? ` Tuning Remotion (--gl=angle, 100% concurrency) gave ${TUNED.min.toFixed(0)}–${TUNED.max.toFixed(0)} s: no faster.` : ''}`}
         </Label>
       </Group>
       <Footnote opacity={progress(f, 40, 20)}>{`${MACHINE} · libx264 medium, CRF 18 · median of 3`}</Footnote>
