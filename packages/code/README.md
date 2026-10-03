@@ -6,42 +6,34 @@ twinkleplop to tokenize source and Celesta's `Text` and `Rect` to draw it.
 
 ## Build and try
 
-From the repository root, after building `@celesta/react` as described in the
-root README:
+Building `@celesta/react` as described in the root README also builds
+`@celesta/code` and stages its TypeScript support. From the repository root:
 
 ```sh
 pnpm install
-pnpm --dir packages/code run build
 pnpm --dir packages/code run test
 pnpm --dir packages/code run check:examples
 cargo run -p celesta-editor --release -- packages/code/examples/highlight.tsx
 ```
 
-Like `@celesta/react`, this package is currently private and used through the
-workspace; it has not been published to npm. It depends on the matching
-`@celesta/react` runtime and React 18 as peers. The desktop CLI bundles the
-optional package from the composition's dependencies while sharing its own
-React and Celesta runtime instances.
+Like `@celesta/react`, this package is currently private and has not been
+published to npm. It depends on the matching `@celesta/react` runtime and
+React 18 as peers. Celesta's desktop app ships it as a separate package;
+the CLI resolves it from that runtime and bundles it only when a composition
+imports it, sharing the CLI's React and Celesta instances.
 
-Repository compositions under `examples/<name>` are outside the pnpm
-workspace. To use `@celesta/code` there, add this dependency to the example's
-own `package.json` and run `pnpm install --ignore-workspace` in that directory
-after building the package:
+Choose **File > Set Up TypeScript** with a React composition open. Its
+`.celesta/` support directory automatically includes the `@celesta/code`
+declarations and import mapping, alongside `@celesta/react` and `@celesta/math`.
+You can import `Code` without adding a dependency or installing from npm,
+including in repository compositions under `examples/<name>`.
 
-```json
-{
-  "dependencies": {
-    "@celesta/code": "link:../../packages/code"
-  }
-}
-```
-
-Other external packages also need dependencies in the composition's project.
-Official package resolution, example dependency setup, and a possible
-`celesta-editor --init` command are tracked in
+Other external packages still need dependencies in the composition's project.
+General example dependency setup and a possible `celesta-editor --init`
+command are tracked in
 [#107](https://github.com/mika-f/Celesta/issues/107).
 
-The browser playground currently only accepts `@celesta/react` and `react`
+The browser playground currently only accepts `@celesta/react`, `@celesta/math`, and `react`
 imports, and does not support this optional package. Browser integration is
 tracked in [#100](https://github.com/mika-f/Celesta/issues/100).
 

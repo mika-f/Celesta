@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -255,23 +255,40 @@ test('invalid layout inputs fail before rendering', () => {
   }
 });
 
-test('standalone optional package bundles through the CLI and shares the runtime with useTypewriter', { timeout: 15000 }, async t => {
+for (const packaged of [false, true]) test(`${packaged ? 'packaged' : 'source'} CLI resolves Code without project dependencies and shares useTypewriter's runtime`, { timeout: 30000 }, async t => {
   const directory = mkdtempSync(join(tmpdir(), 'celesta-code-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
   const entry = join(directory, 'entry.tsx');
-  const codePath = fileURLToPath(new URL('../dist/index.js', import.meta.url));
   writeFileSync(entry, `
     import { Composition, useTypewriter } from '@celesta/react';
-    import { Code } from ${JSON.stringify(codePath)};
+    import { Code, codeCharacterCount } from '@celesta/code';
     const source = 'const value = "😀";';
+    const maximum: number = codeCharacterCount(source, { line: 1, column: Array.from(source).length + 1 });
     function Demo() {
       const { length } = useTypewriter(source, { framesPerChar: 0.5 });
-      return <Code language="ts" visibleCharacters={length}>{source}</Code>;
+      return <Code language="ts" visibleCharacters={Math.min(length, maximum)} highlightLines={[1]} highlightWidth={800}>{source}</Code>;
     }
     export default function Root() {
       return <Composition width={800} height={300} fps={30} durationInFrames={20}><Demo /></Composition>;
     }
   `);
-  const cli = fileURLToPath(new URL('../../react/bin/celesta-react-render.js', import.meta.url));
+  let cli = fileURLToPath(new URL('../../react/bin/celesta-react-render.js', import.meta.url));
+  if (packaged) {
+    const runtime = join(directory, 'runtime/react');
+    const stage = fileURLToPath(new URL('../../../scripts/stage-react-runtime.mjs', import.meta.url));
+    const staged = spawnSync(process.execPath, [stage, runtime], { encoding: 'utf8' });
+    assert.equal(staged.status, 0, staged.stderr);
+    const closure = JSON.parse(readFileSync(join(runtime, 'runtime-packages.json'), 'utf8'));
+    assert.ok(closure['@celesta/code']);
+    assert.ok(closure['@twinkleplop/core']);
+    // The editor copies this same support template into a project at setup.
+    cpSync(join(runtime, 'dist/project-types'), join(directory, '.celesta'), { recursive: true });
+    writeFileSync(join(directory, 'tsconfig.json'), '{"extends":"./.celesta/tsconfig.json"}');
+    const compiler = fileURLToPath(new URL('../node_modules/typescript/lib/tsc.js', import.meta.url));
+    const checked = spawnSync(process.execPath, [compiler, '-p', directory], { encoding: 'utf8' });
+    assert.equal(checked.status, 0, checked.stdout + checked.stderr);
+    cli = join(runtime, 'dist/cli.js');
+  }
   const child = spawn(process.execPath, [cli, entry], { stdio: ['pipe', 'pipe', 'pipe'] });
   t.signal.addEventListener('abort', () => child.kill(), { once: true });
   let stderr = '';
@@ -307,6 +324,5 @@ test('standalone optional package bundles through the CLI and shares the runtime
     assert.equal(measured, firstMeasurements);
   } finally {
     child.kill();
-    rmSync(directory, { recursive: true, force: true });
   }
 });

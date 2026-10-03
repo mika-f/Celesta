@@ -128,8 +128,8 @@ is currently imported as `@celesta/react`; deterministic random numbers, noise,
 and other math helpers are imported from `@celesta/math`.
 
 Syntax-highlighted code is available separately in [`@celesta/code`](packages/code/README.md).
-Build it with `pnpm --dir packages/code run build` after the React package,
-then import `Code` from `@celesta/code`. It supports TSX, TypeScript, JSON,
+The React build also builds it, and the desktop app bundles it separately.
+Import `Code` from `@celesta/code`. It supports TSX, TypeScript, JSON,
 Bash, line highlights, and measured caret positions. For typing animations,
 combine it with `useTypewriter()` from `@celesta/react`.
 It is optional and does not add highlighting dependencies to `@celesta/react`.
@@ -155,13 +155,13 @@ effects under `effects`, with keyframes for numeric properties and colors.
 ### Type-check your compositions
 
 Choose **File > Set Up TypeScript** with a React composition open. Celesta
-copies the `@celesta/react`, `@celesta/math`, React, and Node.js type
+copies the `@celesta/react`, `@celesta/math`, `@celesta/code`, React, and Node.js type
 declarations that match its bundled runtime into a `.celesta/` folder in your
 project. If the project
 has no `tsconfig.json`, Celesta creates one that extends
 `./.celesta/tsconfig.json`. If a `tsconfig.json` already exists, add
 `"extends": "./.celesta/tsconfig.json"` to it. You don't need to install
-`@celesta/react`, `@celesta/math`, `react`, or `@types/*` from npm.
+`@celesta/react`, `@celesta/math`, `@celesta/code`, `react`, or `@types/*` from npm.
 
 Celesta updates `.celesta/` when you open the project in a newer version. The
 folder ignores itself in Git.

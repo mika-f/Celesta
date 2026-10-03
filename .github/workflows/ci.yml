@@ -75,9 +75,8 @@ jobs:
       - name: Test @celesta/react
         run: pnpm --dir packages/react run test
 
-      - name: Build and test @celesta/code
+      - name: Test @celesta/code
         run: |
-          pnpm --dir packages/code run build
           pnpm --dir packages/code run test
           pnpm --dir packages/code run check:examples
 

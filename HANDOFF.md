@@ -78,6 +78,11 @@ video/audio tracks.
   (`celesta_react_bridge::set_up_project_types`), and opening a project
   re-copies it when its `version.json` content hash differs
   (`refresh_project_types`).
+- `@celesta/code` stays separate from the React module and its dependencies.
+  The React build compiles it after the core declarations and stages its types
+  in `project-types`. Desktop packaging includes Code and its tokenizer
+  dependencies; the CLI bundles it on import while sharing the core externals.
+  File > Set Up TypeScript supplies its import mapping without a project install.
 
 Before editing, run:
 

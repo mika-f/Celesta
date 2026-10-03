@@ -1,15 +1,12 @@
 // Stage the TypeScript support directory the editor copies into a project's
-// `.celesta/`: `@celesta/react`'s and `@celesta/math`'s declarations, the
-// React types they build on, Node's globals (entries run under the bundled
-// Node.js), and a base tsconfig mapping those imports. The runtime never
-// loads these — entries always resolve `react`, `@celesta/react`, and
-// `@celesta/math` to the bundled copies — so a project gets matching types
-// without installing anything.
+// `.celesta/`: the React, math, and Code declarations, React's supporting
+// types, Node's globals, and a base tsconfig mapping those imports. Entries
+// use the bundled runtime, so projects get matching types without an install.
 import { createHash } from 'node:crypto';
-import { cpSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
+import { cpSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolvePackageManifest } from '../../../scripts/resolve-package-manifest.mjs';
 
 const source = fileURLToPath(new URL('../', import.meta.url));
 const dist = join(source, 'dist');
@@ -43,8 +40,7 @@ writeJson(join(celesta, 'package.json'), {
 
 // Declarations and license notices only; the runtime ships the JavaScript.
 function copyTypes(name, parent) {
-  const require = createRequire(join(parent, 'package.json'));
-  const packageJson = realpathSync(require.resolve(`${name}/package.json`));
+  const packageJson = resolvePackageManifest(name, parent);
   const directory = dirname(packageJson);
   const target = join(modules, name);
   if (statSync(target, { throwIfNoEntry: false })) return;
@@ -64,6 +60,8 @@ function copyTypes(name, parent) {
   }
 }
 copyTypes('@celesta/math', source);
+// Code stays a separate package, without a dependency from @celesta/react.
+copyTypes('@celesta/code', join(source, '../code'));
 copyTypes('@types/react', source);
 copyTypes('@types/node', source);
 
@@ -87,6 +85,7 @@ writeJson(join(destination, 'tsconfig.json'), {
     paths: {
       '@celesta/react': ['./node_modules/@celesta/react'],
       '@celesta/math': ['./node_modules/@celesta/math'],
+      '@celesta/code': ['./node_modules/@celesta/code'],
       react: ['./node_modules/@types/react'],
       'react/*': ['./node_modules/@types/react/*'],
     },
