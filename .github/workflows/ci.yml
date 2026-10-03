@@ -98,8 +98,10 @@ jobs:
         # them in parallel; the Test step reuses the compiled test targets.
         run: cargo build --workspace --all-targets --locked --timings
 
-      # Tests that need a GPU adapter skip themselves when none is available.
+      # Linux has lavapipe; missing it must fail rather than skip GPU tests.
       - name: Test
+        env:
+          CELESTA_REQUIRE_GPU: ${{ runner.os == 'Linux' && '1' || '0' }}
         run: cargo test --workspace --locked --no-fail-fast --timings
 
       - name: Upload Cargo build timings

@@ -22,7 +22,7 @@ use celesta_renderer::{
     Color as CpuColor, FlattenedPath, FontFallback, LineSegment, MissingGlyphs, PathShape,
     PathTransform, RectPaint, RenderError, ResolvedPaint, TextRasterizer, flatten_path,
     image_source::{fit_within, resize_rgba},
-    resolve_rect_paint,
+    rasterize_path, resolve_rect_paint,
 };
 
 #[cfg(target_os = "macos")]
@@ -1228,10 +1228,7 @@ impl GpuRenderer {
         // The largest path buffer the device can create and bind, in whole
         // entries.
         let limits = self.device.limits();
-        let path_limit = limits
-            .max_storage_buffer_binding_size
-            .min(limits.max_buffer_size)
-            & !15;
+        let path_limit = path_entry_limit(&limits) as u64 * 16;
         if path_size > path_limit {
             return Err(GpuRenderError::PathsTooComplex(self.path_entries.len()));
         }
@@ -1777,7 +1774,8 @@ impl GpuRenderer {
                 // transform applied to the geometry exactly as the CPU
                 // renderer's rasterizer does; the coverage of every output
                 // pixel is then shaded by `layer.wgsl`, so an animated path
-                // costs neither a rasterization nor an upload per frame.
+                // costs neither a rasterization nor a texture upload per frame.
+                // Dense tiles or a full storage buffer use the CPU rasterizer.
                 let shape = PathShape {
                     commands,
                     fill: fill.as_ref(),
@@ -1793,13 +1791,31 @@ impl GpuRenderer {
                     return Ok(());
                 };
                 let (left, top) = (path.left as f32, path.top as f32);
-                let shaded =
-                    ShadedPath::new(&path, &mut self.paint_entries, &mut self.path_entries);
-                if shaded.tiles == 0 {
-                    return Ok(());
-                }
+                let content = match ShadedPath::new(
+                    &path,
+                    &mut self.paint_entries,
+                    &mut self.path_entries,
+                    path_entry_limit(&self.device.limits()),
+                ) {
+                    Some(shaded) if shaded.tiles == 0 => return Ok(()),
+                    Some(shaded) => PreparedContent::Path(shaded),
+                    None => {
+                        let Some(rasterized) =
+                            rasterize_path(&shape, state.transform.into(), width, height)
+                                .map_err(GpuRenderError::Text)?
+                        else {
+                            return Ok(());
+                        };
+                        let image = DecodedImage::new(
+                            rasterized.image.width(),
+                            rasterized.image.height(),
+                            rasterized.image.into_pixels(),
+                        )?;
+                        PreparedContent::Texture(self.upload_texture(&image, false))
+                    }
+                };
                 output.push(PreparedItem::Layer(PreparedLayer {
-                    content: PreparedContent::Path(shaded),
+                    content,
                     anchor: Point { x: 0.0, y: 0.0 },
                     state: LayerState {
                         transform: Affine {
@@ -3105,8 +3121,28 @@ struct ShadedPath {
     stroke: [f32; 4],
 }
 
+// ponytail: cap the quadratic scanline loop; denser tiles use the existing
+// CPU rasterizer. Subdivide tiles if measurements justify a denser GPU path.
+const MAX_PATH_TILE_EDGES: usize = 64;
+
+/// Keep all shader indices exact in f32 even with larger device limits.
+fn path_entry_limit(limits: &wgpu::Limits) -> usize {
+    (limits
+        .max_storage_buffer_binding_size
+        .min(limits.max_buffer_size)
+        / 16)
+        .min(1 << 24) as usize
+}
+
 impl ShadedPath {
-    fn new(path: &FlattenedPath, paints: &mut Vec<[f32; 4]>, entries: &mut Vec<[f32; 4]>) -> Self {
+    /// Returns None before modifying either buffer when this layer needs
+    /// CPU rasterization to bound shader work or fit the frame's buffer.
+    fn new(
+        path: &FlattenedPath,
+        paints: &mut Vec<[f32; 4]>,
+        entries: &mut Vec<[f32; 4]>,
+        entry_limit: usize,
+    ) -> Option<Self> {
         let base = entries.len();
         let inverse = path.inverse;
         let columns = path.width.div_ceil(PATH_TILE_COLUMNS);
@@ -3135,6 +3171,17 @@ impl ShadedPath {
             .collect();
         tiles.sort_unstable();
         tiles.dedup();
+        let edge_entries: usize = outlines.iter().flatten().map(|bins| bins.edges.len()).sum();
+        let required = 3 + tiles.len() * stride + edge_entries;
+        if required > entry_limit.saturating_sub(base)
+            || outlines.iter().flatten().any(|bins| {
+                bins.tiles
+                    .iter()
+                    .any(|tile| tile.edges.len() > MAX_PATH_TILE_EDGES)
+            })
+        {
+            return None;
+        }
         let first_tile = base + 3;
         entries.push([inverse.a, inverse.b, inverse.c, inverse.d].map(|value| value as f32));
         entries.push([
@@ -3162,14 +3209,14 @@ impl ShadedPath {
             }
             entries.extend_from_slice(&bins.edges);
         }
-        Self {
+        Some(Self {
             width: path.width,
             height: path.height,
             base: base as f32,
             tiles: tiles.len() as u32,
             fill: encode_paint(path.fill.as_ref().map(|(paint, _)| paint), paints),
             stroke: encode_paint(path.stroke.as_ref().map(|(paint, _)| paint), paints),
-        }
+        })
     }
 }
 
@@ -4477,7 +4524,7 @@ impl fmt::Display for GpuRenderError {
             ),
             Self::PathsTooComplex(entries) => write!(
                 formatter,
-                "frame's paths have too many edges for the GPU: {entries} entries"
+                "frame's paths exceed the GPU storage buffer: {entries} tile and edge entries"
             ),
         }
     }
@@ -4551,6 +4598,10 @@ mod tests {
         match GpuRenderer::new(options) {
             Ok(renderer) => Some(renderer),
             Err(GpuRenderError::RequestAdapter(error)) => {
+                assert!(
+                    std::env::var("CELESTA_REQUIRE_GPU").as_deref() != Ok("1"),
+                    "GPU tests require an adapter: {error}"
+                );
                 eprintln!("skipping GPU test because no adapter is available: {error}");
                 None
             }
@@ -5533,7 +5584,7 @@ mod tests {
             .unwrap()
             .expect("the path is visible");
         let mut entries = Vec::new();
-        ShadedPath::new(&path, &mut Vec::new(), &mut entries);
+        ShadedPath::new(&path, &mut Vec::new(), &mut entries, 1 << 24).unwrap();
         assert_eq!(renderer.path_entries, entries);
     }
 
@@ -5573,6 +5624,22 @@ mod tests {
         );
     }
 
+    // GPU canvases/readback are premultiplied; CPU frames are straight RGBA.
+    fn premultiplied_pixels(pixels: &[u8]) -> Vec<u8> {
+        pixels
+            .chunks_exact(4)
+            .flat_map(|pixel| {
+                let alpha = u16::from(pixel[3]);
+                [
+                    ((u16::from(pixel[0]) * alpha + 127) / 255) as u8,
+                    ((u16::from(pixel[1]) * alpha + 127) / 255) as u8,
+                    ((u16::from(pixel[2]) * alpha + 127) / 255) as u8,
+                    pixel[3],
+                ]
+            })
+            .collect()
+    }
+
     fn assert_paths_match_cpu(renderer: &mut GpuRenderer, case: &str, layers: Vec<Layer>) {
         let mut scene = empty_scene(96, 64);
         scene.layers = layers;
@@ -5604,6 +5671,270 @@ mod tests {
         Paint::Solid {
             color: color.to_owned(),
         }
+    }
+
+    #[test]
+    fn path_entry_limits_respect_binding_buffer_and_float_precision() {
+        let mut limits = wgpu::Limits::default();
+        assert_eq!(path_entry_limit(&limits), 1 << 23);
+        limits.max_buffer_size = 1023;
+        assert_eq!(path_entry_limit(&limits), 63);
+        limits.max_buffer_size = 1 << 30;
+        limits.max_storage_buffer_binding_size = 1 << 30;
+        assert_eq!(path_entry_limit(&limits), 1 << 24);
+    }
+
+    #[test]
+    fn tile_bins_preserve_full_outline_winding() {
+        let winding = |edges: &[[f32; 4]], x: f64, y: f64| -> i32 {
+            edges
+                .iter()
+                .map(|edge| {
+                    let [ax, ay, bx, by] = edge.map(f64::from);
+                    if (y < ay) == (y < by) || ax + (y - ay) * (bx - ax) / (by - ay) > x {
+                        0
+                    } else if by > ay {
+                        1
+                    } else {
+                        -1
+                    }
+                })
+                .sum()
+        };
+        // Fixed seeds cover horizontal edges, tile boundaries and
+        // self-intersections without a GPU adapter.
+        for seed in 0..32 {
+            let points: Vec<_> = (0..16)
+                .map(|i| ((i * 17 + seed * 7) % 65, (i * 11 + seed * 13) % 33))
+                .collect();
+            let edges: Vec<_> = points
+                .iter()
+                .zip(points.iter().cycle().skip(1))
+                .map(|(&(ax, ay), &(bx, by))| LineSegment {
+                    x0: ax as f32,
+                    y0: ay as f32,
+                    x1: bx as f32,
+                    y1: by as f32,
+                })
+                .collect();
+            let bins = bin_tiles(&edges, 64, 32);
+            let full: Vec<_> = edges.iter().map(|e| [e.x0, e.y0, e.x1, e.y1]).collect();
+            for y in 0..128 {
+                let sample_y = (f64::from(y) + 0.5) / 4.0;
+                for x in 0..64 {
+                    let sample_x = f64::from(x) + 0.5;
+                    let index = (y / 32) * 8 + x / 8;
+                    let tiled =
+                        bins.tiles
+                            .iter()
+                            .find(|tile| tile.index == index)
+                            .map_or(0, |tile| {
+                                tile.backdrop
+                                    + winding(&bins.edges[tile.edges.clone()], sample_x, sample_y)
+                            });
+                    assert_eq!(
+                        tiled,
+                        winding(&full, sample_x, sample_y),
+                        "seed {seed}, ({sample_x}, {sample_y})"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn shaded_path_budget_rejection_preserves_both_buffers() {
+        let paint = celesta_renderer::resolve_rect_paint(Some(&solid("#FFFFFF")), None)
+            .unwrap()
+            .fill
+            .unwrap();
+        let mut path = FlattenedPath {
+            left: 0,
+            top: 0,
+            width: 16,
+            height: 16,
+            fill: Some((
+                paint,
+                vec![
+                    LineSegment {
+                        x0: 1.0,
+                        y0: 0.0,
+                        x1: 1.0,
+                        y1: 16.0,
+                    },
+                    LineSegment {
+                        x0: 15.0,
+                        y0: 16.0,
+                        x1: 15.0,
+                        y1: 0.0,
+                    },
+                ],
+            )),
+            stroke: None,
+            inverse: PathTransform::scale_translate(1.0, 1.0, 0.0, 0.0),
+        };
+        let mut entries = vec![[7.0; 4]];
+        let mut paints = vec![[8.0; 4]];
+        assert!(ShadedPath::new(&path, &mut paints, &mut entries, 1).is_none());
+        let edges = &mut path.fill.as_mut().unwrap().1;
+        *edges = vec![edges[0]; MAX_PATH_TILE_EDGES + 1];
+        assert!(ShadedPath::new(&path, &mut paints, &mut entries, 1 << 24).is_none());
+        assert_eq!(entries, vec![[7.0; 4]]);
+        assert_eq!(paints, vec![[8.0; 4]]);
+    }
+
+    #[test]
+    fn shades_top_boundary_vertices_on_transparent_backgrounds() {
+        let Some(mut renderer) = renderer(GpuRenderOptions {
+            background: Color::TRANSPARENT,
+        }) else {
+            return;
+        };
+        for sides in [4, 6] {
+            for epsilon in [0.0, 2.2e-14, 1e-9, 1e-7] {
+                for reverse in [false, true] {
+                    let mut points: Vec<_> = (0..sides)
+                        .map(|i| {
+                            let angle = f64::from(i) * std::f64::consts::TAU / f64::from(sides);
+                            (64.0 + 20.0 * angle.cos(), epsilon + 20.0 * angle.sin())
+                        })
+                        .collect();
+                    if reverse {
+                        points.reverse();
+                    }
+                    let mut scene = empty_scene(128, 32);
+                    scene.layers = vec![path_layer(
+                        "boundary",
+                        polyline(&points, true),
+                        Some(solid("#FFFFFF")),
+                        None,
+                    )];
+                    let gpu = renderer.render(&scene).unwrap();
+                    let cpu = celesta_renderer::CpuRenderer::new(celesta_renderer::RenderOptions {
+                        background: CpuColor::TRANSPARENT,
+                    })
+                    .render(&scene)
+                    .unwrap();
+                    assert_paths_match(
+                        "top boundary",
+                        gpu.pixels(),
+                        &premultiplied_pixels(cpu.pixels()),
+                    );
+                    for x in 52..76 {
+                        assert_eq!(pixel_at(&gpu, x, 0)[3], 255);
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn shades_integer_holes_exactly_on_transparent_backgrounds() {
+        let Some(mut renderer) = renderer(GpuRenderOptions {
+            background: Color::TRANSPARENT,
+        }) else {
+            return;
+        };
+        let mut commands = polyline(&[(0.0, 0.0), (64.0, 0.0), (64.0, 32.0), (0.0, 32.0)], true);
+        commands.extend(polyline(
+            &[(8.0, 8.0), (8.0, 24.0), (56.0, 24.0), (56.0, 8.0)],
+            true,
+        ));
+        let mut scene = empty_scene(64, 32);
+        scene.layers = vec![path_layer("hole", commands, Some(solid("#FFFFFF")), None)];
+        let gpu = renderer.render(&scene).unwrap();
+        let cpu = celesta_renderer::CpuRenderer::new(celesta_renderer::RenderOptions {
+            background: CpuColor::TRANSPARENT,
+        })
+        .render(&scene)
+        .unwrap();
+        assert_eq!(gpu.pixels(), cpu.pixels());
+    }
+
+    #[test]
+    fn dense_zigzags_use_cpu_textures_and_leave_renderer_usable() {
+        let Some(mut renderer) = renderer(GpuRenderOptions {
+            background: Color::TRANSPARENT,
+        }) else {
+            return;
+        };
+        let mut scene = empty_scene(128, 64);
+        scene.layers = vec![path_layer(
+            "zigzag",
+            polyline(
+                &(0..4096)
+                    .map(|i| {
+                        (
+                            32.0 + f64::from(i) / 64.0,
+                            if i % 2 == 0 { 12.0 } else { 52.0 },
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+                false,
+            ),
+            None,
+            Some((solid("#FFFFFF80"), 1.0)),
+        )];
+        let cpu = celesta_renderer::CpuRenderer::new(celesta_renderer::RenderOptions {
+            background: CpuColor::TRANSPARENT,
+        })
+        .render(&scene)
+        .unwrap();
+        for _ in 0..3 {
+            let gpu = renderer.render(&scene).unwrap();
+            assert!(
+                renderer.path_entries.is_empty(),
+                "dense layer must use a texture"
+            );
+            assert_paths_match(
+                "dense fallback",
+                gpu.pixels(),
+                &premultiplied_pixels(cpu.pixels()),
+            );
+        }
+        scene.layers = vec![path_layer(
+            "simple",
+            polyline(&[(8.0, 8.0), (24.0, 8.0), (24.0, 24.0), (8.0, 24.0)], true),
+            Some(solid("#FFFFFF")),
+            None,
+        )];
+        let gpu = renderer.render(&scene).unwrap();
+        assert!(!renderer.path_entries.is_empty());
+        assert_eq!(pixel_at(&gpu, 16, 16), [255; 4]);
+    }
+
+    #[test]
+    fn full_path_buffer_falls_back_for_only_the_next_layer() {
+        let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+            return;
+        };
+        renderer.scene_size = (64, 32);
+        let limit = path_entry_limit(&renderer.device.limits());
+        renderer.path_entries.resize(limit - 1, [0.0; 4]);
+        let layer = path_layer(
+            "overflow",
+            polyline(&[(0.0, 0.0), (64.0, 0.0), (64.0, 32.0), (0.0, 32.0)], true),
+            Some(solid("#FFFFFF")),
+            None,
+        );
+        let mut items = Vec::new();
+        renderer
+            .prepare_layer(&layer, LayerState::default(), &mut items)
+            .unwrap();
+        assert!(matches!(
+            items.as_slice(),
+            [PreparedItem::Layer(PreparedLayer {
+                content: PreparedContent::Texture(_),
+                ..
+            })]
+        ));
+        assert_eq!(renderer.path_entries.len(), limit - 1);
+        // The following frame can shade normally again.
+        let mut scene = empty_scene(64, 32);
+        scene.layers = vec![layer];
+        let frame = renderer.render(&scene).unwrap();
+        assert!(renderer.path_entries.len() < limit);
+        assert_eq!(pixel_at(&frame, 32, 16), [255; 4]);
     }
 
     fn path_layer(
@@ -6357,7 +6688,12 @@ mod tests {
             rect(&mut commands, 20.1, 20.9, false);
         }
         let mut scene = empty_scene(32, 32);
-        scene.layers = vec![path_layer("crowded", commands, Some(solid("#FFFFFF")), None)];
+        scene.layers = vec![path_layer(
+            "crowded",
+            commands,
+            Some(solid("#FFFFFF")),
+            None,
+        )];
         let frame = renderer.render(&scene).unwrap();
         let alpha = |x| pixel_at(&frame, x, 16)[3];
         assert!(alpha(10).abs_diff(77) <= 2, "slivers cover {}", alpha(10));
@@ -6389,17 +6725,35 @@ mod tests {
                 Some(solid("#80C0FF")),
                 Some((solid("#FFFFFF"), 1.0 + (t * 0.5).sin().abs())),
             )];
+            // Exceed the initial 1024 entries to exercise buffer growth and
+            // bind-group replacement, then animate without accumulating data.
+            let layer = scene.layers.pop().unwrap();
+            scene.layers = (0..8)
+                .map(|i| Layer {
+                    id: format!("wobble-{i}"),
+                    ..layer.clone()
+                })
+                .collect();
             scene
         };
+        let initial_size = renderer.paths.size();
         let mut sizes = Vec::new();
         for index in 0..200 {
             renderer.submit(&frame(index)).unwrap();
             sizes.push(renderer.paths.size());
         }
         renderer.drain().unwrap();
+        assert!(sizes[0] > initial_size, "path buffer must actually grow");
         let largest = renderer.path_entries.capacity() as u64 * 16;
         assert!(sizes.iter().all(|&size| size == sizes[20]), "{sizes:?}");
         assert!(sizes[20] <= (largest * 2).next_power_of_two(), "{sizes:?}");
+        let mut scene = frame(199);
+        scene.layers.truncate(1);
+        let gpu = renderer.render(&scene).unwrap();
+        let cpu = celesta_renderer::CpuRenderer::default()
+            .render(&scene)
+            .unwrap();
+        assert_paths_match("grown path buffer", gpu.pixels(), cpu.pixels());
     }
 
     #[test]
