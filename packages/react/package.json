@@ -20,7 +20,7 @@
   },
   "scripts": {
     "codegen": "cd ../.. && cargo test -p celesta-project -p celesta-composition --features codegen",
-    "build": "tsc -b tsconfig.json && node scripts/stage-project-types.mjs",
+    "build": "tsc -b tsconfig.json && tsc -p ../code/tsconfig.json && node scripts/stage-project-types.mjs",
     "test": "vitest run",
     "clean": "rm -rf dist"
   },

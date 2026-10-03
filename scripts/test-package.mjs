@@ -65,7 +65,25 @@ export default function Root() {
     existsSync(join(runtime, 'react/dist/project-types/version.json')),
     'Package must include the TypeScript support template',
   );
-  console.log('Package smoke test passed: bundled React hooks and MP4 export, without Node.js on PATH.');
+  assert.ok(
+    existsSync(join(runtime, 'react/dist/project-types/node_modules/@celesta/code/dist/index.d.ts')),
+    'Set Up TypeScript must include Code declarations',
+  );
+  writeFileSync(entry, `
+import { Composition } from '@celesta/react';
+import { Code, codeCharacterCount } from '@celesta/code';
+const source = '{ "id": "broll" }';
+export default function Root() {
+  return <Composition width={320} height={120} fps={1} durationInFrames={1}>
+    <Code language="json" highlightLines={[1]} highlightWidth={320}
+      visibleCharacters={codeCharacterCount(source, { line: 1, column: 18 })}>{source}</Code>
+  </Composition>;
+}
+`);
+  const codeOutput = join(directory, 'code.png');
+  run(exporter, ['--react', entry, '--frame', '0', codeOutput]);
+  assert.deepEqual([...readFileSync(codeOutput).subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
+  console.log('Package smoke test passed: bundled React hooks, Code, TypeScript support, and export, without Node.js on PATH.');
 } finally {
   assert.ok(directory.startsWith(join(tmpdir(), 'Celesta package 日本語 ')));
   rmSync(directory, { recursive: true, force: true });

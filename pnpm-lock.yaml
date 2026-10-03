@@ -166,6 +166,37 @@ importers:
 
   .: {}
 
+  packages/code:
+    dependencies:
+      '@twinkleplop/bash':
+        specifier: ^0.1.5
+        version: 0.1.5
+      '@twinkleplop/json':
+        specifier: ^0.1.5
+        version: 0.1.5
+      '@twinkleplop/tsx':
+        specifier: ^0.1.5
+        version: 0.1.5
+      '@twinkleplop/typescript':
+        specifier: ^0.1.5
+        version: 0.1.5
+    devDependencies:
+      '@celesta/react':
+        specifier: workspace:*
+        version: link:../react
+      '@types/node':
+        specifier: ^24.13.6
+        version: 24.19.0
+      '@types/react':
+        specifier: ^18.3.18
+        version: 18.3.31
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
   packages/logos:
     dependencies:
       react:

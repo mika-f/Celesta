@@ -1,0 +1,42 @@
+{
+  "name": "@celesta/code",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Optional syntax-highlighted code components for Celesta compositions.",
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": ["dist", "README.md"],
+  "sideEffects": false,
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test \"test/**/*.test.mjs\"",
+    "check:examples": "tsc -p tsconfig.examples.json"
+  },
+  "peerDependencies": {
+    "@celesta/react": "0.0.0",
+    "react": "^18.3.1"
+  },
+  "dependencies": {
+    "@twinkleplop/bash": "^0.1.5",
+    "@twinkleplop/json": "^0.1.5",
+    "@twinkleplop/tsx": "^0.1.5",
+    "@twinkleplop/typescript": "^0.1.5"
+  },
+  "devDependencies": {
+    "@celesta/react": "workspace:*",
+    "@types/node": "^24.13.6",
+    "@types/react": "^18.3.18",
+    "react": "^18.3.1",
+    "typescript": "^5.7.3"
+  }
+}
