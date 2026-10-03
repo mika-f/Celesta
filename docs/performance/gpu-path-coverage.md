@@ -150,10 +150,13 @@ frame. The blobs are not full-frame: they are circles of 405–630 px, but a
 each blob's two passes cover about 1.1 million pixels at 289 taps each,
 about 2 billion texel reads per frame for the six. The time follows that
 tap count: halving σ to 24 cuts the predicted taps to 0.37 and the measured
-blur time to 0.38 (0.16 and 0.18 at σ 12). Screen blending costs nothing
-measurable, the title's σ24 glow about 1.5–2 ms, removing the particles,
-the spectrum or the HUD made no measurable difference, and React evaluation, which overlaps the GPU,
-about 5 ms of CPU per frame.
+blur time to 0.38 (0.16 and 0.18 at σ 12).
+
+The rest is small. Screen blending costs nothing measurable. The title's
+σ24 glow saves 0.4 ms in the table above, and 1.4 and 2.2 ms in two other
+sessions, so it costs at most about 2 ms. Removing the particles, the
+spectrum or the HUD makes no measurable difference. React evaluation takes
+about 5 ms of CPU per frame, which overlaps the GPU.
 
 Micro-optimizing the blur loop does not change this: computing the
 Gaussian weights incrementally instead of with `exp` per tap, and loading
