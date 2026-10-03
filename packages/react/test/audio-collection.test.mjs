@@ -1,5 +1,4 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
+import { expect, test } from 'vitest';
 import React from 'react';
 
 import { Audio, Composition, Font, Group, Sequence, useCurrentFrame, useTextMetrics } from '../dist/index.js';
@@ -16,7 +15,8 @@ test('audio collection preserves every report, font-dependent hooks, state and s
   });
   function Sound() {
     const frame = useCurrentFrame();
-    const [src] = React.useState('state.wav');
+    const [src, setSrc] = React.useState('state.wav');
+    if (frame === 6 && src === 'state.wav') setSrc('updated.wav');
     const metrics = useTextMetrics('x'.repeat(frame % 4 + 1));
     return metrics.width > 30 ? h(Audio, { src, volume: frame / 10 }) : null;
   }
@@ -39,12 +39,16 @@ test('audio collection preserves every report, font-dependent hooks, state and s
     const expectedMeasurements = [...measured];
     measured.length = 0;
     const actual = batched.collectAudio();
-    assert.deepEqual(actual, expected);
-    assert.deepEqual(measured, expectedMeasurements);
-    assert.equal(actual.filter(({ src }) => src === 'same.wav').length, 60);
-    assert.equal(actual.filter(({ src }) => src === 'one-frame.wav').length, 1);
+    expect(actual).toEqual(expected);
+    expect(measured).toEqual(expectedMeasurements);
+    expect(actual.filter(({ src }) => src === 'same.wav')).toHaveLength(60);
+    expect(actual.filter(({ src }) => src === 'one-frame.wav')).toHaveLength(1);
+    // Volume identifies Sound's local frame. Both paths could remount on
+    // every frame and still agree, so also check the state transition itself.
+    expect(actual.find(({ volume }) => volume === 0.3)?.src).toBe('state.wav');
+    expect(actual.find(({ volume }) => volume === 0.7)?.src).toBe('updated.wav');
   }
-  assert.deepEqual(batched.renderAt({ value: 0, timescale: 30 }, null),
+  expect(batched.renderAt({ value: 0, timescale: 30 }, null)).toEqual(
     reference.renderAt({ value: 0, timescale: 30 }, null));
 });
 
@@ -53,13 +57,13 @@ test('audio collection skips visual layer construction but propagates render fai
     // A visual prop that throws if the layer builder accesses it.
     h('rect', { shadow: { color: '#000000', get blur() { throw new Error('visual layer was built'); } } }),
     h(Audio, { src: 'voice.wav' }));
-  assert.equal(mount(Root).collectAudio().length, 3);
-  assert.throws(() => mount(Root).renderAt({ value: 0, timescale: 30 }, null), /visual layer was built/);
+  expect(mount(Root).collectAudio()).toHaveLength(3);
+  expect(() => mount(Root).renderAt({ value: 0, timescale: 30 }, null)).toThrow(/visual layer was built/);
   function Broken() {
     if (useCurrentFrame() === 2) throw new Error('late audio render failure');
     return null;
   }
-  assert.throws(() => mount(() => h(Composition,
-    { width: 100, height: 100, fps: 30, durationInFrames: 3 }, h(Broken))).collectAudio(),
-  /late audio render failure/);
+  expect(() => mount(() => h(Composition,
+    { width: 100, height: 100, fps: 30, durationInFrames: 3 }, h(Broken))).collectAudio())
+    .toThrow(/late audio render failure/);
 });
