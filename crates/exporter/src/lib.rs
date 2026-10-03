@@ -14,12 +14,13 @@ use std::str::FromStr;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
+    mpsc,
 };
 use std::thread;
 
 use celesta_composition::{
-    AssetLocation, AudioClip, AudioGraph, Layer, LayerContent, Rational, ResolvedAsset, Time,
-    TimeError, TimeRange,
+    AssetLocation, AudioClip, AudioGraph, Layer, LayerContent, Rational, ResolvedAsset, Scene,
+    Time, TimeError, TimeRange,
 };
 use celesta_evaluator::{EvaluationError, Evaluator};
 use celesta_gpu_renderer::{GpuRenderError, GpuRenderOptions, GpuRenderer, ReadbackFormat};
@@ -960,56 +961,81 @@ impl Exporter {
             output,
         )?;
 
+        let evaluate = |offset: u64| -> Result<Scene, ExportError> {
+            let frame_index =
+                i64::try_from(start_frame + offset).map_err(|_| ExportError::TimelineTooLong)?;
+            let time = Time::frames(frame_index, metadata.frame_rate).map_err(ExportError::Time)?;
+            let project_frame = project_evaluator
+                .as_ref()
+                .zip(filtered_project.as_ref())
+                .map(
+                    |(evaluator, filtered_project)| -> Result<_, EvaluationError> {
+                        let mut scene = evaluator.scene_at(time)?;
+                        let mut tracks = BTreeMap::new();
+                        for track in &filtered_project.tracks {
+                            let mut layers = evaluator.layers_for_track(&track.id, time)?;
+                            if let Some(asset_root) = project_asset_root {
+                                absolutize_layers(&mut layers, asset_root);
+                            }
+                            tracks.insert(track.id.clone(), layers);
+                        }
+                        if let Some(asset_root) = project_asset_root {
+                            absolutize_layers(&mut scene.layers, asset_root);
+                        }
+                        Ok((scene.layers, tracks))
+                    },
+                )
+                .transpose()
+                .map_err(ExportError::Evaluation)?;
+            let evaluation = bridge
+                .evaluate_at(
+                    time,
+                    project_frame.as_ref().map(|(layers, tracks)| ProjectFrame {
+                        layers: layers.as_slice(),
+                        tracks,
+                    }),
+                )
+                .map_err(ExportError::React)?;
+            react_audio.extend(evaluation.audio);
+            let mut scene = evaluation.scene;
+            scene.fonts.extend(project_fonts.iter().cloned());
+            Ok(scene)
+        };
+
         let mut reported_fallbacks = ReportedFontWarnings::default();
-        let result = (|| {
+        let result = thread::scope(|scope| {
+            // Node evaluates (and this side parses) the next frame on its own
+            // thread while this one prepares and submits the current frame;
+            // both take milliseconds of CPU per frame and would otherwise
+            // run back to back. Frames arrive in order, at most one ahead.
+            // Leaving early drops `frames`, which stops the evaluator at its
+            // next send.
+            let (sender, frames) = mpsc::sync_channel(1);
+            scope.spawn(move || {
+                let mut evaluate = evaluate;
+                for offset in 0..frame_count {
+                    let scene = evaluate(offset);
+                    let failed = scene.is_err();
+                    if sender.send(scene).is_err() || failed {
+                        break;
+                    }
+                }
+            });
             for offset in 0..frame_count {
                 ensure_not_cancelled(cancellation)?;
                 progress(ExportProgress::Rendering {
                     frame: offset + 1,
                     total: frame_count,
                 });
-                let frame_index = i64::try_from(start_frame + offset)
-                    .map_err(|_| ExportError::TimelineTooLong)?;
-                let time =
-                    Time::frames(frame_index, metadata.frame_rate).map_err(ExportError::Time)?;
-                let project_frame = project_evaluator
-                    .as_ref()
-                    .zip(filtered_project.as_ref())
-                    .map(
-                        |(evaluator, filtered_project)| -> Result<_, EvaluationError> {
-                            let mut scene = evaluator.scene_at(time)?;
-                            let mut tracks = BTreeMap::new();
-                            for track in &filtered_project.tracks {
-                                let mut layers = evaluator.layers_for_track(&track.id, time)?;
-                                if let Some(asset_root) = project_asset_root {
-                                    absolutize_layers(&mut layers, asset_root);
-                                }
-                                tracks.insert(track.id.clone(), layers);
-                            }
-                            if let Some(asset_root) = project_asset_root {
-                                absolutize_layers(&mut scene.layers, asset_root);
-                            }
-                            Ok((scene.layers, tracks))
-                        },
-                    )
-                    .transpose()
-                    .map_err(ExportError::Evaluation)?;
-                let evaluation = bridge
-                    .evaluate_at(
-                        time,
-                        project_frame.as_ref().map(|(layers, tracks)| ProjectFrame {
-                            layers: layers.as_slice(),
-                            tracks,
-                        }),
-                    )
-                    .map_err(ExportError::React)?;
-                react_audio.extend(evaluation.audio);
-                let mut scene = evaluation.scene;
-                scene.fonts.extend(project_fonts.iter().cloned());
+                // Disconnected only if the evaluator panicked, which the
+                // scope re-raises once it joins.
+                let Ok(scene) = frames.recv() else {
+                    break;
+                };
                 // See render_video's matching comment: submit overlaps this
-                // frame's GPU work with the *next* frame's Node IPC round
-                // trip and project evaluation instead of blocking here.
-                if let Some(frame) = renderer.submit(&scene).map_err(ExportError::Render)? {
+                // frame's GPU work with evaluating and encoding other frames
+                // instead of blocking here.
+                if let Some(frame) = renderer.submit(&scene?).map_err(ExportError::Render)? {
                     write_frame(&mut writer, frame)?;
                 }
                 report_font_fallbacks(&renderer, &mut reported_fallbacks, progress);
@@ -1018,7 +1044,7 @@ impl Exporter {
                 write_frame(&mut writer, frame)?;
             }
             Ok(())
-        })();
+        });
         finish_encode(writer, result)
     }
 
