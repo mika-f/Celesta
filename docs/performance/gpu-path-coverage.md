@@ -91,9 +91,9 @@ The pipelined frames went from 6.46 to 1.94 ms (3.3x). The CPU no longer
 fills coverage masks or converts RGBA, and no texture is uploaded: the frame's
 tiles and edges are 0.72 MB (in a buffer that settles at 1 MiB), where the
 rings' batch was uploaded as an RGBA texture of up to 8.3 MB, the whole
-frame. The time beyond the empty frame's is the rings' whole end-to-end
-cost: stroking, flattening and binning on the CPU, the upload, and the
-shading.
+frame. The time beyond an empty frame's 0.33 ms (its clear, copy and
+readback) is the rings' whole end-to-end cost: stroking, flattening and
+binning on the CPU, the upload, and the shading.
 
 `path-bench` still times the CPU renderer's rasterizer as well, which this
 change does not touch; the CSV labels those runs of the new build
