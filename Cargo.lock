@@ -1150,6 +1150,7 @@ dependencies = [
  "image",
  "png 0.18.1",
  "psd",
+ "rayon",
  "resvg 0.45.1",
  "tempfile",
  "unicode-properties",

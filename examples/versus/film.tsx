@@ -9,7 +9,7 @@ import { CUTS, SCENES, SECTIONS, SERIES } from './timeline';
 // film can play the three exports and show the measured numbers:
 //   node examples/versus/bench/run.mjs && node examples/versus/bench/loop.mjs
 // then open this file in Celesta, or export it with:
-//   Celesta-export --react examples/versus/film.tsx versus.mp4
+//   celesta-exporter --react examples/versus/film.tsx versus.mp4
 
 export default function Root() {
   return (

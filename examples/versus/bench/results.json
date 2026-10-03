@@ -226,5 +226,65 @@
         }
       }
     ]
+  },
+  {
+    "date": "2026-10-03T10:53:57.694Z",
+    "machine": {
+      "cpu": "13th Gen Intel(R) Core(TM) i7-13700F",
+      "threads": 24,
+      "memoryGiB": 128,
+      "gpu": "NVIDIA GeForce RTX 4070, 610.88",
+      "os": "Windows_NT 10.0.26200",
+      "node": "v24.21.0"
+    },
+    "scene": "1920x1080, 60 fps, 600 frames, H.264 (libx264 medium, CRF 18), no audio",
+    "remotionFlags": "",
+    "results": [
+      {
+        "name": "celesta",
+        "label": "Celesta (wgpu)",
+        "run": 1,
+        "seconds": 18.377,
+        "fps": 32.6,
+        "bytes": 24831383,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "celesta",
+        "label": "Celesta (wgpu)",
+        "run": 2,
+        "seconds": 19.041,
+        "fps": 31.5,
+        "bytes": 24831383,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "celesta",
+        "label": "Celesta (wgpu)",
+        "run": 3,
+        "seconds": 21.306,
+        "fps": 28.2,
+        "bytes": 24831383,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      }
+    ]
   }
 ]

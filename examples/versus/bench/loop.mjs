@@ -4,12 +4,12 @@
 // (incremental release build); Remotion re-bundles and opens Chromium; Celesta
 // re-bundles and evaluates the entry.
 //
-//   node examples/versus/bench/loop.mjs [--runs 3]
+//   node examples/versus/bench/loop.mjs [--runs 3] [--only celesta,remotion,fframes]
 //
 // The color alternates between two values that look the same, and the
 // sources are restored at the end. Results go to loop.json next to this script.
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -19,6 +19,9 @@ const exe = process.platform === 'win32' ? '.exe' : '';
 const i = process.argv.indexOf('--runs');
 const runs = i >= 0 ? Number(process.argv[i + 1]) : 3;
 if (!Number.isInteger(runs) || runs < 1) throw new Error(`--runs must be a positive integer, got ${process.argv[i + 1]}`);
+const onlyIndex = process.argv.indexOf('--only');
+const only = (onlyIndex >= 0 ? process.argv[onlyIndex + 1] : 'fframes,remotion,celesta')?.split(',');
+if (!only?.length) throw new Error('--only requires at least one pipeline');
 const out = path.join(here, 'out');
 mkdirSync(out, { recursive: true });
 
@@ -50,10 +53,14 @@ const tools = {
   },
 };
 
-const results = Object.fromEntries(Object.keys(tools).map((name) => [name, []]));
+const selected = only.map((name) => {
+  if (!tools[name]) throw new Error(`unknown pipeline ${name}`);
+  return [name, tools[name]];
+});
+const results = Object.fromEntries(selected.map(([name]) => [name, []]));
 const colors = ['#8FB8FE', '#8FB8FF'];
 // Put every source back exactly as it was, also when interrupted.
-const originals = Object.values(tools).map((tool) => [tool.source, readFileSync(tool.source, 'utf8')]);
+const originals = selected.map(([, tool]) => [tool.source, readFileSync(tool.source, 'utf8')]);
 const restore = () => originals.forEach(([file, text]) => writeFileSync(file, text));
 for (const signal of ['SIGINT', 'SIGTERM']) {
   process.on(signal, () => {
@@ -63,7 +70,7 @@ for (const signal of ['SIGINT', 'SIGTERM']) {
 }
 try {
   for (let n = 0; n < runs; n++) {
-    for (const [name, tool] of Object.entries(tools)) {
+    for (const [name, tool] of selected) {
       const text = readFileSync(tool.source, 'utf8');
       writeFileSync(tool.source, text.replace(colors[(n + 1) % 2], colors[n % 2]));
       const start = process.hrtime.bigint();
@@ -76,4 +83,10 @@ try {
 } finally {
   restore();
 }
-writeFileSync(path.join(here, 'loop.json'), `${JSON.stringify({ date: new Date().toISOString(), results }, null, 2)}\n`);
+const file = path.join(here, 'loop.json');
+const previous = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : {};
+const date = new Date().toISOString();
+const merged = { ...previous.results, ...results };
+const measuredAt = Object.fromEntries(Object.keys(merged).map((name) =>
+  [name, results[name] ? date : previous.measuredAt?.[name] ?? previous.date]));
+writeFileSync(file, `${JSON.stringify({ date, results: merged, measuredAt }, null, 2)}\n`);

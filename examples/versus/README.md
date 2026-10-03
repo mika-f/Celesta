@@ -8,19 +8,25 @@ fonts, then measured. [`film.tsx`](film.tsx) is an 82-second, 1920×1080,
 | --- | ---: | ---: |
 | Remotion 4.0.532 | 46.0 s | 3.5 s |
 | fframes 1.1.0 (Skia on Vulkan) | 13.7 s | 13.9 s |
-| Celesta 0.2.0 | 25.9 s | 1.8 s |
+| Celesta 0.2.0 | 19.0 s | 1.4 s |
 
 Medians of three runs on a Core i7-13700F, RTX 4070 and 128 GB of RAM, on
-Windows 11. Each export is a cold CLI run timed from start to exit, encoded
+Windows 11. Celesta was remeasured after the CPU Path optimization; Remotion
+and fframes retain their earlier measurements on the same machine. The export
+records preserve each batch's timestamp, and `loop.json` records measurement
+times per tool. Each export is a cold CLI run timed from start to exit, encoded
 with libx264 `medium` at CRF 18. Remotion with `--gl=angle --concurrency=100%`
 took 40–61 s, which was no faster than its defaults. The edit loop changes one
 color in the source, then renders frame 300 from the command line. fframes
 spends that time in an incremental `cargo build --release`.
 
-fframes renders fastest. Celesta exports about 1.8× faster than Remotion. In
-this scene, most of Celesta's frame time goes to the 24 rotating ellipses,
-because `Path` layers are rasterized on the CPU every frame. Without them,
-Celesta renders at 56 fps instead of 28 fps.
+fframes renders fastest. Celesta exports about 2.4× faster than Remotion.
+Reusing Path worker threads and parallelizing the final RGBA conversion reduced
+Celesta's export from 25.9 s to 19.0 s, about 26%, with identical MP4 output.
+The 24 rotating ellipses still use CPU Path coverage; moving that work to the
+GPU remains an optimization opportunity. See the
+[Path measurements](../../docs/performance/path-rasterization.md) for the
+isolated benchmark and pixel-equivalence checks.
 
 ## Layout
 
@@ -71,10 +77,21 @@ node examples/versus/bench/run.mjs --only remotion --remotion-flags "--gl=angle 
 node examples/versus/bench/loop.mjs
 ```
 
+To refresh Celesta after renderer changes while retaining the other tools'
+results, rebuild the release exporter, then run:
+
+```sh
+node examples/versus/bench/run.mjs --only celesta --runs 3
+node examples/versus/bench/loop.mjs --only celesta --runs 3
+```
+
+The film's race, charts, speed ratio, edit-loop bars, and closing export time
+all read these files, so re-export the film after updating the measurements.
+
 Then open `film.tsx` in Celesta, or export it:
 
 ```sh
-cargo run -p celesta-exporter --release -- --react examples/versus/film.tsx versus.mp4
+cargo run -p celesta-exporter --release -- --react examples/versus/film.tsx examples/versus/versus.mp4 --overwrite
 ```
 
 Fonts (Space Grotesk, JetBrains Mono) load from Google Fonts on the first run
