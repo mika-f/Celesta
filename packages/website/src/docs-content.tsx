@@ -191,6 +191,7 @@ export const contents: Record<string, ReactNode> = {
       <DocCode label="Load a Google Fonts family" language="tsx" code={"<Assets>\n  <Font src=\"https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@400;700\" />\n</Assets>\n<Text style={{ fontFamily: 'M PLUS Rounded 1c', fontWeight: 700, fontSize: 96 }}>\n  こんにちは\n</Text>"} />
       <ul>
         <li><code>maxWidth</code> wraps text at word boundaries, and <code>align</code> positions each line within that width. Use <code>\n</code> in a string to break a line yourself.</li>
+        <li>Japanese normally wraps between most characters, splitting a word such as フレーム, while line-break rules keep punctuation such as 、 and 。 off the start of a line. Set <code>lineBreak: 'phrase'</code> in the style to wrap only between phrases, found with <a href="https://github.com/google/budoux">BudouX</a>; a phrase wider than <code>maxWidth</code> wraps inside itself as normal text does. The browser preview ignores <code>lineBreak</code> and wraps only at whitespace.</li>
         <li>Single-line text is anchored vertically by its visible glyphs, so <code>anchorY={'{0.5}'}</code> centers the letters themselves rather than an invisible line box. Its width is the advance width, so leading and trailing spaces still take up room.</li>
         <li><code>anchorY="baseline"</code> anchors text on its first line’s baseline instead. Text layers with the same <code>y</code> then share a baseline, whatever their letters or font sizes.</li>
       </ul>

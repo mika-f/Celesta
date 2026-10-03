@@ -23,6 +23,7 @@ export type TextStyle = {
   align?: 'left' | 'center' | 'right' | null;
   lineHeight?: number | null;
   letterSpacing?: number | null;
+  lineBreak?: 'normal' | 'phrase' | null;
 };
 export type LayerContent =
   | { type: 'group'; layers: Layer[]; clip?: { x: number; y: number; width: number; height: number; cornerRadius: number } | null }

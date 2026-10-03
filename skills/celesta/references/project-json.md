@@ -258,7 +258,7 @@ Celesta rejects the project if any of these fail:
   numbers finite.
 - Keyframe lists non-empty, times ≥ 0 and ascending.
 - Text styles: `fontSize` and `lineHeight` > 0, stroke `width` ≥ 0, colors
-  exactly `#RRGGBB` or `#RRGGBBAA`.
+  exactly `#RRGGBB` or `#RRGGBBAA`, `lineBreak` `"normal"` or `"phrase"`.
 - Characters: `defaultExpression` must be a key of `expressions`;
   `subtitle.maxWidth` > 0.
 - Dialogue items: `character` exists; `expression` exists on that

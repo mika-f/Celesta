@@ -54,6 +54,7 @@ export type {
   GradientStop,
   Layer,
   LayerContent,
+  LineBreak,
   MediaTiming,
   Paint,
   Point,
