@@ -4,7 +4,9 @@ struct LayerInstance {
     @location(0) matrix: vec4<f32>,
     @location(1) translation_size: vec4<f32>,
     // anchor.xy, opacity, and the content kind: 0 samples `source_texture`,
-    // 1 shades the rect described by `rect`/`fill`/`stroke`.
+    // 1 shades the rect described by `rect`/`fill`/`stroke`, 2 shades the
+    // path whose first entry in `paths` is `rect.x`, painted with
+    // `fill`/`stroke`.
     @location(2) anchor_opacity_kind: vec4<f32>,
     // canvas width, height; the blend mode index (see `blend`), and 1 when
     // `source_texture` holds premultiplied alpha (an isolated group's canvas)
@@ -48,6 +50,24 @@ var<storage, read> clips: array<vec4<f32>>;
 @group(2) @binding(1)
 var<storage, read> paints: array<vec4<f32>>;
 
+// The edges of every path of the frame. Each path starts with
+//   inverse matrix (a, b, c, d) from its region's pixels to its own coordinates
+//   inverse translation, tile columns, entries per tile drawn
+//   which entry of a tile is the fill's, the stroke's (-1 without one), the
+//     index of the first tile's, unused
+// then has, for each `PATH_TILE_COLUMNS`x`PATH_TILE_ROWS` tile drawn, an entry
+// per outline
+//   the tile's index in its region (row by row), index of the first of the
+//   outline's edges there, edge count, backdrop winding
+// and its edges, (x0, y0, x1, y1) in its region's pixels. Mirrors
+// `ShadedPath` and `bin_tiles` in lib.rs.
+@group(2) @binding(2)
+var<storage, read> paths: array<vec4<f32>>;
+
+// Mirrors `PATH_TILE_COLUMNS` and `PATH_TILE_ROWS` in lib.rs.
+const PATH_TILE_COLUMNS: i32 = 8;
+const PATH_TILE_ROWS: i32 = 8;
+
 // Mirrors `MAX_CLIP_DEPTH` in lib.rs.
 const MAX_CLIP_DEPTH: i32 = 8;
 
@@ -66,6 +86,8 @@ struct VertexOutput {
     @location(7) @interpolate(flat) clip: f32,
     // filter, mip level, texels per layer unit (see `LayerInstance`)
     @location(8) @interpolate(flat) sampling: vec3<f32>,
+    // A path's tile: the index of its first entry in `paths`.
+    @location(9) @interpolate(flat) path_tile: u32,
 };
 
 @vertex
@@ -80,12 +102,28 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32, layer: LayerInstance) -> Ve
     );
     let size = layer.translation_size.zw;
     let sampling = layer.clip_sampling.yzw;
-    // A filtered layer's edge texels blend with the transparent texels
-    // around it, so its quad grows by one texel on every side to draw that
-    // anti-aliased edge.
-    let texels = size * sampling.z;
-    let margin = select(vec2<f32>(0.0), 1.0 / texels, sampling.x == 1.0);
-    let uv = coordinates[vertex_index] * (1.0 + 2.0 * margin) - margin;
+    let corner = coordinates[vertex_index % 6u];
+    var uv: vec2<f32>;
+    var path_tile = 0u;
+    if layer.anchor_opacity_kind.w == 2.0 {
+        // A path draws a quad over each tile it lists, skipping the tiles
+        // nothing covers. It is never filtered.
+        let base = u32(layer.rect.x);
+        let header = paths[base + 1u];
+        path_tile = u32(paths[base + 2u].z) + vertex_index / 6u * u32(header.w);
+        let tile = u32(paths[path_tile].x);
+        let columns = u32(header.z);
+        let extent = vec2<f32>(f32(PATH_TILE_COLUMNS), f32(PATH_TILE_ROWS));
+        let origin = vec2<f32>(f32(tile % columns), f32(tile / columns)) * extent;
+        uv = (origin + corner * (min(origin + extent, size) - origin)) / size;
+    } else {
+        // A filtered layer's edge texels blend with the transparent texels
+        // around it, so its quad grows by one texel on every side to draw
+        // that anti-aliased edge.
+        let texels = size * sampling.z;
+        let margin = select(vec2<f32>(0.0), 1.0 / texels, sampling.x == 1.0);
+        uv = corner * (1.0 + 2.0 * margin) - margin;
+    }
     let anchor = layer.anchor_opacity_kind.xy;
     let local = (uv - anchor) * size;
     let world = vec2<f32>(
@@ -108,6 +146,7 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32, layer: LayerInstance) -> Ve
         world,
         layer.clip_sampling.x,
         sampling,
+        path_tile,
     );
 }
 
@@ -207,6 +246,116 @@ fn rect_texel(input: VertexOutput, coordinate: vec2<i32>) -> vec4<f32> {
     return vec4<f32>(color.rgb, floor(color.a * outer + 0.5)) / 255.0;
 }
 
+// Scanlines sampled per pixel row, as `tiny_skia`'s anti-aliasing does.
+const PATH_SUBSCANLINES: i32 = 4;
+
+// The length of [`left`, `left` + 1) that the nonzero fill of the edges
+// `paths[first..first + count]` covers on the scanline at `y`, starting from
+// `backdrop`, the winding left of the tile: crossing by crossing, nearest
+// first. The first pass also sums the edges left of the pixel; each further
+// pass finds the next crossing inside it, so most pixels take one pass and
+// nothing needs storage: no local array, which DX12's shader compilers
+// handle poorly in loops. Edges crossing at the same x count together, so
+// coincident opposite contours cancel.
+fn scanline_coverage(first: u32, count: u32, y: f32, left: f32, backdrop: i32) -> f32 {
+    let right = left + 1.0;
+    var winding = backdrop;
+    var at = left;
+    var covered = 0.0;
+    var first_pass = true;
+    loop {
+        var next = right;
+        var change = 0;
+        for (var index = first; index < first + count; index++) {
+            let edge = paths[index];
+            // Half open, so an edge's shared end counts once.
+            if (y < edge.y) == (y < edge.w) {
+                continue;
+            }
+            let x = edge.x + (y - edge.y) * (edge.z - edge.x) / (edge.w - edge.y);
+            let direction = select(-1, 1, edge.w > edge.y);
+            if first_pass && x <= left {
+                winding += direction;
+                continue;
+            }
+            if x <= at || x >= right {
+                continue;
+            }
+            if x < next {
+                next = x;
+                change = direction;
+            } else if x == next {
+                change += direction;
+            }
+        }
+        first_pass = false;
+        if winding != 0 {
+            covered += next - at;
+        }
+        if next >= right {
+            break;
+        }
+        winding += change;
+        at = next;
+    }
+    return covered;
+}
+
+// How much of the pixel whose top-left corner is `pixel` the nonzero fill of
+// the outline whose entry for the tile there is `tile` covers: the length of
+// `PATH_SUBSCANLINES` horizontal scanlines through it, each measured
+// exactly, averaged. `tiny_skia` samples the same scanlines, but rounds
+// where they cross edges to quarter pixels.
+fn nonzero_coverage(tile: vec4<f32>, pixel: vec2<f32>) -> f32 {
+    let first = u32(tile.y);
+    let count = u32(tile.z);
+    let backdrop = i32(tile.w);
+    if count == 0u {
+        return select(0.0, 1.0, backdrop != 0);
+    }
+    var coverage = 0.0;
+    for (var line = 0; line < PATH_SUBSCANLINES; line++) {
+        let y = pixel.y + (f32(line) + 0.5) / f32(PATH_SUBSCANLINES);
+        coverage += scanline_coverage(first, count, y, pixel.x, backdrop);
+    }
+    return coverage / f32(PATH_SUBSCANLINES);
+}
+
+// The texel `celesta_renderer::rasterize_path` would have produced at
+// `coordinate` of the path's region, straight alpha: the stroke over the
+// fill, each covering what the nonzero fill of its outline covers.
+fn path_texel(input: VertexOutput, coordinate: vec2<i32>) -> vec4<f32> {
+    let base = u32(input.rect.x);
+    let matrix = paths[base];
+    let translation = paths[base + 1u].xy;
+    let outlines = paths[base + 2u];
+    let pixel = vec2<f32>(coordinate);
+    let center = pixel + vec2<f32>(0.5);
+    let local = vec2<f32>(
+        matrix.x * center.x + matrix.z * center.y + translation.x,
+        matrix.y * center.x + matrix.w * center.y + translation.y,
+    );
+    var color = vec4<f32>(0.0);
+    if outlines.y >= 0.0 {
+        let stroke = nonzero_coverage(paths[input.path_tile + u32(outlines.y)], pixel);
+        if stroke > 0.0 {
+            let paint = paint_color(input.stroke, local) / 255.0;
+            color = vec4<f32>(paint.rgb, 1.0) * paint.a * stroke;
+        }
+    }
+    if outlines.x >= 0.0 && color.a < 1.0 {
+        let fill = nonzero_coverage(paths[input.path_tile + u32(outlines.x)], pixel);
+        if fill > 0.0 {
+            let paint = paint_color(input.fill, local) / 255.0;
+            color += vec4<f32>(paint.rgb, 1.0) * paint.a * fill * (1.0 - color.a);
+        }
+    }
+    if color.a <= 0.0 {
+        return vec4<f32>(0.0);
+    }
+    return vec4<f32>(color.rgb / color.a, color.a);
+}
+
 // How much of the pixel at canvas position `world` is inside every clip in
 // the chain starting at `index`, anti-aliased over the edge like `rect_texel`.
 fn clip_coverage(world: vec2<f32>, index: f32) -> f32 {
@@ -233,8 +382,9 @@ fn clip_coverage(world: vec2<f32>, index: f32) -> f32 {
 
 // The size in texels of the layer's content at mip `level`.
 fn texel_size(input: VertexOutput, level: i32) -> vec2<i32> {
-    if input.size_opacity_kind.w == 1.0 {
-        // Rects are shaded at their rasterized size and have no mips.
+    if input.size_opacity_kind.w != 0.0 {
+        // Rects and paths are shaded at their rasterized size and have no
+        // mips.
         return vec2<i32>(round(input.size_opacity_kind.xy));
     }
     return vec2<i32>(textureDimensions(source_texture, level));
@@ -288,6 +438,14 @@ fn bilinear(input: VertexOutput, uv: vec2<f32>, level: i32) -> vec4<f32> {
 
 // The layer's non-premultiplied color under `input.uv`.
 fn layer_color(input: VertexOutput) -> vec4<f32> {
+    // Paths are already outlined in canvas pixels and never filtered. Keep
+    // their coverage loops out of `texel`, which is inlined for every tap
+    // of the image filter by DX12's FXC compiler.
+    if input.size_opacity_kind.w == 2.0 {
+        let size = texel_size(input, 0);
+        let coordinate = min(vec2<i32>(floor(input.uv * vec2<f32>(size))), size - vec2<i32>(1));
+        return path_texel(input, coordinate);
+    }
     if input.sampling.x == 0.0 {
         // Texels land one to one on pixels: copy the one under the pixel.
         let size = texel_size(input, 0);
@@ -296,7 +454,7 @@ fn layer_color(input: VertexOutput) -> vec4<f32> {
     }
     // Trilinear: blend the two mip levels around the level of detail.
     var levels = 1;
-    if input.size_opacity_kind.w != 1.0 {
+    if input.size_opacity_kind.w == 0.0 {
         levels = i32(textureNumLevels(source_texture));
     }
     let level = clamp(input.sampling.y, 0.0, f32(levels - 1));
