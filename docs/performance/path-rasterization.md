@@ -96,8 +96,8 @@ passes strict Clippy on all targets/features. Strict GPU Clippy encounters
 two pre-existing warnings in untouched code (`while_immutable_condition` and
 `clone_on_copy`); with only those two lints allowed, all targets/features pass.
 
-Path coverage still runs on the CPU and each batch still uploads an RGBA
-texture. Moving coverage and painting to the GPU is the next larger change;
-it would need to preserve translucent stroke intersections, fill/stroke
-composition, gradients, clipping, and antialiasing. This change improves the
-existing CPU/GPU path pipeline without changing those semantics.
+At the time, path coverage still ran on the CPU and each batch still uploaded
+an RGBA texture. Issue #116 has since moved coverage and painting to the GPU
+renderer; see [GPU Path coverage](gpu-path-coverage.md). The CPU rasterizer
+described here remains the CPU renderer's, and is the reference the GPU
+output is compared with.

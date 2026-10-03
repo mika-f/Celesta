@@ -1086,6 +1086,7 @@ dependencies = [
 name = "celesta-gpu-renderer"
 version = "0.3.0"
 dependencies = [
+ "bytemuck",
  "celesta-composition",
  "celesta-media",
  "celesta-remote",
