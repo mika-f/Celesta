@@ -85,6 +85,37 @@ backgrounds, dense zigzag fallback, and storage-budget fallback.
 
 ## Measurements
 
+### Review follow-up: current code on RTX 4070
+
+Measured October 4, 2026 at `b98a64254a2ee4a3ce00b5adcec359f679cca2ee`
+(the clipping and density/storage fallback fixes, with the final PR #119 shader).
+Core i7-13700F, RTX 4070, NVIDIA driver 610.88, Windows 11 build 26200,
+**Vulkan** backend, Rust 1.97.1, release builds. Three sequential runs of
+each example, 120 frames each at 1920x1080; medians below. Rings use the
+example's 10-frame warmup; dense geometry includes initialization of the first
+frame and scene construction. Raw observations, including scene-build times,
+are in [gpu-path-coverage-rtx4070-review.csv](gpu-path-coverage-rtx4070-review.csv).
+
+| Stage | Median | Range of three runs |
+| --- | ---: | ---: |
+| Rings: CPU raster reference | 10.04 ms/frame | 9.80–10.26 |
+| Rings: CPU outline (excludes binning) | 0.33 ms/frame | 0.31–0.38 |
+| Rings: GPU submit/drain, readback included | 5.45 ms/frame | 4.67–6.23 |
+| Empty: GPU submit/drain | 3.34 ms/frame | 3.08–3.58 |
+| Rings: one-at-a-time render | 7.03 ms/frame | 6.09–7.85 |
+| Empty: one-at-a-time render | 4.39 ms/frame | 4.20–4.39 |
+| Dense paths (217 layers): submit/drain | 10.74 ms/frame | 8.82–10.91 |
+| Dense rects (3029 layers): submit/drain | 6.65 ms/frame | 6.01–7.48 |
+
+This batch measures the current implementation, with substantial spread. It
+has no paired before build, so it does not establish a speedup and should not
+be compared directly with the M4 batch. It does not rerun the full NEBULA
+MP4 export or the three-tool comparison film; those keep their historical
+provenance below and in the versus README. No macOS/Metal machine was
+available for remeasuring the M4 batch in this follow-up.
+
+### Historical M4 batch
+
 Apple M4 (10 cores), macOS 26.6.2, Metal, Rust 1.95.0, Homebrew FFmpeg 8.1.3,
 release builds, October 3, 2026. "Before" is `main` at `0c72c5d`; "after" is
 `9a91b34`. These are historical measurements, not measurements of the merged
