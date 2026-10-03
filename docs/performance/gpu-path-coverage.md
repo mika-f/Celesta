@@ -3,10 +3,12 @@
 The GPU renderer used to rasterize every `LayerContent::Path` on the CPU
 (the CPU renderer's tiny-skia rasterizer) and upload the RGBA result each
 frame. It now computes coverage and paint per pixel in `layer.wgsl`; the CPU
-strokes and flattens the outline and sorts its edges into tiles. Tiles with
-more than 64 edges per outline, or paths that would exceed the frame's storage
-buffer budget, fall back to the existing CPU rasterizer and a texture for that
-layer. The CPU renderer is unchanged and
+strokes and flattens the outline and sorts its edges into tiles. Paths fall
+back to the existing CPU rasterizer and a texture for that layer when any one
+tile contains more than 64 edges of an outline, or when the path would exceed
+the frame's storage buffer budget. Oversized fallback textures are resized
+to the device's texture limit, with their original output bounds preserved.
+The CPU renderer is unchanged and
 remains the reference the GPU output is compared with.
 
 ## How it works
@@ -85,7 +87,7 @@ backgrounds, dense zigzag fallback, and storage-budget fallback.
 
 ## Measurements
 
-### Review follow-up: current code on RTX 4070
+### Review follow-up: RTX 4070 batch at b98a642
 
 Measured October 4, 2026 at `b98a64254a2ee4a3ce00b5adcec359f679cca2ee`
 (the clipping and density/storage fallback fixes, with the final PR #119 shader).
@@ -107,7 +109,7 @@ are in [gpu-path-coverage-rtx4070-review.csv](gpu-path-coverage-rtx4070-review.c
 | Dense paths (217 layers): submit/drain | 10.74 ms/frame | 8.82–10.91 |
 | Dense rects (3029 layers): submit/drain | 6.65 ms/frame | 6.01–7.48 |
 
-This batch measures the current implementation, with substantial spread. It
+This batch measures the implementation at the named commit, with substantial spread. It
 has no paired before build, so it does not establish a speedup and should not
 be compared directly with the M4 batch. It does not rerun the full NEBULA
 MP4 export or the three-tool comparison film; those keep their historical

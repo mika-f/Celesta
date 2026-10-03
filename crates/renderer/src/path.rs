@@ -805,30 +805,34 @@ mod tests {
 
     #[test]
     fn clipping_keeps_boundary_pieces_when_parameters_round_to_endpoints() {
-        for epsilon in [f32::from_bits(1), 2.4e-15, 1e-9, 1e-7] {
-            for (outside, inside) in [(-20.0, epsilon), (52.0, 32.0 - epsilon)] {
-                for reverse in [false, true] {
-                    let a = tiny_skia::Point::from_xy(4.0, outside);
-                    let b = tiny_skia::Point::from_xy(12.0, inside);
-                    let mut edges = Vec::new();
-                    let (from, to) = if reverse { (b, a) } else { (a, b) };
-                    clip_edge(from, to, (16.0, 32.0), &mut edges);
-                    // The bottom endpoint may round onto the boundary, in
-                    // which case the clipped piece legitimately has no length.
-                    if inside == 32.0 {
-                        continue;
+        let bottom_inside = f32::from_bits(32.0_f32.to_bits() - 1);
+        let cases = [
+            (-20.0, f32::from_bits(1)),
+            (-20.0, 2.4e-15),
+            (-20.0, 1e-9),
+            (-20.0, 1e-7),
+            (52.0, bottom_inside),
+            // A representable endpoint below the bottom with t rounding to 1.
+            (1e9, bottom_inside),
+        ];
+        for (outside, inside) in cases {
+            assert!((0.0..32.0).contains(&inside));
+            for reverse in [false, true] {
+                let a = tiny_skia::Point::from_xy(4.0, outside);
+                let b = tiny_skia::Point::from_xy(12.0, inside);
+                let mut edges = Vec::new();
+                let (from, to) = if reverse { (b, a) } else { (a, b) };
+                clip_edge(from, to, (16.0, 32.0), &mut edges);
+                let edge = edges.first().expect("keep the tiny piece inside the rows");
+                let boundary = outside.clamp(0.0, 32.0);
+                assert_eq!(
+                    (edge.y0, edge.y1),
+                    if reverse {
+                        (inside, boundary)
+                    } else {
+                        (boundary, inside)
                     }
-                    let edge = edges.first().expect("keep the tiny piece inside the rows");
-                    let boundary = outside.clamp(0.0, 32.0);
-                    assert_eq!(
-                        (edge.y0, edge.y1),
-                        if reverse {
-                            (inside, boundary)
-                        } else {
-                            (boundary, inside)
-                        }
-                    );
-                }
+                );
             }
         }
     }

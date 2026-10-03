@@ -1791,6 +1791,11 @@ impl GpuRenderer {
                     return Ok(());
                 };
                 let (left, top) = (path.left as f32, path.top as f32);
+                let mut transform = Affine {
+                    tx: left,
+                    ty: top,
+                    ..Affine::IDENTITY
+                };
                 let content = match ShadedPath::new(
                     &path,
                     &mut self.paint_entries,
@@ -1806,25 +1811,35 @@ impl GpuRenderer {
                         else {
                             return Ok(());
                         };
-                        let image = DecodedImage::new(
-                            rasterized.image.width(),
-                            rasterized.image.height(),
-                            rasterized.image.into_pixels(),
-                        )?;
+                        let (raster_width, raster_height) =
+                            (rasterized.image.width(), rasterized.image.height());
+                        let (texture_width, texture_height) =
+                            fit_within(raster_width, raster_height, self.max_texture_dimension);
+                        let pixels =
+                            if (texture_width, texture_height) == (raster_width, raster_height) {
+                                rasterized.image.into_pixels()
+                            } else {
+                                resize_rgba(
+                                    raster_width,
+                                    raster_height,
+                                    rasterized.image.pixels(),
+                                    texture_width,
+                                    texture_height,
+                                )
+                                .into_raw()
+                            };
+                        // The raster already contains the layer transform;
+                        // compensate only for shrinking its output-space pixels.
+                        transform.a = raster_width as f32 / texture_width as f32;
+                        transform.d = raster_height as f32 / texture_height as f32;
+                        let image = DecodedImage::new(texture_width, texture_height, pixels)?;
                         PreparedContent::Texture(self.upload_texture(&image, false))
                     }
                 };
                 output.push(PreparedItem::Layer(PreparedLayer {
                     content,
                     anchor: Point { x: 0.0, y: 0.0 },
-                    state: LayerState {
-                        transform: Affine {
-                            tx: left,
-                            ty: top,
-                            ..Affine::IDENTITY
-                        },
-                        ..state
-                    },
+                    state: LayerState { transform, ..state },
                     blend_mode,
                     raster_scale: 1.0,
                 }));
@@ -5901,6 +5916,72 @@ mod tests {
         let gpu = renderer.render(&scene).unwrap();
         assert!(!renderer.path_entries.is_empty());
         assert_eq!(pixel_at(&gpu, 16, 16), [255; 4]);
+    }
+
+    #[test]
+    fn shrinks_path_fallback_textures_without_changing_output_bounds() {
+        let Some(mut renderer) = renderer(GpuRenderOptions {
+            background: Color::TRANSPARENT,
+        }) else {
+            return;
+        };
+        renderer.max_texture_dimension = 16;
+        for (width, height) in [(96, 32), (32, 96)] {
+            let contour = polyline(
+                &[
+                    (0.0, 0.0),
+                    (f64::from(width), 0.0),
+                    (f64::from(width), f64::from(height)),
+                    (0.0, f64::from(height)),
+                ],
+                true,
+            );
+            // Coincident contours force the tile-density fallback while
+            // retaining a simple rectangle whose output bounds are exact.
+            let commands = (0..=MAX_PATH_TILE_EDGES)
+                .flat_map(|_| contour.iter().cloned())
+                .collect();
+            let mut layer = path_layer(
+                "oversized-fallback",
+                commands,
+                Some(solid("#FFFFFF80")),
+                None,
+            );
+            layer.transform.position = Point { x: 12.0, y: 8.0 };
+            layer.opacity = 0.5;
+            renderer.scene_size = (128, 128);
+            renderer.path_entries.clear();
+            let mut items = Vec::new();
+            renderer
+                .prepare_layer(&layer, LayerState::default(), &mut items)
+                .unwrap();
+            let [
+                PreparedItem::Layer(PreparedLayer {
+                    content: PreparedContent::Texture(texture),
+                    state,
+                    ..
+                }),
+            ] = items.as_slice()
+            else {
+                panic!("dense path must use a texture");
+            };
+            assert_eq!(
+                (texture.width, texture.height),
+                fit_within(width, height, 16)
+            );
+            assert_eq!(state.transform.a * texture.width as f32, width as f32);
+            assert_eq!(state.transform.d * texture.height as f32, height as f32);
+            assert_eq!((state.transform.tx, state.transform.ty), (12.0, 8.0));
+            let mut scene = empty_scene(128, 128);
+            scene.layers = vec![layer];
+            let frame = renderer.render(&scene).unwrap();
+            assert_eq!(pixel_at(&frame, 12 + width / 2, 8 + height / 2), [64; 4]);
+            // Enlarged texels have a filtered fringe; probe beyond it.
+            assert_eq!(pixel_at(&frame, 4, 8 + height / 2), [0; 4]);
+            assert_eq!(pixel_at(&frame, 20 + width, 8 + height / 2), [0; 4]);
+            assert_eq!(pixel_at(&frame, 12 + width / 2, 0), [0; 4]);
+            assert_eq!(pixel_at(&frame, 12 + width / 2, 16 + height), [0; 4]);
+        }
     }
 
     #[test]
