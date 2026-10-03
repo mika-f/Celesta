@@ -30,6 +30,10 @@ runs:
         "VCPKG_BINARY_SOURCES=clear;files,$cache,readwrite" >> $env:GITHUB_ENV
         "VCPKG_CACHE_KEY_PREFIX=vcpkg-$env:VCPKG_TAG-ffmpeg-x264-x265-x64-windows-static-md-$env:ImageOS-" >> $env:GITHUB_ENV
         "VCPKG_CACHE_KEY_IMAGE=$env:ImageVersion" >> $env:GITHUB_ENV
+        # The Rust cache keeps ffmpeg-sys-next's build output, which records the
+        # FFmpeg libraries to link; key it by the vcpkg release and features
+        # (rust-cache `env-vars`) so a changed FFmpeg build is not mixed with it.
+        "FFMPEG_BUILD=vcpkg-$env:VCPKG_TAG-ffmpeg[x264,x265]" >> $env:GITHUB_ENV
 
     # The runner image version is part of the key so a new image (and with it a
     # possibly different MSVC, which changes vcpkg's ABI hashes) saves a fresh
@@ -82,6 +86,7 @@ runs:
       shell: bash
       env:
         FFMPEG_VERSION: '8.1.3'
+        FFMPEG_SCRIPT_HASH: ${{ hashFiles('scripts/build-ffmpeg-linux.sh') }}
       run: |
         sudo apt-get update
         # libclang-dev is for bindgen in ffmpeg-sys-next, not for FFmpeg itself.
@@ -89,6 +94,10 @@ runs:
         # The prefix ends up in cached build output, so expose the version for
         # the Rust cache key (rust-cache `env-vars`).
         echo "FFMPEG_VERSION=$FFMPEG_VERSION" >> "$GITHUB_ENV"
+        # ffmpeg-sys-next bundles the static FFmpeg libraries into its cached
+        # rlib, so a changed configure (such as a newly enabled encoder) must
+        # change the Rust cache key too, or the old libraries keep being linked.
+        echo "FFMPEG_BUILD=$FFMPEG_SCRIPT_HASH" >> "$GITHUB_ENV"
         # ImageOS is a runner process variable, which the env context omits.
         echo "FFMPEG_IMAGE_OS=$ImageOS" >> "$GITHUB_ENV"
         echo "FFMPEG_PREFIX=$RUNNER_TEMP/ffmpeg-$FFMPEG_VERSION" >> "$GITHUB_ENV"
