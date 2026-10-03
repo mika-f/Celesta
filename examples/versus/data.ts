@@ -41,12 +41,22 @@ export const EXPORT: Record<ToolId, number> = {
   celesta: required(batch('celesta'), 'the Celesta export'),
 };
 
+// How many runs the medians above summarize, for the footnotes.
+const summary = (counts: number[]) => {
+  const n = Math.min(...counts);
+  const most = Math.max(...counts);
+  if (most === 1) return 'single run';
+  return n === most ? `median of ${n}` : `median of ${n}–${most}`;
+};
+export const EXPORT_RUNS = summary(['remotion', 'fframes', 'celesta'].map((id) => batch(id).length));
+
 // Edit one value, then get one frame as a PNG, median seconds.
 export const LOOP: Record<ToolId, number> = {
   remotion: required(loop.results.remotion, 'the Remotion edit loop'),
   fframes: required(loop.results.fframes, 'the fframes edit loop'),
   celesta: required(loop.results.celesta, 'the Celesta edit loop'),
 };
+export const LOOP_RUNS = summary(Object.values(loop.results).map((r) => r.length));
 
 const osName = ({ os }: BenchRecord['machine']) => {
   const win = /^Windows_NT 10\.0\.(\d+)/.exec(os);

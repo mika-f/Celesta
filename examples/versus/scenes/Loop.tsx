@@ -3,7 +3,7 @@ import { Bars } from '../components/Bars';
 import { Footnote, Header, ToolTag } from '../components/Chrome';
 import { Label } from '../components/Label';
 import { C, ORDER, TOOL, type ToolId } from '../constants';
-import { LOOP, SETUP } from '../data';
+import { LOOP, LOOP_RUNS, SETUP } from '../data';
 import { progress } from '../helpers';
 
 const NEEDS: Record<ToolId, string[]> = {
@@ -56,7 +56,7 @@ export function Loop() {
           {'Rust recompiles on every change.\nIn the Celesta app, saving the file reloads the preview.'}
         </Label>
       </Group>
-      <Footnote opacity={progress(f, 120, 20)}>measured from the CLI · median of 3</Footnote>
+      <Footnote opacity={progress(f, 120, 20)}>{`measured from the CLI · ${LOOP_RUNS}`}</Footnote>
     </>
   );
 }
