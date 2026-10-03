@@ -362,19 +362,21 @@ fn clip_edge(
     }
     // Where along the edge (0 at `from`, 1 at `to`) it is inside the rows,
     // and where it crosses the region's sides.
-    let (enter, leave) = if from.y == to.y {
-        if !(0.0..=height).contains(&from.y) {
-            return;
-        }
-        (0.0, 1.0)
-    } else {
-        let along_y = |y: f32| (y - from.y) / (to.y - from.y);
-        let (a, b) = (along_y(0.0), along_y(height));
-        (a.min(b).max(0.0), a.max(b).min(1.0))
-    };
-    if enter >= leave {
+    if (from.y < 0.0 && to.y < 0.0) || (from.y > height && to.y > height) {
         return;
     }
+    let inside = |y: f32| (0.0..=height).contains(&y);
+    let along_y = |y: f32| (y - from.y) / (to.y - from.y);
+    let enter = if inside(from.y) {
+        0.0
+    } else {
+        along_y(from.y.clamp(0.0, height)).clamp(0.0, 1.0)
+    };
+    let leave = if inside(to.y) {
+        1.0
+    } else {
+        along_y(to.y.clamp(0.0, height)).clamp(0.0, 1.0)
+    };
     // The edge's ends inside the rows and where it crosses the region's
     // sides, in order along it. Each cut lands exactly on the row or side it
     // cuts at, and the edge's own ends stay exact, so the pieces meet end to
@@ -382,12 +384,20 @@ fn clip_edge(
     let at = |t: f32| {
         tiny_skia::Point::from_xy(from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t)
     };
-    let on_row = |t: f32| {
-        let y = if at(t).y < height / 2.0 { 0.0 } else { height };
-        tiny_skia::Point::from_xy(at(t).x, y)
+    let on_row = |t: f32, endpoint: tiny_skia::Point| {
+        tiny_skia::Point::from_xy(at(t).x, endpoint.y.clamp(0.0, height))
     };
     let mut cuts = [(0.0, from); 4];
-    cuts[0] = (enter, if enter == 0.0 { from } else { on_row(enter) });
+    // Endpoint membership, rather than t, keeps tiny boundary pieces when
+    // interpolation rounds t to 0 or 1 (including equal enter and leave).
+    cuts[0] = (
+        enter,
+        if inside(from.y) {
+            from
+        } else {
+            on_row(enter, from)
+        },
+    );
     let mut count = 1;
     for x in [0.0, width] {
         let t = (x - from.x) / (to.x - from.x);
@@ -396,7 +406,7 @@ fn clip_edge(
             count += 1;
         }
     }
-    cuts[count] = (leave, if leave == 1.0 { to } else { on_row(leave) });
+    cuts[count] = (leave, if inside(to.y) { to } else { on_row(leave, to) });
     let cuts = &mut cuts[..=count];
     cuts.sort_by(|a, b| a.0.total_cmp(&b.0));
     for pair in cuts.windows(2) {
@@ -791,6 +801,40 @@ mod tests {
 
     fn alpha(frame: &RgbaFrame, x: u32, y: u32) -> u8 {
         frame.pixels()[((y * frame.width() + x) * 4 + 3) as usize]
+    }
+
+    #[test]
+    fn clipping_keeps_boundary_pieces_when_parameters_round_to_endpoints() {
+        let bottom_inside = f32::from_bits(32.0_f32.to_bits() - 1);
+        let cases = [
+            (-20.0, f32::from_bits(1)),
+            (-20.0, 2.4e-15),
+            (-20.0, 1e-9),
+            (-20.0, 1e-7),
+            (52.0, bottom_inside),
+            // A representable endpoint below the bottom with t rounding to 1.
+            (1e9, bottom_inside),
+        ];
+        for (outside, inside) in cases {
+            assert!((0.0..32.0).contains(&inside));
+            for reverse in [false, true] {
+                let a = tiny_skia::Point::from_xy(4.0, outside);
+                let b = tiny_skia::Point::from_xy(12.0, inside);
+                let mut edges = Vec::new();
+                let (from, to) = if reverse { (b, a) } else { (a, b) };
+                clip_edge(from, to, (16.0, 32.0), &mut edges);
+                let edge = edges.first().expect("keep the tiny piece inside the rows");
+                let boundary = outside.clamp(0.0, 32.0);
+                assert_eq!(
+                    (edge.y0, edge.y1),
+                    if reverse {
+                        (inside, boundary)
+                    } else {
+                        (boundary, inside)
+                    }
+                );
+            }
+        }
     }
 
     /// The GPU renderer relies on flattened edges meeting end to end, so the

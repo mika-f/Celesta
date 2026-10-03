@@ -8,11 +8,14 @@ fonts, then measured. [`film.tsx`](film.tsx) is an 82-second, 1920×1080,
 | --- | ---: | ---: |
 | Remotion 4.0.532 | 46.1 s | 3.4 s |
 | fframes 1.1.0 (Skia on Vulkan) | 11.4 s | 11.4 s |
-| Celesta 0.4.0 | 17.6 s | 1.5 s |
+| Celesta (batch `7b4ef96`) | 17.6 s | 1.5 s |
 
 Medians of three runs on a Core i7-13700F, RTX 4070 and 128 GB of RAM, on
 Windows 11. All three tools were remeasured in one session after the GPU Path
-coverage change. The export
+coverage change. The batch was recorded in `7b4ef96` and predates the final
+shader change in `1d62203`; its last shader change was `7441d2b`, based on
+the commit history (the binary's exact build revision was not recorded). These historical
+numbers do not measure that final shader or the later fallback fixes. The export
 records preserve each batch's timestamp, and `loop.json` records measurement
 times per tool. Each export is a cold CLI run timed from start to exit, encoded
 with libx264 `medium` at CRF 18. Remotion with `--gl=angle --concurrency=100%`

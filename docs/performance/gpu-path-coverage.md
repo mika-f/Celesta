@@ -3,7 +3,12 @@
 The GPU renderer used to rasterize every `LayerContent::Path` on the CPU
 (the CPU renderer's tiny-skia rasterizer) and upload the RGBA result each
 frame. It now computes coverage and paint per pixel in `layer.wgsl`; the CPU
-only strokes and flattens the outline and sorts its edges into tiles. The CPU renderer is unchanged and
+strokes and flattens the outline and sorts its edges into tiles. Paths fall
+back to the existing CPU rasterizer and a texture for that layer when any one
+tile contains more than 64 edges of an outline, or when the path would exceed
+the frame's storage buffer budget. Oversized fallback textures are resized
+to the device's texture limit, with their original output bounds preserved.
+The CPU renderer is unchanged and
 remains the reference the GPU output is compared with.
 
 ## How it works
@@ -17,8 +22,8 @@ remains the reference the GPU output is compared with.
    moves onto its left side and what lies right is dropped, which keeps the
    winding of every pixel inside; every cut lands exactly on its row or side,
    so the edges meet end to end.
-2. `ShadedPath` / `bin_tiles` sort the edges into 8x8-pixel tiles, as Vello
-   does: each tile keeps the parts of edges at or right of its left side,
+2. `ShadedPath` / `bin_tiles` use Vello's backdrop binning scheme with
+   8x8-pixel tiles (Vello's GPU pipeline uses 16x16): each tile keeps the parts of edges at or right of its left side,
    cut to its rows, a vertical edge down its left side wherever an edge
    crosses that side, and a backdrop, the winding just left of its top-left
    corner. Only tiles with edges or a nonzero backdrop are stored and drawn,
@@ -38,6 +43,14 @@ edges go into one storage buffer that is rebuilt every frame and only grows
 to the largest frame (to the next power of two), like the instance buffer;
 nothing is cached per shape, so continuously changing shapes cannot
 accumulate GPU resources.
+
+The scanline loop rescans a tile's edges for each crossing, so its cost is
+quadratic in dense geometry. The 64-edge budget bounds that work before any
+GPU entries or paints are appended. The storage budget is also checked per
+layer before appending, including tile headers and duplicated edges; later
+layers can use CPU textures without failing the whole frame. Indices stored
+as f32 are kept exact by capping the buffer at 2^24 entries even if the device
+allows a larger binding.
 
 ## Pixel comparison with the CPU renderer
 
@@ -65,13 +78,52 @@ on average) on the GPU and up to 52 (0.541) on the CPU.
 Other tests check that the crossings in a translucent self-intersecting
 stroke have the color of a single layer, that `render`, the pipelined export
 (`submit`/`drain`) and the BGRA preview target produce identical pixels, that
-the path buffer stays the same size through 200 frames of an animated shape,
+the path buffer grows beyond its initial allocation and stays bounded through
+200 frames of animated shapes (with output checked after bind-group replacement),
 and that flattened edges meet end to end at many rotations (`celesta-renderer`).
+Deterministic CPU tests compare binned winding with the full outline, and GPU
+tests cover top-edge epsilon vertices, an exact integer hole on transparent
+backgrounds, dense zigzag fallback, and storage-budget fallback.
 
 ## Measurements
 
+### Review follow-up: RTX 4070 batch at b98a642
+
+Measured October 4, 2026 at `b98a64254a2ee4a3ce00b5adcec359f679cca2ee`
+(the clipping and density/storage fallback fixes, with the final PR #119 shader).
+Core i7-13700F, RTX 4070, NVIDIA driver 610.88, Windows 11 build 26200,
+**Vulkan** backend, Rust 1.97.1, release builds. Three sequential runs of
+each example, 120 frames each at 1920x1080; medians below. Rings use the
+example's 10-frame warmup; dense geometry includes initialization of the first
+frame and scene construction. Raw observations, including scene-build times,
+are in [gpu-path-coverage-rtx4070-review.csv](gpu-path-coverage-rtx4070-review.csv).
+
+| Stage | Median | Range of three runs |
+| --- | ---: | ---: |
+| Rings: CPU raster reference | 10.04 ms/frame | 9.80–10.26 |
+| Rings: CPU outline (excludes binning) | 0.33 ms/frame | 0.31–0.38 |
+| Rings: GPU submit/drain, readback included | 5.45 ms/frame | 4.67–6.23 |
+| Empty: GPU submit/drain | 3.34 ms/frame | 3.08–3.58 |
+| Rings: one-at-a-time render | 7.03 ms/frame | 6.09–7.85 |
+| Empty: one-at-a-time render | 4.39 ms/frame | 4.20–4.39 |
+| Dense paths (217 layers): submit/drain | 10.74 ms/frame | 8.82–10.91 |
+| Dense rects (3029 layers): submit/drain | 6.65 ms/frame | 6.01–7.48 |
+
+This batch measures the implementation at the named commit, with substantial spread. It
+has no paired before build, so it does not establish a speedup and should not
+be compared directly with the M4 batch. It does not rerun the full NEBULA
+MP4 export or the three-tool comparison film; those keep their historical
+provenance below and in the versus README. No macOS/Metal machine was
+available for remeasuring the M4 batch in this follow-up.
+
+### Historical M4 batch
+
 Apple M4 (10 cores), macOS 26.6.2, Metal, Rust 1.95.0, Homebrew FFmpeg 8.1.3,
-release builds, October 3, 2026. "Before" is `main` at `0c72c5d`; runs
+release builds, October 3, 2026. "Before" is `main` at `0c72c5d`; "after" is
+`9a91b34`. These are historical measurements, not measurements of the merged
+shader at `1d62203` or the later fallback fixes. The shader changed in
+`08552c6`, `7441d2b` and `1d62203` after this batch; changing CSV metric labels
+in `08552c6` did not rerun the benchmark. Runs
 alternate before/after, three each, and the tables give medians. Raw
 observations are in [gpu-path-coverage.csv](gpu-path-coverage.csv). These
 were not measured on the Core i7-13700F / RTX 4070 machine of
@@ -104,14 +156,21 @@ AFTERIMAGE-style geometry) went from 8.11 to 2.84 ms/frame (2.9x); its rect
 version, which this change does not touch, measured 1.69 and 1.36 ms.
 
 The whole NEBULA export (600 frames, libx264 `medium` CRF 18, CLI start to
-exit) measured 47.07 s before and 47.46 s after: no change in wall time on
-this machine. The same exports used 139.9 s of user CPU before and 121.0 s
-after, and their peak resident memory dropped from 998 MB to 830 MB (peak
+exit) measured a median 47.07 s before and 47.46 s after. All three paired
+runs were slower after the change, by 3.06, 1.12 and 0.39 s. The same exports
+used a median 139.9 s of user CPU before and 121.0 s after; run 1 instead
+increased from 96.96 to 105.17 s. Their median peak resident memory dropped
+from 998 MB to 830 MB (peak
 footprint 1,482 MB to 1,336 MB). Sampling the main thread during an
-export shows why the wall time did not move: on the M4 the export is
+export suggests why the wall-time improvement was limited: on the M4 the export is
 GPU-bound. About half of the main thread's samples wait in
 `reclaim_oldest` for the GPU, the libx264 thread mostly waits for frames,
 and path preparation is about 5%.
+
+Run-to-run noise is substantial: even the unchanged `cpu_raster_reference`
+code measured about 27% slower than the earlier `cpu_raster` batch. These
+observations do not establish unchanged wall time or a CPU improvement in
+every run, and must be remeasured for performance claims about the current shader.
 
 Frame 300 as a PNG took 0.39 s both before and after.
 
@@ -121,9 +180,10 @@ differs between them at 56.4 dB PSNR; the MP4s at 44.0 dB, which also
 includes the encoder making different decisions.
 
 `examples/versus/bench/results.json`, `loop.json` and the comparison film
-keep the RTX 4070 measurements: the film compares Celesta with Remotion and
-fframes measured on that machine, so these M4 numbers do not belong there.
-They need a new measurement on the reference machine.
+were remeasured on the RTX 4070 reference machine in the batch recorded by
+`7b4ef96`. That batch also predates the final `1d62203` shader change; the
+README identifies the batch and the available shader provenance. The film compares Celesta
+with Remotion and fframes on that machine, so these M4 numbers do not belong there.
 
 ### Where NEBULA's GPU time goes
 

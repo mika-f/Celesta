@@ -422,23 +422,29 @@ Keep these boundaries intact:
   layers costs more than the rasterization saves. A depth-banded path ribbon
   quantizes opacity/width to its bands where the rects vary per segment.
   `examples/afterimage/film.tsx` still uses its rect `Line`.
-- GPU path shading (2026-10-03, issue #116): the GPU renderer no longer
-  rasterizes paths on the CPU or uploads them. `celesta_renderer::flatten_path`
+- GPU path shading (2026-10-03, issue #116; review fixes 2026-10-04): ordinary
+  paths use GPU coverage; outlines with over 64 edges in a tile or paths
+  exceeding the remaining frame storage budget use CPU raster textures.
+  `celesta_renderer::flatten_path`
   builds the same outlines `rasterize_path` fills (same tiny-skia stroker and
   resolution scale, transformed to output pixels, same region cut to the
   frame) and flattens them into `LineSegment`s relative to the region:
   curves to 0.05 px, edges cut to its rows, what lies left of it moved onto
   `x = 0`, what lies right dropped, horizontal edges kept and every cut
   landing exactly on its row or side so the edges meet end to end.
-  `ShadedPath`/`bin_tiles` sort them into 8x8-pixel tiles, Vello-style: a
+  `ShadedPath`/`bin_tiles` use Vello's backdrop scheme with 8x8-pixel tiles
+  (Vello's GPU tiles are 16x16): a
   tile lists the edge parts at or right of its left side, plus a vertical
   edge down that side wherever an edge crosses it, and a backdrop (the
   winding just left of its top-left corner). Only tiles with edges or a
   nonzero backdrop are stored (in a per-frame storage buffer, binding 2 of
   the clip bind group, rebuilt every frame and grown to the largest frame
   like the instance buffer, no caches) and drawn: `vs_main` places one quad
-  per listed tile (`GpuDraw::vertices` is `0..6 * tiles` for a path, so path
-  draws never merge) and passes the tile's entry to the fragment.
+  per listed tile (`GpuDraw::vertices` is `0..6 * tiles` for a path; one-tile
+  paths can correctly merge with an adjacent rect draw) and passes the tile's
+  entry to the fragment. Buffer indices are capped at 2^24 entries for exact
+  f32 representation. Clipping tests cover tiny boundary pieces whose
+  interpolation parameters round to an endpoint.
   `layer.wgsl`'s `path_texel` measures nonzero coverage on four scanlines per
   pixel row (tiny-skia's sampling) with exact horizontal spans, paints stroke
   over fill with `paint_color` at the pixel centre mapped back to layer
@@ -448,7 +454,8 @@ Keep these boundaries intact:
   edge pixels can differ by a few 1/16 samples: the GPU tests pin max 64 /
   mean 0.5 / at most 1% of channels over 16 against the CPU renderer (or
   its rasterizer, for rotations), and the GPU is the closer of the two to
-  an 8x supersampled rendering. Apple M4, 1080p: the 24 NEBULA rings went
+  an 8x supersampled rendering. Historical Apple M4 measurements at
+  `9a91b34` (before the final shader), 1080p: the 24 NEBULA rings went
   from 6.46 to 1.94 ms/frame (medians of submit/drain with readback;
   stroking and flattening take 0.27 ms of it), the 217-layer path ribbons of
   `dense-geometry-bench` from 8.11 to 2.84 ms/frame. See `docs/performance/gpu-path-coverage.md`.
