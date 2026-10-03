@@ -364,20 +364,20 @@ fn rejects_conflicting_and_oversized_png_selections() {
     };
     fails(
         &["--every", "2", "--frames", "0,1"],
-        "--every cannot be combined with --frame/--frames",
+        "'--every <N>' cannot be used with '--frame <N,...>'",
     );
     fails(
         &["--frames", "0", "--from", "0"],
-        "cannot be combined with --from/--to",
+        "'--frame <N,...>' cannot be used with '--from <TIMECODE>'",
     );
-    fails(&["--every", "0"], "--every must be a positive integer");
+    fails(&["--every", "0"], "invalid value '0' for '--every <N>'");
     fails(
         &["--every", "2", "--columns", "3"],
-        "--columns/--tile-width require --contact-sheet",
+        "required arguments were not provided:\n  --contact-sheet",
     );
     fails(
         &["--every", "2", "--tile-width", "64"],
-        "--columns/--tile-width require --contact-sheet",
+        "required arguments were not provided:\n  --contact-sheet",
     );
     fails(
         &["--contact-sheet"],
@@ -385,7 +385,7 @@ fn rejects_conflicting_and_oversized_png_selections() {
     );
     fails(
         &["--every", "2", "--contact-sheet", "--columns", "0"],
-        "--columns must be a positive integer",
+        "invalid value '0' for '--columns <N>'",
     );
     fails(
         &["--every", "2", "--output-format", "mp4"],
