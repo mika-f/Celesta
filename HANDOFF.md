@@ -58,8 +58,13 @@ video/audio tracks.
   longer used at runtime. On Windows: `vcpkg install
   ffmpeg[x264]:x64-windows-static-md` with `VCPKG_ROOT` set (the workspace
   enables `ez-ffmpeg`'s `static` feature). macOS: `brew install ffmpeg` +
-  `pkg-config`. Linux: the distro `libav{codec,format,filter,device,util}-dev`,
-  `libsw{scale,resample}-dev` packages.
+  `pkg-config`. Linux: `scripts/build-ffmpeg-linux.sh` builds static FFmpeg
+  8.1.x libraries with libx264 into a prefix (Ubuntu 24.04 ships 6.1); point
+  `PKG_CONFIG_PATH` at `<prefix>/lib/pkgconfig`; bindgen needs `libclang-dev`.
+  The editor also needs `libasound2-dev`, `libxkbcommon-x11-dev`, and
+  `libfontconfig-dev`. CI runs Linux on ubuntu-latest with lavapipe
+  (`mesa-vulkan-drivers`), so the GPU tests run there too.
+  `packaging/linux/Dockerfile` builds a headless exporter image.
 - GPUI is pinned to crates.io version `0.2.2`.
 - Node.js (>= 18) and pnpm are required for the React composition path
   (`packages/react`, `celesta-react-bridge`). Run `pnpm install && pnpm run

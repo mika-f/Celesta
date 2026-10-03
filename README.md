@@ -52,11 +52,37 @@ executable is not sufficient.
   `brew install ffmpeg@8 pkg-config`. `ffmpeg@8` is keg-only, so point
   `pkg-config` at it before building:
   `export PKG_CONFIG_PATH="$(brew --prefix ffmpeg@8)/lib/pkgconfig"`.
-- **Linux:** install `pkg-config` and the FFmpeg development packages:
-  `libavcodec-dev`, `libavformat-dev`, `libavfilter-dev`, `libavdevice-dev`,
-  `libavutil-dev`, `libswscale-dev`, and `libswresample-dev`. Your distribution
-  must provide FFmpeg 8.1.x. Native window-system and graphics development
-  packages may also be required by GPUI.
+- **Linux:** most distributions, including Ubuntu 24.04 LTS (FFmpeg 6.1), do
+  not package FFmpeg 8.1.x, so build it from source with
+  [`scripts/build-ffmpeg-linux.sh`](scripts/build-ffmpeg-linux.sh) after
+  cloning the repository (step 2). On Debian and Ubuntu:
+
+  ```sh
+  sudo apt-get install -y build-essential nasm pkg-config curl xz-utils zlib1g-dev libx264-dev libclang-dev
+  sudo scripts/build-ffmpeg-linux.sh /opt/ffmpeg8
+  export PKG_CONFIG_PATH=/opt/ffmpeg8/lib/pkgconfig
+  ```
+
+  The script downloads the FFmpeg source from ffmpeg.org and builds static
+  libraries with `libx264` into `/opt/ffmpeg8` (about 5 minutes on 4 cores).
+  Celesta links them into its executables, so `LD_LIBRARY_PATH` is not needed;
+  only `libx264` stays a shared library. With `libx264` the FFmpeg build is
+  GPL-licensed (see [License](#license)). `libclang-dev` is for Cargo, which
+  generates the FFmpeg bindings with it. Set `PKG_CONFIG_PATH` in every shell
+  where you run Cargo. If your distribution does provide FFmpeg 8.1.x, install
+  `pkg-config` and its `libavcodec`, `libavformat`, `libavfilter`,
+  `libavdevice`, `libavutil`, `libswscale`, and `libswresample` development
+  packages instead.
+
+  The Celesta app also needs the ALSA, xkbcommon, and Fontconfig development
+  packages:
+
+  ```sh
+  sudo apt-get install -y libasound2-dev libxkbcommon-x11-dev libfontconfig-dev
+  ```
+
+  These steps are tested on Ubuntu 24.04 in CI. To export on a machine without
+  a GPU, see [Export without a GPU on Linux](#export-without-a-gpu-on-linux).
 
 ### 2. Get the source and launch
 
@@ -232,6 +258,35 @@ cargo run -p celesta-exporter --release -- --frames 0,90 examples/editor-demo.ce
 cargo run -p celesta-exporter --release -- --every 60 --contact-sheet examples/editor-demo.celesta.json sheet.png
 ```
 
+### Export without a GPU on Linux
+
+The exporter renders through Vulkan on Linux. On machines without a GPU, such
+as CI runners and cloud containers, install Mesa's software Vulkan driver
+(lavapipe), which renders on the CPU:
+
+```sh
+sudo apt-get install -y mesa-vulkan-drivers
+```
+
+Software rendering is much slower than a GPU: with 4 CPU cores, 1080p
+compositions render at roughly 10 to 60 frames per second, depending on the
+scene. Check a single frame before exporting the whole video:
+
+```sh
+cargo run -p celesta-exporter --release -- --react packages/react/examples/title.tsx --frame 0 frame.png
+```
+
+Minimal containers often have no fonts installed, and text cannot be drawn
+without at least one. Install some, such as `fonts-dejavu-core` (and
+`fonts-noto-cjk` for Japanese), or load font files with `<Font>`.
+
+On a software renderer, `--color-conversion auto` leaves the RGB-to-YUV
+conversion to the encoder. `--render-quality draft` skips re-rasterizing scaled
+text, which is quicker for checking timing but not for checking pixels.
+
+To export in a container without building Celesta on the host, use the
+[Linux container image](packaging/linux/README.md).
+
 ## Use with AI agents
 
 [`skills/celesta`](skills/celesta) is an [Agent Skill](https://agentskills.io)
@@ -273,6 +328,12 @@ To create a DMG with `Celesta.app` and an Applications shortcut for
 drag-and-drop installation, follow the [macOS packaging guide](packaging/macos/README.md).
 Node.js is included. Developer ID signing and notarization are supported for
 distribution outside the Mac App Store.
+
+## Build a Linux container image
+
+To export in Docker on a machine without a GPU, such as a CI runner, build the
+headless exporter image described in the
+[Linux container guide](packaging/linux/README.md).
 
 ## Website
 

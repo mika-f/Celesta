@@ -30,6 +30,8 @@ jobs:
             os: windows-latest
           - name: macOS arm64
             os: macos-latest
+          - name: Linux x64
+            os: ubuntu-latest
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -39,6 +41,14 @@ jobs:
     timeout-minutes: 150
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # GPUI's keyboard, font, and audio libraries, and Mesa's software Vulkan
+      # driver (lavapipe) so the GPU renderer tests run without a GPU.
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libasound2-dev libxkbcommon-x11-dev libfontconfig-dev mesa-vulkan-drivers
 
       - uses: ./.github/actions/setup-ffmpeg
 
