@@ -6,13 +6,13 @@ fonts, then measured. [`film.tsx`](film.tsx) is an 82-second, 1920×1080,
 
 | | Export 600 frames to MP4 | Edit → frame 300 as PNG |
 | --- | ---: | ---: |
-| Remotion 4.0.532 | 46.0 s | 3.5 s |
-| fframes 1.1.0 (Skia on Vulkan) | 13.7 s | 13.9 s |
-| Celesta 0.2.0 | 19.0 s | 1.4 s |
+| Remotion 4.0.532 | 46.1 s | 3.4 s |
+| fframes 1.1.0 (Skia on Vulkan) | 11.4 s | 11.4 s |
+| Celesta 0.4.0 | 17.6 s | 1.5 s |
 
 Medians of three runs on a Core i7-13700F, RTX 4070 and 128 GB of RAM, on
-Windows 11. Celesta was remeasured after the CPU Path optimization; Remotion
-and fframes retain their earlier measurements on the same machine. The export
+Windows 11. All three tools were remeasured in one session after the GPU Path
+coverage change. The export
 records preserve each batch's timestamp, and `loop.json` records measurement
 times per tool. Each export is a cold CLI run timed from start to exit, encoded
 with libx264 `medium` at CRF 18. Remotion with `--gl=angle --concurrency=100%`
@@ -20,15 +20,16 @@ took 40–61 s, which was no faster than its defaults. The edit loop changes one
 color in the source, then renders frame 300 from the command line. fframes
 spends that time in an incremental `cargo build --release`.
 
-fframes renders fastest. Celesta exports about 2.4× faster than Remotion.
+fframes renders fastest. Celesta exports about 2.6× faster than Remotion.
 Reusing Path worker threads and parallelizing the final RGBA conversion reduced
 Celesta's export from 25.9 s to 19.0 s, about 26%, with identical MP4 output.
 See the [Path measurements](../../docs/performance/path-rasterization.md) for
 that change's isolated benchmark and pixel-equivalence checks. Since then the
 GPU renderer shades Path coverage itself instead of uploading CPU-rasterized
 paths ([GPU Path coverage](../../docs/performance/gpu-path-coverage.md), issue
-#116); the table above predates that change and has not yet been remeasured on
-this machine.
+#116); the table above includes that change. The three Celesta exports took
+19.5, 17.6 and 15.7 s, so run-to-run spread is wider than the difference from
+the earlier 19.0 s.
 
 ## Layout
 
