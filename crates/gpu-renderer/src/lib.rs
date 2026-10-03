@@ -38,6 +38,13 @@ const BYTES_PER_PIXEL: u32 = 4;
 /// round trip serializing every frame.
 const PIPELINE_DEPTH: usize = 3;
 
+/// Evaluates an unparented Path layer's transform using the GPU renderer's
+/// layer evaluator and precision. Path commands use local coordinates;
+/// the layer's anchor does not offset them.
+pub fn path_transform(transform: &EvaluatedTransform) -> PathTransform {
+    LayerState::default().then(transform, 1.0).transform.into()
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Color {
     pub red: u8,
@@ -1717,17 +1724,9 @@ impl GpuRenderer {
                 // copied texel for texel. Consecutive paths that composite
                 // plainly through the same clip share one texture: a ribbon
                 // of a hundred paths is one rasterization and one upload.
-                let Affine { a, b, c, d, tx, ty } = state.transform;
                 let path = PendingPath {
                     content: layer.content.clone(),
-                    transform: PathTransform {
-                        a: f64::from(a),
-                        b: f64::from(b),
-                        c: f64::from(c),
-                        d: f64::from(d),
-                        tx: f64::from(tx),
-                        ty: f64::from(ty),
-                    },
+                    transform: state.transform.into(),
                     opacity: state.opacity,
                 };
                 match output.last_mut() {
@@ -3578,6 +3577,19 @@ struct Affine {
     ty: f32,
 }
 
+impl From<Affine> for PathTransform {
+    fn from(transform: Affine) -> Self {
+        Self {
+            a: f64::from(transform.a),
+            b: f64::from(transform.b),
+            c: f64::from(transform.c),
+            d: f64::from(transform.d),
+            tx: f64::from(transform.tx),
+            ty: f64::from(transform.ty),
+        }
+    }
+}
+
 impl Affine {
     const IDENTITY: Self = Self {
         a: 1.0,
@@ -5060,6 +5072,54 @@ mod tests {
                 "scene {index}: channels differ by up to {difference}"
             );
         }
+    }
+
+    #[test]
+    fn benchmark_path_transform_matches_prepared_layer() {
+        use celesta_composition::{LineCap, LineJoin, PathCommand};
+
+        let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+            return;
+        };
+        let layer = Layer {
+            id: "transformed-path".to_owned(),
+            transform: EvaluatedTransform {
+                position: Point {
+                    x: 10.123,
+                    y: 24.456,
+                },
+                rotation: 37.123,
+                scale: Point { x: 2.5, y: -0.75 },
+                anchor: Point { x: 8.0, y: 12.0 },
+            },
+            opacity: 0.7,
+            blend_mode: BlendMode::Normal,
+            effects: Default::default(),
+            content: LayerContent::Path {
+                commands: vec![
+                    PathCommand::MoveTo { x: 0.0, y: 0.0 },
+                    PathCommand::LineTo { x: 16.0, y: 2.0 },
+                ],
+                fill: None,
+                stroke: Some(Stroke {
+                    paint: Paint::Solid {
+                        color: "#FFFFFF".to_owned(),
+                    },
+                    width: 1.5,
+                }),
+                line_cap: LineCap::Round,
+                line_join: LineJoin::Round,
+                miter_limit: 4.0,
+            },
+        };
+        let mut items = Vec::new();
+        renderer
+            .prepare_layer(&layer, LayerState::default(), &mut items)
+            .unwrap();
+        let [PreparedItem::Paths(batch)] = items.as_slice() else {
+            panic!("expected one path batch");
+        };
+        assert_eq!(path_transform(&layer.transform), batch.paths[0].transform);
     }
 
     #[test]

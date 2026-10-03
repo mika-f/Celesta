@@ -36,7 +36,13 @@ text, GPU transfer, and libx264 `medium` / CRF 18 encoding. No render-quality
 setting changes. These numbers apply to this workload and machine; full-export
 observations ranged from 25.01–26.54 s before and 18.55–22.30 s afterward.
 
-All isolated raster checksums match. All six full exports have the same MP4
+The isolated raster fingerprints match. The rings CSV rows use Rust 1.97.1's
+64-bit `std::collections::hash_map::DefaultHasher`, fed each frame's RGBA byte
+slice through `Hash`, in frame order. This is non-cryptographic and its
+implementation is not stable across Rust versions; matching fingerprints
+are a regression signal, not proof of byte equality. Exact pixel comparisons
+come from the serial/parallel tests. The nebula rows use SHA-256 over the MP4
+file bytes. All six full exports have the same MP4
 SHA-256, `FE712E1C3313EA97B394586677C7E477BE25A55A769ADBBF4DF28D48D60E3EC9`.
 FFprobe confirms H.264, 1920x1080, and 600 decoded frames.
 
@@ -56,8 +62,16 @@ From the repository root, using Celesta's normal FFmpeg development setup:
 cargo run --release --locked -p celesta-gpu-renderer --example path-bench -- 120
 ```
 
-Copy this example to the base revision and run it there for comparison. It prints the raster
-checksum and separate CPU and GPU timings. To repeat the full-scene export,
+Backport the example and its shared `path_transform` evaluator to the base
+revision, without the rasterizer optimization, for comparison. It prints the
+fingerprint and separate CPU and GPU timings. The original rings observations
+above were collected with the initial benchmark's independent f64 transform
+calculation. The reviewed benchmark now uses the renderer's shared layer
+evaluator, including its f32 precision and scale handling; its fingerprint is
+therefore differs from the historical value: the 120-frame validation run
+produced `08178a298047d7ef`. The table retains the original observations;
+compare both versions with the same evaluator for a new timing comparison.
+GPU and full-export timing paths are unchanged. To repeat the full-scene export,
 use `examples/versus/bench/celesta/nebula.tsx` and its assets (now included on
 main through PR #113), build the React package, then:
 
@@ -68,10 +82,15 @@ target/release/celesta-exporter --react <path-to-nebula.tsx> target/nebula.mp4 -
 
 ## Validation and remaining cost
 
-The renderer and GPU renderer pass 112 tests, including a new comparison of
+The renderer and GPU renderer pass 113 tests, including a new comparison of
 one-worker and four-worker output for a single large path and overlapping
 gradient-filled translucent paths, plus an empty-batch regression check.
-Tests use `--test-threads=1` to avoid concurrent GPU devices on this machine.
+The shared benchmark transform is checked against prepared GPU path data
+with rotation, non-uniform scale, and a nonzero anchor. The edit-loop script
+passes five Node tests for missing, empty, malformed, and null previous
+results, as well as preserving unselected measurements and restoring source.
+Run them with `node --test examples/versus/bench/loop.test.mjs`.
+Rust tests use `--test-threads=1` to avoid concurrent GPU devices on this machine.
 Changed Rust files pass rustfmt; `git diff --check` passes. The CPU renderer
 passes strict Clippy on all targets/features. Strict GPU Clippy encounters
 two pre-existing warnings in untouched code (`while_immutable_condition` and

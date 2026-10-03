@@ -9,7 +9,7 @@
 // The color alternates between two values that look the same, and the
 // sources are restored at the end. Results go to loop.json next to this script.
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -84,7 +84,14 @@ try {
   restore();
 }
 const file = path.join(here, 'loop.json');
-const previous = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : {};
+let previous = {};
+try {
+  previous = JSON.parse(readFileSync(file, 'utf8')) ?? {};
+} catch (error) {
+  if (error.code !== 'ENOENT') {
+    console.warn(`Ignoring unreadable previous loop results: ${error.message}`);
+  }
+}
 const date = new Date().toISOString();
 const merged = { ...previous.results, ...results };
 const measuredAt = Object.fromEntries(Object.keys(merged).map((name) =>

@@ -12,8 +12,8 @@ use celesta_composition::{
     BlendMode, EvaluatedTransform, Layer, LayerContent, LineCap, LineJoin, Paint, PathCommand,
     Point, Rational, Scene, Stroke, Time,
 };
-use celesta_gpu_renderer::{GpuRenderOptions, GpuRenderer};
-use celesta_renderer::{PathDraw, PathShape, PathTransform, rasterize_paths};
+use celesta_gpu_renderer::{GpuRenderOptions, GpuRenderer, path_transform};
+use celesta_renderer::{PathDraw, PathShape, rasterize_paths};
 
 const WIDTH: u32 = 1920;
 const HEIGHT: u32 = 1080;
@@ -40,11 +40,15 @@ fn main() {
         let started = Instant::now();
         let path = rasterize(scene);
         elapsed += started.elapsed();
-        // Outside the timing: detect any changed pixels across revisions.
+        // Outside the timing: a non-cryptographic fingerprint for builds
+        // using the same Rust version, not proof of byte equality.
         path.image.pixels().hash(&mut checksum);
     }
     report("raster", frames, elapsed);
-    println!("raster checksum: {:016x}", checksum.finish());
+    println!(
+        "raster checksum (Rust DefaultHasher, 64-bit): {:016x}",
+        checksum.finish()
+    );
 
     let mut renderer = GpuRenderer::new(GpuRenderOptions::default()).expect("GPU renderer");
     println!(
@@ -127,7 +131,6 @@ fn draw(layer: &Layer) -> PathDraw<'_> {
     else {
         unreachable!("benchmark contains only paths");
     };
-    let (sin, cos) = layer.transform.rotation.to_radians().sin_cos();
     PathDraw {
         shape: PathShape {
             commands,
@@ -137,14 +140,7 @@ fn draw(layer: &Layer) -> PathDraw<'_> {
             line_join: *line_join,
             miter_limit: *miter_limit,
         },
-        transform: PathTransform {
-            a: cos,
-            b: sin,
-            c: -sin,
-            d: cos,
-            tx: layer.transform.position.x,
-            ty: layer.transform.position.y,
-        },
+        transform: path_transform(&layer.transform),
         opacity: layer.opacity,
     }
 }
