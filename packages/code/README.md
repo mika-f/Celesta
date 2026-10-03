@@ -144,8 +144,10 @@ the first three lines when the source has a fourth line:
 ```tsx
 import { Code, codeCharacterCount } from '@celesta/code';
 
-const count = codeCharacterCount(source, { line: 4, column: 1 });
-return <Code language="ts" visibleCharacters={count}>{source}</Code>;
+function FirstThreeLines({ source }: { source: string }) {
+  const count = codeCharacterCount(source, { line: 4, column: 1 });
+  return <Code language="ts" visibleCharacters={count}>{source}</Code>;
+}
 ```
 
 Tabs and emoji each count once, LF and CR each count once, and CRLF counts

@@ -137,21 +137,29 @@ export interface CodePoint {
   lineHeight: number;
 }
 
+function codePointLength(text: string): number {
+  let length = 0;
+  for (const _ of text) length++;
+  return length;
+}
+
 function codePositionParts(source: string, { line, column }: CodePosition) {
   if (typeof source !== 'string') throw new Error('Code source must be a string');
   // Keep separators so CRLF still counts as two original source code points.
   const parts = source.split(/(\r\n|\r|\n)/);
   const index = (line - 1) * 2;
   if (!Number.isSafeInteger(line) || line < 1 || index >= parts.length) throw new Error('Code line is out of range');
-  const characters = Array.from(parts[index]);
-  if (!Number.isSafeInteger(column) || column < 1 || column > characters.length + 1) throw new Error('Code column is out of range');
-  return { parts, index, characters };
+  if (!Number.isSafeInteger(column) || column < 1 || column > codePointLength(parts[index]) + 1) throw new Error('Code column is out of range');
+  return { parts, index };
 }
 
 /** Original source code points before a position, for Code.visibleCharacters. */
 export function codeCharacterCount(source: string, position: CodePosition): number {
   const { parts, index } = codePositionParts(source, position);
-  return Array.from(parts.slice(0, index).join('')).length + position.column - 1;
+  // Count in one walk; this may run every frame for staged reveals.
+  let count = position.column - 1;
+  for (let part = 0; part < index; part++) count += codePointLength(parts[part]);
+  return count;
 }
 
 /** Measures a caret/annotation position using the same style and tabs as Code. */
@@ -159,10 +167,10 @@ export function useCodePoint(
   source: string, position: CodePosition, style?: TextStyle, tabSize = 2,
 ): CodePoint {
   validateTabSize(tabSize);
-  const { characters } = codePositionParts(source, position);
+  const { parts, index } = codePositionParts(source, position);
   const { line, column } = position;
   const resolvedStyle = codeStyle(style);
-  const prefix = expandTabs(characters.slice(0, column - 1).join(''), tabSize);
+  const prefix = expandTabs(Array.from(parts[index]).slice(0, column - 1).join(''), tabSize);
   const { width } = useTextMetrics(prefix, resolvedStyle);
   const { ascent } = useTextMetrics('M', resolvedStyle);
   const y = (line - 1) * resolvedStyle.lineHeight!;
