@@ -2,7 +2,7 @@ import { Easings, Group, Rect, spring, useCurrentFrame, useVideoConfig } from '@
 import { Footnote, Header, ToolTag } from '../components/Chrome';
 import { Label } from '../components/Label';
 import { C, ORDER, TOOL } from '../constants';
-import { EXPORT, EXPORT_RUNS, FRAMES, MACHINE, TUNED } from '../data';
+import { EXPORT, EXPORT_RUNS, FASTEST, FRAMES, MACHINE, TUNED } from '../data';
 import { clamp, progress } from '../helpers';
 
 const START = 36;
@@ -72,7 +72,7 @@ export function Speed() {
         </Group>
         <Label x={250} y={22} size={34} weight={700}>faster than Remotion</Label>
         <Label x={250} y={70} size={21} weight={400} color={C.soft}>
-          {`fframes is the raw-speed winner.${TUNED ? ` Tuning Remotion (--gl=angle, 100% concurrency) gave ${TUNED.min.toFixed(0)}–${TUNED.max.toFixed(0)} s: no faster.` : ''}`}
+          {`${TOOL[FASTEST].name} has the lowest median.${TUNED ? ` Tuning Remotion (--gl=angle, 100% concurrency) gave ${TUNED.min.toFixed(0)}–${TUNED.max.toFixed(0)} s: ${TUNED.median < EXPORT.remotion ? 'faster' : 'no faster'}.` : ''}`}
         </Label>
       </Group>
       <Footnote opacity={progress(f, 40, 20)}>{`${MACHINE} · libx264 medium, CRF 18 · ${EXPORT_RUNS}`}</Footnote>
