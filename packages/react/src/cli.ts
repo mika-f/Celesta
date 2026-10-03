@@ -24,7 +24,7 @@ import { setMediaProbe } from './media';
 import { setTextMeasurer } from './text-measure';
 import type { MeasureTextRequest, TextMetrics } from './text-measure';
 import type { ProbedMediaInfo } from './media';
-import type { CompositionConfig, Scene, Time } from './scene';
+import type { CompositionConfig, EvaluatedTransform, Layer, LayerContent, Scene, Time } from './scene';
 
 // stdout is the JSON request/response channel the Rust bridge
 // (crates/react-bridge) parses one line at a time; anything else written
@@ -37,7 +37,17 @@ globalThis.console = new Console({ stdout: process.stderr, stderr: process.stder
 interface FrameRequest {
   time: Time;
   project?: ProjectFrame;
+  /** Sent by bridges that fill omitted transform fields with their defaults. */
+  compactTransforms?: boolean;
 }
+
+/** A layer whose transform leaves out fields equal to the Rust defaults. */
+type CompactLayer = Omit<Layer, 'transform' | 'content'> & {
+  transform: Partial<EvaluatedTransform>;
+  content:
+    | Exclude<LayerContent, { type: 'group' }>
+    | (Omit<Extract<LayerContent, { type: 'group' }>, 'layers'> & { layers: CompactLayer[] });
+};
 
 interface ResolveRequest {
   components: ComponentResolutionRequest[];
@@ -164,7 +174,11 @@ async function main(): Promise<void> {
         writeLine({ components: resolver.resolve(request.components, request.runtime, mounted.fonts) });
       } else {
         const { scene, audio } = mounted.renderAt(request.time, request.project ?? null);
-        writeLine({ scene, audio });
+        writeLine(
+          request.compactTransforms
+            ? { scene: { ...scene, layers: compactLayers(scene.layers) }, audio }
+            : { scene, audio },
+        );
       }
     } catch (error) {
       writeLine({ error: describeError(error) });
@@ -231,6 +245,7 @@ function writeLine(
         propertySchema: Record<string, ProjectPropertyField> | null;
       }
     | { scene: Scene; audio: AudioClipDescriptor[] }
+    | { scene: Omit<Scene, 'layers'> & { layers: CompactLayer[] }; audio: AudioClipDescriptor[] }
     | { collectedAudio: AudioClipDescriptor[] }
     | { components: ComponentResolution[] }
     | { probeMedia: { path: string } }
@@ -242,6 +257,26 @@ function writeLine(
   const bytes = Buffer.from(`${JSON.stringify(value)}\n`);
   let offset = 0;
   while (offset < bytes.length) offset += fs.writeSync(1, bytes, offset, bytes.length - offset);
+}
+
+// Matches `EvaluatedTransform::default()` in crates/composition. Most layers
+// keep identity scale and rotation; dropping them shrinks a NEBULA frame
+// (1,500 particles) from 554 KiB to 458 KiB.
+function compactLayers(layers: Layer[]): CompactLayer[] {
+  return layers.map((layer) => {
+    const { position, scale, rotation, anchor } = layer.transform;
+    const transform: Partial<EvaluatedTransform> = {};
+    if (position.x !== 0 || position.y !== 0) transform.position = position;
+    if (scale.x !== 1 || scale.y !== 1) transform.scale = scale;
+    if (rotation !== 0) transform.rotation = rotation;
+    if (anchor.x !== 0.5 || anchor.y !== 0.5) transform.anchor = anchor;
+    const { content } = layer;
+    return {
+      ...layer,
+      transform,
+      content: content.type === 'group' ? { ...content, layers: compactLayers(content.layers) } : content,
+    };
+  });
 }
 
 function describeError(error: unknown): string {

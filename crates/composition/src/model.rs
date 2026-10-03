@@ -369,7 +369,9 @@ impl Clip {
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "codegen", derive(ts_rs::TS))]
 #[cfg_attr(feature = "codegen", ts(export))]
-#[serde(rename_all = "camelCase")]
+// Missing fields take their `Default` values, so the React bridge can leave
+// out unchanged ones; a NEBULA frame has 1,500 identity-scaled particles.
+#[serde(rename_all = "camelCase", default)]
 pub struct EvaluatedTransform {
     pub position: Point,
     pub scale: Point,

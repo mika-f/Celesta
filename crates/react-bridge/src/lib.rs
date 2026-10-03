@@ -317,6 +317,7 @@ impl ReactBridge {
             }),
             runtime: None,
             components: None,
+            compact_transforms: true,
         };
         match self.request_response(request)? {
             Response::Ok { scene, audio } => Ok(FrameEvaluation { scene, audio }),
@@ -363,6 +364,7 @@ impl ReactBridge {
                     })
                     .collect(),
             ),
+            compact_transforms: false,
         };
         match self.request_response(request)? {
             Response::Components { components } => Ok(components),
@@ -509,6 +511,10 @@ struct Request<'a> {
     runtime: Option<ResolutionRuntime>,
     #[serde(skip_serializing_if = "Option::is_none")]
     components: Option<Vec<ComponentRequest<'a>>>,
+    /// Asks for scene transforms with default-valued fields left out, which
+    /// `EvaluatedTransform` fills back in. Without it the CLI sends every field.
+    #[serde(rename = "compactTransforms", skip_serializing_if = "std::ops::Not::not")]
+    compact_transforms: bool,
 }
 
 /// The runtime context sent alongside component-resolution requests; the
@@ -1115,6 +1121,38 @@ mod tests {
         let resolved = components[1].as_ref().unwrap();
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].id, "resolved");
+    }
+
+    #[test]
+    fn fills_omitted_transform_fields_with_defaults() {
+        let json = serde_json::json!({
+            "scene": {
+                "width": 64,
+                "height": 64,
+                "frameRate": {"numerator": 30, "denominator": 1},
+                "time": {"value": 0, "timescale": 1},
+                "layers": [{
+                    "id": "compact",
+                    "transform": {"position": {"x": 3.0, "y": 4.0}},
+                    "opacity": 1.0,
+                    "content": {"type": "rect", "width": 4.0, "height": 4.0}
+                }]
+            }
+        })
+        .to_string();
+
+        let Response::Ok { scene, .. } = serde_json::from_str(&json).unwrap() else {
+            panic!("expected an Ok response");
+        };
+        let transform = scene.layers[0].transform;
+        assert_eq!(transform.position, celesta_composition::Point { x: 3.0, y: 4.0 });
+        assert_eq!(
+            transform,
+            celesta_composition::EvaluatedTransform {
+                position: transform.position,
+                ..Default::default()
+            }
+        );
     }
 
     fn audio_descriptor(src: &str, start: f64) -> ReactAudioClipDescriptor {
