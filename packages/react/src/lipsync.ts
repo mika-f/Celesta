@@ -237,6 +237,53 @@ function makeTrack(timeline: MouthShape[], hopHz: number): LipSyncTrack {
   };
 }
 
+export interface MouthKeyframe {
+  /** When this shape starts, in seconds from the start of the voice. */
+  seconds: number;
+  mouth: MouthShape;
+}
+
+/**
+ * Builds a `LipSyncTrack` from timed mouth shapes, for speech engines that
+ * report phoneme timing (see `lipSyncFromVoicevox`). Each keyframe holds its
+ * shape until the next one; the mouth is `closed` before the first keyframe
+ * and from `durationInSeconds` on. Keyframes may be given in any order.
+ */
+export function lipSyncFromKeyframes(
+  keyframes: readonly MouthKeyframe[],
+  durationInSeconds: number,
+): LipSyncTrack {
+  if (!Number.isFinite(durationInSeconds) || durationInSeconds < 0) {
+    throw new Error(`lipSyncFromKeyframes: durationInSeconds must be a non-negative number, got ${durationInSeconds}`);
+  }
+  for (const keyframe of keyframes) {
+    if (!Number.isFinite(keyframe.seconds)) {
+      throw new Error(`lipSyncFromKeyframes: keyframe time must be finite, got ${keyframe.seconds}`);
+    }
+  }
+  // Stable sort keeps the later of two keyframes at the same time last, so it wins.
+  const sorted = [...keyframes].sort((a, b) => a.seconds - b.seconds);
+  const sample = (seconds: number): MouthShape => {
+    if (!Number.isFinite(seconds) || seconds < 0 || seconds >= durationInSeconds) {
+      return 'closed';
+    }
+    // Last keyframe whose start is <= seconds.
+    let low = 0;
+    let high = sorted.length;
+    while (low < high) {
+      const mid = (low + high) >> 1;
+      if (sorted[mid].seconds <= seconds) low = mid + 1;
+      else high = mid;
+    }
+    return low === 0 ? 'closed' : sorted[low - 1].mouth;
+  };
+  return {
+    durationInSeconds,
+    mouthAtSeconds: sample,
+    mouthAtFrame: (frame, fps) => sample(fps > 0 ? frame / fps : 0),
+  };
+}
+
 /**
  * Reads a WAV file and builds its lip-sync track. Call from an entry's
  * `prepare()` export and stash the result in module state (like

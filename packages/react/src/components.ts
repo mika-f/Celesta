@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import { CompositionRuntimeContext } from './hooks';
 import { useOptionalLipSync } from './lipsync';
 import type { LipSyncTrack } from './lipsync';
+import type { BlinkTiming } from './blink';
 import type { Animatable, BlendMode, Paint, TextStyle, LayerShadow, LayerGlow } from './scene';
 import { secondsFromTime, secondsToTime } from './time';
 
@@ -175,6 +176,26 @@ export interface ImageCharacterPortrait extends CommonProps {
   defaultExpression: string;
   expressions: Record<string, AssetInput>;
   lipSync?: CharacterLipSync;
+  /** Eyes-shut images to blink with; see `ImageCharacterBlink`. */
+  blink?: ImageCharacterBlink;
+}
+
+/**
+ * Blinking for an image portrait. Images are keyed by expression; an
+ * expression without a `closed` image does not blink.
+ */
+export interface ImageCharacterBlink extends BlinkTiming {
+  /** The eyes-shut image for each expression that blinks. */
+  closed: Record<string, AssetInput>;
+  /** Optional half-shut images, shown on the frames around each blink. */
+  half?: Record<string, AssetInput>;
+  /**
+   * `false` (default): the images are whole portraits that replace the
+   * expression's image while the eyes are shut. `true`: they are transparent
+   * eye images the same size as the portrait, drawn over it like lip-sync
+   * mouths.
+   */
+  overlay?: boolean;
 }
 
 export interface PsdCharacterPortrait extends CommonProps {
@@ -201,6 +222,20 @@ export interface PsdCharacterPortrait extends CommonProps {
   /** The expression shown when none is picked. Must be a key of `expressions`. */
   defaultExpression?: string;
   lipSync?: PsdCharacterLipSync;
+  /** Eye layers to blink with; an expression's `blink` replaces them. */
+  blink?: PsdCharacterBlink;
+}
+
+/**
+ * Blinking for a PSD portrait: the eye layers, by full path, and optionally
+ * when to blink. The open layers are forced visible and the others hidden,
+ * and while the eyes are shut it is the other way round, as for lip sync.
+ */
+export interface PsdCharacterBlink extends BlinkTiming {
+  open: string | string[];
+  closed: string | string[];
+  /** Half-shut eyes, shown on the frames around each blink. */
+  half?: string | string[];
 }
 
 /** One expression of a PSD portrait; see `PsdCharacterPortrait.expressions`. */
@@ -211,6 +246,12 @@ export type PsdExpression =
       layers: string[] | string;
       /** Replaces the portrait's `lipSync` while this expression is shown. */
       lipSync?: PsdCharacterLipSync;
+      /**
+       * Replaces the portrait's eye layers while this expression is shown
+       * (timing it omits still comes from the portrait's `blink`), or `false`
+       * for an expression that does not blink, such as one with shut eyes.
+       */
+      blink?: PsdCharacterBlink | false;
     };
 
 export type CharacterPortrait = ImageCharacterPortrait | PsdCharacterPortrait;
@@ -242,6 +283,12 @@ export interface CharacterViewProps extends CommonProps {
    * given, the mouth shape is driven from the track for the current frame.
    */
   lipSync?: LipSyncTrack;
+  /**
+   * Blinking, when the portrait has `blink` configured. `false` holds the
+   * eyes open (for a close-up, say); an object overrides the portrait's
+   * timing, such as its `seed`. Default `true`.
+   */
+  blink?: boolean | BlinkTiming;
 }
 
 declare const characterViewReference: unique symbol;

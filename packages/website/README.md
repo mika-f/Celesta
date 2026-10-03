@@ -70,6 +70,12 @@ hero picks macOS or Windows from the visitor's user agent and shows a generic
 button on phones, tablets, and other systems. Values are baked into the build,
 so rebuild after changing them.
 
+The release workflow (`.github/workflows/package.yml`) does this automatically:
+once the GitHub release is created, its `deploy-website` job sets the three
+variables to the release's macOS (arm64) `.dmg` and Windows (x64) `-setup.exe`
+assets and runs `pnpm run deploy`. It needs the `CLOUDFLARE_API_TOKEN` and
+`CLOUDFLARE_ACCOUNT_ID` repository secrets.
+
 ## Content and behavior
 
 - `src/App.tsx`: product copy, navigation, documentation and repository links.
@@ -101,7 +107,7 @@ so rebuild after changing them.
   with one star). It is separate from the app logos in `packages/logos`.
 
 The web editor accepts one self-contained TSX file. Runtime imports are limited
-to `@celesta/react` and `react`; `prepare()`, companion JSON projects, PSD
+to `@celesta/react`, `@celesta/math`, and `react`; `prepare()`, companion JSON projects, PSD
 portraits, and other npm imports still require the desktop/CLI workflow. Add
 local image, video, or audio files with **Add media** and refer to them by file
 name in `src`. Remote media needs CORS access. The web preview is silent;

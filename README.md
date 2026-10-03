@@ -26,7 +26,7 @@ for more examples, see the [examples directory](examples) and the [gallery](docs
 - **Check audio:** see waveforms and track levels, mute or solo tracks, and
   set the preview volume.
 - **Create character dialogue:** combine portraits, expressions, subtitles,
-  voice recordings, and lip-sync cues.
+  voice recordings, lip-sync cues, and blinking.
 - **Compose with React:** use components, hooks, animation helpers, and layouts
   to build scenes, and combine React content with a project timeline. The
   preview reloads when you save the composition.
@@ -81,9 +81,16 @@ cargo run -p celesta-editor --release -- examples/voiceroid.celesta.json
 2. **Edit the source file.** Change the project or composition in your text
    editor. React compositions reload automatically when you save; for a
    project, choose **File › Reload** (Command-R on macOS, Ctrl-R elsewhere).
-3. **Preview.** Press Space to play or pause. Use the left and right arrow keys
-   to step one frame at a time, or drag along the timeline ruler to scrub.
-   Select an asset, track, or clip to see its details in the Inspector.
+3. **Preview.** Press Space to play or pause (L plays, K stops). Use the left
+   and right arrow keys to step one frame at a time, Shift with them to move
+   one second, the up and down arrow keys to jump between clip edges, and Home
+   and End to go to the start and end. Drag along the timeline ruler to scrub.
+   Press = and - to zoom the timeline and Shift-Z to fit it; scroll sideways or
+   drag the bar under the tracks to move along it. Loop playback (Command-/ on
+   macOS, Ctrl-/ elsewhere) repeats the In–Out range when one is marked, and
+   ' shows safe areas over the viewer. The Master meter beside the timeline
+   shows the preview's audio levels. Select an asset, track, or clip to see its
+   details in the Inspector.
 4. **Export.** Choose **Export…** and an MP4 destination. To export a section,
    press I and O to mark its start and end. Progress appears in the status
    bar; **Cancel export** stops the job.
@@ -117,7 +124,8 @@ cargo run -p celesta-editor --release -- packages/react/examples/title.tsx
 
 Use the files in `packages/react/examples` as starting points. They demonstrate
 text, animation, layout, dialogue, and editable project properties. The package
-is currently imported as `@celesta/react`.
+is currently imported as `@celesta/react`; deterministic random numbers, noise,
+and other math helpers are imported from `@celesta/math`.
 
 Visual layers and groups accept `blur`, `shadow`, and `glow`. Radii and shadow
 offsets use output pixels. All three can change each frame through React props:
@@ -140,12 +148,15 @@ effects under `effects`, with keyframes for numeric properties and colors.
 ### Type-check your compositions
 
 Choose **File > Set Up TypeScript** with a React composition open. Celesta
-copies the `@celesta/react`, React, and Node.js type declarations that match
-its bundled runtime into a `.celesta/` folder in your project. If the project
+copies the `@celesta/react`, `@celesta/math`, React, and Node.js type
+declarations that match its bundled runtime into a `.celesta/` folder in your
+project. To start a new
+project before writing its first composition, choose **File > Set Up TypeScript
+in Folder…** and pick the project folder instead. If the project
 has no `tsconfig.json`, Celesta creates one that extends
 `./.celesta/tsconfig.json`. If a `tsconfig.json` already exists, add
 `"extends": "./.celesta/tsconfig.json"` to it. You don't need to install
-`@celesta/react`, `react`, or `@types/*` from npm.
+`@celesta/react`, `@celesta/math`, `react`, or `@types/*` from npm.
 
 Celesta updates `.celesta/` when you open the project in a newer version. The
 folder ignores itself in Git.
@@ -202,6 +213,17 @@ on the GPU. The exporter then reads less data back from the GPU, and the
 encoder has less work to do. `--color-conversion encoder` does the conversion
 in the encoder instead, which is how software renderers are always handled.
 `--color-conversion gpu` forces the GPU conversion.
+
+To check frames as PNG instead of encoding a video, select zero-based frames
+with `--frame`/`--frames`, or every *n*th frame (plus the last one) with
+`--every`, which can be narrowed with `--from`/`--to`. Add `--contact-sheet`
+to lay the selection out as labelled tiles on one image (`--columns`,
+`--tile-width`):
+
+```sh
+cargo run -p celesta-exporter --release -- --frames 0,90 examples/editor-demo.celesta.json check.png
+cargo run -p celesta-exporter --release -- --every 60 --contact-sheet examples/editor-demo.celesta.json sheet.png
+```
 
 ## Use with AI agents
 

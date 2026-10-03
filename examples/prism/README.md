@@ -5,7 +5,7 @@ Celesta の機能を、映像そのものの動きで紹介する48秒のショ�
 120 BPM のオリジナル電子音楽に合わせて展開します。
 
 - `prism.mp4` — 完成映像。1920 × 1080 / 30 fps / H.264 + AAC / ステレオ。
-- `film.tsx` — Celesta の File → Open… で開く編集可能な React ソース。
+- `film.tsx` — Celesta の File → Open… で開く編集可能な React ソース（エントリ。チャプターは `scenes/`、部品は `components/`、立ち絵と音声の読み込みは `character.ts`）。
 - `poster.jpg` — 実際に書き出した映像から抽出した静止画。
 - `make-score.py` — 音楽を再生成する Python スクリプト。追加ライブラリ不要。
 - `assets/fonts/` — Bebas Neue と IBM Plex Mono。OFL ライセンスを同梱。
@@ -59,7 +59,7 @@ target/release/celesta-exporter --preset medium --crf 17 \
 ## 立ち絵と音声
 
 既存のサンプルと同じ素材を相対パスで参照しています。`prism/` を単独で移動するときは
-次の素材も一緒に移し、`film.tsx` の `PSD` / `PRESET` / `VOICE` を更新してください。
+次の素材も一緒に移し、`character.ts` の `PSD` / `PRESET` / `VOICE` を更新してください。
 
 - `../assets/illust/琴葉姉妹_SD立ち絵.psd`
 - `../assets/illust/琴葉茜.pfv`

@@ -13,7 +13,8 @@ import { CompositionRuntimeContext } from './hooks';
 import { TextMetricsFontsContext } from './text-measure';
 import { ProjectLayersContext, ProjectTrackLayersContext } from './project-runtime';
 import { resolveVisibleLayers } from './psd-preset';
-import type { PsdCharacterLipSync, PsdExpression } from './components';
+import type { PsdCharacterBlink, PsdCharacterLipSync, PsdExpression } from './components';
+import { type BlinkPhase, type BlinkTiming, blinkPhase } from './blink';
 import { resolveComponent } from './registry';
 import { type HostNode, type RootContainer, HostReconciler, createRoot } from './reconciler';
 import type {
@@ -261,6 +262,15 @@ function resolveReference(value: unknown): unknown {
     : value;
 }
 
+/** The timing fields of `value` that are set, so spreading it never clears a fallback. */
+function definedTiming(value: BlinkTiming): BlinkTiming {
+  const timing: BlinkTiming = {};
+  if (value.interval !== undefined) timing.interval = value.interval;
+  if (value.duration !== undefined) timing.duration = value.duration;
+  if (value.seed !== undefined) timing.seed = value.seed;
+  return timing;
+}
+
 function resolveCharacterView(value: unknown): HostNode | null {
   const node = resolveReference(value);
   return node !== null && typeof node === 'object' && (node as HostNode).type === 'character-view'
@@ -361,6 +371,7 @@ function buildLayer(
     const override = context.characterViewOverrides.get(node);
     const character = resolveReference(props.character) as
       | {
+          id?: string;
           portrait?:
             | {
                 type?: 'image';
@@ -374,6 +385,11 @@ function buildLayer(
                   o: unknown;
                   closed?: unknown;
                 };
+                blink?: BlinkTiming & {
+                  closed: Record<string, unknown>;
+                  half?: Record<string, unknown>;
+                  overlay?: boolean;
+                };
               }
             | {
                 type: 'psd';
@@ -382,6 +398,7 @@ function buildLayer(
                 expressions?: Record<string, PsdExpression>;
                 defaultExpression?: string;
                 lipSync?: PsdCharacterLipSync;
+                blink?: PsdCharacterBlink;
               };
         }
       | null;
@@ -391,6 +408,20 @@ function buildLayer(
     }
     const mouthValue = override?.mouth ?? props.mouth;
     const mouth = typeof mouthValue === 'string' ? mouthValue : undefined;
+    // Blinks follow the composition frame, not the local one, so a cut to a
+    // new <Sequence> does not restart (and re-sync) every character's rhythm.
+    const eyes = (timing: BlinkTiming): BlinkPhase => {
+      if (props.blink === false) {
+        return 'open';
+      }
+      const frame = Math.round((secondsFromTime(context.time) + context.originSec) * context.fps);
+      const viewTiming = typeof props.blink === 'object' && props.blink !== null ? (props.blink as BlinkTiming) : {};
+      return blinkPhase(frame, context.fps, {
+        seed: character?.id,
+        ...definedTiming(timing),
+        ...definedTiming(viewTiming),
+      });
+    };
     if (portrait.type === 'psd') {
       const expressionValue = override?.expression ?? props.expression;
       const expressionName = typeof expressionValue === 'string' ? expressionValue : portrait.defaultExpression;
@@ -401,10 +432,20 @@ function buildLayer(
           throw new Error(`character has no expression "${expressionName}"`);
         }
       }
-      // An expression is its layers, or `{ layers, lipSync }` with mouths of its own.
-      const { layers: expressionLayers, lipSync: expressionLipSync } =
-        typeof expression === 'object' && !Array.isArray(expression) ? expression : { layers: expression, lipSync: undefined };
+      // An expression is its layers, or `{ layers, lipSync, blink }` with mouths or eyes of its own.
+      const { layers: expressionLayers, lipSync: expressionLipSync, blink: expressionBlink } =
+        typeof expression === 'object' && !Array.isArray(expression)
+          ? expression
+          : { layers: expression, lipSync: undefined, blink: undefined };
       const lipSync = expressionLipSync ?? portrait.lipSync;
+      // An expression's eyes replace the portrait's as a set, so a half-shut
+      // layer from another face folder never leaks in; timing still falls back.
+      const blink: PsdCharacterBlink | undefined =
+        expressionBlink === false
+          ? undefined
+          : expressionBlink
+            ? { ...definedTiming(portrait.blink ?? {}), ...expressionBlink }
+            : portrait.blink;
       const selectedLayer = mouth && lipSync
         ? mouth === 'closed'
           ? lipSync.closed
@@ -414,14 +455,29 @@ function buildLayer(
       const layerList = (layers: string[] | string | undefined) =>
         Array.isArray(layers) ? layers : typeof layers === 'string' ? resolveVisibleLayers(layers) : [];
       const visibleLayers = [...new Set([...layerList(portrait.layers), ...layerList(expressionLayers)])];
+      const enabledLayers = selectedLayer ? [selectedLayer] : [];
+      const disabledLayers = selectedLayer ? mouthLayers.filter((layer) => layer !== selectedLayer) : [];
+      if (blink) {
+        // Eye paths are layer paths, never layer-state strings: a bare string is one path.
+        const eyeLayers = (layers: string[] | string | undefined) =>
+          layers === undefined ? [] : Array.isArray(layers) ? layers : [layers];
+        const open = eyeLayers(blink.open);
+        const closed = eyeLayers(blink.closed);
+        const half = eyeLayers(blink.half);
+        let phase = eyes(blink);
+        if (phase === 'half' && half.length === 0) {
+          phase = 'open';
+        }
+        const shown = phase === 'closed' ? closed : phase === 'half' ? half : open;
+        enabledLayers.push(...shown);
+        disabledLayers.push(...[...open, ...closed, ...half].filter((layer) => !shown.includes(layer)));
+      }
       content = {
         type: 'psd',
         asset: resolveAsset(portrait.src),
         ...(visibleLayers.length ? { visibleLayers } : {}),
-        ...(selectedLayer ? { enabledLayers: [selectedLayer] } : {}),
-        ...(selectedLayer
-          ? { disabledLayers: [...new Set(mouthLayers.filter((layer) => layer !== selectedLayer))] }
-          : {}),
+        ...(enabledLayers.length ? { enabledLayers: [...new Set(enabledLayers)] } : {}),
+        ...(disabledLayers.length ? { disabledLayers: [...new Set(disabledLayers)] } : {}),
       };
     } else {
       const expressionValue = override?.expression ?? props.expression;
@@ -430,14 +486,31 @@ function buildLayer(
       if (src === undefined) {
         throw new Error(`character has no expression "${expression}"`);
       }
+      // An expression blinks only if it has an eyes-shut image.
+      const blink = portrait.blink;
+      const closedSource = blink?.closed[expression];
+      let eyesSource: unknown;
+      if (blink && closedSource !== undefined) {
+        const phase = eyes(blink);
+        eyesSource = phase === 'closed' ? closedSource : phase === 'half' ? blink.half?.[expression] : undefined;
+      }
+      const overlay = blink?.overlay === true;
       const layers: Layer[] = [
         {
           id: `${id}.portrait`,
           transform: extractTransform({}),
           opacity: 1,
-          content: { type: 'image', asset: resolveAsset(src) },
+          content: { type: 'image', asset: resolveAsset(eyesSource !== undefined && !overlay ? eyesSource : src) },
         },
       ];
+      if (eyesSource !== undefined && overlay) {
+        layers.push({
+          id: `${id}.eyes`,
+          transform: extractTransform({}),
+          opacity: 1,
+          content: { type: 'image', asset: resolveAsset(eyesSource) },
+        });
+      }
       const mouthSource = mouth && portrait.lipSync
         ? mouth === 'closed'
           ? portrait.lipSync.closed

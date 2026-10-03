@@ -76,7 +76,8 @@ produces a video that differs between preview and export.
    `useCurrentFrame()` / `useCurrentTime()`. Never use `Math.random()`,
    `Date.now()`, timers, `useEffect`, or state that accumulates across
    renders: frames are rendered out of order when scrubbing and exporting. For
-   "random" values, use `random(seed)` and `noise(seed, t)`.
+   "random" values, use `random(seed)` and `noise(seed, t)` from
+   `@celesta/math`.
 6. **Async work goes in `prepare()`.** Rendering is synchronous. Fetching,
    file reads, `preloadMedia()`, `loadLipSync()`, and `loadPsdPreset()` belong
    in `export async function prepare()`, which runs once before the first
@@ -86,8 +87,8 @@ produces a video that differs between preview and export.
    `loadLipSync`, `loadPsdPreset`, and `preloadMedia`. JSON project asset
    paths resolve from the project file's folder. `http(s)://` URLs are
    downloaded once and cached forever; change the URL to refresh.
-8. **Imports.** `react` and `@celesta/react` always resolve to the runtime
-   bundled with Celesta; never `npm install` them. Other relative imports
+8. **Imports.** `react`, `@celesta/react`, and `@celesta/math` always
+   resolve to the runtime bundled with Celesta; never `npm install` them. Other relative imports
    (including `import data from './data.json'`) are bundled normally.
 9. **Draw order is source order.** Later siblings draw on top. In JSON, later
    tracks draw on top of earlier ones.
@@ -112,6 +113,9 @@ produces a video that differs between preview and export.
    music, `useCue` for things that change at given frames, `TextReveal`,
    `useTypewriter`, `useCountUp`, `Camera`, `Line`/`Polyline`/`Path` (one
    layer per stroke: draw line art as paths, not as many thin `Rect`s).
+   Effects (`blur`, `glow`, `shadow`) and blend modes cost GPU passes per
+   layer. Put one effect on a `Group` rather than one on each of dozens of
+   layers. See [Rendering cost](references/react-api.md#rendering-cost).
 3. **Check it without the GUI.** You cannot see the preview window, so
    verify with the tools in [references/verify-and-export.md](references/verify-and-export.md):
    - `node scripts/inspect.mjs scene.tsx` (in this skill's folder) loads a
@@ -123,6 +127,10 @@ produces a video that differs between preview and export.
    - For JSON projects, or to check actual pixels, run a short export with
      `--from`/`--to` and `--preset ultrafast`, then extract a still with
      `ffmpeg` if it is installed, and look at the image.
+   - To see the whole video at once, export a contact sheet (for example
+     `--every 150 --contact-sheet /tmp/sheet.png`, one labelled tile every
+     5 s at 30 fps) and look at it, then export full-size `--frame`s where
+     something looks off.
 4. **Report back.** Tell the user which file to open (File → Open…) or reload
    (JSON projects need File → Reload; React entries reload on save), what you
    verified, and what you could not verify (for example, how a font looks).
@@ -138,13 +146,15 @@ Load the one you need; each is self-contained.
 - [references/react-api.md](references/react-api.md): every `@celesta/react`
   component, prop, hook, and helper (layers, text and fonts, animation,
   `Sequence`/`Transition`, layout helpers, media, `prepare()`, project
-  properties, `registerComponent`, debug guides).
+  properties, `registerComponent`, rendering cost, debug guides), plus the
+  `@celesta/math` random, noise, and math helpers.
 - [references/project-json.md](references/project-json.md): the complete
   `.celesta.json` schema, validation rules, keyframes and easing names, and
   a full example.
 - [references/dialogue.md](references/dialogue.md): characters, portraits,
-  subtitles, voice lines, automatic lip sync, PSD portraits and PSDTool
-  presets, in both React and JSON.
+  subtitles, voice lines, timing a script from its voices (`planDialogue`),
+  automatic lip sync, blinking, PSD portraits and PSDTool presets, in both
+  React and JSON.
 - [references/verify-and-export.md](references/verify-and-export.md):
   finding the Celesta executables, `inspect.mjs`, export flags, frame
-  extraction, and a table of error messages with fixes.
+  extraction, finding slow parts, and a table of error messages with fixes.

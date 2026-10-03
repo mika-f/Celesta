@@ -1,9 +1,10 @@
 // Stage the TypeScript support directory the editor copies into a project's
-// `.celesta/`: `@celesta/react`'s declarations, the React types they build on,
-// Node's globals (entries run under the bundled Node.js), and a base tsconfig
-// mapping those imports. The runtime never loads these — entries always
-// resolve `react` and `@celesta/react` to the bundled copies — so a project
-// gets matching types without installing anything.
+// `.celesta/`: `@celesta/react`'s and `@celesta/math`'s declarations, the
+// React types they build on, Node's globals (entries run under the bundled
+// Node.js), and a base tsconfig mapping those imports. The runtime never
+// loads these — entries always resolve `react`, `@celesta/react`, and
+// `@celesta/math` to the bundled copies — so a project gets matching types
+// without installing anything.
 import { createHash } from 'node:crypto';
 import { cpSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -62,6 +63,7 @@ function copyTypes(name, parent) {
     copyTypes(dependency, directory);
   }
 }
+copyTypes('@celesta/math', source);
 copyTypes('@types/react', source);
 copyTypes('@types/node', source);
 
@@ -84,6 +86,7 @@ writeJson(join(destination, 'tsconfig.json'), {
     types: ['node'],
     paths: {
       '@celesta/react': ['./node_modules/@celesta/react'],
+      '@celesta/math': ['./node_modules/@celesta/math'],
       react: ['./node_modules/@types/react'],
       'react/*': ['./node_modules/@types/react/*'],
     },

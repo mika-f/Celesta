@@ -125,7 +125,8 @@ export const sections: DocSection[] = [
         <li>Your own components are ordinary React function components. Use props, <code>.map()</code>, and conditionals as you would anywhere else.</li>
         <li>An optional named export, <code>prepare()</code>, runs once before the first frame. See <a href="#data">Data, properties & components</a>.</li>
       </ul>
-      <h3>Set up TypeScript in your editor</h3><p>With a React composition open, choose <strong>File → Set Up TypeScript</strong>. Celesta copies matching declarations for <code>@celesta/react</code>, React, and Node.js into a local <code>.celesta/</code> directory.</p>
+      <h3>Set up TypeScript in your editor</h3><p>With a React composition open, choose <strong>File → Set Up TypeScript</strong>. Celesta copies matching declarations for <code>@celesta/react</code>, <code>@celesta/math</code>, React, and Node.js into a local <code>.celesta/</code> directory.</p>
+      <p>Starting a new project with no composition yet? Choose <strong>File → Set Up TypeScript in Folder…</strong> and pick the project folder, so your first component is written with types in place.</p>
       <p>If there is no <code>tsconfig.json</code>, Celesta creates one. If you already have a configuration, add this <code>extends</code> property while preserving your other settings:</p>
       <DocCode label="tsconfig.json" language="json" code={'{\n  "extends": "./.celesta/tsconfig.json"\n}'} />
       <p>You do not need to install those declaration packages from npm for this editor setup. Celesta refreshes <code>.celesta/</code> when you open the project in a newer app version; that directory ignores itself in Git.</p>
@@ -147,11 +148,11 @@ export const sections: DocSection[] = [
       <h3>Ready-made entrances and exits</h3><p><code>{'<Transition>'}</code> fades, slides, or scales its children at the start (<code>direction="in"</code>, the default) or end (<code>direction="out"</code>) of the enclosing sequence:</p>
       <DocCode label="Slide a caption in, fade it out" language="tsx" code={'<Sequence from={30} durationInFrames={120}>\n  <Transition type="slide" slideFrom="bottom" durationInFrames={15}\n    easing={Easings.easeOutCubic}>\n    <Transition type="fade" direction="out" durationInFrames={20}>\n      <Caption />\n    </Transition>\n  </Transition>\n</Sequence>'} />
       <p>Slides travel <code>distance</code> pixels (64 by default); scales start from <code>scaleFrom</code> (0.8 by default). Pass several types to combine them, such as <code>{"type={['fade', 'slide']}"}</code>.</p>
-      <Note title="Keep animation tied to the frame">Compute visual changes from frame or time values so scrubbing and exporting can reproduce each moment. A browser timer or <code>Math.random()</code> is not the composition’s clock; derive “random” values from the frame or an index instead.</Note>
+      <Note title="Keep animation tied to the frame">Compute visual changes from frame or time values so scrubbing and exporting can reproduce each moment. A browser timer or <code>Math.random()</code> is not the composition’s clock; derive “random” values from the frame or an index instead, with <a href="#motion-toolkit"><code>@celesta/math</code></a>’s seeded <code>random</code> and <code>noise</code>.</Note>
     </>,
   },
   {
-    id: 'motion-toolkit', title: 'Scenes, cues & motion helpers', description: 'Sequencing, staggering, beat sync, and text effects.', keywords: 'Series Stagger computeSeries progress useBeat beatAt bpm music useCue cueAt TextReveal useTypewriter useCountUp Camera Line Polyline Path pointOnPolyline random noise frameToTimecode timecode scenes cascade counter typewriter chart', content: <>
+    id: 'motion-toolkit', title: 'Scenes, cues & motion helpers', description: 'Sequencing, staggering, beat sync, and text effects.', keywords: 'Series Stagger computeSeries progress useBeat beatAt bpm music useCue cueAt TextReveal useTypewriter useCountUp Camera Line Polyline Path pointOnPolyline random noise fbm math @celesta/math frameToTimecode timecode scenes cascade counter typewriter chart', content: <>
       <p>These helpers cover the patterns that come up in almost every video: scenes in a row, lists that cascade in, cuts on the beat, and titles that reveal themselves. Each is built on <code>Sequence</code>, <code>Group</code>, and the frame, so everything stays scrubbable and deterministic.</p>
       <h3>Scenes back to back</h3><p><code>{'<Series>'}</code> plays its <code>{'<Series.Sequence>'}</code> children one after another, so you write each scene’s length instead of its start frame. A negative <code>offset</code> overlaps a scene with the one before it. <code>computeSeries()</code> does the same arithmetic without rendering, which is handy for the composition’s total length:</p>
       <DocCode label="Three scenes, sized from their lengths" language="tsx" code={"const SCENES = [\n  { name: 'intro', durationInFrames: 90, Scene: Intro },\n  { name: 'body', durationInFrames: 240, Scene: Body },\n  { name: 'outro', durationInFrames: 60, Scene: Outro },\n];\nconst { durationInFrames } = computeSeries(SCENES);\n\nexport default function Root() {\n  return (\n    <Composition width={1920} height={1080} fps={30} durationInFrames={durationInFrames}>\n      <Series>\n        {SCENES.map(({ name, durationInFrames, Scene }) => (\n          <Series.Sequence key={name} durationInFrames={durationInFrames}>\n            <Scene />\n          </Series.Sequence>\n        ))}\n      </Series>\n    </Composition>\n  );\n}"} />
@@ -173,7 +174,18 @@ export const sections: DocSection[] = [
       <DocCode label="Travel along a long timeline" language="tsx" code={"<Camera x={interpolate(frame, [0, 120], [0, 4000], { extrapolateRight: 'clamp' })}\n  y={540} zoom={1.1} shake={4}>\n  <TimelineWorld />\n</Camera>"} />
       <h3>Lines and charts</h3><p><code>{'<Line x1 y1 x2 y2>'}</code> draws a segment and <code>{'<Polyline points>'}</code> connects several; both take <code>stroke</code>, <code>strokeWidth</code>, <code>cap</code> (<code>round</code> by default), and <code>join</code>. Animate a polyline’s <code>progress</code> from 0 to 1 to draw it on, and use <code>pointOnPolyline(points, t)</code> to put a marker on its tip.</p>
       <p>For other shapes, <code>{'<Path>'}</code> takes <code>points</code> (with <code>closed</code>) or SVG-like <code>commands</code> (<code>moveTo</code>, <code>lineTo</code>, <code>quadTo</code>, <code>cubicTo</code>, <code>close</code>), a <code>stroke</code> and/or <code>fill</code>, and <code>cap</code>/<code>join</code>/<code>miterLimit</code>. Each is one layer however many segments it has, stays sharp when scaled, and paints a translucent stroke that crosses itself only once, so draw procedural line art as a few paths rather than many thin rects.</p>
-      <h3>Randomness and timecodes</h3><p><code>random(seed)</code> returns the same number in <code>[0, 1)</code> for the same seed, and <code>noise(seed, t)</code> is a smooth curve in <code>[-1, 1]</code> for drift and wobble. Use them instead of <code>Math.random()</code> so every frame renders the same way twice. <code>frameToTimecode(frame, fps)</code> formats <code>HH:MM:SS:FF</code> for an on-screen clock.</p>
+      <h3>Randomness, noise & math</h3><p>Import these from <code>@celesta/math</code>, which the runtime bundles alongside <code>@celesta/react</code>. <code>random(seed)</code> returns the same number in <code>[0, 1)</code> for the same seed, and <code>noise(seed, t)</code> is a smooth curve in <code>[-1, 1]</code> for drift and wobble. Use them instead of <code>Math.random()</code> so every frame renders the same way twice. Give each property its own seed, such as <code>{'`star-${i}-x`'}</code>.</p>
+      <DocCode label="A seeded starfield that drifts" language="tsx" code={"import { noise, randomRange } from '@celesta/math';\n\nconst stars = Array.from({ length: 80 }, (_, i) => (\n  <Rect key={i} width={4} height={4} cornerRadius={2} fill=\"#ffffff\"\n    x={randomRange(`star-${i}-x`, 0, 1920) + noise(i, frame / 40) * 30}\n    y={randomRange(`star-${i}-y`, 0, 1080)}\n    opacity={randomRange(`star-${i}-o`, 0.2, 0.8)} />\n));"} />
+      <Api caption="@celesta/math" rows={[
+        [<><code>random</code>, <code>randomRange</code>, <code>randomInt</code>, <code>randomBool</code>, <code>randomSign</code></>, <>Seeded numbers, whole numbers, and coin flips.</>],
+        [<><code>randomPick</code>, <code>shuffle</code>, <code>randomGaussian</code>, <code>randomInCircle</code></>, <>Pick or reorder items, bell-curve values, and points in a disc.</>],
+        [<><code>noise</code>, <code>noise2D</code>, <code>noise3D</code></>, <>Smooth noise over time, a plane, or a plane changing over time.</>],
+        [<><code>fbm</code>, <code>fbm2D</code>, <code>fbm3D</code></>, <>Layered noise with detail at several scales, for clouds, smoke, and terrain.</>],
+        [<><code>clamp</code>, <code>lerp</code>, <code>inverseLerp</code>, <code>remap</code>, <code>smoothstep</code>, <code>wrap</code>, <code>pingPong</code>, <code>snap</code></>, <>Shape and limit numbers.</>],
+        [<><code>sineWave</code>, <code>triangleWave</code>, <code>squareWave</code>, <code>sawtoothWave</code></>, <>Repeating waves in <code>[-1, 1]</code> with a period of 1.</>],
+        [<><code>degToRad</code>, <code>lerpAngle</code>, <code>rotatePoint</code>, <code>polarToCartesian</code>, <code>cubicBezierPoint</code></>, <>Angles in radians and <code>{'{ x, y }'}</code> points.</>],
+      ]} />
+      <h3>Timecodes</h3><p><code>frameToTimecode(frame, fps)</code>, from <code>@celesta/react</code>, formats <code>HH:MM:SS:FF</code> for an on-screen clock.</p>
     </>,
   },
   {
@@ -296,7 +308,7 @@ export const sections: DocSection[] = [
   },
   {
     id: 'reference', title: 'React essentials', description: 'A compact reference for everything in @celesta/react.', keywords: 'api props Composition Rect Text Group Image Video Audio Font Sequence Series Stagger Transition Camera Line Polyline Path TextReveal useBeat useCue Character CharacterView Dialogue hooks reference', content: <>
-      <p>Import these APIs from <code>@celesta/react</code>. Celesta’s TypeScript declarations provide the complete prop types and editor completions.</p>
+      <p>Import these APIs from <code>@celesta/react</code>. Random numbers, noise, and other math helpers come from <code>@celesta/math</code>; see <a href="#motion-toolkit">motion helpers</a>. Celesta’s TypeScript declarations provide the complete prop types and editor completions.</p>
       <Api caption="Layers" rows={[
         [<code>Composition</code>, <>Set <code>width</code>, <code>height</code>, <code>fps</code>, and <code>durationInFrames</code>. Return exactly one from your default export.</>],
         [<code>Rect</code>, <>A rectangle with <code>width</code>, <code>height</code>, and optional <code>fill</code>, <code>stroke</code>, <code>strokeWidth</code>, and <code>cornerRadius</code>.</>],
@@ -316,7 +328,6 @@ export const sections: DocSection[] = [
         [<><code>TextReveal</code>, <code>useTypewriter()</code>, <code>useCountUp()</code></>, <>Masked line reveals, typing, and counting numbers.</>],
         [<code>Camera</code>, <>Look at a point of a larger world, with zoom, rotation, and shake.</>],
         [<><code>Line</code> / <code>Polyline</code> / <code>Path</code> / <code>pointOnPolyline</code></>, <>Segments, curves, and filled shapes; polylines can draw themselves on.</>],
-        [<><code>random</code> / <code>noise</code></>, <>Deterministic randomness and smooth noise.</>],
         [<><code>interpolate</code> / <code>Easings</code></>, <>Map a frame to a value, with easing and extrapolation.</>],
         [<code>spring</code>, <>A physics-based value that settles from 0 to 1.</>],
         [<><code>useCurrentFrame()</code> / <code>useCurrentTime()</code></>, <>The current frame, or the exact time, local to an enclosing sequence.</>],

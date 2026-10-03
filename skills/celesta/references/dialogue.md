@@ -12,9 +12,11 @@ Dialogue scenes combine three pieces:
 ## Contents
 
 - [React: a two-line conversation](#react-a-two-line-conversation)
+- [Timing a script from its voices](#timing-a-script-from-its-voices)
 - [React props](#react-props)
 - [Automatic lip sync](#automatic-lip-sync)
 - [PSD portraits](#psd-portraits)
+- [Blinking](#blinking)
 - [JSON projects](#json-projects)
 - [Troubleshooting](#troubleshooting)
 
@@ -95,9 +97,101 @@ const lines = [
 ))}
 ```
 
-To fit lines to their recordings, measure them in `prepare()` with
-`preloadMedia(voice)` and `mediaDurationInFrames(info, fps)`, then compute
-`at`/`len` from those lengths (plus a small gap).
+To fit lines to their recordings, let `planDialogue()` measure them (next
+section) instead of writing `at`/`len` by hand.
+
+## Timing a script from its voices
+
+`planDialogue(lines, options)` measures every line's voice in `prepare()` and
+places the lines back to back: each starts after the previous line and its
+gap. `<DialogueSeries>` then renders the plan as `<Sequence>` + `<Dialogue>`
+pairs, and the plan tells the rest of the video when each line starts.
+
+```tsx
+import * as React from 'react';
+import { CharacterView, Composition, DialogueSeries, Rect, Sequence, planDialogue } from '@celesta/react';
+import type { AssetReference, CharacterViewReference, DialoguePlan } from '@celesta/react';
+
+const zunda = React.createRef<AssetReference>();
+const metan = React.createRef<AssetReference>();
+const zundaView = React.createRef<CharacterViewReference>();
+const metanView = React.createRef<CharacterViewReference>();
+
+let plan: DialoguePlan;
+export async function prepare() {
+  plan = await planDialogue(
+    [
+      { id: 'hello', scene: 'intro', speaker: 'zunda', audio: './voices/01.wav', text: 'ずんだもんなのだ。' },
+      { id: 'topic', scene: 'intro', speaker: 'metan', audio: './voices/02.wav', text: '今日は音声合成の話よ。', expression: 'smile' },
+      { id: 'how',   scene: 'body',  speaker: 'zunda', audio: './voices/03.wav', text: 'どうやって喋っているのだ？', gap: 0.6 },
+    ],
+    { fps: 30, sceneLeadIn: 1 },  // a 1 s pause before each new scene
+  );
+}
+
+export default function Root() {
+  return (
+    <Composition width={1920} height={1080} fps={30} durationInFrames={plan.durationInFrames}>
+      {/* …<Assets> with the two <Character>s… */}
+      <Sequence {...plan.scene('intro')}><Rect width={1920} height={1080} fill="#20243a" /></Sequence>
+      <Sequence {...plan.scene('body')}><Rect width={1920} height={1080} fill="#2f3b2a" /></Sequence>
+      <CharacterView ref={zundaView} character={zunda} x={1400} y={200} />
+      <CharacterView ref={metanView} character={metan} x={100} y={200} />
+      <DialogueSeries plan={plan} views={{ zunda: zundaView, metan: metanView }} />
+    </Composition>
+  );
+}
+```
+
+Each line:
+
+| Field | Notes |
+| --- | --- |
+| `text` | Subtitle. |
+| `audio` | Voice file, relative to the entry file. Its length (rounded up to whole frames) is the line's length. |
+| `durationInFrames` | Explicit length instead of measuring; required for a line without `audio`. |
+| `id` | Name for looking the line up; defaults to its index (`"0"`, `"1"`, …). Unique. |
+| `gap` | Seconds of silence after the line; defaults to the plan's `gap` (0.25 s). |
+| `leadIn` | Seconds of silence before the line. Defaults to `sceneLeadIn` on the first line of a new `scene` (not the script's first line), else 0. |
+| `scene` | Groups consecutive lines into a scene. |
+| `speaker` / `character` | Who speaks: a key of `<DialogueSeries views>`, or the `<CharacterView>` ref itself. |
+| `expression`, `mouth`, `lipSync`, `volume`, `muted` | Passed to the line's `<Dialogue>`. |
+
+Lines may carry extra fields of your own; the plan keeps the original line
+as `planned.line`.
+
+Options: `fps` (required), `gap` (default seconds after each line, 0.25),
+`sceneLeadIn` (default seconds before each new scene, 0). Seconds are
+rounded to whole frames.
+
+The plan:
+
+- `plan.durationInFrames`: the total, including the last gap. Use it as the
+  `<Composition durationInFrames>`.
+- `plan.lines`: `{ id, index, line, from, durationInFrames, gapInFrames, leadInFrames, spanInFrames }`
+  per line; `spanInFrames` is the line plus its gap.
+- `plan.startOf(id)`: the frame a line starts on, e.g. a camera move
+  `interpolate(frame, [plan.startOf('how'), plan.startOf('how') + 20], …)`.
+- `plan.range(firstId, lastId?)`: `{ from, durationInFrames }` from one line's
+  start to the end of another's gap, ready to spread onto a `<Sequence>`.
+- `plan.scenes` / `plan.scene(id)`: each scene's `{ id, from, durationInFrames, lines }`.
+  A scene starts at its first line's lead-in and lasts until the next scene
+  starts (the last one until the end), so backgrounds cut with no hole.
+
+`<DialogueSeries>` props:
+
+| Prop | Notes |
+| --- | --- |
+| `plan` | The result of `planDialogue()`. |
+| `views` | `{ speaker: viewRef }` for lines that use `speaker`. |
+| `holdThroughGap` | Keep each subtitle (and expression) through the gap after it. Default false: the line clears when its voice ends. |
+| `dialogueProps` | `(planned) => props` merged into each `<Dialogue>`, e.g. to move one subtitle. |
+
+For lip sync, load each track in `prepare()` and put it on the line:
+`lines = await Promise.all(lines.map(async (l) => ({ ...l, lipSync: await loadLipSync({ src: l.audio, text: l.reading }) })))`.
+
+A missing voice file fails `prepare()` with
+`planDialogue(): voice file for line "how" not found: ./voices/03.wav (looked at …)`.
 
 ## React props
 
@@ -116,6 +210,7 @@ Image portrait:
   defaultExpression: 'calm',                    // must be a key of expressions
   expressions: { calm: './calm.png', smile: './smile.png' },
   lipSync?: { a, i, u, e, o, closed? },         // mouth images, see below
+  blink?: { closed: { calm: './calm-shut.png' }, half?, overlay? }, // see Blinking
 }
 ```
 
@@ -123,9 +218,10 @@ Image portrait:
 
 `character` (the character ref), common layer props (`x`, `y`, `scale`,
 anchors, `opacity`), and optionally `expression`, `mouth`
-(`'closed' | 'a' | 'i' | 'u' | 'e' | 'o'`), and `lipSync` (a track from
-`loadLipSync`). The portrait is drawn at its natural size; use `scale` for
-large artwork.
+(`'closed' | 'a' | 'i' | 'u' | 'e' | 'o'`), `lipSync` (a track from
+`loadLipSync`), and `blink` (`false` holds the eyes open; an object
+overrides the portrait's blink timing, see [Blinking](#blinking)). The
+portrait is drawn at its natural size; use `scale` for large artwork.
 
 ### `<Dialogue>`
 
@@ -143,7 +239,9 @@ large artwork.
 
 `loadLipSync({ src, text, hopHz? })` reads a voice recording and spreads the
 vowels of `text` across its voiced parts, producing a mouth shape for every
-moment. Call it in `prepare()`.
+moment. Call it in `prepare()`. For VOICEVOX voices, prefer
+[`lipSyncFromVoicevox`](#lip-sync-from-voicevox-timing), which uses the
+engine's own phoneme timing.
 
 ```tsx
 let voice: LipSyncTrack | null = null;
@@ -172,6 +270,55 @@ export async function prepare() {
   is rendered; on a `<Dialogue>` only while the line is active.
 - `useLipSync(track)` returns the current shape if other components need it.
 - To drive the mouth by hand, pass `mouth="a"` etc. instead.
+
+### Lip sync from VOICEVOX timing
+
+When the voice comes from VOICEVOX Engine (or a compatible engine such as
+AivisSpeech), build the track from the `audio_query` JSON instead:
+`lipSyncFromVoicevox(query)` reads every consonant and vowel length, so the
+mouth stays in step with the voice. It is synchronous; save the query next to
+the WAV and import it or read it in `prepare()`.
+
+```sh
+# Save the query, then synthesize the WAV from that same query.
+curl -s -X POST -G "http://127.0.0.1:50021/audio_query" --data-urlencode "speaker=3" \
+  --data-urlencode "text=こんにちは、ずんだもんなのだ。" -o voices/hello.json
+curl -s -X POST "http://127.0.0.1:50021/synthesis?speaker=3" \
+  -H "Content-Type: application/json" -d @voices/hello.json -o voices/hello.wav
+```
+
+```tsx
+import { lipSyncFromVoicevox } from '@celesta/react';
+import helloQuery from './voices/hello.json';
+
+const hello = lipSyncFromVoicevox(helloQuery);
+// …
+<Sequence from={30} durationInFrames={Math.ceil(hello.durationInSeconds * 30)}>
+  <Dialogue character={view} audio="./voices/hello.wav" lipSync={hello}>
+    こんにちは、ずんだもんなのだ。
+  </Dialogue>
+</Sequence>
+```
+
+- **Use the query that produced the WAV.** If you edit `speedScale`,
+  `pauseLength`, `pauseLengthScale` or phoneme lengths before `/synthesis`,
+  pass the edited query; those edits are reflected in the track.
+- Time 0 is the start of the WAV, including `prePhonemeLength`, and
+  `durationInSeconds` is the WAV length. Like VOICEVOX, each phoneme is
+  rounded to 1/93.75 s; for an engine that does not use that grid, pass
+  `{ frameRate: null }` (or its own rate).
+- Vowels `a i u e o` (and devoiced `A I U E O`) map to their shapes; `N` (ん),
+  `cl` (っ), pauses and silence are `closed`. A consonant shows its mora's
+  vowel, except `m`/`b`/`p`, which close the lips.
+- If you synthesize with `enable_interrogative_upspeak=false`, pass
+  `lipSyncFromVoicevox(query, { interrogativeUpspeak: false })`.
+- Choosing between the two: use `lipSyncFromVoicevox` whenever you have the
+  query; use `loadLipSync` for recorded or third-party voices where only the
+  WAV and its transcript exist.
+- For other engines that report phoneme timing, build the track yourself
+  with `lipSyncFromKeyframes([{ seconds, mouth }, ...], durationInSeconds)`;
+  each keyframe holds until the next, and the mouth is `closed` before the
+  first and after `durationInSeconds`.
 
 ### Image mouths
 
@@ -263,6 +410,77 @@ in PSDs that keep a mouth folder inside each face folder):
 An expression that is not a key of `expressions` throws, as for image
 portraits.
 
+## Blinking
+
+A portrait with `blink` blinks on its own, every 4 seconds or so with the
+eyes shut for 0.1 s, at irregular moments. It needs nothing per line and
+keeps going through lip sync and expression changes.
+
+PSD portraits name the eye layers by full path (a path or a list of paths
+each). The open layers are forced visible and the shut ones hidden, and the
+other way round during a blink. `half` (half-shut eyes) is optional and
+shows on the frame either side of each blink (two at 60 fps):
+
+```tsx
+<Character ref={hana} name="Hana" portrait={{
+  type: 'psd',
+  src: './hana/hana.psd',
+  layers: ['body', 'hair'],
+  blink: { open: 'eyes/open', closed: 'eyes/closed', half: 'eyes/half' },
+  defaultExpression: 'calm',
+  expressions: {
+    calm: ['face/calm'],
+    // A face folder with eyes of its own (common in public character PSDs)
+    // blinks with those instead.
+    smile: { layers: ['face/smile'], blink: {
+      open: ['face/smile/eyes/l', 'face/smile/eyes/r'], closed: 'face/smile/eyes/shut',
+    } },
+    // Eyes already shut (^^): never blink.
+    happy: { layers: ['face/happy'], blink: false },
+  },
+}} />
+```
+
+An expression's `blink` replaces the portrait's eye layers as a set (its
+`half` is not borrowed from the portrait), while timing it leaves out still
+comes from the portrait's `blink`.
+
+Image portraits give an eyes-shut image per expression; an expression
+without one does not blink. By default the image replaces the expression's
+image during a blink; with `overlay: true` it is a transparent eyes image the
+same size as the portrait, drawn over it (under the mouth) like lip-sync
+mouths:
+
+```ts
+portrait: {
+  defaultExpression: 'calm',
+  expressions: { calm: './mira/calm.png', smile: './mira/smile.png' },
+  blink: {
+    closed: { calm: './mira/calm-shut.png', smile: './mira/smile-shut.png' },
+    half: { calm: './mira/calm-half.png' },   // optional
+  },
+}
+```
+
+Timing, on the portrait's `blink`, an expression's `blink`, or the view's
+`blink={{ … }}` (the later wins):
+
+| Field | Default | Notes |
+| --- | --- | --- |
+| `interval` | `4` | Average seconds between blinks; each gap varies between half and one and a half times this. |
+| `duration` | `0.1` | Seconds the eyes stay shut, at least one frame. |
+| `seed` | the character's id | Same seed, same blinks. Two characters with different ids already blink independently; give a character a different seed if two of its views should not blink together. |
+
+- Blinks are a pure function of the **composition** frame and the seed, so
+  preview and export match, and a cut to a new `<Sequence>` does not restart
+  them. `Math.random()` is never used.
+- `<CharacterView blink={false}>` holds the eyes open, for a close-up or a
+  dramatic stare. Switch it per frame like any other prop.
+- `blinkPhase(frame, fps, { interval?, duration?, seed? })` returns
+  `'open' | 'half' | 'closed'` for the same schedule, if something else
+  (a custom portrait, an eyelid effect) needs to blink in step.
+- JSON projects do not blink yet.
+
 ## JSON projects
 
 Characters live in `characters`; lines are `dialogue` items on a `dialogue`
@@ -338,4 +556,9 @@ active**, and portrait and subtitle positions come from the character.
 | `<CharacterView> requires a character with a portrait` | The `<Character>` needs a `portrait`. |
 | The mouth never moves | WAV is uncompressed; transcript has kana/romaji vowels; `loadLipSync` runs in `prepare()`; the track is passed as `lipSync`; the sequence starts when the voice starts; PSD mouth paths match exactly (list them with `--psd-layers`). |
 | PSD portrait is empty or shows only a mouth | Set `layers` from a PSDTool favorite or layer list. |
+| `planDialogue(): voice file for line … not found` | The path is relative to the entry file; the message shows where it looked. |
+| `<DialogueSeries> line …: speaker "x" is not in views` | Add the speaker to `views`, or set `character` on the line. |
+| The portrait never blinks | `blink` is on the `portrait` (not the view); for an image portrait, `blink.closed` has a key for the current expression; the expression's `blink` is not `false`; the view is not `blink={false}`; a blink is 3 frames every ~4 s, so step frames rather than glancing at one. |
+| A PSD blink shows both eyes, or none | `open`, `closed`, and `half` must list every eye layer, by full path (`--psd-layers`). A layer in neither stays as `layers`/the expression set it, so open eyes left out of `open` show through shut ones. |
+| Two characters blink at the same time | They share an id or a `seed`; give each its own `seed`. |
 | Subtitle in the wrong place | React subtitle `x`/`y` are canvas coordinates with anchors like `Text`; JSON subtitle `position` is the text's center. |

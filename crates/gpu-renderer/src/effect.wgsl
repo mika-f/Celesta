@@ -6,10 +6,12 @@ struct Params {
     color: vec4<f32>,
 };
 
+// Bound like `layer.wgsl`'s layer texture, so a canvas's bind group serves both.
 @group(0) @binding(0)
 var source: texture_2d<f32>;
 
-@group(0) @binding(1)
+// One pass's parameters, at a dynamic offset into the frame's buffer.
+@group(1) @binding(0)
 var<uniform> params: Params;
 
 struct VertexOutput {

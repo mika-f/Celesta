@@ -1,0 +1,8 @@
+[
+  { "id": "hello", "scene": "intro", "speaker": "shizuku", "text": "こんにちは、しずくです。", "reading": "こんにちわ、しずくです" },
+  { "id": "topic", "scene": "intro", "speaker": "komugi", "text": "こむぎです。今日はセリフの並べ方を紹介するよ。", "reading": "こむぎです。きょうわせりふのならべかたをしょうかいするよ" },
+  { "id": "measure", "scene": "intro", "speaker": "shizuku", "expression": "smile", "text": "声の長さを測って、自動で並べてくれるんですね。", "reading": "こえのながさをはかって、じどうでならべてくれるんですね" },
+  { "id": "gap", "scene": "how", "speaker": "komugi", "text": "セリフの後には、短い間が入るんだ。", "speech": "セリフの後には、短いまが入るんだ。", "reading": "せりふのあとにわ、みじかいまがはいるんだ" },
+  { "id": "lead-in", "scene": "how", "speaker": "shizuku", "text": "場面が変わるときは、少し長めに空けるんですね。", "reading": "ばめんがかわるときわ、すこしながめにあけるんですね" },
+  { "id": "timeline", "scene": "how", "speaker": "komugi", "expression": "smile", "text": "下のタイムラインで、ぜんぶ確かめられるよ！", "reading": "したのたいむらいんで、ぜんぶたしかめられるよ" }
+]

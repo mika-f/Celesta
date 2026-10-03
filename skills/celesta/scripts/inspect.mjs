@@ -303,7 +303,7 @@ function printLayers(layers, depth, checkFile, warnings) {
         let extra = '';
         if (content.type === 'video') extra = ` (source ${fmt(content.timing.sourceTimeSeconds)} s)`;
         if (content.type === 'psd') {
-          extra = ` (${content.visibleLayers?.length ?? 0} visible layers${content.enabledLayers?.length ? `, mouth ${content.enabledLayers.join(', ')}` : ''})`;
+          extra = ` (${content.visibleLayers?.length ?? 0} visible layers${content.enabledLayers?.length ? `, shown ${content.enabledLayers.join(', ')}` : ''})`;
           if (!content.visibleLayers?.length) warnings.push(`PSD ${src} has no \`layers\`; it renders with its saved visibility`);
         }
         console.log(`${indent}${content.type} ${src} ${where}${extra}${checkFile(content.asset.location.path)}`);

@@ -7,7 +7,7 @@
 `useTypewriter`・`useCountUp`・`Camera`・`Polyline` など）は、この映像を一度素の API だけで作り、
 何度も手書きしたものを切り出して作られました。各シーンがそのまま使用例になっています。
 
-- `film.tsx` — Celesta の File → Open… で開く React ソース。
+- `film.tsx` — Celesta の File → Open… で開く React ソース（エントリ）。シーンは `scenes/`、共通部品は `components/`、シーンの並びは `timeline.ts`、Git 履歴から取った数値は `data.ts` にあります。
 - `make-score.py` — BGM を生成する Python スクリプト。標準ライブラリのみ。
 - `poster.jpg` — 書き出した映像から抽出した静止画。
 
@@ -32,7 +32,7 @@ HUD のシーン名とタイムコードは `computeSeries()`・`cueAt()`・`fra
 
 ## データ
 
-数字は 2026-09-29 時点のこのリポジトリから取ったもので、`film.tsx` の先頭に取得コマンドと一緒に書いてあります。
+数字は 2026-09-29 時点のこのリポジトリから取ったもので、`data.ts` に取得コマンドと一緒に書いてあります。
 
 - 日ごとのコミット数: `git log --no-merges --date=short --format=%ad | sort | uniq -c`
 - 総コミット数: `git rev-list --count HEAD`

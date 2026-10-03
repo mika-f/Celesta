@@ -1,8 +1,9 @@
 # @celesta/react API reference
 
-Everything is imported from `@celesta/react`. The runtime bundled with
-Celesta provides both `react` (18.x) and `@celesta/react`; do not install
-them from npm.
+Everything is imported from `@celesta/react`, except the random, noise, and
+math helpers, which come from `@celesta/math`. The runtime bundled with
+Celesta provides `react` (18.x), `@celesta/react`, and `@celesta/math`; do
+not install them from npm.
 
 ## Contents
 
@@ -11,10 +12,12 @@ them from npm.
 - [Layers](#layers): Composition, Rect, Path, Text, Group, Image, Video, Audio, Font, Assets
 - [Text styles and fonts](#text-styles-and-fonts)
 - [Time and animation](#time-and-animation): hooks, interpolate, Easings, spring, Sequence, Transition, timecodeToFrame
-- [Motion helpers](#motion-helpers): progress, Series, Stagger, useBeat, useCue, TextReveal, useTypewriter, useCountUp, Camera, Line, Polyline, random, noise, frameToTimecode
+- [Motion helpers](#motion-helpers): progress, Series, Stagger, planDialogue/DialogueSeries, useBeat, useCue, TextReveal, useTypewriter, useCountUp, Camera, Line, Polyline, frameToTimecode
+- [@celesta/math](#celestamath): random, noise, noise2D/3D, fbm, clamp, lerp, remap, smoothstep, waves, angles, points
 - [Layout helpers](#layout-helpers): Center, SafeArea, Stack, Grid, Fit
 - [Media helpers](#media-helpers): preloadMedia, mediaDurationInFrames, measureText, useTextMetrics
 - [Project data](#project-data): ProjectProvider, useProjectProperty, defineProjectProperties, ProjectTimeline, ProjectTrack, registerComponent
+- [Rendering cost](#rendering-cost): what makes preview and export slow, and cheaper ways to get the same picture
 - [Preview-only debug guides](#preview-only-debug-guides)
 - [Keyframe values](#keyframe-values)
 
@@ -255,10 +258,27 @@ type TextStyle = {
   `celesta-export` prints `warning: font family "…" (weight …) is not installed or loaded;
   text layer "…" uses a fallback font` to stderr, once per family and weight.
   `scripts/inspect.mjs` does not check fonts. For reproducible output, ship
-  the font file next to the entry and load it with `<Font>`. Characters the
-  font lacks (emoji) fall back per glyph.
+  the font file next to the entry and load it with `<Font>`.
+- Characters the family lacks fall back per glyph to another font, or are
+  drawn as a missing-glyph box (tofu) when no font has them. Apart from
+  emoji that a color emoji font draws, whitespace, and invisible
+  characters, the app lists them with the preview's warnings, and
+  `celesta-export` prints `warning: font family "…" (weight …) has no glyph
+  for "…"; text layer "…" draws them with a fallback font` (the first 10
+  characters, then `and N more characters`), naming each character once per
+  family and weight. This catches a Google Fonts URL whose `text=` subset
+  misses characters the video uses: add them to `text=`. A family with no
+  face at all only gets the warning above.
 - With Google Fonts, list every weight you use in the URL; a missing weight
   uses the family's nearest one.
+- Emoji meant to look like emoji (🎉, and a character followed by U+FE0F
+  such as ❤️ or 1️⃣, flags, skin tones, ZWJ sequences) are drawn with the
+  first installed color emoji font of Apple Color Emoji, Segoe UI Emoji,
+  Noto Color Emoji, Twemoji Mozilla, Twemoji, Twitter Color Emoji,
+  JoyPixels, and EmojiOne Color (a `<Font>` with one of these families
+  counts), even when a text font has a plain glyph for them. A `fontFamily`
+  that names one of them draws the emoji itself. U+FE0E keeps a character
+  as text.
 
 ## Time and animation
 
@@ -388,6 +408,17 @@ const { durationInFrames } = computeSeries(SCENES);
 </Series>
 ```
 
+### `planDialogue(lines, { fps, gap?, sceneLeadIn? })` and `<DialogueSeries>`
+
+A voiced script laid out back to back from its recordings. In `prepare()`,
+`planDialogue()` measures each line's `audio` and returns a plan: every
+line's `from`, `durationInFrames` (the voice), `gapInFrames` after it
+(default 0.25 s), and the total `durationInFrames` for the `<Composition>`.
+`<DialogueSeries plan views>` renders one `<Sequence>` + `<Dialogue>` per
+line, and `plan.startOf(id)`, `plan.range(a, b)`, `plan.scene(id)` time scene
+cuts and camera moves to the lines. See
+[dialogue.md](dialogue.md#timing-a-script-from-its-voices).
+
 ### `<Stagger each from? durationInFrames?>`
 
 Wraps child *i* in a `<Sequence from={from + i * each}>`, so a component that
@@ -451,7 +482,7 @@ A number that counts to `to` (default 30 frames, `easeOutExpo`), rounded to
 Shows the world point (`x`, `y`) at the center of the current area (canvas,
 `SafeArea`, or `Fit`), magnified by `zoom` about that point. Defaults look at
 the center, so `<Camera zoom={1.05}>` is a slow push-in. `shake` is the
-largest drift in world pixels, smoothed by `noise()`.
+largest drift in world pixels, smoothed by `@celesta/math`'s `noise()`.
 
 ### `<Line x1 y1 x2 y2>` and `<Polyline points progress?>`
 
@@ -462,12 +493,74 @@ round caps, else miter), plus `Path`'s transform, `opacity`, and
 draws the first `progress` (0–1) of its length; `pointOnPolyline(points, t)`
 gives the tip, for a marker or a label that rides the line.
 
-### `random(seed)` and `noise(seed, t)`
+## @celesta/math
 
-`random` returns `[0, 1)`, the same for the same number or string seed; use
-distinct seeds per property (`` `star-${i}-x` ``). `noise` is smooth value
-noise in `[-1, 1]` over `t` (feed it `frame / 20` or so). Use these, never
-`Math.random()`.
+```tsx
+import { noise, random, randomRange } from '@celesta/math';
+```
+
+Pure functions with no React; they work in components, `prepare()`, and
+module scope alike. Everything seeded takes a number or string `seed` and
+returns the same value for the same seed on every render. Use these, never
+`Math.random()`; give each property its own seed (`` `star-${i}-x` ``).
+
+### Random
+
+| Function | Returns |
+| --- | --- |
+| `random(seed)` | `[0, 1)` |
+| `randomRange(seed, min, max)` | `[min, max)` |
+| `randomInt(seed, min, max)` | a whole number, both ends included |
+| `randomBool(seed, probability = 0.5)` | `true` with that probability |
+| `randomSign(seed)` | `-1` or `1` |
+| `randomPick(seed, items)` | one element (throws on an empty array) |
+| `shuffle(seed, items)` | a reordered copy |
+| `randomGaussian(seed, mean = 0, stdDev = 1)` | a normally distributed number |
+| `randomInCircle(seed, radius = 1, center = {x: 0, y: 0})` | an evenly spread point in a disc |
+
+### Noise
+
+All return smooth values in `[-1, 1]`; different seeds give unrelated fields.
+
+- `noise(seed, t)`: 1D value noise; feed it `frame / 20` or so for drift and
+  wobble.
+- `noise2D(seed, x, y)` / `noise3D(seed, x, y, z)`: gradient (Perlin) noise,
+  `0` on whole-number coordinates. Scale positions down (`x / 200`); use the
+  third coordinate as time to animate a 2D field.
+- `fbm(seed, t, opts?)`, `fbm2D(seed, x, y, opts?)`, `fbm3D(seed, x, y, z,
+  opts?)`: layered noise with detail at several scales. `opts` are
+  `octaves` (4), `lacunarity` (2), and `gain` (0.5).
+
+### Numbers
+
+`clamp(v, min, max)`, `clamp01(v)`, `lerp(a, b, t)`, `inverseLerp(a, b, v)`,
+`remap(v, inMin, inMax, outMin, outMax)` (unclamped), `remapClamped(...)`,
+`step(edge, x)`, `smoothstep(e0, e1, x)`, `smootherstep(e0, e1, x)`,
+`fract(x)`, `mod(v, n)` (never negative for positive `n`), `wrap(v, min,
+max)`, `pingPong(v, length)`, `snap(v, increment)`, `roundTo(v, decimals)`,
+`approxEqual(a, b, epsilon = 1e-6)`. For frame-to-value mappings with easing,
+prefer `interpolate`.
+
+### Waves
+
+`sineWave(t)`, `triangleWave(t)`, `squareWave(t)`, `sawtoothWave(t)`: period
+1, range `[-1, 1]`, all in phase: positive for the first half of each period
+and negative for the second (sine, triangle, and sawtooth start at 0; the
+square wave starts at 1). Pass
+`frame / framesPerCycle`.
+
+### Angles and points
+
+Angles are **radians** (`degToRad`/`radToDeg` convert a layer's `rotation`);
+with y pointing down, a positive angle turns clockwise. `TAU`,
+`normalizeAngle(a)` (to `[-π, π)`), `angleDifference(from, to)`,
+`lerpAngle(a, b, t)` (the short way round).
+
+Points are `{ x, y }` (`Vec2`): `distance(a, b)`, `angleBetween(from, to)`,
+`lerpPoint(a, b, t)`, `midpoint(a, b)`, `rotatePoint(p, angle, origin?)`,
+`polarToCartesian(angle, radius, center?)`, `cartesianToPolar(p, center?)`,
+`quadraticBezierPoint(p0, p1, p2, t)`, and `cubicBezierPoint(p0, p1, p2, p3,
+t)` (the curves a `Path`'s `quadTo`/`cubicTo` draw).
 
 ## Layout helpers
 
@@ -514,7 +607,9 @@ export async function prepare() {
 
 `preloadMedia(src)` resolves to
 `{ src, durationSeconds?, video?: { width, height, codec?, frameRate?, durationSeconds? }, audio: [{ codec?, sampleRate?, channels?, durationSeconds? }] }`.
-`mediaDurationInFrames(info, fps)` rounds up to whole frames.
+`mediaDurationInFrames(info, fps)` rounds up to whole frames. To lay out a
+whole voiced script this way, use `planDialogue()` (see
+[dialogue.md](dialogue.md#timing-a-script-from-its-voices)).
 
 ### Measure text
 
@@ -680,6 +775,42 @@ registerComponent<LowerThirdProps>('LowerThird', LowerThird, {
   role: { type: 'string', defaultValue: 'Host' },
 });
 ```
+
+## Rendering cost
+
+Preview and export draw every frame on the GPU. A frame's cost depends on
+how many layers there are, and far more on what they ask the renderer to
+do. Thousands of flat `Rect`s are cheap; a few dozen effects are not. Export
+prints its speed as it goes (`rendering frame 300/1530  58.5 fps`). To find
+the slow part of a video, see
+[verify-and-export.md](verify-and-export.md#find-slow-parts).
+
+| Cheap | Costs more |
+| --- | --- |
+| `Rect`, flat or gradient, including a gradient whose colors change every frame | `blur`, `glow`, `shadow`: each layer with an effect is drawn onto a canvas of its own and filtered in several extra GPU passes over the area it covers |
+| `x`/`y`, `scale`, `rotation`, `opacity` | A `blendMode` other than `'normal'`: every blended layer reads what is beneath it, which takes a copy and a GPU pass of its own |
+| Text, images and SVGs whose content and drawn size stay the same: rasterized once and reused | `Path`, `Line`, `Polyline`: rasterized on the CPU every frame at their drawn size, so a large filled path costs per pixel |
+| | Text whose string or style (including a gradient `fill`'s colors) changes every frame: rasterized again each frame. Text drawn at a changing scale is rasterized again in steps of about 9% |
+
+To get the same picture for less:
+
+- **Put one effect on a `Group`, not one on each layer.** A `Group`'s effect
+  filters all its children together. Letters that fade one by one can
+  share one `glow` on their `Group`; it follows each letter's opacity.
+- **Draw many small lights as gradients.** For dozens of glowing points
+  (stars, windows, sparks), draw a radial-gradient `Rect` that fades to
+  transparent instead of using `glow`. Animate it with `opacity` and
+  `scale`:
+
+  ```tsx
+  <Rect x={x} y={y} width={40} height={40} anchorX={0.5} anchorY={0.5} opacity={brightness}
+    fill={{ type: 'radial', center: { x: 20, y: 20 }, radius: 20,
+      stops: [{ offset: 0, color: '#FFE8C0' }, { offset: 1, color: '#FFE8C000' }] }} />
+  ```
+
+- **Blend a few large layers rather than many small ones.** Layers that use
+  the same mode and do not overlap one another can go in one
+  `<Group blendMode="add">`. The group then blends once.
 
 ## Preview-only debug guides
 
