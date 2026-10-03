@@ -2,7 +2,7 @@
 // the video always matches the last measurement (bench/run.mjs, bench/loop.mjs).
 import loop from './bench/loop.json';
 import runs from './bench/results.json';
-import type { ToolId } from './constants';
+import { ORDER, type ToolId } from './constants';
 
 type Run = { name: string; seconds: number };
 type BenchRecord = { machine: { cpu: string; threads: number; gpu: string; memoryGiB: number; os: string };
@@ -40,6 +40,8 @@ export const EXPORT: Record<ToolId, number> = {
   fframes: required(batch('fframes'), 'the fframes export'),
   celesta: required(batch('celesta'), 'the Celesta export'),
 };
+
+export const FASTEST = ORDER.reduce((best, id) => EXPORT[id] < EXPORT[best] ? id : best);
 
 // How many runs the medians above summarize, for the footnotes.
 const summary = (counts: number[]) => {
