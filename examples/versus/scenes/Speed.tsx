@@ -2,7 +2,7 @@ import { Easings, Group, Rect, spring, useCurrentFrame, useVideoConfig } from '@
 import { Footnote, Header, ToolTag } from '../components/Chrome';
 import { Label } from '../components/Label';
 import { C, ORDER, TOOL } from '../constants';
-import { EXPORT, EXPORT_RUNS, FASTEST, FRAMES, MACHINE, TUNED } from '../data';
+import { EXPORT, EXPORT_RUNS, FASTEST, FRAMES, MACHINE, TIE, TIED_WITH_FASTEST, TUNED, TUNING_GAIN } from '../data';
 import { clamp, progress } from '../helpers';
 
 const START = 36;
@@ -20,6 +20,11 @@ export function Speed() {
   const raceEnd = START + (slowest / SPEEDUP) * fps;
   const verdict = spring({ frame: f - raceEnd - 6, fps, config: { damping: 14, stiffness: 160 } });
   const vsRemotion = EXPORT.remotion / EXPORT.celesta;
+  const lead = TIED_WITH_FASTEST.length
+    ? `${[FASTEST, ...TIED_WITH_FASTEST].map((id) => TOOL[id].name).join(' and ')} are within ${TIE * 100}% of each other.`
+    : `${TOOL[FASTEST].name} has the lowest median.`;
+  const tuning = TUNING_GAIN === null ? '' : Math.abs(TUNING_GAIN) <= TIE ? `within ${TIE * 100}% of the defaults`
+    : TUNING_GAIN > 0 ? `${(TUNING_GAIN * 100).toFixed(0)}% faster` : `${(-TUNING_GAIN * 100).toFixed(0)}% slower`;
   return (
     <>
       <Header f={f} n="05 — SPEED" title="600 frames to MP4. Go." sub="Wall-clock time from launching the CLI to the finished file. Replayed at 6× speed." />
@@ -70,9 +75,9 @@ export function Speed() {
         <Group scale={0.85 + 0.15 * verdict}>
           <Label size={120} weight={700} spacing={-4} color={TOOL.celesta.color}>{`${vsRemotion.toFixed(1)}×`}</Label>
         </Group>
-        <Label x={250} y={22} size={34} weight={700}>faster than Remotion</Label>
+        <Label x={250} y={22} size={34} weight={700}>faster than default Remotion</Label>
         <Label x={250} y={70} size={21} weight={400} color={C.soft}>
-          {`${TOOL[FASTEST].name} has the lowest median.${TUNED ? ` Tuning Remotion (--gl=angle, 100% concurrency) gave ${TUNED.min.toFixed(0)}–${TUNED.max.toFixed(0)} s: ${TUNED.median < EXPORT.remotion ? 'faster' : 'no faster'}.` : ''}`}
+          {`${lead}${TUNED && TUNING_GAIN !== null ? ` Tuning Remotion (--gl=angle, 100% concurrency) gave ${TUNED.min.toFixed(0)}–${TUNED.max.toFixed(0)} s: ${tuning}.` : ''}`}
         </Label>
       </Group>
       <Footnote opacity={progress(f, 40, 20)}>{`${MACHINE} · libx264 medium, CRF 18 · ${EXPORT_RUNS}`}</Footnote>

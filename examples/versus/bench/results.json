@@ -703,5 +703,1120 @@
         }
       }
     ]
+  },
+  {
+    "date": "2026-10-04T07:37:55.123Z",
+    "machine": {
+      "cpu": "13th Gen Intel(R) Core(TM) i7-13700F",
+      "threads": 24,
+      "memoryGiB": 128,
+      "gpu": "NVIDIA GeForce RTX 4070, 610.88",
+      "os": "Windows_NT 10.0.26200",
+      "node": "v24.21.0"
+    },
+    "scene": "1920x1080, 60 fps, 600 frames, H.264 (libx264 medium, CRF 18), no audio",
+    "build": {
+      "revision": "9daa93b",
+      "dirty": true,
+      "sha256": {
+        "celesta": "26b3c891a1cd021b",
+        "fframes": "6db55c80e88789f1"
+      },
+      "notes": "Celesta: FFmpeg 8.1.x + x264 static via vcpkg (x64-windows-static-md); fframes: BtbN FFmpeg n9.0 shared; Remotion 4.0.532"
+    },
+    "interleaved": true,
+    "rounds": 15,
+    "firstRuns": [
+      {
+        "name": "celesta",
+        "label": "Celesta (wgpu)",
+        "run": 0,
+        "seconds": 9.695,
+        "fps": 61.9,
+        "bytes": 24776930,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "remotion",
+        "label": "Remotion (Chromium)",
+        "run": 0,
+        "seconds": 38.335,
+        "fps": 15.7,
+        "bytes": 34975873,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuvj420p",
+          "nb_read_frames": "600",
+          "side_data_list": [
+            {}
+          ]
+        },
+        "remotionFlags": ""
+      },
+      {
+        "name": "remotion-tuned",
+        "label": "Remotion (tuned)",
+        "run": 0,
+        "seconds": 33.914,
+        "fps": 17.7,
+        "bytes": 35395594,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuvj420p",
+          "nb_read_frames": "600",
+          "side_data_list": [
+            {}
+          ]
+        },
+        "remotionFlags": "--gl=angle --concurrency=100%"
+      },
+      {
+        "name": "fframes",
+        "label": "fframes (Skia Vulkan)",
+        "run": 0,
+        "seconds": 9.657,
+        "fps": 62.1,
+        "bytes": 30695694,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      }
+    ],
+    "results": [
+      {
+        "name": "remotion",
+        "label": "Remotion (Chromium)",
+        "run": 1,
+        "seconds": 35.255,
+        "fps": 17,
+        "bytes": 34975873,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuvj420p",
+          "nb_read_frames": "600",
+          "side_data_list": [
+            {}
+          ]
+        },
+        "remotionFlags": ""
+      },
+      {
+        "name": "remotion-tuned",
+        "label": "Remotion (tuned)",
+        "run": 1,
+        "seconds": 35.2,
+        "fps": 17,
+        "bytes": 35383672,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuvj420p",
+          "nb_read_frames": "600",
+          "side_data_list": [
+            {}
+          ]
+        },
+        "remotionFlags": "--gl=angle --concurrency=100%"
+      },
+      {
+        "name": "fframes",
+        "label": "fframes (Skia Vulkan)",
+        "run": 1,
+        "seconds": 10.327,
+        "fps": 58.1,
+        "bytes": 30695694,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "celesta",
+        "label": "Celesta (wgpu)",
+        "run": 1,
+        "seconds": 9.261,
+        "fps": 64.8,
+        "bytes": 24776930,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "remotion-tuned",
+        "label": "Remotion (tuned)",
+        "run": 2,
+        "seconds": 35.073,
+        "fps": 17.1,
+        "bytes": 35383854,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuvj420p",
+          "nb_read_frames": "600",
+          "side_data_list": [
+            {}
+          ]
+        },
+        "remotionFlags": "--gl=angle --concurrency=100%"
+      },
+      {
+        "name": "fframes",
+        "label": "fframes (Skia Vulkan)",
+        "run": 2,
+        "seconds": 9.962,
+        "fps": 60.2,
+        "bytes": 30695694,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "celesta",
+        "label": "Celesta (wgpu)",
+        "run": 2,
+        "seconds": 9.168,
+        "fps": 65.4,
+        "bytes": 24776930,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "remotion",
+        "label": "Remotion (Chromium)",
+        "run": 2,
+        "seconds": 35.693,
+        "fps": 16.8,
+        "bytes": 34975873,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuvj420p",
+          "nb_read_frames": "600",
+          "side_data_list": [
+            {}
+          ]
+        },
+        "remotionFlags": ""
+      },
+      {
+        "name": "fframes",
+        "label": "fframes (Skia Vulkan)",
+        "run": 3,
+        "seconds": 9.893,
+        "fps": 60.6,
+        "bytes": 30695694,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "celesta",
+        "label": "Celesta (wgpu)",
+        "run": 3,
+        "seconds": 8.987,
+        "fps": 66.8,
+        "bytes": 24776930,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "remotion",
+        "label": "Remotion (Chromium)",
+        "run": 3,
+        "seconds": 35.766,
+        "fps": 16.8,
+        "bytes": 34975873,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuvj420p",
+          "nb_read_frames": "600",
+          "side_data_list": [
+            {}
+          ]
+        },
+        "remotionFlags": ""
+      },
+      {
+        "name": "remotion-tuned",
+        "label": "Remotion (tuned)",
+        "run": 3,
+        "seconds": 32.843,
+        "fps": 18.3,
+        "bytes": 35389174,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuvj420p",
+          "nb_read_frames": "600",
+          "side_data_list": [
+            {}
+          ]
+        },
+        "remotionFlags": "--gl=angle --concurrency=100%"
+      },
+      {
+        "name": "celesta",
+        "label": "Celesta (wgpu)",
+        "run": 4,
+        "seconds": 8.634,
+        "fps": 69.5,
+        "bytes": 24776930,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "remotion",
+        "label": "Remotion (Chromium)",
+        "run": 4,
+        "seconds": 35.519,
+        "fps": 16.9,
+        "bytes": 34975873,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuvj420p",
+          "nb_read_frames": "600",
+          "side_data_list": [
+            {}
+          ]
+        },
+        "remotionFlags": ""
+      },
+      {
+        "name": "remotion-tuned",
+        "label": "Remotion (tuned)",
+        "run": 4,
+        "seconds": 33.127,
+        "fps": 18.1,
+        "bytes": 35390495,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuvj420p",
+          "nb_read_frames": "600",
+          "side_data_list": [
+            {}
+          ]
+        },
+        "remotionFlags": "--gl=angle --concurrency=100%"
+      },
+      {
+        "name": "fframes",
+        "label": "fframes (Skia Vulkan)",
+        "run": 4,
+        "seconds": 9.675,
+        "fps": 62,
+        "bytes": 30695694,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "remotion",
+        "label": "Remotion (Chromium)",
+        "run": 5,
+        "seconds": 35.363,
+        "fps": 17,
+        "bytes": 34975873,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuvj420p",
+          "nb_read_frames": "600",
+          "side_data_list": [
+            {}
+          ]
+        },
+        "remotionFlags": ""
+      },
+      {
+        "name": "remotion-tuned",
+        "label": "Remotion (tuned)",
+        "run": 5,
+        "seconds": 32.621,
+        "fps": 18.4,
+        "bytes": 35391568,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuvj420p",
+          "nb_read_frames": "600",
+          "side_data_list": [
+            {}
+          ]
+        },
+        "remotionFlags": "--gl=angle --concurrency=100%"
+      },
+      {
+        "name": "fframes",
+        "label": "fframes (Skia Vulkan)",
+        "run": 5,
+        "seconds": 9.868,
+        "fps": 60.8,
+        "bytes": 30695694,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "celesta",
+        "label": "Celesta (wgpu)",
+        "run": 5,
+        "seconds": 8.696,
+        "fps": 69,
+        "bytes": 24776930,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "remotion-tuned",
+        "label": "Remotion (tuned)",
+        "run": 6,
+        "seconds": 32.791,
+        "fps": 18.3,
+        "bytes": 35400928,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuvj420p",
+          "nb_read_frames": "600",
+          "side_data_list": [
+            {}
+          ]
+        },
+        "remotionFlags": "--gl=angle --concurrency=100%"
+      },
+      {
+        "name": "fframes",
+        "label": "fframes (Skia Vulkan)",
+        "run": 6,
+        "seconds": 9.786,
+        "fps": 61.3,
+        "bytes": 30695694,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "celesta",
+        "label": "Celesta (wgpu)",
+        "run": 6,
+        "seconds": 8.737,
+        "fps": 68.7,
+        "bytes": 24776930,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "remotion",
+        "label": "Remotion (Chromium)",
+        "run": 6,
+        "seconds": 35.112,
+        "fps": 17.1,
+        "bytes": 34975873,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuvj420p",
+          "nb_read_frames": "600",
+          "side_data_list": [
+            {}
+          ]
+        },
+        "remotionFlags": ""
+      },
+      {
+        "name": "fframes",
+        "label": "fframes (Skia Vulkan)",
+        "run": 7,
+        "seconds": 9.832,
+        "fps": 61,
+        "bytes": 30695694,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "celesta",
+        "label": "Celesta (wgpu)",
+        "run": 7,
+        "seconds": 8.686,
+        "fps": 69.1,
+        "bytes": 24776930,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "remotion",
+        "label": "Remotion (Chromium)",
+        "run": 7,
+        "seconds": 35.177,
+        "fps": 17.1,
+        "bytes": 34975873,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuvj420p",
+          "nb_read_frames": "600",
+          "side_data_list": [
+            {}
+          ]
+        },
+        "remotionFlags": ""
+      },
+      {
+        "name": "remotion-tuned",
+        "label": "Remotion (tuned)",
+        "run": 7,
+        "seconds": 32.833,
+        "fps": 18.3,
+        "bytes": 35403721,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuvj420p",
+          "nb_read_frames": "600",
+          "side_data_list": [
+            {}
+          ]
+        },
+        "remotionFlags": "--gl=angle --concurrency=100%"
+      },
+      {
+        "name": "celesta",
+        "label": "Celesta (wgpu)",
+        "run": 8,
+        "seconds": 8.773,
+        "fps": 68.4,
+        "bytes": 24776930,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "remotion",
+        "label": "Remotion (Chromium)",
+        "run": 8,
+        "seconds": 35.473,
+        "fps": 16.9,
+        "bytes": 34975873,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuvj420p",
+          "nb_read_frames": "600",
+          "side_data_list": [
+            {}
+          ]
+        },
+        "remotionFlags": ""
+      },
+      {
+        "name": "remotion-tuned",
+        "label": "Remotion (tuned)",
+        "run": 8,
+        "seconds": 32.887,
+        "fps": 18.2,
+        "bytes": 35401213,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuvj420p",
+          "nb_read_frames": "600",
+          "side_data_list": [
+            {}
+          ]
+        },
+        "remotionFlags": "--gl=angle --concurrency=100%"
+      },
+      {
+        "name": "fframes",
+        "label": "fframes (Skia Vulkan)",
+        "run": 8,
+        "seconds": 9.791,
+        "fps": 61.3,
+        "bytes": 30695694,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "remotion",
+        "label": "Remotion (Chromium)",
+        "run": 9,
+        "seconds": 35.398,
+        "fps": 17,
+        "bytes": 34975873,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuvj420p",
+          "nb_read_frames": "600",
+          "side_data_list": [
+            {}
+          ]
+        },
+        "remotionFlags": ""
+      },
+      {
+        "name": "remotion-tuned",
+        "label": "Remotion (tuned)",
+        "run": 9,
+        "seconds": 32.604,
+        "fps": 18.4,
+        "bytes": 35395670,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuvj420p",
+          "nb_read_frames": "600",
+          "side_data_list": [
+            {}
+          ]
+        },
+        "remotionFlags": "--gl=angle --concurrency=100%"
+      },
+      {
+        "name": "fframes",
+        "label": "fframes (Skia Vulkan)",
+        "run": 9,
+        "seconds": 9.962,
+        "fps": 60.2,
+        "bytes": 30695694,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "celesta",
+        "label": "Celesta (wgpu)",
+        "run": 9,
+        "seconds": 8.683,
+        "fps": 69.1,
+        "bytes": 24776930,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "remotion-tuned",
+        "label": "Remotion (tuned)",
+        "run": 10,
+        "seconds": 32.739,
+        "fps": 18.3,
+        "bytes": 35373586,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuvj420p",
+          "nb_read_frames": "600",
+          "side_data_list": [
+            {}
+          ]
+        },
+        "remotionFlags": "--gl=angle --concurrency=100%"
+      },
+      {
+        "name": "fframes",
+        "label": "fframes (Skia Vulkan)",
+        "run": 10,
+        "seconds": 10.141,
+        "fps": 59.2,
+        "bytes": 30695694,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "celesta",
+        "label": "Celesta (wgpu)",
+        "run": 10,
+        "seconds": 9.016,
+        "fps": 66.6,
+        "bytes": 24776930,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "remotion",
+        "label": "Remotion (Chromium)",
+        "run": 10,
+        "seconds": 35.724,
+        "fps": 16.8,
+        "bytes": 34975873,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuvj420p",
+          "nb_read_frames": "600",
+          "side_data_list": [
+            {}
+          ]
+        },
+        "remotionFlags": ""
+      },
+      {
+        "name": "fframes",
+        "label": "fframes (Skia Vulkan)",
+        "run": 11,
+        "seconds": 10.1,
+        "fps": 59.4,
+        "bytes": 30695694,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "celesta",
+        "label": "Celesta (wgpu)",
+        "run": 11,
+        "seconds": 8.872,
+        "fps": 67.6,
+        "bytes": 24776930,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "remotion",
+        "label": "Remotion (Chromium)",
+        "run": 11,
+        "seconds": 35.269,
+        "fps": 17,
+        "bytes": 34975873,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuvj420p",
+          "nb_read_frames": "600",
+          "side_data_list": [
+            {}
+          ]
+        },
+        "remotionFlags": ""
+      },
+      {
+        "name": "remotion-tuned",
+        "label": "Remotion (tuned)",
+        "run": 11,
+        "seconds": 33.034,
+        "fps": 18.2,
+        "bytes": 35405647,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuvj420p",
+          "nb_read_frames": "600",
+          "side_data_list": [
+            {}
+          ]
+        },
+        "remotionFlags": "--gl=angle --concurrency=100%"
+      },
+      {
+        "name": "celesta",
+        "label": "Celesta (wgpu)",
+        "run": 12,
+        "seconds": 8.73,
+        "fps": 68.7,
+        "bytes": 24776930,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "remotion",
+        "label": "Remotion (Chromium)",
+        "run": 12,
+        "seconds": 35.709,
+        "fps": 16.8,
+        "bytes": 34975873,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuvj420p",
+          "nb_read_frames": "600",
+          "side_data_list": [
+            {}
+          ]
+        },
+        "remotionFlags": ""
+      },
+      {
+        "name": "remotion-tuned",
+        "label": "Remotion (tuned)",
+        "run": 12,
+        "seconds": 32.87,
+        "fps": 18.3,
+        "bytes": 35394139,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuvj420p",
+          "nb_read_frames": "600",
+          "side_data_list": [
+            {}
+          ]
+        },
+        "remotionFlags": "--gl=angle --concurrency=100%"
+      },
+      {
+        "name": "fframes",
+        "label": "fframes (Skia Vulkan)",
+        "run": 12,
+        "seconds": 9.664,
+        "fps": 62.1,
+        "bytes": 30695694,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "remotion",
+        "label": "Remotion (Chromium)",
+        "run": 13,
+        "seconds": 35.361,
+        "fps": 17,
+        "bytes": 34975873,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuvj420p",
+          "nb_read_frames": "600",
+          "side_data_list": [
+            {}
+          ]
+        },
+        "remotionFlags": ""
+      },
+      {
+        "name": "remotion-tuned",
+        "label": "Remotion (tuned)",
+        "run": 13,
+        "seconds": 32.59,
+        "fps": 18.4,
+        "bytes": 35408595,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuvj420p",
+          "nb_read_frames": "600",
+          "side_data_list": [
+            {}
+          ]
+        },
+        "remotionFlags": "--gl=angle --concurrency=100%"
+      },
+      {
+        "name": "fframes",
+        "label": "fframes (Skia Vulkan)",
+        "run": 13,
+        "seconds": 9.994,
+        "fps": 60,
+        "bytes": 30695694,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "celesta",
+        "label": "Celesta (wgpu)",
+        "run": 13,
+        "seconds": 9.219,
+        "fps": 65.1,
+        "bytes": 24776930,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "remotion-tuned",
+        "label": "Remotion (tuned)",
+        "run": 14,
+        "seconds": 32.835,
+        "fps": 18.3,
+        "bytes": 35410800,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuvj420p",
+          "nb_read_frames": "600",
+          "side_data_list": [
+            {}
+          ]
+        },
+        "remotionFlags": "--gl=angle --concurrency=100%"
+      },
+      {
+        "name": "fframes",
+        "label": "fframes (Skia Vulkan)",
+        "run": 14,
+        "seconds": 9.86,
+        "fps": 60.9,
+        "bytes": 30695694,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "celesta",
+        "label": "Celesta (wgpu)",
+        "run": 14,
+        "seconds": 8.831,
+        "fps": 67.9,
+        "bytes": 24776930,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "remotion",
+        "label": "Remotion (Chromium)",
+        "run": 14,
+        "seconds": 35.123,
+        "fps": 17.1,
+        "bytes": 34975873,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuvj420p",
+          "nb_read_frames": "600",
+          "side_data_list": [
+            {}
+          ]
+        },
+        "remotionFlags": ""
+      },
+      {
+        "name": "fframes",
+        "label": "fframes (Skia Vulkan)",
+        "run": 15,
+        "seconds": 9.809,
+        "fps": 61.2,
+        "bytes": 30695694,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "celesta",
+        "label": "Celesta (wgpu)",
+        "run": 15,
+        "seconds": 8.63,
+        "fps": 69.5,
+        "bytes": 24776930,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuv420p",
+          "nb_read_frames": "600"
+        }
+      },
+      {
+        "name": "remotion",
+        "label": "Remotion (Chromium)",
+        "run": 15,
+        "seconds": 35.664,
+        "fps": 16.8,
+        "bytes": 34975873,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuvj420p",
+          "nb_read_frames": "600",
+          "side_data_list": [
+            {}
+          ]
+        },
+        "remotionFlags": ""
+      },
+      {
+        "name": "remotion-tuned",
+        "label": "Remotion (tuned)",
+        "run": 15,
+        "seconds": 32.895,
+        "fps": 18.2,
+        "bytes": 35395142,
+        "probe": {
+          "codec_name": "h264",
+          "width": 1920,
+          "height": 1080,
+          "pix_fmt": "yuvj420p",
+          "nb_read_frames": "600",
+          "side_data_list": [
+            {}
+          ]
+        },
+        "remotionFlags": "--gl=angle --concurrency=100%"
+      }
+    ]
   }
 ]
