@@ -2844,7 +2844,8 @@ fn falls_back_to_cpu_preview_for_odd_dimensions() {
 fn keeps_native_preview_backings_alive_across_dialogue_frame_churn() {
     use core_video::pixel_buffer::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange;
 
-    let Some(renderer) = renderer(GpuRenderOptions::default()) else {
+    // Keep the thread-bound lock here until the preview worker has joined.
+    let Some(TestRenderer { renderer, _lock }) = renderer(GpuRenderOptions::default()) else {
         return;
     };
     std::thread::spawn(move || {
