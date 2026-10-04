@@ -60,6 +60,8 @@ export interface CompositionProps {
   height: number;
   fps: number;
   durationInFrames: number;
+  /** Default text language for font fallback; overridden by `style.lang`. */
+  lang?: string;
   children?: ReactNode;
 }
 
@@ -448,7 +450,12 @@ function assignAssetRef(ref: React.ForwardedRef<AssetReference>, value: AssetRef
 }
 
 export function Composition(props: CompositionProps): ReturnType<typeof React.createElement> {
-  return React.createElement('composition', props);
+  const runtime = React.useContext(CompositionRuntimeContext);
+  return React.createElement(
+    CompositionRuntimeContext.Provider,
+    { value: runtime ? { ...runtime, lang: props.lang } : null },
+    React.createElement('composition', props),
+  );
 }
 
 export function Group(props: GroupProps): ReturnType<typeof React.createElement> {

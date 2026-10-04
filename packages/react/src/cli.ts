@@ -170,7 +170,7 @@ async function main(): Promise<void> {
         if (request.collectAudio !== true) throw new Error('collectAudio must be true');
         writeLine({ collectedAudio: mounted.collectAudio() });
       } else if (isResolveRequest(request)) {
-        resolver ??= createResolver();
+        resolver ??= createResolver(mounted.config.lang);
         writeLine({ components: resolver.resolve(request.components, request.runtime, mounted.fonts) });
       } else {
         const { scene, audio } = mounted.renderAt(request.time, request.project ?? null);
