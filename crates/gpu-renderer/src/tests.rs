@@ -16,7 +16,10 @@ use celesta_renderer::{
     Color as CpuColor, FlattenedPath, LineSegment, PathShape, PathTransform, flatten_path,
 };
 
-use std::path::Path;
+use std::cell::Cell;
+use std::ops::{Deref, DerefMut};
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard};
 
 use celesta_composition::{
     AssetLocation, BlendMode, Clip, EvaluatedTransform, Layer, LayerContent, MediaTiming, Paint,
@@ -35,9 +38,79 @@ fn empty_scene(width: u32, height: u32) -> Scene {
     }
 }
 
-fn renderer(options: GpuRenderOptions) -> Option<GpuRenderer> {
+/// Concurrent GPU devices in one process stall the driver (threads wait
+/// forever in `create_texture` / `bind_image_memory`), so tests that hold a
+/// renderer run one at a time. The lock is reentrant per thread because one
+/// test may hold several renderers.
+static GPU_LOCK: Mutex<()> = Mutex::new(());
+
+thread_local! {
+    static GPU_LOCK_DEPTH: Cell<usize> = const { Cell::new(0) };
+}
+
+struct GpuLockGuard(Option<MutexGuard<'static, ()>>);
+
+impl GpuLockGuard {
+    fn acquire() -> Self {
+        let outermost = GPU_LOCK_DEPTH.with(|depth| {
+            depth.set(depth.get() + 1);
+            depth.get() == 1
+        });
+        // A test that panicked while holding the lock must not fail the rest.
+        Self(outermost.then(|| {
+            GPU_LOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+        }))
+    }
+}
+
+impl Drop for GpuLockGuard {
+    fn drop(&mut self) {
+        self.0.take();
+        GPU_LOCK_DEPTH.with(|depth| depth.set(depth.get() - 1));
+    }
+}
+
+/// A renderer plus the GPU lock; the renderer drops first, then the lock.
+struct TestRenderer {
+    renderer: GpuRenderer,
+    _lock: GpuLockGuard,
+}
+
+impl TestRenderer {
+    fn with_asset_root(mut self, asset_root: impl Into<PathBuf>) -> Self {
+        self.renderer = self.renderer.with_asset_root(asset_root);
+        self
+    }
+
+    fn with_video_decoder(mut self, decoder: impl VideoFrameDecoder + 'static) -> Self {
+        self.renderer = self.renderer.with_video_decoder(decoder);
+        self
+    }
+}
+
+impl Deref for TestRenderer {
+    type Target = GpuRenderer;
+
+    fn deref(&self) -> &GpuRenderer {
+        &self.renderer
+    }
+}
+
+impl DerefMut for TestRenderer {
+    fn deref_mut(&mut self) -> &mut GpuRenderer {
+        &mut self.renderer
+    }
+}
+
+fn renderer(options: GpuRenderOptions) -> Option<TestRenderer> {
+    let lock = GpuLockGuard::acquire();
     match GpuRenderer::new(options) {
-        Ok(renderer) => Some(renderer),
+        Ok(renderer) => Some(TestRenderer {
+            renderer,
+            _lock: lock,
+        }),
         Err(GpuRenderError::RequestAdapter(error)) => {
             assert!(
                 std::env::var("CELESTA_REQUIRE_GPU").as_deref() != Ok("1"),
@@ -2771,7 +2844,8 @@ fn falls_back_to_cpu_preview_for_odd_dimensions() {
 fn keeps_native_preview_backings_alive_across_dialogue_frame_churn() {
     use core_video::pixel_buffer::kCVPixelFormatType_420YpCbCr8BiPlanarFullRange;
 
-    let Some(renderer) = renderer(GpuRenderOptions::default()) else {
+    // Keep the thread-bound lock here until the preview worker has joined.
+    let Some(TestRenderer { renderer, _lock }) = renderer(GpuRenderOptions::default()) else {
         return;
     };
     std::thread::spawn(move || {
