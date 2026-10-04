@@ -58,7 +58,7 @@ pub fn initialize_project(template: &Path, root: &Path) -> io::Result<ProjectTyp
   "private": true,
   "scripts": {
     "preview": "celesta-editor film.tsx",
-    "export": "celesta-exporter --react film.tsx output.mp4",
+    "export": "celesta-exporter --react --overwrite film.tsx output.mp4",
     "typecheck": "tsc --project tsconfig.json"
   },
   "devDependencies": {
