@@ -1,6 +1,6 @@
 # Celesta implementation handoff
 
-Last updated: 2026-10-03 (`TextStyle.lineBreak: 'phrase'` with `celesta-budoux`; GPU renderer shades `Path` coverage, issue #116; GPU blur pairs its taps)
+Last updated: 2026-10-04 (`<TextBox>` / `fitText()` / `useFitText()` fit text into a box, issue #134)
 
 ## Goal
 
@@ -97,6 +97,27 @@ Before editing, run:
 git status --short
 cargo test --workspace
 ```
+
+## Fitting text into a box (2026-10-04)
+
+`<TextBox>`, `useFitText()`, and `fitText()` (`packages/react/src/text-fit.ts`)
+pick the largest font size from `minFontSize` to `maxFontSize` that fits a
+`width` × `height` box and `maxLines` (issue #134). They measure with the
+same measurer as `useTextMetrics()` / `measureText()`, with `maxWidth` set to
+the box width, and `TextBox` draws one `<Text maxWidth={width}>` with the
+measured style, so the size the bridge chose is the size the renderer draws.
+
+- The search tries `maxFontSize`, then `minFontSize`, then bisects the sizes
+  `minFontSize + n * step` (and `maxFontSize`). Wrapping makes fit almost
+  but not strictly monotonic in size; the bisection still returns a size
+  that fits.
+- `lineHeight` is a multiple of the font size here (unlike
+  `TextStyle.lineHeight`, which is px), so `style` omits `fontSize` and
+  `lineHeight`.
+- Not fitting at `minFontSize` gives `fits: false`; `TextBox`'s `overflow`
+  clips (default), draws past the box, or throws.
+- `examples/with-text-box.tsx` is checked against `TextRasterizer::measure`
+  in `crates/react-bridge/tests/node_integration.rs`.
 
 ## Phrase line breaking (2026-10-03)
 

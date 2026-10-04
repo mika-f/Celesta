@@ -71,19 +71,50 @@ export async function measureText(
   style: TextStyle = {},
   options: MeasureTextOptions = {},
 ): Promise<TextMetrics> {
-  if (!measure) {
-    throw new Error('measureText() requires a Celesta editor or exporter runtime');
-  }
-  const fonts = (options.fonts ?? []).map((src): ResolvedAsset => {
-    const path = isRemoteUrl(src) ? src : entryRelativePath(src);
-    return { id: src, location: isRemoteUrl(src) ? { type: 'url', url: src } : { type: 'file', path } };
-  });
-  return measure({
+  return asynchronousMeasurer('measureText()')({
     text,
     style,
     ...(options.maxWidth !== undefined ? { maxWidth: options.maxWidth } : {}),
-    fonts,
+    fonts: prepareFonts(options.fonts),
   });
+}
+
+/** @internal Font files for a `prepare()`-time measurement. */
+export function prepareFonts(sources: readonly string[] = []): ResolvedAsset[] {
+  return sources.map((src): ResolvedAsset => {
+    const path = isRemoteUrl(src) ? src : entryRelativePath(src);
+    return { id: src, location: isRemoteUrl(src) ? { type: 'url', url: src } : { type: 'file', path } };
+  });
+}
+
+/** @internal The asynchronous measurer, or an error naming `caller`. */
+export function asynchronousMeasurer(caller: string): (request: MeasureTextRequest) => Promise<TextMetrics> {
+  if (!measure) {
+    throw new Error(`${caller} requires a Celesta editor or exporter runtime`);
+  }
+  return measure;
+}
+
+/** @internal The composition's `<Font>` declarations plus `extra`, for a render-time measurement. */
+export function useMeasurementFonts(extra: readonly string[] = []): ResolvedAsset[] {
+  const declaredFonts = React.useContext(TextMetricsFontsContext);
+  return [
+    ...declaredFonts.map((font) => font.location.type === 'file'
+      ? { ...font, location: { ...font.location, path: entryRelativePath(font.location.path) } }
+      : font),
+    ...extra.map((src): ResolvedAsset => ({
+      id: src,
+      location: isRemoteUrl(src) ? { type: 'url', url: src } : { type: 'file', path: entryRelativePath(src) },
+    })),
+  ];
+}
+
+/** @internal The synchronous measurer, or an error naming `caller`. */
+export function synchronousMeasurer(caller: string): (request: MeasureTextRequest) => TextMetrics {
+  if (!measureSync) {
+    throw new Error(`${caller} requires a Celesta editor or exporter runtime`);
+  }
+  return measureSync;
 }
 
 /**
@@ -95,21 +126,10 @@ export function useTextMetrics(
   style: TextStyle = {},
   options: MeasureTextOptions = {},
 ): TextMetrics {
-  const declaredFonts = React.useContext(TextMetricsFontsContext);
-  const fonts = [
-    ...declaredFonts.map((font) => font.location.type === 'file'
-      ? { ...font, location: { ...font.location, path: entryRelativePath(font.location.path) } }
-      : font),
-    ...(options.fonts ?? []).map((src): ResolvedAsset => ({
-      id: src,
-      location: isRemoteUrl(src) ? { type: 'url', url: src } : { type: 'file', path: entryRelativePath(src) },
-    })),
-  ];
+  const fonts = useMeasurementFonts(options.fonts);
   const key = JSON.stringify({ text, style, maxWidth: options.maxWidth, fonts });
-  return React.useMemo(() => {
-    if (!measureSync) {
-      throw new Error('useTextMetrics() requires a Celesta editor or exporter runtime');
-    }
-    return measureSync(JSON.parse(key) as MeasureTextRequest);
-  }, [key]);
+  return React.useMemo(
+    () => synchronousMeasurer('useTextMetrics()')(JSON.parse(key) as MeasureTextRequest),
+    [key],
+  );
 }

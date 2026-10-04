@@ -188,6 +188,116 @@ fn render_text_metrics_match_loaded_fonts_and_component_preview_when_node_is_ava
 }
 
 #[test]
+fn text_boxes_fit_their_captions_with_the_renderer_shaping_when_node_is_available() {
+    let Some((node, cli_script, package_root)) = live_react_runtime() else {
+        return;
+    };
+    let entry = package_root.join("examples/with-text-box.tsx");
+    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let mut measurer = celesta_renderer::TextRasterizer::new();
+    let time = Time::new(0, 30);
+    let scene = bridge.scene_at(time).unwrap();
+    measurer
+        .load_fonts(&scene.fonts, entry.parent().unwrap())
+        .unwrap();
+
+    let boxes: Vec<_> = all_layers(&scene.layers)
+        .into_iter()
+        .filter(|layer| layer.id == "caption-text")
+        .collect();
+    assert_eq!(boxes.len(), 5);
+    // The caption box: 1024×136, two lines, line height 1.3 × the size.
+    let fits = |measurer: &mut celesta_renderer::TextRasterizer,
+                text: &str,
+                style: &TextStyle,
+                size: f64| {
+        let style = TextStyle {
+            font_size: Some(size),
+            line_height: Some(size * 1.3),
+            ..style.clone()
+        };
+        let metrics = measurer.measure(text, &style, Some(1024.0));
+        metrics.width <= 1024.001 && metrics.height <= 136.001 && metrics.lines <= 2
+    };
+    let mut sizes = Vec::new();
+    for (index, text_box) in boxes.iter().enumerate() {
+        let LayerContent::Group { layers, clip, .. } = &text_box.content else {
+            panic!("expected a text box group");
+        };
+        let LayerContent::Text {
+            text,
+            style,
+            max_width,
+            baseline_anchor,
+        } = &layers[0].content
+        else {
+            panic!("expected the fitted text");
+        };
+        assert_eq!(*max_width, Some(1024.0));
+        assert!(*baseline_anchor);
+        let size = style.font_size.unwrap();
+        assert_eq!(style.line_height, Some(size * 1.3));
+        // The drawn style is the measured one, so what fits is what draws.
+        let metrics = measurer.measure(text, style, *max_width);
+        let fitted = fits(&mut measurer, text, style, size);
+        if index < 4 {
+            assert!(fitted, "caption {index} fits at {size}px: {metrics:?}");
+            assert!(clip.is_none());
+            assert!(
+                size == 64.0 || !fits(&mut measurer, text, style, size + 1.0),
+                "caption {index} could be larger than {size}px"
+            );
+            assert_eq!(
+                layers[0].transform.position.y,
+                (136.0 - metrics.height) / 2.0 + metrics.ascent
+            );
+        } else {
+            assert!(!fitted);
+            assert_eq!(size, 28.0);
+            assert!(clip.is_some());
+        }
+        sizes.push(size);
+    }
+    assert_eq!(sizes[0], 64.0);
+    assert!(sizes[2] < 64.0 && sizes[2] >= 28.0, "{sizes:?}");
+
+    let mut props = BTreeMap::new();
+    let LayerContent::Group { layers, .. } = &boxes[2].content else {
+        unreachable!()
+    };
+    let LayerContent::Text { text, .. } = &layers[0].content else {
+        unreachable!()
+    };
+    props.insert("text".to_owned(), serde_json::json!(text));
+    let preview = bridge
+        .resolve_components(
+            &[ComponentResolutionRequest {
+                component: "Caption",
+                props: &props,
+            }],
+            time,
+        )
+        .unwrap();
+    let preview_box = all_layers(preview[0].as_deref().unwrap())
+        .into_iter()
+        .find(|layer| layer.id == "caption-text")
+        .unwrap()
+        .clone();
+    // Child ids differ between the two paths; what draws does not.
+    let LayerContent::Group {
+        layers: preview_layers,
+        clip: preview_clip,
+        ..
+    } = &preview_box.content
+    else {
+        panic!("expected a text box group");
+    };
+    assert!(preview_clip.is_none());
+    assert_eq!(preview_layers[0].content, layers[0].content);
+    assert_eq!(preview_layers[0].transform, layers[0].transform);
+}
+
+#[test]
 fn prepare_can_preload_media_metadata_when_node_is_available() {
     let Some((node, cli_script, package_root)) = live_react_runtime() else {
         return;
