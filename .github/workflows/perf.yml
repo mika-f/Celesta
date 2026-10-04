@@ -1,0 +1,115 @@
+name: Performance
+
+# Compares the GPU renderer's work per frame between a pull request and its
+# base. Hosted runners have no GPU, and wall-clock time on shared runners is
+# too noisy to compare, so the renderer runs on Mesa's software Vulkan driver
+# (lavapipe) under Valgrind's Cachegrind, which counts the instructions of
+# the measured frames: the renderer's CPU work and, through lavapipe, its
+# shader work. perf-comment.yml then posts the result on the pull request.
+# See docs/performance/benchmarking.md.
+
+on:
+  pull_request:
+    paths:
+      - "crates/**"
+      - "packages/react/**"
+      - "examples/versus/bench/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "scripts/bench.py"
+      - ".github/workflows/perf.yml"
+  workflow_dispatch:
+    inputs:
+      base:
+        description: Base revision to compare the selected branch with
+        required: true
+        default: origin/main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  instructions:
+    name: Instructions per frame (lavapipe)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The base revision is built from a worktree of this checkout.
+          fetch-depth: 0
+
+      # Valgrind 3.22 or later for Cachegrind's instrumentation client
+      # requests, lavapipe, and CJK fonts for the text workloads.
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends valgrind mesa-vulkan-drivers fonts-noto-cjk
+
+      - uses: ./.github/actions/setup-ffmpeg
+
+      # rust-cache hashes every installed toolchain; exclude the runner's moving stable.
+      - name: Isolate Rust toolchain
+        run: echo "RUSTUP_HOME=$RUNNER_TEMP/celesta-rustup" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # v1
+        with:
+          toolchain: 1.99.0
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: perf
+          env-vars: FFMPEG_VERSION
+
+      # The pnpm version comes from package.json's `packageManager`.
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      # Builds celesta-bench and the React runtime at both revisions, then
+      # fails if a workload needs more than 1% more instructions per frame.
+      # The base's worktree stays out of target/, which rust-cache saves.
+      - name: Compare with the base
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || inputs.base }}
+        run: |
+          mkdir -p perf
+          python3 scripts/bench.py compare --mode instructions --base "$BASE" \
+            --worktrees "$RUNNER_TEMP/bench-worktrees" \
+            --markdown perf/report.md --csv perf/observations.csv --fail-on-regression
+
+      - name: Write the job summary
+        if: always()
+        run: if [ -f perf/report.md ]; then cat perf/report.md >> "$GITHUB_STEP_SUMMARY"; fi
+
+      # perf-comment.yml posts the report on the pull request. It runs in the
+      # base repository's context, since this job's token cannot write to
+      # pull requests from forks.
+      - name: Record the pull request
+        if: always() && github.event_name == 'pull_request'
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: mkdir -p perf && echo "$PR_NUMBER" > perf/pr-number
+
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: perf-report
+          path: perf/
+          if-no-files-found: ignore
+          retention-days: 30
