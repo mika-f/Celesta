@@ -31,7 +31,10 @@ function SourceBuild() {
     <p>Celesta opens its built-in demo. You should see a preview, timeline, Assets panel, and Inspector. You can also pass a project path:</p>
     <DocCode label="Open the example project" code="cargo run -p celesta-editor --release -- examples/editor-demo.celesta.json" />
     <h3>4. Build the React runtime</h3><p>For React compositions in a source build, install the package dependencies, generate the shared types, and build the runtime:</p>
-    <DocCode label="Build the React runtime from source" code={'cd packages/react\npnpm install\npnpm run codegen\npnpm run build\ncd ../..'} />
+    <DocCode label="Build the React runtime from source" code={'pnpm install\npnpm --dir packages/react run codegen\npnpm --dir packages/react run build'} />
+    <p>Run these commands from the repository root. The React examples under <code>examples/</code> are pnpm workspace packages, so this also installs their dependencies. To start your own project:</p>
+    <DocCode label="Initialize a project from source" code="cargo run -p celesta-editor --release -- --init my-video" />
+    <p>See <a href="/docs/create-project/">Create a project</a> for the generated files and dependency setup.</p>
     <DocCode label="Preview React from source" code="cargo run -p celesta-editor --release -- packages/react/examples/title.tsx" />
     <DocCode label="Export React from source" code="cargo run -p celesta-exporter --release -- --react packages/react/examples/title.tsx output.mp4" />
     <p>Run Cargo commands from the repository root. Packaged-app users can skip this entire section and go straight to their <a href="/docs/react-compositions/">first React composition</a>.</p>
@@ -53,11 +56,55 @@ function Installation() {
       {platform === 'Windows' && <><h4>Windows x64</h4><p>Download the <code>windows-x64-setup.exe</code> installer, run it, and open Celesta from the Start menu. The full filename includes the release version.</p><p>Prefer a portable app? Download the <code>windows-x64.zip</code> package, extract the entire archive, and launch <code>Celesta.exe</code>. Keep the runtime directory and DLLs beside the executable.</p></>}
       {platform === 'Linux' && <><h4>Linux</h4><p>Use the <a href="/docs/build-from-source/">source-build instructions</a> for Linux. Check the release assets for any additional platform packages provided with a release.</p></>}
     </div>
-    <h3>2. Create a place for your project</h3><p>Make a folder in your Documents directory, such as <code>my-video</code>. Keep your composition files and media there, separate from the installed app.</p>
-    <h3>3. Open your first scene</h3><p>Celesta opens a built-in demo on launch. To make your own, save the <a href="/docs/react-compositions/">React title example</a> as <code>first-scene.tsx</code> in your project folder, then choose <strong>File → Open…</strong> in Celesta and select it.</p>
+    <h3>2. Create your project</h3><p>Choose <strong>File → Create New Project…</strong>, or the toolbar’s <strong>Create New Project…</strong> button, and select a folder such as <code>Documents/my-video</code>. The folder picker can create a new folder. Celesta initializes it and opens <code>film.tsx</code>. Keep projects separate from the installed app. See <a href="/docs/create-project/">Create a project</a> for the CLI equivalent and generated files.</p>
+    <h3>3. Edit your first scene</h3><p>Open <code>film.tsx</code> in your text editor, change the title or colors, and save. Celesta reloads the preview. Press <kbd>Space</kbd> to play. For animation, save the <a href="/docs/react-compositions/">React title example</a> as <code>first-scene.tsx</code>, then choose <strong>File → Open…</strong> and select it.</p>
     <p>Prefer an existing example? The app package includes <code>title.tsx</code>, <code>editor-demo.celesta.json</code>, and <code>minimal.celesta.json</code>. See <a href="/docs/examples/">where to find them</a>.</p>
     <h3>Updating Celesta</h3><p>Quit Celesta and install the newer release package. For portable Windows builds, extract the new version into its own folder and launch it from there. Keep your projects and media in your Documents directory so they stay separate from app updates.</p>
     <p>Working on Celesta itself? See <a href="/docs/build-from-source/">Build from source</a> for the developer setup.</p>
+  </>;
+}
+
+function CreateProject() {
+  const [platform, setPlatform] = useState('macOS');
+  const executable = platform === 'macOS'
+    ? '"/Applications/Celesta.app/Contents/MacOS/Celesta"'
+    : '& "C:\\path\\to\\Celesta\\Celesta.exe"';
+  return <>
+    <p>Initialize a folder for your React composition, media, and npm dependencies. Celesta includes the runtime needed to preview and export the starter scene.</p>
+    <h3>From the app</h3>
+    <p>Choose <strong>File → Create New Project…</strong>, click <strong>Create New Project…</strong> in the toolbar, or press <kbd>⌘ N</kbd> on macOS / <kbd>Ctrl N</kbd> on Windows and Linux. Select a project folder; the folder picker can create one. Celesta initializes that folder and opens <code>film.tsx</code>.</p>
+    <h3>From the command line</h3>
+    <p>With <code>celesta-editor</code> on PATH, pass the folder to <code>--init</code>. Omit the folder to initialize the current directory:</p>
+    <DocCode label="Initialize and open a project" code={'celesta-editor --init my-video\ncd my-video\ncelesta-editor film.tsx\ncelesta-exporter --react film.tsx output.mp4'} />
+    <DocCode label="Initialize the current directory" code="celesta-editor --init" />
+    <p>Desktop packages name the executables <code>Celesta</code> and <code>Celesta-export</code> (<code>.exe</code> on Windows). Use their installed paths in place of <code>celesta-editor</code> and <code>celesta-exporter</code>, including in generated scripts when needed:</p>
+    <div className="platform-options" role="group" aria-label="Project initialization platform">{['macOS', 'Windows'].map(os => <button key={os} onClick={() => setPlatform(os)} aria-pressed={platform === os}>{os}</button>)}</div>
+    {platform === 'Windows' ? <p>Use PowerShell and replace <code>C:\path\to\Celesta</code> with your installed or extracted app folder. The installer does not add Celesta to PATH.</p> : <p>This command assumes the app is installed in <code>/Applications</code>. Adjust the path if needed.</p>}
+    <DocCode label="Initialize with the installed app" code={`${executable} --init my-video`} />
+    <p>For a <a href="/docs/build-from-source/">source build</a>, build the React runtime first, then run <code>cargo run -p celesta-editor --release -- --init my-video</code> from the repository root.</p>
+    <h3>What initialization creates</h3>
+    <ul>
+      <li><code>film.tsx</code>: a five-second, 1920 × 1080 composition at 30 fps.</li>
+      <li><code>package.json</code>: a private project with preview, export, and typecheck scripts, and TypeScript <code>^7.0.2</code> as a development dependency.</li>
+      <li><code>tsconfig.json</code> and <code>.celesta/</code>: configuration and declarations matching Celesta’s bundled runtime.</li>
+      <li><code>.gitignore</code>: ignores <code>node_modules/</code> and <code>output.mp4</code>. The generated <code>.celesta/</code> directory ignores itself.</li>
+    </ul>
+    <p>Preview and export work without installing packages. To use the project’s TypeScript compiler, install Node.js and pnpm separately, then run these commands in the project folder:</p>
+    <DocCode label="Install the TypeScript compiler and check your project" code={'pnpm install\npnpm typecheck'} />
+    <Note title="Initializing an existing folder">Re-running initialization refreshes <code>.celesta/</code> and creates missing starter files. Existing source files, <code>package.json</code> dependencies and scripts, <code>tsconfig.json</code>, and <code>.gitignore</code> are preserved. If an existing TypeScript configuration does not extend <code>./.celesta/tsconfig.json</code>, Celesta reports the change to make; merge it into your configuration.</Note>
+    <h3>Add npm dependencies</h3>
+    <p>Install external packages in the project that imports them. For a project outside the Celesta repository, run this in its folder:</p>
+    <DocCode label="Add a project dependency" code="pnpm add ag-psd" />
+    <p>Preview and export resolve external imports from the importing file’s project <code>node_modules</code>. Celesta supplies <code>@celesta/react</code>, <code>@celesta/math</code>, <code>@celesta/code</code>, and React from its runtime; you do not need to add them to an external project.</p>
+    <p>Node asset preparation scripts use the same dependencies. Save this as <code>prepare-assets.mjs</code> beside <code>package.json</code>, with <code>portrait.psd</code> in the same folder:</p>
+    <DocCode label="prepare-assets.mjs" language="tsx" code={"import { readFileSync, writeFileSync } from 'node:fs';\nimport { readPsd } from 'ag-psd';\n\nconst { width, height } = readPsd(\n  readFileSync(new URL('./portrait.psd', import.meta.url)),\n  { skipLayerImageData: true, skipCompositeImageData: true, skipThumbnail: true },\n);\nwriteFileSync(\n  new URL('./portrait-info.json', import.meta.url),\n  JSON.stringify({ width, height }),\n);"} />
+    <DocCode label="Prepare assets" code="node prepare-assets.mjs" />
+    <p>Import the generated JSON in your composition as usual. Direct Node scripts use your installed Node.js; the app’s bundled Node.js evaluates compositions. For <code>.ts</code> scripts, use a Node.js version with TypeScript stripping support or a TypeScript runner installed in the project.</p>
+    <h3>Dependencies in repository examples</h3>
+    <p>The React examples under <code>examples/</code> belong to the pnpm workspace. Run <code>pnpm install</code> from the repository root, then add dependencies to the example that needs them:</p>
+    <DocCode label="Add a dependency to an example and preview it" code={'pnpm --dir examples/versus add ag-psd\ncargo run -p celesta-editor --release -- examples/versus/film.tsx\ncargo run -p celesta-exporter --release -- --react examples/versus/film.tsx output.mp4'} />
+    <p>Example manifests use <code>workspace:*</code> for local Celesta packages so Node tools can resolve their imports too. Complete the <a href="/docs/build-from-source/">source-build setup</a> before running Cargo commands.</p>
+    <p>Continue with <a href="/docs/react-compositions/">your first React composition</a>, <a href="/docs/preview/">preview controls</a>, or <a href="/docs/export/">MP4 export</a>.</p>
   </>;
 }
 
@@ -82,11 +129,13 @@ function ExportCommands() {
 
 export const contents: Record<string, ReactNode> = {
   'installation': <Installation />,
+  'create-project': <CreateProject />,
   'preview': <>
       <p>Choose <strong>File → Open…</strong> to open a <code>.celesta.json</code> project or a React composition (<code>.tsx</code>, <code>.jsx</code>, <code>.ts</code>, or <code>.js</code>). Select an asset, track, or clip to inspect its details.</p>
       <Note title="Your source is your canvas">Edit projects and compositions in your text editor. The Celesta app previews and exports them; it does not edit the project itself.</Note>
       <p>React compositions reload when you save. For a JSON project, choose <strong>File → Reload</strong> after changing the source. Keep referenced media files available; missing assets are marked in the Assets panel.</p>
       <div className="doc-table-wrap" tabIndex={0} aria-label="Keyboard shortcuts"><table><caption>Keyboard shortcuts</caption><thead><tr><th>Action</th><th>macOS</th><th>Windows / Linux</th></tr></thead><tbody>
+        <tr><td>Create a new project</td><td><kbd>⌘ N</kbd></td><td><kbd>Ctrl N</kbd></td></tr>
         <tr><td>Open a project</td><td><kbd>⌘ O</kbd></td><td><kbd>Ctrl O</kbd></td></tr>
         <tr><td>Reload a JSON project</td><td><kbd>⌘ R</kbd></td><td><kbd>Ctrl R</kbd></td></tr>
         <tr><td>Play / pause</td><td colSpan={2}><kbd>Space</kbd></td></tr>
@@ -97,7 +146,7 @@ export const contents: Record<string, ReactNode> = {
       <h3>Preview-only guides</h3><p><code>{'<DebugOverlay />'}</code> draws the frame edge, a safe-area inset, and the center point, and <code>{'<DebugBounds>'}</code> outlines a group of layers. Both appear only in the Celesta preview and add nothing to an export, so you can leave them in while you work. <code>useIsPreview()</code> tells your own components the same thing.</p>
     </>,
   'react-compositions': <>
-      <p>The installed app already includes the React runtime. There is no package installation or build step for your composition: just save a file and open it in Celesta.</p>
+      <p>The installed app already includes the React runtime. <a href="/docs/create-project/">Create a project</a> from the app or CLI to get a starter <code>film.tsx</code> and TypeScript configuration. The starter previews and exports without a package installation or build step. Install any additional npm dependencies in your project folder.</p>
       <h3>Make your first scene</h3><p>Create <code>first-scene.tsx</code> in your own project folder. This example creates a 1920 × 1080 composition at 30 fps. The title fades in over 30 frames, then holds until the five-second composition ends.</p>
       <DocCode label="first-scene.tsx" language="tsx" code={firstScene.trim()} />
       <p>In Celesta, choose <strong>File → Open…</strong> and select <code>first-scene.tsx</code>. Press <kbd>Space</kbd> to play.</p>
