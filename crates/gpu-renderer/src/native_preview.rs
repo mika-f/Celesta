@@ -15,7 +15,9 @@ use foreign_types::ForeignType;
 use objc2::rc::Retained;
 use objc2_metal::{MTLTexture, MTLTextureType};
 
-use super::{GpuRenderError, GpuRenderTarget, GpuRenderer, Scene};
+use celesta_composition::Scene;
+
+use crate::{GpuRenderError, GpuRenderTarget, GpuRenderer};
 
 pub(super) struct NativePreviewBridge {
     texture_cache: CVMetalTextureCache,

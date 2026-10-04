@@ -1167,13 +1167,13 @@ mod tests {
             let path = rasterize_path(&draw.shape, draw.transform, 64, 32)
                 .unwrap()
                 .unwrap();
-            crate::render_image_pixels(
+            crate::images::render_image_pixels(
                 &mut expected,
                 path.image.width(),
                 path.image.height(),
                 path.image.pixels(),
                 Point { x: 0.0, y: 0.0 },
-                &crate::ParentState {
+                &crate::clip::ParentState {
                     position: Point {
                         x: f64::from(path.left),
                         y: f64::from(path.top),

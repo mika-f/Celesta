@@ -8,9 +8,9 @@
 //! reduction that is still at least as dense as it is drawn. Everything is
 //! kept in one cache bounded by bytes, dropping the least recently used.
 use super::{
-    Color, RenderError, blend, blend_mixed,
+    Color, RenderError,
+    composite::{blend, blend_mixed, psd_blend_channel},
     image_source::{fit_within, resize_rgba},
-    psd_blend_channel,
 };
 use std::{
     collections::{HashMap, HashSet},
