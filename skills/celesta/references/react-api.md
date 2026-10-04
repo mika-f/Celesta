@@ -15,7 +15,7 @@ not install them from npm.
 - [Motion helpers](#motion-helpers): progress, Series, Stagger, planDialogue/DialogueSeries, useBeat, useCue, TextReveal, useTypewriter, useCountUp, Camera, Line, Polyline, frameToTimecode
 - [@celesta/math](#celestamath): random, noise, noise2D/3D, fbm, clamp, lerp, remap, smoothstep, waves, angles, points
 - [Layout helpers](#layout-helpers): Center, SafeArea, Stack, Grid, Fit
-- [Media helpers](#media-helpers): preloadMedia, mediaDurationInFrames, measureText, useTextMetrics
+- [Media helpers](#media-helpers): preloadMedia, mediaDurationInFrames, measureText, useTextMetrics, TextBox, fitText, useFitText
 - [Project data](#project-data): ProjectProvider, useProjectProperty, defineProjectProperties, ProjectTimeline, ProjectTrack, registerComponent
 - [Rendering cost](#rendering-cost): what makes preview and export slow, and cheaper ways to get the same picture
 - [Preview-only debug guides](#preview-only-debug-guides)
@@ -716,6 +716,67 @@ function Row() {
 Like other React hooks, call `useTextMetrics` at the component's top level,
 with a stable number of calls. The full example is
 `packages/react/examples/with-text-metrics.tsx`.
+
+### Fit text into a box
+
+`<TextBox>` draws text at the largest font size from `minFontSize` to
+`maxFontSize` that fits `width`, `height`, and `maxLines`, so a caption,
+title, or product name can be swapped without retuning its size. Short text
+uses `maxFontSize`; longer text shrinks, down to `minFontSize`.
+
+```tsx
+<TextBox x={448} y={880} width={1024} height={136}
+  minFontSize={28} maxFontSize={64} maxLines={2} lineHeight={1.3}
+  verticalAlign="middle" style={{ fontFamily: 'Noto Sans JP', align: 'center', lineBreak: 'phrase' }}>
+  {caption}
+</TextBox>
+```
+
+| Prop | Notes |
+| --- | --- |
+| `width`, `height` | The box, in px, with its top-left corner at `x`/`y`. Lines wrap at `width` as `<Text maxWidth>` does. |
+| `minFontSize`, `maxFontSize` | The font size range, in px. |
+| `maxLines` | Most lines the text may take. Default: as many as fit `height`. Lines started by `\n` count too. |
+| `lineHeight` | A multiple of the font size (like CSS's unitless `line-height`), so it shrinks with the text. Default: the font's own. |
+| `step` | Sizes tried are `minFontSize + n * step` and `maxFontSize`. Default `1`. |
+| `style` | A `TextStyle` without `fontSize` and `lineHeight`. `align` positions each line inside `width`. |
+| `verticalAlign` | `'top'` (default), `'middle'`, or `'bottom'`: where shorter text sits in `height`. |
+| `overflow` | When the text does not fit even at `minFontSize`: `'clip'` (default) cuts it off at the box and after `maxLines`, keeping `verticalAlign`; `'visible'` draws all its lines, past the box, aligned by `verticalAlign` when they fit `height` (a word wider than `width` is still cut off at it, as with `<Text maxWidth>`); `'error'` fails the render, so an export stops instead of shipping cut-off text. |
+
+The size is chosen by measuring with the renderer's shaping (the same fonts,
+`letterSpacing`, `lineBreak`, and wrapping width the box draws with), so
+preview and export agree. A box takes one measurement when the text fits at
+`maxFontSize` (or when `minFontSize` equals `maxFontSize`), two when it
+cannot fit at all, and about `log2` of the number of sizes otherwise. Fit is
+found by bisection: wrapping can, rarely, let a larger size fit after a
+smaller one does not, and then the size chosen fits but is not the largest
+that would; unchanged text and props reuse the last result. Empty
+text, and `null`, `undefined`, or boolean children, draw nothing. A non-positive or non-finite `width`, `height`, font
+size, `lineHeight`, or `step`, `maxFontSize` below `minFontSize`, or a
+`maxLines` that is not a whole number of at least 1 throws a `RangeError`.
+
+This is fitting text to a fixed box. For a box that grows with its text (a
+pill behind a label), measure it with `useTextMetrics` as above.
+
+`useFitText(text, options)` returns the choice without drawing it, for a
+custom layout or overflow treatment: `{ fontSize, style, metrics, fits }`.
+`options` are `TextBox`'s `width`, `height`, `minFontSize`, `maxFontSize`,
+`maxLines`, `lineHeight`, `step`, and `style`, plus `fonts` as for
+`useTextMetrics`. Draw it with the returned `style` and the same width:
+
+```tsx
+function Title({ text }) {
+  const fit = useFitText(text, { width: 800, height: 120, minFontSize: 32, maxFontSize: 96, maxLines: 1 });
+  return <Group>
+    <Text y={fit.metrics.ascent} anchorY="baseline" maxWidth={800} style={fit.style}>{text}</Text>
+    {!fit.fits && <Rect width={800} height={4} y={124} fill="#EF402B" />}
+  </Group>;
+}
+```
+
+`fitText(text, options)` does the same in `prepare()` and resolves to the
+same result; pass font files in `options.fonts`, as for `measureText()`.
+The full example is `packages/react/examples/with-text-box.tsx`.
 
 For anything else asynchronous (fetching JSON, reading files with
 `node:fs`), use `prepare()` the same way and keep a fallback so the scene

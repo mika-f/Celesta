@@ -136,6 +136,9 @@ export type { MediaAudioInfo, MediaInfo, MediaVideoInfo } from './media';
 export { measureText, useTextMetrics } from './text-measure';
 export type { GlyphMetrics, MeasureTextOptions, TextMetrics } from './text-measure';
 
+export { TextBox, fitText, useFitText } from './text-fit';
+export type { FitTextOptions, FitTextResult, FitTextStyle, TextBoxProps } from './text-fit';
+
 export { DebugBounds, DebugOverlay } from './debug';
 export type { DebugBoundsProps, DebugOverlayProps } from './debug';
 
