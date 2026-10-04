@@ -115,6 +115,22 @@ fn inspection_preserves_export_output_requirement_and_rejects_companion_projects
     assert!(!unsupported_project.status.success());
     assert!(String::from_utf8_lossy(&unsupported_project.stderr).contains("cannot be used"));
     for flags in [
+        vec!["--runtime", "/nope/cli.js"],
+        vec!["--node", "/nope/node"],
+    ] {
+        let result = Command::new(exporter)
+            .args(["--react", "scene.tsx", "out.mp4"])
+            .args(&flags)
+            .output()
+            .unwrap();
+        assert!(!result.status.success(), "accepted {flags:?}");
+        assert!(
+            String::from_utf8_lossy(&result.stderr).contains("require --inspect"),
+            "{flags:?}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    }
+    for flags in [
         vec!["--overwrite"],
         vec!["--from", "0"],
         vec!["--to", "1"],
@@ -206,6 +222,8 @@ fn native_inspection_returns_failure_after_recoverable_errors_and_stops_on_runti
     assert_eq!(messages[1]["fatal"], true);
 
     let wrapped = Command::new("node")
+        .env_remove("CELESTA_REACT_CLI")
+        .env_remove("CELESTA_NODE")
         .arg(root().join("skills/celesta/scripts/inspect.mjs"))
         .arg(&entry)
         .args(["--frames", "2,3", "--json", "--native"])
@@ -216,4 +234,56 @@ fn native_inspection_returns_failure_after_recoverable_errors_and_stops_on_runti
     let report: Value = serde_json::from_slice(&wrapped.stdout).unwrap();
     assert_eq!(report["frames"].as_array().unwrap().len(), 1);
     assert_eq!(report["frames"][0]["status"], "runtimeError");
+}
+
+#[test]
+fn startup_failure_reports_error_and_exits_with_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let entry = dir.path().join("entry.tsx");
+    std::fs::write(
+        &entry,
+        r#"
+        import { Composition } from '@celesta/react';
+        export async function prepare() { throw new Error('prepare exploded'); }
+        export default function Root() {
+            return <Composition width={400} height={200} fps={30} durationInFrames={1} />;
+        }
+        "#,
+    )
+    .unwrap();
+    let direct = Command::new(env!("CARGO_BIN_EXE_celesta-exporter"))
+        .args(["--inspect", "--react"])
+        .arg(&entry)
+        .output()
+        .unwrap();
+    assert_eq!(direct.status.code(), Some(1));
+    let message: Value = serde_json::from_slice(&direct.stdout).unwrap();
+    assert!(
+        message["error"]
+            .as_str()
+            .unwrap()
+            .contains("prepare exploded")
+    );
+    for json in [false, true] {
+        let mut command = Command::new("node");
+        command
+            .env_remove("CELESTA_REACT_CLI")
+            .env_remove("CELESTA_NODE")
+            .arg(root().join("skills/celesta/scripts/inspect.mjs"))
+            .arg(&entry)
+            .arg("--native")
+            .arg(env!("CARGO_BIN_EXE_celesta-exporter"));
+        if json {
+            command.arg("--json");
+        }
+        let wrapped = command.output().unwrap();
+        assert_eq!(wrapped.status.code(), Some(1));
+        let output = String::from_utf8_lossy(&wrapped.stdout).into_owned()
+            + &String::from_utf8_lossy(&wrapped.stderr);
+        assert!(output.contains("prepare exploded"), "{output}");
+        assert!(!output.contains("UNSUPPORTED"), "{output}");
+        if !json {
+            assert!(output.contains("ERROR loading entry"), "{output}");
+        }
+    }
 }

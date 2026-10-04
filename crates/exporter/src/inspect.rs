@@ -8,6 +8,11 @@ use celesta_composition::Time;
 use celesta_react_bridge::{ReactBridge, ReactBridgeError};
 use serde_json::{Value, json};
 
+#[derive(serde::Deserialize)]
+struct InspectRequest {
+    time: Time,
+}
+
 pub fn run(entry: &Path, node: &Path, runtime: &Path) -> Result<(), String> {
     let mut output = io::stdout().lock();
     let mut bridge = match ReactBridge::spawn(node, runtime, entry) {
@@ -34,8 +39,7 @@ pub fn run(entry: &Path, node: &Path, runtime: &Path) -> Result<(), String> {
     let mut failed = false;
     for line in io::stdin().lock().lines() {
         let line = line.map_err(|error| error.to_string())?;
-        let time = serde_json::from_str::<Value>(&line)
-            .and_then(|request| serde_json::from_value::<Time>(request["time"].clone()));
+        let time = serde_json::from_str::<InspectRequest>(&line).map(|request| request.time);
         let time = match time {
             Ok(time) => time,
             Err(error) => {

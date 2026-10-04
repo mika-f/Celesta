@@ -53,10 +53,10 @@ struct Cli {
     )]
     inspect: bool,
     /// React CLI script for inspection (defaults to the bundled runtime).
-    #[arg(long, requires = "inspect")]
+    #[arg(long)]
     runtime: Option<PathBuf>,
     /// Node.js executable for inspection (defaults to the bundled runtime).
-    #[arg(long, requires = "inspect")]
+    #[arg(long)]
     node: Option<PathBuf>,
     /// Export a React composition instead of a JSON project.
     #[arg(long)]
@@ -168,6 +168,16 @@ fn non_zero(value: u32) -> NonZeroU32 {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    // `output` conflicts with --inspect, which makes clap treat `requires`
+    // on these flags as satisfied during export, so check it here.
+    if !cli.inspect && (cli.runtime.is_some() || cli.node.is_some()) {
+        Cli::command()
+            .error(
+                ErrorKind::MissingRequiredArgument,
+                "--runtime and --node require --inspect",
+            )
+            .exit()
+    }
     if cli.inspect {
         let runtime = default_react_runtime();
         return match inspect::run(

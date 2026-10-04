@@ -101,8 +101,11 @@ Limits:
   Node-only inspection refuses measurement requests. If the entry does not
   catch that refusal, it reports `UNSUPPORTED inspection` and exits with
   code **2**. JSON output includes `status: "unsupported"` alongside the
-  error on the affected frame (or startup response for `prepare()`). This
-  does not mean the composition fails in Celesta. Scene errors still exit
+  error on the affected frame. If the measurement happens in `prepare()` or
+  during the initial render (frame 0 is rendered before the handshake),
+  inspection stops at startup: no frames are inspected, and `--json` prints
+  only `{ "error": …, "status": "unsupported" }` without `ready` or `frames`.
+  This does not mean the composition fails in Celesta. Scene errors still exit
   with code **1**, including when other frames are unsupported. Text output
   also checks missing files, which exit with code **1**.
   A caught measurement error can use the entry's fallback, but its placement

@@ -114,3 +114,28 @@ test('timeout still exits cleanly when the native process group is already gone'
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('startup failures in prepare() or the entry source report an error and exit 1', { timeout: 30000 }, () => {
+  const dir = mkdtempSync(join(tmpdir(), 'celesta-inspect-startup-'));
+  const entry = join(dir, 'entry.tsx');
+  const inspect = (...args) => spawnSync(process.execPath, [inspector, entry, '--runtime', runtime, ...args], { encoding: 'utf8', timeout: 15000 });
+  const body = `export default function Root() { return <Composition width={400} height={200} fps={30} durationInFrames={1} />; }`;
+  try {
+    for (const source of [
+      `import { Composition } from '@celesta/react';\nexport async function prepare() { throw new Error('prepare exploded'); }\n${body}`,
+      `import { Composition } from '@celesta/react';\nexport default function Root( {\n`,
+    ]) {
+      writeFileSync(entry, source);
+      const text = inspect();
+      assert.equal(text.status, 1, text.stderr);
+      assert.match(text.stderr, /ERROR loading entry/);
+      assert.doesNotMatch(text.stdout + text.stderr, /UNSUPPORTED/);
+      const json = inspect('--json');
+      assert.equal(json.status, 1, json.stderr);
+      assert.ok(JSON.parse(json.stdout).error);
+      assert.equal(JSON.parse(json.stdout).status, undefined);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

@@ -153,6 +153,16 @@ async function inspectEntry(options) {
     ? spawn(options.native, nativeArgs, { stdio: ['pipe', 'pipe', 'inherit'], detached: process.platform !== 'win32' })
     : spawn(node, [cli, entry], { stdio: ['pipe', 'pipe', 'inherit'] });
   const exited = new Promise((resolve) => child.once('close', resolve));
+  // The native child runs in its own process group (needed to kill Node on
+  // timeout), so terminal signals no longer reach it; forward them.
+  if (options.native && process.platform !== 'win32') {
+    for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+      process.once(signal, () => {
+        try { process.kill(-child.pid, signal); } catch {}
+        process.kill(process.pid, signal);
+      });
+    }
+  }
   const timer = setTimeout(() => {
     console.error(`timed out after ${options.timeout}s; is prepare() waiting on something?`);
     // Native inspection owns a second process (Node); terminate both on timeout.
@@ -290,6 +300,7 @@ async function inspectEntry(options) {
   }
 
   child.stdin.end();
+  clearTimeout(timer);
   // Let the native process drop its bridge and reap the Node child on EOF.
   if (options.native) {
     const code = await exited;
