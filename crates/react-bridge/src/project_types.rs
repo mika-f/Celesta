@@ -8,7 +8,7 @@
 //! without a package registry or an install step.
 
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 /// The directory created at a project root.
@@ -42,6 +42,52 @@ pub enum ProjectTsconfig {
 pub struct ProjectTypesSetup {
     pub root: PathBuf,
     pub tsconfig: ProjectTsconfig,
+}
+
+/// Initializes a React project, preserving existing source and configuration.
+/// Only `.celesta/` is regenerated. Dependencies are installed separately by
+/// the project's package manager; Celesta's runtime packages are bundled.
+pub fn initialize_project(template: &Path, root: &Path) -> io::Result<ProjectTypesSetup> {
+    // Check the runtime before creating anything in the destination.
+    fs::read(template.join(STAMP))?;
+    fs::create_dir_all(root)?;
+    let setup = set_up_project_types_in(template, root)?;
+    write_new(
+        &setup.root.join("package.json"),
+        r#"{
+  "private": true,
+  "scripts": {
+    "preview": "celesta-editor film.tsx",
+    "export": "celesta-exporter --react --overwrite film.tsx output.mp4",
+    "typecheck": "tsc --project tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2"
+  }
+}
+"#,
+    )?;
+    write_new(
+        &setup.root.join("film.tsx"),
+        include_str!("../templates/film.tsx"),
+    )?;
+    write_new(
+        &setup.root.join(".gitignore"),
+        "node_modules/\noutput.mp4\n",
+    )?;
+    Ok(setup)
+}
+
+fn write_new(path: &Path, contents: &str) -> io::Result<()> {
+    match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+    {
+        Ok(mut file) => file.write_all(contents.as_bytes()),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists && path.is_file() => Ok(()),
+        Err(error) => Err(error),
+    }
 }
 
 /// Installs `.celesta/` for `entry`'s project and writes a root
@@ -198,6 +244,77 @@ mod tests {
             project_types_template(Path::new("Resources/react/dist/cli.js")),
             Path::new("Resources/react/dist/project-types")
         );
+    }
+
+    #[test]
+    fn initialize_creates_a_project_and_refreshes_only_generated_files() {
+        let scratch = Scratch::new("initialize");
+        let old = template(&scratch.0.join("old"), "v1");
+        let new = template(&scratch.0.join("new"), "v2");
+        let project = scratch.0.join("new/nested/video");
+        // Initializing a subdirectory must not use an ancestor's package root.
+        write(&scratch.0.join("package.json"), "{}");
+        let setup = initialize_project(&old, &project).unwrap();
+        assert_eq!(setup.root, project);
+        assert_eq!(setup.tsconfig, ProjectTsconfig::Created);
+        let manifest: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(project.join("package.json")).unwrap())
+                .unwrap();
+        assert_eq!(manifest["private"], true);
+        assert_eq!(manifest["devDependencies"]["typescript"], "^7.0.2");
+        assert!(manifest.get("dependencies").is_none());
+        assert!(
+            fs::read_to_string(project.join("film.tsx"))
+                .unwrap()
+                .contains("<Composition")
+        );
+
+        let files = [
+            (
+                "package.json",
+                "{\"dependencies\":{\"ag-psd\":\"^31.0.2\"},\"scripts\":{\"prepare\":\"node prepare-assets.ts\"}}",
+            ),
+            (
+                "tsconfig.json",
+                "{\"extends\":\"./.celesta/tsconfig.json\",\"compilerOptions\":{\"strict\":false}}",
+            ),
+            ("film.tsx", "// My composition\n"),
+            (".gitignore", "custom-output/\n"),
+        ];
+        for (name, contents) in files {
+            write(&project.join(name), contents);
+        }
+        initialize_project(&new, &project).unwrap();
+        initialize_project(&new, &project).unwrap();
+        for (name, contents) in files {
+            assert_eq!(fs::read_to_string(project.join(name)).unwrap(), contents);
+        }
+        assert_eq!(
+            fs::read_to_string(project.join(PROJECT_TYPES_DIR).join(STAMP)).unwrap(),
+            "v2"
+        );
+    }
+
+    #[test]
+    fn initialize_keeps_an_unrelated_tsconfig_and_rejects_an_unavailable_runtime() {
+        let scratch = Scratch::new("initialize-existing");
+        let template = template(&scratch.0, "v1");
+        let project = scratch.0.join("video");
+        write(
+            &project.join("tsconfig.json"),
+            "{\"extends\":\"./custom.json\"}",
+        );
+        let setup = initialize_project(&template, &project).unwrap();
+        assert_eq!(setup.tsconfig, ProjectTsconfig::MissingExtends);
+        assert_eq!(
+            fs::read_to_string(project.join("tsconfig.json")).unwrap(),
+            "{\"extends\":\"./custom.json\"}"
+        );
+        assert!(project.join("film.tsx").is_file());
+
+        let missing = scratch.0.join("missing-project");
+        assert!(initialize_project(&scratch.0.join("missing-runtime"), &missing).is_err());
+        assert!(!missing.exists());
     }
 
     #[test]

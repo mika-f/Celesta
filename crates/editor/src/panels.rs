@@ -90,6 +90,14 @@ impl EditorView {
                     bar.child(message(text.to_string(), success))
                 })
                 .child(
+                    Button::new("create-new-project")
+                        .small()
+                        .ghost()
+                        .label("Create New Project…")
+                        .disabled(self.opening || exporting)
+                        .on_click(cx.listener(Self::create_new_project_click)),
+                )
+                .child(
                     Button::new("open-project")
                         .small()
                         .ghost()

@@ -18,6 +18,7 @@ export const docGroups: DocGroup[] = [
     title: 'Getting started',
     pages: [
       { slug: 'installation', title: 'Install & get started', description: 'Packages for macOS and Windows, with the runtime included.', keywords: 'setup download installer binary macOS Windows Linux dmg portable zip updates' },
+      { slug: 'create-project', title: 'Create a project', description: 'Initialize a React project from the app or CLI and add dependencies.', keywords: 'new project init --init directory folder film.tsx package.json pnpm npm dependencies ag-psd node assets typescript workspace' },
       { slug: 'preview', title: 'Preview your work', description: 'Open, reload, play, and scrub in the desktop app.', keywords: 'keyboard shortcuts open reload play pause scrub inspector audio mute solo' },
       { slug: 'react-compositions', title: 'Your first React composition', description: 'A five-second title card with Composition, Text, and useCurrentFrame.', keywords: 'tsx jsx components typescript setup codegen build title' },
     ],

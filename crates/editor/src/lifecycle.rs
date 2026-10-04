@@ -1,10 +1,11 @@
 use crate::actions::{
-    CloseWindow, OpenProject, ReloadProject, SetUpTypeScript, SetUpTypeScriptInFolder,
+    CloseWindow, CreateNewProject, OpenProject, ReloadProject, SetUpTypeScript,
+    SetUpTypeScriptInFolder,
 };
 use crate::source::load_source;
 use crate::view::EditorView;
 use celesta_react_bridge::{
-    ProjectTsconfig, ProjectTypesSetup, project_types_template,
+    ProjectTsconfig, ProjectTypesSetup, initialize_project, project_types_template,
     runtime_paths as react_runtime_paths, set_up_project_types, set_up_project_types_in,
 };
 use gpui_kit::component::WindowExt as _;
@@ -12,6 +13,94 @@ use gpui_kit::{ClickEvent, Context, PathPromptOptions, Window};
 use std::path::{Path, PathBuf};
 
 impl EditorView {
+    pub(crate) fn create_new_project_action(
+        &mut self,
+        _: &CreateNewProject,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.request_create_project(window, cx);
+    }
+
+    pub(crate) fn create_new_project_click(
+        &mut self,
+        _: &ClickEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.request_create_project(window, cx);
+    }
+
+    fn request_create_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.opening || !self.can_replace_contents(window, cx) {
+            return;
+        }
+        let selection = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Create New Project".into()),
+        });
+        cx.spawn_in(window, async move |view, cx| {
+            let folder = match selection.await {
+                Ok(Ok(Some(paths))) => paths.into_iter().next(),
+                Ok(Ok(None)) | Err(_) => None,
+                Ok(Err(error)) => {
+                    view.update_in(cx, |this, _, cx| {
+                        this.open_error =
+                            Some(format!("Couldn’t show the folder dialog: {error}").into());
+                        cx.notify();
+                    })
+                    .ok();
+                    None
+                }
+            };
+            let Some(folder) = folder else { return };
+            let started = view
+                .update_in(cx, |this, window, cx| {
+                    if this.opening || !this.can_replace_contents(window, cx) {
+                        return false;
+                    }
+                    this.opening = true;
+                    this.open_error = None;
+                    cx.notify();
+                    true
+                })
+                .unwrap_or(false);
+            if !started {
+                return;
+            }
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let (_, cli_script) = react_runtime_paths();
+                    initialize_project(&project_types_template(&cli_script), &folder)
+                })
+                .await;
+            view.update_in(cx, |this, window, cx| {
+                this.opening = false;
+                match result {
+                    Ok(setup) => {
+                        if setup.tsconfig == ProjectTsconfig::MissingExtends {
+                            window.push_notification(
+                                "Add \"extends\": \"./.celesta/tsconfig.json\" to your tsconfig.json to enable Celesta types.",
+                                cx,
+                            );
+                        }
+                        this.load_path(Some(setup.root.join("film.tsx")), window, cx);
+                    }
+                    Err(error) => {
+                        this.open_error =
+                            Some(format!("Couldn’t create project: {error}").into());
+                        cx.notify();
+                    }
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     /// File > Open…: pick a project or React entry and show it in this window.
     pub(crate) fn open_project_action(
         &mut self,

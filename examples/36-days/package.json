@@ -1,0 +1,9 @@
+{
+  "name": "@celesta/example-36-days",
+  "private": true,
+  "dependencies": {
+    "@celesta/react": "workspace:*",
+    "react": "^18.3.1",
+    "@celesta/math": "workspace:*"
+  }
+}

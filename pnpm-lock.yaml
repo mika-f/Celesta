@@ -191,6 +191,96 @@ importers:
 
   .: {}
 
+  examples/36-days:
+    dependencies:
+      '@celesta/math':
+        specifier: workspace:*
+        version: link:../../packages/math
+      '@celesta/react':
+        specifier: workspace:*
+        version: link:../../packages/react
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+
+  examples/afterimage:
+    dependencies:
+      '@celesta/react':
+        specifier: workspace:*
+        version: link:../../packages/react
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+
+  examples/apex:
+    dependencies:
+      '@celesta/math':
+        specifier: workspace:*
+        version: link:../../packages/math
+      '@celesta/react':
+        specifier: workspace:*
+        version: link:../../packages/react
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+
+  examples/assets:
+    dependencies:
+      '@celesta/react':
+        specifier: workspace:*
+        version: link:../../packages/react
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+
+  examples/feature-tour:
+    dependencies:
+      '@celesta/react':
+        specifier: workspace:*
+        version: link:../../packages/react
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+
+  examples/prism:
+    dependencies:
+      '@celesta/react':
+        specifier: workspace:*
+        version: link:../../packages/react
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+
+  examples/reel:
+    dependencies:
+      '@celesta/react':
+        specifier: workspace:*
+        version: link:../../packages/react
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+
+  examples/signal:
+    dependencies:
+      '@celesta/react':
+        specifier: workspace:*
+        version: link:../../packages/react
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+
+  examples/versus:
+    dependencies:
+      '@celesta/code':
+        specifier: workspace:*
+        version: link:../../packages/code
+      '@celesta/react':
+        specifier: workspace:*
+        version: link:../../packages/react
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+
   packages/code:
     dependencies:
       '@twinkleplop/bash':
