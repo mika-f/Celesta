@@ -378,6 +378,10 @@ fn selects_japanese_and_chinese_kanji_per_layer_on_macos() {
                 (Some("zh-Hant-TW"), "PingFang TC"),
                 (None, "PingFang SC"),
             ] {
+                // Some macOS images omit optional fonts such as PingFang.
+                // Assert the exact family only when it is available; still
+                // verify drawable glyphs and matching metrics in every case.
+                let expected_available = has_family(&rasterizer, expected);
                 let style = TextStyle {
                     lang: lang.map(str::to_owned),
                     font_family: family.map(str::to_owned),
@@ -395,11 +399,13 @@ fn selects_japanese_and_chinese_kanji_per_layer_on_macos() {
                         kanji += 1;
                         assert_ne!(glyph.glyph_id, 0);
                         let face = rasterizer.font_system.db().face(glyph.font_id).unwrap();
-                        assert!(
-                            face.families.iter().any(|(name, _)| name == expected),
-                            "{lang:?}, {family:?}, {line_break:?}, {cluster:?}: {:?}",
-                            face.families
-                        );
+                        if expected_available {
+                            assert!(
+                                face.families.iter().any(|(name, _)| name == expected),
+                                "{lang:?}, {family:?}, {line_break:?}, {cluster:?}: {:?}",
+                                face.families
+                            );
+                        }
                     }
                 }
                 assert!(kanji > 0);
