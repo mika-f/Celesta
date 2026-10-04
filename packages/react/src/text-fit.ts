@@ -3,7 +3,6 @@ import type { ReactNode } from 'react';
 
 import { Group, Text } from './components';
 import type { CommonProps } from './components';
-import { extractText } from './render';
 import type { TextStyle } from './scene';
 import {
   asynchronousMeasurer,
@@ -40,7 +39,11 @@ export interface FitTextOptions {
 }
 
 export interface FitTextResult {
-  /** The largest font size tried that fits, or `minFontSize` when none does. */
+  /**
+   * A font size that fits, or `minFontSize` when none does. It is the
+   * largest that fits unless wrapping lets a larger size fit after a smaller
+   * one does not, which the bisection can miss.
+   */
   fontSize: number;
   /** `options.style` with `fontSize` (and `lineHeight`) set: pass it to `<Text>`. */
   style: TextStyle;
@@ -185,7 +188,7 @@ function validate(options: FitTextOptions): void {
 
 export interface TextBoxProps
   extends Omit<CommonProps, 'anchorX' | 'anchorY'>, Omit<FitTextOptions, 'fonts'> {
-  /** Strings or numbers, as for `<Text>`. */
+  /** Strings or numbers, as for `<Text>`; `null`, `undefined`, and booleans draw nothing. */
   children: ReactNode;
   /** Where the text sits in the box's height when it is shorter. Defaults to `'top'`. */
   verticalAlign?: 'top' | 'middle' | 'bottom';
@@ -193,8 +196,10 @@ export interface TextBoxProps
    * What happens when the text does not fit even at `minFontSize`:
    * `'clip'` (the default) draws it at `minFontSize` and cuts it off at the
    * box's edges and after `maxLines`, aligning the lines it keeps;
-   * `'visible'` draws it whole, from the box's top and past its edges;
-   * `'error'` fails the render.
+   * `'visible'` draws all its lines, past the box's height, aligned by
+   * `verticalAlign` when they fit the height (a word wider than `width` is
+   * still cut off at it, as with `<Text maxWidth>`); `'error'` fails the
+   * render.
    */
   overflow?: 'clip' | 'visible' | 'error';
 }
@@ -209,7 +214,7 @@ export function TextBox(props: TextBoxProps): ReturnType<typeof React.createElem
     children, width, height, minFontSize, maxFontSize, maxLines, lineHeight, step, style,
     verticalAlign = 'top', overflow = 'clip', ...common
   } = props;
-  const text = extractText(children);
+  const text = textBoxText(children);
   const fit = useFitText(text, { width, height, minFontSize, maxFontSize, maxLines, lineHeight, step, style });
   if (!fit.fits && overflow === 'error') {
     const preview = text.length > 40 ? `${text.slice(0, 40)}…` : text;
@@ -240,4 +245,17 @@ export function TextBox(props: TextBoxProps): ReturnType<typeof React.createElem
         children: text,
       }),
   );
+}
+
+function textBoxText(children: ReactNode): string {
+  if (children === null || children === undefined || typeof children === 'boolean') {
+    return '';
+  }
+  if (typeof children === 'string' || typeof children === 'number') {
+    return String(children);
+  }
+  if (Array.isArray(children)) {
+    return children.map(textBoxText).join('');
+  }
+  throw new Error('<TextBox> children must be a string, a number, or an array of those');
 }

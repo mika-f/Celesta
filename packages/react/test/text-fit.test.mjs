@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'vitest';
+import { isAbsolute } from 'node:path';
 import React from 'react';
 
-import { Composition, TextBox, fitText, useFitText } from '../dist/index.js';
+import { Composition, Font, TextBox, fitText, useFitText } from '../dist/index.js';
 import { mount } from '../dist/render.js';
 import { setTextMeasurer } from '../dist/text-measure.js';
 
@@ -124,13 +125,19 @@ test('useFitText measures with the composition fonts and caches by value', () =>
     return null;
   }
   const mounted = mount(() => React.createElement(Composition, { width: 400, height: 200, fps: 30, durationInFrames: 2 },
-    React.createElement(Probe, { text: 'hello' })));
+    React.createElement(Probe, { text: 'hello' }),
+    React.createElement(Font, { src: './caption.ttf' })));
   mounted.renderAt({ value: 0, timescale: 30 }, null);
   const count = requests.length;
   mounted.renderAt({ value: 1, timescale: 30 }, null);
   assert.equal(requests.length, count);
   assert.equal(result.fontSize, 30);
   assert.equal(requests[0].style.fontFamily, 'Inter');
+  // <Font> declarations, even after the measuring component, are loaded.
+  const fonts = requests.at(-1).fonts;
+  assert.equal(fonts.length, 1);
+  assert.match(fonts[0].location.path, /caption\.ttf$/);
+  assert.ok(isAbsolute(fonts[0].location.path));
 });
 
 test('TextBox draws the fitted text with the measured style and wrapping', () => {
@@ -170,8 +177,17 @@ test('TextBox overflow clips, shows, or fails', () => {
   );
 });
 
-test('TextBox with empty text draws nothing', () => {
+test('TextBox with empty, missing, or conditional text draws nothing', () => {
   install();
-  const group = render(React.createElement(TextBox, { width: 100, height: 100, minFontSize: 10, maxFontSize: 20 }, '')).layers[0];
-  assert.deepEqual(group.content.layers, []);
+  const props = { width: 100, height: 100, minFontSize: 10, maxFontSize: 20 };
+  for (const children of ['', null, undefined, false, true, [false, null]]) {
+    const group = render(React.createElement(TextBox, props, children)).layers[0];
+    assert.deepEqual(group.content.layers, [], String(children));
+  }
+  const mixed = render(React.createElement(TextBox, props, 'Lv.', 3, false)).layers[0];
+  assert.equal(mixed.content.layers[0].content.text, 'Lv.3');
+  assert.throws(
+    () => render(React.createElement(TextBox, props, React.createElement('b'))),
+    /<TextBox> children must be a string, a number, or an array of those/,
+  );
 });

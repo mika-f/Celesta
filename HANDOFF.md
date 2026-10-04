@@ -101,8 +101,9 @@ cargo test --workspace
 ## Fitting text into a box (2026-10-04)
 
 `<TextBox>`, `useFitText()`, and `fitText()` (`packages/react/src/text-fit.ts`)
-pick the largest font size from `minFontSize` to `maxFontSize` that fits a
-`width` × `height` box and `maxLines` (issue #134). They measure with the
+pick a font size from `minFontSize` to `maxFontSize` that fits a
+`width` × `height` box and `maxLines`, the largest when fit is monotonic in
+size (issue #134). They measure with the
 same measurer as `useTextMetrics()` / `measureText()`, with `maxWidth` set to
 the box width, and `TextBox` draws one `<Text maxWidth={width}>` with the
 measured style, so the size the bridge chose is the size the renderer draws.
@@ -110,7 +111,7 @@ measured style, so the size the bridge chose is the size the renderer draws.
 - The search tries `maxFontSize`, then `minFontSize`, then bisects the sizes
   `minFontSize + n * step` (and `maxFontSize`). Wrapping makes fit almost
   but not strictly monotonic in size; the bisection still returns a size
-  that fits.
+  that fits, though it can miss a larger one past a size that does not.
 - `lineHeight` is a multiple of the font size here (unlike
   `TextStyle.lineHeight`, which is px), so `style` omits `fontSize` and
   `lineHeight`.

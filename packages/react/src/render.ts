@@ -229,8 +229,7 @@ function extractClip(value: unknown): Clip | undefined {
   };
 }
 
-/** @internal Joins `<Text>` children into its string. */
-export function extractText(children: unknown): string {
+function extractText(children: unknown): string {
   if (typeof children === 'string') {
     return children;
   }

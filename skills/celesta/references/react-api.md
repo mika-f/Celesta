@@ -741,14 +741,17 @@ uses `maxFontSize`; longer text shrinks, down to `minFontSize`.
 | `step` | Sizes tried are `minFontSize + n * step` and `maxFontSize`. Default `1`. |
 | `style` | A `TextStyle` without `fontSize` and `lineHeight`. `align` positions each line inside `width`. |
 | `verticalAlign` | `'top'` (default), `'middle'`, or `'bottom'`: where shorter text sits in `height`. |
-| `overflow` | When the text does not fit even at `minFontSize`: `'clip'` (default) cuts it off at the box and after `maxLines`, keeping `verticalAlign`; `'visible'` draws it whole from the top, past the box; `'error'` fails the render, so an export stops instead of shipping cut-off text. |
+| `overflow` | When the text does not fit even at `minFontSize`: `'clip'` (default) cuts it off at the box and after `maxLines`, keeping `verticalAlign`; `'visible'` draws all its lines, past the box, aligned by `verticalAlign` when they fit `height` (a word wider than `width` is still cut off at it, as with `<Text maxWidth>`); `'error'` fails the render, so an export stops instead of shipping cut-off text. |
 
 The size is chosen by measuring with the renderer's shaping (the same fonts,
 `letterSpacing`, `lineBreak`, and wrapping width the box draws with), so
 preview and export agree. A box takes one measurement when the text fits at
-`maxFontSize`, two when it cannot fit at all, and about `log2` of the number
-of sizes otherwise; unchanged text and props reuse the last result. Empty
-text draws nothing. A non-positive or non-finite `width`, `height`, font
+`maxFontSize` (or when `minFontSize` equals `maxFontSize`), two when it
+cannot fit at all, and about `log2` of the number of sizes otherwise. Fit is
+found by bisection: wrapping can, rarely, let a larger size fit after a
+smaller one does not, and then the size chosen fits but is not the largest
+that would; unchanged text and props reuse the last result. Empty
+text, and `null`, `undefined`, or boolean children, draw nothing. A non-positive or non-finite `width`, `height`, font
 size, `lineHeight`, or `step`, `maxFontSize` below `minFontSize`, or a
 `maxLines` that is not a whole number of at least 1 throws a `RangeError`.
 
