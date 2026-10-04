@@ -12,13 +12,15 @@ use gpui_kit::{
     size,
 };
 
+use crate::actions::{
+    ClearExportRange, GoToEnd, GoToStart, NextFrame, PreviousFrame, SetExportIn, SetExportOut,
+    ToggleLoop, TogglePlayback, ToggleSafeAreas,
+};
 use crate::icons::CelestaIcon;
 use crate::meter::audio_meter;
+use crate::preview::PreviewPresentation;
 use crate::timecode::format_timecode;
-use crate::{
-    ClearExportRange, EditorView, GoToEnd, GoToStart, NextFrame, PreviewPresentation,
-    PreviousFrame, SetExportIn, SetExportOut, ToggleLoop, TogglePlayback, ToggleSafeAreas,
-};
+use crate::view::EditorView;
 
 const KEY_CONTEXT: Option<&str> = Some("CelestaEditor");
 

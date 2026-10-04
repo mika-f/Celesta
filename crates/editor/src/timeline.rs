@@ -18,11 +18,11 @@ use gpui_kit::{
     Window, canvas, div, fill, point, prelude::*, px, relative, rgb, size,
 };
 
+use crate::actions::{ZoomTimelineIn, ZoomTimelineOut, ZoomTimelineToFit};
 use crate::icons::CelestaIcon;
 use crate::timecode::{format_timecode, nominal_fps, ruler_scale};
-use crate::{
-    EditorView, ZoomTimelineIn, ZoomTimelineOut, ZoomTimelineToFit, level_at_time, waveform_segment,
-};
+use crate::view::EditorView;
+use crate::waveform::{level_at_time, waveform_segment};
 use celesta_editor_theme as theme;
 
 const KEY_CONTEXT: Option<&str> = Some("CelestaEditor");

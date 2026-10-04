@@ -1,0 +1,35 @@
+use gpui_kit::actions;
+
+actions!(
+    celesta_editor,
+    [
+        OpenProject,
+        ReloadProject,
+        CloseWindow,
+        Quit,
+        ExportProject,
+        SetExportIn,
+        SetExportOut,
+        ClearExportRange,
+        SetUpTypeScript,
+        SetUpTypeScriptInFolder,
+        TogglePlayback,
+        PlayForward,
+        PausePlayback,
+        PreviousFrame,
+        NextFrame,
+        JumpBackward,
+        JumpForward,
+        GoToStart,
+        GoToEnd,
+        PreviousEditPoint,
+        NextEditPoint,
+        GoToIn,
+        GoToOut,
+        ToggleLoop,
+        ToggleSafeAreas,
+        ZoomTimelineIn,
+        ZoomTimelineOut,
+        ZoomTimelineToFit
+    ]
+);
