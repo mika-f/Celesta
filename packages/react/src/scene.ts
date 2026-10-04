@@ -42,4 +42,5 @@ export interface CompositionConfig {
   height: number;
   frameRate: Rational;
   durationInFrames: number;
+  lang?: string;
 }

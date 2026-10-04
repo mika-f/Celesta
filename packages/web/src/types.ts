@@ -4,6 +4,7 @@ export interface CompositionConfig {
   height: number;
   frameRate: { numerator: number; denominator: number };
   durationInFrames: number;
+  lang?: string;
 }
 
 export type Asset = { id: string; location: { type: 'file'; path: string } | { type: 'url'; url: string } };

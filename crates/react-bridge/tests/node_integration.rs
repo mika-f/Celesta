@@ -83,6 +83,7 @@ fn render_text_metrics_match_loaded_fonts_and_component_preview_when_node_is_ava
             let LayerContent::Text { text, style, .. } = &label.content else {
                 panic!("expected a text label");
             };
+            assert_eq!(style.lang.as_deref(), Some("ja-JP"));
             let metrics = measurer.measure(text, style, None);
             let LayerContent::Rect {
                 width,

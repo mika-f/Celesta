@@ -12,6 +12,7 @@ export interface VideoConfig {
 export interface CompositionRuntimeContextValue extends VideoConfig {
   time: Time;
   preview: boolean;
+  lang?: string;
 }
 
 // Populated by render.ts around the entry's default export on every frame

@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import { entryRelativePath, isRemoteUrl } from './entry-dir';
+import { CompositionRuntimeContext } from './hooks';
 import type { ResolvedAsset, TextStyle } from './scene';
 
 /** One shaped glyph cluster (a ligature or combining sequence is one entry). */
@@ -52,6 +53,11 @@ let measureSync: ((request: MeasureTextRequest) => TextMetrics) | undefined;
 /** @internal Fonts collected from the composition, shared with component previews. */
 export const TextMetricsFontsContext = React.createContext<readonly ResolvedAsset[]>([]);
 
+/** @internal Resolves the same language for text layers and their measurements. */
+export function withTextLanguage(style: TextStyle, lang?: string): TextStyle {
+  return lang !== undefined && style.lang == null ? { ...style, lang } : style;
+}
+
 /** @internal Installed by the Celesta CLI before an entry's `prepare()` runs. */
 export function setTextMeasurer(
   next: (request: MeasureTextRequest) => Promise<TextMetrics>,
@@ -95,6 +101,8 @@ export function useTextMetrics(
   style: TextStyle = {},
   options: MeasureTextOptions = {},
 ): TextMetrics {
+  const lang = React.useContext(CompositionRuntimeContext)?.lang;
+  const resolvedStyle = withTextLanguage(style, lang);
   const declaredFonts = React.useContext(TextMetricsFontsContext);
   const fonts = [
     ...declaredFonts.map((font) => font.location.type === 'file'
@@ -105,7 +113,7 @@ export function useTextMetrics(
       location: isRemoteUrl(src) ? { type: 'url', url: src } : { type: 'file', path: entryRelativePath(src) },
     })),
   ];
-  const key = JSON.stringify({ text, style, maxWidth: options.maxWidth, fonts });
+  const key = JSON.stringify({ text, style: resolvedStyle, maxWidth: options.maxWidth, fonts });
   return React.useMemo(() => {
     if (!measureSync) {
       throw new Error('useTextMetrics() requires a Celesta editor or exporter runtime');

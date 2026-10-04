@@ -10,7 +10,7 @@ import * as React from 'react';
 
 import { isRemoteUrl } from './entry-dir';
 import { CompositionRuntimeContext } from './hooks';
-import { TextMetricsFontsContext } from './text-measure';
+import { TextMetricsFontsContext, withTextLanguage } from './text-measure';
 import { ProjectLayersContext, ProjectTrackLayersContext } from './project-runtime';
 import { resolveVisibleLayers } from './psd-preset';
 import type { PsdCharacterBlink, PsdCharacterLipSync, PsdExpression } from './components';
@@ -58,7 +58,7 @@ const HOST_TYPES = new Set([
 ]);
 const ZERO_TIME: Time = { value: 0, timescale: 1 };
 
-type PlaceholderConfig = Pick<CompositionConfig, 'width' | 'height' | 'durationInFrames'> & {
+type PlaceholderConfig = Pick<CompositionConfig, 'width' | 'height' | 'durationInFrames' | 'lang'> & {
   frameRate: { numerator: number };
 };
 const PLACEHOLDER_CONFIG: PlaceholderConfig = {
@@ -145,7 +145,7 @@ function findCompositionInstance(container: RootContainer): HostNode {
 }
 
 function readCompositionConfig(instance: HostNode): CompositionConfig {
-  const { width, height, fps, durationInFrames } = instance.props;
+  const { width, height, fps, durationInFrames, lang } = instance.props;
   if (!Number.isInteger(width) || (width as number) <= 0) {
     throw new Error('<Composition> requires a positive integer `width` prop');
   }
@@ -158,11 +158,15 @@ function readCompositionConfig(instance: HostNode): CompositionConfig {
   if (!Number.isInteger(durationInFrames) || (durationInFrames as number) <= 0) {
     throw new Error('<Composition> requires a positive integer `durationInFrames` prop');
   }
+  if (lang !== undefined && typeof lang !== 'string') {
+    throw new Error('<Composition> requires a string `lang` prop');
+  }
   return {
     width: width as number,
     height: height as number,
     frameRate: { numerator: fps as number, denominator: 1 },
     durationInFrames: durationInFrames as number,
+    ...(lang !== undefined ? { lang: lang as string } : {}),
   };
 }
 
@@ -893,6 +897,21 @@ function walkChildren(
   );
 }
 
+/** Includes text supplied by a project timeline and its nested groups. */
+function inheritTextLanguage(layers: Layer[], lang?: string): Layer[] {
+  if (lang === undefined) return layers;
+  return layers.map((layer) => {
+    const content = layer.content;
+    if (content.type === 'text') {
+      return { ...layer, content: { ...content, style: withTextLanguage(content.style, lang) } };
+    }
+    if (content.type === 'group') {
+      return { ...layer, content: { ...content, layers: inheritTextLanguage(content.layers, lang) } };
+    }
+    return layer;
+  });
+}
+
 export function mount(defaultExport: EntryComponent): MountedComposition {
   const { container, root } = createRoot();
   let fonts: ResolvedAsset[] = [];
@@ -909,6 +928,7 @@ export function mount(defaultExport: EntryComponent): MountedComposition {
       fps: config.frameRate.numerator,
       durationInFrames: config.durationInFrames,
       preview: false,
+      lang: config.lang,
     };
     const element = React.createElement(
       ProjectLayersContext.Provider,
@@ -979,7 +999,7 @@ export function mount(defaultExport: EntryComponent): MountedComposition {
         frameRate: config.frameRate,
         time,
         ...(fonts.length > 0 ? { fonts } : {}),
-        layers,
+        layers: inheritTextLanguage(layers, config.lang),
       },
       audio,
     };
@@ -1046,9 +1066,9 @@ export interface Resolver {
 /**
  * Standalone component resolver used by the editor preview: resolves
  * individual `registerComponent()` names without going through a
- * `<Composition>` tree.
+ * `<Composition>` tree. `lang` supplies that composition's text language.
  */
-export function createResolver(): Resolver {
+export function createResolver(lang?: string): Resolver {
   const { container, root } = createRoot();
 
   const ResolverHost = ({ items }: { items: readonly ComponentResolutionRequest[] }) =>
@@ -1070,7 +1090,11 @@ export function createResolver(): Resolver {
 
   return {
     resolve(items, runtime, fonts = []) {
-      const runtimeValue = runtime ? { ...runtime, preview: runtime.preview === true } : PLACEHOLDER_RUNTIME;
+      const runtimeValue = {
+        ...(runtime ?? PLACEHOLDER_RUNTIME),
+        preview: runtime?.preview === true,
+        lang,
+      };
       const element = React.createElement(
         ProjectLayersContext.Provider,
         { value: [] },
@@ -1104,7 +1128,7 @@ export function createResolver(): Resolver {
           return null;
         }
         const audio: AudioClipDescriptor[] = [];
-        return walkChildren(child, `resolve.${index}`, walkContext, audio);
+        return inheritTextLanguage(walkChildren(child, `resolve.${index}`, walkContext, audio), runtimeValue.lang);
       });
     },
   };
