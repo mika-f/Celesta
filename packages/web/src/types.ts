@@ -15,6 +15,7 @@ export type Stroke = { paint: Paint; width: number };
 export type Point = { x: number; y: number };
 export type Transform = { position: Point; scale: Point; rotation: number; anchor: Point };
 export type TextStyle = {
+  lang?: string | null;
   fontFamily?: string | null;
   fontSize?: number | null;
   fontWeight?: number | null;

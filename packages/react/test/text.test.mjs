@@ -17,7 +17,7 @@ test('anchorY="baseline" anchors Text on its baseline', () => {
       `export default function Root() {\n` +
       `  return (\n` +
       `    <Composition width={100} height={100} fps={30} durationInFrames={1}>\n` +
-      `      <Text id="baseline" y={50} anchorX={0.5} anchorY="baseline">{' = '}</Text>\n` +
+      `      <Text id="baseline" y={50} anchorX={0.5} anchorY="baseline" style={{ lang: 'ja-JP' }}>{' = '}</Text>\n` +
       `      <Text id="numeric" y={50} anchorY={0.5}>a</Text>\n` +
       `    </Composition>\n` +
       `  );\n` +
@@ -34,6 +34,7 @@ test('anchorY="baseline" anchors Text on its baseline', () => {
     const [baseline, numeric] = frame.scene.layers;
     assert.equal(baseline.content.text, ' = ');
     assert.equal(baseline.content.baselineAnchor, true);
+    assert.equal(baseline.content.style.lang, 'ja-JP');
     assert.equal(baseline.transform.anchor.x, 0.5);
     assert.equal(numeric.content.baselineAnchor, undefined);
     assert.equal(numeric.transform.anchor.y, 0.5);
