@@ -178,6 +178,8 @@ export class SceneCanvas {
       }
     } else if (content.type === 'text') {
       const style = content.style;
+      // Canvas language selection is available in newer browsers.
+      if ('lang' in ctx) ctx.lang = style.lang?.trim() || navigator.language;
       const size = style.fontSize ?? 32;
       const lineHeight = style.lineHeight ?? size * 1.2;
       ctx.font = `${style.fontWeight ?? 400} ${size}px ${style.fontFamily ? JSON.stringify(style.fontFamily) + ', ' : ''}system-ui, sans-serif`;

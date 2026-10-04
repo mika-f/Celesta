@@ -46,6 +46,10 @@ pub struct GradientStop {
 #[cfg_attr(feature = "codegen", ts(export))]
 #[serde(rename_all = "camelCase")]
 pub struct TextStyle {
+    /// Language tag for font fallback, such as `ja`, `ja-JP`, or `zh-Hant`.
+    /// When omitted, uses the system locale. Does not select a BudouX model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lang: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub font_family: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

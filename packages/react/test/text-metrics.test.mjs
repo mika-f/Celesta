@@ -26,12 +26,12 @@ test('render metrics cache by value and refresh for text, style, wrapping and co
   function Label() {
     const frame = useCurrentFrame();
     const text = frame < 2 ? '日本 AV' : '日本 AV 123';
-    const m = useTextMetrics(text, { fontSize: frame < 3 ? 20 : 40 }, { maxWidth: frame < 4 ? 100 : 200 });
+    const m = useTextMetrics(text, { fontSize: frame < 3 ? 20 : 40, lang: frame < 6 ? 'ja' : 'zh-Hant' }, { maxWidth: frame < 4 ? 100 : 200 });
     return React.createElement(Rect, { width: m.width + 48, height: m.height + 24 });
   }
   const Root = () => {
     const frame = useCurrentFrame();
-    return React.createElement(Composition, { width: 400, height: 200, fps: 30, durationInFrames: 6 },
+    return React.createElement(Composition, { width: 400, height: 200, fps: 30, durationInFrames: 7 },
       React.createElement(Label),
       React.createElement(Font, { src: frame < 5 ? './one.ttf' : './two.ttf' }));
   };
@@ -49,6 +49,10 @@ test('render metrics cache by value and refresh for text, style, wrapping and co
   render(5);
   assert.match(requests.at(-1).fonts[0].location.path, /two\.ttf$/);
   assert.ok(isAbsolute(requests.at(-1).fonts[0].location.path));
+  const beforeLanguageChange = requests.length;
+  render(6);
+  assert.equal(requests.length, beforeLanguageChange + 1);
+  assert.equal(requests.at(-1).style.lang, 'zh-Hant');
 
   registerComponent('MetricsLabelTest', Label);
   const preview = createResolver().resolve([{ component: 'MetricsLabelTest', props: {} }], {

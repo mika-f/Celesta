@@ -5,12 +5,17 @@ use crate::text::{FontFallback, MissingGlyphs};
 use celesta_composition::{ResolvedAsset, TextStyle};
 use cosmic_text::{Family, FontSystem, SwashCache, Weight, fontdb};
 use std::collections::{HashMap, HashSet};
+#[cfg(target_os = "windows")]
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub struct TextRasterizer {
     pub(crate) font_system: FontSystem,
+    /// The system's normalized locale, used by styles without `lang`.
+    pub(crate) default_locale: String,
+    /// Inactive systems, so alternating languages retain their shaping caches.
+    locale_systems: HashMap<String, FontSystem>,
     /// The database `font_system` was constructed from, before any font was
     /// loaded into it: `FontSystem` derives fallback state from its initial
     /// database, so [`Self::fork`] rebuilds from this one.
@@ -43,8 +48,10 @@ pub(crate) const COLOR_EMOJI_FAMILIES: &[&str] = &[
 
 impl TextRasterizer {
     pub fn new() -> Self {
-        let font_system = FontSystem::new();
-        let initial_db = font_system.db().clone();
+        let (locale, database) = FontSystem::new().into_locale_and_db();
+        let default_locale = fallback_locale(&locale);
+        let initial_db = database.clone();
+        let font_system = FontSystem::new_with_locale_and_db(default_locale.clone(), database);
         #[cfg(target_os = "windows")]
         let font_system = {
             let mut font_system = font_system;
@@ -54,6 +61,8 @@ impl TextRasterizer {
 
         Self {
             font_system,
+            default_locale,
+            locale_systems: HashMap::new(),
             initial_db,
             swash_cache: SwashCache::new(),
             loaded_fonts: HashSet::new(),
@@ -70,13 +79,10 @@ impl TextRasterizer {
     /// reloading the fonts, which would also pick up loaded fonts as
     /// fallback candidates.
     pub fn fork(&self) -> Self {
-        let mut font_system = FontSystem::new_with_locale_and_db(
-            self.font_system.locale().to_owned(),
-            self.initial_db.clone(),
-        );
-        *font_system.db_mut() = self.font_system.db().clone();
         Self {
-            font_system,
+            font_system: self.font_system_for_locale(self.font_system.locale()),
+            default_locale: self.default_locale.clone(),
+            locale_systems: HashMap::new(),
             initial_db: self.initial_db.clone(),
             swash_cache: SwashCache::new(),
             loaded_fonts: self.loaded_fonts.clone(),
@@ -84,6 +90,35 @@ impl TextRasterizer {
             color_emoji_family: None,
             missing_characters: HashMap::new(),
         }
+    }
+
+    fn font_system_for_locale(&self, locale: &str) -> FontSystem {
+        let mut system =
+            FontSystem::new_with_locale_and_db(locale.to_owned(), self.initial_db.clone());
+        *system.db_mut() = self.font_system.db().clone();
+        system
+    }
+
+    pub(crate) fn select_language(&mut self, lang: Option<&str>) {
+        let locale = lang
+            .filter(|lang| !lang.trim().is_empty())
+            .map(fallback_locale);
+        let locale = locale.as_deref().unwrap_or(&self.default_locale);
+        if self.font_system.locale() == locale {
+            return;
+        }
+        let system = self
+            .locale_systems
+            .remove(locale)
+            .unwrap_or_else(|| self.font_system_for_locale(locale));
+        let previous = std::mem::replace(&mut self.font_system, system);
+        // Bound the cache even when a composition generates language tags.
+        if self.locale_systems.len() >= 16 {
+            self.locale_systems.clear();
+        }
+        self.locale_systems
+            .insert(previous.locale().to_owned(), previous);
+        self.missing_characters.clear();
     }
 
     /// How many font files have been loaded so far. It only grows, so a
@@ -164,6 +199,7 @@ impl TextRasterizer {
         if ids.is_empty() {
             return Err(invalid("no font faces found"));
         }
+        self.locale_systems.clear();
         self.matched_weights.clear();
         self.color_emoji_family = None;
         self.missing_characters.clear();
@@ -251,6 +287,7 @@ impl TextRasterizer {
         style: &TextStyle,
     ) -> Option<MissingGlyphs> {
         let family = style.font_family.as_deref()?;
+        self.select_language(style.lang.as_deref());
         let weight = style.font_weight.unwrap_or(400);
         self.matched_weight(family, weight)?;
         let key = (text.to_owned(), family.to_owned(), weight);
@@ -312,6 +349,38 @@ impl TextRasterizer {
         }
         characters
     }
+}
+
+/// cosmic-text matches CJK fallback locales exactly. Normalize language and
+/// region/script tags to the keys its platform tables recognize.
+pub(crate) fn fallback_locale(lang: &str) -> String {
+    let lang = lang.trim().split(['.', '@']).next().unwrap_or_default();
+    let mut parts = lang.split(['-', '_']);
+    let language = parts.next().unwrap_or_default().to_ascii_lowercase();
+    if language != "zh" {
+        return language;
+    }
+    let mut script = None;
+    let mut region = None;
+    // Extensions and private-use subtags do not describe the language.
+    for part in parts.take_while(|part| part.len() != 1) {
+        if part.eq_ignore_ascii_case("hans") || part.eq_ignore_ascii_case("hant") {
+            script = Some(part);
+        } else if part.len() == 2 {
+            region = Some(part);
+        }
+    }
+    let is_region = |value: &str| region.is_some_and(|region| region.eq_ignore_ascii_case(value));
+    if script.is_some_and(|script| script.eq_ignore_ascii_case("hans")) {
+        "zh-CN"
+    } else if is_region("HK") || is_region("MO") {
+        "zh-HK"
+    } else if is_region("TW") || script.is_some_and(|script| script.eq_ignore_ascii_case("hant")) {
+        "zh-TW"
+    } else {
+        "zh-CN"
+    }
+    .to_owned()
 }
 
 #[cfg(target_os = "windows")]
