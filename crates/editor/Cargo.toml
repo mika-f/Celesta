@@ -24,6 +24,7 @@ celesta-media = { path = "../media" }
 celesta-remote = { path = "../remote" }
 celesta-project = { path = "../project" }
 celesta-react-bridge = { path = "../react-bridge" }
+clap = { version = "4.6.7", features = ["derive"] }
 rodio = { version = "0.22.2", default-features = false, features = ["playback"] }
 serde_json.workspace = true
 unicode-segmentation = "1.13.3"

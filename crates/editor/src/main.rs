@@ -2,6 +2,11 @@
 
 use crate::icons::CelestaAssets;
 use celesta_editor_theme as theme;
+use celesta_react_bridge::{
+    ProjectTsconfig, initialize_project, project_types_template,
+    runtime_paths as react_runtime_paths,
+};
+use clap::Parser;
 use gpui_kit::base::GlobalState;
 #[cfg(not(target_os = "macos"))]
 use gpui_kit::component::menu::AppMenuBar;
@@ -10,12 +15,12 @@ use gpui_kit::component::{Root, TitleBar};
 use gpui_kit::prelude::*;
 use gpui_kit::{App, Bounds, KeyBinding, Menu, MenuItem, WindowBounds, WindowOptions, px, size};
 use std::error::Error;
-use std::path::PathBuf;
 
 mod actions;
 mod audio;
 mod audio_control;
 mod background;
+mod cli;
 mod component_schema;
 mod export_control;
 mod export_worker;
@@ -36,9 +41,9 @@ mod waveform;
 mod widgets;
 
 use actions::{
-    ClearExportRange, CloseWindow, ExportProject, GoToEnd, GoToIn, GoToOut, GoToStart,
-    JumpBackward, JumpForward, NextEditPoint, NextFrame, OpenProject, PausePlayback, PlayForward,
-    PreviousEditPoint, PreviousFrame, Quit, ReloadProject, SetExportIn, SetExportOut,
+    ClearExportRange, CloseWindow, CreateNewProject, ExportProject, GoToEnd, GoToIn, GoToOut,
+    GoToStart, JumpBackward, JumpForward, NextEditPoint, NextFrame, OpenProject, PausePlayback,
+    PlayForward, PreviousEditPoint, PreviousFrame, Quit, ReloadProject, SetExportIn, SetExportOut,
     SetUpTypeScript, SetUpTypeScriptInFolder, ToggleLoop, TogglePlayback, ToggleSafeAreas,
     ZoomTimelineIn, ZoomTimelineOut, ZoomTimelineToFit,
 };
@@ -61,7 +66,22 @@ fn main() {
 }
 
 fn run() -> Result<(), Box<dyn Error>> {
-    let path = std::env::args_os().nth(1).map(PathBuf::from);
+    let args = cli::Args::parse();
+    if let Some(directory) = args.init {
+        let (_, cli_script) = react_runtime_paths();
+        let setup = initialize_project(&project_types_template(&cli_script), &directory)?;
+        println!("Initialized Celesta project in {}", setup.root.display());
+        if setup.tsconfig == ProjectTsconfig::MissingExtends {
+            eprintln!(
+                "Add \"extends\": \"./.celesta/tsconfig.json\" to your existing tsconfig.json to enable Celesta types."
+            );
+        }
+        println!(
+            "Open film.tsx with Celesta to preview. Run pnpm install for TypeScript or external dependencies."
+        );
+        return Ok(());
+    }
+    let path = args.path;
     let mut editor = EditorView::open(path.as_deref())?;
 
     let app = gpui_kit::application().with_assets(CelestaAssets);
@@ -69,6 +89,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         gpui_kit::init(cx);
         theme::init(cx);
         cx.bind_keys([
+            KeyBinding::new("secondary-n", CreateNewProject, Some("CelestaEditor")),
             KeyBinding::new("secondary-o", OpenProject, Some("CelestaEditor")),
             KeyBinding::new("secondary-r", ReloadProject, Some("CelestaEditor")),
             KeyBinding::new("secondary-w", CloseWindow, Some("CelestaEditor")),
@@ -147,6 +168,7 @@ fn app_menus() -> Vec<Menu> {
     vec![
         Menu::new("Celesta").items([MenuItem::action("Quit Celesta", Quit)]),
         Menu::new("File").items([
+            MenuItem::action("Create New Project…", CreateNewProject),
             MenuItem::action("Open…", OpenProject),
             MenuItem::action("Reload", ReloadProject),
             MenuItem::separator(),

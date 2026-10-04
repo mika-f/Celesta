@@ -132,14 +132,14 @@ portrait and voice recording.
 
 ## Use React compositions
 
-Set up the included React package once from the repository root:
+Install the workspace dependencies and build the included React runtime once
+from the repository root. React compositions under `examples/*` are workspace
+packages too:
 
 ```sh
-cd packages/react
 pnpm install
-pnpm run codegen
-pnpm run build
-cd ../..
+pnpm --dir packages/react run codegen
+pnpm --dir packages/react run build
 ```
 
 Open the sample title composition in the editor:
@@ -177,6 +177,82 @@ function Title() {
 
 Blur radii are limited to 64 pixels. JSON timeline items accept the same
 effects under `effects`, with keyframes for numeric properties and colors.
+
+### Create a React project
+
+With Celesta's command-line executables on PATH, initialize a directory:
+
+```sh
+celesta-editor --init my-video
+cd my-video
+celesta-editor film.tsx
+celesta-exporter --react film.tsx output.mp4
+```
+
+Use `celesta-editor --init` to initialize the current directory. In the GUI,
+choose **File > Create New Project…** (Ctrl-N, or Command-N on macOS), or the
+toolbar's **Create New Project…**, and select a project folder. The folder
+picker can create a new folder. Celesta initializes it and opens `film.tsx`.
+
+Initialization creates a five-second `film.tsx`, a private `package.json` with
+preview/export/typecheck scripts, `tsconfig.json`, `.gitignore`, and the matching
+type declarations in `.celesta/`. Preview and export use the bundled runtime
+without a package installation. Run `pnpm install` and `pnpm typecheck` to use
+the project's TypeScript compiler.
+
+Re-running `--init` refreshes `.celesta/` and creates missing starter files.
+Existing source files, `package.json` (including dependencies and scripts),
+`.gitignore`, and `tsconfig.json` are kept unchanged. If your existing tsconfig
+does not extend `./.celesta/tsconfig.json`, Celesta reports the required change;
+merge the base configuration into your configuration as appropriate.
+
+For source builds, use `cargo run -p celesta-editor -- --init my-video` after
+building the React runtime above. Preview with
+`cargo run -p celesta-editor -- my-video/film.tsx` and export with
+`cargo run -p celesta-exporter --release -- --react my-video/film.tsx output.mp4`.
+Desktop packages currently name these executables `Celesta` and `Celesta-export`
+(`.exe` on Windows); use their installed paths in place of the Cargo binary
+names, including in generated scripts when needed.
+
+### Add external dependencies
+
+Install general npm packages in the project that imports them. For a repository
+example, add the dependency to that example's workspace package:
+
+```sh
+pnpm --dir examples/versus add ag-psd
+cargo run -p celesta-editor --release -- examples/versus/film.tsx
+cargo run -p celesta-exporter --release -- --react examples/versus/film.tsx output.mp4
+```
+
+For a project outside the repository, run `pnpm add ag-psd` inside the initialized
+directory. Both preview and export resolve external imports from the importing
+file's project `node_modules`. Celesta supplies `@celesta/react`, `@celesta/math`,
+`@celesta/code`, and React from its runtime; these do not need to be added to an
+external project's dependencies. Example manifests use `workspace:*` for the
+local Celesta packages so Node tools can also resolve their imports.
+
+Node asset preparation scripts use the same project dependencies directly. For
+example, save this as `prepare-assets.mjs` beside your `package.json`:
+
+```js
+import { readFileSync, writeFileSync } from 'node:fs';
+import { readPsd } from 'ag-psd';
+
+const { width, height } = readPsd(readFileSync(new URL('./portrait.psd', import.meta.url)), {
+  skipLayerImageData: true,
+  skipCompositeImageData: true,
+  skipThumbnail: true,
+});
+writeFileSync(new URL('./portrait-info.json', import.meta.url), JSON.stringify({ width, height }));
+```
+
+Run `node prepare-assets.mjs` from the project directory after installing its
+dependencies; no `createRequire` workaround pointing to another package is
+needed. Import the generated JSON from your composition as usual. For `.ts`
+preparation scripts, use a Node version with TypeScript stripping support or
+install a TypeScript runner in that project. The bundled Node runtime evaluates
+compositions; direct Node scripts use your installed Node.
 
 ### Type-check your compositions
 
