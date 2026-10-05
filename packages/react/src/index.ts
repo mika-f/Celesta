@@ -30,6 +30,8 @@ export type {
   CharacterViewProps,
   CharacterViewReference,
   CharacterSubtitle,
+  SubtitleCharacter,
+  SubtitleRenderProps,
   DialogueProps,
   FontProps,
   AnimatedNumber,

@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as React from 'react';
 
-import { Dialogue, Sequence } from './components';
+import { Dialogue, Sequence, SubtitleRunContext } from './components';
 import type { AnimatedNumber, CharacterViewProps, CharacterViewReference, DialogueProps } from './components';
 import { entryRelativePath, isRemoteUrl } from './entry-dir';
 import type { LipSyncTrack } from './lipsync';
@@ -263,6 +263,17 @@ export interface DialogueSeriesProps<L extends DialogueLine = DialogueLine> {
    * it instead of clearing it when the voice ends. Defaults to false.
    */
   holdThroughGap?: boolean;
+  /**
+   * Keeps the subtitle up through the gap after each line, so a band that
+   * `subtitle.render` draws behind the text stays while the conversation
+   * goes on. In the gap the band shows the line before with `held: true`
+   * (unless `holdThroughGap` keeps the line itself up); the expression
+   * still returns to the view's own. A line with a lead-in starts a new
+   * run: the band leaves after the gap before it. `frame` and
+   * `durationInFrames` count over the whole run, for fading the band in
+   * and out. A plain subtitle draws nothing in the gap. Defaults to false.
+   */
+  holdSubtitle?: boolean;
   /** Extra `<Dialogue>` props per line, e.g. to move one subtitle; merged over the line's own. */
   dialogueProps?: (line: PlannedDialogueLine<L>) => Partial<Omit<DialogueProps, 'children'>> | undefined;
 }
@@ -280,12 +291,25 @@ export function DialogueSeries<L extends DialogueLine>({
   plan,
   views,
   holdThroughGap = false,
+  holdSubtitle = false,
   dialogueProps,
 }: DialogueSeriesProps<L>): ReturnType<typeof React.createElement> {
+  // Runs of lines with no lead-in between them, which a held subtitle spans.
+  const runs = new Map<PlannedDialogueLine<L>, { from: number; durationInFrames: number }>();
+  if (holdSubtitle) {
+    let run = { from: 0, durationInFrames: 0 };
+    for (const entry of plan.lines) {
+      if (entry.index === 0 || entry.leadInFrames > 0) {
+        run = { from: entry.from, durationInFrames: 0 };
+      }
+      run.durationInFrames = entry.from + entry.spanInFrames - run.from;
+      runs.set(entry, run);
+    }
+  }
   return React.createElement(
     React.Fragment,
     null,
-    plan.lines.map((entry) => {
+    plan.lines.flatMap((entry): React.ReactElement[] => {
       const { line } = entry;
       const character = line.character ?? (line.speaker === undefined ? undefined : views?.[line.speaker]);
       if (!character) {
@@ -306,15 +330,47 @@ export function DialogueSeries<L extends DialogueLine>({
         ...dialogueProps?.(entry),
         children: line.text,
       };
-      return React.createElement(
+      const lineInFrames = holdThroughGap ? entry.spanInFrames : entry.durationInFrames;
+      const spoken = React.createElement(
         Sequence,
-        {
-          key: entry.id,
-          from: entry.from,
-          durationInFrames: holdThroughGap ? entry.spanInFrames : entry.durationInFrames,
-        },
+        { key: entry.id, from: entry.from, durationInFrames: lineInFrames },
         React.createElement(Dialogue, props),
       );
+      const run = runs.get(entry);
+      if (!run) {
+        return [spoken];
+      }
+      const inRun = (from: number, element: React.ReactElement) =>
+        React.createElement(
+          SubtitleRunContext.Provider,
+          { key: `${entry.id}@${from}`, value: { offset: from - run.from, durationInFrames: run.durationInFrames } },
+          element,
+        );
+      const elements = [inRun(entry.from, spoken)];
+      const heldInFrames = entry.spanInFrames - lineInFrames;
+      if (heldInFrames > 0) {
+        const heldFrom = entry.from + lineInFrames;
+        elements.push(
+          inRun(
+            heldFrom,
+            React.createElement(
+              Sequence,
+              { from: heldFrom, durationInFrames: heldInFrames },
+              React.createElement(Dialogue, {
+                character,
+                ...dialogueProps?.(entry),
+                held: true,
+                audio: undefined,
+                expression: undefined,
+                mouth: undefined,
+                lipSync: undefined,
+                children: line.text,
+              }),
+            ),
+          ),
+        );
+      }
+      return elements;
     }),
   );
 }

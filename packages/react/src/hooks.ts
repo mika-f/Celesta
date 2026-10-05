@@ -21,6 +21,13 @@ export const CompositionRuntimeContext = React.createContext<CompositionRuntimeC
   null,
 );
 
+/**
+ * @internal Asks render.ts to reconcile the current frame once more, for a
+ * component that read a ref this commit had not attached yet (a
+ * `<Dialogue>` mounted together with its `<CharacterView>`).
+ */
+export const RerenderRequestContext = React.createContext<() => void>(() => {});
+
 function useRuntimeContext(hookName: string): CompositionRuntimeContextValue {
   const value = React.useContext(CompositionRuntimeContext);
   if (!value) {

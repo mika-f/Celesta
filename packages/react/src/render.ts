@@ -9,7 +9,7 @@
 import * as React from 'react';
 
 import { isRemoteUrl } from './entry-dir';
-import { CompositionRuntimeContext } from './hooks';
+import { CompositionRuntimeContext, RerenderRequestContext } from './hooks';
 import { TextMetricsFontsContext } from './text-measure';
 import { ProjectLayersContext, ProjectTrackLayersContext } from './project-runtime';
 import { resolveVisibleLayers } from './psd-preset';
@@ -543,18 +543,25 @@ function buildLayer(
       throw new Error('<Dialogue> requires a declared character');
     }
     const layers: Layer[] = [];
-    layers.push(
-      buildLayer(
-        {
-          type: 'text',
-          props: { ...character.subtitle, id: `${id}.subtitle`, children: props.text },
-          children: [],
-        },
-        `${path}.subtitle`,
-        context,
-        audio,
-      ),
-    );
+    if (typeof character.subtitle?.render === 'function') {
+      // <Dialogue> already rendered the subtitle as its only child.
+      for (const child of node.children) {
+        layers.push(...walkNode(child, `${id}.subtitle`, context, audio));
+      }
+    } else if (props.held !== true) {
+      layers.push(
+        buildLayer(
+          {
+            type: 'text',
+            props: { ...character.subtitle, id: `${id}.subtitle`, children: props.text },
+            children: [],
+          },
+          `${path}.subtitle`,
+          context,
+          audio,
+        ),
+      );
+    }
     content = { type: 'group', layers };
   } else if (node.type === 'text') {
     const maxWidth = props.maxWidth;
@@ -896,6 +903,10 @@ function walkChildren(
 export function mount(defaultExport: EntryComponent): MountedComposition {
   const { container, root } = createRoot();
   let fonts: ResolvedAsset[] = [];
+  let rerenderRequested = false;
+  const requestRerender = () => {
+    rerenderRequested = true;
+  };
 
   const renderTree = (
     time: Time,
@@ -922,7 +933,11 @@ export function mount(defaultExport: EntryComponent): MountedComposition {
           React.createElement(
             TextMetricsFontsContext.Provider,
             { value: fonts },
-            React.createElement(defaultExport, {}),
+            React.createElement(
+              RerenderRequestContext.Provider,
+              { value: requestRerender },
+              React.createElement(defaultExport, {}),
+            ),
           ),
         ),
       ),
@@ -947,14 +962,19 @@ export function mount(defaultExport: EntryComponent): MountedComposition {
   fonts = initialFonts;
 
   const renderFrame = (time: Time, project: ProjectFrame | null, audioOnly = false) => {
+    rerenderRequested = false;
     renderTree(time, project, config);
     let instance = findCompositionInstance(container);
     const nextFonts: ResolvedAsset[] = [];
     collectFonts(instance, nextFonts);
-    if (JSON.stringify(nextFonts) !== JSON.stringify(fonts)) {
+    const fontsChanged = JSON.stringify(nextFonts) !== JSON.stringify(fonts);
+    if (fontsChanged || rerenderRequested) {
       fonts = nextFonts;
-      // A declaration can appear after its consumer, or change this frame.
-      // Reconcile again with the complete font list before emitting layers.
+      // A declaration can appear after its consumer, or change this frame,
+      // and a ref read during render is attached only by the commit.
+      // Reconcile again with the complete font list and refs before
+      // emitting layers.
+      rerenderRequested = false;
       renderTree(time, project, config);
       instance = findCompositionInstance(container);
     }

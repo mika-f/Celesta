@@ -1,8 +1,10 @@
 import * as React from 'react';
 import type { ReactNode } from 'react';
 
-import { CompositionRuntimeContext } from './hooks';
+import { CompositionRuntimeContext, RerenderRequestContext } from './hooks';
 import { useOptionalLipSync } from './lipsync';
+import { synchronousMeasurer, useMeasurementFonts } from './text-measure';
+import type { MeasureTextRequest, TextMetrics } from './text-measure';
 import type { LipSyncTrack } from './lipsync';
 import type { BlinkTiming } from './blink';
 import type { Animatable, BlendMode, Paint, TextStyle, LayerShadow, LayerGlow } from './scene';
@@ -155,6 +157,10 @@ export interface AssetReference {
   readonly src?: string;
   readonly portrait?: CharacterPortrait;
   readonly subtitle?: CharacterSubtitle;
+  /** A character's `name`. */
+  readonly name?: string;
+  /** A character's `displayName`, or its `name` when not given. */
+  readonly displayName?: string;
 }
 
 export type AssetInput = string | AssetReference | React.RefObject<AssetReference>;
@@ -165,6 +171,11 @@ export interface AssetsProps {
 
 export interface CharacterProps {
   name: string;
+  /**
+   * The name shown to viewers, such as on a subtitle's name plate (see
+   * `SubtitleRenderProps.character`). Defaults to `name`.
+   */
+  displayName?: string;
   id?: string;
   portrait?: CharacterPortrait;
   subtitle?: CharacterSubtitle;
@@ -301,8 +312,49 @@ export interface CharacterViewReference {
 export interface CharacterSubtitle extends CommonProps {
   style?: TextStyle;
   maxWidth?: number;
+  /**
+   * Draws the subtitle yourself, e.g. with a band behind the text and a name
+   * plate. What it returns is placed like the children of a `<Group>` with
+   * this subtitle's other layer props (`x`, `y`, `opacity`, …); `style` and
+   * `maxWidth` are only used to measure the text for `metrics`. Called as a
+   * component, so it may use hooks.
+   */
+  render?: (props: SubtitleRenderProps) => ReactNode;
 }
 
+/** The speaker of a subtitle, as given to `CharacterSubtitle.render`. */
+export interface SubtitleCharacter {
+  id: string;
+  name: string;
+  /** `displayName`, or `name` when the character has none. */
+  displayName: string;
+}
+
+/** What `CharacterSubtitle.render` draws from. */
+export interface SubtitleRenderProps {
+  /** The line's text. */
+  text: string;
+  character: SubtitleCharacter;
+  /** `text` measured with the subtitle's `style` and `maxWidth`, as `<Text>` lays it out. */
+  metrics: TextMetrics;
+  style: TextStyle;
+  maxWidth?: number;
+  /**
+   * True while the line has ended but the subtitle is kept up until the next
+   * one (`<Dialogue held>`, `<DialogueSeries holdSubtitle>`): draw the band,
+   * not the text. `text` and `metrics` are still the line's, so a band
+   * sized from them keeps its size.
+   */
+  held: boolean;
+  /**
+   * Frames since the subtitle appeared: since the enclosing `<Sequence>`
+   * started, or under `<DialogueSeries holdSubtitle>` since the run of
+   * lines it is held through started. Use it to fade the band in.
+   */
+  frame: number;
+  /** Frames the subtitle stays up in all, counted like `frame`. Use it to fade the band out. */
+  durationInFrames: number;
+}
 export interface DialogueProps extends CommonProps {
   character: React.RefObject<CharacterViewReference | null>;
   children: ReactNode;
@@ -314,7 +366,17 @@ export interface DialogueProps extends CommonProps {
   playbackRate?: AnimatedNumber;
   volume?: AnimatedNumber;
   muted?: boolean;
+  /**
+   * Keeps the subtitle up after its line has ended, until the next line: a
+   * `subtitle.render` is called with `held: true`, and a plain subtitle
+   * draws nothing. Give it no `audio`, `expression`, or `mouth`; it is not
+   * the line itself. `<DialogueSeries holdSubtitle>` places these for you.
+   */
+  held?: boolean;
 }
+
+/** @internal Set by `<DialogueSeries holdSubtitle>`: where each line sits in its run. */
+export const SubtitleRunContext = React.createContext<{ offset: number; durationInFrames: number } | null>(null);
 
 export interface FontProps {
   src: AssetInput;
@@ -341,8 +403,10 @@ export const Character = React.forwardRef<AssetReference, CharacterProps>(functi
       kind: 'character',
       portrait: props.portrait,
       subtitle: props.subtitle,
+      name: props.name,
+      displayName: props.displayName ?? props.name,
     }),
-    [props.id, props.name, props.portrait, props.subtitle],
+    [props.id, props.name, props.displayName, props.portrait, props.subtitle],
   );
   assignAssetRef(ref, reference);
   React.useImperativeHandle(ref, () => reference, [reference]);
@@ -404,11 +468,92 @@ export const CharacterView = React.forwardRef<CharacterViewReference, CharacterV
 export function Dialogue(props: DialogueProps): ReturnType<typeof React.createElement> {
   const { children, lipSync, mouth, ...rest } = props;
   const tracked = useOptionalLipSync(lipSync);
-  return React.createElement('dialogue', {
-    ...rest,
-    text: children,
-    mouth: mouth ?? tracked,
-  });
+  const subtitle = useRenderedSubtitle(props.character, children, props.held === true);
+  return React.createElement(
+    'dialogue',
+    {
+      ...rest,
+      text: children,
+      mouth: mouth ?? tracked,
+    },
+    subtitle,
+  );
+}
+
+/**
+ * The subtitle a `subtitle.render` draws for this line, or null for a
+ * plain subtitle, which render.ts draws as a `text` layer.
+ */
+function useRenderedSubtitle(
+  view: React.RefObject<CharacterViewReference | null>,
+  children: ReactNode,
+  held: boolean,
+): ReactNode {
+  const requestRerender = React.useContext(RerenderRequestContext);
+  const runtime = React.useContext(CompositionRuntimeContext);
+  const run = React.useContext(SubtitleRunContext);
+  const fonts = useMeasurementFonts();
+  // A view mounted in this same commit has no ref yet; render.ts reconciles
+  // once more after the commit attaches it.
+  const viewNode = view?.current as { props?: { character?: unknown } } | null | undefined;
+  if (viewNode == null) {
+    requestRerender();
+  }
+  const characterInput = viewNode?.props?.character;
+  const character = (
+    characterInput && typeof characterInput === 'object' && 'current' in characterInput
+      ? characterInput.current
+      : characterInput
+  ) as AssetReference | null | undefined;
+  const subtitle = character?.subtitle;
+  const render = subtitle?.render;
+  const text = subtitleText(children);
+  const style = subtitle?.style ?? {};
+  const maxWidth = subtitle?.maxWidth;
+  const key = render
+    ? JSON.stringify({ text, style, ...(maxWidth !== undefined ? { maxWidth } : {}), fonts })
+    : null;
+  const metrics = React.useMemo(
+    () => (key === null ? null : synchronousMeasurer('subtitle.render')(JSON.parse(key) as MeasureTextRequest)),
+    [key],
+  );
+  if (!render || !character || !metrics || !runtime) {
+    return null;
+  }
+  const localFrame = Math.round(secondsFromTime(runtime.time) * runtime.fps);
+  const { style: _style, maxWidth: _maxWidth, render: _render, id: _id, ...placement } = subtitle;
+  const name = character.name ?? character.id;
+  const info: SubtitleRenderProps = {
+    text,
+    character: { id: character.id, name, displayName: character.displayName ?? name },
+    metrics,
+    style,
+    ...(maxWidth !== undefined ? { maxWidth } : {}),
+    held,
+    frame: localFrame + (run?.offset ?? 0),
+    durationInFrames: run?.durationInFrames ?? runtime.durationInFrames,
+  };
+  return React.createElement(Group, placement, React.createElement(SubtitleRenderer, { render, info }));
+}
+
+function SubtitleRenderer({
+  render,
+  info,
+}: {
+  render: (props: SubtitleRenderProps) => ReactNode;
+  info: SubtitleRenderProps;
+}): ReactNode {
+  return render(info);
+}
+
+function subtitleText(children: ReactNode): string {
+  if (typeof children === 'string') {
+    return children;
+  }
+  if (typeof children === 'number') {
+    return String(children);
+  }
+  return Array.isArray(children) ? children.map(subtitleText).join('') : '';
 }
 
 export const Image = React.forwardRef<AssetReference, ImageProps>(function Image(props, ref) {
