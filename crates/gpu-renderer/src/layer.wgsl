@@ -249,11 +249,12 @@ fn paint_color(paint: vec4<f32>, point: vec2<f32>) -> vec4<f32> {
     return sample_stops(base + 2u, u32(header.y), t);
 }
 
-// `celesta_renderer`'s `RectDistance`: the rounded-box distance in canvas
-// pixels, for a box drawn through the map whose inverse is `inverse`. Exact
-// for a rotation and a uniform scale, and along straight edges; a
-// non-uniformly scaled corner, an ellipse, divides the local distance by its
-// gradient in canvas pixels.
+// `celesta_renderer`'s `RectDistance`: the rounded-box distance for a box
+// drawn through the map whose inverse is `inverse`, in units of a pixel's
+// width across the edge (`|n.x| + |n.y|` for its normal `n`), so
+// `0.5 - distance` ramps across an edge as a pixel-sized box filter does and
+// a thin strip draws the same wherever its edges fall: the local distance
+// over the L1 length of its gradient in canvas pixels.
 fn rect_distance(p: vec2<f32>, half_size: vec2<f32>, radius: f32, inverse: vec4<f32>) -> f32 {
     let q = abs(p) - half_size + vec2<f32>(radius);
     if q.x > 0.0 && q.y > 0.0 {
@@ -264,22 +265,26 @@ fn rect_distance(p: vec2<f32>, half_size: vec2<f32>, radius: f32, inverse: vec4<
             direction.x * inverse.x + direction.y * inverse.y,
             direction.x * inverse.z + direction.y * inverse.w,
         );
-        return (length_q - radius) / length(gradient);
+        return (length_q - radius) / (abs(gradient.x) + abs(gradient.y));
     }
-    // Canvas pixels per local unit across a vertical and a horizontal edge.
-    let scale = 1.0 / vec2<f32>(length(inverse.xz), length(inverse.yw));
-    return max((q.x - radius) * scale.x, (q.y - radius) * scale.y);
+    let footprint = rect_footprint(inverse);
+    return max((q.x - radius) / footprint.x, (q.y - radius) / footprint.y);
+}
+
+// The local units across a pixel's width across a vertical and a horizontal
+// edge: the L1 lengths of the local x and y gradients.
+fn rect_footprint(inverse: vec4<f32>) -> vec2<f32> {
+    return vec2<f32>(abs(inverse.x) + abs(inverse.z), abs(inverse.y) + abs(inverse.w));
 }
 
 // `RectDistance::coverage_cap`: the most of a pixel a box of `half_size` can
 // cover, so a box thinner than a pixel (or empty) is not drawn heavier than
-// it is: at most its area, and its width across each pair of parallel
-// edges, in canvas pixels; at most the whole pixel.
+// it is. A box filter gives a pixel inside the ramps of a pair of parallel
+// edges their distance apart in `rect_distance`'s units, each at most 1;
+// inside both pairs', the product.
 fn rect_coverage_cap(half_size: vec2<f32>, inverse: vec4<f32>) -> f32 {
-    let size = 2.0 * half_size;
-    let area_per_pixel = abs(inverse.x * inverse.w - inverse.y * inverse.z);
-    let widths = size / vec2<f32>(length(inverse.xz), length(inverse.yw));
-    return clamp(min(size.x * size.y / area_per_pixel, min(widths.x, widths.y)), 0.0, 1.0);
+    let fractions = clamp(2.0 * half_size / rect_footprint(inverse), vec2<f32>(0.0), vec2<f32>(1.0));
+    return fractions.x * fractions.y;
 }
 
 // The rect under the pixel, straight alpha, as

@@ -1681,26 +1681,103 @@ fn transformed_rect(
     frame
 }
 
-#[test]
-fn a_sheared_rect_within_a_pixel_covers_its_area() {
-    // x' = x + y: a 0.2x0.2 rect leans into a parallelogram of the same
-    // area, 0.04 of a pixel, centred on pixel (16, 8).
-    let shear = crate::PathTransform {
+/// What a white rect `width` x `height` drawn through `transform` (its
+/// translation then moved by each of ten sub-pixel offsets) covers, over its
+/// area: the lowest and the highest.
+fn coverage_over_offsets(width: f64, height: f64, transform: crate::PathTransform) -> (f64, f64) {
+    let paint = crate::rect::resolve_rect_paint(
+        Some(&Paint::Solid {
+            color: "#FFFFFF".to_owned(),
+        }),
+        None,
+    )
+    .unwrap();
+    let area = width * height * (transform.a * transform.d - transform.b * transform.c).abs();
+    (0..10)
+        .map(|step| {
+            let offset = f64::from(step) / 10.0;
+            let transform = crate::PathTransform {
+                tx: transform.tx + offset,
+                ty: transform.ty + offset * 0.37,
+                ..transform
+            };
+            let rect = crate::rect::rasterize_rect_transformed(
+                width, height, 0.0, &paint, transform, 200, 120,
+            )
+            .unwrap();
+            let covered: f64 = rect
+                .image
+                .pixels()
+                .chunks_exact(4)
+                .map(|pixel| f64::from(pixel[3]) / 255.0)
+                .sum();
+            covered / area
+        })
+        .fold((f64::MAX, f64::MIN), |(low, high), ratio| {
+            (low.min(ratio), high.max(ratio))
+        })
+}
+
+/// Rotations and shears (`x' = a x + c y`, `y' = b x + d y`) that lean
+/// edges off the pixel grid.
+fn leaning_transforms() -> [(&'static str, crate::PathTransform); 4] {
+    let rotation = |degrees: f64| {
+        let (sin, cos) = degrees.to_radians().sin_cos();
+        crate::PathTransform {
+            a: cos,
+            b: sin,
+            c: -sin,
+            d: cos,
+            tx: 60.0,
+            ty: 30.0,
+        }
+    };
+    let shear = |c: f64| crate::PathTransform {
         a: 1.0,
         b: 0.0,
-        c: 1.0,
+        c,
         d: 1.0,
-        tx: 16.3,
-        ty: 8.4,
+        tx: 60.0,
+        ty: 30.0,
     };
-    let frame = transformed_rect(0.2, 0.2, None, shear);
-    let total: u32 = frame
-        .pixels()
-        .chunks_exact(4)
-        .map(|pixel| u32::from(pixel[3]))
-        .sum();
-    assert_eq!(total, 10);
-    assert_eq!(pixel(&frame, 16, 8)[3], 10);
+    [
+        ("rotated 30", rotation(30.0)),
+        ("rotated 45", rotation(45.0)),
+        ("sheared 1", shear(1.0)),
+        ("sheared 2", shear(2.0)),
+    ]
+}
+
+#[test]
+fn thin_strips_cover_their_area_wherever_they_fall() {
+    // A single sample per pixel measured in Euclidean pixels drew a 0.1 px
+    // strip at 45 degrees anywhere from 0.71 to 1.45 of its area depending on
+    // where its edges fell between pixel centres, so a moving strip
+    // flickered.
+    for (name, transform) in leaning_transforms() {
+        for width in [0.1, 0.25, 0.5, 1.0] {
+            let (low, high) = coverage_over_offsets(width, 40.0, transform);
+            assert!(
+                low >= 0.97 && high <= 1.12,
+                "{name}, width {width}: {low:.2} to {high:.2}"
+            );
+        }
+    }
+}
+
+#[test]
+fn boxes_within_a_pixel_stay_near_their_area_when_leaning() {
+    // Smaller than a pixel in both directions, one sample cannot place a
+    // box exactly, but it neither vanishes nor draws several times its area.
+    for (name, transform) in leaning_transforms() {
+        for (width, height) in [(0.2, 0.2), (0.5, 0.3)] {
+            let (low, high) = coverage_over_offsets(width, height, transform);
+            assert!(
+                low >= 0.4 && high <= 1.8,
+                "{name}, {width}x{height}: {low:.2} to {high:.2}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -1737,42 +1814,5 @@ fn a_stroke_filling_the_rect_hides_its_fill() {
     .unwrap();
     for pixel in rect.pixels().chunks_exact(4) {
         assert_eq!(pixel, [255, 0, 0, 255]);
-    }
-}
-
-#[test]
-fn a_strongly_sheared_thin_strip_covers_about_its_area() {
-    // x' = x + 2y leans a 40-unit strip until its edges meet at 27 degrees:
-    // its widths across each other, divided by the sine between them, let
-    // its whole length draw up to 2.6 times its area.
-    let paint = crate::rect::resolve_rect_paint(
-        Some(&Paint::Solid {
-            color: "#FFFFFF".to_owned(),
-        }),
-        None,
-    )
-    .unwrap();
-    let shear = crate::PathTransform {
-        a: 1.0,
-        b: 0.0,
-        c: 2.0,
-        d: 1.0,
-        tx: 60.3,
-        ty: 30.4,
-    };
-    for width in [0.1, 0.25, 0.5] {
-        let rect =
-            crate::rect::rasterize_rect_transformed(width, 40.0, 0.0, &paint, shear, 200, 120)
-                .unwrap();
-        let covered: f64 = rect
-            .image
-            .pixels()
-            .chunks_exact(4)
-            .map(|pixel| f64::from(pixel[3]) / 255.0)
-            .sum();
-        // A single sample per pixel aliases along a sloped strip, as it does
-        // unsheared at the same angle; within that, the area.
-        let ratio = covered / (width * 40.0);
-        assert!((0.7..1.4).contains(&ratio), "width {width}: {ratio:.2}");
     }
 }

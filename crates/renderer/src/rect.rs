@@ -201,65 +201,61 @@ fn shade_rect(
     pixels
 }
 
-/// [`signed_distance_rounded_box`] in output pixels for a box drawn through
-/// an affine transform, given that transform's `inverse`. Exact for a
-/// rotation and a uniform scale, and along straight edges under any
-/// transform. A non-uniform scale stretches the corners into ellipses,
-/// whose distance this approximates by the local distance over its gradient
-/// in output pixels. `layer.wgsl` in `celesta-gpu-renderer` mirrors it.
+/// [`signed_distance_rounded_box`] for a box drawn through an affine
+/// transform, given that transform's `inverse`, measured for anti-aliasing:
+/// in units of a pixel's width across the edge, `|n.x| + |n.y|` for the
+/// edge's normal `n` in output pixels (1 for an edge along a row or column,
+/// up to √2 at 45 degrees). `0.5 - distance` then ramps across the edge as
+/// a pixel-sized box filter does, so a thin strip at any angle draws the
+/// same however its edges fall between pixel centres. That is the local
+/// distance over the L1 length of its gradient in output pixels: exact
+/// along straight edges, and a first-order approximation round a corner
+/// (an ellipse, under a non-uniform scale). `layer.wgsl` in
+/// `celesta-gpu-renderer` mirrors it.
 struct RectDistance {
     /// The inverse's rows: how the local x and y change per output pixel.
     gradient_x: (f64, f64),
     gradient_y: (f64, f64),
-    /// Output pixels per local unit, perpendicular to a vertical edge and
-    /// to a horizontal one.
-    scale_x: f64,
-    scale_y: f64,
-    /// `|det|` of the inverse: local area per output pixel.
-    area_per_pixel: f64,
-    /// The scale, when it is the same along every direction.
-    uniform: Option<f64>,
+    /// The L1 length of each, the local units across a pixel's width
+    /// across a vertical edge and a horizontal one.
+    footprint_x: f64,
+    footprint_y: f64,
 }
 
 impl RectDistance {
     fn new(inverse: PathTransform) -> Self {
         let gradient_x = (inverse.a, inverse.c);
         let gradient_y = (inverse.b, inverse.d);
-        let scale_x = 1.0 / gradient_x.0.hypot(gradient_x.1);
-        let scale_y = 1.0 / gradient_y.0.hypot(gradient_y.1);
-        let orthogonal = gradient_x.0 * gradient_y.0 + gradient_x.1 * gradient_y.1 == 0.0;
+        let l1 = |(x, y): (f64, f64)| x.abs() + y.abs();
         Self {
             gradient_x,
             gradient_y,
-            scale_x,
-            scale_y,
-            area_per_pixel: (inverse.a * inverse.d - inverse.b * inverse.c).abs(),
-            uniform: (orthogonal && scale_x == scale_y).then_some(scale_x),
+            footprint_x: l1(gradient_x),
+            footprint_y: l1(gradient_y),
         }
     }
 
     /// The most of a pixel a box of these half extents can cover. One
     /// sample's `0.5 - distance` alone reaches 0.5 at the centre of a box
-    /// thinner than a pixel, or even empty. A box covers at most its own
-    /// area, and the strip between two parallel edges at most its width
-    /// across them: the band of pixels whose centres lie within half a pixel
-    /// of a strip holds one centre per unit of its length at any angle, so
-    /// that keeps a thin strip's total coverage at its area under rotation
-    /// or shear. Never more than the whole pixel.
+    /// thinner than a pixel, or even empty. A box filter gives a pixel well
+    /// inside the ramps of a pair of parallel edges their distance apart, in
+    /// the units [`Self::of`] measures in; inside both pairs' ramps, the
+    /// product of the two. Each is at most 1.
     fn coverage_cap(&self, half_width: f64, half_height: f64) -> f64 {
-        let (width, height) = (2.0 * half_width, 2.0 * half_height);
-        let cap = (width * height / self.area_per_pixel)
-            .min(width * self.scale_x)
-            .min(height * self.scale_y);
-        // Not `clamp`, which keeps a NaN (a NaN size) that the caller's
-        // `clamp(0.0, cap)` panics on.
-        if cap >= 0.0 { cap.min(1.0) } else { 0.0 }
+        let across = |size: f64, footprint: f64| {
+            let fraction = size / footprint;
+            // Not `clamp`, which keeps a NaN (a NaN size) that the caller's
+            // `clamp(0.0, cap)` panics on.
+            if fraction >= 0.0 {
+                fraction.min(1.0)
+            } else {
+                0.0
+            }
+        };
+        across(2.0 * half_width, self.footprint_x) * across(2.0 * half_height, self.footprint_y)
     }
 
     fn of(&self, px: f64, py: f64, half_width: f64, half_height: f64, radius: f64) -> f64 {
-        if let Some(scale) = self.uniform {
-            return signed_distance_rounded_box(px, py, half_width, half_height, radius) * scale;
-        }
         let qx = px.abs() - half_width + radius;
         let qy = py.abs() - half_height + radius;
         if qx > 0.0 && qy > 0.0 {
@@ -270,9 +266,9 @@ impl RectDistance {
             let (gx, gy) = (signed(qx, px) / length, signed(qy, py) / length);
             let along_x = gx * self.gradient_x.0 + gy * self.gradient_y.0;
             let along_y = gx * self.gradient_x.1 + gy * self.gradient_y.1;
-            (length - radius) / along_x.hypot(along_y)
+            (length - radius) / (along_x.abs() + along_y.abs())
         } else {
-            ((qx - radius) * self.scale_x).max((qy - radius) * self.scale_y)
+            ((qx - radius) / self.footprint_x).max((qy - radius) / self.footprint_y)
         }
     }
 }
