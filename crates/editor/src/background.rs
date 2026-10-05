@@ -189,8 +189,13 @@ impl EditorView {
 
         loop {
             match self.export_worker.events.try_recv() {
-                // The preview already lists font fallbacks.
-                Ok(ExportEvent::Progress(ExportProgress::Warning(_))) => {}
+                // The preview already lists font fallbacks; `Finished` reports
+                // the output, and the label stays on the last stage until then.
+                Ok(ExportEvent::Progress(
+                    ExportProgress::Warning(_)
+                    | ExportProgress::Composition(_)
+                    | ExportProgress::Wrote(_),
+                )) => {}
                 Ok(ExportEvent::Progress(progress)) => {
                     self.export_progress = Some(progress);
                 }

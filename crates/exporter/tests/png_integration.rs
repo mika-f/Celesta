@@ -22,16 +22,22 @@ fn pixels(path: &Path) -> Vec<u8> {
     pixels
 }
 
-#[test]
-fn json_cli_exports_first_last_and_rejects_overwrite_and_invalid_frames() {
-    let dir = tempfile::tempdir().unwrap();
+/// A 3x3, 4 fps, one-second (four-frame) project written into `dir`.
+fn tiny_project(dir: &Path) -> PathBuf {
     let mut project = Project::load(root().join("examples/minimal.celesta.json")).unwrap();
     project.settings.width = 3;
     project.settings.height = 3;
     project.settings.duration = Some(celesta_composition::Time::new(1, 1));
     project.settings.frame_rate = celesta_composition::Rational::new(4, 1);
-    let source = dir.path().join("project.celesta.json");
+    let source = dir.join("project.celesta.json");
     std::fs::write(&source, serde_json::to_vec(&project).unwrap()).unwrap();
+    source
+}
+
+#[test]
+fn json_cli_exports_first_last_and_rejects_overwrite_and_invalid_frames() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = tiny_project(dir.path());
     let output = dir.path().join("check.png");
     let invoke = |frames: &str, extra: &[&str]| {
         Command::new(env!("CARGO_BIN_EXE_celesta-exporter"))
@@ -68,6 +74,69 @@ fn json_cli_exports_first_last_and_rejects_overwrite_and_invalid_frames() {
     assert!(!invoke("-1", &[]).status.success());
     assert!(!invoke("0", &["--from", "0"]).status.success());
     assert!(!invoke("0", &["--output-format", "mp4"]).status.success());
+}
+
+#[test]
+fn json_report_lists_every_written_file_or_a_coded_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = tiny_project(dir.path());
+    let output = dir.path().join("check.png");
+    let invoke = |args: &[&str]| {
+        let result = Command::new(env!("CARGO_BIN_EXE_celesta-exporter"))
+            .arg("--json")
+            .arg(&source)
+            .args(args)
+            .arg(&output)
+            .output()
+            .unwrap();
+        assert!(result.stderr.is_empty(), "{}", stderr(&result));
+        let report: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+        (result.status.code(), report)
+    };
+
+    let (status, report) = invoke(&["--frames", "3,0"]);
+    assert_eq!(status, Some(0), "{report}");
+    assert_eq!(report["status"], "ok");
+    assert_eq!(
+        report["composition"],
+        serde_json::json!({ "width": 3, "height": 3, "fps": 4.0, "frames": 4, "duration": 1.0 })
+    );
+    let outputs = report["outputs"].as_array().unwrap();
+    assert_eq!(
+        outputs
+            .iter()
+            .map(|output| (output["type"].clone(), output["frame"].clone()))
+            .collect::<Vec<_>>(),
+        [("frame".into(), 3.into()), ("frame".into(), 0.into())]
+    );
+    let first = Path::new(outputs[0]["path"].as_str().unwrap());
+    assert!(first.is_absolute() && first.ends_with("check-000003.png"));
+    assert_eq!(outputs[0]["time"], 0.75);
+
+    let (status, report) = invoke(&["--frames", "3,0"]);
+    assert_eq!(status, Some(1));
+    assert_eq!(report["error"]["code"], "output_exists");
+
+    let (status, report) = invoke(&["--every", "2", "--contact-sheet", "--overwrite"]);
+    assert_eq!(status, Some(0), "{report}");
+    assert_eq!(
+        report["outputs"],
+        serde_json::json!([{
+            "type": "contactSheet",
+            "path": std::path::absolute(&output).unwrap(),
+            "columns": 3,
+            "frames": [0, 2, 3]
+        }])
+    );
+
+    let (status, report) = invoke(&["--frame", "4", "--overwrite"]);
+    assert_eq!(status, Some(1));
+    assert_eq!(report["error"]["code"], "invalid_selection");
+    assert_eq!(report["composition"]["frames"], 4);
+
+    let (status, report) = invoke(&["--frame", "0", "--from", "0"]);
+    assert_eq!(status, Some(2));
+    assert_eq!(report["error"]["code"], "usage");
 }
 
 #[test]

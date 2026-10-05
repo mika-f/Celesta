@@ -47,19 +47,20 @@ do. Thousands of flat `Rect`s are cheap; a few dozen effects are not.
 
 ## Find slow parts
 
-The exporter reports its speed as it renders. In text mode (outside a
-terminal, or with `--no-ui`) it prints lines such as
+The exporter reports its speed. With `--json` it is `stats.renderFps`, the
+average for the whole export. In text mode (outside a terminal, or with
+`--no-ui`) it prints lines such as
 `rendering frame 300/1530  58.5 fps  elapsed 00:00:05  eta 00:00:21` to
 stderr; the `fps` is the average so far.
 
 To find which part of a video is slow, export spans of a few seconds and
-compare the last `fps` each one prints. `--preset ultrafast` keeps encoding
+compare their speeds. `--preset ultrafast` keeps encoding
 time out of the measurement. Choose start times that fit inside the video;
 this example is for one at least 44 s long:
 
 ```sh
 for t in 0 10 20 30 40; do
-  Celesta-export --no-ui --overwrite --preset ultrafast --from $t --to $((t + 4)) \
+  Celesta-export --json --overwrite --preset ultrafast --from $t --to $((t + 4)) \
     --react scene.tsx /tmp/celesta-speed.mp4 2>&1 | grep 'rendering frame' | tail -1
 done
 ```

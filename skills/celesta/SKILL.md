@@ -139,15 +139,18 @@ produces a video that differs between preview and export.
      `fitText`, or `@celesta/code` fail there, so go straight to PNG frames.
    - If the project has a `tsconfig.json` extending `./.celesta/tsconfig.json`,
      type-check with `npx tsc --noEmit -p .` (or `pnpm typecheck`).
-   - Look at real pixels: `Celesta-export --react film.tsx --frames 0,90 /tmp/celesta-check.png`,
-     then open the PNGs. Read any `warning:` lines (fonts, missing glyphs).
-     JSON projects: `Celesta-export project.celesta.json --frame 0 /tmp/celesta-check.png`
+   - Pass `--json` to every `Celesta-export` call: it prints one line of
+     JSON with the frame count, the exact files written, `warnings`, and an
+     error `code` ([export.md](references/export.md#json-results)).
+   - Look at real pixels: `Celesta-export --json --react film.tsx --frames 0,90 /tmp/celesta-check.png`,
+     then open the PNGs listed in `outputs`. Read `warnings` (fonts, missing glyphs).
+     JSON projects: `Celesta-export --json project.celesta.json --frame 0 /tmp/celesta-check.png`
      also validates the whole file.
    - See the whole video at once with a contact sheet:
      `--every 150 --contact-sheet /tmp/celesta-sheet.png` (one tile every
      5 s at 30 fps).
-   - Export MP4 only for audio or the final file, with `--no-ui` so progress
-     is plain text ([export.md](references/export.md)).
+   - Export MP4 only for audio or the final file
+     ([export.md](references/export.md)).
 4. **Report back.** Tell the user which file to open (File → Open…) or
    reload (JSON projects need File → Reload; React entries reload on save),
    what you verified, and what you could not verify (for example, audio you
@@ -173,6 +176,6 @@ Load only the one you need; each is self-contained.
 | `.celesta.json` schema, time values, tracks, item types, transforms, keyframes, easing names, validation rules, full example | [project-json.md](references/project-json.md) |
 | React reading a project (`useProjectProperty`), `defineProjectProperties`, `<ProjectTimeline />`, `registerComponent` | [project-data.md](references/project-data.md) |
 | `inspect.mjs`, PNG frames, contact sheets, checking JSON and audio | [verify.md](references/verify.md) |
-| MP4 export options, progress output, exporting without a GPU | [export.md](references/export.md) |
+| MP4 export options, `--json` results, progress output, exporting without a GPU | [export.md](references/export.md) |
 | What is slow to render and how to find it | [performance.md](references/performance.md) |
 | An error message or warning | [errors.md](references/errors.md) |

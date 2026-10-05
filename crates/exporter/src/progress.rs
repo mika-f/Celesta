@@ -11,7 +11,7 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, Instant};
 
-use celesta_exporter::{ExportProgress, RenderQuality, VideoEncoding};
+use celesta_exporter::{ExportError, ExportProgress, RenderQuality, VideoEncoding};
 use ratatui::{
     Frame, Terminal, TerminalOptions, Viewport,
     backend::CrosstermBackend,
@@ -71,7 +71,7 @@ impl Stage {
     }
 }
 
-struct State {
+pub(crate) struct State {
     stage: Stage,
     active_stage: Stage,
     stage_started: Instant,
@@ -91,7 +91,7 @@ struct State {
 }
 
 impl State {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let now = Instant::now();
         Self {
             stage: Stage::Preparing,
@@ -113,7 +113,7 @@ impl State {
         }
     }
 
-    fn update(&mut self, event: ExportProgress) {
+    pub(crate) fn update(&mut self, event: ExportProgress) {
         match event {
             ExportProgress::Rendering { frame, total } => {
                 if self.stage != Stage::Rendering {
@@ -127,6 +127,7 @@ impl State {
             ExportProgress::MixingAudio => self.end_rendering(Stage::Mixing),
             ExportProgress::Muxing => self.end_rendering(Stage::Muxing),
             ExportProgress::Warning(warning) => self.warnings.push(warning),
+            ExportProgress::Composition(_) | ExportProgress::Wrote(_) => {}
         }
     }
 
@@ -166,7 +167,7 @@ impl State {
         self.sample_started = now;
     }
 
-    fn finish(&mut self, result: &Result<(), String>) {
+    pub(crate) fn finish(&mut self, result: &Result<(), String>) {
         self.finished = Some(Instant::now());
         if let Err(error) = result {
             self.error = Some(error.clone());
@@ -185,7 +186,7 @@ impl State {
         }
     }
 
-    fn metrics(&self) -> (Option<f64>, Option<Duration>) {
+    pub(crate) fn metrics(&self) -> (Option<f64>, Option<Duration>) {
         let Some(started) = self.rendering_started else {
             return (None, None);
         };
@@ -207,7 +208,7 @@ impl State {
         (Some(fps), eta)
     }
 
-    fn elapsed(&self) -> Duration {
+    pub(crate) fn elapsed(&self) -> Duration {
         self.finished
             .unwrap_or_else(Instant::now)
             .duration_since(self.started)
@@ -219,8 +220,8 @@ impl State {
 pub fn run(
     settings: Settings<'_>,
     no_ui: bool,
-    export: impl FnOnce(&mut dyn FnMut(ExportProgress)) -> Result<(), String>,
-) -> Result<(), String> {
+    export: impl FnOnce(&mut dyn FnMut(ExportProgress)) -> Result<(), ExportError>,
+) -> Result<(), ExportError> {
     let mut plain = PlainProgress::new();
     if no_ui
         || !io::stderr().is_terminal()
@@ -282,7 +283,7 @@ pub fn run(
         state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .finish(&result);
+            .finish(&result.as_ref().map(|_| ()).map_err(ToString::to_string));
         let _ = stop.send(());
         result
     });
@@ -719,6 +720,7 @@ impl PlainProgress {
                 self.state.update(event);
                 eprintln!("muxing MP4");
             }
+            ExportProgress::Composition(_) | ExportProgress::Wrote(_) => {}
             ExportProgress::Warning(warning) => {
                 if self.terminal {
                     eprintln!("\rwarning: {warning}");

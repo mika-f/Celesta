@@ -102,6 +102,11 @@ impl Sheet {
         })
     }
 
+    /// Tiles per row, at most the number of frames.
+    pub(crate) fn columns(&self) -> u32 {
+        self.columns
+    }
+
     pub(crate) fn width(&self) -> u32 {
         self.width
     }

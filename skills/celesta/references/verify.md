@@ -183,7 +183,7 @@ PNG export skips audio. Export a short MP4 span (see
 streams:
 
 ```sh
-Celesta-export --no-ui --overwrite --preset ultrafast --from 2 --to 5 --react scene.tsx /tmp/celesta-check.mp4
+Celesta-export --json --overwrite --preset ultrafast --from 2 --to 5 --react scene.tsx /tmp/celesta-check.mp4
 ffprobe -v error -show_entries format=duration:stream=codec_type -of compact /tmp/celesta-check.mp4
 ```
 
