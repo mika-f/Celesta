@@ -6,7 +6,8 @@ Builds `celesta-bench` (crates/bench) at a base revision and at the head
 workloads with both, and prints a Markdown table. Two modes:
 
 - `time` (default): wall-clock ms/frame on this machine's GPU. Runs
-  alternate base and head for `--rounds` rounds and the table gives medians.
+  base and head in a seeded random order for `--rounds` rounds (after one
+  discarded round) and the table gives medians with a bootstrap interval.
   Use this on a machine with a real GPU.
 - `instructions`: instructions per frame, counted by Valgrind's Cachegrind
   while Mesa's software Vulkan driver (lavapipe) renders, so shader work is
@@ -22,6 +23,7 @@ import csv
 import json
 import os
 from pathlib import Path
+import random
 import re
 import shutil
 import statistics
@@ -126,13 +128,20 @@ def measure_time(binaries, options):
     # A side with none of the requested workloads is skipped: celesta-bench
     # would run all of its workloads when given none.
     labels = [label for label in binaries if workloads[label]]
-    for round_index in range(options.rounds):
-        # Alternate the order so drift (thermals, clocks) hits both sides.
-        order = labels if round_index % 2 == 0 else labels[::-1]
+    rng = random.Random(options.seed)
+    # Round 0 is not recorded: a freshly built executable is slow on its
+    # first run (page cache, code signing checks), and so is a cold GPU.
+    for round_index in range(options.rounds + 1):
+        # A random order per round, from the reported seed, keeps drift
+        # (thermals, clocks) and any first-in-round effect from lining up
+        # with one side.
+        order = rng.sample(labels, len(labels))
         for label in order:
-            print(f"round {round_index + 1}/{options.rounds}: {label}", file=sys.stderr)
+            kind = "discarded" if round_index == 0 else f"{round_index}/{options.rounds}"
+            print(f"round {kind}: {label}", file=sys.stderr)
             for result in run_bench(binaries[label], arguments[label]):
-                samples[label].setdefault(result["workload"], []).append(result["ms_per_frame"])
+                if round_index > 0:
+                    samples[label].setdefault(result["workload"], []).append(result["ms_per_frame"])
                 adapter = f'{result["adapter"]} ({result["backend"]})'
     return samples, adapter
 
@@ -187,6 +196,19 @@ def measure_instructions(binaries, options):
     return samples, adapter
 
 
+def median_change_interval(before, after, seed, resamples=5000, confidence=0.95):
+    """Percentile-bootstrap confidence interval (in percent) of the change
+    of the median from `before` to `after`."""
+    rng = random.Random(seed)
+    changes = sorted(
+        (statistics.median(rng.choices(after, k=len(after)))
+         / statistics.median(rng.choices(before, k=len(before))) - 1) * 100
+        for _ in range(resamples)
+    )
+    tail = (1 - confidence) / 2
+    return changes[int(tail * resamples)], changes[int((1 - tail) * resamples) - 1]
+
+
 def report(samples, options, adapter, revisions):
     """Returns the Markdown report and whether a workload regressed."""
     unit = "ms/frame" if options.mode == "time" else "instructions/frame"
@@ -195,7 +217,8 @@ def report(samples, options, adapter, revisions):
         "",
         f"Base `{revisions['base']}`, head `{revisions['head']}`. "
         f"{adapter}, {options.size}, {options.frames} frames after {options.warmup} warmup, "
-        f"{options.rounds} round(s). Threshold {options.threshold:g}%.",
+        f"{options.rounds} round(s)" + (f", seed {options.seed}" if options.mode == "time" else "")
+        + f". Threshold {options.threshold:g}%.",
         "",
     ]
     regressed = False
@@ -221,12 +244,20 @@ def report(samples, options, adapter, revisions):
             continue
         before, after = base[workload], head[workload]
         change = (statistics.median(after) / statistics.median(before) - 1) * 100
-        # Wall-clock samples overlap when the change is within the noise.
-        separated = options.mode != "time" or min(after) > max(before) or max(after) < min(before)
+        interval = ""
+        if options.mode == "time":
+            # Noise decides a wall-clock change: report it only if the 95%
+            # bootstrap interval of the median's change excludes zero.
+            low, high = median_change_interval(before, after, options.seed)
+            separated = len(before) > 2 and len(after) > 2 and (low > 0 or high < 0)
+            interval = f" [{low:+.1f}, {high:+.1f}]"
+        else:
+            separated = True
         if change > options.threshold and separated:
-            verdict, regressed = "🔴 slower", True
+            verdict, regressed = "🔴 slower" if options.mode == "time" else "🔴 more instructions", True
         elif change < -options.threshold and separated:
-            verdict = "🟢 faster"
+            # Instruction counts are not speed on a GPU.
+            verdict = "🟢 faster" if options.mode == "time" else "🟢 fewer instructions"
         else:
             verdict = ""
         spread = ""
@@ -234,7 +265,7 @@ def report(samples, options, adapter, revisions):
             spread = f" ({fmt(min(after))}–{fmt(max(after))})"
         lines.append(
             f"| {workload} | {fmt(statistics.median(before))} | "
-            f"{fmt(statistics.median(after))}{spread} | {change:+.2f}% | {verdict} |"
+            f"{fmt(statistics.median(after))}{spread} | {change:+.2f}%{interval} | {verdict} |"
         )
     if options.mode == "instructions":
         lines += ["", "Instructions are counted with Cachegrind while lavapipe renders on the "
@@ -266,7 +297,9 @@ def main():
     compare.add_argument("--base", help="base revision (default: merge base with origin/main)")
     compare.add_argument("--head", help="head revision (default: the working tree)")
     compare.add_argument("--mode", choices=["time", "instructions"], default="time")
-    compare.add_argument("--rounds", type=int, help="runs per side (default: 5 time, 1 instructions)")
+    compare.add_argument("--rounds", type=int, help="runs per side (default: 10 time, 1 instructions)")
+    compare.add_argument("--seed", type=int, help="seed of the run order and the bootstrap (default: random; "
+                         "the report shows it)")
     compare.add_argument("--frames", type=int, help="measured frames (default: 120 time, 6 instructions)")
     compare.add_argument("--warmup", type=int, help="unmeasured frames first (default: 10 time, 2 instructions)")
     compare.add_argument("--size", help="WxH (default: 1920x1080 time, 640x360 instructions)")
@@ -285,8 +318,10 @@ def main():
     options = parser.parse_args()
 
     instructions = options.mode == "instructions"
+    if options.seed is None:
+        options.seed = random.SystemRandom().randrange(2**32)
     for name, (time_default, instructions_default) in {
-        "rounds": (5, 1), "frames": (120, 6), "warmup": (10, 2),
+        "rounds": (10, 1), "frames": (120, 6), "warmup": (10, 2),
         "size": ("1920x1080", "640x360"), "threshold": (5.0, 1.0),
     }.items():
         if getattr(options, name) is None:
