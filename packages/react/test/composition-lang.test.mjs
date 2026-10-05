@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import React from 'react';
 import { test } from 'vitest';
 
-import { Composition, Group, ProjectTimeline, Sequence, Text, useTextMetrics } from '../dist/index.js';
+import { Composition, Group, ProjectTimeline, Sequence, Text, TextBox, useFitText, useTextMetrics } from '../dist/index.js';
 import { mount, createResolver } from '../dist/render.js';
 import { registerComponent } from '../dist/registry.js';
 import { setTextMeasurer } from '../dist/text-measure.js';
@@ -68,6 +68,37 @@ test('composition language reaches nested text, project layers, metrics and comp
   assert.equal(plain.config.lang, undefined);
   assert.equal(texts(plain.renderAt({ value: 0, timescale: 30 }, null).scene.layers)[0].style.lang, undefined);
   assert.throws(() => mount(() => React.createElement(Composition, { ...config, lang: 42 })), /string `lang`/);
+});
+
+test('fitted text measures with the inherited language and preserves explicit overrides', () => {
+  setTextMeasurer(async () => { throw new Error('unexpected async measurement'); }, ({ style }) => {
+    const width = style.fontSize * (style.lang === 'zh-Hant' ? 4 : style.lang === 'ja-JP' ? 2 : 1);
+    return { width, height: style.fontSize, ascent: style.fontSize, descent: 0,
+      lineHeight: style.fontSize, lines: 1, glyphs: [] };
+  });
+  const options = Object.freeze({ width: 40, height: 40, minFontSize: 5, maxFontSize: 30,
+    style: Object.freeze({ fontFamily: 'Test Font' }) });
+  function Caption() {
+    const inherited = useFitText('fit', options);
+    const override = useFitText('override', { ...options, style: { lang: 'zh-Hant' } });
+    return React.createElement(Group, null,
+      React.createElement(Text, { style: inherited.style }, 'fit'),
+      React.createElement(Text, { style: override.style }, 'override'),
+      React.createElement(TextBox, options, 'box'));
+  }
+  const config = { width: 400, height: 200, fps: 30, durationInFrames: 1, lang: 'ja-JP' };
+  const root = mount(() => React.createElement(Composition, config, React.createElement(Caption)));
+  const content = texts(root.renderAt({ value: 0, timescale: 30 }, null).scene.layers);
+  assert.deepEqual(content.map(({ text, style }) => [text, style.lang, style.fontSize]), [
+    ['fit', 'ja-JP', 20], ['override', 'zh-Hant', 10], ['box', 'ja-JP', 20],
+  ]);
+  registerComponent('CompositionLanguageFittedCaption', Caption);
+  const preview = createResolver(root.config.lang).resolve(
+    [{ component: 'CompositionLanguageFittedCaption', props: {} }],
+    { ...config, time: { value: 0, timescale: 30 }, preview: true },
+  );
+  assert.deepEqual(texts(preview[0]), content);
+  assert.deepEqual(options.style, { fontFamily: 'Test Font' });
 });
 
 test('CLI inherits composition language for subtitles and preview requests from older bridges', () => {
