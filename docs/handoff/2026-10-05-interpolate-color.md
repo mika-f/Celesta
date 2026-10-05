@@ -21,11 +21,15 @@ colors the way `interpolate()` maps it onto numbers (issue #136).
   non-positive alpha gives `#00000000`. `'identity'` throws.
 - Non-finite input or `inputRange` values, mismatched lengths, a
   non-increasing range, and colors other than `#RRGGBB`/`#RRGGBBAA` throw.
-- Text solid fills now honor alpha. cosmic-text drops the base color's alpha
-  for ordinary (mask) glyphs, so `TextRasterizer` (`shaping.rs`) multiplies
-  it back into pixels whose RGB equals the fill's; color glyphs keep their
-  own alpha, and the stroke's dilation mask keeps full coverage. Before this,
-  `#FFFFFF80` text rendered opaque.
+- Text solid fills now honor alpha. cosmic-text's `Buffer::draw` drops the
+  base color's alpha for ordinary (mask) glyphs, so `TextRasterizer`
+  (`shaping.rs`) draws through its own `Renderer`, `GlyphPixelRenderer`, which
+  checks each glyph image's `SwashContent` and applies the alpha to mask
+  glyphs only. Color glyphs (emoji) keep their own pixels, and the stroke's
+  dilation mask keeps full coverage. Before this, `#FFFFFF80` text rendered
+  opaque.
+- `interpolateColor` validates arrays by index, so sparse-array holes are
+  rejected rather than skipped.
 - `examples/with-color.tsx` animates a `Rect` fill, gradient stops, and a
   `Text` fill; `crates/react-bridge/tests/node_integration.rs` checks the
   evaluated colors at frames 0 and 45.

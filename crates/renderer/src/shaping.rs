@@ -10,8 +10,8 @@ use crate::text::{AnchorBox, GlyphMetrics, RasterizedText, TextMetrics};
 use crate::types::{Color, RgbaFrame};
 use celesta_composition::{LineBreak, TextAlign, TextStyle};
 use cosmic_text::{
-    Align, Attrs, AttrsList, Buffer, BufferLine, Color as CosmicColor, Family, LineIter, Metrics,
-    Shaping, Weight, Wrap,
+    Align, Attrs, AttrsList, Buffer, BufferLine, Color as CosmicColor, Family, FontSystem,
+    LineIter, Metrics, PhysicalGlyph, Renderer, Shaping, SwashCache, SwashContent, Weight, Wrap,
 };
 
 impl TextRasterizer {
@@ -315,43 +315,31 @@ impl TextRasterizer {
         // multi-color emoji glyphs, which a single mask+solid-fill
         // composite cannot represent.
         let mut glyph_pixels = vec![0_u8; mask_width as usize * mask_height as usize * 4];
-        buffer.draw(
-            &mut self.font_system,
-            &mut self.swash_cache,
-            CosmicColor::rgba(fill.red, fill.green, fill.blue, fill.alpha),
-            |x, y, width, height, color| {
-                for offset_y in 0..height as i32 {
-                    for offset_x in 0..width as i32 {
-                        let pixel_x = x + offset_x + pad as i32;
-                        let pixel_y = y + offset_y + pad as i32;
-                        if pixel_x < 0
-                            || pixel_y < 0
-                            || pixel_x >= mask_width as i32
-                            || pixel_y >= mask_height as i32
-                        {
-                            continue;
-                        }
-                        let offset = pixel_y as usize * mask_width as usize + pixel_x as usize;
-                        mask[offset] = mask[offset].max(color.a());
-                        let pixel_offset = offset * 4;
-                        // cosmic-text drops the base color's alpha, so plain
-                        // glyph pixels (those in the fill's color) come back
-                        // with coverage alone; apply the fill's alpha here.
-                        let alpha = if [color.r(), color.g(), color.b()]
-                            == [fill.red, fill.green, fill.blue]
-                        {
-                            (f64::from(color.a()) * f64::from(fill.alpha) / 255.0).round() as u8
-                        } else {
-                            color.a()
-                        };
-                        blend(
-                            &mut glyph_pixels[pixel_offset..pixel_offset + 4],
-                            Color::rgba(color.r(), color.g(), color.b(), alpha),
-                            1.0,
-                        );
+        buffer.render(
+            &mut GlyphPixelRenderer {
+                font_system: &mut self.font_system,
+                cache: &mut self.swash_cache,
+                callback: |x: i32, y: i32, coverage: u8, color: CosmicColor| {
+                    let pixel_x = x + pad as i32;
+                    let pixel_y = y + pad as i32;
+                    if pixel_x < 0
+                        || pixel_y < 0
+                        || pixel_x >= mask_width as i32
+                        || pixel_y >= mask_height as i32
+                    {
+                        return;
                     }
-                }
+                    let offset = pixel_y as usize * mask_width as usize + pixel_x as usize;
+                    mask[offset] = mask[offset].max(coverage);
+                    let pixel_offset = offset * 4;
+                    blend(
+                        &mut glyph_pixels[pixel_offset..pixel_offset + 4],
+                        Color::rgba(color.r(), color.g(), color.b(), color.a()),
+                        1.0,
+                    );
+                },
             },
+            CosmicColor::rgba(fill.red, fill.green, fill.blue, fill.alpha),
         );
 
         if let Some(gradient) = fill_paint.as_ref().filter(|paint| paint.solid().is_none()) {
@@ -452,4 +440,46 @@ pub(crate) fn trim_transparent_rows(frame: RgbaFrame) -> (RgbaFrame, i32) {
         },
         min_y as i32 - pad_top as i32,
     )
+}
+
+/// Draws glyphs pixel by pixel like cosmic-text's `Buffer::draw`, but applies
+/// the base color's alpha to ordinary (mask) glyphs, which `draw` drops.
+/// Color glyphs (emoji) keep their own pixels. `callback` receives each
+/// pixel's position, its unscaled coverage, and its color.
+struct GlyphPixelRenderer<'a, F: FnMut(i32, i32, u8, CosmicColor)> {
+    font_system: &'a mut FontSystem,
+    cache: &'a mut SwashCache,
+    callback: F,
+}
+
+impl<F: FnMut(i32, i32, u8, CosmicColor)> Renderer for GlyphPixelRenderer<'_, F> {
+    fn rectangle(&mut self, x: i32, y: i32, w: u32, h: u32, color: CosmicColor) {
+        for offset_y in 0..h as i32 {
+            for offset_x in 0..w as i32 {
+                (self.callback)(x + offset_x, y + offset_y, color.a(), color);
+            }
+        }
+    }
+
+    fn glyph(&mut self, glyph: PhysicalGlyph, color: CosmicColor) {
+        let Self {
+            font_system,
+            cache,
+            callback,
+        } = self;
+        let mask = matches!(
+            cache.get_image(font_system, glyph.cache_key),
+            Some(image) if matches!(image.content, SwashContent::Mask)
+        );
+        cache.with_pixels(font_system, glyph.cache_key, color, |x, y, pixel| {
+            let coverage = pixel.a();
+            let pixel = if mask {
+                let alpha = (f64::from(coverage) * f64::from(color.a()) / 255.0).round() as u8;
+                CosmicColor::rgba(pixel.r(), pixel.g(), pixel.b(), alpha)
+            } else {
+                pixel
+            };
+            callback(glyph.x + x, glyph.y + y, coverage, pixel);
+        });
+    }
 }

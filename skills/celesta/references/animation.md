@@ -103,7 +103,8 @@ Same `inputRange` rules and `easing` as `interpolate`, but takes `#RRGGBB` /
   color's RGB is ignored, so `#00000000` works as "transparent". Channels
   that `'extend'` or an overshooting easing push past 0–255 are clamped.
 - At each `inputRange` entry the result is exactly that color (normalized
-  to `#RRGGBBAA`).
+  to `#RRGGBBAA`), as long as the easing returns 0 at 0 and 1 at 1, as every
+  `Easings` curve does.
 
 ## Easings
 

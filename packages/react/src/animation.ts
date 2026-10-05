@@ -122,18 +122,20 @@ export function interpolateColor(
   if (inputRange.length < 2 || inputRange.length !== colors.length) {
     throw new Error('interpolateColor() requires inputRange and colors of the same length, at least 2');
   }
-  if (!inputRange.every((value) => typeof value === 'number' && Number.isFinite(value))) {
-    throw new Error('interpolateColor() requires finite inputRange values');
-  }
-  for (let i = 1; i < inputRange.length; i += 1) {
-    if (inputRange[i] <= inputRange[i - 1]) {
+  // Indexed loops rather than every()/map(), which skip sparse-array holes.
+  for (let i = 0; i < inputRange.length; i += 1) {
+    const value = inputRange[i];
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      throw new Error('interpolateColor() requires finite inputRange values');
+    }
+    if (i > 0 && value <= inputRange[i - 1]) {
       throw new Error('interpolateColor() requires inputRange to be strictly increasing');
     }
   }
-  const rgba = colors.map((color, index) => {
+  const rgba = Array.from(colors, (color, index) => {
     if (typeof color !== 'string' || !HEX_COLOR.test(color)) {
       throw new Error(
-        `interpolateColor() requires #RRGGBB or #RRGGBBAA colors, got ${JSON.stringify(color)} at index ${index}`,
+        `interpolateColor() requires #RRGGBB or #RRGGBBAA colors, got ${String(JSON.stringify(color))} at index ${index}`,
       );
     }
     return parseHexColor(color);

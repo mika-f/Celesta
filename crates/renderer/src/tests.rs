@@ -741,6 +741,37 @@ fn solid_text_fill_alpha_scales_the_glyphs_alpha() {
 }
 
 #[test]
+fn solid_text_fill_alpha_leaves_color_emoji_glyphs_alone() {
+    let mut rasterizer = TextRasterizer::new();
+    let mut pixels = |color: &str| {
+        let style = TextStyle {
+            font_size: Some(64.0),
+            fill: Some(Paint::Solid {
+                color: color.to_owned(),
+            }),
+            ..TextStyle::default()
+        };
+        rasterizer
+            .rasterize("\u{1F525}", &style, None, 1.0)
+            .unwrap()
+            .pixels()
+            .to_vec()
+    };
+    let (opaque, translucent) = (pixels("#FFFFFF"), pixels("#FFFFFF80"));
+    let distinct_colors: std::collections::HashSet<[u8; 3]> = opaque
+        .chunks_exact(4)
+        .filter(|pixel| pixel[3] > 0)
+        .map(|pixel| [pixel[0], pixel[1], pixel[2]])
+        .collect();
+    if distinct_colors.len() <= 1 {
+        eprintln!("skipping: no color-emoji font available in this environment");
+        return;
+    }
+    // Even emoji pixels whose color matches the fill keep their own alpha.
+    assert_eq!(opaque, translucent);
+}
+
+#[test]
 fn letter_spacing_widens_and_tightens_text() {
     let mut rasterizer = TextRasterizer::new();
     let mut width = |letter_spacing| {

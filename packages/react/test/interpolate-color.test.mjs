@@ -81,6 +81,11 @@ test('interpolateColor validates its arguments', () => {
   assert.throws(() => interpolateColor(0, [10, 0], ['#000000', '#FFFFFF']), /strictly increasing/);
   assert.throws(() => interpolateColor(0, [0, Number.NaN], ['#000000', '#FFFFFF']), /finite inputRange/);
   assert.throws(() => interpolateColor(0, [0, Infinity], ['#000000', '#FFFFFF']), /finite inputRange/);
+  // Sparse-array holes are missing values, not skipped entries.
+  // eslint-disable-next-line no-sparse-arrays
+  assert.throws(() => interpolateColor(5, [0, , 10], ['#000000', '#808080', '#FFFFFF']), /finite inputRange/);
+  // eslint-disable-next-line no-sparse-arrays
+  assert.throws(() => interpolateColor(5, [0, 5, 10], ['#000000', , '#FFFFFF']), /got undefined at index 1/);
   assert.throws(() => interpolateColor(Number.NaN, [0, 10], ['#000000', '#FFFFFF']), /finite input/);
   assert.throws(() => interpolateColor(Infinity, [0, 10], ['#000000', '#FFFFFF']), /finite input/);
   for (const color of ['red', '#FFF', '#FFFFF', '#FFFFFFF', '#GGGGGG', 'FFFFFF', '#FFFFFFFFFF', 'rgb(0,0,0)', 0]) {
