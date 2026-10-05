@@ -112,7 +112,8 @@ produces a video that differs between preview and export.
    scenes in a row, `Stagger` and `progress` for entrances, `useBeat` for
    music, `useCue` for things that change at given frames, `TextReveal`,
    `useTypewriter`, `useCountUp`, `Camera`, `Line`/`Polyline`/`Path` (one
-   layer per stroke: draw line art as paths, not as many thin `Rect`s).
+   layer per stroke: draw line art as paths, not as many thin `Rect`s), and
+   `Circle`/`Ellipse`/`Arrow` for diagrams.
    Effects (`blur`, `glow`, `shadow`) and blend modes cost GPU passes per
    layer. Put one effect on a `Group` rather than one on each of dozens of
    layers. See [Rendering cost](references/react-api.md#rendering-cost).

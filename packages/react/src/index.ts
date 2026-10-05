@@ -92,8 +92,11 @@ export type {
   PlannedDialogueLine,
 } from './dialogue-series';
 
-export { Line, Path, Polyline, pointOnPolyline } from './shapes';
+export { Arrow, Circle, Ellipse, Line, Path, Polyline, pointOnPolyline } from './shapes';
 export type {
+  ArrowProps,
+  CircleProps,
+  EllipseProps,
   LineCap,
   LineJoin,
   LineProps,

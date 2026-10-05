@@ -212,3 +212,192 @@ export function Polyline({
     join: join ?? (cap === 'round' ? 'round' : 'miter'),
   });
 }
+
+export interface EllipseProps extends CommonProps {
+  /** Width of the ellipse's bounding box, in pixels. 0 draws nothing. */
+  width: number;
+  /** Height of the ellipse's bounding box, in pixels. 0 draws nothing. */
+  height: number;
+  /**
+   * Hex color or a gradient `Paint` in the shape's local pixels (origin at
+   * its bounding box's top-left, as for `<Rect>`). Omit for no fill.
+   */
+  fill?: string | Paint;
+  /** Hex color or `Paint` of a stroke drawn inside the outline, as for `<Rect>`. */
+  stroke?: string | Paint;
+  /** Thickness in pixels, at most half the shorter side. Defaults to 2. */
+  strokeWidth?: number;
+}
+
+export interface CircleProps extends Omit<EllipseProps, 'width' | 'height'> {
+  /** Radius in pixels; the bounding box is `2 * radius` square. 0 draws nothing. */
+  radius: number;
+}
+
+export interface ArrowProps extends PathLayerProps {
+  /** Tail point. */
+  x1: number;
+  y1: number;
+  /** Tip point, where the head points. */
+  x2: number;
+  y2: number;
+  /** Hex color or a gradient `Paint` (in the arrow's coordinates) of the whole arrow. Defaults to white. */
+  stroke?: string | Paint;
+  /** Thickness of the shaft in pixels. Defaults to 2. */
+  strokeWidth?: number;
+  /** Length of each head along the arrow, in pixels. Defaults to 4 × `strokeWidth`. */
+  headLength?: number;
+  /**
+   * Width of each head across the arrow, in pixels, at least `strokeWidth`.
+   * Defaults to 4 × `strokeWidth`.
+   */
+  headWidth?: number;
+  /** Which ends get a head: `'end'` (the default, at `x2`/`y2`), `'start'`, or `'both'`. */
+  heads?: 'end' | 'start' | 'both';
+}
+
+function dimensionOf(value: number, name: string, component: string): number {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error(`<${component}> requires a finite \`${name}\` of at least 0, got ${String(value)}`);
+  }
+  return value;
+}
+
+/** Eight cubic arcs, each within 0.0004% of the radius of a true ellipse. */
+function ellipseCommands(cx: number, cy: number, rx: number, ry: number): PathCommand[] {
+  const k = (4 / 3) * Math.tan(Math.PI / 16);
+  const at = (i: number) => [Math.cos((i * Math.PI) / 4), Math.sin((i * Math.PI) / 4)];
+  const commands: PathCommand[] = [{ type: 'moveTo', x: cx + rx, y: cy }];
+  for (let i = 0; i < 8; i += 1) {
+    const [c0, s0] = at(i);
+    const [c1, s1] = at(i + 1);
+    commands.push({
+      type: 'cubicTo',
+      x1: cx + rx * (c0 - k * s0),
+      y1: cy + ry * (s0 + k * c0),
+      x2: cx + rx * (c1 + k * s1),
+      y2: cy + ry * (s1 - k * c1),
+      x: cx + rx * c1,
+      y: cy + ry * s1,
+    });
+  }
+  commands.push({ type: 'close' });
+  return commands;
+}
+
+/** `paint` with its gradient points moved by `dx`/`dy`. */
+function offsetPaint(paint: string | Paint | undefined, dx: number, dy: number): string | Paint | undefined {
+  if (paint === undefined || typeof paint === 'string' || paint.type === 'solid') {
+    return paint;
+  }
+  const move = ({ x, y }: { x: number; y: number }) => ({ x: x + dx, y: y + dy });
+  return paint.type === 'linear'
+    ? { ...paint, start: move(paint.start), end: move(paint.end) }
+    : { ...paint, center: move(paint.center) };
+}
+
+/**
+ * An ellipse filling a `width` × `height` box, drawn as one `<Path>`. Like
+ * `<Rect>`, `x`/`y` place the box's `anchorX`/`anchorY` point (its top-left
+ * by default), and the stroke stays inside the box.
+ */
+export function Ellipse({
+  width,
+  height,
+  fill,
+  stroke,
+  strokeWidth,
+  anchorX = 0,
+  anchorY = 0,
+  ...props
+}: EllipseProps): ReturnType<typeof React.createElement> | null {
+  dimensionOf(width, 'width', 'Ellipse');
+  dimensionOf(height, 'height', 'Ellipse');
+  const strokeWidthDrawn = stroke === undefined
+    ? 0
+    : Math.min(strokeWidthOf(strokeWidth, 'Ellipse'), Math.min(width, height) / 2);
+  if (width === 0 || height === 0) {
+    return null;
+  }
+  // The path has no anchor, so its origin is the anchor point.
+  const left = -anchorX * width;
+  const top = -anchorY * height;
+  // The stroke is centred on the outline, so inset it by half its width.
+  const inset = strokeWidthDrawn / 2;
+  return React.createElement(Path, {
+    ...props,
+    commands: ellipseCommands(left + width / 2, top + height / 2, width / 2 - inset, height / 2 - inset),
+    fill: offsetPaint(fill, left, top),
+    stroke: offsetPaint(stroke, left, top),
+    ...(stroke === undefined ? {} : { strokeWidth: strokeWidthDrawn }),
+  });
+}
+
+/** A circle of `radius`, as an `<Ellipse>` `2 * radius` square. */
+export function Circle({ radius, ...props }: CircleProps): ReturnType<typeof React.createElement> | null {
+  dimensionOf(radius, 'radius', 'Circle');
+  return React.createElement(Ellipse, { ...props, width: radius * 2, height: radius * 2 });
+}
+
+/**
+ * A straight arrow from `x1`/`y1` to `x2`/`y2`, filled as one `<Path>`
+ * outline, so a translucent or gradient arrow has no seam between shaft and
+ * head. The shaft ends flat, and each head's tip is exactly at its end
+ * point. An arrow shorter than its heads scales them down to fit, keeping
+ * their shape, and one with no length draws nothing.
+ */
+export function Arrow({
+  x1,
+  y1,
+  x2,
+  y2,
+  stroke = '#FFFFFF',
+  strokeWidth,
+  headLength,
+  headWidth,
+  heads = 'end',
+  ...props
+}: ArrowProps): ReturnType<typeof React.createElement> | null {
+  for (const [name, value] of [['x1', x1], ['y1', y1], ['x2', x2], ['y2', y2]] as const) {
+    if (!Number.isFinite(value)) {
+      throw new Error(`<Arrow> requires a finite \`${name}\`, got ${String(value)}`);
+    }
+  }
+  const width = strokeWidthOf(strokeWidth, 'Arrow');
+  const length = headLength ?? width * 4;
+  const spread = headWidth ?? width * 4;
+  for (const [name, value] of [['headLength', length], ['headWidth', spread]] as const) {
+    if (!Number.isFinite(value) || value <= 0) {
+      throw new Error(`<Arrow> requires a positive \`${name}\`, got ${String(value)}`);
+    }
+  }
+  if (heads !== 'end' && heads !== 'start' && heads !== 'both') {
+    throw new Error(`<Arrow> heads must be 'end', 'start', or 'both', not ${JSON.stringify(heads)}`);
+  }
+  const total = Math.hypot(x2 - x1, y2 - y1);
+  if (total === 0) {
+    return null;
+  }
+  const atStart = heads !== 'end';
+  const atEnd = heads !== 'start';
+  const fit = Math.min(1, total / (length * (atStart && atEnd ? 2 : 1)));
+  const head = length * fit;
+  const shaft = width / 2;
+  const wing = Math.max(spread * fit, width) / 2;
+  // `s` runs along the arrow from the tail, `t` across it.
+  const ux = (x2 - x1) / total;
+  const uy = (y2 - y1) / total;
+  const point = (s: number, t: number): PolylinePoint => [x1 + ux * s - uy * t, y1 + uy * s + ux * t];
+  const back = atStart ? head : 0;
+  const front = atEnd ? total - head : total;
+  const outline: PolylinePoint[] = [
+    ...(atStart ? [point(0, 0), point(back, -wing)] : []),
+    point(back, -shaft),
+    point(front, -shaft),
+    ...(atEnd ? [point(front, -wing), point(total, 0), point(front, wing)] : []),
+    point(front, shaft),
+    point(back, shaft),
+    ...(atStart ? [point(back, wing)] : []),
+  ];
+  return React.createElement(Path, { ...props, points: outline, closed: true, fill: stroke });
+}

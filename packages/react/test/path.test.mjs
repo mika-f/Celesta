@@ -14,7 +14,7 @@ function render(body, { allowFailure = false } = {}) {
   const entry = join(dir, 'entry.tsx');
   writeFileSync(
     entry,
-    `import { Composition, Line, Path, Polyline } from '@celesta/react';\n` +
+    `import { Arrow, Circle, Composition, Ellipse, Line, Path, Polyline } from '@celesta/react';\n` +
       `export default function Root() {\n` +
       `  return (\n` +
       `    <Composition width={300} height={200} fps={30} durationInFrames={1}>\n` +
@@ -128,6 +128,127 @@ test('path commands and styles are validated', () => {
   ];
   for (const [body, error] of cases) {
     // Props the component checks fail the render; the rest fail the frame.
+    const [, frame] = render(body, { allowFailure: true });
+    assert.match(frame.error ?? '', error, body);
+  }
+});
+
+/** The on-curve points of an ellipse path: its moveTo and each cubic's end. */
+function onCurve(commands) {
+  return commands.filter((c) => c.type !== 'close').map((c) => [c.x, c.y]);
+}
+
+function assertClose(actual, expected, message) {
+  assert.ok(Math.abs(actual - expected) < 1e-9, `${message}: ${actual} != ${expected}`);
+}
+
+test('a circle is one closed path of cubic arcs, placed and rotated about its anchor', () => {
+  const [, frame] = render(`<Circle x={150} y={100} anchorX={0.5} anchorY={0.5} radius={40} rotation={30} fill="#3366CC" />`);
+  const [circle] = frame.scene.layers;
+  assert.deepEqual(circle.transform.position, { x: 150, y: 100 });
+  assert.equal(circle.transform.rotation, 30);
+  const { commands, fill, stroke } = circle.content;
+  assert.deepEqual(fill, { type: 'solid', color: '#3366CC' });
+  assert.equal(stroke, undefined);
+  assert.deepEqual(commands.map((c) => c.type), ['moveTo', ...Array(8).fill('cubicTo'), 'close']);
+  for (const [x, y] of onCurve(commands)) {
+    assertClose(Math.hypot(x, y), 40, `(${x}, ${y}) is on the circle`);
+  }
+  // The arcs bulge as far as the circle at their midpoints, within 0.001 px.
+  const [, first] = commands;
+  const mid = [(40 + 3 * first.x1 + 3 * first.x2 + first.x) / 8, (0 + 3 * first.y1 + 3 * first.y2 + first.y) / 8];
+  assert.ok(Math.abs(Math.hypot(...mid) - 40) < 1e-3, `midpoint ${mid}`);
+});
+
+test('an ellipse fills its box from the top-left, strokes inside it, and moves gradients with it', () => {
+  const gradient = `{ type: 'linear', start: { x: 0, y: 0 }, end: { x: 200, y: 0 }, stops: [{ offset: 0, color: '#000000' }, { offset: 1, color: '#FFFFFF' }] }`;
+  const [, frame] = render(
+    `<Ellipse x={10} y={20} width={200} height={100} anchorX={0.25} anchorY={1} fill={${gradient}} stroke="#FF0000" strokeWidth={10} />`,
+  );
+  const [ellipse] = frame.scene.layers;
+  assert.deepEqual(ellipse.transform.position, { x: 10, y: 20 });
+  const { commands, fill, stroke } = ellipse.content;
+  assert.deepEqual(stroke, { paint: { type: 'solid', color: '#FF0000' }, width: 10 });
+  // Box from (-50, -100) to (150, 0); the outline is inset by half the stroke.
+  const points = onCurve(commands);
+  assert.deepEqual(points[0], [145, -50]);
+  assertClose(points[2][0], 50, 'bottom x');
+  assertClose(points[2][1], -5, 'bottom y');
+  assertClose(points[4][0], -45, 'left x');
+  assertClose(points[6][1], -95, 'top y');
+  assert.deepEqual(fill.start, { x: -50, y: -100 });
+  assert.deepEqual(fill.end, { x: 150, y: -100 });
+});
+
+test('an ellipse stroke is at most half its shorter side, and an empty ellipse draws nothing', () => {
+  const [, frame] = render(`<Ellipse width={40} height={20} stroke="#FFFFFF" strokeWidth={50} />`);
+  const { commands, stroke } = frame.scene.layers[0].content;
+  assert.equal(stroke.width, 10);
+  assert.deepEqual(onCurve(commands)[0], [35, 10]);
+  for (const body of [`<Ellipse width={0} height={20} fill="#FFFFFF" />`, `<Circle radius={0} stroke="#FFFFFF" />`]) {
+    const [, empty] = render(body);
+    assert.deepEqual(empty.scene.layers, [], body);
+  }
+});
+
+test('an arrow is one filled outline whose head tip is its end point', () => {
+  const [, frame] = render(`<Arrow x={5} opacity={0.5} x1={0} y1={0} x2={100} y2={0} strokeWidth={4} />`);
+  const [arrow] = frame.scene.layers;
+  assert.equal(arrow.opacity, 0.5);
+  assert.deepEqual(arrow.transform.position, { x: 5, y: 0 });
+  assert.deepEqual(arrow.content, {
+    type: 'path',
+    commands: [
+      { type: 'moveTo', x: 0, y: -2 },
+      { type: 'lineTo', x: 84, y: -2 },
+      { type: 'lineTo', x: 84, y: -8 },
+      { type: 'lineTo', x: 100, y: 0 },
+      { type: 'lineTo', x: 84, y: 8 },
+      { type: 'lineTo', x: 84, y: 2 },
+      { type: 'lineTo', x: 0, y: 2 },
+      { type: 'close' },
+    ],
+    fill: { type: 'solid', color: '#FFFFFF' },
+  });
+});
+
+test('an arrow points along its direction, with heads at the start or both ends', () => {
+  const [, down] = render(`<Arrow x1={10} y1={0} x2={10} y2={50} heads="start" headLength={10} headWidth={20} stroke="#00FF00" />`);
+  assert.deepEqual(onCurve(down.scene.layers[0].content.commands), [
+    [10, 0], [20, 10], [11, 10], [11, 50], [9, 50], [9, 10], [0, 10],
+  ]);
+  const [, both] = render(`<Arrow x1={0} y1={0} x2={100} y2={0} heads="both" headLength={10} headWidth={20} />`);
+  assert.deepEqual(onCurve(both.scene.layers[0].content.commands), [
+    [0, 0], [10, -10], [10, -1], [90, -1], [90, -10], [100, 0], [90, 10], [90, 1], [10, 1], [10, 10],
+  ]);
+});
+
+test('an arrow shorter than its heads shrinks them to fit, and one with no length draws nothing', () => {
+  // Two 16 px heads on a 20 px arrow scale to 10 px long and 10 px wide.
+  const [, short] = render(`<Arrow x1={0} y1={0} x2={20} y2={0} heads="both" strokeWidth={4} />`);
+  assert.deepEqual(onCurve(short.scene.layers[0].content.commands), [
+    [0, 0], [10, -5], [10, -2], [10, -2], [10, -5], [20, 0], [10, 5], [10, 2], [10, 2], [10, 5],
+  ]);
+  // A head never gets narrower than the shaft.
+  const [, tiny] = render(`<Arrow x1={0} y1={0} x2={2} y2={0} strokeWidth={4} />`);
+  assert.deepEqual(onCurve(tiny.scene.layers[0].content.commands), [
+    [0, -2], [0, -2], [0, -2], [2, 0], [0, 2], [0, 2], [0, 2],
+  ]);
+  const [, empty] = render(`<Arrow x1={30} y1={40} x2={30} y2={40} />`);
+  assert.deepEqual(empty.scene.layers, []);
+});
+
+test('shape dimensions are validated', () => {
+  const cases = [
+    [`<Circle radius={-1} fill="#FFFFFF" />`, /finite `radius` of at least 0/],
+    [`<Ellipse width={NaN} height={10} fill="#FFFFFF" />`, /finite `width` of at least 0/],
+    [`<Ellipse width={10} height={10} stroke="#FFFFFF" strokeWidth={0} />`, /positive `strokeWidth`/],
+    [`<Arrow x1={0} y1={0} x2={Infinity} y2={0} />`, /finite `x2`/],
+    [`<Arrow x1={0} y1={0} x2={10} y2={0} headLength={0} />`, /positive `headLength`/],
+    [`<Arrow x1={0} y1={0} x2={10} y2={0} headWidth={-3} />`, /positive `headWidth`/],
+    [`<Arrow x1={0} y1={0} x2={10} y2={0} heads="none" />`, /heads must be/],
+  ];
+  for (const [body, error] of cases) {
     const [, frame] = render(body, { allowFailure: true });
     assert.match(frame.error ?? '', error, body);
   }

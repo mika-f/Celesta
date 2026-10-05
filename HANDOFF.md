@@ -1,6 +1,6 @@
 # Celesta implementation handoff
 
-Last updated: 2026-10-05 (performance check per pull request with `celesta-bench`; `TextStyle.lineBreak: 'phrase'` with `celesta-budoux`; GPU renderer shades `Path` coverage, issue #116; GPU blur pairs its taps)
+Last updated: 2026-10-05 (`<Circle>` / `<Ellipse>` / `<Arrow>` diagram shapes on `<Path>`, issue #135; performance check per pull request with `celesta-bench`; `TextStyle.lineBreak: 'phrase'` with `celesta-budoux`; GPU renderer shades `Path` coverage, issue #116; GPU blur pairs its taps)
 
 ## Goal
 
@@ -12,7 +12,7 @@ composition model; preview and export consume the same renderer inputs.
 
 Per-date notes live in `docs/handoff/<date>.md`. Newest first:
 
-- [`2026-10-05`](docs/handoff/2026-10-05.md): Performance check per pull request
+- [`2026-10-05`](docs/handoff/2026-10-05.md): Circles, ellipses, and arrows; Performance check per pull request
 - [`2026-10-04`](docs/handoff/2026-10-04.md): Fitting text into a box
 - [`2026-10-03`](docs/handoff/2026-10-03.md): Phrase line breaking; GPU blur pairs its taps
 - [`2026-10-02`](docs/handoff/2026-10-02.md): `@celesta/math`

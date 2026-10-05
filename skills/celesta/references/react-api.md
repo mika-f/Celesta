@@ -9,7 +9,7 @@ not install them from npm.
 
 - [Entry file shape](#entry-file-shape)
 - [Common layer props](#common-layer-props)
-- [Layers](#layers): Composition, Rect, Path, Text, Group, Image, Video, Audio, Font, Assets
+- [Layers](#layers): Composition, Rect, Path, Circle, Ellipse, Arrow, Text, Group, Image, Video, Audio, Font, Assets
 - [Text styles and fonts](#text-styles-and-fonts)
 - [Time and animation](#time-and-animation): hooks, interpolate, Easings, spring, Sequence, Transition, timecodeToFrame
 - [Motion helpers](#motion-helpers): progress, Series, Stagger, planDialogue/DialogueSeries, useBeat, useCue, TextReveal, useTypewriter, useCountUp, Camera, Line, Polyline, frameToTimecode
@@ -44,7 +44,7 @@ export default function Root() {
 
 ## Common layer props
 
-Every visual layer (`Rect`, `Text`, `Group`, `Image`, `Video`,
+Every visual layer (`Rect`, `Circle`, `Ellipse`, `Text`, `Group`, `Image`, `Video`,
 `CharacterView`, `Dialogue`, `Sequence`, layout helpers, `Transition`)
 accepts:
 
@@ -128,6 +128,47 @@ Coordinates are the path's own pixels: `x`/`y` move their origin and
 <Path x={960} y={540} fill="#FFD84D" commands={[
   { type: 'moveTo', x: -40, y: 0 }, { type: 'quadTo', x1: 0, y1: -60, x: 40, y: 0 }, { type: 'close' }]} />
 ```
+
+### `<Circle>`, `<Ellipse>`, and `<Arrow>`
+
+Diagram shapes, each drawn as one `<Path>` layer, so they take every common
+layer prop (transforms, `opacity`, `blendMode`, effects) and stay sharp under
+`scale`.
+
+`<Ellipse width height>` and `<Circle radius>` (a `2 * radius` square box)
+are placed like `<Rect>`: `x`/`y` put the box's `anchorX`/`anchorY` point
+(top-left by default), which `rotation`/`scale` turn about.
+
+| Prop | Notes |
+| --- | --- |
+| `width`, `height` / `radius` | Required, pixels, at least 0. A 0 size draws nothing; a negative or non-finite one fails the render. |
+| `fill` | Hex or `Paint`, in local pixels from the box's top-left (as for `Rect`). Omit for no fill. |
+| `stroke`, `strokeWidth` | Hex or `Paint`; width defaults to 2. The stroke lies inside the box, like `Rect`'s, and is at most half the shorter side (a thicker one is drawn at that). |
+
+`<Arrow x1 y1 x2 y2>` is a straight arrow whose head's tip is exactly at
+`x2`/`y2`. Its shaft and heads are one filled outline, so a translucent or
+gradient arrow has no seam. Coordinates are its own pixels, like `Line`'s
+(`x`/`y` move their origin; no `anchorX`/`anchorY`).
+
+| Prop | Notes |
+| --- | --- |
+| `stroke` | Hex or `Paint` (in the arrow's coordinates) of the whole arrow. Default white. |
+| `strokeWidth` | Shaft thickness, default 2. The shaft ends flat. |
+| `headLength`, `headWidth` | Head size along and across the arrow; default 4 × `strokeWidth` each. A head is never narrower than the shaft. |
+| `heads` | `'end'` (default), `'start'`, or `'both'`. |
+
+An arrow shorter than its heads (`headLength`, twice that with `'both'`)
+scales them down to fit, keeping their shape, so animating `x2`/`y2` from
+`x1`/`y1` grows it smoothly. An arrow with no length draws nothing.
+Non-finite points or a head size of 0 or less fail the render.
+
+```tsx
+<Circle x={960} y={540} anchorX={0.5} anchorY={0.5} radius={80} stroke="#FFD84D" strokeWidth={8} />
+<Ellipse x={200} y={300} width={240} height={120} fill="#3366CC" glow={{ color: '#3366CC', blur: 16 }} />
+<Arrow x1={300} y1={600} x2={300 + 400 * progress(frame, 0, 30)} y2={600} strokeWidth={6} heads="both" />
+```
+
+See `packages/react/examples/with-shapes.tsx` for all three side by side.
 
 ### `<Text>`
 
@@ -861,7 +902,7 @@ the slow part of a video, see
 | --- | --- |
 | `Rect`, flat or gradient, including a gradient whose colors change every frame | `blur`, `glow`, `shadow`: each layer with an effect is drawn onto a canvas of its own and filtered in several extra GPU passes over the area it covers |
 | `x`/`y`, `scale`, `rotation`, `opacity` | A `blendMode` other than `'normal'`: every blended layer reads what is beneath it, which takes a copy and a GPU pass of its own |
-| Text, images and SVGs whose content and drawn size stay the same: rasterized once and reused | `Path`, `Line`, `Polyline`: rasterized on the CPU every frame at their drawn size, so a large filled path costs per pixel |
+| Text, images and SVGs whose content and drawn size stay the same: rasterized once and reused | `Path`, `Line`, `Polyline`, `Circle`, `Ellipse`, `Arrow`: rasterized on the CPU every frame at their drawn size, so a large filled path costs per pixel |
 | | Text whose string or style (including a gradient `fill`'s colors) changes every frame: rasterized again each frame. Text drawn at a changing scale is rasterized again in steps of about 9% |
 
 To get the same picture for less:
