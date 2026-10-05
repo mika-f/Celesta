@@ -27,7 +27,7 @@ pub struct CompositionInfo {
     pub width: u32,
     pub height: u32,
     pub frame_rate: Rational,
-    /// Total frames; the last zero-based frame is `frames - 1`.
+    /// Total frames; when nonzero, the last zero-based frame is `frames - 1`.
     pub frames: u64,
 }
 

@@ -11,7 +11,9 @@ PNG file names, parse progress lines, and pattern-match error strings.
   and `issues` with each project validation `{path, message}`). Paths are
   absolute; times are seconds rounded to milliseconds. Field names are
   camelCase. Exit status: 0 ok, 1 export failed, 2 usage (including clap
-  parse errors when `--json` is among the arguments).
+  parse errors when `--json` is among the arguments). `composition` is
+  omitted when the export failed before the composition was known, and a
+  usage-error report has only `status` and `error`.
 - The library reports what the CLI prints through two `ExportProgress`
   events: `Composition(CompositionInfo)` once the composition is known (before
   the range or frame selection is checked, so out-of-range errors still carry

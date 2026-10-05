@@ -62,7 +62,8 @@ struct Composition {
     width: u32,
     height: u32,
     fps: f64,
-    /// Total frames; frame numbers are zero-based, so the last is `frames - 1`.
+    /// Total frames; frame numbers are zero-based, so when nonzero the last is
+    /// `frames - 1`.
     frames: u64,
     /// Seconds.
     duration: f64,

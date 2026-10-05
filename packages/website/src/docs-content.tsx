@@ -123,7 +123,7 @@ function ExportCommands() {
     <DocCode label="Export the first second" code={`${executable} --from 0 --to 1 --react first-scene.tsx section.mp4`} />
     <p>To combine React with the <a href="/docs/timelines/">JSON timeline example</a>, save both files in your project folder and pass the companion project:</p>
     <DocCode label="Export a combined composition" code={`${executable} --react with-project.tsx --project project.celesta.json output.mp4`} />
-    <p>For scripts and AI agents, add <code>--json</code>. The exporter then prints no progress, only one line of JSON when it finishes: the status, the composition's size, fps and frame count, every file it wrote, warnings, and on failure an error code and message.</p>
+    <p>For scripts and AI agents, add <code>--json</code>. The exporter then prints no progress, only one line of JSON when it finishes: the status, every file it wrote, warnings, the composition's size, fps and frame count once the exporter has loaded it, and on failure an error code and message. When the arguments are rejected, the JSON has only the status and the error.</p>
     <p>Using a source build? The <a href="/docs/build-from-source/">developer instructions</a> include the equivalent Cargo command.</p>
   </>;
 }

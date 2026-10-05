@@ -79,7 +79,7 @@ frame numbers, the warnings, and on failure an error code:
 (Shown wrapped here; the real output is one line.)
 
 - `composition.frames` is the frame count. Frames are zero-based, so the
-  last one is `frames - 1`. Times are in seconds, rounded to milliseconds.
+  last one is `frames - 1` (an empty composition has none). Times are in seconds, rounded to milliseconds.
 - `outputs` lists the files that exist after the export, with absolute
   paths. Read these paths; do not work out file names yourself. Each entry
   has a `type`:
@@ -93,7 +93,8 @@ frame numbers, the warnings, and on failure an error code:
 - On failure, `status` is `"error"` and `error` has a stable `code`, the
   `message`, and sometimes a `hint`. `outputs` still lists the PNGs written
   before the failure. `composition` is included when the failure happened
-  after the composition was loaded.
+  after the composition was loaded. A `usage` error report has only
+  `status` and `error`.
 
 | `error.code` | Meaning |
 | --- | --- |

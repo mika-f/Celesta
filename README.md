@@ -296,10 +296,12 @@ Use `--no-ui` for text progress. Redirected output, CI without a terminal,
 and `TERM=dumb` automatically use text progress without terminal control codes.
 
 For scripts and AI agents, `--json` prints no progress. When the export ends,
-it prints one line of JSON on stdout: the status, the composition's size, fps
-and frame count, each written file with its frame numbers, warnings, and on
-failure an error `code`, `message` and sometimes a `hint`. The exit status is
-0 on success, 1 when the export fails, and 2 for invalid arguments.
+it prints one line of JSON on stdout: the status, each written file with its
+frame numbers, warnings, the composition's size, fps and frame count once it
+has been loaded, and on failure an error `code`, `message` and sometimes a
+`hint`. When the arguments are rejected, the JSON has only `status` and
+`error`. The exit status is 0 on success, 1 when the export fails, and 2 for
+invalid arguments.
 
 Export a React composition after completing the React setup:
 
