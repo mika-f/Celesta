@@ -1,7 +1,5 @@
 # Celesta implementation handoff
 
-Last updated: 2026-10-05 (`subtitle.render`, `<Character displayName>`, `<DialogueSeries holdSubtitle>`, issue #85; `<Circle>` / `<Ellipse>` / `<Arrow>` diagram shapes on `<Path>`, issue #135; performance check per pull request with `celesta-bench`; `TextStyle.lineBreak: 'phrase'` with `celesta-budoux`; GPU renderer shades `Path` coverage, issue #116; GPU blur pairs its taps)
-
 ## Goal
 
 Celesta is a code-first video editor. Projects (`.celesta.json`) and React
