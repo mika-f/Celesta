@@ -3,7 +3,7 @@ import type { ReactNode } from 'react';
 
 import { CompositionRuntimeContext, RerenderRequestContext, resolveTextLanguage } from './hooks';
 import { useOptionalLipSync } from './lipsync';
-import { synchronousMeasurer, useMeasurementFonts } from './text-measure';
+import { synchronousMeasurer, useMeasurementFonts, withTextLanguage } from './text-measure';
 import type { MeasureTextRequest, TextMetrics } from './text-measure';
 import type { LipSyncTrack } from './lipsync';
 import type { BlinkTiming } from './blink';
@@ -525,7 +525,7 @@ function useRenderedSubtitle(
   const subtitle = character?.subtitle;
   const render = subtitle?.render;
   const text = render ? subtitleText(children) : '';
-  const style = subtitle?.style ?? {};
+  const style = withTextLanguage(subtitle?.style ?? {}, runtime?.lang);
   const maxWidth = subtitle?.maxWidth;
   const key = render
     ? JSON.stringify({ text, style, ...(maxWidth !== undefined ? { maxWidth } : {}), fonts })

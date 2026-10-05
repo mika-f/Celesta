@@ -13,6 +13,7 @@ import {
   Rect,
   Sequence,
   Text,
+  useCurrentFrame,
   planDialogue,
   registerComponent,
 } from '../dist/index.js';
@@ -102,11 +103,11 @@ test('subtitle.render draws the line from its text, speaker, metrics, and sequen
   const Root = () =>
     h(
       Composition,
-      { width: 640, height: 360, fps: 30, durationInFrames: 60 },
+      { width: 640, height: 360, fps: 30, durationInFrames: 60, lang: 'ja-JP' },
       h(Assets, null, h(Character, { ref: mira, name: 'mira', displayName: 'ミラ', portrait: portrait('mira'), subtitle: subtitle() })),
       h(
         Sequence,
-        { from: 10, durationInFrames: 30 },
+        { from: 10, durationInFrames: 30, lang: useCurrentFrame() < 20 ? 'ko-KR' : 'zh-Hant' },
         h(CharacterView, { ref: view, character: mira }),
         h(Dialogue, { character: view, id: 'line', expression: 'smile' }, 'Hello', ' there'),
       ),
@@ -119,9 +120,12 @@ test('subtitle.render draws the line from its text, speaker, metrics, and sequen
     assert.equal(find(scene.layers, 'band').content.width, 11 * 10 + 20);
     assert.equal(find(scene.layers, 'facts').content.text, `mira/mira/ミラ|Hello there|false|${frame}/30|600`);
     assert.equal(find(scene.layers, 'said').content.text, 'Hello there');
+    assert.equal(find(scene.layers, 'said').content.style.lang, frame === 0 ? 'ko-KR' : 'zh-Hant');
     assert.deepEqual(images(scene.layers), ['mira-smile.png']);
   }
   assert.ok(requests.some((request) => request.text === 'Hello there' && request.maxWidth === 600));
+  assert.deepEqual([...new Set(requests.map((request) => request.style.lang))], ['ko-KR', 'zh-Hant']);
+  assert.equal(mira.current.subtitle.style.lang, undefined);
 });
 
 test('a held Dialogue keeps a rendered band but no plain subtitle', () => {
@@ -214,7 +218,7 @@ test('DialogueSeries holdSubtitle keeps the band through gaps and restarts it af
 });
 
 test('an editor preview draws a rendered subtitle whose view mounts with it', () => {
-  installMeasurer();
+  const requests = installMeasurer();
   const mira = React.createRef();
   const view = React.createRef();
   registerComponent('SubtitlePreviewTest', () =>
@@ -226,10 +230,12 @@ test('an editor preview draws a rendered subtitle whose view mounts with it', ()
       h(Dialogue, { character: view }, 'Preview'),
     ),
   );
-  const [layers] = createResolver().resolve([{ component: 'SubtitlePreviewTest', props: {} }], {
+  const [layers] = createResolver('ja-JP').resolve([{ component: 'SubtitlePreviewTest', props: {} }], {
     width: 640, height: 360, fps: 30, durationInFrames: 30, time: { value: 0, timescale: 30 }, preview: true,
   });
   assert.equal(find(layers, 'facts').content.text, 'mira/mira/mira|Preview|false|0/30|600');
+  assert.equal(find(layers, 'said').content.style.lang, 'ja-JP');
+  assert.equal(requests.at(-1).style.lang, 'ja-JP');
 });
 
 test('a rendered subtitle rejects children that are not text, like a plain one', () => {
