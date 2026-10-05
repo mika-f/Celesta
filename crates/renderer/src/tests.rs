@@ -1427,19 +1427,40 @@ fn rasterize_psd_disabled_layers_win_over_enabled() {
     assert_eq!(pixel_at(&without, 120, 150), [250, 224, 205, 255]);
 }
 
-/// The red channel of row 2 of a 32x6 black canvas holding a 2-unit-tall
-/// white rect of `width`, at `x` with horizontal `anchor`, scaled by `scale`.
-fn rect_row(x: f64, width: f64, anchor: f64, scale: Point) -> Vec<u8> {
+/// The red channel along row 2 (or, `vertical`, column 2) of a 32x32 black
+/// canvas holding a white rect `length` long and 2 units across, its start
+/// at `at` with `anchor` along it, scaled by `along` and `across`.
+fn rect_line(
+    vertical: bool,
+    at: f64,
+    length: f64,
+    anchor: f64,
+    (along, across): (f64, f64),
+) -> Vec<u8> {
+    let swap = |along: f64, across: f64| {
+        if vertical {
+            Point {
+                x: across,
+                y: along,
+            }
+        } else {
+            Point {
+                x: along,
+                y: across,
+            }
+        }
+    };
+    let size = swap(length, 2.0);
     let layer = Layer {
         transform: EvaluatedTransform {
-            position: Point { x, y: 1.0 },
-            anchor: Point { x: anchor, y: 0.0 },
-            scale,
+            position: swap(at, 1.0),
+            anchor: swap(anchor, 0.0),
+            scale: swap(along, across),
             ..EvaluatedTransform::default()
         },
         content: LayerContent::Rect {
-            width,
-            height: 2.0,
+            width: size.x,
+            height: size.y,
             fill: Some(Paint::Solid {
                 color: "#FFFFFFFF".to_owned(),
             }),
@@ -1450,7 +1471,7 @@ fn rect_row(x: f64, width: f64, anchor: f64, scale: Point) -> Vec<u8> {
     };
     let scene = Scene {
         width: 32,
-        height: 6,
+        height: 32,
         ..clip_scene(vec![layer])
     };
     let frame = CpuRenderer::new(RenderOptions {
@@ -1458,49 +1479,81 @@ fn rect_row(x: f64, width: f64, anchor: f64, scale: Point) -> Vec<u8> {
     })
     .render(&scene)
     .unwrap();
-    (0..32).map(|x| pixel(&frame, x, 2)[0]).collect()
+    (0..32)
+        .map(|i| {
+            let (x, y) = if vertical { (2, i) } else { (i, 2) };
+            pixel(&frame, x, y)[0]
+        })
+        .collect()
 }
 
 #[test]
 fn rects_keep_fractional_positions_sizes_anchors_and_scales() {
-    /// A black row with `pixels` from pixel `first` on.
+    /// A black line with `pixels` from pixel `first` on.
     fn expected(first: usize, pixels: &[u8]) -> Vec<u8> {
-        let mut row = vec![0; 32];
-        row[first..first + pixels.len()].copy_from_slice(pixels);
-        row
+        let mut line = vec![0; 32];
+        line[first..first + pixels.len()].copy_from_slice(pixels);
+        line
     }
-    let unit = Point { x: 1.0, y: 1.0 };
     let full = |count: usize| vec![255; count];
     let with = |start: u8, middle: Vec<u8>, end: u8| [vec![start], middle, vec![end]].concat();
+    // Along x, then along y.
+    let check = |at: f64, length: f64, anchor: f64, scale: (f64, f64), line: Vec<u8>| {
+        for vertical in [false, true] {
+            assert_eq!(
+                rect_line(vertical, at, length, anchor, scale),
+                line,
+                "vertical: {vertical}, at {at}, length {length}, anchor {anchor}, scale {scale:?}"
+            );
+        }
+    };
 
     // Half-pixel position: both edges half covered, not snapped.
-    assert_eq!(
-        rect_row(10.5, 10.0, 0.0, unit),
-        expected(10, &with(128, full(9), 128))
+    check(
+        10.5,
+        10.0,
+        0.0,
+        (1.0, 1.0),
+        expected(10, &with(128, full(9), 128)),
     );
-    // Centred on a fractional width: [14.75, 25.25], symmetric.
-    assert_eq!(
-        rect_row(20.0, 10.5, 0.5, unit),
-        expected(14, &with(64, full(10), 64))
+    // Centred on a fractional length: [14.75, 25.25], symmetric.
+    check(
+        20.0,
+        10.5,
+        0.5,
+        (1.0, 1.0),
+        expected(14, &with(64, full(10), 64)),
     );
     // Scaled up: 10.25 * 2 = 20.5 pixels, not 11 texels stretched to 22.
-    assert_eq!(
-        rect_row(4.0, 10.25, 0.0, Point { x: 2.0, y: 2.0 }),
-        expected(4, &[full(20), vec![128]].concat())
+    check(
+        4.0,
+        10.25,
+        0.0,
+        (2.0, 2.0),
+        expected(4, &[full(20), vec![128]].concat()),
     );
     // A fractional scale: 10 * 1.25 = 12.5 pixels.
-    assert_eq!(
-        rect_row(4.0, 10.0, 0.0, Point { x: 1.25, y: 1.25 }),
-        expected(4, &[full(12), vec![128]].concat())
+    check(
+        4.0,
+        10.0,
+        0.0,
+        (1.25, 1.25),
+        expected(4, &[full(12), vec![128]].concat()),
     );
-    // A non-uniform scale keeps the horizontal edge exact too.
-    assert_eq!(
-        rect_row(4.0, 10.0, 0.0, Point { x: 1.25, y: 1.0 }),
-        expected(4, &[full(12), vec![128]].concat())
+    // A non-uniform scale keeps the edge along the stretched axis exact too.
+    check(
+        4.0,
+        10.0,
+        0.0,
+        (1.25, 1.0),
+        expected(4, &[full(12), vec![128]].concat()),
     );
     // A negative scale mirrors the rect about its position.
-    assert_eq!(
-        rect_row(20.5, 10.0, 0.0, Point { x: -1.0, y: 1.0 }),
-        expected(10, &with(128, full(9), 128))
+    check(
+        20.5,
+        10.0,
+        0.0,
+        (-1.0, 1.0),
+        expected(10, &with(128, full(9), 128)),
     );
 }

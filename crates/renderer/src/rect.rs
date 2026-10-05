@@ -231,9 +231,11 @@ impl RectDistance {
         let qx = px.abs() - half_width + radius;
         let qy = py.abs() - half_height + radius;
         if qx > 0.0 && qy > 0.0 {
-            // The local distance grows along `(qx, qy) / length`.
+            // The local distance grows along `(qx, qy) / length`, signed by
+            // the quadrant: a shear stretches opposite corners apart.
             let length = qx.hypot(qy);
-            let (gx, gy) = (qx / length, qy / length);
+            let signed = |q: f64, p: f64| if p < 0.0 { -q } else { q };
+            let (gx, gy) = (signed(qx, px) / length, signed(qy, py) / length);
             let along_x = gx * self.gradient_x.0 + gy * self.gradient_y.0;
             let along_y = gx * self.gradient_x.1 + gy * self.gradient_y.1;
             (length - radius) / along_x.hypot(along_y)

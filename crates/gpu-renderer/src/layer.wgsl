@@ -88,9 +88,9 @@ struct VertexOutput {
     @location(8) @interpolate(flat) sampling: vec3<f32>,
     // A path's tile: the index of its first entry in `paths`.
     @location(9) @interpolate(flat) path_tile: u32,
-    // A rect's inverse map, from the target's pixels to its own units from
-    // its top-left corner: the linear part (du/dx, dv/dx, du/dy, dv/dy) and
-    // the translation.
+    // A rect's inverse map, from scene pixels to its own units from its
+    // top-left corner: the linear part (du/dx, dv/dx, du/dy, dv/dy) and the
+    // translation.
     @location(10) @interpolate(flat) inverse: vec4<f32>,
     @location(11) @interpolate(flat) inverse_translation: vec2<f32>,
 };
@@ -121,7 +121,7 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32, layer: LayerInstance) -> Ve
         inverse = vec4<f32>(m.w, -m.y, -m.z, m.x) / (m.x * m.w - m.y * m.z);
         let margin = vec2<f32>(length(inverse.xz), length(inverse.yw));
         local = (corner - anchor) * size + (corner * 2.0 - 1.0) * margin;
-        let offset = layer.origin.xy - layer.translation_size.xy;
+        let offset = -layer.translation_size.xy;
         inverse_translation = vec2<f32>(
             inverse.x * offset.x + inverse.z * offset.y,
             inverse.y * offset.x + inverse.w * offset.y,
@@ -249,7 +249,8 @@ fn rect_distance(p: vec2<f32>, half_size: vec2<f32>, radius: f32, inverse: vec4<
     let q = abs(p) - half_size + vec2<f32>(radius);
     if q.x > 0.0 && q.y > 0.0 {
         let length_q = length(q);
-        let direction = q / length_q;
+        // Signed by the quadrant: a shear stretches opposite corners apart.
+        let direction = select(q, -q, p < vec2<f32>(0.0)) / length_q;
         let gradient = vec2<f32>(
             direction.x * inverse.x + direction.y * inverse.y,
             direction.x * inverse.z + direction.y * inverse.w,
@@ -265,9 +266,10 @@ fn rect_distance(p: vec2<f32>, half_size: vec2<f32>, radius: f32, inverse: vec4<
 // `celesta_renderer::rasterize_rect_transformed` shades it at the pixel's
 // centre.
 fn rect_color(input: VertexOutput) -> vec4<f32> {
-    // From the pixel's centre rather than an interpolated coordinate, which
-    // drifts by more than an edge's anti-aliasing can hide.
-    let pixel = input.position.xy;
+    // From the scene position rather than `@builtin(position)`, which is in
+    // the target's pixels: a preview draws the scene through a fitted
+    // viewport.
+    let pixel = input.world;
     let point = vec2<f32>(
         input.inverse.x * pixel.x + input.inverse.z * pixel.y,
         input.inverse.y * pixel.x + input.inverse.w * pixel.y,

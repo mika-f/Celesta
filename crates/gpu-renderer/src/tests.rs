@@ -751,6 +751,87 @@ fn shades_rects_like_the_cpu_rasterizer() {
     }
 }
 
+#[test]
+fn shades_rects_in_scene_pixels_through_a_scaled_preview_viewport() {
+    let Some(mut renderer) = renderer(GpuRenderOptions {
+        background: Color::rgba(0, 0, 0, 255),
+    }) else {
+        return;
+    };
+    // A 32x16 scene letterboxed into a 64x64 target: scaled by 2 into the
+    // viewport at y 16..48.
+    let mut scene = empty_scene(32, 16);
+    scene.layers = vec![corner_rect("rect", 4.5, 4.0, 10.0, 6.0, "#ffffff")];
+    let (width, height) = (64, 64);
+    let texture = renderer.device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("Celesta viewport test target"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    renderer
+        .render_to_target(
+            &scene,
+            GpuRenderTarget {
+                view: &view,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                width,
+                height,
+            },
+        )
+        .unwrap();
+    let layout = ReadbackLayout::new(width, height).unwrap();
+    let buffer = renderer.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Celesta viewport test readback"),
+        size: layout.buffer_size,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut encoder = renderer
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    encoder.copy_texture_to_buffer(
+        texture.as_image_copy(),
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buffer,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(layout.padded_bytes_per_row),
+                rows_per_image: Some(height),
+            },
+        },
+        texture.size(),
+    );
+    renderer.queue.submit([encoder.finish()]);
+    buffer.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+    renderer
+        .device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .unwrap();
+    let mapped = buffer.slice(..).get_mapped_range().unwrap();
+    let pixels = layout.unpad(&mapped, width, height).unwrap();
+    let red = |x: u32, y: u32| pixels[((y * width + x) * 4) as usize];
+
+    // The rect covers scene x 4.5..14.5, y 4..10: target x 9..29, y 24..36,
+    // anti-aliased over a scene pixel (two target pixels). Sampled 0.75
+    // scene pixels inside and outside each edge.
+    for (x, y) in [(19, 30), (10, 25), (27, 34)] {
+        assert_eq!(red(x, y), 255, "inside at {x}, {y}");
+    }
+    for (x, y) in [(7, 30), (30, 30), (19, 22), (19, 37)] {
+        assert_eq!(red(x, y), 0, "outside at {x}, {y}");
+    }
+}
+
 /// A rect at `(x, y)` in its parent, top-left anchored.
 fn corner_rect(id: &str, x: f64, y: f64, width: f64, height: f64, color: &str) -> Layer {
     Layer {
