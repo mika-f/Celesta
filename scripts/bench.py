@@ -260,11 +260,12 @@ def report(samples, options, adapter, revisions):
             verdict = "🟢 faster" if options.mode == "time" else "🟢 fewer instructions"
         else:
             verdict = ""
-        spread = ""
+        spread = before_spread = ""
         if options.mode == "time" and len(before) > 1:
             spread = f" ({fmt(min(after))}–{fmt(max(after))})"
+            before_spread = f" ({fmt(min(before))}–{fmt(max(before))})"
         lines.append(
-            f"| {workload} | {fmt(statistics.median(before))} | "
+            f"| {workload} | {fmt(statistics.median(before))}{before_spread} | "
             f"{fmt(statistics.median(after))}{spread} | {change:+.2f}%{interval} | {verdict} |"
         )
     if options.mode == "instructions":

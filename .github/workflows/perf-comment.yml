@@ -90,13 +90,11 @@ jobs:
             fi
             if [[ -f perf-time/report-time.md ]]; then
               echo
-              echo "<details><summary>Time per frame on a GPU (macOS runner, reference only)</summary>"
+              echo "### Time per frame on a GPU (macOS runner, reference only)"
               echo
-              echo "A shared VM: noisy, and never a check. Instruction counts above are what gates; a change that matters here should be confirmed on your own GPU."
+              echo "A shared VM: noisy, and never a check. The instruction counts above are what gates; confirm a change that matters here on your own GPU. Ranges are min–max over the rounds, and the brackets are the 95% bootstrap interval of the median's change."
               echo
               sed '1{/^###/d;}' perf-time/report-time.md
-              echo
-              echo "</details>"
             fi
             echo
             echo "<sub>Commit ${HEAD_SHA:0:7} · [workflow run]($RUN_URL) · [how this is measured](https://github.com/$REPO/blob/main/docs/performance/benchmarking.md)</sub>"

@@ -167,8 +167,9 @@ The `Time per frame (macOS)` job of
 `macos-latest` for every pull request that runs the performance check, and by
 hand (Actions, Performance, Run workflow, with a `base`). Its adapter is
 `Apple Paravirtual device (Metal)`: a GPU, reached through virtualization.
-`perf-comment.yml` adds its table to the pull request's comment, folded below
-the instruction counts.
+`perf-comment.yml` adds its table to the pull request's comment, below the
+instruction counts: medians and min–max ranges of both sides, the 95%
+bootstrap interval of the change, the adapter and the seed.
 
 It is a reference, not a check. A shared VM is much noisier than a desk machine
 (intervals of +-20% or more for workloads under 2 ms), so it only sees large
