@@ -744,10 +744,10 @@ export interface FreezeFrameProps extends CommonProps {
 
 /**
  * Draws its children as the composition looked at `frame`: directly inside,
- * `useCurrentFrame()` is `frame` on the root clock (a `<Sequence>` within
- * still counts from its own start), `useVideoConfig()` reports
- * the composition's duration, and `<Sequence>`s, `<Video>`, lip sync, and
- * blinking all follow that frame. A constant `frame` holds still; a moving one
+ * `useCurrentFrame()` is `frame` on the root clock, rounded like any time (a
+ * `<Sequence>` within still counts from its own start), `useVideoConfig()`
+ * reports the composition's duration, and `<Sequence>`s, `<Video>`, lip
+ * sync, and blinking all follow that frame. A constant `frame` holds still; a moving one
  * replays the composition at that offset. Frozen children are always silent.
  * `<CharacterView>`s inside never attach their ref, which stays with the live
  * view, and `<Dialogue>`s inside drive only views drawn inside the same
