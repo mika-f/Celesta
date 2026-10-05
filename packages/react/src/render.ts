@@ -572,14 +572,16 @@ function buildLayer(
         layers.push(...walkNode(child, `${id}.subtitle`, context, audio));
       }
     } else if (props.held !== true) {
+      // `${id}.subtitle` is already final (prefixed inside a <FreezeFrame>),
+      // so it goes in as the path rather than as an authored id.
       layers.push(
         buildLayer(
           {
             type: 'text',
-            props: { ...character.subtitle, id: `${id}.subtitle`, children: props.text },
+            props: { ...character.subtitle, id: undefined, children: props.text },
             children: [],
           },
-          `${path}.subtitle`,
+          `${id}.subtitle`,
           context,
           audio,
         ),

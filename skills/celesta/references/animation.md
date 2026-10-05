@@ -52,7 +52,7 @@ For randomness and noise, use [`@celesta/math`](math.md).
 
 | Hook | Returns |
 | --- | --- |
-| `useCurrentFrame()` | Integer frame, local to the innermost `<Sequence>` (inside a `<FreezeFrame>`, its `frame`). |
+| `useCurrentFrame()` | Integer frame, local to the innermost `<Sequence>` (directly inside a `<FreezeFrame>`, its `frame`). |
 | `useCurrentTime()` | Exact `{ value, timescale }` time, local to the innermost `<Sequence>`. |
 | `useVideoConfig()` | `{ width, height, fps, durationInFrames }`; inside a `Sequence`, `durationInFrames` is the sequence's. |
 | `useIsPreview()` | `true` only in the Celesta app preview, `false` in exports. |
@@ -158,9 +158,11 @@ For scenes in a row, prefer `Series` (next) to computing `from` by hand.
 `<FreezeFrame frame>` draws its children as the composition looked at
 `frame`, for rewinds, flashbacks, and thumbnail strips. `frame` is an
 absolute composition frame wherever the element sits, even inside a
-`<Sequence>`. Inside, `useCurrentFrame()` is `frame`, `durationInFrames` is the
-composition's, and `<Sequence>`s, `<Video>`, lip sync, and blinking all follow
-that frame. A constant `frame` holds still; a moving one replays at an offset.
+`<Sequence>`. It resets the clock to the root's: directly inside,
+`useCurrentFrame()` is `frame` and `durationInFrames` is the composition's,
+while a `<Sequence>` inside still counts from its own start as usual (at
+`frame={80}`, `<Sequence from={50}>` sees frame 30). `<Video>`, lip sync, and
+blinking follow that frame too. A constant `frame` holds still; a moving one replays at an offset.
 It accepts common layer props.
 
 ```tsx

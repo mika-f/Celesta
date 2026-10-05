@@ -210,3 +210,19 @@ test('a frozen video follows the frozen frame and authored ids are prefixed', ()
   assert.equal(find(scene.layers, 'thumb/clip').content.timing.sourceTimeSeconds, 2.5);
   assert.throws(() => mount(() => root(h(FreezeFrame, { frame: Number.NaN }))), /<FreezeFrame> requires a finite `frame`/);
 });
+
+test('a frozen line\'s subtitle id is derived from its own id once', () => {
+  const mira = React.createRef();
+  const view = React.createRef();
+  const composition = mount(() => root(
+    h(Assets, null, h(Character, { ref: mira, name: 'mira', portrait: portrait('mira') })),
+    h(FreezeFrame, { id: 'thumb', frame: 0 },
+      h(CharacterView, { ref: view, character: mira }),
+      h(Dialogue, { id: 'line', character: view }, 'named'),
+      h(Dialogue, { character: view }, 'unnamed'),
+    ),
+  ));
+  const ids = (layers) => layers.flatMap((layer) => [layer.id, ...(layer.content.type === 'group' ? ids(layer.content.layers) : [])]);
+  const subtitles = ids(at(composition, 0).scene.layers).filter((id) => id.endsWith('.subtitle'));
+  assert.deepEqual(subtitles, ['thumb/line.subtitle', 'root.1.2.subtitle']);
+});

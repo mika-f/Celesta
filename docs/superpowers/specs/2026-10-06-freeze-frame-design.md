@@ -51,7 +51,9 @@ export function FreezeFrame(props: FreezeFrameProps): ReactElement;
   original frame showed. A constant `frame` holds still; `frame={x - 90}` plays
   the original three seconds late.
 - `frame` is not clamped to `[0, durationInFrames)`. A non-finite `frame`
-  throws.
+  throws. A fractional `frame` is allowed, like a fractional `<Sequence from>`:
+  `useCurrentTime()` is exact and `useCurrentFrame()` rounds it, as it rounds
+  any time.
 - `lang` is not time: it is inherited from the enclosing tree.
 - Nested `<FreezeFrame>`s: the innermost one sets the clock.
 
@@ -164,7 +166,7 @@ scope.
 
 ### Docs
 
-`packages/website/src/docs-content.tsx`, `skills/celesta/references/react-core.md`,
+`packages/website/src/docs-content.tsx`, `skills/celesta/references/animation.md`,
 `docs/handoff/2026-10-06-freeze-frame.md`, and its line in `HANDOFF.md`.
 
 ## Out of scope

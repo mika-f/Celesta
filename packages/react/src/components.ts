@@ -743,8 +743,9 @@ export interface FreezeFrameProps extends CommonProps {
 }
 
 /**
- * Draws its children as the composition looked at `frame`: inside,
- * `useCurrentFrame()` is `frame` on the root clock, `useVideoConfig()` reports
+ * Draws its children as the composition looked at `frame`: directly inside,
+ * `useCurrentFrame()` is `frame` on the root clock (a `<Sequence>` within
+ * still counts from its own start), `useVideoConfig()` reports
  * the composition's duration, and `<Sequence>`s, `<Video>`, lip sync, and
  * blinking all follow that frame. A constant `frame` holds still; a moving one
  * replays the composition at that offset. Frozen children are always silent.
