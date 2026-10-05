@@ -9,8 +9,10 @@ a rect covers at its centre, through the layer's transform (PR #166).
 
 - CPU: `celesta_renderer::rasterize_rect_transformed` paints the rect
   `[0, width] x [0, height]` through a `PathTransform` into the part of the
-  canvas it covers, like `rasterize_path`, and `CpuRenderer` draws it. The
-  texture form, `rasterize_rect`, is unchanged.
+  canvas it covers, like `rasterize_path`, and `CpuRenderer` draws it.
+  `rasterize_rect` still returns the rect at its own size, one texel per
+  unit rounded up to whole texels, but shades it the same way, so it shares
+  the coverage cap and the stroke/fill mix below.
 - GPU: `layer.wgsl`'s `rect_color` maps the interpolated scene position
   (`world`, not `@builtin(position)`, which is in the target's pixels when a
   preview is drawn through a fitted viewport) through the rect's inverse
