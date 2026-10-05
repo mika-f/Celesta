@@ -516,6 +516,47 @@ fn evaluates_a_rect_with_fill_stroke_and_corner_radius_when_node_is_available() 
 }
 
 #[test]
+fn draws_circles_ellipses_and_arrows_as_paths_when_node_is_available() {
+    let Some((node, cli_script, package_root)) = live_react_runtime() else {
+        return;
+    };
+
+    let entry = package_root.join("examples/with-shapes.tsx");
+    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    // At frame 0 nothing is rotated, which the CPU renderer needs, and the
+    // growing circle has no radius yet, so it draws nothing.
+    let scene = bridge.scene_at(Time::new(0, 30)).unwrap();
+    let paths = all_layers(&scene.layers)
+        .into_iter()
+        .filter(|layer| matches!(layer.content, LayerContent::Path { .. }))
+        .count();
+    // 4 circles, 5 ellipses, 12 + 6 arrows; the rest are rects and a group.
+    assert_eq!(paths, 27);
+
+    let frame = celesta_renderer::CpuRenderer::default()
+        .render(&scene)
+        .unwrap();
+    let pixel = |x: u32, y: u32| {
+        let offset = ((y * frame.width() + x) * 4) as usize;
+        <[u8; 3]>::try_from(&frame.pixels()[offset..offset + 3]).unwrap()
+    };
+    let background = [0x10, 0x18, 0x20];
+    // A filled circle, and a stroked one whose stroke stays inside its box.
+    assert_eq!(pixel(140, 120), [0x33, 0x66, 0xCC]);
+    assert_eq!(pixel(300, 120), background);
+    assert_eq!(pixel(300, 64), [0xFF, 0xD8, 0x4D]);
+    assert_eq!(pixel(300, 58), background);
+    // An ellipse fills its box from the top-left, not its corners.
+    assert_eq!(pixel(180, 290), [0x8E, 0x6C, 0xFF]);
+    assert_eq!(pixel(84, 244), background);
+    // An arrow's shaft and head, with its tip at the end point.
+    assert_eq!(pixel(480, 460), [0x4D, 0xD8, 0xC0]);
+    assert_eq!(pixel(604, 466), [0x4D, 0xD8, 0xC0]);
+    assert_eq!(pixel(480, 466), background);
+    assert_eq!(pixel(624, 460), background);
+}
+
+#[test]
 fn reports_audio_clips_per_frame_when_node_is_available() {
     let Some((node, cli_script, package_root)) = live_react_runtime() else {
         return;
