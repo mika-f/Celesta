@@ -28,9 +28,9 @@ pub struct TextRasterizer {
     /// `color_emoji_family`'s result once looked up, cleared whenever a
     /// font is loaded.
     pub(crate) color_emoji_family: Option<Option<String>>,
-    /// `missing_characters` results by text, family, and weight, cleared
+    /// `missing_characters` results by locale, text, family, and weight, cleared
     /// whenever a font is loaded.
-    pub(crate) missing_characters: HashMap<(String, String, u16), Vec<char>>,
+    pub(crate) missing_characters: HashMap<(String, String, String, u16), Vec<char>>,
 }
 
 /// Families of color emoji fonts, most preferred first: the ones macOS and
@@ -118,7 +118,6 @@ impl TextRasterizer {
         }
         self.locale_systems
             .insert(previous.locale().to_owned(), previous);
-        self.missing_characters.clear();
     }
 
     /// How many font files have been loaded so far. It only grows, so a
@@ -290,7 +289,12 @@ impl TextRasterizer {
         self.select_language(style.lang.as_deref());
         let weight = style.font_weight.unwrap_or(400);
         self.matched_weight(family, weight)?;
-        let key = (text.to_owned(), family.to_owned(), weight);
+        let key = (
+            self.font_system.locale().to_owned(),
+            text.to_owned(),
+            family.to_owned(),
+            weight,
+        );
         let characters = match self.missing_characters.get(&key) {
             Some(characters) => characters.clone(),
             None => {

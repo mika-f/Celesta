@@ -503,6 +503,40 @@ fn reports_emoji_no_font_has_a_glyph_for() {
 }
 
 #[test]
+fn missing_glyph_cache_survives_language_switches_and_clears_when_fonts_load() {
+    let mut rasterizer = regular_only_rasterizer();
+    let text = "CELESTA 漢字";
+    let mut style = bebas_style();
+    let mut expected = Vec::new();
+    for lang in ["ja", "zh-Hant"] {
+        style.lang = Some(lang.to_owned());
+        expected.push(rasterizer.missing_glyphs("title", text, &style));
+    }
+    assert_eq!(rasterizer.missing_characters.len(), 2);
+
+    for _ in 0..3 {
+        // These aliases normalize to the same locales used above.
+        for (lang, expected) in ["ja-JP", "zh-TW"].into_iter().zip(&expected) {
+            rasterizer.select_language(Some(lang));
+            assert_eq!(rasterizer.missing_characters.len(), 2);
+            style.lang = Some(lang.to_owned());
+            assert_eq!(&rasterizer.missing_glyphs("title", text, &style), expected);
+            assert_eq!(rasterizer.missing_characters.len(), 2);
+        }
+    }
+
+    rasterizer
+        .load_font_data("cache-test", sfnt(), None)
+        .unwrap();
+    assert!(rasterizer.missing_characters.is_empty());
+    for (lang, expected) in ["ja", "zh-Hant"].into_iter().zip(&expected) {
+        style.lang = Some(lang.to_owned());
+        assert_eq!(&rasterizer.missing_glyphs("title", text, &style), expected);
+    }
+    assert_eq!(rasterizer.missing_characters.len(), 2);
+}
+
+#[test]
 fn leaves_a_family_with_no_face_to_the_font_fallback() {
     let mut rasterizer = regular_only_rasterizer();
     let style = TextStyle {
