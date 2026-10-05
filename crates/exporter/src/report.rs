@@ -343,9 +343,9 @@ mod tests {
         assert_eq!(
             value["outputs"],
             serde_json::json!([
-                { "type": "frame", "path": "/tmp/check-000090.png", "frame": 90, "time": 3.003 },
+                { "type": "frame", "path": absolute(Path::new("/tmp/check-000090.png")), "frame": 90, "time": 3.003 },
                 {
-                    "type": "video", "path": "/tmp/check.mp4", "firstFrame": 30, "frames": 60,
+                    "type": "video", "path": absolute(Path::new("/tmp/check.mp4")), "firstFrame": 30, "frames": 60,
                     "start": 1.001, "duration": 2.002, "audio": false
                 }
             ])
