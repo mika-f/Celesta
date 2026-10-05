@@ -732,8 +732,11 @@ fn shades_rects_like_the_cpu_rasterizer() {
             }
         }
         // The shader works in f32 and the rasterizer in f64, so an edge's
-        // coverage or a stroke's blend of the two colors can land on a
-        // rounding tie in one and just miss it in the other.
+        // coverage, a gradient's color or a stroke's blend of the two colors
+        // can land on a rounding tie in one and just miss it in the other.
+        // At an edge pixel the color and the coverage can each be one code
+        // off, and blending onto the background compounds them into two
+        // (seen on lavapipe). A misplaced edge differs by far more.
         let max_difference = shaded
             .pixels()
             .iter()
@@ -742,7 +745,7 @@ fn shades_rects_like_the_cpu_rasterizer() {
             .max()
             .unwrap();
         assert!(
-            max_difference <= 1,
+            max_difference <= 2,
             "case {index}: channels differ by up to {max_difference}"
         );
     }
