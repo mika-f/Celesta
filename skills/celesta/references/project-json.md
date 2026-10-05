@@ -1,7 +1,10 @@
 # .celesta.json project reference
 
 A project file is a JSON timeline: settings, assets, characters, tracks of
-timed items, and free-form properties. Celesta validates the whole file on
+timed items, and free-form properties. Use it for explicit, hand-placed
+timelines; for anything computed, write React instead (or combine both, see
+[project-data.md](project-data.md)). To check a project, export one PNG frame
+([verify.md](verify.md#check-a-json-project)). Celesta validates the whole file on
 load and refuses it with `path: message` errors (for example
 `tracks[0].items[2].content.asset: references missing asset "bgm"`).
 
@@ -143,9 +146,15 @@ Same fields as `video`, referencing an `audio` asset. No picture.
 
 ```json
 { "type": "image", "asset": "logo" }
+{ "type": "image", "asset": "photo", "width": 800, "height": 450, "fit": "cover" }
 ```
 
-Drawn at its natural size, centered on `transform.position`.
+Centered on `transform.position`. Image assets may be PNG, JPEG, WebP, PNM,
+or SVG. Without `width`/`height` (finite, positive) the image is drawn at its
+natural size; one of them preserves the aspect ratio; both stretch to that
+box unless `fit` is `"contain"` (centered, transparent letterboxing) or
+`"cover"` (centered, cropped). SVGs rasterize at their drawn size, use
+`var(--x, fallback)` fallbacks, and keep their own backgrounds.
 
 ### text
 
@@ -159,8 +168,12 @@ Drawn at its natural size, centered on `transform.position`.
   } }
 ```
 
-`style` has the same fields as React's `TextStyle`. `\n` breaks lines.
-There is no `maxWidth` on text items (only on character subtitles).
+`style` has the same fields as React's `TextStyle` (see
+[text.md](text.md#textstyle)), including `letterSpacing` and `lineBreak`.
+Paints are objects, and JSON colors are `#RRGGBB` or `#RRGGBBAA`. `\n` breaks
+lines. There is no `maxWidth` on text items (only on character subtitles),
+so text items never wrap on their own. Fonts come from `font` assets or
+installed families.
 
 ### dialogue
 
@@ -176,7 +189,8 @@ See [dialogue.md](dialogue.md#json-projects).
 Rendered by a React component registered with `registerComponent`, and
 only when the project is exported together with a React entry that
 renders `<ProjectTimeline />` (see
-[verify-and-export.md](verify-and-export.md#export)). Exporting the JSON
+[project-data.md](project-data.md#registercomponent) and
+[export.md](export.md#commands)). Exporting the JSON
 project on its own fails with an `unsupported … missing component` error on
 that layer; so does registering a name that does not match `component`
 exactly.
@@ -349,18 +363,3 @@ fades in, a logo, and an animated title.
   "properties": {}
 }
 ```
-
-### Image display size and SVG
-
-Image assets accept PNG, JPEG, WebP, PNM, and SVG source paths or URLs.
-An image timeline content may include `width`, `height` (finite positive numbers),
-and `fit` (`"contain"` or `"cover"`):
-
-```json
-{ "type": "image", "asset": "logo", "width": 432 }
-```
-
-Omitted dimensions use the source's natural size; one dimension preserves the
-aspect ratio. Both stretch by default. `contain` centers with transparent
-letterboxing; `cover` centers and crops. SVG rasterization follows the accumulated
-layer scale, resolves CSS variable fallbacks, and preserves source backgrounds.
