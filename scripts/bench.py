@@ -117,10 +117,13 @@ def measure_time(binaries, options):
     """{label: {workload: [ms/frame per round]}}, plus the adapter name."""
     samples = {label: {} for label in binaries}
     adapter = None
+    workloads = {label: workloads_of(binary, options) for label, binary in binaries.items()}
     arguments = {label: ["--frames", str(options.frames), "--warmup", str(options.warmup),
-                         "--size", options.size, *workloads_of(binary, options)]
-                 for label, binary in binaries.items()}
-    labels = list(binaries)
+                         "--size", options.size, *workloads[label]]
+                 for label in binaries}
+    # A side with none of the requested workloads is skipped: celesta-bench
+    # would run all of its workloads when given none.
+    labels = [label for label in binaries if workloads[label]]
     for round_index in range(options.rounds):
         # Alternate the order so drift (thermals, clocks) hits both sides.
         order = labels if round_index % 2 == 0 else labels[::-1]
