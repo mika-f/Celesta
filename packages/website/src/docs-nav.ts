@@ -26,7 +26,7 @@ export const docGroups: DocGroup[] = [
   {
     title: 'Guides',
     pages: [
-      { slug: 'animation', title: 'Frames, timing & animation', description: 'Make motion a function of the frame.', keywords: 'interpolate easing spring transition sequence hooks useCurrentFrame duration fps opacity animation' },
+      { slug: 'animation', title: 'Frames, timing & animation', description: 'Make motion a function of the frame.', keywords: 'interpolate interpolateColor color easing spring transition sequence hooks useCurrentFrame duration fps opacity animation' },
       { slug: 'motion-toolkit', title: 'Scenes, cues & beats', description: 'Sequencing, staggering, and beat sync.', keywords: 'Series Stagger computeSeries progress useBeat beatAt bpm music useCue cueAt scenes cascade frameToTimecode timecode' },
       { slug: 'text-camera-lines', title: 'Text effects, camera & lines', description: 'Reveals, typewriters, counters, camera moves, and drawn paths.', keywords: 'TextReveal useTypewriter useCountUp Camera shake zoom Line Polyline Path Circle Ellipse Arrow pointOnPolyline chart counter typewriter draw on' },
       { slug: 'layout', title: 'Shapes & layout', description: 'Position layers, group them, clip them, and arrange a scene.', keywords: 'Rect Group blendMode blend mode multiply screen overlay difference anchor rotation scale Center SafeArea Stack Grid Fit clip mask layout coordinates' },

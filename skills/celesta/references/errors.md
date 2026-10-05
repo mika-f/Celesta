@@ -20,6 +20,8 @@ or `ERROR:` per frame. Dialogue, portrait, and lip-sync symptoms are in
 | `components with asset content require a non-empty \`src\` prop` | An `Image`/`Video`/`Audio`/`Font`/portrait `src` is empty or an unassigned ref. |
 | `… must be called from within a Celesta <Composition>`, or React's `Invalid hook call` | Hooks such as `useCurrentFrame()` only work inside components that Celesta renders, never in `prepare()`, at module level, or in plain helper functions. |
 | `interpolate() requires inputRange to be strictly increasing` | Sort the input range; no duplicates. |
+| `interpolateColor() requires #RRGGBB or #RRGGBBAA colors, got … at index N` | Write colors as `#RRGGBB` or `#RRGGBBAA`; CSS names, `rgb()`, and `#RGB` are not accepted. |
+| `interpolateColor() extrapolateLeft must be 'extend' or 'clamp'` (or `extrapolateRight`) | `'identity'` has no meaning for colors; use `'clamp'` (the default) or `'extend'`. |
 | `Build failed with 1 error: … Could not resolve "pkg"` | The npm package is not installed in the project: run `pnpm add pkg` (or npm) in the project folder ([setup.md](setup.md#npm-dependencies)). Never install `react`, `@celesta/react`, `@celesta/math`, or `@celesta/code`. A relative path that does not exist fails the same way. |
 | `Named export 'random' not found` (or `noise`, `randomRange`, …) | Random, noise, and math helpers moved to `@celesta/math`: `import { random } from '@celesta/math'`. |
 | `<ProjectTimeline /> requires evaluated project layers` | Export with `--react entry.tsx --project project.celesta.json`. |
