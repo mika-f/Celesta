@@ -1,7 +1,7 @@
 // Frame-driven animation helpers, meant to be combined with useCurrentFrame()
-// (hooks.ts). Neither function here reads React state itself — both are
-// plain math over whatever frame/time value the caller passes in, so they
-// work the same whether called from a component body or anywhere else.
+// (hooks.ts). No function here reads React state itself — each is plain math
+// over whatever frame/time value the caller passes in, so they work the same
+// whether called from a component body or anywhere else.
 
 export type Extrapolate = 'extend' | 'clamp' | 'identity';
 
@@ -57,14 +57,133 @@ export function interpolate(
     }
   }
 
+  const { segment, progress } = locateSegment(input, inputRange, easing);
+  return outputRange[segment] + progress * (outputRange[segment + 1] - outputRange[segment]);
+}
+
+/**
+ * The `inputRange` segment `input` falls in (the first or last one outside
+ * the range) and the eased position inside it: 0 at its start, 1 at its end,
+ * and beyond 0–1 when extrapolating or when `easing` overshoots.
+ */
+function locateSegment(
+  input: number,
+  inputRange: readonly number[],
+  easing: (input: number) => number,
+): { segment: number; progress: number } {
   let segment = 0;
   while (segment < inputRange.length - 2 && input >= inputRange[segment + 1]) {
     segment += 1;
   }
   const segmentStart = inputRange[segment];
   const segmentEnd = inputRange[segment + 1];
-  const progress = easing((input - segmentStart) / (segmentEnd - segmentStart));
-  return outputRange[segment] + progress * (outputRange[segment + 1] - outputRange[segment]);
+  return { segment, progress: easing((input - segmentStart) / (segmentEnd - segmentStart)) };
+}
+
+/** How `interpolateColor()` treats inputs outside `inputRange`. */
+export type ColorExtrapolate = 'extend' | 'clamp';
+
+export interface InterpolateColorOptions {
+  easing?: (input: number) => number;
+  extrapolateLeft?: ColorExtrapolate;
+  extrapolateRight?: ColorExtrapolate;
+}
+
+const HEX_COLOR = /^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/;
+
+/**
+ * Maps `input` from `inputRange` onto `colors` (`#RRGGBB` or `#RRGGBBAA`)
+ * the way `interpolate()` maps it onto numbers, returning `#RRGGBBAA` with
+ * uppercase digits. `inputRange` must be strictly increasing, finite, and
+ * the same length as `colors` (at least 2 entries each).
+ *
+ * Colors blend in gamma-encoded sRGB with premultiplied alpha, like the
+ * renderer's gradient stops and CSS: a fade to `#00000000` doesn't darken the
+ * color on the way, and a fully transparent color's RGB has no effect. Each
+ * channel is rounded to the nearest 8-bit value. Where the eased position in
+ * a segment is exactly 0 or 1 (at every `inputRange` entry, with `Easings`)
+ * the result is that end's color, even a fully transparent one.
+ *
+ * Outside `inputRange`, `extrapolateLeft`/`extrapolateRight` choose
+ * `'clamp'` (default), which holds the boundary color, or `'extend'`, which
+ * continues the boundary segment's slope. Channels that `'extend'` or an
+ * overshooting `easing` (such as `Easings.easeOutBack`) push past 0–255 are
+ * clamped to it.
+ */
+export function interpolateColor(
+  input: number,
+  inputRange: readonly number[],
+  colors: readonly string[],
+  options: InterpolateColorOptions = {},
+): string {
+  if (typeof input !== 'number' || !Number.isFinite(input)) {
+    throw new Error('interpolateColor() requires a finite input');
+  }
+  if (inputRange.length < 2 || inputRange.length !== colors.length) {
+    throw new Error('interpolateColor() requires inputRange and colors of the same length, at least 2');
+  }
+  if (!inputRange.every((value) => typeof value === 'number' && Number.isFinite(value))) {
+    throw new Error('interpolateColor() requires finite inputRange values');
+  }
+  for (let i = 1; i < inputRange.length; i += 1) {
+    if (inputRange[i] <= inputRange[i - 1]) {
+      throw new Error('interpolateColor() requires inputRange to be strictly increasing');
+    }
+  }
+  const rgba = colors.map((color, index) => {
+    if (typeof color !== 'string' || !HEX_COLOR.test(color)) {
+      throw new Error(
+        `interpolateColor() requires #RRGGBB or #RRGGBBAA colors, got ${JSON.stringify(color)} at index ${index}`,
+      );
+    }
+    return parseHexColor(color);
+  });
+  const { easing = (t: number) => t, extrapolateLeft = 'clamp', extrapolateRight = 'clamp' } = options;
+  for (const [name, value] of [['extrapolateLeft', extrapolateLeft], ['extrapolateRight', extrapolateRight]]) {
+    if (value !== 'extend' && value !== 'clamp') {
+      throw new Error(`interpolateColor() ${name} must be 'extend' or 'clamp'`);
+    }
+  }
+
+  const lastIndex = inputRange.length - 1;
+  if (input <= inputRange[0] && extrapolateLeft === 'clamp') {
+    return formatHexColor(rgba[0]);
+  }
+  if (input >= inputRange[lastIndex] && extrapolateRight === 'clamp') {
+    return formatHexColor(rgba[lastIndex]);
+  }
+
+  const { segment, progress } = locateSegment(input, inputRange, easing);
+  if (progress === 0) {
+    return formatHexColor(rgba[segment]);
+  }
+  if (progress === 1) {
+    return formatHexColor(rgba[segment + 1]);
+  }
+  const from = premultiply(rgba[segment]);
+  const to = premultiply(rgba[segment + 1]);
+  const mixed = from.map((channel, i) => channel + progress * (to[i] - channel));
+  const alpha = Math.min(255, mixed[3]);
+  if (!(alpha > 0)) {
+    return '#00000000';
+  }
+  const unpremultiply = (channel: number) => Math.min(255, Math.max(0, (channel * 255) / alpha));
+  return formatHexColor([unpremultiply(mixed[0]), unpremultiply(mixed[1]), unpremultiply(mixed[2]), alpha]);
+}
+
+/** `[r, g, b, a]`, each 0–255; `#RRGGBB` is opaque. */
+function parseHexColor(color: string): [number, number, number, number] {
+  const channel = (offset: number) => parseInt(color.slice(offset, offset + 2), 16);
+  return [channel(1), channel(3), channel(5), color.length === 9 ? channel(7) : 255];
+}
+
+function premultiply([r, g, b, a]: readonly number[]): number[] {
+  return [(r * a) / 255, (g * a) / 255, (b * a) / 255, a];
+}
+
+/** Rounds each 0–255 channel to `#RRGGBBAA` with uppercase digits. */
+function formatHexColor(channels: readonly number[]): string {
+  return `#${channels.map((channel) => Math.round(channel).toString(16).padStart(2, '0')).join('').toUpperCase()}`;
 }
 
 /**
