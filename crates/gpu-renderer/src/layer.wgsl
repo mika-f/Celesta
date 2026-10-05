@@ -89,10 +89,11 @@ struct VertexOutput {
     // A path's tile: the index of its first entry in `paths`.
     @location(9) @interpolate(flat) path_tile: u32,
     // A rect's inverse map, from scene pixels to its own units from its
-    // top-left corner: the linear part (du/dx, dv/dx, du/dy, dv/dy) and the
-    // translation.
+    // top-left corner: the linear part (du/dx, dv/dx, du/dy, dv/dy), then
+    // the translation and the most of a pixel the rect and the box inside
+    // its stroke can cover (see `rect_coverage_cap`).
     @location(10) @interpolate(flat) inverse: vec4<f32>,
-    @location(11) @interpolate(flat) inverse_translation: vec2<f32>,
+    @location(11) @interpolate(flat) inverse_translation_caps: vec4<f32>,
 };
 
 @vertex
@@ -111,7 +112,7 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32, layer: LayerInstance) -> Ve
     var uv: vec2<f32>;
     var path_tile = 0u;
     var inverse = vec4<f32>(0.0);
-    var inverse_translation = vec2<f32>(0.0);
+    var inverse_translation_caps = vec4<f32>(0.0);
     let anchor = layer.anchor_opacity_kind.xy;
     var local: vec2<f32>;
     if layer.anchor_opacity_kind.w == 1.0 {
@@ -122,10 +123,18 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32, layer: LayerInstance) -> Ve
         let margin = vec2<f32>(length(inverse.xz), length(inverse.yw));
         local = (corner - anchor) * size + (corner * 2.0 - 1.0) * margin;
         let offset = -layer.translation_size.xy;
-        inverse_translation = vec2<f32>(
+        let translation = vec2<f32>(
             inverse.x * offset.x + inverse.z * offset.y,
             inverse.y * offset.x + inverse.w * offset.y,
         ) + anchor * size;
+        // Constant across the rect, so found once here.
+        let half_size = layer.rect.xy;
+        let inner_half_size = max(half_size - vec2<f32>(layer.rect.w), vec2<f32>(0.0));
+        inverse_translation_caps = vec4<f32>(
+            translation,
+            rect_coverage_cap(half_size, inverse),
+            rect_coverage_cap(inner_half_size, inverse),
+        );
     } else if layer.anchor_opacity_kind.w == 2.0 {
         // A path draws a quad over each tile it lists, skipping the tiles
         // nothing covers. It is never filtered.
@@ -170,7 +179,7 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32, layer: LayerInstance) -> Ve
         sampling,
         path_tile,
         inverse,
-        inverse_translation,
+        inverse_translation_caps,
     );
 }
 
@@ -264,16 +273,13 @@ fn rect_distance(p: vec2<f32>, half_size: vec2<f32>, radius: f32, inverse: vec4<
 
 // `RectDistance::coverage_cap`: the most of a pixel a box of `half_size` can
 // cover, so a box thinner than a pixel (or empty) is not drawn heavier than
-// it is. Its width and height in canvas pixels, each within 0 to 1, over the
-// sine between its edges, which a shear leans; at most the whole pixel.
+// it is: at most its area, and its width across each pair of parallel
+// edges, in canvas pixels; at most the whole pixel.
 fn rect_coverage_cap(half_size: vec2<f32>, inverse: vec4<f32>) -> f32 {
-    let lengths = vec2<f32>(length(inverse.xz), length(inverse.yw));
-    let extent = clamp(2.0 * half_size / lengths, vec2<f32>(0.0), vec2<f32>(1.0));
-    var sine = 1.0;
-    if dot(inverse.xz, inverse.yw) != 0.0 {
-        sine = abs(inverse.x * inverse.w - inverse.y * inverse.z) / (lengths.x * lengths.y);
-    }
-    return clamp(extent.x * extent.y / sine, 0.0, 1.0);
+    let size = 2.0 * half_size;
+    let area_per_pixel = abs(inverse.x * inverse.w - inverse.y * inverse.z);
+    let widths = size / vec2<f32>(length(inverse.xz), length(inverse.yw));
+    return clamp(min(size.x * size.y / area_per_pixel, min(widths.x, widths.y)), 0.0, 1.0);
 }
 
 // The rect under the pixel, straight alpha, as
@@ -287,7 +293,7 @@ fn rect_color(input: VertexOutput) -> vec4<f32> {
     let point = vec2<f32>(
         input.inverse.x * pixel.x + input.inverse.z * pixel.y,
         input.inverse.y * pixel.x + input.inverse.w * pixel.y,
-    ) + input.inverse_translation;
+    ) + input.inverse_translation_caps.xy;
     let half_size = input.rect.xy;
     let radius = input.rect.z;
     let stroke_width = input.rect.w;
@@ -295,21 +301,20 @@ fn rect_color(input: VertexOutput) -> vec4<f32> {
     let outer = clamp(
         0.5 - rect_distance(p, half_size, radius, input.inverse),
         0.0,
-        rect_coverage_cap(half_size, input.inverse),
+        input.inverse_translation_caps.z,
     );
     var color = paint_color(input.fill, point);
     if stroke_width > 0.0 {
         let stroke = paint_color(input.stroke, point);
-        let inner_half_size = max(half_size - vec2<f32>(stroke_width), vec2<f32>(0.0));
         let inner = clamp(
             0.5 - rect_distance(
                 p,
-                inner_half_size,
+                max(half_size - vec2<f32>(stroke_width), vec2<f32>(0.0)),
                 max(radius - stroke_width, 0.0),
                 input.inverse,
             ),
             0.0,
-            rect_coverage_cap(inner_half_size, input.inverse),
+            input.inverse_translation_caps.w,
         );
         // Of the part of the pixel the rect covers, the fill's share; the
         // rest is stroke.

@@ -1683,3 +1683,40 @@ fn a_stroke_filling_the_rect_hides_its_fill() {
         assert_eq!(pixel, [255, 0, 0, 255]);
     }
 }
+
+#[test]
+fn a_strongly_sheared_thin_strip_covers_about_its_area() {
+    // x' = x + 2y leans a 40-unit strip until its edges meet at 27 degrees:
+    // its widths across each other, divided by the sine between them, let
+    // its whole length draw up to 2.6 times its area.
+    let paint = crate::rect::resolve_rect_paint(
+        Some(&Paint::Solid {
+            color: "#FFFFFF".to_owned(),
+        }),
+        None,
+    )
+    .unwrap();
+    let shear = crate::PathTransform {
+        a: 1.0,
+        b: 0.0,
+        c: 2.0,
+        d: 1.0,
+        tx: 60.3,
+        ty: 30.4,
+    };
+    for width in [0.1, 0.25, 0.5] {
+        let rect =
+            crate::rect::rasterize_rect_transformed(width, 40.0, 0.0, &paint, shear, 200, 120)
+                .unwrap();
+        let covered: f64 = rect
+            .image
+            .pixels()
+            .chunks_exact(4)
+            .map(|pixel| f64::from(pixel[3]) / 255.0)
+            .sum();
+        // A single sample per pixel aliases along a sloped strip, as it does
+        // unsheared at the same angle; within that, the area.
+        let ratio = covered / (width * 40.0);
+        assert!((0.7..1.4).contains(&ratio), "width {width}: {ratio:.2}");
+    }
+}

@@ -215,9 +215,8 @@ struct RectDistance {
     /// to a horizontal one.
     scale_x: f64,
     scale_y: f64,
-    /// The sine of the angle between the local axes on the canvas: 1
-    /// unless the transform shears.
-    sine: f64,
+    /// `|det|` of the inverse: local area per output pixel.
+    area_per_pixel: f64,
     /// The scale, when it is the same along every direction.
     uniform: Option<f64>,
 }
@@ -229,33 +228,32 @@ impl RectDistance {
         let scale_x = 1.0 / gradient_x.0.hypot(gradient_x.1);
         let scale_y = 1.0 / gradient_y.0.hypot(gradient_y.1);
         let orthogonal = gradient_x.0 * gradient_y.0 + gradient_x.1 * gradient_y.1 == 0.0;
-        let determinant = inverse.a * inverse.d - inverse.b * inverse.c;
         Self {
             gradient_x,
             gradient_y,
             scale_x,
             scale_y,
-            sine: if orthogonal {
-                1.0
-            } else {
-                determinant.abs() * scale_x * scale_y
-            },
+            area_per_pixel: (inverse.a * inverse.d - inverse.b * inverse.c).abs(),
             uniform: (orthogonal && scale_x == scale_y).then_some(scale_x),
         }
     }
 
     /// The most of a pixel a box of these half extents can cover. One
     /// sample's `0.5 - distance` alone reaches 0.5 at the centre of a box
-    /// thinner than a pixel, or even empty. Its width and height in output
-    /// pixels (across its edges), each within 0 to 1, bound that along each
-    /// axis; a shear leans the edges, so it divides by the sine between
-    /// them: a box within a pixel then covers its area, and a thin one its
-    /// width along the other edges. Never more than the whole pixel.
+    /// thinner than a pixel, or even empty. A box covers at most its own
+    /// area, and the strip between two parallel edges at most its width
+    /// across them: the band of pixels whose centres lie within half a pixel
+    /// of a strip holds one centre per unit of its length at any angle, so
+    /// that keeps a thin strip's total coverage at its area under rotation
+    /// or shear. Never more than the whole pixel.
     fn coverage_cap(&self, half_width: f64, half_height: f64) -> f64 {
-        let extent = |half: f64, scale: f64| (2.0 * half * scale).clamp(0.0, 1.0);
-        (extent(half_width, self.scale_x) * extent(half_height, self.scale_y) / self.sine)
-            .min(1.0)
-            .max(0.0)
+        let (width, height) = (2.0 * half_width, 2.0 * half_height);
+        let cap = (width * height / self.area_per_pixel)
+            .min(width * self.scale_x)
+            .min(height * self.scale_y);
+        // Not `clamp`, which keeps a NaN (a NaN size) that the caller's
+        // `clamp(0.0, cap)` panics on.
+        if cap >= 0.0 { cap.min(1.0) } else { 0.0 }
     }
 
     fn of(&self, px: f64, py: f64, half_width: f64, half_height: f64, radius: f64) -> f64 {

@@ -723,10 +723,35 @@ fn shades_sheared_rects_like_the_cpu_rasterizer() {
     // A rect rotated inside a group scaled non-uniformly is sheared: its
     // local axes are no longer perpendicular on the canvas, so each rounded
     // corner's anti-aliasing depends on which corner it is.
-    for (index, (rotation, group_scale)) in [(30.0, (1.6, 0.7)), (-55.0, (0.8, 1.9))]
+    let rounded = LayerContent::Rect {
+        width: 30.5,
+        height: 18.25,
+        fill: Some(Paint::Solid {
+            color: "#ffffff".to_owned(),
+        }),
+        stroke: Some(Stroke {
+            paint: Paint::Solid {
+                color: "#ff4000c0".to_owned(),
+            },
+            width: 2.5,
+        }),
+        corner_radius: 7.0,
+    };
+    // Thinner than a pixel: its coverage is capped by its width across the
+    // leaning edges.
+    let thin = LayerContent::Rect {
+        width: 0.3,
+        height: 24.0,
+        fill: Some(Paint::Solid {
+            color: "#ffffff".to_owned(),
+        }),
+        stroke: None,
+        corner_radius: 0.0,
+    };
+    let cases = [(30.0, (1.6, 0.7)), (-55.0, (0.8, 1.9))]
         .into_iter()
-        .enumerate()
-    {
+        .flat_map(|case| [(case, rounded.clone()), (case, thin.clone())]);
+    for (index, ((rotation, group_scale), content)) in cases.enumerate() {
         let group_transform = EvaluatedTransform {
             position: Point { x: 31.7, y: 30.2 },
             scale: Point {
@@ -753,20 +778,7 @@ fn shades_sheared_rects_like_the_cpu_rasterizer() {
                     opacity: 0.9,
                     blend_mode: BlendMode::Normal,
                     effects: Default::default(),
-                    content: LayerContent::Rect {
-                        width: 30.5,
-                        height: 18.25,
-                        fill: Some(Paint::Solid {
-                            color: "#ffffff".to_owned(),
-                        }),
-                        stroke: Some(Stroke {
-                            paint: Paint::Solid {
-                                color: "#ff4000c0".to_owned(),
-                            },
-                            width: 2.5,
-                        }),
-                        corner_radius: 7.0,
-                    },
+                    content,
                 }],
                 clip: None,
             },
