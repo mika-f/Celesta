@@ -1,6 +1,4 @@
-# Handoff notes, 2026-08-26
-
-## `<Sequence>`, per-frame audio collection, and editor React preview (2026-08-26)
+# `<Sequence>`, per-frame audio collection, and editor React preview (2026-08-26)
 
 Three related gaps closed in one pass; they share one protocol change.
 

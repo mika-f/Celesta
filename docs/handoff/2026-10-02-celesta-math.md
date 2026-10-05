@@ -1,6 +1,4 @@
-# Handoff notes, 2026-10-02
-
-## `@celesta/math` (2026-10-02)
+# `@celesta/math` (2026-10-02)
 
 `random` and `noise` moved out of `@celesta/react` into the new
 `packages/math` (`@celesta/math`), which also adds more random, noise, scalar,

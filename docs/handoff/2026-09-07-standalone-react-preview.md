@@ -1,6 +1,4 @@
-# Handoff notes, 2026-09-07
-
-## Standalone React composition preview in the editor (2026-09-07)
+# Standalone React composition preview in the editor (2026-09-07)
 
 `celesta-editor <entry>.tsx` (also `.ts`/`.jsx`/`.js`/`.mjs`/`.cjs`; a
 `*.celesta.json` is still always a project) opens a standalone React composition

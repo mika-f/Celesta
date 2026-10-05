@@ -1,6 +1,4 @@
-# Handoff notes, 2026-08-29
-
-## Character portraits, PSD presets, and automatic lip sync (2026-08-29)
+# Character portraits, PSD presets, and automatic lip sync (2026-08-29)
 
 `@celesta/react` has `<Character>` / `<CharacterView>` (`src/components.ts`,
 `src/render.ts`): a `<Character>` inside `<Assets>` declares a reusable

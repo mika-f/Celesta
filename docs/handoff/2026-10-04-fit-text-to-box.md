@@ -1,6 +1,4 @@
-# Handoff notes, 2026-10-04
-
-## Fitting text into a box (2026-10-04)
+# Fitting text into a box (2026-10-04)
 
 `<TextBox>`, `useFitText()`, and `fitText()` (`packages/react/src/text-fit.ts`)
 pick a font size from `minFontSize` to `maxFontSize` that fits a
