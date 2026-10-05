@@ -117,6 +117,9 @@ export type { CountUpOptions, TextRevealProps, Typewriter, TypewriterOptions } f
 export { Easings, interpolate, progress, spring } from './animation';
 export type { Extrapolate, InterpolateOptions, SpringConfig, SpringOptions } from './animation';
 
+export { frameKeyframes } from './keyframes';
+export type { FrameKeyframe, FrameKeyframesOptions } from './keyframes';
+
 export { Transition } from './transition';
 export type {
   SlideFrom,

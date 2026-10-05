@@ -392,6 +392,40 @@ Keyframe `easing` uses the kebab-case names listed in
 `opacity`, …) do not take keyframes in React; compute them from the frame
 with `interpolate` ([animation.md](animation.md#interpolate)).
 
+### `frameKeyframes(keys, { fps, origin? })`
+
+Builds the same keyframes from frame numbers. Each key is
+`{ frame, value, easing? }`; `easing` shapes the segment that ends at that
+key and defaults to `'linear'`. Fade in over 15 frames and out over the
+last 15 of a 90-frame sequence:
+
+```tsx
+const { fps } = useVideoConfig();
+<Audio src="./bgm.wav" volume={frameKeyframes([
+  { frame: 0, value: 0 },
+  { frame: 15, value: 0.8, easing: 'ease-out' },
+  { frame: 75, value: 0.8 },
+  { frame: 90, value: 0, easing: 'ease-in' },
+], { fps })} />
+```
+
+- **Keys count from the start of the `<Audio>`'s innermost `<Sequence>`.**
+  To write keys in composition frames (or another outer clock), pass
+  `origin`: the frame that sequence starts on, on the keys' clock. With
+  `<Sequence from={30}><Sequence from={15}><Audio …/></Sequence></Sequence>`,
+  a key at composition frame 45 needs `origin: 45`. Keys before `origin` are
+  allowed.
+- Times are `(frame - origin) / fps` seconds rounded to the nearest
+  microsecond, as `<Sequence>` offsets are. Fractional frames and fps
+  (29.97) work.
+- Keys must be in order of `frame`. Two keys on the same frame make a cut:
+  the first value holds up to that frame, the second applies after it.
+  Before the first key and after the last, the nearest key's value holds.
+- An empty list, keys out of order, a non-finite `frame`, `value`, or
+  `origin`, and an `fps` that is not positive throw.
+
+See `packages/react/examples/with-volume-fade.tsx`.
+
 ## Preview-only debug guides
 
 `<DebugOverlay safeArea? color? showCenter? showFrame? />` draws the safe
