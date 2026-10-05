@@ -34,14 +34,15 @@ a rect covers at its centre, through the layer's transform (PR #166).
   once per rect, in the vertex shader on the GPU). One sample's
   `0.5 - distance` alone drew a 0.1 px rect at 55% and an empty one at 50%.
   A box filter gives a pixel inside the ramps of a pair of parallel edges
-  their distance apart in those units, each at most 1, and inside both
-  pairs' the product. The box inside a stroke is capped the same way, and
+  their distance apart in those units, at most 1; the cap multiplies the two
+  pairs' fractions, which is exact for an unsheared box and an approximation
+  under shear, where the two pairs' coverages are not independent. The box inside a stroke is capped the same way, and
   the stroke and fill mix by the fill's share of what the rect covers.
 - `thin_strips_cover_their_area_wherever_they_fall` holds strips from 0.1 to
-  1 px wide, rotated or sheared, within 0.97 to 1.12 of their area at every
-  sub-pixel offset. A box smaller than a pixel in both directions cannot be
-  placed exactly by one sample: leaning, it draws 0.5 to 1.7 of its area
-  depending on position (`boxes_within_a_pixel_stay_near_their_area_when_leaning`).
+  1 px wide, rotated or sheared, within 0.97 to 1.12 of their area at ten
+  sampled sub-pixel offsets. A box smaller than a pixel in both directions cannot be
+  placed exactly by one sample: leaning, it draws about 0.5 to 1.7 of its
+  area depending on position, at the same sampled offsets (`boxes_within_a_pixel_stay_near_their_area_when_leaning`).
 - `CpuRenderer` is slower on scenes of many thin rects (`ribbons` about 9%):
   it shades every pixel each rect covers plus a one-pixel border, instead of
   copying a small texture. Preview and export use the GPU renderer, which got
