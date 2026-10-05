@@ -716,6 +716,31 @@ fn gradient_text_varies_across_the_glyphs() {
 }
 
 #[test]
+fn solid_text_fill_alpha_scales_the_glyphs_alpha() {
+    let mut rasterizer = TextRasterizer::new();
+    let mut max_alpha = |color: &str| {
+        let style = TextStyle {
+            font_size: Some(64.0),
+            fill: Some(Paint::Solid {
+                color: color.to_owned(),
+            }),
+            ..TextStyle::default()
+        };
+        let text = rasterizer.rasterize("MMMM", &style, None, 1.0).unwrap();
+        let pixels = text.pixels().chunks_exact(4);
+        assert!(
+            pixels
+                .clone()
+                .all(|pixel| pixel[3] == 0 || pixel[..3] == [255, 0, 0])
+        );
+        pixels.map(|pixel| pixel[3]).max().unwrap()
+    };
+    assert_eq!(max_alpha("#FF0000"), 255);
+    assert_eq!(max_alpha("#FF000080"), 128);
+    assert_eq!(max_alpha("#FF000000"), 0);
+}
+
+#[test]
 fn letter_spacing_widens_and_tightens_text() {
     let mut rasterizer = TextRasterizer::new();
     let mut width = |letter_spacing| {

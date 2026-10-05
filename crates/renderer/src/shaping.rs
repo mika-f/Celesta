@@ -334,9 +334,19 @@ impl TextRasterizer {
                         let offset = pixel_y as usize * mask_width as usize + pixel_x as usize;
                         mask[offset] = mask[offset].max(color.a());
                         let pixel_offset = offset * 4;
+                        // cosmic-text drops the base color's alpha, so plain
+                        // glyph pixels (those in the fill's color) come back
+                        // with coverage alone; apply the fill's alpha here.
+                        let alpha = if [color.r(), color.g(), color.b()]
+                            == [fill.red, fill.green, fill.blue]
+                        {
+                            (f64::from(color.a()) * f64::from(fill.alpha) / 255.0).round() as u8
+                        } else {
+                            color.a()
+                        };
                         blend(
                             &mut glyph_pixels[pixel_offset..pixel_offset + 4],
-                            Color::rgba(color.r(), color.g(), color.b(), color.a()),
+                            Color::rgba(color.r(), color.g(), color.b(), alpha),
                             1.0,
                         );
                     }
