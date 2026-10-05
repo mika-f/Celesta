@@ -262,6 +262,14 @@ fn rect_distance(p: vec2<f32>, half_size: vec2<f32>, radius: f32, inverse: vec4<
     return max((q.x - radius) * scale.x, (q.y - radius) * scale.y);
 }
 
+// `RectDistance::coverage_cap`: the most of a pixel a box of `half_size` can
+// cover, its width and height in canvas pixels, each at most 1, so a box
+// thinner than a pixel (or empty) is not drawn heavier than it is.
+fn rect_coverage_cap(half_size: vec2<f32>, inverse: vec4<f32>) -> f32 {
+    let extent = min(2.0 * half_size / vec2<f32>(length(inverse.xz), length(inverse.yw)), vec2<f32>(1.0));
+    return extent.x * extent.y;
+}
+
 // The rect under the pixel, straight alpha, as
 // `celesta_renderer::rasterize_rect_transformed` shades it at the pixel's
 // centre.
@@ -278,19 +286,24 @@ fn rect_color(input: VertexOutput) -> vec4<f32> {
     let radius = input.rect.z;
     let stroke_width = input.rect.w;
     let p = point - half_size;
-    let outer = clamp(0.5 - rect_distance(p, half_size, radius, input.inverse), 0.0, 1.0);
+    let outer = clamp(
+        0.5 - rect_distance(p, half_size, radius, input.inverse),
+        0.0,
+        rect_coverage_cap(half_size, input.inverse),
+    );
     var color = paint_color(input.fill, point);
     if stroke_width > 0.0 {
         let stroke = paint_color(input.stroke, point);
+        let inner_half_size = max(half_size - vec2<f32>(stroke_width), vec2<f32>(0.0));
         let inner = clamp(
             0.5 - rect_distance(
                 p,
-                max(half_size - vec2<f32>(stroke_width), vec2<f32>(0.0)),
+                inner_half_size,
                 max(radius - stroke_width, 0.0),
                 input.inverse,
             ),
             0.0,
-            1.0,
+            rect_coverage_cap(inner_half_size, input.inverse),
         );
         // `floor(x + 0.5)` rounds like Rust's `f64::round` for these
         // non-negative values; WGSL's `round` rounds halves to even, and

@@ -1557,3 +1557,45 @@ fn rects_keep_fractional_positions_sizes_anchors_and_scales() {
         expected(10, &with(128, full(9), 128)),
     );
 }
+
+#[test]
+fn rects_thinner_than_a_pixel_cover_only_their_width() {
+    for vertical in [false, true] {
+        let total = |at: f64, length: f64| -> u32 {
+            rect_line(vertical, at, length, 0.0, (1.0, 1.0))
+                .into_iter()
+                .map(u32::from)
+                .sum()
+        };
+        // Empty: nothing, even centred on a pixel.
+        assert_eq!(total(16.5, 0.0), 0, "vertical: {vertical}");
+        // A tenth of a pixel covers a tenth of one, on a pixel's centre or
+        // across a pixel boundary alike.
+        assert_eq!(total(16.45, 0.1), 26, "vertical: {vertical}");
+        assert_eq!(total(15.95, 0.1), 26, "vertical: {vertical}");
+    }
+}
+
+#[test]
+fn a_stroke_filling_the_rect_hides_its_fill() {
+    // The stroke reaches the centre from every side: no fill shows, not
+    // even half of it along the centre line.
+    let rect = rasterize_rect(
+        5.0,
+        5.0,
+        0.0,
+        Some(&Paint::Solid {
+            color: "#FFFFFF".to_owned(),
+        }),
+        Some(&celesta_composition::Stroke {
+            paint: Paint::Solid {
+                color: "#FF0000".to_owned(),
+            },
+            width: 2.5,
+        }),
+    )
+    .unwrap();
+    for pixel in rect.pixels().chunks_exact(4) {
+        assert_eq!(pixel, [255, 0, 0, 255]);
+    }
+}

@@ -596,6 +596,20 @@ fn shades_rects_like_the_cpu_rasterizer() {
             1.0,
         ),
         (0.4, 9.0, 0.0, fill("#ffff00"), None, 45.0, 3.0, 1.0),
+        // Thinner than a pixel, or empty: covered no more than they are wide.
+        (0.3, 9.0, 0.0, fill("#ffff00"), None, 0.0, 1.0, 1.0),
+        (0.0, 9.0, 0.0, fill("#ffff00"), None, 17.0, 1.0, 1.0),
+        // A stroke reaching the centre from every side hides the fill.
+        (
+            5.0,
+            5.0,
+            0.0,
+            fill("#ffffff"),
+            Some(stroke("#ff0000", 2.5)),
+            0.0,
+            1.0,
+            1.0,
+        ),
         // Gradients, shaded from the stops rather than rasterized.
         (
             40.0,

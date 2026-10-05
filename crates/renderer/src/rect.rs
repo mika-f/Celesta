@@ -138,11 +138,22 @@ fn shade_rect(
         half_height,
         radius,
     } = *rect;
+    let distance = RectDistance::new(inverse);
+    let outer_cap = distance.coverage_cap(half_width, half_height);
+    // The stroke's paint, and the box inside it that the fill shows through.
     let stroke = paint
         .stroke
         .as_ref()
-        .filter(|(_, stroke_width)| *stroke_width > 0.0);
-    let distance = RectDistance::new(inverse);
+        .filter(|(_, stroke_width)| *stroke_width > 0.0)
+        .map(|(stroke_paint, stroke_width)| {
+            let inner = RectBox {
+                half_width: (half_width - stroke_width).max(0.0),
+                half_height: (half_height - stroke_width).max(0.0),
+                radius: (radius - stroke_width).max(0.0),
+            };
+            let cap = distance.coverage_cap(inner.half_width, inner.half_height);
+            (stroke_paint, inner, cap)
+        });
 
     for y in 0..pixel_height {
         for x in 0..pixel_width {
@@ -153,7 +164,7 @@ fn shade_rect(
             let px = sample_x - half_width;
             let py = sample_y - half_height;
             let outer_distance = distance.of(px, py, half_width, half_height, radius);
-            let outer_alpha = (0.5 - outer_distance).clamp(0.0, 1.0);
+            let outer_alpha = (0.5 - outer_distance).clamp(0.0, outer_cap);
             if outer_alpha <= 0.0 {
                 continue;
             }
@@ -162,14 +173,11 @@ fn shade_rect(
                 .fill
                 .as_ref()
                 .map_or(Color::TRANSPARENT, |fill| fill.color_at(sample_x, sample_y));
-            if let Some((stroke_paint, stroke_width)) = stroke {
+            if let Some((stroke_paint, inner, inner_cap)) = &stroke {
                 let stroke_color = stroke_paint.color_at(sample_x, sample_y);
-                let inner_half_width = (half_width - stroke_width).max(0.0);
-                let inner_half_height = (half_height - stroke_width).max(0.0);
-                let inner_radius = (radius - stroke_width).max(0.0);
                 let inner_distance =
-                    distance.of(px, py, inner_half_width, inner_half_height, inner_radius);
-                let inner_alpha = (0.5 - inner_distance).clamp(0.0, 1.0);
+                    distance.of(px, py, inner.half_width, inner.half_height, inner.radius);
+                let inner_alpha = (0.5 - inner_distance).clamp(0.0, *inner_cap);
                 color = Color::rgba(
                     lerp(stroke_color.red, color.red, inner_alpha),
                     lerp(stroke_color.green, color.green, inner_alpha),
@@ -222,6 +230,15 @@ impl RectDistance {
             scale_y,
             uniform: (orthogonal && scale_x == scale_y).then_some(scale_x),
         }
+    }
+
+    /// The most of a pixel a box of these half extents can cover: its
+    /// width and height in output pixels, each at most 1. One sample's
+    /// `0.5 - distance` alone reaches 0.5 at the centre of a box that is
+    /// thinner than a pixel, or even empty; this bounds it to the box's
+    /// exact coverage along each axis.
+    fn coverage_cap(&self, half_width: f64, half_height: f64) -> f64 {
+        (2.0 * half_width * self.scale_x).min(1.0) * (2.0 * half_height * self.scale_y).min(1.0)
     }
 
     fn of(&self, px: f64, py: f64, half_width: f64, half_height: f64, radius: f64) -> f64 {
