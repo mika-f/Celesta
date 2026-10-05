@@ -1,8 +1,11 @@
 // Two characters talk through a short script whose timing comes entirely
 // from their voice recordings: planDialogue() measures each line, adds a
 // short gap after it and a longer pause before a new scene, and
-// <DialogueSeries> plays the lines. The timeline at the bottom draws the
-// plan itself — lines, gaps, and the scene lead-in — with a playhead.
+// <DialogueSeries> plays the lines. Each character's subtitle.render draws
+// a band sized to the line with the speaker's name plate; holdSubtitle keeps
+// the band up between lines and lets it fade with the conversation. The
+// timeline at the bottom draws the plan itself — lines, gaps, and the scene
+// lead-in — with a playhead.
 //
 // Assets: examples/assets/dialogue-demo (original characters; voices made
 // with Open JTalk and the MMDAgent "Mei"/"Takumi" HTS voices, CC BY 3.0 —
@@ -24,14 +27,18 @@ import {
   loadLipSync,
   planDialogue,
   useCurrentFrame,
+  useTextMetrics,
 } from '@celesta/react';
 import type {
   AssetReference,
+  CharacterSubtitle,
   CharacterViewReference,
   DialogueLine,
   DialoguePlan,
   LipSyncTrack,
   PlannedDialogueLine,
+  SubtitleRenderProps,
+  TextStyle,
 } from '@celesta/react';
 
 import script from '../../../examples/assets/dialogue-demo/script.json';
@@ -48,6 +55,7 @@ const CAST: Record<Speaker, { name: string; color: string; x: number }> = {
   shizuku: { name: 'しずく', color: '#3f8fd6', x: 190 },
   komugi: { name: 'こむぎ', color: '#d97a2b', x: 730 },
 };
+const COLOR_BY_NAME: Record<string, string> = { しずく: CAST.shizuku.color, こむぎ: CAST.komugi.color };
 
 const SCENES: Record<string, { title: string; background: [string, string] }> = {
   intro: { title: '1. はじめまして', background: ['#eaf4ff', '#cfe3f7'] },
@@ -161,22 +169,42 @@ function Timeline() {
   );
 }
 
-function subtitle(color: string) {
-  return {
-    x: WIDTH / 2,
-    y: 555,
-    anchorX: 0.5,
-    anchorY: 0.5,
-    maxWidth: 1100,
-    style: {
-      fontSize: 38,
-      fontWeight: 700,
-      align: 'center' as const,
-      fill: { type: 'solid' as const, color: '#ffffff' },
-      stroke: { paint: { type: 'solid' as const, color }, width: 5 },
-    },
-  };
+const PLATE_STYLE: TextStyle = { fontSize: 22, fontWeight: 700, fill: { type: 'solid', color: '#ffffff' } };
+
+/**
+ * The subtitle: a band sized to the line and a name plate in the speaker's
+ * color. Between lines (`held`) the band stays without the text; it fades
+ * in when a run of lines starts and out when it ends.
+ */
+function SubtitleBand({ text, character, metrics, style, maxWidth, held, frame, durationInFrames }: SubtitleRenderProps) {
+  const color = COLOR_BY_NAME[character.name];
+  const plate = useTextMetrics(character.displayName, PLATE_STYLE);
+  const fade = Math.min(6, durationInFrames / 3);
+  const opacity = interpolate(frame + 0.5, [0, fade, durationInFrames - fade, durationInFrames], [0, 1, 1, 0], {
+    extrapolateLeft: 'clamp',
+    extrapolateRight: 'clamp',
+  });
+  const width = Math.max(560, metrics.width + 80);
+  const height = metrics.height + 40;
+  return (
+    <Group opacity={opacity}>
+      <Rect anchorX={0.5} anchorY={0.5} width={width} height={height} cornerRadius={24} fill="#2b2340d0" stroke={color} strokeWidth={3} />
+      <Rect x={-width / 2 + 24} y={-height / 2} anchorY={0.5} width={plate.width + 32} height={36} cornerRadius={18} fill={color} />
+      <Text x={-width / 2 + 40} y={-height / 2} anchorY={0.5} style={PLATE_STYLE}>{character.displayName}</Text>
+      {held ? null : (
+        <Text anchorX={0.5} anchorY={0.5} maxWidth={maxWidth} style={style}>{text}</Text>
+      )}
+    </Group>
+  );
 }
+
+const SUBTITLE: CharacterSubtitle = {
+  x: WIDTH / 2,
+  y: 548,
+  maxWidth: 1000,
+  style: { fontSize: 36, fontWeight: 700, align: 'center', fill: { type: 'solid', color: '#ffffff' } },
+  render: (props) => <SubtitleBand {...props} />,
+};
 
 export default function Root() {
   return (
@@ -185,12 +213,13 @@ export default function Root() {
         <Character
           ref={characters.shizuku}
           name="しずく"
+          displayName="しずく（案内役）"
           portrait={{
             defaultExpression: 'normal',
             expressions: { normal: `${DEMO}/portraits/shizuku-normal.png`, smile: `${DEMO}/portraits/shizuku-smile.png` },
             lipSync: mouths(),
           }}
-          subtitle={subtitle(CAST.shizuku.color)}
+          subtitle={SUBTITLE}
         />
         <Character
           ref={characters.komugi}
@@ -200,7 +229,7 @@ export default function Root() {
             expressions: { normal: `${DEMO}/portraits/komugi-normal.png`, smile: `${DEMO}/portraits/komugi-smile.png` },
             lipSync: mouths(),
           }}
-          subtitle={subtitle(CAST.komugi.color)}
+          subtitle={SUBTITLE}
         />
       </Assets>
       {/* Each scene's backdrop and title follow the plan, so they cut with the lines. */}
@@ -212,7 +241,7 @@ export default function Root() {
       ))}
       <Member speaker="shizuku" />
       <Member speaker="komugi" />
-      <DialogueSeries plan={plan} views={views} />
+      <DialogueSeries plan={plan} views={views} holdSubtitle />
       <Timeline />
     </Composition>
   );

@@ -13,6 +13,7 @@ Dialogue scenes combine three pieces:
 
 - [React: a two-line conversation](#react-a-two-line-conversation)
 - [Timing a script from its voices](#timing-a-script-from-its-voices)
+- [Drawing the subtitle yourself](#drawing-the-subtitle-yourself)
 - [React props](#react-props)
 - [Automatic lip sync](#automatic-lip-sync)
 - [PSD portraits](#psd-portraits)
@@ -185,6 +186,7 @@ The plan:
 | `plan` | The result of `planDialogue()`. |
 | `views` | `{ speaker: viewRef }` for lines that use `speaker`. |
 | `holdThroughGap` | Keep each subtitle (and expression) through the gap after it. Default false: the line clears when its voice ends. |
+| `holdSubtitle` | Keep a `subtitle.render` band up through the gap after each line (see [Drawing the subtitle yourself](#drawing-the-subtitle-yourself)). Default false. |
 | `dialogueProps` | `(planned) => props` merged into each `<Dialogue>`, e.g. to move one subtitle. |
 
 For lip sync, load each track in `prepare()` and put it on the line:
@@ -193,15 +195,81 @@ For lip sync, load each track in `prepare()` and put it on the line:
 A missing voice file fails `prepare()` with
 `planDialogue(): voice file for line "how" not found: ./voices/03.wav (looked at …)`.
 
+## Drawing the subtitle yourself
+
+A plain `subtitle` draws only the text. For a band behind it, a name plate,
+or anything else, give the subtitle a `render` function. It is called as a
+component (hooks work) with the line, and what it returns is placed like the
+children of a `<Group>` with the subtitle's other layer props, so draw
+around the origin and set `x`/`y` on the subtitle:
+
+```tsx
+import { Group, Rect, Text, interpolate, useTextMetrics } from '@celesta/react';
+import type { CharacterSubtitle, SubtitleRenderProps, TextStyle } from '@celesta/react';
+
+const PLATE: TextStyle = { fontSize: 24, fontWeight: 800, fill: { type: 'solid', color: '#ffffff' } };
+
+function Band({ text, character, metrics, style, maxWidth, held, frame, durationInFrames }: SubtitleRenderProps) {
+  const plate = useTextMetrics(character.displayName, PLATE);
+  const fade = Math.min(8, durationInFrames / 3);
+  // Sampled mid-frame, so every frame of the run, even a one-frame run, shows.
+  const opacity = interpolate(frame + 0.5, [0, fade, durationInFrames - fade, durationInFrames], [0, 1, 1, 0],
+    { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
+  const width = Math.max(1120, metrics.width + 80);  // the band follows the text
+  const height = metrics.height + 48;
+  return (
+    <Group opacity={opacity}>
+      <Rect anchorX={0.5} anchorY={0.5} width={width} height={height} cornerRadius={30}
+        fill="#0B0F0CC8" stroke="#7CC242" strokeWidth={4} />
+      <Rect x={-width / 2 + 32} y={-height / 2} anchorY={0.5} width={plate.width + 48} height={46}
+        cornerRadius={23} fill="#7CC242" />
+      <Text x={-width / 2 + 56} y={-height / 2} anchorY={0.5} style={PLATE}>{character.displayName}</Text>
+      {held ? null : <Text anchorX={0.5} anchorY={0.5} maxWidth={maxWidth} style={style}>{text}</Text>}
+    </Group>
+  );
+}
+
+const subtitle: CharacterSubtitle = {
+  x: 960, y: 962, maxWidth: 1060,
+  style: { fontSize: 44, align: 'center', fill: { type: 'solid', color: '#ffffff' } },
+  render: (props) => <Band {...props} />,
+};
+// <Character name="zundamon" displayName="ずんだもん" subtitle={subtitle} … />
+```
+
+`render` gets:
+
+| Field | Notes |
+| --- | --- |
+| `text` | The line's text. |
+| `character` | `{ id, name, displayName }` of the speaker. `displayName` is `<Character displayName>`, or `name` without one. |
+| `metrics` | `text` measured with the subtitle's `style` and `maxWidth`, as `<Text>` lays it out (`width`, `height`, `lines`, …). |
+| `style`, `maxWidth` | The subtitle's own, for drawing the text. |
+| `held` | True while the line has ended but the subtitle is kept up (below): draw the band, not the text. `text` and `metrics` stay the line's. |
+| `frame`, `durationInFrames` | Frames since the subtitle appeared and how long it stays: the enclosing `<Sequence>`, or the run of lines under `holdSubtitle`. Use them to fade the band in and out. |
+
+To keep the band up between lines, use `<DialogueSeries holdSubtitle>`: in
+the gap after each line, `render` is called for that line with
+`held: true`, so the band (and name plate) stays while the text clears and
+the expression returns to the view's own. `holdThroughGap` keeps the text
+up too. A line with a lead-in (`leadIn`, or `sceneLeadIn` at a new scene)
+starts a new run: the band leaves after the gap before it and comes back
+with the line. `frame` and `durationInFrames` count over the run, so the
+fade above plays once per run, not per line. A plain subtitle draws nothing
+in a held gap. Without `<DialogueSeries>`, place
+`<Dialogue character={view} held>{previousText}</Dialogue>` in the gap
+yourself.
+
 ## React props
 
 ### `<Character>`
 
 | Prop | Notes |
 | --- | --- |
-| `name` | Display name; also the id unless `id` is given. |
+| `name` | Name; also the id unless `id` is given. |
+| `displayName` | Name shown to viewers, e.g. on a name plate (`character.displayName` in `subtitle.render`). Defaults to `name`. |
 | `portrait` | Image portrait or PSD portrait (below). |
-| `subtitle` | Subtitle placement and style: common layer props (`x`, `y`, `anchorX`, …) plus `style` (a `TextStyle`) and `maxWidth`. Positions are canvas coordinates unless the `Dialogue` itself is moved. |
+| `subtitle` | Subtitle placement and style: common layer props (`x`, `y`, `anchorX`, …) plus `style` (a `TextStyle`) and `maxWidth`. Positions are canvas coordinates unless the `Dialogue` itself is moved. `render` draws it yourself ([above](#drawing-the-subtitle-yourself)). |
 
 Image portrait:
 
@@ -234,6 +302,7 @@ portrait is drawn at its natural size; use `scale` for large artwork.
 | `volume`, `playbackRate` | Number or keyframes, as on `<Audio>`. |
 | `startFrom`, `muted` | As on `<Audio>`. |
 | `x`, `y`, `opacity`, … | Move or fade the **subtitle**, useful inside a `<Transition>`. |
+| `held` | Keep the subtitle up after its line: `subtitle.render` gets `held: true`; a plain subtitle draws nothing. Give it no `audio` or `expression`. |
 
 ## Automatic lip sync
 
