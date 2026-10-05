@@ -517,6 +517,69 @@ fn evaluates_a_rect_with_fill_stroke_and_corner_radius_when_node_is_available() 
 }
 
 #[test]
+fn interpolates_rect_text_and_gradient_stop_colors_when_node_is_available() {
+    use celesta_composition::{GradientStop, Paint};
+
+    let Some((node, cli_script, package_root)) = live_react_runtime() else {
+        return;
+    };
+
+    let entry = package_root.join("examples/with-color.tsx");
+    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let solid = |color: &str| Paint::Solid {
+        color: color.to_owned(),
+    };
+    // [sky rect fill, gradient stops, text fill] at a frame.
+    let mut colors_at = |frame: i64| {
+        let scene = bridge.scene_at(Time::new(frame, 30)).unwrap();
+        let LayerContent::Rect { fill: sky, .. } = &scene.layers[0].content else {
+            panic!("expected the sky rect");
+        };
+        let LayerContent::Rect {
+            fill: Some(Paint::Linear { stops, .. }),
+            ..
+        } = &scene.layers[1].content
+        else {
+            panic!("expected a rect with a linear gradient");
+        };
+        let LayerContent::Text { style, .. } = &scene.layers[2].content else {
+            panic!("expected the title text");
+        };
+        (
+            sky.clone().unwrap(),
+            stops.clone(),
+            style.fill.clone().unwrap(),
+        )
+    };
+    let stops = |top: &str, bottom: &str| {
+        vec![
+            GradientStop {
+                offset: 0.0,
+                color: top.to_owned(),
+            },
+            GradientStop {
+                offset: 1.0,
+                color: bottom.to_owned(),
+            },
+        ]
+    };
+
+    // Frame 0: each range's first color; the bottom stop's range starts at
+    // 30, so it holds its first color.
+    let (sky, gradient, title) = colors_at(0);
+    assert_eq!(sky, solid("#101820FF"));
+    assert_eq!(gradient, stops("#FFD84D00", "#3366CCFF"));
+    assert_eq!(title, solid("#FFFFFF00"));
+
+    // Frame 45: the sky's middle color exactly; the bottom stop a quarter
+    // through 30..90; the text 25/70 of the way from white to #FFD84D.
+    let (sky, gradient, title) = colors_at(45);
+    assert_eq!(sky, solid("#EF7B45FF"));
+    assert_eq!(gradient[1].color, "#625DA4FF");
+    assert_eq!(title, solid("#FFF1BFFF"));
+}
+
+#[test]
 fn draws_circles_ellipses_and_arrows_as_paths_when_node_is_available() {
     let Some((node, cli_script, package_root)) = live_react_runtime() else {
         return;

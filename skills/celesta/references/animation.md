@@ -14,6 +14,7 @@ For randomness and noise, use [`@celesta/math`](math.md).
 - [Pick a helper](#pick-a-helper)
 - [Hooks](#hooks)
 - [interpolate](#interpolate)
+- [interpolateColor](#interpolatecolor)
 - [Easings](#easings)
 - [spring](#spring)
 - [progress](#progress)
@@ -31,6 +32,7 @@ For randomness and noise, use [`@celesta/math`](math.md).
 | You want… | Use |
 | --- | --- |
 | A value from A to B over some frames | `interpolate` with `'clamp'`, or `progress` |
+| A color from A to B (fill, gradient stop, shadow) | `interpolateColor` |
 | A bouncy pop-in | `spring` |
 | Scenes back to back | `Series` + `computeSeries` |
 | A voiced script back to back | `planDialogue` + `DialogueSeries` ([dialogue.md](dialogue.md#timing-a-script-from-its-voices)) |
@@ -74,6 +76,35 @@ interpolate(frame, [0, 20, 40], [0, 1, 0], {
 `inputRange` must be strictly increasing and the same length as
 `outputRange` (at least 2). **The default extrapolation is `extend`**, so
 values keep changing past the range; pass `'clamp'` for fades and moves.
+
+## interpolateColor
+
+`interpolateColor(input, inputRange, colors, options?)`
+
+```tsx
+const fill = interpolateColor(frame, [0, 45, 90], ['#101820', '#EF7B45', '#7FC8F8']);
+<Rect width={1280} height={720} fill={fill} />
+<Text style={{ fill: { type: 'solid', color: interpolateColor(frame, [0, 20], ['#FFFFFF00', '#FFFFFF']) } }}>…</Text>
+<Rect fill={{ type: 'linear', start: { x: 0, y: 0 }, end: { x: 0, y: 400 }, stops: [
+  { offset: 0, color: interpolateColor(frame, [0, 60], ['#FFD84D00', '#FFD84D']) },
+  { offset: 1, color: '#3366CC' },
+] }} … />
+```
+
+Same `inputRange` rules and `easing` as `interpolate`, but takes `#RRGGBB` /
+`#RRGGBBAA` colors (no CSS names, `rgb()`, or `#RGB`) and returns uppercase
+`#RRGGBBAA`.
+
+- **The default extrapolation is `'clamp'`** (unlike `interpolate`): outside
+  the range the end color holds. `'extend'` continues the end segment;
+  `'identity'` is not accepted.
+- Blends in sRGB with **premultiplied alpha**, like gradient stops and CSS:
+  `#FF0000` → `#FF000000` stays red while it fades, and a fully transparent
+  color's RGB is ignored, so `#00000000` works as "transparent". Channels
+  that `'extend'` or an overshooting easing push past 0–255 are clamped.
+- At each `inputRange` entry the result is exactly that color (normalized
+  to `#RRGGBBAA`), as long as the easing returns 0 at 0 and 1 at 1, as every
+  `Easings` curve does.
 
 ## Easings
 

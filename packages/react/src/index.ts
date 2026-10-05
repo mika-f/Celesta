@@ -114,8 +114,15 @@ export type { CameraProps } from './camera';
 export { TextReveal, useCountUp, useTypewriter } from './text-motion';
 export type { CountUpOptions, TextRevealProps, Typewriter, TypewriterOptions } from './text-motion';
 
-export { Easings, interpolate, progress, spring } from './animation';
-export type { Extrapolate, InterpolateOptions, SpringConfig, SpringOptions } from './animation';
+export { Easings, interpolate, interpolateColor, progress, spring } from './animation';
+export type {
+  ColorExtrapolate,
+  Extrapolate,
+  InterpolateColorOptions,
+  InterpolateOptions,
+  SpringConfig,
+  SpringOptions,
+} from './animation';
 
 export { frameKeyframes } from './keyframes';
 export type { FrameKeyframe, FrameKeyframesOptions } from './keyframes';
