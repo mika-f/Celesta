@@ -1,7 +1,7 @@
 import * as React from 'react';
 import type { ReactNode } from 'react';
 
-import { CompositionRuntimeContext, RerenderRequestContext } from './hooks';
+import { CompositionRuntimeContext, RerenderRequestContext, resolveTextLanguage } from './hooks';
 import { useOptionalLipSync } from './lipsync';
 import { synchronousMeasurer, useMeasurementFonts } from './text-measure';
 import type { MeasureTextRequest, TextMetrics } from './text-measure';
@@ -78,6 +78,8 @@ export interface ClipRect {
 }
 
 export interface GroupProps extends CommonProps {
+  /** Default text language within this group; inherited when omitted. */
+  lang?: string;
   /**
    * Draws the children only inside this rectangle, in the group's own
    * coordinate space (the space the children's `x`/`y` are given in), so it
@@ -110,6 +112,8 @@ export interface TextProps extends Omit<CommonProps, 'anchorY'> {
   anchorY?: number | 'baseline';
   children: ReactNode;
   style?: TextStyle;
+  /** Text language, overriding ancestors; an explicit `style.lang` takes priority. */
+  lang?: string;
   /**
    * Wraps lines to fit this width, breaking where Unicode line breaking
    * (UAX #14) allows: at spaces in Latin text, and between most characters
@@ -451,15 +455,21 @@ function assignAssetRef(ref: React.ForwardedRef<AssetReference>, value: AssetRef
 
 export function Composition(props: CompositionProps): ReturnType<typeof React.createElement> {
   const runtime = React.useContext(CompositionRuntimeContext);
+  const lang = resolveTextLanguage(props.lang);
   return React.createElement(
     CompositionRuntimeContext.Provider,
-    { value: runtime ? { ...runtime, lang: props.lang } : null },
+    { value: runtime ? { ...runtime, lang } : null },
     React.createElement('composition', props),
   );
 }
 
 export function Group(props: GroupProps): ReturnType<typeof React.createElement> {
-  return React.createElement('group', props);
+  const runtime = React.useContext(CompositionRuntimeContext);
+  const lang = resolveTextLanguage(props.lang, runtime?.lang);
+  const element = React.createElement('group', props);
+  return runtime && props.lang !== undefined
+    ? React.createElement(CompositionRuntimeContext.Provider, { value: { ...runtime, lang } }, element)
+    : element;
 }
 
 export const CharacterView = React.forwardRef<CharacterViewReference, CharacterViewProps>(
@@ -602,6 +612,8 @@ export const Font = React.forwardRef<AssetReference, FontProps>(function Font(pr
 });
 
 export interface SequenceProps extends CommonProps {
+  /** Default text language within this sequence; inherited when omitted. */
+  lang?: string;
   /**
    * Frame this sequence starts at, in the enclosing timeline's own frame
    * numbering (the root composition's clock, or its parent `<Sequence>`'s
@@ -634,6 +646,7 @@ export function Sequence(props: SequenceProps): ReturnType<typeof React.createEl
   if (!context) {
     throw new Error('<Sequence> must be called from within a Celesta <Composition>');
   }
+  const lang = resolveTextLanguage(props.lang, context.lang);
   const fps = context.fps;
   const localSeconds = secondsFromTime(context.time);
   const from = typeof props.from === 'number' && Number.isFinite(props.from) ? props.from : 0;
@@ -653,6 +666,7 @@ export function Sequence(props: SequenceProps): ReturnType<typeof React.createEl
     {
       value: {
         ...context,
+        lang,
         time: shiftedTime,
         durationInFrames: duration,
       },

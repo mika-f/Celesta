@@ -9,7 +9,7 @@
 import * as React from 'react';
 
 import { isRemoteUrl } from './entry-dir';
-import { CompositionRuntimeContext, RerenderRequestContext } from './hooks';
+import { CompositionRuntimeContext, RerenderRequestContext, resolveTextLanguage } from './hooks';
 import { TextMetricsFontsContext, withTextLanguage } from './text-measure';
 import { ProjectLayersContext, ProjectTrackLayersContext } from './project-runtime';
 import { resolveVisibleLayers } from './psd-preset';
@@ -114,6 +114,7 @@ export interface AudioClipDescriptor {
  * seconds.
  */
 interface WalkContext {
+  lang?: string;
   time: Time;
   fps: number;
   originSec: number;
@@ -170,8 +171,9 @@ function readCompositionConfig(instance: HostNode): CompositionConfig {
   };
 }
 
-function rootWalkContext(fps: number, durationInFrames: number, time: Time): WalkContext {
+function rootWalkContext(fps: number, durationInFrames: number, time: Time, lang?: string): WalkContext {
   return {
+    lang,
     time,
     fps,
     originSec: 0,
@@ -572,7 +574,10 @@ function buildLayer(
     content = {
       type: 'text',
       text: extractText(props.children),
-      style: (props.style as TextStyle | undefined) ?? {},
+      style: withTextLanguage(
+        (props.style as TextStyle | undefined) ?? {},
+        resolveTextLanguage(props.lang, context.lang),
+      ),
       ...(typeof maxWidth === 'number' ? { maxWidth } : {}),
       ...(props.anchorY === 'baseline' ? { baselineAnchor: true } : {}),
     };
@@ -762,6 +767,7 @@ function childSequenceContext(node: HostNode, context: WalkContext): WalkContext
   }
   return {
     time: secondsToTime(localSec - startLocalSec),
+    lang: context.lang,
     fps,
     originSec,
     rangeStartSec,
@@ -824,8 +830,11 @@ function walkNode(
   if (!HOST_TYPES.has(node.type)) {
     throw new Error(`unsupported element <${node.type}>; use Celesta's built-in components`);
   }
+  if ((node.type === 'group' || node.type === 'sequence') && node.props.lang !== undefined) {
+    context = { ...context, lang: resolveTextLanguage(node.props.lang, context.lang) };
+  }
   if (node.type === 'rawLayers') {
-    return audioOnly ? [] : (node.props.layers as Layer[] | undefined) ?? [];
+    return audioOnly ? [] : inheritTextLanguage((node.props.layers as Layer[] | undefined) ?? [], context.lang);
   }
   if (
     node.type === 'assets' ||
@@ -967,9 +976,9 @@ export function mount(defaultExport: EntryComponent): MountedComposition {
     });
   };
 
-  // The first pass exists only to read <Composition>'s own props, which
-  // must be static (not derived from useVideoConfig()/useCurrentFrame()/
-  // <ProjectTimeline />/<ProjectTrack />) — but its children still render
+  // The first pass reads <Composition>'s size and clock props, which must
+  // be static (not derived from useVideoConfig()/useCurrentFrame()/
+  // <ProjectTimeline />/<ProjectTrack />). lang may vary by frame. Children still render
   // and may use those, so a placeholder context is provided rather than
   // leaving it unset, which would throw. Empty layers/tracks (rather than
   // null, which would still throw) are enough since this pass's own output
@@ -999,7 +1008,12 @@ export function mount(defaultExport: EntryComponent): MountedComposition {
       instance = findCompositionInstance(container);
     }
     const audio: AudioClipDescriptor[] = [];
-    const context = rootWalkContext(config.frameRate.numerator, config.durationInFrames, time);
+    const context = rootWalkContext(
+      config.frameRate.numerator,
+      config.durationInFrames,
+      time,
+      resolveTextLanguage(instance.props.lang),
+    );
     if (!audioOnly) {
       for (const child of instance.children) {
         collectCharacterViewOverrides(child, context);
@@ -1019,7 +1033,7 @@ export function mount(defaultExport: EntryComponent): MountedComposition {
         frameRate: config.frameRate,
         time,
         ...(fonts.length > 0 ? { fonts } : {}),
-        layers: inheritTextLanguage(layers, config.lang),
+        layers,
       },
       audio,
     };
@@ -1153,6 +1167,7 @@ export function createResolver(lang?: string): Resolver {
         runtimeValue.fps,
         runtimeValue.durationInFrames,
         runtime?.time ?? ZERO_TIME,
+        runtimeValue.lang,
       );
       return container.children.map((child, index) => {
         // An unresolved name renders the empty 'rawLayers' marker; anything
@@ -1162,7 +1177,7 @@ export function createResolver(lang?: string): Resolver {
           return null;
         }
         const audio: AudioClipDescriptor[] = [];
-        return inheritTextLanguage(walkChildren(child, `resolve.${index}`, walkContext, audio), runtimeValue.lang);
+        return walkChildren(child, `resolve.${index}`, walkContext, audio);
       });
     },
   };
