@@ -695,60 +695,156 @@ fn shades_rects_like_the_cpu_rasterizer() {
         };
         let mut scene = empty_scene(64, 60);
         scene.layers = vec![rect];
-        let shaded = renderer.render(&scene).unwrap();
-
-        // The rect's box `[0, width] x [0, height]`, its anchor on the
-        // layer's position.
-        let layer = path_transform(&transform);
-        let (anchor_x, anchor_y) = (-transform.anchor.x * width, -transform.anchor.y * height);
-        let placement = celesta_renderer::PathTransform {
-            tx: layer.tx + layer.a * anchor_x + layer.c * anchor_y,
-            ty: layer.ty + layer.b * anchor_x + layer.d * anchor_y,
-            ..layer
-        };
-        let paint = celesta_renderer::resolve_rect_paint(fill.as_ref(), stroke.as_ref()).unwrap();
-        let rasterized = celesta_renderer::rasterize_rect_transformed(
-            width,
-            height,
-            corner_radius,
-            &paint,
-            placement,
-            scene.width,
-            scene.height,
-        )
-        .unwrap();
-        let mut expected: Vec<u8> = (0..scene.width * scene.height)
-            .flat_map(|_| [10, 20, 30, 255])
-            .collect();
-        let image = &rasterized.image;
-        for (offset, texel) in image.pixels().chunks_exact(4).enumerate() {
-            let x = rasterized.left as usize + offset % image.width() as usize;
-            let y = rasterized.top as usize + offset / image.width() as usize;
-            let pixel = &mut expected[(y * scene.width as usize + x) * 4..][..3];
-            let alpha = f64::from(texel[3]) / 255.0 * opacity;
-            for (channel, value) in pixel.iter_mut().zip(texel) {
-                *channel =
-                    (f64::from(*value) * alpha + f64::from(*channel) * (1.0 - alpha)).round() as u8;
-            }
-        }
-        // The shader works in f32 and the rasterizer in f64, so an edge's
-        // coverage, a gradient's color or a stroke's blend of the two colors
-        // can land on a rounding tie in one and just miss it in the other.
-        // At an edge pixel the color and the coverage can each be one code
-        // off, and blending onto the background compounds them into two
-        // (seen on lavapipe). A misplaced edge differs by far more.
-        let max_difference = shaded
-            .pixels()
-            .iter()
-            .zip(&expected)
-            .map(|(shaded, expected)| shaded.abs_diff(*expected))
-            .max()
-            .unwrap();
-        assert!(
-            max_difference <= 2,
-            "case {index}: channels differ by up to {max_difference}"
-        );
+        assert_rect_matches_cpu(&mut renderer, &scene, path_transform(&transform), &index);
     }
+}
+
+#[test]
+fn shades_sheared_rects_like_the_cpu_rasterizer() {
+    let Some(mut renderer) = renderer(GpuRenderOptions {
+        background: Color::rgba(10, 20, 30, 255),
+    }) else {
+        return;
+    };
+    // A rect rotated inside a group scaled non-uniformly is sheared: its
+    // local axes are no longer perpendicular on the canvas, so each rounded
+    // corner's anti-aliasing depends on which corner it is.
+    for (index, (rotation, group_scale)) in [(30.0, (1.6, 0.7)), (-55.0, (0.8, 1.9))]
+        .into_iter()
+        .enumerate()
+    {
+        let group_transform = EvaluatedTransform {
+            position: Point { x: 31.7, y: 30.2 },
+            scale: Point {
+                x: group_scale.0,
+                y: group_scale.1,
+            },
+            ..EvaluatedTransform::default()
+        };
+        let rect_transform = EvaluatedTransform {
+            rotation,
+            ..EvaluatedTransform::default()
+        };
+        let mut scene = empty_scene(64, 60);
+        scene.layers = vec![Layer {
+            id: "group".to_owned(),
+            transform: group_transform,
+            opacity: 1.0,
+            blend_mode: BlendMode::Normal,
+            effects: Default::default(),
+            content: LayerContent::Group {
+                layers: vec![Layer {
+                    id: "rect".to_owned(),
+                    transform: rect_transform,
+                    opacity: 0.9,
+                    blend_mode: BlendMode::Normal,
+                    effects: Default::default(),
+                    content: LayerContent::Rect {
+                        width: 30.5,
+                        height: 18.25,
+                        fill: Some(Paint::Solid {
+                            color: "#ffffff".to_owned(),
+                        }),
+                        stroke: Some(Stroke {
+                            paint: Paint::Solid {
+                                color: "#ff4000c0".to_owned(),
+                            },
+                            width: 2.5,
+                        }),
+                        corner_radius: 7.0,
+                    },
+                }],
+                clip: None,
+            },
+        }];
+        let layer = LayerState::default()
+            .then(&group_transform, 1.0)
+            .then(&rect_transform, 1.0)
+            .transform
+            .into();
+        assert_rect_matches_cpu(&mut renderer, &scene, layer, &format!("sheared {index}"));
+    }
+}
+
+/// Renders `scene`, whose only visible layer is a rect drawn through
+/// `layer` (its layer transform, without the anchor), and compares it with
+/// `celesta_renderer::rasterize_rect_transformed` over the background
+/// (10, 20, 30).
+fn assert_rect_matches_cpu(
+    renderer: &mut GpuRenderer,
+    scene: &Scene,
+    layer: celesta_renderer::PathTransform,
+    case: &dyn std::fmt::Display,
+) {
+    let shaded = renderer.render(scene).unwrap();
+    fn rect(layer: &Layer) -> &Layer {
+        match &layer.content {
+            LayerContent::Group { layers, .. } => rect(&layers[0]),
+            _ => layer,
+        }
+    }
+    let rect = rect(&scene.layers[0]);
+    let LayerContent::Rect {
+        width,
+        height,
+        fill,
+        stroke,
+        corner_radius,
+    } = &rect.content
+    else {
+        unreachable!("the scene draws a rect");
+    };
+    // The rect's box `[0, width] x [0, height]`, its anchor on the layer's
+    // position.
+    let anchor = rect.transform.anchor;
+    let (anchor_x, anchor_y) = (-anchor.x * width, -anchor.y * height);
+    let placement = celesta_renderer::PathTransform {
+        tx: layer.tx + layer.a * anchor_x + layer.c * anchor_y,
+        ty: layer.ty + layer.b * anchor_x + layer.d * anchor_y,
+        ..layer
+    };
+    let paint = celesta_renderer::resolve_rect_paint(fill.as_ref(), stroke.as_ref()).unwrap();
+    let rasterized = celesta_renderer::rasterize_rect_transformed(
+        *width,
+        *height,
+        *corner_radius,
+        &paint,
+        placement,
+        scene.width,
+        scene.height,
+    )
+    .unwrap();
+    let mut expected: Vec<u8> = (0..scene.width * scene.height)
+        .flat_map(|_| [10, 20, 30, 255])
+        .collect();
+    let image = &rasterized.image;
+    for (offset, texel) in image.pixels().chunks_exact(4).enumerate() {
+        let x = rasterized.left as usize + offset % image.width() as usize;
+        let y = rasterized.top as usize + offset / image.width() as usize;
+        let pixel = &mut expected[(y * scene.width as usize + x) * 4..][..3];
+        let alpha = f64::from(texel[3]) / 255.0 * rect.opacity;
+        for (channel, value) in pixel.iter_mut().zip(texel) {
+            *channel =
+                (f64::from(*value) * alpha + f64::from(*channel) * (1.0 - alpha)).round() as u8;
+        }
+    }
+    // The shader works in f32 and the rasterizer in f64, so an edge's
+    // coverage, a gradient's color or a stroke's blend of the two colors
+    // can land on a rounding tie in one and just miss it in the other.
+    // At an edge pixel the color and the coverage can each be one code
+    // off, and blending onto the background compounds them into two
+    // (seen on lavapipe). A misplaced edge differs by far more.
+    let max_difference = shaded
+        .pixels()
+        .iter()
+        .zip(&expected)
+        .map(|(shaded, expected)| shaded.abs_diff(*expected))
+        .max()
+        .unwrap();
+    assert!(
+        max_difference <= 2,
+        "case {case}: channels differ by up to {max_difference}"
+    );
 }
 
 #[test]
