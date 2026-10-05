@@ -598,6 +598,7 @@ fn batched_audio_graph_matches_full_frame_evaluation_when_node_is_available() {
         "examples/with-audio.tsx",
         "examples/with-conditional-audio.tsx",
         "examples/with-sequence.tsx",
+        "examples/with-volume-fade.tsx",
         "test/fixtures/audio-collection.tsx",
     ] {
         let entry = package_root.join(fixture);
@@ -745,6 +746,44 @@ fn collects_conditionally_rendered_audio_with_keyframed_volume_when_node_is_avai
     assert_eq!(volume.keyframes.len(), 2);
     assert_eq!(volume.keyframes[0].value, 0.25);
     assert_eq!(volume.keyframes[1].value, 1.0);
+}
+
+#[test]
+fn frame_keyframes_fade_audio_in_the_collected_graph_when_node_is_available() {
+    let Some((node, cli_script, package_root)) = live_react_runtime() else {
+        return;
+    };
+
+    let entry = package_root.join("examples/with-volume-fade.tsx");
+    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let graph = bridge
+        .collect_audio_graph(48_000, 1.0, entry.parent().unwrap())
+        .unwrap();
+    assert_eq!(graph.clips.len(), 2);
+    let mut clips: Vec<_> = graph.clips.iter().collect();
+    clips.sort_by(|left, right| left.range.start.cmp_exact(right.range.start).unwrap());
+    // The mixer evaluates volume with evaluate_f64 at clip-local time, for
+    // preview and export.
+    let volume_at = |clip: &celesta_composition::AudioClip, frame: i64| {
+        celesta_composition::evaluate_f64(&clip.volume, Time::new(frame, 30)).unwrap()
+    };
+
+    // BGM: frames 0-15 fade in to 0.8, frames 75-90 fade out.
+    let bgm = clips[0];
+    assert_eq!(bgm.range.start.as_seconds().unwrap(), 0.0);
+    assert_eq!(volume_at(bgm, 0), 0.0);
+    assert_eq!(volume_at(bgm, 15), 0.8);
+    assert_eq!(volume_at(bgm, 75), 0.8);
+    assert!(volume_at(bgm, 80) < 0.8);
+    assert_eq!(volume_at(bgm, 90), 0.0);
+
+    // Voice: starts at frame 45 inside nested sequences; keys written in
+    // composition frames with origin 45 fade in over its first 6 frames.
+    let voice = clips[1];
+    assert_eq!(voice.range.start.as_seconds().unwrap(), 1.5);
+    assert_eq!(volume_at(voice, 0), 0.0);
+    assert!((volume_at(voice, 3) - 0.5).abs() < 1e-4);
+    assert_eq!(volume_at(voice, 6), 1.0);
 }
 
 #[test]

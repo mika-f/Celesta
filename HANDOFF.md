@@ -11,6 +11,7 @@ composition model; preview and export consume the same renderer inputs.
 Per-task notes live in `docs/handoff/<date>-<task>.md`. Newest first:
 
 - [`2026-10-05-exporter-json-results`](docs/handoff/2026-10-05-exporter-json-results.md): Exporter `--json` results
+- [`2026-10-05-frame-volume-keyframes`](docs/handoff/2026-10-05-frame-volume-keyframes.md): Frame-based volume keyframes
 - [`2026-10-05-subtitle-render-prop`](docs/handoff/2026-10-05-subtitle-render-prop.md): Drawing subtitles with a render prop
 - [`2026-10-05-circles-ellipses-arrows`](docs/handoff/2026-10-05-circles-ellipses-arrows.md): Circles, ellipses, and arrows
 - [`2026-10-05-performance-check`](docs/handoff/2026-10-05-performance-check.md): Performance check per pull request

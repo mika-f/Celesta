@@ -105,7 +105,8 @@ produces a video that differs between preview and export.
     item without a position sits centered on the top-left corner.
 11. **Time units differ.** React uses frames (`from`, `durationInFrames`) and
     seconds (`startFrom`). JSON and keyframes use `{ "value": n, "timescale": d }`,
-    meaning `n / d` seconds.
+    meaning `n / d` seconds. In React, build `<Audio>` volume keyframes from
+    frames with `frameKeyframes()` instead of converting by hand.
 12. **A React `<Video>` is silent.** Add an `<Audio>` with the same `src`,
     `startFrom`, and `playbackRate` to hear it. (JSON `video` items play
     their sound.)
@@ -166,7 +167,7 @@ Load only the one you need; each is self-contained.
 | Task | Read |
 | --- | --- |
 | Find `Celesta`/`Celesta-export`, start a project (`--init`), add npm packages, type-check, how the user previews | [setup.md](references/setup.md) |
-| Entry file and `prepare()`, layer props, `Rect`/gradients, `Path`/`Line`/`Polyline`, `Circle`/`Ellipse`/`Arrow`, `Group` clip, `Image`, `Video`, `Audio`, `Font`/`Assets`, layout helpers (`Center`, `SafeArea`, `Stack`, `Grid`, `Fit`), `preloadMedia`, audio keyframes, debug guides | [react-core.md](references/react-core.md) |
+| Entry file and `prepare()`, layer props, `Rect`/gradients, `Path`/`Line`/`Polyline`, `Circle`/`Ellipse`/`Arrow`, `Group` clip, `Image`, `Video`, `Audio`, `Font`/`Assets`, layout helpers (`Center`, `SafeArea`, `Stack`, `Grid`, `Fit`), `preloadMedia`, audio keyframes and `frameKeyframes`, debug guides | [react-core.md](references/react-core.md) |
 | Frame hooks, `interpolate`, `Easings`, `spring`, `progress`, `Sequence`, `Series`, `Stagger`, `Transition`, `useBeat`, `useCue`, `Camera`, timecodes | [animation.md](references/animation.md) |
 | `Text`, `TextStyle`, fonts and fallback, text language (`lang`), emoji, line breaking, `TextReveal`, `useTypewriter`, `useCountUp`, `useTextMetrics`/`measureText`, `TextBox`/`useFitText`/`fitText` | [text.md](references/text.md) |
 | Syntax-highlighted code, typing code, highlighted lines, carets (`@celesta/code`) | [code.md](references/code.md) |
