@@ -1,7 +1,5 @@
 # Celesta implementation handoff
 
-Last updated: 2026-10-05 (`subtitle.render`, `<Character displayName>`, `<DialogueSeries holdSubtitle>`, issue #85; `<Circle>` / `<Ellipse>` / `<Arrow>` diagram shapes on `<Path>`, issue #135; performance check per pull request with `celesta-bench`; `TextStyle.lineBreak: 'phrase'` with `celesta-budoux`; GPU renderer shades `Path` coverage, issue #116; GPU blur pairs its taps)
-
 ## Goal
 
 Celesta is a code-first video editor. Projects (`.celesta.json`) and React
@@ -10,23 +8,29 @@ composition model; preview and export consume the same renderer inputs.
 
 ## Dated notes
 
-Per-date notes live in `docs/handoff/<date>.md`. Newest first:
+Per-task notes live in `docs/handoff/<date>-<task>.md`. Newest first:
 
-- [`2026-10-05`](docs/handoff/2026-10-05.md): Drawing subtitles with a render prop; Circles, ellipses, and arrows; Performance check per pull request
-- [`2026-10-04`](docs/handoff/2026-10-04.md): Fitting text into a box
-- [`2026-10-03`](docs/handoff/2026-10-03.md): Phrase line breaking; GPU blur pairs its taps
-- [`2026-10-02`](docs/handoff/2026-10-02.md): `@celesta/math`
-- [`2026-09-25`](docs/handoff/2026-09-25.md): Preview-only GPUI app; React `<Font>` loads local font files
-- [`2026-09-07`](docs/handoff/2026-09-07.md): Standalone React composition preview in the editor
-- [`2026-08-31`](docs/handoff/2026-08-31.md): React workflow helpers
-- [`2026-08-30`](docs/handoff/2026-08-30.md): `@celesta/react` `x`/`y` place the top-left corner
-- [`2026-08-29`](docs/handoff/2026-08-29.md): Character portraits, PSD presets, and automatic lip sync
-- [`2026-08-28`](docs/handoff/2026-08-28.md): `Rect` primitive and a Remotion-homepage-style demo composition; Pipelined GPU readback for export; Color emoji glyph rendering
-- [`2026-08-26`](docs/handoff/2026-08-26.md): `<Sequence>`, per-frame audio collection, and editor React preview
+- [`2026-10-05-subtitle-render-prop`](docs/handoff/2026-10-05-subtitle-render-prop.md): Drawing subtitles with a render prop
+- [`2026-10-05-circles-ellipses-arrows`](docs/handoff/2026-10-05-circles-ellipses-arrows.md): Circles, ellipses, and arrows
+- [`2026-10-05-performance-check`](docs/handoff/2026-10-05-performance-check.md): Performance check per pull request
+- [`2026-10-04-fit-text-to-box`](docs/handoff/2026-10-04-fit-text-to-box.md): Fitting text into a box
+- [`2026-10-03-phrase-line-breaking`](docs/handoff/2026-10-03-phrase-line-breaking.md): Phrase line breaking
+- [`2026-10-03-gpu-blur-paired-taps`](docs/handoff/2026-10-03-gpu-blur-paired-taps.md): GPU blur pairs its taps
+- [`2026-10-02-celesta-math`](docs/handoff/2026-10-02-celesta-math.md): `@celesta/math`
+- [`2026-09-25-preview-only-gpui-app`](docs/handoff/2026-09-25-preview-only-gpui-app.md): Preview-only GPUI app
+- [`2026-09-25-react-font-local-files`](docs/handoff/2026-09-25-react-font-local-files.md): React `<Font>` loads local font files
+- [`2026-09-07-standalone-react-preview`](docs/handoff/2026-09-07-standalone-react-preview.md): Standalone React composition preview in the editor
+- [`2026-08-31-react-workflow-helpers`](docs/handoff/2026-08-31-react-workflow-helpers.md): React workflow helpers
+- [`2026-08-30-react-xy-top-left`](docs/handoff/2026-08-30-react-xy-top-left.md): `@celesta/react` `x`/`y` place the top-left corner
+- [`2026-08-29-portraits-psd-lipsync`](docs/handoff/2026-08-29-portraits-psd-lipsync.md): Character portraits, PSD presets, and automatic lip sync
+- [`2026-08-28-rect-demo-composition`](docs/handoff/2026-08-28-rect-demo-composition.md): `Rect` primitive and a Remotion-homepage-style demo composition
+- [`2026-08-28-pipelined-gpu-readback`](docs/handoff/2026-08-28-pipelined-gpu-readback.md): Pipelined GPU readback for export
+- [`2026-08-28-color-emoji-glyphs`](docs/handoff/2026-08-28-color-emoji-glyphs.md): Color emoji glyph rendering
+- [`2026-08-26-sequence-audio-react-preview`](docs/handoff/2026-08-26-sequence-audio-react-preview.md): `<Sequence>`, per-frame audio collection, and editor React preview
 
 Since the preview-only change (2026-09-25), the "Implemented editor behavior"
 notes below describe the editing features as they existed before it; treat them
-as history. Add new dated notes as `docs/handoff/<date>.md` and list them above.
+as history. Add new notes as `docs/handoff/<date>-<task>.md` and list them above.
 
 The current milestone is a usable editor foundation for gameplay videos with
 VOICEROID-style portraits, dialogue subtitles, voice assets, and ordinary

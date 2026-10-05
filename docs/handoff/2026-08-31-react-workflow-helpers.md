@@ -1,6 +1,4 @@
-# Handoff notes, 2026-08-31
-
-## React workflow helpers (2026-08-31)
+# React workflow helpers (2026-08-31)
 
 - `Transition` wraps children in the existing `Group` transform and derives a
   clamped fade, slide, or scale entrance/exit from `useCurrentFrame()`. It

@@ -1,6 +1,4 @@
-# Handoff notes, 2026-08-30
-
-## `@celesta/react` `x`/`y` place the top-left corner (2026-08-30)
+# `@celesta/react` `x`/`y` place the top-left corner (2026-08-30)
 
 `extractTransform` in `packages/react/src/render.ts` now defaults `anchor` to
 `{ x: 0, y: 0 }` instead of `{ x: 0.5, y: 0.5 }`, so a component's `x`/`y`
