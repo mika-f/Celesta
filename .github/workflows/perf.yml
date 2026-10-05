@@ -16,6 +16,7 @@ on:
       - "examples/versus/bench/**"
       - "Cargo.toml"
       - "Cargo.lock"
+      - "pnpm-lock.yaml"
       - "scripts/bench.py"
       - ".github/workflows/perf.yml"
   workflow_dispatch:

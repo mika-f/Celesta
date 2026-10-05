@@ -111,7 +111,9 @@ and the head and compares them. See `docs/performance/benchmarking.md`.
   640x360. `celesta-bench` turns counting on for the measured frames only
   with Cachegrind client requests (`crates/bench/src/cachegrind.rs`, inline
   asm for Linux x86_64/aarch64). Repeated runs agree within 0.02% (`ribbons`
-  0.4%); the job fails above +1%. Mesa's shader cache is disabled because
+  0.4%); the job fails above +1% when the base has `crates/bench` (a base
+  without it, like this change's own pull request, only measures the head
+  and passes). Mesa's shader cache is disabled because
   lavapipe compiles some variants during measured frames. The report is
   posted on the pull request (one comment, updated per run) by
   `perf-comment.yml`, a `workflow_run` workflow, so pull requests from forks

@@ -88,6 +88,10 @@ fn parse(args: &[String]) -> Result<Options, String> {
                     .and_then(|(w, h)| Some((w.parse().ok()?, h.parse().ok()?)))
                     .filter(|&(w, h)| w > 0 && h > 0)
                     .ok_or_else(|| format!("--size: expected WxH, got {value}"))?;
+                // The workloads are 16:9 and scale by width.
+                if u64::from(width) * 9 != u64::from(height) * 16 {
+                    return Err(format!("--size: {value} is not 16:9"));
+                }
                 (options.width, options.height) = (width, height);
             }
             "--dump" => options.dump = Some(PathBuf::from(value()?)),
@@ -109,7 +113,13 @@ fn parse(args: &[String]) -> Result<Options, String> {
 }
 
 fn run(options: &Options) -> Result<(), String> {
-    let assets = AssetDir::new().map_err(|error| format!("writing the image asset: {error}"))?;
+    let assets = options
+        .workloads
+        .iter()
+        .any(|workload| workload.name == "images")
+        .then(AssetDir::new)
+        .transpose()
+        .map_err(|error| format!("writing the image asset: {error}"))?;
     for workload in &options.workloads {
         let fail = |error| format!("{}: {error}", workload.name);
         // Built before any timing, so only rendering is measured.
@@ -118,7 +128,7 @@ fn run(options: &Options) -> Result<(), String> {
                 options.width,
                 options.height,
                 options.warmup + options.frames,
-                assets.path(),
+                assets.as_ref().map(AssetDir::path),
             )
             .map_err(fail)?;
         let (warmup, measured) = scenes.split_at(options.warmup);
@@ -170,7 +180,8 @@ fn run(options: &Options) -> Result<(), String> {
     Ok(())
 }
 
-/// A temporary asset root holding the `images` workload's image.
+/// A temporary asset root holding the `images` workload's image, written
+/// only when that workload runs.
 struct AssetDir(PathBuf);
 
 impl AssetDir {

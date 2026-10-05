@@ -61,10 +61,16 @@ jobs:
             echo "## Performance"
             echo
             if [[ -f perf/report.md ]]; then
-              if [[ "$CONCLUSION" == success ]]; then
+              # The verdict comes from the report itself: the run can also
+              # fail after a report without regressions was written.
+              if grep -q 'only the head was measured' perf/report.md; then
+                echo "The base has no benchmark yet, so nothing was compared. The head's numbers are below."
+              elif grep -q '🔴' perf/report.md; then
+                echo "**A workload needs more than 1% more instructions per frame than the base (🔴 below).** If this is intended, say so in the pull request."
+              elif [[ "$CONCLUSION" == success ]]; then
                 echo "No workload needs more than 1% more instructions per frame than the base."
               else
-                echo "**A workload needs more instructions per frame than the base (🔴 below).** If this is intended, say so in the pull request."
+                echo "No workload needs more than 1% more instructions per frame than the base, but the workflow failed afterwards. See the workflow run."
               fi
               echo
               # Drop the report's own heading; this comment has one.

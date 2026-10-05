@@ -73,13 +73,13 @@ pub const WORKLOADS: &[Workload] = &[
 impl Workload {
     /// The scenes of frames `0..count`, at `width`x`height`, and the asset
     /// root their relative paths resolve against. `images` is the directory
-    /// holding [`IMAGE_PATH`].
+    /// holding [`IMAGE_PATH`], which only the `images` workload needs.
     pub fn scenes(
         &self,
         width: u32,
         height: u32,
         count: usize,
-        images: &Path,
+        images: Option<&Path>,
     ) -> Result<(Vec<Scene>, PathBuf), String> {
         match self.source {
             Source::Synthetic(build) => {
@@ -89,7 +89,7 @@ impl Workload {
                 let scenes = (0..count)
                     .map(|frame| synthetic(&canvas, width, height, build(&canvas, frame)))
                     .collect();
-                Ok((scenes, images.to_owned()))
+                Ok((scenes, images.map_or_else(PathBuf::new, Path::to_owned)))
             }
             Source::React(entry) => {
                 let entry = Path::new(env!("CARGO_MANIFEST_DIR"))

@@ -2,8 +2,11 @@
 
 Two checks use the same benchmark, `celesta-bench` (`crates/bench`):
 
-- **On every pull request (CI):** instructions per frame on a GitHub-hosted
-  runner, which has no GPU. Deterministic, so a change of a percent shows.
+- **On pull requests that touch the renderer, the React runtime, or the
+  benchmark (CI):** instructions per frame on a GitHub-hosted runner, which
+  has no GPU. Nearly deterministic: the check fails when a workload needs
+  more than 1% more instructions per frame than the base, well above the
+  run-to-run noise (0.4% at most).
 - **On your machine:** wall-clock ms/frame on a real GPU. Measures what a
   user sees, but run to run noise is a few percent or more.
 
@@ -25,8 +28,15 @@ every scene before it starts timing, so only rendering is measured.
 
 The synthetic workloads are laid out at 1920x1080 and scaled to `--size`;
 `nebula` is wrapped in a scaling group, with its blur, shadow, and glow
-radii scaled to match. `nebula` needs Node.js and pnpm: the benchmark builds
-`packages/react` like CI does.
+radii scaled to match. `--size` must be 16:9. `nebula` needs Node.js and a
+built `packages/react`: `scripts/bench.py compare` builds it at both
+revisions, but before running `celesta-bench` directly, build it yourself:
+
+```sh
+pnpm --dir packages/react install --frozen-lockfile
+pnpm --dir packages/react run codegen --locked
+pnpm --dir packages/react run build
+```
 
 ```sh
 cargo run --release -p celesta-bench -- list
@@ -48,7 +58,9 @@ frames:
   counts executed instructions. `celesta-bench` switches counting on just
   for the measured frames with Cachegrind's client requests
   (`crates/bench/src/cachegrind.rs`), so process start, device creation,
-  shader compilation, warmup, and the React entry's evaluation are left out.
+  the shader compiles of pipeline creation and warmup, and the React
+  entry's evaluation are left out (shader variants lavapipe compiles inside
+  a measured frame are counted; see below).
   Rayon and lavapipe each get one thread, so no idle thread spins for a
   scheduling-dependent number of instructions, and Mesa's shader cache is
   off: lavapipe compiles some shader variants on first use, possibly in a
@@ -60,7 +72,10 @@ frames:
 
 Repeated runs of the same binary agree within 0.02%, except `ribbons`
 (3,000 layers), which varies by up to 0.4%. The job fails if a workload
-needs more than 1% more instructions per frame than at the base. Locally
+needs more than 1% more instructions per frame than at the base. If the
+base has no `crates/bench` yet, only the head is measured and the job
+passes; the report says so. A workload the head removes is listed as
+removed, and one it adds as new. Locally
 (in an aarch64 Ubuntu 24.04 container on an M4), the whole comparison took
 under 3 minutes after the build, and widening the blur kernel from 3σ to
 3.3σ showed as +7.8% in `blur` and +6.9% in `nebula`, with the other

@@ -56,10 +56,11 @@ def build(revision, label, target_dir, worktrees, react):
         # A worktree that stays at the same path keeps Cargo's incremental
         # state for the workspace crates between invocations.
         source = worktrees / label
-        if (source / ".git").exists():
+        if (source / ".git").is_file():
             git("checkout", "--quiet", "--detach", revision, cwd=source)
+        elif source.exists():
+            sys.exit(f"{source} exists but is not a worktree; remove it or pass --worktrees")
         else:
-            shutil.rmtree(source, ignore_errors=True)
             git("worktree", "prune")
             git("worktree", "add", "--quiet", "--detach", str(source), revision)
     print(f"building celesta-bench for {label} ({describe(revision)})", file=sys.stderr)
@@ -98,12 +99,17 @@ def run_bench(binary, arguments, env=None):
     return [json.loads(line) for line in output.splitlines() if line.startswith("{")]
 
 
-def workloads_of(binary, options):
-    """The requested workloads (default: all) that `binary` has, so a
-    workload added by the head is measured on the head only."""
-    listed = [line.split("\t")[0] for line in subprocess.run(
+def listed_workloads(binary):
+    return [line.split("\t")[0] for line in subprocess.run(
         [str(binary), "list"], check=True, text=True, stdout=subprocess.PIPE,
     ).stdout.splitlines()]
+
+
+def workloads_of(binary, options):
+    """The requested workloads (default: all) that `binary` has, so a
+    workload added by the head is measured on the head only, and one the
+    head removed on the base only."""
+    listed = listed_workloads(binary)
     return [name for name in options.workloads or listed if name in listed]
 
 
@@ -200,6 +206,10 @@ def report(samples, options, adapter, revisions):
 
     lines += [f"| Workload | Base ({unit}) | Head ({unit}) | Change | |",
               "| --- | ---: | ---: | ---: | --- |"]
+    for workload in base:
+        if workload not in head:
+            lines.append(f"| {workload} | {fmt(statistics.median(base[workload]))} | — | | "
+                         "removed: no longer measured |")
     for workload in head:
         if workload not in base:
             lines.append(f"| {workload} | — | {fmt(statistics.median(head[workload]))} | | new |")
@@ -292,6 +302,10 @@ def main():
     if binaries["head"] is None:
         sys.exit("the head revision has no crates/bench")
     binaries = {label: binary for label, binary in binaries.items() if binary is not None}
+    known = {name for binary in binaries.values() for name in listed_workloads(binary)}
+    unknown = [name for name in options.workloads if name not in known]
+    if unknown:
+        sys.exit(f"unknown workload(s): {', '.join(unknown)} (known: {', '.join(sorted(known))})")
 
     measure = measure_instructions if instructions else measure_time
     samples, adapter = measure(binaries, options)
