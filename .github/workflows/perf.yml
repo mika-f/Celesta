@@ -5,7 +5,8 @@ name: Performance
 # too noisy to compare, so the renderer runs on Mesa's software Vulkan driver
 # (lavapipe) under Valgrind's Cachegrind, which counts the instructions of
 # the measured frames: the renderer's CPU work and, through lavapipe, its
-# shader work. perf-comment.yml then posts the result on the pull request.
+# shader work. A second job times the same workloads on a macOS runner's GPU
+# as a reference. perf-comment.yml then posts both on the pull request.
 # See docs/performance/benchmarking.md.
 
 on:
@@ -115,14 +116,16 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
-  # Run by hand to see whether a change shows on a GPU (Apple silicon, Metal),
-  # which the instruction counts above cannot tell. Wall-clock time on a
-  # shared runner is noisy, so this is a reference, not a check: the report
-  # names the adapter, and a software one means the runner has no usable GPU.
+  # Time per frame on a GPU (Apple silicon, Metal), which the instruction
+  # counts above cannot tell. Wall-clock time on a shared runner is noisy, so
+  # this is a reference, not a check: it never fails the workflow
+  # (continue-on-error), perf-comment.yml adds its table below the
+  # instruction counts, and the report names the adapter; a software one means
+  # the runner has no usable GPU.
   time:
     name: Time per frame (macOS)
-    if: github.event_name == 'workflow_dispatch'
     runs-on: macos-latest
+    continue-on-error: true
     defaults:
       run:
         shell: bash
@@ -156,7 +159,7 @@ jobs:
 
       - name: Compare with the base
         env:
-          BASE: ${{ inputs.base }}
+          BASE: ${{ github.event.pull_request.base.sha || inputs.base }}
         run: |
           mkdir -p perf
           python3 scripts/bench.py compare --mode time --base "$BASE" \

@@ -162,13 +162,19 @@ power, and prefer more rounds over more frames.
 
 ### On a GitHub-hosted macOS runner
 
-Run the `Time per frame (macOS)` job of
-[`perf.yml`](../../.github/workflows/perf.yml) by hand (Actions, Performance,
-Run workflow, with a `base`) to run the same comparison on `macos-latest`.
-Its adapter is `Apple Paravirtual device (Metal)`: a GPU, reached through
-virtualization. A shared VM is much noisier than a desk machine (intervals of
-+-20% or more for workloads under 2 ms), so it only sees large changes, and
-it is not a check: it never runs on pull requests.
+The `Time per frame (macOS)` job of
+[`perf.yml`](../../.github/workflows/perf.yml) runs this comparison on
+`macos-latest` for every pull request that runs the performance check, and by
+hand (Actions, Performance, Run workflow, with a `base`). Its adapter is
+`Apple Paravirtual device (Metal)`: a GPU, reached through virtualization.
+`perf-comment.yml` adds its table to the pull request's comment, folded below
+the instruction counts.
+
+It is a reference, not a check. A shared VM is much noisier than a desk machine
+(intervals of +-20% or more for workloads under 2 ms), so it only sees large
+changes; it never fails the workflow (`continue-on-error`), and a run without
+its table still gets the comment. macOS arm64 runners can queue for a while,
+and the comment waits for the whole workflow.
 
 ## Check the output too
 
