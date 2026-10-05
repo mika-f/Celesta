@@ -179,6 +179,8 @@ It accepts common layer props.
   `<Dialogue>` inside drives only a view drawn inside the same
   `<FreezeFrame>`; pointing it at a view outside throws.
 - Authored `id`s inside are prefixed with the freeze layer's id and `/`.
+- `<ProjectTimeline />`, `<ProjectTrack />`, and `useProjectTrack()` throw
+  inside: project layers are evaluated for the current frame only.
 
 ## Series and computeSeries
 

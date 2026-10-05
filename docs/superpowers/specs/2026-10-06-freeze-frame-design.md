@@ -75,6 +75,13 @@ playback with sound is already `<Sequence from>`.
   back to the live view, which would make the frozen picture depend on the
   current frame.
 
+### Project layers
+
+`<ProjectTimeline />`, `<ProjectTrack />`, and `useProjectTrack()` throw inside
+a `<FreezeFrame>`. Rust evaluates project layers (and the transforms of
+resolved registered components) for the current frame only, so a frozen copy
+would show the current frame's content as frame `N`.
+
 ### Layer ids
 
 Layer ids are tree paths unless the author sets `id`, so an authored `id`

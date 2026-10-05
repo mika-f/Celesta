@@ -28,4 +28,8 @@ as the composition looked at an absolute frame (issue #88). The design is in
 - Authored ids inside are prefixed with the freeze layer's id and `/`
   (`WalkContext.idPrefix`): export keeps one sequential video decode session
   per layer id (`crates/media/src/ffmpeg.rs`).
+- Project layers are evaluated by Rust for the current frame only, so
+  `<ProjectTimeline />`, `<ProjectTrack />`, and `useProjectTrack()` throw
+  inside a freeze (`FreezeFrameContext`, `project-runtime.ts`) instead of
+  showing the current frame's content as frame N.
 - Tests: `packages/react/test/freeze-frame.test.mjs`.

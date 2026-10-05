@@ -1,7 +1,13 @@
 import * as React from 'react';
 import type { ReactNode } from 'react';
 
-import { CompositionRuntimeContext, RerenderRequestContext, RootRuntimeContext, resolveTextLanguage } from './hooks';
+import {
+  CompositionRuntimeContext,
+  FreezeFrameContext,
+  RerenderRequestContext,
+  RootRuntimeContext,
+  resolveTextLanguage,
+} from './hooks';
 import { useOptionalLipSync } from './lipsync';
 import { synchronousMeasurer, useMeasurementFonts, withTextLanguage } from './text-measure';
 import type { MeasureTextRequest, TextMetrics } from './text-measure';
@@ -745,6 +751,8 @@ export interface FreezeFrameProps extends CommonProps {
  * `<CharacterView>`s inside never attach their ref, which stays with the live
  * view, and `<Dialogue>`s inside drive only views drawn inside the same
  * `<FreezeFrame>`. Authored `id`s inside are prefixed with this layer's id.
+ * Project layers (`<ProjectTimeline />`, `<ProjectTrack />`) are evaluated at
+ * the current frame only, so they throw inside.
  */
 export function FreezeFrame(props: FreezeFrameProps): ReturnType<typeof React.createElement> {
   const context = React.useContext(CompositionRuntimeContext);
@@ -759,7 +767,11 @@ export function FreezeFrame(props: FreezeFrameProps): ReturnType<typeof React.cr
   return React.createElement(
     CompositionRuntimeContext.Provider,
     { value: { ...root, lang: context.lang, time: secondsToTime(props.frame / root.fps) } },
-    React.createElement(ViewScopeContext.Provider, { value: scope }, React.createElement('freeze-frame', props)),
+    React.createElement(
+      FreezeFrameContext.Provider,
+      { value: true },
+      React.createElement(ViewScopeContext.Provider, { value: scope }, React.createElement('freeze-frame', props)),
+    ),
   );
 }
 

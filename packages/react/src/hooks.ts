@@ -28,6 +28,9 @@ export const CompositionRuntimeContext = React.createContext<CompositionRuntimeC
  */
 export const RootRuntimeContext = React.createContext<CompositionRuntimeContextValue | null>(null);
 
+/** @internal True inside a `<FreezeFrame>`. */
+export const FreezeFrameContext = React.createContext(false);
+
 /**
  * @internal Asks render.ts to reconcile the current frame once more, for a
  * component that read a ref this commit had not attached yet (a

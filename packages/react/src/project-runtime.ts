@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 
 import type { Project } from './generated/Project';
 import type { JsonValue } from './generated/serde_json/JsonValue';
+import { FreezeFrameContext } from './hooks';
 import { resolveComponent } from './registry';
 import type { Layer } from './scene';
 
@@ -52,6 +53,7 @@ export function useProjectProperty<T extends JsonValue = JsonValue>(key: string,
 export const ProjectLayersContext = React.createContext<Layer[] | null>(null);
 
 export function ProjectTimeline(): ReturnType<typeof React.createElement> {
+  useOutsideFreezeFrame('<ProjectTimeline />');
   const layers = React.useContext(ProjectLayersContext);
   if (!layers) {
     throw new Error(
@@ -73,7 +75,15 @@ export function ProjectTimeline(): ReturnType<typeof React.createElement> {
 // treat "absent" and "empty" the same way, as "nothing to show".
 export const ProjectTrackLayersContext = React.createContext<Record<string, Layer[]> | null>(null);
 
+/** Project layers are evaluated at the current frame only, so a frozen copy would show the wrong moment. */
+function useOutsideFreezeFrame(name: string): void {
+  if (React.useContext(FreezeFrameContext)) {
+    throw new Error(`${name} cannot be drawn inside <FreezeFrame>: project layers are evaluated at the current frame only`);
+  }
+}
+
 function useProjectTrackLayers(hookName: string): Record<string, Layer[]> {
+  useOutsideFreezeFrame(hookName);
   const tracks = React.useContext(ProjectTrackLayersContext);
   if (!tracks) {
     throw new Error(

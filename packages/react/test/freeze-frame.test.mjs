@@ -15,6 +15,8 @@ import {
   Dialogue,
   FreezeFrame,
   Group,
+  ProjectTimeline,
+  ProjectTrack,
   Sequence,
   Text,
   Video,
@@ -187,6 +189,15 @@ test('a frozen line must refer to a view inside the same, innermost freeze', () 
   );
   const nested = setup(({ view, line }) => h(FreezeFrame, { frame: 0 }, h(FreezeFrame, { frame: 0 }, view, line)));
   assert.deepEqual(texts(at(nested, 0).scene.layers), ['hi']);
+});
+
+test('project layers, evaluated at the current frame only, throw inside a freeze', () => {
+  for (const [element, name] of [[h(ProjectTimeline), '<ProjectTimeline />'], [h(ProjectTrack, { id: 'main' }), '<ProjectTrack />']]) {
+    assert.throws(
+      () => mount(() => root(h(FreezeFrame, { frame: 0 }, element))),
+      new RegExp(`${name} cannot be drawn inside <FreezeFrame>`),
+    );
+  }
 });
 
 test('a frozen video follows the frozen frame and authored ids are prefixed', () => {
