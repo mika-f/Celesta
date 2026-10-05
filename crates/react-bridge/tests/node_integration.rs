@@ -749,7 +749,7 @@ fn collects_conditionally_rendered_audio_with_keyframed_volume_when_node_is_avai
 }
 
 #[test]
-fn frame_keyframes_fade_audio_in_the_mixed_graph_when_node_is_available() {
+fn frame_keyframes_fade_audio_in_the_collected_graph_when_node_is_available() {
     let Some((node, cli_script, package_root)) = live_react_runtime() else {
         return;
     };
@@ -762,7 +762,8 @@ fn frame_keyframes_fade_audio_in_the_mixed_graph_when_node_is_available() {
     assert_eq!(graph.clips.len(), 2);
     let mut clips: Vec<_> = graph.clips.iter().collect();
     clips.sort_by(|left, right| left.range.start.cmp_exact(right.range.start).unwrap());
-    // The mixer evaluates volume at clip-local time, for preview and export.
+    // The mixer evaluates volume with evaluate_f64 at clip-local time, for
+    // preview and export.
     let volume_at = |clip: &celesta_composition::AudioClip, frame: i64| {
         celesta_composition::evaluate_f64(&clip.volume, Time::new(frame, 30)).unwrap()
     };

@@ -31,7 +31,7 @@ export default function Root() {
   return (
     <Composition width={640} height={360} fps={FPS} durationInFrames={DURATION}>
       <Text>Volume fade</Text>
-      <Audio src="./voice.wav" volume={bgmVolume} />
+      <Audio src="./bgm.wav" volume={bgmVolume} />
       <Sequence from={30}>
         <Sequence from={15}>
           <Audio src="./voice.wav" volume={voiceVolume} />

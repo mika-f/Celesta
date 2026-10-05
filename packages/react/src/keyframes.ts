@@ -36,6 +36,7 @@ export interface FrameKeyframesOptions {
  *
  * Keys must be in order of `frame`. Two keys on the same frame make a cut:
  * the first value holds up to that frame and the second applies after it.
+ * A third key on one frame would never be heard, so it throws.
  * Keys before `origin` are allowed; before the first key the value holds at
  * the first key's value, and after the last key at the last key's value.
  *
@@ -72,6 +73,9 @@ export function frameKeyframes(
       }
       if (index > 0 && key.frame < keys[index - 1].frame) {
         throw new Error(`frameKeyframes() requires keys in order of frame (key ${index})`);
+      }
+      if (index > 1 && key.frame === keys[index - 2].frame) {
+        throw new Error(`frameKeyframes() allows at most two keys on one frame (key ${index})`);
       }
       const time = secondsToTime((key.frame - origin) / fps);
       return key.easing === undefined ? { time, value: key.value } : { time, value: key.value, easing: key.easing };

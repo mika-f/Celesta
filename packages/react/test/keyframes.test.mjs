@@ -46,14 +46,19 @@ test('frameKeyframes keeps keys on the same frame as a cut and a single key as a
     { frame: 30, value: 0.2 },
   ], { fps: 30 });
   assert.deepEqual(cut.keyframes.map(({ value }) => value), [1, 1, 0.2]);
+  assert.deepEqual(cut.keyframes.map(({ time }) => time), [us(0), us(1_000_000), us(1_000_000)]);
   assert.deepEqual(frameKeyframes([{ frame: 10, value: 0.5 }], { fps: 30 }).keyframes, [{ time: us(333_333), value: 0.5 }]);
 });
 
-test('frameKeyframes rejects empty, unordered, and non-finite keys and invalid fps', () => {
+test('frameKeyframes rejects empty, unordered, triple, and non-finite keys and invalid fps', () => {
   assert.throws(() => frameKeyframes([], { fps: 30 }), /at least one key/);
   assert.throws(
     () => frameKeyframes([{ frame: 10, value: 1 }, { frame: 5, value: 0 }], { fps: 30 }),
     /in order of frame \(key 1\)/,
+  );
+  assert.throws(
+    () => frameKeyframes([{ frame: 30, value: 1 }, { frame: 30, value: 0.5 }, { frame: 30, value: 0 }], { fps: 30 }),
+    /at most two keys on one frame \(key 2\)/,
   );
   assert.throws(() => frameKeyframes([{ frame: NaN, value: 1 }], { fps: 30 }), /finite frame \(key 0\)/);
   assert.throws(() => frameKeyframes([{ frame: 0, value: Infinity }], { fps: 30 }), /finite value \(key 0\)/);

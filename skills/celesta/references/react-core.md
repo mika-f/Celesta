@@ -419,7 +419,8 @@ const { fps } = useVideoConfig();
   microsecond, as `<Sequence>` offsets are. Fractional frames and fps
   (29.97) work.
 - Keys must be in order of `frame`. Two keys on the same frame make a cut:
-  the first value holds up to that frame, the second applies after it.
+  the first value holds up to that frame, the second applies after it. A
+  third key on the same frame throws.
   Before the first key and after the last, the nearest key's value holds.
 - An empty list, keys out of order, a non-finite `frame`, `value`, or
   `origin`, and an `fps` that is not positive throw.
