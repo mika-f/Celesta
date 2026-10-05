@@ -24,6 +24,7 @@ impl TextRasterizer {
         width: Option<f32>,
         scale: f32,
     ) -> Buffer {
+        self.select_language(style.lang.as_deref());
         let requested_weight = style.font_weight.unwrap_or(400);
         // cosmic-text only picks the requested family's face when its weight
         // is exactly the requested one, and otherwise falls back to another

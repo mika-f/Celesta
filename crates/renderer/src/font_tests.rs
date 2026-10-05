@@ -1,4 +1,4 @@
-use crate::fonts::TextRasterizer;
+use crate::fonts::{TextRasterizer, fallback_locale};
 use crate::linebreak::emoji_presentation_spans;
 use crate::text::{FontFallback, MissingGlyphs};
 use celesta_composition::TextStyle;
@@ -9,6 +9,29 @@ use std::path::Path;
 use celesta_composition::{AssetLocation, ResolvedAsset};
 
 const FAMILY: &str = "Celesta Web Font Test";
+
+#[test]
+fn normalizes_language_tags_for_cjk_fallback() {
+    for (lang, expected) in [
+        ("ja", "ja"),
+        ("ja-JP", "ja"),
+        ("JA_jp.UTF-8", "ja"),
+        ("ko-KR", "ko"),
+        ("zh", "zh-CN"),
+        ("zh-Hans", "zh-CN"),
+        ("zh-Hans-TW", "zh-CN"),
+        ("zh-Hant", "zh-TW"),
+        ("zh-Hant-TW", "zh-TW"),
+        ("zh_HK", "zh-HK"),
+        ("zh-hant-hk", "zh-HK"),
+        ("zh-MO", "zh-HK"),
+        ("zh-CN-x-tw", "zh-CN"),
+        ("en-US", "en"),
+        ("th-TH", "th"),
+    ] {
+        assert_eq!(fallback_locale(lang), expected, "{lang}");
+    }
+}
 
 /// A minimal sfnt holding only a `name` table: enough for fontdb to list
 /// a face under `FAMILY`.
@@ -251,6 +274,7 @@ fn a_fork_rasterizes_text_exactly_like_the_original() {
             &examples,
         )
         .unwrap();
+    original.select_language(Some("zh-Hant"));
     let mut fork = original.fork();
     assert_eq!(fork.loaded_font_count(), original.loaded_font_count());
     let plain = TextStyle {
@@ -270,6 +294,22 @@ fn a_fork_rasterizes_text_exactly_like_the_original() {
         // A loaded family, with characters it lacks falling back to
         // system fonts.
         ("CELESTA 日本語 🎉", bebas_style(), None),
+        (
+            "CELESTA 日本語 🎉",
+            TextStyle {
+                lang: Some("ja-JP".to_owned()),
+                ..bebas_style()
+            },
+            None,
+        ),
+        (
+            "CELESTA 漢字 🎉",
+            TextStyle {
+                lang: Some("zh-Hant".to_owned()),
+                ..bebas_style()
+            },
+            None,
+        ),
         // Wrapped onto several lines.
         (
             "Celesta renders every frame of a composition",
@@ -286,6 +326,96 @@ fn a_fork_rasterizes_text_exactly_like_the_original() {
             "{text}"
         );
         assert!(actual.into_pixels() == expected.into_pixels(), "{text}");
+    }
+}
+
+#[test]
+fn loading_fonts_updates_every_language_and_preserves_the_default_in_forks() {
+    let mut rasterizer = TextRasterizer::new();
+    rasterizer.select_language(Some("ja"));
+    rasterizer.select_language(Some("zh-CN"));
+    let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/prism");
+    rasterizer
+        .load_font_data(
+            "locale-test",
+            fs::read(examples.join("assets/fonts/BebasNeue-Regular.ttf")).unwrap(),
+            Some(FAMILY.to_owned()),
+        )
+        .unwrap();
+    let mut fork = rasterizer.fork();
+    for rasterizer in [&mut rasterizer, &mut fork] {
+        for lang in [Some("ja"), Some("zh-CN"), Some("zh-Hant"), None, Some("")] {
+            let style = TextStyle {
+                lang: lang.map(str::to_owned),
+                font_family: Some(FAMILY.to_owned()),
+                ..TextStyle::default()
+            };
+            assert_eq!(rasterizer.missing_glyphs("title", "CELESTA", &style), None);
+            assert!(has_family(rasterizer, FAMILY));
+            if lang.is_none() || lang == Some("") {
+                assert_eq!(rasterizer.font_system.locale(), rasterizer.default_locale);
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn selects_japanese_and_chinese_kanji_per_layer_on_macos() {
+    let mut rasterizer = regular_only_rasterizer();
+    // Start with an English default to verify explicit Japanese works on
+    // any host, and omitted language restores the system fallback.
+    rasterizer.default_locale = "en".to_owned();
+    for family in [None, Some("Bebas Neue")] {
+        for line_break in [
+            celesta_composition::LineBreak::Normal,
+            celesta_composition::LineBreak::Phrase,
+        ] {
+            for (lang, expected) in [
+                (Some("ja-JP"), "Hiragino Sans"),
+                (Some("zh-CN"), "PingFang SC"),
+                (Some("ja"), "Hiragino Sans"),
+                (Some("zh-Hant-TW"), "PingFang TC"),
+                (None, "PingFang SC"),
+            ] {
+                // Some macOS images omit optional fonts such as PingFang.
+                // Assert the exact family only when it is available; still
+                // verify drawable glyphs and matching metrics in every case.
+                let expected_available = has_family(&rasterizer, expected);
+                let style = TextStyle {
+                    lang: lang.map(str::to_owned),
+                    font_family: family.map(str::to_owned),
+                    line_break: Some(line_break),
+                    ..TextStyle::default()
+                };
+                let buffer = rasterizer.shaped_buffer("漢字とかな", &style, Some(400.0), 1.0);
+                let mut kanji = 0;
+                for run in buffer.layout_runs() {
+                    for glyph in run.glyphs {
+                        let cluster = &run.text[glyph.start..glyph.end];
+                        if !cluster.contains(['漢', '字']) {
+                            continue;
+                        }
+                        kanji += 1;
+                        assert_ne!(glyph.glyph_id, 0);
+                        let face = rasterizer.font_system.db().face(glyph.font_id).unwrap();
+                        if expected_available {
+                            assert!(
+                                face.families.iter().any(|(name, _)| name == expected),
+                                "{lang:?}, {family:?}, {line_break:?}, {cluster:?}: {:?}",
+                                face.families
+                            );
+                        }
+                    }
+                }
+                assert!(kanji > 0);
+                let measured = rasterizer.measure("漢字とかな", &style, None);
+                let drawn = rasterizer
+                    .rasterize("漢字とかな", &style, None, 1.0)
+                    .unwrap();
+                assert_eq!(measured.width.ceil() as u32, drawn.width());
+            }
+        }
     }
 }
 
@@ -359,6 +489,7 @@ fn reports_emoji_no_font_has_a_glyph_for() {
     let mut rasterizer = TextRasterizer::new();
     rasterizer.font_system =
         FontSystem::new_with_locale_and_db("en-US".to_owned(), fontdb::Database::new());
+    rasterizer.initial_db = rasterizer.font_system.db().clone();
     rasterizer
         .load_fonts(
             &[file_font("assets/fonts/BebasNeue-Regular.ttf")],
@@ -369,6 +500,40 @@ fn reports_emoji_no_font_has_a_glyph_for() {
         .missing_glyphs("title", "CELESTA 🎉 ず ❤\u{FE0F}", &bebas_style())
         .unwrap();
     assert_eq!(missing.characters, ['🎉', 'ず', '❤']);
+}
+
+#[test]
+fn missing_glyph_cache_survives_language_switches_and_clears_when_fonts_load() {
+    let mut rasterizer = regular_only_rasterizer();
+    let text = "CELESTA 漢字";
+    let mut style = bebas_style();
+    let mut expected = Vec::new();
+    for lang in ["ja", "zh-Hant"] {
+        style.lang = Some(lang.to_owned());
+        expected.push(rasterizer.missing_glyphs("title", text, &style));
+    }
+    assert_eq!(rasterizer.missing_characters.len(), 2);
+
+    for _ in 0..3 {
+        // These aliases normalize to the same locales used above.
+        for (lang, expected) in ["ja-JP", "zh-TW"].into_iter().zip(&expected) {
+            rasterizer.select_language(Some(lang));
+            assert_eq!(rasterizer.missing_characters.len(), 2);
+            style.lang = Some(lang.to_owned());
+            assert_eq!(&rasterizer.missing_glyphs("title", text, &style), expected);
+            assert_eq!(rasterizer.missing_characters.len(), 2);
+        }
+    }
+
+    rasterizer
+        .load_font_data("cache-test", sfnt(), None)
+        .unwrap();
+    assert!(rasterizer.missing_characters.is_empty());
+    for (lang, expected) in ["ja", "zh-Hant"].into_iter().zip(&expected) {
+        style.lang = Some(lang.to_owned());
+        assert_eq!(&rasterizer.missing_glyphs("title", text, &style), expected);
+    }
+    assert_eq!(rasterizer.missing_characters.len(), 2);
 }
 
 #[test]

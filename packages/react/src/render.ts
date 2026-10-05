@@ -9,8 +9,8 @@
 import * as React from 'react';
 
 import { isRemoteUrl } from './entry-dir';
-import { CompositionRuntimeContext, RerenderRequestContext } from './hooks';
-import { TextMetricsFontsContext } from './text-measure';
+import { CompositionRuntimeContext, RerenderRequestContext, resolveTextLanguage } from './hooks';
+import { TextMetricsFontsContext, withTextLanguage } from './text-measure';
 import { ProjectLayersContext, ProjectTrackLayersContext } from './project-runtime';
 import { resolveVisibleLayers } from './psd-preset';
 import type { PsdCharacterBlink, PsdCharacterLipSync, PsdExpression } from './components';
@@ -58,7 +58,7 @@ const HOST_TYPES = new Set([
 ]);
 const ZERO_TIME: Time = { value: 0, timescale: 1 };
 
-type PlaceholderConfig = Pick<CompositionConfig, 'width' | 'height' | 'durationInFrames'> & {
+type PlaceholderConfig = Pick<CompositionConfig, 'width' | 'height' | 'durationInFrames' | 'lang'> & {
   frameRate: { numerator: number };
 };
 const PLACEHOLDER_CONFIG: PlaceholderConfig = {
@@ -114,6 +114,7 @@ export interface AudioClipDescriptor {
  * seconds.
  */
 interface WalkContext {
+  lang?: string;
   time: Time;
   fps: number;
   originSec: number;
@@ -145,7 +146,7 @@ function findCompositionInstance(container: RootContainer): HostNode {
 }
 
 function readCompositionConfig(instance: HostNode): CompositionConfig {
-  const { width, height, fps, durationInFrames } = instance.props;
+  const { width, height, fps, durationInFrames, lang } = instance.props;
   if (!Number.isInteger(width) || (width as number) <= 0) {
     throw new Error('<Composition> requires a positive integer `width` prop');
   }
@@ -158,16 +159,21 @@ function readCompositionConfig(instance: HostNode): CompositionConfig {
   if (!Number.isInteger(durationInFrames) || (durationInFrames as number) <= 0) {
     throw new Error('<Composition> requires a positive integer `durationInFrames` prop');
   }
+  if (lang !== undefined && typeof lang !== 'string') {
+    throw new Error('<Composition> requires a string `lang` prop');
+  }
   return {
     width: width as number,
     height: height as number,
     frameRate: { numerator: fps as number, denominator: 1 },
     durationInFrames: durationInFrames as number,
+    ...(lang !== undefined ? { lang: lang as string } : {}),
   };
 }
 
-function rootWalkContext(fps: number, durationInFrames: number, time: Time): WalkContext {
+function rootWalkContext(fps: number, durationInFrames: number, time: Time, lang?: string): WalkContext {
   return {
+    lang,
     time,
     fps,
     originSec: 0,
@@ -568,7 +574,10 @@ function buildLayer(
     content = {
       type: 'text',
       text: extractText(props.children),
-      style: (props.style as TextStyle | undefined) ?? {},
+      style: withTextLanguage(
+        (props.style as TextStyle | undefined) ?? {},
+        resolveTextLanguage(props.lang, context.lang),
+      ),
       ...(typeof maxWidth === 'number' ? { maxWidth } : {}),
       ...(props.anchorY === 'baseline' ? { baselineAnchor: true } : {}),
     };
@@ -758,6 +767,7 @@ function childSequenceContext(node: HostNode, context: WalkContext): WalkContext
   }
   return {
     time: secondsToTime(localSec - startLocalSec),
+    lang: context.lang,
     fps,
     originSec,
     rangeStartSec,
@@ -820,8 +830,11 @@ function walkNode(
   if (!HOST_TYPES.has(node.type)) {
     throw new Error(`unsupported element <${node.type}>; use Celesta's built-in components`);
   }
+  if ((node.type === 'group' || node.type === 'sequence') && node.props.lang !== undefined) {
+    context = { ...context, lang: resolveTextLanguage(node.props.lang, context.lang) };
+  }
   if (node.type === 'rawLayers') {
-    return audioOnly ? [] : (node.props.layers as Layer[] | undefined) ?? [];
+    return audioOnly ? [] : inheritTextLanguage((node.props.layers as Layer[] | undefined) ?? [], context.lang);
   }
   if (
     node.type === 'assets' ||
@@ -900,6 +913,21 @@ function walkChildren(
   );
 }
 
+/** Includes text supplied by a project timeline and its nested groups. */
+function inheritTextLanguage(layers: Layer[], lang?: string): Layer[] {
+  if (lang === undefined) return layers;
+  return layers.map((layer) => {
+    const content = layer.content;
+    if (content.type === 'text') {
+      return { ...layer, content: { ...content, style: withTextLanguage(content.style, lang) } };
+    }
+    if (content.type === 'group') {
+      return { ...layer, content: { ...content, layers: inheritTextLanguage(content.layers, lang) } };
+    }
+    return layer;
+  });
+}
+
 export function mount(defaultExport: EntryComponent): MountedComposition {
   const { container, root } = createRoot();
   let fonts: ResolvedAsset[] = [];
@@ -920,6 +948,7 @@ export function mount(defaultExport: EntryComponent): MountedComposition {
       fps: config.frameRate.numerator,
       durationInFrames: config.durationInFrames,
       preview: false,
+      lang: config.lang,
     };
     const element = React.createElement(
       ProjectLayersContext.Provider,
@@ -947,9 +976,9 @@ export function mount(defaultExport: EntryComponent): MountedComposition {
     });
   };
 
-  // The first pass exists only to read <Composition>'s own props, which
-  // must be static (not derived from useVideoConfig()/useCurrentFrame()/
-  // <ProjectTimeline />/<ProjectTrack />) — but its children still render
+  // The first pass reads <Composition>'s size and clock props, which must
+  // be static (not derived from useVideoConfig()/useCurrentFrame()/
+  // <ProjectTimeline />/<ProjectTrack />). lang may vary by frame. Children still render
   // and may use those, so a placeholder context is provided rather than
   // leaving it unset, which would throw. Empty layers/tracks (rather than
   // null, which would still throw) are enough since this pass's own output
@@ -979,7 +1008,12 @@ export function mount(defaultExport: EntryComponent): MountedComposition {
       instance = findCompositionInstance(container);
     }
     const audio: AudioClipDescriptor[] = [];
-    const context = rootWalkContext(config.frameRate.numerator, config.durationInFrames, time);
+    const context = rootWalkContext(
+      config.frameRate.numerator,
+      config.durationInFrames,
+      time,
+      resolveTextLanguage(instance.props.lang),
+    );
     if (!audioOnly) {
       for (const child of instance.children) {
         collectCharacterViewOverrides(child, context);
@@ -1066,9 +1100,9 @@ export interface Resolver {
 /**
  * Standalone component resolver used by the editor preview: resolves
  * individual `registerComponent()` names without going through a
- * `<Composition>` tree.
+ * `<Composition>` tree. `lang` supplies that composition's text language.
  */
-export function createResolver(): Resolver {
+export function createResolver(lang?: string): Resolver {
   const { container, root } = createRoot();
 
   const ResolverHost = ({ items }: { items: readonly ComponentResolutionRequest[] }) =>
@@ -1090,7 +1124,11 @@ export function createResolver(): Resolver {
 
   return {
     resolve(items, runtime, fonts = []) {
-      const runtimeValue = runtime ? { ...runtime, preview: runtime.preview === true } : PLACEHOLDER_RUNTIME;
+      const runtimeValue = {
+        ...(runtime ?? PLACEHOLDER_RUNTIME),
+        preview: runtime?.preview === true,
+        lang,
+      };
       let rerenderRequested = false;
       const requestRerender = () => {
         rerenderRequested = true;
@@ -1129,6 +1167,7 @@ export function createResolver(): Resolver {
         runtimeValue.fps,
         runtimeValue.durationInFrames,
         runtime?.time ?? ZERO_TIME,
+        runtimeValue.lang,
       );
       return container.children.map((child, index) => {
         // An unresolved name renders the empty 'rawLayers' marker; anything

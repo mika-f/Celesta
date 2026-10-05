@@ -64,7 +64,9 @@ def build(revision, label, target_dir, worktrees, react):
             git("worktree", "prune")
             git("worktree", "add", "--quiet", "--detach", str(source), revision)
     print(f"building celesta-bench for {label} ({describe(revision)})", file=sys.stderr)
-    env = {**os.environ, "CARGO_TARGET_DIR": str(target_dir)}
+    # Shared artifacts can reuse a path dependency from the other revision.
+    cargo_target = target_dir / label
+    env = {**os.environ, "CARGO_TARGET_DIR": str(cargo_target)}
     subprocess.run(
         ["cargo", "build", "--release", "--locked", "--quiet", "-p", "celesta-bench"],
         check=True, cwd=source, env=env,
@@ -80,7 +82,7 @@ def build(revision, label, target_dir, worktrees, react):
     suffix = ".exe" if os.name == "nt" else ""
     binary = target_dir / "bench-bin" / f"celesta-bench-{label}{suffix}"
     binary.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(target_dir / "release" / f"celesta-bench{suffix}", binary)
+    shutil.copy2(cargo_target / "release" / f"celesta-bench{suffix}", binary)
     return binary
 
 

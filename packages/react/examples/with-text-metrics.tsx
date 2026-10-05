@@ -55,7 +55,7 @@ function ChipRow() {
 registerComponent('MeasuredPill', MeasuredPill);
 
 export default function Root() {
-  return <Composition width={1600} height={600} fps={30} durationInFrames={120}>
+  return <Composition width={1600} height={600} fps={30} durationInFrames={120} lang="ja-JP">
     <Font src="../../../examples/prism/assets/fonts/IBMPlexMono-Regular.ttf" />
     <Heading />
     <Group x={64} y={160}><MeasuredPill /></Group>

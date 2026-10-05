@@ -4,6 +4,7 @@ export interface CompositionConfig {
   height: number;
   frameRate: { numerator: number; denominator: number };
   durationInFrames: number;
+  lang?: string;
 }
 
 export type Asset = { id: string; location: { type: 'file'; path: string } | { type: 'url'; url: string } };
@@ -15,6 +16,7 @@ export type Stroke = { paint: Paint; width: number };
 export type Point = { x: number; y: number };
 export type Transform = { position: Point; scale: Point; rotation: number; anchor: Point };
 export type TextStyle = {
+  lang?: string | null;
   fontFamily?: string | null;
   fontSize?: number | null;
   fontWeight?: number | null;

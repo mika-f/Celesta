@@ -12,6 +12,7 @@ export interface VideoConfig {
 export interface CompositionRuntimeContextValue extends VideoConfig {
   time: Time;
   preview: boolean;
+  lang?: string;
 }
 
 // Populated by render.ts around the entry's default export on every frame
@@ -27,6 +28,15 @@ export const CompositionRuntimeContext = React.createContext<CompositionRuntimeC
  * `<Dialogue>` mounted together with its `<CharacterView>`).
  */
 export const RerenderRequestContext = React.createContext<() => void>(() => {});
+
+/** @internal Shared language inheritance for React providers and the scene walker. */
+export function resolveTextLanguage(lang: unknown, inherited?: string): string | undefined {
+  if (lang === undefined) return inherited;
+  if (typeof lang !== 'string') {
+    throw new Error('Celesta components require a string `lang` prop');
+  }
+  return lang;
+}
 
 function useRuntimeContext(hookName: string): CompositionRuntimeContextValue {
   const value = React.useContext(CompositionRuntimeContext);

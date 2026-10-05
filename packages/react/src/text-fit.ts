@@ -3,12 +3,14 @@ import type { ReactNode } from 'react';
 
 import { Group, Text } from './components';
 import type { CommonProps } from './components';
+import { CompositionRuntimeContext } from './hooks';
 import type { TextStyle } from './scene';
 import {
   asynchronousMeasurer,
   prepareFonts,
   synchronousMeasurer,
   useMeasurementFonts,
+  withTextLanguage,
 } from './text-measure';
 import type { MeasureTextRequest, TextMetrics } from './text-measure';
 
@@ -75,8 +77,10 @@ export async function fitText(text: string, options: FitTextOptions): Promise<Fi
  * hook's last result.
  */
 export function useFitText(text: string, options: FitTextOptions): FitTextResult {
+  const lang = React.useContext(CompositionRuntimeContext)?.lang;
+  const style = withTextLanguage(options.style ?? {}, lang);
   const fonts = useMeasurementFonts(options.fonts);
-  const key = JSON.stringify({ text, options: { ...options, fonts: undefined }, fonts });
+  const key = JSON.stringify({ text, options: { ...options, style, fonts: undefined }, fonts });
   return React.useMemo(() => {
     const { text, options, fonts } = JSON.parse(key) as {
       text: string;
