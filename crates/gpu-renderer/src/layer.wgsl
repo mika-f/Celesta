@@ -88,6 +88,11 @@ struct VertexOutput {
     @location(8) @interpolate(flat) sampling: vec3<f32>,
     // A path's tile: the index of its first entry in `paths`.
     @location(9) @interpolate(flat) path_tile: u32,
+    // A rect's inverse map, from the target's pixels to its own units from
+    // its top-left corner: the linear part (du/dx, dv/dx, du/dy, dv/dy) and
+    // the translation.
+    @location(10) @interpolate(flat) inverse: vec4<f32>,
+    @location(11) @interpolate(flat) inverse_translation: vec2<f32>,
 };
 
 @vertex
@@ -105,7 +110,23 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32, layer: LayerInstance) -> Ve
     let corner = coordinates[vertex_index % 6u];
     var uv: vec2<f32>;
     var path_tile = 0u;
-    if layer.anchor_opacity_kind.w == 2.0 {
+    var inverse = vec4<f32>(0.0);
+    var inverse_translation = vec2<f32>(0.0);
+    let anchor = layer.anchor_opacity_kind.xy;
+    var local: vec2<f32>;
+    if layer.anchor_opacity_kind.w == 1.0 {
+        // A rect is shaded wherever it lands, so its quad reaches one pixel
+        // past every edge for the anti-aliasing there.
+        let m = layer.matrix;
+        inverse = vec4<f32>(m.w, -m.y, -m.z, m.x) / (m.x * m.w - m.y * m.z);
+        let margin = vec2<f32>(length(inverse.xz), length(inverse.yw));
+        local = (corner - anchor) * size + (corner * 2.0 - 1.0) * margin;
+        let offset = layer.origin.xy - layer.translation_size.xy;
+        inverse_translation = vec2<f32>(
+            inverse.x * offset.x + inverse.z * offset.y,
+            inverse.y * offset.x + inverse.w * offset.y,
+        ) + anchor * size;
+    } else if layer.anchor_opacity_kind.w == 2.0 {
         // A path draws a quad over each tile it lists, skipping the tiles
         // nothing covers. It is never filtered.
         let base = u32(layer.rect.x);
@@ -124,8 +145,9 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32, layer: LayerInstance) -> Ve
         let margin = select(vec2<f32>(0.0), 1.0 / texels, sampling.x == 1.0);
         uv = corner * (1.0 + 2.0 * margin) - margin;
     }
-    let anchor = layer.anchor_opacity_kind.xy;
-    let local = (uv - anchor) * size;
+    if layer.anchor_opacity_kind.w != 1.0 {
+        local = (uv - anchor) * size;
+    }
     let world = vec2<f32>(
         layer.matrix.x * local.x + layer.matrix.z * local.y + layer.translation_size.x,
         layer.matrix.y * local.x + layer.matrix.w * local.y + layer.translation_size.y,
@@ -147,6 +169,8 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32, layer: LayerInstance) -> Ve
         layer.clip_sampling.x,
         sampling,
         path_tile,
+        inverse,
+        inverse_translation,
     );
 }
 
@@ -216,24 +240,52 @@ fn paint_color(paint: vec4<f32>, point: vec2<f32>) -> vec4<f32> {
     return sample_stops(base + 2u, u32(header.y), t);
 }
 
-// The texel `celesta_renderer::rasterize_rect` would have produced at
-// `coordinate`, straight alpha, so drawing a rect here matches uploading its
-// rasterized texture and reading it the same way.
-fn rect_texel(input: VertexOutput, coordinate: vec2<i32>) -> vec4<f32> {
-    let texel = vec2<f32>(coordinate) + vec2<f32>(0.5);
+// `celesta_renderer`'s `RectDistance`: the rounded-box distance in canvas
+// pixels, for a box drawn through the map whose inverse is `inverse`. Exact
+// for a rotation and a uniform scale, and along straight edges; a
+// non-uniformly scaled corner, an ellipse, divides the local distance by its
+// gradient in canvas pixels.
+fn rect_distance(p: vec2<f32>, half_size: vec2<f32>, radius: f32, inverse: vec4<f32>) -> f32 {
+    let q = abs(p) - half_size + vec2<f32>(radius);
+    if q.x > 0.0 && q.y > 0.0 {
+        let length_q = length(q);
+        let direction = q / length_q;
+        let gradient = vec2<f32>(
+            direction.x * inverse.x + direction.y * inverse.y,
+            direction.x * inverse.z + direction.y * inverse.w,
+        );
+        return (length_q - radius) / length(gradient);
+    }
+    // Canvas pixels per local unit across a vertical and a horizontal edge.
+    let scale = 1.0 / vec2<f32>(length(inverse.xz), length(inverse.yw));
+    return max((q.x - radius) * scale.x, (q.y - radius) * scale.y);
+}
+
+// The rect under the pixel, straight alpha, as
+// `celesta_renderer::rasterize_rect_transformed` shades it at the pixel's
+// centre.
+fn rect_color(input: VertexOutput) -> vec4<f32> {
+    // From the pixel's centre rather than an interpolated coordinate, which
+    // drifts by more than an edge's anti-aliasing can hide.
+    let pixel = input.position.xy;
+    let point = vec2<f32>(
+        input.inverse.x * pixel.x + input.inverse.z * pixel.y,
+        input.inverse.y * pixel.x + input.inverse.w * pixel.y,
+    ) + input.inverse_translation;
     let half_size = input.rect.xy;
     let radius = input.rect.z;
     let stroke_width = input.rect.w;
-    let p = texel - half_size;
-    let outer = clamp(0.5 - rounded_box(p, half_size, radius), 0.0, 1.0);
-    var color = paint_color(input.fill, texel);
+    let p = point - half_size;
+    let outer = clamp(0.5 - rect_distance(p, half_size, radius, input.inverse), 0.0, 1.0);
+    var color = paint_color(input.fill, point);
     if stroke_width > 0.0 {
-        let stroke = paint_color(input.stroke, texel);
+        let stroke = paint_color(input.stroke, point);
         let inner = clamp(
-            0.5 - rounded_box(
+            0.5 - rect_distance(
                 p,
                 max(half_size - vec2<f32>(stroke_width), vec2<f32>(0.0)),
                 max(radius - stroke_width, 0.0),
+                input.inverse,
             ),
             0.0,
             1.0,
@@ -357,7 +409,7 @@ fn path_texel(input: VertexOutput, coordinate: vec2<i32>) -> vec4<f32> {
 }
 
 // How much of the pixel at canvas position `world` is inside every clip in
-// the chain starting at `index`, anti-aliased over the edge like `rect_texel`.
+// the chain starting at `index`, anti-aliased over the edge like `rect_color`.
 fn clip_coverage(world: vec2<f32>, index: f32) -> f32 {
     var coverage = 1.0;
     var current = index;
@@ -382,9 +434,8 @@ fn clip_coverage(world: vec2<f32>, index: f32) -> f32 {
 
 // The size in texels of the layer's content at mip `level`.
 fn texel_size(input: VertexOutput, level: i32) -> vec2<i32> {
-    if input.size_opacity_kind.w != 0.0 {
-        // Rects and paths are shaded at their rasterized size and have no
-        // mips.
+    if input.size_opacity_kind.w == 2.0 {
+        // Paths are shaded at their rasterized size and have no mips.
         return vec2<i32>(round(input.size_opacity_kind.xy));
     }
     return vec2<i32>(textureDimensions(source_texture, level));
@@ -392,9 +443,6 @@ fn texel_size(input: VertexOutput, level: i32) -> vec2<i32> {
 
 // The straight-alpha texel at `coordinate`, which must lie inside the layer.
 fn texel(input: VertexOutput, coordinate: vec2<i32>, level: i32) -> vec4<f32> {
-    if input.size_opacity_kind.w == 1.0 {
-        return rect_texel(input, coordinate);
-    }
     let color = textureLoad(source_texture, coordinate, level);
     if input.blend.y == 1.0 && color.a > 0.0 {
         return vec4<f32>(color.rgb / color.a, color.a);
@@ -445,6 +493,10 @@ fn layer_color(input: VertexOutput) -> vec4<f32> {
         let size = texel_size(input, 0);
         let coordinate = min(vec2<i32>(floor(input.uv * vec2<f32>(size))), size - vec2<i32>(1));
         return path_texel(input, coordinate);
+    }
+    // Rects are shaded per pixel and never filtered.
+    if input.size_opacity_kind.w == 1.0 {
+        return rect_color(input);
     }
     if input.sampling.x == 0.0 {
         // Texels land one to one on pixels: copy the one under the pixel.

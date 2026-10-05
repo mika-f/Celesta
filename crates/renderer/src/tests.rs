@@ -1426,3 +1426,81 @@ fn rasterize_psd_disabled_layers_win_over_enabled() {
     // With the mouth suppressed the pixel is the bare skin base.
     assert_eq!(pixel_at(&without, 120, 150), [250, 224, 205, 255]);
 }
+
+/// The red channel of row 2 of a 32x6 black canvas holding a 2-unit-tall
+/// white rect of `width`, at `x` with horizontal `anchor`, scaled by `scale`.
+fn rect_row(x: f64, width: f64, anchor: f64, scale: Point) -> Vec<u8> {
+    let layer = Layer {
+        transform: EvaluatedTransform {
+            position: Point { x, y: 1.0 },
+            anchor: Point { x: anchor, y: 0.0 },
+            scale,
+            ..EvaluatedTransform::default()
+        },
+        content: LayerContent::Rect {
+            width,
+            height: 2.0,
+            fill: Some(Paint::Solid {
+                color: "#FFFFFFFF".to_owned(),
+            }),
+            stroke: None,
+            corner_radius: 0.0,
+        },
+        ..red_square()
+    };
+    let scene = Scene {
+        width: 32,
+        height: 6,
+        ..clip_scene(vec![layer])
+    };
+    let frame = CpuRenderer::new(RenderOptions {
+        background: Color::rgba(0, 0, 0, 255),
+    })
+    .render(&scene)
+    .unwrap();
+    (0..32).map(|x| pixel(&frame, x, 2)[0]).collect()
+}
+
+#[test]
+fn rects_keep_fractional_positions_sizes_anchors_and_scales() {
+    /// A black row with `pixels` from pixel `first` on.
+    fn expected(first: usize, pixels: &[u8]) -> Vec<u8> {
+        let mut row = vec![0; 32];
+        row[first..first + pixels.len()].copy_from_slice(pixels);
+        row
+    }
+    let unit = Point { x: 1.0, y: 1.0 };
+    let full = |count: usize| vec![255; count];
+    let with = |start: u8, middle: Vec<u8>, end: u8| [vec![start], middle, vec![end]].concat();
+
+    // Half-pixel position: both edges half covered, not snapped.
+    assert_eq!(
+        rect_row(10.5, 10.0, 0.0, unit),
+        expected(10, &with(128, full(9), 128))
+    );
+    // Centred on a fractional width: [14.75, 25.25], symmetric.
+    assert_eq!(
+        rect_row(20.0, 10.5, 0.5, unit),
+        expected(14, &with(64, full(10), 64))
+    );
+    // Scaled up: 10.25 * 2 = 20.5 pixels, not 11 texels stretched to 22.
+    assert_eq!(
+        rect_row(4.0, 10.25, 0.0, Point { x: 2.0, y: 2.0 }),
+        expected(4, &[full(20), vec![128]].concat())
+    );
+    // A fractional scale: 10 * 1.25 = 12.5 pixels.
+    assert_eq!(
+        rect_row(4.0, 10.0, 0.0, Point { x: 1.25, y: 1.25 }),
+        expected(4, &[full(12), vec![128]].concat())
+    );
+    // A non-uniform scale keeps the horizontal edge exact too.
+    assert_eq!(
+        rect_row(4.0, 10.0, 0.0, Point { x: 1.25, y: 1.0 }),
+        expected(4, &[full(12), vec![128]].concat())
+    );
+    // A negative scale mirrors the rect about its position.
+    assert_eq!(
+        rect_row(20.5, 10.0, 0.0, Point { x: -1.0, y: 1.0 }),
+        expected(10, &with(128, full(9), 128))
+    );
+}

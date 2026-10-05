@@ -1,15 +1,16 @@
 use crate::error::RenderError;
 use crate::paint::{ResolvedPaint, resolve_paint};
+use crate::path::{PathTransform, RasterizedPath, apply, invert};
 use crate::text::RasterizedText;
 use crate::types::Color;
 use celesta_composition::{Paint, Stroke};
 
 /// Rasterizes a flat-shaded, optionally rounded and stroked rectangle into an
-/// RGBA buffer, anti-aliased by signed distance. Shares `RasterizedText`'s
-/// shape (width/height/pixels) so it composites through the exact same
-/// `render_image` path text does. Takes the raw `Paint`/`Stroke` composition
-/// types (like `TextRasterizer::rasterize` takes `&TextStyle`) so callers,
-/// including `celesta-gpu-renderer`, never need their own color parsing.
+/// RGBA buffer, anti-aliased by signed distance: the rect at its own size,
+/// one texel per unit, rounded up to whole texels. Takes the raw
+/// `Paint`/`Stroke` composition types (like `TextRasterizer::rasterize`
+/// takes `&TextStyle`) so callers never need their own color parsing. To
+/// draw a rect where a layer puts it, use [`rasterize_rect_transformed`].
 pub fn rasterize_rect(
     width: f64,
     height: f64,
@@ -17,13 +18,20 @@ pub fn rasterize_rect(
     fill: Option<&Paint>,
     stroke: Option<&Stroke>,
 ) -> Result<RasterizedText, RenderError> {
-    let RectPaint { fill, stroke } = resolve_rect_paint(fill, stroke)?;
-    Ok(rasterize_rect_pixels(
-        width,
-        height,
-        corner_radius,
-        fill,
-        stroke,
+    let paint = resolve_rect_paint(fill, stroke)?;
+    let pixel_width = width.max(0.0).ceil().max(1.0) as u32;
+    let pixel_height = height.max(0.0).ceil().max(1.0) as u32;
+    let pixels = shade_rect(
+        &RectBox::new(width, height, corner_radius),
+        &paint,
+        PathTransform::scale_translate(1.0, 1.0, 0.0, 0.0),
+        (0, 0, pixel_width, pixel_height),
+    );
+    Ok(RasterizedText::whole(
+        pixel_width,
+        pixel_height,
+        0.0,
+        pixels,
     ))
 }
 
@@ -52,50 +60,115 @@ pub fn resolve_rect_paint(
     Ok(RectPaint { fill, stroke })
 }
 
-pub(crate) fn rasterize_rect_pixels(
+/// Paints the rect `[0, width] x [0, height]` of a layer's own coordinates
+/// through `transform`, anti-aliased, into the part of a
+/// `canvas_width`x`canvas_height` output it covers, like `rasterize_path`
+/// does a path. Every output pixel is shaded at its centre, so fractional
+/// positions, sizes, anchors and scales keep their edges where they fall,
+/// which a texture of whole texels placed on a whole pixel would not. `None`
+/// when no output pixel is covered.
+///
+/// Paint coordinates (gradient points) are in the layer's own coordinates,
+/// from the rect's top-left corner.
+pub fn rasterize_rect_transformed(
     width: f64,
     height: f64,
     corner_radius: f64,
-    fill: Option<ResolvedPaint>,
-    stroke: Option<(ResolvedPaint, f64)>,
-) -> RasterizedText {
-    let pixel_width = width.max(0.0).ceil().max(1.0) as u32;
-    let pixel_height = height.max(0.0).ceil().max(1.0) as u32;
-    let mut pixels = vec![0_u8; pixel_width as usize * pixel_height as usize * 4];
+    paint: &RectPaint,
+    transform: PathTransform,
+    canvas_width: u32,
+    canvas_height: u32,
+) -> Option<RasterizedPath> {
+    let inverse = invert(transform)?;
+    let corners = [(0.0, 0.0), (width, 0.0), (0.0, height), (width, height)]
+        .map(|(x, y)| apply(transform, x, y));
+    // Anti-aliasing reaches half a pixel past the edge.
+    let span = |values: [f64; 4], limit: u32| {
+        let low = values.into_iter().fold(f64::INFINITY, f64::min);
+        let high = values.into_iter().fold(f64::NEG_INFINITY, f64::max);
+        let low = (low - 1.0).floor().max(0.0);
+        let high = (high + 1.0).ceil().min(f64::from(limit));
+        (high > low).then_some((low as u32, (high - low) as u32))
+    };
+    let (left, pixel_width) = span(corners.map(|(x, _)| x), canvas_width)?;
+    let (top, pixel_height) = span(corners.map(|(_, y)| y), canvas_height)?;
+    let pixels = shade_rect(
+        &RectBox::new(width, height, corner_radius),
+        paint,
+        inverse,
+        (left, top, pixel_width, pixel_height),
+    );
+    Some(RasterizedPath {
+        left: left as i32,
+        top: top as i32,
+        image: RasterizedText::whole(pixel_width, pixel_height, 0.0, pixels),
+    })
+}
 
-    let half_width = width / 2.0;
-    let half_height = height / 2.0;
-    let radius = corner_radius.max(0.0).min(half_width.min(half_height));
-    let stroke = stroke.filter(|(_, stroke_width)| *stroke_width > 0.0);
+/// A rect's box in its own units, centred on the origin.
+struct RectBox {
+    half_width: f64,
+    half_height: f64,
+    radius: f64,
+}
+
+impl RectBox {
+    fn new(width: f64, height: f64, corner_radius: f64) -> Self {
+        let half_width = width / 2.0;
+        let half_height = height / 2.0;
+        Self {
+            half_width,
+            half_height,
+            radius: corner_radius.max(0.0).min(half_width.min(half_height)),
+        }
+    }
+}
+
+/// Shades the output pixels `(left, top, width, height)` of a rect drawn
+/// through the transform whose inverse is `inverse`.
+fn shade_rect(
+    rect: &RectBox,
+    paint: &RectPaint,
+    inverse: PathTransform,
+    (left, top, pixel_width, pixel_height): (u32, u32, u32, u32),
+) -> Vec<u8> {
+    let mut pixels = vec![0_u8; pixel_width as usize * pixel_height as usize * 4];
+    let RectBox {
+        half_width,
+        half_height,
+        radius,
+    } = *rect;
+    let stroke = paint
+        .stroke
+        .as_ref()
+        .filter(|(_, stroke_width)| *stroke_width > 0.0);
+    let distance = RectDistance::new(inverse);
 
     for y in 0..pixel_height {
         for x in 0..pixel_width {
-            let px = x as f64 + 0.5 - half_width;
-            let py = y as f64 + 0.5 - half_height;
-            let outer_distance =
-                signed_distance_rounded_box(px, py, half_width, half_height, radius);
+            // The output pixel's centre in the rect's own units, from its
+            // top-left corner (where gradients are defined) and its centre.
+            let (canvas_x, canvas_y) = (f64::from(left + x) + 0.5, f64::from(top + y) + 0.5);
+            let (sample_x, sample_y) = apply(inverse, canvas_x, canvas_y);
+            let px = sample_x - half_width;
+            let py = sample_y - half_height;
+            let outer_distance = distance.of(px, py, half_width, half_height, radius);
             let outer_alpha = (0.5 - outer_distance).clamp(0.0, 1.0);
             if outer_alpha <= 0.0 {
                 continue;
             }
 
-            let (sample_x, sample_y) = (f64::from(x) + 0.5, f64::from(y) + 0.5);
-            let mut color = fill
+            let mut color = paint
+                .fill
                 .as_ref()
                 .map_or(Color::TRANSPARENT, |fill| fill.color_at(sample_x, sample_y));
-            if let Some((stroke_paint, stroke_width)) = &stroke {
-                let (stroke_color, stroke_width) =
-                    (stroke_paint.color_at(sample_x, sample_y), *stroke_width);
+            if let Some((stroke_paint, stroke_width)) = stroke {
+                let stroke_color = stroke_paint.color_at(sample_x, sample_y);
                 let inner_half_width = (half_width - stroke_width).max(0.0);
                 let inner_half_height = (half_height - stroke_width).max(0.0);
                 let inner_radius = (radius - stroke_width).max(0.0);
-                let inner_distance = signed_distance_rounded_box(
-                    px,
-                    py,
-                    inner_half_width,
-                    inner_half_height,
-                    inner_radius,
-                );
+                let inner_distance =
+                    distance.of(px, py, inner_half_width, inner_half_height, inner_radius);
                 let inner_alpha = (0.5 - inner_distance).clamp(0.0, 1.0);
                 color = Color::rgba(
                     lerp(stroke_color.red, color.red, inner_alpha),
@@ -114,8 +187,60 @@ pub(crate) fn rasterize_rect_pixels(
                 .clamp(0.0, 255.0) as u8;
         }
     }
+    pixels
+}
 
-    RasterizedText::whole(pixel_width, pixel_height, 0.0, pixels)
+/// [`signed_distance_rounded_box`] in output pixels for a box drawn through
+/// an affine transform, given that transform's `inverse`. Exact for a
+/// rotation and a uniform scale, and along straight edges under any
+/// transform. A non-uniform scale stretches the corners into ellipses,
+/// whose distance this approximates by the local distance over its gradient
+/// in output pixels. `layer.wgsl` in `celesta-gpu-renderer` mirrors it.
+struct RectDistance {
+    /// The inverse's rows: how the local x and y change per output pixel.
+    gradient_x: (f64, f64),
+    gradient_y: (f64, f64),
+    /// Output pixels per local unit, perpendicular to a vertical edge and
+    /// to a horizontal one.
+    scale_x: f64,
+    scale_y: f64,
+    /// The scale, when it is the same along every direction.
+    uniform: Option<f64>,
+}
+
+impl RectDistance {
+    fn new(inverse: PathTransform) -> Self {
+        let gradient_x = (inverse.a, inverse.c);
+        let gradient_y = (inverse.b, inverse.d);
+        let scale_x = 1.0 / gradient_x.0.hypot(gradient_x.1);
+        let scale_y = 1.0 / gradient_y.0.hypot(gradient_y.1);
+        let orthogonal = gradient_x.0 * gradient_y.0 + gradient_x.1 * gradient_y.1 == 0.0;
+        Self {
+            gradient_x,
+            gradient_y,
+            scale_x,
+            scale_y,
+            uniform: (orthogonal && scale_x == scale_y).then_some(scale_x),
+        }
+    }
+
+    fn of(&self, px: f64, py: f64, half_width: f64, half_height: f64, radius: f64) -> f64 {
+        if let Some(scale) = self.uniform {
+            return signed_distance_rounded_box(px, py, half_width, half_height, radius) * scale;
+        }
+        let qx = px.abs() - half_width + radius;
+        let qy = py.abs() - half_height + radius;
+        if qx > 0.0 && qy > 0.0 {
+            // The local distance grows along `(qx, qy) / length`.
+            let length = qx.hypot(qy);
+            let (gx, gy) = (qx / length, qy / length);
+            let along_x = gx * self.gradient_x.0 + gy * self.gradient_y.0;
+            let along_y = gx * self.gradient_x.1 + gy * self.gradient_y.1;
+            (length - radius) / along_x.hypot(along_y)
+        } else {
+            ((qx - radius) * self.scale_x).max((qy - radius) * self.scale_y)
+        }
+    }
 }
 
 /// Inigo Quilez's rounded-box signed distance function: negative inside the

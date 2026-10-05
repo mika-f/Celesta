@@ -529,7 +529,7 @@ fn blends_layers_and_isolated_groups_like_the_cpu_renderer() {
 }
 
 #[test]
-fn shades_rects_like_their_rasterized_texture() {
+fn shades_rects_like_the_cpu_rasterizer() {
     let Some(mut renderer) = renderer(GpuRenderOptions {
         background: Color::rgba(10, 20, 30, 255),
     }) else {
@@ -663,13 +663,20 @@ fn shades_rects_like_their_rasterized_texture() {
             1.0,
         ),
     ];
-    for (index, (width, height, corner_radius, fill, stroke, rotation, scale, opacity)) in
-        cases.into_iter().enumerate()
+    // Each case also squashed vertically, for a non-uniform scale.
+    let cases = cases
+        .iter()
+        .flat_map(|case| [(case.clone(), 1.0), (case.clone(), 0.6)]);
+    for (index, ((width, height, corner_radius, fill, stroke, rotation, scale, opacity), squash)) in
+        cases.enumerate()
     {
         let transform = EvaluatedTransform {
             position: Point { x: 32.3, y: 29.6 },
             rotation,
-            scale: Point { x: scale, y: scale },
+            scale: Point {
+                x: scale,
+                y: scale * squash,
+            },
             ..EvaluatedTransform::default()
         };
         let rect = Layer {
@@ -686,54 +693,52 @@ fn shades_rects_like_their_rasterized_texture() {
                 corner_radius,
             },
         };
-        let rasterized = celesta_renderer::rasterize_rect(
-            width,
-            height,
-            corner_radius,
-            fill.as_ref(),
-            stroke.as_ref(),
-        )
-        .unwrap();
-        let id = format!("rasterized-{index}");
-        renderer.image_sources.insert_raster(
-            &id,
-            image::RgbaImage::from_raw(
-                rasterized.width(),
-                rasterized.height(),
-                rasterized.into_pixels(),
-            )
-            .unwrap(),
-        );
-        let image = Layer {
-            id: id.clone(),
-            transform,
-            opacity,
-            blend_mode: BlendMode::Normal,
-            effects: Default::default(),
-            content: LayerContent::Image {
-                width: None,
-                height: None,
-                fit: None,
-                asset: ResolvedAsset {
-                    id: id.clone(),
-                    location: AssetLocation::File { path: id },
-                },
-            },
-        };
-
         let mut scene = empty_scene(64, 60);
         scene.layers = vec![rect];
         let shaded = renderer.render(&scene).unwrap();
-        scene.layers = vec![image];
-        let sampled = renderer.render(&scene).unwrap();
-        // The shader works in f32 and the rasterizer in f64, so a
-        // stroke's blend of the two colors can land on a rounding tie in
-        // one and just miss it in the other: one code value at most.
+
+        // The rect's box `[0, width] x [0, height]`, its anchor on the
+        // layer's position.
+        let layer = path_transform(&transform);
+        let (anchor_x, anchor_y) = (-transform.anchor.x * width, -transform.anchor.y * height);
+        let placement = celesta_renderer::PathTransform {
+            tx: layer.tx + layer.a * anchor_x + layer.c * anchor_y,
+            ty: layer.ty + layer.b * anchor_x + layer.d * anchor_y,
+            ..layer
+        };
+        let paint = celesta_renderer::resolve_rect_paint(fill.as_ref(), stroke.as_ref()).unwrap();
+        let rasterized = celesta_renderer::rasterize_rect_transformed(
+            width,
+            height,
+            corner_radius,
+            &paint,
+            placement,
+            scene.width,
+            scene.height,
+        )
+        .unwrap();
+        let mut expected: Vec<u8> = (0..scene.width * scene.height)
+            .flat_map(|_| [10, 20, 30, 255])
+            .collect();
+        let image = &rasterized.image;
+        for (offset, texel) in image.pixels().chunks_exact(4).enumerate() {
+            let x = rasterized.left as usize + offset % image.width() as usize;
+            let y = rasterized.top as usize + offset / image.width() as usize;
+            let pixel = &mut expected[(y * scene.width as usize + x) * 4..][..3];
+            let alpha = f64::from(texel[3]) / 255.0 * opacity;
+            for (channel, value) in pixel.iter_mut().zip(texel) {
+                *channel =
+                    (f64::from(*value) * alpha + f64::from(*channel) * (1.0 - alpha)).round() as u8;
+            }
+        }
+        // The shader works in f32 and the rasterizer in f64, so an edge's
+        // coverage or a stroke's blend of the two colors can land on a
+        // rounding tie in one and just miss it in the other.
         let max_difference = shaded
             .pixels()
             .iter()
-            .zip(sampled.pixels())
-            .map(|(shaded, sampled)| shaded.abs_diff(*sampled))
+            .zip(&expected)
+            .map(|(shaded, expected)| shaded.abs_diff(*expected))
             .max()
             .unwrap();
         assert!(

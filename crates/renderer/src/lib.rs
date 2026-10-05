@@ -28,7 +28,7 @@ pub use assets::rasterize_psd;
 pub use error::RenderError;
 pub use fonts::TextRasterizer;
 pub use paint::{GradientStop, ResolvedPaint};
-pub use rect::{RectPaint, rasterize_rect, resolve_rect_paint};
+pub use rect::{RectPaint, rasterize_rect, rasterize_rect_transformed, resolve_rect_paint};
 pub use renderer::CpuRenderer;
 pub use text::{FontFallback, GlyphMetrics, MissingGlyphs, RasterizedText, TextMetrics};
 pub use types::{Color, RenderOptions, RgbaFrame};
