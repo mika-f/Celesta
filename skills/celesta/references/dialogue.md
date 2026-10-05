@@ -211,7 +211,7 @@ const PLATE: TextStyle = { fontSize: 24, fontWeight: 800, fill: { type: 'solid',
 
 function Band({ text, character, metrics, style, maxWidth, held, frame, durationInFrames }: SubtitleRenderProps) {
   const plate = useTextMetrics(character.displayName, PLATE);
-  const fade = Math.min(8, durationInFrames / 2);
+  const fade = Math.min(8, durationInFrames / 3);  // keeps the range increasing
   const opacity = interpolate(frame, [0, fade, durationInFrames - fade, durationInFrames], [0, 1, 1, 0],
     { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
   const width = Math.max(1120, metrics.width + 80);  // the band follows the text

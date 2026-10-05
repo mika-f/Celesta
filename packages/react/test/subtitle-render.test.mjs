@@ -14,8 +14,9 @@ import {
   Sequence,
   Text,
   planDialogue,
+  registerComponent,
 } from '../dist/index.js';
-import { mount } from '../dist/render.js';
+import { createResolver, mount } from '../dist/render.js';
 import { setTextMeasurer } from '../dist/text-measure.js';
 
 // Every character is `fontSize` wide and one line is `fontSize * 1.25` high.
@@ -210,4 +211,38 @@ test('DialogueSeries holdSubtitle keeps the band through gaps and restarts it af
     );
   const [held] = renderFrames(HeldLines, [12]);
   assert.equal(find(held.layers, 'facts').content.text, 'mira/mira/mira|First|false|12/32|600');
+});
+
+test('an editor preview draws a rendered subtitle whose view mounts with it', () => {
+  installMeasurer();
+  const mira = React.createRef();
+  const view = React.createRef();
+  registerComponent('SubtitlePreviewTest', () =>
+    h(
+      React.Fragment,
+      null,
+      h(Assets, null, h(Character, { ref: mira, name: 'mira', portrait: portrait('mira'), subtitle: subtitle() })),
+      h(CharacterView, { ref: view, character: mira }),
+      h(Dialogue, { character: view }, 'Preview'),
+    ),
+  );
+  const [layers] = createResolver().resolve([{ component: 'SubtitlePreviewTest', props: {} }], {
+    width: 640, height: 360, fps: 30, durationInFrames: 30, time: { value: 0, timescale: 30 }, preview: true,
+  });
+  assert.equal(find(layers, 'facts').content.text, 'mira/mira/mira|Preview|false|0/30|600');
+});
+
+test('a rendered subtitle rejects children that are not text, like a plain one', () => {
+  installMeasurer();
+  const mira = React.createRef();
+  const view = React.createRef();
+  const Root = () =>
+    h(
+      Composition,
+      { width: 640, height: 360, fps: 30, durationInFrames: 30 },
+      h(Assets, null, h(Character, { ref: mira, name: 'mira', portrait: portrait('mira'), subtitle: subtitle() })),
+      h(CharacterView, { ref: view, character: mira }),
+      h(Dialogue, { character: view }, 'Hi ', h('group', null)),
+    );
+  assert.throws(() => renderFrames(Root, [0]), /<Dialogue> children must be a string, a number, or an array of those/);
 });

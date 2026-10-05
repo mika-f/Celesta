@@ -179,7 +179,7 @@ const PLATE_STYLE: TextStyle = { fontSize: 22, fontWeight: 700, fill: { type: 's
 function SubtitleBand({ text, character, metrics, style, maxWidth, held, frame, durationInFrames }: SubtitleRenderProps) {
   const color = COLOR_BY_NAME[character.name];
   const plate = useTextMetrics(character.displayName, PLATE_STYLE);
-  const fade = Math.min(6, durationInFrames / 2);
+  const fade = Math.min(6, durationInFrames / 3);
   const opacity = interpolate(frame, [0, fade, durationInFrames - fade, durationInFrames], [0, 1, 1, 0], {
     extrapolateLeft: 'clamp',
     extrapolateRight: 'clamp',

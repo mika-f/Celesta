@@ -1091,7 +1091,11 @@ export function createResolver(): Resolver {
   return {
     resolve(items, runtime, fonts = []) {
       const runtimeValue = runtime ? { ...runtime, preview: runtime.preview === true } : PLACEHOLDER_RUNTIME;
-      const element = React.createElement(
+      let rerenderRequested = false;
+      const requestRerender = () => {
+        rerenderRequested = true;
+      };
+      const element = () => React.createElement(
         ProjectLayersContext.Provider,
         { value: [] },
         React.createElement(
@@ -1103,14 +1107,24 @@ export function createResolver(): Resolver {
             React.createElement(
               TextMetricsFontsContext.Provider,
               { value: fonts },
-              React.createElement(ResolverHost, { items }),
+              React.createElement(
+                RerenderRequestContext.Provider,
+                { value: requestRerender },
+                React.createElement(ResolverHost, { items }),
+              ),
             ),
           ),
         ),
       );
       HostReconciler.flushSync(() => {
-        HostReconciler.updateContainer(element, root, null, null);
+        HostReconciler.updateContainer(element(), root, null, null);
       });
+      if (rerenderRequested) {
+        // A ref read during render is attached only by the commit.
+        HostReconciler.flushSync(() => {
+          HostReconciler.updateContainer(element(), root, null, null);
+        });
+      }
       const walkContext = rootWalkContext(
         runtimeValue.fps,
         runtimeValue.durationInFrames,

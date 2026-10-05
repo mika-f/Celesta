@@ -507,7 +507,7 @@ function useRenderedSubtitle(
   ) as AssetReference | null | undefined;
   const subtitle = character?.subtitle;
   const render = subtitle?.render;
-  const text = subtitleText(children);
+  const text = render ? subtitleText(children) : '';
   const style = subtitle?.style ?? {};
   const maxWidth = subtitle?.maxWidth;
   const key = render
@@ -553,7 +553,10 @@ function subtitleText(children: ReactNode): string {
   if (typeof children === 'number') {
     return String(children);
   }
-  return Array.isArray(children) ? children.map(subtitleText).join('') : '';
+  if (Array.isArray(children)) {
+    return children.map(subtitleText).join('');
+  }
+  throw new Error('<Dialogue> children must be a string, a number, or an array of those');
 }
 
 export const Image = React.forwardRef<AssetReference, ImageProps>(function Image(props, ref) {
