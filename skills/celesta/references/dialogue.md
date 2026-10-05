@@ -1,5 +1,9 @@
 # Character dialogue, portraits, and lip sync
 
+Everything here is imported from `@celesta/react`. Voice, portrait, and
+PSD paths are relative to the entry file (JSON: asset ids declared in
+`assets`).
+
 Dialogue scenes combine three pieces:
 
 - a **character**: a portrait (one image per expression, or a layered PSD),
@@ -269,7 +273,7 @@ yourself.
 | `name` | Name; also the id unless `id` is given. |
 | `displayName` | Name shown to viewers, e.g. on a name plate (`character.displayName` in `subtitle.render`). Defaults to `name`. |
 | `portrait` | Image portrait or PSD portrait (below). |
-| `subtitle` | Subtitle placement and style: common layer props (`x`, `y`, `anchorX`, …) plus `style` (a `TextStyle`) and `maxWidth`. Positions are canvas coordinates unless the `Dialogue` itself is moved. `render` draws it yourself ([above](#drawing-the-subtitle-yourself)). |
+| `subtitle` | Subtitle placement and style: common layer props (`x`, `y`, `anchorX`, …) plus `style` (a `TextStyle`) and `maxWidth`. Positions are canvas coordinates unless the `Dialogue` itself is moved. For Japanese subtitles, set `style.lineBreak: 'phrase'` so lines wrap between phrases ([text.md](text.md#line-breaking)). `render` draws it yourself ([above](#drawing-the-subtitle-yourself)). |
 
 Image portrait:
 

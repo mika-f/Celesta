@@ -168,7 +168,9 @@ async function inspectEntry(options) {
       }
       if (message.measureText) {
         send({
-          error: 'inspect.mjs cannot shape text; open the entry in Celesta or use Celesta-export to measure with real fonts',
+          error:
+            'inspect.mjs cannot shape text, so measureText(), useTextMetrics(), fitText(), useFitText(), <TextBox>, ' +
+            'and @celesta/code fail here; check this entry with a PNG export (Celesta-export --react <entry> --frame N out.png) instead',
         });
         continue;
       }
@@ -277,7 +279,19 @@ function describeTransform(layer) {
   if (scale.x !== 1 || scale.y !== 1) parts.push(scale.x === scale.y ? `scale ${fmt(scale.x)}` : `scale (${fmt(scale.x)}, ${fmt(scale.y)})`);
   if (rotation) parts.push(`rotate ${fmt(rotation)}°`);
   if (layer.opacity !== 1) parts.push(`opacity ${fmt(layer.opacity)}`);
+  if (layer.blendMode && layer.blendMode !== 'normal') parts.push(`blend ${layer.blendMode}`);
+  const effects = layer.effects ?? {};
+  if (effects.blur) parts.push(`blur ${fmt(effects.blur)}`);
+  if (effects.shadow) parts.push(`shadow ${effects.shadow.color}/${fmt(effects.shadow.blur)} (${fmt(effects.shadow.offsetX)}, ${fmt(effects.shadow.offsetY)})`);
+  if (effects.glow) parts.push(`glow ${effects.glow.color}/${fmt(effects.glow.blur)}`);
   return parts.join(' ');
+}
+
+function describePaint(paint) {
+  if (!paint) return '';
+  if (paint.type === 'solid') return paint.color;
+  const stops = (paint.stops ?? []).map((stop) => stop.color).join('→');
+  return `${paint.type}(${stops})`;
 }
 
 function printLayers(layers, depth, checkFile, warnings) {
@@ -289,12 +303,20 @@ function printLayers(layers, depth, checkFile, warnings) {
       case 'text': {
         const style = content.style ?? {};
         const font = [style.fontFamily ?? 'default font', style.fontSize && `${style.fontSize}px`, style.fontWeight].filter(Boolean).join(' ');
-        const color = style.fill?.color ? ` ${style.fill.color}` : '';
-        console.log(`${indent}text ${JSON.stringify(content.text)} ${where} [${font}${color}${content.maxWidth ? `, maxWidth ${content.maxWidth}` : ''}]`);
+        const color = style.fill ? ` ${describePaint(style.fill)}` : '';
+        const extras = [
+          content.maxWidth && `maxWidth ${fmt(content.maxWidth)}`,
+          style.lineBreak === 'phrase' && 'lineBreak phrase',
+          content.baselineAnchor && 'baseline anchor',
+        ].filter(Boolean);
+        console.log(`${indent}text ${JSON.stringify(content.text)} ${where} [${font}${color}${extras.map((extra) => `, ${extra}`).join('')}]`);
         break;
       }
       case 'rect':
-        console.log(`${indent}rect ${fmt(content.width)}×${fmt(content.height)} ${where}${content.fill ? ` fill ${content.fill.color}` : ''}${content.stroke ? ` stroke ${content.stroke.paint.color}/${content.stroke.width}` : ''}${content.cornerRadius ? ` radius ${content.cornerRadius}` : ''}`);
+        console.log(`${indent}rect ${fmt(content.width)}×${fmt(content.height)} ${where}${content.fill ? ` fill ${describePaint(content.fill)}` : ''}${content.stroke ? ` stroke ${describePaint(content.stroke.paint)}/${fmt(content.stroke.width)}` : ''}${content.cornerRadius ? ` radius ${fmt(content.cornerRadius)}` : ''}`);
+        break;
+      case 'path':
+        console.log(`${indent}path ${content.commands.length} commands ${where}${content.fill ? ` fill ${describePaint(content.fill)}` : ''}${content.stroke ? ` stroke ${describePaint(content.stroke.paint)}/${fmt(content.stroke.width)}` : ''}`);
         break;
       case 'image':
       case 'video':
@@ -302,6 +324,9 @@ function printLayers(layers, depth, checkFile, warnings) {
         const src = content.asset.location.path ?? content.asset.location.url;
         let extra = '';
         if (content.type === 'video') extra = ` (source ${fmt(content.timing.sourceTimeSeconds)} s)`;
+        if (content.type === 'image' && (content.width || content.height)) {
+          extra = ` size ${content.width ? fmt(content.width) : 'auto'}×${content.height ? fmt(content.height) : 'auto'}${content.fit ? ` ${content.fit}` : ''}`;
+        }
         if (content.type === 'psd') {
           extra = ` (${content.visibleLayers?.length ?? 0} visible layers${content.enabledLayers?.length ? `, shown ${content.enabledLayers.join(', ')}` : ''})`;
           if (!content.visibleLayers?.length) warnings.push(`PSD ${src} has no \`layers\`; it renders with its saved visibility`);
@@ -309,10 +334,13 @@ function printLayers(layers, depth, checkFile, warnings) {
         console.log(`${indent}${content.type} ${src} ${where}${extra}${checkFile(content.asset.location.path)}`);
         break;
       }
-      case 'group':
-        console.log(`${indent}group ${where}`);
+      case 'group': {
+        const clip = content.clip;
+        const clipText = clip ? ` clip ${fmt(clip.width)}×${fmt(clip.height)} at (${fmt(clip.x)}, ${fmt(clip.y)})${clip.cornerRadius ? ` radius ${fmt(clip.cornerRadius)}` : ''}` : '';
+        console.log(`${indent}group ${where}${clipText}`);
         printLayers(content.layers, depth + 1, checkFile, warnings);
         break;
+      }
       case 'missingComponent':
         warnings.push(`component "${content.component}" is not registered; export will fail`);
         console.log(`${indent}UNREGISTERED COMPONENT ${content.component} ${where}`);
