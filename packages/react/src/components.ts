@@ -1,7 +1,7 @@
 import * as React from 'react';
 import type { ReactNode } from 'react';
 
-import { CompositionRuntimeContext, RerenderRequestContext, resolveTextLanguage } from './hooks';
+import { CompositionRuntimeContext, RerenderRequestContext, RootRuntimeContext, resolveTextLanguage } from './hooks';
 import { useOptionalLipSync } from './lipsync';
 import { synchronousMeasurer, useMeasurementFonts, withTextLanguage } from './text-measure';
 import type { MeasureTextRequest, TextMetrics } from './text-measure';
@@ -472,12 +472,59 @@ export function Group(props: GroupProps): ReturnType<typeof React.createElement>
     : element;
 }
 
+/**
+ * The views drawn inside one `<FreezeFrame>`, by the ref their author
+ * passed. A copy never attaches the author's ref, which the live view owns;
+ * `<Dialogue>`s inside resolve that ref through `references` instead.
+ */
+interface ViewScope {
+  readonly views: Map<object, unknown>;
+  readonly references: WeakMap<object, { readonly current: unknown }>;
+}
+
+const ViewScopeContext = React.createContext<ViewScope | null>(null);
+
+function createViewScope(): ViewScope {
+  return { views: new Map(), references: new WeakMap() };
+}
+
+/** A ref-like object reading the copy of `ref`'s view in `scope`; stable per ref. */
+function scopedViewReference(scope: ViewScope, ref: object): { readonly current: unknown } {
+  let reference = scope.references.get(ref);
+  if (!reference) {
+    reference = {
+      get current() {
+        return scope.views.get(ref) ?? null;
+      },
+    };
+    scope.references.set(ref, reference);
+  }
+  return reference;
+}
+
 export const CharacterView = React.forwardRef<CharacterViewReference, CharacterViewProps>(
   function CharacterView(props, ref) {
     const { lipSync, ...rest } = props;
     const tracked = useOptionalLipSync(lipSync);
     const mouth = rest.mouth ?? tracked;
-    return React.createElement('character-view', { ...rest, mouth, ref });
+    const scope = React.useContext(ViewScopeContext);
+    const attached = React.useRef<unknown>(null);
+    // Detaching passes null, so remember which node this view registered and
+    // only remove the entry while it is still ours.
+    const register = React.useCallback(
+      (node: unknown) => {
+        if (!scope || !ref) return;
+        if (node !== null) {
+          attached.current = node;
+          scope.views.set(ref, node);
+        } else {
+          if (scope.views.get(ref) === attached.current) scope.views.delete(ref);
+          attached.current = null;
+        }
+      },
+      [scope, ref],
+    );
+    return React.createElement('character-view', { ...rest, mouth, ref: scope ? register : ref });
   },
 );
 
@@ -485,11 +532,16 @@ export const CharacterView = React.forwardRef<CharacterViewReference, CharacterV
 export function Dialogue(props: DialogueProps): ReturnType<typeof React.createElement> {
   const { children, lipSync, mouth, ...rest } = props;
   const tracked = useOptionalLipSync(lipSync);
-  const subtitle = useRenderedSubtitle(props.character, children, props.held === true);
+  const scope = React.useContext(ViewScopeContext);
+  const character = scope && props.character
+    ? (scopedViewReference(scope, props.character) as DialogueProps['character'])
+    : props.character;
+  const subtitle = useRenderedSubtitle(character, children, props.held === true);
   return React.createElement(
     'dialogue',
     {
       ...rest,
+      character,
       text: children,
       mouth: mouth ?? tracked,
     },
@@ -672,6 +724,42 @@ export function Sequence(props: SequenceProps): ReturnType<typeof React.createEl
       },
     },
     React.createElement('sequence', props),
+  );
+}
+
+export interface FreezeFrameProps extends CommonProps {
+  /**
+   * Composition frame the children are drawn at, counted on the root
+   * composition's clock whatever `<Sequence>`s enclose this element.
+   */
+  frame: number;
+  children?: ReactNode;
+}
+
+/**
+ * Draws its children as the composition looked at `frame`: inside,
+ * `useCurrentFrame()` is `frame` on the root clock, `useVideoConfig()` reports
+ * the composition's duration, and `<Sequence>`s, `<Video>`, lip sync, and
+ * blinking all follow that frame. A constant `frame` holds still; a moving one
+ * replays the composition at that offset. Frozen children are always silent.
+ * `<CharacterView>`s inside never attach their ref, which stays with the live
+ * view, and `<Dialogue>`s inside drive only views drawn inside the same
+ * `<FreezeFrame>`. Authored `id`s inside are prefixed with this layer's id.
+ */
+export function FreezeFrame(props: FreezeFrameProps): ReturnType<typeof React.createElement> {
+  const context = React.useContext(CompositionRuntimeContext);
+  const root = React.useContext(RootRuntimeContext);
+  const [scope] = React.useState(createViewScope);
+  if (!context || !root) {
+    throw new Error('<FreezeFrame> must be called from within a Celesta <Composition>');
+  }
+  if (typeof props.frame !== 'number' || !Number.isFinite(props.frame)) {
+    throw new Error('<FreezeFrame> requires a finite `frame`');
+  }
+  return React.createElement(
+    CompositionRuntimeContext.Provider,
+    { value: { ...root, lang: context.lang, time: secondsToTime(props.frame / root.fps) } },
+    React.createElement(ViewScopeContext.Provider, { value: scope }, React.createElement('freeze-frame', props)),
   );
 }
 

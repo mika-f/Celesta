@@ -119,8 +119,8 @@ scope.
 
 ### Walker (`render.ts`)
 
-- `'freeze-frame'` joins `HOST_TYPES`, the group branch in `buildLayer`, and
-  the `lang` branch in `walkNode`.
+- `'freeze-frame'` joins `HOST_TYPES` and gets its own group branch in
+  `buildLayer`, which walks the children with the freeze context.
 - `WalkContext` gains `compositionEndSec` (the root `rangeEndSec`), `frozen`,
   and `idPrefix`. `childFreezeContext(node, layerId, context)` returns
   `time = frame / fps`, `originSec = 0`, `rangeStartSec = 0`,
