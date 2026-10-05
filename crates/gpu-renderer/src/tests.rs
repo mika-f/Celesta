@@ -729,7 +729,7 @@ fn shades_sheared_rects_like_the_cpu_rasterizer() {
         scene.layers = vec![Layer {
             id: "group".to_owned(),
             transform: group_transform,
-            opacity: 1.0,
+            opacity: 0.8,
             blend_mode: BlendMode::Normal,
             effects: Default::default(),
             content: LayerContent::Group {
@@ -777,13 +777,17 @@ fn assert_rect_matches_cpu(
     case: &dyn std::fmt::Display,
 ) {
     let shaded = renderer.render(scene).unwrap();
-    fn rect(layer: &Layer) -> &Layer {
+    /// The rect inside `layer`, and its opacity through every group.
+    fn rect(layer: &Layer) -> (&Layer, f64) {
         match &layer.content {
-            LayerContent::Group { layers, .. } => rect(&layers[0]),
-            _ => layer,
+            LayerContent::Group { layers, .. } => {
+                let (rect, opacity) = rect(&layers[0]);
+                (rect, layer.opacity * opacity)
+            }
+            _ => (layer, layer.opacity),
         }
     }
-    let rect = rect(&scene.layers[0]);
+    let (rect, opacity) = rect(&scene.layers[0]);
     let LayerContent::Rect {
         width,
         height,
@@ -822,7 +826,7 @@ fn assert_rect_matches_cpu(
         let x = rasterized.left as usize + offset % image.width() as usize;
         let y = rasterized.top as usize + offset / image.width() as usize;
         let pixel = &mut expected[(y * scene.width as usize + x) * 4..][..3];
-        let alpha = f64::from(texel[3]) / 255.0 * rect.opacity;
+        let alpha = f64::from(texel[3]) / 255.0 * opacity;
         for (channel, value) in pixel.iter_mut().zip(texel) {
             *channel =
                 (f64::from(*value) * alpha + f64::from(*channel) * (1.0 - alpha)).round() as u8;
