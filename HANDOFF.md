@@ -1,6 +1,6 @@
 # Celesta implementation handoff
 
-Last updated: 2026-10-04 (`<TextBox>` / `fitText()` / `useFitText()` fit text into a box, issue #134)
+Last updated: 2026-10-05 (performance check per pull request with `celesta-bench`; `TextStyle.lineBreak: 'phrase'` with `celesta-budoux`; GPU renderer shades `Path` coverage, issue #116; GPU blur pairs its taps)
 
 ## Goal
 
@@ -98,6 +98,30 @@ git status --short
 cargo test --workspace
 ```
 
+## Performance check per pull request (2026-10-05)
+
+`celesta-bench` (`crates/bench`) renders seven workloads through the GPU
+renderer's export path: `nebula` (the real `examples/versus/bench` React
+composition) and six synthetic scenes (`rings`, `blur`, `ribbons`, `text`,
+`shapes`, `images`). `scripts/bench.py compare` builds it at a base revision
+and the head and compares them. See `docs/performance/benchmarking.md`.
+
+- CI (`.github/workflows/perf.yml`) has no GPU, so it counts instructions
+  per frame with Cachegrind while lavapipe renders (shaders included), at
+  640x360. `celesta-bench` turns counting on for the measured frames only
+  with Cachegrind client requests (`crates/bench/src/cachegrind.rs`, inline
+  asm for Linux x86_64/aarch64). Repeated runs agree within 0.02% (`ribbons`
+  0.4%); the job fails above +1% when the base has `crates/bench` (a base
+  without it, like this change's own pull request, only measures the head
+  and passes). Mesa's shader cache is disabled because
+  lavapipe compiles some variants during measured frames. The report is
+  posted on the pull request (one comment, updated per run) by
+  `perf-comment.yml`, a `workflow_run` workflow, so pull requests from forks
+  get it too without giving their code a write token.
+- Locally, `--mode time` (the default) alternates base and head on the real
+  GPU and reports medians.
+- Not covered: video decoding, audio, encoding, and GPU-only costs such as
+  bandwidth (instruction counts cannot see them).
 ## Fitting text into a box (2026-10-04)
 
 `<TextBox>`, `useFitText()`, and `fitText()` (`packages/react/src/text-fit.ts`)
@@ -215,6 +239,7 @@ wave, angle, and point helpers. `@celesta/react` no longer exports `random` or
 | `celesta-budoux` | Rust port of google/budoux with its Japanese model: splits text into phrases for `lineBreak: 'phrase'`. |
 | `celesta-renderer` | Deterministic CPU reference renderer, PNG output, and the shared text rasterizer. |
 | `celesta-gpu-renderer` | `wgpu` renderer for images, video frames, styled text, nested transforms, opacity, offscreen readback, and renderer-owned surfaces. |
+| `celesta-bench` | Benchmark workloads for the GPU renderer's export path, driven by `scripts/bench.py` locally (time) and in CI (Cachegrind instruction counts on lavapipe). Not published. |
 | `celesta-exporter` | Deterministic frame-exact H.264/AAC MP4 export through the shared evaluator, GPU renderer, audio graph, and the linked FFmpeg libraries (`ez-ffmpeg` `VideoWriter` for encode, `FfmpegContext` for the AAC mux). Also exports React entries via `celesta-react-bridge`. |
 | `celesta-editor` | Preview-only GPUI application: File menu open/reload, playback clock, GPU preview bridge, read-only asset list, timeline, and inspector, and MP4 export. |
 | `celesta-remote` | Resolves asset locations to local files: relative paths join the asset root, and `http`/`https` URLs download once into a per-user cache (`<cache dir>/remote-v1/<url hash>/<file name>`, never revalidated). Used by both renderers, the audio mixer, the editor's waveforms, and React `preloadMedia()` probes. Also reads `@font-face` stylesheets (`stylesheet_font_faces`), e.g. Google Fonts CSS links; `TextRasterizer::load_fonts` loads each face, unpacks WOFF/WOFF2 with `wuff`, and registers the CSS `font-family` as an extra family name. |
