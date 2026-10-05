@@ -160,7 +160,7 @@ def count_instructions(binary, workload, options, out):
 def measure_instructions(binaries, options):
     """{label: {workload: [instructions/frame per round]}}, plus the adapter name."""
     first = next(iter(binaries.values()))
-    probe = run_bench(first, ["--frames", "1", "--warmup", "0", "--size", "16x16", "rings"])[0]
+    probe = run_bench(first, ["--frames", "1", "--warmup", "0", "--size", "32x18", "rings"])[0]
     adapter = f'{probe["adapter"]} ({probe["backend"]})'
     if "llvmpipe" not in probe["adapter"]:
         sys.exit(f"instructions mode needs lavapipe (llvmpipe), but the adapter is {adapter}")
