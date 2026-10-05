@@ -302,7 +302,7 @@ def main():
                          "the report shows it)")
     compare.add_argument("--frames", type=int, help="measured frames (default: 120 time, 6 instructions)")
     compare.add_argument("--warmup", type=int, help="unmeasured frames first (default: 10 time, 2 instructions)")
-    compare.add_argument("--size", help="WxH (default: 1920x1080 time, 640x360 instructions)")
+    compare.add_argument("--size", help="WxH (default: 1920x1080 time, 1280x720 instructions)")
     compare.add_argument("--threshold", type=float,
                          help="percent change reported as slower or faster (default: 5 time, 1 instructions)")
     compare.add_argument("--jobs", type=int, default=os.cpu_count(),
@@ -322,7 +322,7 @@ def main():
         options.seed = random.SystemRandom().randrange(2**32)
     for name, (time_default, instructions_default) in {
         "rounds": (10, 1), "frames": (120, 6), "warmup": (10, 2),
-        "size": ("1920x1080", "640x360"), "threshold": (5.0, 1.0),
+        "size": ("1920x1080", "1280x720"), "threshold": (5.0, 1.0),
     }.items():
         if getattr(options, name) is None:
             setattr(options, name, instructions_default if instructions else time_default)
