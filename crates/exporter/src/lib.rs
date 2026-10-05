@@ -13,7 +13,7 @@ mod render;
 mod tests;
 mod timecode;
 
-pub use control::{ExportCancellation, ExportProgress};
+pub use control::{CompositionInfo, ExportCancellation, ExportProgress, ExportedFile};
 pub use error::ExportError;
 pub use exporter::Exporter;
 pub use options::{

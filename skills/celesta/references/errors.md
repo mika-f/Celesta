@@ -1,7 +1,9 @@
 # Error messages and fixes
 
 Find the message (or its start) and apply the fix. The exporter prefixes
-failures with `Celesta export:`; `inspect.mjs` prints `ERROR loading entry:`
+failures with `Celesta export:`, or with `--json` reports them as
+`error.message` next to an `error.code`
+([export.md](export.md#json-results)); `inspect.mjs` prints `ERROR loading entry:`
 or `ERROR:` per frame. Dialogue, portrait, and lip-sync symptoms are in
 [dialogue.md](dialogue.md#troubleshooting).
 
@@ -49,7 +51,7 @@ or `ERROR:` per frame. Dialogue, portrait, and lip-sync symptoms are in
 | `H.264 MP4 export requires non-zero even dimensions, got 1921x1080` | Make width and height even. |
 | `output already exists: …` | Choose another path, or add `--overwrite` if replacing it is intended. |
 | `PNG output requires --frame, --frames or --every` | Add a frame selection, or drop `--output-format png` / `--contact-sheet`. |
-| `unexpected argument '--every'` (or `--contact-sheet`, `--no-ui`), or the exporter prints its usage text | The installed Celesta is older than this skill; ask the user to update, or use only the options its usage lists. |
+| `unexpected argument '--every'` (or `--contact-sheet`, `--no-ui`, `--json`), or the exporter prints its usage text | The installed Celesta is older than this skill; ask the user to update, or use only the options its usage lists (without `--json`, use `--no-ui`). |
 | Export is very slow | See [performance.md](performance.md). Without a GPU, see [export.md](export.md#without-a-gpu). |
 
 ## Media, PSD, lip sync

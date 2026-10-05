@@ -1,4 +1,4 @@
-use crate::control::{ExportCancellation, ExportProgress};
+use crate::control::{CompositionInfo, ExportCancellation, ExportProgress, ExportedFile};
 use crate::error::ExportError;
 use crate::exporter::Exporter;
 use crate::project::build_audio_graph;
@@ -154,6 +154,12 @@ impl Exporter {
         let mut bridge = ReactBridge::spawn(&react_runtime.node, &react_runtime.cli_script, entry)
             .map_err(ExportError::React)?;
         let metadata = bridge.metadata().clone();
+        progress(ExportProgress::Composition(CompositionInfo {
+            width: metadata.width,
+            height: metadata.height,
+            frame_rate: metadata.frame_rate,
+            frames: metadata.duration_in_frames,
+        }));
         validate_dimensions(metadata.width, metadata.height)?;
         if metadata.duration_in_frames == 0 {
             return Err(ExportError::EmptyTimeline);
@@ -211,7 +217,8 @@ impl Exporter {
         ensure_not_cancelled(cancellation)?;
 
         let graph = build_audio_graph(&react_audio, asset_root, project_refs)?;
-        let output_file = if graph.clips.is_empty() {
+        let audio = !graph.clips.is_empty();
+        let output_file = if !audio {
             final_file
         } else {
             progress(ExportProgress::MixingAudio);
@@ -263,6 +270,12 @@ impl Exporter {
                 }
             }
         })?;
+        progress(ExportProgress::Wrote(ExportedFile::Video {
+            path: output_path.to_owned(),
+            first_frame: start_frame,
+            frames: frame_count,
+            audio,
+        }));
         Ok(())
     }
 }

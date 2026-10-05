@@ -9,6 +9,7 @@ stands for its path.
 
 - [Commands](#commands)
 - [Options](#options)
+- [JSON results](#json-results)
 - [Progress output](#progress-output)
 - [Quality notes](#quality-notes)
 - [Without a GPU](#without-a-gpu)
@@ -28,14 +29,14 @@ file's) folder, not the current directory.
 A fast check of one second around the part you changed:
 
 ```sh
-Celesta-export --no-ui --overwrite --preset ultrafast --from 2 --to 3 \
+Celesta-export --json --overwrite --preset ultrafast --from 2 --to 3 \
   --react scene.tsx /tmp/celesta-check.mp4
 ```
 
 The final export the user asked for:
 
 ```sh
-Celesta-export --no-ui --react scene.tsx out.mp4
+Celesta-export --json --react scene.tsx out.mp4
 ```
 
 **Only overwrite a file the user asked for or one you created.** Without
@@ -53,15 +54,69 @@ Celesta-export --no-ui --react scene.tsx out.mp4
 | `--crf <n>` | 0–51, lower is better quality (default 18). |
 | `--color-conversion <w>` | `auto` (default), `gpu`, or `encoder`: where RGB becomes YUV. |
 | `--render-quality <q>` | `final` (default) or `draft`. `draft` draws scaled text from a scale-1 texture, so it is softer; use it only to check timing. |
+| `--json` | No progress output; one line of JSON on stdout when the export ends. See [JSON results](#json-results). |
 | `--no-ui` | Plain text progress instead of the terminal dashboard (automatic when stderr is not a terminal). |
 | `--frame`, `--frames`, `--every`, `--contact-sheet`, `--columns`, `--tile-width`, `--output-format` | PNG output; see [verify.md](verify.md#look-at-real-frames). |
 
 MP4 export needs non-zero, even `width` and `height`.
 
+## JSON results
+
+Add `--json` to every exporter call you make. Instead of progress output, the
+exporter prints a single line of JSON on stdout when it finishes and writes
+nothing to stderr. It lists the composition, every file written with its
+frame numbers, the warnings, and on failure an error code:
+
+```json
+{"status":"ok","source":"/Users/me/my-video/scene.tsx",
+ "composition":{"width":1920,"height":1080,"fps":30.0,"frames":150,"duration":5.0},
+ "outputs":[{"type":"frame","path":"/tmp/celesta-check-000000.png","frame":0,"time":0.0},
+            {"type":"frame","path":"/tmp/celesta-check-000090.png","frame":90,"time":3.0}],
+ "warnings":["font family \"Noto Sans JP\" (weight 400) is not installed or loaded; text layer \"root.0\" uses a fallback font"],
+ "stats":{"elapsedSeconds":1.2,"renderFps":58.5}}
+```
+
+(Shown wrapped here; the real output is one line.)
+
+- `composition.frames` is the frame count. Frames are zero-based, so the
+  last one is `frames - 1`. Times are in seconds, rounded to milliseconds.
+- `outputs` lists the files that exist after the export, with absolute
+  paths. Read these paths; do not work out file names yourself. Each entry
+  has a `type`:
+  - `video`: `firstFrame`, `frames`, `start`, `duration`, and `audio`
+    (whether the MP4 has an audio stream);
+  - `frame`: one PNG, with `frame` and `time`;
+  - `contactSheet`: one PNG, with `columns` and the tile `frames` in
+    reading order.
+- `stats.renderFps` is the average rendering speed. Compare it between
+  spans to find slow parts.
+- On failure, `status` is `"error"` and `error` has a stable `code`, the
+  `message`, and sometimes a `hint`. `outputs` still lists the PNGs written
+  before the failure. `composition` is included when the failure happened
+  after the composition was loaded.
+
+| `error.code` | Meaning |
+| --- | --- |
+| `usage` | The arguments were rejected (exit status 2). |
+| `output_exists` | An output file exists; add `--overwrite` only if you may replace it. |
+| `invalid_selection` | A frame is out of range or repeated, or the selection or contact sheet is too large. |
+| `empty_range` | `--from`/`--to` cover no frames of the composition. |
+| `unsupported_output` | An MP4 export needs a `.mp4` path. |
+| `unsupported_dimensions` | MP4 needs even width and height. |
+| `project_io`, `project_json` | The project file could not be read or is not valid JSON. |
+| `project_validation` | The project is invalid; `error.issues` lists each `{path, message}`. |
+| `react` | The React entry failed to load or render; read `message` and look it up in [errors.md](errors.md). |
+| `evaluation`, `render`, `audio`, `ffmpeg`, `io`, `time` | The export failed at that stage; read `message`. |
+
+The exit status is 0 on success, 1 when the export fails, and 2 for usage
+errors. An installed Celesta older than this option rejects it with
+`unexpected argument '--json'`; then use `--no-ui` and read the text output
+below.
+
 ## Progress output
 
-In an interactive terminal the exporter draws a full-screen dashboard. Pass
-`--no-ui` when you run it so the output is plain text that you can read:
+Without `--json`, an interactive terminal gets a full-screen dashboard.
+`--no-ui` makes the output plain text:
 
 ```text
 rendering frame 300/1530  58.5 fps  elapsed 00:00:05  eta 00:00:21

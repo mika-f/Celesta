@@ -1,4 +1,4 @@
-use crate::control::ExportProgress;
+use crate::control::{CompositionInfo, ExportProgress, ExportedFile};
 use crate::error::ExportError;
 use crate::exporter::Exporter;
 use crate::options::ColorConversion;
@@ -68,10 +68,7 @@ pub struct PngExport {
 pub const MAX_PNG_FRAMES: usize = 1_000;
 
 fn invalid(message: impl Into<String>) -> ExportError {
-    ExportError::Io {
-        operation: "export PNG frames",
-        source: io::Error::new(io::ErrorKind::InvalidInput, message.into()),
-    }
+    ExportError::InvalidSelection(message.into())
 }
 
 /// Checks the selection and output name shared by every PNG layout.
@@ -201,15 +198,22 @@ impl Destination {
         .map_err(invalid)
     }
 
+    /// Writes or places the rendered `frame`; returns the file it wrote, if any.
     fn accept(
         &mut self,
         index: usize,
         frame: u64,
         rendered: &celesta_gpu_renderer::GpuFrame,
         overwrite: bool,
-    ) -> Result<(), ExportError> {
+    ) -> Result<Option<ExportedFile>, ExportError> {
         match self {
-            Self::Files(paths) => publish(rendered, &paths[index], overwrite),
+            Self::Files(paths) => {
+                publish(rendered, &paths[index], overwrite)?;
+                Ok(Some(ExportedFile::Frame {
+                    path: paths[index].clone(),
+                    frame,
+                }))
+            }
             Self::Sheet(sheet) => sheet
                 .place(
                     index,
@@ -217,20 +221,34 @@ impl Destination {
                     rendered.pixels(),
                     (rendered.width(), rendered.height()),
                 )
+                .map(|()| None)
                 .map_err(invalid),
         }
     }
 
-    fn finish(self, output: &Path, overwrite: bool) -> Result<(), ExportError> {
+    /// Writes the contact sheet of `frames`; returns the file it wrote, if any.
+    fn finish(
+        self,
+        frames: &[u64],
+        output: &Path,
+        overwrite: bool,
+    ) -> Result<Option<ExportedFile>, ExportError> {
         match self {
-            Self::Files(_) => Ok(()),
-            Self::Sheet(sheet) => write_png(
-                sheet.width(),
-                sheet.height(),
-                sheet.pixels(),
-                output,
-                overwrite,
-            ),
+            Self::Files(_) => Ok(None),
+            Self::Sheet(sheet) => {
+                write_png(
+                    sheet.width(),
+                    sheet.height(),
+                    sheet.pixels(),
+                    output,
+                    overwrite,
+                )?;
+                Ok(Some(ExportedFile::ContactSheet {
+                    path: output.to_owned(),
+                    frames: frames.to_vec(),
+                    columns: sheet.columns(),
+                }))
+            }
         }
     }
 }
@@ -370,6 +388,12 @@ impl Exporter {
         let duration = project.effective_duration().map_err(ExportError::Time)?;
         let frame_rate = project.settings.frame_rate;
         let total = frame_count(duration, frame_rate)?;
+        progress(ExportProgress::Composition(CompositionInfo {
+            width: project.settings.width,
+            height: project.settings.height,
+            frame_rate,
+            frames: total,
+        }));
         let frames = select(
             &request.frames,
             self.options.range.as_ref(),
@@ -403,9 +427,16 @@ impl Exporter {
             let scene = evaluator.scene_at(time).map_err(ExportError::Evaluation)?;
             let rendered = renderer.render(&scene).map_err(ExportError::Render)?;
             report_font_fallbacks(&renderer, &mut fallbacks, &mut progress);
-            destination.accept(index, frame, &rendered, self.options.overwrite)?;
+            if let Some(file) =
+                destination.accept(index, frame, &rendered, self.options.overwrite)?
+            {
+                progress(ExportProgress::Wrote(file));
+            }
         }
-        destination.finish(output, self.options.overwrite)
+        if let Some(file) = destination.finish(&frames, output, self.options.overwrite)? {
+            progress(ExportProgress::Wrote(file));
+        }
+        Ok(())
     }
 
     /// Exports selected React frames with one runtime/prepare call and shared font/asset caches.
@@ -455,6 +486,12 @@ impl Exporter {
         let mut bridge = ReactBridge::spawn(&runtime.node, &runtime.cli_script, entry)
             .map_err(ExportError::React)?;
         let metadata = bridge.metadata().clone();
+        progress(ExportProgress::Composition(CompositionInfo {
+            width: metadata.width,
+            height: metadata.height,
+            frame_rate: metadata.frame_rate,
+            frames: metadata.duration_in_frames,
+        }));
         let duration = Time::frames(
             i64::try_from(metadata.duration_in_frames).map_err(|_| ExportError::TimelineTooLong)?,
             metadata.frame_rate,
@@ -546,9 +583,16 @@ impl Exporter {
 
             let rendered = renderer.render(&scene).map_err(ExportError::Render)?;
             report_font_fallbacks(&renderer, &mut fallbacks, &mut progress);
-            destination.accept(index, frame, &rendered, self.options.overwrite)?;
+            if let Some(file) =
+                destination.accept(index, frame, &rendered, self.options.overwrite)?
+            {
+                progress(ExportProgress::Wrote(file));
+            }
         }
-        destination.finish(output, self.options.overwrite)
+        if let Some(file) = destination.finish(&frames, output, self.options.overwrite)? {
+            progress(ExportProgress::Wrote(file));
+        }
+        Ok(())
     }
 }
 

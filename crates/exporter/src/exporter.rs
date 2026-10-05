@@ -1,4 +1,4 @@
-use crate::control::{ExportCancellation, ExportProgress};
+use crate::control::{CompositionInfo, ExportCancellation, ExportProgress, ExportedFile};
 use crate::error::ExportError;
 use crate::options::ExportOptions;
 use crate::range::{ExportWindow, resolve_window, shifted_audio_graph};
@@ -77,10 +77,15 @@ impl Exporter {
         let output_path = output_path.as_ref();
         ensure_not_cancelled(cancellation)?;
         validate_output(output_path, self.options.overwrite)?;
-        validate_dimensions(project.settings.width, project.settings.height)?;
-
         let duration = project.effective_duration().map_err(ExportError::Time)?;
         let full_frame_count = frame_count(duration, project.settings.frame_rate)?;
+        progress(ExportProgress::Composition(CompositionInfo {
+            width: project.settings.width,
+            height: project.settings.height,
+            frame_rate: project.settings.frame_rate,
+            frames: full_frame_count,
+        }));
+        validate_dimensions(project.settings.width, project.settings.height)?;
         if full_frame_count == 0 {
             return Err(ExportError::EmptyTimeline);
         }
@@ -187,6 +192,13 @@ impl Exporter {
                 }
             }
         })?;
+        progress(ExportProgress::Wrote(ExportedFile::Video {
+            path: output_path.to_owned(),
+            first_frame: u64::try_from(window.start_frame)
+                .map_err(|_| ExportError::TimelineTooLong)?,
+            frames: window.frames,
+            audio: true,
+        }));
         Ok(())
     }
 }

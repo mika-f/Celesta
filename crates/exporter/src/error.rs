@@ -26,6 +26,9 @@ pub enum ExportError {
         source: ez_ffmpeg::error::Error,
     },
     OutputExists(PathBuf),
+    /// The PNG frame selection, its output name, or its contact sheet
+    /// layout cannot be exported.
+    InvalidSelection(String),
     UnsupportedOutput(PathBuf),
     UnsupportedDimensions {
         width: u32,
@@ -56,6 +59,9 @@ impl fmt::Display for ExportError {
             }
             Self::OutputExists(path) => {
                 write!(formatter, "output already exists: {}", path.display())
+            }
+            Self::InvalidSelection(message) => {
+                write!(formatter, "could not export PNG frames: {message}")
             }
             Self::UnsupportedOutput(path) => write!(
                 formatter,
@@ -93,6 +99,7 @@ impl Error for ExportError {
             Self::Io { source, .. } => Some(source),
             Self::Ffmpeg { source, .. } => Some(source),
             Self::OutputExists(_)
+            | Self::InvalidSelection(_)
             | Self::UnsupportedOutput(_)
             | Self::UnsupportedDimensions { .. }
             | Self::InvalidCrf(_)

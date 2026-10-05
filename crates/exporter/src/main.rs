@@ -7,12 +7,13 @@ use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser, ValueEnum};
 
 mod progress;
+mod report;
 
 use celesta_composition::Time;
 use celesta_exporter::{
-    ColorConversion, CompanionProject, ContactSheet, EncoderPreset, ExportOptions, ExportProgress,
-    ExportRange, Exporter, FrameSelection, PngExport, ReactRuntimeOptions, RenderQuality,
-    VideoEncoding, parse_timecode,
+    ColorConversion, CompanionProject, ContactSheet, EncoderPreset, ExportError, ExportOptions,
+    ExportProgress, ExportRange, Exporter, FrameSelection, PngExport, ReactRuntimeOptions,
+    RenderQuality, VideoEncoding, parse_timecode,
 };
 use celesta_project::Project;
 
@@ -24,7 +25,12 @@ PNG output is selected by --frame/--frames or --every. Multiple frames use
 output-000090.png names; frame numbers are zero-based. --every <n> picks
 frames 0, n, 2n, ... of the --from/--to span (or the whole composition) plus
 its last frame. --contact-sheet writes the selection as one labelled grid
-image instead.";
+image instead.
+
+--json prints one line of JSON on stdout when the export ends, and nothing
+else: status, the composition's size, fps and frame count, every written
+file with its frame numbers, warnings, and on failure an error code and
+message. It suits scripts and AI agents.";
 
 /// Exports a Celesta project or React composition to MP4 video or PNG stills.
 #[derive(Parser)]
@@ -122,6 +128,19 @@ struct Cli {
     /// Disable the terminal progress dashboard (automatic outside a terminal).
     #[arg(long)]
     no_ui: bool,
+    /// Print only a JSON result on stdout, with no progress output.
+    #[arg(long)]
+    json: bool,
+}
+
+impl Cli {
+    fn video(&self) -> VideoEncoding {
+        VideoEncoding {
+            preset: self.preset,
+            crf: self.crf,
+            color_conversion: self.color_conversion,
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -148,24 +167,55 @@ fn non_zero(value: u32) -> NonZeroU32 {
 }
 
 fn main() -> ExitCode {
-    let cli = Cli::parse();
-    let png = png_output(&cli).unwrap_or_else(|error| {
-        Cli::command()
-            .error(ErrorKind::ArgumentConflict, error)
-            .exit()
+    let cli = Cli::try_parse().unwrap_or_else(|error| {
+        // Help and version requests are not failures.
+        if error.use_stderr() && std::env::args_os().any(|arg| arg == "--json") {
+            report::usage_error(&error.to_string());
+            std::process::exit(error.exit_code());
+        }
+        error.exit()
     });
-    let range = export_range(cli.from, cli.to).unwrap_or_else(|error| {
-        Cli::command()
-            .error(ErrorKind::ValueValidation, error)
-            .exit()
-    });
-    match run(cli, png, range) {
-        Ok(()) => ExitCode::SUCCESS,
+    let png = png_output(&cli)
+        .unwrap_or_else(|error| usage_error(cli.json, ErrorKind::ArgumentConflict, error));
+    let range = export_range(cli.from, cli.to)
+        .unwrap_or_else(|error| usage_error(cli.json, ErrorKind::ValueValidation, &error));
+    let export =
+        |on_progress: &mut dyn FnMut(ExportProgress)| export(&cli, png, range, on_progress);
+    if cli.json {
+        return if report::run(&cli.source, export) {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        };
+    }
+    let settings = progress::Settings {
+        source: &cli.source,
+        output: &cli.output,
+        react: cli.react,
+        png,
+        video: cli.video(),
+        render_quality: cli.render_quality,
+    };
+    match progress::run(settings, cli.no_ui, export) {
+        Ok(()) => {
+            eprintln!("export complete: {}", cli.output.display());
+            ExitCode::SUCCESS
+        }
         Err(error) => {
             eprintln!("Celesta export: {error}");
             ExitCode::FAILURE
         }
     }
+}
+
+/// Exits with a usage error, as JSON with `--json`.
+fn usage_error(json: bool, kind: ErrorKind, message: &str) -> ! {
+    let error = Cli::command().error(kind, message);
+    if json {
+        report::usage_error(message);
+        std::process::exit(error.exit_code());
+    }
+    error.exit()
 }
 
 /// Whether `cli` asks for PNG stills rather than a video, checking the
@@ -182,138 +232,82 @@ fn png_output(cli: &Cli) -> Result<bool, &'static str> {
     Ok(png)
 }
 
-fn run(cli: Cli, png: bool, range: Option<ExportRange>) -> Result<(), String> {
-    let Cli {
-        source,
-        output,
-        react,
-        project: companion_project_path,
-        overwrite,
-        frames,
-        every,
-        contact_sheet,
-        columns,
-        tile_width,
-        preset,
-        crf,
-        color_conversion,
-        render_quality,
-        no_ui,
-        ..
-    } = cli;
-    let video = VideoEncoding {
-        preset,
-        crf,
-        color_conversion,
-    };
-    let png_export = PngExport {
-        frames: match every {
-            Some(step) => FrameSelection::Every(step.get()),
-            None => FrameSelection::Frames(frames),
-        },
-        contact_sheet: contact_sheet.then_some(ContactSheet {
-            columns: columns.get(),
-            tile_width: tile_width.get(),
-        }),
-    };
+fn export(
+    cli: &Cli,
+    png: bool,
+    range: Option<ExportRange>,
+    on_progress: &mut dyn FnMut(ExportProgress),
+) -> Result<(), ExportError> {
     let exporter = Exporter::new(ExportOptions {
-        overwrite,
+        overwrite: cli.overwrite,
         range,
-        video,
-        render_quality,
+        video: cli.video(),
+        render_quality: cli.render_quality,
     });
-    progress::run(
-        progress::Settings {
-            source: &source,
-            output: &output,
-            react,
-            png,
-            video,
-            render_quality,
-        },
-        no_ui,
-        |on_progress: &mut dyn FnMut(ExportProgress)| {
-            if png {
-                let project_path = if react {
-                    companion_project_path.as_deref()
-                } else {
-                    Some(source.as_path())
-                };
-                let project = project_path
-                    .map(Project::load)
-                    .transpose()
-                    .map_err(|e| e.to_string())?;
-                let root = project_path.map(|path| path.parent().unwrap_or_else(|| Path::new(".")));
-                if react {
-                    exporter
-                        .export_react_png_with(
-                            &source,
-                            &default_react_runtime(),
-                            project
-                                .as_ref()
-                                .zip(root)
-                                .map(|(project, project_asset_root)| CompanionProject {
-                                    project,
-                                    project_asset_root,
-                                }),
-                            &png_export,
-                            &output,
-                            on_progress,
-                        )
-                        .map_err(|e| e.to_string())?;
-                } else {
-                    exporter
-                        .export_project_png_with(
-                            project.as_ref().ok_or("missing project")?,
-                            root.ok_or("missing asset root")?,
-                            &png_export,
-                            &output,
-                            on_progress,
-                        )
-                        .map_err(|e| e.to_string())?;
-                }
-            } else if react {
-                let runtime = default_react_runtime();
-                match companion_project_path {
-                    Some(project_path) => {
-                        let project =
-                            Project::load(&project_path).map_err(|error| error.to_string())?;
-                        let project_asset_root =
-                            project_path.parent().unwrap_or_else(|| Path::new("."));
-                        exporter
-                            .export_react_entry_with_project_and_progress(
-                                &source,
-                                &runtime,
-                                CompanionProject {
-                                    project: &project,
-                                    project_asset_root,
-                                },
-                                &output,
-                                on_progress,
-                            )
-                            .map_err(|error| error.to_string())?;
-                    }
-                    None => {
-                        exporter
-                            .export_react_entry_with_progress(
-                                &source,
-                                &runtime,
-                                &output,
-                                on_progress,
-                            )
-                            .map_err(|error| error.to_string())?;
-                    }
-                }
-            } else {
-                exporter
-                    .export_file_with_progress(&source, &output, on_progress)
-                    .map_err(|error| error.to_string())?;
-            }
-            Ok(())
-        },
-    )?;
-    eprintln!("export complete: {}", output.display());
-    Ok(())
+    let load = |path: &Path| Project::load(path).map_err(ExportError::Project);
+    let companion = cli
+        .project
+        .as_deref()
+        .map(|path| load(path).map(|project| (project, path)))
+        .transpose()?;
+    let companion = companion.as_ref().map(|(project, path)| CompanionProject {
+        project,
+        project_asset_root: asset_root(path),
+    });
+    if png {
+        let png_export = PngExport {
+            frames: match cli.every {
+                Some(step) => FrameSelection::Every(step.get()),
+                None => FrameSelection::Frames(cli.frames.clone()),
+            },
+            contact_sheet: cli.contact_sheet.then_some(ContactSheet {
+                columns: cli.columns.get(),
+                tile_width: cli.tile_width.get(),
+            }),
+        };
+        if cli.react {
+            exporter.export_react_png_with(
+                &cli.source,
+                &default_react_runtime(),
+                companion,
+                &png_export,
+                &cli.output,
+                on_progress,
+            )
+        } else {
+            exporter.export_project_png_with(
+                &load(&cli.source)?,
+                asset_root(&cli.source),
+                &png_export,
+                &cli.output,
+                on_progress,
+            )
+        }
+    } else if cli.react {
+        let runtime = default_react_runtime();
+        match companion {
+            Some(companion) => exporter.export_react_entry_with_project_and_progress(
+                &cli.source,
+                &runtime,
+                companion,
+                &cli.output,
+                on_progress,
+            ),
+            None => exporter.export_react_entry_with_progress(
+                &cli.source,
+                &runtime,
+                &cli.output,
+                on_progress,
+            ),
+        }
+    } else {
+        exporter.export_file_with_progress(&cli.source, &cli.output, on_progress)
+    }
+}
+
+/// Where a project's relative asset paths resolve from.
+fn asset_root(project_path: &Path) -> &Path {
+    project_path.parent().unwrap_or_else(|| Path::new("."))
 }
 
 /// Builds an [`ExportRange`] from the `--from` / `--to` timecodes. Returns

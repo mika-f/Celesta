@@ -56,12 +56,14 @@ pub(crate) fn format_time(time: Time) -> String {
 
 pub(crate) fn export_progress_label(progress: &ExportProgress) -> String {
     match progress {
-        ExportProgress::Rendering { frame: 0, total: 0 } => "Starting export…".to_owned(),
+        ExportProgress::Rendering { frame: 0, total: 0 } | ExportProgress::Composition(_) => {
+            "Starting export…".to_owned()
+        }
         ExportProgress::Rendering { frame, total } => {
             format!("Exporting frame {frame}/{total}")
         }
         ExportProgress::MixingAudio => "Mixing export audio…".to_owned(),
-        ExportProgress::Muxing => "Muxing MP4…".to_owned(),
+        ExportProgress::Muxing | ExportProgress::Wrote(_) => "Muxing MP4…".to_owned(),
         ExportProgress::Warning(warning) => warning.clone(),
     }
 }
