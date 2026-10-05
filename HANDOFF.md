@@ -10,6 +10,7 @@ composition model; preview and export consume the same renderer inputs.
 
 Per-task notes live in `docs/handoff/<date>-<task>.md`. Newest first:
 
+- [`2026-10-06-subpixel-rects`](docs/handoff/2026-10-06-subpixel-rects.md): Sub-pixel accurate rects
 - [`2026-10-05-exporter-json-results`](docs/handoff/2026-10-05-exporter-json-results.md): Exporter `--json` results
 - [`2026-10-05-frame-volume-keyframes`](docs/handoff/2026-10-05-frame-volume-keyframes.md): Frame-based volume keyframes
 - [`2026-10-05-subtitle-render-prop`](docs/handoff/2026-10-05-subtitle-render-prop.md): Drawing subtitles with a render prop
@@ -197,11 +198,12 @@ Keep these boundaries intact:
   target. Only a blended draw ends a pass, because it copies the area under
   it to a backdrop texture (`fs_blend` in `layer.wgsl`) first. Finally the
   root canvas is copied onto the target.
-- `Rect` fills and strokes, flat or gradient, are shaded in `layer.wgsl`
-  (`rect_texel`, `paint_color`) and never rasterized into textures, so an
-  animated gradient costs no more than a static one. Gradients are passed
-  in a `paints` storage buffer next to the clips (`encode_paint`), and the
-  shader matches `celesta_renderer::rasterize_rect` within one code value.
+- `Rect` fills and strokes, flat or gradient, are shaded per output pixel in
+  `layer.wgsl` (`rect_color`, `paint_color`) and never rasterized into
+  textures, so an animated gradient costs no more than a static one.
+  Gradients are passed in a `paints` storage buffer next to the clips
+  (`encode_paint`), and the shader matches
+  `celesta_renderer::rasterize_rect_transformed` within two code values.
 - Audio preview evaluates the shared `AudioGraph`, decodes assets through
   FFmpeg to project-rate stereo PCM, mixes timeline/source offsets, animated
   playback rate and volume, mute state, and overlapping clips, then plays the
@@ -254,9 +256,9 @@ Keep these boundaries intact:
   unchanged). The whole-composition path is untouched when `range` is `None`.
 - Dense geometry (2026-09-28, issue #29): `GpuRenderer` no longer rasterizes
   rects on the CPU. `layer.wgsl`'s `rect_color` shades them from the same
-  rounded-box SDF `rasterize_rect` uses, snapped to the texel the rasterized
-  texture would have been sampled at, so output matches it (within one code
-  value where f32 and f64 round a stroke blend differently). Every layer is
+  rounded-box SDF the CPU renderer uses (at first snapped to the texel a
+  rasterized texture would have been sampled at; since 2026-10-06 per output
+  pixel, see `2026-10-06-subpixel-rects`). Every layer is
   one instance in a per-frame vertex buffer (`LayerInstance`, reused across
   frames), texture bind groups are created once per texture, and consecutive
   layers sampling the same texture are one instanced draw — all rects share
