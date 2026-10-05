@@ -1577,6 +1577,90 @@ fn rects_thinner_than_a_pixel_cover_only_their_width() {
 }
 
 #[test]
+fn rects_of_negative_size_draw_nothing() {
+    for vertical in [false, true] {
+        assert_eq!(
+            rect_line(vertical, 16.5, -5.0, 0.0, (1.0, 1.0)),
+            vec![0; 32],
+            "vertical: {vertical}"
+        );
+    }
+}
+
+/// The straight RGBA pixels of a rect painted white (and stroked black at
+/// `stroke_width`, if any) through `transform`, on a 32x16 canvas.
+fn transformed_rect(
+    width: f64,
+    height: f64,
+    stroke_width: Option<f64>,
+    transform: crate::PathTransform,
+) -> RgbaFrame {
+    let stroke = stroke_width.map(|width| celesta_composition::Stroke {
+        paint: Paint::Solid {
+            color: "#000000".to_owned(),
+        },
+        width,
+    });
+    let paint = crate::rect::resolve_rect_paint(
+        Some(&Paint::Solid {
+            color: "#FFFFFF".to_owned(),
+        }),
+        stroke.as_ref(),
+    )
+    .unwrap();
+    let rect =
+        crate::rect::rasterize_rect_transformed(width, height, 0.0, &paint, transform, 32, 16)
+            .unwrap();
+    let mut frame = RgbaFrame {
+        width: 32,
+        height: 16,
+        pixels: vec![0; 32 * 16 * 4],
+    };
+    for (index, texel) in rect.image.pixels().chunks_exact(4).enumerate() {
+        let x = rect.left as u32 + index as u32 % rect.image.width();
+        let y = rect.top as u32 + index as u32 / rect.image.width();
+        let offset = ((y * 32 + x) * 4) as usize;
+        frame.pixels[offset..offset + 4].copy_from_slice(texel);
+    }
+    frame
+}
+
+#[test]
+fn a_sheared_rect_within_a_pixel_covers_its_area() {
+    // x' = x + y: a 0.2x0.2 rect leans into a parallelogram of the same
+    // area, 0.04 of a pixel, centred on pixel (16, 8).
+    let shear = crate::PathTransform {
+        a: 1.0,
+        b: 0.0,
+        c: 1.0,
+        d: 1.0,
+        tx: 16.3,
+        ty: 8.4,
+    };
+    let frame = transformed_rect(0.2, 0.2, None, shear);
+    let total: u32 = frame
+        .pixels()
+        .chunks_exact(4)
+        .map(|pixel| u32::from(pixel[3]))
+        .sum();
+    assert_eq!(total, 10);
+    assert_eq!(pixel(&frame, 16, 8)[3], 10);
+}
+
+#[test]
+fn a_thin_stroked_rect_mixes_by_the_covered_area() {
+    // 0.1 of a pixel wide on pixel 16's centre, stroked 0.02 on each side:
+    // of what it covers, 0.06 / 0.1 is fill.
+    let frame = transformed_rect(
+        0.1,
+        10.0,
+        Some(0.02),
+        crate::PathTransform::scale_translate(1.0, 1.0, 16.45, 3.0),
+    );
+    assert_eq!(pixel(&frame, 16, 8), [153, 153, 153, 26]);
+}
+
+#[test]
 fn a_stroke_filling_the_rect_hides_its_fill() {
     // The stroke reaches the centre from every side: no fill shows, not
     // even half of it along the centre line.

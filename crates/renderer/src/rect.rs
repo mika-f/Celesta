@@ -178,11 +178,14 @@ fn shade_rect(
                 let inner_distance =
                     distance.of(px, py, inner.half_width, inner.half_height, inner.radius);
                 let inner_alpha = (0.5 - inner_distance).clamp(0.0, *inner_cap);
+                // Of the part of the pixel the rect covers, the fill's share;
+                // the rest is stroke.
+                let fill_share = (inner_alpha / outer_alpha).min(1.0);
                 color = Color::rgba(
-                    lerp(stroke_color.red, color.red, inner_alpha),
-                    lerp(stroke_color.green, color.green, inner_alpha),
-                    lerp(stroke_color.blue, color.blue, inner_alpha),
-                    lerp(stroke_color.alpha, color.alpha, inner_alpha),
+                    lerp(stroke_color.red, color.red, fill_share),
+                    lerp(stroke_color.green, color.green, fill_share),
+                    lerp(stroke_color.blue, color.blue, fill_share),
+                    lerp(stroke_color.alpha, color.alpha, fill_share),
                 );
             }
 
@@ -212,6 +215,9 @@ struct RectDistance {
     /// to a horizontal one.
     scale_x: f64,
     scale_y: f64,
+    /// The sine of the angle between the local axes on the canvas: 1
+    /// unless the transform shears.
+    sine: f64,
     /// The scale, when it is the same along every direction.
     uniform: Option<f64>,
 }
@@ -223,22 +229,33 @@ impl RectDistance {
         let scale_x = 1.0 / gradient_x.0.hypot(gradient_x.1);
         let scale_y = 1.0 / gradient_y.0.hypot(gradient_y.1);
         let orthogonal = gradient_x.0 * gradient_y.0 + gradient_x.1 * gradient_y.1 == 0.0;
+        let determinant = inverse.a * inverse.d - inverse.b * inverse.c;
         Self {
             gradient_x,
             gradient_y,
             scale_x,
             scale_y,
+            sine: if orthogonal {
+                1.0
+            } else {
+                determinant.abs() * scale_x * scale_y
+            },
             uniform: (orthogonal && scale_x == scale_y).then_some(scale_x),
         }
     }
 
-    /// The most of a pixel a box of these half extents can cover: its
-    /// width and height in output pixels, each at most 1. One sample's
-    /// `0.5 - distance` alone reaches 0.5 at the centre of a box that is
-    /// thinner than a pixel, or even empty; this bounds it to the box's
-    /// exact coverage along each axis.
+    /// The most of a pixel a box of these half extents can cover. One
+    /// sample's `0.5 - distance` alone reaches 0.5 at the centre of a box
+    /// thinner than a pixel, or even empty. Its width and height in output
+    /// pixels (across its edges), each within 0 to 1, bound that along each
+    /// axis; a shear leans the edges, so it divides by the sine between
+    /// them: a box within a pixel then covers its area, and a thin one its
+    /// width along the other edges. Never more than the whole pixel.
     fn coverage_cap(&self, half_width: f64, half_height: f64) -> f64 {
-        (2.0 * half_width * self.scale_x).min(1.0) * (2.0 * half_height * self.scale_y).min(1.0)
+        let extent = |half: f64, scale: f64| (2.0 * half * scale).clamp(0.0, 1.0);
+        (extent(half_width, self.scale_x) * extent(half_height, self.scale_y) / self.sine)
+            .min(1.0)
+            .max(0.0)
     }
 
     fn of(&self, px: f64, py: f64, half_width: f64, half_height: f64, radius: f64) -> f64 {

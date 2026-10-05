@@ -263,11 +263,17 @@ fn rect_distance(p: vec2<f32>, half_size: vec2<f32>, radius: f32, inverse: vec4<
 }
 
 // `RectDistance::coverage_cap`: the most of a pixel a box of `half_size` can
-// cover, its width and height in canvas pixels, each at most 1, so a box
-// thinner than a pixel (or empty) is not drawn heavier than it is.
+// cover, so a box thinner than a pixel (or empty) is not drawn heavier than
+// it is. Its width and height in canvas pixels, each within 0 to 1, over the
+// sine between its edges, which a shear leans; at most the whole pixel.
 fn rect_coverage_cap(half_size: vec2<f32>, inverse: vec4<f32>) -> f32 {
-    let extent = min(2.0 * half_size / vec2<f32>(length(inverse.xz), length(inverse.yw)), vec2<f32>(1.0));
-    return extent.x * extent.y;
+    let lengths = vec2<f32>(length(inverse.xz), length(inverse.yw));
+    let extent = clamp(2.0 * half_size / lengths, vec2<f32>(0.0), vec2<f32>(1.0));
+    var sine = 1.0;
+    if dot(inverse.xz, inverse.yw) != 0.0 {
+        sine = abs(inverse.x * inverse.w - inverse.y * inverse.z) / (lengths.x * lengths.y);
+    }
+    return clamp(extent.x * extent.y / sine, 0.0, 1.0);
 }
 
 // The rect under the pixel, straight alpha, as
@@ -305,10 +311,16 @@ fn rect_color(input: VertexOutput) -> vec4<f32> {
             0.0,
             rect_coverage_cap(inner_half_size, input.inverse),
         );
+        // Of the part of the pixel the rect covers, the fill's share; the
+        // rest is stroke.
+        var fill_share = 0.0;
+        if outer > 0.0 {
+            fill_share = min(inner / outer, 1.0);
+        }
         // `floor(x + 0.5)` rounds like Rust's `f64::round` for these
         // non-negative values; WGSL's `round` rounds halves to even, and
         // lerped channels often land exactly on a half.
-        color = floor(stroke + (color - stroke) * inner + 0.5);
+        color = floor(stroke + (color - stroke) * fill_share + 0.5);
     }
     return vec4<f32>(color.rgb, floor(color.a * outer + 0.5)) / 255.0;
 }
