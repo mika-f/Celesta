@@ -20,18 +20,28 @@ a rect covers at its centre, through the layer's transform (PR #166).
   never snapped or filtered. `shades_rects_like_the_cpu_rasterizer` and
   `shades_sheared_rects_like_the_cpu_rasterizer` hold the two within two
   code values.
-- Edge distance in output pixels (`RectDistance` / `rect_distance`): exact
-  for rotation with a uniform scale and along straight edges. A non-uniform
-  scale makes the corners ellipses, approximated by the local distance over
-  its gradient, signed by quadrant so a shear leans opposite corners apart.
+- Edge distance (`RectDistance` / `rect_distance`) is measured in units of
+  a pixel's width across the edge, `|n.x| + |n.y|` for the edge's normal `n`
+  (1 along a row or column, up to √2 at 45 degrees): the local distance over
+  the L1 length of its gradient in output pixels. `0.5 - distance` then
+  ramps across an edge as a pixel-sized box filter does. Measured in
+  Euclidean pixels instead, a thin strip near 45 degrees drew 0.71 to 1.47
+  of its area depending on where its edges fell between pixel centres, so a
+  moving strip flickered. Exact along straight edges; round a corner (an
+  ellipse under a non-uniform scale) a first-order approximation, signed by
+  quadrant so a shear leans opposite corners apart.
 - Coverage is capped per rect (`coverage_cap` / `rect_coverage_cap`, found
-  once per rect, in the vertex shader on the GPU): at most the rect's area,
-  its width across each pair of parallel edges, and 1. One sample's
+  once per rect, in the vertex shader on the GPU). One sample's
   `0.5 - distance` alone drew a 0.1 px rect at 55% and an empty one at 50%.
-  The box inside a stroke is capped the same way, and the stroke and fill mix
-  by the fill's share of what the rect covers.
-- A single sample per pixel still aliases along sloped thin strips (a 0.1 px
-  strip at 45 degrees covers about 0.77 of its area), as it did before.
+  A box filter gives a pixel inside the ramps of a pair of parallel edges
+  their distance apart in those units, each at most 1, and inside both
+  pairs' the product. The box inside a stroke is capped the same way, and
+  the stroke and fill mix by the fill's share of what the rect covers.
+- `thin_strips_cover_their_area_wherever_they_fall` holds strips from 0.1 to
+  1 px wide, rotated or sheared, within 0.97 to 1.12 of their area at every
+  sub-pixel offset. A box smaller than a pixel in both directions cannot be
+  placed exactly by one sample: leaning, it draws 0.5 to 1.7 of its area
+  depending on position (`boxes_within_a_pixel_stay_near_their_area_when_leaning`).
 - `CpuRenderer` is slower on scenes of many thin rects (`ribbons` about 9%):
   it shades every pixel each rect covers plus a one-pixel border, instead of
   copying a small texture. Preview and export use the GPU renderer, which got
