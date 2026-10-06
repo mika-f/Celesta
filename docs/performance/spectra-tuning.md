@@ -131,6 +131,96 @@ Rendering now takes about 3 ms/frame for SPECTRA and 5 ms for NEBULA, and
 the React evaluation runs on its own thread one frame ahead (about 5–7 ms
 for SPECTRA). With the default preset, libx264 sets the pace.
 
+## On a GeForce RTX 4070
+
+The same workloads on Windows 11 with an i7-13700F and an RTX 4070
+(Vulkan, driver 610.88) told a different story: after the changes above,
+the GPU finished every frame almost at once (under 0.2 ms of waiting per
+frame), and the CPU set the pace. Split the same way, per frame:
+
+| Workload | Prepare (CPU) | Copy out of the readback buffer | Submit |
+| --- | ---: | ---: | ---: |
+| nebula | 4.3–4.7 | 1.3–1.5 | 0.5–0.6 |
+| spectra | 2.3–3.3 | 1.5–2.0 | 0.4–0.6 |
+| rings | 1.5–2.3 | 1.3–2.1 | 0.1–0.2 |
+| images | 4.3 | 1.5 | 0.1 |
+
+ms/frame, two runs. Four changes came out of it. Rendered frames stay
+bit-identical: every workload's frames 13, 57 and 120 match the previous
+binary exactly.
+
+### 4. Copying frames out on a thread of their own
+
+`submit` reclaimed the oldest frame on the caller's thread, copying it out
+of its mapped buffer into a new vector. On Windows, that vector's 8 MB are
+faulted in page by page: copying into fresh memory took 1.4–1.8 ms, into
+reused memory 0.5 ms. A `ReadbackWorker` thread
+(`crates/gpu-renderer/src/readback.rs`) now maps, copies and unmaps each
+submitted frame in order, and `submit` and `drain` only receive them. The
+copy overlaps with preparing the next frames; for workloads that prepare
+little, the thread's copy (about 2 ms of RGBA at 1080p, under 1 ms for
+the exporter's yuv420p) is now the limit. Two threads taking turns did not
+help: the page faults serialize.
+
+### 5. Outlining paths in parallel, alongside the text
+
+`prepare_layer` stroked, flattened and binned each path into tiles as it
+walked the scene. Paths are now left for after the walk like text, and
+`outline_paths` outlines them on rayon's threads while `rasterize_texts`
+rasterizes the frame's new text. Each path's entries are built with indices
+counted from its own start; `place_paths` chooses where each goes in the
+frame's buffer, in order, and copies them there in parallel, so the buffer
+holds exactly the entries it did. `rings` went from 1.4 to about 0.8
+ms/frame for its paths, NEBULA from 1.4 to 0.5.
+
+### 6. Unstroked glyphs are the text frame
+
+Text without a stroke was composited onto an empty frame of its own size,
+which copies each pixel (0.65 ms for NEBULA's 760x170 title, rasterized
+every frame as its letter spacing animates). The glyph pixels are now the
+frame as they are; a gradient fill that fades to transparent zeroes those
+pixels, as compositing did. Glyph pixels without coverage are skipped.
+
+### 7. One image render per layout
+
+`ImageSources` kept one render per image. The `images` workload draws one
+image as both `cover` and `contain`, so every layer rendered it again,
+every frame: 4.3 ms. Each source now keeps the latest render of up to four
+sizes and fits.
+
+### Results
+
+`python scripts/bench.py compare --base 4847b18 --rounds 5` and
+`--base 23bc933 --rounds 7` (the head of the changes above), on the
+machine above. Raw observations are in
+[spectra-tuning-rtx4070.csv](spectra-tuning-rtx4070.csv): `base` is
+`4847b18`, `pr` is `23bc933`, and `head` holds both comparisons' runs.
+
+| Workload | `4847b18` | `23bc933` | Head | vs `4847b18` | vs `23bc933` |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| nebula | 7.72 | 6.83 | 3.86–3.87 | −50% | −43% |
+| spectra | 5.58 | 4.44 | 2.97–3.25 | −42% | −33% |
+| rings | 3.36 | 3.36 | 2.39–2.45 | −29% | −27% |
+| blur | 4.41 | 2.97 | 2.18–2.26 | −49% | −27% |
+| ribbons | 2.74 | 2.70 | 1.96–2.02 | −26% | −28% |
+| text | 2.75 | 3.01 | 1.98–2.17 | −21% | −34% |
+| shapes | 2.15 | 2.23 | 1.91–1.97 | −11% | −12% |
+| images | 5.56 | 5.57 | 1.83–1.88 | −67% | −66% |
+
+Medians in ms/frame; the head's are from each comparison. `shapes` is
+within the noise (its ranges overlap), as are `rings` and `blur` against
+`23bc933`.
+
+Exporting SPECTRA did not get faster on this machine: 9.2 s with libx264
+`medium` and 7.0 s with `ultrafast`, before and after. About 1.4 s of that
+is starting up, and the remaining 8 ms per frame is more than rendering's
+3 ms: the export is paced by the rest of its pipeline (the React
+evaluation and the encoder), not measured separately here.
+
+Also tried, and left out: handing out text to the rasterizer forks one at a
+time instead of in fixed shares (no difference beyond the noise, and a
+text no longer stays with the fork that has its glyphs cached).
+
 ## Not done
 
 - Hardware encoding (VideoToolbox, NVENC) would lift the export's current
@@ -139,7 +229,12 @@ for SPECTRA). With the default preset, libx264 sets the pace.
   as a texture per layer. A glyph atlas drawn on the GPU would remove most
   of that, at the cost of reworking strokes, gradients and their parity
   with the CPU renderer.
-- Path outlines are stroked, flattened and binned on one thread; they could
-  be prepared in parallel like text.
 - Every effect is now up to four cheap passes per filter, and render pass
   creation shows in the CPU profile (about 12% of SPECTRA's main thread).
+  On the RTX 4070, `queue.submit` takes 0.5–1.3 ms of the `blur` and
+  NEBULA frames.
+- The readback copy faults in a new frame's memory on Windows. Reusing
+  frame buffers would avoid it, but the exporter hands each frame's vector
+  to the encoder, which frees it on its own thread.
+- On the RTX 4070 the SPECTRA export is paced by the React evaluation and
+  the encoder, not by rendering.

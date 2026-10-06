@@ -34,3 +34,19 @@ led to three changes; measurements and details are in
   the changed files are clean.
 - The export is now limited by libx264 (`medium`), not rendering. See
   "Not done" in the performance note for the next steps.
+- **On a GeForce RTX 4070** (Windows, i7-13700F) the CPU set the pace, so
+  four more changes followed; all keep the output bit-identical.
+  `ReadbackWorker` (`readback.rs`) maps, copies and unmaps each `submit`ted
+  frame on its own thread, in order, and `reclaim_oldest` only receives
+  it; dropping the renderer joins the thread. Paths become
+  `PreparedItem::PendingPath` like text; `prepare_draws` runs
+  `outline_paths` (flatten and `PathEntries::build`, relative indices) and
+  `rasterize_texts` under `rayon::join`, then `place_texts` and
+  `place_paths` (which offsets each path's indices and copies the entries
+  in parallel). `pending_paths` is cleared at the start of a frame, so a
+  failed frame leaves nothing behind. Unstroked text uses its glyph pixels
+  as the frame, and `ImageSources` keeps one render per size and fit (up
+  to four per source). `celesta-gpu-renderer` (71), `celesta-renderer`
+  (95) and `celesta-exporter` tests pass on Windows with Vulkan.
+  `scripts/bench.py` prints its report as UTF-8, which Windows consoles
+  needed.
