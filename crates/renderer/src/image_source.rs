@@ -27,6 +27,26 @@ struct Render {
 /// can draw an image at several (a `cover` thumbnail and a `contain` hero),
 /// and keeping only the last would render each again every frame.
 const LAYOUTS_PER_SOURCE: usize = 4;
+
+/// How many pixels a source's renders besides its latest may hold between
+/// them (64 MB of RGBA): a few layouts of an image, not several of a huge SVG.
+const OLDER_RENDER_PIXELS: u64 = 16 << 20;
+
+/// Keeps the latest of `renders`, and the next most recent ones up to
+/// `LAYOUTS_PER_SOURCE` in all while they hold `pixels` or fewer.
+fn keep_recent(renders: &mut VecDeque<Render>, pixels: u64) {
+    let mut held = 0;
+    let older = renders
+        .iter()
+        .skip(1)
+        .take(LAYOUTS_PER_SOURCE - 1)
+        .take_while(|render| {
+            held += u64::from(render.resolution.0) * u64::from(render.resolution.1);
+            held <= pixels
+        })
+        .count();
+    renders.truncate(1 + older);
+}
 enum Source {
     Raster(Arc<RgbaImage>),
     Svg(Box<usvg::Tree>),
@@ -187,12 +207,12 @@ impl ImageSources {
             height: h,
             is_svg: matches!(source, Source::Svg(_)),
         };
-        renders.truncate(LAYOUTS_PER_SOURCE - 1);
         renders.push_front(Render {
             layout,
             resolution: (pw, ph),
             image: image.clone(),
         });
+        keep_recent(renders, OLDER_RENDER_PIXELS);
         Ok(image)
     }
 }
@@ -410,6 +430,42 @@ mod tests {
         let contain = render(ImageFit::Contain);
         assert!(Arc::ptr_eq(&cover, &render(ImageFit::Cover)));
         assert!(Arc::ptr_eq(&contain, &render(ImageFit::Contain)));
+    }
+
+    #[test]
+    fn keeps_older_renders_only_within_their_pixel_budget() {
+        let render = |layout: &str, width: u32, height: u32| Render {
+            layout: layout.to_owned(),
+            resolution: (width, height),
+            image: DisplayImage {
+                pixels: Arc::new(RgbaImage::new(1, 1)),
+                width: 1.0,
+                height: 1.0,
+                is_svg: true,
+            },
+        };
+        let layouts = |renders: &VecDeque<Render>| {
+            renders
+                .iter()
+                .map(|render| render.layout.clone())
+                .collect::<Vec<_>>()
+        };
+        // The latest stays whatever its size; the older ones while they fit.
+        let mut renders: VecDeque<_> = [
+            render("huge", 100, 100),
+            render("a", 4, 4),
+            render("b", 4, 4),
+            render("c", 2, 2),
+        ]
+        .into();
+        keep_recent(&mut renders, 32);
+        assert_eq!(layouts(&renders), ["huge", "a", "b"]);
+        let mut renders: VecDeque<_> = [render("new", 1, 1), render("huge", 100, 100)].into();
+        keep_recent(&mut renders, 32);
+        assert_eq!(layouts(&renders), ["new"]);
+        let mut renders: VecDeque<_> = (0..6).map(|i| render(&i.to_string(), 1, 1)).collect();
+        keep_recent(&mut renders, 32);
+        assert_eq!(renders.len(), LAYOUTS_PER_SOURCE);
     }
 
     #[test]
