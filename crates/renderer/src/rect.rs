@@ -306,31 +306,82 @@ fn mix_premultiplied(a: Color, b: Color, t: f64) -> Color {
     )
 }
 
+/// Grows `mask` by `radius` pixels in every direction: each pixel becomes the
+/// largest value within a `2 * radius + 1` square around it. A square's
+/// maximum is the maximum of its rows' maxima, so this takes the maximum
+/// along each row first, then across the rows.
 pub(crate) fn dilate_mask(mask: &[u8], width: u32, height: u32, radius: u32) -> Vec<u8> {
-    let mut output = vec![0; mask.len()];
-    let radius = radius as i32;
-    for y in 0..height as i32 {
-        for x in 0..width as i32 {
-            let alpha = mask[y as usize * width as usize + x as usize];
-            if alpha == 0 {
-                continue;
-            }
-            for offset_y in -radius..=radius {
-                for offset_x in -radius..=radius {
-                    let target_x = x + offset_x;
-                    let target_y = y + offset_y;
-                    if target_x < 0
-                        || target_y < 0
-                        || target_x >= width as i32
-                        || target_y >= height as i32
-                    {
-                        continue;
-                    }
-                    let offset = target_y as usize * width as usize + target_x as usize;
-                    output[offset] = output[offset].max(alpha);
-                }
+    let (width, height, radius) = (width as usize, height as usize, radius as usize);
+    if width == 0 {
+        return Vec::new();
+    }
+    let mut rows = vec![0; mask.len()];
+    for (row, output) in mask.chunks_exact(width).zip(rows.chunks_exact_mut(width)) {
+        if row.iter().all(|&alpha| alpha == 0) {
+            continue;
+        }
+        for (x, value) in output.iter_mut().enumerate() {
+            let window = &row[x.saturating_sub(radius)..(x + radius + 1).min(width)];
+            *value = window.iter().copied().max().unwrap_or(0);
+        }
+    }
+    let mut dilated = vec![0; mask.len()];
+    for (y, output) in dilated.chunks_exact_mut(width).enumerate() {
+        let window = y.saturating_sub(radius)..(y + radius + 1).min(height);
+        for source in rows[window.start * width..window.end * width].chunks_exact(width) {
+            for (value, &candidate) in output.iter_mut().zip(source) {
+                *value = (*value).max(candidate);
             }
         }
     }
-    output
+    dilated
+}
+
+#[cfg(test)]
+mod dilate_tests {
+    use super::dilate_mask;
+
+    /// Every pixel spreads its value over the square around it.
+    fn dilate_by_spreading(mask: &[u8], width: u32, height: u32, radius: u32) -> Vec<u8> {
+        let mut output = vec![0; mask.len()];
+        let (width, height, radius) = (width as i32, height as i32, radius as i32);
+        for y in 0..height {
+            for x in 0..width {
+                let alpha = mask[(y * width + x) as usize];
+                for target_y in (y - radius).max(0)..=(y + radius).min(height - 1) {
+                    for target_x in (x - radius).max(0)..=(x + radius).min(width - 1) {
+                        let offset = (target_y * width + target_x) as usize;
+                        output[offset] = output[offset].max(alpha);
+                    }
+                }
+            }
+        }
+        output
+    }
+
+    #[test]
+    fn matches_spreading_every_pixel() {
+        let mut seed = 12345_u32;
+        for (width, height) in [(1, 1), (1, 9), (9, 1), (17, 11), (40, 23)] {
+            let mask: Vec<u8> = (0..width * height)
+                .map(|_| {
+                    seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                    // Mostly empty, like glyph masks.
+                    if seed >> 30 == 0 {
+                        (seed >> 8) as u8
+                    } else {
+                        0
+                    }
+                })
+                .collect();
+            for radius in [0, 1, 2, 5, 30] {
+                assert_eq!(
+                    dilate_mask(&mask, width, height, radius),
+                    dilate_by_spreading(&mask, width, height, radius),
+                    "{width}x{height} by {radius}"
+                );
+            }
+        }
+        assert!(dilate_mask(&[], 0, 0, 3).is_empty());
+    }
 }

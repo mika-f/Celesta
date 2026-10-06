@@ -60,7 +60,9 @@ pub(crate) fn plan_groups(items: &[PreparedItem], scene: CanvasRegion) -> Vec<Gr
     for item in items {
         match item {
             PreparedItem::Layer(layer) => cover(&mut open, Some(layer.bounds())),
-            PreparedItem::PendingText => unreachable!("pending text is resolved"),
+            PreparedItem::PendingText | PreparedItem::PendingPath => {
+                unreachable!("pending text and paths are resolved")
+            }
             PreparedItem::BeginGroup => {
                 open.push((plans.len(), None));
                 plans.push(plan(None, None));

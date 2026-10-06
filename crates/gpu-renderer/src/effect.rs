@@ -10,7 +10,8 @@ pub(crate) struct EffectProcessor {
     /// The bilinear sampler `effect.wgsl` pairs taps through, bound beside
     /// the parameters.
     pub(crate) sampler: wgpu::Sampler,
-    pub(crate) pipeline: wgpu::RenderPipeline,
+    /// The blur pass, then `effect.wgsl`'s `downsample` and `upsample`.
+    pub(crate) pipelines: [wgpu::RenderPipeline; 3],
     /// Canvases groups draw onto and effects filter through, kept across
     /// effects and frames instead of allocating several per effect every
     /// frame, each with the frame it was last taken in. A canvas goes back
@@ -31,6 +32,63 @@ pub(crate) struct EffectProcessor {
 
 /// Bytes of `Params` in `effect.wgsl`: three `vec4<f32>`s.
 pub(crate) const EFFECT_PARAMS_SIZE: u64 = 3 * 4 * 4;
+
+/// The most filter passes one blur, shadow, or glow takes: shrinking, the
+/// two blur passes, and enlarging.
+pub(crate) const PASSES_PER_FILTER: usize = 4;
+
+/// The sigma, in texels of the reduced copy, a blur needs at least before it
+/// runs at reduced resolution. The copy's box filter and the bilinear
+/// enlargement then add little next to the Gaussian, so the result stays
+/// within a few 8-bit steps of the exact blur; see `reduced_blur`.
+const MIN_REDUCED_SIGMA: f32 = 4.0;
+
+/// The most a blur's resolution is reduced by, per axis.
+const MAX_REDUCTION: u32 = 8;
+
+/// Runs a blur of `sigma` output pixels at `1 / factor` resolution, with
+/// the sigma it takes there, when `factor` is above 1: the largest power of
+/// two up to `MAX_REDUCTION` that leaves at least `MIN_REDUCED_SIGMA`.
+///
+/// Reading a `factor`-wide box, blurring, and enlarging bilinearly (a tent
+/// `factor` pixels to each side) adds the box's variance `(factor² - 1) / 12`
+/// and the tent's `factor² / 6` to the Gaussian's. The reduced sigma is
+/// smaller by exactly that, so the overall spread matches `sigma`. Every
+/// pass reads `factor²` fewer pixels, and the blur passes `factor` times
+/// fewer taps each.
+pub(crate) fn reduced_blur(sigma: f32) -> (u32, f32) {
+    let mut factor = 1;
+    while factor < MAX_REDUCTION && sigma / (factor * 2) as f32 >= MIN_REDUCED_SIGMA {
+        factor *= 2;
+    }
+    if factor == 1 {
+        return (1, sigma);
+    }
+    let factor_squared = (factor * factor) as f32;
+    let variance = sigma * sigma - (factor_squared - 1.0) / 12.0 - factor_squared / 6.0;
+    (factor, (variance / factor_squared).sqrt())
+}
+
+/// What one filter pass of `effect.wgsl` does.
+#[derive(Clone, Copy)]
+pub(crate) enum Filter {
+    /// One direction of the Gaussian; with a color, shifted by the offset
+    /// and tinted.
+    Blur {
+        direction: [f32; 2],
+        radius: f32,
+        offset: [f32; 2],
+        color: Option<[f32; 4]>,
+    },
+    /// Shrinks by `factor`.
+    Downsample { factor: u32 },
+    /// Enlarges by `factor`; with a color, shifted by the offset and tinted.
+    Upsample {
+        factor: u32,
+        offset: [f32; 2],
+        color: Option<[f32; 4]>,
+    },
+}
 
 impl EffectProcessor {
     /// Reads its source through `texture_layout` (`layer.wgsl`'s), so a
@@ -69,30 +127,32 @@ impl EffectProcessor {
             immediate_size: 0,
         });
         let shader = device.create_shader_module(wgpu::include_wgsl!("effect.wgsl"));
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Celesta Gaussian effect pipeline"),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vertex"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                buffers: &[],
-            },
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fragment"),
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::Rgba8Unorm,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
+        let pipelines = ["fragment", "downsample", "upsample"].map(|entry_point| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Celesta Gaussian effect pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vertex"),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    buffers: &[],
+                },
+                primitive: wgpu::PrimitiveState::default(),
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some(entry_point),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: wgpu::TextureFormat::Rgba8Unorm,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
+            })
         });
         let params_stride = device
             .limits()
@@ -107,7 +167,7 @@ impl EffectProcessor {
         Self {
             params_layout,
             sampler,
-            pipeline,
+            pipelines,
             pool: Vec::new(),
             frame: 0,
             params,
@@ -204,6 +264,7 @@ impl EffectProcessor {
     /// Blurs (and, with `color`, shifts and tints) `source`, whose layers
     /// cover `content`. Each pass only shades the pixels its result can be
     /// non-transparent at, so a small glow costs a small area, not the canvas.
+    /// A large blur runs at reduced resolution; see `reduced_blur`.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn apply(
         &mut self,
@@ -218,6 +279,70 @@ impl EffectProcessor {
     ) -> CanvasTexture {
         let size = source.texture.size();
         let reach = blur_reach(radius);
+        let (factor, reduced) = reduced_blur(radius.clamp(0.0, 64.0));
+        if factor > 1 {
+            let scale = 1.0 / factor as f32;
+            let [left, top, right, bottom] = content.0;
+            // Every reduced texel any of the content's pixels reaches.
+            let small = PixelBounds([
+                (left * scale).floor(),
+                (top * scale).floor(),
+                (right * scale).ceil(),
+                (bottom * scale).ceil(),
+            ]);
+            let small_reach = blur_reach(reduced);
+            let (width, height) = (size.width.div_ceil(factor), size.height.div_ceil(factor));
+            let shrunk = self.take_canvas(device, layer_layout, width, height);
+            let horizontal = self.take_canvas(device, layer_layout, width, height);
+            let vertical = self.take_canvas(device, layer_layout, width, height);
+            let result = self.take_canvas(device, layer_layout, size.width, size.height);
+            self.pass(
+                encoder,
+                source,
+                &shrunk,
+                small,
+                Filter::Downsample { factor },
+            );
+            self.pass(
+                encoder,
+                &shrunk,
+                &horizontal,
+                small.expand(small_reach, 0.0),
+                Filter::Blur {
+                    direction: [1.0, 0.0],
+                    radius: reduced,
+                    offset: [0.0, 0.0],
+                    color: None,
+                },
+            );
+            self.pass(
+                encoder,
+                &horizontal,
+                &vertical,
+                small.expand(small_reach, small_reach),
+                Filter::Blur {
+                    direction: [0.0, 1.0],
+                    radius: reduced,
+                    offset: [0.0, 0.0],
+                    color: None,
+                },
+            );
+            self.pass(
+                encoder,
+                &vertical,
+                &result,
+                content.expand(reach, reach).offset(offset),
+                Filter::Upsample {
+                    factor,
+                    offset,
+                    color,
+                },
+            );
+            for canvas in [shrunk, horizontal, vertical] {
+                self.recycle(canvas);
+            }
+            return result;
+        }
         let horizontal =
             (radius > 0.0).then(|| self.take_canvas(device, layer_layout, size.width, size.height));
         let vertical = self.take_canvas(device, layer_layout, size.width, size.height);
@@ -227,10 +352,12 @@ impl EffectProcessor {
                 source,
                 horizontal,
                 content.expand(reach, 0.0),
-                [1.0, 0.0],
-                radius,
-                [0.0, 0.0],
-                None,
+                Filter::Blur {
+                    direction: [1.0, 0.0],
+                    radius,
+                    offset: [0.0, 0.0],
+                    color: None,
+                },
             );
         }
         self.pass(
@@ -238,10 +365,12 @@ impl EffectProcessor {
             horizontal.as_ref().unwrap_or(source),
             &vertical,
             content.expand(reach, reach).offset(offset),
-            [0.0, 1.0],
-            radius,
-            offset,
-            color,
+            Filter::Blur {
+                direction: [0.0, 1.0],
+                radius,
+                offset,
+                color,
+            },
         );
         if let Some(horizontal) = horizontal {
             self.recycle(horizontal);
@@ -249,18 +378,39 @@ impl EffectProcessor {
         vertical
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn pass(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         source: &CanvasTexture,
         target: &CanvasTexture,
         region: PixelBounds,
-        direction: [f32; 2],
-        radius: f32,
-        offset: [f32; 2],
-        color: Option<[f32; 4]>,
+        filter: Filter,
     ) {
+        let (pipeline, direction, radius, offset, factor, color) = match filter {
+            Filter::Blur {
+                direction,
+                radius,
+                offset,
+                color,
+            } => (0, direction, radius, offset, 1, color),
+            Filter::Downsample { factor } => (1, [0.0; 2], 0.0, [0.0; 2], factor, None),
+            Filter::Upsample {
+                factor,
+                offset,
+                color,
+            } => (
+                2,
+                // The canvas's size, which a shadow reads transparency past.
+                [
+                    target.texture.width() as f32,
+                    target.texture.height() as f32,
+                ],
+                0.0,
+                offset,
+                factor,
+                color,
+            ),
+        };
         let tint = color.unwrap_or([0.0; 4]);
         let params = [
             direction[0],
@@ -269,7 +419,7 @@ impl EffectProcessor {
             f32::from(color.is_some()),
             offset[0],
             offset[1],
-            0.0,
+            factor as f32,
             0.0,
             tint[0],
             tint[1],
@@ -294,7 +444,7 @@ impl EffectProcessor {
             return;
         };
         pass.set_scissor_rect(x, y, width, height);
-        pass.set_pipeline(&self.pipeline);
+        pass.set_pipeline(&self.pipelines[pipeline]);
         pass.set_bind_group(0, &source.bind_group, &[]);
         pass.set_bind_group(1, &self.params_bind_group, &[at as u32]);
         pass.draw(0..3, 0..1);
@@ -362,5 +512,25 @@ impl EffectSpec {
                 })
                 .transpose()?,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reduced_blur;
+
+    #[test]
+    fn reduces_only_blurs_that_stay_wide_enough() {
+        assert_eq!(reduced_blur(0.0), (1, 0.0));
+        assert_eq!(reduced_blur(7.9), (1, 7.9));
+        for (sigma, factor) in [(8.0, 2), (16.0, 4), (31.9, 4), (32.0, 8), (64.0, 8)] {
+            let (reduced_factor, reduced) = reduced_blur(sigma);
+            assert_eq!(reduced_factor, factor, "sigma {sigma}");
+            // The box and the tent add `factor² / 4 - 1 / 12` of variance.
+            let f = factor as f32;
+            let total = reduced * reduced * f * f + f * f / 4.0 - 1.0 / 12.0;
+            assert!((total - sigma * sigma).abs() < 1e-2, "sigma {sigma}");
+            assert!(reduced >= 3.9, "sigma {sigma}");
+        }
     }
 }

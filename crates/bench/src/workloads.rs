@@ -1,6 +1,7 @@
 //! The scenes each workload renders. `nebula` is the real NEBULA
-//! composition from `examples/versus/bench`, evaluated by the React bridge
-//! (Node.js and a built `packages/react` are required). The others are
+//! composition from `examples/versus/bench`, and `spectra` the SPECTRA reel
+//! from `examples/spectra`, both evaluated by the React bridge (Node.js and
+//! a built `packages/react` are required). The others are
 //! synthetic scenes, one per kind of work the GPU renderer does, laid out on
 //! a 1920x1080 canvas. Every frame moves something, so caches only help
 //! where they would in an export. All are scaled to the requested size, so
@@ -28,15 +29,27 @@ pub struct Workload {
 enum Source {
     /// Builds a frame's layers on the 1920x1080 canvas.
     Synthetic(fn(&Canvas, usize) -> Vec<Layer>),
-    /// A React entry, relative to the repository root.
-    React(&'static str),
+    /// A React entry, relative to the repository root, and where its runs
+    /// of frames start: the measured frames are split evenly into runs of
+    /// consecutive frames, one from each start (see `run_frame`), so a film
+    /// with chapters is measured in every one of them. It needs at least as
+    /// many measured frames as starts.
+    React(&'static str, &'static [u64]),
 }
 
 pub const WORKLOADS: &[Workload] = &[
     Workload {
         name: "nebula",
         description: "NEBULA from examples/versus/bench (React; about 1,660 layers)",
-        source: Source::React("examples/versus/bench/celesta/nebula.tsx"),
+        source: Source::React("examples/versus/bench/celesta/nebula.tsx", &[0]),
+    },
+    Workload {
+        name: "spectra",
+        description: "SPECTRA from examples/spectra (React; every chapter and crossfade)",
+        // Each chapter once it has settled, and the crossfades into
+        // GEOMETRY (frames 135-149) and SOURCE (405-419), where two chapters
+        // draw at once: a run of a single frame, as in CI, lands in them too.
+        source: Source::React("examples/spectra/film.tsx", &[60, 140, 300, 410, 600]),
     },
     Workload {
         name: "rings",
@@ -71,16 +84,19 @@ pub const WORKLOADS: &[Workload] = &[
 ];
 
 impl Workload {
-    /// The scenes of frames `0..count`, at `width`x`height`, and the asset
-    /// root their relative paths resolve against. `images` is the directory
-    /// holding [`IMAGE_PATH`], which only the `images` workload needs.
+    /// The scenes of `warmup` frames and then `frames` measured ones, at
+    /// `width`x`height`, and the asset root their relative paths resolve
+    /// against. `images` is the directory holding [`IMAGE_PATH`], which only
+    /// the `images` workload needs.
     pub fn scenes(
         &self,
         width: u32,
         height: u32,
-        count: usize,
+        warmup: usize,
+        frames: usize,
         images: Option<&Path>,
     ) -> Result<(Vec<Scene>, PathBuf), String> {
+        let count = warmup + frames;
         match self.source {
             Source::Synthetic(build) => {
                 let canvas = Canvas {
@@ -91,7 +107,14 @@ impl Workload {
                     .collect();
                 Ok((scenes, images.map_or_else(PathBuf::new, Path::to_owned)))
             }
-            Source::React(entry) => {
+            Source::React(entry, starts) => {
+                if frames < starts.len() {
+                    return Err(format!(
+                        "measures {} runs of frames, so it needs --frames {} or more",
+                        starts.len(),
+                        starts.len()
+                    ));
+                }
                 let entry = Path::new(env!("CARGO_MANIFEST_DIR"))
                     .join("../..")
                     .join(entry)
@@ -108,8 +131,9 @@ impl Workload {
                     .map_err(|error| format!("starting the React bridge: {error}"))?;
                 let metadata = bridge.metadata().clone();
                 let scenes = (0..count)
-                    .map(|frame| {
-                        let frame = (frame as u64 % metadata.duration_in_frames.max(1)) as i64;
+                    .map(|index| {
+                        let frame = run_frame(starts, warmup, frames, index);
+                        let frame = (frame % metadata.duration_in_frames.max(1)) as i64;
                         let time = Time::frames(frame, metadata.frame_rate)
                             .map_err(|error| error.to_string())?;
                         let scene = bridge
@@ -123,6 +147,20 @@ impl Workload {
             }
         }
     }
+}
+
+/// The frame the `index`th scene shows. The warmup frames start at the
+/// first start and the first run follows them, so a single run from 0
+/// renders frames `0..warmup + frames` in order; every other run starts at
+/// its own start.
+fn run_frame(starts: &[u64], warmup: usize, frames: usize, index: usize) -> u64 {
+    let Some(measured) = index.checked_sub(warmup) else {
+        return starts[0] + index as u64;
+    };
+    let run = measured * starts.len() / frames;
+    let first = (run * frames).div_ceil(starts.len());
+    let skipped = if run == 0 { warmup } else { 0 };
+    starts[run] + (skipped + measured - first) as u64
 }
 
 fn synthetic(canvas: &Canvas, width: u32, height: u32, layers: Vec<Layer>) -> Scene {
@@ -641,4 +679,36 @@ pub fn image() -> image::RgbaImage {
             if (x / 64 + y / 64) % 5 == 0 { 160 } else { 255 },
         ])
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::run_frame;
+
+    #[test]
+    fn one_run_renders_frames_in_order() {
+        let frames: Vec<_> = (0..12).map(|index| run_frame(&[0], 2, 10, index)).collect();
+        assert_eq!(frames, (0..12).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn every_start_gets_a_run() {
+        let starts = [60, 140, 300, 410, 600];
+        let frames: Vec<_> = (0..8)
+            .map(|index| run_frame(&starts, 2, 6, index))
+            .collect();
+        assert_eq!(frames, [60, 61, 62, 63, 140, 300, 410, 600]);
+        let frames: Vec<_> = (0..20)
+            .map(|index| run_frame(&starts, 0, 20, index))
+            .collect();
+        assert_eq!(&frames[..5], [60, 61, 62, 63, 140]);
+        assert_eq!(frames[19], 603);
+        // Later runs start at their own start, whatever the warmup.
+        let frames: Vec<_> = (0..130)
+            .map(|index| run_frame(&starts, 10, 120, index))
+            .collect();
+        assert_eq!(frames[10], 70);
+        assert_eq!(&frames[34..36], [140, 141]);
+        assert_eq!(frames[82], 410);
+    }
 }

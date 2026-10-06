@@ -1,0 +1,10 @@
+{
+  "name": "@celesta/example-spectra",
+  "private": true,
+  "dependencies": {
+    "@celesta/code": "workspace:*",
+    "@celesta/math": "workspace:*",
+    "@celesta/react": "workspace:*",
+    "react": "^18.3.1"
+  }
+}

@@ -28,9 +28,12 @@ pub(crate) enum PreparedItem {
     /// Draws the finished group's canvas onto its parent.
     EndGroup(PreparedLayer),
     EndEffect(PreparedLayer, EffectSpec),
-    /// A text layer `resolve_pending_texts` replaces with a `Layer` before
-    /// anything else reads the items.
+    /// A text layer `place_texts` replaces with a `Layer` before anything
+    /// else reads the items.
     PendingText,
+    /// A path layer `place_paths` replaces with a `Layer`, or drops when it
+    /// covers no pixel, before anything else reads the items.
+    PendingPath,
 }
 
 pub(crate) struct PreparedLayer {

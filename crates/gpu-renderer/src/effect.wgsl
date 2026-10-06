@@ -1,5 +1,7 @@
 // Separable Gaussian blur of a premultiplied scene-sized layer. The second
-// pass can shift and tint the blurred alpha for a shadow or glow.
+// pass can shift and tint the blurred alpha for a shadow or glow. A large
+// blur runs on a copy `downsample` shrinks by a whole factor, and `upsample`
+// enlarges the result again, shifting and tinting it instead.
 struct Params {
     direction_radius_mode: vec4<f32>,
     offset: vec4<f32>,
@@ -10,7 +12,10 @@ struct Params {
 @group(0) @binding(0)
 var source: texture_2d<f32>;
 
-// One pass's parameters, at a dynamic offset into the frame's buffer.
+// One pass's parameters, at a dynamic offset into the frame's buffer:
+// `direction_radius_mode` is the blur's direction, its sigma, and whether to
+// tint; `offset.xy` the shadow's offset in output pixels, and `offset.z` the
+// factor `downsample` and `upsample` scale by.
 @group(1) @binding(0)
 var<uniform> params: Params;
 
@@ -118,4 +123,55 @@ fn fragment(input: VertexOutput) -> @location(0) vec4<f32> {
         return vec4<f32>(params.color.rgb * alpha, alpha);
     }
     return blurred;
+}
+
+// Each texel is the mean of the `factor` x `factor` block of source texels it
+// covers. Texels past the source's edge count as transparent, as they do for
+// the blur.
+@fragment
+fn downsample(input: VertexOutput) -> @location(0) vec4<f32> {
+    let size = vec2<i32>(textureDimensions(source));
+    let factor = i32(params.offset.z);
+    let origin = vec2<i32>(input.position.xy) * factor;
+    let end = min(origin + vec2<i32>(factor), size);
+    var sum = vec4<f32>(0.0);
+    for (var y = origin.y; y < end.y; y++) {
+        for (var x = origin.x; x < end.x; x++) {
+            sum += textureLoad(source, vec2<i32>(x, y), 0);
+        }
+    }
+    return sum / f32(factor * factor);
+}
+
+// Bilinearly enlarges a blur `downsample` shrank by `factor`, shifted by the
+// offset and tinted like the blur's second pass. `direction_radius_mode.xy`
+// is the size of the canvas it enlarges onto. Within the canvas the blurred
+// field is smooth, so its outermost half texel is extrapolated from the two
+// texels beside the edge; a shadow that reads past the canvas reads transparency there, weighted as
+// the full-resolution pass's bilinear read would be.
+@fragment
+fn upsample(input: VertexOutput) -> @location(0) vec4<f32> {
+    let size = vec2<i32>(textureDimensions(source));
+    let canvas = params.direction_radius_mode.xy;
+    let center = input.position.xy - vec2<f32>(0.5) - params.offset.xy;
+    let inside = clamp(center + vec2<f32>(1.0), vec2<f32>(0.0), vec2<f32>(1.0))
+        * clamp(canvas - center, vec2<f32>(0.0), vec2<f32>(1.0));
+    let at = (center + vec2<f32>(0.5)) / params.offset.z - vec2<f32>(0.5);
+    let last = size - vec2<i32>(1);
+    let low = clamp(vec2<i32>(floor(at)), vec2<i32>(0), max(last - vec2<i32>(1), vec2<i32>(0)));
+    let high = min(low + vec2<i32>(1), last);
+    let fraction = at - vec2<f32>(low);
+    let top = mix(textureLoad(source, low, 0), textureLoad(source, vec2<i32>(high.x, low.y), 0), fraction.x);
+    let bottom = mix(textureLoad(source, vec2<i32>(low.x, high.y), 0), textureLoad(source, high, 0),
+        fraction.x);
+    // Past the outermost texel centers, `fraction` leaves 0..1 and the edge
+    // pair's slope carries on for that half texel.
+    let field = mix(top, bottom, fraction.y);
+    let alpha = clamp(field.a, 0.0, 1.0);
+    let enlarged = vec4<f32>(clamp(field.rgb, vec3<f32>(0.0), vec3<f32>(alpha)), alpha) * inside.x * inside.y;
+    if params.direction_radius_mode.w > 0.5 {
+        let alpha = enlarged.a * params.color.a;
+        return vec4<f32>(params.color.rgb * alpha, alpha);
+    }
+    return enlarged;
 }

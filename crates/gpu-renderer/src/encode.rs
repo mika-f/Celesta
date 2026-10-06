@@ -1,4 +1,5 @@
 use crate::compositor::{Compositor, begin_pass};
+use crate::effect::PASSES_PER_FILTER;
 use crate::error::GpuRenderError;
 use crate::pipeline::{PipelineKind, create_pipeline};
 use crate::plan::{GpuStep, PreparedDraws};
@@ -70,14 +71,15 @@ impl GpuRenderer {
         self.prepare_canvases(scene.width, scene.height);
         self.ensure_pipeline(FORMAT, PipelineKind::Layer);
         self.ensure_pipeline(FORMAT, PipelineKind::Blend);
-        // Each effect filters through at most two passes per shadow, glow
-        // and blur.
+        // Each effect filters its shadow, glow and blur through at most
+        // `PASSES_PER_FILTER` passes each.
         let effects = draws
             .steps
             .iter()
             .filter(|step| matches!(step, GpuStep::EndEffect { .. }))
             .count();
-        self.effects.begin_frame(&self.device, effects * 6);
+        self.effects
+            .begin_frame(&self.device, effects * 3 * PASSES_PER_FILTER);
         let root = self.canvas.clone().expect("prepare_canvases creates it");
         let mut compositor = Compositor {
             device: &self.device,

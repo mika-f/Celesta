@@ -14,6 +14,8 @@ pub enum GpuRenderError {
     Map(wgpu::BufferAsyncError),
     MapRange(wgpu::MapRangeError),
     MapCallbackDropped,
+    /// The thread that reads pipelined frames back could not be started.
+    ReadbackThread(io::Error),
     AssetIo {
         asset: String,
         source: io::Error,
@@ -84,6 +86,12 @@ impl fmt::Display for GpuRenderError {
                 write!(formatter, "could not access the mapped GPU frame: {error}")
             }
             Self::MapCallbackDropped => formatter.write_str("GPU readback callback was dropped"),
+            Self::ReadbackThread(error) => {
+                write!(
+                    formatter,
+                    "could not start the GPU readback thread: {error}"
+                )
+            }
             Self::AssetIo { asset, source } => {
                 write!(formatter, "could not read GPU asset {asset}: {source}")
             }
@@ -178,6 +186,7 @@ impl Error for GpuRenderError {
             Self::Poll(error) => Some(error),
             Self::Map(error) => Some(error),
             Self::MapRange(error) => Some(error),
+            Self::ReadbackThread(error) => Some(error),
             Self::AssetIo { source, .. } => Some(source),
             Self::ImageDecode { source, .. } => Some(source),
             Self::RemoteAsset { source, .. } => Some(source),

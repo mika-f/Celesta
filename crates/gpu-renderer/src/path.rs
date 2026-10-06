@@ -1,5 +1,35 @@
 use crate::draw::encode_paint;
-use celesta_renderer::{FlattenedPath, LineSegment};
+use crate::transform::LayerState;
+use celesta_composition::{BlendMode, LineCap, LineJoin, Paint, PathCommand, Stroke};
+use celesta_renderer::{FlattenedPath, LineSegment, PathShape};
+
+/// A path layer whose outline `prepare_layer` left for `outline_paths`,
+/// holding what is needed to outline it and to replace `item`.
+pub(crate) struct PendingPath {
+    /// Index of its `PreparedItem::PendingPath` in the frame's items.
+    pub(crate) item: usize,
+    pub(crate) commands: Vec<PathCommand>,
+    pub(crate) fill: Option<Paint>,
+    pub(crate) stroke: Option<Stroke>,
+    pub(crate) line_cap: LineCap,
+    pub(crate) line_join: LineJoin,
+    pub(crate) miter_limit: f64,
+    pub(crate) state: LayerState,
+    pub(crate) blend_mode: BlendMode,
+}
+
+impl PendingPath {
+    pub(crate) fn shape(&self) -> PathShape<'_> {
+        PathShape {
+            commands: &self.commands,
+            fill: self.fill.as_ref(),
+            stroke: self.stroke.as_ref(),
+            line_cap: self.line_cap,
+            line_join: self.line_join,
+            miter_limit: self.miter_limit,
+        }
+    }
+}
 
 /// The pixels of a path's region that share one list of edges in `paths`.
 /// Mirrors `PATH_TILE_COLUMNS` and `PATH_TILE_ROWS` in `layer.wgsl`.
@@ -53,13 +83,40 @@ pub(crate) fn path_entry_limit(limits: &wgpu::Limits) -> usize {
 impl ShadedPath {
     /// Returns None before modifying either buffer when this layer needs
     /// CPU rasterization to bound shader work or fit the frame's buffer.
+    #[cfg(test)]
     pub(crate) fn new(
         path: &FlattenedPath,
         paints: &mut Vec<[f32; 4]>,
         entries: &mut Vec<[f32; 4]>,
         entry_limit: usize,
     ) -> Option<Self> {
+        let built = PathEntries::build(path, entry_limit)?;
         let base = entries.len();
+        if !built.fits(base, entry_limit) {
+            return None;
+        }
+        entries.resize(base + built.len(), [0.0; 4]);
+        built.place(base, &mut entries[base..]);
+        Some(built.shaded(path, base, paints))
+    }
+}
+
+/// A path's entries in `paths` (see `ShadedPath::base`), built on any
+/// thread with its indices counted from its own first entry, then placed
+/// in the frame's buffer once the paths before it are.
+pub(crate) struct PathEntries {
+    width: u32,
+    height: u32,
+    tiles: u32,
+    stride: usize,
+    entries: Vec<[f32; 4]>,
+}
+
+impl PathEntries {
+    /// None when a tile has more edges than the shader takes, or the path
+    /// needs more than `entry_limit` entries (the most the frame's buffer
+    /// can hold), so it needs CPU rasterization.
+    pub(crate) fn build(path: &FlattenedPath, entry_limit: usize) -> Option<Self> {
         let inverse = path.inverse;
         let columns = path.width.div_ceil(PATH_TILE_COLUMNS);
         let outlines: Vec<_> = [&path.fill, &path.stroke]
@@ -70,6 +127,13 @@ impl ShadedPath {
                     .map(|(_, edges)| bin_tiles(edges, path.width, path.height))
             })
             .collect();
+        if outlines.iter().flatten().any(|bins| {
+            bins.tiles
+                .iter()
+                .any(|tile| tile.edges.len() > MAX_PATH_TILE_EDGES)
+        }) {
+            return None;
+        }
         // Each tile's entries: the fill's, then the stroke's, if it has them.
         let mut stride = 0;
         let mut slots = [-1.0; 2];
@@ -88,17 +152,12 @@ impl ShadedPath {
         tiles.sort_unstable();
         tiles.dedup();
         let edge_entries: usize = outlines.iter().flatten().map(|bins| bins.edges.len()).sum();
-        let required = 3 + tiles.len() * stride + edge_entries;
-        if required > entry_limit.saturating_sub(base)
-            || outlines.iter().flatten().any(|bins| {
-                bins.tiles
-                    .iter()
-                    .any(|tile| tile.edges.len() > MAX_PATH_TILE_EDGES)
-            })
-        {
+        let first_tile = 3;
+        let required = first_tile + tiles.len() * stride + edge_entries;
+        if required > entry_limit {
             return None;
         }
-        let first_tile = base + 3;
+        let mut entries = Vec::with_capacity(required);
         entries.push([inverse.a, inverse.b, inverse.c, inverse.d].map(|value| value as f32));
         entries.push([
             inverse.tx as f32,
@@ -128,12 +187,105 @@ impl ShadedPath {
         Some(Self {
             width: path.width,
             height: path.height,
-            base: base as f32,
             tiles: tiles.len() as u32,
-            fill: encode_paint(path.fill.as_ref().map(|(paint, _)| paint), paints),
-            stroke: encode_paint(path.stroke.as_ref().map(|(paint, _)| paint), paints),
+            stride,
+            entries,
         })
     }
+
+    pub(crate) fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// How many tiles it draws.
+    pub(crate) const fn tiles(&self) -> u32 {
+        self.tiles
+    }
+
+    /// Whether it fits a buffer of `entry_limit` entries from `base` on.
+    pub(crate) fn fits(&self, base: usize, entry_limit: usize) -> bool {
+        self.len() <= entry_limit.saturating_sub(base)
+    }
+
+    /// Writes its entries into `out`, the `len()` entries of the frame's
+    /// buffer from `base` on, with their indices counted from the buffer's
+    /// start.
+    pub(crate) fn place(&self, base: usize, out: &mut [[f32; 4]]) {
+        out.copy_from_slice(&self.entries);
+        let shift = |index: f32| (index as usize + base) as f32;
+        out[2][2] = shift(out[2][2]);
+        let tiles = &mut out[3..3 + self.tiles as usize * self.stride];
+        // A tile an outline covers has edges or a backdrop; only those
+        // point at edges.
+        for entry in tiles {
+            if entry[2] != 0.0 || entry[3] != 0.0 {
+                entry[1] = shift(entry[1]);
+            }
+        }
+    }
+
+    /// The draw of `path` once its entries are placed at `base`.
+    pub(crate) fn shaded(
+        &self,
+        path: &FlattenedPath,
+        base: usize,
+        paints: &mut Vec<[f32; 4]>,
+    ) -> ShadedPath {
+        ShadedPath {
+            width: self.width,
+            height: self.height,
+            base: base as f32,
+            tiles: self.tiles,
+            fill: encode_paint(path.fill.as_ref().map(|(paint, _)| paint), paints),
+            stroke: encode_paint(path.stroke.as_ref().map(|(paint, _)| paint), paints),
+        }
+    }
+}
+
+/// Up to how many pieces `bin_tiles` sorts with `sort_pieces_in_place`.
+const SMALL_PIECE_COUNT: usize = 64;
+
+/// Sorts a region's pieces by tile: first into rows, keeping their order,
+/// then each row's few pieces by column. A region has few rows, and a row
+/// few pieces, so this costs a fraction of sorting them all by comparison.
+/// The pieces are counted into their rows.
+pub(crate) fn count_pieces_into_rows(
+    pieces: Vec<(usize, [f32; 4])>,
+    rows: usize,
+    columns: usize,
+) -> Vec<(usize, [f32; 4])> {
+    let mut row_starts = vec![0_usize; rows + 1];
+    for &(tile, _) in &pieces {
+        row_starts[tile / columns + 1] += 1;
+    }
+    for row in 0..rows {
+        row_starts[row + 1] += row_starts[row];
+    }
+    let mut sorted = vec![(0, [0.0; 4]); pieces.len()];
+    let mut next = row_starts.clone();
+    for piece in pieces {
+        let row = piece.0 / columns;
+        sorted[next[row]] = piece;
+        next[row] += 1;
+    }
+    for row in row_starts.windows(2) {
+        sorted[row[0]..row[1]].sort_unstable_by_key(|(tile, _)| *tile);
+    }
+    sorted
+}
+
+/// Sorts like `count_pieces_into_rows`, into the same order, but in place:
+/// for a small path's few pieces, the standard library's stable sort into
+/// rows needs no heap memory, and the counts would cost more than it.
+pub(crate) fn sort_pieces_in_place(
+    mut pieces: Vec<(usize, [f32; 4])>,
+    columns: usize,
+) -> Vec<(usize, [f32; 4])> {
+    pieces.sort_by_key(|(tile, _)| tile / columns);
+    for row in pieces.chunk_by_mut(|a, b| a.0 / columns == b.0 / columns) {
+        row.sort_unstable_by_key(|(tile, _)| *tile);
+    }
+    pieces
 }
 
 /// An outline's edges sorted into the tiles of its region that it covers
@@ -268,7 +420,11 @@ pub(crate) fn bin_tiles(edges: &[LineSegment], width: u32, height: u32) -> TileB
             }
         }
     }
-    pieces.sort_unstable_by_key(|(tile, _)| *tile);
+    let pieces = if pieces.len() <= SMALL_PIECE_COUNT {
+        sort_pieces_in_place(pieces, columns)
+    } else {
+        count_pieces_into_rows(pieces, rows, columns)
+    };
     backdrops.sort_unstable_by_key(|(tile, _)| *tile);
     let mut bins = TileBins {
         tiles: Vec::new(),

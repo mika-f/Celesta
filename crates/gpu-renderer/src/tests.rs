@@ -1,6 +1,9 @@
 use crate::error::GpuRenderError;
 use crate::layer::{PreparedContent, PreparedItem, PreparedLayer};
-use crate::path::{MAX_PATH_TILE_EDGES, ShadedPath, bin_tiles, path_entry_limit};
+use crate::path::{
+    MAX_PATH_TILE_EDGES, ShadedPath, bin_tiles, count_pieces_into_rows, path_entry_limit,
+    sort_pieces_in_place,
+};
 use crate::plan::GpuStep;
 use crate::readback::ReadbackLayout;
 use crate::renderer::GpuRenderer;
@@ -1339,6 +1342,7 @@ fn benchmark_path_transform_matches_prepared_layer() {
     renderer
         .prepare_layer(&layer, LayerState::default(), &mut items)
         .unwrap();
+    renderer.resolve_pending_paths(&mut items).unwrap();
     let [
         PreparedItem::Layer(PreparedLayer {
             content: PreparedContent::Path(_),
@@ -1725,6 +1729,7 @@ fn shrinks_path_fallback_textures_without_changing_output_bounds() {
         renderer
             .prepare_layer(&layer, LayerState::default(), &mut items)
             .unwrap();
+        renderer.resolve_pending_paths(&mut items).unwrap();
         let [
             PreparedItem::Layer(PreparedLayer {
                 content: PreparedContent::Texture(texture),
@@ -1772,6 +1777,7 @@ fn full_path_buffer_falls_back_for_only_the_next_layer() {
     renderer
         .prepare_layer(&layer, LayerState::default(), &mut items)
         .unwrap();
+    renderer.resolve_pending_paths(&mut items).unwrap();
     assert!(matches!(
         items.as_slice(),
         [PreparedItem::Layer(PreparedLayer {
@@ -3043,6 +3049,80 @@ fn submit_and_drain_return_frames_in_submission_order_with_correct_content() {
 }
 
 #[test]
+fn dropping_a_renderer_finishes_the_frames_in_flight() {
+    let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+        return;
+    };
+    // Large enough that the thread is still copying them out when the
+    // renderer is dropped.
+    for _ in 0..3 {
+        assert!(renderer.submit(&empty_scene(3840, 2160)).unwrap().is_none());
+    }
+    let finished = renderer
+        .readback_worker
+        .as_ref()
+        .expect("submit starts the readback worker")
+        .finished
+        .clone();
+    // Waits for the readback thread instead of leaving it behind.
+    drop(renderer);
+    assert_eq!(finished.load(std::sync::atomic::Ordering::SeqCst), 3);
+}
+
+#[test]
+fn few_path_pieces_sort_in_place_into_the_counted_order() {
+    let (rows, columns) = (5, 7);
+    let mut seed = 7_u32;
+    for count in [0, 1, 2, 9, 40, 64] {
+        // Pieces of the same tile keep apart by their first coordinate.
+        let pieces: Vec<_> = (0..count)
+            .map(|index| {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                ((seed >> 8) as usize % (rows * columns), [index as f32; 4])
+            })
+            .collect();
+        assert_eq!(
+            sort_pieces_in_place(pieces.clone(), columns),
+            count_pieces_into_rows(pieces, rows, columns),
+            "{count} pieces"
+        );
+    }
+}
+
+#[test]
+fn a_failed_frame_leaves_no_paths_for_the_next() {
+    let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+        return;
+    };
+    let square = path_layer(
+        "square",
+        polyline(&[(0.0, 0.0), (4.0, 0.0), (4.0, 4.0), (0.0, 4.0)], true),
+        Some(solid("#FFFFFF")),
+        None,
+    );
+    let missing = Layer {
+        id: "missing".to_owned(),
+        content: LayerContent::MissingComponent {
+            component: "Missing".to_owned(),
+            props: Default::default(),
+        },
+        ..square.clone()
+    };
+    let mut scene = empty_scene(8, 8);
+    scene.layers = vec![
+        solid_rect("a", 6.0, 1.0, 1.0, "#000000"),
+        solid_rect("b", 7.0, 1.0, 1.0, "#000000"),
+        square.clone(),
+        missing,
+    ];
+    assert!(renderer.render(&scene).is_err());
+    // The failed frame's path pointed past this frame's only item.
+    scene.layers = vec![square];
+    let frame = renderer.render(&scene).unwrap();
+    assert_eq!(pixel_at(&frame, 2, 2), [255; 4]);
+}
+
+#[test]
 fn falls_back_to_cpu_preview_for_odd_dimensions() {
     let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
         return;
@@ -4133,6 +4213,91 @@ fn baseline_anchored_text_layers_share_a_baseline() {
         assert!(
             bottom.abs_diff(BASELINE - 1) <= 2,
             "{name} ends on row {bottom}, not above the baseline at {BASELINE}"
+        );
+    }
+}
+
+/// Large blurs run at a half, a quarter, or an eighth of the resolution
+/// (see `effect::reduced_blur`). Each factor must stay within the CPU
+/// renderer's exact Gaussian, also where the kernel runs off the scene and
+/// where a shadow's offset reads past its canvas.
+#[test]
+fn reduced_resolution_blurs_match_cpu() {
+    use celesta_composition::{LayerEffects, LayerGlow, LayerShadow};
+
+    let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+        return;
+    };
+    let shadow = |blur: f64, offset_x: f64, offset_y: f64| LayerEffects {
+        shadow: Some(LayerShadow {
+            color: "#40c0ffd0".to_owned(),
+            blur,
+            offset_x,
+            offset_y,
+        }),
+        ..LayerEffects::default()
+    };
+    let cases = [
+        // Factor 2, 4 and 8, with the kernel running off the top edge.
+        (
+            LayerEffects {
+                blur: 10.0,
+                ..LayerEffects::default()
+            },
+            [30.0, 20.0, 70.0, 50.0],
+        ),
+        (
+            LayerEffects {
+                blur: 24.0,
+                ..LayerEffects::default()
+            },
+            [30.0, 20.0, 70.0, 50.0],
+        ),
+        (
+            LayerEffects {
+                blur: 48.0,
+                ..LayerEffects::default()
+            },
+            [100.0, 80.0, 70.0, 50.0],
+        ),
+        // Content against the left edge, its shadow shifted away from it,
+        // so the shadow reads past the canvas.
+        (shadow(17.0, 21.5, -6.25), [0.0, 70.0, 40.0, 42.0]),
+        (
+            LayerEffects {
+                glow: Some(LayerGlow {
+                    color: "#ffe060ff".to_owned(),
+                    blur: 64.0,
+                }),
+                ..LayerEffects::default()
+            },
+            [250.0, 150.0, 70.0, 74.0],
+        ),
+    ];
+    for (effects, [x, y, width, height]) in cases {
+        let mut scene = empty_scene(320, 224);
+        scene.layers = vec![
+            corner_rect("backdrop", 0.0, 0.0, 320.0, 224.0, "#101828"),
+            Layer {
+                id: "fx".to_owned(),
+                transform: EvaluatedTransform::default(),
+                opacity: 0.9,
+                blend_mode: BlendMode::Normal,
+                effects: effects.clone(),
+                content: LayerContent::Group {
+                    layers: vec![corner_rect("content", x, y, width, height, "#ff40a0")],
+                    clip: None,
+                },
+            },
+        ];
+        let gpu = renderer.render(&scene).unwrap();
+        let cpu = celesta_renderer::CpuRenderer::default()
+            .render(&scene)
+            .unwrap();
+        let difference = max_channel_difference(&gpu, &cpu);
+        assert!(
+            difference <= 5,
+            "{effects:?}: channels differ by up to {difference}"
         );
     }
 }

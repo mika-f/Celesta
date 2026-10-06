@@ -11,7 +11,41 @@ use std::{
 #[derive(Default)]
 pub struct ImageSources {
     sources: HashMap<String, Source>,
-    rendered: HashMap<String, (String, DisplayImage)>,
+    /// The latest renders of each source, most recently used first: one per
+    /// display size and fit (its latest resolution), at most
+    /// [`LAYOUTS_PER_SOURCE`].
+    rendered: HashMap<String, VecDeque<Render>>,
+}
+
+struct Render {
+    layout: String,
+    resolution: (u32, u32),
+    image: DisplayImage,
+}
+
+/// How many display sizes and fits of one source stay rendered. One frame
+/// can draw an image at several (a `cover` thumbnail and a `contain` hero),
+/// and keeping only the last would render each again every frame.
+const LAYOUTS_PER_SOURCE: usize = 4;
+
+/// How many pixels a source's renders besides its latest may hold between
+/// them (64 MB of RGBA): a few layouts of an image, not several of a huge SVG.
+const OLDER_RENDER_PIXELS: u64 = 16 << 20;
+
+/// Keeps the latest of `renders`, and the next most recent ones up to
+/// `LAYOUTS_PER_SOURCE` in all while they hold `pixels` or fewer.
+fn keep_recent(renders: &mut VecDeque<Render>, pixels: u64) {
+    let mut held = 0;
+    let older = renders
+        .iter()
+        .skip(1)
+        .take(LAYOUTS_PER_SOURCE - 1)
+        .take_while(|render| {
+            held += u64::from(render.resolution.0) * u64::from(render.resolution.1);
+            held <= pixels
+        })
+        .count();
+    renders.truncate(1 + older);
 }
 enum Source {
     Raster(Arc<RgbaImage>),
@@ -112,11 +146,17 @@ impl ImageSources {
             return Err(invalid("image display size exceeds rasterization limits"));
         }
         let (pw, ph) = (pw as u32, ph as u32);
-        let signature = format!("{w}:{h}:{pw}:{ph}:{fit:?}");
-        if let Some((previous, image)) = self.rendered.get(key)
-            && previous == &signature
-        {
-            return Ok(image.clone());
+        let layout = format!("{w}:{h}:{fit:?}");
+        let renders = self.rendered.entry(key.to_owned()).or_default();
+        // An animated SVG replaces its layout's render at a new resolution
+        // instead of keeping one per resolution.
+        if let Some(index) = renders.iter().position(|render| render.layout == layout) {
+            let render = renders.remove(index).expect("the index was just found");
+            if render.resolution == (pw, ph) {
+                let image = render.image.clone();
+                renders.push_front(render);
+                return Ok(image);
+            }
         }
         let (sx, sy) = (pw as f64 / sw, ph as f64 / sh);
         let (sx, sy) = match fit {
@@ -167,9 +207,12 @@ impl ImageSources {
             height: h,
             is_svg: matches!(source, Source::Svg(_)),
         };
-        // Retain only the latest resolution for each source during animation.
-        self.rendered
-            .insert(key.to_owned(), (signature, image.clone()));
+        renders.push_front(Render {
+            layout,
+            resolution: (pw, ph),
+            image: image.clone(),
+        });
+        keep_recent(renders, OLDER_RENDER_PIXELS);
         Ok(image)
     }
 }
@@ -369,6 +412,60 @@ mod tests {
         let resized = resize_rgba(4, 1, &pixels, 2, 1);
         assert_eq!(resized.get_pixel(0, 0).0, [43, 43, 43, 255]);
         assert_eq!(resized.get_pixel(1, 0).0, [137, 137, 137, 255]);
+    }
+
+    #[test]
+    fn keeps_the_renders_of_several_layouts_of_one_source() {
+        let mut cache = ImageSources::default();
+        cache.insert_raster("photo", RgbaImage::new(4, 2));
+        let path = Path::new("not-read.png");
+        let mut render = |fit| {
+            cache
+                .render("photo", path, Some(8.0), Some(8.0), Some(fit), 1.0)
+                .unwrap()
+                .pixels
+        };
+        // One frame draws the image both ways, the next frame again.
+        let cover = render(ImageFit::Cover);
+        let contain = render(ImageFit::Contain);
+        assert!(Arc::ptr_eq(&cover, &render(ImageFit::Cover)));
+        assert!(Arc::ptr_eq(&contain, &render(ImageFit::Contain)));
+    }
+
+    #[test]
+    fn keeps_older_renders_only_within_their_pixel_budget() {
+        let render = |layout: &str, width: u32, height: u32| Render {
+            layout: layout.to_owned(),
+            resolution: (width, height),
+            image: DisplayImage {
+                pixels: Arc::new(RgbaImage::new(1, 1)),
+                width: 1.0,
+                height: 1.0,
+                is_svg: true,
+            },
+        };
+        let layouts = |renders: &VecDeque<Render>| {
+            renders
+                .iter()
+                .map(|render| render.layout.clone())
+                .collect::<Vec<_>>()
+        };
+        // The latest stays whatever its size; the older ones while they fit.
+        let mut renders: VecDeque<_> = [
+            render("huge", 100, 100),
+            render("a", 4, 4),
+            render("b", 4, 4),
+            render("c", 2, 2),
+        ]
+        .into();
+        keep_recent(&mut renders, 32);
+        assert_eq!(layouts(&renders), ["huge", "a", "b"]);
+        let mut renders: VecDeque<_> = [render("new", 1, 1), render("huge", 100, 100)].into();
+        keep_recent(&mut renders, 32);
+        assert_eq!(layouts(&renders), ["new"]);
+        let mut renders: VecDeque<_> = (0..6).map(|i| render(&i.to_string(), 1, 1)).collect();
+        keep_recent(&mut renders, 32);
+        assert_eq!(renders.len(), LAYOUTS_PER_SOURCE);
     }
 
     #[test]

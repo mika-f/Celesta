@@ -12,7 +12,11 @@ on:
   pull_request:
     paths:
       - "crates/**"
+      - "packages/code/**"
+      - "packages/math/**"
       - "packages/react/**"
+      - "examples/spectra/**"
+      - "examples/assets/**"
       - "examples/versus/bench/**"
       - "Cargo.toml"
       - "Cargo.lock"
