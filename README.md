@@ -1,12 +1,11 @@
 # Celesta
 
-Celesta is a code-first video tool. Describe a timeline of video, images,
-text, and audio in a `.celesta.json` project, or build animated scenes with
-React. Preview your work in the Celesta app and export it as an MP4.
+Celesta is a code-first video tool. Build animated scenes with React and
+TypeScript, combining video, images, text, shapes, and audio. Preview your work
+in the Celesta desktop app and export it as an MP4 or PNG frames.
 
-Celesta is under active development. The instructions below run it from
-source. Existing package names, commands, and the `.celesta.json` project file
-extension still use `celesta` for compatibility.
+Celesta is under active development. Packaged desktop apps include the React
+runtime and Node.js; the instructions below also cover running from source.
 
 ## Gallery
 
@@ -18,26 +17,48 @@ for more examples, see the [examples directory](examples) and the [gallery](docs
 
 ## What you can do
 
-- **Describe a timeline:** list local or `http(s)` media and place clips on
-  multiple video, audio, overlay, and dialogue tracks in a project file.
-- **Preview frame by frame:** open a project or React composition, play it
+- **Compose with React:** use components, hooks, sequences, transitions, and
+  layouts to build scenes. Animate positions, colors, and effects with
+  interpolation and springs, or hold a scene at a chosen frame with
+  `<FreezeFrame>`.
+- **Draw and lay out content:** combine rectangles, circles, ellipses, arrows,
+  and paths with text. Load fonts, measure text, fit it into a box, and wrap
+  Japanese text at phrase boundaries.
+- **Use media:** load local or HTTP(S) video, images, and audio. Remote files
+  are downloaded into a cache for native preview and export.
+- **Preview frame by frame:** open a React composition, play it
   with synchronized audio, scrub the timeline, or step through frames. The
-  timeline, asset list, and Inspector show what the project contains.
+  timeline, asset list, and Inspector show what the composition contains.
+  The preview reloads when you save its source.
 - **Check audio:** see waveforms and track levels, mute or solo tracks, and
-  set the preview volume.
-- **Create character dialogue:** combine portraits, expressions, subtitles,
-  voice recordings, lip-sync cues, and blinking.
-- **Compose with React:** use components, hooks, animation helpers, and layouts
-  to build scenes, and combine React content with a project timeline. The
-  preview reloads when you save the composition.
+  set the preview volume. Use frame-based keyframes for volume fades and
+  playback-rate changes.
+- **Create character dialogue:** combine image or PSD portraits, expressions,
+  subtitles, voice recordings, lip-sync cues, and blinking. Use
+  `<DialogueSeries>` to sequence conversations.
 - **Export MP4:** render H.264 video with AAC audio, either from the app or
   the command line. Export the whole composition or a selected time range.
+- **Inspect frames:** export selected frames as PNG files or a labelled
+  contact sheet, and request machine-readable export results for scripts.
+
+## Start with the desktop app
+
+Download a macOS or Windows package from the
+[GitHub releases](https://github.com/mika-f/celesta/releases/latest).
+Choose **File › Create New Project…**, select a folder, and edit the generated
+`film.tsx` in your text editor. Celesta opens it for preview and reloads it
+when you save. Choose **Export…** to write an MP4.
+
+Preview and export use the bundled runtime. Install Node.js and a package
+manager separately when you need TypeScript checking or external npm packages;
+see [Create a React project](#create-a-react-project).
 
 ## Run from source
 
 You need Rust 1.89 or later, the native build tools for your platform, and
 FFmpeg 8.1.x development libraries (FFmpeg 9 and later are not supported yet).
-React compositions additionally require Node.js 18 or later and pnpm.
+To build the React runtime, use Node.js 24 and the pnpm version declared in
+the root `package.json`, matching the repository's CI setup.
 
 ### 1. Prepare FFmpeg
 
@@ -89,24 +110,33 @@ executable is not sufficient.
 ```sh
 git clone https://github.com/mika-f/celesta.git
 cd celesta
-cargo run -p celesta-editor --release
 ```
 
-The app opens a built-in demo. Choose **File › Open…** (Command-O on macOS,
-Ctrl-O elsewhere) to open a project or React composition, or pass its path:
+Prepare FFmpeg before running Cargo. On Linux, run the source-build script
+from step 1 now. Then build the React runtime and launch the app:
 
 ```sh
-cargo run -p celesta-editor --release -- examples/voiceroid.celesta.json
+pnpm install
+pnpm --dir packages/react run codegen
+pnpm --dir packages/react run build
+cargo run -p celesta-editor --release -- packages/react/examples/title.tsx
+```
+
+The app opens the sample title composition. Choose **File › Open…** (Command-O
+on macOS, Ctrl-O elsewhere) to open another React composition, or pass its path:
+
+```sh
+cargo run -p celesta-editor --release -- examples/reel/film.tsx
 ```
 
 ## Preview and export
 
-1. **Open a project.** Choose **File › Open…** and select a `.celesta.json`
-   project or a React composition (`.tsx`, `.jsx`, `.ts`, or `.js`).
-   `examples/minimal.celesta.json` is a small starting point.
-2. **Edit the source file.** Change the project or composition in your text
-   editor. React compositions reload automatically when you save; for a
-   project, choose **File › Reload** (Command-R on macOS, Ctrl-R elsewhere).
+1. **Open a composition.** Choose **File › Open…** and select a React
+   composition (`.tsx`, `.jsx`, `.ts`, or `.js`).
+   `packages/react/examples/title.tsx` is a small starting point.
+2. **Edit the source file.** Change the composition in your text editor.
+   Compositions reload automatically when you save. You can also choose
+   **File › Reload** (Command-R on macOS, Ctrl-R elsewhere).
 3. **Preview.** Press Space to play or pause (L plays, K stops). Use the left
    and right arrow keys to step one frame at a time, Shift with them to move
    one second, the up and down arrow keys to jump between clip edges, and Home
@@ -121,37 +151,28 @@ cargo run -p celesta-editor --release -- examples/voiceroid.celesta.json
    press I and O to mark its start and end. Progress appears in the status
    bar; **Cancel export** stops the job.
 
-Project files reference your source media. Keep those files available when
+Compositions reference your source media. Keep local media available when
 reopening or sharing a project. Assets whose files cannot be found are marked
-in the Assets panel.
+in the Assets panel. Remote media needs network access on its first use;
+subsequent runs reuse the cached files.
 
 ### Character dialogue
 
-Open `examples/voiceroid.celesta.json` to try a dialogue project with a sample
-portrait and voice recording.
+See [`with-dialogue-series.tsx`](packages/react/examples/with-dialogue-series.tsx)
+for a conversation built with `<DialogueSeries>`, or
+[`with-lip-sync.tsx`](packages/react/examples/with-lip-sync.tsx)
+for a PSD portrait with lip-sync.
 
 ## Use React compositions
 
-Install the workspace dependencies and build the included React runtime once
-from the repository root. React compositions under `examples/*` are workspace
-packages too:
+For source builds, complete [Run from source](#run-from-source) first. React
+compositions under `examples/*` are workspace packages too.
 
-```sh
-pnpm install
-pnpm --dir packages/react run codegen
-pnpm --dir packages/react run build
-```
-
-Open the sample title composition in the editor:
-
-```sh
-cargo run -p celesta-editor --release -- packages/react/examples/title.tsx
-```
-
-Use the files in `packages/react/examples` as starting points. They demonstrate
-text, animation, layout, dialogue, and editable project properties. The package
-is currently imported as `@celesta/react`; deterministic random numbers, noise,
-and other math helpers are imported from `@celesta/math`.
+Use the files in [`packages/react/examples`](packages/react/examples) as
+starting points. They demonstrate text, animation, layout, shapes, dialogue,
+audio, and project properties. Import composition components from
+`@celesta/react`; deterministic random numbers, noise, and other math helpers
+come from `@celesta/math`.
 
 Syntax-highlighted code is available separately in [`@celesta/code`](packages/code/README.md).
 The React build also builds it, and the desktop app bundles it separately.
@@ -164,6 +185,8 @@ Visual layers and groups accept `blur`, `shadow`, and `glow`. Radii and shadow
 offsets use output pixels. All three can change each frame through React props:
 
 ```tsx
+import { Group, Text, useCurrentFrame } from '@celesta/react';
+
 function Title() {
   const frame = useCurrentFrame();
   return <Group blur={Math.min(frame / 10, 8)}
@@ -175,8 +198,7 @@ function Title() {
 }
 ```
 
-Blur radii are limited to 64 pixels. JSON timeline items accept the same
-effects under `effects`, with keyframes for numeric properties and colors.
+Blur radii are limited to 64 pixels.
 
 ### Create a React project
 
@@ -270,19 +292,12 @@ has no `tsconfig.json`, Celesta creates one that extends
 Celesta updates `.celesta/` when you open the project in a newer version. The
 folder ignores itself in Git.
 
-To combine an existing timeline with React content, use a composition containing
-`<ProjectTimeline />` and supply the companion project when exporting:
-
-```sh
-cargo run -p celesta-exporter --release -- --react packages/react/examples/with-project.tsx --project examples/editor-demo.celesta.json output.mp4
-```
-
 ## Export from the command line
 
-Export a project:
+Export a React composition after completing the source-build setup:
 
 ```sh
-cargo run -p celesta-exporter --release -- examples/editor-demo.celesta.json output.mp4
+cargo run -p celesta-exporter --release -- --react packages/react/examples/title.tsx output.mp4
 ```
 
 In a terminal, exports show a [Ratatui](https://github.com/ratatui/ratatui)
@@ -303,17 +318,11 @@ has been loaded, and on failure an error `code`, `message` and sometimes a
 `error`. The exit status is 0 on success, 1 when the export fails, and 2 for
 invalid arguments.
 
-Export a React composition after completing the React setup:
-
-```sh
-cargo run -p celesta-exporter --release -- --react packages/react/examples/title.tsx output.mp4
-```
-
 Add `--overwrite` to replace an existing output file. To export a section, add
 `--from` and `--to` with times in `HH:MM:SS.mmm`, `MM:SS.mmm`, or seconds:
 
 ```sh
-cargo run -p celesta-exporter --release -- --from 0 --to 1 examples/editor-demo.celesta.json section.mp4
+cargo run -p celesta-exporter --release -- --react --from 0 --to 1 packages/react/examples/title.tsx section.mp4
 ```
 
 The video is encoded with libx264 using `--preset medium --crf 18` by default.
@@ -322,7 +331,7 @@ will be larger, but quality stays about the same. `--crf` takes a value from 0
 to 51. Lower values give higher quality and larger files:
 
 ```sh
-cargo run -p celesta-exporter --release -- --preset veryfast examples/editor-demo.celesta.json draft.mp4
+cargo run -p celesta-exporter --release -- --react --preset veryfast packages/react/examples/title.tsx draft.mp4
 ```
 
 On a hardware GPU, frames are converted from RGB to the video's YUV colors
@@ -338,8 +347,8 @@ to lay the selection out as labelled tiles on one image (`--columns`,
 `--tile-width`):
 
 ```sh
-cargo run -p celesta-exporter --release -- --frames 0,90 examples/editor-demo.celesta.json check.png
-cargo run -p celesta-exporter --release -- --every 60 --contact-sheet examples/editor-demo.celesta.json sheet.png
+cargo run -p celesta-exporter --release -- --react --frames 0,90 packages/react/examples/title.tsx check.png
+cargo run -p celesta-exporter --release -- --react --every 60 --contact-sheet packages/react/examples/title.tsx sheet.png
 ```
 
 ### Export without a GPU on Linux
@@ -375,8 +384,8 @@ To export in a container without building Celesta on the host, use the
 
 [`skills/celesta`](skills/celesta) is an [Agent Skill](https://agentskills.io)
 that teaches coding agents such as Claude Code and Codex to write React
-compositions and `.celesta.json` projects, check them without the GUI, and
-export them. Install it with the `skills` CLI:
+compositions, check them without the GUI, and export them. Install it with
+the `skills` CLI:
 
 ```sh
 npx skills add mika-f/celesta
@@ -396,10 +405,11 @@ node skills/celesta/scripts/inspect.mjs --psd-layers examples/assets/lipsync-fix
 
 ## Current limitations
 
-- Media must be available as local files; remote media URLs are not supported.
+- Remote media is cached by URL without revalidation. Use a new URL or clear
+  the cache when the remote file changes.
 - MP4 export requires non-zero, even-numbered width and height.
-- The Celesta app previews projects but does not edit them. Change projects
-  and compositions in their source files.
+- The Celesta app previews and exports compositions; edit their source files
+  in a text editor.
 
 ## Build a Windows package
 
