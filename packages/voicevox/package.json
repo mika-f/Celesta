@@ -1,0 +1,37 @@
+{
+  "name": "@celesta/voicevox",
+  "version": "0.0.0",
+  "private": true,
+  "description": "VOICEVOX AudioQuery lip sync for Celesta compositions.",
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test",
+    "clean": "rm -rf dist"
+  },
+  "peerDependencies": {
+    "@celesta/react": "0.0.0"
+  },
+  "devDependencies": {
+    "@celesta/react": "workspace:*",
+    "typescript": "^5.7.3"
+  }
+}

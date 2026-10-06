@@ -17,8 +17,7 @@
 // synthesized WAV to the sample; without it the error accumulates (about
 // 50 ms over a 1.7 s line at `speedScale: 1.5`).
 
-import { lipSyncFromKeyframes, type LipSyncTrack, type MouthKeyframe } from './lipsync';
-import type { MouthShape } from './generated/MouthShape';
+import { lipSyncFromKeyframes, type LipSyncTrack, type MouthKeyframe, type MouthShape } from '@celesta/react';
 
 /** One mora of a VOICEVOX AudioQuery. Only the fields lip sync reads. */
 export interface VoicevoxMora {

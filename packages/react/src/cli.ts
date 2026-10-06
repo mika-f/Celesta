@@ -325,18 +325,19 @@ async function loadEntry(entryPath: string): Promise<LoadedEntry> {
     plugins: [{
       name: 'shared-runtime',
       setup(build) {
-        build.onResolve({ filter: /^@celesta\/code$/ }, () => {
-          let codePath: string;
+        build.onResolve({ filter: /^@celesta\/(?:code|voicevox)$/ }, (args) => {
+          let packagePath: string;
           try {
-            codePath = require.resolve('@celesta/code');
+            packagePath = require.resolve(args.path);
           } catch (error) {
             if ((error as NodeJS.ErrnoException).code !== 'MODULE_NOT_FOUND') throw error;
-            // Source builds keep Code beside React rather than in its deps.
-            codePath = createRequire(path.join(__dirname, '../../code/package.json')).resolve('@celesta/code');
+            // Source builds keep optional packages beside React.
+            const name = args.path.slice('@celesta/'.length);
+            packagePath = createRequire(path.join(__dirname, `../../${name}/package.json`)).resolve(args.path);
           }
-          // Bundle Code, so its React and Celesta imports share the externals
+          // Bundle optional packages, so their Celesta imports share the externals
           // below instead of loading peer copies or requiring a project install.
-          return { path: codePath };
+          return { path: packagePath };
         });
         build.onResolve({ filter: /^(react(?:\/jsx(?:-dev)?-runtime)?|@celesta\/(?:react|math))$/ }, (args) => ({
           path: pathToFileURL(require.resolve(args.path)).href,

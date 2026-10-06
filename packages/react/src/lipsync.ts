@@ -245,7 +245,7 @@ export interface MouthKeyframe {
 
 /**
  * Builds a `LipSyncTrack` from timed mouth shapes, for speech engines that
- * report phoneme timing (see `lipSyncFromVoicevox`). Each keyframe holds its
+ * report phoneme timing (e.g. `@celesta/voicevox`). Each keyframe holds its
  * shape until the next one; the mouth is `closed` before the first keyframe
  * and from `durationInSeconds` on. Keyframes may be given in any order.
  */

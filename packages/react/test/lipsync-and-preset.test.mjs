@@ -13,6 +13,7 @@ import { test } from 'vitest';
 import {
   buildEnvelope,
   decodeWav,
+  lipSyncFromKeyframes,
   lipSyncTimeline,
   parsePfv,
   resolveVisibleLayers,
@@ -87,4 +88,27 @@ test('buildEnvelope produces one bucket per hop', () => {
   const envelope = buildEnvelope(audio, 100);
   assert.equal(envelope.length, 100);
   assert.ok(envelope.every((v) => Math.abs(v - 0.5) < 1e-6));
+});
+
+test('lipSyncFromKeyframes holds each shape until the next keyframe', () => {
+  const track = lipSyncFromKeyframes(
+    [
+      { seconds: 0.5, mouth: 'i' },
+      { seconds: 0.2, mouth: 'a' },
+      { seconds: 0.8, mouth: 'u' },
+    ],
+    1,
+  );
+  assert.equal(track.durationInSeconds, 1);
+  assert.equal(track.mouthAtSeconds(0.1), 'closed');
+  assert.equal(track.mouthAtSeconds(0.2), 'a');
+  assert.equal(track.mouthAtSeconds(0.49), 'a');
+  assert.equal(track.mouthAtSeconds(0.5), 'i');
+  assert.equal(track.mouthAtSeconds(0.6), 'i');
+  assert.equal(track.mouthAtSeconds(0.8), 'u');
+  assert.equal(track.mouthAtSeconds(0.9), 'u');
+  assert.equal(track.mouthAtSeconds(1), 'closed');
+  assert.equal(track.mouthAtFrame(15, 30), 'i');
+  assert.equal(lipSyncFromKeyframes([], 1).mouthAtSeconds(0.5), 'closed');
+  assert.throws(() => lipSyncFromKeyframes([], -1), /durationInSeconds/);
 });

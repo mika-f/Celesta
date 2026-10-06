@@ -1,5 +1,5 @@
 // Stage the TypeScript support directory the editor copies into a project's
-// `.celesta/`: the React, math, and Code declarations, React's supporting
+// `.celesta/`: the React, math, Code, and VOICEVOX declarations, React's supporting
 // types, Node's globals, and a base tsconfig mapping those imports. Entries
 // use the bundled runtime, so projects get matching types without an install.
 import { createHash } from 'node:crypto';
@@ -44,6 +44,10 @@ function copyTypes(name, parent) {
   const directory = dirname(packageJson);
   const target = join(modules, name);
   if (statSync(target, { throwIfNoEntry: false })) return;
+  const metadata = JSON.parse(readFileSync(packageJson, 'utf8'));
+  if (metadata.types && !statSync(join(directory, metadata.types), { throwIfNoEntry: false })?.isFile()) {
+    throw new Error(`Missing declarations for ${name}: ${metadata.types}. Build the package before staging project types.`);
+  }
   cpSync(directory, target, {
     recursive: true,
     dereference: true,
@@ -54,14 +58,14 @@ function copyTypes(name, parent) {
       return statSync(path).isDirectory() || base.endsWith('.d.ts') || base === 'package.json' || /^licen[cs]e/i.test(base);
     },
   });
-  const metadata = JSON.parse(readFileSync(packageJson, 'utf8'));
   for (const dependency of Object.keys(metadata.dependencies ?? {})) {
     copyTypes(dependency, directory);
   }
 }
 copyTypes('@celesta/math', source);
-// Code stays a separate package, without a dependency from @celesta/react.
+// Optional packages stay separate, without dependencies from @celesta/react.
 copyTypes('@celesta/code', join(source, '../code'));
+copyTypes('@celesta/voicevox', join(source, '../voicevox'));
 copyTypes('@types/react', source);
 copyTypes('@types/node', source);
 
@@ -86,6 +90,7 @@ writeJson(join(destination, 'tsconfig.json'), {
       '@celesta/react': ['./node_modules/@celesta/react'],
       '@celesta/math': ['./node_modules/@celesta/math'],
       '@celesta/code': ['./node_modules/@celesta/code'],
+      '@celesta/voicevox': ['./node_modules/@celesta/voicevox'],
       react: ['./node_modules/@types/react'],
       'react/*': ['./node_modules/@types/react/*'],
     },
