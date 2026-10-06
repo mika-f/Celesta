@@ -34,8 +34,9 @@ GPU-bound the same way.
 ## 1. Large blurs at reduced resolution
 
 `EffectProcessor::apply` (`crates/gpu-renderer/src/effect.rs`) now blurs a
-σ of 8 or more on a copy shrunk by a power of two `f` (up to 8), chosen so
-the blur there keeps σ' ≥ 4 texels:
+σ of 8 or more on a copy shrunk by a power of two `f` (up to 8), the largest
+that keeps σ / f ≥ 4 texels (the compensated σ' below then comes out
+slightly smaller: 3.97 for σ 8):
 
 1. `downsample`: each texel is the mean of its `f`x`f` block. Texels past
    the canvas count as transparent, as they do for the blur.
@@ -111,10 +112,14 @@ between runs; the base's NEBULA ranged from 42 to 73 ms here.
 | spectra | 16.90 | 4.23 (3.20–8.51) | −75% |
 | blur | 41.07 | 6.40 (5.24–10.31) | −84% |
 
-The other workloads (`rings`, `ribbons`, `text`, `shapes`, `images`) were
-compared again with 11 rounds and none moved beyond the noise: medians
-within −5% to +9%, with overlapping ranges, and `ribbons` and `images` do
-not reach the changed code.
+In this 7-round run, the other workloads' medians moved as much as the
+M4's drift does: `ribbons` from 1.08 to 2.10 ms and `text` from 1.08 to
+1.93 ms, with ranges overlapping the base's (`ribbons`' head ran from 1.08
+to 10.04 ms), and `ribbons` and `images` do not reach the changed code. Run
+again with 11 rounds (those observations are not in the CSV), `rings`,
+`ribbons`, `text`, `shapes` and `images` stayed within the noise: medians
+within −5% to +9%, with overlapping ranges. On the RTX 4070 below, which
+does not drift, `text` got faster.
 
 ### The whole export
 

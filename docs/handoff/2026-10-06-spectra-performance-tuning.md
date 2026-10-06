@@ -7,9 +7,12 @@ led to three changes; measurements and details are in
 
 - **Workload runs.** `Source::React` takes the frames its runs start at.
   `run_frame` splits the measured frames evenly into runs of consecutive
-  frames, one per start, each `warmup` frames past its start, with the
-  warmup frames before the first run. `nebula` uses `&[0]`, so it renders
-  the same frames as before. `spectra` starts at 60, 140, 300, 400 and 600.
+  frames, one per start. The warmup frames start at the first start and
+  the first run follows them; every other run starts at its own start, so
+  CI's single-frame runs land where local ones do. `nebula` uses `&[0]`, so
+  it renders the same frames as before. `spectra` starts at 60, 140, 300,
+  410 and 600 (the crossfades into GEOMETRY and SOURCE are frames 135–149
+  and 405–419) and needs at least five measured frames.
   `perf.yml` also triggers on `examples/spectra/**`, `packages/code/**` and
   `packages/math/**`.
 - **Reduced-resolution blur.** `effect::reduced_blur` picks a factor of 2,
@@ -43,8 +46,8 @@ led to three changes; measurements and details are in
   `outline_paths` (flatten and `PathEntries::build`, relative indices) and
   `rasterize_texts` under `rayon::join`, then `place_texts` and
   `place_paths` (which offsets each path's indices and copies the entries
-  in parallel). `pending_paths` is cleared at the start of a frame, so a
-  failed frame leaves nothing behind. Unstroked text uses its glyph pixels
+  in parallel). A frame whose preparation fails part way can leave paths
+  in `pending_paths`; the next frame clears them before it starts. Unstroked text uses its glyph pixels
   as the frame, and `ImageSources` keeps one render per size and fit (up
   to four per source). `celesta-gpu-renderer` (71), `celesta-renderer`
   (95) and `celesta-exporter` tests pass on Windows with Vulkan.
