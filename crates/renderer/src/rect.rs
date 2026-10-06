@@ -181,12 +181,7 @@ fn shade_rect(
                 // Of the part of the pixel the rect covers, the fill's share;
                 // the rest is stroke.
                 let fill_share = (inner_alpha / outer_alpha).min(1.0);
-                color = Color::rgba(
-                    lerp(stroke_color.red, color.red, fill_share),
-                    lerp(stroke_color.green, color.green, fill_share),
-                    lerp(stroke_color.blue, color.blue, fill_share),
-                    lerp(stroke_color.alpha, color.alpha, fill_share),
-                );
+                color = mix_premultiplied(stroke_color, color, fill_share);
             }
 
             let offset = (y * pixel_width + x) as usize * 4;
@@ -288,10 +283,27 @@ pub(crate) fn signed_distance_rounded_box(
     qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - radius
 }
 
-pub(crate) fn lerp(a: u8, b: u8, t: f64) -> u8 {
-    (f64::from(a) + (f64::from(b) - f64::from(a)) * t)
-        .round()
-        .clamp(0.0, 255.0) as u8
+/// `a` and `b` mixed `t` of the way to `b` as premultiplied colors, returned
+/// straight. Mixing straight colors would pull a stroke's color toward a
+/// transparent fill's black, darkening its inner edge.
+fn mix_premultiplied(a: Color, b: Color, t: f64) -> Color {
+    let weight_a = f64::from(a.alpha) * (1.0 - t);
+    let weight_b = f64::from(b.alpha) * t;
+    let alpha = weight_a + weight_b;
+    if alpha <= 0.0 {
+        return Color::TRANSPARENT;
+    }
+    let channel = |a: u8, b: u8| {
+        ((f64::from(a) * weight_a + f64::from(b) * weight_b) / alpha)
+            .round()
+            .clamp(0.0, 255.0) as u8
+    };
+    Color::rgba(
+        channel(a.red, b.red),
+        channel(a.green, b.green),
+        channel(a.blue, b.blue),
+        alpha.round().clamp(0.0, 255.0) as u8,
+    )
 }
 
 pub(crate) fn dilate_mask(mask: &[u8], width: u32, height: u32, radius: u32) -> Vec<u8> {

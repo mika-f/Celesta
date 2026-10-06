@@ -327,10 +327,21 @@ fn rect_color(input: VertexOutput) -> vec4<f32> {
         if outer > 0.0 {
             fill_share = min(inner / outer, 1.0);
         }
-        // `floor(x + 0.5)` rounds like Rust's `f64::round` for these
-        // non-negative values; WGSL's `round` rounds halves to even, and
-        // lerped channels often land exactly on a half.
-        color = floor(stroke + (color - stroke) * fill_share + 0.5);
+        // Mixed premultiplied, so a transparent fill does not pull the
+        // stroke's color toward black. `floor(x + 0.5)` rounds like Rust's
+        // `f64::round` for these non-negative values; WGSL's `round` rounds
+        // halves to even, and mixed channels often land exactly on a half.
+        let stroke_weight = stroke.a * (1.0 - fill_share);
+        let fill_weight = color.a * fill_share;
+        let alpha = stroke_weight + fill_weight;
+        if alpha > 0.0 {
+            color = floor(vec4<f32>(
+                (stroke.rgb * stroke_weight + color.rgb * fill_weight) / alpha,
+                alpha,
+            ) + 0.5);
+        } else {
+            color = vec4<f32>(0.0);
+        }
     }
     return vec4<f32>(color.rgb, floor(color.a * outer + 0.5)) / 255.0;
 }
