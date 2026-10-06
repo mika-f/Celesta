@@ -268,7 +268,27 @@ pub(crate) fn bin_tiles(edges: &[LineSegment], width: u32, height: u32) -> TileB
             }
         }
     }
-    pieces.sort_unstable_by_key(|(tile, _)| *tile);
+    // Sorted by tile: first into rows with a counting sort, then each row's
+    // few pieces by column. A region has few rows, and a row few pieces,
+    // so this costs a fraction of sorting them all by comparison.
+    let mut row_starts = vec![0_usize; rows + 1];
+    for &(tile, _) in &pieces {
+        row_starts[tile / columns + 1] += 1;
+    }
+    for row in 0..rows {
+        row_starts[row + 1] += row_starts[row];
+    }
+    let mut sorted = vec![(0, [0.0; 4]); pieces.len()];
+    let mut next = row_starts.clone();
+    for piece in pieces {
+        let row = piece.0 / columns;
+        sorted[next[row]] = piece;
+        next[row] += 1;
+    }
+    for row in row_starts.windows(2) {
+        sorted[row[0]..row[1]].sort_unstable_by_key(|(tile, _)| *tile);
+    }
+    let pieces = sorted;
     backdrops.sort_unstable_by_key(|(tile, _)| *tile);
     let mut bins = TileBins {
         tiles: Vec::new(),
