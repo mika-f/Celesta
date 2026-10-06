@@ -35,15 +35,100 @@ impl Color {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GpuRenderOptions {
     pub background: Color,
+    pub driver: GpuDriver,
 }
 
 impl Default for GpuRenderOptions {
     fn default() -> Self {
         Self {
             background: Color::rgba(20, 22, 28, 255),
+            driver: GpuDriver::default(),
         }
     }
 }
+
+/// The graphics API `GpuRenderer::new` renders through.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum GpuDriver {
+    /// The first API with a GPU, in wgpu's order: Vulkan, Metal, DX12, then
+    /// OpenGL.
+    #[default]
+    Auto,
+    Vulkan,
+    /// Direct3D 12, Windows only.
+    Dx12,
+    /// macOS only.
+    Metal,
+    /// OpenGL (ES), through WGL on Windows and EGL elsewhere.
+    Gl,
+}
+
+impl GpuDriver {
+    pub const ALL: [Self; 5] = [Self::Auto, Self::Vulkan, Self::Dx12, Self::Metal, Self::Gl];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Vulkan => "vulkan",
+            Self::Dx12 => "dx12",
+            Self::Metal => "metal",
+            Self::Gl => "gl",
+        }
+    }
+
+    pub(crate) fn backends(self) -> wgpu::Backends {
+        match self {
+            Self::Auto => wgpu::Backends::all(),
+            Self::Vulkan => wgpu::Backends::VULKAN,
+            Self::Dx12 => wgpu::Backends::DX12,
+            Self::Metal => wgpu::Backends::METAL,
+            Self::Gl => wgpu::Backends::GL,
+        }
+    }
+
+    /// Whether this build of Celesta can render through this API on this
+    /// platform. It may still find no GPU that supports it.
+    pub fn is_built_in(self) -> bool {
+        wgpu::Instance::enabled_backend_features().intersects(self.backends())
+    }
+}
+
+impl fmt::Display for GpuDriver {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for GpuDriver {
+    type Err = UnknownGpuDriver;
+
+    fn from_str(name: &str) -> Result<Self, Self::Err> {
+        Self::ALL
+            .into_iter()
+            .find(|driver| driver.as_str() == name)
+            .ok_or_else(|| UnknownGpuDriver(name.to_owned()))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UnknownGpuDriver(pub(crate) String);
+
+impl fmt::Display for UnknownGpuDriver {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let names: Vec<_> = GpuDriver::ALL
+            .iter()
+            .map(|driver| driver.as_str())
+            .collect();
+        write!(
+            formatter,
+            "unknown driver '{}' (expected {})",
+            self.0,
+            names.join(", ")
+        )
+    }
+}
+
+impl Error for UnknownGpuDriver {}
 
 /// The pixel layout `GpuRenderer::submit`/`drain` read frames back in.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

@@ -27,7 +27,7 @@ pub use timecode::{TimecodeError, parse_timecode};
 mod contact_sheet;
 mod stills;
 
-pub use celesta_gpu_renderer::{RenderQuality, UnknownRenderQuality};
+pub use celesta_gpu_renderer::{GpuDriver, RenderQuality, UnknownGpuDriver, UnknownRenderQuality};
 pub use stills::{ContactSheet, FrameSelection, MAX_PNG_FRAMES, PngExport};
 
 /// Sample rate used to mix a React export's audio when no companion project

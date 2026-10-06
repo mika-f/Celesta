@@ -133,10 +133,18 @@ impl GpuRenderer {
     }
 
     pub async fn request(options: GpuRenderOptions) -> Result<Self, GpuRenderError> {
-        let instance = wgpu::Instance::default();
+        if !options.driver.is_built_in() {
+            return Err(GpuRenderError::DriverUnavailable(options.driver));
+        }
+        let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
+        descriptor.backends = options.driver.backends();
+        descriptor.backend_options.dx12.shader_compiler = dx12_shader_compiler();
+        let instance = wgpu::Instance::new(descriptor);
         Self::request_compatible(options, &instance, None).await
     }
 
+    /// `options.driver` is ignored: the adapter comes from `instance`, which
+    /// must be the one `surface` was created from.
     pub async fn request_for_surface(
         options: GpuRenderOptions,
         instance: &wgpu::Instance,
@@ -805,4 +813,22 @@ impl GpuRenderer {
 
         self.render(scene).map(PreviewFrame::Cpu)
     }
+}
+
+/// DXC when `dxcompiler.dll` sits next to the executable, FXC otherwise.
+/// wgpu's own default also searches `PATH`, where an older DXC (from the
+/// Windows SDK or another app) fails to load instead of falling back to FXC.
+/// `WGPU_DX12_COMPILER=fxc|dxc` overrides the choice.
+fn dx12_shader_compiler() -> wgpu::Dx12Compiler {
+    let bundled = std::env::current_exe()
+        .ok()
+        .and_then(|exe| Some(exe.parent()?.join("dxcompiler.dll")))
+        .filter(|dll| dll.is_file());
+    match bundled {
+        Some(dll) => wgpu::Dx12Compiler::DynamicDxc {
+            dxc_path: dll.to_string_lossy().into_owned(),
+        },
+        None => wgpu::Dx12Compiler::Fxc,
+    }
+    .with_env()
 }

@@ -1,5 +1,5 @@
-use crate::RenderQuality;
 use crate::range::ExportRange;
+use crate::{GpuDriver, RenderQuality};
 use std::error::Error;
 use std::fmt;
 use std::str::FromStr;
@@ -18,6 +18,8 @@ pub struct ExportOptions {
     /// [`RenderQuality::Final`]; this is independent of the encoder preset,
     /// which only trades encoding speed against file size.
     pub render_quality: RenderQuality,
+    /// The graphics API frames are rendered through.
+    pub driver: GpuDriver,
 }
 
 /// Settings for the exported H.264 video stream.

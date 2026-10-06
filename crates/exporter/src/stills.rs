@@ -416,6 +416,7 @@ impl Exporter {
             frame_rate,
             ColorConversion::Encoder,
             self.options.render_quality,
+            self.options.driver,
         )?;
         let mut fallbacks = ReportedFontWarnings::default();
         for (index, &frame) in frames.iter().enumerate() {
@@ -538,6 +539,7 @@ impl Exporter {
             metadata.frame_rate,
             ColorConversion::Encoder,
             self.options.render_quality,
+            self.options.driver,
         )?;
         let mut fallbacks = ReportedFontWarnings::default();
         for (index, &frame) in frames.iter().enumerate() {

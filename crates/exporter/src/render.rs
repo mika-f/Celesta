@@ -8,7 +8,7 @@ use crate::range::ExportWindow;
 use crate::react::ReactVideoRequest;
 use celesta_composition::{Rational, Scene, Time, TimeError};
 use celesta_evaluator::{EvaluationError, Evaluator};
-use celesta_gpu_renderer::{GpuRenderOptions, GpuRenderer, ReadbackFormat};
+use celesta_gpu_renderer::{GpuDriver, GpuRenderOptions, GpuRenderer, ReadbackFormat};
 use celesta_media::FfmpegBackend;
 use celesta_project::Project;
 use celesta_react_bridge::ProjectFrame;
@@ -41,6 +41,7 @@ impl Exporter {
             frame_rate,
             self.options.video.color_conversion,
             self.options.render_quality,
+            self.options.driver,
         )?;
         let mut writer = open_video_writer(
             project.settings.width,
@@ -131,6 +132,7 @@ impl Exporter {
             metadata.frame_rate,
             self.options.video.color_conversion,
             self.options.render_quality,
+            self.options.driver,
         )?;
         let mut writer = open_video_writer(
             metadata.width,
@@ -323,12 +325,16 @@ pub(crate) fn export_renderer(
     frame_rate: Rational,
     color_conversion: ColorConversion,
     render_quality: RenderQuality,
+    driver: GpuDriver,
 ) -> Result<GpuRenderer, ExportError> {
-    let mut renderer = GpuRenderer::new(GpuRenderOptions::default())
-        .map_err(ExportError::Render)?
-        .with_render_quality(render_quality)
-        .with_asset_root(asset_root)
-        .with_video_decoder(FfmpegBackend::new().with_sequential_video(frame_rate));
+    let mut renderer = GpuRenderer::new(GpuRenderOptions {
+        driver,
+        ..GpuRenderOptions::default()
+    })
+    .map_err(ExportError::Render)?
+    .with_render_quality(render_quality)
+    .with_asset_root(asset_root)
+    .with_video_decoder(FfmpegBackend::new().with_sequential_video(frame_rate));
     let on_gpu = match color_conversion {
         ColorConversion::Auto => renderer.supports_yuv420p_readback() && !renderer.is_software(),
         ColorConversion::Gpu => true,

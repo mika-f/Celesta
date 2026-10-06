@@ -31,8 +31,9 @@ pub use transform::path_transform;
 #[cfg(target_os = "macos")]
 pub use types::NativePreviewFrame;
 pub use types::{
-    Color, GpuFrame, GpuRenderOptions, GpuRenderTarget, PreviewFrame, PreviewFrameStatus,
-    PreviewViewport, ReadbackFormat, RenderQuality, UnknownRenderQuality,
+    Color, GpuDriver, GpuFrame, GpuRenderOptions, GpuRenderTarget, PreviewFrame,
+    PreviewFrameStatus, PreviewViewport, ReadbackFormat, RenderQuality, UnknownGpuDriver,
+    UnknownRenderQuality,
 };
 
 #[cfg(target_os = "macos")]
