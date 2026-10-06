@@ -4136,3 +4136,88 @@ fn baseline_anchored_text_layers_share_a_baseline() {
         );
     }
 }
+
+/// Large blurs run at a half, a quarter, or an eighth of the resolution
+/// (see `effect::reduced_blur`). Each factor must stay within the CPU
+/// renderer's exact Gaussian, also where the kernel runs off the scene and
+/// where a shadow's offset reads past its canvas.
+#[test]
+fn reduced_resolution_blurs_match_cpu() {
+    use celesta_composition::{LayerEffects, LayerGlow, LayerShadow};
+
+    let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+        return;
+    };
+    let shadow = |blur: f64, offset_x: f64, offset_y: f64| LayerEffects {
+        shadow: Some(LayerShadow {
+            color: "#40c0ffd0".to_owned(),
+            blur,
+            offset_x,
+            offset_y,
+        }),
+        ..LayerEffects::default()
+    };
+    let cases = [
+        // Factor 2, 4 and 8, with the kernel running off the top edge.
+        (
+            LayerEffects {
+                blur: 10.0,
+                ..LayerEffects::default()
+            },
+            [30.0, 20.0, 70.0, 50.0],
+        ),
+        (
+            LayerEffects {
+                blur: 24.0,
+                ..LayerEffects::default()
+            },
+            [30.0, 20.0, 70.0, 50.0],
+        ),
+        (
+            LayerEffects {
+                blur: 48.0,
+                ..LayerEffects::default()
+            },
+            [100.0, 80.0, 70.0, 50.0],
+        ),
+        // Content against the left edge, its shadow shifted away from it,
+        // so the shadow reads past the canvas.
+        (shadow(17.0, 21.5, -6.25), [0.0, 70.0, 40.0, 42.0]),
+        (
+            LayerEffects {
+                glow: Some(LayerGlow {
+                    color: "#ffe060ff".to_owned(),
+                    blur: 64.0,
+                }),
+                ..LayerEffects::default()
+            },
+            [250.0, 150.0, 70.0, 74.0],
+        ),
+    ];
+    for (effects, [x, y, width, height]) in cases {
+        let mut scene = empty_scene(320, 224);
+        scene.layers = vec![
+            corner_rect("backdrop", 0.0, 0.0, 320.0, 224.0, "#101828"),
+            Layer {
+                id: "fx".to_owned(),
+                transform: EvaluatedTransform::default(),
+                opacity: 0.9,
+                blend_mode: BlendMode::Normal,
+                effects: effects.clone(),
+                content: LayerContent::Group {
+                    layers: vec![corner_rect("content", x, y, width, height, "#ff40a0")],
+                    clip: None,
+                },
+            },
+        ];
+        let gpu = renderer.render(&scene).unwrap();
+        let cpu = celesta_renderer::CpuRenderer::default()
+            .render(&scene)
+            .unwrap();
+        let difference = max_channel_difference(&gpu, &cpu);
+        assert!(
+            difference <= 5,
+            "{effects:?}: channels differ by up to {difference}"
+        );
+    }
+}
