@@ -245,14 +245,18 @@ def report(samples, options, adapter, revisions):
         before, after = base[workload], head[workload]
         change = (statistics.median(after) / statistics.median(before) - 1) * 100
         interval = ""
+        separated = True
         if options.mode == "time":
             # Noise decides a wall-clock change: report it only if the 95%
-            # bootstrap interval of the median's change excludes zero.
-            low, high = median_change_interval(before, after, options.seed)
-            separated = len(before) > 2 and len(after) > 2 and (low > 0 or high < 0)
-            interval = f" [{low:+.1f}, {high:+.1f}]"
-        else:
-            separated = True
+            # bootstrap interval of the median's change excludes zero. With
+            # fewer than 3 samples a side the interval means nothing, so
+            # there is neither an interval nor a verdict.
+            if len(before) > 2 and len(after) > 2:
+                low, high = median_change_interval(before, after, options.seed)
+                separated = low > 0 or high < 0
+                interval = f" [{low:+.1f}, {high:+.1f}]"
+            else:
+                separated = False
         if change > options.threshold and separated:
             verdict, regressed = "🔴 slower" if options.mode == "time" else "🔴 more instructions", True
         elif change < -options.threshold and separated:

@@ -140,12 +140,10 @@ python3 scripts/bench.py compare --base v0.4.0 --head my-branch --csv out.csv
 
 It builds both revisions (the head defaults to your working tree, including
 uncommitted changes; the base is built in a worktree under
-`target/bench-worktrees/`), then runs them in alternating order for
-`--rounds` rounds (default 5) of 120 frames at 1920x1080 after 10 warmup
-frames. The table gives medians and the head's range. A workload is marked
-slower or faster only if the medians differ by more than `--threshold`
-(default 5%) and the two sides' ranges do not overlap. `--csv` writes the
-observations in the format of the other CSV files in this directory.
+`target/bench-worktrees/`), then runs them for `--rounds` rounds (default 10)
+of 120 frames at 1920x1080 after 10 warmup frames. The table gives the medians
+and the min–max range of each side. `--csv` writes the observations in the
+format of the other CSV files in this directory.
 
 Each round runs both sides in a random order, from a seed the report prints
 (`--seed` repeats a run), after one discarded round: a freshly built
