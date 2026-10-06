@@ -3,6 +3,7 @@
 `<Circle>`, `<Ellipse>`, and `<Arrow>` (`packages/react/src/shapes.ts`) are
 React components that each return one `<Path>` (issue #135); there is no new
 renderer primitive, so preview, export, CPU, and GPU draw them as any path.
+(`<Circle>` has since become a rounded `<Rect>`; see the last bullet.)
 
 - `Ellipse width height` / `Circle radius` follow `<Rect>`'s conventions,
   which `Path` alone does not: `x`/`y` place the box's `anchorX`/`anchorY`

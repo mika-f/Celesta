@@ -347,6 +347,10 @@ export function Circle({
   ...props
 }: CircleProps): ReturnType<typeof React.createElement> | null {
   dimensionOf(radius, 'radius', 'Circle');
+  // A rect with a non-finite size draws nothing, so reject one up front.
+  if (!Number.isFinite(radius * 2)) {
+    throw new Error(`<Circle> requires a \`radius\` whose diameter is finite, got ${String(radius)}`);
+  }
   const strokeWidthDrawn = stroke === undefined ? 0 : Math.min(strokeWidthOf(strokeWidth, 'Circle'), radius);
   if (radius === 0) {
     return null;

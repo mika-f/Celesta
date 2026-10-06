@@ -260,6 +260,7 @@ test('an arrow shorter than its heads shrinks them to fit, and one with no lengt
 test('shape dimensions are validated', () => {
   const cases = [
     [`<Circle radius={-1} fill="#FFFFFF" />`, /finite `radius` of at least 0/],
+    [`<Circle radius={Number.MAX_VALUE} fill="#FFFFFF" />`, /diameter is finite/],
     [`<Ellipse width={NaN} height={10} fill="#FFFFFF" />`, /finite `width` of at least 0/],
     [`<Ellipse width={10} height={10} stroke="#FFFFFF" strokeWidth={0} />`, /positive `strokeWidth`/],
     [`<Circle radius={10} stroke="#FFFFFF" strokeWidth={-1} />`, /<Circle> requires a positive `strokeWidth`/],
