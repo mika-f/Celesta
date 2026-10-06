@@ -4,16 +4,18 @@ use crate::draw::{LAYER_INSTANCE_SIZE, RectShape, clip_bind_group, clip_buffer, 
 use crate::effect::EffectSpec;
 use crate::error::GpuRenderError;
 use crate::layer::{PreparedContent, PreparedItem, PreparedLayer};
-use crate::path::{ShadedPath, path_entry_limit};
+use crate::path::{PathEntries, PendingPath, path_entry_limit};
 use crate::plan::{CompositePlan, GpuDraw, GpuStep, GroupPlan, PreparedDraws, plan_groups};
 use crate::renderer::GpuRenderer;
 use crate::text::{PendingText, text_layer, text_raster_scale};
 use crate::texture::{DecodedImage, TEXT_TEXTURE_PREFIX, canvas_texture, psd_key};
+use crate::texture::{rasterize_texts, text_jobs};
 use crate::transform::{Affine, CLIP_ENTRY_SIZE, ClipEntry, LayerState, MAX_CLIP_DEPTH};
 use crate::types::RenderQuality;
 use celesta_composition::{BlendMode, Clip, Layer, LayerContent, LayerEffects, Point, Scene};
 use celesta_renderer::image_source::{fit_within, resize_rgba};
-use celesta_renderer::{PathShape, flatten_path, rasterize_path, resolve_rect_paint};
+use celesta_renderer::{FlattenedPath, flatten_path, rasterize_path, resolve_rect_paint};
+use rayon::prelude::*;
 
 impl GpuRenderer {
     pub(crate) fn prepare_draws(&mut self, scene: &Scene) -> Result<PreparedDraws, GpuRenderError> {
@@ -34,6 +36,7 @@ impl GpuRenderer {
             self.text_font_count = font_count;
         }
         self.pending_texts.clear();
+        self.pending_paths.clear();
         self.texture_generation += 1;
         self.clip_entries.clear();
         self.paint_entries.clear();
@@ -52,7 +55,19 @@ impl GpuRenderer {
         self.textures
             .retain(|_, cached| cached.last_used == generation);
         prepared?;
-        self.resolve_pending_texts(&mut items)?;
+        // The text the cache did not have and the paths, prepared on rayon's
+        // threads at the same time.
+        let texts = std::mem::take(&mut self.pending_texts);
+        let paths = std::mem::take(&mut self.pending_paths);
+        let jobs = text_jobs(&texts);
+        let (limit, size) = (self.max_texture_dimension, self.scene_size);
+        let (rasterizer, workers) = (&mut self.text_rasterizer, &mut self.text_workers);
+        let (images, outlines) = rayon::join(
+            || rasterize_texts(rasterizer, workers, &jobs, limit),
+            || outline_paths(&paths, size),
+        );
+        self.place_texts(&texts, &jobs, images, &mut items)?;
+        self.place_paths(&paths, outlines?, &mut items)?;
 
         // A frame that blends anything but source-over composites through
         // scene-sized canvases, so its layers need one more instance: the
@@ -93,7 +108,9 @@ impl GpuRenderer {
             let target = open.last().expect("the root canvas is always open").canvas;
             let layer = match item {
                 PreparedItem::Layer(layer) => layer,
-                PreparedItem::PendingText => unreachable!("pending text is resolved"),
+                PreparedItem::PendingText | PreparedItem::PendingPath => {
+                    unreachable!("pending text and paths are resolved")
+                }
                 PreparedItem::BeginGroup => {
                     let group = groups.next().expect("plan_groups plans every group");
                     steps.push(GpuStep::BeginGroup {
@@ -590,7 +607,7 @@ impl GpuRenderer {
                     )));
                 } else {
                     // Rasterized with the frame's other new text once every
-                    // layer is prepared; see `resolve_pending_texts`.
+                    // layer is prepared; see `rasterize_texts`.
                     self.pending_texts.push(PendingText {
                         item: output.len(),
                         key,
@@ -646,74 +663,20 @@ impl GpuRenderer {
                 // renderer's rasterizer does; the coverage of every output
                 // pixel is then shaded by `layer.wgsl`, so an animated path
                 // costs neither a rasterization nor a texture upload per frame.
-                // Dense tiles or a full storage buffer use the CPU rasterizer.
-                let shape = PathShape {
-                    commands,
-                    fill: fill.as_ref(),
-                    stroke: stroke.as_ref(),
+                // It is outlined with the frame's other paths once every layer
+                // is prepared; see `outline_paths`.
+                self.pending_paths.push(PendingPath {
+                    item: output.len(),
+                    commands: commands.clone(),
+                    fill: fill.clone(),
+                    stroke: stroke.clone(),
                     line_cap: *line_cap,
                     line_join: *line_join,
                     miter_limit: *miter_limit,
-                };
-                let (width, height) = self.scene_size;
-                let Some(path) = flatten_path(&shape, state.transform.into(), width, height)
-                    .map_err(GpuRenderError::Text)?
-                else {
-                    return Ok(());
-                };
-                let (left, top) = (path.left as f32, path.top as f32);
-                let mut transform = Affine {
-                    tx: left,
-                    ty: top,
-                    ..Affine::IDENTITY
-                };
-                let content = match ShadedPath::new(
-                    &path,
-                    &mut self.paint_entries,
-                    &mut self.path_entries,
-                    path_entry_limit(&self.device.limits()),
-                ) {
-                    Some(shaded) if shaded.tiles == 0 => return Ok(()),
-                    Some(shaded) => PreparedContent::Path(shaded),
-                    None => {
-                        let Some(rasterized) =
-                            rasterize_path(&shape, state.transform.into(), width, height)
-                                .map_err(GpuRenderError::Text)?
-                        else {
-                            return Ok(());
-                        };
-                        let (raster_width, raster_height) =
-                            (rasterized.image.width(), rasterized.image.height());
-                        let (texture_width, texture_height) =
-                            fit_within(raster_width, raster_height, self.max_texture_dimension);
-                        let pixels =
-                            if (texture_width, texture_height) == (raster_width, raster_height) {
-                                rasterized.image.into_pixels()
-                            } else {
-                                resize_rgba(
-                                    raster_width,
-                                    raster_height,
-                                    rasterized.image.pixels(),
-                                    texture_width,
-                                    texture_height,
-                                )
-                                .into_raw()
-                            };
-                        // The raster already contains the layer transform;
-                        // compensate only for shrinking its output-space pixels.
-                        transform.a = raster_width as f32 / texture_width as f32;
-                        transform.d = raster_height as f32 / texture_height as f32;
-                        let image = DecodedImage::new(texture_width, texture_height, pixels)?;
-                        PreparedContent::Texture(self.upload_texture(&image, false))
-                    }
-                };
-                output.push(PreparedItem::Layer(PreparedLayer {
-                    content,
-                    anchor: Point { x: 0.0, y: 0.0 },
-                    state: LayerState { transform, ..state },
+                    state,
                     blend_mode,
-                    raster_scale: 1.0,
-                }));
+                });
+                output.push(PreparedItem::PendingPath);
             }
             LayerContent::MissingComponent { .. } => {
                 return Err(GpuRenderError::UnsupportedContent {
@@ -745,4 +708,138 @@ impl GpuRenderer {
             .push(ClipEntry::new(clip, state.transform, state.clip, depth));
         Ok(index)
     }
+}
+
+impl GpuRenderer {
+    /// Outlines the paths `prepare_layer` deferred and puts their layers in
+    /// place of their `PendingPath` items, as `prepare_draws` does.
+    #[cfg(test)]
+    pub(crate) fn resolve_pending_paths(
+        &mut self,
+        items: &mut Vec<PreparedItem>,
+    ) -> Result<(), GpuRenderError> {
+        let paths = std::mem::take(&mut self.pending_paths);
+        let outlines = outline_paths(&paths, self.scene_size)?;
+        self.place_paths(&paths, outlines, items)
+    }
+
+    /// Puts the layers of `pending`, outlined by `outline_paths`, in place
+    /// of their `PendingPath` items, and drops the items of paths that cover
+    /// no pixel. Only where each path's entries go in the frame's buffer is
+    /// chosen in order; they are copied there in parallel.
+    pub(crate) fn place_paths(
+        &mut self,
+        pending: &[PendingPath],
+        outlines: Vec<PathOutline>,
+        items: &mut Vec<PreparedItem>,
+    ) -> Result<(), GpuRenderError> {
+        if pending.is_empty() {
+            return Ok(());
+        }
+        let (width, height) = self.scene_size;
+        let entry_limit = path_entry_limit(&self.device.limits());
+        // The shaded paths' entries and where they go, in order.
+        let mut placed = Vec::new();
+        let mut end = self.path_entries.len();
+        for (path, outline) in pending.iter().zip(&outlines) {
+            let Some((flattened, entries)) = outline else {
+                continue;
+            };
+            let mut transform = Affine {
+                tx: flattened.left as f32,
+                ty: flattened.top as f32,
+                ..Affine::IDENTITY
+            };
+            let content = match entries {
+                Some(entries) if entries.tiles() == 0 => continue,
+                Some(entries) if entries.fits(end, entry_limit) => {
+                    let shaded = entries.shaded(flattened, end, &mut self.paint_entries);
+                    placed.push((entries, end));
+                    end += entries.len();
+                    PreparedContent::Path(shaded)
+                }
+                // Dense tiles or a full storage buffer use the CPU rasterizer.
+                _ => {
+                    let Some(rasterized) =
+                        rasterize_path(&path.shape(), path.state.transform.into(), width, height)
+                            .map_err(GpuRenderError::Text)?
+                    else {
+                        continue;
+                    };
+                    let (raster_width, raster_height) =
+                        (rasterized.image.width(), rasterized.image.height());
+                    let (texture_width, texture_height) =
+                        fit_within(raster_width, raster_height, self.max_texture_dimension);
+                    let pixels = if (texture_width, texture_height) == (raster_width, raster_height)
+                    {
+                        rasterized.image.into_pixels()
+                    } else {
+                        resize_rgba(
+                            raster_width,
+                            raster_height,
+                            rasterized.image.pixels(),
+                            texture_width,
+                            texture_height,
+                        )
+                        .into_raw()
+                    };
+                    // The raster already contains the layer transform;
+                    // compensate only for shrinking its output-space pixels.
+                    transform.a = raster_width as f32 / texture_width as f32;
+                    transform.d = raster_height as f32 / texture_height as f32;
+                    let image = DecodedImage::new(texture_width, texture_height, pixels)?;
+                    PreparedContent::Texture(self.upload_texture(&image, false))
+                }
+            };
+            items[path.item] = PreparedItem::Layer(PreparedLayer {
+                content,
+                anchor: Point { x: 0.0, y: 0.0 },
+                state: LayerState {
+                    transform,
+                    ..path.state
+                },
+                blend_mode: path.blend_mode,
+                raster_scale: 1.0,
+            });
+        }
+        // Each path's entries into its own part of the buffer.
+        let start = self.path_entries.len();
+        self.path_entries.resize(end, [0.0; 4]);
+        let mut parts = Vec::with_capacity(placed.len());
+        let mut rest = &mut self.path_entries[start..];
+        for (entries, base) in placed {
+            let (part, after) = std::mem::take(&mut rest).split_at_mut(entries.len());
+            parts.push((entries, base, part));
+            rest = after;
+        }
+        parts
+            .into_par_iter()
+            .for_each(|(entries, base, part)| entries.place(base, part));
+        items.retain(|item| !matches!(item, PreparedItem::PendingPath));
+        Ok(())
+    }
+}
+
+/// A pending path flattened, and its entries for `paths` unless it needs
+/// CPU rasterization; `None` when it covers no pixel.
+pub(crate) type PathOutline = Option<(FlattenedPath, Option<PathEntries>)>;
+
+/// Outlines, flattens and bins `pending` into tiles. Each path is
+/// independent of the others, and a frame of animated paths has dozens, so
+/// they spread over rayon's threads.
+pub(crate) fn outline_paths(
+    pending: &[PendingPath],
+    (width, height): (u32, u32),
+) -> Result<Vec<PathOutline>, GpuRenderError> {
+    pending
+        .par_iter()
+        .map(|path| {
+            let flattened = flatten_path(&path.shape(), path.state.transform.into(), width, height)
+                .map_err(GpuRenderError::Text)?;
+            Ok(flattened.map(|flattened| {
+                let entries = PathEntries::build(&flattened);
+                (flattened, entries)
+            }))
+        })
+        .collect()
 }

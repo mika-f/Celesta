@@ -4,6 +4,7 @@ use crate::effect::EffectProcessor;
 use crate::error::GpuRenderError;
 #[cfg(target_os = "macos")]
 use crate::native_preview;
+use crate::path::PendingPath;
 use crate::pipeline::{PipelineKind, create_pipeline};
 use crate::readback::{ReadbackLayout, ReadbackSlot, SlotReadback};
 use crate::text::PendingText;
@@ -83,8 +84,11 @@ pub struct GpuRenderer {
     /// Forks of `text_rasterizer` that rasterize a frame's new text in
     /// parallel, rebuilt whenever it loads another font.
     pub(crate) text_workers: Vec<TextRasterizer>,
-    /// This frame's text layers waiting for `resolve_pending_texts`.
+    /// This frame's text layers waiting for `rasterize_texts`.
     pub(crate) pending_texts: Vec<PendingText>,
+    /// The paths `prepare_layer` met in the frame being prepared, for
+    /// `outline_paths`.
+    pub(crate) pending_paths: Vec<PendingPath>,
     #[cfg(target_os = "macos")]
     pub(crate) native_preview: Option<native_preview::NativePreviewBridge>,
     /// Ring of reusable offscreen texture/readback-buffer pairs behind
@@ -303,6 +307,7 @@ impl GpuRenderer {
             text_rasterizer: TextRasterizer::new(),
             text_workers: Vec::new(),
             pending_texts: Vec::new(),
+            pending_paths: Vec::new(),
             #[cfg(target_os = "macos")]
             native_preview,
             readback_slots: Vec::new(),

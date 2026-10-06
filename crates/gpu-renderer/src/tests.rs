@@ -1339,6 +1339,7 @@ fn benchmark_path_transform_matches_prepared_layer() {
     renderer
         .prepare_layer(&layer, LayerState::default(), &mut items)
         .unwrap();
+    renderer.resolve_pending_paths(&mut items).unwrap();
     let [
         PreparedItem::Layer(PreparedLayer {
             content: PreparedContent::Path(_),
@@ -1725,6 +1726,7 @@ fn shrinks_path_fallback_textures_without_changing_output_bounds() {
         renderer
             .prepare_layer(&layer, LayerState::default(), &mut items)
             .unwrap();
+        renderer.resolve_pending_paths(&mut items).unwrap();
         let [
             PreparedItem::Layer(PreparedLayer {
                 content: PreparedContent::Texture(texture),
@@ -1772,6 +1774,7 @@ fn full_path_buffer_falls_back_for_only_the_next_layer() {
     renderer
         .prepare_layer(&layer, LayerState::default(), &mut items)
         .unwrap();
+    renderer.resolve_pending_paths(&mut items).unwrap();
     assert!(matches!(
         items.as_slice(),
         [PreparedItem::Layer(PreparedLayer {
@@ -3040,6 +3043,39 @@ fn submit_and_drain_return_frames_in_submission_order_with_correct_content() {
                 .all(|pixel| pixel == [color.red, color.green, color.blue, color.alpha])
         );
     }
+}
+
+#[test]
+fn a_failed_frame_leaves_no_paths_for_the_next() {
+    let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+        return;
+    };
+    let square = path_layer(
+        "square",
+        polyline(&[(0.0, 0.0), (4.0, 0.0), (4.0, 4.0), (0.0, 4.0)], true),
+        Some(solid("#FFFFFF")),
+        None,
+    );
+    let missing = Layer {
+        id: "missing".to_owned(),
+        content: LayerContent::MissingComponent {
+            component: "Missing".to_owned(),
+            props: Default::default(),
+        },
+        ..square.clone()
+    };
+    let mut scene = empty_scene(8, 8);
+    scene.layers = vec![
+        solid_rect("a", 6.0, 1.0, 1.0, "#000000"),
+        solid_rect("b", 7.0, 1.0, 1.0, "#000000"),
+        square.clone(),
+        missing,
+    ];
+    assert!(renderer.render(&scene).is_err());
+    // The failed frame's path pointed past this frame's only item.
+    scene.layers = vec![square];
+    let frame = renderer.render(&scene).unwrap();
+    assert_eq!(pixel_at(&frame, 2, 2), [255; 4]);
 }
 
 #[test]

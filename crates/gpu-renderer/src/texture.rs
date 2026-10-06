@@ -5,6 +5,7 @@ use crate::renderer::GpuRenderer;
 use crate::text::{PendingText, rasterize_text, text_layer};
 use celesta_composition::ResolvedAsset;
 use celesta_remote::resolve_asset_path;
+use celesta_renderer::TextRasterizer;
 use rayon::prelude::*;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -49,50 +50,16 @@ impl GpuRenderer {
         Ok(texture)
     }
 
-    /// Rasterizes the text `prepare_layer` found missing from the cache and
-    /// puts its layers in place of their `PendingText` items. A frame whose
-    /// labels or scale change each frame misses on dozens of texts, and each
-    /// rasterization is independent, so they spread over rayon's threads,
-    /// each with its own fork of the text rasterizer.
-    pub(crate) fn resolve_pending_texts(
+    /// Caches the textures of the text `prepare_layer` found missing from
+    /// the cache, rasterized by `rasterize_texts`, and puts its layers in
+    /// place of their `PendingText` items.
+    pub(crate) fn place_texts(
         &mut self,
+        pending: &[PendingText],
+        jobs: &[&PendingText],
+        images: Vec<Result<DecodedImage, GpuRenderError>>,
         items: &mut [PreparedItem],
     ) -> Result<(), GpuRenderError> {
-        let pending = std::mem::take(&mut self.pending_texts);
-        if pending.is_empty() {
-            return Ok(());
-        }
-        let mut seen = HashSet::new();
-        let jobs: Vec<&PendingText> = pending
-            .iter()
-            .filter(|text| seen.insert(text.key.as_str()))
-            .collect();
-        let limit = self.max_texture_dimension;
-        let images: Vec<_> = if jobs.len() == 1 {
-            vec![rasterize_text(&mut self.text_rasterizer, jobs[0], limit)]
-        } else {
-            let workers = jobs
-                .len()
-                .min(rayon::current_num_threads())
-                .min(MAX_TEXT_WORKERS);
-            while self.text_workers.len() < workers {
-                self.text_workers.push(self.text_rasterizer.fork());
-            }
-            let chunk = jobs.len().div_ceil(workers);
-            // One result list per chunk, in chunk order, so the flattened
-            // images line up with `jobs`.
-            let chunks: Vec<Vec<_>> = self
-                .text_workers
-                .par_iter_mut()
-                .zip(jobs.par_chunks(chunk))
-                .map(|(rasterizer, jobs)| {
-                    jobs.iter()
-                        .map(|job| rasterize_text(rasterizer, job, limit))
-                        .collect()
-                })
-                .collect();
-            chunks.into_iter().flatten().collect()
-        };
         let generation = self.texture_generation;
         for (job, image) in jobs.iter().zip(images) {
             let texture = self.upload_texture(&image?, false);
@@ -391,4 +358,51 @@ pub(crate) fn canvas_texture(
         view,
         bind_group,
     }
+}
+
+/// The texts of `pending` to rasterize: the first of each key.
+pub(crate) fn text_jobs(pending: &[PendingText]) -> Vec<&PendingText> {
+    let mut seen = HashSet::new();
+    pending
+        .iter()
+        .filter(|text| seen.insert(text.key.as_str()))
+        .collect()
+}
+
+/// Rasterizes `jobs`, in order. A frame whose labels or scale change each
+/// frame misses on dozens of texts, and each rasterization is independent,
+/// so they spread over rayon's threads, each with its own fork of
+/// `rasterizer` from `workers`.
+pub(crate) fn rasterize_texts(
+    rasterizer: &mut TextRasterizer,
+    workers: &mut Vec<TextRasterizer>,
+    jobs: &[&PendingText],
+    limit: u32,
+) -> Vec<Result<DecodedImage, GpuRenderError>> {
+    if jobs.len() <= 1 {
+        return jobs
+            .iter()
+            .map(|job| rasterize_text(rasterizer, job, limit))
+            .collect();
+    }
+    let count = jobs
+        .len()
+        .min(rayon::current_num_threads())
+        .min(MAX_TEXT_WORKERS);
+    while workers.len() < count {
+        workers.push(rasterizer.fork());
+    }
+    let chunk = jobs.len().div_ceil(count);
+    // One result list per chunk, in chunk order, so the flattened images
+    // line up with `jobs`.
+    let chunks: Vec<Vec<_>> = workers
+        .par_iter_mut()
+        .zip(jobs.par_chunks(chunk))
+        .map(|(rasterizer, jobs)| {
+            jobs.iter()
+                .map(|job| rasterize_text(rasterizer, job, limit))
+                .collect()
+        })
+        .collect();
+    chunks.into_iter().flatten().collect()
 }
