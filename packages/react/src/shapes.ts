@@ -1,5 +1,6 @@
 import * as React from 'react';
 
+import { Rect } from './components';
 import type { CommonProps } from './components';
 import type { LineCap, LineJoin, Paint, PathCommand } from './scene';
 
@@ -333,10 +334,31 @@ export function Ellipse({
   });
 }
 
-/** A circle of `radius`, as an `<Ellipse>` `2 * radius` square. */
-export function Circle({ radius, ...props }: CircleProps): ReturnType<typeof React.createElement> | null {
+/**
+ * A circle of `radius`, placed like an `<Ellipse>` `2 * radius` square but
+ * drawn as a `<Rect>` with `cornerRadius` `radius`: shaded directly on the
+ * GPU with no outline to flatten, so many animated circles are much cheaper
+ * than paths.
+ */
+export function Circle({
+  radius,
+  stroke,
+  strokeWidth,
+  ...props
+}: CircleProps): ReturnType<typeof React.createElement> | null {
   dimensionOf(radius, 'radius', 'Circle');
-  return React.createElement(Ellipse, { ...props, width: radius * 2, height: radius * 2 });
+  const strokeWidthDrawn = stroke === undefined ? 0 : Math.min(strokeWidthOf(strokeWidth, 'Circle'), radius);
+  if (radius === 0) {
+    return null;
+  }
+  return React.createElement(Rect, {
+    ...props,
+    width: radius * 2,
+    height: radius * 2,
+    cornerRadius: radius,
+    stroke,
+    ...(stroke === undefined ? {} : { strokeWidth: strokeWidthDrawn }),
+  });
 }
 
 /**
