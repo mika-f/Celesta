@@ -85,7 +85,8 @@ impl PreparedLayer {
     ) {
         let (texel_width, texel_height, kind) = match &self.content {
             PreparedContent::Texture(texture) => (texture.width, texture.height, 0.0),
-            PreparedContent::Rect(rect) => (rect.pixel_width, rect.pixel_height, 1.0),
+            // Unused: a rect is shaded at its exact size, `size` below.
+            PreparedContent::Rect(_) => (1, 1, 1.0),
             PreparedContent::Path(path) => (path.width, path.height, 2.0),
             PreparedContent::Canvas { .. } => (canvas.width, canvas.height, 0.0),
         };
@@ -118,9 +119,12 @@ impl PreparedLayer {
             transform.ty += canvas.y as f32;
         }
         // A layer whose texels land one to one on canvas pixels is copied
-        // exactly; anything scaled or rotated is filtered.
+        // exactly; anything scaled or rotated is filtered. A rect has no
+        // texels: it is shaded wherever it lands, so it is never moved onto
+        // a whole pixel.
         let exact = transform.is_uniform_scale(self.raster_scale);
-        let (tx, ty) = if exact {
+        let is_rect = matches!(self.content, PreparedContent::Rect(_));
+        let (tx, ty) = if exact && !is_rect {
             self.pixel_aligned_translation(transform, texel_width, texel_height)
         } else {
             (transform.tx, transform.ty)
@@ -133,6 +137,7 @@ impl PreparedLayer {
                 .max(1.0)
                 .log2()
         };
+        let (width, height) = self.size(texel_width, texel_height);
         let values = [
             transform.a,
             transform.b,
@@ -140,8 +145,8 @@ impl PreparedLayer {
             transform.d,
             tx,
             ty,
-            texel_width as f32 / self.raster_scale,
-            texel_height as f32 / self.raster_scale,
+            width,
+            height,
             self.anchor.x as f32,
             self.anchor.y as f32,
             self.state.opacity,
@@ -174,15 +179,18 @@ impl PreparedLayer {
     pub(crate) fn bounds(&self) -> PixelBounds {
         let (texel_width, texel_height) = match &self.content {
             PreparedContent::Texture(texture) => (texture.width, texture.height),
-            PreparedContent::Rect(rect) => (rect.pixel_width, rect.pixel_height),
+            PreparedContent::Rect(_) => (1, 1),
             PreparedContent::Path(path) => (path.width, path.height),
             PreparedContent::Canvas { .. } => unreachable!("only a group's end draws a canvas"),
         };
-        let width = texel_width as f32 / self.raster_scale;
-        let height = texel_height as f32 / self.raster_scale;
+        let (width, height) = self.size(texel_width, texel_height);
         let transform = self.state.transform;
         let anchor = [self.anchor.x as f32, self.anchor.y as f32];
-        let (margin_u, margin_v) = if transform.is_uniform_scale(self.raster_scale) {
+        // A rect's quad reaches one pixel past its edge, within the growth
+        // below.
+        let (margin_u, margin_v) = if matches!(self.content, PreparedContent::Rect(_))
+            || transform.is_uniform_scale(self.raster_scale)
+        {
             (0.0, 0.0)
         } else {
             (1.0 / texel_width as f32, 1.0 / texel_height as f32)
@@ -208,6 +216,18 @@ impl PreparedLayer {
         let min = |values: [f32; 4]| values.into_iter().fold(f32::INFINITY, f32::min);
         let max = |values: [f32; 4]| values.into_iter().fold(f32::NEG_INFINITY, f32::max);
         PixelBounds([min(xs), min(ys), max(xs), max(ys)]).expand(2.0, 2.0)
+    }
+
+    /// The layer's size in layer units: a rect's own, or `texel_width` x
+    /// `texel_height` texels at `raster_scale`.
+    fn size(&self, texel_width: u32, texel_height: u32) -> (f32, f32) {
+        match &self.content {
+            PreparedContent::Rect(rect) => (2.0 * rect.half_width, 2.0 * rect.half_height),
+            _ => (
+                texel_width as f32 / self.raster_scale,
+                texel_height as f32 / self.raster_scale,
+            ),
+        }
     }
 
     /// The translation of a layer drawn texel for texel, moved so its

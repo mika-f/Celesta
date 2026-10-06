@@ -529,7 +529,7 @@ fn blends_layers_and_isolated_groups_like_the_cpu_renderer() {
 }
 
 #[test]
-fn shades_rects_like_their_rasterized_texture() {
+fn shades_rects_like_the_cpu_rasterizer() {
     let Some(mut renderer) = renderer(GpuRenderOptions {
         background: Color::rgba(10, 20, 30, 255),
     }) else {
@@ -596,6 +596,20 @@ fn shades_rects_like_their_rasterized_texture() {
             1.0,
         ),
         (0.4, 9.0, 0.0, fill("#ffff00"), None, 45.0, 3.0, 1.0),
+        // Thinner than a pixel, or empty: covered no more than they are wide.
+        (0.3, 9.0, 0.0, fill("#ffff00"), None, 0.0, 1.0, 1.0),
+        (0.0, 9.0, 0.0, fill("#ffff00"), None, 17.0, 1.0, 1.0),
+        // A stroke reaching the centre from every side hides the fill.
+        (
+            5.0,
+            5.0,
+            0.0,
+            fill("#ffffff"),
+            Some(stroke("#ff0000", 2.5)),
+            0.0,
+            1.0,
+            1.0,
+        ),
         // Gradients, shaded from the stops rather than rasterized.
         (
             40.0,
@@ -663,13 +677,20 @@ fn shades_rects_like_their_rasterized_texture() {
             1.0,
         ),
     ];
-    for (index, (width, height, corner_radius, fill, stroke, rotation, scale, opacity)) in
-        cases.into_iter().enumerate()
+    // Each case also squashed vertically, for a non-uniform scale.
+    let cases = cases
+        .iter()
+        .flat_map(|case| [(case.clone(), 1.0), (case.clone(), 0.6)]);
+    for (index, ((width, height, corner_radius, fill, stroke, rotation, scale, opacity), squash)) in
+        cases.enumerate()
     {
         let transform = EvaluatedTransform {
             position: Point { x: 32.3, y: 29.6 },
             rotation,
-            scale: Point { x: scale, y: scale },
+            scale: Point {
+                x: scale,
+                y: scale * squash,
+            },
             ..EvaluatedTransform::default()
         };
         let rect = Layer {
@@ -686,60 +707,254 @@ fn shades_rects_like_their_rasterized_texture() {
                 corner_radius,
             },
         };
-        let rasterized = celesta_renderer::rasterize_rect(
-            width,
-            height,
-            corner_radius,
-            fill.as_ref(),
-            stroke.as_ref(),
-        )
-        .unwrap();
-        let id = format!("rasterized-{index}");
-        renderer.image_sources.insert_raster(
-            &id,
-            image::RgbaImage::from_raw(
-                rasterized.width(),
-                rasterized.height(),
-                rasterized.into_pixels(),
-            )
-            .unwrap(),
-        );
-        let image = Layer {
-            id: id.clone(),
-            transform,
-            opacity,
-            blend_mode: BlendMode::Normal,
-            effects: Default::default(),
-            content: LayerContent::Image {
-                width: None,
-                height: None,
-                fit: None,
-                asset: ResolvedAsset {
-                    id: id.clone(),
-                    location: AssetLocation::File { path: id },
-                },
-            },
-        };
-
         let mut scene = empty_scene(64, 60);
         scene.layers = vec![rect];
-        let shaded = renderer.render(&scene).unwrap();
-        scene.layers = vec![image];
-        let sampled = renderer.render(&scene).unwrap();
-        // The shader works in f32 and the rasterizer in f64, so a
-        // stroke's blend of the two colors can land on a rounding tie in
-        // one and just miss it in the other: one code value at most.
-        let max_difference = shaded
-            .pixels()
-            .iter()
-            .zip(sampled.pixels())
-            .map(|(shaded, sampled)| shaded.abs_diff(*sampled))
-            .max()
-            .unwrap();
-        assert!(
-            max_difference <= 1,
-            "case {index}: channels differ by up to {max_difference}"
-        );
+        assert_rect_matches_cpu(&mut renderer, &scene, path_transform(&transform), &index);
+    }
+}
+
+#[test]
+fn shades_sheared_rects_like_the_cpu_rasterizer() {
+    let Some(mut renderer) = renderer(GpuRenderOptions {
+        background: Color::rgba(10, 20, 30, 255),
+    }) else {
+        return;
+    };
+    // A rect rotated inside a group scaled non-uniformly is sheared: its
+    // local axes are no longer perpendicular on the canvas, so each rounded
+    // corner's anti-aliasing depends on which corner it is.
+    let rounded = LayerContent::Rect {
+        width: 30.5,
+        height: 18.25,
+        fill: Some(Paint::Solid {
+            color: "#ffffff".to_owned(),
+        }),
+        stroke: Some(Stroke {
+            paint: Paint::Solid {
+                color: "#ff4000c0".to_owned(),
+            },
+            width: 2.5,
+        }),
+        corner_radius: 7.0,
+    };
+    // Thinner than a pixel: its coverage is capped by its width across the
+    // leaning edges.
+    let thin = LayerContent::Rect {
+        width: 0.3,
+        height: 24.0,
+        fill: Some(Paint::Solid {
+            color: "#ffffff".to_owned(),
+        }),
+        stroke: None,
+        corner_radius: 0.0,
+    };
+    let cases = [(30.0, (1.6, 0.7)), (-55.0, (0.8, 1.9))]
+        .into_iter()
+        .flat_map(|case| [(case, rounded.clone()), (case, thin.clone())]);
+    for (index, ((rotation, group_scale), content)) in cases.enumerate() {
+        let group_transform = EvaluatedTransform {
+            position: Point { x: 31.7, y: 30.2 },
+            scale: Point {
+                x: group_scale.0,
+                y: group_scale.1,
+            },
+            ..EvaluatedTransform::default()
+        };
+        let rect_transform = EvaluatedTransform {
+            rotation,
+            ..EvaluatedTransform::default()
+        };
+        let mut scene = empty_scene(64, 60);
+        scene.layers = vec![Layer {
+            id: "group".to_owned(),
+            transform: group_transform,
+            opacity: 0.8,
+            blend_mode: BlendMode::Normal,
+            effects: Default::default(),
+            content: LayerContent::Group {
+                layers: vec![Layer {
+                    id: "rect".to_owned(),
+                    transform: rect_transform,
+                    opacity: 0.9,
+                    blend_mode: BlendMode::Normal,
+                    effects: Default::default(),
+                    content,
+                }],
+                clip: None,
+            },
+        }];
+        let layer = LayerState::default()
+            .then(&group_transform, 1.0)
+            .then(&rect_transform, 1.0)
+            .transform
+            .into();
+        assert_rect_matches_cpu(&mut renderer, &scene, layer, &format!("sheared {index}"));
+    }
+}
+
+/// Renders `scene`, whose only visible layer is a rect drawn through
+/// `layer` (its layer transform, without the anchor), and compares it with
+/// `celesta_renderer::rasterize_rect_transformed` over the background
+/// (10, 20, 30).
+fn assert_rect_matches_cpu(
+    renderer: &mut GpuRenderer,
+    scene: &Scene,
+    layer: celesta_renderer::PathTransform,
+    case: &dyn std::fmt::Display,
+) {
+    let shaded = renderer.render(scene).unwrap();
+    /// The rect inside `layer`, and its opacity through every group.
+    fn rect(layer: &Layer) -> (&Layer, f64) {
+        match &layer.content {
+            LayerContent::Group { layers, .. } => {
+                let (rect, opacity) = rect(&layers[0]);
+                (rect, layer.opacity * opacity)
+            }
+            _ => (layer, layer.opacity),
+        }
+    }
+    let (rect, opacity) = rect(&scene.layers[0]);
+    let LayerContent::Rect {
+        width,
+        height,
+        fill,
+        stroke,
+        corner_radius,
+    } = &rect.content
+    else {
+        unreachable!("the scene draws a rect");
+    };
+    // The rect's box `[0, width] x [0, height]`, its anchor on the layer's
+    // position.
+    let anchor = rect.transform.anchor;
+    let (anchor_x, anchor_y) = (-anchor.x * width, -anchor.y * height);
+    let placement = celesta_renderer::PathTransform {
+        tx: layer.tx + layer.a * anchor_x + layer.c * anchor_y,
+        ty: layer.ty + layer.b * anchor_x + layer.d * anchor_y,
+        ..layer
+    };
+    let paint = celesta_renderer::resolve_rect_paint(fill.as_ref(), stroke.as_ref()).unwrap();
+    let rasterized = celesta_renderer::rasterize_rect_transformed(
+        *width,
+        *height,
+        *corner_radius,
+        &paint,
+        placement,
+        scene.width,
+        scene.height,
+    )
+    .unwrap();
+    let mut expected: Vec<u8> = (0..scene.width * scene.height)
+        .flat_map(|_| [10, 20, 30, 255])
+        .collect();
+    let image = &rasterized.image;
+    for (offset, texel) in image.pixels().chunks_exact(4).enumerate() {
+        let x = rasterized.left as usize + offset % image.width() as usize;
+        let y = rasterized.top as usize + offset / image.width() as usize;
+        let pixel = &mut expected[(y * scene.width as usize + x) * 4..][..3];
+        let alpha = f64::from(texel[3]) / 255.0 * opacity;
+        for (channel, value) in pixel.iter_mut().zip(texel) {
+            *channel =
+                (f64::from(*value) * alpha + f64::from(*channel) * (1.0 - alpha)).round() as u8;
+        }
+    }
+    // The shader works in f32 and the rasterizer in f64, so an edge's
+    // coverage, a gradient's color or a stroke's blend of the two colors
+    // can land on a rounding tie in one and just miss it in the other.
+    // At an edge pixel the color and the coverage can each be one code
+    // off, and blending onto the background compounds them into two
+    // (seen on lavapipe). A misplaced edge differs by far more.
+    let max_difference = shaded
+        .pixels()
+        .iter()
+        .zip(&expected)
+        .map(|(shaded, expected)| shaded.abs_diff(*expected))
+        .max()
+        .unwrap();
+    assert!(
+        max_difference <= 2,
+        "case {case}: channels differ by up to {max_difference}"
+    );
+}
+
+#[test]
+fn shades_rects_in_scene_pixels_through_a_scaled_preview_viewport() {
+    let Some(mut renderer) = renderer(GpuRenderOptions {
+        background: Color::rgba(0, 0, 0, 255),
+    }) else {
+        return;
+    };
+    // A 32x16 scene letterboxed into a 64x64 target: scaled by 2 into the
+    // viewport at y 16..48.
+    let mut scene = empty_scene(32, 16);
+    scene.layers = vec![corner_rect("rect", 4.5, 4.0, 10.0, 6.0, "#ffffff")];
+    let (width, height) = (64, 64);
+    let texture = renderer.device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("Celesta viewport test target"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+    renderer
+        .render_to_target(
+            &scene,
+            GpuRenderTarget {
+                view: &view,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                width,
+                height,
+            },
+        )
+        .unwrap();
+    let layout = ReadbackLayout::new(width, height).unwrap();
+    let buffer = renderer.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Celesta viewport test readback"),
+        size: layout.buffer_size,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut encoder = renderer
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+    encoder.copy_texture_to_buffer(
+        texture.as_image_copy(),
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buffer,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(layout.padded_bytes_per_row),
+                rows_per_image: Some(height),
+            },
+        },
+        texture.size(),
+    );
+    renderer.queue.submit([encoder.finish()]);
+    buffer.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+    renderer
+        .device
+        .poll(wgpu::PollType::wait_indefinitely())
+        .unwrap();
+    let mapped = buffer.slice(..).get_mapped_range().unwrap();
+    let pixels = layout.unpad(&mapped, width, height).unwrap();
+    let red = |x: u32, y: u32| pixels[((y * width + x) * 4) as usize];
+
+    // The rect covers scene x 4.5..14.5, y 4..10: target x 9..29, y 24..36,
+    // anti-aliased over a scene pixel (two target pixels). Sampled 0.75
+    // scene pixels inside and outside each edge.
+    for (x, y) in [(19, 30), (10, 25), (27, 34)] {
+        assert_eq!(red(x, y), 255, "inside at {x}, {y}");
+    }
+    for (x, y) in [(7, 30), (30, 30), (19, 22), (19, 37)] {
+        assert_eq!(red(x, y), 0, "outside at {x}, {y}");
     }
 }
 

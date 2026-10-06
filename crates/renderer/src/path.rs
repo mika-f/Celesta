@@ -701,7 +701,7 @@ fn build_path(commands: &[PathCommand]) -> Option<tiny_skia::Path> {
     builder.finish()
 }
 
-fn invert(t: PathTransform) -> Option<PathTransform> {
+pub(crate) fn invert(t: PathTransform) -> Option<PathTransform> {
     let determinant = t.a * t.d - t.b * t.c;
     if !determinant.is_normal() {
         return None;
@@ -722,7 +722,7 @@ fn invert(t: PathTransform) -> Option<PathTransform> {
     })
 }
 
-fn apply(t: PathTransform, x: f64, y: f64) -> (f64, f64) {
+pub(crate) fn apply(t: PathTransform, x: f64, y: f64) -> (f64, f64) {
     (t.a * x + t.c * y + t.tx, t.b * x + t.d * y + t.ty)
 }
 

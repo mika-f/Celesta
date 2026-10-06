@@ -61,13 +61,9 @@ pub(crate) fn clip_bind_group(
     })
 }
 
-/// A rect drawn by `layer.wgsl`'s `rect_color`, which reproduces
-/// `celesta_renderer::rasterize_rect` texel for texel.
+/// A rect drawn by `layer.wgsl`'s `rect_color`, which shades every output
+/// pixel it covers as `celesta_renderer::rasterize_rect_transformed` does.
 pub(crate) struct RectShape {
-    /// The size of the texture `rasterize_rect` would produce: the rect's
-    /// size rounded up to whole pixels, at least 1x1.
-    pub(crate) pixel_width: u32,
-    pub(crate) pixel_height: u32,
     pub(crate) half_width: f32,
     pub(crate) half_height: f32,
     pub(crate) radius: f32,
@@ -96,8 +92,6 @@ impl RectShape {
         let half_width = width / 2.0;
         let half_height = height / 2.0;
         Self {
-            pixel_width: width.max(0.0).ceil().max(1.0) as u32,
-            pixel_height: height.max(0.0).ceil().max(1.0) as u32,
             half_width: half_width as f32,
             half_height: half_height as f32,
             radius: corner_radius.max(0.0).min(half_width.min(half_height)) as f32,

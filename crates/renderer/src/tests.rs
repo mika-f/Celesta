@@ -1482,3 +1482,337 @@ fn rasterize_psd_disabled_layers_win_over_enabled() {
     // With the mouth suppressed the pixel is the bare skin base.
     assert_eq!(pixel_at(&without, 120, 150), [250, 224, 205, 255]);
 }
+
+/// The red channel along row 2 (or, `vertical`, column 2) of a 32x32 black
+/// canvas holding a white rect `length` long and 2 units across, its start
+/// at `at` with `anchor` along it, scaled by `along` and `across`.
+fn rect_line(
+    vertical: bool,
+    at: f64,
+    length: f64,
+    anchor: f64,
+    (along, across): (f64, f64),
+) -> Vec<u8> {
+    let swap = |along: f64, across: f64| {
+        if vertical {
+            Point {
+                x: across,
+                y: along,
+            }
+        } else {
+            Point {
+                x: along,
+                y: across,
+            }
+        }
+    };
+    let size = swap(length, 2.0);
+    let layer = Layer {
+        transform: EvaluatedTransform {
+            position: swap(at, 1.0),
+            anchor: swap(anchor, 0.0),
+            scale: swap(along, across),
+            ..EvaluatedTransform::default()
+        },
+        content: LayerContent::Rect {
+            width: size.x,
+            height: size.y,
+            fill: Some(Paint::Solid {
+                color: "#FFFFFFFF".to_owned(),
+            }),
+            stroke: None,
+            corner_radius: 0.0,
+        },
+        ..red_square()
+    };
+    let scene = Scene {
+        width: 32,
+        height: 32,
+        ..clip_scene(vec![layer])
+    };
+    let frame = CpuRenderer::new(RenderOptions {
+        background: Color::rgba(0, 0, 0, 255),
+    })
+    .render(&scene)
+    .unwrap();
+    (0..32)
+        .map(|i| {
+            let (x, y) = if vertical { (2, i) } else { (i, 2) };
+            pixel(&frame, x, y)[0]
+        })
+        .collect()
+}
+
+#[test]
+fn rects_keep_fractional_positions_sizes_anchors_and_scales() {
+    /// A black line with `pixels` from pixel `first` on.
+    fn expected(first: usize, pixels: &[u8]) -> Vec<u8> {
+        let mut line = vec![0; 32];
+        line[first..first + pixels.len()].copy_from_slice(pixels);
+        line
+    }
+    let full = |count: usize| vec![255; count];
+    let with = |start: u8, middle: Vec<u8>, end: u8| [vec![start], middle, vec![end]].concat();
+    // Along x, then along y.
+    let check = |at: f64, length: f64, anchor: f64, scale: (f64, f64), line: Vec<u8>| {
+        for vertical in [false, true] {
+            assert_eq!(
+                rect_line(vertical, at, length, anchor, scale),
+                line,
+                "vertical: {vertical}, at {at}, length {length}, anchor {anchor}, scale {scale:?}"
+            );
+        }
+    };
+
+    // Half-pixel position: both edges half covered, not snapped.
+    check(
+        10.5,
+        10.0,
+        0.0,
+        (1.0, 1.0),
+        expected(10, &with(128, full(9), 128)),
+    );
+    // Centred on a fractional length: [14.75, 25.25], symmetric.
+    check(
+        20.0,
+        10.5,
+        0.5,
+        (1.0, 1.0),
+        expected(14, &with(64, full(10), 64)),
+    );
+    // Scaled up: 10.25 * 2 = 20.5 pixels, not 11 texels stretched to 22.
+    check(
+        4.0,
+        10.25,
+        0.0,
+        (2.0, 2.0),
+        expected(4, &[full(20), vec![128]].concat()),
+    );
+    // A fractional scale: 10 * 1.25 = 12.5 pixels.
+    check(
+        4.0,
+        10.0,
+        0.0,
+        (1.25, 1.25),
+        expected(4, &[full(12), vec![128]].concat()),
+    );
+    // A non-uniform scale keeps the edge along the stretched axis exact too.
+    check(
+        4.0,
+        10.0,
+        0.0,
+        (1.25, 1.0),
+        expected(4, &[full(12), vec![128]].concat()),
+    );
+    // A negative scale mirrors the rect about its position.
+    check(
+        20.5,
+        10.0,
+        0.0,
+        (-1.0, 1.0),
+        expected(10, &with(128, full(9), 128)),
+    );
+}
+
+#[test]
+fn rects_thinner_than_a_pixel_cover_only_their_width() {
+    for vertical in [false, true] {
+        let total = |at: f64, length: f64| -> u32 {
+            rect_line(vertical, at, length, 0.0, (1.0, 1.0))
+                .into_iter()
+                .map(u32::from)
+                .sum()
+        };
+        // Empty: nothing, even centred on a pixel.
+        assert_eq!(total(16.5, 0.0), 0, "vertical: {vertical}");
+        // A tenth of a pixel covers a tenth of one, on a pixel's centre or
+        // across a pixel boundary alike.
+        assert_eq!(total(16.45, 0.1), 26, "vertical: {vertical}");
+        assert_eq!(total(15.95, 0.1), 26, "vertical: {vertical}");
+    }
+}
+
+#[test]
+fn rects_of_negative_size_draw_nothing() {
+    for vertical in [false, true] {
+        assert_eq!(
+            rect_line(vertical, 16.5, -5.0, 0.0, (1.0, 1.0)),
+            vec![0; 32],
+            "vertical: {vertical}"
+        );
+    }
+}
+
+/// The straight RGBA pixels of a rect painted white (and stroked black at
+/// `stroke_width`, if any) through `transform`, on a 32x16 canvas.
+fn transformed_rect(
+    width: f64,
+    height: f64,
+    stroke_width: Option<f64>,
+    transform: crate::PathTransform,
+) -> RgbaFrame {
+    let stroke = stroke_width.map(|width| celesta_composition::Stroke {
+        paint: Paint::Solid {
+            color: "#000000".to_owned(),
+        },
+        width,
+    });
+    let paint = crate::rect::resolve_rect_paint(
+        Some(&Paint::Solid {
+            color: "#FFFFFF".to_owned(),
+        }),
+        stroke.as_ref(),
+    )
+    .unwrap();
+    let rect =
+        crate::rect::rasterize_rect_transformed(width, height, 0.0, &paint, transform, 32, 16)
+            .unwrap();
+    let mut frame = RgbaFrame {
+        width: 32,
+        height: 16,
+        pixels: vec![0; 32 * 16 * 4],
+    };
+    for (index, texel) in rect.image.pixels().chunks_exact(4).enumerate() {
+        let x = rect.left as u32 + index as u32 % rect.image.width();
+        let y = rect.top as u32 + index as u32 / rect.image.width();
+        let offset = ((y * 32 + x) * 4) as usize;
+        frame.pixels[offset..offset + 4].copy_from_slice(texel);
+    }
+    frame
+}
+
+/// What a white rect `width` x `height` drawn through `transform` (its
+/// translation then moved by each of ten sub-pixel offsets) covers, over its
+/// area: the lowest and the highest.
+fn coverage_over_offsets(width: f64, height: f64, transform: crate::PathTransform) -> (f64, f64) {
+    let paint = crate::rect::resolve_rect_paint(
+        Some(&Paint::Solid {
+            color: "#FFFFFF".to_owned(),
+        }),
+        None,
+    )
+    .unwrap();
+    let area = width * height * (transform.a * transform.d - transform.b * transform.c).abs();
+    (0..10)
+        .map(|step| {
+            let offset = f64::from(step) / 10.0;
+            let transform = crate::PathTransform {
+                tx: transform.tx + offset,
+                ty: transform.ty + offset * 0.37,
+                ..transform
+            };
+            let rect = crate::rect::rasterize_rect_transformed(
+                width, height, 0.0, &paint, transform, 200, 120,
+            )
+            .unwrap();
+            let covered: f64 = rect
+                .image
+                .pixels()
+                .chunks_exact(4)
+                .map(|pixel| f64::from(pixel[3]) / 255.0)
+                .sum();
+            covered / area
+        })
+        .fold((f64::MAX, f64::MIN), |(low, high), ratio| {
+            (low.min(ratio), high.max(ratio))
+        })
+}
+
+/// Rotations and shears (`x' = a x + c y`, `y' = b x + d y`) that lean
+/// edges off the pixel grid.
+fn leaning_transforms() -> [(&'static str, crate::PathTransform); 4] {
+    let rotation = |degrees: f64| {
+        let (sin, cos) = degrees.to_radians().sin_cos();
+        crate::PathTransform {
+            a: cos,
+            b: sin,
+            c: -sin,
+            d: cos,
+            tx: 60.0,
+            ty: 30.0,
+        }
+    };
+    let shear = |c: f64| crate::PathTransform {
+        a: 1.0,
+        b: 0.0,
+        c,
+        d: 1.0,
+        tx: 60.0,
+        ty: 30.0,
+    };
+    [
+        ("rotated 30", rotation(30.0)),
+        ("rotated 45", rotation(45.0)),
+        ("sheared 1", shear(1.0)),
+        ("sheared 2", shear(2.0)),
+    ]
+}
+
+#[test]
+fn thin_strips_cover_their_area_wherever_they_fall() {
+    // A single sample per pixel measured in Euclidean pixels drew a 0.1 px
+    // strip at 45 degrees anywhere from 0.71 to 1.45 of its area depending on
+    // where its edges fell between pixel centres, so a moving strip
+    // flickered.
+    for (name, transform) in leaning_transforms() {
+        for width in [0.1, 0.25, 0.5, 1.0] {
+            let (low, high) = coverage_over_offsets(width, 40.0, transform);
+            assert!(
+                low >= 0.97 && high <= 1.12,
+                "{name}, width {width}: {low:.2} to {high:.2}"
+            );
+        }
+    }
+}
+
+#[test]
+fn boxes_within_a_pixel_stay_near_their_area_when_leaning() {
+    // Smaller than a pixel in both directions, one sample cannot place a
+    // box exactly, but it neither vanishes nor draws several times its area.
+    for (name, transform) in leaning_transforms() {
+        for (width, height) in [(0.2, 0.2), (0.5, 0.3)] {
+            let (low, high) = coverage_over_offsets(width, height, transform);
+            assert!(
+                low >= 0.4 && high <= 1.8,
+                "{name}, {width}x{height}: {low:.2} to {high:.2}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_thin_stroked_rect_mixes_by_the_covered_area() {
+    // 0.1 of a pixel wide on pixel 16's centre, stroked 0.02 on each side:
+    // of what it covers, 0.06 / 0.1 is fill.
+    let frame = transformed_rect(
+        0.1,
+        10.0,
+        Some(0.02),
+        crate::PathTransform::scale_translate(1.0, 1.0, 16.45, 3.0),
+    );
+    assert_eq!(pixel(&frame, 16, 8), [153, 153, 153, 26]);
+}
+
+#[test]
+fn a_stroke_filling_the_rect_hides_its_fill() {
+    // The stroke reaches the centre from every side: no fill shows, not
+    // even half of it along the centre line.
+    let rect = rasterize_rect(
+        5.0,
+        5.0,
+        0.0,
+        Some(&Paint::Solid {
+            color: "#FFFFFF".to_owned(),
+        }),
+        Some(&celesta_composition::Stroke {
+            paint: Paint::Solid {
+                color: "#FF0000".to_owned(),
+            },
+            width: 2.5,
+        }),
+    )
+    .unwrap();
+    for pixel in rect.pixels().chunks_exact(4) {
+        assert_eq!(pixel, [255, 0, 0, 255]);
+    }
+}
