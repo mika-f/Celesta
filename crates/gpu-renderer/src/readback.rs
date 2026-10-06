@@ -216,7 +216,8 @@ pub(crate) struct Readback {
 
 impl Readback {
     /// Waits for the frame, copies its tightly packed rows out of the
-    /// mapped buffer, and unmaps it for the slot's next frame.
+    /// mapped buffer, and unmaps it for the slot's next frame, also when
+    /// reading it failed once the mapping was asked for.
     fn finish(self, device: &wgpu::Device) -> Result<GpuFrame, GpuRenderError> {
         let (sender, receiver) = mpsc::sync_channel(1);
         let slice = self.buffer.slice(..);
@@ -226,16 +227,32 @@ impl Readback {
         // Wait for this frame's own submission only. Waiting for the most
         // recent one (`wait_indefinitely`) would also block on every
         // younger frame still in flight.
-        device
-            .poll(wgpu::PollType::Wait {
-                submission_index: Some(self.submission),
-                timeout: None,
-            })
-            .map_err(GpuRenderError::Poll)?;
+        let waited = device.poll(wgpu::PollType::Wait {
+            submission_index: Some(self.submission.clone()),
+            timeout: None,
+        });
+        if let Err(error) = waited {
+            // Cancels the mapping still pending.
+            self.buffer.unmap();
+            return Err(GpuRenderError::Poll(error));
+        }
+        // A mapping that failed leaves the buffer unmapped.
         receiver
             .recv()
             .map_err(|_| GpuRenderError::MapCallbackDropped)?
             .map_err(GpuRenderError::Map)?;
+        let pixels = self.unpack(&slice);
+        self.buffer.unmap();
+        Ok(GpuFrame {
+            width: self.width,
+            height: self.height,
+            format: self.format,
+            pixels: pixels?,
+        })
+    }
+
+    /// The tightly packed rows of the mapped buffer's planes.
+    fn unpack(&self, slice: &wgpu::BufferSlice<'_>) -> Result<Vec<u8>, GpuRenderError> {
         let mapped = slice.get_mapped_range().map_err(GpuRenderError::MapRange)?;
         let capacity = self
             .planes
@@ -250,14 +267,7 @@ impl Readback {
                 &mut pixels,
             );
         }
-        drop(mapped);
-        self.buffer.unmap();
-        Ok(GpuFrame {
-            width: self.width,
-            height: self.height,
-            format: self.format,
-            pixels,
-        })
+        Ok(pixels)
     }
 }
 
@@ -270,27 +280,39 @@ pub(crate) struct ReadbackWorker {
     readbacks: Option<mpsc::Sender<Readback>>,
     frames: mpsc::Receiver<Result<GpuFrame, GpuRenderError>>,
     thread: Option<JoinHandle<()>>,
+    /// How many readbacks the thread has finished.
+    #[cfg(test)]
+    pub(crate) finished: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl ReadbackWorker {
-    pub(crate) fn new(device: wgpu::Device) -> Self {
+    pub(crate) fn new(device: wgpu::Device) -> Result<Self, GpuRenderError> {
         let (readbacks, pending) = mpsc::channel::<Readback>();
-        let (finished, frames) = mpsc::channel();
+        let (sender, frames) = mpsc::channel();
+        #[cfg(test)]
+        let finished = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        #[cfg(test)]
+        let counted = finished.clone();
         let thread = std::thread::Builder::new()
             .name("celesta-readback".to_owned())
             .spawn(move || {
                 for readback in pending {
-                    if finished.send(readback.finish(&device)).is_err() {
+                    let frame = readback.finish(&device);
+                    #[cfg(test)]
+                    counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    if sender.send(frame).is_err() {
                         break;
                     }
                 }
             })
-            .expect("spawning the readback thread");
-        Self {
+            .map_err(GpuRenderError::ReadbackThread)?;
+        Ok(Self {
             readbacks: Some(readbacks),
             frames,
             thread: Some(thread),
-        }
+            #[cfg(test)]
+            finished,
+        })
     }
 
     pub(crate) fn send(&self, readback: Readback) {

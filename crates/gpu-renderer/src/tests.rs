@@ -3053,11 +3053,20 @@ fn dropping_a_renderer_finishes_the_frames_in_flight() {
     let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
         return;
     };
-    for _ in 0..2 {
-        assert!(renderer.submit(&empty_scene(2, 2)).unwrap().is_none());
+    // Large enough that the thread is still copying them out when the
+    // renderer is dropped.
+    for _ in 0..3 {
+        assert!(renderer.submit(&empty_scene(3840, 2160)).unwrap().is_none());
     }
+    let finished = renderer
+        .readback_worker
+        .as_ref()
+        .expect("submit starts the readback worker")
+        .finished
+        .clone();
     // Waits for the readback thread instead of leaving it behind.
     drop(renderer);
+    assert_eq!(finished.load(std::sync::atomic::Ordering::SeqCst), 3);
 }
 
 #[test]

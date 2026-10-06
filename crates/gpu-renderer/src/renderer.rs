@@ -619,6 +619,9 @@ impl GpuRenderer {
                 height: scene.height,
             });
         }
+        if self.readback_worker.is_none() {
+            self.readback_worker = Some(ReadbackWorker::new(self.device.clone())?);
+        }
         let draws = self.prepare_draws(scene)?;
 
         let ready = if self.readback_free.is_empty() && self.readback_order.len() >= PIPELINE_DEPTH
@@ -715,7 +718,8 @@ impl GpuRenderer {
 
         let readback = self.readback_slots[slot_index].readback(submission);
         self.readback_worker
-            .get_or_insert_with(|| ReadbackWorker::new(self.device.clone()))
+            .as_ref()
+            .expect("created before the frame was prepared")
             .send(readback);
         self.readback_order.push_back(slot_index);
 
@@ -733,7 +737,8 @@ impl GpuRenderer {
     }
 
     /// Waits for the oldest in-flight slot's frame from the readback
-    /// worker, frees the slot for reuse, and returns the frame.
+    /// worker, frees the slot for reuse (also when reading it back failed:
+    /// the worker unmaps it either way), and returns the frame.
     pub(crate) fn reclaim_oldest(&mut self) -> Result<GpuFrame, GpuRenderError> {
         let slot_index = self
             .readback_order
@@ -743,9 +748,9 @@ impl GpuRenderer {
             .readback_worker
             .as_ref()
             .expect("submit starts the worker before a frame is in flight")
-            .receive()?;
+            .receive();
         self.readback_free.push(slot_index);
-        Ok(frame)
+        frame
     }
 
     pub(crate) fn readback_slot(
