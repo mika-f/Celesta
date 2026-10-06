@@ -353,20 +353,32 @@ impl TextRasterizer {
                 let x = f64::from((index % mask_width as usize) as u32) - f64::from(pad) + 0.5;
                 let y = f64::from((index / mask_width as usize) as u32) - f64::from(pad) + 0.5;
                 let color = gradient.color_at(x, y);
-                pixel[..3].copy_from_slice(&[color.red, color.green, color.blue]);
-                pixel[3] = (f64::from(pixel[3]) * f64::from(color.alpha) / 255.0).round() as u8;
+                let alpha = (f64::from(pixel[3]) * f64::from(color.alpha) / 255.0).round() as u8;
+                // Transparent pixels stay all zeros, as compositing below
+                // expects.
+                if alpha == 0 {
+                    pixel.copy_from_slice(&[0; 4]);
+                    continue;
+                }
+                pixel.copy_from_slice(&[color.red, color.green, color.blue, alpha]);
             }
         }
 
-        let pixel_count = mask_width as usize * mask_height as usize * 4;
+        // Without a stroke the glyphs are the frame as they are: drawn onto
+        // nothing, `blend` copies each pixel, and every transparent glyph
+        // pixel is all zeros.
         let mut frame = RgbaFrame {
             width: mask_width,
             height: mask_height,
-            pixels: vec![0; pixel_count],
+            pixels: glyph_pixels,
         };
         if let Some(stroke) = &style.stroke
             && stroke_radius > 0
         {
+            let glyph_pixels = std::mem::replace(
+                &mut frame.pixels,
+                vec![0; mask_width as usize * mask_height as usize * 4],
+            );
             let stroke_mask = dilate_mask(&mask, mask_width, mask_height, stroke_radius);
             let stroke_paint = ResolvedPaint::from_paint(&stroke.paint)?.scaled(f64::from(scale));
             composite_mask_with(&mut frame, &stroke_mask, mask_width, |x, y| {
@@ -375,8 +387,8 @@ impl TextRasterizer {
                     f64::from(y) - f64::from(pad) + 0.5,
                 )
             });
+            composite_rgba(&mut frame, &glyph_pixels, mask_width, mask_height, 0, 0);
         }
-        composite_rgba(&mut frame, &glyph_pixels, mask_width, mask_height, 0, 0);
         // Single-line text keeps its advance width, so leading and trailing
         // spaces still take up room, but drops the empty rows above and below
         // its ink: `anchorY` 0.5 centers the letters, not the line box.
@@ -473,6 +485,12 @@ impl<F: FnMut(i32, i32, u8, CosmicColor)> Renderer for GlyphPixelRenderer<'_, F>
         );
         cache.with_pixels(font_system, glyph.cache_key, color, |x, y, pixel| {
             let coverage = pixel.a();
+            // Nothing to draw: the mask keeps its larger coverage, and
+            // `blend` keeps the pixel below (all zeros if transparent, as the
+            // glyph buffer's transparent pixels are).
+            if coverage == 0 {
+                return;
+            }
             let pixel = if mask {
                 let alpha = (f64::from(coverage) * f64::from(color.a()) / 255.0).round() as u8;
                 CosmicColor::rgba(pixel.r(), pixel.g(), pixel.b(), alpha)
