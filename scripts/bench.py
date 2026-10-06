@@ -259,6 +259,8 @@ def write_csv(path, samples, options):
 
 
 def main():
+    # The report has en dashes; Windows consoles default to a legacy code page.
+    sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     commands = parser.add_subparsers(dest="command", required=True)
     compare = commands.add_parser("compare", help="compare a base revision with the head")
@@ -317,7 +319,7 @@ def main():
     markdown, regressed = report(samples, options, adapter, revisions)
     print(markdown)
     if options.markdown:
-        with open(options.markdown, "a") as file:
+        with open(options.markdown, "a", encoding="utf-8") as file:
             file.write(markdown)
     if options.csv:
         write_csv(options.csv, samples, options)
