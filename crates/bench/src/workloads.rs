@@ -32,7 +32,8 @@ enum Source {
     /// A React entry, relative to the repository root, and where its runs
     /// of frames start: the measured frames are split evenly into runs of
     /// consecutive frames, one from each start (see `run_frame`), so a film
-    /// with chapters is measured in every one of them.
+    /// with chapters is measured in every one of them. It needs at least as
+    /// many measured frames as starts.
     React(&'static str, &'static [u64]),
 }
 
@@ -46,8 +47,9 @@ pub const WORKLOADS: &[Workload] = &[
         name: "spectra",
         description: "SPECTRA from examples/spectra (React; every chapter and crossfade)",
         // Each chapter once it has settled, and the crossfades into
-        // GEOMETRY and SOURCE, where two chapters draw at once.
-        source: Source::React("examples/spectra/film.tsx", &[60, 140, 300, 400, 600]),
+        // GEOMETRY (frames 135-149) and SOURCE (405-419), where two chapters
+        // draw at once: a run of a single frame, as in CI, lands in them too.
+        source: Source::React("examples/spectra/film.tsx", &[60, 140, 300, 410, 600]),
     },
     Workload {
         name: "rings",
@@ -106,6 +108,13 @@ impl Workload {
                 Ok((scenes, images.map_or_else(PathBuf::new, Path::to_owned)))
             }
             Source::React(entry, starts) => {
+                if frames < starts.len() {
+                    return Err(format!(
+                        "measures {} runs of frames, so it needs --frames {} or more",
+                        starts.len(),
+                        starts.len()
+                    ));
+                }
                 let entry = Path::new(env!("CARGO_MANIFEST_DIR"))
                     .join("../..")
                     .join(entry)
@@ -140,16 +149,18 @@ impl Workload {
     }
 }
 
-/// The frame the `index`th scene shows. Each run is `warmup` frames past its
-/// start, and the warmup frames fill that gap before the first run, so a
-/// single run from 0 renders frames `0..warmup + frames` in order.
+/// The frame the `index`th scene shows. The warmup frames start at the
+/// first start and the first run follows them, so a single run from 0
+/// renders frames `0..warmup + frames` in order; every other run starts at
+/// its own start.
 fn run_frame(starts: &[u64], warmup: usize, frames: usize, index: usize) -> u64 {
     let Some(measured) = index.checked_sub(warmup) else {
         return starts[0] + index as u64;
     };
     let run = measured * starts.len() / frames;
     let first = (run * frames).div_ceil(starts.len());
-    starts[run] + (warmup + measured - first) as u64
+    let skipped = if run == 0 { warmup } else { 0 };
+    starts[run] + (skipped + measured - first) as u64
 }
 
 fn synthetic(canvas: &Canvas, width: u32, height: u32, layers: Vec<Layer>) -> Scene {
@@ -682,15 +693,22 @@ mod tests {
 
     #[test]
     fn every_start_gets_a_run() {
-        let starts = [60, 140, 300, 400, 600];
+        let starts = [60, 140, 300, 410, 600];
         let frames: Vec<_> = (0..8)
             .map(|index| run_frame(&starts, 2, 6, index))
             .collect();
-        assert_eq!(frames, [60, 61, 62, 63, 142, 302, 402, 602]);
+        assert_eq!(frames, [60, 61, 62, 63, 140, 300, 410, 600]);
         let frames: Vec<_> = (0..20)
             .map(|index| run_frame(&starts, 0, 20, index))
             .collect();
         assert_eq!(&frames[..5], [60, 61, 62, 63, 140]);
         assert_eq!(frames[19], 603);
+        // Later runs start at their own start, whatever the warmup.
+        let frames: Vec<_> = (0..130)
+            .map(|index| run_frame(&starts, 10, 120, index))
+            .collect();
+        assert_eq!(frames[10], 70);
+        assert_eq!(&frames[34..36], [140, 141]);
+        assert_eq!(frames[82], 410);
     }
 }

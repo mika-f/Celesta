@@ -19,7 +19,7 @@ every scene before it starts timing, so only rendering is measured.
 | Workload | What it draws |
 | --- | --- |
 | `nebula` | NEBULA from [`examples/versus/bench`](../../examples/versus/bench/SCENE.md), the real React composition (`celesta/nebula.tsx`), evaluated by the React bridge: about 1,660 layers per frame |
-| `spectra` | SPECTRA from [`examples/spectra`](../../examples/spectra/README.md), a React reel of five chapters that uses blur, shadows, glows, blend modes, clips, paths, text, code, images and a camera. Its measured frames are split into five runs of consecutive frames, one in each chapter's settled part or crossfade (frames 60, 140, 300, 400 and 600 onwards) |
+| `spectra` | SPECTRA from [`examples/spectra`](../../examples/spectra/README.md), a React reel of five chapters that uses blur, shadows, glows, blend modes, clips, paths, text, code, images and a camera. Its measured frames are split into five runs of consecutive frames, one in each chapter's settled part or crossfade: the first follows the warmup frames from frame 60, the others start at frames 140, 300, 410 and 600 whatever the warmup. It needs `--frames 5` or more |
 | `rings` | NEBULA's 24 rotating stroked ellipses alone ([path-rasterization.md](path-rasterization.md)) |
 | `blur` | six large blurred, screen-blended blobs plus cards with shadows and glows |
 | `ribbons` | about 3,000 thin rotated rects that change every frame (`examples/afterimage`) |
