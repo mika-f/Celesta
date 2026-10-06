@@ -4,10 +4,10 @@ use crate::composite::{blend, blend_with_mode};
 use crate::effects::{blur_pixels, premultiply_pixels, render_effect_shadow, unpremultiply_color};
 use crate::error::RenderError;
 use crate::images::{DecodedImage, render_image, render_image_pixels, render_placeholder};
-use crate::rect::rasterize_rect;
+use crate::rect::{rasterize_rect_transformed, resolve_rect_paint};
 use crate::renderer::CpuRenderer;
 use crate::types::{Color, RgbaFrame};
-use crate::{PathShape, PathTransform, rasterize_path};
+use crate::{PathShape, PathTransform, RasterizedPath, rasterize_path};
 use celesta_composition::{
     BlendMode, Layer, LayerContent, MediaTiming, Point, ResolvedAsset, TextStyle,
 };
@@ -189,23 +189,25 @@ impl CpuRenderer {
                 stroke,
                 corner_radius,
             } => {
-                let image = rasterize_rect(
+                let paint = resolve_rect_paint(fill.as_ref(), stroke.as_ref())?;
+                let anchor = layer.transform.anchor;
+                let transform = PathTransform::scale_translate(
+                    state.scale.x,
+                    state.scale.y,
+                    state.position.x - anchor.x * width * state.scale.x,
+                    state.position.y - anchor.y * height * state.scale.y,
+                );
+                if let Some(rect) = rasterize_rect_transformed(
                     *width,
                     *height,
                     *corner_radius,
-                    fill.as_ref(),
-                    stroke.as_ref(),
-                )?;
-                render_image(
-                    frame,
-                    &DecodedImage {
-                        width: image.width(),
-                        height: image.height(),
-                        pixels: image.into_pixels(),
-                    },
-                    layer.transform.anchor,
-                    &state,
-                );
+                    &paint,
+                    transform,
+                    frame.width,
+                    frame.height,
+                ) {
+                    render_output_pixels(frame, &rect, &state);
+                }
             }
             LayerContent::Path {
                 commands,
@@ -230,23 +232,7 @@ impl CpuRenderer {
                     state.position.y,
                 );
                 if let Some(path) = rasterize_path(&shape, transform, frame.width, frame.height)? {
-                    // Already in output pixels: drawn unscaled at its corner.
-                    let state = ParentState {
-                        position: Point {
-                            x: f64::from(path.left),
-                            y: f64::from(path.top),
-                        },
-                        scale: Point { x: 1.0, y: 1.0 },
-                        ..state
-                    };
-                    render_image_pixels(
-                        frame,
-                        path.image.width,
-                        path.image.height,
-                        &path.image.pixels,
-                        Point { x: 0.0, y: 0.0 },
-                        &state,
-                    );
+                    render_output_pixels(frame, &path, &state);
                 }
             }
             LayerContent::MissingComponent { .. } => render_placeholder(
@@ -402,4 +388,25 @@ impl CpuRenderer {
     pub(crate) fn local_asset_path(&self, asset: &ResolvedAsset) -> Result<PathBuf, RenderError> {
         local_asset_path(&self.asset_root, asset)
     }
+}
+
+/// Draws an image already in output pixels (a rasterized rect or path)
+/// unscaled at its corner.
+fn render_output_pixels(frame: &mut RgbaFrame, image: &RasterizedPath, state: &ParentState) {
+    let state = ParentState {
+        position: Point {
+            x: f64::from(image.left),
+            y: f64::from(image.top),
+        },
+        scale: Point { x: 1.0, y: 1.0 },
+        ..state.clone()
+    };
+    render_image_pixels(
+        frame,
+        image.image.width,
+        image.image.height,
+        &image.image.pixels,
+        Point { x: 0.0, y: 0.0 },
+        &state,
+    );
 }
