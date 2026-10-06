@@ -1,6 +1,9 @@
 use crate::error::GpuRenderError;
 use crate::layer::{PreparedContent, PreparedItem, PreparedLayer};
-use crate::path::{MAX_PATH_TILE_EDGES, ShadedPath, bin_tiles, path_entry_limit};
+use crate::path::{
+    MAX_PATH_TILE_EDGES, ShadedPath, bin_tiles, count_pieces_into_rows, path_entry_limit,
+    sort_pieces_in_place,
+};
 use crate::plan::GpuStep;
 use crate::readback::ReadbackLayout;
 use crate::renderer::GpuRenderer;
@@ -3055,6 +3058,26 @@ fn dropping_a_renderer_finishes_the_frames_in_flight() {
     }
     // Waits for the readback thread instead of leaving it behind.
     drop(renderer);
+}
+
+#[test]
+fn few_path_pieces_sort_in_place_into_the_counted_order() {
+    let (rows, columns) = (5, 7);
+    let mut seed = 7_u32;
+    for count in [0, 1, 2, 9, 40, 64] {
+        // Pieces of the same tile keep apart by their first coordinate.
+        let pieces: Vec<_> = (0..count)
+            .map(|index| {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                ((seed >> 8) as usize % (rows * columns), [index as f32; 4])
+            })
+            .collect();
+        assert_eq!(
+            sort_pieces_in_place(pieces.clone(), columns),
+            count_pieces_into_rows(pieces, rows, columns),
+            "{count} pieces"
+        );
+    }
 }
 
 #[test]

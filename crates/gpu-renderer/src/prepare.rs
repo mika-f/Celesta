@@ -61,10 +61,11 @@ impl GpuRenderer {
         let paths = std::mem::take(&mut self.pending_paths);
         let jobs = text_jobs(&texts);
         let (limit, size) = (self.max_texture_dimension, self.scene_size);
+        let entry_limit = path_entry_limit(&self.device.limits());
         let (rasterizer, workers) = (&mut self.text_rasterizer, &mut self.text_workers);
         let (images, outlines) = rayon::join(
             || rasterize_texts(rasterizer, workers, &jobs, limit),
-            || outline_paths(&paths, size),
+            || outline_paths(&paths, size, entry_limit),
         );
         self.place_texts(&texts, &jobs, images, &mut items)?;
         self.place_paths(&paths, outlines?, &mut items)?;
@@ -719,7 +720,8 @@ impl GpuRenderer {
         items: &mut Vec<PreparedItem>,
     ) -> Result<(), GpuRenderError> {
         let paths = std::mem::take(&mut self.pending_paths);
-        let outlines = outline_paths(&paths, self.scene_size)?;
+        let entry_limit = path_entry_limit(&self.device.limits());
+        let outlines = outline_paths(&paths, self.scene_size, entry_limit)?;
         self.place_paths(&paths, outlines, items)
     }
 
@@ -824,12 +826,13 @@ impl GpuRenderer {
 /// CPU rasterization; `None` when it covers no pixel.
 pub(crate) type PathOutline = Option<(FlattenedPath, Option<PathEntries>)>;
 
-/// Outlines, flattens and bins `pending` into tiles. Each path is
-/// independent of the others, and a frame of animated paths has dozens, so
-/// they spread over rayon's threads.
+/// Outlines, flattens and bins `pending` into tiles, building the entries of
+/// those that fit `entry_limit`. Each path is independent of the others, and
+/// a frame of animated paths has dozens, so they spread over rayon's threads.
 pub(crate) fn outline_paths(
     pending: &[PendingPath],
     (width, height): (u32, u32),
+    entry_limit: usize,
 ) -> Result<Vec<PathOutline>, GpuRenderError> {
     pending
         .par_iter()
@@ -837,7 +840,7 @@ pub(crate) fn outline_paths(
             let flattened = flatten_path(&path.shape(), path.state.transform.into(), width, height)
                 .map_err(GpuRenderError::Text)?;
             Ok(flattened.map(|flattened| {
-                let entries = PathEntries::build(&flattened);
+                let entries = PathEntries::build(&flattened, entry_limit);
                 (flattened, entries)
             }))
         })

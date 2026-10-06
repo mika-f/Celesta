@@ -90,7 +90,7 @@ impl ShadedPath {
         entries: &mut Vec<[f32; 4]>,
         entry_limit: usize,
     ) -> Option<Self> {
-        let built = PathEntries::build(path)?;
+        let built = PathEntries::build(path, entry_limit)?;
         let base = entries.len();
         if !built.fits(base, entry_limit) {
             return None;
@@ -113,9 +113,10 @@ pub(crate) struct PathEntries {
 }
 
 impl PathEntries {
-    /// None when a tile has more edges than the shader takes, so the path
-    /// needs CPU rasterization.
-    pub(crate) fn build(path: &FlattenedPath) -> Option<Self> {
+    /// None when a tile has more edges than the shader takes, or the path
+    /// needs more than `entry_limit` entries (the most the frame's buffer
+    /// can hold), so it needs CPU rasterization.
+    pub(crate) fn build(path: &FlattenedPath, entry_limit: usize) -> Option<Self> {
         let inverse = path.inverse;
         let columns = path.width.div_ceil(PATH_TILE_COLUMNS);
         let outlines: Vec<_> = [&path.fill, &path.stroke]
@@ -152,7 +153,11 @@ impl PathEntries {
         tiles.dedup();
         let edge_entries: usize = outlines.iter().flatten().map(|bins| bins.edges.len()).sum();
         let first_tile = 3;
-        let mut entries = Vec::with_capacity(first_tile + tiles.len() * stride + edge_entries);
+        let required = first_tile + tiles.len() * stride + edge_entries;
+        if required > entry_limit {
+            return None;
+        }
+        let mut entries = Vec::with_capacity(required);
         entries.push([inverse.a, inverse.b, inverse.c, inverse.d].map(|value| value as f32));
         entries.push([
             inverse.tx as f32,
@@ -235,6 +240,52 @@ impl PathEntries {
             stroke: encode_paint(path.stroke.as_ref().map(|(paint, _)| paint), paints),
         }
     }
+}
+
+/// Up to how many pieces `bin_tiles` sorts with `sort_pieces_in_place`.
+const SMALL_PIECE_COUNT: usize = 64;
+
+/// Sorts a region's pieces by tile: first into rows, keeping their order,
+/// then each row's few pieces by column. A region has few rows, and a row
+/// few pieces, so this costs a fraction of sorting them all by comparison.
+/// The pieces are counted into their rows.
+pub(crate) fn count_pieces_into_rows(
+    pieces: Vec<(usize, [f32; 4])>,
+    rows: usize,
+    columns: usize,
+) -> Vec<(usize, [f32; 4])> {
+    let mut row_starts = vec![0_usize; rows + 1];
+    for &(tile, _) in &pieces {
+        row_starts[tile / columns + 1] += 1;
+    }
+    for row in 0..rows {
+        row_starts[row + 1] += row_starts[row];
+    }
+    let mut sorted = vec![(0, [0.0; 4]); pieces.len()];
+    let mut next = row_starts.clone();
+    for piece in pieces {
+        let row = piece.0 / columns;
+        sorted[next[row]] = piece;
+        next[row] += 1;
+    }
+    for row in row_starts.windows(2) {
+        sorted[row[0]..row[1]].sort_unstable_by_key(|(tile, _)| *tile);
+    }
+    sorted
+}
+
+/// Sorts like `count_pieces_into_rows`, into the same order, but in place:
+/// for a small path's few pieces, the standard library's stable sort into
+/// rows needs no heap memory, and the counts would cost more than it.
+pub(crate) fn sort_pieces_in_place(
+    mut pieces: Vec<(usize, [f32; 4])>,
+    columns: usize,
+) -> Vec<(usize, [f32; 4])> {
+    pieces.sort_by_key(|(tile, _)| tile / columns);
+    for row in pieces.chunk_by_mut(|a, b| a.0 / columns == b.0 / columns) {
+        row.sort_unstable_by_key(|(tile, _)| *tile);
+    }
+    pieces
 }
 
 /// An outline's edges sorted into the tiles of its region that it covers
@@ -369,27 +420,11 @@ pub(crate) fn bin_tiles(edges: &[LineSegment], width: u32, height: u32) -> TileB
             }
         }
     }
-    // Sorted by tile: first into rows with a counting sort, then each row's
-    // few pieces by column. A region has few rows, and a row few pieces,
-    // so this costs a fraction of sorting them all by comparison.
-    let mut row_starts = vec![0_usize; rows + 1];
-    for &(tile, _) in &pieces {
-        row_starts[tile / columns + 1] += 1;
-    }
-    for row in 0..rows {
-        row_starts[row + 1] += row_starts[row];
-    }
-    let mut sorted = vec![(0, [0.0; 4]); pieces.len()];
-    let mut next = row_starts.clone();
-    for piece in pieces {
-        let row = piece.0 / columns;
-        sorted[next[row]] = piece;
-        next[row] += 1;
-    }
-    for row in row_starts.windows(2) {
-        sorted[row[0]..row[1]].sort_unstable_by_key(|(tile, _)| *tile);
-    }
-    let pieces = sorted;
+    let pieces = if pieces.len() <= SMALL_PIECE_COUNT {
+        sort_pieces_in_place(pieces, columns)
+    } else {
+        count_pieces_into_rows(pieces, rows, columns)
+    };
     backdrops.sort_unstable_by_key(|(tile, _)| *tile);
     let mut bins = TileBins {
         tiles: Vec::new(),
