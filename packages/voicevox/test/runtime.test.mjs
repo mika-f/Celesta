@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -19,7 +19,14 @@ for (const packaged of [false, true]) {
         cli = join(runtime, 'dist/cli.js');
         const types = join(runtime, 'dist/project-types');
         assert.match(readFileSync(join(types, 'node_modules/@celesta/voicevox/dist/index.d.ts'), 'utf8'), /VoicevoxAudioQuery/);
-        assert.equal(JSON.parse(readFileSync(join(runtime, 'runtime-packages.json'), 'utf8'))['@celesta/voicevox'], '0.0.0');
+        assert.equal(JSON.parse(readFileSync(join(runtime, 'runtime-packages.json'), 'utf8'))['@celesta/voicevox'],
+          JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version);
+        const adapter = join(runtime, 'node_modules/@celesta/voicevox');
+        for (const name of ['src', 'test', 'tsconfig.json']) {
+          assert.ok(!existsSync(join(adapter, name)), `Runtime must not ship ${name}`);
+        }
+        assert.ok(existsSync(join(adapter, 'dist/index.js')));
+        assert.ok(existsSync(join(adapter, 'README.md')));
         writeFileSync(join(root, 'tsconfig.json'), JSON.stringify({
           extends: './runtime/dist/project-types/tsconfig.json',
           include: ['film.tsx'],

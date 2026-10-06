@@ -95,7 +95,7 @@ test('lipSyncFromKeyframes holds each shape until the next keyframe', () => {
     [
       { seconds: 0.5, mouth: 'i' },
       { seconds: 0.2, mouth: 'a' },
-      { seconds: 0.8, mouth: 'closed' },
+      { seconds: 0.8, mouth: 'u' },
     ],
     1,
   );
@@ -104,7 +104,10 @@ test('lipSyncFromKeyframes holds each shape until the next keyframe', () => {
   assert.equal(track.mouthAtSeconds(0.2), 'a');
   assert.equal(track.mouthAtSeconds(0.49), 'a');
   assert.equal(track.mouthAtSeconds(0.5), 'i');
-  assert.equal(track.mouthAtSeconds(0.9), 'closed');
+  assert.equal(track.mouthAtSeconds(0.6), 'i');
+  assert.equal(track.mouthAtSeconds(0.8), 'u');
+  assert.equal(track.mouthAtSeconds(0.9), 'u');
+  assert.equal(track.mouthAtSeconds(1), 'closed');
   assert.equal(track.mouthAtFrame(15, 30), 'i');
   assert.equal(lipSyncFromKeyframes([], 1).mouthAtSeconds(0.5), 'closed');
   assert.throws(() => lipSyncFromKeyframes([], -1), /durationInSeconds/);

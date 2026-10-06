@@ -44,6 +44,10 @@ function copyTypes(name, parent) {
   const directory = dirname(packageJson);
   const target = join(modules, name);
   if (statSync(target, { throwIfNoEntry: false })) return;
+  const metadata = JSON.parse(readFileSync(packageJson, 'utf8'));
+  if (metadata.types && !statSync(join(directory, metadata.types), { throwIfNoEntry: false })?.isFile()) {
+    throw new Error(`Missing declarations for ${name}: ${metadata.types}. Build the package before staging project types.`);
+  }
   cpSync(directory, target, {
     recursive: true,
     dereference: true,
@@ -54,7 +58,6 @@ function copyTypes(name, parent) {
       return statSync(path).isDirectory() || base.endsWith('.d.ts') || base === 'package.json' || /^licen[cs]e/i.test(base);
     },
   });
-  const metadata = JSON.parse(readFileSync(packageJson, 'utf8'));
   for (const dependency of Object.keys(metadata.dependencies ?? {})) {
     copyTypes(dependency, directory);
   }

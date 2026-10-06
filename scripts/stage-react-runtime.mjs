@@ -26,7 +26,18 @@ function copyPackage(name, parent) {
   cpSync(directory, join(destination, 'node_modules', name), {
     recursive: true,
     dereference: true,
-    filter: (path) => path === directory || !path.slice(directory.length + 1).split(/[\\/]/).includes('node_modules'),
+    filter: (path) => {
+      if (path === directory) return true;
+      const parts = path.slice(directory.length + 1).split(/[\\/]/);
+      if (parts.includes('node_modules')) return false;
+      // Workspace packages contain development files that are not part of
+      // the installed runtime. Registry packages already have their publish set.
+      if (name.startsWith('@celesta/')) {
+        const top = parts[0];
+        return top === 'dist' || top === 'package.json' || /^(readme|licen[cs]e)(\.|$)/i.test(top);
+      }
+      return true;
+    },
   });
   for (const dependency of Object.keys(metadata.dependencies ?? {})) {
     copyPackage(dependency, directory);
