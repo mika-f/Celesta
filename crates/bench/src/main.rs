@@ -127,7 +127,8 @@ fn run(options: &Options) -> Result<(), String> {
             .scenes(
                 options.width,
                 options.height,
-                options.warmup + options.frames,
+                options.warmup,
+                options.frames,
                 assets.as_ref().map(AssetDir::path),
             )
             .map_err(fail)?;

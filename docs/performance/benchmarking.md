@@ -19,6 +19,7 @@ every scene before it starts timing, so only rendering is measured.
 | Workload | What it draws |
 | --- | --- |
 | `nebula` | NEBULA from [`examples/versus/bench`](../../examples/versus/bench/SCENE.md), the real React composition (`celesta/nebula.tsx`), evaluated by the React bridge: about 1,660 layers per frame |
+| `spectra` | SPECTRA from [`examples/spectra`](../../examples/spectra/README.md), a React reel of five chapters that uses blur, shadows, glows, blend modes, clips, paths, text, code, images and a camera. Its measured frames are split into five runs of consecutive frames, one in each chapter's settled part or crossfade (frames 60, 140, 300, 400 and 600 onwards) |
 | `rings` | NEBULA's 24 rotating stroked ellipses alone ([path-rasterization.md](path-rasterization.md)) |
 | `blur` | six large blurred, screen-blended blobs plus cards with shadows and glows |
 | `ribbons` | about 3,000 thin rotated rects that change every frame (`examples/afterimage`) |
@@ -27,10 +28,11 @@ every scene before it starts timing, so only rendering is measured.
 | `images` | one 512x512 image drawn 16 times, scaled and rotated, with `cover` and `contain` |
 
 The synthetic workloads are laid out at 1920x1080 and scaled to `--size`;
-`nebula` is wrapped in a scaling group, with its blur, shadow, and glow
-radii scaled to match. `--size` must be 16:9. `nebula` needs Node.js and a
-built `packages/react`: `scripts/bench.py compare` builds it at both
-revisions, but before running `celesta-bench` directly, build it yourself:
+`nebula` and `spectra` are wrapped in a scaling group, with their blur,
+shadow, and glow radii scaled to match. `--size` must be 16:9. `nebula` and
+`spectra` need Node.js and a built `packages/react`: `scripts/bench.py
+compare` builds it at both revisions, but before running `celesta-bench`
+directly, build it yourself:
 
 ```sh
 pnpm --dir packages/react install --frozen-lockfile
