@@ -6,7 +6,7 @@ use crate::error::GpuRenderError;
 use crate::native_preview;
 use crate::path::PendingPath;
 use crate::pipeline::{PipelineKind, create_pipeline};
-use crate::readback::{ReadbackLayout, ReadbackSlot, SlotReadback};
+use crate::readback::{ReadbackLayout, ReadbackSlot, ReadbackWorker, SlotReadback};
 use crate::text::PendingText;
 use crate::texture::{CachedTexture, CanvasTexture, DecodedImage, LayerTexture, upload_texture};
 use crate::transform::{CLIP_ENTRY_SIZE, ClipEntry};
@@ -98,6 +98,9 @@ pub struct GpuRenderer {
     pub(crate) readback_slots: Vec<ReadbackSlot>,
     pub(crate) readback_order: VecDeque<usize>,
     pub(crate) readback_free: Vec<usize>,
+    /// Waits for and copies out the in-flight frames, started by the first
+    /// `submit`.
+    pub(crate) readback_worker: Option<ReadbackWorker>,
     /// The layout newly submitted frames are read back in.
     pub(crate) readback_format: ReadbackFormat,
     /// Created by the first switch to [`ReadbackFormat::Yuv420p`].
@@ -313,6 +316,7 @@ impl GpuRenderer {
             readback_slots: Vec::new(),
             readback_order: VecDeque::new(),
             readback_free: Vec::new(),
+            readback_worker: None,
             readback_format: ReadbackFormat::Rgba8,
             yuv_converter: None,
             textures: HashMap::new(),
@@ -709,14 +713,10 @@ impl GpuRenderer {
         }
         let submission = self.queue.submit([encoder.finish()]);
 
-        let slot = &mut self.readback_slots[slot_index];
-        let (sender, receiver) = mpsc::sync_channel(1);
-        slot.buffer
-            .slice(..)
-            .map_async(wgpu::MapMode::Read, move |result| {
-                let _ = sender.send(result);
-            });
-        slot.pending = Some((submission, receiver));
+        let readback = self.readback_slots[slot_index].readback(submission);
+        self.readback_worker
+            .get_or_insert_with(|| ReadbackWorker::new(self.device.clone()))
+            .send(readback);
         self.readback_order.push_back(slot_index);
 
         Ok(ready)
@@ -732,49 +732,18 @@ impl GpuRenderer {
         Ok(frames)
     }
 
-    /// Blocks on the oldest in-flight slot's readback, frees it for reuse,
-    /// and returns its pixels.
+    /// Waits for the oldest in-flight slot's frame from the readback
+    /// worker, frees the slot for reuse, and returns the frame.
     pub(crate) fn reclaim_oldest(&mut self) -> Result<GpuFrame, GpuRenderError> {
         let slot_index = self
             .readback_order
             .pop_front()
             .expect("reclaim_oldest called with no in-flight frame");
-        let frame = {
-            let slot = &mut self.readback_slots[slot_index];
-            let (submission, receiver) = slot
-                .pending
-                .take()
-                .expect("in-flight slot always has a pending readback");
-            // Wait for this slot's own submission only. Waiting for the most
-            // recent one (`wait_indefinitely`) would also block on every
-            // younger frame still in flight, draining the GPU queue on each
-            // reclaim and defeating the pipelining.
-            self.device
-                .poll(wgpu::PollType::Wait {
-                    submission_index: Some(submission),
-                    timeout: None,
-                })
-                .map_err(GpuRenderError::Poll)?;
-            receiver
-                .recv()
-                .map_err(|_| GpuRenderError::MapCallbackDropped)?
-                .map_err(GpuRenderError::Map)?;
-
-            let slice = slot.buffer.slice(..);
-            let mapped = slice.get_mapped_range().map_err(GpuRenderError::MapRange)?;
-            let pixels = match &slot.readback {
-                SlotReadback::Rgba8(layout) => layout.unpad(&mapped, slot.width, slot.height)?,
-                SlotReadback::Yuv420p(yuv) => yuv.unpad(&mapped),
-            };
-            drop(mapped);
-            slot.buffer.unmap();
-            GpuFrame {
-                width: slot.width,
-                height: slot.height,
-                format: slot.format(),
-                pixels,
-            }
-        };
+        let frame = self
+            .readback_worker
+            .as_ref()
+            .expect("submit starts the worker before a frame is in flight")
+            .receive()?;
         self.readback_free.push(slot_index);
         Ok(frame)
     }

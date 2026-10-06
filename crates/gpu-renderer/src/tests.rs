@@ -3046,6 +3046,18 @@ fn submit_and_drain_return_frames_in_submission_order_with_correct_content() {
 }
 
 #[test]
+fn dropping_a_renderer_finishes_the_frames_in_flight() {
+    let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+        return;
+    };
+    for _ in 0..2 {
+        assert!(renderer.submit(&empty_scene(2, 2)).unwrap().is_none());
+    }
+    // Waits for the readback thread instead of leaving it behind.
+    drop(renderer);
+}
+
+#[test]
 fn a_failed_frame_leaves_no_paths_for_the_next() {
     let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
         return;

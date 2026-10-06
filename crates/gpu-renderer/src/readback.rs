@@ -1,9 +1,11 @@
 use crate::BYTES_PER_PIXEL;
 use crate::error::GpuRenderError;
-use crate::types::ReadbackFormat;
+use crate::types::{GpuFrame, ReadbackFormat};
 use crate::yuv::YuvConverter;
 use std::sync::mpsc;
+use std::thread::JoinHandle;
 
+#[derive(Clone, Copy)]
 pub(crate) struct ReadbackLayout {
     pub(crate) unpadded_bytes_per_row: u32,
     pub(crate) padded_bytes_per_row: u32,
@@ -71,8 +73,7 @@ impl ReadbackLayout {
 }
 
 /// One reusable texture/readback-buffer pair behind `GpuRenderer::submit`'s
-/// ring, plus the receiver for its currently outstanding `map_async` call
-/// (`None` when the slot is free).
+/// ring.
 pub(crate) struct ReadbackSlot {
     pub(crate) texture: wgpu::Texture,
     pub(crate) view: wgpu::TextureView,
@@ -80,10 +81,6 @@ pub(crate) struct ReadbackSlot {
     pub(crate) width: u32,
     pub(crate) height: u32,
     pub(crate) readback: SlotReadback,
-    pub(crate) pending: Option<(
-        wgpu::SubmissionIndex,
-        mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>,
-    )>,
 }
 
 /// How a slot's rendered texture reaches its mapped `buffer`.
@@ -118,23 +115,6 @@ impl YuvReadback {
     pub(crate) fn buffer_size(&self) -> u64 {
         let last = &self.planes[2];
         last.offset + last.layout.buffer_size
-    }
-
-    /// Packs the three padded planes of a mapped readback buffer into one
-    /// tightly packed I420 frame.
-    pub(crate) fn unpad(&self, mapped: &[u8]) -> Vec<u8> {
-        let capacity = self
-            .planes
-            .iter()
-            .map(|plane| plane.layout.unpadded_bytes_per_row as usize * plane.height as usize)
-            .sum();
-        let mut pixels = Vec::with_capacity(capacity);
-        for plane in &self.planes {
-            let start = plane.offset as usize;
-            let region = &mapped[start..start + plane.layout.buffer_size as usize];
-            plane.layout.unpad_into(region, &mut pixels);
-        }
-        pixels
     }
 }
 
@@ -189,7 +169,6 @@ impl ReadbackSlot {
             width,
             height,
             readback,
-            pending: None,
         })
     }
 
@@ -197,6 +176,145 @@ impl ReadbackSlot {
         match self.readback {
             SlotReadback::Rgba8(_) => ReadbackFormat::Rgba8,
             SlotReadback::Yuv420p(_) => ReadbackFormat::Yuv420p,
+        }
+    }
+
+    /// The readback of the frame just submitted to it, for the
+    /// [`ReadbackWorker`], which maps its buffer once `submission` is done.
+    pub(crate) fn readback(&self, submission: wgpu::SubmissionIndex) -> Readback {
+        // Each plane's padded rows, packed one after the other.
+        let planes = match &self.readback {
+            SlotReadback::Rgba8(layout) => vec![(0, *layout, self.height)],
+            SlotReadback::Yuv420p(yuv) => yuv
+                .planes
+                .iter()
+                .map(|plane| (plane.offset, plane.layout, plane.height))
+                .collect(),
+        };
+        Readback {
+            buffer: self.buffer.clone(),
+            submission,
+            planes,
+            width: self.width,
+            height: self.height,
+            format: self.format(),
+        }
+    }
+}
+
+/// A submitted frame waiting in its slot's readback buffer.
+pub(crate) struct Readback {
+    buffer: wgpu::Buffer,
+    submission: wgpu::SubmissionIndex,
+    /// Each plane's offset in `buffer`, its rows, and its height, in the
+    /// order they are packed into the frame.
+    planes: Vec<(u64, ReadbackLayout, u32)>,
+    width: u32,
+    height: u32,
+    format: ReadbackFormat,
+}
+
+impl Readback {
+    /// Waits for the frame, copies its tightly packed rows out of the
+    /// mapped buffer, and unmaps it for the slot's next frame.
+    fn finish(self, device: &wgpu::Device) -> Result<GpuFrame, GpuRenderError> {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let slice = self.buffer.slice(..);
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = sender.send(result);
+        });
+        // Wait for this frame's own submission only. Waiting for the most
+        // recent one (`wait_indefinitely`) would also block on every
+        // younger frame still in flight.
+        device
+            .poll(wgpu::PollType::Wait {
+                submission_index: Some(self.submission),
+                timeout: None,
+            })
+            .map_err(GpuRenderError::Poll)?;
+        receiver
+            .recv()
+            .map_err(|_| GpuRenderError::MapCallbackDropped)?
+            .map_err(GpuRenderError::Map)?;
+        let mapped = slice.get_mapped_range().map_err(GpuRenderError::MapRange)?;
+        let capacity = self
+            .planes
+            .iter()
+            .map(|(_, layout, height)| layout.unpadded_bytes_per_row as usize * *height as usize)
+            .sum();
+        let mut pixels = Vec::with_capacity(capacity);
+        for (offset, layout, _) in &self.planes {
+            let start = *offset as usize;
+            layout.unpad_into(
+                &mapped[start..start + layout.buffer_size as usize],
+                &mut pixels,
+            );
+        }
+        drop(mapped);
+        self.buffer.unmap();
+        Ok(GpuFrame {
+            width: self.width,
+            height: self.height,
+            format: self.format,
+            pixels,
+        })
+    }
+}
+
+/// Finishes `GpuRenderer::submit`'s frames on a thread of its own, in the
+/// order they were sent: waits for each, then copies it out of its mapped
+/// readback buffer. A frame's copy (8 MB of RGBA at 1080p, into memory the
+/// system has to fault in page by page) then overlaps with the caller
+/// preparing the next frames instead of adding to each of them.
+pub(crate) struct ReadbackWorker {
+    readbacks: Option<mpsc::Sender<Readback>>,
+    frames: mpsc::Receiver<Result<GpuFrame, GpuRenderError>>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl ReadbackWorker {
+    pub(crate) fn new(device: wgpu::Device) -> Self {
+        let (readbacks, pending) = mpsc::channel::<Readback>();
+        let (finished, frames) = mpsc::channel();
+        let thread = std::thread::Builder::new()
+            .name("celesta-readback".to_owned())
+            .spawn(move || {
+                for readback in pending {
+                    if finished.send(readback.finish(&device)).is_err() {
+                        break;
+                    }
+                }
+            })
+            .expect("spawning the readback thread");
+        Self {
+            readbacks: Some(readbacks),
+            frames,
+            thread: Some(thread),
+        }
+    }
+
+    pub(crate) fn send(&self, readback: Readback) {
+        self.readbacks
+            .as_ref()
+            .expect("only dropping takes the sender")
+            .send(readback)
+            .expect("the readback thread runs until dropped");
+    }
+
+    /// The oldest sent frame not yet received, once it is ready.
+    pub(crate) fn receive(&self) -> Result<GpuFrame, GpuRenderError> {
+        self.frames
+            .recv()
+            .expect("the readback thread answers every readback")
+    }
+}
+
+impl Drop for ReadbackWorker {
+    fn drop(&mut self) {
+        // Ends the thread's loop once it has finished what it was sent.
+        self.readbacks = None;
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
         }
     }
 }
