@@ -114,6 +114,26 @@ pub(crate) fn blend_mixed(
 
 pub(crate) fn blend(destination: &mut [u8], source: Color, opacity: f64) {
     let source_alpha = (f64::from(source.alpha) / 255.0) * opacity.clamp(0.0, 1.0);
+    // A transparent source keeps the destination: the general formula below
+    // divides `destination * alpha` by that same alpha. Over nothing, or
+    // fully opaque, the source comes out as it is, for the same reason. Most
+    // glyph and stroke pixels take one of these paths.
+    if source_alpha == 0.0 {
+        // Except that a transparent destination comes out all zeros.
+        if destination[3] == 0 {
+            destination.copy_from_slice(&[0, 0, 0, 0]);
+        }
+        return;
+    }
+    if source_alpha == 1.0 || destination[3] == 0 {
+        destination.copy_from_slice(&[
+            source.red,
+            source.green,
+            source.blue,
+            (source_alpha * 255.0).round() as u8,
+        ]);
+        return;
+    }
     let destination_alpha = f64::from(destination[3]) / 255.0;
     let output_alpha = source_alpha + destination_alpha * (1.0 - source_alpha);
     if output_alpha == 0.0 {
@@ -222,4 +242,47 @@ pub(crate) fn psd_blend_channel(mode: &str) -> Option<fn(f64, f64) -> f64> {
         // Saturation, Color, Luminosity.
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `blend` without its shortcuts.
+    fn blend_exactly(destination: &mut [u8], source: Color, opacity: f64) {
+        let source_alpha = (f64::from(source.alpha) / 255.0) * opacity.clamp(0.0, 1.0);
+        let destination_alpha = f64::from(destination[3]) / 255.0;
+        let output_alpha = source_alpha + destination_alpha * (1.0 - source_alpha);
+        if output_alpha == 0.0 {
+            destination.copy_from_slice(&[0, 0, 0, 0]);
+            return;
+        }
+        for channel in 0..3 {
+            let source_value = f64::from([source.red, source.green, source.blue][channel]);
+            let destination_value = f64::from(destination[channel]);
+            let output = (source_value * source_alpha
+                + destination_value * destination_alpha * (1.0 - source_alpha))
+                / output_alpha;
+            destination[channel] = output.round().clamp(0.0, 255.0) as u8;
+        }
+        destination[3] = (output_alpha * 255.0).round().clamp(0.0, 255.0) as u8;
+    }
+
+    #[test]
+    fn shortcuts_match_the_general_formula() {
+        let channels = [0, 1, 37, 128, 200, 254, 255];
+        for &red in &channels {
+            for &alpha in &channels {
+                for opacity in [0.0, 0.3, 1.0 / 255.0, 0.999, 1.0] {
+                    for destination in [[0, 0, 0, 0], [9, 99, 199, 0], [40, 80, 120, 255]] {
+                        let source = Color::rgba(red, 255 - red, red / 2, alpha);
+                        let (mut fast, mut exact) = (destination, destination);
+                        blend(&mut fast, source, opacity);
+                        blend_exactly(&mut exact, source, opacity);
+                        assert_eq!(fast, exact, "{source:?} at {opacity} over {destination:?}");
+                    }
+                }
+            }
+        }
+    }
 }
