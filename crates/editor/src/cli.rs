@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
+use celesta_gpu_renderer::GpuDriver;
 use clap::Parser;
+use clap::builder::{PossibleValuesParser, TypedValueParser};
 
 #[derive(Debug, Parser)]
 #[command(name = "celesta-editor", version, about = "Celesta video editor")]
@@ -13,6 +15,16 @@ pub struct Args {
     /// Defaults to the current directory; .celesta/ is refreshed.
     #[arg(long, value_name = "DIRECTORY", num_args = 0..=1, default_missing_value = ".")]
     pub init: Option<PathBuf>,
+
+    /// Graphics API to render the preview and exports with; auto takes the
+    /// first one with a GPU.
+    #[arg(
+        long,
+        default_value_t = GpuDriver::default(),
+        value_parser = PossibleValuesParser::new(GpuDriver::ALL.map(GpuDriver::as_str))
+            .map(|name| name.parse::<GpuDriver>().expect("listed driver names parse"))
+    )]
+    pub driver: GpuDriver,
 }
 
 #[cfg(test)]
@@ -37,6 +49,23 @@ mod tests {
         assert_eq!(
             parse(&["--", "-film.tsx"]).unwrap().path,
             Some("-film.tsx".into())
+        );
+    }
+
+    #[test]
+    fn parses_driver() {
+        assert_eq!(parse(&[]).unwrap().driver, GpuDriver::Auto);
+        assert_eq!(
+            parse(&["--driver=dx12", "film.tsx"]).unwrap().driver,
+            GpuDriver::Dx12
+        );
+        assert_eq!(
+            parse(&["--driver", "vulkan"]).unwrap().driver,
+            GpuDriver::Vulkan
+        );
+        assert_eq!(
+            parse(&["--driver=d3d12"]).unwrap_err().kind(),
+            ErrorKind::InvalidValue
         );
     }
 

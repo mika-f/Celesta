@@ -1,6 +1,6 @@
 use celesta_exporter::{
     ExportCancellation, ExportError, ExportOptions, ExportProgress, ExportRange, Exporter,
-    ReactRuntimeOptions,
+    GpuDriver, ReactRuntimeOptions,
 };
 use celesta_project::Project;
 use std::error::Error;
@@ -14,6 +14,7 @@ pub(crate) struct ExportRequest {
     pub(crate) output: PathBuf,
     pub(crate) range: Option<ExportRange>,
     pub(crate) cancellation: ExportCancellation,
+    pub(crate) driver: GpuDriver,
 }
 
 /// What the export worker renders: a normal `project.json`, or a standalone
@@ -53,6 +54,7 @@ impl ExportWorker {
                     let exporter = Exporter::new(ExportOptions {
                         overwrite: true,
                         range: request.range,
+                        driver: request.driver,
                         ..ExportOptions::default()
                     });
                     let progress = |progress| {

@@ -9,6 +9,7 @@ use crate::waveform::{
     waveform_segment,
 };
 use celesta_editor_core::ClipKind;
+use celesta_gpu_renderer::GpuDriver;
 
 use celesta_composition::{
     Animatable, AssetLocation, AudioClip, Rational, ResolvedAsset, Time, TimeRange,
@@ -50,6 +51,7 @@ fn export_worker_reports_cancellation_without_creating_output() {
             output: output.clone(),
             range: None,
             cancellation,
+            driver: GpuDriver::default(),
         })
         .unwrap();
 

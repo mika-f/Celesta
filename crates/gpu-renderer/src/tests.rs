@@ -11,7 +11,7 @@ use crate::text::text_raster_scale;
 use crate::texture::{DecodedImage, downsample};
 use crate::transform::{Affine, LayerState, MAX_CLIP_DEPTH, path_transform};
 use crate::types::{
-    Color, GpuFrame, GpuRenderOptions, GpuRenderTarget, PreviewFrame, PreviewViewport,
+    Color, GpuDriver, GpuFrame, GpuRenderOptions, GpuRenderTarget, PreviewFrame, PreviewViewport,
     ReadbackFormat, RenderQuality,
 };
 use celesta_renderer::image_source::fit_within;
@@ -107,7 +107,11 @@ impl DerefMut for TestRenderer {
     }
 }
 
-fn renderer(options: GpuRenderOptions) -> Option<TestRenderer> {
+/// `CELESTA_TEST_DRIVER` (e.g. `dx12`) runs the GPU tests through that driver.
+fn renderer(mut options: GpuRenderOptions) -> Option<TestRenderer> {
+    if let Ok(driver) = std::env::var("CELESTA_TEST_DRIVER") {
+        options.driver = driver.parse().expect("CELESTA_TEST_DRIVER names a driver");
+    }
     let lock = GpuLockGuard::acquire();
     match GpuRenderer::new(options) {
         Ok(renderer) => Some(TestRenderer {
@@ -124,6 +128,15 @@ fn renderer(options: GpuRenderOptions) -> Option<TestRenderer> {
         }
         Err(error) => panic!("could not initialize GPU renderer: {error}"),
     }
+}
+
+#[test]
+fn parses_every_driver_name() {
+    for driver in GpuDriver::ALL {
+        assert_eq!(driver.as_str().parse(), Ok(driver));
+    }
+    assert!("d3d12".parse::<GpuDriver>().is_err());
+    assert!(GpuDriver::Auto.is_built_in());
 }
 
 #[test]
@@ -221,6 +234,7 @@ fn rasterizes_a_frames_new_text_in_parallel_like_one_at_a_time() {
     let all: Vec<_> = labels.iter().copied().enumerate().collect();
     let Some(mut renderer) = renderer(GpuRenderOptions {
         background: Color::rgba(0, 0, 0, 255),
+        ..GpuRenderOptions::default()
     }) else {
         return;
     };
@@ -250,6 +264,7 @@ fn rasterizes_a_frames_new_text_in_parallel_like_one_at_a_time() {
 fn reuses_unchanged_layer_textures_across_frames_and_evicts_unused_ones() {
     let Some(mut renderer) = renderer(GpuRenderOptions {
         background: Color::rgba(0, 0, 0, 255),
+        ..GpuRenderOptions::default()
     }) else {
         return;
     };
@@ -308,6 +323,7 @@ fn reuses_unchanged_layer_textures_across_frames_and_evicts_unused_ones() {
 fn batches_consecutive_rects_into_one_draw_in_painter_order() {
     let Some(mut renderer) = renderer(GpuRenderOptions {
         background: Color::rgba(0, 0, 0, 255),
+        ..GpuRenderOptions::default()
     }) else {
         return;
     };
@@ -363,6 +379,7 @@ fn blend_rect(id: &str, x: f64, y: f64, size: f64, color: &str, blend_mode: Blen
 fn blends_a_magnified_layer_against_its_whole_backdrop() {
     let options = GpuRenderOptions {
         background: Color::rgba(10, 20, 30, 255),
+        ..GpuRenderOptions::default()
     };
     let (Some(mut fresh), Some(mut reused)) = (renderer(options), renderer(options)) else {
         return;
@@ -467,7 +484,10 @@ fn blend_scene() -> Scene {
 #[test]
 fn blends_layers_and_isolated_groups_like_the_cpu_renderer() {
     let background = Color::rgba(10, 20, 30, 255);
-    let Some(mut renderer) = renderer(GpuRenderOptions { background }) else {
+    let Some(mut renderer) = renderer(GpuRenderOptions {
+        background,
+        ..GpuRenderOptions::default()
+    }) else {
         return;
     };
     let scene = blend_scene();
@@ -535,6 +555,7 @@ fn blends_layers_and_isolated_groups_like_the_cpu_renderer() {
 fn shades_rects_like_the_cpu_rasterizer() {
     let Some(mut renderer) = renderer(GpuRenderOptions {
         background: Color::rgba(10, 20, 30, 255),
+        ..GpuRenderOptions::default()
     }) else {
         return;
     };
@@ -720,6 +741,7 @@ fn shades_rects_like_the_cpu_rasterizer() {
 fn shades_sheared_rects_like_the_cpu_rasterizer() {
     let Some(mut renderer) = renderer(GpuRenderOptions {
         background: Color::rgba(10, 20, 30, 255),
+        ..GpuRenderOptions::default()
     }) else {
         return;
     };
@@ -884,6 +906,7 @@ fn assert_rect_matches_cpu(
 fn shades_rects_in_scene_pixels_through_a_scaled_preview_viewport() {
     let Some(mut renderer) = renderer(GpuRenderOptions {
         background: Color::rgba(0, 0, 0, 255),
+        ..GpuRenderOptions::default()
     }) else {
         return;
     };
@@ -1576,6 +1599,7 @@ fn shaded_path_budget_rejection_preserves_both_buffers() {
 fn shades_top_boundary_vertices_on_transparent_backgrounds() {
     let Some(mut renderer) = renderer(GpuRenderOptions {
         background: Color::TRANSPARENT,
+        ..GpuRenderOptions::default()
     }) else {
         return;
     };
@@ -1621,6 +1645,7 @@ fn shades_top_boundary_vertices_on_transparent_backgrounds() {
 fn shades_integer_holes_exactly_on_transparent_backgrounds() {
     let Some(mut renderer) = renderer(GpuRenderOptions {
         background: Color::TRANSPARENT,
+        ..GpuRenderOptions::default()
     }) else {
         return;
     };
@@ -1644,6 +1669,7 @@ fn shades_integer_holes_exactly_on_transparent_backgrounds() {
 fn dense_zigzags_use_cpu_textures_and_leave_renderer_usable() {
     let Some(mut renderer) = renderer(GpuRenderOptions {
         background: Color::TRANSPARENT,
+        ..GpuRenderOptions::default()
     }) else {
         return;
     };
@@ -1696,6 +1722,7 @@ fn dense_zigzags_use_cpu_textures_and_leave_renderer_usable() {
 fn shrinks_path_fallback_textures_without_changing_output_bounds() {
     let Some(mut renderer) = renderer(GpuRenderOptions {
         background: Color::TRANSPARENT,
+        ..GpuRenderOptions::default()
     }) else {
         return;
     };
@@ -2521,6 +2548,7 @@ fn measures_pixels_crossed_by_many_edges_exactly() {
 
     let Some(mut renderer) = renderer(GpuRenderOptions {
         background: Color::TRANSPARENT,
+        ..GpuRenderOptions::default()
     }) else {
         return;
     };
@@ -2616,7 +2644,10 @@ fn keeps_path_buffers_bounded_while_shapes_animate() {
 #[test]
 fn clips_groups_that_blend_like_the_cpu_renderer() {
     let background = Color::rgba(10, 20, 30, 255);
-    let Some(mut renderer) = renderer(GpuRenderOptions { background }) else {
+    let Some(mut renderer) = renderer(GpuRenderOptions {
+        background,
+        ..GpuRenderOptions::default()
+    }) else {
         return;
     };
     let clip = Clip {
@@ -2792,6 +2823,7 @@ fn refuses_clips_nested_deeper_than_the_shader_walks() {
 fn renders_a_gradient_filled_rect() {
     let Some(mut renderer) = renderer(GpuRenderOptions {
         background: Color::rgba(0, 0, 0, 255),
+        ..GpuRenderOptions::default()
     }) else {
         return;
     };
@@ -2850,6 +2882,7 @@ fn solid_rect(id: &str, x: f64, width: f64, height: f64, color: &str) -> Layer {
 fn converts_frames_to_the_same_yuv420p_values_as_libswscale() {
     let Some(mut renderer) = renderer(GpuRenderOptions {
         background: Color::rgba(0, 0, 0, 255),
+        ..GpuRenderOptions::default()
     }) else {
         return;
     };
@@ -2997,7 +3030,10 @@ fn svg_display_size_and_animated_scale_match_cpu() {
 #[test]
 fn renders_an_offscreen_background_when_a_gpu_is_available() {
     let background = Color::rgba(51, 102, 153, 255);
-    let Some(mut renderer) = renderer(GpuRenderOptions { background }) else {
+    let Some(mut renderer) = renderer(GpuRenderOptions {
+        background,
+        ..GpuRenderOptions::default()
+    }) else {
         return;
     };
     let frame = renderer.render(&empty_scene(3, 2)).unwrap();
@@ -3235,6 +3271,7 @@ fn renders_to_a_bgra_preview_target_without_readback() {
 fn decodes_and_rotates_a_nested_image_on_the_gpu() {
     let Some(renderer) = renderer(GpuRenderOptions {
         background: Color::TRANSPARENT,
+        ..GpuRenderOptions::default()
     }) else {
         return;
     };
@@ -3304,6 +3341,7 @@ fn decodes_positions_and_fades_a_video_frame_on_the_gpu() {
 
     let Some(renderer) = renderer(GpuRenderOptions {
         background: Color::rgba(0, 0, 0, 255),
+        ..GpuRenderOptions::default()
     }) else {
         return;
     };
@@ -3384,6 +3422,7 @@ fn shrinks_images_and_video_frames_larger_than_the_texture_limit() {
 
     let Some(renderer) = renderer(GpuRenderOptions {
         background: Color::rgba(0, 0, 0, 255),
+        ..GpuRenderOptions::default()
     }) else {
         return;
     };
@@ -3531,6 +3570,7 @@ fn keeps_psd_composites_of_different_levels_apart_at_the_same_size() {
 fn composites_a_psd_larger_than_the_texture_limit_at_the_limit() {
     let Some(mut renderer) = renderer(GpuRenderOptions {
         background: Color::TRANSPARENT,
+        ..GpuRenderOptions::default()
     }) else {
         return;
     };
@@ -3585,6 +3625,7 @@ fn composites_a_psd_larger_than_the_texture_limit_at_the_limit() {
 fn rasterizes_and_rotates_styled_text_on_the_gpu() {
     let Some(mut renderer) = renderer(GpuRenderOptions {
         background: Color::TRANSPARENT,
+        ..GpuRenderOptions::default()
     }) else {
         return;
     };
@@ -3944,6 +3985,7 @@ fn final_quality_rasterizes_scaled_text_at_its_drawn_size() {
 fn filters_enlarged_images_instead_of_repeating_texels() {
     let Some(mut renderer) = renderer(GpuRenderOptions {
         background: Color::TRANSPARENT,
+        ..GpuRenderOptions::default()
     }) else {
         return;
     };
@@ -3979,6 +4021,7 @@ fn filters_enlarged_images_instead_of_repeating_texels() {
 fn shrinks_cached_images_through_mipmaps() {
     let Some(mut renderer) = renderer(GpuRenderOptions {
         background: Color::TRANSPARENT,
+        ..GpuRenderOptions::default()
     }) else {
         return;
     };
@@ -4028,6 +4071,7 @@ fn shrinks_cached_images_through_mipmaps() {
 fn anti_aliases_the_edges_of_rotated_images() {
     let Some(mut renderer) = renderer(GpuRenderOptions {
         background: Color::TRANSPARENT,
+        ..GpuRenderOptions::default()
     }) else {
         return;
     };

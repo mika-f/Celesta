@@ -7,11 +7,14 @@
 //!
 //! ```text
 //! cargo run --release -p celesta-bench -- list
-//! cargo run --release -p celesta-bench -- run [--frames N] [--warmup N] [--size WxH] [--dump DIR] [workload...]
+//! cargo run --release -p celesta-bench -- run [--frames N] [--warmup N] [--size WxH] [--driver NAME] [--dump DIR] [workload...]
 //! ```
 //!
 //! `--dump DIR` saves each workload's last frame as `DIR/<workload>.png`,
 //! outside the timing, to check what a workload draws.
+//! `--driver` picks the graphics API (`auto`, `vulkan`, `dx12`, `metal`, `gl`).
+//! `setup_ms` is the time from creating the renderer through the warmup
+//! frames, which includes compiling its shaders.
 
 mod cachegrind;
 mod workloads;
@@ -21,7 +24,7 @@ use std::process::ExitCode;
 use std::time::Instant;
 
 use celesta_composition::Scene;
-use celesta_gpu_renderer::{GpuRenderOptions, GpuRenderer};
+use celesta_gpu_renderer::{GpuDriver, GpuRenderOptions, GpuRenderer};
 
 use workloads::{IMAGE_PATH, WORKLOADS, Workload};
 
@@ -30,6 +33,7 @@ struct Options {
     warmup: usize,
     width: u32,
     height: u32,
+    driver: GpuDriver,
     dump: Option<PathBuf>,
     workloads: Vec<&'static Workload>,
 }
@@ -45,7 +49,7 @@ fn main() -> ExitCode {
         }
         Some("run") => parse(&args[1..]).and_then(|options| run(&options)),
         _ => Err("usage: celesta-bench list | run [--frames N] [--warmup N] \
-                  [--size WxH] [--dump DIR] [workload...]"
+                  [--size WxH] [--driver NAME] [--dump DIR] [workload...]"
             .to_owned()),
     };
     match result {
@@ -63,6 +67,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
         warmup: 10,
         width: 1920,
         height: 1080,
+        driver: GpuDriver::default(),
         dump: None,
         workloads: Vec::new(),
     };
@@ -93,6 +98,11 @@ fn parse(args: &[String]) -> Result<Options, String> {
                     return Err(format!("--size: {value} is not 16:9"));
                 }
                 (options.width, options.height) = (width, height);
+            }
+            "--driver" => {
+                options.driver = value()?
+                    .parse()
+                    .map_err(|error| format!("--driver: {error}"))?;
             }
             "--dump" => options.dump = Some(PathBuf::from(value()?)),
             name => options.workloads.push(
@@ -135,9 +145,13 @@ fn run(options: &Options) -> Result<(), String> {
         let (warmup, measured) = scenes.split_at(options.warmup);
         // A fresh renderer per workload, so one workload's caches never
         // help another.
-        let mut renderer = GpuRenderer::new(GpuRenderOptions::default())
-            .map_err(|error| format!("creating the GPU renderer: {error}"))?
-            .with_asset_root(asset_root);
+        let setup_started = Instant::now();
+        let mut renderer = GpuRenderer::new(GpuRenderOptions {
+            driver: options.driver,
+            ..GpuRenderOptions::default()
+        })
+        .map_err(|error| format!("creating the GPU renderer: {error}"))?
+        .with_asset_root(asset_root);
         let render = |renderer: &mut GpuRenderer, scenes: &[Scene]| {
             let mut rendered = 0;
             for scene in scenes {
@@ -148,6 +162,7 @@ fn run(options: &Options) -> Result<(), String> {
             Ok::<_, celesta_gpu_renderer::GpuRenderError>(())
         };
         render(&mut renderer, warmup).map_err(|error| fail(error.to_string()))?;
+        let setup = setup_started.elapsed();
         cachegrind::start();
         let started = Instant::now();
         let result = render(&mut renderer, measured);
@@ -168,12 +183,13 @@ fn run(options: &Options) -> Result<(), String> {
         let adapter = renderer.adapter_info();
         println!(
             "{{\"workload\":\"{}\",\"frames\":{},\"width\":{},\"height\":{},\
-             \"ms_per_frame\":{:.4},\"adapter\":\"{}\",\"backend\":\"{:?}\"}}",
+             \"ms_per_frame\":{:.4},\"setup_ms\":{:.1},\"adapter\":\"{}\",\"backend\":\"{:?}\"}}",
             workload.name,
             options.frames,
             options.width,
             options.height,
             elapsed.as_secs_f64() * 1000.0 / options.frames as f64,
+            setup.as_secs_f64() * 1000.0,
             adapter.name.replace(['"', '\\'], ""),
             adapter.backend,
         );

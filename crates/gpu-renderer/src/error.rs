@@ -1,5 +1,5 @@
 use crate::transform::MAX_CLIP_DEPTH;
-use crate::types::ReadbackFormat;
+use crate::types::{GpuDriver, ReadbackFormat};
 use celesta_media::MediaError;
 use celesta_remote::RemoteAssetError;
 use celesta_renderer::RenderError;
@@ -8,6 +8,8 @@ use std::{fmt, io};
 
 #[derive(Debug)]
 pub enum GpuRenderError {
+    /// This build cannot render through the driver on this platform.
+    DriverUnavailable(GpuDriver),
     RequestAdapter(wgpu::RequestAdapterError),
     RequestDevice(wgpu::RequestDeviceError),
     Poll(wgpu::PollError),
@@ -78,6 +80,12 @@ pub enum GpuRenderError {
 impl fmt::Display for GpuRenderError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::DriverUnavailable(driver) => {
+                write!(
+                    formatter,
+                    "the {driver} driver is not available on this platform"
+                )
+            }
             Self::RequestAdapter(error) => write!(formatter, "could not select a GPU: {error}"),
             Self::RequestDevice(error) => write!(formatter, "could not open the GPU: {error}"),
             Self::Poll(error) => write!(formatter, "could not wait for GPU work: {error}"),
@@ -194,7 +202,8 @@ impl Error for GpuRenderError {
             Self::Media(error) => Some(error),
             Self::Text(error) => Some(error),
             Self::Effects(error) => Some(error),
-            Self::MapCallbackDropped
+            Self::DriverUnavailable(_)
+            | Self::MapCallbackDropped
             | Self::TooManyLayers(_)
             | Self::ClipsNestedTooDeep(_)
             | Self::PathsTooComplex(_)

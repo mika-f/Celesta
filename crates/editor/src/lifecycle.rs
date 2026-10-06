@@ -325,8 +325,9 @@ impl EditorView {
                 .await;
             view.update_in(cx, |this, _, cx| {
                 this.opening = false;
+                let driver = this.driver;
                 let result = loaded.and_then(|(document, react_preview)| {
-                    EditorView::from_document(path, document, react_preview)
+                    EditorView::from_document(path, document, react_preview, driver)
                         .map_err(|error| error.to_string())
                 });
                 match result {

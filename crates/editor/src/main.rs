@@ -82,7 +82,7 @@ fn run() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
     let path = args.path;
-    let mut editor = EditorView::open(path.as_deref())?;
+    let mut editor = EditorView::open(path.as_deref(), args.driver)?;
 
     let app = gpui_kit::application().with_assets(CelestaAssets);
     app.run(move |cx: &mut App| {

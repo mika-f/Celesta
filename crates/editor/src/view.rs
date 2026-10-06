@@ -9,7 +9,7 @@ use crate::source::load_source;
 use celesta_composition::Rational;
 use celesta_editor_core::{AssetSummary, EditorDocument, TimelineClock, TrackSummary};
 use celesta_exporter::{ExportCancellation, ExportProgress};
-use celesta_gpu_renderer::{GpuRenderOptions, GpuRenderer};
+use celesta_gpu_renderer::{GpuDriver, GpuRenderOptions, GpuRenderer};
 use celesta_media::FfmpegBackend;
 use celesta_react_bridge::{ComponentPropertyField, ComponentPropertySchema};
 #[cfg(not(target_os = "macos"))]
@@ -124,6 +124,9 @@ pub(crate) struct EditorView {
     pub(crate) export_out_frame: Option<i64>,
     pub(crate) choosing_export_path: bool,
     pub(crate) gpu_name: SharedString,
+    /// The graphics API from `--driver`, kept for projects opened later and
+    /// for exports.
+    pub(crate) driver: GpuDriver,
     pub(crate) focus_handle: Option<FocusHandle>,
     pub(crate) master_volume_focus: Option<FocusHandle>,
     /// Split positions for the workspace shell: `dock_split` is the
@@ -153,15 +156,16 @@ pub(crate) struct EditorView {
 }
 
 impl EditorView {
-    pub(crate) fn open(path: Option<&Path>) -> Result<Self, Box<dyn Error>> {
+    pub(crate) fn open(path: Option<&Path>, driver: GpuDriver) -> Result<Self, Box<dyn Error>> {
         let (document, react_preview) = load_source(path)?;
-        Self::from_document(path.map(Path::to_path_buf), document, react_preview)
+        Self::from_document(path.map(Path::to_path_buf), document, react_preview, driver)
     }
 
     pub(crate) fn from_document(
         source_path: Option<PathBuf>,
         document: EditorDocument,
         react_preview: Option<ReactPreview>,
+        driver: GpuDriver,
     ) -> Result<Self, Box<dyn Error>> {
         let settings = &document.project().settings;
         let frame_rate_value = settings.frame_rate;
@@ -182,10 +186,14 @@ impl EditorView {
         // vs ~2ms of React evaluation on a 1080p source). Sharing one decode
         // run across the playhead's forward progress is what makes playback
         // track in real time; a backwards seek or a long jump still re-seeks.
-        let renderer = GpuRenderer::new(GpuRenderOptions::default())?
-            .with_asset_root(document.asset_root())
-            .with_video_decoder(FfmpegBackend::new().with_sequential_video(frame_rate_value));
-        let gpu_name = renderer.adapter_info().name.clone().into();
+        let renderer = GpuRenderer::new(GpuRenderOptions {
+            driver,
+            ..GpuRenderOptions::default()
+        })?
+        .with_asset_root(document.asset_root())
+        .with_video_decoder(FfmpegBackend::new().with_sequential_video(frame_rate_value));
+        let adapter = renderer.adapter_info();
+        let gpu_name = format!("{} ({})", adapter.name, adapter.backend).into();
         let preview_worker = PreviewWorker::spawn(renderer)?;
         let media_probe_worker = MediaProbeWorker::spawn()?;
         let audio_mix_worker = AudioMixWorker::spawn()?;
@@ -261,6 +269,7 @@ impl EditorView {
             export_out_frame: None,
             choosing_export_path: false,
             gpu_name,
+            driver,
             focus_handle: None,
             master_volume_focus: None,
             dock_split: None,

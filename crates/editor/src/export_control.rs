@@ -112,6 +112,7 @@ impl EditorView {
             output: output.clone(),
             range,
             cancellation: cancellation.clone(),
+            driver: self.driver,
         };
         self.export_path = Some(output);
         self.export_progress = Some(ExportProgress::Rendering { frame: 0, total: 0 });

@@ -12,8 +12,8 @@ mod report;
 use celesta_composition::Time;
 use celesta_exporter::{
     ColorConversion, CompanionProject, ContactSheet, EncoderPreset, ExportError, ExportOptions,
-    ExportProgress, ExportRange, Exporter, FrameSelection, PngExport, ReactRuntimeOptions,
-    RenderQuality, VideoEncoding, parse_timecode,
+    ExportProgress, ExportRange, Exporter, FrameSelection, GpuDriver, PngExport,
+    ReactRuntimeOptions, RenderQuality, VideoEncoding, parse_timecode,
 };
 use celesta_project::Project;
 
@@ -125,6 +125,13 @@ struct Cli {
         value_parser = names(&RenderQuality::ALL, RenderQuality::as_str)
     )]
     render_quality: RenderQuality,
+    /// Graphics API to render with; auto takes the first one with a GPU.
+    #[arg(
+        long,
+        default_value_t = GpuDriver::default(),
+        value_parser = names(&GpuDriver::ALL, GpuDriver::as_str)
+    )]
+    driver: GpuDriver,
     /// Disable the terminal progress dashboard (automatic outside a terminal).
     #[arg(long)]
     no_ui: bool,
@@ -243,6 +250,7 @@ fn export(
         range,
         video: cli.video(),
         render_quality: cli.render_quality,
+        driver: cli.driver,
     });
     let load = |path: &Path| Project::load(path).map_err(ExportError::Project);
     let companion = cli
