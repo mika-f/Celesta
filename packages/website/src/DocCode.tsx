@@ -1,3 +1,4 @@
+import { t, text } from './i18n';
 import { useEffect, useMemo, useState } from 'react';
 import { highlight } from './syntax';
 
@@ -15,14 +16,14 @@ export function DocCode({ code: source, label, language = 'shell' }: { code: str
   async function copy() {
     try {
       await navigator.clipboard.writeText(code);
-      setStatus('Copied!');
+      setStatus(t('copied'));
     } catch {
-      setStatus('Copy unavailable. Select the code to copy it manually.');
+      setStatus(t('copy-failed'));
     }
   }
 
   return <div className="doc-code">
-    <div className="doc-code-bar"><span>{label}</span><button onClick={copy} aria-label={`Copy ${label}`}>Copy</button></div>
+    <div className="doc-code-bar">{text('code.copy', [<span />, label, <button onClick={copy} aria-label={t('copy-label', { label })} />])}</div>
     <div dangerouslySetInnerHTML={{ __html: html }} />
     <span className="doc-copy-status" role="status">{status}</span>
   </div>;

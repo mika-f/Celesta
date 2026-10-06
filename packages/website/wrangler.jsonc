@@ -2,5 +2,14 @@
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "celesta-website",
   "compatibility_date": "2026-09-24",
-  "assets": { "directory": "./dist", "not_found_handling": "404-page" }
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "404-page",
+    "binding": "ASSETS",
+    "run_worker_first": [
+      "/",
+      "/index.html"
+    ]
+  },
+  "main": "worker.ts"
 }

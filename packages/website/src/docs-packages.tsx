@@ -1,6 +1,9 @@
+import { docPath } from './docs-nav';
+import { t, text, homePath } from './i18n';
 import type { ReactNode } from 'react';
 import { DocCode } from './DocCode';
 import { Api, Note } from './docs-shared';
+import voicevoxScene from './examples/voicevox.tsx?raw';
 
 // Chapters for the packages that ship beside @celesta/react.
 
@@ -8,45 +11,61 @@ import { Api, Note } from './docs-shared';
 const lines = (...rows: string[]) => rows.join('\n');
 
 export const packageContents: Record<string, ReactNode> = {
+  'voicevox': <>
+    <p>{text('package.voicevox-intro', [<code>@celesta/voicevox</code>, <code>@celesta/react</code>])}</p>
+    <p>{text('package.voicevox-runtime')}</p>
+    <h3>{text('package.voicevox-example')}</h3>
+    <p>{text('package.voicevox-query')}</p>
+    <DocCode label="voicevox.tsx" language="tsx" code={voicevoxScene.trim()} />
+    <Api caption="@celesta/voicevox" rows={[
+      [<code>lipSyncFromVoicevox(query, options?)</code>, text('api.voicevox-convert')],
+      [<code>voicevoxVowelShape(vowel)</code>, text('api.voicevox-vowel')],
+    ]} />
+    <Api caption={t('package.voicevox-options')} rows={[
+      [<code>frameRate</code>, text('api.voicevox-frame-rate')],
+      [<code>interrogativeUpspeak</code>, text('api.voicevox-upspeak')],
+    ]} />
+    <p>{text('package.voicevox-types')}</p>
+  </>,
   'math': <>
-    <p><code>@celesta/math</code> is a small, dependency-free toolkit for the numbers behind motion: seeded randomness, smooth noise, number shaping, waves, angles, and 2D points. It is bundled with the runtime, so a composition imports it directly:</p>
-    <DocCode label="Import" language="tsx" code={"import { random, randomRange, noise } from '@celesta/math';"} />
-    <p>Choose <strong>File → Set Up TypeScript</strong> for editor types (see <a href="/docs/react-compositions/">Your first React composition</a>), or use it in the <a href="/#playground">web editor</a>, which accepts <code>@celesta/react</code>, <code>@celesta/math</code>, and <code>react</code>. The package is not published to npm yet.</p>
-    <p>This chapter covers randomness. <a href="/docs/math-noise/">Noise & fbm</a> covers smooth drift, and <a href="/docs/math-shaping/">shaping, waves & geometry</a> covers the everyday helpers.</p>
+    <p>{text('package.is-a-small-dependency-free-toolkit-for', [<code>@celesta/math</code>])}</p>
+    <DocCode label={t('package.import')} language="tsx" code={"import { random, randomRange, noise } from '@celesta/math';"} />
+    <p>{text('package.choose-file-set-up-typescript-for-editor', [<strong />, <a href={docPath('react-compositions')} />, <a href={`${homePath}#playground`} />, <code>@celesta/react</code>, <code>@celesta/math</code>, <code>react</code>])}</p>
+    <p>{text('package.this-chapter-covers-randomness-noise-fbm-covers', [<a href={docPath('math-noise')} />, <a href={docPath('math-shaping')} />])}</p>
 
-    <h3>Why not Math.random()?</h3>
-    <p>A composition is a function of the frame. The preview scrubs backward, the exporter renders frames in order, and both must draw the same picture for the same frame. <code>Math.random()</code> gives a different answer every call, so stars would jump around each time you scrub. Every function in <code>@celesta/math</code> is a pure function of its inputs: the same seed returns the same value in preview, in export, and on every machine.</p>
+    <h3>{text('package.why-not-math-random')}</h3>
+    <p>{text('package.a-composition-is-a-function-of-the', [<code>Math.random()</code>, <code>@celesta/math</code>])}</p>
 
-    <h3>Seeds</h3>
-    <p>A <code>Seed</code> is a number or a string. <code>random(seed)</code> returns a number in <code>[0, 1)</code>, and the same seed always returns the same number. Give each thing you randomize its own seed, and vary it by index and by property:</p>
-    <DocCode label="One seed per property" language="tsx" code={lines(
+    <h3>{text('package.seeds')}</h3>
+    <p>{text('package.a-is-a-number-or-a-string', [<code>Seed</code>, <code>random(seed)</code>, <code>[0, 1)</code>])}</p>
+    <DocCode label={t('package.one-seed-per-property')} language="tsx" code={lines(
       'const x = randomRange(`star-${i}-x`, 0, 1920);',
       'const y = randomRange(`star-${i}-y`, 0, 1080);',
       'const size = randomRange(`star-${i}-size`, 2, 6);',
     )} />
     <ul>
-      <li>Reusing a seed reuses the value. <code>random('a')</code> called twice is the same number, so <code>x</code> and <code>y</code> need different seeds or the stars line up on a diagonal.</li>
-      <li>A fractional number is its own seed: <code>0.5</code> does not collide with <code>0</code> or <code>1</code>. A number and a string that spells it, such as <code>0.5</code> and <code>'0.5'</code>, are the same seed.</li>
-      <li>A seed must be a string or a finite number. <code>NaN</code> and <code>Infinity</code> throw an error that names the function.</li>
-      <li>To make a value change over time, put time in the seed: <code>random(Math.floor(frame / 4))</code> jumps to a new value every four frames, which suits flicker and glitch effects. For smooth change, use <a href="/docs/math-noise/"><code>noise</code></a>.</li>
+      <li>{text('package.reusing-a-seed-reuses-the-value-called', [<code>random('a')</code>, <code>x</code>, <code>y</code>])}</li>
+      <li>{text('package.a-fractional-number-is-its-own-seed', [<code>0.5</code>, <code>0</code>, <code>1</code>, <code>0.5</code>, <code>'0.5'</code>])}</li>
+      <li>{text('package.a-seed-must-be-a-string-or', [<code>NaN</code>, <code>Infinity</code>])}</li>
+      <li>{text('package.to-make-a-value-change-over-time', [<code>random(Math.floor(frame / 4))</code>, <a href={docPath('math-noise')} />, <code>noise</code>])}</li>
     </ul>
 
-    <h3>The random functions</h3>
-    <Api caption="Randomness" rows={[
-      [<code>random(seed)</code>, <>A number in <code>[0, 1)</code>.</>],
-      [<code>randomRange(seed, min, max)</code>, <>A number in <code>[min, max)</code>.</>],
-      [<code>randomInt(seed, min, max)</code>, <>A whole number from <code>min</code> to <code>max</code>, <strong>both included</strong>. Throws if no whole number lies between them.</>],
-      [<code>randomBool(seed, probability?)</code>, <><code>true</code> with the given probability (<code>0.5</code> by default).</>],
-      [<code>randomSign(seed)</code>, <><code>-1</code> or <code>1</code>, each half the time. Handy for mirroring a direction or spin.</>],
-      [<code>randomPick(seed, items)</code>, <>One element of <code>items</code>. Throws on an empty list.</>],
-      [<code>shuffle(seed, items)</code>, <>A shuffled <strong>copy</strong> of <code>items</code>; the original is untouched.</>],
-      [<code>randomGaussian(seed, mean?, stdDev?)</code>, <>A bell-curve value: most land within <code>stdDev</code> of <code>mean</code> (defaults <code>0</code> and <code>1</code>), a few land much further out.</>],
-      [<code>randomInCircle(seed, radius?, center?)</code>, <>A point spread evenly over a disc, as <code>{'{ x, y }'}</code>. Defaults to radius <code>1</code> about the origin.</>],
+    <h3>{text('package.the-random-functions')}</h3>
+    <Api caption={t('package.randomness')} rows={[
+      [<code>random(seed)</code>, <>{text('api.a-number-in', [<code>[0, 1)</code>])}</>],
+      [<code>randomRange(seed, min, max)</code>, <>{text('api.a-number-in-a045', [<code>[min, max)</code>])}</>],
+      [<code>randomInt(seed, min, max)</code>, <>{text('api.a-whole-number-from-to-throws-if', [<code>min</code>, <code>max</code>, <strong />, text('package.both-included')])}</>],
+      [<code>randomBool(seed, probability?)</code>, <>{text('api.with-the-given-probability-by-default', [<code>true</code>, <code>0.5</code>])}</>],
+      [<code>randomSign(seed)</code>, <>{text('api.or-each-half-the-time-handy-for', [<code>-1</code>, <code>1</code>])}</>],
+      [<code>randomPick(seed, items)</code>, <>{text('api.one-element-of-throws-on-an-empty', [<code>items</code>])}</>],
+      [<code>shuffle(seed, items)</code>, <>{text('api.a-shuffled-of-the-original-is-untouched', [<strong />, text('package.copy'), <code>items</code>])}</>],
+      [<code>randomGaussian(seed, mean?, stdDev?)</code>, <>{text('api.a-bell-curve-value-most-land-within', [<code>stdDev</code>, <code>mean</code>, <code>0</code>, <code>1</code>])}</>],
+      [<code>randomInCircle(seed, radius?, center?)</code>, <>{text('api.a-point-spread-evenly-over-a-disc', [<code>{'{ x, y }'}</code>, <code>1</code>])}</>],
     ]} />
 
-    <h3>A seeded starfield</h3>
-    <p>Because the seeds are fixed, the field below is identical on every frame; only the drift, from <a href="/docs/math-noise/"><code>noise</code></a>, moves:</p>
-    <DocCode label="A starfield that drifts" language="tsx" code={lines(
+    <h3>{text('package.a-seeded-starfield')}</h3>
+    <p>{text('package.because-the-seeds-are-fixed-the-field', [<a href={docPath('math-noise')} />, <code>noise</code>])}</p>
+    <DocCode label={t('package.a-starfield-that-drifts')} language="tsx" code={lines(
       "import { noise, randomRange } from '@celesta/math';",
       '',
       'function Stars() {',
@@ -62,9 +81,9 @@ export const packageContents: Record<string, ReactNode> = {
       '}',
     )} />
 
-    <h3>Choosing and ordering things</h3>
-    <p><code>randomPick</code> and <code>shuffle</code> pick from lists you already have, such as a palette or a set of captions. Seed them with something stable, like the item’s index:</p>
-    <DocCode label="A palette, and a shuffled order" language="tsx" code={lines(
+    <h3>{text('package.choosing-and-ordering-things')}</h3>
+    <p>{text('package.and-pick-from-lists-you-already-have', [<code>randomPick</code>, <code>shuffle</code>])}</p>
+    <DocCode label={t('package.a-palette-and-a-shuffled-order')} language="tsx" code={lines(
       "const palette = ['#a68bbf', '#7cf29c', '#f2c97c', '#7cc4f2'];",
       '',
       'const color = randomPick(`bar-${i}-color`, palette);',
@@ -73,9 +92,9 @@ export const packageContents: Record<string, ReactNode> = {
       'const spin = 45 * randomSign(`bar-${i}-spin`);     // clockwise or counter-clockwise',
     )} />
 
-    <h3>Natural-looking scatter</h3>
-    <p>Uniform randomness looks artificial: every value is as likely as any other. <code>randomGaussian</code> clusters values around a center, and <code>randomInCircle</code> spreads points evenly by area instead of crowding the middle of a disc, so a burst of particles looks round rather than starry-centered:</p>
-    <DocCode label="A burst of particles" language="tsx" code={lines(
+    <h3>{text('package.natural-looking-scatter')}</h3>
+    <p>{text('package.uniform-randomness-looks-artificial-every-value-is', [<code>randomGaussian</code>, <code>randomInCircle</code>])}</p>
+    <DocCode label={t('package.a-burst-of-particles')} language="tsx" code={lines(
       "import { randomGaussian, randomInCircle } from '@celesta/math';",
       '',
       'const particles = Array.from({ length: 120 }, (_, i) => {',
@@ -85,15 +104,15 @@ export const packageContents: Record<string, ReactNode> = {
       '    width={size} height={size} cornerRadius={size / 2} fill="#f2c97c" />;',
       '});',
     )} />
-    <Note title="Keep the seed, change the look">When a random layout is almost right, change the seed’s prefix (<code>star-</code> to <code>sky-</code>) and the whole field rearranges. Because every value is repeatable, the version you liked in the preview is the version you export.</Note>
+    <Note title={t('package.keep-the-seed-change-the-look')}>{text('package.when-a-random-layout-is-almost-right', [<code>star-</code>, <code>sky-</code>])}</Note>
   </>,
 
   'math-noise': <>
-    <p>Noise is smooth randomness: nearby inputs give nearby outputs, so values wander instead of jumping. Use it for drift, wobble, handheld shake, floating particles, and organic textures. Like everything in <a href="/docs/math/"><code>@celesta/math</code></a>, it is deterministic: the same seed and coordinates return the same value on every render.</p>
+    <p>{text('package.noise-is-smooth-randomness-nearby-inputs-give', [<a href={docPath('math')} />, <code>@celesta/math</code>])}</p>
 
-    <h3>1D noise over time</h3>
-    <p><code>noise(seed, t)</code> returns a value in <code>[-1, 1]</code>. It picks a random value at each whole number of <code>t</code> and blends smoothly between them, so the scale of <code>t</code> sets the speed: <code>frame / 20</code> changes direction about every 20 frames.</p>
-    <DocCode label="A gentle floating motion" language="tsx" code={lines(
+    <h3>{text('package.1d-noise-over-time')}</h3>
+    <p>{text('package.returns-a-value-in-it-picks-a', [<code>noise(seed, t)</code>, <code>[-1, 1]</code>, <code>t</code>, <code>t</code>, <code>frame / 20</code>])}</p>
+    <DocCode label={t('package.a-gentle-floating-motion')} language="tsx" code={lines(
       "import { noise } from '@celesta/math';",
       '',
       'function Floating({ children }: { children: React.ReactNode }) {',
@@ -107,16 +126,16 @@ export const packageContents: Record<string, ReactNode> = {
       '}',
     )} />
     <ul>
-      <li>Use a <strong>different seed for each property</strong>. With one seed, <code>x</code> and <code>y</code> move in lockstep along a diagonal.</li>
-      <li>Larger divisors are slower and calmer: <code>frame / 90</code> drifts, <code>frame / 8</code> trembles.</li>
-      <li>Scale by the amount you want: <code>noise(…) * 24</code> moves up to 24 pixels either way.</li>
-      <li>Add a per-item offset for a crowd: <code>noise(`dot-${'{i}'}`, frame / 40)</code> keeps each dot on its own path.</li>
+      <li>{text('package.use-a-different-seed-for-each-property', [<strong />, <code>x</code>, <code>y</code>])}</li>
+      <li>{text('package.larger-divisors-are-slower-and-calmer-drifts', [<code>frame / 90</code>, <code>frame / 8</code>])}</li>
+      <li>{text('package.scale-by-the-amount-you-want-moves', [<code>noise(…) * 24</code>])}</li>
+      <li>{text('package.add-a-per-item-offset-for-a', [<code>noise(`dot-${'{i}'}`, frame / 40)</code>])}</li>
     </ul>
-    <Note title="Camera shake">The <code>shake</code> prop of <a href="/docs/text-camera-lines/"><code>Camera</code></a> is built for handheld drift. Reach for <code>noise</code> directly when you want to shake something that is not the camera, or to shape the shake yourself.</Note>
+    <Note title={t('package.camera-shake')}>{text('package.the-prop-of-is-built-for-handheld', [<code>shake</code>, <a href={docPath('text-camera-lines')} />, <code>Camera</code>, <code>noise</code>])}</Note>
 
-    <h3>2D and 3D noise</h3>
-    <p><code>noise2D(seed, x, y)</code> samples a smooth field over a plane. Scale the position down, as in <code>x / 200</code>, to stretch the features; the smaller the divisor, the busier the field. <code>noise3D(seed, x, y, z)</code> adds a third coordinate, which you can treat as time to animate a field smoothly.</p>
-    <DocCode label="A field of dots that breathe" language="tsx" code={lines(
+    <h3>{text('package.2d-and-3d-noise')}</h3>
+    <p>{text('package.samples-a-smooth-field-over-a-plane', [<code>noise2D(seed, x, y)</code>, <code>x / 200</code>, <code>noise3D(seed, x, y, z)</code>])}</p>
+    <DocCode label={t('package.a-field-of-dots-that-breathe')} language="tsx" code={lines(
       "import { noise3D } from '@celesta/math';",
       '',
       'function Field() {',
@@ -135,16 +154,16 @@ export const packageContents: Record<string, ReactNode> = {
       '  return <>{dots}</>;',
       '}',
     )} />
-    <p>Every result lies in <code>[-1, 1]</code>. To turn it into a size, an opacity, or any other range, use <a href="/docs/math-shaping/"><code>remap</code></a> or the arithmetic above: <code>0.5 + n * 0.5</code> maps it to <code>[0, 1]</code>.</p>
+    <p>{text('package.every-result-lies-in-to-turn-it', [<code>[-1, 1]</code>, <a href={docPath('math-shaping')} />, <code>remap</code>, <code>0.5 + n * 0.5</code>, <code>[0, 1]</code>])}</p>
 
-    <h3>Layered noise (fbm)</h3>
-    <p>One layer of noise moves on a single scale, which looks smooth and a little artificial. Fractal Brownian motion, <code>fbm</code>, adds several layers, each finer and weaker than the last. The result wanders on a large scale and also has small detail, like clouds, smoke, terrain, or flame. <code>fbm</code>, <code>fbm2D</code>, and <code>fbm3D</code> take the same arguments as the plain versions plus an options object, and still return values in <code>[-1, 1]</code>.</p>
-    <Api caption="fbm options" rows={[
-      [<code>octaves</code>, <>How many layers to add. A whole number of at least 1; the default is <code>4</code>. More layers add finer detail and cost a little more per call.</>],
-      [<code>lacunarity</code>, <>How much finer each layer is than the one before. The default is <code>2</code>, doubling the frequency.</>],
-      [<code>gain</code>, <>How much weaker each layer is than the one before. A finite number of at least 0; the default is <code>0.5</code>. Lower values keep the result smoother, higher values make it rougher.</>],
+    <h3>{text('package.layered-noise-fbm')}</h3>
+    <p>{text('package.one-layer-of-noise-moves-on-a', [<code>fbm</code>, <code>fbm</code>, <code>fbm2D</code>, <code>fbm3D</code>, <code>[-1, 1]</code>])}</p>
+    <Api caption={t('package.fbm-options')} rows={[
+      [<code>octaves</code>, <>{text('api.how-many-layers-to-add-a-whole', [<code>4</code>])}</>],
+      [<code>lacunarity</code>, <>{text('api.how-much-finer-each-layer-is-than', [<code>2</code>])}</>],
+      [<code>gain</code>, <>{text('api.how-much-weaker-each-layer-is-than', [<code>0.5</code>])}</>],
     ]} />
-    <DocCode label="A rough horizon line" language="tsx" code={lines(
+    <DocCode label={t('package.a-rough-horizon-line')} language="tsx" code={lines(
       "import { fbm } from '@celesta/math';",
       '',
       'const points: [number, number][] = Array.from({ length: 97 }, (_, i) => [',
@@ -154,39 +173,39 @@ export const packageContents: Record<string, ReactNode> = {
       '',
       '<Polyline points={points} stroke="#a68bbf" strokeWidth={3} />',
     )} />
-    <p>Invalid options throw an error that names the function, such as <code>fbm2D() requires a whole number of octaves of at least 1</code>.</p>
+    <p>{text('package.invalid-options-throw-an-error-that-names', [<code>fbm2D() requires a whole number of octaves of at least 1</code>])}</p>
 
-    <h3>Which one do I use?</h3>
-    <div className="doc-table-wrap" tabIndex={0} aria-label="Choosing a noise function"><table><caption>Choosing a noise function</caption><thead><tr><th>You want</th><th>Use</th></tr></thead><tbody>
-      <tr><td>One value that drifts over time</td><td><code>noise(seed, frame / n)</code></td></tr>
-      <tr><td>A value that wanders on several scales</td><td><code>fbm(seed, frame / n)</code></td></tr>
-      <tr><td>A pattern across the screen</td><td><code>noise2D</code> or <code>fbm2D</code> sampled at scaled positions</td></tr>
-      <tr><td>A pattern across the screen that moves</td><td><code>noise3D</code> or <code>fbm3D</code> with time as the third coordinate</td></tr>
-      <tr><td>A new, unrelated value each frame or beat</td><td><a href="/docs/math/"><code>random</code></a> with the frame in the seed</td></tr>
+    <h3>{text('package.which-one-do-i-use')}</h3>
+    <div className="doc-table-wrap" tabIndex={0} aria-label={t('package.choosing-a-noise-function')}><table><caption>{text('package.choosing-a-noise-function-m508')}</caption><thead><tr><th>{text('package.you-want')}</th><th>{text('package.use')}</th></tr></thead><tbody>
+      <tr><td>{text('package.one-value-that-drifts-over-time')}</td><td><code>noise(seed, frame / n)</code></td></tr>
+      <tr><td>{text('package.a-value-that-wanders-on-several-scales')}</td><td><code>fbm(seed, frame / n)</code></td></tr>
+      <tr><td>{text('package.a-pattern-across-the-screen')}</td><td>{text('package.or-sampled-at-scaled-positions', [<code>noise2D</code>, <code>fbm2D</code>])}</td></tr>
+      <tr><td>{text('package.a-pattern-across-the-screen-that-moves')}</td><td>{text('package.or-with-time-as-the-third-coordinate', [<code>noise3D</code>, <code>fbm3D</code>])}</td></tr>
+      <tr><td>{text('package.a-new-unrelated-value-each-frame-or')}</td><td>{text('package.with-the-frame-in-the-seed', [<a href={docPath('math')} />, <code>random</code>])}</td></tr>
     </tbody></table></div>
   </>,
 
   'math-shaping': <>
-    <p>The remaining helpers in <a href="/docs/math/"><code>@celesta/math</code></a> reshape numbers, build repeating motion, and do the angle and point arithmetic that layout and orbits need. They are plain functions, so you can use them anywhere: in a component, in <code>prepare()</code>, or in a data file.</p>
+    <p>{text('package.the-remaining-helpers-in-reshape-numbers-build', [<a href={docPath('math')} />, <code>@celesta/math</code>, <code>prepare()</code>])}</p>
 
-    <h3>Shaping numbers</h3>
-    <Api caption="Scalars" rows={[
-      [<code>clamp(value, min, max)</code>, <>Limits <code>value</code> to <code>[min, max]</code>. <code>clamp01(value)</code> limits it to <code>[0, 1]</code>.</>],
-      [<code>lerp(a, b, t)</code>, <>The value <code>t</code> of the way from <code>a</code> to <code>b</code>. <code>t</code> is not clamped, so values outside 0–1 extrapolate.</>],
-      [<code>inverseLerp(a, b, value)</code>, <>The opposite: how far <code>value</code> is from <code>a</code> to <code>b</code>, as a <code>t</code>. Returns <code>0</code> when <code>a === b</code>.</>],
-      [<code>remap(value, inMin, inMax, outMin, outMax)</code>, <>Moves a value from one range to another, without clamping. <code>remapClamped</code> keeps the result inside the output range.</>],
-      [<code>step(edge, x)</code>, <><code>0</code> below <code>edge</code>, <code>1</code> from <code>edge</code> on.</>],
-      [<code>smoothstep(edge0, edge1, x)</code>, <>A smooth 0–1 ramp as <code>x</code> goes from <code>edge0</code> to <code>edge1</code>. <code>smootherstep</code> has an even gentler start and finish.</>],
-      [<code>fract(x)</code>, <>The fractional part, always in <code>[0, 1)</code>, also for negative numbers.</>],
-      [<code>mod(value, divisor)</code>, <>Modulo with the sign of the divisor: <code>mod(-1, 4)</code> is <code>3</code>, not <code>-1</code>.</>],
-      [<code>wrap(value, min, max)</code>, <>Wraps into <code>[min, max)</code>, for looping positions and hues.</>],
-      [<code>pingPong(value, length)</code>, <>Bounces a steadily increasing value back and forth between <code>0</code> and <code>length</code>.</>],
-      [<code>snap(value, increment)</code>, <>Rounds to the nearest multiple of <code>increment</code>, for stepped or grid-locked motion.</>],
-      [<code>roundTo(value, decimals?)</code>, <>Rounds to a number of decimals, for tidy on-screen readouts.</>],
-      [<code>approxEqual(a, b, epsilon?)</code>, <>Whether two numbers differ by at most <code>epsilon</code> (<code>1e-6</code> by default).</>],
+    <h3>{text('package.shaping-numbers')}</h3>
+    <Api caption={t('package.scalars')} rows={[
+      [<code>clamp(value, min, max)</code>, <>{text('api.limits-to-limits-it-to', [<code>value</code>, <code>[min, max]</code>, <code>clamp01(value)</code>, <code>[0, 1]</code>])}</>],
+      [<code>lerp(a, b, t)</code>, <>{text('api.the-value-of-the-way-from-to', [<code>t</code>, <code>a</code>, <code>b</code>, <code>t</code>])}</>],
+      [<code>inverseLerp(a, b, value)</code>, <>{text('api.the-opposite-how-far-is-from-to', [<code>value</code>, <code>a</code>, <code>b</code>, <code>t</code>, <code>0</code>, <code>a === b</code>])}</>],
+      [<code>remap(value, inMin, inMax, outMin, outMax)</code>, <>{text('api.moves-a-value-from-one-range-to', [<code>remapClamped</code>])}</>],
+      [<code>step(edge, x)</code>, <>{text('api.below-from-on', [<code>0</code>, <code>edge</code>, <code>1</code>, <code>edge</code>])}</>],
+      [<code>smoothstep(edge0, edge1, x)</code>, <>{text('api.a-smooth-0-1-ramp-as-goes', [<code>x</code>, <code>edge0</code>, <code>edge1</code>, <code>smootherstep</code>])}</>],
+      [<code>fract(x)</code>, <>{text('api.the-fractional-part-always-in-also-for', [<code>[0, 1)</code>])}</>],
+      [<code>mod(value, divisor)</code>, <>{text('api.modulo-with-the-sign-of-the-divisor', [<code>mod(-1, 4)</code>, <code>3</code>, <code>-1</code>])}</>],
+      [<code>wrap(value, min, max)</code>, <>{text('api.wraps-into-for-looping-positions-and-hues', [<code>[min, max)</code>])}</>],
+      [<code>pingPong(value, length)</code>, <>{text('api.bounces-a-steadily-increasing-value-back-and', [<code>0</code>, <code>length</code>])}</>],
+      [<code>snap(value, increment)</code>, <>{text('api.rounds-to-the-nearest-multiple-of-for', [<code>increment</code>])}</>],
+      [<code>roundTo(value, decimals?)</code>, <>{text('api.rounds-to-a-number-of-decimals-for')}</>],
+      [<code>approxEqual(a, b, epsilon?)</code>, <>{text('api.whether-two-numbers-differ-by-at-most', [<code>epsilon</code>, <code>1e-6</code>])}</>],
     ]} />
-    <Note title="remap or interpolate?"><code>remap</code> is a plain linear conversion with no easing and, unless you use <code>remapClamped</code>, no clamping. For motion over frames, with easing and <code>extrapolateLeft</code>/<code>extrapolateRight</code>, use <a href="/docs/animation/"><code>interpolate</code></a> from <code>@celesta/react</code>. <code>remap</code> shines when converting other kinds of values, such as turning a noise result into an opacity.</Note>
-    <DocCode label="Loops and bounces" language="tsx" code={lines(
+    <Note title={t('package.remap-or-interpolate')}>{text('package.is-a-plain-linear-conversion-with-no', [<code>remap</code>, <code>remapClamped</code>, <code>extrapolateLeft</code>, <code>extrapolateRight</code>, <a href={docPath('animation')} />, <code>interpolate</code>, <code>@celesta/react</code>, <code>remap</code>])}</Note>
+    <DocCode label={t('package.loops-and-bounces')} language="tsx" code={lines(
       "import { pingPong, snap, wrap } from '@celesta/math';",
       '',
       'const frame = useCurrentFrame();',
@@ -195,15 +214,15 @@ export const packageContents: Record<string, ReactNode> = {
       'const stepped = snap(sweep, 100);             // the same sweep, in 100 px jumps',
     )} />
 
-    <h3>Waves</h3>
-    <p>The four wave functions repeat with a <strong>period of 1</strong> and return values in <code>[-1, 1]</code>, so you pass <code>frame / framesPerCycle</code>. They are in phase: each is positive for the first half of a cycle and negative for the second, so you can swap one for another.</p>
-    <Api caption="Waves" rows={[
-      [<code>sineWave(t)</code>, <>A smooth sine. Gentle pulses, bobbing, breathing.</>],
-      [<code>triangleWave(t)</code>, <>Straight ramps up and down. Constant-speed back-and-forth.</>],
-      [<code>squareWave(t)</code>, <><code>1</code> for the first half of each cycle, <code>-1</code> for the second. On/off blinking.</>],
-      [<code>sawtoothWave(t)</code>, <>Ramps from 0 up to 1, drops to -1 halfway, and ramps back to 0. Repeating sweeps.</>],
+    <h3>{text('package.waves')}</h3>
+    <p>{text('package.the-four-wave-functions-repeat-with-a', [<strong />, <code>[-1, 1]</code>, <code>frame / framesPerCycle</code>])}</p>
+    <Api caption={t('package.waves-m527')} rows={[
+      [<code>sineWave(t)</code>, <>{text('api.a-smooth-sine-gentle-pulses-bobbing-breathing')}</>],
+      [<code>triangleWave(t)</code>, <>{text('api.straight-ramps-up-and-down-constant-speed')}</>],
+      [<code>squareWave(t)</code>, <>{text('api.for-the-first-half-of-each-cycle', [<code>1</code>, <code>-1</code>])}</>],
+      [<code>sawtoothWave(t)</code>, <>{text('api.ramps-from-0-up-to-1-drops')}</>],
     ]} />
-    <DocCode label="A breathing circle on a 2-second cycle" language="tsx" code={lines(
+    <DocCode label={t('package.a-breathing-circle-on-a-2-second')} language="tsx" code={lines(
       "import { sineWave } from '@celesta/math';",
       '',
       'const { fps } = useVideoConfig();',
@@ -214,27 +233,27 @@ export const packageContents: Record<string, ReactNode> = {
       '  cornerRadius={100} scale={1 + 0.08 * breath} fill="#a68bbf" />',
     )} />
 
-    <h3>Angles</h3>
-    <p>Functions that take or return angles use <strong>radians</strong>. A layer’s <code>rotation</code> prop is in <strong>degrees</strong>, so convert with <code>radToDeg</code> when you hand it a computed angle.</p>
-    <Api caption="Angles" rows={[
-      [<code>TAU</code>, <>A full turn in radians (2π).</>],
-      [<><code>degToRad(degrees)</code>, <code>radToDeg(radians)</code></>, <>Convert between degrees and radians.</>],
-      [<code>normalizeAngle(angle)</code>, <>Wraps an angle into <code>[-π, π)</code>.</>],
-      [<code>angleDifference(from, to)</code>, <>The shortest signed turn from one angle to another.</>],
-      [<code>lerpAngle(a, b, t)</code>, <>Interpolates between angles the short way round, so 350° to 10° passes through 0° instead of sweeping back through 180°.</>],
+    <h3>{text('package.angles')}</h3>
+    <p>{text('package.functions-that-take-or-return-angles-use', [<strong />, <code>rotation</code>, <strong />, <code>radToDeg</code>])}</p>
+    <Api caption={t('package.angles-m531')} rows={[
+      [<code>TAU</code>, <>{text('api.a-full-turn-in-radians-2')}</>],
+      [<><code>degToRad(degrees)</code>, <code>radToDeg(radians)</code></>, <>{text('api.convert-between-degrees-and-radians')}</>],
+      [<code>normalizeAngle(angle)</code>, <>{text('api.wraps-an-angle-into', [<code>[-π, π)</code>])}</>],
+      [<code>angleDifference(from, to)</code>, <>{text('api.the-shortest-signed-turn-from-one-angle')}</>],
+      [<code>lerpAngle(a, b, t)</code>, <>{text('api.interpolates-between-angles-the-short-way-round')}</>],
     ]} />
 
-    <h3>Points and geometry</h3>
-    <p>Points are plain <code>{'{ x, y }'}</code> objects, typed as <code>Vec2</code>. Celesta’s y axis points down, so a positive angle turns <strong>clockwise</strong> on screen, the same as <code>rotation</code>.</p>
-    <Api caption="2D points" rows={[
-      [<code>distance(a, b)</code>, <>The straight-line distance between two points.</>],
-      [<code>angleBetween(from, to)</code>, <>The direction from one point to another, in radians; <code>0</code> points along +x.</>],
-      [<><code>lerpPoint(a, b, t)</code>, <code>midpoint(a, b)</code></>, <>A point along a segment, and the point halfway.</>],
-      [<code>rotatePoint(point, angle, origin?)</code>, <>Turns a point about an origin (the coordinate origin by default).</>],
-      [<><code>polarToCartesian(angle, radius, center?)</code>, <code>cartesianToPolar(point, center?)</code></>, <>Convert between a direction-and-distance and an <code>{'{ x, y }'}</code>. The second returns <code>{'{ angle, radius }'}</code>.</>],
-      [<><code>quadraticBezierPoint(p0, p1, p2, t)</code>, <code>cubicBezierPoint(p0, p1, p2, p3, t)</code></>, <>The point at <code>t</code> (0–1) along a Bézier curve, as drawn by a path’s <code>quadTo</code> and <code>cubicTo</code>. Use them to move an object along a curve you also draw.</>],
+    <h3>{text('package.points-and-geometry')}</h3>
+    <p>{text('package.points-are-plain-objects-typed-as-celesta', [<code>{'{ x, y }'}</code>, <code>Vec2</code>, <strong />, <code>rotation</code>])}</p>
+    <Api caption={t('package.2d-points')} rows={[
+      [<code>distance(a, b)</code>, <>{text('api.the-straight-line-distance-between-two-points')}</>],
+      [<code>angleBetween(from, to)</code>, <>{text('api.the-direction-from-one-point-to-another', [<code>0</code>])}</>],
+      [<><code>lerpPoint(a, b, t)</code>, <code>midpoint(a, b)</code></>, <>{text('api.a-point-along-a-segment-and-the')}</>],
+      [<code>rotatePoint(point, angle, origin?)</code>, <>{text('api.turns-a-point-about-an-origin-the')}</>],
+      [<><code>polarToCartesian(angle, radius, center?)</code>, <code>cartesianToPolar(point, center?)</code></>, <>{text('api.convert-between-a-direction-and-distance-and', [<code>{'{ x, y }'}</code>, <code>{'{ angle, radius }'}</code>])}</>],
+      [<><code>quadraticBezierPoint(p0, p1, p2, t)</code>, <code>cubicBezierPoint(p0, p1, p2, p3, t)</code></>, <>{text('api.the-point-at-0-1-along-a', [<code>t</code>, <code>quadTo</code>, <code>cubicTo</code>])}</>],
     ]} />
-    <DocCode label="Dots on a rotating ring" language="tsx" code={lines(
+    <DocCode label={t('package.dots-on-a-rotating-ring')} language="tsx" code={lines(
       "import { TAU, polarToCartesian } from '@celesta/math';",
       '',
       'const frame = useCurrentFrame();',
@@ -245,7 +264,7 @@ export const packageContents: Record<string, ReactNode> = {
       '    width={24} height={24} cornerRadius={12} fill="#a68bbf" />;',
       '});',
     )} />
-    <DocCode label="A marker riding a curve" language="tsx" code={lines(
+    <DocCode label={t('package.a-marker-riding-a-curve')} language="tsx" code={lines(
       "import { cubicBezierPoint } from '@celesta/math';",
       '',
       'const p0 = { x: 200, y: 800 }, p1 = { x: 500, y: 200 };',
@@ -260,14 +279,14 @@ export const packageContents: Record<string, ReactNode> = {
       '<Rect x={marker.x} y={marker.y} anchorX={0.5} anchorY={0.5} width={32} height={32}',
       '  cornerRadius={16} fill="#a68bbf" />',
     )} />
-    <p>Both <code>quadraticBezierPoint</code> and <code>cubicBezierPoint</code> use the same control points as a <code>Path</code>’s <code>quadTo</code> and <code>cubicTo</code> commands, so the marker stays on the drawn curve. See <a href="/docs/text-camera-lines/">Text effects, camera & lines</a> for <code>Path</code>.</p>
+    <p>{text('package.both-and-use-the-same-control-points', [<code>quadraticBezierPoint</code>, <code>cubicBezierPoint</code>, <code>Path</code>, <code>quadTo</code>, <code>cubicTo</code>, <a href={docPath('text-camera-lines')} />, <code>Path</code>])}</p>
   </>,
 
   'code': <>
-    <p><code>@celesta/code</code> draws syntax-highlighted source code in a composition. It tokenizes with <a href="https://twinkleplop.pngwn.at">twinkleplop</a> and draws each colored run with Celesta’s own <code>Text</code> and <code>Rect</code>, so code scales, fades, blurs, and exports like any other layer. It is optional: <code>@celesta/react</code> does not depend on it.</p>
-    <Note title="Availability">The desktop app and CLI include <code>@celesta/code</code>, and <strong>File → Set Up TypeScript</strong> adds its declarations alongside <code>@celesta/react</code> and <code>@celesta/math</code>. You do not install anything from npm; the package is not published there. The <a href="/#playground">web editor</a> does not support it yet, so use the desktop app or CLI for compositions that import it.</Note>
+    <p>{text('package.draws-syntax-highlighted-source-code-in-a', [<code>@celesta/code</code>, <a href="https://twinkleplop.pngwn.at" />, <code>Text</code>, <code>Rect</code>, <code>@celesta/react</code>])}</p>
+    <Note title={t('package.availability')}>{text('package.the-desktop-app-and-cli-include-and', [<code>@celesta/code</code>, <strong />, <code>@celesta/react</code>, <code>@celesta/math</code>, <a href={`${homePath}#playground`} />])}</Note>
 
-    <h3>Your first code block</h3>
+    <h3>{text('package.your-first-code-block')}</h3>
     <DocCode label="code-block.tsx" language="tsx" code={lines(
       "import { Assets, Composition, Font, Rect } from '@celesta/react';",
       "import { Code, codeThemes } from '@celesta/code';",
@@ -291,52 +310,52 @@ export const packageContents: Record<string, ReactNode> = {
       '  );',
       '}',
     )} />
-    <p><code>Code</code> takes the source as its only child, as a string. Keep indentation and trailing newlines inside the string: they are part of the picture.</p>
+    <p>{text('package.takes-the-source-as-its-only-child', [<code>Code</code>])}</p>
 
-    <h3>Fonts</h3>
-    <p>Use a <strong>monospaced</strong> font. <code>Code</code> defaults to JetBrains Mono at 24 px with a line height of 1.5 × the font size. Load the font file with <code>{'<Font src="…" />'}</code>, as above, or install it on the machine that renders. If the font is missing, Celesta falls back as it does for any text.</p>
+    <h3>{text('package.fonts')}</h3>
+    <p>{text('package.use-a-monospaced-font-defaults-to-jetbrains', [<strong />, <code>Code</code>, <code>{'<Font src="…" />'}</code>])}</p>
 
-    <h3>Props</h3>
-    <Api caption="Code props" rows={[
-      [<code>children</code>, <>The source, as a string.</>],
-      [<code>language</code>, <><code>tsx</code>, <code>ts</code>, <code>json</code>, <code>bash</code>, or <code>text</code> (the default, which applies no coloring).</>],
-      [<code>style</code>, <>A Celesta <code>TextStyle</code>: <code>fontFamily</code>, <code>fontSize</code>, <code>lineHeight</code>, and so on. Text is left aligned and never wraps, and the theme supplies each run’s fill color. Other <code>align</code> values throw.</>],
-      [<code>theme</code>, <>Token colors, a foreground fallback, and the line highlight color. <code>codeThemes.dark</code> by default.</>],
-      [<code>tabSize</code>, <>Width of a tab stop, counted in characters. Defaults to <code>2</code>.</>],
-      [<code>highlightLines</code>, <>One-based line numbers to mark with a highlight band.</>],
-      [<code>highlightWidth</code>, <>Band width in pixels. Defaults to the width of the source; set it to reach the edge of a surrounding panel.</>],
-      [<code>visibleCharacters</code>, <>How much of the source to show, for typing effects. See <a href="/docs/code-typing/">Code: typing, carets & tokens</a>.</>],
-      [<><code>x</code>, <code>y</code>, <code>scale</code>, <code>rotation</code>, <code>anchorX</code>/<code>anchorY</code>, <code>opacity</code>, <code>blendMode</code>, <code>blur</code>, <code>shadow</code>, <code>glow</code></>, <>The usual layer props apply to the whole block.</>],
+    <h3>{text('package.props')}</h3>
+    <Api caption={t('package.code-props')} rows={[
+      [<code>children</code>, <>{text('api.the-source-as-a-string')}</>],
+      [<code>language</code>, <>{text('api.or-the-default-which-applies-no-coloring', [<code>tsx</code>, <code>ts</code>, <code>json</code>, <code>bash</code>, <code>text</code>])}</>],
+      [<code>style</code>, <>{text('api.a-celesta-and-so-on-text-is', [<code>TextStyle</code>, <code>fontFamily</code>, <code>fontSize</code>, <code>lineHeight</code>, <code>align</code>])}</>],
+      [<code>theme</code>, <>{text('api.token-colors-a-foreground-fallback-and-the', [<code>codeThemes.dark</code>])}</>],
+      [<code>tabSize</code>, <>{text('api.width-of-a-tab-stop-counted-in', [<code>2</code>])}</>],
+      [<code>highlightLines</code>, <>{text('api.one-based-line-numbers-to-mark-with')}</>],
+      [<code>highlightWidth</code>, <>{text('api.band-width-in-pixels-defaults-to-the')}</>],
+      [<code>visibleCharacters</code>, <>{text('api.how-much-of-the-source-to-show', [<a href={docPath('code-typing')} />, text('package.code-typing-carets-tokens')])}</>],
+      [<><code>x</code>, <code>y</code>, <code>scale</code>, <code>rotation</code>, <code>anchorX</code>/<code>anchorY</code>, <code>opacity</code>, <code>blendMode</code>, <code>blur</code>, <code>shadow</code>, <code>glow</code></>, <>{text('api.the-usual-layer-props-apply-to-the')}</>],
     ]} />
 
-    <h3>Line highlights</h3>
-    <p><code>highlightLines</code> draws a band behind the lines you name, full width and full line height, even while the code is still being typed:</p>
-    <DocCode label="Mark one line" language="tsx" code={lines(
+    <h3>{text('package.line-highlights')}</h3>
+    <p>{text('package.draws-a-band-behind-the-lines-you', [<code>highlightLines</code>])}</p>
+    <DocCode label={t('package.mark-one-line')} language="tsx" code={lines(
       '<Code x={64} y={64} language="ts" style={style} highlightLines={[2]} highlightWidth={1152}>',
       '  {source}',
       '</Code>',
     )} />
-    <p>Animate the highlight by changing the list as the frame advances; each band is cheap, so highlighting a line per beat or per cue is fine.</p>
+    <p>{text('package.animate-the-highlight-by-changing-the-list')}</p>
 
-    <h3>Themes</h3>
-    <p><code>codeThemes.dark</code> and <code>codeThemes.light</code> are ready to use. A theme does not draw a panel background: place a <code>Rect</code> behind the code, sized to your design. To customize, spread a built-in theme and override what you need:</p>
-    <DocCode label="A custom theme" language="tsx" code={lines(
+    <h3>{text('package.themes')}</h3>
+    <p>{text('package.and-are-ready-to-use-a-theme', [<code>codeThemes.dark</code>, <code>codeThemes.light</code>, <code>Rect</code>])}</p>
+    <DocCode label={t('package.a-custom-theme')} language="tsx" code={lines(
       'const theme = {',
       '  ...codeThemes.dark,',
       "  highlightLine: '#a68bbf30',",
       "  tokens: { ...codeThemes.dark.tokens, keyword: '#e0b7ff' },",
       '};',
     )} />
-    <p>Token names are twinkleplop’s, such as <code>keyword</code>, <code>string</code>, <code>comment</code>, <code>number</code>, <code>function</code>, <code>type</code>, <code>tag_name</code>, <code>attr_name</code>, <code>punctuation</code>, and <code>operator</code>. In JSON, object keys are <code>property</code>; string values keep <code>string</code> and <code>string_escape</code>. A name your theme does not list uses <code>foreground</code>.</p>
-    <p>Continue with <a href="/docs/code-typing/">typing effects, carets, and tokens</a>.</p>
+    <p>{text('package.token-names-are-twinkleplop-s-such-as', [<code>keyword</code>, <code>string</code>, <code>comment</code>, <code>number</code>, <code>function</code>, <code>type</code>, <code>tag_name</code>, <code>attr_name</code>, <code>punctuation</code>, <code>operator</code>, <code>property</code>, <code>string</code>, <code>string_escape</code>, <code>foreground</code>])}</p>
+    <p>{text('package.continue-with-typing-effects-carets-and-tokens', [<a href={docPath('code-typing')} />])}</p>
   </>,
 
   'code-typing': <>
-    <p>Code looks best when it arrives a character at a time. This chapter reveals <a href="/docs/code/"><code>Code</code></a> as if it were typed, puts a caret where the typing is, and shows the lower-level tools behind both.</p>
+    <p>{text('package.code-looks-best-when-it-arrives-a', [<a href={docPath('code')} />, <code>Code</code>])}</p>
 
-    <h3>Typing code in</h3>
-    <p>Pass <code>useTypewriter()</code>’s <code>length</code> to <code>visibleCharacters</code>:</p>
-    <DocCode label="Type the source out" language="tsx" code={lines(
+    <h3>{text('package.typing-code-in')}</h3>
+    <p>{text('package.pass-s-to', [<code>useTypewriter()</code>, <code>length</code>, <code>visibleCharacters</code>])}</p>
+    <DocCode label={t('package.type-the-source-out')} language="tsx" code={lines(
       "import { useTypewriter } from '@celesta/react';",
       "import { Code } from '@celesta/code';",
       '',
@@ -345,17 +364,17 @@ export const packageContents: Record<string, ReactNode> = {
       '  return <Code x={64} y={64} language="ts" style={style} visibleCharacters={length}>{source}</Code>;',
       '}',
     )} />
-    <p>The whole source is tokenized once, when the source or language changes, and typing only reveals the result. Colors therefore reflect the <strong>finished</strong> code: a half-typed string is already colored as a string, and nothing flickers as a quote is closed.</p>
-    <h3>What visibleCharacters counts</h3>
+    <p>{text('package.the-whole-source-is-tokenized-once-when', [<strong />])}</p>
+    <h3>{text('package.what-visiblecharacters-counts')}</h3>
     <ul>
-      <li>Unicode <strong>code points of the original source</strong>, matching <code>useTypewriter().length</code>. A single-code-point emoji counts once; a joined, flag, or skin-tone sequence counts once per code point.</li>
-      <li>A tab costs one character and an LF costs one. A <strong>CRLF costs two</strong>.</li>
-      <li>Fractions round down, a negative count shows nothing, and the default <code>Infinity</code> shows everything.</li>
+      <li>{text('package.unicode-code-points-of-the-original-source', [<strong />, <code>useTypewriter().length</code>])}</li>
+      <li>{text('package.a-tab-costs-one-character-and-an', [<strong />])}</li>
+      <li>{text('package.fractions-round-down-a-negative-count-shows', [<code>Infinity</code>])}</li>
     </ul>
 
-    <h3>A caret that follows the typing</h3>
-    <p><code>useCodePoint(source, {'{ line, column }'}, style?, tabSize?)</code> measures a position in the source with the same font and tab expansion as <code>Code</code>, so you can place a caret, underline, or callout there. Lines and columns are <strong>one-based</strong>, and columns count original characters (a tab or a single-code-point emoji is one column). The column may be one past the last character, to sit at a line’s end. An invalid position throws.</p>
-    <DocCode label="A blinking caret at the end of the typed text" language="tsx" code={lines(
+    <h3>{text('package.a-caret-that-follows-the-typing')}</h3>
+    <p>{text('package.measures-a-position-in-the-source-with', [<code>useCodePoint(source, {'{ line, column }'}, style?, tabSize?)</code>, <code>Code</code>, <strong />])}</p>
+    <DocCode label={t('package.a-blinking-caret-at-the-end-of')} language="tsx" code={lines(
       "import { Group, Rect, useTypewriter } from '@celesta/react';",
       "import { Code, useCodePoint } from '@celesta/code';",
       '',
@@ -375,11 +394,11 @@ export const packageContents: Record<string, ReactNode> = {
       '  );',
       '}',
     )} />
-    <p>Wrapping both in one <code>Group</code> keeps the caret aligned with the code however the group is moved or scaled. The hook returns <code>x</code>, the line’s top <code>y</code>, the <code>baseline</code>, and <code>lineHeight</code>, all relative to <code>Code</code>’s top-left corner, before any group transform.</p>
+    <p>{text('package.wrapping-both-in-one-keeps-the-caret', [<code>Group</code>, <code>x</code>, <code>y</code>, <code>baseline</code>, <code>lineHeight</code>, <code>Code</code>])}</p>
 
-    <h3>Revealing whole lines</h3>
-    <p><code>codeCharacterCount(source, {'{ line, column }'})</code> turns a source position into the number of characters before it, which is exactly what <code>visibleCharacters</code> wants. It is a plain function, so it also works outside React. To show the first three lines of a four-line snippet:</p>
-    <DocCode label="Show the first three lines" language="tsx" code={lines(
+    <h3>{text('package.revealing-whole-lines')}</h3>
+    <p>{text('package.turns-a-source-position-into-the-number', [<code>codeCharacterCount(source, {'{ line, column }'})</code>, <code>visibleCharacters</code>])}</p>
+    <DocCode label={t('package.show-the-first-three-lines')} language="tsx" code={lines(
       "import { Code, codeCharacterCount } from '@celesta/code';",
       '',
       'function FirstThreeLines({ source }: { source: string }) {',
@@ -387,23 +406,23 @@ export const packageContents: Record<string, ReactNode> = {
       '  return <Code language="ts" visibleCharacters={count}>{source}</Code>;',
       '}',
     )} />
-    <p>A position at the end of a line leaves out that line’s newline; use column 1 of the next line to include it. Pair this with <a href="/docs/motion-toolkit/"><code>useCue</code></a> to build up a snippet one step at a time, one cue per line.</p>
+    <p>{text('package.a-position-at-the-end-of-a', [<a href={docPath('motion-toolkit')} />, <code>useCue</code>])}</p>
 
-    <h3>Tokens</h3>
-    <p><code>tokenizeCode(source, language?)</code> returns the tokens behind <code>Code</code>: each one has the original <code>text</code>, a <code>type</code> (twinkleplop’s name, or <code>plain</code>), and its <code>start</code> and <code>end</code> offsets in UTF-16 units, end exclusive. Tokens preserve all of the source, whitespace included, and need neither HTML nor a DOM. Use them for your own rendering or to analyze the code:</p>
-    <DocCode label="Count the comments" language="tsx" code={lines(
+    <h3>{text('package.tokens')}</h3>
+    <p>{text('package.returns-the-tokens-behind-each-one-has', [<code>tokenizeCode(source, language?)</code>, <code>Code</code>, <code>text</code>, <code>type</code>, <code>plain</code>, <code>start</code>, <code>end</code>])}</p>
+    <DocCode label={t('package.count-the-comments')} language="tsx" code={lines(
       "import { tokenizeCode } from '@celesta/code';",
       '',
       "const comments = tokenizeCode(source, 'ts').filter((token) => token.type === 'comment');",
     )} />
 
-    <h3>Limits</h3>
+    <h3>{text('package.limits')}</h3>
     <ul>
-      <li>Each color run is its own <code>Text</code> layer, and the package measures prefixes of the source. Long lines with many colors cost more to measure, add layers, and take longer to rasterize. Keep snippets to what fits on screen.</li>
-      <li>Shaping does not carry across color boundaries, so ligatures, kerning, combining characters, and right-to-left text are not preserved as one run. Use a monospaced font and left-to-right code.</li>
-      <li>Proportional fonts are not a supported layout guarantee.</li>
-      <li>Blank runs get no <code>Text</code> layer but keep their measured spacing.</li>
+      <li>{text('package.each-color-run-is-its-own-layer', [<code>Text</code>])}</li>
+      <li>{text('package.shaping-does-not-carry-across-color-boundaries')}</li>
+      <li>{text('package.proportional-fonts-are-not-a-supported-layout')}</li>
+      <li>{text('package.blank-runs-get-no-layer-but-keep', [<code>Text</code>])}</li>
     </ul>
-    <p>Sharing styled-text shaping in the core renderer is the planned fix; it is tracked in <a href="https://github.com/mika-f/Celesta/issues/99">issue 99</a>. Browser support is tracked in <a href="https://github.com/mika-f/Celesta/issues/100">issue 100</a>.</p>
+    <p>{text('package.sharing-styled-text-shaping-in-the-core', [<a href="https://github.com/mika-f/Celesta/issues/99" />, <a href="https://github.com/mika-f/Celesta/issues/100" />])}</p>
   </>,
 };

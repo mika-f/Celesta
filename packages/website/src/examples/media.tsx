@@ -1,6 +1,6 @@
 import {
   Audio, Composition, Image, Sequence, Video,
-  mediaDurationInFrames, preloadMedia,
+  frameKeyframes, mediaDurationInFrames, preloadMedia,
 } from '@celesta/react';
 
 const FPS = 30;
@@ -25,13 +25,10 @@ export default function Root() {
       {/* Fade the music in over the first two seconds. */}
       <Audio
         src="./media/music.wav"
-        volume={{
-          type: 'keyframes',
-          keyframes: [
-            { time: { value: 0, timescale: 1 }, value: 0 },
-            { time: { value: 2, timescale: 1 }, value: 0.8, easing: 'ease-out' },
-          ],
-        }}
+        volume={frameKeyframes([
+          { frame: 0, value: 0 },
+          { frame: 60, value: 0.8, easing: 'ease-out' },
+        ], { fps: FPS })}
       />
     </Composition>
   );

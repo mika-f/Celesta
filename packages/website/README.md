@@ -1,11 +1,11 @@
 # Celesta website
 
-An English product website built with Vite, React, TypeScript, and Tailwind CSS 4.
+An English and Japanese product website built with Vite, React, TypeScript, and Tailwind CSS 4.
 It is an independent pnpm package, like `packages/logos` and `packages/react`.
 
 ## Develop
 
-Use Node.js 22.12+ (Node.js 24 LTS recommended) and pnpm 12.4.2.
+Use Node.js 22.12+ (Node.js 24 LTS recommended) and the pnpm version declared in the root `package.json`.
 
 ```sh
 cd packages/website
@@ -19,8 +19,11 @@ files to `dist/`. `pnpm preview` serves that production build.
 ## Deploy to Cloudflare Workers
 
 The site uses [Workers Static Assets](https://developers.cloudflare.com/workers/static-assets/).
-No API server, bindings, database, or runtime secrets are required.
-`wrangler.jsonc` sets the Worker name to `celesta-website` and serves `dist/`.
+A small `worker.ts` redirects `/` using the browser’s `Accept-Language` header.
+Only `/` and `/index.html` run the Worker first; explicit language URLs and
+other files are served as static assets through the `ASSETS` binding. No database
+or runtime secrets are required. `wrangler.jsonc` names the Worker
+`celesta-website` and serves `dist/`.
 Change the name there if your account already uses it for another project.
 
 From `packages/website`:
@@ -47,13 +50,46 @@ For a CI runner outside Cloudflare, authenticate Wrangler with the
 `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets. Keep tokens out of Git.
 
 Run `pnpm preview:cloudflare` to build and serve the site through local Wrangler.
-Vite builds separate HTML entries for `/` and `/docs/`. A small plugin in
-`vite.config.ts` then copies the docs entry to `dist/docs/<slug>/index.html` for
-every page in `src/docs-nav.ts` (with that page's title and description), so
-deep links such as `/docs/export/` work on direct visits without an SPA
-fallback. The dev server and `vite preview` answer for those paths too.
+Vite builds shared website and documentation entries, then `vite.config.ts`
+generates a real HTML file for every supported language and chapter. Direct
+visits to `/en/`, `/ja/`, `/en/docs/export/`, and `/ja/docs/export/` work without
+an SPA fallback. Each page has localized `lang`, title, description, canonical,
+and `hreflang` metadata. The Vite dev server and preview also support language
+routing. Existing `/docs/` and `/docs/<slug>/` URLs keep the English guide;
+legacy `/docs/#<chapter>` links still open the matching chapter.
 The included `404.html` handles unknown routes; `public/_headers` defines response
 headers and immutable caching for Vite's hashed assets.
+
+## Languages
+
+- `/` redirects with HTTP 302 based on `Accept-Language` preferences and `q`
+  weights. Regional tags such as `ja-JP` select Japanese. Missing or unsupported
+  languages fall back to English. `User-Agent` identifies the browser and OS,
+  so it is not used as a language signal. The response uses
+  `Vary: Accept-Language` and `Cache-Control: no-store`.
+- `/en/` and `/ja/` always display the requested language, including playground,
+  downloads, documentation navigation, search, and every chapter’s prose/API
+  tables. Code examples and API identifiers remain unchanged.
+- Header language links preserve the current chapter, query string, and anchor.
+- `src/locales.ts` is the language registry. `src/locales/en.json` is the source
+  catalog; `src/locales/ja.json` contains Japanese translations. `catalog.ts`
+  checks that each language supplies every message.
+
+To add a language:
+
+1. Copy `src/locales/en.json` to `<language>.json` and translate the values.
+   Preserve `{name}` variables and numbered React placeholders. `<0/>` inserts
+   a code example or dynamic value; `<0>…</0>` preserves an element such as a
+   link or emphasis while allowing its text and position to change. These are
+   React elements, not arbitrary HTML.
+2. Register the code and native name in `src/locales.ts`, import its catalog in
+   `src/catalog.ts`, and add it to `catalogs`.
+3. Run `pnpm test` and `pnpm build`. Routing, language links, HTML generation,
+   and alternate-language metadata all use the registry automatically.
+
+Edit prose in the catalogs; layout and API examples stay in the TSX files.
+When adding new content, add the same descriptive message key to every catalog.
+The tests check completeness, interpolation variables, and placeholder nesting.
 
 ## Download links
 
@@ -84,23 +120,23 @@ assets and runs `pnpm run deploy`. It needs the `CLOUDFLARE_API_TOKEN` and
 - `src/App.tsx`: product copy, navigation, documentation and repository links.
 - `src/links.ts` and `src/Download.tsx`: repository and download links, and the
   platform-aware download buttons.
-- `/docs/`: the on-site English user guide, one page per chapter at
-  `/docs/<slug>/`, all built from `docs/index.html`. `src/docs-nav.ts` is the
+- `/docs/`: the on-site bilingual user guide, one page per chapter at
+  `/<language>/docs/<slug>/`, all built from `docs/index.html`. `src/docs-nav.ts` is the
   single list of groups and pages (slug, title, description, search keywords);
   add a page there, then add its content under the same slug in
   `src/docs-content.tsx` (app, React, and guides) or `src/docs-packages.tsx`
-  (`@celesta/math` and `@celesta/code`). `src/Docs.tsx` renders the grouped
+  (`@celesta/math`, `@celesta/code`, and `@celesta/voicevox`). `src/Docs.tsx` renders the grouped
   sidebar, topic search, previous/next links, and the overview. Old
   `/docs/#<chapter>` links redirect to the matching page. Link between pages
-  with `/docs/<slug>/`; `src/docs-shared.tsx` has the `Note` and `Api` helpers.
+  with `docPath(slug)`; `src/docs-shared.tsx` has the `Note` and `Api` helpers.
   `src/DocCode.tsx` supplies accessible copy controls for code examples.
   `src/syntax.ts` highlights code with [twinkleplop](https://twinkleplop.pngwn.at)
   (TSX, JSON, and shell); the playground editor uses it too, layering a
   transparent textarea over the highlighted source.
-- `src/examples/`: complete documentation examples (`first-scene.tsx`,
-  `dialogue.tsx`, `lip-sync.tsx`, `media.tsx`, `dialogue.celesta.json`). The
+- `src/examples/`: complete documentation examples (including title, media, dialogue, dialogue sequencing,
+  fitted text, reusable data, and VOICEVOX entries). The
   docs import them as raw text. They are excluded from the site's own
-  type-check and checked against the real `@celesta/react` instead.
+  type-check and checked against the real `@celesta/react` and the separately staged `@celesta/voicevox` instead.
   The JSON chapter imports `../../examples/editor-demo.celesta.json` from the
   repository so its example stays in sync. Build with the repository present.
 - `src/demo/title-scene.tsx`: editable starting composition.
@@ -134,6 +170,7 @@ links use the repository's configured GitHub origin.
 ## Verification
 
 ```sh
+pnpm test
 pnpm build
 pnpm check:examples
 pnpm deploy:check
@@ -154,3 +191,10 @@ selection, code copying, mobile contents navigation, and direct visits to
 `/docs/export/` and the legacy `/docs/#export` using both Vite and local Wrangler. Keep guide instructions in
 sync with the root README and the React API, and run `pnpm check:examples`
 after changing any example.
+
+The user guide follows the React workflow in the root README. The JSON timeline
+chapter is for compatibility with existing files; new project, preview, and
+export instructions use React entries. Keep CLI flags aligned with
+`crates/exporter/src/main.rs` and `crates/editor/src/cli.rs`, and package import
+examples aligned with each package's public `src/index.ts`. In particular,
+VOICEVOX adapters are imported from `@celesta/voicevox`, not `@celesta/react`.

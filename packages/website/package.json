@@ -9,12 +9,13 @@
   },
   "scripts": {
     "dev": "pnpm --filter @celesta/web build && vite --host 127.0.0.1",
-    "build": "pnpm --filter @celesta/web build && tsc --noEmit && vite build",
+    "build": "pnpm --filter @celesta/web build && wrangler types && tsc --noEmit && vite build",
     "check:examples": "tsc -p tsconfig.examples.json",
     "preview": "vite preview --host 127.0.0.1",
     "preview:cloudflare": "pnpm build && wrangler dev",
     "deploy:check": "pnpm build && wrangler deploy --dry-run",
-    "deploy": "pnpm build && wrangler deploy"
+    "deploy": "pnpm build && wrangler deploy",
+    "test": "node --experimental-strip-types --test tests/*.test.mjs"
   },
   "dependencies": {
     "@celesta/web": "workspace:*",
