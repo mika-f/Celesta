@@ -3,6 +3,7 @@
 `<Circle>`, `<Ellipse>`, and `<Arrow>` (`packages/react/src/shapes.ts`) are
 React components that each return one `<Path>` (issue #135); there is no new
 renderer primitive, so preview, export, CPU, and GPU draw them as any path.
+(`<Circle>` has since become a rounded `<Rect>`; see the last bullet.)
 
 - `Ellipse width height` / `Circle radius` follow `<Rect>`'s conventions,
   which `Path` alone does not: `x`/`y` place the box's `anchorX`/`anchorY`
@@ -32,5 +33,5 @@ renderer primitive, so preview, export, CPU, and GPU draw them as any path.
   renderer texel for texel). A circle whose radius grew from 20 to 21 at a
   fixed centre drifted up to 0.5 px and jumped 0.9 px between 20.5 and 20.6;
   the path stays centred. Revisit only if rects become sub-pixel accurate.
-  They have since (`2026-10-06-subpixel-rects`), so this can be measured
-  again.
+  They have since (`2026-10-06-subpixel-rects`), and `<Circle>` is now a
+  rounded `<Rect>` (`2026-10-06-circles-as-rects`).

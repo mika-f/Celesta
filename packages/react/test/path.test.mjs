@@ -142,22 +142,36 @@ function assertClose(actual, expected, message) {
   assert.ok(Math.abs(actual - expected) < 1e-9, `${message}: ${actual} != ${expected}`);
 }
 
-test('a circle is one closed path of cubic arcs, placed and rotated about its anchor', () => {
-  const [, frame] = render(`<Circle x={150} y={100} anchorX={0.5} anchorY={0.5} radius={40} rotation={30} fill="#3366CC" />`);
+test('a circle is a rect rounded to its radius, placed and rotated about its anchor', () => {
+  const gradient = `{ type: 'radial', center: { x: 40, y: 40 }, radius: 40, stops: [{ offset: 0, color: '#FFFFFF' }, { offset: 1, color: '#000000' }] }`;
+  const [, frame] = render(
+    `<Circle x={150} y={100} anchorX={0.5} anchorY={0.5} radius={40} rotation={30} opacity={0.5} fill={${gradient}} stroke="#FF0000" strokeWidth={6} />`,
+  );
   const [circle] = frame.scene.layers;
   assert.deepEqual(circle.transform.position, { x: 150, y: 100 });
+  assert.deepEqual(circle.transform.anchor, { x: 0.5, y: 0.5 });
   assert.equal(circle.transform.rotation, 30);
-  const { commands, fill, stroke } = circle.content;
-  assert.deepEqual(fill, { type: 'solid', color: '#3366CC' });
-  assert.equal(stroke, undefined);
-  assert.deepEqual(commands.map((c) => c.type), ['moveTo', ...Array(8).fill('cubicTo'), 'close']);
-  for (const [x, y] of onCurve(commands)) {
-    assertClose(Math.hypot(x, y), 40, `(${x}, ${y}) is on the circle`);
-  }
-  // The arcs bulge as far as the circle at their midpoints, within 0.001 px.
-  const [, first] = commands;
-  const mid = [(40 + 3 * first.x1 + 3 * first.x2 + first.x) / 8, (0 + 3 * first.y1 + 3 * first.y2 + first.y) / 8];
-  assert.ok(Math.abs(Math.hypot(...mid) - 40) < 1e-3, `midpoint ${mid}`);
+  assert.equal(circle.opacity, 0.5);
+  // A rect's stroke is inside it and its gradients start from its top-left,
+  // as an ellipse's are.
+  assert.deepEqual(circle.content, {
+    type: 'rect',
+    width: 80,
+    height: 80,
+    cornerRadius: 40,
+    fill: {
+      type: 'radial',
+      center: { x: 40, y: 40 },
+      radius: 40,
+      stops: [{ offset: 0, color: '#FFFFFF' }, { offset: 1, color: '#000000' }],
+    },
+    stroke: { paint: { type: 'solid', color: '#FF0000' }, width: 6 },
+  });
+});
+
+test('a circle stroke defaults to 2 px and is at most its radius', () => {
+  const [, frame] = render(`<Circle radius={10} stroke="#FFFFFF" /><Circle radius={10} stroke="#FFFFFF" strokeWidth={50} />`);
+  assert.deepEqual(frame.scene.layers.map((layer) => layer.content.stroke.width), [2, 10]);
 });
 
 test('an ellipse fills its box from the top-left, strokes inside it, and moves gradients with it', () => {
@@ -176,6 +190,11 @@ test('an ellipse fills its box from the top-left, strokes inside it, and moves g
   assertClose(points[2][1], -5, 'bottom y');
   assertClose(points[4][0], -45, 'left x');
   assertClose(points[6][1], -95, 'top y');
+  // Eight cubic arcs, each bulging as far as the ellipse at its midpoint.
+  assert.deepEqual(commands.map((c) => c.type), ['moveTo', ...Array(8).fill('cubicTo'), 'close']);
+  const [, first] = commands;
+  const mid = [(145 + 3 * first.x1 + 3 * first.x2 + first.x) / 8, (-50 + 3 * first.y1 + 3 * first.y2 + first.y) / 8];
+  assert.ok(Math.abs(Math.hypot((mid[0] - 50) / 95, (mid[1] + 50) / 45) - 1) < 1e-5, `midpoint ${mid}`);
   assert.deepEqual(fill.start, { x: -50, y: -100 });
   assert.deepEqual(fill.end, { x: 150, y: -100 });
 });
@@ -241,8 +260,10 @@ test('an arrow shorter than its heads shrinks them to fit, and one with no lengt
 test('shape dimensions are validated', () => {
   const cases = [
     [`<Circle radius={-1} fill="#FFFFFF" />`, /finite `radius` of at least 0/],
+    [`<Circle radius={Number.MAX_VALUE} fill="#FFFFFF" />`, /diameter is finite/],
     [`<Ellipse width={NaN} height={10} fill="#FFFFFF" />`, /finite `width` of at least 0/],
     [`<Ellipse width={10} height={10} stroke="#FFFFFF" strokeWidth={0} />`, /positive `strokeWidth`/],
+    [`<Circle radius={10} stroke="#FFFFFF" strokeWidth={-1} />`, /<Circle> requires a positive `strokeWidth`/],
     [`<Arrow x1={0} y1={0} x2={Infinity} y2={0} />`, /finite `x2`/],
     [`<Arrow x1={0} y1={0} x2={10} y2={0} headLength={0} />`, /positive `headLength`/],
     [`<Arrow x1={0} y1={0} x2={10} y2={0} headWidth={-3} />`, /positive `headWidth`/],

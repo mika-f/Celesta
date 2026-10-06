@@ -175,9 +175,10 @@ else miter), plus `Path`'s transform, `opacity`, and `blendMode` props.
 
 ## Circle, Ellipse, Arrow
 
-Diagram shapes, each drawn as one `<Path>` layer, so they take every common
-layer prop (transforms, `opacity`, `blendMode`, effects) and stay sharp under
-`scale`.
+Diagram shapes, each drawn as one layer, so they take every common layer
+prop (transforms, `opacity`, `blendMode`, effects) and stay sharp under
+`scale`. A `Circle` is a `Rect` rounded to its radius, as cheap as any
+`Rect`; an `Ellipse` or an `Arrow` is a `<Path>`.
 
 `<Ellipse width height>` and `<Circle radius>` (a `2 * radius` square box)
 are placed like `<Rect>`: `x`/`y` put the box's `anchorX`/`anchorY` point

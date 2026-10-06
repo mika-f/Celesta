@@ -47,6 +47,6 @@ a rect covers at its centre, through the layer's transform (PR #166).
   it shades every pixel each rect covers plus a one-pixel border, instead of
   copying a small texture. Preview and export use the GPU renderer, which got
   faster on every workload.
-- This lifts the reason `<Circle>` is drawn as a path rather than a rounded
-  `<Rect>` (see `2026-10-05-circles-ellipses-arrows`); that comparison can be
-  measured again.
+- This lifted the reason `<Circle>` was drawn as a path rather than a
+  rounded `<Rect>`; it is now a rect (`2026-10-06-circles-as-rects`), which
+  also made the stroke and fill mix premultiplied.

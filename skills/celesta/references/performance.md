@@ -14,9 +14,9 @@ do. Thousands of flat `Rect`s are cheap; a few dozen effects are not.
 
 | Cheap | Costs more |
 | --- | --- |
-| `Rect`, flat or gradient, including a gradient whose colors change every frame | `blur`, `glow`, `shadow`: each layer with an effect is drawn onto a canvas of its own and filtered in several extra GPU passes over the area it covers |
+| `Rect`, flat or gradient, including a gradient whose colors change every frame, and `Circle` (a rounded `Rect`) | `blur`, `glow`, `shadow`: each layer with an effect is drawn onto a canvas of its own and filtered in several extra GPU passes over the area it covers |
 | `x`/`y`, `scale`, `rotation`, `opacity` | A `blendMode` other than `'normal'`: every blended layer reads what is beneath it, which takes a copy and a GPU pass of its own |
-| Text, images and SVGs whose content and drawn size stay the same: rasterized once and reused | `Path`, `Line`, `Polyline`, `Circle`, `Ellipse`, `Arrow`: each path's outline is rebuilt on the CPU every frame and shaded on the GPU, so cost grows with segment count and covered area. Still far cheaper than the same line art as hundreds of `Rect`s |
+| Text, images and SVGs whose content and drawn size stay the same: rasterized once and reused | `Path`, `Line`, `Polyline`, `Ellipse`, `Arrow`: each path's outline is rebuilt on the CPU every frame and shaded on the GPU, so cost grows with segment count and covered area. Still far cheaper than the same line art as hundreds of `Rect`s |
 | | Text whose string or style (including a gradient `fill`'s colors) changes every frame: rasterized again each frame. Text drawn at a changing scale is rasterized again in steps of about 9% |
 | | `@celesta/code` with long, many-colored lines: one `Text` layer per color run |
 

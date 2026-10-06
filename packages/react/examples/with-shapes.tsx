@@ -1,6 +1,7 @@
 import { Arrow, Circle, Composition, Ellipse, Group, Rect, interpolate, useCurrentFrame } from '@celesta/react';
 
-// Circles, ellipses, and arrows for a diagram, each one `<Path>` layer.
+// Circles, ellipses, and arrows for a diagram. A circle is one rounded
+// `<Rect>` layer; an ellipse or an arrow is one `<Path>` layer.
 // Like `<Rect>`, `x`/`y` place a circle's or ellipse's anchor point (its
 // top-left unless `anchorX`/`anchorY` say otherwise) and a stroke stays
 // inside its box. An arrow runs from `x1`/`y1` to its head at `x2`/`y2`.

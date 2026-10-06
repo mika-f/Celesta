@@ -472,6 +472,27 @@ fn renders_a_filled_rounded_rect_with_a_stroke() {
 }
 
 #[test]
+fn a_stroke_without_fill_keeps_its_color_along_the_inner_edge() {
+    // A circle's ring: the inner edge is anti-aliased against no fill, which
+    // must fade the stroke's alpha, not darken its color.
+    let stroke = celesta_composition::Stroke {
+        paint: Paint::Solid {
+            color: "#FFC040".to_owned(),
+        },
+        width: 4.0,
+    };
+    let ring = rasterize_rect(40.6, 40.6, 20.3, None, Some(&stroke)).unwrap();
+    let mut inner_edge = 0;
+    for pixel in ring.pixels().chunks_exact(4) {
+        if pixel[3] > 0 {
+            assert_eq!(&pixel[..3], &[0xFF, 0xC0, 0x40], "pixel {pixel:?}");
+            inner_edge += usize::from(pixel[3] < 255);
+        }
+    }
+    assert!(inner_edge > 0);
+}
+
+#[test]
 fn centers_visible_single_line_text_on_its_transform() {
     let scene = Scene {
         width: 1280,

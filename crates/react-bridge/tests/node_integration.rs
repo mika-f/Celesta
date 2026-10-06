@@ -580,7 +580,7 @@ fn interpolates_rect_text_and_gradient_stop_colors_when_node_is_available() {
 }
 
 #[test]
-fn draws_circles_ellipses_and_arrows_as_paths_when_node_is_available() {
+fn draws_circles_as_rects_and_ellipses_and_arrows_as_paths_when_node_is_available() {
     let Some((node, cli_script, package_root)) = live_react_runtime() else {
         return;
     };
@@ -590,12 +590,21 @@ fn draws_circles_ellipses_and_arrows_as_paths_when_node_is_available() {
     // At frame 0 nothing is rotated, which the CPU renderer needs, and the
     // growing circle has no radius yet, so it draws nothing.
     let scene = bridge.scene_at(Time::new(0, 30)).unwrap();
-    let paths = all_layers(&scene.layers)
-        .into_iter()
+    let layers = all_layers(&scene.layers);
+    let paths = layers
+        .iter()
         .filter(|layer| matches!(layer.content, LayerContent::Path { .. }))
         .count();
-    // 4 circles, 5 ellipses, 12 + 6 arrows; the rest are rects and a group.
-    assert_eq!(paths, 27);
+    // 5 ellipses, 12 + 6 arrows; the rest are rects and a group.
+    assert_eq!(paths, 23);
+    let circles = layers
+        .iter()
+        .filter(|layer| {
+            matches!(layer.content, LayerContent::Rect { width, corner_radius, .. }
+                if corner_radius * 2.0 == width)
+        })
+        .count();
+    assert_eq!(circles, 4);
 
     let frame = celesta_renderer::CpuRenderer::default()
         .render(&scene)
