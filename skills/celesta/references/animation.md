@@ -19,6 +19,7 @@ For randomness and noise, use [`@celesta/math`](math.md).
 - [spring](#spring)
 - [progress](#progress)
 - [Sequence](#sequence)
+- [FreezeFrame](#freezeframe)
 - [Series and computeSeries](#series-and-computeseries)
 - [Stagger](#stagger)
 - [Transition](#transition)
@@ -35,6 +36,7 @@ For randomness and noise, use [`@celesta/math`](math.md).
 | A color from A to B (fill, gradient stop, shadow) | `interpolateColor` |
 | A bouncy pop-in | `spring` |
 | Scenes back to back | `Series` + `computeSeries` |
+| A past frame redrawn in place (rewind, flashback, thumbnails) | `FreezeFrame` |
 | A voiced script back to back | `planDialogue` + `DialogueSeries` ([dialogue.md](dialogue.md#timing-a-script-from-its-voices)) |
 | Items entering one after another | `Stagger` (or `progress(frame, i * each, …)`) |
 | Fade/slide/scale at a scene's start or end | `Transition` |
@@ -50,7 +52,7 @@ For randomness and noise, use [`@celesta/math`](math.md).
 
 | Hook | Returns |
 | --- | --- |
-| `useCurrentFrame()` | Integer frame, local to the innermost `<Sequence>`. |
+| `useCurrentFrame()` | Integer frame, local to the innermost `<Sequence>` (directly inside a `<FreezeFrame>`, its `frame`, rounded). |
 | `useCurrentTime()` | Exact `{ value, timescale }` time, local to the innermost `<Sequence>`. |
 | `useVideoConfig()` | `{ width, height, fps, durationInFrames }`; inside a `Sequence`, `durationInFrames` is the sequence's. |
 | `useIsPreview()` | `true` only in the Celesta app preview, `false` in exports. |
@@ -150,6 +152,38 @@ their local React state. Declare fonts or assets needed throughout the
 composition in `<Assets>` outside a sequence.
 
 For scenes in a row, prefer `Series` (next) to computing `from` by hand.
+
+## FreezeFrame
+
+`<FreezeFrame frame>` draws its children as the composition looked at
+`frame`, for rewinds, flashbacks, and thumbnail strips. `frame` is an
+absolute composition frame wherever the element sits, even inside a
+`<Sequence>`. It resets the clock to the root's: directly inside,
+`useCurrentFrame()` is `frame` (rounded to the nearest integer when
+`frame` is fractional) and `durationInFrames` is the composition's,
+while a `<Sequence>` inside still counts from its own start as usual (at
+`frame={80}`, `<Sequence from={50}>` sees frame 30). `<Video>`, lip sync, and
+blinking follow that frame too. A constant `frame` holds still; a moving one replays at an offset.
+It accepts common layer props.
+
+```tsx
+// Frame 1200 of the video, at quarter size
+<Group scale={0.25} x={80} y={80}>
+  <FreezeFrame frame={1200}>
+    <World />
+  </FreezeFrame>
+</Group>
+```
+
+- Frozen children are always silent: `<Audio>` and voiced `<Dialogue>` inside
+  are not collected. For delayed playback with sound, use `<Sequence from>`.
+- Portraits can be redrawn too. A `<CharacterView>` inside never takes over
+  its ref, so the live `<Dialogue>`s keep driving the live view. A
+  `<Dialogue>` inside drives only a view drawn inside the same
+  `<FreezeFrame>`; pointing it at a view outside throws.
+- Authored `id`s inside are prefixed with the freeze layer's id and `/`.
+- `<ProjectTimeline />`, `<ProjectTrack />`, and `useProjectTrack()` throw
+  inside: project layers are evaluated for the current frame only.
 
 ## Series and computeSeries
 

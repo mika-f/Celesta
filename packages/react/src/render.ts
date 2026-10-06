@@ -9,7 +9,7 @@
 import * as React from 'react';
 
 import { isRemoteUrl } from './entry-dir';
-import { CompositionRuntimeContext, RerenderRequestContext, resolveTextLanguage } from './hooks';
+import { CompositionRuntimeContext, RerenderRequestContext, RootRuntimeContext, resolveTextLanguage } from './hooks';
 import { TextMetricsFontsContext, withTextLanguage } from './text-measure';
 import { ProjectLayersContext, ProjectTrackLayersContext } from './project-runtime';
 import { resolveVisibleLayers } from './psd-preset';
@@ -54,6 +54,7 @@ const HOST_TYPES = new Set([
   'video',
   'audio',
   'sequence',
+  'freeze-frame',
   'rawLayers',
 ]);
 const ZERO_TIME: Time = { value: 0, timescale: 1 };
@@ -111,7 +112,9 @@ export interface AudioClipDescriptor {
  * the enclosing `<Sequence>` chain; `originSec` converts local time back to
  * composition seconds (`local + originSec`); `rangeStartSec`/`rangeEndSec`
  * bound when the current subtree can be visible or audible, in composition
- * seconds.
+ * seconds. `compositionEndSec` is the root's `rangeEndSec`, which a
+ * `<FreezeFrame>` restores for its children; `frozen` is true inside one, and
+ * `idPrefix` is prepended to authored layer ids there.
  */
 interface WalkContext {
   lang?: string;
@@ -120,6 +123,9 @@ interface WalkContext {
   originSec: number;
   rangeStartSec: number;
   rangeEndSec: number;
+  compositionEndSec: number;
+  frozen: boolean;
+  idPrefix: string;
   characterViewOverrides: Map<HostNode, Record<string, unknown>>;
 }
 
@@ -179,6 +185,9 @@ function rootWalkContext(fps: number, durationInFrames: number, time: Time, lang
     originSec: 0,
     rangeStartSec: 0,
     rangeEndSec: durationInFrames / fps,
+    compositionEndSec: durationInFrames / fps,
+    frozen: false,
+    idPrefix: '',
     characterViewOverrides: new Map(),
   };
 }
@@ -347,7 +356,7 @@ function buildLayer(
   audio: AudioClipDescriptor[],
 ): Layer {
   const { props } = node;
-  const id = typeof props.id === 'string' && props.id.length > 0 ? props.id : path;
+  const id = typeof props.id === 'string' && props.id.length > 0 ? `${context.idPrefix}${props.id}` : path;
   const transform = extractTransform(props);
   const opacity = typeof props.rawOpacity === 'number' ? props.rawOpacity : numberOr(props.opacity, 1);
   const blendMode = extractBlendMode(props.blendMode);
@@ -361,6 +370,9 @@ function buildLayer(
       layers: walkChildren(node, path, context, audio),
       ...(clip ? { clip } : {}),
     };
+  } else if (node.type === 'freeze-frame') {
+    // Frozen children are always silent: their audio goes nowhere.
+    content = { type: 'group', layers: walkChildren(node, path, childFreezeContext(node, context, id), []) };
   } else if (node.type === 'image') {
     for (const key of ['width', 'height']) {
       if (props[key] !== undefined && (typeof props[key] !== 'number' || !Number.isFinite(props[key]) || props[key] <= 0)) {
@@ -539,6 +551,11 @@ function buildLayer(
     }
   } else if (node.type === 'dialogue') {
     const view = resolveCharacterView(props.character);
+    if (!view && context.frozen) {
+      throw new Error(
+        '<Dialogue> inside <FreezeFrame> must refer to a <CharacterView> rendered inside the same <FreezeFrame>',
+      );
+    }
     const character = resolveReference(view?.props.character) as
       | {
           portrait?: Record<string, unknown>;
@@ -555,14 +572,16 @@ function buildLayer(
         layers.push(...walkNode(child, `${id}.subtitle`, context, audio));
       }
     } else if (props.held !== true) {
+      // `${id}.subtitle` is already final (prefixed inside a <FreezeFrame>),
+      // so it goes in as the path rather than as an authored id.
       layers.push(
         buildLayer(
           {
             type: 'text',
-            props: { ...character.subtitle, id: `${id}.subtitle`, children: props.text },
+            props: { ...character.subtitle, id: undefined, children: props.text },
             children: [],
           },
-          `${path}.subtitle`,
+          `${id}.subtitle`,
           context,
           audio,
         ),
@@ -772,12 +791,41 @@ function childSequenceContext(node: HostNode, context: WalkContext): WalkContext
     originSec,
     rangeStartSec,
     rangeEndSec,
+    compositionEndSec: context.compositionEndSec,
+    frozen: context.frozen,
+    idPrefix: context.idPrefix,
+    characterViewOverrides: context.characterViewOverrides,
+  };
+}
+
+/**
+ * The walk context for a `<FreezeFrame>`'s children: the root clock at its
+ * `frame`, with the root's range rather than the enclosing one, so a freeze
+ * inside a short `<Sequence>` still opens the sequences its frame is in.
+ * Authored ids inside are prefixed with the freeze layer's id.
+ */
+function childFreezeContext(node: HostNode, context: WalkContext, layerId: string): WalkContext {
+  return {
+    time: secondsToTime(numberOr(node.props.frame, 0) / context.fps),
+    lang: context.lang,
+    fps: context.fps,
+    originSec: 0,
+    rangeStartSec: 0,
+    rangeEndSec: context.compositionEndSec,
+    compositionEndSec: context.compositionEndSec,
+    frozen: true,
+    idPrefix: `${layerId}/`,
     characterViewOverrides: context.characterViewOverrides,
   };
 }
 
 function collectCharacterViewOverrides(node: HostNode, context: WalkContext): void {
-  const childContext = node.type === 'sequence' ? childSequenceContext(node, context) : context;
+  const childContext =
+    node.type === 'sequence'
+      ? childSequenceContext(node, context)
+      : node.type === 'freeze-frame'
+        ? childFreezeContext(node, context, '')
+        : context;
   if (!childContext) {
     return;
   }
@@ -866,6 +914,7 @@ function walkNode(
       : [buildLayer(node, path, childContext, audio)];
   }
   if (audioOnly) {
+    // A <FreezeFrame> subtree is silent, so the audio sweep skips it whole.
     return node.type === 'group' ? walkChildren(node, path, context, audio, true) : [];
   }
   return [buildLayer(node, path, context, audio)];
@@ -957,15 +1006,19 @@ export function mount(defaultExport: EntryComponent): MountedComposition {
         ProjectTrackLayersContext.Provider,
         { value: project?.tracks ?? null },
         React.createElement(
-          CompositionRuntimeContext.Provider,
+          RootRuntimeContext.Provider,
           { value: runtimeValue },
           React.createElement(
-            TextMetricsFontsContext.Provider,
-            { value: fonts },
+            CompositionRuntimeContext.Provider,
+            { value: runtimeValue },
             React.createElement(
-              RerenderRequestContext.Provider,
-              { value: requestRerender },
-              React.createElement(defaultExport, {}),
+              TextMetricsFontsContext.Provider,
+              { value: fonts },
+              React.createElement(
+                RerenderRequestContext.Provider,
+                { value: requestRerender },
+                React.createElement(defaultExport, {}),
+              ),
             ),
           ),
         ),
@@ -1140,15 +1193,19 @@ export function createResolver(lang?: string): Resolver {
           ProjectTrackLayersContext.Provider,
           { value: {} },
           React.createElement(
-            CompositionRuntimeContext.Provider,
+            RootRuntimeContext.Provider,
             { value: runtimeValue },
             React.createElement(
-              TextMetricsFontsContext.Provider,
-              { value: fonts },
+              CompositionRuntimeContext.Provider,
+              { value: runtimeValue },
               React.createElement(
-                RerenderRequestContext.Provider,
-                { value: requestRerender },
-                React.createElement(ResolverHost, { items }),
+                TextMetricsFontsContext.Provider,
+                { value: fonts },
+                React.createElement(
+                  RerenderRequestContext.Provider,
+                  { value: requestRerender },
+                  React.createElement(ResolverHost, { items }),
+                ),
               ),
             ),
           ),

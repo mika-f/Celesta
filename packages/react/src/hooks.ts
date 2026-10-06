@@ -23,6 +23,15 @@ export const CompositionRuntimeContext = React.createContext<CompositionRuntimeC
 );
 
 /**
+ * @internal The root composition's runtime, which `<Sequence>` never
+ * overrides: `<FreezeFrame>` reads the composition's clock and duration here.
+ */
+export const RootRuntimeContext = React.createContext<CompositionRuntimeContextValue | null>(null);
+
+/** @internal True inside a `<FreezeFrame>`. */
+export const FreezeFrameContext = React.createContext(false);
+
+/**
  * @internal Asks render.ts to reconcile the current frame once more, for a
  * component that read a ref this commit had not attached yet (a
  * `<Dialogue>` mounted together with its `<CharacterView>`).
