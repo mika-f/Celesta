@@ -132,14 +132,12 @@ different decisions: the raw frames differ by at most 1, as above.
 `examples/versus/bench/results.json` and the comparison film keep the
 RTX 4070 measurements. These M4 numbers do not belong there.
 
-### Not done: reduced-resolution blur
+### Since then: reduced-resolution blur
 
-For large σ, blurring a downsampled copy would cut reads by many times more.
-But the CPU renderer's exact Gaussian would then have to change the same
-way, or the parity tolerance would have to be relaxed explicitly. Pairing
-keeps both renderers on the same kernel. With pairing in place, the blobs
-still account for most of NEBULA's GPU time, so downsampling is the next
-step if more is needed.
+For large σ, blurring a downsampled copy cuts reads by many times more. It
+was left out here because the CPU renderer's exact Gaussian is the
+reference. It has since been done on the GPU only, within the same parity
+tolerance; see [spectra-tuning.md](spectra-tuning.md).
 
 ## Reproduce
 
