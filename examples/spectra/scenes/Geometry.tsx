@@ -11,8 +11,9 @@ const MODES: BlendMode[] = ['normal', 'multiply', 'screen', 'overlay', 'add', 'd
 function Backdrop({ t }: { t: number }) {
   return (
     <Group opacity={0.35}>
-      {Array.from({ length: 33 }, (_, i) => (
-        <Line key={`v${i}`} x1={i * 60 + ((t * 30) % 60)} y1={0} x2={i * 60 + ((t * 30) % 60)} y2={1080} stroke="#2A3360" strokeWidth={1} />
+      {/* One line left of the screen too, so none is missing as they scroll. */}
+      {Array.from({ length: 34 }, (_, i) => (
+        <Line key={`v${i}`} x1={(i - 1) * 60 + ((t * 30) % 60)} y1={0} x2={(i - 1) * 60 + ((t * 30) % 60)} y2={1080} stroke="#2A3360" strokeWidth={1} />
       ))}
       {Array.from({ length: 19 }, (_, i) => (
         <Line key={`h${i}`} x1={0} y1={i * 60} x2={1920} y2={i * 60} stroke="#2A3360" strokeWidth={1} />

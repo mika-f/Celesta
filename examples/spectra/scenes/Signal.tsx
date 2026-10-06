@@ -47,8 +47,11 @@ function Donut({ frame }: { frame: number }) {
     <Group x={1240} y={330} rotation={frame * 0.3}>
       {shares.map((share, i) => {
         const span = share * total * Math.PI * 2;
-        const commands = arc(110, 190 + (i === 0 ? 14 : 0), at + 0.02, at + Math.max(0.03, span) - 0.02);
+        const start = at;
         at += span;
+        // Too narrow for the gaps on either side yet.
+        if (span <= 0.04) return null;
+        const commands = arc(110, 190 + (i === 0 ? 14 : 0), start + 0.02, start + span - 0.02);
         return <Path key={i} commands={commands} fill={PALETTE[i]} shadow={i === 0 ? { color: '#00000080', blur: 12, offsetX: 0, offsetY: 6 } : undefined} />;
       })}
     </Group>

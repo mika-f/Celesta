@@ -30,7 +30,9 @@ const PORTRAITS = [
 
 function Editor({ frame }: { frame: number }) {
   const { length } = useTypewriter(SOURCE, { from: 4, framesPerChar: 0.22 });
-  const line = SOURCE.slice(0, Math.min(length, SOURCE.length)).split('\n').length;
+  const lines = SOURCE.slice(0, Math.min(length, SOURCE.length)).split('\n');
+  const line = lines.length;
+  const column = lines[lines.length - 1].length + 1;
   return (
     <Group x={120} y={150}>
       <Rect width={1080} height={760} cornerRadius={20} fill="#0D1117" stroke="#30363D" strokeWidth={2}
@@ -45,7 +47,7 @@ function Editor({ frame }: { frame: number }) {
         {SOURCE}
       </Code>
       <Text x={1056} y={742} anchorX={1} anchorY="baseline" style={style(MONO, 16, DIM)}>
-        {`Ln ${line}, Col ${length} · frame ${frame}`}
+        {`Ln ${line}, Col ${column} · frame ${frame}`}
       </Text>
     </Group>
   );

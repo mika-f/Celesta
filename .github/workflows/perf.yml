@@ -16,6 +16,7 @@ on:
       - "packages/math/**"
       - "packages/react/**"
       - "examples/spectra/**"
+      - "examples/assets/**"
       - "examples/versus/bench/**"
       - "Cargo.toml"
       - "Cargo.lock"
