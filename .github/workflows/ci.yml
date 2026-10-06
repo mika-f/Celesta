@@ -90,6 +90,9 @@ jobs:
           pnpm --dir packages/code run test
           pnpm --dir packages/code run check:examples
 
+      - name: Test @celesta/voicevox
+        run: pnpm --dir packages/voicevox run test
+
       - name: Test @celesta/math
         run: pnpm --dir packages/math run test
 

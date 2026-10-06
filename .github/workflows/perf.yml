@@ -15,6 +15,7 @@ on:
       - "packages/code/**"
       - "packages/math/**"
       - "packages/react/**"
+      - "packages/voicevox/**"
       - "examples/spectra/**"
       - "examples/assets/**"
       - "examples/versus/bench/**"

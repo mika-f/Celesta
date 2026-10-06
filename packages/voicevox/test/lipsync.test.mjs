@@ -1,5 +1,5 @@
-// Unit tests for `lipSyncFromVoicevox` / `lipSyncFromKeyframes`. Run after
-// `pnpm run build`:  node --test test/
+// Unit tests for the VOICEVOX AudioQuery adapter. Run after building
+// @celesta/react and @celesta/voicevox: pnpm --dir packages/voicevox test
 //
 // `voicevox-zundamon-konnichiwa.json` is a real VOICEVOX Engine `audio_query`
 // response (Zundamon, normal style) for 「こんにちは、ずんだもんなのだ。」.
@@ -10,9 +10,9 @@
 
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { test } from 'vitest';
+import test from 'node:test';
 
-import { lipSyncFromKeyframes, lipSyncFromVoicevox, voicevoxVowelShape } from '../dist/index.js';
+import { lipSyncFromVoicevox, voicevoxVowelShape } from '../dist/index.js';
 
 const fixture = JSON.parse(
   readFileSync(new URL('./fixtures/voicevox-zundamon-konnichiwa.json', import.meta.url), 'utf8'),
@@ -191,24 +191,4 @@ test('voicevoxVowelShape maps phonemes to mouth shapes', () => {
     ['a', 'i', 'u', 'e', 'o', 'A', 'I', 'U', 'E', 'O', 'N', 'cl', 'pau', 'sil'].map(voicevoxVowelShape),
     ['a', 'i', 'u', 'e', 'o', 'a', 'i', 'u', 'e', 'o', 'closed', 'closed', 'closed', 'closed'],
   );
-});
-
-test('lipSyncFromKeyframes holds each shape until the next keyframe', () => {
-  const track = lipSyncFromKeyframes(
-    [
-      { seconds: 0.5, mouth: 'i' },
-      { seconds: 0.2, mouth: 'a' },
-      { seconds: 0.8, mouth: 'closed' },
-    ],
-    1,
-  );
-  assert.equal(track.durationInSeconds, 1);
-  assert.equal(track.mouthAtSeconds(0.1), 'closed');
-  assert.equal(track.mouthAtSeconds(0.2), 'a');
-  assert.equal(track.mouthAtSeconds(0.49), 'a');
-  assert.equal(track.mouthAtSeconds(0.5), 'i');
-  assert.equal(track.mouthAtSeconds(0.9), 'closed');
-  assert.equal(track.mouthAtFrame(15, 30), 'i');
-  assert.equal(lipSyncFromKeyframes([], 1).mouthAtSeconds(0.5), 'closed');
-  assert.throws(() => lipSyncFromKeyframes([], -1), /durationInSeconds/);
 });

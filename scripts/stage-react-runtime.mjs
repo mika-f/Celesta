@@ -44,9 +44,10 @@ function copyPackage(name, parent) {
   }
 }
 
-// Ship Code and its tokenizer closure alongside the core runtime, without
-// making the React package depend on or load syntax highlighting itself.
+// Ship optional packages alongside the core runtime without making the React
+// package depend on or load them itself. Code also brings its tokenizer closure.
 copyPackage('@celesta/code', join(source, '../code'));
+copyPackage('@celesta/voicevox', join(source, '../voicevox'));
 for (const name of ['@celesta/math', 'react', 'react-reconciler', 'esbuild', 'ag-psd']) {
   copyPackage(name, source);
 }

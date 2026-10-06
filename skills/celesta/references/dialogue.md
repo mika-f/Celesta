@@ -346,6 +346,10 @@ export async function prepare() {
 
 ### Lip sync from VOICEVOX timing
 
+VOICEVOX-specific helpers and types live in `@celesta/voicevox`. The desktop
+runtime includes the package; **File > Set Up TypeScript** installs its
+declarations. Shared WAV lip sync and dialogue components stay in `@celesta/react`.
+
 When the voice comes from VOICEVOX Engine (or a compatible engine such as
 AivisSpeech), build the track from the `audio_query` JSON instead:
 `lipSyncFromVoicevox(query)` reads every consonant and vowel length, so the
@@ -361,7 +365,7 @@ curl -s -X POST "http://127.0.0.1:50021/synthesis?speaker=3" \
 ```
 
 ```tsx
-import { lipSyncFromVoicevox } from '@celesta/react';
+import { lipSyncFromVoicevox } from '@celesta/voicevox';
 import helloQuery from './voices/hello.json';
 
 const hello = lipSyncFromVoicevox(helloQuery);
