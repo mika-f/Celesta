@@ -2,6 +2,7 @@
 
 mod keyframe;
 mod style;
+mod tagged;
 #[cfg(test)]
 mod tests;
 mod time;

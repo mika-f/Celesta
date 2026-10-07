@@ -1,5 +1,5 @@
 use crate::time::{Rational, Time};
-use crate::{Clip, LayerContent};
+use crate::{Clip, LayerContent, LineCap, Paint, PathCommand, Point};
 use std::cmp::Ordering;
 
 #[test]
@@ -122,4 +122,96 @@ fn a_clips_corner_radius_stays_within_half_the_shorter_side() {
         .effective_corner_radius(),
         0.0
     );
+}
+
+#[test]
+fn tagged_content_parses_with_its_type_first_or_later() {
+    let first = r##"{"type":"rect","width":2,"height":3,"fill":{"type":"solid","color":"#fff"}}"##;
+    let later = r##"{"width":2,"fill":{"color":"#fff","type":"solid"},"type":"rect","height":3}"##;
+    let expected = LayerContent::Rect {
+        width: 2.0,
+        height: 3.0,
+        fill: Some(Paint::Solid {
+            color: "#fff".to_owned(),
+        }),
+        stroke: None,
+        corner_radius: 0.0,
+    };
+    assert_eq!(
+        serde_json::from_str::<LayerContent>(first).unwrap(),
+        expected
+    );
+    assert_eq!(
+        serde_json::from_str::<LayerContent>(later).unwrap(),
+        expected
+    );
+}
+
+#[test]
+fn tagged_content_fills_omitted_fields_with_their_defaults() {
+    let content = serde_json::from_str::<LayerContent>(
+        r#"{"type":"path","commands":[{"type":"close","x":1}]}"#,
+    )
+    .unwrap();
+    let LayerContent::Path {
+        commands,
+        fill,
+        line_cap,
+        miter_limit,
+        ..
+    } = content
+    else {
+        panic!("expected a path, got {content:?}");
+    };
+    assert_eq!(commands, [PathCommand::Close]);
+    assert_eq!(fill, None);
+    assert_eq!(line_cap, LineCap::Butt);
+    assert_eq!(miter_limit, crate::DEFAULT_MITER_LIMIT);
+}
+
+#[test]
+fn tagged_content_reports_a_missing_or_unknown_type() {
+    let missing = serde_json::from_str::<Paint>(r##"{"color":"#fff"}"##).unwrap_err();
+    assert!(
+        missing.to_string().contains("missing field `type`"),
+        "{missing}"
+    );
+    let unknown =
+        serde_json::from_str::<Paint>(r##"{"type":"conic","color":"#fff"}"##).unwrap_err();
+    assert!(
+        unknown.to_string().contains("unknown variant `conic`"),
+        "{unknown}"
+    );
+}
+
+#[test]
+fn nested_groups_round_trip() {
+    let leaf = LayerContent::Path {
+        commands: vec![
+            PathCommand::MoveTo { x: 1.0, y: 2.0 },
+            PathCommand::LineTo { x: 3.0, y: 4.0 },
+            PathCommand::Close,
+        ],
+        fill: Some(Paint::Linear {
+            start: Point { x: 0.0, y: 0.0 },
+            end: Point { x: 1.0, y: 0.0 },
+            stops: Vec::new(),
+        }),
+        stroke: None,
+        line_cap: LineCap::Round,
+        line_join: Default::default(),
+        miter_limit: 2.0,
+    };
+    let json = serde_json::to_string(&leaf).unwrap();
+    let group = format!(
+        r#"{{"type":"group","layers":[{{"id":"a","transform":{{}},"opacity":1,"content":{{"type":"group","layers":[{{"id":"b","transform":{{}},"opacity":1,"content":{json}}}]}}}}]}}"#
+    );
+    let LayerContent::Group { layers, .. } = serde_json::from_str::<LayerContent>(&group).unwrap()
+    else {
+        panic!("expected a group");
+    };
+    let LayerContent::Group { layers, .. } = &layers[0].content else {
+        panic!("expected a nested group");
+    };
+    assert_eq!(layers[0].content, leaf);
 }
