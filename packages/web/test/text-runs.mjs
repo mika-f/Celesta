@@ -18,11 +18,11 @@ try {
     document.body.append(canvas);
     const ctx = canvas.getContext('2d');
     const renderer = new SceneCanvas();
-    const raster = async (text, style, maxWidth) => {
+    const raster = async (text, style, maxWidth, baselineAnchor = true) => {
       ctx.reset();
       await renderer.layer(ctx, { id: 'text', opacity: 1, transform: {
         position: { x: 10, y: 70 }, scale: { x: 1, y: 1 }, rotation: 0, anchor: { x: 0, y: 0 } },
-        content: { type: 'text', text, style, maxWidth, baselineAnchor: true } }, new DOMMatrix(), 1);
+        content: { type: 'text', text, style, maxWidth, baselineAnchor } }, new DOMMatrix(), 1);
       return ctx.getImageData(0, 0, canvas.width, canvas.height).data;
     };
     (async () => {
@@ -56,6 +56,59 @@ try {
       }
       const wrapped = await raster('AV   AV', { fontSize: 40, lineHeight: 54, colorRuns: [{ start: 5, end: 7, color: '#ff0000' }] }, 80);
       check(wrapped.some((n, i) => i % 4 === 0 && n === 255 && wrapped[i + 1] === 0 && wrapped[i + 2] === 0), 'wrapped source color ranges were lost');
+      const compare = (a, b, label) => {
+        let differing = 0, occupied = 0;
+        for (let i = 0; i < a.length; i += 4) {
+          if (a[i + 3] < 250 || b[i + 3] < 250) continue;
+          occupied++;
+          if ([0, 1, 2].some(c => Math.abs(a[i + c] - b[i + c]) > 3)) differing++;
+        }
+        check(occupied > 0 && differing / occupied < 0.01, label + ': changed opaque colors ' + differing + '/' + occupied);
+      };
+      const bounds = pixels => {
+        let left = 900, top = 240, right = 0, bottom = 0;
+        for (let i = 3; i < pixels.length; i += 4) {
+          if (pixels[i] <= 8) continue;
+          const x = ((i - 3) / 4) % 900, y = Math.floor((i - 3) / 4 / 900);
+          left = Math.min(left, x); top = Math.min(top, y); right = Math.max(right, x); bottom = Math.max(bottom, y);
+        }
+        return [left, top, right, bottom];
+      };
+      const compact = { fontSize: 40, lineHeight: 8, fontFamily: 'serif' };
+      const directBounds = bounds(await raster('jÁ\\njÁ', compact));
+      const styledBounds = bounds(await raster('jÁ\\njÁ', { ...compact, visibleCharacters: 5 }));
+      check(directBounds.every((n, i) => Math.abs(n - styledBounds[i]) <= 1), 'compact multiline ink was clipped ' + directBounds + '/' + styledBounds);
+      const crBounds = bounds(await raster('AV\\rAV', compact, undefined, false));
+      const lfBounds = bounds(await raster('AV\\nAV', compact, undefined, false));
+      check(crBounds.every((n, i) => n === lfBounds[i]), 'CR geometry differs from LF ' + crBounds + '/' + lfBounds);
+      const gradient = { type: 'linear', start: { x: 0, y: 0 }, end: { x: 100, y: 70 }, stops: [{ offset: 0, color: '#f00' }, { offset: 1, color: '#00f' }] };
+      const stroked = { fontSize: 40, lineHeight: 54, fill: gradient, stroke: { width: 5, paint: gradient } };
+      compare(await raster('AV é', stroked), await raster('AV é', { ...stroked, visibleCharacters: 5 }), 'padded gradient origin');
+      const mono = { fontSize: 40, lineHeight: 54, fill: { type: 'solid', color: '#ff0000' } };
+      compare(await raster('A\\uFE0F', mono), await raster('A\\uFE0F', { ...mono, colorRuns: [{ start: 0, end: 2, color: '#ff0000' }] }), 'monochrome variation glyph');
+      // Inspect locale propagation at the platform boundary.
+      const extent = SVGTextContentElement.prototype.getExtentOfChar;
+      let extents = 0, lang;
+      SVGTextContentElement.prototype.getExtentOfChar = function(index) {
+        extents++; lang = this.getAttributeNS('http://www.w3.org/XML/1998/namespace', 'lang'); return extent.call(this, index);
+      };
+      await raster('Locale test', { fontSize: 39, visibleCharacters: 2 });
+      check(lang === navigator.language, 'SVG locale differs from resolved Canvas locale');
+      const transform = { position: { x: 0, y: 50 }, scale: { x: 1, y: 1 }, rotation: 0, anchor: { x: 0, y: 0 } };
+      const scene = color => ({ width: 900, height: 240, layers: Array.from({ length: 80 }, (_, i) => ({
+        id: String(i), opacity: 1, transform,
+        content: { type: 'text', text: 'line ' + i, style: { fontSize: 24, colorRuns: [{ start: 0, end: 4, color }] } },
+      })) });
+      await renderer.draw(canvas, scene('#ff0000'));
+      const shaped = extents;
+      await renderer.draw(canvas, scene('#00ff00'));
+      await renderer.draw(canvas, scene('#00ff00'));
+      check(extents === shaped, 'large scenes re-shape cached lines');
+      check(renderer.textLayouts.size === 80 && renderer.styledText.size === 80, 'active scene cache retention');
+      await renderer.draw(canvas, { width: 900, height: 240, layers: [] });
+      check(renderer.textLayouts.size <= 32 && renderer.styledText.size <= 64, 'idle caches were not bounded');
+      SVGTextContentElement.prototype.getExtentOfChar = extent;
+      renderer.dispose();
       document.body.append(Object.assign(document.createElement('pre'), { textContent: 'PASS' }));
     })().catch(error => document.body.append(Object.assign(document.createElement('pre'), { textContent: 'FAIL: ' + error.stack })));
   `, loader: 'js', resolveDir: directory }, bundle: true, write: false, format: 'iife' });

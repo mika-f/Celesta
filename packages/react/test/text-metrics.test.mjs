@@ -138,3 +138,15 @@ test('text carets use shaped cluster advances and bidi direction without prefix 
   assert.deepEqual(textCaret(m, 4), { x: 32, y: 24, line: 1 });
   assert.deepEqual(textCaret(m, 5), { x: 20, y: 24, line: 1 });
 });
+
+test('text carets retain consecutive and trailing empty lines', async () => {
+  const { textCaret } = await import('../dist/index.js');
+  const m = { ...metrics(12), lines: 5, height: 120, lineStarts: [0, 3, 5, 7, 8], glyphs: [
+    { text: 'A', start: 0, end: 1, rtl: false, x: 0, width: 12, line: 0 },
+    { text: 'B', start: 5, end: 6, rtl: false, x: 0, width: 12, line: 2 },
+  ] };
+  assert.deepEqual(textCaret(m, 1), { x: 12, y: 0, line: 0 });
+  assert.deepEqual(textCaret(m, 3), { x: 0, y: 24, line: 1 });
+  assert.deepEqual(textCaret(m, 7), { x: 0, y: 72, line: 3 });
+  assert.deepEqual(textCaret(m, 8), { x: 0, y: 96, line: 4 });
+});

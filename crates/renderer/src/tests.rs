@@ -1930,6 +1930,8 @@ fn colored_runs_preserve_full_shaping_and_reveal_geometry() {
             );
             if visible == 0 {
                 assert!(partial.pixels().iter().all(|&p| p == 0));
+            } else if visible == count {
+                assert_eq!(partial, full);
             }
         }
         let first = rasterizer.shaped_buffer(text, &plain, None, 1.0);
@@ -1998,7 +2000,7 @@ fn colored_runs_validate_ranges_and_override_gradient_without_recoloring_white()
                 None,
                 1.0
             ),
-            Err(crate::RenderError::InvalidTextColorRun)
+            Err(crate::RenderError::InvalidTextColorRun { .. })
         ));
     }
 }
@@ -2027,4 +2029,97 @@ fn glyph_offsets_refer_to_original_code_points_after_wrapping_and_crlf() {
             );
         }
     }
+}
+
+#[test]
+fn color_runs_paint_each_cluster_and_reveal_the_expected_prefix() {
+    use celesta_composition::TextColorRun;
+    let mut rasterizer = TextRasterizer::new();
+    let text = "A B C D";
+    let style = TextStyle {
+        font_family: Some("monospace".into()),
+        font_size: Some(40.0),
+        color_runs: text
+            .chars()
+            .enumerate()
+            .map(|(start, _)| TextColorRun {
+                start,
+                end: start + 1,
+                color: if start % 4 == 0 { "#ff0000" } else { "#00ff00" }.into(),
+            })
+            .collect(),
+        ..Default::default()
+    };
+    let full = rasterizer.rasterize(text, &style, None, 1.0).unwrap();
+    let metrics = rasterizer.measure(text, &style, None);
+    for glyph in metrics.glyphs.iter().filter(|glyph| glyph.text != " ") {
+        let expected = if glyph.start % 4 == 0 {
+            [255, 0, 0]
+        } else {
+            [0, 255, 0]
+        };
+        let pixels: Vec<_> = full
+            .pixels()
+            .chunks_exact(4)
+            .enumerate()
+            .filter(|(i, p)| {
+                let x = (i % full.width() as usize) as f64;
+                x >= glyph.x && x < glyph.x + glyph.width && p[3] > 0
+            })
+            .map(|(_, p)| p)
+            .collect();
+        assert!(!pixels.is_empty(), "missing glyph {}", glyph.text);
+        assert!(
+            pixels.iter().all(|p| p[..3] == expected),
+            "wrong color for {}",
+            glyph.text
+        );
+    }
+    for visible in [1, 3, 5, text.chars().count()] {
+        let partial = rasterizer
+            .rasterize(
+                text,
+                &TextStyle {
+                    visible_characters: Some(visible),
+                    ..style.clone()
+                },
+                None,
+                1.0,
+            )
+            .unwrap();
+        let mut expected = style.clone();
+        for run in &mut expected.color_runs {
+            if run.start >= visible {
+                run.color = "#00000000".into();
+            }
+        }
+        assert_eq!(
+            partial,
+            rasterizer.rasterize(text, &expected, None, 1.0).unwrap(),
+            "visible={visible}"
+        );
+    }
+}
+
+#[test]
+fn oversized_text_does_not_evict_cached_layouts() {
+    let mut rasterizer = TextRasterizer::new();
+    let style = TextStyle::default();
+    let first = rasterizer.shaped_buffer("cached 0", &style, None, 1.0);
+    for i in 1..32 {
+        rasterizer.shaped_buffer(&format!("cached {i}"), &style, None, 1.0);
+    }
+    rasterizer.shaped_buffer(&" ".repeat(100_001), &style, None, 1.0);
+    assert_eq!(rasterizer.shaped_buffers.len(), 32);
+    assert!(std::sync::Arc::ptr_eq(
+        &first,
+        &rasterizer.shaped_buffer("cached 0", &style, None, 1.0)
+    ));
+}
+
+#[test]
+fn metrics_retain_empty_line_source_offsets() {
+    let mut rasterizer = TextRasterizer::new();
+    let metrics = rasterizer.measure("A\r\n\r\nB\n\n", &TextStyle::default(), None);
+    assert_eq!(metrics.line_starts, [0, 3, 5, 7, 8]);
 }

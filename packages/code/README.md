@@ -122,7 +122,10 @@ position from the full-source glyph layout using the same font and tab expansion
 as `Code`. Moving the caret does not measure prefixes. Both line and column
 are one-based; columns count original code points, so tabs and emoji each count
 once. `column` may be one past the final character to place a caret at line end.
-Invalid positions throw an error.
+Invalid positions throw an error. This hook requires the native editor/exporter
+runtime; browser renders cannot provide shaped glyph metrics and throw an
+explicit `useCodePoint()` unsupported error. `Code` rendering itself works in
+the browser.
 
 ```tsx
 const caret = useCodePoint(source, { line: 1, column: 7 }, style);

@@ -86,6 +86,8 @@ impl RasterizedText {
 /// Size of laid-out text, in composition units.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TextMetrics {
+    /// Source code-point offset at the start of each visual line, including empty lines.
+    pub line_starts: Vec<usize>,
     /// Widest line's advance width.
     pub width: f64,
     /// Total height of all lines.

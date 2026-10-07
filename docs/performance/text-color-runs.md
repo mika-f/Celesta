@@ -28,8 +28,9 @@ Paint and visibility do not divide shaping runs. These fields also work on
 subtitle styles; language parsing and code themes remain in `@celesta/code`.
 
 `GlyphMetrics` now includes `start`, `end` and `rtl`. `textCaret(metrics, offset)`
-returns `{ x, y, line }` from full-source shaping. Positions inside a cluster
-interpolate its advance rather than using font-specific ligature caret stops.
+returns `{ x, y, line }` from full-source shaping. Native metrics also include
+`lineStarts`, so carets on empty and trailing lines retain their line position.
+Positions inside a cluster interpolate its advance rather than using font-specific ligature caret stops.
 `useCodePoint()` maps original tabs and CRLF positions to this layout; moving a
 caret no longer makes prefix measurement RPCs.
 
@@ -50,20 +51,26 @@ necessary; this preserves placement but can reduce sharpness.
 
 The browser rasterizes each full line once, uses full-line SVG character extents
 for cluster positions and applies paint/reveal masks to the cached Canvas image.
-Its cache retains 32 layouts and 64 painted variants. It does not shape individual
-color fragments or measure prefixes. Browser color masks follow cluster advance
+Its cache retains the active scene, including scenes exceeding 32 lines.
+After each frame it prunes unused entries to the larger of the active entry
+count and the idle limits (32 layouts / 64 painted variants).
+Emoji presentation text uses an additional black/white raster probe to keep
+actual color glyphs while tinting monochrome fallback glyphs. It does not shape
+individual color fragments or measure prefixes. Browser color masks follow cluster advance
 regions; glyph overhangs and overlapping glyphs can differ at color boundaries
 from native per-glyph painting. Browser and native fonts/rasterization and the
 browser's existing word wrapping are platform-dependent, so identical pixel
-output across browsers and desktop is not promised. Custom Font assets and Code rendering are supported by the browser runtime.
+output across browsers and desktop is not promised. Custom Font assets and Code
+rendering are supported by the browser runtime.
 `useCodePoint()` still requires native shaped glyph metrics.
 
 ## Release comparison
 
 Measured on 2026-10-07, Apple M4 / Metal, 1920×1080, Menlo 16 px / 24 px line
 height. Values are medians of three independent samples, 30 frames per phase.
-Before uses the Code sources at `f6ace76`; after uses the working implementation.
-Both use the same current release-built bridge and renderers. This isolates the
+Before uses the Code sources at `f6ace76`; after uses the implementation at
+`fcdb9ed` (before review fixes). Both use the same release-built bridge and
+renderers at `fcdb9ed`. This isolates the
 Code representation change; it is not a benchmark of two entire repository
 revisions. In particular, both sides use the extended glyph measurement payload.
 
@@ -118,18 +125,19 @@ code-runs -- path/to/entry.tsx 30`.
 
 Checks exercised for this change:
 
-- Code: 11 tests, including constant RPC counts on long/multiple lines, source
+- Code: 12 tests, including constant RPC counts on long/multiple lines, source
   tabs/CRLF, moving carets, highlight changes, typing/seeking and packaged CLI.
-- React: 139 tests, including cluster/BiDi carets; Code example type checking.
+- React: 140 tests, including cluster/BiDi carets; Code example type checking.
 - Composition code generation: 49 tests; project code generation: 29 tests.
-- Native rasterizer: 101 tests, including identical coverage/layout under color
+- Native rasterizer: 104 tests, including identical coverage/layout under color
   changes, fixed reveal geometry, gradients, range errors and source offsets.
 - GPU: 76 tests, including CPU comparison after premultiplying the reference,
   texture reuse/reveals and an unwrapped line exceeding the texture limit.
 - Bridge: 24 unit tests and 26 Node integration tests.
 - Web build and `node packages/web/test/text-runs.mjs [path-to-chromium]`:
   real browser shaping/coverage, bidi, emoji, multiline/wrapping, combining
-  reveals, stroke and gradient coverage. The default Chromium path is macOS
+  reveals, stroke and gradient coverage, gradient origins, compact ink bounds,
+  resolved locales, monochrome emoji fallback, and 80-line cache reuse. The default Chromium path is macOS
   Google Chrome; pass its executable explicitly on other platforms.
 - Web unit tests: font cache invalidation, source offsets after wrapping and
   existing browser worker/rendering behavior.

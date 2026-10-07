@@ -4396,6 +4396,7 @@ fn colored_text_and_reveals_match_cpu_through_cached_gpu_textures() {
         let reference = cpu.render(&scene).unwrap();
         let frame = gpu.render(&scene).unwrap();
         // GPU readback is premultiplied; the CPU reference stores straight RGBA.
+        assert_eq!(reference.pixels().len(), frame.pixels().len());
         assert!(
             reference
                 .pixels()

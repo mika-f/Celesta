@@ -32,6 +32,8 @@ export interface TextMetrics {
   lineHeight: number;
   lines: number;
   glyphs: GlyphMetrics[];
+  /** Source code-point offsets for visual line starts, including empty lines. */
+  lineStarts?: number[];
 }
 
 export interface MeasureTextOptions {
@@ -150,11 +152,14 @@ export function useTextMetrics(
 /** A caret from complete-text shaping; positions inside a cluster interpolate its advance. */
 export function textCaret(metrics: TextMetrics, offset: number): { x: number; y: number; line: number } {
   if (!Number.isSafeInteger(offset) || offset < 0) throw new Error('Text caret offset must be a non-negative integer');
-  const glyph = metrics.glyphs.find(glyph => glyph.start <= offset && offset < glyph.end)
-    ?? metrics.glyphs.reduce<GlyphMetrics | undefined>((last, glyph) =>
-      glyph.end <= offset && (!last || glyph.end >= last.end) ? glyph : last, undefined);
-  if (!glyph) return { x: 0, y: 0, line: 0 };
-  const fraction = Math.min(1, (offset - glyph.start) / Math.max(1, glyph.end - glyph.start));
+  const line = metrics.lineStarts?.reduce((line, start, index) => start <= offset ? index : line, 0);
+  const glyphs = line !== undefined ? metrics.glyphs.filter(glyph => glyph.line === line) : metrics.glyphs;
+  const glyph = glyphs.find(glyph => glyph.start <= offset && offset < glyph.end)
+    ?? glyphs.reduce<GlyphMetrics | undefined>((last, glyph) =>
+      glyph.end <= offset && (!last || glyph.end >= last.end) ? glyph : last, undefined)
+    ?? glyphs.find(glyph => glyph.start >= offset);
+  if (!glyph) return { x: 0, y: Math.max(0, line ?? 0) * metrics.lineHeight, line: Math.max(0, line ?? 0) };
+  const fraction = Math.max(0, Math.min(1, (offset - glyph.start) / Math.max(1, glyph.end - glyph.start)));
   return { x: glyph.x + glyph.width * (glyph.rtl ? 1 - fraction : fraction),
     y: glyph.line * metrics.lineHeight, line: glyph.line };
 }

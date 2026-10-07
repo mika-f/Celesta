@@ -5,7 +5,10 @@ import { readFileSync, mkdirSync, writeFileSync, symlinkSync, existsSync } from 
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('..', import.meta.url));
-const baseline = process.argv[2] ?? 'HEAD';
+const baseline = process.argv[2];
+if (!baseline) throw new Error('usage: node scripts/bench-code-runs.mjs <baseline-ref> [samples]');
+const samples = Number(process.argv[3] ?? 3);
+if (!Number.isSafeInteger(samples) || samples < 1) throw new Error('samples must be a positive integer');
 const directory = resolve(root, 'target/code-runs-baseline');
 mkdirSync(directory, { recursive: true });
 for (const file of ['index.ts', 'syntax.ts']) {
@@ -36,8 +39,6 @@ writeFileSync(probe, `
   };
 `);
 execFileSync('cargo', ['build', '--release', '-p', 'celesta-bench', '--example', 'code-runs'], { cwd: root, stdio: 'inherit' });
-const samples = Number(process.argv[3] ?? 3);
-if (!Number.isSafeInteger(samples) || samples < 1) throw new Error('samples must be a positive integer');
 for (let sample = 0; sample < samples; sample++) {
   for (const multiline of [false, true]) {
     for (const [variant, path] of [['before', resolve(directory, 'benchmark.tsx')], ['after', entry]]) {

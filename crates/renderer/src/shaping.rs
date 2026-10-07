@@ -11,7 +11,8 @@ use crate::types::{Color, RgbaFrame};
 use celesta_composition::{LineBreak, TextAlign, TextStyle};
 use cosmic_text::{
     Align, Attrs, AttrsList, Buffer, BufferLine, Color as CosmicColor, Family, FontSystem,
-    LineIter, Metrics, PhysicalGlyph, Renderer, Shaping, SwashCache, SwashContent, Weight, Wrap,
+    LineEnding, LineIter, Metrics, PhysicalGlyph, Renderer, Shaping, SwashCache, SwashContent,
+    Weight, Wrap,
 };
 use std::sync::Arc;
 
@@ -26,20 +27,22 @@ impl TextRasterizer {
         scale: f32,
     ) -> Arc<Buffer> {
         self.select_language(style.lang.as_deref());
-        let key = format!(
-            "{text:?}\0{:?}\0{width:?}\0{scale:?}",
-            (
-                &style.lang,
-                &style.font_family,
-                style.font_size,
-                style.font_weight,
-                style.align,
-                style.line_height,
-                style.letter_spacing,
-                style.line_break,
+        let key = (text.len() <= 100_000).then(|| {
+            format!(
+                "{text:?}\0{:?}\0{width:?}\0{scale:?}",
+                (
+                    &style.lang,
+                    &style.font_family,
+                    style.font_size,
+                    style.font_weight,
+                    style.align,
+                    style.line_height,
+                    style.letter_spacing,
+                    style.line_break,
+                )
             )
-        );
-        if let Some(buffer) = self.shaped_buffers.get(&key) {
+        });
+        if let Some(buffer) = key.as_ref().and_then(|key| self.shaped_buffers.get(key)) {
             return Arc::clone(buffer);
         }
         let requested_weight = style.font_weight.unwrap_or(400);
@@ -235,10 +238,10 @@ impl TextRasterizer {
         buffer.shape_until_scroll(&mut self.font_system, false);
         let buffer = Arc::new(buffer);
         // Bound retained layouts; long documents do not grow the cache forever.
-        if self.shaped_buffers.len() >= 32 {
-            self.shaped_buffers.clear();
-        }
-        if text.len() <= 100_000 {
+        if let Some(key) = key {
+            if self.shaped_buffers.len() >= 32 {
+                self.shaped_buffers.clear();
+            }
             self.shaped_buffers.insert(key, Arc::clone(&buffer));
         }
         buffer
@@ -270,6 +273,13 @@ impl TextRasterizer {
                 metrics.descent = f64::from(run.line_height) - metrics.ascent;
                 metrics.line_height = f64::from(run.line_height);
             }
+            let start = run
+                .glyphs
+                .iter()
+                .map(|glyph| glyph.start)
+                .min()
+                .unwrap_or(0);
+            metrics.line_starts.push(offsets[run.line_i][start]);
             metrics.lines += 1;
             // Cluster-wise: a ligature or combined glyph has one entry.
             for glyph in run.glyphs {
@@ -343,16 +353,25 @@ impl TextRasterizer {
         // multi-color emoji glyphs, which a single mask+solid-fill
         // composite cannot represent.
         let mut glyph_pixels = vec![0_u8; mask_width as usize * mask_height as usize * 4];
-        let offsets = source_offsets(&buffer, text, style);
-        let count = text.chars().count();
-        let mut colors = vec![None; count];
+        let offsets = (!style.color_runs.is_empty() || style.visible_characters.is_some())
+            .then(|| source_offsets(&buffer, text, style));
+        let count = if style.color_runs.is_empty() {
+            0
+        } else {
+            text.chars().count()
+        };
+        let mut colors = Vec::with_capacity(style.color_runs.len());
         let mut previous_end = 0;
-        for run in &style.color_runs {
+        for (index, run) in style.color_runs.iter().enumerate() {
             if run.start < previous_end || run.end < run.start || run.end > count {
-                return Err(RenderError::InvalidTextColorRun);
+                return Err(RenderError::InvalidTextColorRun {
+                    index,
+                    start: run.start,
+                    end: run.end,
+                    text_length: count,
+                });
             }
-            let color = Color::from_hex(&run.color)?;
-            colors[run.start..run.end].fill(Some(color));
+            colors.push(Color::from_hex(&run.color)?);
             previous_end = run.end;
         }
         let mut ink_rows: Option<(usize, usize)> = None;
@@ -389,11 +408,18 @@ impl TextRasterizer {
         };
         for run in buffer.layout_runs() {
             for glyph in run.glyphs {
-                let start = offsets[run.line_i][glyph.start];
+                let start = offsets
+                    .as_ref()
+                    .map_or(0, |offsets| offsets[run.line_i][glyph.start]);
                 renderer.visible = style
                     .visible_characters
                     .is_none_or(|visible| start < visible);
-                let override_color = colors.get(start).copied().flatten();
+                let index = style.color_runs.partition_point(|run| run.end <= start);
+                let override_color = style
+                    .color_runs
+                    .get(index)
+                    .filter(|run| run.start <= start)
+                    .map(|_| colors[index]);
                 let color = override_color.unwrap_or(fill);
                 renderer.gradient = if override_color.is_none() {
                     fill_paint.as_ref().filter(|paint| paint.solid().is_none())
@@ -576,7 +602,7 @@ fn source_offsets(buffer: &Buffer, text: &str, style: &TextStyle) -> Vec<Vec<usi
     buffer
         .lines
         .iter()
-        .zip(LineIter::new(text))
+        .zip(LineIter::new(text).chain(std::iter::once((text.len()..text.len(), LineEnding::None))))
         .map(|(line, (range, ending))| {
             let mut offsets = vec![base; line.text().len() + 1];
             let mut point = base;

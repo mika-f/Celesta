@@ -148,7 +148,10 @@ export function codeCharacterCount(source: string, position: CodePosition): numb
   return count;
 }
 
-/** Measures a caret/annotation position using the same style and tabs as Code. */
+/**
+ * Measures a caret/annotation using native shaped glyph metrics and Code's style/tabs.
+ * Unsupported in the browser runtime, which cannot supply shaped glyph metrics.
+ */
 export function useCodePoint(
   source: string, position: CodePosition, style?: TextStyle, tabSize = 2,
 ): CodePoint {
@@ -170,8 +173,11 @@ export function useCodePoint(
   const { ascent } = useTextMetrics('M', resolvedStyle);
   const target = layout.positions[line - 1];
   const offset = target.start + target.columns[column - 1];
+  let glyphs;
+  try { glyphs = metrics.glyphs; }
+  catch { throw new Error('useCodePoint() requires native shaped glyph metrics and is unsupported in browser renders'); }
   const caret = textCaret(metrics, offset);
-  const x = metrics.glyphs.some(glyph => glyph.line === line - 1) ? caret.x : 0;
+  const x = glyphs.some(glyph => glyph.line === line - 1) ? caret.x : 0;
   const y = (line - 1) * resolvedStyle.lineHeight!;
   return { x, y, baseline: y + ascent, lineHeight: resolvedStyle.lineHeight! };
 }

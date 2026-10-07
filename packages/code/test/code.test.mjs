@@ -353,3 +353,13 @@ test('long lines and changing caret positions have constant measurements and one
     assert.equal(calls, 4, 'reveal, seek and caret moves reuse full geometry');
   }
 });
+
+test('useCodePoint explicitly rejects browser glyph metrics', () => {
+  const browserMetrics = request => ({ ...metrics(request), get glyphs() {
+    throw new Error('Shaped glyph metrics are unavailable in the browser runtime');
+  } });
+  setTextMeasurer(async request => browserMetrics(request), browserMetrics);
+  const Label = () => { useCodePoint('abc', { line: 1, column: 2 }); return null; };
+  const Root = () => React.createElement(Composition, { width: 100, height: 100, fps: 30, durationInFrames: 1 }, React.createElement(Label));
+  assert.throws(() => frameAt(mount(Root), 0), /useCodePoint\(\).*unsupported in browser renders/);
+});

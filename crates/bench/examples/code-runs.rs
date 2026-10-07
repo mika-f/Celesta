@@ -41,7 +41,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let evaluation = started.elapsed().as_secs_f64() * 1000.0 / frames as f64;
     let started = Instant::now();
     let typing = (1..=frames)
-        .map(|frame| bridge.scene_at(Time::new(frame * 119 / frames, 30)))
+        .map(|frame| bridge.scene_at(Time::new((frame * 119 / frames).clamp(1, 119), 30)))
         .collect::<Result<Vec<_>, _>>()?;
     let typing_evaluation = started.elapsed().as_secs_f64() * 1000.0 / frames as f64;
     // Renderer setup is excluded, including device/pipeline initialization.
