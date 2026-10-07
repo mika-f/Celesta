@@ -202,6 +202,14 @@ function rootWalkContext(fps: number, durationInFrames: number, time: Time, lang
  * slower to send. Strings an author builds (ids, text, colors, asset paths)
  * go through here; ids the walk builds itself use `join`, which is flat.
  * V8 never makes a string shorter than 13 characters cons or sliced.
+ *
+ * JavaScript cannot tell whether a string is already flat, so a longer
+ * string pays the round trip even when it is: 1,500 flat 19-character asset
+ * paths add about 0.07 ms a frame, and 60-character texts about 0.19 ms
+ * (Apple M5), against the 0.25–0.6 ms that one non-flat string costs a
+ * NEBULA or SPECTRA frame. An author's literal can't be told apart from a
+ * string their component built, and skipping author strings would leave
+ * NEBULA's `FRAME ${n}` on the slow path.
  */
 function flatString(value: string): string {
   return value.length < 13 ? value : JSON.parse(JSON.stringify(value));
