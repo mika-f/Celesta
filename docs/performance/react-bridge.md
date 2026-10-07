@@ -5,9 +5,11 @@ while Rust decodes frame N), and send the CLI's messages length-prefixed.
 Keep JSON and the stdio pipe. Do not send per-frame deltas, field patches
 or struct-of-arrays layers, and do not change the transport.
 
-Exports did not get faster on either machine measured, because rendering
-and encoding set their pace. What this changes is how fast evaluation can
-go, which caps any export once rendering or encoding get faster.
+Exports barely get faster: up to 5% with `--preset ultrafast` on the Mac,
+within noise on the Windows machine and with the default preset, because
+rendering and encoding set their pace. What this changes is how fast
+evaluation can go, which caps any export once rendering or encoding get
+faster.
 
 ## Where a frame's time goes
 
@@ -65,28 +67,47 @@ Exports, pipelining + length prefix against `main`, five rounds: wall time
 
 ### Apple M-series Mac
 
-Node 26; the load average was 13–17 during the export runs, so only the
-render thread's wait is reported for them. Five rounds:
+Node 26, on AC power, with nothing else busy but the window server and a
+browser. Seven rounds, the same variants as on Windows:
 
 | Variant | NEBULA | SPECTRA | reel |
 | --- | ---: | ---: | ---: |
-| `main` | 3.32 | 1.47 | 0.93 |
-| length prefix, serial | −3% | ±0% | −3% |
-| pipelining alone | 2.70 (−19%) | 1.32 (−10%) | 0.78 (−16%) |
-| pipelining + length prefix | 2.65 (−20%) | 1.38 (−6%) | 0.78 (−16%) |
+| `main` | 3.18 | 1.22 | 0.82 |
+| length prefix, serial | −1.6% | −1.6% | −2.7% |
+| pipelining alone | 2.54 (−20%) | 1.09 (−11%) | 0.71 (−13%) |
+| **pipelining + length prefix** | **2.43 (−24%)** | **1.09 (−11%)** | **0.68 (−16%)** |
 
-Render thread waiting for React during an `ultrafast` export, six rounds:
-NEBULA 1,494 → 158 ms, SPECTRA 1,090 → 678 ms, reel 691 → 427 ms. The
-wall time did not change beyond the load's noise.
+The length prefix on top of pipelining is worth −4.2% for NEBULA (95% CI
+−5.2% to −1.8%) and −4.3% for reel (−5.3% to −2.5%); SPECTRA's −1.4% is
+not resolved.
 
-Here the length prefix adds nothing to pipelining beyond the noise of five
-rounds.
+This Mac slows down as it heats: across the five export rounds NEBULA's
+`ultrafast` export took 2.9, 4.0, 5.1, 4.9 and 5.2 s on `main`, and the
+default preset 8.6 to 16.4 s. `main` and this change ran back to back in
+each round, so the figures below are the medians of their ratios within a
+round, not of the absolute times.
+
+| Entry, preset | Wall time | Render loop | Render thread waiting for React (`main` → this change) |
+| --- | ---: | ---: | --- |
+| NEBULA, `ultrafast` | −4.7% | −6.7% | 1,246 → 155 ms |
+| NEBULA, default | −0.3% | −3.3% | 1,417 → 663 ms |
+| SPECTRA, `ultrafast` | −2.9% | −3.4% | 846 → 577 ms |
+| SPECTRA, default | ±0% | +0.1% | 726 → 383 ms |
+| reel, `ultrafast` | −2.5% | −2.5% | 591 → 402 ms |
+| reel, default | −0.2% | +0.6% | 518 → 216 ms |
+
+An earlier, shorter run on this Mac reported the length prefix as adding
+nothing and exports as unchanged, and put the noise down to a load average
+of 13–17. The load came from the exports themselves; the noise was the
+heat drift above, which five rounds of absolute medians could not see
+through.
 
 ## Reading the results
 
 **Exports are paced by rendering and encoding.** Pipelining removes almost
-all of NEBULA's wait, but the A4000's render loop shrinks 2–3% and its wall
-time not at all: rendering and encoding take the freed time.
+all of NEBULA's wait, but the render loop shrinks only 2–7% and the wall
+time at most 5%: rendering and encoding take the freed time. With the
+default preset, where x264 takes longer, nothing changes.
 
 **Evaluation caps an export.** On the A4000, NEBULA's render loop runs at
 about 164 frames/s with `ultrafast`, just under the 175 frames/s serial
@@ -103,12 +124,14 @@ side (3–4 ms for NEBULA on the Mac) is far longer than the decode
 (0.67 ms), so faster decoding no longer shortens a frame and faster
 JavaScript does.
 
-**The length prefix pays off only pipelined, and only on Windows.** Why is
-not established. Line-delimited reads go through an 8 KiB `BufReader`
-into a growing `String`; length-prefixed ones are a few large `read_exact`
-calls into a reused `Vec`, and Node encodes into a reused `Buffer`.
-Windows pipe reads may cost more than macOS ones, and pipelining may put
-the transfer, rather than the decode, on the critical path.
+**The length prefix pays off only pipelined, more on Windows.** It is
+worth about 11% for NEBULA and reel on the A4000 and about 4% on the Mac,
+and nothing measurable serial. Why is not established. Line-delimited
+reads go through an 8 KiB `BufReader` into a growing `String`;
+length-prefixed ones are a few large `read_exact` calls into a reused
+`Vec`, and Node encodes into a reused `Buffer`. Windows pipe reads may cost
+more than macOS ones, and pipelining may put the transfer, rather than the
+decode, on the critical path.
 
 **reel spends most of an export outside the render loop**: 3.0 of 4.8 s on
 the A4000, in start-up and audio. That, not the bridge, is where reel's

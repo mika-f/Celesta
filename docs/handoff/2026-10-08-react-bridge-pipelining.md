@@ -41,9 +41,14 @@ on NEBULA frames).
 The length prefix (162b385) was reverted (8d87ac2) after it measured
 within noise on its own on both machines, then restored (84df80c) when an
 interleaved run on the Windows RTX A4000 showed it worth a further 11% on
-top of pipelining for NEBULA and reel. Two lessons:
+top of pipelining for NEBULA and reel. 84df80c's message says the Mac
+showed no such difference; a longer interleaved re-run there found about
+4%. Three lessons:
 
 - A change that does nothing alone can still matter combined with another;
   measure the combination before reverting.
 - Results from separate sessions on the same machine drifted by up to 6%
   for `main` alone; compare variants only within one interleaved run.
+- On the Mac, absolute times climb as it heats (NEBULA's export 2.9 → 5.2 s
+  over five rounds), and an export pushes the load average past 10 by
+  itself. Compare base and head run back to back in the same round.
