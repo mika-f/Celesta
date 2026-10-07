@@ -1,4 +1,6 @@
 import type { Scene, Layer, Asset, Paint } from './types';
+import { loadFonts } from './fonts';
+import { textLines, textStyle } from './text-layout';
 
 type Canvas = HTMLCanvasElement;
 type Context = CanvasRenderingContext2D;
@@ -18,28 +20,12 @@ function paint(ctx: Context, value: Paint, x = 0, y = 0): string | CanvasGradien
   return gradient;
 }
 
-function textLines(ctx: Context, text: string, maxWidth: number | null | undefined): string[] {
-  if (!maxWidth) return text.split('\n');
-  return text.split('\n').flatMap(paragraph => {
-    const lines: string[] = [];
-    let line = '';
-    for (const word of paragraph.split(/(?<=\s)/)) {
-      if (line && ctx.measureText((line + word).trimEnd()).width > maxWidth) {
-        lines.push(line.trimEnd());
-        line = word;
-      } else line += word;
-    }
-    lines.push(line.trimEnd());
-    return lines;
-  });
-}
-
 export class SceneCanvas {
   private images = new Map<string, Promise<HTMLImageElement>>();
   private videos = new Map<string, Promise<HTMLVideoElement>>();
   private urls: string[] = [];
 
-  constructor(private assets: Map<string, File> = new Map()) {}
+  constructor(private assets: Map<string, File> = new Map(), private baseURL?: string) {}
 
   dispose() {
     for (const url of this.urls) URL.revokeObjectURL(url);
@@ -50,7 +36,10 @@ export class SceneCanvas {
     const location = asset.location;
     if (location.type === 'url') return location.url;
     const file = this.assets.get(location.path) ?? this.assets.get(location.path.replace(/^\.\//, ''));
-    if (!file) throw new Error(`Missing media file: ${location.path}. Add it with “Add media”.`);
+    if (!file) {
+      if (this.baseURL) return new URL(location.path, this.baseURL).href;
+      throw new Error(`Missing media file: ${location.path}. Add it with “Add media”.`);
+    }
     const url = URL.createObjectURL(file);
     this.urls.push(url);
     return url;
@@ -59,6 +48,7 @@ export class SceneCanvas {
   async audioBytes(src: string): Promise<ArrayBuffer> {
     const file = this.assets.get(src) ?? this.assets.get(src.replace(/^\.\//, ''));
     if (file) return file.arrayBuffer();
+    if (this.baseURL) src = new URL(src, this.baseURL).href;
     if (!/^https?:\/\//i.test(src)) throw new Error(`Missing audio file: ${src}. Add it with “Add media”.`);
     const response = await fetch(src);
     if (!response.ok) throw new Error(`Could not load audio: ${src} (${response.status}).`);
@@ -100,7 +90,7 @@ export class SceneCanvas {
   }
 
   async draw(canvas: Canvas, scene: Scene): Promise<void> {
-    if (scene.fonts?.length) throw new Error('Custom <Font> assets require the desktop renderer.');
+    await loadFonts(scene.fonts ?? [], asset => this.src(asset));
     if (canvas.width !== scene.width) canvas.width = scene.width;
     if (canvas.height !== scene.height) canvas.height = scene.height;
     const ctx = canvas.getContext('2d');
@@ -123,7 +113,7 @@ export class SceneCanvas {
     if (!mode) throw new Error(`Unsupported blend mode: ${layer.blendMode}`);
     if (content.type === 'group') {
       let target = ctx;
-      if (mode !== 'source-over') {
+      if (mode !== 'source-over' || layer.effects) {
         const isolated = document.createElement('canvas');
         isolated.width = ctx.canvas.width;
         isolated.height = ctx.canvas.height;
@@ -148,6 +138,7 @@ export class SceneCanvas {
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.globalAlpha = alpha;
         ctx.globalCompositeOperation = mode;
+        this.effects(ctx, layer);
         ctx.drawImage(target.canvas, 0, 0);
         ctx.restore();
       }
@@ -157,6 +148,7 @@ export class SceneCanvas {
     ctx.save();
     ctx.globalAlpha = alpha;
     ctx.globalCompositeOperation = mode;
+    this.effects(ctx, layer);
     if (content.type === 'rect') {
       const width = content.width, height = content.height;
       const x = -t.anchor.x * width, y = -t.anchor.y * height;
@@ -176,14 +168,34 @@ export class SceneCanvas {
         ctx.lineWidth = content.stroke.width;
         ctx.stroke();
       }
+    } else if (content.type === 'path') {
+      ctx.setTransform(matrix);
+      ctx.beginPath();
+      let started = false;
+      for (const command of content.commands) {
+        if (!started && command.type !== 'moveTo') ctx.moveTo(0, 0);
+        if (command.type === 'moveTo') ctx.moveTo(command.x, command.y);
+        else if (command.type === 'lineTo') ctx.lineTo(command.x, command.y);
+        else if (command.type === 'quadTo') ctx.quadraticCurveTo(command.x1, command.y1, command.x, command.y);
+        else if (command.type === 'cubicTo') ctx.bezierCurveTo(command.x1, command.y1, command.x2, command.y2, command.x, command.y);
+        else ctx.closePath();
+        started = true;
+      }
+      if (content.fill) { ctx.fillStyle = paint(ctx, content.fill); ctx.fill(); }
+      if (content.stroke?.width) {
+        ctx.strokeStyle = paint(ctx, content.stroke.paint);
+        ctx.lineWidth = content.stroke.width;
+        ctx.lineCap = content.lineCap ?? 'butt';
+        ctx.lineJoin = content.lineJoin ?? 'miter';
+        ctx.miterLimit = content.miterLimit ?? 4;
+        ctx.stroke();
+      }
     } else if (content.type === 'text') {
       const style = content.style;
       // Canvas language selection is available in newer browsers.
-      if ('lang' in ctx) ctx.lang = style.lang?.trim() || navigator.language;
       const size = style.fontSize ?? 32;
       const lineHeight = style.lineHeight ?? size * 1.2;
-      ctx.font = `${style.fontWeight ?? 400} ${size}px ${style.fontFamily ? JSON.stringify(style.fontFamily) + ', ' : ''}system-ui, sans-serif`;
-      ctx.letterSpacing = `${style.letterSpacing ?? 0}px`;
+      textStyle(ctx, style);
       ctx.textBaseline = 'alphabetic';
       ctx.textAlign = 'left';
       const lines = textLines(ctx, content.text, content.maxWidth);
@@ -242,5 +254,17 @@ export class SceneCanvas {
       throw new Error(`The web renderer does not support ${content.type} layers yet.`);
     }
     ctx.restore();
+  }
+
+  private effects(ctx: Context, layer: Layer) {
+    const effects = layer.effects;
+    const filters: string[] = [];
+    if (effects?.blur) filters.push(`blur(${effects.blur}px)`);
+    if (effects?.shadow) {
+      const { offsetX, offsetY, blur, color } = effects.shadow;
+      filters.push(`drop-shadow(${offsetX}px ${offsetY}px ${blur}px ${color})`);
+    }
+    if (effects?.glow) filters.push(`drop-shadow(0px 0px ${effects.glow.blur}px ${effects.glow.color})`);
+    ctx.filter = filters.join(' ') || 'none';
   }
 }

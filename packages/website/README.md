@@ -158,8 +158,7 @@ assets and runs `pnpm run deploy`. It needs the `CLOUDFLARE_API_TOKEN` and
   with `docPath(slug)`; `src/docs-shared.tsx` has the `Note` and `Api` helpers.
   `src/DocCode.tsx` supplies accessible copy controls for code examples.
   `src/syntax.ts` highlights code with [twinkleplop](https://twinkleplop.pngwn.at)
-  (TSX, JSON, and shell); the playground editor uses it too, layering a
-  transparent textarea over the highlighted source.
+  (TSX, JSON, and shell) in documentation.
 - `src/examples/`: complete documentation examples (including title, media, dialogue, dialogue sequencing,
   fitted text, reusable data, and VOICEVOX entries). The
   docs import them as raw text. They are excluded from the site's own
@@ -167,6 +166,11 @@ assets and runs `pnpm run deploy`. It needs the `CLOUDFLARE_API_TOKEN` and
   The JSON chapter imports `../../examples/editor-demo.celesta.json` from the
   repository so its example stays in sync. Build with the repository present.
 - `src/demo/title-scene.tsx`: editable starting composition.
+- `src/SourceEditor.tsx`: lazy-loaded Monaco editor via `@monaco-editor/react`.
+  Editor and language workers are bundled by Vite and served from the site.
+  File switching preserves undo history and scroll; resetting the sample or
+  opening a file starts a fresh editor session. Syntax diagnostics are enabled;
+  project errors come from the existing compilation worker.
 - `src/Playground.tsx`: TSX editor and file/media import. `@celesta/web` provides
   frame preview and MP4 export. esbuild WASM compiles the visitor's code in a
   dedicated Worker, and Celesta's real React reconciler/evaluator produces
@@ -176,9 +180,11 @@ assets and runs `pnpm run deploy`. It needs the `CLOUDFLARE_API_TOKEN` and
 - `src/Brand.tsx` and `public/favicon.svg`: the website's crescent mark (a "C"
   with one star). It is separate from the app logos in `packages/logos`.
 
-The web editor accepts one self-contained TSX file. Runtime imports are limited
-to `@celesta/react`, `@celesta/math`, and `react`; `prepare()`, companion JSON projects, PSD
-portraits, and other npm imports still require the desktop/CLI workflow. Add
+The home-page editor accepts one self-contained TSX file; showcase entries
+provide their full virtual source projects. Runtime imports are limited to
+`@celesta/react`, `@celesta/math`, `@celesta/code`, and `react`. Browser-compatible
+`prepare()` and font loading work; filesystem preparation, companion JSON
+projects, PSD portraits, and other npm imports require the desktop/CLI workflow. Add
 local image, video, or audio files with **Add media** and refer to them by file
 name in `src`. Remote media needs CORS access. The web preview is silent;
 constant-rate/constant-volume audio clips are mixed into the exported MP4.
@@ -191,7 +197,8 @@ native output. Export currently buffers the MP4 in memory.
 The website uses packaged macOS and Windows downloads as the primary onboarding
 flow. The source-build workflow is a separate developer chapter. Keep
 installation copy aligned with the packaging scripts and published release
-assets. There are no external fonts, analytics, or media requests. Public
+assets. Showcase compositions may load Google Fonts; the website UI uses
+system fonts. There are no analytics requests. Public
 links use the repository's configured GitHub origin.
 
 ## Verification
@@ -231,3 +238,31 @@ simple tradeoff for two languages; switch to loading a catalog per language if
 additional locales make its transfer size significant. Search aliases live in
 the catalogs too, so add terms readers use in each language. Locale-specific
 404 pages and no-JavaScript fallback links are generated with the other HTML.
+
+## Showcase
+
+`/en/showcase/` and `/ja/showcase/` list the compositions in `examples/`.
+Each has its own static HTML address, such as `/ja/showcase/apex/`, with
+localized metadata and language links. The header links to the showcase.
+Unprefixed `/showcase/` addresses preserve the English entry.
+
+Reel, Apex, Afterimage, Signal, Spectra, and 36 Days run in the browser.
+The editor loads their original TSX/TS sources on demand; choose a source
+file to edit it, and the full project recompiles. Playback, frame scrubbing,
+reset, source downloads, and MP4 export use the same `Playground` as the home
+page. Browser editions explicitly omit generated soundtracks. Prism and
+Feature Tour need native PSD/voice preparation; Versus needs three generated
+benchmark videos. Their detail pages link to the original source and setup
+instructions and clearly identify the desktop requirement.
+
+`src/showcase-catalog.ts` defines the works and initial preview frames.
+Add descriptions and other UI text to both locale catalogs. The source glob
+in `src/showcase-sources.ts` selects the browser-ready example directories.
+Vite reads these as editor text, bypassing desktop-only TypeScript configs.
+The build copies the shared OpenType fonts, license files, and portrait PNGs
+to `dist/showcase-assets/`; development serves the same paths. Keep these
+asset paths in sync when adding an example with new media.
+
+Verify all browser-ready entries, a dependent-file edit, reset, playback,
+scrubbing, MP4 export, localized direct visits, and the mobile menu. The web
+package's `pnpm test` checks virtual module resolution and unavailable imports.

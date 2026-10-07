@@ -15,6 +15,11 @@ export type Paint =
 export type Stroke = { paint: Paint; width: number };
 export type Point = { x: number; y: number };
 export type Transform = { position: Point; scale: Point; rotation: number; anchor: Point };
+export type PathCommand =
+  | { type: 'moveTo' | 'lineTo'; x: number; y: number }
+  | { type: 'quadTo'; x1: number; y1: number; x: number; y: number }
+  | { type: 'cubicTo'; x1: number; y1: number; x2: number; y2: number; x: number; y: number }
+  | { type: 'close' };
 export type TextStyle = {
   lang?: string | null;
   fontFamily?: string | null;
@@ -30,6 +35,7 @@ export type TextStyle = {
 export type LayerContent =
   | { type: 'group'; layers: Layer[]; clip?: { x: number; y: number; width: number; height: number; cornerRadius: number } | null }
   | { type: 'rect'; width: number; height: number; fill?: Paint | null; stroke?: Stroke | null; cornerRadius: number }
+  | { type: 'path'; commands: PathCommand[]; fill?: Paint | null; stroke?: Stroke | null; lineCap?: 'butt' | 'round' | 'square'; lineJoin?: 'miter' | 'round' | 'bevel'; miterLimit?: number }
   | { type: 'text'; text: string; style: TextStyle; maxWidth?: number | null; baselineAnchor?: boolean }
   | { type: 'image'; asset: Asset; width?: number; height?: number; fit?: 'contain' | 'cover' }
   | { type: 'video'; asset: Asset; timing: { sourceTimeSeconds: number } }
@@ -39,6 +45,7 @@ export type Layer = {
   id: string;
   transform: Transform;
   opacity: number;
+  effects?: { blur?: number; shadow?: { color: string; blur: number; offsetX: number; offsetY: number } | null; glow?: { color: string; blur: number } | null };
   blendMode?: 'normal' | 'multiply' | 'screen' | 'overlay' | 'add' | 'difference';
   content: LayerContent;
 };

@@ -1,8 +1,8 @@
 import { t, text } from './i18n';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import initialSource from './demo/title-scene.tsx?raw';
 import { Engine, SceneCanvas, exportMp4, type CompositionConfig } from '@celesta/web';
-import { highlight } from './syntax';
+const SourceEditor = lazy(() => import('./SourceEditor'));
 
 function download(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
@@ -18,13 +18,18 @@ function timecode(frame: number, fps: number) {
   return `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}:${String(frame % fps).padStart(2, '0')}`;
 }
 
-export function Playground() {
-  const [source, setSource] = useState(initialSource);
-  const [name, setName] = useState('my-first-scene.tsx');
+export function Playground({ initialFiles, entry = 'my-first-scene.tsx', initialFrame = 60, baseURL, silent = false, title }: {
+  initialFiles?: Record<string, string>; entry?: string; initialFrame?: number; baseURL?: string; silent?: boolean; title?: string;
+} = {}) {
+  const [files, setFiles] = useState(initialFiles ?? { [entry]: initialSource });
+  const [activeEntry, setActiveEntry] = useState(entry);
+  const [name, setName] = useState(entry);
+  const [editorVersion, setEditorVersion] = useState(0);
+  const source = files[name];
   const [engine, setEngine] = useState<Engine | null>(null);
   const [config, setConfig] = useState<CompositionConfig | null>(null);
-  const [renderer, setRenderer] = useState(() => new SceneCanvas());
-  const [frame, setFrame] = useState(60);
+  const [renderer, setRenderer] = useState(() => new SceneCanvas(new Map(), baseURL));
+  const [frame, setFrame] = useState(initialFrame);
   const [playing, setPlaying] = useState(false);
   const [message, setMessage] = useState(t('playground.status.preparing'));
   const [error, setError] = useState('');
@@ -36,10 +41,7 @@ export function Playground() {
   const controller = useRef<AbortController | null>(null);
   const frameRequest = useRef(0);
   const drawQueue = useRef(Promise.resolve());
-  const compiledSource = useRef('');
-  const sourceHighlight = useRef<HTMLDivElement>(null);
-  // A trailing line keeps the highlight as tall as the textarea when the source ends with a newline.
-  const highlighted = useMemo(() => highlight(`${source}\n`, 'tsx'), [source]);
+  const compiledFiles = useRef<Record<string, string> | null>(null);
 
   useEffect(() => {
     let current = true;
@@ -47,12 +49,13 @@ export function Playground() {
     setEngine(null);
     setConfig(null);
     setHasAudio(false);
+    setError('');
     const timeout = setTimeout(() => {
       setMessage(t('playground.status.compiling'));
       next = new Engine();
-      void next.compile(source).then(result => {
+      void next.compile(files[activeEntry], { files, entry: activeEntry, baseURL, silent }).then(result => {
         if (!current) return;
-        compiledSource.current = source;
+        compiledFiles.current = files;
         setEngine(next);
         setConfig(result);
         setError('');
@@ -67,7 +70,7 @@ export function Playground() {
       });
     }, 450);
     return () => { current = false; clearTimeout(timeout); next?.dispose(); };
-  }, [source]);
+  }, [files, activeEntry, baseURL, silent]);
 
   useEffect(() => {
     if (!engine || !canvas.current || exporting) return;
@@ -116,18 +119,20 @@ export function Playground() {
     if (!files) return;
     const assets = new Map(Array.from(files, file => [file.name, file]));
     setMediaNames(Array.from(assets.keys()));
-    setRenderer(previous => { previous.dispose(); return new SceneCanvas(assets); });
+    setRenderer(previous => { previous.dispose(); return new SceneCanvas(assets, baseURL); });
   }
 
   async function openSource(file: File | undefined) {
     if (!file) return;
     setPlaying(false);
-    setSource(await file.text());
+    setFiles({ [file.name]: await file.text() });
+    setEditorVersion(version => version + 1);
+    setActiveEntry(file.name);
     setName(file.name);
   }
 
   async function exportFile() {
-    if (!engine || !config || compiledSource.current !== source) return;
+    if (!engine || !config || compiledFiles.current !== files) return;
     setPlaying(false);
     setExporting(true);
     setProgress(0);
@@ -137,7 +142,7 @@ export function Playground() {
     controller.current = abort;
     try {
       const blob = await exportMp4(engine, config, renderer, abort.signal, (done, total) => setProgress(Math.round(done / total * 100)));
-      download(blob, name.replace(/\.[^.]+$/, '') + '.mp4');
+      download(blob, activeEntry.replace(/\.[^.]+$/, '') + '.mp4');
       setMessage(t('playground.status.downloaded'));
     } catch (cause) {
       if (abort.signal.aborted) setMessage(t('playground.status.canceled'));
@@ -150,19 +155,20 @@ export function Playground() {
 
   const fps = config ? config.frameRate.numerator / config.frameRate.denominator : 30;
   const last = (config?.durationInFrames ?? 1) - 1;
-  const ready = !!engine && !!config && !error && compiledSource.current === source;
+  const ready = !!engine && !!config && !error && compiledFiles.current === files;
 
   return <section id="playground" aria-labelledby="playground-heading" className="playground-section shell">
     <div className="section-top">
-      <p className="eyebrow">{text('playground.label')}</p><h2 id="playground-heading">{text('playground.the-scene-below-is-code-change-a', [<br />, <em />])}</h2>
-      <span className="hand-note">{text('playground.try-editing-title')}</span>
+      <p className="eyebrow">{text('playground.label')}</p><h2 id="playground-heading">{title ?? text('playground.the-scene-below-is-code-change-a', [<br />, <em />])}</h2>
+      <span className="hand-note">{initialFiles ? t('showcase.edit-hint') : text('playground.try-editing-title')}</span>
     </div>
     <div className="studio">
       <div className="studio-bar flex items-center justify-between">{text('playground.celesta-web-editor', [<span />, name, <span className="flex items-center gap-2" />, <i className="status-dot" />])}</div>
       <div className="studio-main grid">
         <div className="source-panel">
+          {initialFiles && <div className="source-files"><label>{t('showcase.source-file')}<select aria-label={t('showcase.source-file')} value={name} disabled={exporting} onChange={event => setName(event.target.value)}>{Object.keys(files).sort().map(path => <option key={path} value={path}>{path}</option>)}</select></label><button disabled={exporting} onClick={() => { setPlaying(false); setFiles(initialFiles); setEditorVersion(version => version + 1); setName(entry); setActiveEntry(entry); setFrame(initialFrame); }}>{t('showcase.reset')}</button></div>}
           <div className="flex items-center justify-between source-heading">{text('playground.tsx-your-composition-copy-source', [<span />, <b />, <button onClick={() => { void navigator.clipboard.writeText(source).then(() => setMessage(t('playground.status.copied-source'))).catch(() => setMessage(t('playground.status.copy-source-failed'))); }} className="copy-button" />])}</div>
-          <div className="source-scroll"><div ref={sourceHighlight} className="source-highlight" aria-hidden="true" dangerouslySetInnerHTML={{ __html: highlighted }} /><textarea aria-label={t('playground.composition-source-code')} spellCheck={false} value={source} disabled={exporting} onChange={event => { setPlaying(false); setSource(event.target.value); }} onScroll={event => { sourceHighlight.current?.scrollTo(event.currentTarget.scrollLeft, event.currentTarget.scrollTop); }} /></div>
+          <div className="source-scroll"><div className="source-editor"><Suspense fallback={<p className="editor-loading" role="status">{t('playground.editor-loading')}</p>}><SourceEditor key={editorVersion} name={name} source={source} readOnly={exporting} onChange={value => { setPlaying(false); setFiles(previous => ({ ...previous, [name]: value })); }} /></Suspense></div></div>
           <div className="source-footer flex items-center justify-between gap-2"><span>{text('playground.lines-not-saved-download-to-keep-it', [source.split('\n').length])}</span><div className="flex gap-3">{text('playground.open-tsx-download-tsx', [<label className="file-action" />, <input type="file" accept=".tsx,.jsx,.ts,.js" onChange={event => { void openSource(event.target.files?.[0]); event.target.value = ''; }} />, <button onClick={() => download(new Blob([source], { type: 'text/plain;charset=utf-8' }), name)} />])}</div></div>
         </div>
         <div className="preview-panel">

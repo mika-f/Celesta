@@ -113,13 +113,8 @@ h2 { font-size: clamp(34px, 4.6vw, 64px); line-height: 1; letter-spacing: -.04em
 .copy-button:hover { color: var(--text); }
 /* The code pane takes the preview's height and scrolls; contain: size keeps it from stretching the row. */
 .source-scroll { flex: 1 1 0; min-height: 0; position: relative; contain: size; }
-/* A transparent textarea sits over its twinkleplop-highlighted copy; both must share font metrics and padding. */
-.source-scroll textarea, .source-highlight pre { margin: 0; padding: 16px; font: 12.5px/1.7 var(--font-mono); font-variant-ligatures: none; tab-size: 2; white-space: pre; letter-spacing: 0; }
-.source-highlight { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
-.source-highlight pre { min-width: 100%; width: max-content; min-height: 100%; }
-.source-scroll textarea { position: relative; display: block; width: 100%; height: 100%; min-height: 420px; resize: none; border: 0; outline: 0; background: transparent; color: transparent; caret-color: var(--text); overflow: auto; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
-.source-scroll textarea::selection { background: #b5a2e74d; color: transparent; }
-.source-scroll textarea:focus-visible { box-shadow: inset 0 0 0 1px var(--muted); }
+.source-editor { position: absolute; inset: 0; min-width: 0; overflow: hidden; }
+.editor-loading { display: grid; place-items: center; height: 100%; margin: 0; color: var(--muted); font-size: 13px; }
 
 /* twinkleplop token theme: monochrome, with the accent reserved for literals. */
 .twinkleplop { color: #c9c9c5; }
@@ -250,7 +245,6 @@ h2 { font-size: clamp(34px, 4.6vw, 64px); line-height: 1; letter-spacing: -.04em
   .preview-panel { grid-row: 1; }
   .source-panel { border-right: 0; border-top: 1px solid var(--line-strong); }
   .source-scroll { flex: none; height: 360px; contain: none; overflow: hidden; }
-  .source-scroll textarea { min-height: 0; }
   .idea-tags { grid-template-columns: 1fr 1fr; }
   .idea-tags li:nth-child(3) { padding-left: 0; border-left: 0; }
   .idea-tags li:nth-child(n+3) { margin-top: 24px; border-top: 1px solid var(--line); }
@@ -314,3 +308,40 @@ h2 { font-size: clamp(34px, 4.6vw, 64px); line-height: 1; letter-spacing: -.04em
 @media (max-width: 760px) {
   :lang(ja) .hero h1 { font-size: clamp(42px, 12vw, 80px); }
 }
+
+/* Showcase */
+.showcase-intro { padding-block: 76px 48px; }
+.showcase-intro h1 { max-width: 960px; margin-block: 28px; font-size: clamp(44px, 7vw, 96px); line-height: 1.05; letter-spacing: -.045em; }
+.showcase-intro > p:not(.eyebrow) { max-width: 660px; font-size: 18px; line-height: 1.7; color: var(--muted); }
+.showcase-meta { display: flex; flex-wrap: wrap; gap: 16px 32px; margin-top: 28px; color: var(--muted); font-size: 14px; }
+.showcase-meta a:hover, .showcase-note a:hover { color: var(--text); }
+.showcase-gallery { padding-bottom: 80px; }
+.showcase-note { max-width: 940px; margin-block: 0 40px; font-size: 14px; color: var(--muted); line-height: 1.7; }
+.showcase-note a { text-decoration: underline; text-underline-offset: 3px; }
+.showcase-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 48px 24px; }
+.showcase-card { min-width: 0; }
+.showcase-poster { aspect-ratio: 16 / 9; background: var(--surface-2); overflow: hidden; display: grid; place-items: center; border: 1px solid var(--line); }
+.showcase-poster img { width: 100%; height: 100%; object-fit: cover; transition: transform .2s; }
+.showcase-card:hover .showcase-poster img { transform: scale(1.025); }
+.showcase-poster > span { font-family: var(--font-mono); font-size: 30px; letter-spacing: -.06em; color: var(--accent); }
+.showcase-card-meta { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; margin-top: 18px; font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
+.showcase-card h2 { font-size: 26px; margin-block: 14px 10px; }
+.showcase-card p { font-size: 14px; line-height: 1.65; color: var(--muted); }
+.showcase-notice { padding-bottom: 80px; }
+.showcase-notice h2 { font-size: 36px; }
+.showcase-notice p { max-width: 660px; margin-block: 24px; line-height: 1.7; color: var(--muted); }
+.showcase-loading { padding-block: 40px 120px; }
+.source-files { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 18px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+.source-files label { display: flex; min-width: 0; align-items: center; gap: 12px; }
+.source-files select { min-width: 0; max-width: 260px; padding: 6px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--text); font-family: var(--font-mono); }
+.source-files button { flex-shrink: 0; }
+.source-files select:focus-visible { outline: 1px solid var(--text); outline-offset: 3px; }
+@media (max-width: 1000px) { .showcase-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px) {
+  .showcase-intro { padding-block: 48px 32px; }
+  .showcase-grid { grid-template-columns: minmax(0, 1fr); gap: 36px; }
+  .source-files { align-items: flex-start; flex-direction: column; }
+  .source-files label { width: 100%; }
+  .source-files select { flex: 1; max-width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) { .showcase-poster img { transition: none; } }

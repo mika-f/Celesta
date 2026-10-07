@@ -18,10 +18,12 @@
   },
   "dependencies": {
     "@celesta/web": "workspace:*",
+    "@monaco-editor/react": "^4.7.0",
     "@twinkleplop/bash": "^0.1.5",
     "@twinkleplop/json": "^0.1.5",
     "@twinkleplop/tsx": "^0.1.5",
     "i18next": "^26.4.2",
+    "monaco-editor": "^0.57.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "react-i18next": "^17.0.15"
