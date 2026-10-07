@@ -127,7 +127,7 @@ Checks exercised for this change:
 
 - Code: 12 tests, including constant RPC counts on long/multiple lines, source
   tabs/CRLF, moving carets, highlight changes, typing/seeking and packaged CLI.
-- React: 140 tests, including cluster/BiDi carets; Code example type checking.
+- React: 141 tests, including cluster/BiDi carets; Code example type checking.
 - Composition code generation: 49 tests; project code generation: 29 tests.
 - Native rasterizer: 104 tests, including identical coverage/layout under color
   changes, fixed reveal geometry, gradients, range errors and source offsets.

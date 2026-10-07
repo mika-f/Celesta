@@ -150,3 +150,11 @@ test('text carets retain consecutive and trailing empty lines', async () => {
   assert.deepEqual(textCaret(m, 7), { x: 0, y: 72, line: 3 });
   assert.deepEqual(textCaret(m, 8), { x: 0, y: 96, line: 4 });
 });
+
+
+test('carets stop searching after finding the requested cluster without copying glyphs', async () => {
+  const { textCaret } = await import('../dist/index.js');
+  const glyphs = [{ text: 'A', start: 0, end: 1, rtl: false, x: 0, width: 12, line: 0 }];
+  Object.defineProperty(glyphs, 1, { get() { throw new Error('searched past the matching cluster'); } });
+  assert.deepEqual(textCaret({ ...metrics(12), lineStarts: [0], glyphs }, 0), { x: 0, y: 0, line: 0 });
+});
