@@ -1,7 +1,7 @@
 {
   "home": {
     "skip-to-content": "本文へ移動",
-    "why-celesta-playground-docs-github-download": "<slot0>Celesta の特長</slot0><slot1>プレイグラウンド</slot1><slot2>ドキュメント</slot2><slot3>GitHub <slot4>↗</slot4></slot3><slot5>ダウンロード</slot5>",
+    "why-celesta-playground-docs-github-download": "<slot0>Celesta の特長</slot0><slot1>プレイグラウンド</slot1><slot2>ドキュメント</slot2><slot3>GitHub <slot4>↗</slot4></slot3><slot5>ダウンロード</slot5><slot6>ショーケース</slot6>",
     "main-navigation": "メインナビゲーション",
     "open-source-in-active-development-tc": "<slot0>オープンソース · 開発中 <slot1>↗</slot1></slot0><slot2>TC <slot3/></slot2>",
     "motion-written-down": "コードで、<slot0/><slot1>動画を作る。</slot1>",
@@ -110,7 +110,8 @@
       "cancel": "中止",
       "export-progress": "書き出しの進捗"
     },
-    "media-hint": "追加したファイル名を Image/Video の src に指定してください。"
+    "media-hint": "追加したファイル名を Image/Video の src に指定してください。",
+    "editor-loading": "エディターを読み込み中…"
   },
   "download": {
     "install-guide-all-releases": "<slot0/><slot1/><slot2> · </slot2><slot3>インストール方法</slot3><slot4> · </slot4><slot5>リリース一覧 <slot6>↗</slot6></slot5>",
@@ -999,5 +1000,66 @@
     "heading": "このページは見つかりませんでした。",
     "description": "ページが移動したか、リンクが間違っている可能性があります。",
     "back": "Celesta のトップページへ →"
+  },
+  "showcase": {
+    "label": "ショーケース",
+    "made-with": "Celesta で制作",
+    "heading": "動きを、あなたの作品に。",
+    "intro": "examples ディレクトリの作品をその場で実行できます。再生、フレーム単位の確認、React ソースの編集をブラウザで試してください。",
+    "all": "← 作品一覧へ",
+    "credits": "オリジナルのソースとクレジット ↗",
+    "desktop-heading": "Celesta アプリで実行。",
+    "setup": "ソースと実行手順 ↗",
+    "install": "Celesta をインストール",
+    "loading": "作品のソースを読み込み中…",
+    "retry": "再試行",
+    "compositions": "作品一覧",
+    "note": "ブラウザ版は無音です。生成した音源を含む作品は元のソースをアプリで実行してください。Google Fonts からフォントを読み込む場合があります。ブラウザの描画はネイティブ版と異なることがあります。",
+    "desktop": "アプリで実行",
+    "run": "実行・編集 →",
+    "edit-title": "自分の作品にしてみよう。",
+    "edit-hint": "ファイルを選んで、1行変えてみよう。",
+    "source-file": "ソースファイル",
+    "reset": "サンプルをリセット",
+    "edition-note": "ブラウザ版には生成音源を含みません。どのソースファイルも編集でき、変更は自動で再コンパイルされます。変更を残すには、編集したファイルをそれぞれダウンロードしてください。",
+    "original": "アプリ用のオリジナル作品 ↗",
+    "explore": "ショーケースを見る",
+    "metadata-title": "ショーケース — Celesta",
+    "metadata-sample-title": "{{title}} — Celesta ショーケース",
+    "metadata-description": "Celesta の作品をブラウザで再生、フレーム単位で確認、React ソースを編集できます。",
+    "metadata-noscript": "作品を実行するには JavaScript を有効にしてください。<slot0>GitHub でソースを見る</slot0>こともできます。",
+    "samples": {
+      "reel": {
+        "description": "動くタイポグラフィ、手続き的なフィールド、コードから生まれるタイトルシーケンス。"
+      },
+      "apex": {
+        "description": "投影した立体図形、軌道を描くリング、拍に合わせて動く1分間の作品。"
+      },
+      "afterimage": {
+        "description": "紙、インク、赤、ねじれたリボンによる視覚的な実験。"
+      },
+      "signal": {
+        "description": "フレームカウンターから生成的な図形へと展開するモーショングラフィック。"
+      },
+      "spectra": {
+        "description": "粒子、グラデーション、パス、タイポグラフィ、コードのハイライトを60 FPSで描画。"
+      },
+      "36-days": {
+        "description": "Celesta 自身の Git 履歴から作ったデータ映像。"
+      },
+      "prism": {
+        "description": "レイヤー付き PSD 立ち絵と自動リップシンクを使った製品紹介映像。",
+        "limitation": "PSD の描画と、ローカルで用意した音声が必要です。オリジナルの作品をアプリで開いてください。"
+      },
+      "feature-tour": {
+        "description": "React、モーション、レイアウト、タイポグラフィ、音声を紹介する9つのチャプター。",
+        "limitation": "PSD の描画、ローカルで用意した音声、音量アニメーションが必要です。オリジナルの作品をアプリで開いてください。"
+      },
+      "versus": {
+        "description": "1つのシーンを3つのエンジンで描画し、記録済みのベンチマーク結果を比較。",
+        "limitation": "生成済みのベンチマーク動画3本が必要です。ベンチマークを実行してから、オリジナルの作品をアプリで開いてください。"
+      }
+    },
+    "docs": "ドキュメント"
   }
 }

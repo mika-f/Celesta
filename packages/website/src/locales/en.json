@@ -1,7 +1,7 @@
 {
   "home": {
     "skip-to-content": "Skip to content",
-    "why-celesta-playground-docs-github-download": "<slot0>Why Celesta</slot0><slot1>Playground</slot1><slot2>Docs</slot2><slot3>GitHub <slot4>↗</slot4></slot3><slot5>Download</slot5>",
+    "why-celesta-playground-docs-github-download": "<slot0>Why Celesta</slot0><slot1>Playground</slot1><slot2>Docs</slot2><slot3>GitHub <slot4>↗</slot4></slot3><slot5>Download</slot5><slot6>Showcase</slot6>",
     "main-navigation": "Main navigation",
     "open-source-in-active-development-tc": "<slot0>Open source · In active development <slot1>↗</slot1></slot0><slot2>TC <slot3/></slot2>",
     "motion-written-down": "Motion,<slot0/><slot1>written down.</slot1>",
@@ -110,7 +110,8 @@
       "cancel": "Cancel",
       "export-progress": "Export progress"
     },
-    "media-hint": "Use media file names in Image/Video src."
+    "media-hint": "Use media file names in Image/Video src.",
+    "editor-loading": "Loading editor…"
   },
   "download": {
     "install-guide-all-releases": "<slot0/> <slot1/><slot2> · </slot2><slot3>Install guide</slot3><slot4> · </slot4><slot5>All releases <slot6>↗</slot6></slot5>",
@@ -999,5 +1000,66 @@
     "heading": "No page at this address.",
     "description": "It may have moved, or the link may be wrong.",
     "back": "Back to Celesta →"
+  },
+  "showcase": {
+    "label": "Showcase",
+    "made-with": "Made with Celesta",
+    "heading": "Motion you can make your own.",
+    "intro": "Run compositions from the examples directory. Play, scrub to any frame, and edit the React source right here.",
+    "all": "← All compositions",
+    "credits": "Original source & credits ↗",
+    "desktop-heading": "Run it in Celesta.",
+    "setup": "Source & setup ↗",
+    "install": "Install Celesta",
+    "loading": "Loading composition source…",
+    "retry": "Retry",
+    "compositions": "Compositions",
+    "note": "Browser editions are silent; their generated soundtracks are available through the original desktop workflow. Fonts may load from Google Fonts. Browser rendering can differ from native output.",
+    "desktop": "Desktop composition",
+    "run": "Run & edit →",
+    "edit-title": "Make it your own.",
+    "edit-hint": "Choose a file. Change a line.",
+    "source-file": "Source file",
+    "reset": "Reset sample",
+    "edition-note": "This browser edition omits the generated soundtrack. Edit any source file; changes are recompiled automatically. Download each edited file to keep your changes.",
+    "original": "Original desktop composition ↗",
+    "explore": "Explore the showcase",
+    "metadata-title": "Showcase — Celesta",
+    "metadata-sample-title": "{{title}} — Celesta showcase",
+    "metadata-description": "Explore Celesta compositions. Play, scrub, and edit React motion graphics in your browser.",
+    "metadata-noscript": "Enable JavaScript to run compositions, or <slot0>browse their source on GitHub</slot0>.",
+    "samples": {
+      "reel": {
+        "description": "Kinetic typography, a procedural field, and a code-first title sequence."
+      },
+      "apex": {
+        "description": "A minute of projected geometry, orbiting rings, and beat-driven motion."
+      },
+      "afterimage": {
+        "description": "An optical study in paper, ink, red, and twisted ribbons."
+      },
+      "signal": {
+        "description": "An editorial motion piece, from frame counters to generative forms."
+      },
+      "spectra": {
+        "description": "Particles, gradients, paths, typography, and highlighted code at 60 FPS."
+      },
+      "36-days": {
+        "description": "A data film built from Celesta’s own Git history."
+      },
+      "prism": {
+        "description": "A product film with a layered PSD portrait and automatic lip sync.",
+        "limitation": "This composition needs PSD rendering and a locally prepared voice recording. Open the original in the desktop app."
+      },
+      "feature-tour": {
+        "description": "Nine chapters of React, motion, layout, typography, and voice.",
+        "limitation": "This composition needs PSD rendering, a locally prepared voice recording, and animated audio. Open the original in the desktop app."
+      },
+      "versus": {
+        "description": "One scene, three engines: a comparison using recorded benchmark results.",
+        "limitation": "This composition needs the three generated benchmark videos. Run the benchmarks, then open the original in the desktop app."
+      }
+    },
+    "docs": "Docs"
   }
 }

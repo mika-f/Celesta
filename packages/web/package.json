@@ -15,7 +15,8 @@
   "module": "./dist/index.js",
   "sideEffects": false,
   "scripts": {
-    "build": "tsc -p tsconfig.worker.json && vite build && tsc -p tsconfig.json",
+    "test": "node --experimental-strip-types --test test/*.test.mjs",
+    "build": "pnpm --filter @celesta/react build && tsc -p tsconfig.worker.json && vite build && tsc -p tsconfig.json",
     "prepack": "npm run build"
   },
   "dependencies": {

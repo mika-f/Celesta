@@ -1,5 +1,6 @@
 import { docPath } from './docs-nav';
-import { t, text, homePath } from './i18n';
+import { currentLocale, t, text, homePath } from './i18n';
+import { showcasePath } from './showcase-catalog';
 import { useState, type ReactNode } from 'react';
 import { DocCode } from './DocCode';
 import { Api, Note } from './docs-shared';
@@ -423,6 +424,7 @@ export const contents: Record<string, ReactNode> = {
       ]} />
     </>,
   'examples': <>
+      <p><a className="button button-secondary" href={showcasePath('', currentLocale)}>{t('showcase.explore')} →</a></p>
       <div className="doc-example-grid">
         <a href={docPath('react-compositions')}><span>{text('docs.chapters.examples.01-react')}</span><strong>{text('docs.chapters.examples.a-title-in-motion')}</strong><p>{text('docs.chapters.examples.follow-the-complete-fading-title-example-in')}</p></a>
         <a href={docPath('media')}><span>{text('docs.chapters.examples.02-media')}</span><strong>{text('docs.chapters.examples.footage-and-sound')}</strong><p>{text('docs.chapters.examples.combine-image-video-and-audio-layers-in')}</p></a>

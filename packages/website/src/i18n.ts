@@ -1,4 +1,4 @@
-import { createElement, Fragment, isValidElement, type ReactNode } from 'react';
+import { createElement, Fragment, isValidElement, type ComponentProps, type ReactNode } from 'react';
 import { Trans } from 'react-i18next';
 import { i18n, translate, type Message } from './catalog.ts';
 import { localeFromPath } from './locales.ts';
@@ -17,5 +17,5 @@ export function richText(message: string, components: ReactNode[] = []): ReactNo
     const component = components[Number(index)];
     return [`slot${index}`, isValidElement(component) ? component : createElement(Fragment, null, component)];
   }));
-  return createElement(Trans, { i18n, defaults: message, components: slots, shouldUnescape: true });
+  return createElement(Trans, { i18n, defaults: message, components: slots as ComponentProps<typeof Trans>['components'], shouldUnescape: true });
 }

@@ -1,4 +1,6 @@
 import type { Scene, Layer, Asset, Paint } from './types';
+import { loadFonts, releaseFonts } from './fonts';
+import { textLines, textStyle } from './text-layout';
 
 type Canvas = HTMLCanvasElement;
 type Context = CanvasRenderingContext2D;
@@ -18,31 +20,17 @@ function paint(ctx: Context, value: Paint, x = 0, y = 0): string | CanvasGradien
   return gradient;
 }
 
-function textLines(ctx: Context, text: string, maxWidth: number | null | undefined): string[] {
-  if (!maxWidth) return text.split('\n');
-  return text.split('\n').flatMap(paragraph => {
-    const lines: string[] = [];
-    let line = '';
-    for (const word of paragraph.split(/(?<=\s)/)) {
-      if (line && ctx.measureText((line + word).trimEnd()).width > maxWidth) {
-        lines.push(line.trimEnd());
-        line = word;
-      } else line += word;
-    }
-    lines.push(line.trimEnd());
-    return lines;
-  });
-}
-
 export class SceneCanvas {
   private images = new Map<string, Promise<HTMLImageElement>>();
   private videos = new Map<string, Promise<HTMLVideoElement>>();
-  private urls: string[] = [];
+  private urls = new Map<File, string>();
 
-  constructor(private assets: Map<string, File> = new Map()) {}
+  constructor(private assets: Map<string, File> = new Map(), private baseURL?: string) {}
 
   dispose() {
-    for (const url of this.urls) URL.revokeObjectURL(url);
+    releaseFonts(this.urls.values());
+    for (const url of this.urls.values()) URL.revokeObjectURL(url);
+    this.urls.clear();
     for (const video of this.videos.values()) void video.then(v => { v.pause(); v.removeAttribute('src'); v.load(); });
   }
 
@@ -50,15 +38,19 @@ export class SceneCanvas {
     const location = asset.location;
     if (location.type === 'url') return location.url;
     const file = this.assets.get(location.path) ?? this.assets.get(location.path.replace(/^\.\//, ''));
-    if (!file) throw new Error(`Missing media file: ${location.path}. Add it with “Add media”.`);
-    const url = URL.createObjectURL(file);
-    this.urls.push(url);
+    if (!file) {
+      if (this.baseURL) return new URL(location.path, this.baseURL).href;
+      throw new Error(`Missing media file: ${location.path}. Add it with “Add media”.`);
+    }
+    let url = this.urls.get(file);
+    if (!url) { url = URL.createObjectURL(file); this.urls.set(file, url); }
     return url;
   }
 
   async audioBytes(src: string): Promise<ArrayBuffer> {
     const file = this.assets.get(src) ?? this.assets.get(src.replace(/^\.\//, ''));
     if (file) return file.arrayBuffer();
+    if (this.baseURL) src = new URL(src, this.baseURL).href;
     if (!/^https?:\/\//i.test(src)) throw new Error(`Missing audio file: ${src}. Add it with “Add media”.`);
     const response = await fetch(src);
     if (!response.ok) throw new Error(`Could not load audio: ${src} (${response.status}).`);
@@ -100,7 +92,7 @@ export class SceneCanvas {
   }
 
   async draw(canvas: Canvas, scene: Scene): Promise<void> {
-    if (scene.fonts?.length) throw new Error('Custom <Font> assets require the desktop renderer.');
+    await loadFonts(scene.fonts ?? [], asset => this.src(asset));
     if (canvas.width !== scene.width) canvas.width = scene.width;
     if (canvas.height !== scene.height) canvas.height = scene.height;
     const ctx = canvas.getContext('2d');
@@ -121,16 +113,38 @@ export class SceneCanvas {
     const content = layer.content;
     const mode = blend[layer.blendMode ?? 'normal'];
     if (!mode) throw new Error(`Unsupported blend mode: ${layer.blendMode}`);
+    const effects = layer.effects;
+    if (effects && (effects.blur || effects.shadow || effects.glow)) {
+      const source = this.surface(ctx);
+      await this.layer(source, { ...layer, opacity: 1, blendMode: 'normal', effects: undefined }, parent, 1);
+      const result = this.surface(ctx);
+      // Each effect reads the unmodified source, matching the native renderer.
+      for (const effect of [effects.shadow, effects.glow ? { ...effects.glow, offsetX: 0, offsetY: 0 } : null]) {
+        if (!effect) continue;
+        const mask = this.surface(ctx);
+        mask.drawImage(source.canvas, 0, 0);
+        mask.globalCompositeOperation = 'source-in';
+        mask.fillStyle = effect.color;
+        mask.fillRect(0, 0, mask.canvas.width, mask.canvas.height);
+        result.filter = effect.blur > 0 ? `blur(${effect.blur}px)` : 'none';
+        result.drawImage(mask.canvas, effect.offsetX, effect.offsetY);
+        mask.canvas.width = 0;
+      }
+      result.filter = effects.blur && effects.blur > 0 ? `blur(${effects.blur}px)` : 'none';
+      result.drawImage(source.canvas, 0, 0);
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalAlpha = alpha;
+      ctx.globalCompositeOperation = mode;
+      ctx.filter = 'none';
+      ctx.drawImage(result.canvas, 0, 0);
+      ctx.restore();
+      source.canvas.width = result.canvas.width = 0;
+      return;
+    }
     if (content.type === 'group') {
       let target = ctx;
-      if (mode !== 'source-over') {
-        const isolated = document.createElement('canvas');
-        isolated.width = ctx.canvas.width;
-        isolated.height = ctx.canvas.height;
-        const isolatedContext = isolated.getContext('2d');
-        if (!isolatedContext) throw new Error('Canvas 2D is unavailable.');
-        target = isolatedContext;
-      }
+      if (mode !== 'source-over') target = this.surface(ctx);
       target.save();
       const clip = content.clip;
       if (clip) {
@@ -140,7 +154,7 @@ export class SceneCanvas {
         target.clip();
       }
       for (const child of content.layers) {
-        await this.layer(target, child as WebLayer, matrix, mode === 'source-over' ? alpha : 1);
+        await this.layer(target, child as WebLayer, matrix, target === ctx ? alpha : 1);
       }
       target.restore();
       if (target !== ctx) {
@@ -148,6 +162,7 @@ export class SceneCanvas {
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.globalAlpha = alpha;
         ctx.globalCompositeOperation = mode;
+        ctx.filter = 'none';
         ctx.drawImage(target.canvas, 0, 0);
         ctx.restore();
       }
@@ -157,6 +172,7 @@ export class SceneCanvas {
     ctx.save();
     ctx.globalAlpha = alpha;
     ctx.globalCompositeOperation = mode;
+    ctx.filter = 'none';
     if (content.type === 'rect') {
       const width = content.width, height = content.height;
       const x = -t.anchor.x * width, y = -t.anchor.y * height;
@@ -176,17 +192,37 @@ export class SceneCanvas {
         ctx.lineWidth = content.stroke.width;
         ctx.stroke();
       }
+    } else if (content.type === 'path') {
+      ctx.setTransform(matrix);
+      ctx.beginPath();
+      let started = false;
+      for (const command of content.commands) {
+        if (!started && command.type !== 'moveTo') ctx.moveTo(0, 0);
+        if (command.type === 'moveTo') ctx.moveTo(command.x, command.y);
+        else if (command.type === 'lineTo') ctx.lineTo(command.x, command.y);
+        else if (command.type === 'quadTo') ctx.quadraticCurveTo(command.x1, command.y1, command.x, command.y);
+        else if (command.type === 'cubicTo') ctx.bezierCurveTo(command.x1, command.y1, command.x2, command.y2, command.x, command.y);
+        else ctx.closePath();
+        started = true;
+      }
+      if (content.fill) { ctx.fillStyle = paint(ctx, content.fill); ctx.fill(); }
+      if (content.stroke?.width) {
+        ctx.strokeStyle = paint(ctx, content.stroke.paint);
+        ctx.lineWidth = content.stroke.width;
+        ctx.lineCap = content.lineCap ?? 'butt';
+        ctx.lineJoin = content.lineJoin ?? 'miter';
+        ctx.miterLimit = content.miterLimit ?? 4;
+        ctx.stroke();
+      }
     } else if (content.type === 'text') {
       const style = content.style;
       // Canvas language selection is available in newer browsers.
-      if ('lang' in ctx) ctx.lang = style.lang?.trim() || navigator.language;
       const size = style.fontSize ?? 32;
       const lineHeight = style.lineHeight ?? size * 1.2;
-      ctx.font = `${style.fontWeight ?? 400} ${size}px ${style.fontFamily ? JSON.stringify(style.fontFamily) + ', ' : ''}system-ui, sans-serif`;
-      ctx.letterSpacing = `${style.letterSpacing ?? 0}px`;
+      textStyle(ctx, style);
       ctx.textBaseline = 'alphabetic';
       ctx.textAlign = 'left';
-      const lines = textLines(ctx, content.text, content.maxWidth);
+      const lines = textLines(ctx, content.text, content.maxWidth, style.lang);
       const measured = lines.map(line => ctx.measureText(line));
       const width = content.maxWidth ?? Math.max(0, ...measured.map(m => m.width));
       const placed = measured.map((m, i) => ({
@@ -242,5 +278,14 @@ export class SceneCanvas {
       throw new Error(`The web renderer does not support ${content.type} layers yet.`);
     }
     ctx.restore();
+  }
+
+  private surface(ctx: Context): Context {
+    const canvas = document.createElement('canvas');
+    canvas.width = ctx.canvas.width;
+    canvas.height = ctx.canvas.height;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Canvas 2D is unavailable.');
+    return context;
   }
 }

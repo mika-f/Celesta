@@ -1,5 +1,14 @@
 import type { CompositionConfig, Frame } from './types';
 
+export interface CompileOptions {
+  files?: Record<string, string>;
+  entry?: string;
+  /** Absolute URL of the entry's media directory. */
+  baseURL?: string;
+  /** For sample editions whose generated soundtrack is not distributed. */
+  silent?: boolean;
+}
+
 export class Engine {
   private worker = new Worker(new URL('./engine.worker.ts', import.meta.url), { type: 'module' });
   private nextId = 0;
@@ -27,7 +36,7 @@ export class Engine {
 
   dispose() { this.failAll(new Error('Composition changed.')); }
 
-  private request<T>(type: 'compile' | 'frame', data: { source?: string; frame?: number }, timeoutMs: number): Promise<T> {
+  private request<T>(type: 'compile' | 'frame', data: { source?: string; frame?: number; options?: CompileOptions }, timeoutMs: number): Promise<T> {
     const id = ++this.nextId;
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -38,6 +47,6 @@ export class Engine {
     });
   }
 
-  compile(source: string): Promise<CompositionConfig> { return this.request('compile', { source }, 15_000); }
+  compile(source: string, options: CompileOptions = {}): Promise<CompositionConfig> { return this.request('compile', { source, options }, 30_000); }
   frame(frame: number): Promise<Frame> { return this.request('frame', { frame }, 10_000); }
 }

@@ -1,6 +1,7 @@
 import { LanguageSwitcher } from './LanguageSwitcher';
 import { docPath } from './docs-nav';
-import { t, text } from './i18n';
+import { currentLocale, t, text } from './i18n';
+import { showcasePath } from './showcase-catalog';
 import { useEffect, useRef, useState } from 'react';
 import { Playground } from './Playground';
 import { Brand } from './Brand';
@@ -39,7 +40,7 @@ export function App() {
       <div className="shell header-inner flex items-center justify-between">
         <Brand />
         <button className="menu-toggle" aria-expanded={menuOpen} aria-controls="navigation" onClick={() => setMenuOpen(!menuOpen)}>{menuOpen ? t('common.navigation.close') : t('common.navigation.menu')}</button>
-        <nav id="navigation" aria-label={t('home.main-navigation')} className={`nav flex items-center ${menuOpen ? 'is-open' : ''}`} onClick={() => setMenuOpen(false)}>{text('home.why-celesta-playground-docs-github-download', [<a href="#features" />, <a href="#playground" />, <a href={documentation} />, <a href={repository} />, <span aria-hidden="true" />, <a className="nav-download" href={allDownloads} />])}<LanguageSwitcher /></nav>
+        <nav id="navigation" aria-label={t('home.main-navigation')} className={`nav flex items-center ${menuOpen ? 'is-open' : ''}`} onClick={() => setMenuOpen(false)}>{text('home.why-celesta-playground-docs-github-download', [<a href="#features" />, <a href="#playground" />, <a href={documentation} />, <a href={repository} />, <span aria-hidden="true" />, <a className="nav-download" href={allDownloads} />, <a href={showcasePath('', currentLocale)} />])}<LanguageSwitcher /></nav>
       </div>
     </header>
     <main id="main">

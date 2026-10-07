@@ -7,10 +7,19 @@ export { mount } from './render';
 export type { MountedComposition, EntryComponent } from './render';
 export {
   Audio, Assets, Character, CharacterView, Composition, Dialogue, Font,
-  Group, Image, Rect, Sequence, Text, Video,
+  FreezeFrame, Group, Image, Rect, Sequence, Text, Video,
 } from './components';
 export { useCurrentFrame, useCurrentTime, useIsPreview, useVideoConfig } from './hooks';
-export { Easings, interpolate, spring } from './animation';
+export { Easings, interpolate, interpolateColor, progress, spring } from './animation';
+export { frameToTimecode, timecodeToFrame } from './time';
+export { beatAt, cueAt, useBeat, useCue } from './timing';
+export { Series, Stagger, computeSeries } from './series';
+export { Arrow, Circle, Ellipse, Line, Path, Polyline, pointOnPolyline } from './shapes';
+export { Camera } from './camera';
+export { TextReveal, useCountUp, useTypewriter } from './text-motion';
+export { frameKeyframes } from './keyframes';
+export { measureText, useTextMetrics } from './text-measure';
+export { TextBox, fitText, useFitText } from './text-fit';
 export { Transition } from './transition';
 export { Center, Fit, Grid, SafeArea, Stack, useLayoutBounds } from './layout';
 export { DebugBounds, DebugOverlay } from './debug';
