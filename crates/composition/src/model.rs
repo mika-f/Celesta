@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 
+use crate::tagged::TypeTagged;
 use crate::{Animatable, Paint, Rational, Stroke, TextStyle, Time, TimeRange};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -138,7 +139,8 @@ fn screen(backdrop: f64, source: f64) -> f64 {
     backdrop + source - backdrop * source
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+// Deserialized through `LayerContentDef`, which keeps the same serde field attributes.
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[cfg_attr(feature = "codegen", derive(ts_rs::TS))]
 #[cfg_attr(feature = "codegen", ts(export))]
 #[serde(
@@ -241,11 +243,90 @@ pub enum LayerContent {
     },
 }
 
+impl<'de> Deserialize<'de> for LayerContent {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        LayerContentDef::deserialize(TypeTagged(deserializer))
+    }
+}
+
+/// `LayerContent` without the `type` tag, which [`TypeTagged`] reads instead.
+#[derive(Deserialize)]
+#[serde(
+    remote = "LayerContent",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+enum LayerContentDef {
+    Video {
+        asset: ResolvedAsset,
+        timing: MediaTiming,
+    },
+    Image {
+        asset: ResolvedAsset,
+        #[serde(default)]
+        width: Option<f64>,
+        #[serde(default)]
+        height: Option<f64>,
+        #[serde(default)]
+        fit: Option<ImageFit>,
+    },
+    Psd {
+        asset: ResolvedAsset,
+        #[serde(default)]
+        visible_layers: Vec<String>,
+        #[serde(default)]
+        enabled_layers: Vec<String>,
+        #[serde(default)]
+        disabled_layers: Vec<String>,
+    },
+    Text {
+        text: String,
+        style: TextStyle,
+        #[serde(default)]
+        max_width: Option<f64>,
+        #[serde(default)]
+        baseline_anchor: bool,
+    },
+    Group {
+        layers: Vec<Layer>,
+        #[serde(default)]
+        clip: Option<Clip>,
+    },
+    Rect {
+        width: f64,
+        height: f64,
+        #[serde(default)]
+        fill: Option<Paint>,
+        #[serde(default)]
+        stroke: Option<Stroke>,
+        #[serde(default)]
+        corner_radius: f64,
+    },
+    Path {
+        commands: Vec<PathCommand>,
+        #[serde(default)]
+        fill: Option<Paint>,
+        #[serde(default)]
+        stroke: Option<Stroke>,
+        #[serde(default)]
+        line_cap: LineCap,
+        #[serde(default)]
+        line_join: LineJoin,
+        #[serde(default = "default_miter_limit")]
+        miter_limit: f64,
+    },
+    MissingComponent {
+        component: String,
+        props: BTreeMap<String, Value>,
+    },
+}
+
 /// One step of a `LayerContent::Path`, in the layer's own pixels, like SVG's
 /// absolute path commands. A command other than `MoveTo` that starts the
 /// path, or follows `Close`, begins its subpath at `(0, 0)` or the closed
 /// subpath's start, as in SVG.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+// Deserialized through `PathCommandDef`, which keeps the same serde field attributes.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 #[cfg_attr(feature = "codegen", derive(ts_rs::TS))]
 #[cfg_attr(feature = "codegen", ts(export))]
 #[serde(
@@ -272,6 +353,45 @@ pub enum PathCommand {
     },
     /// Closes the subpath with a straight line back to its start and joins
     /// the two ends, so a closed outline has no seam.
+    Close,
+}
+
+impl<'de> Deserialize<'de> for PathCommand {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        PathCommandDef::deserialize(TypeTagged(deserializer))
+    }
+}
+
+/// `PathCommand` without the `type` tag, which [`TypeTagged`] reads instead.
+#[derive(Deserialize)]
+#[serde(
+    remote = "PathCommand",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+enum PathCommandDef {
+    MoveTo {
+        x: f64,
+        y: f64,
+    },
+    LineTo {
+        x: f64,
+        y: f64,
+    },
+    QuadTo {
+        x1: f64,
+        y1: f64,
+        x: f64,
+        y: f64,
+    },
+    CubicTo {
+        x1: f64,
+        y1: f64,
+        x2: f64,
+        y2: f64,
+        x: f64,
+        y: f64,
+    },
     Close,
 }
 
@@ -410,7 +530,8 @@ pub struct ResolvedAsset {
     pub location: AssetLocation,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+// Deserialized through `AssetLocationDef`, which keeps the same serde field attributes.
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[cfg_attr(feature = "codegen", derive(ts_rs::TS))]
 #[cfg_attr(feature = "codegen", ts(export))]
 #[serde(
@@ -419,6 +540,24 @@ pub struct ResolvedAsset {
     rename_all_fields = "camelCase"
 )]
 pub enum AssetLocation {
+    File { path: String },
+    Url { url: String },
+}
+
+impl<'de> Deserialize<'de> for AssetLocation {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        AssetLocationDef::deserialize(TypeTagged(deserializer))
+    }
+}
+
+/// `AssetLocation` without the `type` tag, which [`TypeTagged`] reads instead.
+#[derive(Deserialize)]
+#[serde(
+    remote = "AssetLocation",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+enum AssetLocationDef {
     File { path: String },
     Url { url: String },
 }

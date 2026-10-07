@@ -1,7 +1,9 @@
 use crate::Point;
-use serde::{Deserialize, Serialize};
+use crate::tagged::TypeTagged;
+use serde::{Deserialize, Deserializer, Serialize};
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+// Deserialized through `PaintDef`, which keeps the same serde field attributes.
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[cfg_attr(feature = "codegen", derive(ts_rs::TS))]
 #[cfg_attr(feature = "codegen", ts(export))]
 #[serde(
@@ -23,6 +25,35 @@ pub enum Paint {
     },
     /// Colors blend outward from `center` to `radius`, in the same space as
     /// `Linear`.
+    Radial {
+        center: Point,
+        radius: f64,
+        stops: Vec<GradientStop>,
+    },
+}
+
+impl<'de> Deserialize<'de> for Paint {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        PaintDef::deserialize(TypeTagged(deserializer))
+    }
+}
+
+/// `Paint` without the `type` tag, which [`TypeTagged`] reads instead.
+#[derive(Deserialize)]
+#[serde(
+    remote = "Paint",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+enum PaintDef {
+    Solid {
+        color: String,
+    },
+    Linear {
+        start: Point,
+        end: Point,
+        stops: Vec<GradientStop>,
+    },
     Radial {
         center: Point,
         radius: f64,

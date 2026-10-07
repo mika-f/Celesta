@@ -1,6 +1,12 @@
 use crate::time::{Rational, Time};
-use crate::{Clip, LayerContent};
+use crate::{
+    AssetLocation, Clip, EvaluatedTransform, ImageFit, Layer, LayerContent, LineCap, LineJoin,
+    MediaTiming, Paint, PathCommand, Point, ResolvedAsset, Stroke, TextStyle,
+};
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 use std::cmp::Ordering;
+use std::fmt::Debug;
 
 #[test]
 fn compares_times_without_floating_point() {
@@ -122,4 +128,269 @@ fn a_clips_corner_radius_stays_within_half_the_shorter_side() {
         .effective_corner_radius(),
         0.0
     );
+}
+
+#[test]
+fn tagged_content_parses_with_its_type_first_or_later() {
+    let first = r##"{"type":"rect","width":2,"height":3,"fill":{"type":"solid","color":"#fff"}}"##;
+    let later = r##"{"width":2,"fill":{"color":"#fff","type":"solid"},"type":"rect","height":3}"##;
+    let expected = LayerContent::Rect {
+        width: 2.0,
+        height: 3.0,
+        fill: Some(Paint::Solid {
+            color: "#fff".to_owned(),
+        }),
+        stroke: None,
+        corner_radius: 0.0,
+    };
+    assert_eq!(
+        serde_json::from_str::<LayerContent>(first).unwrap(),
+        expected
+    );
+    assert_eq!(
+        serde_json::from_str::<LayerContent>(later).unwrap(),
+        expected
+    );
+}
+
+#[test]
+fn tagged_content_fills_omitted_fields_with_their_defaults() {
+    let content = serde_json::from_str::<LayerContent>(
+        r#"{"type":"path","commands":[{"type":"close","x":1}]}"#,
+    )
+    .unwrap();
+    let LayerContent::Path {
+        commands,
+        fill,
+        line_cap,
+        miter_limit,
+        ..
+    } = content
+    else {
+        panic!("expected a path, got {content:?}");
+    };
+    assert_eq!(commands, [PathCommand::Close]);
+    assert_eq!(fill, None);
+    assert_eq!(line_cap, LineCap::Butt);
+    assert_eq!(miter_limit, crate::DEFAULT_MITER_LIMIT);
+}
+
+#[test]
+fn tagged_content_reports_a_missing_or_unknown_type() {
+    let missing = serde_json::from_str::<Paint>(r##"{"color":"#fff"}"##).unwrap_err();
+    assert!(
+        missing.to_string().contains("missing field `type`"),
+        "{missing}"
+    );
+    let unknown =
+        serde_json::from_str::<Paint>(r##"{"type":"conic","color":"#fff"}"##).unwrap_err();
+    assert!(
+        unknown.to_string().contains("unknown variant `conic`"),
+        "{unknown}"
+    );
+}
+
+#[test]
+fn nested_groups_round_trip() {
+    let leaf = LayerContent::Path {
+        commands: vec![
+            PathCommand::MoveTo { x: 1.0, y: 2.0 },
+            PathCommand::LineTo { x: 3.0, y: 4.0 },
+            PathCommand::Close,
+        ],
+        fill: Some(Paint::Linear {
+            start: Point { x: 0.0, y: 0.0 },
+            end: Point { x: 1.0, y: 0.0 },
+            stops: Vec::new(),
+        }),
+        stroke: None,
+        line_cap: LineCap::Round,
+        line_join: Default::default(),
+        miter_limit: 2.0,
+    };
+    let json = serde_json::to_string(&leaf).unwrap();
+    let group = format!(
+        r#"{{"type":"group","layers":[{{"id":"a","transform":{{}},"opacity":1,"content":{{"type":"group","layers":[{{"id":"b","transform":{{}},"opacity":1,"content":{json}}}]}}}}]}}"#
+    );
+    let LayerContent::Group { layers, .. } = serde_json::from_str::<LayerContent>(&group).unwrap()
+    else {
+        panic!("expected a group");
+    };
+    let LayerContent::Group { layers, .. } = &layers[0].content else {
+        panic!("expected a nested group");
+    };
+    assert_eq!(layers[0].content, leaf);
+}
+
+#[test]
+fn tagged_content_rejects_a_repeated_type() {
+    for json in [
+        r##"{"type":"solid","color":"#fff","type":"solid"}"##,
+        r##"{"color":"#fff","type":"solid","type":"solid"}"##,
+    ] {
+        let error = serde_json::from_str::<Paint>(json).unwrap_err();
+        assert!(
+            error.to_string().contains("duplicate field `type`"),
+            "{error}"
+        );
+    }
+}
+
+/// Every variant of the `type`-tagged enums, once with its optional fields
+/// at their defaults (which `Serialize` leaves out) and once with them set.
+/// Their deserialization mirrors repeat the fields' serde attributes by
+/// hand; a missing `default` or a different name fails to round trip.
+#[test]
+fn every_tagged_variant_round_trips() {
+    fn round_trip<T: Serialize + DeserializeOwned + PartialEq + Debug>(value: T) {
+        // A string keeps `type` first; a `Value` sorts it among the keys.
+        let json = serde_json::to_string(&value).unwrap();
+        assert_eq!(serde_json::from_str::<T>(&json).unwrap(), value, "{json}");
+        let json = serde_json::to_value(&value).unwrap();
+        assert_eq!(
+            serde_json::from_value::<T>(json.clone()).unwrap(),
+            value,
+            "{json}"
+        );
+    }
+
+    let asset = || ResolvedAsset {
+        id: "a".to_owned(),
+        location: AssetLocation::File {
+            path: "a.png".to_owned(),
+        },
+    };
+    let solid = || Paint::Solid {
+        color: "#fff".to_owned(),
+    };
+    let stroke = || Stroke {
+        paint: solid(),
+        width: 2.0,
+    };
+    let point = |x, y| Point { x, y };
+
+    round_trip(AssetLocation::Url {
+        url: "https://example.com/a.png".to_owned(),
+    });
+    round_trip(solid());
+    round_trip(Paint::Linear {
+        start: point(0.0, 0.0),
+        end: point(1.0, 2.0),
+        stops: Vec::new(),
+    });
+    round_trip(Paint::Radial {
+        center: point(1.0, 2.0),
+        radius: 3.0,
+        stops: Vec::new(),
+    });
+
+    let mut contents = vec![
+        LayerContent::Video {
+            asset: asset(),
+            timing: MediaTiming {
+                local_time: Time::new(1, 2),
+                source_start: Time::new(0, 1),
+                source_time_seconds: 0.5,
+                playback_rate: 1.0,
+            },
+        },
+        LayerContent::MissingComponent {
+            component: "Card".to_owned(),
+            props: [("title".to_owned(), serde_json::json!("hi"))].into(),
+        },
+    ];
+    for set in [false, true] {
+        contents.extend([
+            LayerContent::Image {
+                asset: asset(),
+                width: set.then_some(10.0),
+                height: set.then_some(20.0),
+                fit: set.then_some(ImageFit::Cover),
+            },
+            LayerContent::Psd {
+                asset: asset(),
+                visible_layers: if set {
+                    vec!["a".to_owned()]
+                } else {
+                    Vec::new()
+                },
+                enabled_layers: if set {
+                    vec!["b".to_owned()]
+                } else {
+                    Vec::new()
+                },
+                disabled_layers: if set {
+                    vec!["c".to_owned()]
+                } else {
+                    Vec::new()
+                },
+            },
+            LayerContent::Text {
+                text: "hi".to_owned(),
+                style: TextStyle::default(),
+                max_width: set.then_some(100.0),
+                baseline_anchor: set,
+            },
+            LayerContent::Group {
+                layers: vec![Layer {
+                    id: "child".to_owned(),
+                    transform: EvaluatedTransform::default(),
+                    opacity: 1.0,
+                    blend_mode: Default::default(),
+                    effects: Default::default(),
+                    content: LayerContent::Group {
+                        layers: Vec::new(),
+                        clip: None,
+                    },
+                }],
+                clip: set.then_some(Clip {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 10.0,
+                    height: 10.0,
+                    corner_radius: 2.0,
+                }),
+            },
+            LayerContent::Rect {
+                width: 10.0,
+                height: 20.0,
+                fill: set.then(solid),
+                stroke: set.then(stroke),
+                corner_radius: if set { 3.0 } else { 0.0 },
+            },
+            LayerContent::Path {
+                commands: vec![
+                    PathCommand::MoveTo { x: 0.0, y: 0.0 },
+                    PathCommand::LineTo { x: 1.0, y: 0.0 },
+                    PathCommand::QuadTo {
+                        x1: 1.0,
+                        y1: 1.0,
+                        x: 0.0,
+                        y: 1.0,
+                    },
+                    PathCommand::CubicTo {
+                        x1: 0.0,
+                        y1: 2.0,
+                        x2: 1.0,
+                        y2: 2.0,
+                        x: 1.0,
+                        y: 3.0,
+                    },
+                    PathCommand::Close,
+                ],
+                fill: set.then(solid),
+                stroke: set.then(stroke),
+                line_cap: if set { LineCap::Square } else { LineCap::Butt },
+                line_join: if set {
+                    LineJoin::Bevel
+                } else {
+                    LineJoin::Miter
+                },
+                miter_limit: if set { 2.0 } else { crate::DEFAULT_MITER_LIMIT },
+            },
+        ]);
+    }
+    for content in contents {
+        round_trip(content);
+    }
 }
