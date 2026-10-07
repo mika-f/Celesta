@@ -1,3 +1,4 @@
+import { t, text } from './i18n';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import initialSource from './demo/title-scene.tsx?raw';
 import { Engine, SceneCanvas, exportMp4, type CompositionConfig } from '@celesta/web';
@@ -25,7 +26,7 @@ export function Playground() {
   const [renderer, setRenderer] = useState(() => new SceneCanvas());
   const [frame, setFrame] = useState(60);
   const [playing, setPlaying] = useState(false);
-  const [message, setMessage] = useState('Preparing the editor…');
+  const [message, setMessage] = useState(t('playground.status.preparing'));
   const [error, setError] = useState('');
   const [exporting, setExporting] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -47,7 +48,7 @@ export function Playground() {
     setConfig(null);
     setHasAudio(false);
     const timeout = setTimeout(() => {
-      setMessage('Compiling…');
+      setMessage(t('playground.status.compiling'));
       next = new Engine();
       void next.compile(source).then(result => {
         if (!current) return;
@@ -55,14 +56,14 @@ export function Playground() {
         setEngine(next);
         setConfig(result);
         setError('');
-        setMessage('Ready to preview and export.');
+        setMessage(t('playground.status.ready'));
         setFrame(previous => Math.min(previous, result.durationInFrames - 1));
       }).catch(cause => {
         if (!current) return;
         setEngine(null);
         setConfig(null);
         setError(cause instanceof Error ? cause.message : String(cause));
-        setMessage('Fix the code to preview.');
+        setMessage(t('playground.status.fix-code'));
       });
     }, 450);
     return () => { current = false; clearTimeout(timeout); next?.dispose(); };
@@ -131,16 +132,16 @@ export function Playground() {
     setExporting(true);
     setProgress(0);
     setError('');
-    setMessage('Exporting MP4…');
+    setMessage(t('playground.status.exporting'));
     const abort = new AbortController();
     controller.current = abort;
     try {
       const blob = await exportMp4(engine, config, renderer, abort.signal, (done, total) => setProgress(Math.round(done / total * 100)));
       download(blob, name.replace(/\.[^.]+$/, '') + '.mp4');
-      setMessage('MP4 downloaded.');
+      setMessage(t('playground.status.downloaded'));
     } catch (cause) {
-      if (abort.signal.aborted) setMessage('Export canceled.');
-      else { setError(cause instanceof Error ? cause.message : String(cause)); setMessage('Export failed.'); }
+      if (abort.signal.aborted) setMessage(t('playground.status.canceled'));
+      else { setError(cause instanceof Error ? cause.message : String(cause)); setMessage(t('playground.status.failed')); }
     } finally {
       controller.current = null;
       setExporting(false);
@@ -153,35 +154,32 @@ export function Playground() {
 
   return <section id="playground" aria-labelledby="playground-heading" className="playground-section shell">
     <div className="section-top">
-      <p className="eyebrow">Playground</p><h2 id="playground-heading">The scene below is code.<br /><em>Change a line.</em></h2>
-      <span className="hand-note">Try editing TITLE.</span>
+      <p className="eyebrow">{text('playground.label')}</p><h2 id="playground-heading">{text('playground.the-scene-below-is-code-change-a', [<br />, <em />])}</h2>
+      <span className="hand-note">{text('playground.try-editing-title')}</span>
     </div>
     <div className="studio">
-      <div className="studio-bar flex items-center justify-between">
-        <span>{name}</span>
-        <span className="flex items-center gap-2"><i className="status-dot" /> Celesta web editor</span>
-      </div>
+      <div className="studio-bar flex items-center justify-between">{text('playground.celesta-web-editor', [<span />, name, <span className="flex items-center gap-2" />, <i className="status-dot" />])}</div>
       <div className="studio-main grid">
         <div className="source-panel">
-          <div className="flex items-center justify-between source-heading"><span><b>TSX</b> Your composition</span><button onClick={() => { void navigator.clipboard.writeText(source).then(() => setMessage('Source copied.')).catch(() => setMessage('Could not copy source.')); }} className="copy-button">Copy source</button></div>
-          <div className="source-scroll"><div ref={sourceHighlight} className="source-highlight" aria-hidden="true" dangerouslySetInnerHTML={{ __html: highlighted }} /><textarea aria-label="Composition source code" spellCheck={false} value={source} disabled={exporting} onChange={event => { setPlaying(false); setSource(event.target.value); }} onScroll={event => { sourceHighlight.current?.scrollTo(event.currentTarget.scrollLeft, event.currentTarget.scrollTop); }} /></div>
-          <div className="source-footer flex items-center justify-between gap-2"><span>{source.split('\n').length} lines · Not saved. Download to keep it.</span><div className="flex gap-3"><label className="file-action">Open .tsx<input type="file" accept=".tsx,.jsx,.ts,.js" onChange={event => { void openSource(event.target.files?.[0]); event.target.value = ''; }} /></label><button onClick={() => download(new Blob([source], { type: 'text/plain;charset=utf-8' }), name)}>Download .tsx ↓</button></div></div>
+          <div className="flex items-center justify-between source-heading">{text('playground.tsx-your-composition-copy-source', [<span />, <b />, <button onClick={() => { void navigator.clipboard.writeText(source).then(() => setMessage(t('playground.status.copied-source'))).catch(() => setMessage(t('playground.status.copy-source-failed'))); }} className="copy-button" />])}</div>
+          <div className="source-scroll"><div ref={sourceHighlight} className="source-highlight" aria-hidden="true" dangerouslySetInnerHTML={{ __html: highlighted }} /><textarea aria-label={t('playground.composition-source-code')} spellCheck={false} value={source} disabled={exporting} onChange={event => { setPlaying(false); setSource(event.target.value); }} onScroll={event => { sourceHighlight.current?.scrollTo(event.currentTarget.scrollLeft, event.currentTarget.scrollTop); }} /></div>
+          <div className="source-footer flex items-center justify-between gap-2"><span>{text('playground.lines-not-saved-download-to-keep-it', [source.split('\n').length])}</span><div className="flex gap-3">{text('playground.open-tsx-download-tsx', [<label className="file-action" />, <input type="file" accept=".tsx,.jsx,.ts,.js" onChange={event => { void openSource(event.target.files?.[0]); event.target.value = ''; }} />, <button onClick={() => download(new Blob([source], { type: 'text/plain;charset=utf-8' }), name)} />])}</div></div>
         </div>
         <div className="preview-panel">
-          <div className="preview-heading flex justify-between"><span>COMPOSITION PREVIEW</span><span>{config ? `${config.width} × ${config.height} · ${fps} FPS` : 'Waiting for code'}</span></div>
-          <canvas ref={canvas} className="scene" width={1920} height={1080} role="img" aria-label={`Composition preview at frame ${frame}`} />
+          <div className="preview-heading flex justify-between">{text('playground.composition-preview', [<span />, <span />, config ? `${config.width} × ${config.height} · ${fps} FPS` : t('playground.status.waiting')])}</div>
+          <canvas ref={canvas} className="scene" width={1920} height={1080} role="img" aria-label={t('playground.controls.preview-at', { frame })} />
           <div className="transport flex items-center gap-4">
-            <button className="play-button" disabled={!ready || exporting} aria-label={playing ? 'Pause preview' : 'Play preview'} onClick={() => { if (!playing && frame >= last) setFrame(0); setPlaying(!playing); }}>{playing ? <span aria-hidden="true">Ⅱ</span> : <svg aria-hidden="true" viewBox="0 0 20 20"><path d="m7 4 10 6-10 6z" fill="currentColor" /></svg>}</button>
-            <input type="range" min="0" max={last} value={Math.min(frame, last)} disabled={!ready || exporting} aria-label="Preview frame" aria-valuetext={`Frame ${frame} of ${last}`} onChange={event => { setPlaying(false); setFrame(Number(event.target.value)); }} />
+            <button className="play-button" disabled={!ready || exporting} aria-label={playing ? t('playground.controls.pause') : t('playground.controls.play')} onClick={() => { if (!playing && frame >= last) setFrame(0); setPlaying(!playing); }}>{playing ? <span aria-hidden="true">Ⅱ</span> : <svg aria-hidden="true" viewBox="0 0 20 20"><path d="m7 4 10 6-10 6z" fill="currentColor" /></svg>}</button>
+            <input type="range" min="0" max={last} value={Math.min(frame, last)} disabled={!ready || exporting} aria-label={t('playground.preview-frame')} aria-valuetext={t('playground.controls.frame-of', { frame, last })} onChange={event => { setPlaying(false); setFrame(Number(event.target.value)); }} />
             <output className="timecode">{timecode(frame, fps)}</output>
           </div>
-          <div className="studio-tools"><label className="file-action">Add media<input type="file" multiple accept="image/*,video/*,audio/*" onChange={event => { addMedia(event.target.files); event.target.value = ''; }} /></label><span>{mediaNames.length ? mediaNames.join(', ') : 'Use media file names in Image/Video src.'}</span></div>
-          <div className="studio-export"><button className="button button-primary" disabled={!ready || exporting} onClick={() => { void exportFile(); }}>Export MP4 ↓</button>{exporting && <button onClick={() => controller.current?.abort()}>Cancel</button>}{exporting && <progress aria-label="Export progress" max="100" value={progress} />}</div>
+          <div className="studio-tools">{text('playground.add-media', [<label className="file-action" />, <input type="file" multiple accept="image/*,video/*,audio/*" onChange={event => { addMedia(event.target.files); event.target.value = ''; }} />, <span />, mediaNames.length ? mediaNames.join(', ') : t('playground.media-hint')])}</div>
+          <div className="studio-export">{text('playground.export-mp4', [<button className="button button-primary" disabled={!ready || exporting} onClick={() => { void exportFile(); }} />, exporting && <button onClick={() => controller.current?.abort()}>{t('playground.controls.cancel')}</button>, exporting && <progress aria-label={t('playground.controls.export-progress')} max="100" value={progress} />])}</div>
           <p className={`studio-status ${error ? 'is-error' : ''}`} role="status">{error || message}</p>
-          {hasAudio && <p className="studio-audio-note">Video preview is silent; MP4 export includes audio.</p>}
+          {hasAudio && <p className="studio-audio-note">{text('playground.video-preview-is-silent-mp4-export-includes')}</p>}
         </div>
       </div>
     </div>
-    <div className="studio-caption flex flex-wrap justify-between gap-2"><p>esbuild compiles your TSX in a Web Worker and Celesta’s React renderer evaluates each frame. Preview and export share one canvas renderer.</p><span>Runs entirely in your browser</span></div>
+    <div className="studio-caption flex flex-wrap justify-between gap-2"><p>{text('playground.esbuild-compiles-your-tsx-in-a-web')}</p><span>{text('playground.runs-entirely-in-your-browser')}</span></div>
   </section>;
 }

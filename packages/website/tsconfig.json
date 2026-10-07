@@ -15,11 +15,14 @@
     "types": [
       "vite/client"
     ],
-    "jsx": "react-jsx"
+    "jsx": "react-jsx",
+    "resolveJsonModule": true
   },
   "include": [
     "src",
-    "vite.config.ts"
+    "vite.config.ts",
+    "worker.ts",
+    "worker-configuration.d.ts"
   ],
   "exclude": [
     "src/examples",

@@ -3,26 +3,28 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@12.4.2",
   "engines": {
     "node": ">=22.12.0"
   },
   "scripts": {
     "dev": "pnpm --filter @celesta/web build && vite --host 127.0.0.1",
-    "build": "pnpm --filter @celesta/web build && tsc --noEmit && vite build",
+    "build": "pnpm --filter @celesta/web build && wrangler types && tsc --noEmit && vite build",
     "check:examples": "tsc -p tsconfig.examples.json",
     "preview": "vite preview --host 127.0.0.1",
     "preview:cloudflare": "pnpm build && wrangler dev",
     "deploy:check": "pnpm build && wrangler deploy --dry-run",
-    "deploy": "pnpm build && wrangler deploy"
+    "deploy": "pnpm build && wrangler deploy",
+    "test": "node --experimental-strip-types --test tests/*.test.mjs"
   },
   "dependencies": {
     "@celesta/web": "workspace:*",
     "@twinkleplop/bash": "^0.1.5",
     "@twinkleplop/json": "^0.1.5",
     "@twinkleplop/tsx": "^0.1.5",
+    "i18next": "^26.4.2",
     "react": "^19.3.0",
-    "react-dom": "^19.3.0"
+    "react-dom": "^19.3.0",
+    "react-i18next": "^17.0.15"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",

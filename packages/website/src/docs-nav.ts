@@ -1,5 +1,5 @@
-// The documentation's structure. It has no JSX or imports so vite.config.ts
-// can read it too: every page below is built as /docs/<slug>/.
+import { translate, type Message } from './catalog.ts';
+import { localeFromPath, type Locale } from './locales.ts';
 
 export interface DocPage {
   slug: string;
@@ -13,55 +13,64 @@ export interface DocGroup {
   pages: DocPage[];
 }
 
-export const docGroups: DocGroup[] = [
+const groupMessages = [
   {
-    title: 'Getting started',
+    title: 'docs.navigation.groups.getting-started',
     pages: [
-      { slug: 'installation', title: 'Install & get started', description: 'Packages for macOS and Windows, with the runtime included.', keywords: 'setup download installer binary macOS Windows Linux dmg portable zip updates' },
-      { slug: 'create-project', title: 'Create a project', description: 'Initialize a React project from the app or CLI and add dependencies.', keywords: 'new project init --init directory folder film.tsx package.json pnpm npm dependencies ag-psd node assets typescript workspace' },
-      { slug: 'preview', title: 'Preview your work', description: 'Open, reload, play, and scrub in the desktop app.', keywords: 'keyboard shortcuts open reload play pause scrub inspector audio mute solo' },
-      { slug: 'react-compositions', title: 'Your first React composition', description: 'A five-second title card with Composition, Text, and useCurrentFrame.', keywords: 'tsx jsx components typescript setup codegen build title' },
+      { slug: 'installation', title: 'docs.chapters.installation.metadata.title', description: 'docs.chapters.installation.metadata.description', keywords: 'docs.chapters.installation.metadata.keywords' },
+      { slug: 'create-project', title: 'docs.chapters.create-project.metadata.title', description: 'docs.chapters.create-project.metadata.description', keywords: 'docs.chapters.create-project.metadata.keywords' },
+      { slug: 'preview', title: 'docs.chapters.preview.metadata.title', description: 'docs.chapters.preview.metadata.description', keywords: 'docs.chapters.preview.metadata.keywords' },
+      { slug: 'react-compositions', title: 'docs.chapters.react-compositions.metadata.title', description: 'docs.chapters.react-compositions.metadata.description', keywords: 'docs.chapters.react-compositions.metadata.keywords' },
     ],
   },
   {
-    title: 'Guides',
+    title: 'docs.navigation.groups.guides',
     pages: [
-      { slug: 'animation', title: 'Frames, timing & animation', description: 'Make motion a function of the frame.', keywords: 'interpolate interpolateColor color easing spring transition sequence hooks useCurrentFrame duration fps opacity animation' },
-      { slug: 'motion-toolkit', title: 'Scenes, cues & beats', description: 'Sequencing, staggering, and beat sync.', keywords: 'Series Stagger computeSeries progress useBeat beatAt bpm music useCue cueAt scenes cascade frameToTimecode timecode' },
-      { slug: 'text-camera-lines', title: 'Text effects, camera & lines', description: 'Reveals, typewriters, counters, camera moves, and drawn paths.', keywords: 'TextReveal useTypewriter useCountUp Camera shake zoom Line Polyline Path Circle Ellipse Arrow pointOnPolyline chart counter typewriter draw on' },
-      { slug: 'layout', title: 'Shapes & layout', description: 'Position layers, group them, clip them, and arrange a scene.', keywords: 'Rect Group blendMode blend mode multiply screen overlay difference anchor rotation scale Center SafeArea Stack Grid Fit clip mask layout coordinates' },
-      { slug: 'text-fonts', title: 'Text & fonts', description: 'Style text, wrap it, and load font files or web fonts.', keywords: 'Text style font Font webfont woff woff2 Google Fonts css fontFamily fontWeight stroke outline lineHeight maxWidth wrap lineBreak phrase BudouX Japanese align baseline emoji' },
-      { slug: 'media', title: 'Images, video & sound', description: 'Image, Video, and Audio layers from local or remote files.', keywords: 'Image Video Audio media src url remote download startFrom playbackRate volume muted keyframes fade music preloadMedia mediaDurationInFrames png jpeg webp mp4 wav' },
-      { slug: 'dialogue', title: 'Character dialogue', description: 'Portraits, subtitles, voices, and lip sync.', keywords: 'dialogue character CharacterView portrait expressions subtitles voice lip sync lipsync mouth psd pfv PSDTool voiceroid talk conversation' },
-      { slug: 'data', title: 'Data, properties & components', description: 'Load data once, expose settings, and reuse components from JSON.', keywords: 'prepare async fetch data defineProjectProperties useProjectProperty ProjectProvider loadProject registerComponent component inspector schema' },
-      { slug: 'export', title: 'Export a video', description: 'Take your composition from the preview to an MP4.', keywords: 'mp4 H264 AAC render cli command line from to overwrite export Linux headless GPU software Vulkan lavapipe Mesa Docker container CI png frame' },
+      { slug: 'animation', title: 'docs.chapters.animation.metadata.title', description: 'docs.chapters.animation.metadata.description', keywords: 'docs.chapters.animation.metadata.keywords' },
+      { slug: 'motion-toolkit', title: 'docs.chapters.motion-toolkit.metadata.title', description: 'docs.chapters.motion-toolkit.metadata.description', keywords: 'docs.chapters.motion-toolkit.metadata.keywords' },
+      { slug: 'text-camera-lines', title: 'docs.chapters.text-camera-lines.metadata.title', description: 'docs.chapters.text-camera-lines.metadata.description', keywords: 'docs.chapters.text-camera-lines.metadata.keywords' },
+      { slug: 'layout', title: 'docs.chapters.layout.metadata.title', description: 'docs.chapters.layout.metadata.description', keywords: 'docs.chapters.layout.metadata.keywords' },
+      { slug: 'text-fonts', title: 'docs.chapters.text-fonts.metadata.title', description: 'docs.chapters.text-fonts.metadata.description', keywords: 'docs.chapters.text-fonts.metadata.keywords' },
+      { slug: 'media', title: 'docs.chapters.media.metadata.title', description: 'docs.chapters.media.metadata.description', keywords: 'docs.chapters.media.metadata.keywords' },
+      { slug: 'dialogue', title: 'docs.chapters.dialogue.metadata.title', description: 'docs.chapters.dialogue.metadata.description', keywords: 'docs.chapters.dialogue.metadata.keywords' },
+      { slug: 'data', title: 'docs.chapters.data.metadata.title', description: 'docs.chapters.data.metadata.description', keywords: 'docs.chapters.data.metadata.keywords' },
+      { slug: 'export', title: 'docs.chapters.export.metadata.title', description: 'docs.chapters.export.metadata.description', keywords: 'docs.chapters.export.metadata.keywords' },
     ],
   },
   {
-    title: 'Packages',
+    title: 'docs.navigation.groups.packages',
     pages: [
-      { slug: 'reference', title: '@celesta/react', description: 'A compact reference for everything in @celesta/react.', keywords: 'api props Composition Rect Text Group Image Video Audio Font Sequence Series Stagger Transition Camera Line Polyline Path Circle Ellipse Arrow TextReveal useBeat useCue Character CharacterView Dialogue hooks reference' },
-      { slug: 'math', title: '@celesta/math', description: 'Seeded randomness that renders the same way every time.', keywords: 'math random randomRange randomInt randomBool randomSign randomPick shuffle randomGaussian randomInCircle seed deterministic Math.random' },
-      { slug: 'math-noise', title: 'Math: noise & fbm', description: 'Smooth, repeatable drift, wobble, and organic fields.', keywords: 'noise noise2D noise3D fbm fbm2D fbm3D octaves lacunarity gain perlin wobble drift shake clouds smoke terrain' },
-      { slug: 'math-shaping', title: 'Math: shaping, waves & geometry', description: 'Number shaping, waves, angles, and 2D points.', keywords: 'clamp lerp inverseLerp remap smoothstep smootherstep wrap mod pingPong snap roundTo fract sineWave triangleWave squareWave sawtoothWave degToRad lerpAngle rotatePoint polarToCartesian bezier distance Vec2 TAU' },
-      { slug: 'code', title: '@celesta/code', description: 'Syntax-highlighted code, with themes and line highlights.', keywords: 'code syntax highlight highlighting twinkleplop tokens theme codeThemes language tsx ts json bash monospace font highlightLines tabSize' },
-      { slug: 'code-typing', title: 'Code: typing, carets & tokens', description: 'Reveal code as it is typed, place carets, and read tokens.', keywords: 'visibleCharacters useTypewriter useCodePoint codeCharacterCount tokenizeCode caret annotation typing reveal limits performance ligatures' },
+      { slug: 'reference', title: 'docs.chapters.reference.metadata.title', description: 'docs.chapters.reference.metadata.description', keywords: 'docs.chapters.reference.metadata.keywords' },
+      { slug: 'voicevox', title: 'docs.chapters.voicevox.metadata.title', description: 'docs.chapters.voicevox.metadata.description', keywords: 'docs.chapters.voicevox.metadata.keywords' },
+      { slug: 'math', title: 'docs.chapters.math.metadata.title', description: 'docs.chapters.math.metadata.description', keywords: 'docs.chapters.math.metadata.keywords' },
+      { slug: 'math-noise', title: 'docs.chapters.math-noise.metadata.title', description: 'docs.chapters.math-noise.metadata.description', keywords: 'docs.chapters.math-noise.metadata.keywords' },
+      { slug: 'math-shaping', title: 'docs.chapters.math-shaping.metadata.title', description: 'docs.chapters.math-shaping.metadata.description', keywords: 'docs.chapters.math-shaping.metadata.keywords' },
+      { slug: 'code', title: 'docs.chapters.code.metadata.title', description: 'docs.chapters.code.metadata.description', keywords: 'docs.chapters.code.metadata.keywords' },
+      { slug: 'code-typing', title: 'docs.chapters.code-typing.metadata.title', description: 'docs.chapters.code-typing.metadata.description', keywords: 'docs.chapters.code-typing.metadata.keywords' },
     ],
   },
   {
-    title: 'More',
+    title: 'docs.navigation.groups.more',
     pages: [
-      { slug: 'examples', title: 'Examples to build on', description: 'Complete files you can copy, run, and change.', keywords: 'examples samples inspiration title layout animation dialogue project properties' },
-      { slug: 'timelines', title: 'JSON project timelines', description: 'Deprecated. Kept for existing projects.', keywords: 'json schema project assets tracks settings range time timescale properties keyframes easing ProjectTimeline' },
-      { slug: 'build-from-source', title: 'Build from source', description: 'For contributors, custom builds, and Linux users.', keywords: 'developer source code clone cargo Rust FFmpeg Node pnpm codegen macOS Windows Linux Ubuntu apt pkg-config PKG_CONFIG_PATH' },
-      { slug: 'troubleshooting', title: 'Troubleshooting', description: 'Common errors and how to fix them.', keywords: 'errors missing media build FFmpeg npm typescript black blank reload limitations help lip sync font subtitle' },
+      { slug: 'examples', title: 'docs.chapters.examples.metadata.title', description: 'docs.chapters.examples.metadata.description', keywords: 'docs.chapters.examples.metadata.keywords' },
+      { slug: 'timelines', title: 'docs.chapters.timelines.metadata.title', description: 'docs.chapters.timelines.metadata.description', keywords: 'docs.chapters.timelines.metadata.keywords' },
+      { slug: 'build-from-source', title: 'docs.chapters.build-from-source.metadata.title', description: 'docs.chapters.build-from-source.metadata.description', keywords: 'docs.chapters.build-from-source.metadata.keywords' },
+      { slug: 'troubleshooting', title: 'docs.chapters.troubleshooting.metadata.title', description: 'docs.chapters.troubleshooting.metadata.description', keywords: 'docs.chapters.troubleshooting.metadata.keywords' },
     ],
   },
-];
+] satisfies { title: Message; pages: (Omit<DocPage, 'title' | 'description' | 'keywords'> & { title: Message; description: Message; keywords: Message })[] }[];
 
+export function getDocGroups(locale: Locale): DocGroup[] {
+  return groupMessages.map(group => ({
+    title: translate(locale, group.title),
+    pages: group.pages.map(page => ({ ...page, title: translate(locale, page.title), description: translate(locale, page.description), keywords: translate(locale, page.keywords) })),
+  }));
+}
+
+export const docGroups = getDocGroups(localeFromPath(typeof window === 'undefined' ? '/en/' : window.location.pathname));
 export const docPages: DocPage[] = docGroups.flatMap(group => group.pages);
 
-/** The path of a documentation page. The overview is `/docs/`. */
-export function docPath(slug: string): string {
-  return slug === 'overview' ? '/docs/' : `/docs/${slug}/`;
+/** The path of a documentation page. The overview is `/<locale>/docs/`. */
+export function docPath(slug: string, locale = localeFromPath(typeof window === 'undefined' ? '/en/' : window.location.pathname)): string {
+  return slug === 'overview' ? `/${locale}/docs/` : `/${locale}/docs/${slug}/`;
 }
