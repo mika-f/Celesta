@@ -6,7 +6,7 @@ import * as codeComponents from '../../code/src/index';
 import { setTextMeasurer } from '../../react/src/text-measure';
 import type { CompileOptions } from './engine';
 import { projectFiles } from './project-files';
-import { loadFonts, requireLoadedFonts } from './fonts';
+import { loadFonts, requireLoadedFonts, resetFonts } from './fonts';
 import { textMeasurer } from './text-layout';
 import type { MountedComposition } from '../../react/src/render';
 
@@ -28,6 +28,7 @@ async function handle(data: Request) {
       const options = data.options ?? {};
       mounted?.dispose();
       mounted = null;
+      resetFonts();
       const source = data.source ?? '';
       const entry = options.entry ?? 'composition.tsx';
       const transformOptions = {

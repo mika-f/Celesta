@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { loadFonts, requireLoadedFonts, releaseFonts } from '../src/fonts.ts';
+import { loadFonts, requireLoadedFonts, resetFonts } from '../src/fonts.ts';
 
 // A minimal OpenType name table with only a Unicode-platform family record.
 function unicodeFont() {
@@ -53,6 +53,12 @@ test('Unicode font names, preload requirements, cached failures and partial CSS 
   requireLoadedFonts([unresolved], missingMedia);
   await loadFonts([unresolved], missingMedia);
   assert.equal(warnings.length, 4);
-  releaseFonts(fetched);
+  resetFonts();
   assert.equal(faces.size, 0);
+  assert.throws(() => requireLoadedFonts([unicode], resolve), /preloaded fonts/);
+  await loadFonts([asset('missing.ttf')], resolve);
+  await loadFonts([unresolved], missingMedia);
+  assert.equal(fetched.length, 5);
+  assert.equal(warnings.length, 6);
+  resetFonts();
 });

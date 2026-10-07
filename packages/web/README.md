@@ -66,7 +66,7 @@ const renderer = new SceneCanvas(new Map(), baseURL);
 ```
 
 Relative TSX/TS/JS/JSON imports resolve within `files`, including directory
-`index.tsx`/`index.ts` entries. Sources are bundled in the Worker. `baseURL`
+`index.tsx`/`index.ts`/`index.jsx`/`index.js`/`index.json` entries. Sources are bundled in the Worker. `baseURL`
 resolves relative fonts and media; uploaded files take precedence in the canvas
 renderer. Fonts used for measurement must also be reachable by the Worker.
 Fonts declared with `<Font>` load before the first requested frame. A
@@ -75,6 +75,13 @@ requires those extra fonts to be preloaded using `await measureText(...,
 { fonts })` in `prepare()`; the browser reports an error instead of caching
 fallback measurements for unloaded extra fonts. Failed font loads warn once
 and use the default font, so a missing face does not prevent playback.
+Recompiling an Engine releases the previous project's worker font faces and
+load cache, including failed loads, before preparing the new project.
+Canvas supplies whole-text widths and line metrics, but does not expose a
+portable shaped glyph-cluster API. Accessing `TextMetrics.glyphs` throws an
+explicit unsupported-feature error rather than returning grapheme estimates.
+Use whole-text metrics or catch this error in `prepare()` to select a fallback
+(as Reel does); use the native renderer when exact glyph positions are needed.
 All remote fonts and media need CORS access. `silent: true` explicitly omits
 audio from evaluated frames and exported MP4s, for sample editions without
 distributed soundtracks.

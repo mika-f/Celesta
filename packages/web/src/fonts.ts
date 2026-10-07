@@ -40,6 +40,12 @@ export function releaseFonts(urls: Iterable<string>): void {
   }
 }
 
+/** The dedicated worker owns a single project's font set. */
+export function resetFonts(): void {
+  releaseFonts(loaded.keys());
+  unresolved.clear();
+}
+
 export function loadFonts(assets: Asset[], resolve: (asset: Asset) => string): Promise<void[]> {
   return Promise.all(assets.map(asset => {
     let url: string;

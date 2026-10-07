@@ -119,7 +119,7 @@ export function Playground({ initialFiles, entry = 'my-first-scene.tsx', initial
     if (!files) return;
     const assets = new Map(Array.from(files, file => [file.name, file]));
     setMediaNames(Array.from(assets.keys()));
-    setRenderer(previous => { previous.dispose(); return new SceneCanvas(assets, baseURL); });
+    setRenderer(new SceneCanvas(assets, baseURL));
   }
 
   async function openSource(file: File | undefined) {
@@ -127,9 +127,23 @@ export function Playground({ initialFiles, entry = 'my-first-scene.tsx', initial
     const source = await file.text();
     setPlaying(false);
     setFiles(previous => initialFiles ? { ...previous, [file.name]: source } : { [file.name]: source });
-    setEditorVersion(version => version + 1);
-    if (!initialFiles) setActiveEntry(file.name);
+    if (!initialFiles) {
+      setEditorVersion(version => version + 1);
+      setActiveEntry(file.name);
+    }
     setName(file.name);
+  }
+
+  function resetSample() {
+    if (!initialFiles) return;
+    setPlaying(false);
+    setFiles(initialFiles);
+    setEditorVersion(version => version + 1);
+    setName(entry);
+    setActiveEntry(entry);
+    setFrame(initialFrame);
+    setMediaNames([]);
+    setRenderer(new SceneCanvas(new Map(), baseURL));
   }
 
   async function exportFile() {
@@ -167,7 +181,7 @@ export function Playground({ initialFiles, entry = 'my-first-scene.tsx', initial
       <div className="studio-bar flex items-center justify-between">{text('playground.celesta-web-editor', [<span />, name, <span className="flex items-center gap-2" />, <i className="status-dot" />])}</div>
       <div className="studio-main grid">
         <div className="source-panel">
-          {initialFiles && <div className="source-files"><label>{t('showcase.source-file')}<select aria-label={t('showcase.source-file')} value={name} disabled={exporting} onChange={event => setName(event.target.value)}>{Object.keys(files).sort().map(path => <option key={path} value={path}>{path}</option>)}</select></label><button disabled={exporting} onClick={() => { setPlaying(false); setFiles(initialFiles); setEditorVersion(version => version + 1); setName(entry); setActiveEntry(entry); setFrame(initialFrame); }}>{t('showcase.reset')}</button></div>}
+          {initialFiles && <div className="source-files"><label>{t('showcase.source-file')}<select aria-label={t('showcase.source-file')} value={name} disabled={exporting} onChange={event => setName(event.target.value)}>{Object.keys(files).sort().map(path => <option key={path} value={path}>{path}</option>)}</select></label><button disabled={exporting} onClick={resetSample}>{t('showcase.reset')}</button></div>}
           <div className="flex items-center justify-between source-heading">{text('playground.tsx-your-composition-copy-source', [<span />, <b />, <button onClick={() => { void navigator.clipboard.writeText(source).then(() => setMessage(t('playground.status.copied-source'))).catch(() => setMessage(t('playground.status.copy-source-failed'))); }} className="copy-button" />])}</div>
           <div className="source-scroll"><div className="source-editor"><Suspense fallback={<p className="editor-loading" role="status">{t('playground.editor-loading')}</p>}><SourceEditor key={editorVersion} name={name} source={source} readOnly={exporting} onChange={value => { setPlaying(false); setFiles(previous => ({ ...previous, [name]: value })); }} /></Suspense></div></div>
           <div className="source-footer flex items-center justify-between gap-2"><span>{text('playground.lines-not-saved-download-to-keep-it', [source.split('\n').length])}</span><div className="flex gap-3">{text('playground.open-tsx-download-tsx', [<label className="file-action" />, <input type="file" accept=".tsx,.jsx,.ts,.js" onChange={event => { void openSource(event.target.files?.[0]); event.target.value = ''; }} />, <button onClick={() => download(new Blob([source], { type: 'text/plain;charset=utf-8' }), name)} />])}</div></div>

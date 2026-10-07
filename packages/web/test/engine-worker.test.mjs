@@ -32,7 +32,7 @@ test('compiles serialize, fonts refresh the same mount, and recompile unmounts t
   t.after(() => { Object.assign(globalThis, originals); delete globalThis.mountCount; delete globalThis.cleanupCount; rmSync(directory, { recursive: true }); });
   globalThis.mountCount = 0; globalThis.cleanupCount = 0;
   globalThis.fonts = new Set();
-  globalThis.FontFace = class { constructor(family) { this.family = family; } async load() { return this; } };
+  globalThis.FontFace = class { constructor(family, source) { this.family = family; this.source = source; } async load() { return this; } };
   globalThis.OffscreenCanvas = class {
     getContext() { return { measureText(text) { return { width: text.length * (globalThis.fonts.size ? 20 : 10), fontBoundingBoxAscent: 15, fontBoundingBoxDescent: 5 }; } }; }
   };
@@ -41,7 +41,7 @@ test('compiles serialize, fonts refresh the same mount, and recompile unmounts t
   t.mock.method(globalThis, 'fetch', async url => {
     requested.push(url);
     if (url.startsWith('https://first.test/')) { fetched.resolve(); await unblock.promise; }
-    return new Response('@font-face { font-family: Demo; src: url(https://fonts.test/demo.woff); }', { headers: { 'content-type': 'text/css' } });
+    return new Response(`@font-face { font-family: Demo; src: url(${new URL('demo.woff', url).href}); }`, { headers: { 'content-type': 'text/css' } });
   });
   const responses = [], completion = new Map();
   globalThis.self = { postMessage(response) { responses.push(response); completion.get(response.id)?.resolve(response); } };
@@ -71,6 +71,8 @@ test('compiles serialize, fonts refresh the same mount, and recompile unmounts t
   assert.equal(values[1].value.scene.layers[0].content.width, 60);
   assert.equal(values[1].value.audio.length, 0);
   assert.equal(values[3].value.audio.length, 1);
+  assert.equal(fonts.size, 1);
+  assert.match([...fonts][0].source, /second\.test\/demo\.woff/);
 
   const explicit = `import {Composition, Rect, useTextMetrics, measureText} from '@celesta/react';
     export default function Root() { const m=useTextMetrics('abc', {fontFamily:'Demo'}, {fonts:['https://extra.test/font.css']}); return <Composition width={100} height={100} fps={30} durationInFrames={1}><Rect width={m.width} height={1}/></Composition>; }`;
@@ -78,8 +80,13 @@ test('compiles serialize, fonts refresh the same mount, and recompile unmounts t
   const rejected = await send({ id: 5, type: 'compile', source: explicit });
   expectedError.mock.restore();
   assert.match(rejected.error, /preloaded fonts/);
+  assert.equal(fonts.size, 0);
   const prepared = await send({ id: 6, type: 'compile', source: explicit + `export async function prepare() { await measureText('abc', {fontFamily:'Demo'}, {fonts:['https://extra.test/font.css']}); }` });
   assert.equal(prepared.error, undefined);
   const preparedFrame = await send({ id: 7, type: 'frame', frame: 0 });
   assert.equal(preparedFrame.value.scene.layers[0].content.width, 60);
+
+  const fallback = await send({ id: 8, type: 'compile', source: explicit + `export async function prepare() { try { const metrics = await measureText('fi'); metrics.glyphs; } catch (error) { if (!error.message.includes('Shaped glyph metrics')) throw error; } await measureText('abc', {fontFamily:'Demo'}, {fonts:['https://extra.test/font.css']}); }` });
+  assert.equal(fallback.error, undefined);
+  assert.equal(fonts.size, 1);
 });

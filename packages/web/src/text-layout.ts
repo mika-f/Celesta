@@ -15,9 +15,9 @@ export function textStyle(ctx: Context, style: TextStyle) {
   if ('lang' in ctx) ctx.lang = style.lang?.trim() || navigator.language;
 }
 
-export function textLines(ctx: Context, text: string, maxWidth?: number | null): string[] {
+export function textLines(ctx: Context, text: string, maxWidth?: number | null, lang?: string | null): string[] {
   if (!maxWidth) return text.split('\n');
-  const segmenter = new Intl.Segmenter(navigator.language, { granularity: 'word' });
+  const segmenter = new Intl.Segmenter(lang?.trim() || navigator.language, { granularity: 'word' });
   return text.split('\n').flatMap(paragraph => {
     const lines: string[] = [];
     let line = '';
@@ -36,24 +36,19 @@ export function textMeasurer() {
   const ctx = new OffscreenCanvas(1, 1).getContext('2d')!;
   return ({ text, style, maxWidth }: MeasureTextRequest): TextMetrics => {
     textStyle(ctx, style);
-    const lines = textLines(ctx, text, maxWidth);
+    const lines = textLines(ctx, text, maxWidth, style.lang);
     const lineHeight = style.lineHeight ?? (style.fontSize ?? 32) * 1.2;
     const baseline = ctx.measureText('M');
     const ascent = (lineHeight - baseline.fontBoundingBoxAscent - baseline.fontBoundingBoxDescent) / 2 + baseline.fontBoundingBoxAscent;
-    const glyphs: TextMetrics['glyphs'] = [];
-    const widths = lines.map((line, index) => {
-      const width = ctx.measureText(line).width;
-      const boxWidth = maxWidth ?? width;
-      const left = style.align === 'center' ? (boxWidth - width) / 2 : style.align === 'right' ? boxWidth - width : 0;
-      let prefix = '', previous = 0;
-      for (const { segment } of new Intl.Segmenter(style.lang ?? navigator.language, { granularity: 'grapheme' }).segment(line)) {
-        prefix += segment;
-        const advance = ctx.measureText(prefix).width;
-        glyphs.push({ text: segment, x: left + previous, width: advance - previous, line: index });
-        previous = advance;
-      }
-      return width;
-    });
-    return { width: Math.max(0, ...widths), height: lines.length * lineHeight, ascent, descent: lineHeight - ascent, lineHeight, lines: lines.length, glyphs };
+    const widths = lines.map(line => ctx.measureText(line).width);
+    return {
+      width: Math.max(0, ...widths), height: lines.length * lineHeight, ascent, descent: lineHeight - ascent, lineHeight, lines: lines.length,
+      // Canvas exposes whole-run measurements, but no portable shaped-cluster API.
+      // Access fails explicitly so prepare() can select a fallback without using
+      // grapheme/prefix estimates as native GlyphMetrics.
+      get glyphs(): TextMetrics['glyphs'] {
+        throw new Error('Shaped glyph metrics are unavailable in the browser runtime. Use whole-text metrics or the native renderer.');
+      },
+    };
   };
 }

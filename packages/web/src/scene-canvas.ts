@@ -113,16 +113,38 @@ export class SceneCanvas {
     const content = layer.content;
     const mode = blend[layer.blendMode ?? 'normal'];
     if (!mode) throw new Error(`Unsupported blend mode: ${layer.blendMode}`);
+    const effects = layer.effects;
+    if (effects && (effects.blur || effects.shadow || effects.glow)) {
+      const source = this.surface(ctx);
+      await this.layer(source, { ...layer, opacity: 1, blendMode: 'normal', effects: undefined }, parent, 1);
+      const result = this.surface(ctx);
+      // Each effect reads the unmodified source, matching the native renderer.
+      for (const effect of [effects.shadow, effects.glow ? { ...effects.glow, offsetX: 0, offsetY: 0 } : null]) {
+        if (!effect) continue;
+        const mask = this.surface(ctx);
+        mask.drawImage(source.canvas, 0, 0);
+        mask.globalCompositeOperation = 'source-in';
+        mask.fillStyle = effect.color;
+        mask.fillRect(0, 0, mask.canvas.width, mask.canvas.height);
+        result.filter = effect.blur > 0 ? `blur(${effect.blur}px)` : 'none';
+        result.drawImage(mask.canvas, effect.offsetX, effect.offsetY);
+        mask.canvas.width = 0;
+      }
+      result.filter = effects.blur && effects.blur > 0 ? `blur(${effects.blur}px)` : 'none';
+      result.drawImage(source.canvas, 0, 0);
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalAlpha = alpha;
+      ctx.globalCompositeOperation = mode;
+      ctx.filter = 'none';
+      ctx.drawImage(result.canvas, 0, 0);
+      ctx.restore();
+      source.canvas.width = result.canvas.width = 0;
+      return;
+    }
     if (content.type === 'group') {
       let target = ctx;
-      if (mode !== 'source-over' || layer.effects) {
-        const isolated = document.createElement('canvas');
-        isolated.width = ctx.canvas.width;
-        isolated.height = ctx.canvas.height;
-        const isolatedContext = isolated.getContext('2d');
-        if (!isolatedContext) throw new Error('Canvas 2D is unavailable.');
-        target = isolatedContext;
-      }
+      if (mode !== 'source-over') target = this.surface(ctx);
       target.save();
       const clip = content.clip;
       if (clip) {
@@ -140,7 +162,7 @@ export class SceneCanvas {
         ctx.setTransform(1, 0, 0, 1, 0, 0);
         ctx.globalAlpha = alpha;
         ctx.globalCompositeOperation = mode;
-        this.effects(ctx, layer);
+        ctx.filter = 'none';
         ctx.drawImage(target.canvas, 0, 0);
         ctx.restore();
       }
@@ -150,7 +172,7 @@ export class SceneCanvas {
     ctx.save();
     ctx.globalAlpha = alpha;
     ctx.globalCompositeOperation = mode;
-    this.effects(ctx, layer);
+    ctx.filter = 'none';
     if (content.type === 'rect') {
       const width = content.width, height = content.height;
       const x = -t.anchor.x * width, y = -t.anchor.y * height;
@@ -200,7 +222,7 @@ export class SceneCanvas {
       textStyle(ctx, style);
       ctx.textBaseline = 'alphabetic';
       ctx.textAlign = 'left';
-      const lines = textLines(ctx, content.text, content.maxWidth);
+      const lines = textLines(ctx, content.text, content.maxWidth, style.lang);
       const measured = lines.map(line => ctx.measureText(line));
       const width = content.maxWidth ?? Math.max(0, ...measured.map(m => m.width));
       const placed = measured.map((m, i) => ({
@@ -258,15 +280,12 @@ export class SceneCanvas {
     ctx.restore();
   }
 
-  private effects(ctx: Context, layer: Layer) {
-    const effects = layer.effects;
-    const filters: string[] = [];
-    if (effects?.blur) filters.push(`blur(${effects.blur}px)`);
-    if (effects?.shadow) {
-      const { offsetX, offsetY, blur, color } = effects.shadow;
-      filters.push(`drop-shadow(${offsetX}px ${offsetY}px ${blur}px ${color})`);
-    }
-    if (effects?.glow) filters.push(`drop-shadow(0px 0px ${effects.glow.blur}px ${effects.glow.color})`);
-    ctx.filter = filters.join(' ') || 'none';
+  private surface(ctx: Context): Context {
+    const canvas = document.createElement('canvas');
+    canvas.width = ctx.canvas.width;
+    canvas.height = ctx.canvas.height;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Canvas 2D is unavailable.');
+    return context;
   }
 }

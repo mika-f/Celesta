@@ -22,3 +22,16 @@ test('bundle a nested TSX project, resolve JSON and keep runtime imports externa
   await assert.rejects(build({ ...options, logLevel: 'silent', plugins: [projectFiles({ 'film.tsx': "import fs from 'node:fs'; export default fs;" }, 'film.tsx')] }), /unavailable in the web editor/);
   await assert.rejects(build({ ...options, logLevel: 'silent', plugins: [projectFiles({ 'film.tsx': "import Scene from './missing'; export default Scene;" }, 'film.tsx')] }), /Missing project source/);
 });
+
+test('directory imports resolve JSX, JavaScript and JSON index files', async () => {
+  const files = {
+    'film.tsx': "import Scene from './scene'; import value from './value'; import data from './data'; export default () => Scene(value + data.width);",
+    'scene/index.jsx': 'export default width => <rect width={width} />;',
+    'value/index.js': 'export default 20;',
+    'data/index.json': '{"width":300}',
+  };
+  const result = await build({ entryPoints: ['film.tsx'], bundle: true, write: false, format: 'cjs', jsxFactory: 'React.createElement', plugins: [projectFiles(files, 'film.tsx')] });
+  const module = { exports: {} };
+  new Function('module', 'exports', 'React', result.outputFiles[0].text)(module, module.exports, { createElement: (type, props) => ({ type, props }) });
+  assert.deepEqual(module.exports.default(), { type: 'rect', props: { width: 320 } });
+});

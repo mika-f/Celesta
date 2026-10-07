@@ -258,7 +258,9 @@ instructions and clearly identify the desktop requirement.
 
 `src/showcase-catalog.ts` defines the works and initial preview frames.
 Add descriptions and other UI text to both locale catalogs. The source glob
-in `src/showcase-sources.ts` selects the browser-ready example directories.
+in `src/showcase-sources.ts` reads TSX/TS sources from all example directories;
+`loadShowcase()` excludes entries with the catalog's `desktop` flag and loads
+only the selected browser edition.
 Vite reads these as editor text, bypassing desktop-only TypeScript configs.
 The build copies the shared OpenType fonts, license files, and portrait PNGs
 to `dist/showcase-assets/`; development serves the same paths. Keep these
