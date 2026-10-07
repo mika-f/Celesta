@@ -27,7 +27,7 @@ import type { ProbedMediaInfo } from './media';
 import type { CompositionConfig, EvaluatedTransform, Layer, LayerContent, Scene, Time } from './scene';
 
 // stdout is the JSON request/response channel the Rust bridge
-// (crates/react-bridge) parses one message at a time; anything else written
+// (crates/react-bridge) parses one line at a time; anything else written
 // there corrupts the protocol and fails the export. Route every `console`
 // method to stderr — which the bridge inherits straight to the user's
 // terminal — so a `console.log` left in a composition is evaluated and
@@ -67,13 +67,9 @@ function isResolveRequest(request: Request): request is ResolveRequest {
 }
 
 async function main(): Promise<void> {
-  const args = process.argv.slice(2);
-  // The Rust bridge reads length-prefixed messages; without the flag every
-  // message is one JSON line, which is easier to read from scripts and tests.
-  lengthPrefixed = args[0] === '--length-prefixed';
-  const entry = lengthPrefixed ? args[1] : args[0];
+  const entry = process.argv[2];
   if (!entry) {
-    process.stderr.write('usage: celesta-react-render [--length-prefixed] <entry-file>\n');
+    process.stderr.write('usage: celesta-react-render <entry-file>\n');
     process.exitCode = 1;
     return;
   }
@@ -241,9 +237,6 @@ function textMeasureResponse(next: IteratorResult<string>): TextMetrics {
   return response.metrics;
 }
 
-let lengthPrefixed = false;
-let messageBuffer = Buffer.allocUnsafe(64 * 1024);
-
 function writeLine(
   value:
     | {
@@ -261,21 +254,7 @@ function writeLine(
 ): void {
   // Synchronous hooks may immediately wait for Rust's reply. Flush the whole
   // request without depending on Node's event loop to drain stdout.
-  const json = JSON.stringify(value);
-  let bytes: Buffer;
-  if (lengthPrefixed) {
-    // A little-endian u32 byte count, then the JSON, encoded straight into a
-    // buffer reused across messages.
-    const length = Buffer.byteLength(json);
-    if (messageBuffer.length < length + 4) {
-      messageBuffer = Buffer.allocUnsafe(Math.max(length + 4, messageBuffer.length * 2));
-    }
-    messageBuffer.writeUInt32LE(length, 0);
-    messageBuffer.write(json, 4);
-    bytes = messageBuffer.subarray(0, length + 4);
-  } else {
-    bytes = Buffer.from(`${json}\n`);
-  }
+  const bytes = Buffer.from(`${JSON.stringify(value)}\n`);
   let offset = 0;
   while (offset < bytes.length) offset += fs.writeSync(1, bytes, offset, bytes.length - offset);
 }

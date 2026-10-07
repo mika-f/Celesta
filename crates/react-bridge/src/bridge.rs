@@ -13,7 +13,7 @@ use celesta_media::FfmpegBackend;
 use celesta_remote::{RemoteAssetCache, is_remote_url};
 use celesta_renderer::TextRasterizer;
 use serde::Serialize;
-use std::io::{self, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
@@ -22,7 +22,7 @@ pub struct ReactBridge {
     pub(crate) child: Child,
     pub(crate) stdin: ChildStdin,
     pub(crate) stdout: BufReader<ChildStdout>,
-    /// The last message read from `stdout`, kept to reuse its allocation.
+    /// The last message read from `stdout`.
     pub(crate) message: Vec<u8>,
     pub(crate) metadata: ReactCompositionMetadata,
     pub(crate) text_measurer: Option<TextRasterizer>,
@@ -56,7 +56,6 @@ impl ReactBridge {
         }
         let mut child = command
             .arg(cli_script.as_ref())
-            .arg("--length-prefixed")
             .arg(entry.as_ref())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -218,12 +217,7 @@ impl ReactBridge {
         &mut self,
         frame: PendingFrame,
     ) -> Result<FrameEvaluation, ReactBridgeError> {
-        let response = serde_json::from_slice(&frame.0).map_err(ReactBridgeError::Protocol);
-        // Keep the larger allocation for the next message.
-        if frame.0.capacity() > self.message.capacity() {
-            self.message = frame.0;
-        }
-        match response? {
+        match serde_json::from_slice(&frame.0).map_err(ReactBridgeError::Protocol)? {
             Response::Ok { scene, audio } => Ok(FrameEvaluation { scene, audio }),
             Response::Components { .. } => Err(ReactBridgeError::UnexpectedResponse),
             Response::CollectedAudio { .. } => Err(ReactBridgeError::UnexpectedResponse),
@@ -347,30 +341,16 @@ impl ReactBridge {
 /// decoded.
 pub struct PendingFrame(Vec<u8>);
 
-/// Reads one message from the CLI into `buffer`, reusing its allocation. With
-/// `--length-prefixed` every message is a little-endian `u32` byte count
-/// followed by that many bytes of JSON, so a frame's scene is read in a few
-/// large reads instead of being scanned for its line end.
+/// Reads one JSON line from the CLI into `buffer`.
 fn read_message(
     stdout: &mut BufReader<ChildStdout>,
     buffer: &mut Vec<u8>,
 ) -> Result<(), ReactBridgeError> {
-    let eof = |error: io::Error| match error.kind() {
-        io::ErrorKind::UnexpectedEof => ReactBridgeError::UnexpectedExit,
-        _ => ReactBridgeError::Io(error),
-    };
-    let mut length = [0; 4];
-    stdout.read_exact(&mut length).map_err(eof)?;
-    let length = u32::from_le_bytes(length) as usize;
-    buffer.clear();
-    buffer.reserve(length);
-    let read = stdout
-        .take(length as u64)
-        .read_to_end(buffer)
-        .map_err(ReactBridgeError::Io)?;
-    if read == length {
-        Ok(())
-    } else {
-        Err(ReactBridgeError::UnexpectedExit)
+    let mut line = String::new();
+    let read = stdout.read_line(&mut line).map_err(ReactBridgeError::Io)?;
+    if read == 0 {
+        return Err(ReactBridgeError::UnexpectedExit);
     }
+    *buffer = line.into_bytes();
+    Ok(())
 }
