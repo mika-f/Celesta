@@ -28,6 +28,28 @@ times one at a time, so it has no next frame to submit early.
 
 ## Results
 
+### How it was measured
+
+Build each variant (`main` and this branch) in its own worktree:
+`pnpm install && pnpm run codegen && pnpm run build` in `packages/react`,
+then `cargo build --release -p celesta-exporter -p celesta-react-bridge
+--bins --examples` (without `--bins`, `--examples` leaves the exporter
+unbuilt). reel needs `python3 examples/reel/make-music.py` first. Run the
+variants alternately, round by round, and compare within a run.
+
+- Evaluation: `protocol-bench <entry> 300 60` on `main`,
+  `protocol-bench --pipelined <entry> 300 60` on this branch; the figure is
+  the printed `mean`.
+- Export: `celesta-exporter --overwrite --no-ui --preset ultrafast --react
+  <entry> out.mp4`. The render-thread figures come from a temporary timer
+  in `render_react_video` (`crates/exporter/src/render.rs`): an `Instant`
+  before `thread::scope` for the render loop, and an `Instant` around
+  `frames.recv()` summed into a static `AtomicU64` for the wait, both
+  printed with `eprintln!` before `finish_encode`.
+- Scene equality: put a `node` wrapper first on `PATH` that runs the real
+  Node with stdout piped through `tee` to a file, export with each variant,
+  and compare the `{"scene"…}` lines.
+
 ### Apple M-series Mac
 
 Node 26, release builds, variants interleaved. The machine's load average
