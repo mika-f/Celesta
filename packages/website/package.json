@@ -21,8 +21,10 @@
     "@twinkleplop/bash": "^0.1.5",
     "@twinkleplop/json": "^0.1.5",
     "@twinkleplop/tsx": "^0.1.5",
+    "i18next": "^26.4.2",
     "react": "^19.3.0",
-    "react-dom": "^19.3.0"
+    "react-dom": "^19.3.0",
+    "react-i18next": "^17.0.15"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",

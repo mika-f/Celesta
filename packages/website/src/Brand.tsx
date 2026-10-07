@@ -5,5 +5,5 @@ export function Logo() {
 }
 
 export function Brand({ href = `${homePath}#top` }: { href?: string }) {
-  return <a className="brand" href={href} aria-label={t('home-label')}><Logo />Celesta</a>;
+  return <a className="brand" href={href} aria-label={t('common.navigation.label')}><Logo />Celesta</a>;
 }

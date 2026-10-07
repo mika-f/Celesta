@@ -9,7 +9,7 @@ export function LanguageSwitcher() {
     window.addEventListener('hashchange', update);
     return () => window.removeEventListener('hashchange', update);
   }, []);
-  return <span className="language-switcher" role="group" aria-label={t('language')}>
+  return <span className="language-switcher" role="group" aria-label={t('common.navigation.language')}>
     {localeCodes.map(locale => <a key={locale} href={`${localizedPath(window.location.pathname, locale)}${window.location.search}${hash}`} lang={locale} hrefLang={locale} aria-current={locale === currentLocale ? 'page' : undefined}>{locales[locale]}</a>)}
   </span>;
 }

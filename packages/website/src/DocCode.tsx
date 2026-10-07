@@ -16,14 +16,14 @@ export function DocCode({ code: source, label, language = 'shell' }: { code: str
   async function copy() {
     try {
       await navigator.clipboard.writeText(code);
-      setStatus(t('copied'));
+      setStatus(t('common.clipboard.copied'));
     } catch {
-      setStatus(t('copy-failed'));
+      setStatus(t('common.clipboard.copy-failed'));
     }
   }
 
   return <div className="doc-code">
-    <div className="doc-code-bar">{text('code.copy', [<span />, label, <button onClick={copy} aria-label={t('copy-label', { label })} />])}</div>
+    <div className="doc-code-bar">{text('code.copy', [<span />, label, <button onClick={copy} aria-label={t('common.clipboard.copy-label', { label })} />])}</div>
     <div dangerouslySetInnerHTML={{ __html: html }} />
     <span className="doc-copy-status" role="status">{status}</span>
   </div>;

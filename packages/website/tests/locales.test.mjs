@@ -48,33 +48,57 @@ test('language links replace the locale with or without a trailing slash', () =>
 });
 
 test('missing rich-text wrappers preserve copy, nesting and HTML escaping', () => {
-  assert.equal(renderToStaticMarkup(richText('Read <0>the docs</0> now.')), 'Read the docs now.');
-  assert.equal(renderToStaticMarkup(richText('<0>Read <1>this</1></0>', [undefined, createElement('strong')])), 'Read <strong>this</strong>');
-  assert.equal(renderToStaticMarkup(richText('<0>&lt;script&gt;</0>', ['unused'])), '&lt;script&gt;');
+  assert.equal(renderToStaticMarkup(richText('Read <slot0>the docs</slot0> now.')), 'Read the docs now.');
+  assert.equal(renderToStaticMarkup(richText('<slot0>Read <slot1>this</slot1></slot0>', [undefined, createElement('strong')])), 'Read <strong>this</strong>');
+  assert.equal(renderToStaticMarkup(richText('<slot0>&lt;script&gt;</slot0>', ['unused'])), '&lt;script&gt;');
+});
+
+test('Trans preserves nested links, scalar slots and existing code children', () => {
+  assert.equal(renderToStaticMarkup(richText('<slot0>Read <slot1>this</slot1></slot0>', [createElement('a', { href: '/ja/docs/' }), createElement('strong')])), '<a href="/ja/docs/">Read <strong>this</strong></a>');
+  assert.equal(renderToStaticMarkup(richText('<slot0/> lines', [126])), '126 lines');
+  assert.equal(renderToStaticMarkup(richText('Use <slot0/>.', [createElement('code', null, '<FreezeFrame frame={60}>')])), 'Use <code>&lt;FreezeFrame frame={60}&gt;</code>.');
+});
+
+test('nested messages interpolate values without leaking a previous language', () => {
+  assert.equal(translate('ja', 'docs.metadata.title', { title: 'VOICEVOX' }), 'VOICEVOX — Celesta ドキュメント');
+  assert.equal(translate('en', 'docs.metadata.title', { title: 'VOICEVOX' }), 'VOICEVOX — Celesta documentation');
+  assert.equal(translate('ja', 'playground.controls.preview-at', { frame: 60 }), 'フレーム 60 のプレビュー');
 });
 
 test('search aliases are localized and result counts use the correct forms', () => {
   const pages = getDocGroups('ja').flatMap(group => group.pages);
   assert.ok(pages.find(page => page.slug === 'installation').keywords.includes('セットアップ'));
   assert.ok(pages.find(page => page.slug === 'math').keywords.includes('数学'));
-  for (const [locale, count, expected] of [['en', 1, '1 matching topic'], ['en', 2, '2 matching topics'], ['ja', 1, '1 件のトピック']]) {
-    const key = new Intl.PluralRules(locale).select(count) === 'one' ? 'matches-one' : 'matches-other';
-    assert.equal(translate(locale, key, { count }), expected);
+  for (const [locale, count, expected] of [['en', 0, '0 matching topics'], ['en', 1, '1 matching topic'], ['en', 2, '2 matching topics'], ['ja', 1, '1 件のトピック'], ['ja', 2, '2 件のトピック']]) {
+    assert.equal(translate(locale, 'docs.search.matches', { count }), expected);
   }
 });
 
-test('all catalogs contain every message and preserve balanced React placeholders', () => {
-  const catalogs = Object.fromEntries(localeCodes.map(locale => [locale, JSON.parse(readFileSync(new URL(`../src/locales/${locale}.json`, import.meta.url)))]));
-  const tokens = text => text.match(/<\/?\d+\/?>|\{\w+\}/g) ?? [];
+test('structured catalogs contain every message and preserve balanced Trans slots', () => {
+  const flatten = (object, prefix = '') => Object.fromEntries(Object.entries(object).flatMap(([key, value]) => {
+    assert.ok(!key.includes('.'), `flat key: ${prefix}${key}`);
+    const path = `${prefix}${key}`;
+    return typeof value === 'string' ? [[path, value]] : Object.entries(flatten(value, `${path}.`));
+  }));
+  const catalogs = Object.fromEntries(localeCodes.map(locale => [locale, flatten(JSON.parse(readFileSync(new URL(`../src/locales/${locale}.json`, import.meta.url))))]));
+  const tokens = text => text.match(/<\/?slot\d+\/?>|\{\{\w+\}\}/g) ?? [];
   for (const [locale, catalog] of Object.entries(catalogs)) {
-    assert.deepEqual(Object.keys(catalog).sort(), Object.keys(catalogs.en).sort(), locale);
+    for (const key of Object.keys(catalogs.en)) assert.ok(key in catalog, `${locale}:${key} is missing`);
+    const pluralBases = Object.keys(catalogs.en).filter(key => key.endsWith('_other')).map(key => key.slice(0, -6));
+    for (const base of pluralBases) {
+      for (const category of new Intl.PluralRules(locale).resolvedOptions().pluralCategories) {
+        assert.ok(`${base}_${category}` in catalog, `${locale}:${base}_${category} is missing`);
+      }
+    }
     for (const [key, value] of Object.entries(catalog)) {
       assert.ok(value.trim(), `${locale}:${key} is empty`);
-      assert.deepEqual(tokens(value).sort(), tokens(catalogs.en[key]).sort(), `${locale}:${key} placeholders`);
+      const source = catalogs.en[key] ?? catalogs.en[key.replace(/_(zero|one|two|few|many|other)$/, '_other')];
+      assert.equal(typeof source, 'string', `${locale}:${key} has no source message`);
+      assert.deepEqual(tokens(value).sort(), tokens(source).sort(), `${locale}:${key} placeholders`);
       const stack = [];
       for (const token of tokens(value)) {
-        if (/^<\d+>$/.test(token)) stack.push(token.slice(1, -1));
-        if (/^<\/\d+>$/.test(token)) assert.equal(stack.pop(), token.slice(2, -1), `${locale}:${key} nesting`);
+        if (/^<slot\d+>$/.test(token)) stack.push(token.slice(5, -1));
+        if (/^<\/slot\d+>$/.test(token)) assert.equal(stack.pop(), token.slice(6, -1), `${locale}:${key} nesting`);
       }
       assert.deepEqual(stack, [], `${locale}:${key} unclosed placeholder`);
     }

@@ -38,7 +38,7 @@ export function App() {
     <header id="top" className="header">
       <div className="shell header-inner flex items-center justify-between">
         <Brand />
-        <button className="menu-toggle" aria-expanded={menuOpen} aria-controls="navigation" onClick={() => setMenuOpen(!menuOpen)}>{menuOpen ? t('close') : t('menu')}</button>
+        <button className="menu-toggle" aria-expanded={menuOpen} aria-controls="navigation" onClick={() => setMenuOpen(!menuOpen)}>{menuOpen ? t('common.navigation.close') : t('common.navigation.menu')}</button>
         <nav id="navigation" aria-label={t('home.main-navigation')} className={`nav flex items-center ${menuOpen ? 'is-open' : ''}`} onClick={() => setMenuOpen(false)}>{text('home.why-celesta-playground-docs-github-download', [<a href="#features" />, <a href="#playground" />, <a href={documentation} />, <a href={repository} />, <span aria-hidden="true" />, <a className="nav-download" href={allDownloads} />])}<LanguageSwitcher /></nav>
       </div>
     </header>
@@ -71,7 +71,7 @@ export function App() {
       </section>
       <section className="possibilities shell" aria-labelledby="possibilities-heading">
         <div className="section-top"><p className="eyebrow">{text('home.good-for')}</p><div><h2 id="possibilities-heading">{text('home.video-you-would-rather-describe-than-drag', [<br />, <em />])}</h2></div></div>
-        <ul className="idea-tags">{[t('idea-title'), t('idea-dialogue'), t('idea-data'), t('idea-loops')].map((idea, i) => <li key={idea}><span>{String(i + 1).padStart(2, '0')}</span>{idea}</li>)}</ul>
+        <ul className="idea-tags">{[t('home.ideas.title'), t('home.ideas.dialogue'), t('home.ideas.data'), t('home.ideas.loops')].map((idea, i) => <li key={idea}><span>{String(i + 1).padStart(2, '0')}</span>{idea}</li>)}</ul>
       </section>
       <section id="start" className="start-section" aria-labelledby="start-heading">
         <div className="shell start-card grid md:grid-cols-2">

@@ -16,8 +16,8 @@ const site = 'https://celesta.natsuneko.cat';
 function localizedHtml(html: string, locale: Locale, slug?: string): string {
   const docs = slug !== undefined;
   const page = getDocGroups(locale).flatMap(group => group.pages).find(page => page.slug === slug);
-  const title = page ? translate(locale, 'docs-title', { title: page.title }) : translate(locale, docs ? 'docs-overview-title' : 'home-title');
-  const description = page?.description ?? translate(locale, docs ? 'docs-description' : 'home-description');
+  const title = page ? translate(locale, 'docs.metadata.title', { title: page.title }) : translate(locale, docs ? 'docs.metadata.overview-title' : 'home.metadata.title');
+  const description = page?.description ?? translate(locale, docs ? 'docs.metadata.description' : 'home.metadata.description');
   const suffix = docs ? `docs/${slug === 'overview' ? '' : `${slug}/`}` : '';
   const path = `/${locale}/${suffix}`;
   const alternatives = localeCodes.map(code => `<link rel="alternate" hreflang="${code}" href="${site}/${code}/${suffix}" />`).join('\n    ');
@@ -26,9 +26,9 @@ function localizedHtml(html: string, locale: Locale, slug?: string): string {
     .replace(/<title>.*?<\/title>/, `<title>${escapeHtml(title)}</title>`)
     .replace(/(<meta name="description" content=")[^"]*/, `$1${escapeHtml(description)}`)
     .replace(/(<meta property="og:title" content=")[^"]*/, `$1${escapeHtml(title)}`)
-    .replace(/(<meta property="og:description" content=")[^"]*/, `$1${escapeHtml(page?.description ?? translate(locale, docs ? 'docs-og-description' : 'home-og-description'))}`)
+    .replace(/(<meta property="og:description" content=")[^"]*/, `$1${escapeHtml(page?.description ?? translate(locale, docs ? 'docs.metadata.og-description' : 'home.metadata.og-description'))}`)
     .replace(/<noscript>[\s\S]*?<\/noscript>/, renderToStaticMarkup(createElement('noscript', null,
-      richText(translate(locale, docs ? 'docs-noscript' : 'home-noscript'), [createElement('a', { href: 'https://github.com/mika-f/Celesta#readme' })]))))
+      richText(translate(locale, docs ? 'docs.metadata.noscript' : 'home.metadata.noscript'), [createElement('a', { href: 'https://github.com/mika-f/Celesta#readme' })]))))
     .replace(/\s*<link rel="(?:canonical|alternate)"[^>]*>/g, '')
     .replace('</head>', `    <link rel="canonical" href="${site}${path}" />\n    ${alternatives}\n    <link rel="alternate" hreflang="x-default" href="${docs ? `${site}/en/${suffix}` : `${site}/`}" />\n  </head>`);
 }
@@ -90,12 +90,12 @@ function sitePages(): Plugin {
           createElement('head', null,
             createElement('meta', { charSet: 'utf-8' }),
             createElement('meta', { name: 'viewport', content: 'width=device-width, initial-scale=1' }),
-            createElement('title', null, translate(locale, 'not-found-title'))),
+            createElement('title', null, translate(locale, 'not-found.title'))),
           createElement('body', { style: { background: '#0a0a0a', color: '#ededeb', fontFamily: 'Helvetica, Arial, sans-serif', padding: '12vw' } },
             createElement('p', null, '404'),
-            createElement('h1', null, translate(locale, 'not-found-heading')),
-            createElement('p', null, translate(locale, 'not-found-description')),
-            createElement('a', { href: `/${locale}/`, style: { color: 'inherit' } }, translate(locale, 'not-found-back'))));
+            createElement('h1', null, translate(locale, 'not-found.heading')),
+            createElement('p', null, translate(locale, 'not-found.description')),
+            createElement('a', { href: `/${locale}/`, style: { color: 'inherit' } }, translate(locale, 'not-found.back'))));
         writeFileSync(join(outDir, locale, '404.html'), '<!doctype html>\n' + renderToStaticMarkup(notFound));
       }
       // Preserve existing English documentation URLs and hash links.

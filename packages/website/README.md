@@ -73,23 +73,50 @@ headers and immutable caching for Vite's hashed assets.
 - Header language links preserve the current chapter, query string, and anchor.
 - `src/locales.ts` is the language registry. `src/locales/en.json` is the source
   catalog; `src/locales/ja.json` contains Japanese translations. `catalog.ts`
-  checks that each language supplies every message.
+  initializes i18next with these resources and checks their nested key structure
+  in TypeScript. React copy uses react-i18next’s `Trans`.
 
 To add a language:
 
 1. Copy `src/locales/en.json` to `<language>.json` and translate the values.
-   Preserve `{name}` variables and numbered React placeholders. `<0/>` inserts
-   a code example or dynamic value; `<0>…</0>` preserves an element such as a
-   link or emphasis while allowing its text and position to change. These are
-   React elements, not arbitrary HTML.
+   Preserve `{{name}}` interpolation variables and named React slots.
+   `<slot0/>` inserts a code example or dynamic value; `<slot0>…</slot0>`
+   preserves an element such as a link or emphasis while allowing its text
+   and position to change. `text(key, [component0, …])` supplies these slots
+   to `Trans`; missing wrappers preserve their translated children. These
+   slots are React elements, not arbitrary HTML.
 2. Register a lowercase URL code (such as `ja` or `pt-br`) and native name in `src/locales.ts`, import its catalog in
    `src/catalog.ts`, and add it to `catalogs`.
 3. Run `pnpm test` and `pnpm build`. Routing, language links, HTML generation,
    and alternate-language metadata all use the registry automatically.
 
 Edit prose in the catalogs; layout and API examples stay in the TSX files.
-When adding new content, add the same descriptive message key to every catalog.
-The tests check completeness, interpolation variables, and placeholder nesting.
+Use nested objects for pages, features, and documentation chapters, for example:
+
+```json
+{
+  "docs": {
+    "chapters": {
+      "voicevox": {
+        "metadata": { "title": "@celesta/voicevox" },
+        "intro": "<slot0/> converts a VOICEVOX AudioQuery to a lip-sync track."
+      }
+    },
+    "search": {
+      "matches_one": "{{count}} matching topic",
+      "matches_other": "{{count}} matching topics"
+    }
+  }
+}
+```
+
+Read a leaf with `t('docs.chapters.voicevox.metadata.title')`. For counts, call
+`t('docs.search.matches', { count })`; i18next selects the plural form. Keep
+source keys in every catalog and add the plural suffixes required by a new
+language (`_one`, `_few`, `_many`, `_other`, and so on). Keys are checked against
+the English resource type. Tests recursively check completeness, interpolation
+variables, and Trans slot nesting. There is no flattened lookup catalog or
+custom interpolation/markup parser.
 
 ## Download links
 
