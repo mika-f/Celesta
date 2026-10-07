@@ -30,6 +30,8 @@ export type TextStyle = {
   align?: 'left' | 'center' | 'right' | null;
   lineHeight?: number | null;
   letterSpacing?: number | null;
+  colorRuns?: { start: number; end: number; color: string }[];
+  visibleCharacters?: number | null;
   lineBreak?: 'normal' | 'phrase' | null;
 };
 export type LayerContent =

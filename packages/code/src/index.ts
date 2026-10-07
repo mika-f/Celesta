@@ -1,8 +1,8 @@
 import * as React from 'react';
-import { Group, Rect, Text, useTextMetrics } from '@celesta/react';
-import type { CommonProps, TextStyle } from '@celesta/react';
-import { codeLines, expandTabs, tokenizeCode, validateTabSize } from './syntax.js';
-import type { CodeLanguage, CodeRun } from './syntax.js';
+import { Group, Rect, Text, textCaret, useTextMetrics } from '@celesta/react';
+import type { CommonProps, TextColorRun, TextStyle } from '@celesta/react';
+import { codeLines, tokenizeCode, validateTabSize } from './syntax.js';
+import type { CodeLanguage } from './syntax.js';
 
 export { tokenizeCode } from './syntax.js';
 export type { CodeLanguage, CodeToken } from './syntax.js';
@@ -63,21 +63,6 @@ function codeStyle(style: TextStyle = {}): TextStyle {
   return { ...style, fontFamily: style.fontFamily ?? 'JetBrains Mono', fontSize, lineHeight, align: 'left' };
 }
 
-function TokenRun({ run, visible, style, color, tabSize }: {
-  run: CodeRun; visible: number; style: TextStyle; color: string; tabSize: number;
-}): React.ReactElement | null {
-  // ponytail: prefix shaping is cached per run, but long lines still need many
-  // measurements and Text layers. Shared styled-text shaping is the upgrade path.
-  const { width } = useTextMetrics(run.prefix, style);
-  const count = Math.max(0, Math.min(run.characters.length, visible - run.start));
-  const text = count === run.characters.length ? run.text
-    : expandTabs(run.characters.slice(0, count).join(''), tabSize, run.column);
-  if (!text) return null;
-  return React.createElement(Text, {
-    x: width, anchorY: 'baseline', style: { ...style, fill: { type: 'solid', color } }, children: text,
-  });
-}
-
 /** Syntax-highlighted code built from Celesta's Text and Rect primitives. */
 export function Code({
   children, language = 'text', style, theme = codeThemes.dark,
@@ -92,18 +77,15 @@ export function Code({
   const tokens = React.useMemo(() => tokenizeCode(children, language), [children, language]);
   const lines = React.useMemo(() => codeLines(tokens, tabSize), [tokens, tabSize]);
   const coloredLines = React.useMemo(() => lines.map(line => {
-    const runs: (CodeRun & { color: string })[] = [];
+    const runs: TextColorRun[] = [];
     for (const run of line.runs) {
       const color = theme.tokens[run.type] ?? theme.foreground;
+      const end = run.column + Array.from(run.text).length;
       const previous = runs[runs.length - 1];
-      if (previous?.color === color) {
-        for (const character of run.characters) previous.characters.push(character);
-        previous.text += run.text;
-      } else {
-        runs.push({ ...run, characters: [...run.characters], color });
-      }
+      if (previous?.color === color) previous.end = end;
+      else runs.push({ start: run.column, end, color });
     }
-    return runs.filter(run => run.text.trim().length > 0);
+    return runs;
   }), [lines, theme]);
   const metrics = useTextMetrics(lines.map(line => line.text).join('\n'), resolvedStyle);
   // Empty text has no glyph runs in some fonts, so measure a baseline explicitly.
@@ -116,10 +98,14 @@ export function Code({
     highlighted.has(index + 1) ? React.createElement(Rect, {
       width: highlightWidth ?? metrics.width, height: lineHeight, fill: theme.highlightLine,
     }) : null,
-    React.createElement(Group, { y: baseline }, runs.map(run => React.createElement(TokenRun, {
-      key: run.start, run, visible, style: resolvedStyle, tabSize,
-      color: run.color,
-    }))),
+    lines[index].text && visible > lines[index].start ? React.createElement(Text, {
+      y: baseline, anchorY: 'baseline', children: lines[index].text,
+      style: {
+        ...resolvedStyle, fill: { type: 'solid', color: theme.foreground }, colorRuns: runs,
+        visibleCharacters: visible < lines[index].start + lines[index].columns.length - 1
+          ? lines[index].columns[Math.max(0, visible - lines[index].start)] : undefined,
+      },
+    }) : null,
   )));
 }
 
@@ -162,17 +148,36 @@ export function codeCharacterCount(source: string, position: CodePosition): numb
   return count;
 }
 
-/** Measures a caret/annotation position using the same style and tabs as Code. */
+/**
+ * Measures a caret/annotation using native shaped glyph metrics and Code's style/tabs.
+ * Unsupported in the browser runtime, which cannot supply shaped glyph metrics.
+ */
 export function useCodePoint(
   source: string, position: CodePosition, style?: TextStyle, tabSize = 2,
 ): CodePoint {
   validateTabSize(tabSize);
-  const { parts, index } = codePositionParts(source, position);
+  codePositionParts(source, position);
   const { line, column } = position;
   const resolvedStyle = codeStyle(style);
-  const prefix = expandTabs(Array.from(parts[index]).slice(0, column - 1).join(''), tabSize);
-  const { width } = useTextMetrics(prefix, resolvedStyle);
+  const layout = React.useMemo(() => {
+    const lines = codeLines(tokenizeCode(source), tabSize);
+    let start = 0;
+    const positions = lines.map(line => {
+      const position = { start, columns: line.columns };
+      start += line.columns[line.columns.length - 1] + 1;
+      return position;
+    });
+    return { text: lines.map(line => line.text).join('\n'), positions };
+  }, [source, tabSize]);
+  const metrics = useTextMetrics(layout.text, resolvedStyle);
   const { ascent } = useTextMetrics('M', resolvedStyle);
+  const target = layout.positions[line - 1];
+  const offset = target.start + target.columns[column - 1];
+  let glyphs;
+  try { glyphs = metrics.glyphs; }
+  catch { throw new Error('useCodePoint() requires native shaped glyph metrics and is unsupported in browser renders'); }
+  const caret = textCaret(metrics, offset);
+  const x = glyphs.some(glyph => glyph.line === line - 1) ? caret.x : 0;
   const y = (line - 1) * resolvedStyle.lineHeight!;
-  return { x: width, y, baseline: y + ascent, lineHeight: resolvedStyle.lineHeight! };
+  return { x, y, baseline: y + ascent, lineHeight: resolvedStyle.lineHeight! };
 }

@@ -32,6 +32,7 @@ export type { ResolvedAsset } from './generated/ResolvedAsset';
 export type { Scene } from './generated/Scene';
 export type { Stroke } from './generated/Stroke';
 export type { TextAlign } from './generated/TextAlign';
+export type { TextColorRun } from './generated/TextColorRun';
 export type { TextStyle } from './generated/TextStyle';
 export type { Time } from './generated/Time';
 

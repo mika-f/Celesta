@@ -34,11 +34,15 @@ pub(crate) struct TextMetricsPayload {
     pub(crate) line_height: f64,
     pub(crate) lines: usize,
     pub(crate) glyphs: Vec<GlyphPayload>,
+    pub(crate) line_starts: Vec<usize>,
 }
 
 #[derive(Serialize)]
 pub(crate) struct GlyphPayload {
     pub(crate) text: String,
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+    pub(crate) rtl: bool,
     pub(crate) x: f64,
     pub(crate) width: f64,
     pub(crate) line: usize,
@@ -73,11 +77,15 @@ pub(crate) fn text_metrics_payload(metrics: &TextMetrics) -> TextMetricsPayload 
         descent: metrics.descent,
         line_height: metrics.line_height,
         lines: metrics.lines,
+        line_starts: metrics.line_starts.clone(),
         glyphs: metrics
             .glyphs
             .iter()
             .map(|glyph| GlyphPayload {
                 text: glyph.text.clone(),
+                start: glyph.start,
+                end: glyph.end,
+                rtl: glyph.rtl,
                 x: glyph.x,
                 width: glyph.width,
                 line: glyph.line,

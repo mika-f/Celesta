@@ -91,10 +91,10 @@ The complete source is tokenized only when source or language changes. Line
 preparation also updates when tab size changes. Typing reveals the cached result;
 it does not
 re-tokenize an incomplete program. Colors therefore reflect the finished code.
-Measurements use the full source and prefixes, so changing visibility or line
-highlights keeps layout stable and reuses the mounted component's measurements.
-Adjacent tokens with the same color share a Text layer, and blank runs have no
-Text layer while retaining their measured spacing.
+Code measures the full source and a baseline once, independently of token count.
+Each non-empty source line is one Text layer with `style.colorRuns`; changing
+visibility, theme or line highlights keeps the complete line's shaping and
+reuses its measurements. Adjacent tokens with the same color share a run.
 
 ## Themes
 
@@ -118,10 +118,14 @@ Unspecified names use `foreground`.
 ## Carets and annotations
 
 `useCodePoint(source, { line, column }, style?, tabSize?)` measures a source
-position using the same font and tab expansion as `Code`. Both line and column
+position from the full-source glyph layout using the same font and tab expansion
+as `Code`. Moving the caret does not measure prefixes. Both line and column
 are one-based; columns count original code points, so tabs and emoji each count
 once. `column` may be one past the final character to place a caret at line end.
-Invalid positions throw an error.
+Invalid positions throw an error. This hook requires the native editor/exporter
+runtime; browser renders cannot provide shaped glyph metrics and throw an
+explicit `useCodePoint()` unsupported error. `Code` rendering itself works in
+the browser.
 
 ```tsx
 const caret = useCodePoint(source, { line: 1, column: 7 }, style);
@@ -161,11 +165,14 @@ all source text, including whitespace, and requires neither HTML nor a DOM.
 
 ## Current limits
 
-Rendering uses separate Text layers per color run and measures their prefixes.
-Long lines with many colors increase initial measurement work, scene size, and
-rasterization work. Font shaping across color boundaries (including ligatures,
-kerning, combining clusters, and bidirectional text) is not preserved as one
-text run. Use a monospaced font and left-to-right code; proportional fonts are
-not a supported layout guarantee. Shared styled-text shaping and rendering
-belong in the core renderer rather than this optional tokenizer package.
-This follow-up is tracked in [#99](https://github.com/mika-f/Celesta/issues/99).
+Color boundaries preserve kerning, ligatures, combining sequences and bidirectional
+shaping. A shaped cluster takes its first code point's color and is revealed
+as a whole when that first code point becomes visible. Positions inside a
+cluster interpolate its advance; they are not font-specific ligature caret stops.
+Left alignment and unwrapped lines remain intentional. Monospaced fonts are
+recommended for conventional code indentation; proportional fonts retain their
+natural shaping. Extremely wide lines are rasterized at a smaller scale on the
+GPU to fit its texture limit, which can reduce sharpness.
+
+The same `TextStyle.colorRuns` and `visibleCharacters` work on ordinary `Text`
+and subtitles. See [the API and benchmark note](../../docs/performance/text-color-runs.md).

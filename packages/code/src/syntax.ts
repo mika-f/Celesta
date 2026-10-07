@@ -77,21 +77,20 @@ export function expandTabs(text: string, tabSize: number, column = 0): string {
 
 export interface CodeRun {
   type: string;
-  characters: string[];
   text: string;
-  prefix: string;
   column: number;
-  /** Code-point offset in the original source (not the expanded text). */
-  start: number;
 }
 
 export interface CodeLine {
   text: string;
   runs: CodeRun[];
+  start: number;
+  /** Expanded columns at each original source code-point boundary. */
+  columns: number[];
 }
 
 export function codeLines(tokens: readonly CodeToken[], tabSize: number): CodeLine[] {
-  const lines: CodeLine[] = [{ text: '', runs: [] }];
+  const lines: CodeLine[] = [{ text: '', runs: [], start: 0, columns: [0] }];
   let offset = 0;
   let column = 0;
   let previousCR = false;
@@ -99,19 +98,20 @@ export function codeLines(tokens: readonly CodeToken[], tabSize: number): CodeLi
     for (const character of token.text) {
       const line = lines[lines.length - 1];
       if (character === '\r' || character === '\n') {
-        if (character !== '\n' || !previousCR) lines.push({ text: '', runs: [] });
+        if (character !== '\n' || !previousCR) lines.push({ text: '', runs: [], start: offset + 1, columns: [0] });
+        if (character === '\n' && previousCR) lines[lines.length - 1].start = offset + 1;
         column = 0;
       } else {
         let run = line.runs[line.runs.length - 1];
         if (!run || run.type !== token.type) {
-          run = { type: token.type, characters: [], text: '', prefix: line.text, column, start: offset };
+          run = { type: token.type, text: '', column };
           line.runs.push(run);
         }
         const expanded = expandTabs(character, tabSize, column);
-        run.characters.push(character);
         run.text += expanded;
         line.text += expanded;
         column += Array.from(expanded).length;
+        line.columns.push(column);
       }
       previousCR = character === '\r';
       offset++;

@@ -1859,3 +1859,267 @@ fn a_stroke_filling_the_rect_hides_its_fill() {
         assert_eq!(pixel, [255, 0, 0, 255]);
     }
 }
+
+#[test]
+fn colored_runs_preserve_full_shaping_and_reveal_geometry() {
+    use celesta_composition::TextColorRun;
+    let mut rasterizer = TextRasterizer::new();
+    let plain = TextStyle {
+        font_size: Some(36.0),
+        font_family: Some("serif".into()),
+        ..Default::default()
+    };
+    for text in [
+        "AV office e\u{301} 😀 אבג",
+        "AV\r\noffice e\u{301}\n😀 אבג\n",
+        "日本語の字幕を色分けする",
+    ] {
+        let count = text.chars().count();
+        let colored = TextStyle {
+            color_runs: (0..count)
+                .map(|start| TextColorRun {
+                    start,
+                    end: start + 1,
+                    color: if start % 2 == 0 { "#ff0000" } else { "#00ff00" }.into(),
+                })
+                .collect(),
+            ..plain.clone()
+        };
+        assert_eq!(
+            rasterizer.measure(text, &plain, Some(180.0)),
+            rasterizer.measure(text, &colored, Some(180.0))
+        );
+        let original = rasterizer.rasterize(text, &plain, None, 1.0).unwrap();
+        let full = rasterizer.rasterize(text, &colored, None, 1.0).unwrap();
+        assert_eq!(
+            original
+                .pixels()
+                .chunks_exact(4)
+                .map(|p| p[3])
+                .collect::<Vec<_>>(),
+            full.pixels()
+                .chunks_exact(4)
+                .map(|p| p[3])
+                .collect::<Vec<_>>()
+        );
+        for visible in [0, 1, count / 2, count] {
+            let partial = rasterizer
+                .rasterize(
+                    text,
+                    &TextStyle {
+                        visible_characters: Some(visible),
+                        ..colored.clone()
+                    },
+                    None,
+                    1.0,
+                )
+                .unwrap();
+            assert_eq!(
+                (
+                    partial.width(),
+                    partial.height(),
+                    partial.baseline(),
+                    partial.anchor_box
+                ),
+                (
+                    full.width(),
+                    full.height(),
+                    full.baseline(),
+                    full.anchor_box
+                )
+            );
+            if visible == 0 {
+                assert!(partial.pixels().iter().all(|&p| p == 0));
+            } else if visible == count {
+                assert_eq!(partial, full);
+            }
+        }
+        let first = rasterizer.shaped_buffer(text, &plain, None, 1.0);
+        let second = rasterizer.shaped_buffer(text, &colored, None, 1.0);
+        assert!(
+            std::sync::Arc::ptr_eq(&first, &second),
+            "paint changes reuse the exact layout"
+        );
+    }
+}
+
+#[test]
+fn colored_runs_validate_ranges_and_override_gradient_without_recoloring_white() {
+    use celesta_composition::TextColorRun;
+    let mut rasterizer = TextRasterizer::new();
+    let white = TextColorRun {
+        start: 0,
+        end: 2,
+        color: "#ffffff80".into(),
+    };
+    let solid = TextStyle {
+        color_runs: vec![white.clone()],
+        font_size: Some(40.0),
+        ..Default::default()
+    };
+    let gradient = TextStyle {
+        fill: Some(Paint::Linear {
+            start: Point { x: 0.0, y: 0.0 },
+            end: Point { x: 80.0, y: 0.0 },
+            stops: vec![
+                celesta_composition::GradientStop {
+                    offset: 0.0,
+                    color: "#ff0000".into(),
+                },
+                celesta_composition::GradientStop {
+                    offset: 1.0,
+                    color: "#0000ff".into(),
+                },
+            ],
+        }),
+        ..solid.clone()
+    };
+    assert_eq!(
+        rasterizer.rasterize("AV", &solid, None, 1.0).unwrap(),
+        rasterizer.rasterize("AV", &gradient, None, 1.0).unwrap()
+    );
+    for runs in [
+        vec![TextColorRun {
+            end: 3,
+            ..white.clone()
+        }],
+        vec![white.clone(), white.clone()],
+        vec![TextColorRun {
+            start: 2,
+            end: 1,
+            ..white
+        }],
+    ] {
+        assert!(matches!(
+            rasterizer.rasterize(
+                "AV",
+                &TextStyle {
+                    color_runs: runs,
+                    ..solid.clone()
+                },
+                None,
+                1.0
+            ),
+            Err(crate::RenderError::InvalidTextColorRun { .. })
+        ));
+    }
+}
+
+#[test]
+fn glyph_offsets_refer_to_original_code_points_after_wrapping_and_crlf() {
+    let mut rasterizer = TextRasterizer::new();
+    let text = "😀 e\u{301}\r\nאבג\n日本語の字幕";
+    for line_break in [LineBreak::Normal, LineBreak::Phrase] {
+        let metrics = rasterizer.measure(
+            text,
+            &TextStyle {
+                font_size: Some(32.0),
+                line_break: Some(line_break),
+                ..Default::default()
+            },
+            Some(120.0),
+        );
+        for glyph in metrics.glyphs {
+            assert_eq!(
+                text.chars()
+                    .skip(glyph.start)
+                    .take(glyph.end - glyph.start)
+                    .collect::<String>(),
+                glyph.text
+            );
+        }
+    }
+}
+
+#[test]
+fn color_runs_paint_each_cluster_and_reveal_the_expected_prefix() {
+    use celesta_composition::TextColorRun;
+    let mut rasterizer = TextRasterizer::new();
+    let text = "A B C D";
+    let style = TextStyle {
+        font_family: Some("monospace".into()),
+        font_size: Some(40.0),
+        color_runs: text
+            .chars()
+            .enumerate()
+            .map(|(start, _)| TextColorRun {
+                start,
+                end: start + 1,
+                color: if start % 4 == 0 { "#ff0000" } else { "#00ff00" }.into(),
+            })
+            .collect(),
+        ..Default::default()
+    };
+    let full = rasterizer.rasterize(text, &style, None, 1.0).unwrap();
+    let metrics = rasterizer.measure(text, &style, None);
+    for glyph in metrics.glyphs.iter().filter(|glyph| glyph.text != " ") {
+        let expected = if glyph.start % 4 == 0 {
+            [255, 0, 0]
+        } else {
+            [0, 255, 0]
+        };
+        let pixels: Vec<_> = full
+            .pixels()
+            .chunks_exact(4)
+            .enumerate()
+            .filter(|(i, p)| {
+                let x = (i % full.width() as usize) as f64;
+                x >= glyph.x && x < glyph.x + glyph.width && p[3] > 0
+            })
+            .map(|(_, p)| p)
+            .collect();
+        assert!(!pixels.is_empty(), "missing glyph {}", glyph.text);
+        assert!(
+            pixels.iter().all(|p| p[..3] == expected),
+            "wrong color for {}",
+            glyph.text
+        );
+    }
+    for visible in [1, 3, 5, text.chars().count()] {
+        let partial = rasterizer
+            .rasterize(
+                text,
+                &TextStyle {
+                    visible_characters: Some(visible),
+                    ..style.clone()
+                },
+                None,
+                1.0,
+            )
+            .unwrap();
+        let mut expected = style.clone();
+        for run in &mut expected.color_runs {
+            if run.start >= visible {
+                run.color = "#00000000".into();
+            }
+        }
+        assert_eq!(
+            partial,
+            rasterizer.rasterize(text, &expected, None, 1.0).unwrap(),
+            "visible={visible}"
+        );
+    }
+}
+
+#[test]
+fn oversized_text_does_not_evict_cached_layouts() {
+    let mut rasterizer = TextRasterizer::new();
+    let style = TextStyle::default();
+    let first = rasterizer.shaped_buffer("cached 0", &style, None, 1.0);
+    for i in 1..32 {
+        rasterizer.shaped_buffer(&format!("cached {i}"), &style, None, 1.0);
+    }
+    rasterizer.shaped_buffer(&" ".repeat(100_001), &style, None, 1.0);
+    assert_eq!(rasterizer.shaped_buffers.len(), 32);
+    assert!(std::sync::Arc::ptr_eq(
+        &first,
+        &rasterizer.shaped_buffer("cached 0", &style, None, 1.0)
+    ));
+}
+
+#[test]
+fn metrics_retain_empty_line_source_offsets() {
+    let mut rasterizer = TextRasterizer::new();
+    let metrics = rasterizer.measure("A\r\n\r\nB\n\n", &TextStyle::default(), None);
+    assert_eq!(metrics.line_starts, [0, 3, 5, 7, 8]);
+}

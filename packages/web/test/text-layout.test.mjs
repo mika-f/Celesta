@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { textLines, textMeasurer } from '../src/text-layout.ts';
+import { textLines, textLineRanges, textMeasurer } from '../src/text-layout.ts';
 
 test('wrapping uses the requested language, including with older canvas contexts', t => {
   const locales = [], Segmenter = Intl.Segmenter;
@@ -29,4 +29,12 @@ test('whole-run kerning and ligature widths are preserved without fabricating gl
     assert.equal(metrics.width, width);
     assert.throws(() => metrics.glyphs, /Shaped glyph metrics.*native renderer/);
   }
+});
+
+
+test('wrapped ranges retain source code-point offsets across trimmed spaces and CRLF', () => {
+  const ctx = { measureText: text => ({ width: Array.from(text).length }) };
+  assert.deepEqual(textLineRanges(ctx, '😀 AV   AV\r\né', 5, 'en'), [
+    { text: '😀 AV', start: 0 }, { text: 'AV', start: 7 }, { text: 'é', start: 11 },
+  ]);
 });

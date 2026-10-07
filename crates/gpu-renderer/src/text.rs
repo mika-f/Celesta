@@ -34,10 +34,11 @@ pub(crate) fn rasterize_text(
             .rasterize(&job.text, &job.style, job.max_width, scale)
             .map_err(GpuRenderError::Text)?;
         let largest = text.width().max(text.height());
-        if largest <= limit || scale <= 1.0 {
+        if largest <= limit {
             break text;
         }
-        scale = (scale * limit as f32 / largest as f32 * 0.99).max(1.0);
+        // An unwrapped line can exceed the texture limit even at 1x.
+        scale *= limit as f32 / largest as f32 * 0.99;
     };
     let baseline = text.baseline_anchor();
     let origin = text.anchor_in_image(0.0, 0.0);

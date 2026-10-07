@@ -11,8 +11,10 @@ use crate::types::{Color, RgbaFrame};
 use celesta_composition::{LineBreak, TextAlign, TextStyle};
 use cosmic_text::{
     Align, Attrs, AttrsList, Buffer, BufferLine, Color as CosmicColor, Family, FontSystem,
-    LineIter, Metrics, PhysicalGlyph, Renderer, Shaping, SwashCache, SwashContent, Weight, Wrap,
+    LineEnding, LineIter, Metrics, PhysicalGlyph, Renderer, Shaping, SwashCache, SwashContent,
+    Weight, Wrap,
 };
+use std::sync::Arc;
 
 impl TextRasterizer {
     /// Shapes `text` into a laid-out buffer. `width` and `scale` are in
@@ -23,8 +25,26 @@ impl TextRasterizer {
         style: &TextStyle,
         width: Option<f32>,
         scale: f32,
-    ) -> Buffer {
+    ) -> Arc<Buffer> {
         self.select_language(style.lang.as_deref());
+        let key = (text.len() <= 100_000).then(|| {
+            format!(
+                "{text:?}\0{:?}\0{width:?}\0{scale:?}",
+                (
+                    &style.lang,
+                    &style.font_family,
+                    style.font_size,
+                    style.font_weight,
+                    style.align,
+                    style.line_height,
+                    style.letter_spacing,
+                    style.line_break,
+                )
+            )
+        });
+        if let Some(buffer) = key.as_ref().and_then(|key| self.shaped_buffers.get(key)) {
+            return Arc::clone(buffer);
+        }
         let requested_weight = style.font_weight.unwrap_or(400);
         // cosmic-text only picks the requested family's face when its weight
         // is exactly the requested one, and otherwise falls back to another
@@ -216,6 +236,14 @@ impl TextRasterizer {
             buffer.set_size(&mut self.font_system, Some(width), None);
         }
         buffer.shape_until_scroll(&mut self.font_system, false);
+        let buffer = Arc::new(buffer);
+        // Bound retained layouts; long documents do not grow the cache forever.
+        if let Some(key) = key {
+            if self.shaped_buffers.len() >= 32 {
+                self.shaped_buffers.clear();
+            }
+            self.shaped_buffers.insert(key, Arc::clone(&buffer));
+        }
         buffer
     }
 
@@ -228,6 +256,12 @@ impl TextRasterizer {
         max_width: Option<f64>,
     ) -> TextMetrics {
         let buffer = self.shaped_buffer(text, style, max_width.map(|w| w as f32), 1.0);
+        let offsets = source_offsets(&buffer, text, style);
+        let boundaries: Vec<_> = text
+            .char_indices()
+            .map(|(byte, _)| byte)
+            .chain(std::iter::once(text.len()))
+            .collect();
         let mut metrics = TextMetrics::default();
         for run in buffer.layout_runs() {
             metrics.width = metrics.width.max(f64::from(run.line_w));
@@ -239,23 +273,27 @@ impl TextRasterizer {
                 metrics.descent = f64::from(run.line_height) - metrics.ascent;
                 metrics.line_height = f64::from(run.line_height);
             }
+            let start = run
+                .glyphs
+                .iter()
+                .map(|glyph| glyph.start)
+                .min()
+                .unwrap_or(0);
+            metrics.line_starts.push(offsets[run.line_i][start]);
             metrics.lines += 1;
             // Cluster-wise: a ligature or combined glyph has one entry.
             for glyph in run.glyphs {
-                let Some(cluster) = run.text.get(glyph.start..glyph.end) else {
-                    continue;
-                };
-                // The word joiners `lineBreak: phrase` adds are not text.
-                let cluster = if style.line_break == Some(LineBreak::Phrase) {
-                    cluster.replace(WORD_JOINER, "")
-                } else {
-                    cluster.to_owned()
-                };
+                let start = offsets[run.line_i][glyph.start];
+                let end = offsets[run.line_i][glyph.end];
+                let cluster = &text[boundaries[start]..boundaries[end]];
                 if cluster.is_empty() {
                     continue;
                 }
                 metrics.glyphs.push(GlyphMetrics {
-                    text: cluster,
+                    start: offsets[run.line_i][glyph.start],
+                    end: offsets[run.line_i][glyph.end],
+                    rtl: glyph.level.is_rtl(),
+                    text: cluster.to_owned(),
                     x: f64::from(glyph.x),
                     width: f64::from(glyph.w),
                     line: metrics.lines - 1,
@@ -315,52 +353,83 @@ impl TextRasterizer {
         // multi-color emoji glyphs, which a single mask+solid-fill
         // composite cannot represent.
         let mut glyph_pixels = vec![0_u8; mask_width as usize * mask_height as usize * 4];
-        buffer.render(
-            &mut GlyphPixelRenderer {
-                font_system: &mut self.font_system,
-                cache: &mut self.swash_cache,
-                callback: |x: i32, y: i32, coverage: u8, color: CosmicColor| {
-                    let pixel_x = x + pad as i32;
-                    let pixel_y = y + pad as i32;
-                    if pixel_x < 0
-                        || pixel_y < 0
-                        || pixel_x >= mask_width as i32
-                        || pixel_y >= mask_height as i32
-                    {
-                        return;
-                    }
-                    let offset = pixel_y as usize * mask_width as usize + pixel_x as usize;
-                    mask[offset] = mask[offset].max(coverage);
-                    let pixel_offset = offset * 4;
-                    blend(
-                        &mut glyph_pixels[pixel_offset..pixel_offset + 4],
-                        Color::rgba(color.r(), color.g(), color.b(), color.a()),
-                        1.0,
-                    );
-                },
+        let offsets = (!style.color_runs.is_empty() || style.visible_characters.is_some())
+            .then(|| source_offsets(&buffer, text, style));
+        let count = if style.color_runs.is_empty() {
+            0
+        } else {
+            text.chars().count()
+        };
+        let mut colors = Vec::with_capacity(style.color_runs.len());
+        let mut previous_end = 0;
+        for (index, run) in style.color_runs.iter().enumerate() {
+            if run.start < previous_end || run.end < run.start || run.end > count {
+                return Err(RenderError::InvalidTextColorRun {
+                    index,
+                    start: run.start,
+                    end: run.end,
+                    text_length: count,
+                });
+            }
+            colors.push(Color::from_hex(&run.color)?);
+            previous_end = run.end;
+        }
+        let mut ink_rows: Option<(usize, usize)> = None;
+        let mut renderer = GlyphPixelRenderer {
+            font_system: &mut self.font_system,
+            cache: &mut self.swash_cache,
+            gradient: None,
+            visible: true,
+            callback: |x: i32, y: i32, coverage: u8, color: CosmicColor, visible: bool| {
+                let pixel_x = x + pad as i32;
+                let pixel_y = y + pad as i32;
+                if pixel_x < 0
+                    || pixel_y < 0
+                    || pixel_x >= mask_width as i32
+                    || pixel_y >= mask_height as i32
+                {
+                    return;
+                }
+                let row = pixel_y as usize;
+                ink_rows =
+                    Some(ink_rows.map_or((row, row), |(min, max)| (min.min(row), max.max(row))));
+                if !visible {
+                    return;
+                }
+                let offset = row * mask_width as usize + pixel_x as usize;
+                mask[offset] = mask[offset].max(coverage);
+                let pixel_offset = offset * 4;
+                blend(
+                    &mut glyph_pixels[pixel_offset..pixel_offset + 4],
+                    Color::rgba(color.r(), color.g(), color.b(), color.a()),
+                    1.0,
+                );
             },
-            CosmicColor::rgba(fill.red, fill.green, fill.blue, fill.alpha),
-        );
-
-        if let Some(gradient) = fill_paint.as_ref().filter(|paint| paint.solid().is_none()) {
-            // Plain glyph pixels come back as opaque-white scaled by coverage;
-            // anything with color (an emoji) keeps its own.
-            for (index, pixel) in glyph_pixels.chunks_exact_mut(4).enumerate() {
-                if pixel[3] == 0 || pixel[..3] != [255, 255, 255] {
-                    continue;
-                }
-                // Gradient coordinates are relative to the layout box.
-                let x = f64::from((index % mask_width as usize) as u32) - f64::from(pad) + 0.5;
-                let y = f64::from((index / mask_width as usize) as u32) - f64::from(pad) + 0.5;
-                let color = gradient.color_at(x, y);
-                let alpha = (f64::from(pixel[3]) * f64::from(color.alpha) / 255.0).round() as u8;
-                // Transparent pixels stay all zeros, as compositing below
-                // expects.
-                if alpha == 0 {
-                    pixel.copy_from_slice(&[0; 4]);
-                    continue;
-                }
-                pixel.copy_from_slice(&[color.red, color.green, color.blue, alpha]);
+        };
+        for run in buffer.layout_runs() {
+            for glyph in run.glyphs {
+                let start = offsets
+                    .as_ref()
+                    .map_or(0, |offsets| offsets[run.line_i][glyph.start]);
+                renderer.visible = style
+                    .visible_characters
+                    .is_none_or(|visible| start < visible);
+                let index = style.color_runs.partition_point(|run| run.end <= start);
+                let override_color = style
+                    .color_runs
+                    .get(index)
+                    .filter(|run| run.start <= start)
+                    .map(|_| colors[index]);
+                let color = override_color.unwrap_or(fill);
+                renderer.gradient = if override_color.is_none() {
+                    fill_paint.as_ref().filter(|paint| paint.solid().is_none())
+                } else {
+                    None
+                };
+                renderer.glyph(
+                    glyph.physical((0.0, run.line_y), 1.0),
+                    CosmicColor::rgba(color.red, color.green, color.blue, color.alpha),
+                );
             }
         }
 
@@ -395,7 +464,15 @@ impl TextRasterizer {
         let mut top = 0;
         let single_line = !text.contains('\n');
         if single_line {
-            (frame, top) = trim_transparent_rows(frame);
+            if (!style.color_runs.is_empty() || style.visible_characters.is_some())
+                && let Some((min, max)) = ink_rows
+            {
+                let min = min.saturating_sub(stroke_radius as usize);
+                let max = (max + stroke_radius as usize).min(mask_height as usize - 1);
+                (frame, top) = trim_rows(frame, min, max);
+            } else {
+                (frame, top) = trim_transparent_rows(frame);
+            }
         }
         // A single line is anchored by its visible rows, stroke included;
         // several lines by their line boxes.
@@ -437,6 +514,11 @@ pub(crate) fn trim_transparent_rows(frame: RgbaFrame) -> (RgbaFrame, i32) {
         return (frame, 0);
     };
     let max_y = frame.height as usize - 1 - from_bottom;
+    trim_rows(frame, min_y, max_y)
+}
+
+fn trim_rows(frame: RgbaFrame, min_y: usize, max_y: usize) -> (RgbaFrame, i32) {
+    let row_bytes = frame.width as usize * 4;
     let height = max_y - min_y + 1;
     let pad_top = height % 2;
     if height == frame.height as usize && pad_top == 0 {
@@ -458,17 +540,19 @@ pub(crate) fn trim_transparent_rows(frame: RgbaFrame) -> (RgbaFrame, i32) {
 /// the base color's alpha to ordinary (mask) glyphs, which `draw` drops.
 /// Color glyphs (emoji) keep their own pixels. `callback` receives each
 /// pixel's position, its unscaled coverage, and its color.
-struct GlyphPixelRenderer<'a, F: FnMut(i32, i32, u8, CosmicColor)> {
+struct GlyphPixelRenderer<'a, F: FnMut(i32, i32, u8, CosmicColor, bool)> {
     font_system: &'a mut FontSystem,
     cache: &'a mut SwashCache,
+    gradient: Option<&'a ResolvedPaint>,
+    visible: bool,
     callback: F,
 }
 
-impl<F: FnMut(i32, i32, u8, CosmicColor)> Renderer for GlyphPixelRenderer<'_, F> {
+impl<F: FnMut(i32, i32, u8, CosmicColor, bool)> Renderer for GlyphPixelRenderer<'_, F> {
     fn rectangle(&mut self, x: i32, y: i32, w: u32, h: u32, color: CosmicColor) {
         for offset_y in 0..h as i32 {
             for offset_x in 0..w as i32 {
-                (self.callback)(x + offset_x, y + offset_y, color.a(), color);
+                (self.callback)(x + offset_x, y + offset_y, color.a(), color, self.visible);
             }
         }
     }
@@ -477,6 +561,8 @@ impl<F: FnMut(i32, i32, u8, CosmicColor)> Renderer for GlyphPixelRenderer<'_, F>
         let Self {
             font_system,
             cache,
+            gradient,
+            visible,
             callback,
         } = self;
         let mask = matches!(
@@ -493,11 +579,47 @@ impl<F: FnMut(i32, i32, u8, CosmicColor)> Renderer for GlyphPixelRenderer<'_, F>
             }
             let pixel = if mask {
                 let alpha = (f64::from(coverage) * f64::from(color.a()) / 255.0).round() as u8;
-                CosmicColor::rgba(pixel.r(), pixel.g(), pixel.b(), alpha)
+                if let Some(gradient) = gradient {
+                    let color = gradient
+                        .color_at(f64::from(glyph.x + x) + 0.5, f64::from(glyph.y + y) + 0.5);
+                    let alpha =
+                        (f64::from(coverage) * f64::from(color.alpha) / 255.0).round() as u8;
+                    CosmicColor::rgba(color.red, color.green, color.blue, alpha)
+                } else {
+                    CosmicColor::rgba(pixel.r(), pixel.g(), pixel.b(), alpha)
+                }
             } else {
                 pixel
             };
-            callback(glyph.x + x, glyph.y + y, coverage, pixel);
+            callback(glyph.x + x, glyph.y + y, coverage, pixel, *visible);
         });
     }
+}
+
+/// Translate shaping's line-local UTF-8 offsets to full-source code points.
+fn source_offsets(buffer: &Buffer, text: &str, style: &TextStyle) -> Vec<Vec<usize>> {
+    let mut base = 0;
+    buffer
+        .lines
+        .iter()
+        .zip(LineIter::new(text).chain(std::iter::once((text.len()..text.len(), LineEnding::None))))
+        .map(|(line, (range, ending))| {
+            let mut offsets = vec![base; line.text().len() + 1];
+            let mut point = base;
+            let mut original = text[range.clone()].chars().peekable();
+            for (byte, character) in line.text().char_indices() {
+                offsets[byte..byte + character.len_utf8()].fill(point);
+                if style.line_break != Some(LineBreak::Phrase)
+                    || character != WORD_JOINER
+                    || original.peek() == Some(&WORD_JOINER)
+                {
+                    original.next();
+                    point += 1;
+                }
+            }
+            offsets[line.text().len()] = point;
+            base += text[range].chars().count() + ending.as_str().chars().count();
+            offsets
+        })
+        .collect()
 }
