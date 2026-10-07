@@ -62,9 +62,40 @@ spent waiting for the next React scene (median of six rounds):
 The whole export did not get measurably faster on this machine (NEBULA
 6.53 s both before and after, SPECTRA 5.09 → 4.95 s): rendering and
 encoding set the pace here, and the load made the totals vary by up to
-2×. Machines where the React evaluation paces the export, like the
-RTX 4070 in `docs/performance/spectra-tuning.md`, are where it should
-show.
+2×.
+
+### Windows, RTX A4000
+
+i7-12700K, RTX A4000 (driver 581.15, Vulkan), Windows 11, Node 26; CPU
+load 1–10%. main, the length prefix alone, and both changes; medians of
+five rounds.
+
+`protocol-bench`, mean ms per frame:
+
+| Variant | NEBULA | SPECTRA | reel |
+| --- | ---: | ---: | ---: |
+| main | 5.79 | 4.26 | 1.51 |
+| length prefix | 5.68 (−2%) | 4.33 (+2%) | 1.55 (+3%) |
+| both, `--pipelined` | 4.14 (−29%) | 3.97 (−7%) | 1.19 (−21%) |
+
+Export wall time, and the render loop / the render thread's wait for
+React:
+
+| Entry, preset | main | both |
+| --- | --- | --- |
+| NEBULA, `ultrafast` | 5.23 s, 3,661 / 292 ms | 5.24 s, 3,559 / 25 ms |
+| NEBULA, `medium` | 7.27 s, 5,292 / 672 ms | 7.20 s, 5,159 / 24 ms |
+| SPECTRA, `ultrafast` | 4.56 s, 2,865 / 983 ms | 4.42 s, 2,729 / 804 ms |
+| SPECTRA, `medium` | 6.26 s, 4,221 / 1,251 ms | 6.16 s, 4,055 / 918 ms |
+| reel, `ultrafast` | 4.76 s, 1,715 / 451 ms | 4.68 s, 1,579 / 300 ms |
+| reel, `medium` | 5.90 s, 2,697 / 500 ms | 5.89 s, 2,657 / 181 ms |
+
+The length prefix alone changed neither table beyond noise. Pipelining
+removes almost all of NEBULA's wait, but the render loop shrinks 2.5–3%
+and the wall time not at all: rendering and encoding take the freed time
+here too. SPECTRA still waits 0.8–0.9 s after pipelining, so its
+evaluation remains partly the limit; reel spends much of its wall time
+outside the render loop (start-up and audio).
 
 Every frame's scene message from main and from both changes was
 byte-identical for NEBULA (600 frames), SPECTRA (690, with 114 text

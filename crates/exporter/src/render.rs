@@ -6,7 +6,7 @@ use crate::options::{ColorConversion, VideoEncoding};
 use crate::project::{absolutize_fonts, absolutize_layers, visual_only_project};
 use crate::range::ExportWindow;
 use crate::react::ReactVideoRequest;
-use celesta_composition::{Rational, Scene, Time, TimeError};
+use celesta_composition::{Rational, Time, TimeError};
 use celesta_evaluator::{EvaluationError, Evaluator};
 use celesta_gpu_renderer::{GpuDriver, GpuRenderOptions, GpuRenderer, ReadbackFormat};
 use celesta_media::FfmpegBackend;
