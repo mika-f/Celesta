@@ -82,7 +82,7 @@ To add a language:
    a code example or dynamic value; `<0>…</0>` preserves an element such as a
    link or emphasis while allowing its text and position to change. These are
    React elements, not arbitrary HTML.
-2. Register the code and native name in `src/locales.ts`, import its catalog in
+2. Register a lowercase URL code (such as `ja` or `pt-br`) and native name in `src/locales.ts`, import its catalog in
    `src/catalog.ts`, and add it to `catalogs`.
 3. Run `pnpm test` and `pnpm build`. Routing, language links, HTML generation,
    and alternate-language metadata all use the registry automatically.
@@ -198,3 +198,9 @@ export instructions use React entries. Keep CLI flags aligned with
 `crates/exporter/src/main.rs` and `crates/editor/src/cli.rs`, and package import
 examples aligned with each package's public `src/index.ts`. In particular,
 VOICEVOX adapters are imported from `@celesta/voicevox`, not `@celesta/react`.
+
+Catalogs currently ship together in the shared JavaScript bundle. This is a
+simple tradeoff for two languages; switch to loading a catalog per language if
+additional locales make its transfer size significant. Search aliases live in
+the catalogs too, so add terms readers use in each language. Locale-specific
+404 pages and no-JavaScript fallback links are generated with the other HTML.

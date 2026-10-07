@@ -31,9 +31,9 @@ function SourceBuild() {
     </div>
     <h3>{text('guide.2-get-the-source')}</h3>
     <DocCode label={t('guide.clone-celesta')} code={`git clone ${repository}.git celesta\ncd celesta`} />
-    <h3>{text('guide.4-build-the-react-runtime')}</h3><p>{text('guide.for-react-compositions-in-a-source-build')}</p>
+    <h3>{text('guide.source-build.build-runtime')}</h3><p>{text('guide.for-react-compositions-in-a-source-build')}</p>
     <DocCode label={t('guide.build-the-react-runtime-from-source')} code={'pnpm install\npnpm --dir packages/react run codegen\npnpm --dir packages/react run build'} />
-    <h3>{text('guide.3-open-your-first-project')}</h3>
+    <h3>{text('guide.source-build.open-composition')}</h3>
     <DocCode label={t('guide.launch-the-native-app')} code="cargo run -p celesta-editor --release -- packages/react/examples/title.tsx" />
     <p>{text('guide.celesta-opens-its-built-in-demo-you')}</p>
     <DocCode label={t('guide.open-the-example-project')} code="cargo run -p celesta-editor --release -- examples/reel/film.tsx" />
@@ -178,7 +178,7 @@ export const contents: Record<string, ReactNode> = {
         <li>{text('guide.your-own-components-are-ordinary-react-function', [<code>.map()</code>])}</li>
         <li>{text('guide.an-optional-named-export-runs-once-before', [<code>prepare()</code>, <a href={docPath('data')} />])}</li>
       </ul>
-      <h3>{text('guide.set-up-typescript-in-your-editor')}</h3><p>{text('guide.with-a-react-composition-open-choose-file', [<strong />, <code>@celesta/react</code>, <code>@celesta/math</code>, <code>@celesta/code</code>, <code>.celesta/</code>])}</p>
+      <h3>{text('guide.set-up-typescript-in-your-editor')}</h3><p>{text('guide.with-a-react-composition-open-choose-file', [<strong />, <code>@celesta/react</code>, <code>@celesta/math</code>, <code>@celesta/code</code>, <code>.celesta/</code>, <code>@celesta/voicevox</code>])}</p>
       <p>{text('guide.starting-a-new-project-with-no-composition', [<strong />])}</p>
       <p>{text('guide.if-there-is-no-celesta-creates-one', [<code>tsconfig.json</code>, <code>extends</code>])}</p>
       <DocCode label="tsconfig.json" language="json" code={'{\n  "extends": "./.celesta/tsconfig.json"\n}'} />
@@ -206,7 +206,7 @@ export const contents: Record<string, ReactNode> = {
       <DocCode label={t('guide.slide-a-caption-in-fade-it-out')} language="tsx" code={'<Sequence from={30} durationInFrames={120}>\n  <Transition type="slide" slideFrom="bottom" durationInFrames={15}\n    easing={Easings.easeOutCubic}>\n    <Transition type="fade" direction="out" durationInFrames={20}>\n      <Caption />\n    </Transition>\n  </Transition>\n</Sequence>'} />
       <p>{text('guide.slides-travel-pixels-64-by-default-scales', [<code>distance</code>, <code>scaleFrom</code>, <code>{"type={['fade', 'slide']}"}</code>])}</p>
       <Note title={t('guide.keep-animation-tied-to-the-frame')}>{text('guide.compute-visual-changes-from-frame-or-time', [<code>Math.random()</code>, <a href={docPath('math')} />, <code>@celesta/math</code>, <code>random</code>, <code>noise</code>])}</Note>
-      <h3>{text('guide.freeze-frame')}</h3><p>{text('guide.freeze-frame-body')}</p>
+      <h3>{text('guide.freeze-frame')}</h3><p>{text('guide.freeze-frame-body', [<code>{'<FreezeFrame frame={60}>'}</code>])}</p>
       <DocCode label="FreezeFrame" language="tsx" code={'<FreezeFrame frame={60}>\n  <AnimatedTitle />\n</FreezeFrame>'} />
     </>,
   'motion-toolkit': <>
@@ -304,6 +304,7 @@ export const contents: Record<string, ReactNode> = {
       <p>{text('guide.time-is-represented-as-divide-the-value', [<code>{'{ value, timescale }'}</code>, <code>{'{ "value": 10, "timescale": 1 }'}</code>])}</p>
       <p>{text('guide.copy-the-project-below-into-in-your', [<code>project.celesta.json</code>, <strong />])}</p><details className="doc-details">{text('guide.view-the-complete-built-in-title-project', [<summary />, <DocCode label="examples/editor-demo.celesta.json" language="json" code={timelineExample.trim()} />])}</details>
       <p>{text('guide.is-an-empty-starting-point-for-a', [<code>examples/minimal.celesta.json</code>, <strong />])}</p>
+      <DocCode label={t('guide.export-json-project')} code="celesta-exporter project.celesta.json output.mp4" />
       <h3>{text('guide.animate-with-keyframes')}</h3><p>{text('guide.in-a-json-transform-places-the-item', [<code>position</code>, <code>opacity</code>, <code>volume</code>, <code>easing</code>])}</p>
       <DocCode label={t('guide.fade-an-item-in-over-half-a')} language="json" code={'"opacity": {\n  "type": "keyframes",\n  "keyframes": [\n    { "time": { "value": 0, "timescale": 30 }, "value": 0 },\n    { "time": { "value": 15, "timescale": 30 }, "value": 1, "easing": "ease-out" }\n  ]\n}'} />
       <p>{text('guide.easing-names-match-the-react-in-kebab', [<code>Easings</code>, <code>ease-in-out-cubic</code>, <code>ease-out-back</code>])}</p>
@@ -311,6 +312,7 @@ export const contents: Record<string, ReactNode> = {
       <details className="doc-details">{text('guide.view-the-complete-json-dialogue-project', [<summary />, <DocCode label="dialogue.celesta.json" language="json" code={dialogueProject.trim()} />])}</details>
       <p>{text('guide.json-lines-can-lip-sync-as-well', [<code>lipSync</code>, <code>{'"lipSync": [{ "time": { "value": 0, "timescale": 30 }, "shape": "a" }]'}</code>, <code>loadLipSync()</code>])}</p>
       <h3>{text('guide.combine-a-project-with-react')}</h3><p>{text('guide.a-react-composition-can-include-pass-its', [<code>{'<ProjectTimeline />'}</code>])}</p>
+      <DocCode label={t('guide.export-with-companion-project')} code="celesta-exporter --react with-project.tsx --project project.celesta.json output.mp4" />
       <details className="doc-details">{text('guide.view-the-companion-react-composition', [<summary />, <DocCode label="with-project.tsx" language="tsx" code={withProject.trim()} />])}</details><p>{text('guide.save-this-as-beside-your-json-file', [<code>with-project.tsx</code>, <a href={docPath('export')} />, <code>{'<ProjectTrack id="…" />'}</code>])}</p>
     </>,
   'dialogue': <>
@@ -437,7 +439,7 @@ export const contents: Record<string, ReactNode> = {
       <details className="doc-details"><summary>{text('guide.a-source-build-cannot-find-ffmpeg')}</summary><p>{text('guide.confirm-that-the-8-1-x-development', [<code>PKG_CONFIG_PATH</code>, <code>VCPKG_ROOT</code>, <code>PKG_CONFIG_PATH</code>, <code>/opt/ffmpeg8/lib/pkgconfig</code>, <a href={docPath('build-from-source')} />])}</p></details>
       <details className="doc-details"><summary>{text('guide.my-media-is-missing')}</summary><p>{text('guide.celesta-currently-supports-local-media-files-not')}</p></details>
       <details className="doc-details"><summary>{text('guide.the-preview-did-not-change-after-saving')}</summary><p>{text('guide.react-compositions-reload-automatically-for-json-projects', [<strong />])}</p></details>
-      <details className="doc-details"><summary>{text('guide.my-text-uses-the-wrong-font')}</summary><p>{text('guide.must-match-the-family-name-of-a', [<code>fontFamily</code>, <code>{'<Font>'}</code>, <code>celesta-export</code>, <code>{'<Font>'}</code>])}</p></details>
+      <details className="doc-details"><summary>{text('guide.my-text-uses-the-wrong-font')}</summary><p>{text('guide.must-match-the-family-name-of-a', [<code>fontFamily</code>, <code>{'<Font>'}</code>, <code>celesta-exporter</code>, <code>{'<Font>'}</code>])}</p></details>
       <details className="doc-details"><summary>{text('guide.the-mouth-does-not-move')}</summary><p>{text('guide.lip-sync-needs-an-uncompressed-wav-voice', [<code>loadLipSync()</code>, <code>prepare()</code>, <code>lipSync</code>, <code>layers</code>])}</p></details>
       <details className="doc-details"><summary>{text('guide.my-editor-cannot-resolve-celesta-react')}</summary><p>{text('guide.open-the-composition-in-celesta-and-choose', [<strong />, <code>tsconfig.json</code>, <code>./.celesta/tsconfig.json</code>])}</p></details>
       <details className="doc-details"><summary>{text('guide.mp4-export-will-not-start')}</summary><p>{text('guide.use-non-zero-even-numbered-dimensions-and', [<code>--overwrite</code>])}</p></details>

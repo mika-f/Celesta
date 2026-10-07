@@ -1,5 +1,5 @@
 import { LanguageSwitcher } from './LanguageSwitcher';
-import { t, text, homePath } from './i18n';
+import { t, text, homePath, currentLocale } from './i18n';
 import { useEffect, useState } from 'react';
 import { Brand } from './Brand';
 import { contents, repository } from './docs-content';
@@ -8,7 +8,7 @@ import { packageContents } from './docs-packages';
 
 const pageContents = { ...contents, ...packageContents };
 
-const overviewTopic = { slug: 'overview', title: t('docs.overview'), description: t('overview-description'), keywords: 'introduction start overview welcome' };
+const overviewTopic = { slug: 'overview', title: t('docs.overview'), description: t('overview-description'), keywords: t('search.overview') };
 
 /** The page for the current address: `/docs/` is the overview, `/docs/<slug>/` a chapter. */
 function currentSlug(): string {
@@ -70,7 +70,7 @@ export function Docs() {
                 </div>)}
               </>}
           </nav>
-          <p className="docs-search-status" role="status">{normalizedQuery ? results.length ? t('matches', { count: results.length }) : t('no-matches') : ''}</p>
+          <p className="docs-search-status" role="status">{normalizedQuery ? results.length ? t(new Intl.PluralRules(currentLocale).select(results.length) === 'one' ? 'matches-one' : 'matches-other', { count: results.length }) : t('no-matches') : ''}</p>
           <div className="docs-sidebar-note"><p>{text('docs.found-a-gap-in-the-docs')}</p><a href={`${repository}/issues`}>{text('docs.open-an-issue')}</a></div>
         </div>
       </aside>

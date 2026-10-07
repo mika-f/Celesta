@@ -165,6 +165,9 @@ kbd { display: inline-block; border: 1px solid var(--line-strong); padding: 0 6p
   .doc-code-bar { padding-inline: 10px; }
 }
 
-@media (max-width: 360px) {
+@media (max-width: 440px) {
   .docs-top-nav a:first-child { display: none; }
 }
+
+.docs-header .header-inner { gap: 16px; }
+.docs-top-nav a { white-space: nowrap; }

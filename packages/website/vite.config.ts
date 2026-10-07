@@ -3,7 +3,10 @@ import { dirname, join } from 'node:path';
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { getDocGroups } from './src/docs-nav.ts';
+import { richText } from './src/i18n.ts';
 import { translate } from './src/catalog.ts';
 import { languageRedirect, localeCodes, localeFromPath, type Locale } from './src/locales.ts';
 
@@ -24,7 +27,8 @@ function localizedHtml(html: string, locale: Locale, slug?: string): string {
     .replace(/(<meta name="description" content=")[^"]*/, `$1${escapeHtml(description)}`)
     .replace(/(<meta property="og:title" content=")[^"]*/, `$1${escapeHtml(title)}`)
     .replace(/(<meta property="og:description" content=")[^"]*/, `$1${escapeHtml(page?.description ?? translate(locale, docs ? 'docs-og-description' : 'home-og-description'))}`)
-    .replace(/<noscript>[\s\S]*?<\/noscript>/, `<noscript>${escapeHtml(translate(locale, docs ? 'docs-noscript' : 'home-noscript'))}</noscript>`)
+    .replace(/<noscript>[\s\S]*?<\/noscript>/, renderToStaticMarkup(createElement('noscript', null,
+      richText(translate(locale, docs ? 'docs-noscript' : 'home-noscript'), [createElement('a', { href: 'https://github.com/mika-f/Celesta#readme' })]))))
     .replace(/\s*<link rel="(?:canonical|alternate)"[^>]*>/g, '')
     .replace('</head>', `    <link rel="canonical" href="${site}${path}" />\n    ${alternatives}\n    <link rel="alternate" hreflang="x-default" href="${docs ? `${site}/en/${suffix}` : `${site}/`}" />\n  </head>`);
 }
@@ -82,6 +86,17 @@ function sitePages(): Plugin {
       for (const locale of localeCodes) {
         write(locale, localizedHtml(home, locale));
         for (const slug of ['overview', ...slugs]) write(`${locale}/docs/${slug === 'overview' ? '' : slug}`, localizedHtml(docs, locale, slug));
+        const notFound = createElement('html', { lang: locale },
+          createElement('head', null,
+            createElement('meta', { charSet: 'utf-8' }),
+            createElement('meta', { name: 'viewport', content: 'width=device-width, initial-scale=1' }),
+            createElement('title', null, translate(locale, 'not-found-title'))),
+          createElement('body', { style: { background: '#0a0a0a', color: '#ededeb', fontFamily: 'Helvetica, Arial, sans-serif', padding: '12vw' } },
+            createElement('p', null, '404'),
+            createElement('h1', null, translate(locale, 'not-found-heading')),
+            createElement('p', null, translate(locale, 'not-found-description')),
+            createElement('a', { href: `/${locale}/`, style: { color: 'inherit' } }, translate(locale, 'not-found-back'))));
+        writeFileSync(join(outDir, locale, '404.html'), '<!doctype html>\n' + renderToStaticMarkup(notFound));
       }
       // Preserve existing English documentation URLs and hash links.
       for (const slug of slugs) write(`docs/${slug}`, localizedHtml(docs, 'en', slug));

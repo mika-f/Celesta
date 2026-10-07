@@ -95,6 +95,9 @@ jobs:
           pnpm --dir packages/voicevox run build
           pnpm --dir packages/voicevox run test
 
+      - name: Test @celesta/website
+        run: pnpm --dir packages/website test
+
       - name: Test @celesta/math
         run: pnpm --dir packages/math run test
 
