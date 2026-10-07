@@ -250,7 +250,8 @@ Reel, Apex, Afterimage, Signal, Spectra, and 36 Days run in the browser.
 The editor loads their original TSX/TS sources on demand; choose a source
 file to edit it, and the full project recompiles. Playback, frame scrubbing,
 reset, source downloads, and MP4 export use the same `Playground` as the home
-page. Browser editions explicitly omit generated soundtracks. Prism and
+page. Opening a source file merges it into the sample while preserving its
+entry composition; the home-page editor replaces its single file. Browser editions explicitly omit generated soundtracks. Prism and
 Feature Tour need native PSD/voice preparation; Versus needs three generated
 benchmark videos. Their detail pages link to the original source and setup
 instructions and clearly identify the desktop requirement.

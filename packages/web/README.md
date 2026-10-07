@@ -69,6 +69,12 @@ Relative TSX/TS/JS/JSON imports resolve within `files`, including directory
 `index.tsx`/`index.ts` entries. Sources are bundled in the Worker. `baseURL`
 resolves relative fonts and media; uploaded files take precedence in the canvas
 renderer. Fonts used for measurement must also be reachable by the Worker.
+Fonts declared with `<Font>` load before the first requested frame. A
+synchronous `useTextMetrics(..., { fonts })` or `useFitText(..., { fonts })`
+requires those extra fonts to be preloaded using `await measureText(...,
+{ fonts })` in `prepare()`; the browser reports an error instead of caching
+fallback measurements for unloaded extra fonts. Failed font loads warn once
+and use the default font, so a missing face does not prevent playback.
 All remote fonts and media need CORS access. `silent: true` explicitly omits
 audio from evaluated frames and exported MP4s, for sample editions without
 distributed soundtracks.

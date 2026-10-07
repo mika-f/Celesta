@@ -38,7 +38,7 @@ export default function SourceEditor({ name, source, readOnly, onChange }: {
   }, [root]);
 
   const language = name.endsWith('.json') ? 'json' : /\.[cm]?jsx?$/.test(name) ? 'javascript' : 'typescript';
-  return <Editor path={`${root}${name}`} language={language} value={source} theme="celesta"
+  return <Editor path={`${root}${name.split('/').map(encodeURIComponent).join('/')}`} language={language} value={source} theme="celesta"
     loading={t('playground.editor-loading')}
     onChange={value => { if (value !== undefined) onChange(value); }}
     options={{

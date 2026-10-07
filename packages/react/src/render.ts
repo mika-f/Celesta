@@ -130,6 +130,8 @@ interface WalkContext {
 }
 
 export interface MountedComposition {
+  /** Unmounts the persistent React root and runs effect cleanup. */
+  dispose(): void;
   readonly config: CompositionConfig;
   readonly fonts: readonly ResolvedAsset[];
   /**
@@ -1093,6 +1095,7 @@ export function mount(defaultExport: EntryComponent): MountedComposition {
   };
 
   return {
+    dispose() { HostReconciler.flushSync(() => { HostReconciler.updateContainer(null, root, null, null); }); },
     config,
     get fonts() { return fonts; },
     renderAt: renderFrame,

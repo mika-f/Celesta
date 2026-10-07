@@ -51,7 +51,7 @@ export function Docs() {
     <header className="header docs-header">
       <div className="shell header-inner flex items-center justify-between">
         <div className="flex items-center gap-5">{text('docs.ui.documentation', [<Brand />, <a className="docs-header-label" href={docPath('overview')} />])}</div>
-        <a href={showcasePath('', currentLocale)}>{t('showcase.label')}</a><LanguageSwitcher /><nav className="docs-top-nav flex items-center gap-6" aria-label={t('docs.ui.main-navigation')}>{text('docs.ui.website-github', [<a href={homePath} />, <a href={repository} />, <span aria-hidden="true" />])}</nav>
+        <a className="docs-showcase-link" href={showcasePath('', currentLocale)}>{t('showcase.label')}</a><LanguageSwitcher /><nav className="docs-top-nav flex items-center gap-6" aria-label={t('docs.ui.main-navigation')}>{text('docs.ui.website-github', [<a href={homePath} />, <a href={repository} />, <span aria-hidden="true" />])}</nav>
       </div>
     </header>
     <div className="docs-layout shell">
@@ -61,6 +61,7 @@ export function Docs() {
           <label className="docs-search-label" htmlFor="topic-search">{text('docs.ui.find-a-topic')}</label>
           <div className="docs-search"><span aria-hidden="true">⌕</span><input id="topic-search" type="search" placeholder={t('docs.ui.setup-math-export')} value={query} onChange={event => setQuery(event.target.value)} />{query && <button onClick={() => setQuery('')} aria-label={t('docs.ui.clear-topic-search')}>×</button>}</div>
           <nav aria-label={t('docs.ui.documentation-topics')}>
+            <a href={showcasePath('', currentLocale)}>{t('showcase.label')} ↗</a>
             {normalizedQuery
               ? results.map(topicLink)
               : <>

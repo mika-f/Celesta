@@ -124,10 +124,11 @@ export function Playground({ initialFiles, entry = 'my-first-scene.tsx', initial
 
   async function openSource(file: File | undefined) {
     if (!file) return;
+    const source = await file.text();
     setPlaying(false);
-    setFiles({ [file.name]: await file.text() });
+    setFiles(previous => initialFiles ? { ...previous, [file.name]: source } : { [file.name]: source });
     setEditorVersion(version => version + 1);
-    setActiveEntry(file.name);
+    if (!initialFiles) setActiveEntry(file.name);
     setName(file.name);
   }
 

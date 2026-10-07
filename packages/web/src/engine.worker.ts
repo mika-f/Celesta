@@ -6,22 +6,29 @@ import * as codeComponents from '../../code/src/index';
 import { setTextMeasurer } from '../../react/src/text-measure';
 import type { CompileOptions } from './engine';
 import { projectFiles } from './project-files';
-import { loadFonts } from './fonts';
+import { loadFonts, requireLoadedFonts } from './fonts';
 import { textMeasurer } from './text-layout';
 import type { MountedComposition } from '../../react/src/render';
 
 let initialized: Promise<void> | undefined;
 let mounted: MountedComposition | null = null;
-let options: CompileOptions = {};
+let silent = false;
+let queue = Promise.resolve();
+type Request = { id: number; type: 'compile' | 'frame'; source?: string; frame?: number; options?: CompileOptions };
 
-self.onmessage = async (event: MessageEvent<{ id: number; type: 'compile' | 'frame'; source?: string; frame?: number; options?: CompileOptions }>) => {
-  const { id, type } = event.data;
+// The reconciler and text measurer belong to one project; do not interleave compiles.
+self.onmessage = (event: MessageEvent<Request>) => { queue = queue.then(() => handle(event.data)); };
+
+async function handle(data: Request) {
+  const { id, type } = data;
   try {
     if (type === 'compile') {
       initialized ??= esbuild.initialize({ wasmURL, worker: false });
       await initialized;
-      options = event.data.options ?? {};
-      const source = event.data.source ?? '';
+      const options = data.options ?? {};
+      mounted?.dispose();
+      mounted = null;
+      const source = data.source ?? '';
       const entry = options.entry ?? 'composition.tsx';
       const transformOptions = {
         loader: 'tsx', format: 'cjs', target: 'es2022',
@@ -54,22 +61,22 @@ self.onmessage = async (event: MessageEvent<{ id: number; type: 'compile' | 'fra
         return new URL(asset.location.path, options.baseURL).href;
       };
       const measure = textMeasurer();
-      setTextMeasurer(async request => { await loadFonts(request.fonts, resolveFont); return measure(request); }, measure);
+      setTextMeasurer(async request => { await loadFonts(request.fonts, resolveFont); return measure(request); }, request => { requireLoadedFonts(request.fonts, resolveFont); return measure(request); });
       const entryComponent = module.exports.default as celesta.EntryComponent;
       if (typeof module.exports.prepare === 'function') await module.exports.prepare();
       mounted = celesta.mount(entryComponent);
       await loadFonts([...mounted.fonts], resolveFont);
-      mounted = celesta.mount(entryComponent);
+      silent = options.silent ?? false;
       self.postMessage({ id, value: mounted.config });
     } else {
       if (!mounted) throw new Error('Compile a composition first.');
-      const frame = event.data.frame ?? 0;
+      const frame = data.frame ?? 0;
       const { frameRate } = mounted.config;
       const value = mounted.renderAt({ value: frame * frameRate.denominator, timescale: frameRate.numerator }, null);
-      if (options.silent) value.audio = [];
+      if (silent) value.audio = [];
       self.postMessage({ id, value });
     }
   } catch (cause) {
     self.postMessage({ id, error: cause instanceof Error ? cause.message : String(cause) });
   }
-};
+}

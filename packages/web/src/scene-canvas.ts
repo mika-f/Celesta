@@ -1,5 +1,5 @@
 import type { Scene, Layer, Asset, Paint } from './types';
-import { loadFonts } from './fonts';
+import { loadFonts, releaseFonts } from './fonts';
 import { textLines, textStyle } from './text-layout';
 
 type Canvas = HTMLCanvasElement;
@@ -23,12 +23,14 @@ function paint(ctx: Context, value: Paint, x = 0, y = 0): string | CanvasGradien
 export class SceneCanvas {
   private images = new Map<string, Promise<HTMLImageElement>>();
   private videos = new Map<string, Promise<HTMLVideoElement>>();
-  private urls: string[] = [];
+  private urls = new Map<File, string>();
 
   constructor(private assets: Map<string, File> = new Map(), private baseURL?: string) {}
 
   dispose() {
-    for (const url of this.urls) URL.revokeObjectURL(url);
+    releaseFonts(this.urls.values());
+    for (const url of this.urls.values()) URL.revokeObjectURL(url);
+    this.urls.clear();
     for (const video of this.videos.values()) void video.then(v => { v.pause(); v.removeAttribute('src'); v.load(); });
   }
 
@@ -40,8 +42,8 @@ export class SceneCanvas {
       if (this.baseURL) return new URL(location.path, this.baseURL).href;
       throw new Error(`Missing media file: ${location.path}. Add it with “Add media”.`);
     }
-    const url = URL.createObjectURL(file);
-    this.urls.push(url);
+    let url = this.urls.get(file);
+    if (!url) { url = URL.createObjectURL(file); this.urls.set(file, url); }
     return url;
   }
 
@@ -130,7 +132,7 @@ export class SceneCanvas {
         target.clip();
       }
       for (const child of content.layers) {
-        await this.layer(target, child as WebLayer, matrix, mode === 'source-over' ? alpha : 1);
+        await this.layer(target, child as WebLayer, matrix, target === ctx ? alpha : 1);
       }
       target.restore();
       if (target !== ctx) {

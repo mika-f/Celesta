@@ -1,7 +1,7 @@
 import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { defineConfig, type Plugin } from 'vite';
+import { defineConfig, normalizePath, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import { createElement } from 'react';
@@ -84,7 +84,7 @@ function sitePages(): Plugin {
         if (home) request.url = '/index.html' + url.search;
         else if (slug && (slug === 'overview' || slugs.includes(slug))) request.url = '/docs/index.html' + url.search;
         else if (showcaseSlug && (showcaseSlug === 'overview' || showcase.some(item => item.slug === showcaseSlug))) request.url = '/showcase/index.html' + url.search;
-        else if (/^\/showcase-assets\/examples\/(?:afterimage\/assets\/fonts|versus\/bench\/assets\/(?:fonts|licenses)|assets\/dialogue-demo\/portraits)\/[^/]+$/.test(url.pathname)) request.url = '/@fs' + fileURLToPath(new URL(`../../${url.pathname.slice('/showcase-assets/'.length)}`, import.meta.url));
+        else if (/^\/showcase-assets\/examples\/(?:afterimage\/assets\/fonts|versus\/bench\/assets\/(?:fonts|licenses)|assets\/dialogue-demo\/portraits)\/[^/]+$/.test(url.pathname)) request.url = '/@fs/' + normalizePath(fileURLToPath(new URL(`../../${url.pathname.slice('/showcase-assets/'.length)}`, import.meta.url)));
         next();
       });
     },
