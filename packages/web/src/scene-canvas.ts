@@ -1,6 +1,6 @@
-import type { Scene, Layer, Asset, Paint } from './types';
+import type { Scene, Layer, Asset, Paint, TextStyle } from './types';
 import { loadFonts, releaseFonts } from './fonts';
-import { textLines, textStyle } from './text-layout';
+import { textLineRanges, textStyle } from './text-layout';
 
 type Canvas = HTMLCanvasElement;
 type Context = CanvasRenderingContext2D;
@@ -24,10 +24,15 @@ export class SceneCanvas {
   private images = new Map<string, Promise<HTMLImageElement>>();
   private videos = new Map<string, Promise<HTMLVideoElement>>();
   private urls = new Map<File, string>();
+  private styledText = new Map<string, HTMLCanvasElement>();
+  private textLayouts = new Map<string, { mask: HTMLCanvasElement; stroke?: HTMLCanvasElement; regions: { start: number; end: number; x: number; width: number; emoji: boolean }[] }>();
+  private fontKey = '';
 
   constructor(private assets: Map<string, File> = new Map(), private baseURL?: string) {}
 
   dispose() {
+    this.styledText.clear();
+    this.textLayouts.clear();
     releaseFonts(this.urls.values());
     for (const url of this.urls.values()) URL.revokeObjectURL(url);
     this.urls.clear();
@@ -73,6 +78,129 @@ export class SceneCanvas {
     return pending;
   }
 
+  /** Shape the complete line once, then apply paint and reveals to its glyph mask. */
+  private styledLine(ctx: Context, text: string, style: TextStyle, width: number, height: number, baseline: number, x: number, offset: number): HTMLCanvasElement {
+    const { colorRuns, visibleCharacters, fill, ...geometry } = style;
+    const layoutKey = JSON.stringify({ text, geometry, width, height, baseline, x });
+    const key = JSON.stringify({ layoutKey, colorRuns, visibleCharacters, fill, offset });
+    const cached = this.styledText.get(key);
+    if (cached) return cached;
+    let layout = this.textLayouts.get(layoutKey);
+    if (!layout) {
+      const mask = document.createElement('canvas');
+      mask.width = Math.max(1, Math.ceil(width));
+      mask.height = Math.max(1, Math.ceil(height));
+      const draw = mask.getContext('2d')!;
+      draw.font = ctx.font;
+      draw.letterSpacing = ctx.letterSpacing;
+      draw.fontKerning = ctx.fontKerning;
+      draw.textBaseline = 'alphabetic';
+      draw.fillStyle = '#fff';
+      if ('lang' in draw && 'lang' in ctx) draw.lang = ctx.lang;
+      let stroke: HTMLCanvasElement | undefined;
+      if (style.stroke?.width) {
+        stroke = document.createElement('canvas');
+        stroke.width = mask.width;
+        stroke.height = mask.height;
+        const outline = stroke.getContext('2d')!;
+        outline.font = draw.font;
+        outline.letterSpacing = draw.letterSpacing;
+        outline.fontKerning = draw.fontKerning;
+        outline.textBaseline = 'alphabetic';
+        outline.lineJoin = 'round';
+        outline.lineWidth = style.stroke.width * 2;
+        outline.strokeStyle = paint(outline, style.stroke.paint);
+        outline.strokeText(text, x, baseline);
+      }
+      draw.fillText(text, x, baseline);
+      // SVG exposes character extents from the full shaped line, unlike
+      // Canvas's prefix-only measurement. Fill changes never touch this node.
+      const ns = 'http://www.w3.org/2000/svg';
+      const svg = document.createElementNS(ns, 'svg');
+      svg.style.cssText = 'position:fixed;left:-100000px;opacity:0;pointer-events:none';
+      const element = document.createElementNS(ns, 'text');
+      element.style.font = ctx.font;
+      element.style.letterSpacing = ctx.letterSpacing;
+      element.style.fontKerning = ctx.fontKerning;
+      element.style.whiteSpace = 'pre';
+      element.setAttribute('x', String(x));
+      element.setAttribute('y', String(baseline));
+      if (style.lang) element.setAttribute('xml:lang', style.lang);
+      element.textContent = text;
+      svg.append(element);
+      document.body.append(svg);
+      const regions: { start: number; end: number; x: number; width: number; emoji: boolean }[] = [];
+      try {
+        let point = 0;
+        for (const { segment, index } of new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text)) {
+          const extent = element.getExtentOfChar(index);
+          const count = Array.from(segment).length;
+          const previous = regions.at(-1);
+          // SVG reports the same extent for each character of a ligature.
+          if (previous && previous.x === extent.x && previous.width === extent.width) previous.end += count;
+          else regions.push({ start: point, end: point + count, x: extent.x, width: extent.width, emoji: /\p{Emoji_Presentation}|\uFE0F|\u20e3/u.test(segment) });
+          point += count;
+        }
+      } finally { svg.remove(); }
+      layout = { mask, stroke, regions };
+      if (this.textLayouts.size >= 32) this.textLayouts.clear();
+      this.textLayouts.set(layoutKey, layout);
+    }
+    const result = document.createElement('canvas');
+    result.width = layout.mask.width;
+    result.height = layout.mask.height;
+    const draw = result.getContext('2d')!;
+    draw.fillStyle = fill ? paint(draw, fill) : '#fff';
+    draw.fillRect(0, 0, result.width, result.height);
+    const hidden = new Uint8Array(result.width);
+    const natural = new Uint8Array(result.width);
+    let runIndex = 0;
+    for (const region of layout.regions) {
+      const point = offset + region.start;
+      const runs = colorRuns ?? [];
+      while (runIndex < runs.length && runs[runIndex].end <= point) runIndex++;
+      const run = runs[runIndex];
+      // Resolve once per cluster; shaping and rasterization are already cached.
+      const color = run && run.start <= point && point < run.end ? run.color : undefined;
+      const left = Math.max(0, Math.min(result.width, Math.round(region.x)));
+      const right = Math.max(0, Math.min(result.width, Math.round(region.x + region.width)));
+      if (region.emoji) natural.fill(1, left, right);
+      if (color) {
+        draw.clearRect(left, 0, right - left, result.height);
+        draw.fillStyle = color;
+        draw.fillRect(left, 0, right - left, result.height);
+      }
+      if (visibleCharacters != null && point >= visibleCharacters) hidden.fill(1, left, right);
+    }
+    const colors = draw.getImageData(0, 0, result.width, result.height);
+    const pixels = layout.mask.getContext('2d')!.getImageData(0, 0, result.width, result.height);
+    for (let i = 0; i < pixels.data.length; i += 4) {
+      if (hidden[(i / 4) % result.width]) pixels.data.fill(0, i, i + 4);
+      else if (!natural[(i / 4) % result.width] && pixels.data[i] === 255 && pixels.data[i + 1] === 255 && pixels.data[i + 2] === 255) {
+        pixels.data[i] = colors.data[i];
+        pixels.data[i + 1] = colors.data[i + 1];
+        pixels.data[i + 2] = colors.data[i + 2];
+        pixels.data[i + 3] = Math.round(pixels.data[i + 3] * colors.data[i + 3] / 255);
+      }
+    }
+    draw.putImageData(pixels, 0, 0);
+    if (layout.stroke) {
+      const outline = layout.stroke.getContext('2d')!.getImageData(0, 0, result.width, result.height);
+      for (let i = 0; i < outline.data.length; i += 4) {
+        if (hidden[(i / 4) % result.width]) outline.data.fill(0, i, i + 4);
+      }
+      const stroke = document.createElement('canvas');
+      stroke.width = result.width; stroke.height = result.height;
+      stroke.getContext('2d')!.putImageData(outline, 0, 0);
+      draw.globalCompositeOperation = 'destination-over';
+      draw.drawImage(stroke, 0, 0);
+    }
+    if (visibleCharacters === 0) draw.clearRect(0, 0, result.width, result.height);
+    if (this.styledText.size >= 64) this.styledText.clear();
+    this.styledText.set(key, result);
+    return result;
+  }
+
   private async video(asset: Asset): Promise<HTMLVideoElement> {
     const key = JSON.stringify(asset.location);
     let pending = this.videos.get(key);
@@ -93,6 +221,12 @@ export class SceneCanvas {
 
   async draw(canvas: Canvas, scene: Scene): Promise<void> {
     await loadFonts(scene.fonts ?? [], asset => this.src(asset));
+    const fontKey = JSON.stringify(scene.fonts ?? []);
+    if (fontKey !== this.fontKey) {
+      this.styledText.clear();
+      this.textLayouts.clear();
+      this.fontKey = fontKey;
+    }
     if (canvas.width !== scene.width) canvas.width = scene.width;
     if (canvas.height !== scene.height) canvas.height = scene.height;
     const ctx = canvas.getContext('2d');
@@ -216,14 +350,25 @@ export class SceneCanvas {
       }
     } else if (content.type === 'text') {
       const style = content.style;
+      const count = Array.from(content.text).length;
+      let previousEnd = 0;
+      for (const run of style.colorRuns ?? []) {
+        if (!Number.isSafeInteger(run.start) || !Number.isSafeInteger(run.end) || run.start < previousEnd || run.end < run.start || run.end > count) {
+          throw new Error('Invalid text color run range');
+        }
+        previousEnd = run.end;
+      }
+      if (style.visibleCharacters != null && (!Number.isSafeInteger(style.visibleCharacters) || style.visibleCharacters < 0)) {
+        throw new Error('Text visibleCharacters must be a non-negative integer');
+      }
       // Canvas language selection is available in newer browsers.
       const size = style.fontSize ?? 32;
       const lineHeight = style.lineHeight ?? size * 1.2;
       textStyle(ctx, style);
       ctx.textBaseline = 'alphabetic';
       ctx.textAlign = 'left';
-      const lines = textLines(ctx, content.text, content.maxWidth, style.lang);
-      const measured = lines.map(line => ctx.measureText(line));
+      const lines = textLineRanges(ctx, content.text, content.maxWidth, style.lang);
+      const measured = lines.map(line => ctx.measureText(line.text));
       const width = content.maxWidth ?? Math.max(0, ...measured.map(m => m.width));
       const placed = measured.map((m, i) => ({
         x: style.align === 'center' ? (width - m.width) / 2 : style.align === 'right' ? width - m.width : 0,
@@ -236,14 +381,20 @@ export class SceneCanvas {
       ctx.setTransform(matrix.translate(-t.anchor.x * width, y));
       for (let i = 0; i < lines.length; i++) {
         const baseline = placed[i].baseline - top;
+        if (style.colorRuns?.length || style.visibleCharacters != null) {
+          const pad = Math.ceil(style.stroke?.width ?? 0);
+          const image = this.styledLine(ctx, lines[i].text, style, width + pad * 2, height + pad * 2, baseline + pad, placed[i].x + pad, lines[i].start);
+          ctx.drawImage(image, -pad, -pad);
+          continue;
+        }
         if (style.stroke?.width) {
           ctx.lineJoin = 'round';
           ctx.lineWidth = style.stroke.width * 2;
           ctx.strokeStyle = paint(ctx, style.stroke.paint);
-          ctx.strokeText(lines[i], placed[i].x, baseline);
+          ctx.strokeText(lines[i].text, placed[i].x, baseline);
         }
         ctx.fillStyle = style.fill ? paint(ctx, style.fill) : '#fff';
-        ctx.fillText(lines[i], placed[i].x, baseline);
+        ctx.fillText(lines[i].text, placed[i].x, baseline);
       }
     } else if (content.type === 'image' || content.type === 'video') {
       let image: HTMLImageElement | HTMLVideoElement;

@@ -67,6 +67,15 @@ pub struct TextStyle {
     /// Extra space after each glyph, in px. Negative values tighten.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub letter_spacing: Option<f64>,
+    /// Solid color overrides in Unicode code-point ranges of the complete text.
+    /// Ranges must be ordered and non-overlapping. A shaped cluster uses the
+    /// color at its first code point, so color changes never split shaping.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub color_runs: Vec<TextColorRun>,
+    /// Reveal clusters beginning before this code-point offset, retaining the
+    /// complete text's layout. Omitted means all text is visible.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub visible_characters: Option<usize>,
     /// Where a line may wrap when the text has a `maxWidth`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line_break: Option<LineBreak>,
@@ -105,4 +114,15 @@ pub enum LineBreak {
     /// not split across lines. A phrase wider than `maxWidth` wraps inside
     /// itself as `Normal` text does.
     Phrase,
+}
+
+/// A solid color over a half-open Unicode code-point range in the full text.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS))]
+#[cfg_attr(feature = "codegen", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct TextColorRun {
+    pub start: usize,
+    pub end: usize,
+    pub color: String,
 }

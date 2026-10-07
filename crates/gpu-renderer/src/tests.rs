@@ -4345,3 +4345,103 @@ fn reduced_resolution_blurs_match_cpu() {
         );
     }
 }
+
+#[test]
+fn colored_text_and_reveals_match_cpu_through_cached_gpu_textures() {
+    use celesta_composition::TextColorRun;
+    let Some(mut gpu) = renderer(GpuRenderOptions {
+        background: Color::rgba(0, 0, 0, 0),
+        ..Default::default()
+    }) else {
+        return;
+    };
+    let mut cpu = celesta_renderer::CpuRenderer::new(celesta_renderer::RenderOptions {
+        background: CpuColor::rgba(0, 0, 0, 0),
+    });
+    let text = "AV office e\u{301}\nאבג 😀";
+    let mut scene = empty_scene(400, 180);
+    scene.layers.push(Layer {
+        id: "colored".into(),
+        transform: EvaluatedTransform {
+            position: Point { x: 12.0, y: 48.0 },
+            anchor: Point { x: 0.0, y: 0.0 },
+            ..Default::default()
+        },
+        opacity: 1.0,
+        blend_mode: BlendMode::Normal,
+        effects: Default::default(),
+        content: LayerContent::Text {
+            text: text.into(),
+            baseline_anchor: true,
+            max_width: None,
+            style: TextStyle {
+                font_size: Some(32.0),
+                line_height: Some(44.0),
+                color_runs: (0..text.chars().count())
+                    .map(|start| TextColorRun {
+                        start,
+                        end: start + 1,
+                        color: if start % 2 == 0 { "#ff0000" } else { "#00ff00" }.into(),
+                    })
+                    .collect(),
+                ..Default::default()
+            },
+        },
+    });
+    for visible in [None, Some(1), Some(8), Some(0), None] {
+        let LayerContent::Text { style, .. } = &mut scene.layers[0].content else {
+            unreachable!()
+        };
+        style.visible_characters = visible;
+        let reference = cpu.render(&scene).unwrap();
+        let frame = gpu.render(&scene).unwrap();
+        // GPU readback is premultiplied; the CPU reference stores straight RGBA.
+        assert!(
+            reference
+                .pixels()
+                .chunks_exact(4)
+                .zip(frame.pixels().chunks_exact(4))
+                .all(|(cpu, gpu)| {
+                    (0..4).all(|channel| {
+                        let expected = if channel == 3 {
+                            cpu[channel]
+                        } else {
+                            (u16::from(cpu[channel]) * u16::from(cpu[3]) / 255) as u8
+                        };
+                        expected.abs_diff(gpu[channel]) <= 1
+                    })
+                }),
+            "visible={visible:?}"
+        );
+    }
+}
+
+#[test]
+fn an_unwrapped_colored_line_fits_the_gpu_texture_limit() {
+    use crate::text::{PendingText, rasterize_text};
+    use celesta_composition::TextColorRun;
+    let mut rasterizer = celesta_renderer::TextRasterizer::new();
+    let text = "const n = 1; ".repeat(100);
+    let job = PendingText {
+        item: 0,
+        key: "long-line".into(),
+        style: TextStyle {
+            font_size: Some(24.0),
+            color_runs: vec![TextColorRun {
+                start: 0,
+                end: text.chars().count(),
+                color: "#ff0000".into(),
+            }],
+            ..Default::default()
+        },
+        text,
+        max_width: None,
+        raster_scale: 1.0,
+        anchor: Point { x: 0.0, y: 0.0 },
+        baseline_anchor: true,
+        state: LayerState::default(),
+        blend_mode: BlendMode::Normal,
+    };
+    let image = rasterize_text(&mut rasterizer, &job, 1024).unwrap();
+    assert!(image.width <= 1024 && image.height <= 1024 && image.raster_scale < 1.0);
+}

@@ -18,7 +18,7 @@ export { Arrow, Circle, Ellipse, Line, Path, Polyline, pointOnPolyline } from '.
 export { Camera } from './camera';
 export { TextReveal, useCountUp, useTypewriter } from './text-motion';
 export { frameKeyframes } from './keyframes';
-export { measureText, useTextMetrics } from './text-measure';
+export { measureText, textCaret, useTextMetrics } from './text-measure';
 export { TextBox, fitText, useFitText } from './text-fit';
 export { Transition } from './transition';
 export { Center, Fit, Grid, SafeArea, Stack, useLayoutBounds } from './layout';

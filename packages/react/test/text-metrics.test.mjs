@@ -126,3 +126,15 @@ test('CLI shares prepare and render RPCs, handles large UTF-8 replies, and forwa
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('text carets use shaped cluster advances and bidi direction without prefix measurement', async () => {
+  const { textCaret } = await import('../dist/index.js');
+  const m = { ...metrics(80), glyphs: [
+    { text: 'ffi', start: 0, end: 3, rtl: false, x: 10, width: 30, line: 0 },
+    { text: 'א', start: 4, end: 5, rtl: true, x: 20, width: 12, line: 1 },
+  ] };
+  assert.deepEqual(textCaret(m, 1), { x: 20, y: 0, line: 0 });
+  assert.deepEqual(textCaret(m, 3), { x: 40, y: 0, line: 0 });
+  assert.deepEqual(textCaret(m, 4), { x: 32, y: 24, line: 1 });
+  assert.deepEqual(textCaret(m, 5), { x: 20, y: 24, line: 1 });
+});

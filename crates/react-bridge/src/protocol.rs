@@ -65,7 +65,7 @@ pub(crate) enum Response {
     },
     MeasureText {
         #[serde(rename = "measureText")]
-        measure_text: MeasureTextRequest,
+        measure_text: Box<MeasureTextRequest>,
     },
     Ok {
         scene: Scene,
@@ -87,7 +87,7 @@ pub(crate) enum Response {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RawResponse {
     pub(crate) collected_audio: Option<Vec<ReactAudioClipDescriptor>>,
-    pub(crate) measure_text: Option<MeasureTextRequest>,
+    pub(crate) measure_text: Option<Box<MeasureTextRequest>>,
     pub(crate) scene: Option<Scene>,
     #[serde(default)]
     pub(crate) audio: Vec<ReactAudioClipDescriptor>,
@@ -138,7 +138,7 @@ pub(crate) enum ReadyMessage {
     },
     MeasureText {
         #[serde(rename = "measureText")]
-        measure_text: MeasureTextRequest,
+        measure_text: Box<MeasureTextRequest>,
     },
     Error {
         error: String,

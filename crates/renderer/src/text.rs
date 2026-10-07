@@ -102,6 +102,10 @@ pub struct TextMetrics {
 /// One shaped glyph cluster: its text, left edge within its line, and advance.
 #[derive(Clone, Debug, PartialEq)]
 pub struct GlyphMetrics {
+    /// Half-open Unicode code-point range in the complete source text.
+    pub start: usize,
+    pub end: usize,
+    pub rtl: bool,
     pub text: String,
     pub x: f64,
     pub width: f64,

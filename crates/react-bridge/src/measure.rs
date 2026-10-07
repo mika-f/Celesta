@@ -39,6 +39,9 @@ pub(crate) struct TextMetricsPayload {
 #[derive(Serialize)]
 pub(crate) struct GlyphPayload {
     pub(crate) text: String,
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+    pub(crate) rtl: bool,
     pub(crate) x: f64,
     pub(crate) width: f64,
     pub(crate) line: usize,
@@ -78,6 +81,9 @@ pub(crate) fn text_metrics_payload(metrics: &TextMetrics) -> TextMetricsPayload 
             .iter()
             .map(|glyph| GlyphPayload {
                 text: glyph.text.clone(),
+                start: glyph.start,
+                end: glyph.end,
+                rtl: glyph.rtl,
                 x: glyph.x,
                 width: glyph.width,
                 line: glyph.line,

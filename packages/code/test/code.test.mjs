@@ -18,7 +18,11 @@ function metrics(request) {
   return {
     width: Math.max(...lines.map(line => Array.from(line).length)) * 10,
     height: lines.length * lineHeight, ascent: lineHeight * 0.75, descent: lineHeight * 0.25,
-    lineHeight, lines: lines.length, glyphs: [],
+    lineHeight, lines: lines.length, glyphs: lines.flatMap((line, row) => {
+      const start = lines.slice(0, row).reduce((n, text) => n + Array.from(text).length + 1, 0);
+      return Array.from(line).map((text, column) => ({ text, start: start + column, end: start + column + 1,
+        rtl: false, x: column * 10, width: 10, line: row }));
+    }),
   };
 }
 
@@ -47,7 +51,7 @@ function renderedText(scene, left = 0) {
   return [...rows].sort(([a], [b]) => a - b).map(([, row]) => {
     let text = '';
     for (const layer of row.sort((a, b) => a.x - b.x)) {
-      text += ' '.repeat((layer.x - left) / 10 - Array.from(text).length) + layer.content.text;
+      text += ' '.repeat((layer.x - left) / 10 - Array.from(text).length) + Array.from(layer.content.text).slice(0, layer.content.style.visibleCharacters ?? Infinity).join('');
     }
     return text;
   }).join('\n');
@@ -110,8 +114,8 @@ test('typing, seeking and line highlights reuse full-source measurements and kee
   assert.equal(typed[0].content.width, first[0].content.width);
   const full = layers(frameAt(mounted, 2));
   assert.equal(full.find(layer => layer.content.type === 'rect').y, 20 + 36);
-  assert.ok(full.some(layer => layer.content.text === '// comment' && layer.x === 40 + 20));
-  assert.ok(full.some(layer => layer.content.text?.includes('const') && layer.content.style.fill.color === codeThemes.dark.tokens.keyword));
+  assert.ok(full.some(layer => layer.content.text === '  // comment' && layer.x === 40));
+  assert.ok(full.some(layer => layer.content.text?.includes('const') && layer.content.style.colorRuns.some(run => run.color === codeThemes.dark.tokens.keyword)));
   assert.equal(full.find(layer => layer.content.type === 'text').content.baselineAnchor, true);
   assert.ok(requests.at(-1).fonts.some(font => font.location.path.endsWith('mono.ttf')));
   frameAt(mounted, 0);
@@ -185,8 +189,8 @@ test('JSON property keys include escaped fragments and differ from string values
   const Root = () => React.createElement(Composition, { width: 800, height: 300, fps: 30, durationInFrames: 1 },
     React.createElement(Code, { language: 'json', children: source }));
   const textLayers = layers(frameAt(mount(Root), 0)).filter(layer => layer.content.type === 'text');
-  assert.ok(textLayers.some(layer => layer.content.text === JSON.stringify(keys[1]) && layer.content.style.fill.color === codeThemes.dark.tokens.property));
-  assert.ok(textLayers.some(layer => layer.content.text === '"broll: value"' && layer.content.style.fill.color === codeThemes.dark.tokens.string));
+  assert.ok(textLayers.some(layer => layer.content.style.colorRuns.some(run => Array.from(layer.content.text).slice(run.start, run.end).join('') === JSON.stringify(keys[1]) && run.color === codeThemes.dark.tokens.property)));
+  assert.ok(textLayers.some(layer => layer.content.style.colorRuns.some(run => Array.from(layer.content.text).slice(run.start, run.end).join('') === '"broll: value"' && run.color === codeThemes.dark.tokens.string)));
 });
 
 test('codeCharacterCount converts source positions into visible code points', () => {
@@ -224,7 +228,7 @@ test('source and grammar changes refresh colors and geometry; unknown theme toke
   const first = layers(frameAt(mounted, 0));
   const second = layers(frameAt(mounted, 1));
   const plain = layers(frameAt(mounted, 2));
-  assert.ok(first.some(layer => layer.content.style?.fill.color === '#ff0000'));
+  assert.ok(first.some(layer => layer.content.style?.colorRuns.some(run => run.color === '#ff0000')));
   assert.ok(second.some(layer => layer.content.text?.includes('let')));
   assert.ok(second[0].content.width > first[0].content.width);
   assert.equal(plain.filter(layer => layer.content.type === 'text').length, 1);
@@ -324,5 +328,28 @@ for (const packaged of [false, true]) test(`${packaged ? 'packaged' : 'source'} 
     assert.equal(measured, firstMeasurements);
   } finally {
     child.kill();
+  }
+});
+
+
+test('long lines and changing caret positions have constant measurements and one Text per line', () => {
+  for (const source of ['const n = 1; '.repeat(100), Array(20).fill('const n = 1; '.repeat(10)).join('\n')]) {
+    let calls = 0;
+    setTextMeasurer(async request => metrics(request), request => { calls++; return metrics(request); });
+    function Root() {
+      const frame = useCurrentFrame();
+      const point = useCodePoint(source, { line: 1, column: frame + 1 });
+      return React.createElement(Composition, { width: 1920, height: 1080, fps: 30, durationInFrames: 3 },
+        React.createElement(Code, { children: source, language: 'ts', visibleCharacters: frame ? Infinity : 0 }),
+        React.createElement(Rect, { x: point.x, width: 2, height: 36 }));
+    }
+    const mounted = mount(Root);
+    frameAt(mounted, 0);
+    assert.equal(calls, 4, 'two geometry measurements each for Code and caret, independent of runs');
+    const full = layers(frameAt(mounted, 1));
+    assert.equal(full.filter(layer => layer.content.type === 'text').length, source.split('\n').length);
+    frameAt(mounted, 2);
+    frameAt(mounted, 0);
+    assert.equal(calls, 4, 'reveal, seek and caret moves reuse full geometry');
   }
 });

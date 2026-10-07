@@ -10,6 +10,7 @@ pub enum RenderError {
         height: u32,
     },
     InvalidColor(String),
+    InvalidTextColorRun,
     UnsupportedRotation {
         layer: String,
         degrees: f64,
@@ -54,6 +55,10 @@ impl fmt::Display for RenderError {
             Self::SurfaceTooLarge { width, height } => {
                 write!(formatter, "surface {width}x{height} is too large")
             }
+            Self::InvalidTextColorRun => write!(
+                formatter,
+                "text color runs must be ordered, non-overlapping ranges within the text"
+            ),
             Self::InvalidColor(color) => write!(formatter, "invalid color `{color}`"),
             Self::UnsupportedRotation { layer, degrees } => write!(
                 formatter,

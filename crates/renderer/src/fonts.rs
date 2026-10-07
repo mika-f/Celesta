@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 pub struct TextRasterizer {
     pub(crate) font_system: FontSystem,
+    pub(crate) shaped_buffers: HashMap<String, Arc<cosmic_text::Buffer>>,
     /// The system's normalized locale, used by styles without `lang`.
     pub(crate) default_locale: String,
     /// Inactive systems, so alternating languages retain their shaping caches.
@@ -69,6 +70,7 @@ impl TextRasterizer {
             matched_weights: HashMap::new(),
             color_emoji_family: None,
             missing_characters: HashMap::new(),
+            shaped_buffers: HashMap::new(),
         }
     }
 
@@ -89,6 +91,7 @@ impl TextRasterizer {
             matched_weights: HashMap::new(),
             color_emoji_family: None,
             missing_characters: HashMap::new(),
+            shaped_buffers: HashMap::new(),
         }
     }
 
@@ -202,6 +205,7 @@ impl TextRasterizer {
         self.matched_weights.clear();
         self.color_emoji_family = None;
         self.missing_characters.clear();
+        self.shaped_buffers.clear();
         let Some(alias) = alias else {
             return Ok(());
         };

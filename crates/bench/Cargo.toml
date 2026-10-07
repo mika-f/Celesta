@@ -12,3 +12,7 @@ celesta-composition = { path = "../composition" }
 celesta-gpu-renderer = { path = "../gpu-renderer" }
 celesta-react-bridge = { path = "../react-bridge" }
 image = { version = "0.25.8", default-features = false, features = ["png"] }
+
+[dev-dependencies]
+celesta-renderer = { path = "../renderer" }
+serde_json = { workspace = true }

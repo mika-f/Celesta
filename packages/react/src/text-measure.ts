@@ -6,6 +6,10 @@ import type { ResolvedAsset, TextStyle } from './scene';
 
 /** One shaped glyph cluster (a ligature or combining sequence is one entry). */
 export interface GlyphMetrics {
+  /** Half-open Unicode code-point range in the complete source text. */
+  start: number;
+  end: number;
+  rtl: boolean;
   /** The source text the cluster covers. */
   text: string;
   /** Left edge within its line, in composition pixels, alignment included. */
@@ -135,9 +139,22 @@ export function useTextMetrics(
   const lang = React.useContext(CompositionRuntimeContext)?.lang;
   const resolvedStyle = withTextLanguage(style, lang);
   const fonts = useMeasurementFonts(options.fonts);
-  const key = JSON.stringify({ text, style: resolvedStyle, maxWidth: options.maxWidth, fonts });
+  const { colorRuns, visibleCharacters, fill, stroke, ...layoutStyle } = resolvedStyle;
+  const key = JSON.stringify({ text, style: layoutStyle, maxWidth: options.maxWidth, fonts });
   return React.useMemo(
     () => synchronousMeasurer('useTextMetrics()')(JSON.parse(key) as MeasureTextRequest),
     [key],
   );
+}
+
+/** A caret from complete-text shaping; positions inside a cluster interpolate its advance. */
+export function textCaret(metrics: TextMetrics, offset: number): { x: number; y: number; line: number } {
+  if (!Number.isSafeInteger(offset) || offset < 0) throw new Error('Text caret offset must be a non-negative integer');
+  const glyph = metrics.glyphs.find(glyph => glyph.start <= offset && offset < glyph.end)
+    ?? metrics.glyphs.reduce<GlyphMetrics | undefined>((last, glyph) =>
+      glyph.end <= offset && (!last || glyph.end >= last.end) ? glyph : last, undefined);
+  if (!glyph) return { x: 0, y: 0, line: 0 };
+  const fraction = Math.min(1, (offset - glyph.start) / Math.max(1, glyph.end - glyph.start));
+  return { x: glyph.x + glyph.width * (glyph.rtl ? 1 - fraction : fraction),
+    y: glyph.line * metrics.lineHeight, line: glyph.line };
 }

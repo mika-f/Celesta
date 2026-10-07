@@ -41,8 +41,14 @@ test('file font URLs are reused across frames and isolated opacity is applied on
   const group = { opacity: 0.5, transform, effects: { glow: { blur: 1, color: '#fff' } }, content: { type: 'group', layers: [rect] } };
   const scene = { width: 10, height: 10, fonts: [{ id: 'font', location: { type: 'file', path: 'font.css' } }], layers: [group] };
   const output = canvas();
+  renderer.styledText.set('fallback', {});
+  renderer.textLayouts.set('fallback', {});
   await renderer.draw(output, scene);
+  assert.equal(renderer.styledText.size, 0, 'font changes invalidate painted text');
+  assert.equal(renderer.textLayouts.size, 0, 'font changes invalidate shaped text');
+  renderer.textLayouts.set('loaded-font', {});
   await renderer.draw(output, scene);
+  assert.equal(renderer.textLayouts.size, 1, 'unchanged fonts retain the layout cache');
   assert.equal(createURL.mock.callCount(), 1);
   assert.equal(fetchFont.mock.callCount(), 1);
   assert.equal(faces.size, 1);
