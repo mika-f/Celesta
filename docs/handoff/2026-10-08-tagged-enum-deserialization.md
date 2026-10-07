@@ -7,7 +7,7 @@ a group's children go through that tree again at every level. Profiling the
 bridge's JSON decoding of a NEBULA frame put about a quarter of it there,
 more than number parsing.
 
-`composition/src/tagged.rs` adds `TypeTagged`, a deserializer adapter. Each
+`crates/composition/src/tagged.rs` adds `TypeTagged`, a deserializer adapter. Each
 enum now derives `Deserialize` on an externally tagged mirror
 (`#[serde(remote = "...")]`, `LayerContentDef` and so on) and deserializes
 it through `TypeTagged`, which reads the variant from the `type` field and
@@ -18,18 +18,25 @@ the ts-rs bindings and the JSON format are unchanged.
   objects in 120 NEBULA frames). When `type` comes later, as in a
   hand-written project file, the fields before it are buffered as
   `serde_json::Value`s; errors in those values lose their line and column.
-- A repeated `type` key is now ignored instead of rejected.
+- A repeated `type` key is still rejected as a duplicate field, as the
+  derived deserializer did.
 - The mirrors repeat each variant's fields. The compiler checks names and
   types against the real enum, but serde attributes (`default`,
   `default = "default_miter_limit"`) must be kept in step by hand.
+  `every_tagged_variant_round_trips` round trips every variant with its
+  optional fields left out and set, through a string (`type` first) and a
+  `serde_json::Value` (`type` among sorted keys), so a mirror missing a
+  `default` fails it.
 - Tests: `tagged_content_parses_with_its_type_first_or_later`,
   `tagged_content_fills_omitted_fields_with_their_defaults`,
   `tagged_content_reports_a_missing_or_unknown_type`,
-  `nested_groups_round_trip`.
+  `tagged_content_rejects_a_repeated_type`, `nested_groups_round_trip` and
+  `every_tagged_variant_round_trips`.
 
 Measured on an Apple M4, Node 26, release build, with
-`crates/react-bridge/examples/protocol-bench.rs` (300 frames from frame 60
-after 30 warmup frames; medians of three alternating runs):
+`crates/react-bridge/examples/protocol-bench.rs <entry> 300 60` (30 warmup
+frames from frame 60, then frames 90 to 389 measured; medians of three
+alternating runs):
 
 | Entry | Before | After |
 | --- | --- | --- |

@@ -1,6 +1,12 @@
 use crate::time::{Rational, Time};
-use crate::{Clip, LayerContent, LineCap, Paint, PathCommand, Point};
+use crate::{
+    AssetLocation, Clip, EvaluatedTransform, ImageFit, Layer, LayerContent, LineCap, LineJoin,
+    MediaTiming, Paint, PathCommand, Point, ResolvedAsset, Stroke, TextStyle,
+};
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 use std::cmp::Ordering;
+use std::fmt::Debug;
 
 #[test]
 fn compares_times_without_floating_point() {
@@ -214,4 +220,177 @@ fn nested_groups_round_trip() {
         panic!("expected a nested group");
     };
     assert_eq!(layers[0].content, leaf);
+}
+
+#[test]
+fn tagged_content_rejects_a_repeated_type() {
+    for json in [
+        r##"{"type":"solid","color":"#fff","type":"solid"}"##,
+        r##"{"color":"#fff","type":"solid","type":"solid"}"##,
+    ] {
+        let error = serde_json::from_str::<Paint>(json).unwrap_err();
+        assert!(
+            error.to_string().contains("duplicate field `type`"),
+            "{error}"
+        );
+    }
+}
+
+/// Every variant of the `type`-tagged enums, once with its optional fields
+/// at their defaults (which `Serialize` leaves out) and once with them set.
+/// Their deserialization mirrors repeat the fields' serde attributes by
+/// hand; a missing `default` or a different name fails to round trip.
+#[test]
+fn every_tagged_variant_round_trips() {
+    fn round_trip<T: Serialize + DeserializeOwned + PartialEq + Debug>(value: T) {
+        // A string keeps `type` first; a `Value` sorts it among the keys.
+        let json = serde_json::to_string(&value).unwrap();
+        assert_eq!(serde_json::from_str::<T>(&json).unwrap(), value, "{json}");
+        let json = serde_json::to_value(&value).unwrap();
+        assert_eq!(
+            serde_json::from_value::<T>(json.clone()).unwrap(),
+            value,
+            "{json}"
+        );
+    }
+
+    let asset = || ResolvedAsset {
+        id: "a".to_owned(),
+        location: AssetLocation::File {
+            path: "a.png".to_owned(),
+        },
+    };
+    let solid = || Paint::Solid {
+        color: "#fff".to_owned(),
+    };
+    let stroke = || Stroke {
+        paint: solid(),
+        width: 2.0,
+    };
+    let point = |x, y| Point { x, y };
+
+    round_trip(AssetLocation::Url {
+        url: "https://example.com/a.png".to_owned(),
+    });
+    round_trip(solid());
+    round_trip(Paint::Linear {
+        start: point(0.0, 0.0),
+        end: point(1.0, 2.0),
+        stops: Vec::new(),
+    });
+    round_trip(Paint::Radial {
+        center: point(1.0, 2.0),
+        radius: 3.0,
+        stops: Vec::new(),
+    });
+
+    let mut contents = vec![
+        LayerContent::Video {
+            asset: asset(),
+            timing: MediaTiming {
+                local_time: Time::new(1, 2),
+                source_start: Time::new(0, 1),
+                source_time_seconds: 0.5,
+                playback_rate: 1.0,
+            },
+        },
+        LayerContent::MissingComponent {
+            component: "Card".to_owned(),
+            props: [("title".to_owned(), serde_json::json!("hi"))].into(),
+        },
+    ];
+    for set in [false, true] {
+        contents.extend([
+            LayerContent::Image {
+                asset: asset(),
+                width: set.then_some(10.0),
+                height: set.then_some(20.0),
+                fit: set.then_some(ImageFit::Cover),
+            },
+            LayerContent::Psd {
+                asset: asset(),
+                visible_layers: if set {
+                    vec!["a".to_owned()]
+                } else {
+                    Vec::new()
+                },
+                enabled_layers: if set {
+                    vec!["b".to_owned()]
+                } else {
+                    Vec::new()
+                },
+                disabled_layers: if set {
+                    vec!["c".to_owned()]
+                } else {
+                    Vec::new()
+                },
+            },
+            LayerContent::Text {
+                text: "hi".to_owned(),
+                style: TextStyle::default(),
+                max_width: set.then_some(100.0),
+                baseline_anchor: set,
+            },
+            LayerContent::Group {
+                layers: vec![Layer {
+                    id: "child".to_owned(),
+                    transform: EvaluatedTransform::default(),
+                    opacity: 1.0,
+                    blend_mode: Default::default(),
+                    effects: Default::default(),
+                    content: LayerContent::Group {
+                        layers: Vec::new(),
+                        clip: None,
+                    },
+                }],
+                clip: set.then_some(Clip {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 10.0,
+                    height: 10.0,
+                    corner_radius: 2.0,
+                }),
+            },
+            LayerContent::Rect {
+                width: 10.0,
+                height: 20.0,
+                fill: set.then(solid),
+                stroke: set.then(stroke),
+                corner_radius: if set { 3.0 } else { 0.0 },
+            },
+            LayerContent::Path {
+                commands: vec![
+                    PathCommand::MoveTo { x: 0.0, y: 0.0 },
+                    PathCommand::LineTo { x: 1.0, y: 0.0 },
+                    PathCommand::QuadTo {
+                        x1: 1.0,
+                        y1: 1.0,
+                        x: 0.0,
+                        y: 1.0,
+                    },
+                    PathCommand::CubicTo {
+                        x1: 0.0,
+                        y1: 2.0,
+                        x2: 1.0,
+                        y2: 2.0,
+                        x: 1.0,
+                        y: 3.0,
+                    },
+                    PathCommand::Close,
+                ],
+                fill: set.then(solid),
+                stroke: set.then(stroke),
+                line_cap: if set { LineCap::Square } else { LineCap::Butt },
+                line_join: if set {
+                    LineJoin::Bevel
+                } else {
+                    LineJoin::Miter
+                },
+                miter_limit: if set { 2.0 } else { crate::DEFAULT_MITER_LIMIT },
+            },
+        ]);
+    }
+    for content in contents {
+        round_trip(content);
+    }
 }

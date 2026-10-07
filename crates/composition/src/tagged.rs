@@ -146,6 +146,34 @@ struct Fields<A> {
     map: A,
 }
 
+/// Hands a field name to `seed`, rejecting a second `type` as serde's
+/// derived tagged enums do.
+struct NotType<K>(K);
+
+impl<'de, K: DeserializeSeed<'de>> DeserializeSeed<'de> for NotType<K> {
+    type Value = K::Value;
+
+    fn deserialize<D: Deserializer<'de>>(self, deserializer: D) -> Result<K::Value, D::Error> {
+        deserializer.deserialize_identifier(self)
+    }
+}
+
+impl<'de, K: DeserializeSeed<'de>> Visitor<'de> for NotType<K> {
+    type Value = K::Value;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a field name")
+    }
+
+    fn visit_str<E: de::Error>(self, key: &str) -> Result<K::Value, E> {
+        if key == "type" {
+            return Err(E::duplicate_field("type"));
+        }
+        self.0
+            .deserialize(IntoDeserializer::<E>::into_deserializer(key))
+    }
+}
+
 impl<'de, A: MapAccess<'de>> VariantAccess<'de> for Fields<A> {
     type Error = A::Error;
 
@@ -183,7 +211,7 @@ impl<'de, A: MapAccess<'de>> MapAccess<'de> for Fields<A> {
         seed: K,
     ) -> Result<Option<K::Value>, A::Error> {
         let Some((key, value)) = self.before.next() else {
-            return self.map.next_key_seed(seed);
+            return self.map.next_key_seed(NotType(seed));
         };
         self.pending = Some(value);
         seed.deserialize(IntoDeserializer::<A::Error>::into_deserializer(key))

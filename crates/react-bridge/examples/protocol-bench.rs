@@ -1,5 +1,7 @@
 //! Times `ReactBridge::scene_at` round trips (Node evaluation, JSON transfer
-//! and decoding) for a React entry, after 30 warmup frames. Run as:
+//! and decoding) for a React entry. Evaluates 30 warmup frames from `start`,
+//! then measures the next `frames` (wrapping at the composition's end). Run
+//! as:
 //!
 //! ```text
 //! cargo run --release -p celesta-react-bridge --example protocol-bench -- <entry.tsx> [frames] [start]
@@ -18,18 +20,26 @@ fn main() {
     )
     .canonicalize()
     .expect("entry exists");
-    let frames: i64 = args
-        .next()
-        .map_or(240, |value| value.parse().expect("frames"));
-    let start: i64 = args.next().map_or(0, |value| value.parse().expect("start"));
+    let frames: u64 = args.next().map_or(240, |value| {
+        value
+            .parse()
+            .ok()
+            .filter(|&frames| frames > 0)
+            .expect("frames must be a positive number")
+    });
+    let start: u64 = args.next().map_or(0, |value| {
+        value
+            .parse()
+            .expect("start must be a frame number of zero or more")
+    });
     let cli = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../packages/react/dist/cli.js");
     let mut bridge = ReactBridge::spawn("node", &cli, &entry).expect("bridge spawns");
     let metadata = bridge.metadata().clone();
     let warmup = 30;
     let mut times = Vec::new();
     for index in 0..warmup + frames {
-        let frame = (start + index) % metadata.duration_in_frames as i64;
-        let time = Time::frames(frame, metadata.frame_rate).expect("valid frame");
+        let frame = (start + index) % metadata.duration_in_frames.max(1);
+        let time = Time::frames(frame as i64, metadata.frame_rate).expect("valid frame");
         let started = Instant::now();
         std::hint::black_box(bridge.scene_at(time).expect("scene evaluates"));
         if index >= warmup {
