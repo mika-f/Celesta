@@ -176,7 +176,25 @@ impl ReactBridge {
         time: Time,
         project: Option<ProjectFrame<'_>>,
     ) -> Result<FrameEvaluation, ReactBridgeError> {
-        let request = Request {
+        self.submit_frame(time, project)?;
+        let frame = self.receive_frame()?;
+        self.decode_frame(frame)
+    }
+
+    /// Asks Node to evaluate the frame at `time`, without waiting for it.
+    /// Every submitted frame must be collected, in order, with
+    /// [`Self::receive_frame`] before any other request is made.
+    ///
+    /// Together with [`Self::receive_frame`] and [`Self::decode_frame`] this
+    /// lets a caller that renders consecutive frames pipeline them: submit
+    /// frame N + 1 between receiving frame N and decoding it, so Node
+    /// evaluates the next frame while this side parses the current one.
+    pub fn submit_frame(
+        &mut self,
+        time: Time,
+        project: Option<ProjectFrame<'_>>,
+    ) -> Result<(), ReactBridgeError> {
+        self.write_request(Request {
             time: Some(time),
             project: project.map(|frame| ProjectPayload {
                 layers: frame.layers,
@@ -185,8 +203,27 @@ impl ReactBridge {
             runtime: None,
             components: None,
             compact_transforms: true,
-        };
-        match self.request_response(request)? {
+        })
+    }
+
+    /// Waits for the oldest submitted frame and returns its response still
+    /// encoded. Text measurements Node asks for meanwhile are answered here.
+    pub fn receive_frame(&mut self) -> Result<PendingFrame, ReactBridgeError> {
+        self.receive_message()?;
+        Ok(PendingFrame(std::mem::take(&mut self.message)))
+    }
+
+    /// Decodes a frame from [`Self::receive_frame`].
+    pub fn decode_frame(
+        &mut self,
+        frame: PendingFrame,
+    ) -> Result<FrameEvaluation, ReactBridgeError> {
+        let response = serde_json::from_slice(&frame.0).map_err(ReactBridgeError::Protocol);
+        // Keep the larger allocation for the next message.
+        if frame.0.capacity() > self.message.capacity() {
+            self.message = frame.0;
+        }
+        match response? {
             Response::Ok { scene, audio } => Ok(FrameEvaluation { scene, audio }),
             Response::Components { .. } => Err(ReactBridgeError::UnexpectedResponse),
             Response::CollectedAudio { .. } => Err(ReactBridgeError::UnexpectedResponse),
@@ -272,26 +309,43 @@ impl ReactBridge {
         &mut self,
         request: R,
     ) -> Result<Response, ReactBridgeError> {
+        self.write_request(request)?;
+        self.receive_message()?;
+        serde_json::from_slice(&self.message).map_err(ReactBridgeError::Protocol)
+    }
+
+    fn write_request<R: Serialize>(&mut self, request: R) -> Result<(), ReactBridgeError> {
         let payload = serde_json::to_string(&request).map_err(ReactBridgeError::Protocol)?;
         writeln!(self.stdin, "{payload}").map_err(ReactBridgeError::Io)?;
-        self.stdin.flush().map_err(ReactBridgeError::Io)?;
+        self.stdin.flush().map_err(ReactBridgeError::Io)
+    }
 
+    /// Reads messages into `self.message` until one is not a text
+    /// measurement, answering each measurement as it arrives.
+    fn receive_message(&mut self) -> Result<(), ReactBridgeError> {
         loop {
             read_message(&mut self.stdout, &mut self.message)?;
-            let response: Response =
-                serde_json::from_slice(&self.message).map_err(ReactBridgeError::Protocol)?;
-            if let Response::MeasureText { measure_text } = response {
-                let metrics = measure_text_response(&mut self.text_measurer, &measure_text);
-                serde_json::to_writer(&mut self.stdin, &metrics)
-                    .map_err(ReactBridgeError::Protocol)?;
-                writeln!(self.stdin).map_err(ReactBridgeError::Io)?;
-                self.stdin.flush().map_err(ReactBridgeError::Io)?;
-            } else {
-                return Ok(response);
+            // The CLI writes the key first; checking it leaves a frame's
+            // scene to be parsed only once, possibly later.
+            if !self.message.starts_with(br#"{"measureText":"#) {
+                return Ok(());
             }
+            let Response::MeasureText { measure_text } =
+                serde_json::from_slice(&self.message).map_err(ReactBridgeError::Protocol)?
+            else {
+                return Err(ReactBridgeError::UnexpectedResponse);
+            };
+            let metrics = measure_text_response(&mut self.text_measurer, &measure_text);
+            serde_json::to_writer(&mut self.stdin, &metrics).map_err(ReactBridgeError::Protocol)?;
+            writeln!(self.stdin).map_err(ReactBridgeError::Io)?;
+            self.stdin.flush().map_err(ReactBridgeError::Io)?;
         }
     }
 }
+
+/// A frame's response read by [`ReactBridge::receive_frame`], not yet
+/// decoded.
+pub struct PendingFrame(Vec<u8>);
 
 /// Reads one message from the CLI into `buffer`, reusing its allocation. With
 /// `--length-prefixed` every message is a little-endian `u32` byte count

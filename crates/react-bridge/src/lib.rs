@@ -17,7 +17,7 @@ mod tests;
 mod types;
 
 pub use audio::{merge_react_audio_clips, react_audio_clips};
-pub use bridge::ReactBridge;
+pub use bridge::{PendingFrame, ReactBridge};
 pub use error::ReactBridgeError;
 pub use types::{
     ComponentPropertyField, ComponentPropertySchema, ComponentResolutionRequest, FrameEvaluation,
