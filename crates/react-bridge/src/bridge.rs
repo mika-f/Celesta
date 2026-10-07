@@ -13,7 +13,7 @@ use celesta_media::FfmpegBackend;
 use celesta_remote::{RemoteAssetCache, is_remote_url};
 use celesta_renderer::TextRasterizer;
 use serde::Serialize;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{self, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
@@ -22,8 +22,8 @@ pub struct ReactBridge {
     pub(crate) child: Child,
     pub(crate) stdin: ChildStdin,
     pub(crate) stdout: BufReader<ChildStdout>,
-    /// The last message read from `stdout`.
-    pub(crate) message: String,
+    /// The last message read from `stdout`, kept to reuse its allocation.
+    pub(crate) message: Vec<u8>,
     pub(crate) metadata: ReactCompositionMetadata,
     pub(crate) text_measurer: Option<TextRasterizer>,
 }
@@ -56,6 +56,7 @@ impl ReactBridge {
         }
         let mut child = command
             .arg(cli_script.as_ref())
+            .arg("--length-prefixed")
             .arg(entry.as_ref())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -68,7 +69,7 @@ impl ReactBridge {
         let mut stdin = child.stdin.take().ok_or(ReactBridgeError::MissingPipe)?;
         let stdout = child.stdout.take().ok_or(ReactBridgeError::MissingPipe)?;
         let mut stdout = BufReader::new(stdout);
-        let mut message = String::new();
+        let mut message = Vec::new();
 
         let mut media = FfmpegBackend::new();
         // Created on the first `measureText`: it scans the system fonts.
@@ -81,7 +82,7 @@ impl ReactBridge {
                 return Err(error);
             }
             let ready: ReadyMessage =
-                serde_json::from_str(&message).map_err(ReactBridgeError::Protocol)?;
+                serde_json::from_slice(&message).map_err(ReactBridgeError::Protocol)?;
             match ready {
                 ReadyMessage::Ready {
                     config,
@@ -217,7 +218,12 @@ impl ReactBridge {
         &mut self,
         frame: PendingFrame,
     ) -> Result<FrameEvaluation, ReactBridgeError> {
-        match serde_json::from_str(&frame.0).map_err(ReactBridgeError::Protocol)? {
+        let response = serde_json::from_slice(&frame.0).map_err(ReactBridgeError::Protocol);
+        // Keep the larger allocation for the next message.
+        if frame.0.capacity() > self.message.capacity() {
+            self.message = frame.0;
+        }
+        match response? {
             Response::Ok { scene, audio } => Ok(FrameEvaluation { scene, audio }),
             Response::Components { .. } => Err(ReactBridgeError::UnexpectedResponse),
             Response::CollectedAudio { .. } => Err(ReactBridgeError::UnexpectedResponse),
@@ -305,7 +311,7 @@ impl ReactBridge {
     ) -> Result<Response, ReactBridgeError> {
         self.write_request(request)?;
         self.receive_message()?;
-        serde_json::from_str(&self.message).map_err(ReactBridgeError::Protocol)
+        serde_json::from_slice(&self.message).map_err(ReactBridgeError::Protocol)
     }
 
     fn write_request<R: Serialize>(&mut self, request: R) -> Result<(), ReactBridgeError> {
@@ -321,11 +327,11 @@ impl ReactBridge {
             read_message(&mut self.stdout, &mut self.message)?;
             // The CLI writes the key first; checking it leaves a frame's
             // scene to be parsed only once, possibly later.
-            if !self.message.starts_with(r#"{"measureText":"#) {
+            if !self.message.starts_with(br#"{"measureText":"#) {
                 return Ok(());
             }
             let Response::MeasureText { measure_text } =
-                serde_json::from_str(&self.message).map_err(ReactBridgeError::Protocol)?
+                serde_json::from_slice(&self.message).map_err(ReactBridgeError::Protocol)?
             else {
                 return Err(ReactBridgeError::UnexpectedResponse);
             };
@@ -339,19 +345,32 @@ impl ReactBridge {
 
 /// A frame's response read by [`ReactBridge::receive_frame`], not yet
 /// decoded.
-pub struct PendingFrame(String);
+pub struct PendingFrame(Vec<u8>);
 
-/// Reads one JSON line from the CLI into `buffer`. It stays a `String`:
-/// `read_line` has already checked the UTF-8, which `serde_json::from_str`
-/// then skips and `from_slice` would check again.
+/// Reads one message from the CLI into `buffer`, reusing its allocation. With
+/// `--length-prefixed` every message is a little-endian `u32` byte count
+/// followed by that many bytes of JSON, so a frame's scene is read in a few
+/// large reads instead of being scanned for its line end.
 fn read_message(
     stdout: &mut BufReader<ChildStdout>,
-    buffer: &mut String,
+    buffer: &mut Vec<u8>,
 ) -> Result<(), ReactBridgeError> {
+    let eof = |error: io::Error| match error.kind() {
+        io::ErrorKind::UnexpectedEof => ReactBridgeError::UnexpectedExit,
+        _ => ReactBridgeError::Io(error),
+    };
+    let mut length = [0; 4];
+    stdout.read_exact(&mut length).map_err(eof)?;
+    let length = u32::from_le_bytes(length) as usize;
     buffer.clear();
-    let read = stdout.read_line(buffer).map_err(ReactBridgeError::Io)?;
-    if read == 0 {
-        return Err(ReactBridgeError::UnexpectedExit);
+    buffer.reserve(length);
+    let read = stdout
+        .take(length as u64)
+        .read_to_end(buffer)
+        .map_err(ReactBridgeError::Io)?;
+    if read == length {
+        Ok(())
+    } else {
+        Err(ReactBridgeError::UnexpectedExit)
     }
-    Ok(())
 }
