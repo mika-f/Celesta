@@ -771,7 +771,7 @@
         "a-new-unrelated-value-each-frame-or": "フレームや拍ごとの独立した新しい値",
         "with-the-frame-in-the-seed": "シードにフレームを入れた <slot0><slot1/></slot0>",
         "metadata": {
-          "title": "数学：ノイズと fbm",
+          "title": "math：ノイズと fbm",
           "description": "滑らかで再現可能な漂い・揺れ・有機的な場。",
           "keywords": "数学 ノイズ ゆらぎ 揺れ 地形 noise noise2D noise3D fbm fbm2D fbm3D octaves lacunarity gain perlin wobble drift shake clouds smoke terrain"
         },
@@ -802,7 +802,7 @@
         "a-marker-riding-a-curve": "曲線に沿って動くマーカー",
         "both-and-use-the-same-control-points": "<slot0/> と <slot1/> は <slot2/> の <slot3/> / <slot4/> と同じ制御点を使うので、マーカーが描いた曲線上に留まります。<slot6/> は<slot5>テキスト効果・カメラ・線</slot5>をご覧ください。",
         "metadata": {
-          "title": "数学：整形・波・幾何",
+          "title": "math：整形・波・幾何",
           "description": "数値の整形、波、角度、2D の点。",
           "keywords": "数学 数値 波 角度 幾何 点 座標 clamp lerp inverseLerp remap smoothstep smootherstep wrap mod pingPong snap roundTo fract sineWave triangleWave squareWave sawtoothWave degToRad lerpAngle rotatePoint polarToCartesian bezier distance Vec2 TAU"
         },
@@ -847,7 +847,7 @@
         "use-a-monospaced-font-defaults-to-jetbrains": "<slot0>等幅</slot0>フォントを使います。<slot1/> の既定は JetBrains Mono、24 px、行高は文字サイズの 1.5 倍です。上のように <slot2/> で読み込むか、描画するマシンにインストールします。不足時はほかのテキストと同様にフォールバックします。",
         "props": "props",
         "code-props": "Code の props",
-        "code-typing-carets-tokens": "コード：入力・カーソル・トークン",
+        "code-typing-carets-tokens": "code：入力・カーソル・トークン",
         "line-highlights": "行の強調",
         "draws-a-band-behind-the-lines-you": "<slot0/> は指定した行の背後に、幅と行高いっぱいの帯を描きます。コードを入力中でも表示されます。",
         "mark-one-line": "1 行を強調",
@@ -902,7 +902,7 @@
         "blank-runs-get-no-layer-but-keep": "空白だけの区間は <slot0/> レイヤーを作りませんが、計測した間隔を保持します。",
         "sharing-styled-text-shaping-in-the-core": "コア描画でスタイル付きテキストの字形処理を共有する修正を計画しており、<slot0>Issue 99</slot0> で追跡しています。ブラウザ対応は <slot1>Issue 100</slot1> です。",
         "metadata": {
-          "title": "コード：入力・カーソル・トークン",
+          "title": "code：入力・カーソル・トークン",
           "description": "入力風にコードを表示し、カーソルを配置し、トークンを取得します。",
           "keywords": "コード 入力 カーソル トークン タイピング visibleCharacters useTypewriter useCodePoint codeCharacterCount tokenizeCode caret annotation typing reveal limits performance ligatures"
         }

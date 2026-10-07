@@ -771,7 +771,7 @@
         "a-new-unrelated-value-each-frame-or": "A new, unrelated value each frame or beat",
         "with-the-frame-in-the-seed": "<slot0><slot1/></slot0> with the frame in the seed",
         "metadata": {
-          "title": "Math: noise & fbm",
+          "title": "math: noise & fbm",
           "description": "Smooth, repeatable drift, wobble, and organic fields.",
           "keywords": "noise noise2D noise3D fbm fbm2D fbm3D octaves lacunarity gain perlin wobble drift shake clouds smoke terrain"
         },
@@ -802,7 +802,7 @@
         "a-marker-riding-a-curve": "A marker riding a curve",
         "both-and-use-the-same-control-points": "Both <slot0/> and <slot1/> use the same control points as a <slot2/>’s <slot3/> and <slot4/> commands, so the marker stays on the drawn curve. See <slot5>Text effects, camera & lines</slot5> for <slot6/>.",
         "metadata": {
-          "title": "Math: shaping, waves & geometry",
+          "title": "math: shaping, waves & geometry",
           "description": "Number shaping, waves, angles, and 2D points.",
           "keywords": "clamp lerp inverseLerp remap smoothstep smootherstep wrap mod pingPong snap roundTo fract sineWave triangleWave squareWave sawtoothWave degToRad lerpAngle rotatePoint polarToCartesian bezier distance Vec2 TAU"
         },
@@ -847,7 +847,7 @@
         "use-a-monospaced-font-defaults-to-jetbrains": "Use a <slot0>monospaced</slot0> font. <slot1/> defaults to JetBrains Mono at 24 px with a line height of 1.5 × the font size. Load the font file with <slot2/>, as above, or install it on the machine that renders. If the font is missing, Celesta falls back as it does for any text.",
         "props": "Props",
         "code-props": "Code props",
-        "code-typing-carets-tokens": "Code: typing, carets & tokens",
+        "code-typing-carets-tokens": "code: typing, carets & tokens",
         "line-highlights": "Line highlights",
         "draws-a-band-behind-the-lines-you": "<slot0/> draws a band behind the lines you name, full width and full line height, even while the code is still being typed:",
         "mark-one-line": "Mark one line",
@@ -902,7 +902,7 @@
         "blank-runs-get-no-layer-but-keep": "Blank runs get no <slot0/> layer but keep their measured spacing.",
         "sharing-styled-text-shaping-in-the-core": "Sharing styled-text shaping in the core renderer is the planned fix; it is tracked in <slot0>issue 99</slot0>. Browser support is tracked in <slot1>issue 100</slot1>.",
         "metadata": {
-          "title": "Code: typing, carets & tokens",
+          "title": "code: typing, carets & tokens",
           "description": "Reveal code as it is typed, place carets, and read tokens.",
           "keywords": "visibleCharacters useTypewriter useCodePoint codeCharacterCount tokenizeCode caret annotation typing reveal limits performance ligatures"
         }
