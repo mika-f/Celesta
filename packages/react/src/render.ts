@@ -194,6 +194,19 @@ function rootWalkContext(fps: number, durationInFrames: number, time: Time, lang
   };
 }
 
+/**
+ * `value` as a flat string. V8's JSON.stringify fast path gives up at the
+ * first ConsString or SlicedString it meets (what concatenating to 13 or
+ * more characters, or slicing, produces) and serializes the whole frame
+ * again on the slow path: one `FRAME ${n}` text made a NEBULA frame 2.8x
+ * slower to send. Strings an author builds (ids, text, colors, asset paths)
+ * go through here; ids the walk builds itself use `join`, which is flat.
+ * V8 never makes a string shorter than 13 characters cons or sliced.
+ */
+function flatString(value: string): string {
+  return value.length < 13 ? value : JSON.parse(JSON.stringify(value));
+}
+
 function numberOr(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
@@ -269,9 +282,10 @@ function resolveAsset(src: unknown): ResolvedAsset {
     throw new Error('components with asset content require a non-empty `src` prop');
   }
   const id = typeof reference === 'string' ? reference : (reference as { id?: unknown }).id;
+  const flatPath = flatString(path);
   return {
-    id: typeof id === 'string' && id.length > 0 ? id : path,
-    location: isRemoteUrl(path) ? { type: 'url', url: path } : { type: 'file', path },
+    id: typeof id === 'string' && id.length > 0 ? flatString(id) : flatPath,
+    location: isRemoteUrl(flatPath) ? { type: 'url', url: flatPath } : { type: 'file', path: flatPath },
   };
 }
 
@@ -358,7 +372,7 @@ function buildLayer(
   audio: AudioClipDescriptor[],
 ): Layer {
   const { props } = node;
-  const id = typeof props.id === 'string' && props.id.length > 0 ? `${context.idPrefix}${props.id}` : path;
+  const id = typeof props.id === 'string' && props.id.length > 0 ? flatString(`${context.idPrefix}${props.id}`) : path;
   const transform = extractTransform(props);
   const opacity = typeof props.rawOpacity === 'number' ? props.rawOpacity : numberOr(props.opacity, 1);
   const blendMode = extractBlendMode(props.blendMode);
@@ -519,7 +533,7 @@ function buildLayer(
       const overlay = blink?.overlay === true;
       const layers: Layer[] = [
         {
-          id: `${id}.portrait`,
+          id: [id, 'portrait'].join('.'),
           transform: extractTransform({}),
           opacity: 1,
           content: { type: 'image', asset: resolveAsset(eyesSource !== undefined && !overlay ? eyesSource : src) },
@@ -527,7 +541,7 @@ function buildLayer(
       ];
       if (eyesSource !== undefined && overlay) {
         layers.push({
-          id: `${id}.eyes`,
+          id: [id, 'eyes'].join('.'),
           transform: extractTransform({}),
           opacity: 1,
           content: { type: 'image', asset: resolveAsset(eyesSource) },
@@ -540,7 +554,7 @@ function buildLayer(
         : undefined;
       if (mouthSource !== undefined) {
         layers.push({
-          id: `${id}.mouth`,
+          id: [id, 'mouth'].join('.'),
           transform: extractTransform({}),
           opacity: 1,
           content: { type: 'image', asset: resolveAsset(mouthSource) },
@@ -571,7 +585,7 @@ function buildLayer(
     if (typeof character.subtitle?.render === 'function') {
       // <Dialogue> already rendered the subtitle as its only child.
       for (const child of node.children) {
-        layers.push(...walkNode(child, `${id}.subtitle`, context, audio));
+        layers.push(...walkNode(child, [id, 'subtitle'].join('.'), context, audio));
       }
     } else if (props.held !== true) {
       // `${id}.subtitle` is already final (prefixed inside a <FreezeFrame>),
@@ -583,7 +597,7 @@ function buildLayer(
             props: { ...character.subtitle, id: undefined, children: props.text },
             children: [],
           },
-          `${id}.subtitle`,
+          [id, 'subtitle'].join('.'),
           context,
           audio,
         ),
@@ -594,7 +608,7 @@ function buildLayer(
     const maxWidth = props.maxWidth;
     content = {
       type: 'text',
-      text: extractText(props.children),
+      text: flatString(extractText(props.children)),
       style: withTextLanguage(
         (props.style as TextStyle | undefined) ?? {},
         resolveTextLanguage(props.lang, context.lang),
@@ -662,7 +676,7 @@ function buildLayer(
 
 function toPaint(value: unknown): Paint | undefined {
   return typeof value === 'string'
-    ? { type: 'solid', color: value }
+    ? { type: 'solid', color: flatString(value) }
     : value && typeof value === 'object'
       ? (value as Paint)
       : undefined;
@@ -960,7 +974,7 @@ function walkChildren(
     return [];
   }
   return node.children.flatMap((child, index) =>
-    walkNode(child, `${parentPath}.${index}`, context, audio),
+    walkNode(child, [parentPath, index].join('.'), context, audio),
   );
 }
 
