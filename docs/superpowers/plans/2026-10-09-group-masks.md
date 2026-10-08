@@ -1581,8 +1581,11 @@ In `draw_group`, replace the `let (Some(GpuStep::BeginGroup { canvas: region }),
         };
         if let GpuStep::EndMask { mask, .. } = end {
             let split = mask_content(steps);
+            // Copied out of `self`, so the closure borrows nothing of it
+            // while `draw_canvas` takes `&mut self`.
+            let (device, layout) = (self.device, self.texture_layout);
             let take = |effects: &mut crate::effect::EffectProcessor| {
-                effects.take_canvas(self.device, self.texture_layout, region.width, region.height)
+                effects.take_canvas(device, layout, region.width, region.height)
             };
             let matte = take(self.effects);
             self.draw_canvas(encoder, &matte, wgpu::Color::TRANSPARENT, &steps[1..split]);
@@ -1601,7 +1604,7 @@ In `draw_group`, replace the `let (Some(GpuStep::BeginGroup { canvas: region }),
         }
 ```
 
-If the borrow checker rejects the `take` closure (it captures `self.device` while `self.effects` is borrowed mutably), call `self.effects.take_canvas(self.device, self.texture_layout, region.width, region.height)` inline three times instead. Update `draw_group`'s doc comment to "Composites the group `steps` (from its `BeginGroup` or `BeginMask` to its end) onto a canvas of its own and applies its effect or mask, …".
+Update `draw_group`'s doc comment to "Composites the group `steps` (from its `BeginGroup` or `BeginMask` to its end) onto a canvas of its own and applies its effect or mask, …".
 
 Replace `group_end` with one that counts masks, and add `mask_content` below it:
 
@@ -2173,7 +2176,17 @@ In `walkNode`, after the `rawLayers` early return, add:
 Run: `cd packages/react && pnpm run build && pnpm exec vitest run`
 Expected: PASS, including every existing test. If `audio-collection.test.mjs`'s first test now fails, the visual walk's audio order no longer matches the audio-only walk. Check that the group branch walks siblings in order, as Step 4 does.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Check that no new React warning appears**
+
+`Group` now passes every group's children to `createElement` as a vararg instead of `props.children`, which re-runs React's dev-mode child-key validation on them. The CLI forwards console output to Rust, and every composition goes through this path, so check it on an existing multi-child example:
+
+```bash
+cd packages/react && echo '{"time":{"value":0,"timescale":1}}' | node bin/celesta-react-render.js examples/with-shapes.tsx 2>&1 >/dev/null | grep -i "key" ; echo "exit $?"
+```
+
+Expected: no line mentioning a `key` (grep finds nothing, `exit 1`). Run the same command on `main`'s build too, if a warning does appear, to tell a new warning from an existing one. If the change adds one, pass the children inside a fragment slot instead: `React.createElement('group', props, React.createElement(React.Fragment, null, children), maskElement(mask))`. Then rerun the tests.
+
+- [ ] **Step 7: Commit**
 
 ```bash
 git add packages/react/src packages/react/test/mask.test.mjs
