@@ -54,9 +54,9 @@ booleans, and fragments as `<Text>` / `<Dialogue>` children; spans anywhere),
 additive fields and parameter widenings, and the type of `DialogueLine.text`,
 which has no runtime effect.
 
-Tests assert this: the scene JSON and the rendered pixels of span-free text
-match before and after, and the existing renderer, GPU, React, and browser
-suites pass unchanged.
+Tests assert this: span-free text keeps the same scene JSON and reuses the
+same cached layout as a style without runs, and the existing renderer, GPU,
+React, and browser suites, which check rendered pixels, pass unchanged.
 
 ## API
 
@@ -155,7 +155,8 @@ pub struct TextFontRun {
   #186's reuse of shaped text when only paint changes.
 - `fontRuns` is internal: the public API is `<Span>`, so the representation
   can change later without breaking compositions. It is not described in
-  `react-api.md` or the website beyond a note that `<Span>` produces it.
+  `skills/celesta/references/text.md` or the website beyond a note that
+  `<Span>` produces it.
 - Empty `fontRuns` serializes to nothing, so existing scenes and project files
   are unchanged. TypeScript bindings are regenerated.
 
@@ -214,8 +215,9 @@ and make line spacing uneven. Spans do not move the baseline:
   cosmic-text does, `line_top + (line_height - (ascent + descent)) / 2 +
   ascent`, but with `ascent` and `descent` taken over the glyphs outside font
   runs on that line.
-- A line whose glyphs are all inside font runs uses the largest ascent and
-  descent of the glyphs outside font runs anywhere in the text.
+- A line that has glyphs, all inside font runs, uses the largest ascent and
+  descent of the glyphs outside font runs anywhere in the text. A line with
+  no glyphs (an empty line) keeps cosmic-text's baseline.
 - Text entirely inside font runs keeps cosmic-text's baseline.
 - Line height stays fixed by `Metrics`. Measure and rasterize use the same
   recomputed baselines, so they agree.
@@ -263,8 +265,8 @@ is the reference.
 
 ## Testing
 
-- **Unchanged behavior.** Span-free text: identical scene JSON and pixels
-  before and after; existing suites pass unchanged.
+- **Unchanged behavior.** Span-free text: identical scene JSON and the same
+  cached layout as a style without runs; existing suites pass unchanged.
 - **Renderer (Rust).** Family runs with the repository's Bebas Neue and IBM
   Plex Mono fonts: advances change, measured width equals rasterized width,
   and the shaping cache separates texts that differ only in font runs while
@@ -299,5 +301,6 @@ Stacked PRs with gh-stack, in this order:
 Deliverables of the last layer: a new small example (`examples/rich-text/`)
 showing an emphasized Japanese subtitle, an explanatory paragraph with mixed
 weights and a brand-font word, a TextReveal headline with a span, and typing
-with `visibleCharacters`; `skills/celesta/references/react-api.md`; the
-website docs (en/ja); and a handoff note `docs/handoff/<date>-rich-text.md`.
+with `visibleCharacters`; `skills/celesta/references/text.md` and
+`dialogue.md`; the website docs (en/ja); and a handoff note
+`docs/handoff/<date>-rich-text.md`.
