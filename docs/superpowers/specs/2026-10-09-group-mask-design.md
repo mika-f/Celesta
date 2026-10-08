@@ -4,23 +4,20 @@
 
 A `Group` can already be limited to a rectangle with `clip`, rounded or not.
 It cannot be cut out by an arbitrary shape, glyph, or image: video inside
-letters, a circular wipe, or a soft-edged reveal. `<Mask>` lets another drawn
-subtree decide, per pixel, how much of a group shows.
+letters, a circular wipe, or a soft-edged reveal. A group's `mask` lets
+another drawn subtree decide, per pixel, how much of the group shows.
 
 ```tsx
 // Video inside letters.
-<Group>
-  <Mask>
-    <Text style={{ fontSize: 320, fontWeight: 900 }}>CELESTA</Text>
-  </Mask>
+<Group mask={<Text style={{ fontSize: 320, fontWeight: 900 }}>CELESTA</Text>}>
   <Video src="./clip.mp4" />
 </Group>
 
-// A circular wipe from scene A to scene B.
+// A circular wipe from scene A to scene B, with a soft edge.
 <SceneA />
 <Group>
   <Mask>
-    <Circle x={960} y={540} anchorX={0.5} anchorY={0.5} radius={radius} fill="#ffffff" />
+    <Circle x={960} y={540} anchorX={0.5} anchorY={0.5} radius={radius} fill="#ffffff" blur={24} />
   </Mask>
   <SceneB />
 </Group>
@@ -34,11 +31,11 @@ The existing rectangle `clip` is unchanged.
 LayerContent::Group {
     layers: Vec<Layer>,
     clip: Option<Clip>,
-    /// Shows the children only where this subtree is drawn; see `Mask`.
-    mask: Option<Mask>,
+    /// Shows the children only where this subtree is drawn; see `GroupMask`.
+    mask: Option<GroupMask>,
 }
 
-pub struct Mask {
+pub struct GroupMask {
     /// Drawn in the group's own coordinate space, like `layers`; never shown.
     pub layers: Vec<Layer>,
     pub mode: MaskMode,   // default Alpha
@@ -51,8 +48,10 @@ pub enum MaskMode { Alpha, Luminance }
 - JSON: `{"type":"group","layers":[…],"mask":{"layers":[…],"mode":"luminance","invert":true}}`.
   `mask` is omitted when `None`, `mode` when `alpha`, and `invert` when false.
   Added to `LayerContentDef` as well, so tagged deserialization keeps working.
-- ts-rs exports `Mask` and `MaskMode`; `pnpm run codegen` regenerates
-  `packages/react/src/generated/`.
+- ts-rs exports `GroupMask` and `MaskMode`; `pnpm run codegen` regenerates
+  `packages/react/src/generated/`, and `scene.ts` re-exports both. The type
+  is not called `Mask`: `scene.ts`'s re-exports are public, and `Mask` is the
+  React component.
 - Project JSON (`celesta-project`) does not get masks. The evaluator builds
   groups with `mask: None`.
 
@@ -122,38 +121,71 @@ export interface MaskProps {
   children?: ReactNode;
 }
 export function Mask(props: MaskProps): ReactElement;
+
+export interface GroupProps extends CommonProps {
+  // …existing props…
+  /**
+   * Shows the children only where this is drawn. A `<Mask>` element sets the
+   * mode and invert; anything else is masked by alpha.
+   */
+  mask?: ReactNode;
+}
 ```
 
-- `<Mask>` renders a `'mask'` host element. It is a direct child of
-  `<Group>`, at any position among the siblings; its children become
-  `mask.layers`, and the other children stay `layers`.
+There are two ways to write a mask, and they meet in one host element:
+
+```tsx
+<Group mask={<Text>CELESTA</Text>}>…</Group>                        // shorthand
+<Group mask={<Mask mode="luminance" invert><Text>…</Text></Mask>}>…</Group>
+<Group>
+  <Mask mode="luminance"><Text>…</Text></Mask>                       // as a child
+  …
+</Group>
+```
+
+- `<Mask>` renders a `'mask'` host element carrying `mode` and `invert`.
+  Only `<Mask>` carries them: there are no `maskMode` / `maskInvert` props.
+- `Group` renders its `mask` prop as an extra child. A `<Mask>` element goes
+  in as it is; any other node is wrapped in `<Mask>` (alpha, not inverted).
+  `null`, `undefined`, and booleans mean no mask, so `mask={on && <Circle />}`
+  switches the mask off. A `<Mask>` with no children is an empty mask, which
+  hides the group (or shows it whole when inverted); a mask whose content
+  disappears mid-animation therefore never flashes the whole group.
+- The walker therefore sees at most one `'mask'` host child under a
+  `'group'`, at any position among the siblings. "Direct child" means in the
+  host tree: function components and fragments in between do not count. Its
+  children become `mask.layers`, and the other children stay `layers`.
 - A registered component is rendered inside an internal `'group'`
   (`ResolvedProjectLayer`, `ResolverHost`), so a `<Mask>` at the top of its
   output masks that wrapper, which is the component's own output. This is
   allowed.
 - `<Mask>` has no layer of its own and no transform props. To move the mask
-  separately from the children, wrap its children in a `<Group>`.
+  separately from the children, wrap its children in a `<Group>` or move the
+  children themselves.
 - Errors thrown by the walker:
-  - `<Mask>` anywhere other than directly under `<Group>`, including under
-    `<Sequence>` and `<FreezeFrame>`: "`<Mask>` must be a direct child of
-    `<Group>`".
-  - Two `<Mask>`s under one `<Group>`: "a `<Group>` takes at most one
-    `<Mask>`".
+  - A `'mask'` anywhere other than directly under `<Group>`: under
+    `<Sequence>`, `<FreezeFrame>`, another `<Mask>`, or at the root.
+    "`<Mask>` must be a direct child of `<Group>`". `<Sequence><Group mask>`
+    expresses the same thing.
+  - Two masks under one `<Group>`, whether two `<Mask>` children or a `mask`
+    prop plus a `<Mask>` child: "a `<Group>` takes at most one mask".
   - A `mode` other than the two: "unknown mask mode …; expected one of alpha,
     luminance", in the style of `extractBlendMode`.
 - Inside the mask, time, `lang`, and fonts work as in the group's other
   children. Mask layers get tree-path ids like any other layer, so a
   `<Video>` in the mask and one in the children keep separate decode
   sessions.
-- The mask subtree is silent: `<Audio>` and voiced `<Dialogue>` inside it are
-  collected neither by `renderAt` nor by the audio-only walk, as inside
-  `<FreezeFrame>`. A mask is a matte, not something heard.
+- Audio inside the mask plays as anywhere else: `<Audio>` and voiced
+  `<Dialogue>` are collected by `renderAt` and by the audio-only walk. Being
+  drawn and being heard are independent, as for a layer at opacity 0. Unlike
+  `<FreezeFrame>`, a mask draws its subtree once, at the same time as its
+  siblings, so nothing plays twice.
 
 ## Implementation
 
 ### `celesta-composition`
 
-Add `Mask`, `MaskMode`, and the `mask` field (in `model.rs` and
+Add `GroupMask`, `MaskMode`, and the `mask` field (in `model.rs` and
 `LayerContentDef`). Update every `LayerContent::Group` constructor.
 
 ### Traversals that must see the mask subtree
@@ -244,13 +276,17 @@ axis-aligned.
 ### React (`packages/react/test/mask.test.mjs`)
 
 1. `<Group><Mask>…</Mask>…</Group>` serializes `mask.layers` apart from
-   `layers`, at any sibling position, with `mode` and `invert` omitted at
-   their defaults.
-2. Each walker error above throws its message.
-3. Mask layers get unique tree-path ids, and inherit `lang`.
-4. `<Audio>` inside `<Mask>` is collected neither by `renderAt` nor by
-   `collectAudio`.
-5. `compactLayers` and `inheritTextLanguage` reach `mask.layers`.
+   `layers`, at any sibling position (also behind a function component or a
+   fragment), with `mode` and `invert` omitted at their defaults.
+2. `mask={<Text/>}`, `mask={<Mask mode invert>…</Mask>}`, and the child form
+   serialize identically for the same content and options.
+3. `mask={null}` and `mask={false}` give no mask; an empty `<Mask />` gives
+   `mask.layers: []`.
+4. Each walker error above throws its message.
+5. Mask layers get unique tree-path ids, and inherit `lang`.
+6. `<Audio>` inside a mask is collected by both `renderAt` and
+   `collectAudio`, once.
+7. `compactLayers` and `inheritTextLanguage` reach `mask.layers`.
 
 ### Performance
 
@@ -262,8 +298,18 @@ the `text` workload. The existing workloads must not slow down.
 ## Examples
 
 `packages/react/examples/with-mask.tsx`: video inside letters for the first
-half (a `<Video src="./clip.mp4">`, as `with-video.tsx` does), then a
-circular wipe with a blurred edge between two scenes for the second half.
+half (a `<Video src="./clip.mp4">`, as `with-video.tsx` does, written with
+the `mask` prop), then a circular wipe with a blurred edge between two scenes
+for the second half (written with a `<Mask>` child).
+
+## Delivery
+
+Two pull requests:
+
+1. The scene model, codegen, the CPU and GPU renderers, the traversals, and
+   the Rust tests. Masks are usable from scene JSON at this point.
+2. The React API, the React tests, the exporter test, the example, the bench
+   workload, and the docs.
 
 ## Docs
 
@@ -281,3 +327,5 @@ circular wipe with a blurred edge between two scenes for the second half.
 - Linear-light luminance, or luma weights other than Rec. 709.
 - A mask that is shown as well (After Effects' visible matte layer). Draw it
   twice.
+- Wipes in `<Transition>` or #141's `TransitionSeries`. Shape wipes built on
+  masks belong to #141's extension or a follow-up (noted on #141).
