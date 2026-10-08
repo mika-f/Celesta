@@ -58,7 +58,8 @@ function run(entrySource, layers) {
   const args = layers ? [cli, entry, '--properties-stdin'] : [cli, entry];
   const input = layers ? `${JSON.stringify({ propertyInputs: layers })}\n${FRAME}\n` : `${FRAME}\n`;
   const result = spawnSync(process.execPath, args, { input, encoding: 'utf8' });
-  return result.stdout.split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
+  const messages = result.stdout.split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
+  return Object.assign(messages, { status: result.status });
 }
 
 function textOf(messages) {
@@ -104,8 +105,9 @@ test('every invalid value is reported before prepare() runs', () => {
       baseDir: dir,
       values: { titel: 'typo', accent: 'red', mode: 'c', data: 'missing.txt' },
     },
-    { source: 'props', baseDir: dir, values: { count: true } },
+    { source: 'props', baseDir: dir, values: { count: true, data: '.' } },
   ]);
+  assert.equal(messages.status, 1);
   assert.equal(messages.length, 1, JSON.stringify(messages));
   const issues = messages[0].invalidProperties;
   assert.deepEqual(
@@ -117,11 +119,14 @@ test('every invalid value is reported before prepare() runs', () => {
       '--props-file a.json mode',
       '--props-file a.json data',
       '--props count',
+      '--props data',
     ],
   );
   assert.match(issues[1].message, /declared: title, accent, count, mode, data/);
   assert.match(issues[3].message, /one of "a", "b"/);
-  assert.match(issues[4].message, /missing\.txt does not exist/);
+  assert.match(issues[4].message, /missing\.txt is not an existing file/);
+  // A directory is not a file.
+  assert.match(issues[6].message, /is not an existing file/);
 });
 
 test('outside values need a schema, but a companion project without one stays compatible', () => {
@@ -133,7 +138,9 @@ test('outside values need a schema, but a companion project without one stays co
   const compatible = run(entry, [{ source: 'project', file: 'p.celesta.json', baseDir: dir, values: { title: 'x' } }]);
   assert.equal(textOf(compatible).text, 'ok');
 
-  const [rejected] = run(entry, [{ source: 'props', baseDir: dir, values: { title: 'x' } }]);
+  const rejectedRun = run(entry, [{ source: 'props', baseDir: dir, values: { title: 'x' } }]);
+  assert.equal(rejectedRun.status, 1);
+  const [rejected] = rejectedRun;
   assert.equal(rejected.invalidProperties[0].key, '');
   assert.match(rejected.invalidProperties[0].message, /defineProjectProperties/);
 });
@@ -146,6 +153,24 @@ test('reading a property at module scope is an error', () => {
     `export default function Root() {\n` +
     `  return <Composition width={64} height={64} fps={30} durationInFrames={1}>{null}</Composition>;\n` +
     `}\n`;
-  const [message] = run(entry, []);
-  assert.match(message.error, /read at module scope/);
+  const result = run(entry, []);
+  assert.equal(result.status, 1);
+  assert.match(result[0].error, /read at module scope/);
+});
+
+test('an empty path turns a file off, and __proto__ is an ordinary key', () => {
+  const entry =
+    `import { Composition, Text, defineProjectProperties, getProjectProperty } from '@celesta/react';\n` +
+    `defineProjectProperties({ data: { type: 'path', defaultValue: './default.txt' }, ['__proto__']: { type: 'string', defaultValue: 'd' } });\n` +
+    `export default function Root() {\n` +
+    `  return <Composition width={64} height={64} fps={30} durationInFrames={1}><Text x={0} y={0}>{JSON.stringify([getProjectProperty('data'), getProjectProperty('__proto__')])}</Text></Composition>;\n` +
+    `}\n`;
+  const messages = run(entry, [{ source: 'props', baseDir: dir, values: JSON.parse('{"data":"","__proto__":"set"}') }]);
+  assert.equal(textOf(messages).text, '["","set"]');
+});
+
+test('a malformed handshake is reported as an error line', () => {
+  const messages = run(SCHEMA_ENTRY, [{ source: 'props', baseDir: dir, values: null }]);
+  assert.equal(messages.status, 1);
+  assert.match(messages[0].error, /invalid project property inputs/);
 });

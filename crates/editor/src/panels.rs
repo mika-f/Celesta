@@ -572,7 +572,7 @@ impl EditorView {
                     .chain(args.props.iter().map(|_| "--props".to_owned()))
                     .collect();
                 if sources.is_empty() {
-                    "Defaults".to_owned()
+                    "No overrides".to_owned()
                 } else {
                     sources.join(" + ")
                 }

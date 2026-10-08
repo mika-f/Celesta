@@ -130,7 +130,14 @@ async function main(): Promise<void> {
 
   // The schema exists only once the entry's module scope has run; checking
   // here reports every bad value before `prepare()` or any frame uses one.
-  const properties = resolvePropertyInputs(propertyLayers, listProjectProperties(), path.dirname(entryPath));
+  let properties: ReturnType<typeof resolvePropertyInputs>;
+  try {
+    properties = resolvePropertyInputs(propertyLayers, listProjectProperties(), path.dirname(entryPath));
+  } catch (error) {
+    writeLine({ error: describeError(error) });
+    process.exitCode = 1;
+    return;
+  }
   if (properties.issues.length > 0) {
     writeLine({ invalidProperties: properties.issues });
     process.exitCode = 1;
@@ -224,10 +231,23 @@ async function readPropertyInputs(lines: AsyncIterator<string>): Promise<Propert
   } catch (error) {
     throw new Error(`invalid project property inputs: ${describeError(error)}`);
   }
-  if (!Array.isArray(message.propertyInputs)) {
-    throw new Error('invalid project property inputs: expected a propertyInputs array');
+  if (!Array.isArray(message.propertyInputs) || !message.propertyInputs.every(isPropertyInputLayer)) {
+    throw new Error('invalid project property inputs: expected a propertyInputs array of { source, baseDir, values } layers');
   }
-  return message.propertyInputs as PropertyInputLayer[];
+  return message.propertyInputs;
+}
+
+function isPropertyInputLayer(layer: unknown): layer is PropertyInputLayer {
+  if (layer === null || typeof layer !== 'object') return false;
+  const { source, baseDir, values, file } = layer as Record<string, unknown>;
+  return (
+    (source === 'project' || source === 'propsFile' || source === 'props') &&
+    typeof baseDir === 'string' &&
+    values !== null &&
+    typeof values === 'object' &&
+    !Array.isArray(values) &&
+    (file === undefined || typeof file === 'string')
+  );
 }
 
 async function requestMediaProbe(

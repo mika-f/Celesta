@@ -49,8 +49,13 @@ checked after the entry's module code has run.
 ```tsx
 let rows: Row[] = [];
 export async function prepare() {
-  // A `path` value is absolute by the time it is read.
-  rows = JSON.parse(await fs.promises.readFile(getProjectProperty<string>('data'), 'utf8'));
+  // A local `path` value is absolute by the time it is read; an http(s) URL
+  // stays a URL, so fetch it instead of reading it from disk.
+  const data = getProjectProperty<string>('data');
+  const text = /^https?:\/\//i.test(data)
+    ? await (await fetch(data)).text()
+    : await fs.promises.readFile(data, 'utf8');
+  rows = JSON.parse(text);
 }
 
 export default function Card() {
@@ -86,15 +91,18 @@ Where a value comes from, highest precedence first:
 
 Every `--props`/`--props-file` value is checked before `prepare()` runs, and
 all problems are reported together (`--json` code `invalid_properties`, one
-`issues` entry per key):
+`issues` entry per key, or one entry with no `path` for a source that an
+entry without a schema cannot accept):
 
 - the key must be declared (with no `defineProjectProperties()` call, any
   `--props` value is an error);
 - `string`/`number`/`boolean` must have that JSON type; `color` must be
   `#RRGGBB` or `#RRGGBBAA`; `select` must be one of `options`;
-- `path` must be an existing file or an `http(s)` URL. Relative paths in
-  `--props-file` resolve from that file's folder, in `--props` from the
-  current directory, and a relative default from the entry's folder.
+- `path` must be an existing regular file (not a folder), an `http(s)` URL,
+  or `""` for "no file". Relative paths in `--props-file` resolve from that
+  file's folder, in `--props` from the current directory, and a relative
+  default from the entry's folder. Defaults are not checked; `prepare()`
+  reports a missing default file itself.
 
 A `--project` file's declared keys are checked the same way; its undeclared
 keys are ignored. `<ProjectProvider>` values are not checked.

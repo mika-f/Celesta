@@ -54,7 +54,9 @@ struct ErrorReport {
 
 #[derive(Serialize)]
 struct Issue {
-    path: String,
+    /// Absent for a property issue about a whole source rather than one key.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
     message: String,
 }
 
@@ -237,7 +239,7 @@ fn error_report(error: &ExportError) -> ErrorReport {
                 .as_slice()
                 .iter()
                 .map(|error| Issue {
-                    path: error.path.clone(),
+                    path: Some(error.path.clone()),
                     message: error.message.clone(),
                 })
                 .collect();
@@ -250,7 +252,7 @@ fn error_report(error: &ExportError) -> ErrorReport {
             issues = invalid
                 .iter()
                 .map(|issue| Issue {
-                    path: issue.key.clone(),
+                    path: (!issue.key.is_empty()).then(|| issue.key.clone()),
                     message: format!("{}: {}", issue.source, issue.message),
                 })
                 .collect();
@@ -393,20 +395,30 @@ mod tests {
     fn rejected_properties_are_listed_as_issues_by_key() {
         let value = report(|_| {
             Err(ExportError::React(ReactBridgeError::InvalidProperties(
-                vec![celesta_react_bridge::PropertyIssue {
-                    key: "accent".to_owned(),
-                    source: "--props-file spring.json".to_owned(),
-                    message: "expected a #RRGGBB or #RRGGBBAA color, got \"pink\"".to_owned(),
-                }],
+                vec![
+                    celesta_react_bridge::PropertyIssue {
+                        key: "accent".to_owned(),
+                        source: "--props-file spring.json".to_owned(),
+                        message: "expected a #RRGGBB or #RRGGBBAA color, got \"pink\"".to_owned(),
+                    },
+                    celesta_react_bridge::PropertyIssue {
+                        key: String::new(),
+                        source: "--props".to_owned(),
+                        message: "the entry declares no project properties".to_owned(),
+                    },
+                ],
             )))
         });
         assert_eq!(value["error"]["code"], "invalid_properties");
         assert_eq!(
             value["error"]["issues"],
-            serde_json::json!([{
-                "path": "accent",
-                "message": "--props-file spring.json: expected a #RRGGBB or #RRGGBBAA color, got \"pink\""
-            }])
+            serde_json::json!([
+                {
+                    "path": "accent",
+                    "message": "--props-file spring.json: expected a #RRGGBB or #RRGGBBAA color, got \"pink\""
+                },
+                { "message": "--props: the entry declares no project properties" }
+            ])
         );
         assert!(
             value["error"]["hint"]

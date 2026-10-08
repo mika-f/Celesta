@@ -43,7 +43,9 @@ export function useProjectProperty<T extends JsonValue = JsonValue>(key: string,
   const project = React.useContext(ProjectContext);
   // A Provider may store `null`, which is a value and must not fall through.
   let value = inputProjectProperty(key);
-  if (value === undefined) value = project?.properties[key];
+  if (value === undefined && project && Object.prototype.hasOwnProperty.call(project.properties, key)) {
+    value = project.properties[key];
+  }
   if (value === undefined) value = declaredDefault(key) ?? defaultValue;
   if (value === undefined) {
     throw new Error(`useProjectProperty("${key}"): the property is not declared with defineProjectProperties() and has no default value`);

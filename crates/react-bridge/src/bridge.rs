@@ -88,7 +88,8 @@ impl ReactBridge {
                 property_inputs: properties.layers(),
             })
             .map_err(ReactBridgeError::Protocol)?;
-            // A runtime that already exited reports why on stdout below.
+            // A runtime that already exited fails below as `UnexpectedExit`;
+            // its reason is on the inherited stderr.
             let _ = writeln!(stdin, "{payload}").and_then(|()| stdin.flush());
         }
 
@@ -152,9 +153,14 @@ impl ReactBridge {
                     stdin.flush().map_err(ReactBridgeError::Io)?;
                 }
                 ReadyMessage::InvalidProperties { invalid_properties } => {
+                    // The entry is already imported; handles it opened could keep Node alive.
+                    let _ = child.kill();
+                    let _ = child.wait();
                     return Err(ReactBridgeError::InvalidProperties(invalid_properties));
                 }
                 ReadyMessage::Error { error } => {
+                    let _ = child.kill();
+                    let _ = child.wait();
                     return Err(ReactBridgeError::EntryFailed(error));
                 }
             }

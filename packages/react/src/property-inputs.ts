@@ -55,7 +55,8 @@ export function resolvePropertyInputs(
   schema: ProjectPropertySchema | undefined,
   entryDir: string,
 ): ResolvedProperties {
-  const values: Record<string, JsonValue> = {};
+  // Prototype-free, so a key such as `__proto__` is stored as an own value.
+  const values: Record<string, JsonValue> = Object.create(null);
   const issues: PropertyIssue[] = [];
   for (const layer of layers) {
     const source = describeSource(layer);
@@ -92,7 +93,9 @@ export function resolvePropertyInputs(
     }
   }
 
-  const defaults: Record<string, JsonValue> = {};
+  // Defaults are resolved but not checked: a variant or a `<ProjectProvider>`
+  // may supply the file, and `prepare()` reports a missing default itself.
+  const defaults: Record<string, JsonValue> = Object.create(null);
   for (const [key, field] of Object.entries(schema ?? {})) {
     defaults[key] = field.type === 'path' ? resolvePath(field.defaultValue, entryDir) : field.defaultValue;
   }
@@ -125,13 +128,23 @@ function checkValue(field: ProjectPropertyField, value: JsonValue, baseDir: stri
         ? { value }
         : expected(`one of ${field.options.map((option) => JSON.stringify(option)).join(', ')}`, value);
     case 'path': {
-      if (typeof value !== 'string' || value.length === 0) return expected('a file path or URL', value);
+      if (typeof value !== 'string') return expected('a file path or URL', value);
+      // `""` means "no file", as an empty default does.
+      if (value === '' || REMOTE_URL.test(value)) return { value };
       const resolved = resolvePath(value, baseDir);
-      if (!REMOTE_URL.test(resolved) && !fs.existsSync(resolved)) {
-        return { error: `${resolved} does not exist` };
+      if (!isFile(resolved)) {
+        return { error: `${resolved} is not an existing file` };
       }
       return { value: resolved };
     }
+  }
+}
+
+function isFile(file: string): boolean {
+  try {
+    return fs.statSync(file).isFile();
+  } catch {
+    return false;
   }
 }
 

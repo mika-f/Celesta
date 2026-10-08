@@ -13,8 +13,8 @@ use celesta_react_bridge::{
     PropertyInputs, ReactBridge, ReactCompositionMetadata, runtime_paths as react_runtime_paths,
 };
 use gpui_kit::Context;
-use std::path::Path;
-use std::time::Duration;
+use std::path::PathBuf;
+use std::time::{Duration, SystemTime};
 
 impl EditorView {
     /// `HH:MM:SS:FF` for a composition time, rounded to the nearest frame.
@@ -45,11 +45,16 @@ impl EditorView {
                 node,
                 cli_script,
                 entry,
-                properties: self
-                    .react_preview
-                    .as_ref()
-                    .map(|react| react.properties.clone())
-                    .unwrap_or_default(),
+                // A JSON project's components read its own `properties`, as
+                // `celesta-exporter --react … --project …` passes them.
+                properties: match &self.react_preview {
+                    Some(react) => react.properties.clone(),
+                    None => PropertyInputs::default().with_project(
+                        self.document.project_properties(),
+                        self.document.path(),
+                        self.document.asset_root(),
+                    ),
+                },
             }
         });
         let react_mode = if self.is_react_preview() {
@@ -99,25 +104,28 @@ impl EditorView {
         let property_args = react.property_args.clone();
         let (node, cli_script) = react_runtime_paths();
         let frame = self.clock.frame();
+        let session = self.session;
         cx.spawn(async move |view, cx| {
-            let entry_for_meta = entry.clone();
-            let loaded = cx
+            let (watched, loaded) = cx
                 .background_executor()
                 .spawn(async move {
+                    // Sampled before reading, so an edit made while Node starts
+                    // still differs from it and triggers another reload.
+                    let watched = watched_mtime(&entry, &property_args);
                     // Re-read --props-file so edits to a variant show up too.
-                    let properties = property_args.load()?;
-                    ReactBridge::spawn_with_properties(
-                        &node,
-                        &cli_script,
-                        &entry_for_meta,
-                        &properties,
-                    )
-                    .map(|bridge| (bridge.metadata().clone(), properties))
-                    .map_err(|error| error.to_string())
+                    let loaded = property_args.load().and_then(|properties| {
+                        ReactBridge::spawn_with_properties(&node, &cli_script, &entry, &properties)
+                            .map(|bridge| (entry, bridge.metadata().clone(), properties))
+                            .map_err(|error| error.to_string())
+                    });
+                    (watched, loaded)
                 })
                 .await;
             view.update(cx, |this, cx| {
-                this.apply_react_reload(&entry, loaded, frame, cx);
+                // Another file opened meanwhile; this result belongs to the old one.
+                if this.session == session {
+                    this.apply_react_reload(watched, loaded, frame, cx);
+                }
             })
             .ok();
         })
@@ -126,21 +134,21 @@ impl EditorView {
 
     pub(crate) fn apply_react_reload(
         &mut self,
-        entry: &Path,
-        loaded: Result<(ReactCompositionMetadata, PropertyInputs), String>,
+        watched: Option<SystemTime>,
+        loaded: Result<(PathBuf, ReactCompositionMetadata, PropertyInputs), String>,
         frame: i64,
         cx: &mut Context<Self>,
     ) {
         if let Some(react) = self.react_preview.as_mut() {
-            react.watched_mtime = watched_mtime(entry, &react.property_args);
+            react.watched_mtime = watched;
         }
         match loaded {
-            Ok((metadata, properties)) => {
+            Ok((entry, metadata, properties)) => {
                 if let Some(react) = self.react_preview.as_mut() {
                     react.properties = properties;
                 }
                 if let Ok(document) = EditorDocument::react_preview(
-                    entry,
+                    &entry,
                     metadata.width,
                     metadata.height,
                     metadata.frame_rate,

@@ -180,7 +180,8 @@ impl PreviewWorker {
 }
 
 /// Spawns (or reuses) the preview worker's long-lived React connection for
-/// `react`. Respawns only when the entry or runtime paths changed; a spawn
+/// `react`. Respawns only when the entry, runtime paths, or property values
+/// changed; a spawn
 /// failure is remembered on the returned state so callers do not restart Node
 /// on every frame.
 pub(crate) fn ensure_react_bridge<'a>(

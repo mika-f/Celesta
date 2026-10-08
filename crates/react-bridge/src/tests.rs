@@ -107,7 +107,8 @@ fn deserializes_the_project_property_schema_from_the_ready_message() {
             "accent": {"type": "color", "defaultValue": "#ff8800"},
             "opacity": {"type": "number", "defaultValue": 1.0, "min": 0.0, "max": 1.0},
             "visible": {"type": "boolean", "defaultValue": true},
-            "style": {"type": "select", "defaultValue": "bold", "options": ["bold", "light"]}
+            "style": {"type": "select", "defaultValue": "bold", "options": ["bold", "light"]},
+            "data": {"type": "path", "label": "Data", "defaultValue": "./rows.json"}
         }
     })
     .to_string();
@@ -132,6 +133,13 @@ fn deserializes_the_project_property_schema_from_the_ready_message() {
         Some(&ComponentPropertyField::Color {
             label: None,
             default_value: "#ff8800".to_owned(),
+        })
+    );
+    assert_eq!(
+        schema.get("data"),
+        Some(&ComponentPropertyField::Path {
+            label: Some("Data".to_owned()),
+            default_value: "./rows.json".to_owned(),
         })
     );
     assert_eq!(

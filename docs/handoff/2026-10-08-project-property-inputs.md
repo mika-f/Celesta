@@ -49,7 +49,10 @@ one `{ "invalidProperties": [{ key, source, message }] }` line in place of
   checked.
 - `string`/`number` (finite)/`boolean` check the JSON type. `color` must be
   `#RRGGBB`/`#RRGGBBAA`, the same rule as `CpuColor::from_hex`. `select`
-  must be one of `options`. `path` must exist unless it is an `http(s)` URL.
+  must be one of `options`. `path` must be an existing regular file, an
+  `http(s)` URL (kept as is), or `""` (no file, so a variant can turn off a
+  file the default supplies). Declared defaults are resolved but not
+  checked: a variant or a Provider may supply the file instead.
 - `min`/`max`/`step` stay Inspector hints and are not enforced (decided with
   the user). There is no `required` flag or JSON-object type; both can be
   added to the same validator later.
@@ -58,12 +61,19 @@ one `{ "invalidProperties": [{ key, source, message }] }` line in place of
   companion project, from its asset root; for a declared default, from the
   entry's folder. An empty default stays `""`. Provider values are returned
   unchanged.
+- Validated values and defaults are prototype-free objects, so a key such
+  as `__proto__` is an ordinary property.
+- A malformed handshake line (layers without object `values`, string
+  `baseDir`, or a known `source`) fails as an `error` line, not a crash.
 - Reading a property at module scope throws: values are held back
   (`holdProjectPropertyValues`) until validation completes.
 
 The Rust side surfaces this as `ReactBridgeError::InvalidProperties`. The
 exporter's `--json` reports it with the code `invalid_properties`, one
-`issues` entry per key (`path` is the key). An unreadable or non-object
+`issues` entry per key (`path` is the key). An entry without a schema yields
+one issue per strict source with an empty key; its `issues` entry has no
+`path`. The bridge kills the Node process before returning either startup
+error. An unreadable or non-object
 `--props`/`--props-file` is `ExportError::Properties`, with the same code.
 
 ## Plumbing
@@ -83,7 +93,13 @@ exporter's `--json` reports it with the code `invalid_properties`, one
   `PropertyInputs` reach the preview bridge (`ReactPreviewContext`, so
   changed values respawn Node), the audio sweep, and the export worker. The
   reload watcher includes the `--props-file` mtime, since the file may live
-  outside the entry's folder. File > Open of another file drops the options.
+  outside the entry's folder; it is sampled before the props file is read,
+  so an edit while Node starts triggers another reload. A reload that
+  finishes after another file was opened is discarded (session check).
+  File > Open of another file drops the options; reopening the same entry
+  keeps them. A JSON project's preview passes its own `properties` as the
+  companion layer, so its components see the same values as
+  `--react … --project …` exports.
   The React Preview panel shows which sources are active. A JSON project
   opened with these options is an error.
 

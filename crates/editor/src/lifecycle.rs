@@ -2,7 +2,7 @@ use crate::actions::{
     CloseWindow, CreateNewProject, OpenProject, ReloadProject, SetUpTypeScript,
     SetUpTypeScriptInFolder,
 };
-use crate::source::{PropertyArgs, load_source};
+use crate::source::load_source;
 use crate::view::EditorView;
 use celesta_react_bridge::{
     ProjectTsconfig, ProjectTypesSetup, initialize_project, project_types_template,
@@ -313,6 +313,18 @@ impl EditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Reopening the same entry keeps its --props/--props-file; another
+        // file may declare different properties, so it starts without them.
+        let property_args = self
+            .react_preview
+            .as_ref()
+            .filter(|react| {
+                path.as_deref()
+                    .and_then(|path| std::path::absolute(path).ok())
+                    .is_some_and(|path| path == react.entry)
+            })
+            .map(|react| react.property_args.clone())
+            .unwrap_or_default();
         self.opening = true;
         self.open_error = None;
         self.pause();
@@ -321,7 +333,7 @@ impl EditorView {
             let load_path = path.clone();
             let loaded = cx
                 .background_executor()
-                .spawn(async move { load_source(load_path.as_deref(), PropertyArgs::default()) })
+                .spawn(async move { load_source(load_path.as_deref(), property_args) })
                 .await;
             view.update_in(cx, |this, _, cx| {
                 this.opening = false;

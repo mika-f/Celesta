@@ -50,7 +50,7 @@ Celesta-export --json --react scene.tsx out.mp4
 | `--react` | The source is a React entry instead of a JSON project. |
 | `--project <file>` | Companion JSON project for `<ProjectTimeline />`/`<ProjectTrack />` (needs `--react`). Its `properties` also count as project property values. |
 | `--props-file <file>` | JSON object of project property values for the entry (needs `--react`); see [project-data.md](project-data.md#pass-values-from-the-command-line). |
-| `--props <json>` | Inline JSON object of project property values; wins over `--props-file`. |
+| `--props <json>` | Inline JSON object of project property values (needs `--react`); wins over `--props-file`. |
 | `--from <t>`, `--to <t>` | Export only this span (`--to` exclusive); the output starts at 00:00. Times are seconds, `MM:SS.mmm`, or `HH:MM:SS.mmm`. |
 | `--overwrite` | Replace an existing output file. |
 | `--preset <p>` | libx264 preset, `ultrafast` … `veryslow` (default `medium`). Encoding speed against file size only; it does not change what is rendered. |

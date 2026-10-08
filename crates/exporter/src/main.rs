@@ -29,9 +29,9 @@ its last frame. --contact-sheet writes the selection as one labelled grid
 image instead.
 
 --props and --props-file set the values an entry declares with
-defineProjectProperties(). Later sources win: --props, then --props-file,
-then the --project file's properties, then the declared defaults. Every value
-is checked against the declaration before anything renders.
+defineProjectProperties(). Highest precedence first: --props, --props-file,
+the --project file's properties, the declared defaults. Every value is
+checked against the declaration before anything renders.
 
 --json prints one line of JSON on stdout when the export ends, and nothing
 else: status, the composition's size, fps and frame count, every written

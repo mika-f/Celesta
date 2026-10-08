@@ -157,7 +157,7 @@ function readPropertyInputs(options) {
     }
     return value;
   };
-  if (options.propsFile) {
+  if (options.propsFile !== null) {
     const file = path.resolve(options.propsFile);
     if (!existsSync(file)) fail(`--props-file not found: ${file}`);
     layers.push({
@@ -167,7 +167,7 @@ function readPropertyInputs(options) {
       values: object(readFileSync(file, 'utf8'), `--props-file ${options.propsFile}`),
     });
   }
-  if (options.props) {
+  if (options.props !== null) {
     layers.push({ source: 'props', baseDir: process.cwd(), values: object(options.props, '--props') });
   }
   return layers;

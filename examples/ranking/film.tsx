@@ -48,7 +48,9 @@ let rows: Row[] = [];
 // file read here and the duration computed from it always match the variant.
 export async function prepare(): Promise<void> {
   const file = getProjectProperty<string>('data');
-  const parsed: unknown = JSON.parse(await fs.promises.readFile(file, 'utf8'));
+  // A `path` property may also be an http(s) URL, which is fetched instead.
+  const text = /^https?:\/\//i.test(file) ? await (await fetch(file)).text() : await fs.promises.readFile(file, 'utf8');
+  const parsed: unknown = JSON.parse(text);
   if (!Array.isArray(parsed) || parsed.length === 0) {
     throw new Error(`${file} must be a non-empty array of { name, score } rows`);
   }
@@ -56,6 +58,10 @@ export async function prepare(): Promise<void> {
     .map((row: Row) => ({ name: String(row.name), score: Number(row.score) }))
     .sort((a, b) => b.score - a.score)
     .slice(0, MAX_ROWS);
+  // Bar widths are relative to the top score.
+  if (rows.some((row) => !Number.isFinite(row.score) || row.score < 0) || rows[0].score === 0) {
+    throw new Error(`${file}: every score must be a non-negative number, and the top score above 0`);
+  }
 }
 
 const THEMES = {

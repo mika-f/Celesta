@@ -4,7 +4,7 @@ One composition, several videos. `film.tsx` declares its inputs with
 `defineProjectProperties()` — title, subtitle, accent color, light or dark
 theme, and the data file — and each file in `variants/` picks values for
 them. `prepare()` reads the data file named by the `data` property, and the
-composition's length follows the number of rows. 1280 × 720 / 30 fps.
+composition's length follows the number of displayed rows (up to six). 1280 × 720 / 30 fps.
 
 From the repository root:
 

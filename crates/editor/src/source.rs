@@ -63,11 +63,13 @@ pub(crate) fn load_source(
     property_args: PropertyArgs,
 ) -> Result<(EditorDocument, Option<ReactPreview>), String> {
     if !property_args.is_empty() && !path.is_some_and(is_react_entry) {
-        return Err("--props and --props-file need a React entry (.tsx) to open".to_owned());
+        return Err("--props and --props-file need a React entry to open".to_owned());
     }
     let loaded = match path {
         Some(path) if is_react_entry(path) => {
             let (node, cli_script) = react_runtime_paths();
+            // Sampled before reading, so an edit made while Node starts is noticed.
+            let watched_mtime = watched_mtime(path, &property_args);
             let properties = property_args.load()?;
             let metadata =
                 ReactBridge::spawn_with_properties(&node, &cli_script, path, &properties)
@@ -86,7 +88,6 @@ pub(crate) fn load_source(
             let entry = document
                 .react_entry_absolute_path()
                 .unwrap_or_else(|| path.to_owned());
-            let watched_mtime = watched_mtime(&entry, &property_args);
             Ok((
                 document,
                 Some(ReactPreview {
