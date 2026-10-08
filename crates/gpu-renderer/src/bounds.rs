@@ -16,6 +16,19 @@ impl PixelBounds {
         }
     }
 
+    /// The part both cover; `None` when either is `None` or they do not
+    /// overlap.
+    pub(crate) fn intersection(a: Option<Self>, b: Option<Self>) -> Option<Self> {
+        let (Self(a), Self(b)) = (a?, b?);
+        let bounds = [
+            a[0].max(b[0]),
+            a[1].max(b[1]),
+            a[2].min(b[2]),
+            a[3].min(b[3]),
+        ];
+        (bounds[2] > bounds[0] && bounds[3] > bounds[1]).then_some(Self(bounds))
+    }
+
     pub(crate) fn expand(self, x: f32, y: f32) -> Self {
         let [left, top, right, bottom] = self.0;
         Self([left - x, top - y, right + x, bottom + y])

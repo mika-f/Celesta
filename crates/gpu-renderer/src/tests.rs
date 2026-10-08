@@ -25,8 +25,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
 use celesta_composition::{
-    AssetLocation, BlendMode, Clip, EvaluatedTransform, Layer, LayerContent, MediaTiming, Paint,
-    Point, Rational, ResolvedAsset, Scene, Stroke, TextStyle, Time,
+    AssetLocation, BlendMode, Clip, EvaluatedTransform, GroupMask, Layer, LayerContent,
+    LayerShadow, MaskMode, MediaTiming, Paint, Point, Rational, ResolvedAsset, Scene, Stroke,
+    TextStyle, Time,
 };
 use celesta_media::{MediaError, VideoFrame, VideoFrameDecoder};
 
@@ -4466,4 +4467,278 @@ fn an_unwrapped_colored_line_fits_the_gpu_texture_limit() {
     };
     let image = rasterize_text(&mut rasterizer, &job, 1024).unwrap();
     assert!(image.width <= 1024 && image.height <= 1024 && image.raster_scale < 1.0);
+}
+
+fn alpha_mask(layers: Vec<Layer>) -> GroupMask {
+    GroupMask {
+        layers,
+        mode: MaskMode::Alpha,
+        invert: false,
+    }
+}
+
+fn masked_group(transform: EvaluatedTransform, mask: GroupMask, layers: Vec<Layer>) -> Layer {
+    Layer {
+        id: "masked".to_owned(),
+        transform,
+        opacity: 1.0,
+        blend_mode: BlendMode::Normal,
+        effects: Default::default(),
+        content: LayerContent::Group {
+            layers,
+            clip: None,
+            mask: Some(mask),
+        },
+    }
+}
+
+/// A disc of `radius` centred on `(x, y)`, drawn as a fully rounded rect.
+fn disc(id: &str, x: f64, y: f64, radius: f64, color: &str) -> Layer {
+    let mut layer = corner_rect(
+        id,
+        x - radius,
+        y - radius,
+        radius * 2.0,
+        radius * 2.0,
+        color,
+    );
+    if let LayerContent::Rect { corner_radius, .. } = &mut layer.content {
+        *corner_radius = radius;
+    }
+    layer
+}
+
+#[test]
+fn masks_groups_like_the_cpu_renderer() {
+    let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+        return;
+    };
+    let red = || corner_rect("red", 0.0, 0.0, 64.0, 48.0, "#FF0000FF");
+    let cases: Vec<(&str, Vec<Layer>)> = vec![
+        (
+            "alpha disc",
+            vec![masked_group(
+                EvaluatedTransform::default(),
+                alpha_mask(vec![disc("matte", 30.0, 24.0, 14.0, "#FFFFFFFF")]),
+                vec![red()],
+            )],
+        ),
+        (
+            "luminance",
+            vec![masked_group(
+                EvaluatedTransform::default(),
+                GroupMask {
+                    mode: MaskMode::Luminance,
+                    ..alpha_mask(vec![
+                        corner_rect("gray", 0.0, 0.0, 64.0, 48.0, "#808080FF"),
+                        disc("white", 30.0, 24.0, 10.0, "#FFFFFFFF"),
+                    ])
+                },
+                vec![red()],
+            )],
+        ),
+        (
+            "translucent luminance",
+            vec![masked_group(
+                EvaluatedTransform::default(),
+                GroupMask {
+                    mode: MaskMode::Luminance,
+                    ..alpha_mask(vec![disc("matte", 30.0, 24.0, 14.0, "#FFFFFF80")])
+                },
+                vec![red()],
+            )],
+        ),
+        (
+            "inverted",
+            vec![masked_group(
+                EvaluatedTransform::default(),
+                GroupMask {
+                    invert: true,
+                    ..alpha_mask(vec![disc("matte", 30.0, 24.0, 14.0, "#FFFFFFFF")])
+                },
+                vec![red()],
+            )],
+        ),
+        (
+            "empty",
+            vec![masked_group(
+                EvaluatedTransform::default(),
+                alpha_mask(Vec::new()),
+                vec![red()],
+            )],
+        ),
+        (
+            "empty inverted",
+            vec![masked_group(
+                EvaluatedTransform::default(),
+                GroupMask {
+                    invert: true,
+                    ..alpha_mask(Vec::new())
+                },
+                vec![red()],
+            )],
+        ),
+        (
+            "translated and scaled",
+            vec![masked_group(
+                EvaluatedTransform {
+                    position: Point { x: 6.0, y: 4.0 },
+                    scale: Point { x: 2.0, y: 2.0 },
+                    anchor: Point { x: 0.0, y: 0.0 },
+                    ..EvaluatedTransform::default()
+                },
+                alpha_mask(vec![disc("matte", 10.0, 8.0, 6.0, "#FFFFFFFF")]),
+                vec![corner_rect("red", -4.0, -4.0, 40.0, 30.0, "#FF0000FF")],
+            )],
+        ),
+        (
+            "with a clip",
+            vec![{
+                let mut group = masked_group(
+                    EvaluatedTransform::default(),
+                    alpha_mask(vec![disc("matte", 30.0, 24.0, 18.0, "#FFFFFFFF")]),
+                    vec![red()],
+                );
+                if let LayerContent::Group { clip, .. } = &mut group.content {
+                    *clip = Some(Clip {
+                        x: 4.0,
+                        y: 4.0,
+                        width: 30.0,
+                        height: 40.0,
+                        corner_radius: 6.0,
+                    });
+                }
+                group
+            }],
+        ),
+        (
+            "isolated multiply over a backdrop",
+            vec![
+                corner_rect("backdrop", 0.0, 0.0, 64.0, 48.0, "#80C0E0FF"),
+                masked_group(
+                    EvaluatedTransform::default(),
+                    alpha_mask(vec![disc("matte", 30.0, 24.0, 14.0, "#FFFFFFFF")]),
+                    vec![Layer {
+                        blend_mode: BlendMode::Multiply,
+                        ..corner_rect("blue", 0.0, 0.0, 64.0, 48.0, "#3060F0FF")
+                    }],
+                ),
+            ],
+        ),
+        (
+            "the group's own blend mode",
+            vec![
+                corner_rect("backdrop", 0.0, 0.0, 64.0, 48.0, "#80C0E0FF"),
+                Layer {
+                    blend_mode: BlendMode::Multiply,
+                    ..masked_group(
+                        EvaluatedTransform::default(),
+                        alpha_mask(vec![disc("matte", 30.0, 24.0, 14.0, "#FFFFFFFF")]),
+                        vec![red()],
+                    )
+                },
+            ],
+        ),
+        (
+            "a blended layer inside the mask",
+            vec![masked_group(
+                EvaluatedTransform::default(),
+                GroupMask {
+                    mode: MaskMode::Luminance,
+                    ..alpha_mask(vec![
+                        corner_rect("dark", 0.0, 0.0, 64.0, 48.0, "#404040FF"),
+                        Layer {
+                            blend_mode: BlendMode::Screen,
+                            ..disc("light", 30.0, 24.0, 14.0, "#808080FF")
+                        },
+                    ])
+                },
+                vec![red()],
+            )],
+        ),
+        (
+            "off the scene edge",
+            vec![masked_group(
+                EvaluatedTransform {
+                    position: Point { x: 40.0, y: 30.0 },
+                    anchor: Point { x: 0.0, y: 0.0 },
+                    ..EvaluatedTransform::default()
+                },
+                alpha_mask(vec![disc("matte", 16.0, 12.0, 20.0, "#FFFFFFFF")]),
+                vec![corner_rect("red", 0.0, 0.0, 60.0, 60.0, "#FF0000FF")],
+            )],
+        ),
+        (
+            "nested",
+            vec![masked_group(
+                EvaluatedTransform::default(),
+                alpha_mask(vec![corner_rect(
+                    "outer",
+                    0.0,
+                    0.0,
+                    36.0,
+                    48.0,
+                    "#FFFFFFFF",
+                )]),
+                vec![masked_group(
+                    EvaluatedTransform::default(),
+                    alpha_mask(vec![disc("inner", 30.0, 24.0, 16.0, "#FFFFFFFF")]),
+                    vec![red()],
+                )],
+            )],
+        ),
+        (
+            "group and mask layer opacity",
+            vec![Layer {
+                opacity: 0.5,
+                ..masked_group(
+                    EvaluatedTransform::default(),
+                    alpha_mask(vec![Layer {
+                        opacity: 0.5,
+                        ..disc("matte", 30.0, 24.0, 14.0, "#FFFFFFFF")
+                    }]),
+                    vec![red()],
+                )
+            }],
+        ),
+    ];
+    for (case, layers) in cases {
+        let mut scene = empty_scene(64, 48);
+        scene.layers = layers;
+        let gpu = renderer.render(&scene).unwrap();
+        let cpu = celesta_renderer::CpuRenderer::default()
+            .render(&scene)
+            .unwrap();
+        let difference = max_channel_difference(&gpu, &cpu);
+        assert!(
+            difference <= 3,
+            "{case}: channels differ by up to {difference}"
+        );
+    }
+}
+
+#[test]
+fn a_shadow_follows_a_masked_shape_like_the_cpu_renderer() {
+    let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+        return;
+    };
+    let mut group = masked_group(
+        EvaluatedTransform::default(),
+        alpha_mask(vec![disc("matte", 24.0, 24.0, 12.0, "#FFFFFFFF")]),
+        vec![corner_rect("red", 0.0, 0.0, 64.0, 48.0, "#FF0000FF")],
+    );
+    group.effects.shadow = Some(LayerShadow {
+        color: "#000000C0".to_owned(),
+        blur: 2.0,
+        offset_x: 12.0,
+        offset_y: 4.0,
+    });
+    let mut scene = empty_scene(64, 48);
+    scene.layers = vec![group];
+    let gpu = renderer.render(&scene).unwrap();
+    let cpu = celesta_renderer::CpuRenderer::default()
+        .render(&scene)
+        .unwrap();
+    let difference = max_channel_difference(&gpu, &cpu);
+    assert!(difference <= 5, "channels differ by up to {difference}");
 }

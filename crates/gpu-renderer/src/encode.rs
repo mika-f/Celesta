@@ -89,6 +89,7 @@ impl GpuRenderer {
             backdrop: self.backdrop.as_ref().expect("prepare_canvases creates it"),
             draws,
             effects: &mut self.effects,
+            masks: &self.masks,
         };
         compositor.draw_canvas(
             encoder,

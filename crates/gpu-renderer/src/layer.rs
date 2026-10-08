@@ -1,6 +1,7 @@
 use crate::bounds::{CanvasRegion, PixelBounds};
 use crate::draw::RectShape;
 use crate::effect::EffectSpec;
+use crate::mask::MaskSpec;
 use crate::path::ShadedPath;
 use crate::texture::LayerTexture;
 use crate::transform::{Affine, LayerState};
@@ -28,6 +29,13 @@ pub(crate) enum PreparedItem {
     /// Draws the finished group's canvas onto its parent.
     EndGroup(PreparedLayer),
     EndEffect(PreparedLayer, EffectSpec),
+    /// The items up to the matching `MaskContent` draw a group's mask onto a
+    /// transparent canvas, those from there to the matching `EndMask` its
+    /// children onto another covering the same region.
+    BeginMask,
+    MaskContent,
+    /// Draws the children shown through the mask onto the group's parent.
+    EndMask(PreparedLayer, MaskSpec),
     /// A text layer `place_texts` replaces with a `Layer` before anything
     /// else reads the items.
     PendingText,

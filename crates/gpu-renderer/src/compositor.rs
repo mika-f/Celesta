@@ -1,4 +1,5 @@
 use crate::effect::EffectProcessor;
+use crate::mask::MaskPipelines;
 use crate::plan::{GpuStep, PreparedDraws};
 use crate::texture::CanvasTexture;
 use celesta_composition::BlendMode;
@@ -12,6 +13,7 @@ pub(crate) struct Compositor<'a> {
     pub(crate) backdrop: &'a BackdropTexture,
     pub(crate) draws: &'a PreparedDraws,
     pub(crate) effects: &'a mut EffectProcessor,
+    pub(crate) masks: &'a MaskPipelines,
 }
 
 /// One draw onto a canvas, in painter's order.
@@ -67,7 +69,7 @@ impl Compositor<'_> {
                         });
                     }
                 }
-                GpuStep::BeginGroup { .. } => {
+                GpuStep::BeginGroup { .. } | GpuStep::BeginMask { .. } => {
                     let end = group_end(steps, index);
                     let (instance, blend_mode, area) = match &steps[end] {
                         GpuStep::EndGroup {
@@ -81,6 +83,12 @@ impl Compositor<'_> {
                             area,
                             ..
                         } => (*final_instance, *blend_mode, *area),
+                        GpuStep::EndMask {
+                            instance,
+                            blend_mode,
+                            area,
+                            ..
+                        } => (*instance, *blend_mode, *area),
                         _ => unreachable!("group_end returns a group's end"),
                     };
                     match self.draw_group(encoder, &steps[index..=end]) {
@@ -99,8 +107,11 @@ impl Compositor<'_> {
                     }
                     index = end;
                 }
-                GpuStep::EndGroup { .. } | GpuStep::EndEffect { .. } => {
-                    unreachable!("draw_group consumes every group's end")
+                GpuStep::EndGroup { .. }
+                | GpuStep::EndEffect { .. }
+                | GpuStep::MaskContent
+                | GpuStep::EndMask { .. } => {
+                    unreachable!("draw_group consumes every group's steps")
                 }
             }
             index += 1;
@@ -168,19 +179,45 @@ impl Compositor<'_> {
         }
     }
 
-    /// Composites the group `steps` (from its `BeginGroup` to its end) onto
-    /// a canvas of its own and applies its effect, returning the canvas to
-    /// draw onto the group's parent, or `None` when it holds nothing.
+    /// Composites the group `steps` (from its `BeginGroup` or `BeginMask` to
+    /// its end) onto a canvas of its own and applies its effect or mask,
+    /// returning the canvas to draw onto the group's parent, or `None` when
+    /// it holds nothing.
     pub(crate) fn draw_group(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         steps: &[GpuStep],
     ) -> Option<CanvasTexture> {
-        let (Some(GpuStep::BeginGroup { canvas: region }), Some(end)) =
-            (steps.first(), steps.last())
+        let (
+            Some(GpuStep::BeginGroup { canvas: region } | GpuStep::BeginMask { canvas: region }),
+            Some(end),
+        ) = (steps.first(), steps.last())
         else {
-            unreachable!("a group runs from its BeginGroup to its end");
+            unreachable!("a group runs from its BeginGroup or BeginMask to its end");
         };
+        if let GpuStep::EndMask { mask, .. } = end {
+            let split = mask_content(steps);
+            // Copied out of `self`, so the closure borrows nothing of it
+            // while `draw_canvas` takes `&mut self`.
+            let (device, layout) = (self.device, self.texture_layout);
+            let take = |effects: &mut EffectProcessor| {
+                effects.take_canvas(device, layout, region.width, region.height)
+            };
+            let matte = take(self.effects);
+            self.draw_canvas(encoder, &matte, wgpu::Color::TRANSPARENT, &steps[1..split]);
+            let children = take(self.effects);
+            self.draw_canvas(
+                encoder,
+                &children,
+                wgpu::Color::TRANSPARENT,
+                &steps[split + 1..steps.len() - 1],
+            );
+            let result = take(self.effects);
+            self.masks.apply(encoder, &children, &matte, &result, *mask);
+            self.effects.recycle(matte);
+            self.effects.recycle(children);
+            return Some(result);
+        }
         let canvas = self.effects.take_canvas(
             self.device,
             self.texture_layout,
@@ -264,17 +301,33 @@ pub(crate) fn group_end(steps: &[GpuStep], begin: usize) -> usize {
     let mut depth = 0;
     for (index, step) in steps.iter().enumerate().skip(begin) {
         match step {
-            GpuStep::BeginGroup { .. } => depth += 1,
-            GpuStep::EndGroup { .. } | GpuStep::EndEffect { .. } => {
+            GpuStep::BeginGroup { .. } | GpuStep::BeginMask { .. } => depth += 1,
+            GpuStep::EndGroup { .. } | GpuStep::EndEffect { .. } | GpuStep::EndMask { .. } => {
                 depth -= 1;
                 if depth == 0 {
                     return index;
                 }
             }
-            GpuStep::Draw(_) | GpuStep::Blend { .. } => {}
+            GpuStep::Draw(_) | GpuStep::Blend { .. } | GpuStep::MaskContent => {}
         }
     }
     unreachable!("every group has an end")
+}
+
+/// The index of the `MaskContent` that ends the mask `steps[0]` begins.
+fn mask_content(steps: &[GpuStep]) -> usize {
+    let mut depth = 0;
+    for (index, step) in steps.iter().enumerate() {
+        match step {
+            GpuStep::BeginGroup { .. } | GpuStep::BeginMask { .. } => depth += 1,
+            GpuStep::EndGroup { .. } | GpuStep::EndEffect { .. } | GpuStep::EndMask { .. } => {
+                depth -= 1;
+            }
+            GpuStep::MaskContent if depth == 1 => return index,
+            GpuStep::Draw(_) | GpuStep::Blend { .. } | GpuStep::MaskContent => {}
+        }
+    }
+    unreachable!("every mask has its content")
 }
 
 pub(crate) struct BackdropTexture {

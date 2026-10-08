@@ -2,6 +2,7 @@ use crate::compositor::BackdropTexture;
 use crate::draw::{LAYER_INSTANCE_SIZE, clip_bind_group, clip_buffer, instance_buffer};
 use crate::effect::EffectProcessor;
 use crate::error::GpuRenderError;
+use crate::mask::MaskPipelines;
 #[cfg(target_os = "macos")]
 use crate::native_preview;
 use crate::path::PendingPath;
@@ -48,6 +49,8 @@ pub struct GpuRenderer {
     /// draws onto, taken just before the draw.
     pub(crate) backdrop: Option<BackdropTexture>,
     pub(crate) effects: EffectProcessor,
+    /// Shows masked groups' children through their masks.
+    pub(crate) masks: MaskPipelines,
     /// Every layer's `LayerInstance` for the frame being prepared, reused
     /// (and grown when a frame needs more) across frames.
     pub(crate) instances: wgpu::Buffer,
@@ -255,6 +258,7 @@ impl GpuRenderer {
             });
         let shader = device.create_shader_module(wgpu::include_wgsl!("layer.wgsl"));
         let effects = EffectProcessor::new(&device, &texture_bind_group_layout);
+        let masks = MaskPipelines::new(&device, &texture_bind_group_layout);
         let pipeline = create_pipeline(
             &device,
             &pipeline_layout,
@@ -299,6 +303,7 @@ impl GpuRenderer {
             canvas: None,
             backdrop: None,
             effects,
+            masks,
             instances,
             clip_bind_group_layout,
             clips,
