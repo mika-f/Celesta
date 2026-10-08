@@ -36,6 +36,16 @@ jobs:
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ github.token }}
 
+      # The macOS job is a reference and can be missing (it failed, was
+      # cancelled, or the artifact expired); the comment is posted without it.
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        continue-on-error: true
+        with:
+          name: perf-report-time
+          path: perf-time
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
       - name: Post or update the comment
         env:
           GH_TOKEN: ${{ github.token }}
@@ -77,6 +87,14 @@ jobs:
               sed '1{/^###/d;}' perf/report.md
             else
               echo "The measurement did not finish. See the workflow run."
+            fi
+            if [[ -f perf-time/report-time.md ]]; then
+              echo
+              echo "### Time per frame on a GPU (macOS runner, reference only)"
+              echo
+              echo "A shared VM: noisy, and never a check. The instruction counts above are what gates; confirm a change that matters here on your own GPU. Ranges are min–max over the rounds, and the brackets are the 95% bootstrap interval of the median's change."
+              echo
+              sed '1{/^###/d;}' perf-time/report-time.md
             fi
             echo
             echo "<sub>Commit ${HEAD_SHA:0:7} · [workflow run]($RUN_URL) · [how this is measured](https://github.com/$REPO/blob/main/docs/performance/benchmarking.md)</sub>"

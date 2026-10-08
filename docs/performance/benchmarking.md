@@ -10,6 +10,9 @@ Two checks use the same benchmark, `celesta-bench` (`crates/bench`):
 - **On your machine:** wall-clock ms/frame on a real GPU. Measures what a
   user sees, but run to run noise is a few percent or more.
 
+Neither check compares the pictures: a change that alters the output can
+look like a speedup. See [Check the output too](#check-the-output-too).
+
 ## Workloads
 
 `celesta-bench` renders each workload through the GPU renderer's export path
@@ -51,7 +54,7 @@ cargo run --release -p celesta-bench -- run --frames 10 --dump out/ # also save 
 [`.github/workflows/perf.yml`](../../.github/workflows/perf.yml) runs on pull
 requests that touch the renderer, the React runtime, or the benchmark. It
 builds `celesta-bench` at the pull request's base and at its merge commit,
-and runs each workload with both, at 640x360 for 6 frames after 2 warmup
+and runs each workload with both, at 1280x720 for 6 frames after 2 warmup
 frames:
 
 - **No GPU needed.** The renderer runs on Mesa's software Vulkan driver,
@@ -82,6 +85,30 @@ removed, and one it adds as new. Locally
 under 3 minutes after the build, and widening the blur kernel from 3σ to
 3.3σ showed as +7.8% in `blur` and +6.9% in `nebula`, with the other
 workloads within 0.4%.
+
+**The size.** The synthetic workloads are laid out at 1920x1080 and scaled
+to the measured size, so a smaller size is a different scene: at 640x360
+the 3,000 `ribbons` rects are mostly under one pixel, and text scale, mip
+selection, path tile counts and blur, shadow and glow radii all shrink,
+while the pixel count falls to 1/9 and the CPU side (planning, uploads,
+text) weighs more against the shaders. CI therefore measures at 1280x720,
+a ratio of 2/3, which keeps those effects close to 1080p at a 2.25x pixel
+cost. The local comparison uses 1920x1080. The change in #166 was about the
+same at both 640x360 and 1280x720 (`shapes` -33% and -37%, `ribbons` -25%
+at both, `text` -9% and -11%, `images` -10% at both), but a change to
+sub-pixel drawing, mips or text scale can still depend on the size; confirm
+such a change locally at 1920x1080. CI does not measure two sizes or a size
+per workload: that doubles or complicates the job for effects the local
+comparison already covers.
+
+**Read a decrease as fewer instructions, not a faster GPU.** The report says
+"fewer instructions" for a drop. In #166, `text` and `images` needed about
+10% fewer instructions with a pixel-identical output, yet on a real GPU
+(Apple M4, Metal, 1920x1080, 10 rounds) they did not change (+2.1% and
+-0.4%, intervals spanning zero), while `shapes` was faster on both (-37% in
+instructions, -40% in time). Probably lavapipe generated different code for
+a changed shader. A pull request that claims a speedup from the instruction
+count must confirm it on a real GPU.
 
 The table appears on the job's summary page and as a comment on the pull
 request, which each later run updates in place. The comment is posted by
@@ -115,15 +142,65 @@ python3 scripts/bench.py compare --base v0.4.0 --head my-branch --csv out.csv
 
 It builds both revisions (the head defaults to your working tree, including
 uncommitted changes; the base is built in a worktree under
-`target/bench-worktrees/`), then runs them in alternating order for
-`--rounds` rounds (default 5) of 120 frames at 1920x1080 after 10 warmup
-frames. The table gives medians and the head's range. A workload is marked
-slower or faster only if the medians differ by more than `--threshold`
-(default 5%) and the two sides' ranges do not overlap. `--csv` writes the
-observations in the format of the other CSV files in this directory.
+`target/bench-worktrees/`), then runs them for `--rounds` rounds (default 10)
+of 120 frames at 1920x1080 after 10 warmup frames. The table gives the medians
+and the min–max range of each side. `--csv` writes the observations in the
+format of the other CSV files in this directory.
+
+Each round runs both sides in a random order, from a seed the report prints
+(`--seed` repeats a run), after one discarded round: a freshly built
+executable is slow on its first run. A workload is marked slower or faster
+only if the medians differ by more than `--threshold` (default 5%) and the
+95% bootstrap interval of the median's change, shown in brackets, excludes
+zero. With the default 10 rounds and run-to-run noise of 7%, a true 10%
+change is found about 7 times in 10 and no change is reported about 1 time
+in 20 (simulated); a smaller change needs more rounds. `ribbons` and `text`
+in #166 are the kind of change that needs them.
 
 For results worth recording, close other GPU work, keep the machine on AC
 power, and prefer more rounds over more frames.
+
+### On a GitHub-hosted macOS runner
+
+The `Time per frame (macOS)` job of
+[`perf.yml`](../../.github/workflows/perf.yml) runs this comparison on
+`macos-latest` for every pull request that runs the performance check, and by
+hand (Actions, Performance, Run workflow, with a `base`). Its adapter is
+`Apple Paravirtual device (Metal)`: a GPU, reached through virtualization.
+`perf-comment.yml` adds its table to the pull request's comment, below the
+instruction counts: medians and min–max ranges of both sides, the 95%
+bootstrap interval of the change, the adapter and the seed.
+
+It is a reference, not a check. A shared VM is much noisier than a desk machine
+(intervals of +-20% or more for workloads under 2 ms), so it only sees large
+changes; it never fails the workflow (`continue-on-error`), and a run without
+its table still gets the comment. macOS arm64 runners can queue for a while,
+and the comment waits for the whole workflow.
+
+## Check the output too
+
+The benchmark measures time, not pictures. A change can look faster because it
+draws less, or draw something else (in #166, `ribbons` and `shapes` changed
+on 12.8% and 10.0% of the pixels, including thin rects that got too dark,
+which the numbers did not show). Before comparing performance, render the
+same frames at the base and the head, with `--dump`, and compare the PNGs:
+
+```sh
+cargo run --release -p celesta-bench -- run --frames 1 --warmup 0 --dump out-head/ shapes ribbons
+# the same at the base, then compare out-base/ and out-head/
+```
+
+A pull request that changes the output says so and shows that the difference
+is intended; one that claims not to change it should show no difference. There
+is no automatic check yet: it is a step for the author and the reviewer.
+
+## Not measured
+
+The benchmark covers the export path only (`submit`/`drain`,
+`RenderQuality::Final`, a target the size of the scene). The preview path
+(`RenderQuality::Draft`, `render_to_target` scaling to a viewport) has no
+workload; a bug there has been caught by a test instead (#166). Adding one is
+left open.
 
 `--mode instructions` runs the CI comparison locally. It needs Linux with
 Valgrind 3.22 or later and lavapipe (`mesa-vulkan-drivers`) as the only
