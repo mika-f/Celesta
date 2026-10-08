@@ -27,11 +27,36 @@ mechanism added here.
 ## Scope
 
 In scope: solid `fill`, `fontWeight`, and `fontFamily` per span, on `<Text>`,
-`<TextBox>`, `<Dialogue>`, and `<DialogueSeries>` lines; native (CPU/GPU)
-rendering as the reference; browser rendering as close as practical.
+`<TextBox>`, `<TextReveal>`, `<Dialogue>`, and `<DialogueSeries>` lines; the
+measurement APIs and `useTypewriter`; native (CPU/GPU) rendering as the
+reference; browser rendering as close as practical.
 
 Out of scope: per-span `fontSize`, gradient fills, strokes, italics (no
-`fontStyle` exists), font stacks (#204), and any change to `@celesta/code`.
+`fontStyle` exists), synthetic bold, font stacks (#204), and any change to
+`@celesta/code`.
+
+## Existing behavior is unchanged
+
+Every composition that renders today renders identically:
+
+- Text without spans produces the same scene JSON: `fontRuns` and `colorRuns`
+  are only emitted when spans produce them.
+- With empty `fontRuns`, native shaping input and cache keys are unchanged,
+  and the baseline is cosmic-text's own `line_y`. The baseline recomputation
+  below runs only when `fontRuns` is non-empty.
+- Font warnings judge the same family for every character when there are no
+  runs, so their entries and messages are unchanged.
+- The browser runtime takes its existing path when `fontRuns` is empty.
+- Measurement requests for string input are unchanged, and so are their keys.
+
+Changes are limited to input that used to throw (`null`, `undefined`,
+booleans, and fragments as `<Text>` / `<Dialogue>` children; spans anywhere),
+additive fields and parameter widenings, and the type of `DialogueLine.text`,
+which has no runtime effect.
+
+Tests assert this: the scene JSON and the rendered pixels of span-free text
+match before and after, and the existing renderer, GPU, React, and browser
+suites pass unchanged.
 
 ## API
 
@@ -49,20 +74,46 @@ export interface SpanProps {
 export function Span(props: SpanProps): ReactElement;
 ```
 
-- `<Span>` is valid only as a descendant of a text container: `<Text>`,
-  `<TextBox>`, `<Dialogue>`, or a `<DialogueSeries>` line's `text`. Rendered
-  anywhere else (directly in a `<Group>`, say), it throws.
+- `<Span>` is valid only inside rich text content: the children of `<Text>`,
+  `<TextBox>`, `<TextReveal>`, and `<Dialogue>`, a `<DialogueSeries>` line's
+  `text`, and the content arguments of the measurement APIs and
+  `useTypewriter`. Rendered anywhere else (directly in a `<Group>`, say), it
+  throws.
 - Spans nest. Each property of an inner span overrides the outer value; unset
   properties inherit.
-- Text children may be strings, numbers, arrays, fragments, and `<Span>`.
-  `null`, `undefined`, and booleans render nothing (as `TextBox` already
-  allows). Any other element, including a user component that returns a
-  `<Span>`, throws: text children are read as props, not rendered by React.
-  The error names what is allowed.
+- Rich text content may contain strings, numbers, arrays, fragments, and
+  `<Span>`. `null`, `undefined`, and booleans render nothing (as `TextBox`
+  already allows). Any other element, including a user component that returns
+  a `<Span>`, throws: rich text content is read as props, not rendered by
+  React. The error names what is allowed.
 - `fill` that is not solid throws.
 - A `<Text>` whose `style.colorRuns` is non-empty and whose children contain a
   span with `fill` throws, rather than defining a precedence between them.
 - Offsets are Unicode code points, as `colorRuns` already uses.
+- A `fontWeight` the family has no face for uses the nearest face, as the
+  text's own `fontWeight` does since #45. No bold is synthesized; variable
+  fonts get the weight through their `wght` axis.
+
+### Measurement and typing
+
+- `useTextMetrics`, `measureText`, and `useFitText` take rich text content
+  (`ReactNode`) as their first argument. Strings work as before.
+- `useTypewriter` takes rich text content and counts code points of its plain
+  text. `text` stays the typed plain string. For spans, pass `length` to
+  `style.visibleCharacters`, which reveals the text without changing its
+  layout:
+
+  ```tsx
+  const content = <>速い、<Span style={{ fontWeight: 700 }}>カンタン</Span>。</>;
+  const { length } = useTypewriter(content, { from: 10 });
+  return <Text style={{ ...style, visibleCharacters: length }}>{content}</Text>;
+  ```
+
+### TextReveal
+
+`<TextReveal>` accepts rich text content. It flattens the content, splits the
+text at `\n`, and gives each line's `Text` the runs inside that line, with
+offsets rebased to the line's start.
 
 ### Subtitles
 
@@ -74,7 +125,8 @@ export function Span(props: SpanProps): ReactElement;
 - `DialogueLine.text` widens from `string` to `ReactNode`. Code reading
   `line.text` as a string through the default `DialogueLine` type needs a
   narrowing; a custom `L extends DialogueLine` that declares `text: string`
-  is unaffected.
+  is unaffected. Entry bundling does not type-check, so nothing changes at
+  run time.
 
 ## Scene model
 
@@ -111,14 +163,12 @@ pub struct TextFontRun {
 
 1. **Flattening (React).** `extractText` (render.ts), `subtitleText`
    (components.ts), and `textBoxText` (text-fit.ts) become one
-   `flattenTextChildren(children)` returning `{ text, colorRuns, fontRuns }`.
+   `flattenTextContent(content)` returning `{ text, colorRuns, fontRuns }`.
    It counts code points with `Array.from`, resolves inherited span styles,
-   and merges adjacent runs with identical attributes. A run whose resolved
-   values equal the text's own style is still emitted; the renderer treats
-   it as a no-op.
+   and merges adjacent runs with identical attributes. TextReveal, the
+   measurement APIs, and `useTypewriter` use it too.
 2. **Scene.** The text layer's style gets the flattened runs merged in.
-3. **Measurement.** `useTextMetrics`, `useFitText`, `TextBox`, and subtitle
-   `metrics` send `fontRuns` with the request. `useTextMetrics` already keys
+3. **Measurement.** Requests carry `fontRuns`. `useTextMetrics` already keys
    on the style minus paint fields, so `fontRuns` stays in its key.
 4. **Rendering.** CPU and GPU share `TextRasterizer::shaped_buffer`; the
    browser runtime has its own path (below).
@@ -140,27 +190,47 @@ rasterizer and its texture key already includes the whole style.
   and the line is re-set. Each range gets `Attrs` with the run's family (or
   the text's) and `matched_weight(family, weight)`, via `attrs_list.add_span`.
 - **Cluster rule.** An extended grapheme cluster takes the attributes at its
-  first code point. A run boundary inside a cluster moves to the next cluster
-  start, so combining marks and ZWJ sequences are never split between shaping
-  runs. This matches `colorRuns`' rule (a shaped cluster uses its first code
-  point's color).
+  first code point, matching `colorRuns`' rule. cosmic-text 0.18 already
+  applies attributes per grapheme cluster at the cluster's first byte, so
+  native needs no boundary adjustment; the browser path implements the rule
+  explicitly.
 - **Existing spans inherit run attributes.** The color-emoji span and the
   word-joiner span (letter spacing 0) are currently cloned from the base
   attributes. They must be derived from the attributes in effect at their
   position; otherwise a joiner inside a bold run would switch back to the
-  regular face and split shaping there. Emoji spans keep the color emoji
-  family with the run's matched weight.
-- **Line height and baseline.** Line height stays fixed by `Metrics`. Where
-  families mix in a line, the baseline follows cosmic-text's layout. Measure
-  and rasterize use the same buffer, so they agree.
+  regular face and split shaping there (cosmic-text splits shaping runs where
+  family, weight, stretch, or style change; letter spacing alone does not).
+  Emoji spans keep the color emoji family with the run's matched weight.
 - **Kerning and ligatures** do not cross a font-run boundary, since the faces
   differ. They are kept inside runs and across color-only boundaries.
-- **Font warnings.** `font_fallback` and `missing_glyphs` check only the
-  text's own family today, so characters drawn from a span's family would be
-  reported as missing. Both check each character against the family and
-  weight in effect at its position and return one entry per family/weight
-  (`Option` → `Vec`). The GPU renderer's de-duplication of reported entries is
-  updated accordingly.
+
+### Baseline
+
+cosmic-text places each line's baseline from the largest ascent and descent of
+the glyphs on that line, so a span in a taller font would move its line down
+and make line spacing uneven. Spans do not move the baseline:
+
+- When `fontRuns` is non-empty, each line's baseline is recomputed as
+  cosmic-text does, `line_top + (line_height - (ascent + descent)) / 2 +
+  ascent`, but with `ascent` and `descent` taken over the glyphs outside font
+  runs on that line.
+- A line whose glyphs are all inside font runs uses the largest ascent and
+  descent of the glyphs outside font runs anywhere in the text.
+- Text entirely inside font runs keeps cosmic-text's baseline.
+- Line height stays fixed by `Metrics`. Measure and rasterize use the same
+  recomputed baselines, so they agree.
+
+Glyph ascent and descent come from each glyph's face metrics (`font_id`) at
+its font size. Whether the layout exposes enough to do this is the first
+thing the implementation verifies.
+
+### Font warnings
+
+`font_fallback` and `missing_glyphs` check only the text's own family today,
+so characters drawn from a span's family would be reported as missing. Both
+check each character against the family and weight in effect at its position
+and return one entry per family/weight (`Option` → `Vec`). The GPU renderer's
+de-duplication of reported entries is updated accordingly.
 
 ## Browser rendering
 
@@ -173,45 +243,61 @@ is the reference.
   inside runs and lost across boundaries, as on native.
 - **Drawing.** `styledLine` draws each run's piece with its own `ctx.font`
   (`fillText`, and `strokeText` for the outline) at the x of its first
-  character. Character extents come from an SVG `<text>` with one `<tspan>`
-  per run, so color regions and reveals keep working from the same extents.
-- **Open question.** `getExtentOfChar` across `<tspan>` children is
-  unverified. It is checked in real Chrome first; if it does not hold, x
-  positions come from accumulated per-run `measureText` widths instead.
-- **Documented differences.** Kerning at run boundaries, baseline placement
-  in lines that mix families, and the existing platform font differences.
+  character. Run pieces are split at grapheme cluster boundaries.
+- **Positions.** Character extents come from an SVG `<text>` with one
+  `<tspan>` per run, so color regions and reveals keep working from the same
+  extents. `getExtentOfChar` reports positions across `<tspan>` children
+  that agree with summed per-run `measureText` widths (checked in Chromium
+  152).
+- **Baseline.** The browser already places every line's baseline from the
+  text's own font, which matches the native rule above.
+- **Documented differences.** Kerning at run boundaries and the existing
+  platform font and rasterization differences.
 
 ## Compatibility
 
-- Text without spans produces the same scene as before.
+- See "Existing behavior is unchanged".
 - `@celesta/code` keeps using `colorRuns` and does not change.
-- `DialogueLine.text` widens to `ReactNode` (see Subtitles).
 - `font_fallback` / `missing_glyphs` return types change inside the Rust
   workspace; their callers (gpu-renderer, exporter, editor) are updated.
 
 ## Testing
 
+- **Unchanged behavior.** Span-free text: identical scene JSON and pixels
+  before and after; existing suites pass unchanged.
 - **Renderer (Rust).** Family runs with the repository's Bebas Neue and IBM
   Plex Mono fonts: advances change, measured width equals rasterized width,
   and the shaping cache separates texts that differ only in font runs while
-  still sharing across color-only changes. Weight runs are asserted where the
-  system has a bold face and skipped otherwise, like the color emoji tests.
-  Also: a boundary inside a combining sequence, phrase line breaking with a
-  run (no split at joiners), emoji inside a run, invalid ranges, and warnings
-  for a span family that lacks characters.
+  still sharing across color-only changes. Baselines: a span in a taller
+  family does not move its line, an all-span wrapped line matches the other
+  lines, and fully spanned text keeps cosmic-text's baseline. Weight runs are
+  asserted where the system has a bold face and skipped otherwise, like the
+  color emoji tests. Also: a boundary inside a combining sequence, phrase line
+  breaking with a run (no split at joiners), emoji inside a run, invalid
+  ranges, and warnings for a span family that lacks characters.
 - **GPU.** Font-run text matches the CPU reference, as existing text tests do.
 - **React.** Offsets with surrogate pairs, nested spans, merged adjacent runs,
-  the three errors (gradient fill, foreign element, `colorRuns` conflict),
-  `Dialogue` `content` and `metrics`, `TextBox` fitting with a bold span, and
-  `DialogueSeries` lines with spans.
+  the errors (gradient fill, foreign element, `colorRuns` conflict, span
+  outside rich text), `Dialogue` `content` and `metrics`, `TextBox` fitting
+  with a bold span, `DialogueSeries` lines with spans, `TextReveal` runs
+  rebased per line, measurement APIs with content, and `useTypewriter`
+  counting rich content.
 - **Web.** `text-runs.mjs` in real Chrome with bold and family runs (coverage,
-  wrapping, color and reveal over runs), plus unit tests for run-aware
-  wrapping.
+  wrapping, color and reveal over runs, grapheme boundaries), plus unit tests
+  for run-aware wrapping.
 
-## Deliverables
+## Delivery
 
-- Examples: a Japanese subtitle with emphasis and an explanatory paragraph
-  with mixed weights and a brand-font word. Whether this is a new example or
-  a `feature-tour` chapter is decided in the plan.
-- `skills/celesta/references/react-api.md`, the website docs (en/ja), and a
-  handoff note `docs/handoff/<date>-rich-text.md`.
+Stacked PRs with gh-stack, in this order:
+
+1. Scene model and native rendering (`fontRuns`, shaping, baseline, warnings).
+2. React API (`<Span>`, flattening, subtitles, TextReveal, measurement,
+   `useTypewriter`).
+3. Browser rendering.
+4. Example and documentation.
+
+Deliverables of the last layer: a new small example (`examples/rich-text/`)
+showing an emphasized Japanese subtitle, an explanatory paragraph with mixed
+weights and a brand-font word, a TextReveal headline with a span, and typing
+with `visibleCharacters`; `skills/celesta/references/react-api.md`; the
+website docs (en/ja); and a handoff note `docs/handoff/<date>-rich-text.md`.
