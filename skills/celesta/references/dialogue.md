@@ -152,7 +152,7 @@ Each line:
 
 | Field | Notes |
 | --- | --- |
-| `text` | Subtitle. |
+| `text` | Subtitle; may hold [`<Span>`](text.md#rich-text-with-span), as `<Dialogue>` children may. |
 | `audio` | Voice file, relative to the entry file. Its length (rounded up to whole frames) is the line's length. |
 | `durationInFrames` | Explicit length instead of measuring; required for a line without `audio`. |
 | `id` | Name for looking the line up; defaults to its index (`"0"`, `"1"`, …). Unique. |
@@ -213,7 +213,7 @@ import type { CharacterSubtitle, SubtitleRenderProps, TextStyle } from '@celesta
 
 const PLATE: TextStyle = { fontSize: 24, fontWeight: 800, fill: { type: 'solid', color: '#ffffff' } };
 
-function Band({ text, character, metrics, style, maxWidth, held, frame, durationInFrames }: SubtitleRenderProps) {
+function Band({ content, character, metrics, style, maxWidth, held, frame, durationInFrames }: SubtitleRenderProps) {
   const plate = useTextMetrics(character.displayName, PLATE);
   const fade = Math.min(8, durationInFrames / 3);
   // Sampled mid-frame, so every frame of the run, even a one-frame run, shows.
@@ -228,7 +228,7 @@ function Band({ text, character, metrics, style, maxWidth, held, frame, duration
       <Rect x={-width / 2 + 32} y={-height / 2} anchorY={0.5} width={plate.width + 48} height={46}
         cornerRadius={23} fill="#7CC242" />
       <Text x={-width / 2 + 56} y={-height / 2} anchorY={0.5} style={PLATE}>{character.displayName}</Text>
-      {held ? null : <Text anchorX={0.5} anchorY={0.5} maxWidth={maxWidth} style={style}>{text}</Text>}
+      {held ? null : <Text anchorX={0.5} anchorY={0.5} maxWidth={maxWidth} style={style}>{content}</Text>}
     </Group>
   );
 }
@@ -245,9 +245,10 @@ const subtitle: CharacterSubtitle = {
 
 | Field | Notes |
 | --- | --- |
-| `text` | The line's text. |
+| `text` | The line's text, as a plain string. |
+| `content` | The line as written, [`<Span>`](text.md#rich-text-with-span)s included: `<Text style={style}>{content}</Text>` keeps its emphasis. |
 | `character` | `{ id, name, displayName }` of the speaker. `displayName` is `<Character displayName>`, or `name` without one. |
-| `metrics` | `text` measured with the subtitle's `style` and `maxWidth`, as `<Text>` lays it out (`width`, `height`, `lines`, …). |
+| `metrics` | The line measured with the subtitle's `style` and `maxWidth`, spans included, as `<Text>` lays it out (`width`, `height`, `lines`, …). |
 | `style`, `maxWidth` | The subtitle's own, for drawing the text. |
 | `held` | True while the line has ended but the subtitle is kept up (below): draw the band, not the text. `text` and `metrics` stay the line's. |
 | `frame`, `durationInFrames` | Frames since the subtitle appeared and how long it stays: the enclosing `<Sequence>`, or the run of lines under `holdSubtitle`. Use them to fade the band in and out. |
@@ -300,7 +301,7 @@ portrait is drawn at its natural size; use `scale` for large artwork.
 | Prop | Notes |
 | --- | --- |
 | `character` | The **view** ref. Required. |
-| children | Subtitle text. |
+| children | Subtitle text; may hold [`<Span>`](text.md#rich-text-with-span) to emphasize part of it: `この機能、<Span style={{ fill: '#ffd447', fontWeight: 700 }}>ぜひ一度</Span>試してね`. |
 | `expression`, `mouth`, `lipSync` | Applied to the view while the line is active. |
 | `audio` | Voice file path. |
 | `volume`, `playbackRate` | Number or keyframes, as on `<Audio>`. |

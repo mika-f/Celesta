@@ -8,6 +8,7 @@ from `@celesta/react`. Syntax-highlighted code is in [code.md](code.md).
 ## Contents
 
 - [The Text layer](#the-text-layer)
+- [Rich text with `<Span>`](#rich-text-with-span)
 - [TextStyle](#textstyle)
 - [Line breaking](#line-breaking)
 - [Fonts, fallback, and emoji](#fonts-fallback-and-emoji)
@@ -21,7 +22,7 @@ from `@celesta/react`. Syntax-highlighted code is in [code.md](code.md).
 
 | Prop | Notes |
 | --- | --- |
-| children | Strings or numbers only (arrays of them are joined). Use template literals to combine values: `` {`${name} · Lv.${level}`} ``. `\n` breaks a line. No elements inside `Text`. |
+| children | Strings, numbers, and [`<Span>`](#rich-text-with-span) elements (arrays and fragments of those are joined); `null`, `undefined`, and booleans draw nothing. Use template literals to combine values: `` {`${name} · Lv.${level}`} ``. `\n` breaks a line. No other elements inside `Text`. |
 | `style` | A `TextStyle`, see below. |
 | `lang` | Text language (e.g. `"zh-Hant"`), overriding enclosing scopes; `style.lang` takes priority. |
 | `maxWidth` | Wrap lines to fit this width; `style.align` positions each line inside it. A word wider than `maxWidth` is not split; the part past `maxWidth` is cut off. See [Line breaking](#line-breaking). |
@@ -33,9 +34,42 @@ Anchoring:
   `anchorY={0.5}` centers the letters themselves. Horizontally it keeps its
   advance width, so leading and trailing spaces take up room.
 - `anchorY="baseline"` anchors the text on its first line's baseline
-  instead. Use it to line up separate `Text` layers (colored runs,
-  per-character animation, mixed font sizes) at one `y`, and with measured
-  layouts (`y={padding + metrics.ascent}`).
+  instead. Use it to line up separate `Text` layers (per-character
+  animation, mixed font sizes) at one `y`, and with measured layouts
+  (`y={padding + metrics.ascent}`). For a differently colored or weighted
+  word inside a line, use [`<Span>`](#rich-text-with-span) instead.
+
+## Rich text with `<Span>`
+
+`<Span style={{ fill, fontWeight, fontFamily }}>` changes part of a text.
+The whole text is still shaped as one paragraph: it wraps, aligns, and
+measures as one, and its baseline stays where the text's own glyphs put it.
+
+```tsx
+<Text style={{ fontSize: 48, fill: { type: 'solid', color: '#ffffff' } }}>
+  速い、<Span style={{ fill: '#28A34A', fontWeight: 700 }}>カンタン</Span>、頼もしい。
+</Text>
+```
+
+- `fill` is a hex color or a solid paint; gradients are rejected.
+- `fontWeight` uses the family's nearest face when it has no face at that
+  weight, as the text's own `fontWeight` does. No bold is synthesized.
+- `fontFamily` must be installed or loaded with `<Font>`, like the text's.
+- Spans nest; an inner span overrides only the properties it sets.
+- `<Span>` works in `<Text>`, `<TextBox>`, `<TextReveal>`, `<Dialogue>`,
+  `DialogueSeries` lines, `useTextMetrics`, `measureText`, `useFitText`,
+  `fitText`, and `useTypewriter`. Anywhere else it throws, and so does a
+  component that returns a `<Span>` inside text: text children are read,
+  not rendered.
+- A grapheme cluster (a letter with its accents, an emoji sequence) takes
+  the style at its first character.
+- Kerning and ligatures do not cross a change of weight or family; they do
+  cross a change of color.
+- `<Span fill>` cannot be combined with `style.colorRuns` on the same text.
+- The browser preview draws each span with its own font and can differ
+  slightly from export at span edges.
+
+See [`examples/rich-text`](../../../examples/rich-text/film.tsx).
 
 ## TextStyle
 
@@ -58,7 +92,8 @@ type TextStyle = {
 `fill: { type: 'solid', color: '#ffffff' }`. Gradients are described in
 [react-core.md](react-core.md#rect-and-paints-gradients); their coordinates
 are relative to the text's layout box. The same style fields are used by
-character subtitles and `.celesta.json` text items.
+character subtitles and `.celesta.json` text items. `<Span>` writes
+`colorRuns` and an internal `fontRuns` field; set them through `<Span>`.
 
 ## Line breaking
 
@@ -153,7 +188,8 @@ is omitted or lacks a character. **Set it for any CJK video:**
 ### `<TextReveal>`
 
 Each line of a string slides up from behind its own mask (`Group clip`),
-staggered. Props: `children` (string, `\n` separates lines), `style`,
+staggered. Props: `children` (text, which may hold `<Span>`; `\n`
+separates lines, and a span crossing `\n` continues on the next line), `style`,
 `lineHeight` (mask height and line spacing; defaults to `style.lineHeight`,
 then `fontSize`), `baseline` (0.8: baseline position inside each line box),
 `align` (0/0.5/1 pivot of each line), `from`, `stagger` (4),
@@ -169,6 +205,16 @@ default one second) otherwise. To place a caret after the typed text,
 measure it: `useTextMetrics(text, style).width`. For code, pass `length` to
 `<Code visibleCharacters>` ([code.md](code.md)).
 
+`text` may hold `<Span>`; `text` in the result is then the plain string. To
+type rich text without changing its layout, pass `length` to
+`style.visibleCharacters` of a `<Text>` with the same content:
+
+```tsx
+const content = <>速い、<Span style={{ fontWeight: 700 }}>カンタン</Span>。</>;
+const { length } = useTypewriter(content, { from: 10 });
+return <Text style={{ ...style, visibleCharacters: length }}>{content}</Text>;
+```
+
 ### `useCountUp(to, { from?, delay?, durationInFrames?, easing?, decimals? })`
 
 A number that counts to `to` (default 30 frames, `easeOutExpo`), rounded to
@@ -181,8 +227,9 @@ A number that counts to `to` (default 30 frames, `easeOutExpo`), rounded to
 Shapes text exactly as `<Text>` does, synchronously, during render, and
 returns
 `{ width, height, ascent, descent, lineHeight, lines, glyphs: [{ text, x, width, line }] }`
-in composition pixels. Use it to size backgrounds, line up colored runs, and
-place carets, without guessing widths.
+in composition pixels. Use it to size backgrounds and place carets without
+guessing widths. `text` may hold `<Span>`, measured with the spans' weights
+and families.
 
 - `width` is the advance width, including spaces. `height` is the line-box
   height (single-line `<Text>` trims empty rows above and below its glyphs).
@@ -197,8 +244,9 @@ place carets, without guessing widths.
   measurement only; also declare them with `<Font>` so drawing uses them.
 - Unchanged text, style, width and fonts reuse the last result. Call it at
   the component's top level with a stable number of calls, like any hook.
-- Each `<Text>` shapes separately: keep letters that need shared kerning or
-  a ligature in one run.
+- Each `<Text>` shapes separately: for a word in another color, weight, or
+  family, use one `<Text>` with [`<Span>`](#rich-text-with-span) rather than
+  separate layers placed by measured widths.
 
 A pill that grows with its label:
 
@@ -215,20 +263,12 @@ function Pill({ label }: { label: string }) {
 }
 ```
 
-Independently colored runs on one baseline:
+A pill around a label with an emphasized word measures the same content it
+draws:
 
 ```tsx
-function Heading() {
-  const style = { fontFamily: 'sans-serif', fontSize: 64 };
-  const first = useTextMetrics('速い、', style);
-  const accent = useTextMetrics('Easy', style);
-  return <Group y={100}>
-    <Text anchorY="baseline" style={style}>速い、</Text>
-    <Text x={first.width} anchorY="baseline"
-      style={{ ...style, fill: { type: 'solid', color: '#28A34A' } }}>Easy</Text>
-    <Text x={first.width + accent.width} anchorY="baseline" style={style}>、頼もしい。</Text>
-  </Group>;
-}
+const label = <>New <Span style={{ fontWeight: 700 }}>2.0</Span></>;
+const m = useTextMetrics(label, style);
 ```
 
 A centered row: measure each item, add padding and a fixed gap, and offset
@@ -237,8 +277,9 @@ the row by `(width - total) / 2`. The full example is
 
 ### `measureText(text, style, { maxWidth?, fonts? })`
 
-The same measurement, asynchronously, for `prepare()`. `<Font>` files are
-not loaded during `prepare()`; pass their `src` in `fonts`.
+The same measurement, asynchronously, for `prepare()`; `text` may hold
+`<Span>`. `<Font>` files are not loaded during `prepare()`; pass their
+`src` in `fonts`.
 
 ```tsx
 let titleWidth = 0;
@@ -279,6 +320,8 @@ uses `maxFontSize`; longer text shrinks, down to `minFontSize`.
   agree. It is found by bisection; rarely, a larger size could also fit
   past one that does not, and the size chosen fits but is not the largest.
 - Empty text, and `null`, `undefined`, or boolean children, draw nothing.
+  Children may hold `<Span>`; the fit is measured with the spans' weights
+  and families.
 - A non-positive or non-finite `width`, `height`, font size, `lineHeight`,
   or `step`, `maxFontSize` below `minFontSize`, or a `maxLines` that is not
   a whole number of at least 1 throws a `RangeError`.
