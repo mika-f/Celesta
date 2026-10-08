@@ -26,6 +26,7 @@ impl TextRasterizer {
         width: Option<f32>,
         scale: f32,
     ) -> Arc<Buffer> {
+        let source = text;
         self.select_language(style.lang.as_deref());
         let key = (text.len() <= 100_000).then(|| {
             format!(
@@ -39,6 +40,7 @@ impl TextRasterizer {
                     style.line_height,
                     style.letter_spacing,
                     style.line_break,
+                    &style.font_runs,
                 )
             )
         });
@@ -79,6 +81,37 @@ impl TextRasterizer {
             TextAlign::Center => Align::Center,
             TextAlign::Right => Align::Right,
         });
+        // Font runs become per-range attributes: the run's family (or the
+        // text's) at the weight CSS matching picks within that family.
+        let font_runs = if style.font_runs.is_empty() {
+            Vec::new()
+        } else {
+            usable_font_runs(style, source.chars().count())
+        };
+        let mut run_attrs: Vec<(Attrs, u16)> = Vec::with_capacity(font_runs.len());
+        for run in &font_runs {
+            let family = run.font_family.as_deref().or(style.font_family.as_deref());
+            let requested = run.font_weight.or(style.font_weight).unwrap_or(400);
+            let weight = family
+                .and_then(|family| self.matched_weight(family, requested))
+                .unwrap_or(requested);
+            let mut run_attr = attrs.clone().weight(Weight(weight));
+            if let Some(family) = family {
+                run_attr = run_attr.family(Family::Name(family));
+            }
+            run_attrs.push((run_attr, requested));
+        }
+        // Each buffer line's source text and the code point it starts at,
+        // with the empty line `set_text` adds after a trailing line ending.
+        let mut line_sources: Vec<(&str, usize)> = Vec::new();
+        if !font_runs.is_empty() {
+            let mut base = 0;
+            for (range, ending) in LineIter::new(source) {
+                line_sources.push((&source[range.clone()], base));
+                base += source[range].chars().count() + ending.as_str().chars().count();
+            }
+            line_sources.push(("", base));
+        }
         // `lineBreak: phrase` joins every phrase segment before the text is
         // shaped, so the joined text, as it is laid out, is shaped once. Each
         // line's original text and segments are kept to measure them below.
@@ -124,34 +157,75 @@ impl TextRasterizer {
             Shaping::Advanced,
             alignment,
         );
-        let emoji_attrs = emoji_family.as_deref().map(|family| {
-            let weight = self
-                .matched_weight(family, requested_weight)
-                .unwrap_or(requested_weight);
-            attrs
-                .clone()
-                .family(Family::Name(family))
-                .weight(Weight(weight))
-        });
-        // A word joiner draws nothing, so it gets no letter spacing either.
-        // Letter spacing does not split a shaping run, so the span leaves the
-        // shaping as it is.
-        let joiner_attrs = style
-            .letter_spacing
-            .map(|_| attrs.clone().letter_spacing(0.0));
-        // Added to the lines `set_text` made rather than passed to
-        // `set_rich_text`, which splits lines differently (dropping the
-        // empty line after a trailing newline).
-        let add_spans = |line: &mut BufferLine| {
-            let mut spans: Vec<(std::ops::Range<usize>, &Attrs)> = Vec::new();
-            if let Some(emoji_attrs) = &emoji_attrs {
-                for range in emoji_presentation_spans(line.text()) {
-                    spans.push((range, emoji_attrs));
+        // The emoji font's weight depends on the weight asked for where an
+        // emoji sits: the text's, or a font run's.
+        let mut emoji_weights: Vec<(u16, u16)> = Vec::new();
+        if let Some(family) = emoji_family.as_deref() {
+            for requested in std::iter::once(requested_weight)
+                .chain(run_attrs.iter().map(|(_, requested)| *requested))
+            {
+                if !emoji_weights.iter().any(|(asked, _)| *asked == requested) {
+                    let matched = self.matched_weight(family, requested).unwrap_or(requested);
+                    emoji_weights.push((requested, matched));
                 }
             }
-            if let Some(joiner_attrs) = &joiner_attrs {
+        }
+        // Added to the lines `set_text` made rather than passed to
+        // `set_rich_text`, which splits lines differently (dropping the
+        // empty line after a trailing newline). Emoji and word-joiner spans
+        // start from the attributes in effect where they sit, so they never
+        // switch a font run back to the text's font and split its shaping.
+        let add_spans = |line_i: usize, line: &mut BufferLine| {
+            let runs = line_sources
+                .get(line_i)
+                .map(|&(original, base)| font_run_spans(line.text(), original, base, &font_runs))
+                .unwrap_or_default();
+            let attrs_at = |at: usize| {
+                runs.iter()
+                    .find(|(range, _)| range.contains(&at))
+                    .map_or((&attrs, requested_weight), |(_, index)| {
+                        (&run_attrs[*index].0, run_attrs[*index].1)
+                    })
+            };
+            // cosmic-text shapes an ASCII word in one piece when every added
+            // span it overlaps matches the word's first attributes, ignoring
+            // parts left at the defaults: "CD" starting in a run would come
+            // out in the run's font throughout. Spelling the defaults out as
+            // a span over a line with runs keeps such words split.
+            let mut spans: Vec<(std::ops::Range<usize>, Attrs)> = if runs.is_empty() {
+                Vec::new()
+            } else {
+                vec![(0..line.text().len(), attrs.clone())]
+            };
+            spans.extend(
+                runs.iter()
+                    .map(|(range, index)| (range.clone(), run_attrs[*index].0.clone())),
+            );
+            if let Some(family) = emoji_family.as_deref() {
+                for range in emoji_presentation_spans(line.text()) {
+                    let (at, requested) = attrs_at(range.start);
+                    let weight = emoji_weights
+                        .iter()
+                        .find(|(asked, _)| *asked == requested)
+                        .map_or(requested, |(_, matched)| *matched);
+                    spans.push((
+                        range,
+                        at.clone()
+                            .family(Family::Name(family))
+                            .weight(Weight(weight)),
+                    ));
+                }
+            }
+            // A word joiner draws nothing, so it gets no letter spacing
+            // either. Letter spacing does not split a shaping run, so the
+            // span leaves the shaping as it is.
+            if style.letter_spacing.is_some() {
                 for (start, joiner) in line.text().match_indices(WORD_JOINER) {
-                    spans.push((start..start + joiner.len(), joiner_attrs));
+                    let (at, _) = attrs_at(start);
+                    spans.push((
+                        start..start + joiner.len(),
+                        at.clone().letter_spacing(0.0),
+                    ));
                 }
             }
             if spans.is_empty() {
@@ -159,12 +233,12 @@ impl TextRasterizer {
             }
             let mut attrs_list = line.attrs_list().clone();
             for (range, attrs) in spans {
-                attrs_list.add_span(range, attrs);
+                attrs_list.add_span(range, &attrs);
             }
             line.set_attrs_list(attrs_list);
         };
-        for line in &mut buffer.lines {
-            add_spans(line);
+        for (line_i, line) in buffer.lines.iter_mut().enumerate() {
+            add_spans(line_i, line);
         }
 
         if let Some(width) = width
@@ -184,8 +258,12 @@ impl TextRasterizer {
             for run in buffer.layout_runs() {
                 glyphs[run.line_i].extend(run.glyphs.iter().map(|glyph| (glyph.start, glyph.w)));
             }
-            for ((line, (original, segments)), mut glyphs) in
-                buffer.lines.iter_mut().zip(&phrase_lines).zip(glyphs)
+            for (line_i, ((line, (original, segments)), mut glyphs)) in buffer
+                .lines
+                .iter_mut()
+                .zip(&phrase_lines)
+                .zip(glyphs)
+                .enumerate()
             {
                 if segments.is_empty() {
                     continue;
@@ -230,7 +308,7 @@ impl TextRasterizer {
                         AttrsList::new(&attrs),
                     );
                     line.set_align(alignment);
-                    add_spans(line);
+                    add_spans(line_i, line);
                 }
             }
             buffer.set_size(&mut self.font_system, Some(width), None);
@@ -645,6 +723,50 @@ pub fn validate_font_runs(text: &str, style: &TextStyle) -> Result<(), RenderErr
         previous_end = run.end;
     }
     Ok(())
+}
+
+/// The byte offset in `shaped` of each code point of `original`, then
+/// `shaped.len()`. `shaped` is `original` with any word joiners phrase line
+/// breaking inserted, told apart from original ones as `source_offsets`
+/// does.
+fn shaped_byte_offsets(shaped: &str, original: &str) -> Vec<usize> {
+    let mut offsets = Vec::with_capacity(original.len() + 1);
+    let mut original = original.chars().peekable();
+    for (byte, character) in shaped.char_indices() {
+        if character == WORD_JOINER && original.peek() != Some(&WORD_JOINER) {
+            continue;
+        }
+        offsets.push(byte);
+        original.next();
+    }
+    offsets.push(shaped.len());
+    offsets
+}
+
+/// The byte range of `shaped` (a buffer line holding source text `original`,
+/// which starts at code point `base`) that each font run covers, with the
+/// run's index in `runs`. cosmic-text applies a cluster's attributes from
+/// its first byte, so a range starting inside a cluster leaves it alone.
+fn font_run_spans(
+    shaped: &str,
+    original: &str,
+    base: usize,
+    runs: &[&TextFontRun],
+) -> Vec<(std::ops::Range<usize>, usize)> {
+    if runs.is_empty() {
+        return Vec::new();
+    }
+    let offsets = shaped_byte_offsets(shaped, original);
+    let end = base + offsets.len() - 1;
+    runs.iter()
+        .enumerate()
+        .filter(|(_, run)| run.start < end && run.end > base)
+        .map(|(index, run)| {
+            let start = run.start.max(base) - base;
+            let stop = run.end.min(end) - base;
+            (offsets[start]..offsets[stop], index)
+        })
+        .collect()
 }
 
 /// The font runs of `style` that are well-formed for a text of `length`
