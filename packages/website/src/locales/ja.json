@@ -364,6 +364,10 @@
         "scenes-back-to-back": "シーンを続けて並べる",
         "plays-its-children-one-after-another-so": "<slot0/> は子の <slot1/> を順番に再生するので、開始フレームではなく各シーンの長さを指定できます。<slot2/> を負にすると前のシーンと重なります。<slot3/> は描画せず同じ計算を行い、コンポジション全体の長さを求めるのに便利です。",
         "three-scenes-sized-from-their-lengths": "各シーンの長さから全体を計算",
+        "transitions-between-scenes": "シーンをトランジションでつなぐ",
+        "transition-series-body": "<slot0/> は <slot1/> と同じくシーンを順に並べ、2 つのシーンの間に <slot2/> を置けます。<slot3/> はカット、<slot4/> は次のシーンを前のシーンの上にフェードイン、<slot5/> は次のシーンが前のシーンを押し出し、<slot6/> は動く直線の境界の向こうに次のシーンを見せます。トランジションは前後のシーンを <slot7/> の分だけ重ねるので、<slot8/> で各シーンの開始位置と、重なりの分だけ短くなった全体の長さを求められます。",
+        "scenes-joined-by-a-cross-fade-and-a-slide": "クロスフェードとスライドでつないだシーン",
+        "transition-series-rules": "各シーンは通常の Sequence で、入りのトランジションの最初のフレームがフレーム 0 です。後のシーンが手前に描かれます。前後どちらかのシーンより長いトランジションや、入りと出のトランジションを合わせた長さに満たないシーンはエラーになるので、空白や 3 つのシーンの同時表示は起こりません。重なったシーンの音声は同時に再生されます。<slot0/> はシーン内の Audio に映像と一緒にフェードする音量を返し、<slot1/> はほかのタイミング調整のためにシーン前後のトランジションを返します。",
         "cascades-and-entrances": "順番に入場させる",
         "is-a-clamped-0-1-value-for": "<slot0/> は「区間のどこまで進んだか」を 0〜1 に制限した値で返し、多くの入場効果の基礎になります。<slot1/> は前の子から <slot2/> フレーム遅れて次の子を開始するので、フレーム 0 向けの入場効果がリストを順に流れます。",
         "rows-that-arrive-one-after-another": "一行ずつ表示する",
@@ -377,8 +381,8 @@
         "from-formats-for-an-on-screen-clock": "<slot1/> の <slot0/> は、<slot2/> 形式の画面内時計を生成します。",
         "metadata": {
           "title": "シーン・キュー・拍",
-          "description": "順番に並べる、段階的に表示する、拍に同期する。",
-          "keywords": "シーン キュー 拍 音楽 順番 時刻 Series Stagger computeSeries progress useBeat beatAt bpm music useCue cueAt scenes cascade frameToTimecode timecode"
+          "description": "順番に並べる、トランジションでつなぐ、段階的に表示する、拍に同期する。",
+          "keywords": "シーン キュー 拍 音楽 順番 時刻 トランジション クロスフェード スライド ワイプ Series TransitionSeries computeTransitionSeries useTransitionVolume Stagger computeSeries progress useBeat beatAt bpm music useCue cueAt scenes cascade frameToTimecode timecode"
         }
       },
       "text-camera-lines": {
@@ -597,7 +601,7 @@
         "metadata": {
           "title": "@celesta/react",
           "description": "@celesta/react 全体の簡潔なリファレンス。",
-          "keywords": "参照 関数 型 フック コンポーネント api props Composition Rect Text Group Image Video Audio Font Sequence Series Stagger Transition Camera Line Polyline Path Circle Ellipse Arrow TextReveal useBeat useCue Character CharacterView Dialogue hooks reference"
+          "keywords": "参照 関数 型 フック コンポーネント api props Composition Rect Text Group Image Video Audio Font Sequence Series TransitionSeries Stagger Transition Camera Line Polyline Path Circle Ellipse Arrow TextReveal useBeat useCue Character CharacterView Dialogue hooks reference"
         },
         "api": {
           "set-and-optional-supplies-the-default-text": "<slot0/>、<slot1/>、<slot2/>、<slot3/> を設定します。任意の <slot4/> で既定のテキスト言語を指定し、default export からひとつだけ返します。",
@@ -610,6 +614,7 @@
           "draws-its-children-as-the-composition-looked": "子要素を、コンポジション全体の <slot0/> 時点（絶対フレーム）の状態で、音声なしで描画します。",
           "a-fade-slide-or-scale-or-several": "親シーケンスの開始・終了に、フェード・スライド・拡縮を単独または組み合わせて適用します。",
           "scenes-back-to-back-by-length-see": "長さでシーンを続けて並べます。<slot0><slot1/></slot0>を参照。",
+          "transition-series": "シーンの間をカット・クロスフェード・スライド・ワイプでつなぎ、重なりと全体の長さを計算します。<slot0><slot1/></slot0>を参照。",
           "starts-each-child-a-fixed-number-of": "各子を前の子から一定フレーム遅れて開始します。",
           "a-clamped-eased-0-1-value-for": "フレームの区間を、イージング付きの 0〜1 に制限した値にします。",
           "beats-bars-and-a-pulse-for-a": "BPM のテンポから拍・小節・パルスを取得します。",

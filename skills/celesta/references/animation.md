@@ -21,6 +21,7 @@ For randomness and noise, use [`@celesta/math`](math.md).
 - [Sequence](#sequence)
 - [FreezeFrame](#freezeframe)
 - [Series and computeSeries](#series-and-computeseries)
+- [TransitionSeries](#transitionseries)
 - [Stagger](#stagger)
 - [Transition](#transition)
 - [useBeat / beatAt](#usebeat--beatat)
@@ -36,10 +37,11 @@ For randomness and noise, use [`@celesta/math`](math.md).
 | A color from A to B (fill, gradient stop, shadow) | `interpolateColor` |
 | A bouncy pop-in | `spring` |
 | Scenes back to back | `Series` + `computeSeries` |
+| Scenes joined by a cut, cross-fade, slide, or wipe | `TransitionSeries` + `computeTransitionSeries` |
 | A past frame redrawn in place (rewind, flashback, thumbnails) | `FreezeFrame` |
 | A voiced script back to back | `planDialogue` + `DialogueSeries` ([dialogue.md](dialogue.md#timing-a-script-from-its-voices)) |
 | Items entering one after another | `Stagger` (or `progress(frame, i * each, …)`) |
-| Fade/slide/scale at a scene's start or end | `Transition` |
+| Fade/slide/scale of one element at a scene's start or end | `Transition` |
 | Motion on the music's beat | `useBeat` |
 | Something that changes at given frames (captions, camera stops, chart callouts) | `useCue` |
 | A push-in, pan, or shake over a whole scene | `Camera` |
@@ -209,6 +211,74 @@ const { durationInFrames } = computeSeries(SCENES);
   </Series>
 </Composition>
 ```
+
+## TransitionSeries
+
+Scenes back to back with transitions between them; the overlaps and the
+total length are computed for you. Children are `<TransitionSeries.Sequence
+durationInFrames>` scenes with an optional `<TransitionSeries.Transition
+type durationInFrames from? easing?>` between two of them. Prefer it to a
+`Series` with negative `offset`s plus hand-matched `Transition`s.
+
+| `type` | What happens over `durationInFrames` |
+| --- | --- |
+| `'cut'` | Nothing: no overlap, omit `durationInFrames` (same as no transition). |
+| `'crossfade'` | The next scene fades in over the previous one, which stays opaque. |
+| `'slide'` | The next scene pushes the previous one out, entering from `from`. |
+| `'wipe'` | The next scene is revealed by a straight edge moving in from `from`. |
+
+`from` is `'left'` (default), `'right'`, `'top'`, or `'bottom'`; `easing`
+shapes the progress (default linear, e.g. `Easings.easeInOutCubic`). Slides
+move by the composition's width or height.
+
+Timing rules:
+
+- A transition of *n* frames starts the next scene *n* frames before the
+  previous one ends, so the series is the scenes' lengths added up minus
+  every transition. `computeTransitionSeries(items)` returns
+  `{ sequences: [{ from, durationInFrames }], transitions: [{ from,
+  durationInFrames }], durationInFrames }`: use it for the `<Composition>`.
+  Items are the children's props in order: scenes `{ durationInFrames }`,
+  transitions `{ type, durationInFrames? }` (scene items must not have a
+  `type` key).
+- It throws for: no scene, a transition first or last, two transitions in a
+  row, an unknown `type`, a cut with frames, and a scene shorter than its
+  transitions in and out together (a scene may spend all of its frames in
+  transitions, but three scenes never show at once).
+- Each scene is a `<Sequence>`: `useCurrentFrame()` is 0 on the first frame of
+  its transition in, and `durationInFrames` includes both overlaps. It is
+  unmounted after its transition out. The next scene draws above.
+- Progress over *n* frames is 1/(n+1) … n/(n+1): every overlapped frame shows
+  both scenes; the frames either side show one scene whole.
+- Audio of overlapping scenes plays together at its own volume. For an
+  audio cross-fade, give an `<Audio>` placed directly in the scene
+  `volume={useTransitionVolume(level)}`: `level`, ramping from/to 0 over the
+  scene's transitions in and out. `useTransitionSeriesScene()` returns
+  `{ index, enter, exit }` (`{ type, durationInFrames }` or `null`) for other
+  timing, such as waiting for the scene to be fully on screen.
+
+```tsx
+const FADE = { type: 'crossfade', durationInFrames: 15 } as const;
+const { durationInFrames } = computeTransitionSeries([
+  { durationInFrames: 90 }, FADE, { durationInFrames: 240 },
+]); // 90 + 240 - 15 = 315
+// …
+<Composition width={1920} height={1080} fps={30} durationInFrames={durationInFrames}>
+  <TransitionSeries>
+    <TransitionSeries.Sequence durationInFrames={90}><Intro /></TransitionSeries.Sequence>
+    <TransitionSeries.Transition {...FADE} />
+    <TransitionSeries.Sequence durationInFrames={240}><Body /></TransitionSeries.Sequence>
+  </TransitionSeries>
+</Composition>
+
+function Body() {
+  // The scene's sound fades in under the cross-fade.
+  return <Audio src="./body.wav" volume={useTransitionVolume(0.8)} />;
+}
+```
+
+`packages/react/examples/with-transition-series.tsx` compares all four
+types.
 
 ## Stagger
 
