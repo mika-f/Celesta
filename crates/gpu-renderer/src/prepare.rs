@@ -71,9 +71,10 @@ impl GpuRenderer {
         self.place_texts(&texts, &jobs, images, &mut items)?;
         self.place_paths(&paths, outlines?, &mut items)?;
 
-        // A frame that blends anything but source-over composites through
-        // scene-sized canvases, so its layers need one more instance: the
-        // one that copies the finished root canvas onto the target.
+        // A frame with an isolated group, an effect, a mask or a layer that
+        // blends anything but source-over composites through canvases, so
+        // its layers need one more instance: the one that copies the
+        // finished root canvas onto the target.
         let composited = items.iter().any(
             |item| !matches!(item, PreparedItem::Layer(layer) if layer.blend_mode.is_normal()),
         );

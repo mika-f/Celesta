@@ -56,10 +56,10 @@ impl GpuRenderer {
         Ok(())
     }
 
-    /// Draws a frame that uses blend modes, isolated groups or effects onto
-    /// the scene-sized root canvas (each group through a canvas of its own),
-    /// leaving the result in `self.canvas` for `encode_draws` to copy onto
-    /// the target. Canvases hold premultiplied alpha, which is what
+    /// Draws a frame that uses blend modes, isolated groups, effects or masks
+    /// onto the scene-sized root canvas (each group through a canvas of its
+    /// own), leaving the result in `self.canvas` for `encode_draws` to copy
+    /// onto the target. Canvases hold premultiplied alpha, which is what
     /// source-over blending onto a cleared texture produces.
     pub(crate) fn encode_composited(
         &mut self,

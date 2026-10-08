@@ -41,9 +41,10 @@ pub struct GpuRenderer {
     pub(crate) texture_bind_group_layout: wgpu::BindGroupLayout,
     pub(crate) backdrop_bind_group_layout: wgpu::BindGroupLayout,
     pub(crate) render_quality: RenderQuality,
-    /// The scene-sized texture a frame that uses blend modes or effects
-    /// composites in. Isolated groups and effects draw onto smaller canvases
-    /// from `effects`' pool. Reused across frames of the same size.
+    /// The scene-sized texture a frame that uses blend modes, isolated
+    /// groups, effects or masks composites in. Isolated groups, effects and
+    /// masks draw onto smaller canvases from `effects`' pool. Reused across
+    /// frames of the same size.
     pub(crate) canvas: Option<CanvasTexture>,
     /// What a blended draw reads its backdrop from: a copy of the canvas it
     /// draws onto, taken just before the draw.

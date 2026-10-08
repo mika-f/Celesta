@@ -11,9 +11,9 @@ pub(crate) enum PreparedContent {
     Texture(LayerTexture),
     Rect(RectShape),
     Path(ShadedPath),
-    /// A whole scene-sized canvas: a finished isolated group, a masked
-    /// group's children shown through its mask, or the root canvas being
-    /// copied onto the target.
+    /// A whole canvas: a finished isolated group, a masked group's children
+    /// shown through its mask, or the root canvas being copied onto the
+    /// target.
     Canvas {
         /// Whether the canvas holds premultiplied alpha (an isolated group)
         /// that the shader must unpremultiply.
