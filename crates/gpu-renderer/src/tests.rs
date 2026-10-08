@@ -4822,8 +4822,10 @@ fn text_masks_a_group() {
     let frame = renderer.render(&scene).unwrap();
     let red = frame
         .pixels()
-        .chunks_exact(4)
-        .filter(|pixel| *pixel == [255, 0, 0, 255])
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|pixel| **pixel == [255, 0, 0, 255])
         .count();
     // The glyphs show some of the red, and their gaps hide the rest.
     assert!(red > 50, "only {red} red pixels");
@@ -4946,12 +4948,28 @@ fn a_mask_off_the_children_draws_nothing_unless_inverted() {
             vec![corner_rect("red", 0.0, 0.0, 16.0, 16.0, "#FF0000FF")],
         )
     };
+    let background = renderer.options().background;
+    let background = [
+        background.red,
+        background.green,
+        background.blue,
+        background.alpha,
+    ];
     let mut scene = empty_scene(40, 40);
     scene.layers = vec![group(false)];
     let hidden = renderer.render(&scene).unwrap();
-    assert_ne!(pixel_at(&hidden, 8, 8), [255, 0, 0, 255]);
+    for (x, y) in [(0, 0), (8, 8), (15, 15), (34, 34)] {
+        assert_eq!(pixel_at(&hidden, x, y), background, "({x}, {y}) drawn");
+    }
     scene.layers = vec![group(true)];
     let shown = renderer.render(&scene).unwrap();
-    assert_eq!(pixel_at(&shown, 8, 8), [255, 0, 0, 255]);
-    assert_ne!(pixel_at(&shown, 34, 34), [255, 0, 0, 255]);
+    for (x, y) in [(0, 0), (8, 8), (15, 15)] {
+        assert_eq!(
+            pixel_at(&shown, x, y),
+            [255, 0, 0, 255],
+            "({x}, {y}) hidden"
+        );
+    }
+    // The mask itself never draws, inverted or not.
+    assert_eq!(pixel_at(&shown, 34, 34), background);
 }
