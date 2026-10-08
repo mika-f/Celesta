@@ -1,3 +1,4 @@
+use crate::properties::PropertyIssue;
 use std::error::Error;
 use std::path::PathBuf;
 use std::{fmt, io};
@@ -14,6 +15,8 @@ pub enum ReactBridgeError {
     UnexpectedExit,
     UnexpectedResponse,
     EntryFailed(String),
+    /// The entry rejected project property values before running `prepare()`.
+    InvalidProperties(Vec<PropertyIssue>),
     Render(String),
     Time(celesta_composition::TimeError),
 }
@@ -45,6 +48,13 @@ impl fmt::Display for ReactBridgeError {
             Self::EntryFailed(error) => {
                 write!(formatter, "could not load the React composition: {error}")
             }
+            Self::InvalidProperties(issues) => {
+                formatter.write_str("invalid project properties:")?;
+                for issue in issues {
+                    write!(formatter, "\n  - {issue}")?;
+                }
+                Ok(())
+            }
             Self::Render(error) => write!(formatter, "could not render the composition: {error}"),
             Self::Time(error) => write!(formatter, "invalid composition time: {error}"),
         }
@@ -60,6 +70,7 @@ impl Error for ReactBridgeError {
             | Self::UnexpectedExit
             | Self::UnexpectedResponse
             | Self::EntryFailed(_)
+            | Self::InvalidProperties(_)
             | Self::Render(_) => None,
             Self::Time(error) => Some(error),
         }

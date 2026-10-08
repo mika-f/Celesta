@@ -29,7 +29,11 @@ export type ComponentPropertyField =
   | { type: 'number'; label?: string; defaultValue: number; min?: number; max?: number; step?: number }
   | { type: 'boolean'; label?: string; defaultValue: boolean }
   | { type: 'color'; label?: string; defaultValue: string }
-  | { type: 'select'; label?: string; defaultValue: string; options: readonly string[] };
+  | { type: 'select'; label?: string; defaultValue: string; options: readonly string[] }
+  // A local file or an http(s) URL. Relative values from --props-file
+  // resolve against that file's directory, from --props against the current
+  // directory, and the default against the entry's directory.
+  | { type: 'path'; label?: string; defaultValue: string };
 
 export type ComponentPropertySchema<Props extends Record<string, JsonValue> = Record<string, JsonValue>> = {
   [K in keyof Props]: ComponentPropertyField;

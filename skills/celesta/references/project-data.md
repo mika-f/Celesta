@@ -1,15 +1,17 @@
-# Combining React with a .celesta.json project
+# Project properties and .celesta.json projects
 
-React compositions can read values from a `.celesta.json` project, declare
-editable project properties, draw the project's timeline, and render
-registered components that JSON timeline items name. All imported from
-`@celesta/react`.
+React compositions can declare project properties (template inputs such as a
+title, colors, or a data file) and receive their values from the command
+line, read values from a `.celesta.json` project, draw the project's
+timeline, and render registered components that JSON timeline items name.
+All imported from `@celesta/react`.
 
 ## Contents
 
 - [Which pattern to use](#which-pattern-to-use)
-- [Read values from a project](#read-values-from-a-project)
 - [defineProjectProperties](#defineprojectproperties)
+- [Pass values from the command line](#pass-values-from-the-command-line)
+- [Read values from a project](#read-values-from-a-project)
 - [Draw a JSON timeline inside React](#draw-a-json-timeline-inside-react)
 - [registerComponent](#registercomponent)
 
@@ -17,10 +19,96 @@ registered components that JSON timeline items name. All imported from
 
 | You want… | Do this |
 | --- | --- |
-| A React video whose title/colors come from a JSON file | `ProjectProvider` + `useProjectProperty` |
-| Inspector-visible fields for those values | `defineProjectProperties` |
+| One source rendered with different titles, colors, or data files | `defineProjectProperties` + `useProjectProperty`/`getProjectProperty`, exported with `--props-file`/`--props` |
+| A React video whose title/colors come from a JSON project file | `ProjectProvider` + `useProjectProperty` |
 | A hand-placed JSON timeline with React overlays drawn over or under it | `<ProjectTimeline />` / `<ProjectTrack id>`, exported with `--react … --project …` |
 | JSON items that render a React component (lower thirds, cards) | `registerComponent` + a JSON `component` item, exported with `--react … --project …` |
+
+## defineProjectProperties
+
+Declares the entry's inputs: their type, default, and Inspector label. Call
+it at module level.
+
+```ts
+defineProjectProperties({
+  title:  { type: 'string',  label: 'Title',  defaultValue: 'Celesta' },
+  accent: { type: 'color',   label: 'Accent', defaultValue: '#ff8800' },
+  size:   { type: 'number',  label: 'Size',   defaultValue: 48, min: 8, max: 200, step: 2 },
+  sub:    { type: 'boolean', label: 'Subtitle', defaultValue: false },
+  weight: { type: 'select',  label: 'Weight', defaultValue: 'bold', options: ['bold', 'light'] },
+  data:   { type: 'path',    label: 'Data',   defaultValue: './data/sample.json' },
+});
+```
+
+Read values while rendering with `useProjectProperty(key)` and in
+`prepare()` (or anywhere outside a component) with `getProjectProperty(key)`.
+Both fall back to the declared default, so the second argument is only
+needed for undeclared keys. Neither works at module level: values are
+checked after the entry's module code has run.
+
+```tsx
+let rows: Row[] = [];
+export async function prepare() {
+  // A local `path` value is absolute by the time it is read; an http(s) URL
+  // stays a URL, so fetch it instead of reading it from disk.
+  const data = getProjectProperty<string>('data');
+  const text = /^https?:\/\//i.test(data)
+    ? await (await fetch(data)).text()
+    : await fs.promises.readFile(data, 'utf8');
+  rows = JSON.parse(text);
+}
+
+export default function Card() {
+  // Values are fixed for the whole render, so they may set the duration.
+  return <Composition width={1280} height={720} fps={30} durationInFrames={30 + rows.length * 10}>
+    <Title text={useProjectProperty<string>('title')} />
+  </Composition>;
+}
+```
+
+`min`, `max`, and `step` are Inspector hints; they are not enforced. The
+app's Inspector is read-only.
+
+## Pass values from the command line
+
+```sh
+Celesta-export --react card.tsx spring.mp4 --props-file variants/spring.json
+Celesta-export --react card.tsx autumn.mp4 --props-file variants/autumn.json --props '{"title":"Autumn"}'
+celesta-editor card.tsx --props-file variants/spring.json   # preview the same values
+node <skill>/scripts/inspect.mjs card.tsx --props-file variants/spring.json
+```
+
+`--props-file` is a JSON object of values; `--props` is the same inline.
+Where a value comes from, highest precedence first:
+
+1. `--props`
+2. `--props-file`
+3. the `--project` companion file's `properties`
+4. the nearest `<ProjectProvider>`'s `properties` (`useProjectProperty` only;
+   `getProjectProperty` cannot see the React tree)
+5. the `defineProjectProperties()` default
+6. the `defaultValue` argument
+
+Every `--props`/`--props-file` value is checked before `prepare()` runs, and
+all problems are reported together (`--json` code `invalid_properties`, one
+`issues` entry per key, or one entry with no `path` for a source that an
+entry without a schema cannot accept):
+
+- the key must be declared (with no `defineProjectProperties()` call, any
+  `--props` value is an error);
+- `string`/`number`/`boolean` must have that JSON type; `color` must be
+  `#RRGGBB` or `#RRGGBBAA`; `select` must be one of `options`;
+- `path` must be an existing regular file (not a folder), an `http(s)` URL,
+  or `""` for "no file". Relative paths in `--props-file` resolve from that
+  file's folder, in `--props` from the current directory, and a relative
+  default from the entry's folder. Defaults are not checked; `prepare()`
+  reports a missing default file itself.
+
+A `--project` file's declared keys are checked the same way; its undeclared
+keys are ignored. `<ProjectProvider>` values are not checked.
+
+The editor re-reads `--props-file` on reload and when the file changes, and
+exports from the editor use the same values.
 
 ## Read values from a project
 
@@ -44,23 +132,6 @@ export default function Root() {
 `useProject()` returns the whole project. `loadProject(path)` and
 `loadProjectFromString(json)` also create a `Project`. Values come from the
 project's top-level `properties` object.
-
-## defineProjectProperties
-
-Declares the Inspector fields for `properties` (call it at module level):
-
-```ts
-defineProjectProperties({
-  title:  { type: 'string',  label: 'Title',  defaultValue: 'Celesta' },
-  accent: { type: 'color',   label: 'Accent', defaultValue: '#ff8800' },
-  size:   { type: 'number',  label: 'Size',   defaultValue: 48, min: 8, max: 200, step: 2 },
-  sub:    { type: 'boolean', label: 'Subtitle', defaultValue: false },
-  weight: { type: 'select',  label: 'Weight', defaultValue: 'bold', options: ['bold', 'light'] },
-});
-```
-
-The app's Inspector is read-only: users change values by editing the
-project file, not in the GUI.
 
 ## Draw a JSON timeline inside React
 

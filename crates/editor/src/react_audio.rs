@@ -1,6 +1,6 @@
 use crate::audio::take_latest;
 use celesta_composition::AudioGraph;
-use celesta_react_bridge::ReactBridge;
+use celesta_react_bridge::{PropertyInputs, ReactBridge};
 use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
@@ -11,6 +11,7 @@ pub(crate) struct ReactAudioRequest {
     pub(crate) node: PathBuf,
     pub(crate) cli_script: PathBuf,
     pub(crate) entry: PathBuf,
+    pub(crate) properties: PropertyInputs,
     pub(crate) sample_rate: u32,
     pub(crate) master_volume: f64,
 }
@@ -43,18 +44,22 @@ impl ReactAudioWorker {
                         .entry
                         .parent()
                         .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
-                    let graph =
-                        ReactBridge::spawn(&request.node, &request.cli_script, &request.entry)
+                    let graph = ReactBridge::spawn_with_properties(
+                        &request.node,
+                        &request.cli_script,
+                        &request.entry,
+                        &request.properties,
+                    )
+                    .map_err(|error| error.to_string())
+                    .and_then(|mut bridge| {
+                        bridge
+                            .collect_audio_graph(
+                                request.sample_rate,
+                                request.master_volume,
+                                &entry_dir,
+                            )
                             .map_err(|error| error.to_string())
-                            .and_then(|mut bridge| {
-                                bridge
-                                    .collect_audio_graph(
-                                        request.sample_rate,
-                                        request.master_volume,
-                                        &entry_dir,
-                                    )
-                                    .map_err(|error| error.to_string())
-                            });
+                    });
                     if result_tx
                         .send(ReactAudioResult {
                             generation: request.generation,

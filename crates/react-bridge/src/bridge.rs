@@ -2,8 +2,10 @@ use crate::audio::react_audio_clips;
 use crate::error::ReactBridgeError;
 use crate::measure::measure_text_response;
 use crate::probe::{MediaProbeResponse, media_probe_payload};
+use crate::properties::PropertyInputs;
 use crate::protocol::{
-    ComponentRequest, ProjectPayload, ReadyMessage, Request, ResolutionRuntime, Response,
+    ComponentRequest, ProjectPayload, PropertyInputsMessage, ReadyMessage, Request,
+    ResolutionRuntime, Response,
 };
 use crate::types::{
     ComponentResolutionRequest, FrameEvaluation, ProjectFrame, ReactCompositionMetadata,
@@ -42,6 +44,19 @@ impl ReactBridge {
         cli_script: impl AsRef<Path>,
         entry: impl AsRef<Path>,
     ) -> Result<Self, ReactBridgeError> {
+        Self::spawn_with_properties(node, cli_script, entry, &PropertyInputs::default())
+    }
+
+    /// Same as [`Self::spawn`], also giving the entry project property
+    /// values. They are checked against its `defineProjectProperties()`
+    /// schema before `prepare()`; rejected values fail with
+    /// [`ReactBridgeError::InvalidProperties`].
+    pub fn spawn_with_properties(
+        node: impl AsRef<Path>,
+        cli_script: impl AsRef<Path>,
+        entry: impl AsRef<Path>,
+        properties: &PropertyInputs,
+    ) -> Result<Self, ReactBridgeError> {
         let node = node.as_ref();
         let mut command = Command::new(node);
         if !cfg!(debug_assertions) && std::env::var_os("NODE_ENV").is_none() {
@@ -52,9 +67,11 @@ impl ReactBridge {
             use std::os::windows::process::CommandExt;
             command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
         }
+        command.arg(cli_script.as_ref()).arg(entry.as_ref());
+        if !properties.is_empty() {
+            command.arg("--properties-stdin");
+        }
         let mut child = command
-            .arg(cli_script.as_ref())
-            .arg(entry.as_ref())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -66,6 +83,15 @@ impl ReactBridge {
         let mut stdin = child.stdin.take().ok_or(ReactBridgeError::MissingPipe)?;
         let stdout = child.stdout.take().ok_or(ReactBridgeError::MissingPipe)?;
         let mut stdout = BufReader::new(stdout);
+        if !properties.is_empty() {
+            let payload = serde_json::to_string(&PropertyInputsMessage {
+                property_inputs: properties.layers(),
+            })
+            .map_err(ReactBridgeError::Protocol)?;
+            // A runtime that already exited fails below as `UnexpectedExit`;
+            // its reason is on the inherited stderr.
+            let _ = writeln!(stdin, "{payload}").and_then(|()| stdin.flush());
+        }
 
         let mut media = FfmpegBackend::new();
         // Created on the first `measureText`: it scans the system fonts.
@@ -126,7 +152,15 @@ impl ReactBridge {
                     writeln!(stdin, "{payload}").map_err(ReactBridgeError::Io)?;
                     stdin.flush().map_err(ReactBridgeError::Io)?;
                 }
+                ReadyMessage::InvalidProperties { invalid_properties } => {
+                    // The entry is already imported; handles it opened could keep Node alive.
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(ReactBridgeError::InvalidProperties(invalid_properties));
+                }
                 ReadyMessage::Error { error } => {
+                    let _ = child.kill();
+                    let _ = child.wait();
                     return Err(ReactBridgeError::EntryFailed(error));
                 }
             }

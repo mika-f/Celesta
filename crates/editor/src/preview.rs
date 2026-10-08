@@ -1,8 +1,9 @@
 use crate::audio::take_latest;
 use crate::helpers::prepare_preview_frame;
+use crate::source::PropertyArgs;
 use celesta_composition::{Layer, LayerContent, Scene};
 use celesta_gpu_renderer::{GpuRenderer, RenderQuality};
-use celesta_react_bridge::{ComponentResolutionRequest, ReactBridge};
+use celesta_react_bridge::{ComponentResolutionRequest, PropertyInputs, ReactBridge};
 use gpui_kit::RenderImage;
 use rodio::Player;
 use rodio::buffer::SamplesBuffer;
@@ -59,6 +60,8 @@ pub(crate) struct ReactPreviewContext {
     pub(crate) node: PathBuf,
     pub(crate) cli_script: PathBuf,
     pub(crate) entry: PathBuf,
+    /// Project property values; changed values respawn the bridge.
+    pub(crate) properties: PropertyInputs,
 }
 
 /// How the preview worker should treat this frame's React entry: resolve just
@@ -77,9 +80,14 @@ pub(crate) enum ReactPreviewMode {
 /// audio graph come from the React bridge instead of evaluating tracks.
 pub(crate) struct ReactPreview {
     pub(crate) entry: PathBuf,
-    /// Newest source-file modification time seen under the entry's directory.
-    /// The reload watcher compares against this to notice code edits.
+    /// Newest source-file modification time seen under the entry's directory
+    /// (or of the `--props-file`). The reload watcher compares against this
+    /// to notice edits.
     pub(crate) watched_mtime: Option<SystemTime>,
+    /// The command line's `--props`/`--props-file`, re-read on every reload.
+    pub(crate) property_args: PropertyArgs,
+    /// The values `property_args` held at the last (re)load.
+    pub(crate) properties: PropertyInputs,
 }
 
 pub(crate) struct CpuPreviewFrame {
@@ -172,7 +180,8 @@ impl PreviewWorker {
 }
 
 /// Spawns (or reuses) the preview worker's long-lived React connection for
-/// `react`. Respawns only when the entry or runtime paths changed; a spawn
+/// `react`. Respawns only when the entry, runtime paths, or property values
+/// changed; a spawn
 /// failure is remembered on the returned state so callers do not restart Node
 /// on every frame.
 pub(crate) fn ensure_react_bridge<'a>(
@@ -184,7 +193,12 @@ pub(crate) fn ensure_react_bridge<'a>(
         .is_none_or(|state| state.context != *react)
     {
         *react_bridge = Some(
-            match ReactBridge::spawn(&react.node, &react.cli_script, &react.entry) {
+            match ReactBridge::spawn_with_properties(
+                &react.node,
+                &react.cli_script,
+                &react.entry,
+                &react.properties,
+            ) {
                 Ok(bridge) => ReactPreviewBridge {
                     context: react.clone(),
                     bridge: Some(bridge),

@@ -24,5 +24,5 @@ export { Transition } from './transition';
 export { Center, Fit, Grid, SafeArea, Stack, useLayoutBounds } from './layout';
 export { DebugBounds, DebugOverlay } from './debug';
 export { registerComponent, getComponentSchema } from './registry';
-export { defineProjectProperties, listProjectProperties } from './properties';
+export { defineProjectProperties, getProjectProperty, listProjectProperties } from './properties';
 export { mediaDurationInFrames } from './media';

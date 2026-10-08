@@ -1,0 +1,8 @@
+{
+  "name": "@celesta/example-ranking",
+  "private": true,
+  "dependencies": {
+    "@celesta/react": "workspace:*",
+    "react": "^18.3.1"
+  }
+}

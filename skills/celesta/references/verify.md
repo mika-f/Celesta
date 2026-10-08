@@ -38,6 +38,7 @@ node <skill>/scripts/inspect.mjs scene.tsx --frames 0,45,-1 # -1 is the last fra
 node <skill>/scripts/inspect.mjs scene.tsx --every 15       # every 15th frame (and the last)
 node <skill>/scripts/inspect.mjs scene.tsx --json           # raw Scene JSON
 node <skill>/scripts/inspect.mjs --psd-layers hana.psd      # PSD layer paths for portraits
+node <skill>/scripts/inspect.mjs card.tsx --props-file variants/spring.json  # with project property values
 ```
 
 It finds the runtime automatically (a source checkout above the entry or the

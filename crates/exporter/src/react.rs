@@ -1,12 +1,19 @@
+use crate::error::ExportError;
 use celesta_project::Project;
-use celesta_react_bridge::{ReactAudioClipDescriptor, ReactBridge, ReactCompositionMetadata};
+use celesta_react_bridge::{
+    PropertyInputs, ReactAudioClipDescriptor, ReactBridge, ReactCompositionMetadata,
+};
 use std::path::{Path, PathBuf};
 
-/// Locates the `@celesta/react` Node.js runtime used to evaluate a React entry.
+/// Locates the `@celesta/react` Node.js runtime used to evaluate a React
+/// entry, and holds the project property values passed to it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReactRuntimeOptions {
     pub node: PathBuf,
     pub cli_script: PathBuf,
+    /// `--props`/`--props-file` values. A companion project's `properties`
+    /// are added below them when one is exported alongside.
+    pub properties: PropertyInputs,
 }
 
 impl ReactRuntimeOptions {
@@ -14,7 +21,32 @@ impl ReactRuntimeOptions {
         Self {
             node: node.into(),
             cli_script: cli_script.into(),
+            properties: PropertyInputs::default(),
         }
+    }
+
+    #[must_use]
+    pub fn with_properties(mut self, properties: PropertyInputs) -> Self {
+        self.properties = properties;
+        self
+    }
+
+    /// Starts the entry with these properties over the companion project's.
+    pub(crate) fn spawn(
+        &self,
+        entry: &Path,
+        project: Option<(&Project, &Path)>,
+    ) -> Result<ReactBridge, ExportError> {
+        let properties = match project {
+            Some((project, asset_root)) => {
+                self.properties
+                    .clone()
+                    .with_project(&project.properties, None, asset_root)
+            }
+            None => self.properties.clone(),
+        };
+        ReactBridge::spawn_with_properties(&self.node, &self.cli_script, entry, &properties)
+            .map_err(ExportError::React)
     }
 }
 

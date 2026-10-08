@@ -5,7 +5,7 @@ use crate::media_probe::{MediaAssetInfo, MediaProbeWorker};
 use crate::meter::MasterLevels;
 use crate::preview::{AudioPreview, PreviewPresentation, PreviewWorker, ReactPreview};
 use crate::react_audio::ReactAudioWorker;
-use crate::source::load_source;
+use crate::source::{PropertyArgs, load_source};
 use celesta_composition::Rational;
 use celesta_editor_core::{AssetSummary, EditorDocument, TimelineClock, TrackSummary};
 use celesta_exporter::{ExportCancellation, ExportProgress};
@@ -156,8 +156,12 @@ pub(crate) struct EditorView {
 }
 
 impl EditorView {
-    pub(crate) fn open(path: Option<&Path>, driver: GpuDriver) -> Result<Self, Box<dyn Error>> {
-        let (document, react_preview) = load_source(path)?;
+    pub(crate) fn open(
+        path: Option<&Path>,
+        property_args: PropertyArgs,
+        driver: GpuDriver,
+    ) -> Result<Self, Box<dyn Error>> {
+        let (document, react_preview) = load_source(path, property_args)?;
         Self::from_document(path.map(Path::to_path_buf), document, react_preview, driver)
     }
 

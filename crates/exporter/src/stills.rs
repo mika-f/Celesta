@@ -9,7 +9,7 @@ use crate::render::{ReportedFontWarnings, export_renderer, frame_count, report_f
 use celesta_composition::{Rational, Time};
 use celesta_evaluator::{EvaluationError, Evaluator};
 use celesta_project::Project;
-use celesta_react_bridge::{ProjectFrame, ReactBridge};
+use celesta_react_bridge::ProjectFrame;
 use std::collections::{BTreeMap, HashSet};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -484,8 +484,7 @@ impl Exporter {
             )
         });
         let project = project_owned.as_ref().map(|(p, root)| (*p, root.as_path()));
-        let mut bridge = ReactBridge::spawn(&runtime.node, &runtime.cli_script, entry)
-            .map_err(ExportError::React)?;
+        let mut bridge = runtime.spawn(entry, project)?;
         let metadata = bridge.metadata().clone();
         progress(ExportProgress::Composition(CompositionInfo {
             width: metadata.width,

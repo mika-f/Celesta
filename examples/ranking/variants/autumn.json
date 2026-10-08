@@ -1,0 +1,7 @@
+{
+  "title": "Autumn Picks",
+  "subtitle": "Most-ordered seasonal drinks, September to November",
+  "accent": "#f2a33a",
+  "theme": "dark",
+  "data": "autumn-drinks.json"
+}

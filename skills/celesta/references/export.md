@@ -20,6 +20,7 @@ stands for its path.
 Celesta-export [options] project.celesta.json out.mp4
 Celesta-export [options] --react scene.tsx out.mp4
 Celesta-export [options] --react scene.tsx --project project.celesta.json out.mp4
+Celesta-export [options] --react card.tsx --props-file variants/spring.json spring.mp4
 ```
 
 The source comes before the output. With `--react`, the source is the
@@ -47,7 +48,9 @@ Celesta-export --json --react scene.tsx out.mp4
 | Option | Meaning |
 | --- | --- |
 | `--react` | The source is a React entry instead of a JSON project. |
-| `--project <file>` | Companion JSON project for `<ProjectTimeline />`/`<ProjectTrack />` (needs `--react`). |
+| `--project <file>` | Companion JSON project for `<ProjectTimeline />`/`<ProjectTrack />` (needs `--react`). Its `properties` also count as project property values. |
+| `--props-file <file>` | JSON object of project property values for the entry (needs `--react`); see [project-data.md](project-data.md#pass-values-from-the-command-line). |
+| `--props <json>` | Inline JSON object of project property values (needs `--react`); wins over `--props-file`. |
 | `--from <t>`, `--to <t>` | Export only this span (`--to` exclusive); the output starts at 00:00. Times are seconds, `MM:SS.mmm`, or `HH:MM:SS.mmm`. |
 | `--overwrite` | Replace an existing output file. |
 | `--preset <p>` | libx264 preset, `ultrafast` … `veryslow` (default `medium`). Encoding speed against file size only; it does not change what is rendered. |
