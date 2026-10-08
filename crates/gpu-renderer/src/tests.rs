@@ -4688,6 +4688,25 @@ fn masks_groups_like_the_cpu_renderer() {
             )],
         ),
         (
+            "a mask inside a mask's layers",
+            vec![masked_group(
+                EvaluatedTransform::default(),
+                alpha_mask(vec![masked_group(
+                    EvaluatedTransform::default(),
+                    alpha_mask(vec![corner_rect(
+                        "stripe",
+                        0.0,
+                        0.0,
+                        36.0,
+                        48.0,
+                        "#FFFFFFFF",
+                    )]),
+                    vec![disc("inner", 30.0, 24.0, 16.0, "#FFFFFFFF")],
+                )]),
+                vec![red()],
+            )],
+        ),
+        (
             "group and mask layer opacity",
             vec![Layer {
                 opacity: 0.5,
@@ -4741,4 +4760,198 @@ fn a_shadow_follows_a_masked_shape_like_the_cpu_renderer() {
         .unwrap();
     let difference = max_channel_difference(&gpu, &cpu);
     assert!(difference <= 5, "channels differ by up to {difference}");
+}
+
+#[test]
+fn a_path_masks_a_group_like_the_cpu_renderer() {
+    let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+        return;
+    };
+    let diamond = path_layer(
+        "diamond",
+        polyline(
+            &[(48.0, 4.0), (88.0, 32.0), (48.0, 60.0), (8.0, 32.0)],
+            true,
+        ),
+        Some(Paint::Solid {
+            color: "#FFFFFFFF".to_owned(),
+        }),
+        None,
+    );
+    assert_paths_match_cpu(
+        &mut renderer,
+        "path mask",
+        vec![masked_group(
+            EvaluatedTransform::default(),
+            alpha_mask(vec![diamond]),
+            vec![corner_rect("red", 0.0, 0.0, 96.0, 64.0, "#FF0000FF")],
+        )],
+    );
+}
+
+#[test]
+fn text_masks_a_group() {
+    let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+        return;
+    };
+    let text = Layer {
+        id: "word".to_owned(),
+        transform: EvaluatedTransform {
+            position: Point { x: 48.0, y: 32.0 },
+            ..EvaluatedTransform::default()
+        },
+        opacity: 1.0,
+        blend_mode: BlendMode::Normal,
+        effects: Default::default(),
+        content: LayerContent::Text {
+            text: "MASK".to_owned(),
+            style: TextStyle {
+                font_size: Some(36.0),
+                ..TextStyle::default()
+            },
+            max_width: None,
+            baseline_anchor: false,
+        },
+    };
+    let mut scene = empty_scene(96, 64);
+    scene.layers = vec![masked_group(
+        EvaluatedTransform::default(),
+        alpha_mask(vec![text]),
+        vec![corner_rect("red", 0.0, 0.0, 96.0, 64.0, "#FF0000FF")],
+    )];
+    let frame = renderer.render(&scene).unwrap();
+    let red = frame
+        .pixels()
+        .chunks_exact(4)
+        .filter(|pixel| *pixel == [255, 0, 0, 255])
+        .count();
+    // The glyphs show some of the red, and their gaps hide the rest.
+    assert!(red > 50, "only {red} red pixels");
+    assert!(red < 96 * 64 / 2, "{red} red pixels: the text did not mask");
+    assert_ne!(pixel_at(&frame, 0, 0), [255, 0, 0, 255]);
+}
+
+#[test]
+fn an_image_masks_a_group_by_luminance() {
+    let Some(renderer) = renderer(GpuRenderOptions {
+        background: Color::TRANSPARENT,
+        ..GpuRenderOptions::default()
+    }) else {
+        return;
+    };
+    let mut renderer = renderer.with_asset_root(env!("CARGO_MANIFEST_DIR"));
+    // The 2x2 checker holds red, green / blue, white, row by row.
+    let checker = Layer {
+        id: "checker".to_owned(),
+        transform: EvaluatedTransform {
+            anchor: Point { x: 0.0, y: 0.0 },
+            ..EvaluatedTransform::default()
+        },
+        opacity: 1.0,
+        blend_mode: BlendMode::Normal,
+        effects: Default::default(),
+        content: LayerContent::Image {
+            width: None,
+            height: None,
+            fit: None,
+            asset: ResolvedAsset {
+                id: "checker".to_owned(),
+                location: AssetLocation::File {
+                    path: "tests/assets/checker.ppm".to_owned(),
+                },
+            },
+        },
+    };
+    let mut scene = empty_scene(2, 2);
+    scene.layers = vec![masked_group(
+        EvaluatedTransform::default(),
+        GroupMask {
+            mode: MaskMode::Luminance,
+            ..alpha_mask(vec![checker])
+        },
+        vec![corner_rect("white", 0.0, 0.0, 2.0, 2.0, "#FFFFFFFF")],
+    )];
+    let frame = renderer.render(&scene).unwrap();
+    // White shown through each texel's luma: premultiplied, every channel
+    // is the alpha.
+    for ((x, y), luma) in [((0, 0), 54), ((1, 0), 182), ((0, 1), 18), ((1, 1), 255)] {
+        let pixel = pixel_at(&frame, x, y);
+        for channel in pixel {
+            assert!(
+                channel.abs_diff(luma) <= 1,
+                "({x}, {y}): {pixel:?}, expected {luma} in every channel"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_mask_rotates_with_its_group() {
+    let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+        return;
+    };
+    // As in `a_clip_rotates_with_its_group`: turned 90 degrees clockwise
+    // about (20, 20), the mask's 20x10 rect lands on canvas x 10..20,
+    // y 20..40.
+    let mut scene = empty_scene(40, 40);
+    scene.layers = vec![masked_group(
+        EvaluatedTransform {
+            position: Point { x: 20.0, y: 20.0 },
+            rotation: 90.0,
+            ..EvaluatedTransform::default()
+        },
+        alpha_mask(vec![corner_rect(
+            "matte",
+            0.0,
+            0.0,
+            20.0,
+            10.0,
+            "#FFFFFFFF",
+        )]),
+        vec![corner_rect("red", -40.0, -40.0, 80.0, 80.0, "#FF0000FF")],
+    )];
+    let frame = renderer.render(&scene).unwrap();
+    assert_eq!(pixel_at(&frame, 15, 30), [255, 0, 0, 255]);
+    let background = renderer.options().background;
+    let background = [
+        background.red,
+        background.green,
+        background.blue,
+        background.alpha,
+    ];
+    for (x, y) in [(8, 30), (22, 30), (15, 18)] {
+        assert_eq!(pixel_at(&frame, x, y), background, "({x}, {y}) leaked");
+    }
+}
+
+#[test]
+fn a_mask_off_the_children_draws_nothing_unless_inverted() {
+    let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+        return;
+    };
+    let group = |invert| {
+        masked_group(
+            EvaluatedTransform::default(),
+            GroupMask {
+                invert,
+                ..alpha_mask(vec![corner_rect(
+                    "matte",
+                    30.0,
+                    30.0,
+                    8.0,
+                    8.0,
+                    "#FFFFFFFF",
+                )])
+            },
+            vec![corner_rect("red", 0.0, 0.0, 16.0, 16.0, "#FF0000FF")],
+        )
+    };
+    let mut scene = empty_scene(40, 40);
+    scene.layers = vec![group(false)];
+    let hidden = renderer.render(&scene).unwrap();
+    assert_ne!(pixel_at(&hidden, 8, 8), [255, 0, 0, 255]);
+    scene.layers = vec![group(true)];
+    let shown = renderer.render(&scene).unwrap();
+    assert_eq!(pixel_at(&shown, 8, 8), [255, 0, 0, 255]);
+    assert_ne!(pixel_at(&shown, 34, 34), [255, 0, 0, 255]);
 }

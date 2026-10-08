@@ -35,8 +35,9 @@ pub(crate) struct GroupPlan {
     pub(crate) drawn: bool,
 }
 
-/// Plans the canvas of every isolated group and effect in `items`, in the
-/// order they begin, from the bounds of what their layers draw.
+/// Plans the canvas of every isolated group, effect, and mask in `items`, in
+/// the order they begin, from the bounds of what their layers draw. A
+/// mask's canvas covers where its children show through it.
 pub(crate) fn plan_groups(items: &[PreparedItem], scene: CanvasRegion) -> Vec<GroupPlan> {
     let mut plans: Vec<GroupPlan> = Vec::new();
     // Each open group's index in `plans` and what its layers cover so far.
@@ -117,9 +118,7 @@ pub(crate) enum GpuStep {
         area: Option<[u32; 4]>,
     },
     /// Starts drawing onto a fresh transparent canvas covering `canvas`.
-    BeginGroup {
-        canvas: CanvasRegion,
-    },
+    BeginGroup { canvas: CanvasRegion },
     /// Draws the finished group canvas onto its parent with `instance`.
     EndGroup {
         instance: u32,
@@ -142,9 +141,8 @@ pub(crate) enum GpuStep {
     /// Starts drawing a mask onto a fresh transparent canvas covering
     /// `canvas`; the steps from the matching `MaskContent` draw the group's
     /// children onto a second one covering the same region.
-    BeginMask {
-        canvas: CanvasRegion,
-    },
+    BeginMask { canvas: CanvasRegion },
+    /// Ends the mask's steps; the children's follow, onto the second canvas.
     MaskContent,
     /// Draws the children shown through the mask onto the parent with
     /// `instance`.
