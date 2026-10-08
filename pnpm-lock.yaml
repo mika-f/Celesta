@@ -244,6 +244,15 @@ importers:
         specifier: ^18.3.1
         version: 18.3.1
 
+  examples/rich-text:
+    dependencies:
+      '@celesta/react':
+        specifier: workspace:*
+        version: link:../../packages/react
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+
   examples/signal:
     dependencies:
       '@celesta/react':
