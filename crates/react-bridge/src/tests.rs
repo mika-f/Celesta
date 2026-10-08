@@ -1,7 +1,8 @@
 use crate::audio::{merge_react_audio_clips, react_audio_clips};
 use crate::bridge::ReactBridge;
 use crate::error::ReactBridgeError;
-use crate::protocol::{ReadyMessage, Response};
+use crate::properties::{PropertyInputError, PropertyInputs, PropertySource};
+use crate::protocol::{PropertyInputsMessage, ReadyMessage, Response};
 use crate::types::{ComponentPropertyField, ReactAudioClipDescriptor};
 use celesta_composition::{Animatable, AssetLocation, Time};
 use std::path::Path;
@@ -397,5 +398,74 @@ fn react_audio_clips_resolve_relative_paths_and_carry_ranges() {
             url: "https://example.com/bgm.mp3".to_owned()
         },
         "URL src kept as a URL"
+    );
+}
+
+#[test]
+fn loads_props_file_below_inline_props_with_their_own_path_bases() {
+    let dir = std::env::temp_dir().join(format!("celesta-props-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("variants")).unwrap();
+    let file = dir.join("variants/spring.json");
+    std::fs::write(&file, r#"{"title":"Spring","data":"rows.json"}"#).unwrap();
+
+    let inputs = PropertyInputs::load(Some(&file), Some(r#"{"title":"Inline"}"#)).unwrap();
+    let layers = inputs.layers();
+    assert_eq!(layers.len(), 2);
+    assert_eq!(layers[0].source, PropertySource::PropsFile);
+    assert_eq!(layers[0].base_dir, dir.join("variants"));
+    assert_eq!(layers[0].values["data"], "rows.json");
+    assert_eq!(layers[1].source, PropertySource::Props);
+    assert_eq!(layers[1].base_dir, std::env::current_dir().unwrap());
+
+    // A companion project's values go below both.
+    let project = std::collections::BTreeMap::from([("title".to_owned(), serde_json::json!("P"))]);
+    let with_project = inputs.with_project(&project, Some(Path::new("p.celesta.json")), &dir);
+    assert_eq!(with_project.layers()[0].source, PropertySource::Project);
+    let message = serde_json::to_value(PropertyInputsMessage {
+        property_inputs: with_project.layers(),
+    })
+    .unwrap();
+    assert_eq!(message["propertyInputs"][0]["source"], "project");
+    assert_eq!(message["propertyInputs"][0]["file"], "p.celesta.json");
+    assert_eq!(message["propertyInputs"][1]["source"], "propsFile");
+    assert!(message["propertyInputs"][2].get("file").is_none());
+
+    // An empty project map adds nothing, so the CLI is not told to read stdin.
+    let empty = PropertyInputs::default().with_project(&Default::default(), None, &dir);
+    assert!(empty.is_empty());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn rejects_props_that_are_not_json_objects() {
+    assert!(matches!(
+        PropertyInputs::load(None, Some("[1]")),
+        Err(PropertyInputError::NotAnObject(origin)) if origin == "--props"
+    ));
+    assert!(matches!(
+        PropertyInputs::load(None, Some("{title:")),
+        Err(PropertyInputError::Parse { .. })
+    ));
+    let missing = PropertyInputs::load(Some(Path::new("no-such-props.json")), None).unwrap_err();
+    assert!(
+        missing
+            .to_string()
+            .starts_with("could not read --props-file no-such-props.json")
+    );
+}
+
+#[test]
+fn reads_invalid_properties_before_ready() {
+    let message: ReadyMessage = serde_json::from_str(
+        r#"{"invalidProperties":[{"key":"accent","source":"--props","message":"expected a color"},{"key":"","source":"--props-file a.json","message":"no schema"}]}"#,
+    )
+    .unwrap();
+    let ReadyMessage::InvalidProperties { invalid_properties } = message else {
+        panic!("expected invalid properties");
+    };
+    let error = ReactBridgeError::InvalidProperties(invalid_properties);
+    assert_eq!(
+        error.to_string(),
+        "invalid project properties:\n  - --props: accent: expected a color\n  - --props-file a.json: no schema"
     );
 }

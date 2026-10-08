@@ -155,8 +155,13 @@ scene whose asset root is the React entry's directory.
 `registerComponent()` resolves named component layers into React subtrees,
 preserving their evaluated transform and opacity. Unregistered components
 remain unresolved and cause export to fail; editor preview shows warnings.
-Component and project property schemas are metadata separate from rendering;
-the current Inspector is read-only.
+Component property schemas are Inspector metadata. The project property schema
+also types the values an entry receives from `--props`, `--props-file`, and a
+companion project's `properties`: the bridge sends them on the first stdin
+line (`--properties-stdin`), and the CLI checks them after the entry's module
+scope runs and before `prepare()`. See
+[`docs/handoff/2026-10-08-project-property-inputs.md`](docs/handoff/2026-10-08-project-property-inputs.md).
+The current Inspector is read-only.
 
 Sequence timing, per-frame audio, standalone preview, coordinate conventions,
 fonts, text helpers, shapes, subtitles, and other feature specifications are

@@ -2,7 +2,7 @@ use crate::actions::{
     CloseWindow, CreateNewProject, OpenProject, ReloadProject, SetUpTypeScript,
     SetUpTypeScriptInFolder,
 };
-use crate::source::load_source;
+use crate::source::{PropertyArgs, load_source};
 use crate::view::EditorView;
 use celesta_react_bridge::{
     ProjectTsconfig, ProjectTypesSetup, initialize_project, project_types_template,
@@ -321,7 +321,7 @@ impl EditorView {
             let load_path = path.clone();
             let loaded = cx
                 .background_executor()
-                .spawn(async move { load_source(load_path.as_deref()) })
+                .spawn(async move { load_source(load_path.as_deref(), PropertyArgs::default()) })
                 .await;
             view.update_in(cx, |this, _, cx| {
                 this.opening = false;

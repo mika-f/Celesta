@@ -1,0 +1,7 @@
+{
+  "title": "Spring Picks",
+  "subtitle": "Most-ordered seasonal drinks, March to May",
+  "accent": "#ff6f9c",
+  "theme": "light",
+  "data": "spring-drinks.json"
+}

@@ -351,6 +351,28 @@ cargo run -p celesta-exporter --release -- --react --frames 0,90 packages/react/
 cargo run -p celesta-exporter --release -- --react --every 60 --contact-sheet packages/react/examples/title.tsx sheet.png
 ```
 
+### Render variants of one composition
+
+An entry that declares its inputs with `defineProjectProperties()` can be
+rendered with different titles, colors, or data files without editing the
+source. Pass a JSON object of values with `--props-file`, or inline with
+`--props` (which wins over the file). Relative paths in the file resolve from
+the file's folder. Every value is checked against the declaration before
+anything renders, and `--json` reports the problems with the code
+`invalid_properties`. [`examples/ranking`](examples/ranking/README.md) is a
+template with two variants:
+
+```sh
+cargo run -p celesta-exporter --release -- --react examples/ranking/film.tsx spring.mp4 \
+  --props-file examples/ranking/variants/spring.json
+cargo run -p celesta-exporter --release -- --react examples/ranking/film.tsx autumn.mp4 \
+  --props-file examples/ranking/variants/autumn.json --props '{"title":"Autumn"}'
+```
+
+`celesta-editor` takes the same `--props-file` and `--props` options for the
+preview and its exports. Values win over a `--project` file's `properties`,
+which win over the declared defaults.
+
 ### Export without a GPU on Linux
 
 The exporter renders through Vulkan on Linux. On machines without a GPU, such

@@ -1,5 +1,6 @@
 use crate::measure::MeasureTextRequest;
 use crate::probe::MediaProbeRequest;
+use crate::properties::{PropertyIssue, PropertyLayer};
 use crate::types::{
     ComponentPropertyField, ComponentPropertySchema, ReactAudioClipDescriptor,
     ReactCompositionConfig,
@@ -7,6 +8,13 @@ use crate::types::{
 use celesta_composition::{Layer, Scene, Time};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+
+/// The first stdin line when the CLI runs with `--properties-stdin`.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PropertyInputsMessage<'a> {
+    pub(crate) property_inputs: &'a [PropertyLayer],
+}
 
 #[derive(Serialize)]
 pub(crate) struct Request<'a> {
@@ -139,6 +147,10 @@ pub(crate) enum ReadyMessage {
     MeasureText {
         #[serde(rename = "measureText")]
         measure_text: Box<MeasureTextRequest>,
+    },
+    InvalidProperties {
+        #[serde(rename = "invalidProperties")]
+        invalid_properties: Vec<PropertyIssue>,
     },
     Error {
         error: String,

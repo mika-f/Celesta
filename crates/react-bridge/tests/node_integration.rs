@@ -6,8 +6,8 @@ use celesta_composition::{
     Animatable, BlendMode, EvaluatedTransform, Layer, LayerContent, Rational, TextStyle, Time,
 };
 use celesta_react_bridge::{
-    ComponentPropertyField, ComponentResolutionRequest, ProjectFrame, ReactBridge,
-    react_audio_clips,
+    ComponentPropertyField, ComponentResolutionRequest, ProjectFrame, PropertyInputs, ReactBridge,
+    ReactBridgeError, react_audio_clips,
 };
 
 fn no_tracks() -> BTreeMap<String, Vec<Layer>> {
@@ -965,6 +965,54 @@ fn reports_a_declared_project_property_schema_when_node_is_available() {
         &layer.content,
         LayerContent::Text { text, .. } if text == "Chapter 3"
     )));
+}
+
+#[test]
+fn passes_project_property_inputs_over_the_provider_when_node_is_available() {
+    let Some((node, cli_script, package_root)) = live_react_runtime() else {
+        return;
+    };
+    let entry = package_root.join("examples/with-properties.tsx");
+    let text_of = |bridge: &mut ReactBridge| {
+        let scene = bridge.scene_at(Time::new(0, 30)).unwrap();
+        scene
+            .layers
+            .iter()
+            .find_map(|layer| match &layer.content {
+                LayerContent::Text { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .expect("the entry draws its title")
+    };
+
+    // --props beats the companion project, which beats the in-source Provider;
+    // the project's undeclared key is ignored rather than rejected.
+    let project = BTreeMap::from([
+        ("title".to_owned(), serde_json::json!("From project")),
+        ("unrelated".to_owned(), serde_json::json!(true)),
+    ]);
+    let from_project = PropertyInputs::default().with_project(&project, None, &package_root);
+    let mut bridge =
+        ReactBridge::spawn_with_properties(&node, &cli_script, &entry, &from_project).unwrap();
+    assert_eq!(text_of(&mut bridge), "From project");
+
+    let inline = PropertyInputs::load(None, Some(r#"{"title":"From CLI"}"#))
+        .unwrap()
+        .with_project(&project, None, &package_root);
+    let mut bridge =
+        ReactBridge::spawn_with_properties(&node, &cli_script, &entry, &inline).unwrap();
+    assert_eq!(text_of(&mut bridge), "From CLI");
+
+    let invalid = PropertyInputs::load(None, Some(r#"{"fontSize":"big","titel":"x"}"#)).unwrap();
+    match ReactBridge::spawn_with_properties(&node, &cli_script, &entry, &invalid) {
+        Err(ReactBridgeError::InvalidProperties(issues)) => {
+            let keys: Vec<_> = issues.iter().map(|issue| issue.key.as_str()).collect();
+            assert_eq!(keys, ["fontSize", "titel"]);
+            assert!(issues.iter().all(|issue| issue.source == "--props"));
+        }
+        Err(error) => panic!("expected invalid properties, got {error}"),
+        Ok(_) => panic!("expected invalid properties to fail the spawn"),
+    }
 }
 
 #[test]

@@ -11,6 +11,16 @@ pub struct Args {
     #[arg(value_name = "PROJECT", conflicts_with = "init")]
     pub path: Option<PathBuf>,
 
+    /// Project property values for the React entry, as a JSON object; wins
+    /// over --props-file. Preview and export use the same values.
+    #[arg(long, value_name = "JSON", requires = "path")]
+    pub props: Option<String>,
+
+    /// JSON file of project property values for the React entry; relative
+    /// paths in it resolve from the file's directory. Re-read on reload.
+    #[arg(long, value_name = "FILE", requires = "path")]
+    pub props_file: Option<PathBuf>,
+
     /// Initialize a React project, preserving existing source and configuration.
     /// Defaults to the current directory; .celesta/ is refreshed.
     #[arg(long, value_name = "DIRECTORY", num_args = 0..=1, default_missing_value = ".")]
@@ -49,6 +59,24 @@ mod tests {
         assert_eq!(
             parse(&["--", "-film.tsx"]).unwrap().path,
             Some("-film.tsx".into())
+        );
+    }
+
+    #[test]
+    fn parses_project_property_inputs_for_an_opened_entry() {
+        let args = parse(&[
+            "card.tsx",
+            "--props-file",
+            "variants/spring.json",
+            "--props",
+            r#"{"title":"Hi"}"#,
+        ])
+        .unwrap();
+        assert_eq!(args.props_file, Some("variants/spring.json".into()));
+        assert_eq!(args.props.as_deref(), Some(r#"{"title":"Hi"}"#));
+        assert_eq!(
+            parse(&["--props", "{}"]).unwrap_err().kind(),
+            ErrorKind::MissingRequiredArgument
         );
     }
 

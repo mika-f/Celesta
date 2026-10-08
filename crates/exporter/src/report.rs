@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use celesta_composition::Rational;
 use celesta_exporter::{CompositionInfo, ExportError, ExportProgress, ExportedFile};
 use celesta_project::LoadError;
+use celesta_react_bridge::ReactBridgeError;
 use serde::Serialize;
 
 use crate::progress::State;
@@ -45,7 +46,8 @@ struct ErrorReport {
     /// What to change to get past the error, when that is a CLI option.
     #[serde(skip_serializing_if = "Option::is_none")]
     hint: Option<&'static str>,
-    /// Every project validation error, each with its JSON path.
+    /// Every project validation error, each with its JSON path, or every
+    /// rejected project property, each with its key.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     issues: Vec<Issue>,
 }
@@ -244,7 +246,21 @@ fn error_report(error: &ExportError) -> ErrorReport {
         ExportError::Evaluation(_) => ("evaluation", None),
         ExportError::Render(_) => ("render", None),
         ExportError::Audio(_) => ("audio", None),
+        ExportError::React(ReactBridgeError::InvalidProperties(invalid)) => {
+            issues = invalid
+                .iter()
+                .map(|issue| Issue {
+                    path: issue.key.clone(),
+                    message: format!("{}: {}", issue.source, issue.message),
+                })
+                .collect();
+            (
+                "invalid_properties",
+                Some("pass values matching the entry's defineProjectProperties() schema"),
+            )
+        }
         ExportError::React(_) => ("react", None),
+        ExportError::Properties(_) => ("invalid_properties", None),
         ExportError::Time(_) => ("time", None),
         ExportError::Io { .. } => ("io", None),
         ExportError::Ffmpeg { .. } => ("ffmpeg", None),
@@ -371,6 +387,33 @@ mod tests {
         assert!(value["error"].get("issues").is_none());
         assert!(value.get("composition").is_none());
         assert_eq!(value["outputs"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn rejected_properties_are_listed_as_issues_by_key() {
+        let value = report(|_| {
+            Err(ExportError::React(ReactBridgeError::InvalidProperties(
+                vec![celesta_react_bridge::PropertyIssue {
+                    key: "accent".to_owned(),
+                    source: "--props-file spring.json".to_owned(),
+                    message: "expected a #RRGGBB or #RRGGBBAA color, got \"pink\"".to_owned(),
+                }],
+            )))
+        });
+        assert_eq!(value["error"]["code"], "invalid_properties");
+        assert_eq!(
+            value["error"]["issues"],
+            serde_json::json!([{
+                "path": "accent",
+                "message": "--props-file spring.json: expected a #RRGGBB or #RRGGBBAA color, got \"pink\""
+            }])
+        );
+        assert!(
+            value["error"]["hint"]
+                .as_str()
+                .unwrap()
+                .contains("defineProjectProperties")
+        );
     }
 
     #[test]

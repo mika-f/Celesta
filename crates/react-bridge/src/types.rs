@@ -104,6 +104,12 @@ pub enum ComponentPropertyField {
         default_value: String,
         options: Vec<String>,
     },
+    /// A local file or an http(s) URL.
+    Path {
+        #[serde(default)]
+        label: Option<String>,
+        default_value: String,
+    },
 }
 
 /// One registered component's declared props, keyed by prop name — the

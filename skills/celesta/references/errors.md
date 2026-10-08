@@ -24,6 +24,8 @@ or `ERROR:` per frame. Dialogue, portrait, and lip-sync symptoms are in
 | `interpolateColor() extrapolateLeft must be 'extend' or 'clamp'` (or `extrapolateRight`) | `'identity'` has no meaning for colors; use `'clamp'` (the default) or `'extend'`. |
 | `Build failed with 1 error: … Could not resolve "pkg"` | The npm package is not installed in the project: run `pnpm add pkg` (or npm) in the project folder ([setup.md](setup.md#npm-dependencies)). Never install `react`, `@celesta/react`, `@celesta/math`, or `@celesta/code`. A relative path that does not exist fails the same way. |
 | `Named export 'random' not found` (or `noise`, `randomRange`, …) | Random, noise, and math helpers moved to `@celesta/math`: `import { random } from '@celesta/math'`. |
+| `invalid project properties:` followed by `--props: key: …` lines (`--json` code `invalid_properties`) | A `--props`/`--props-file`/`--project` value does not match `defineProjectProperties()`: an undeclared key, the wrong type, a color that is not `#RRGGBB`/`#RRGGBBAA`, a `select` value outside `options`, or a `path` that does not exist. Fix the value or declare the key ([project-data.md](project-data.md#pass-values-from-the-command-line)). |
+| `project property "key" was read at module scope` | Call `getProjectProperty()` in `prepare()` or while rendering, not at module level. |
 | `<ProjectTimeline /> requires evaluated project layers` | Export with `--react entry.tsx --project project.celesta.json`. |
 | `… missing component` | A JSON `component` item has no matching `registerComponent`, or the project was exported without its React entry. |
 

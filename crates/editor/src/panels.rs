@@ -554,6 +554,29 @@ impl EditorView {
             .as_ref()
             .map(|react| react.entry.display().to_string())
             .unwrap_or_default();
+        // Where the values come from: the props file's name and/or --props.
+        let properties = self
+            .react_preview
+            .as_ref()
+            .map_or_else(String::new, |react| {
+                let args = &react.property_args;
+                let sources: Vec<String> = args
+                    .props_file
+                    .iter()
+                    .map(|file| {
+                        file.file_name()
+                            .unwrap_or(file.as_os_str())
+                            .to_string_lossy()
+                            .into_owned()
+                    })
+                    .chain(args.props.iter().map(|_| "--props".to_owned()))
+                    .collect();
+                if sources.is_empty() {
+                    "Defaults".to_owned()
+                } else {
+                    sources.join(" + ")
+                }
+            });
         let label_color = cx.theme().muted_foreground;
         let value_color = cx.theme().foreground;
         let row = move |label: &str, value: String| {
@@ -589,6 +612,7 @@ impl EditorView {
                         format_timecode(self.clock.end_frame(), self.frame_rate_value),
                     ))
                     .child(row("Renderer", self.gpu_name.to_string()))
+                    .child(row("Properties", properties))
                     .child(div().h(px(4.0)))
                     .child(
                         Button::new("reload-react-entry")

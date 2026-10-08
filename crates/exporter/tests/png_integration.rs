@@ -484,3 +484,87 @@ fn rejects_conflicting_and_oversized_png_selections() {
             .starts_with("check")
     }));
 }
+
+#[test]
+fn react_cli_props_win_over_the_companion_project_and_are_checked_first() {
+    if !root().join("packages/react/dist/cli.js").exists() {
+        eprintln!("skipping React props test: build packages/react first");
+        return;
+    }
+    let dir = tempfile::tempdir_in(root().join("packages/react")).unwrap();
+    let entry = dir.path().join("film.tsx");
+    std::fs::write(
+        &entry,
+        r##"
+import { Composition, Rect, defineProjectProperties, getProjectProperty, useProjectProperty } from '@celesta/react';
+defineProjectProperties({
+  fill: { type: 'color', defaultValue: '#ff0000' },
+  frames: { type: 'number', defaultValue: 4 },
+});
+function Fill() {
+  return <Rect width={3} height={3} fill={useProjectProperty<string>('fill')} />;
+}
+export default function Root() {
+  return <Composition width={3} height={3} fps={4} durationInFrames={getProjectProperty<number>('frames')}>
+    <Fill />
+  </Composition>;
+}
+"##,
+    )
+    .unwrap();
+    let mut project = Project::load(tiny_project(dir.path())).unwrap();
+    project
+        .properties
+        .insert("fill".to_owned(), serde_json::json!("#00ff00"));
+    let companion = dir.path().join("project.celesta.json");
+    std::fs::write(&companion, serde_json::to_vec(&project).unwrap()).unwrap();
+    std::fs::create_dir(dir.path().join("variants")).unwrap();
+    let variant = dir.path().join("variants/blue.json");
+    std::fs::write(&variant, r##"{ "fill": "#0000ff", "frames": 2 }"##).unwrap();
+
+    let run = |args: &[&str]| {
+        let output = dir.path().join("out.png");
+        let mut command = Command::new(env!("CARGO_BIN_EXE_celesta-exporter"));
+        command
+            .args(["--react", "--json", "--overwrite", "--frame", "0"])
+            .args(args)
+            .arg(&entry)
+            .arg(&output);
+        let result = command.output().unwrap();
+        let report: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+        (report, output)
+    };
+    let companion_arg = companion.to_str().unwrap();
+    let variant_arg = variant.to_str().unwrap();
+
+    let (report, output) = run(&["--project", companion_arg]);
+    assert_eq!(report["status"], "ok", "{report}");
+    assert_eq!(report["composition"]["frames"], 4);
+    assert_eq!(&pixels(&output)[..4], &[0, 255, 0, 255]);
+
+    let (report, output) = run(&["--project", companion_arg, "--props-file", variant_arg]);
+    assert_eq!(report["status"], "ok", "{report}");
+    assert_eq!(report["composition"]["frames"], 2);
+    assert_eq!(&pixels(&output)[..4], &[0, 0, 255, 255]);
+
+    let (report, output) = run(&[
+        "--props-file",
+        variant_arg,
+        "--props",
+        r##"{ "fill": "#ffffff" }"##,
+    ]);
+    assert_eq!(report["status"], "ok", "{report}");
+    assert_eq!(&pixels(&output)[..4], &[255, 255, 255, 255]);
+
+    let (report, _) = run(&["--props", r#"{ "fill": "blue", "frame": 1 }"#]);
+    assert_eq!(report["status"], "error");
+    assert_eq!(report["error"]["code"], "invalid_properties");
+    assert!(report.get("composition").is_none(), "{report}");
+    let keys: Vec<_> = report["error"]["issues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|issue| issue["path"].as_str().unwrap())
+        .collect();
+    assert_eq!(keys, ["fill", "frame"]);
+}

@@ -4,7 +4,7 @@ use celesta_evaluator::EvaluationError;
 use celesta_gpu_renderer::GpuRenderError;
 use celesta_media::AudioMixError;
 use celesta_project::LoadError;
-use celesta_react_bridge::ReactBridgeError;
+use celesta_react_bridge::{PropertyInputError, ReactBridgeError};
 use std::error::Error;
 use std::path::PathBuf;
 use std::{fmt, io};
@@ -16,6 +16,8 @@ pub enum ExportError {
     Render(GpuRenderError),
     Audio(AudioMixError),
     React(ReactBridgeError),
+    /// `--props` or `--props-file` is not a readable JSON object.
+    Properties(PropertyInputError),
     Time(TimeError),
     Io {
         operation: &'static str,
@@ -52,6 +54,9 @@ impl fmt::Display for ExportError {
             Self::Render(error) => write!(formatter, "could not render export: {error}"),
             Self::Audio(error) => write!(formatter, "could not mix export audio: {error}"),
             Self::React(error) => write!(formatter, "could not evaluate React export: {error}"),
+            Self::Properties(error) => {
+                write!(formatter, "could not read project properties: {error}")
+            }
             Self::Time(error) => write!(formatter, "could not calculate export time: {error}"),
             Self::Io { operation, source } => write!(formatter, "could not {operation}: {source}"),
             Self::Ffmpeg { stage, source } => {
@@ -95,6 +100,7 @@ impl Error for ExportError {
             Self::Render(error) => Some(error),
             Self::Audio(error) => Some(error),
             Self::React(error) => Some(error),
+            Self::Properties(error) => Some(error),
             Self::Time(error) => Some(error),
             Self::Io { source, .. } => Some(source),
             Self::Ffmpeg { source, .. } => Some(source),

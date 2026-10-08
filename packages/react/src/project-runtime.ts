@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import type { Project } from './generated/Project';
 import type { JsonValue } from './generated/serde_json/JsonValue';
 import { FreezeFrameContext } from './hooks';
+import { declaredDefault, inputProjectProperty } from './properties';
 import { resolveComponent } from './registry';
 import type { Layer } from './scene';
 
@@ -32,15 +33,22 @@ export function useProject(): Project {
 // `Project.properties` (`Record<string, JsonValue>`) is the GUI-editable
 // value store: the editor writes plain JSON values there, and React reads
 // them back with this hook rather than hardcoding them into the entry.
-// There is no schema here yet — no declared type, default, or validation
-// beyond "this call's own `defaultValue`" — so a property renamed or
-// retyped in the editor silently falls back to `defaultValue` here rather
-// than erroring. A schema-based API (`defineProjectProperties`, generating
-// the Inspector fields) is intentionally deferred; see HANDOFF.md.
-export function useProjectProperty<T extends JsonValue = JsonValue>(key: string, defaultValue: T): T {
-  const project = useProject();
-  const value = project.properties[key];
-  return value === undefined ? defaultValue : (value as T);
+// Values from outside the source (`--props`, `--props-file`, the companion
+// project) win over the nearest `<ProjectProvider>`, which wins over the
+// `defineProjectProperties()` default and then `defaultValue`. Only the
+// outside values are validated against the schema; a Provider's value is
+// returned as stored. Without a Provider the hook still reads the outside
+// values and defaults.
+export function useProjectProperty<T extends JsonValue = JsonValue>(key: string, defaultValue?: T): T {
+  const project = React.useContext(ProjectContext);
+  // A Provider may store `null`, which is a value and must not fall through.
+  let value = inputProjectProperty(key);
+  if (value === undefined) value = project?.properties[key];
+  if (value === undefined) value = declaredDefault(key) ?? defaultValue;
+  if (value === undefined) {
+    throw new Error(`useProjectProperty("${key}"): the property is not declared with defineProjectProperties() and has no default value`);
+  }
+  return value as T;
 }
 
 // `<ProjectTimeline />` does not evaluate the project itself: celesta-evaluator

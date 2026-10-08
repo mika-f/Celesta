@@ -2,7 +2,7 @@ use crate::component_schema::ComponentSchemaRequest;
 use crate::helpers::format_time;
 use crate::media_probe::{MediaProbeRequest, ProbeAsset};
 use crate::preview::{PreviewRequest, ReactPreviewContext, ReactPreviewMode};
-use crate::source::{REACT_PREVIEW_SAMPLE_RATE, newest_source_mtime};
+use crate::source::{REACT_PREVIEW_SAMPLE_RATE, watched_mtime};
 use crate::timecode::format_timecode;
 use crate::view::EditorView;
 use celesta_composition::Time;
@@ -10,7 +10,7 @@ use celesta_editor_core::{EditorDocument, TimelineClock};
 use celesta_gpu_renderer::RenderQuality;
 use celesta_project::AssetKind;
 use celesta_react_bridge::{
-    ReactBridge, ReactCompositionMetadata, runtime_paths as react_runtime_paths,
+    PropertyInputs, ReactBridge, ReactCompositionMetadata, runtime_paths as react_runtime_paths,
 };
 use gpui_kit::Context;
 use std::path::Path;
@@ -45,6 +45,11 @@ impl EditorView {
                 node,
                 cli_script,
                 entry,
+                properties: self
+                    .react_preview
+                    .as_ref()
+                    .map(|react| react.properties.clone())
+                    .unwrap_or_default(),
             }
         });
         let react_mode = if self.is_react_preview() {
@@ -91,20 +96,28 @@ impl EditorView {
             return;
         };
         let entry = react.entry.clone();
+        let property_args = react.property_args.clone();
         let (node, cli_script) = react_runtime_paths();
         let frame = self.clock.frame();
         cx.spawn(async move |view, cx| {
             let entry_for_meta = entry.clone();
-            let metadata = cx
+            let loaded = cx
                 .background_executor()
                 .spawn(async move {
-                    ReactBridge::spawn(&node, &cli_script, &entry_for_meta)
-                        .map(|bridge| bridge.metadata().clone())
-                        .map_err(|error| error.to_string())
+                    // Re-read --props-file so edits to a variant show up too.
+                    let properties = property_args.load()?;
+                    ReactBridge::spawn_with_properties(
+                        &node,
+                        &cli_script,
+                        &entry_for_meta,
+                        &properties,
+                    )
+                    .map(|bridge| (bridge.metadata().clone(), properties))
+                    .map_err(|error| error.to_string())
                 })
                 .await;
             view.update(cx, |this, cx| {
-                this.apply_react_reload(&entry, metadata, frame, cx);
+                this.apply_react_reload(&entry, loaded, frame, cx);
             })
             .ok();
         })
@@ -114,15 +127,18 @@ impl EditorView {
     pub(crate) fn apply_react_reload(
         &mut self,
         entry: &Path,
-        metadata: Result<ReactCompositionMetadata, String>,
+        loaded: Result<(ReactCompositionMetadata, PropertyInputs), String>,
         frame: i64,
         cx: &mut Context<Self>,
     ) {
         if let Some(react) = self.react_preview.as_mut() {
-            react.watched_mtime = entry.parent().and_then(newest_source_mtime);
+            react.watched_mtime = watched_mtime(entry, &react.property_args);
         }
-        match metadata {
-            Ok(metadata) => {
+        match loaded {
+            Ok((metadata, properties)) => {
+                if let Some(react) = self.react_preview.as_mut() {
+                    react.properties = properties;
+                }
                 if let Ok(document) = EditorDocument::react_preview(
                     entry,
                     metadata.width,
@@ -170,17 +186,17 @@ impl EditorView {
                 cx.background_executor()
                     .timer(Duration::from_millis(800))
                     .await;
-                let Ok(Some(dir)) = view.update(cx, |this, _| {
+                let Ok(Some((entry, property_args))) = view.update(cx, |this, _| {
                     this.react_preview
                         .as_ref()
                         .filter(|_| this.session == session)
-                        .and_then(|react| react.entry.parent().map(Path::to_path_buf))
+                        .map(|react| (react.entry.clone(), react.property_args.clone()))
                 }) else {
                     break;
                 };
                 let latest = cx
                     .background_executor()
-                    .spawn(async move { newest_source_mtime(&dir) })
+                    .spawn(async move { watched_mtime(&entry, &property_args) })
                     .await;
                 let changed = view
                     .update(cx, |this, _| match this.react_preview.as_ref() {

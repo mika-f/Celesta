@@ -28,6 +28,7 @@ impl EditorView {
                 node,
                 cli_script,
                 entry: react.entry.clone(),
+                properties: react.properties.clone(),
                 sample_rate: self.document.project().settings.sample_rate,
                 master_volume: self.document.master_volume(),
             }) {

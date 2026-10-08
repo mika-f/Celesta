@@ -18,8 +18,10 @@ import type {
 } from './render';
 import { listComponentSchemas } from './registry';
 import type { ComponentPropertySchema } from './registry';
-import { listProjectProperties } from './properties';
+import { holdProjectPropertyValues, listProjectProperties, setProjectPropertyValues } from './properties';
 import type { ProjectPropertyField } from './properties';
+import { resolvePropertyInputs } from './property-inputs';
+import type { PropertyInputLayer, PropertyIssue } from './property-inputs';
 import { setMediaProbe } from './media';
 import { setTextMeasurer } from './text-measure';
 import type { MeasureTextRequest, TextMetrics } from './text-measure';
@@ -67,9 +69,9 @@ function isResolveRequest(request: Request): request is ResolveRequest {
 }
 
 async function main(): Promise<void> {
-  const entry = process.argv[2];
-  if (!entry) {
-    process.stderr.write('usage: celesta-react-render <entry-file>\n');
+  const [entry, ...options] = process.argv.slice(2);
+  if (!entry || options.some((option) => option !== PROPERTIES_STDIN)) {
+    process.stderr.write(`usage: celesta-react-render <entry-file> [${PROPERTIES_STDIN}]\n`);
     process.exitCode = 1;
     return;
   }
@@ -104,8 +106,20 @@ async function main(): Promise<void> {
     return textMeasureResponse(lines.nextSync());
   });
 
+  let propertyLayers: PropertyInputLayer[] = [];
+  if (options.includes(PROPERTIES_STDIN)) {
+    try {
+      propertyLayers = await readPropertyInputs(lines);
+    } catch (error) {
+      writeLine({ error: describeError(error) });
+      process.exitCode = 1;
+      return;
+    }
+  }
+
   let defaultExport: EntryComponent;
   let prepare: (() => Promise<void>) | undefined;
+  holdProjectPropertyValues();
   try {
     ({ defaultExport, prepare } = await loadEntry(entryPath));
   } catch (error) {
@@ -113,6 +127,16 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
+
+  // The schema exists only once the entry's module scope has run; checking
+  // here reports every bad value before `prepare()` or any frame uses one.
+  const properties = resolvePropertyInputs(propertyLayers, listProjectProperties(), path.dirname(entryPath));
+  if (properties.issues.length > 0) {
+    writeLine({ invalidProperties: properties.issues });
+    process.exitCode = 1;
+    return;
+  }
+  setProjectPropertyValues(properties.values, properties.defaults);
 
   if (prepare) {
     // Runs once, before the persistent root is mounted and before any frame
@@ -186,6 +210,26 @@ async function main(): Promise<void> {
   }
 }
 
+/** With this option the first stdin line carries `{ "propertyInputs": PropertyInputLayer[] }`. */
+const PROPERTIES_STDIN = '--properties-stdin';
+
+async function readPropertyInputs(lines: AsyncIterator<string>): Promise<PropertyInputLayer[]> {
+  const next = await lines.next();
+  if (next.done) {
+    throw new Error('Celesta closed stdin before sending the project property inputs');
+  }
+  let message: { propertyInputs?: unknown };
+  try {
+    message = JSON.parse(next.value);
+  } catch (error) {
+    throw new Error(`invalid project property inputs: ${describeError(error)}`);
+  }
+  if (!Array.isArray(message.propertyInputs)) {
+    throw new Error('invalid project property inputs: expected a propertyInputs array');
+  }
+  return message.propertyInputs as PropertyInputLayer[];
+}
+
 async function requestMediaProbe(
   lines: AsyncIterator<string>,
   path: string,
@@ -250,6 +294,7 @@ function writeLine(
     | { components: ComponentResolution[] }
     | { probeMedia: { path: string } }
     | { measureText: MeasureTextRequest }
+    | { invalidProperties: PropertyIssue[] }
     | { error: string },
 ): void {
   // Synchronous hooks may immediately wait for Rust's reply. Flush the whole
