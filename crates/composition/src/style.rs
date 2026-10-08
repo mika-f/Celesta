@@ -103,6 +103,12 @@ pub struct TextStyle {
     /// color at its first code point, so color changes never split shaping.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub color_runs: Vec<TextColorRun>,
+    /// Font weight and family overrides in Unicode code-point ranges of the
+    /// complete text. Ranges must be ordered and non-overlapping. Unlike
+    /// `color_runs`, these change shaping and layout. Written by `<Span>`;
+    /// not meant to be set directly.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub font_runs: Vec<TextFontRun>,
     /// Reveal clusters beginning before this code-point offset, retaining the
     /// complete text's layout. Omitted means all text is visible.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -156,4 +162,19 @@ pub struct TextColorRun {
     pub start: usize,
     pub end: usize,
     pub color: String,
+}
+
+/// A font weight and family over a half-open Unicode code-point range in the
+/// full text. Omitted fields use the text's own.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS))]
+#[cfg_attr(feature = "codegen", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct TextFontRun {
+    pub start: usize,
+    pub end: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_weight: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_family: Option<String>,
 }
