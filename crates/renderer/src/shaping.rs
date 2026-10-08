@@ -11,7 +11,7 @@ use crate::types::{Color, RgbaFrame};
 use celesta_composition::{LineBreak, TextAlign, TextFontRun, TextStyle};
 use cosmic_text::{
     Align, Attrs, AttrsList, Buffer, BufferLine, Color as CosmicColor, Family, FontSystem,
-    LineEnding, LineIter, Metrics, PhysicalGlyph, Renderer, Shaping, SwashCache, SwashContent,
+    LayoutGlyph, LineEnding, LineIter, Metrics, PhysicalGlyph, Renderer, Shaping, SwashCache, SwashContent,
     Weight, Wrap,
 };
 use std::sync::Arc;
@@ -325,6 +325,85 @@ impl TextRasterizer {
         buffer
     }
 
+    /// Each layout run's baseline when `style` has font runs, which do not
+    /// move baselines: placed as cosmic-text places them, but from the
+    /// largest ascent and descent of the glyphs outside font runs on the
+    /// line, or in the whole text for a line whose glyphs are all in runs.
+    /// A line with no glyphs keeps cosmic-text's. `None` without font runs,
+    /// or when every glyph is in a run, so cosmic-text's baselines stand.
+    pub(crate) fn run_baselines(
+        &mut self,
+        buffer: &Buffer,
+        text: &str,
+        style: &TextStyle,
+    ) -> Option<Vec<f32>> {
+        if style.font_runs.is_empty() {
+            return None;
+        }
+        let runs = usable_font_runs(style, text.chars().count());
+        let offsets = source_offsets(buffer, text, style);
+        let in_run = |point: usize| {
+            let index = runs.partition_point(|run| run.end <= point);
+            runs.get(index).is_some_and(|run| run.start <= point)
+        };
+        let widen = |extent: Option<(f32, f32)>, (ascent, descent): (f32, f32)| {
+            Some(extent.map_or((ascent, descent), |(a, d): (f32, f32)| {
+                (a.max(ascent), d.max(descent))
+            }))
+        };
+        let mut lines = Vec::new();
+        let mut overall = None;
+        for layout in buffer.layout_runs() {
+            let mut extent = None;
+            for glyph in layout.glyphs {
+                if in_run(offsets[layout.line_i][glyph.start]) {
+                    continue;
+                }
+                if let Some(glyph_extent) = self.glyph_extent(glyph) {
+                    extent = widen(extent, glyph_extent);
+                }
+            }
+            if let Some(line_extent) = extent {
+                overall = widen(overall, line_extent);
+            }
+            let has_glyphs = !layout.glyphs.is_empty();
+            lines.push((
+                layout.line_top,
+                layout.line_height,
+                layout.line_y,
+                has_glyphs,
+                extent,
+            ));
+        }
+        let overall = overall?;
+        Some(
+            lines
+                .into_iter()
+                .map(|(top, height, line_y, has_glyphs, extent)| {
+                    if !has_glyphs {
+                        return line_y;
+                    }
+                    let (ascent, descent) = extent.unwrap_or(overall);
+                    top + (height - (ascent + descent)) / 2.0 + ascent
+                })
+                .collect(),
+        )
+    }
+
+    /// A glyph's ascent and descent in pixels, from its face's metrics,
+    /// computed as cosmic-text computes them for its line layout.
+    pub(crate) fn glyph_extent(&mut self, glyph: &LayoutGlyph) -> Option<(f32, f32)> {
+        let font = self
+            .font_system
+            .get_font(glyph.font_id, glyph.font_weight)?;
+        let metrics = font.metrics();
+        let units = f32::from(metrics.units_per_em);
+        Some((
+            glyph.font_size * (metrics.ascent / units),
+            glyph.font_size * (-metrics.descent / units),
+        ))
+    }
+
     /// Measures `text` in composition units (scale 1) without drawing it,
     /// laid out exactly as [`Self::rasterize`] would.
     pub fn measure(
@@ -340,14 +419,18 @@ impl TextRasterizer {
             .map(|(byte, _)| byte)
             .chain(std::iter::once(text.len()))
             .collect();
+        let baselines = self.run_baselines(&buffer, text, style);
         let mut metrics = TextMetrics::default();
-        for run in buffer.layout_runs() {
+        for (index, run) in buffer.layout_runs().enumerate() {
             metrics.width = metrics.width.max(f64::from(run.line_w));
             metrics.height = metrics
                 .height
                 .max(f64::from(run.line_top + run.line_height));
             if metrics.lines == 0 {
-                metrics.ascent = f64::from(run.line_y - run.line_top);
+                let line_y = baselines
+                    .as_ref()
+                    .map_or(run.line_y, |baselines| baselines[index]);
+                metrics.ascent = f64::from(line_y - run.line_top);
                 metrics.descent = f64::from(run.line_height) - metrics.ascent;
                 metrics.line_height = f64::from(run.line_height);
             }
@@ -399,7 +482,34 @@ impl TextRasterizer {
         let measured_height = buffer.layout_runs().fold(0.0_f32, |height, run| {
             height.max(run.line_top + run.line_height)
         });
-        let baseline = buffer.layout_runs().next().map_or(0.0, |run| run.line_y);
+        let baselines = self.run_baselines(&buffer, text, style);
+        let line_y = |index: usize, line_y: f32| {
+            baselines
+                .as_ref()
+                .map_or(line_y, |baselines| baselines[index])
+        };
+        let baseline = buffer
+            .layout_runs()
+            .next()
+            .map_or(0.0, |run| line_y(0, run.line_y));
+        // With font runs, a run's glyphs can reach past the line boxes the
+        // text's own glyphs fit; leave room for them above and below.
+        let (overflow_top, overflow_bottom) = match &baselines {
+            None => (0, 0),
+            Some(baselines) => {
+                let mut top = 0.0_f32;
+                let mut bottom = 0.0_f32;
+                for (index, run) in buffer.layout_runs().enumerate() {
+                    for glyph in run.glyphs {
+                        if let Some((ascent, descent)) = self.glyph_extent(glyph) {
+                            top = top.max(ascent - baselines[index]);
+                            bottom = bottom.max(baselines[index] + descent - measured_height);
+                        }
+                    }
+                }
+                (top.ceil() as u32, bottom.ceil() as u32)
+            }
+        };
         let layout_width = width.unwrap_or(measured_width).ceil().max(1.0) as u32;
         let layout_height = measured_height.ceil().max(1.0) as u32;
         // The stroke grows the glyphs by its width in every direction, which
@@ -409,8 +519,10 @@ impl TextRasterizer {
             (stroke.width * f64::from(scale)).round().max(0.0) as u32
         });
         let pad = stroke_radius;
+        // Rows above the layout box's top edge in the image.
+        let pad_top = pad + overflow_top;
         let mask_width = layout_width + 2 * pad;
-        let mask_height = layout_height + 2 * pad;
+        let mask_height = layout_height + 2 * pad + overflow_top + overflow_bottom;
         let fill_paint =
             resolve_paint(style.fill.as_ref())?.map(|paint| paint.scaled(f64::from(scale)));
         // A gradient is painted over white glyphs below.
@@ -461,7 +573,7 @@ impl TextRasterizer {
             visible: true,
             callback: |x: i32, y: i32, coverage: u8, color: CosmicColor, visible: bool| {
                 let pixel_x = x + pad as i32;
-                let pixel_y = y + pad as i32;
+                let pixel_y = y + pad_top as i32;
                 if pixel_x < 0
                     || pixel_y < 0
                     || pixel_x >= mask_width as i32
@@ -485,7 +597,8 @@ impl TextRasterizer {
                 );
             },
         };
-        for run in buffer.layout_runs() {
+        for (line_index, run) in buffer.layout_runs().enumerate() {
+            let run_y = line_y(line_index, run.line_y);
             for glyph in run.glyphs {
                 let start = offsets
                     .as_ref()
@@ -506,7 +619,7 @@ impl TextRasterizer {
                     None
                 };
                 renderer.glyph(
-                    glyph.physical((0.0, run.line_y), 1.0),
+                    glyph.physical((0.0, run_y), 1.0),
                     CosmicColor::rgba(color.red, color.green, color.blue, color.alpha),
                 );
             }
@@ -532,7 +645,7 @@ impl TextRasterizer {
             composite_mask_with(&mut frame, &stroke_mask, mask_width, |x, y| {
                 stroke_paint.color_at(
                     f64::from(x) - f64::from(pad) + 0.5,
-                    f64::from(y) - f64::from(pad) + 0.5,
+                    f64::from(y) - f64::from(pad_top) + 0.5,
                 )
             });
             composite_rgba(&mut frame, &glyph_pixels, mask_width, mask_height, 0, 0);
@@ -565,7 +678,7 @@ impl TextRasterizer {
         } else {
             AnchorBox {
                 left: pad,
-                top: pad,
+                top: pad_top,
                 width: layout_width,
                 height: layout_height,
             }
@@ -573,7 +686,7 @@ impl TextRasterizer {
         Ok(RasterizedText {
             width: frame.width,
             height: frame.height,
-            baseline: baseline + pad as f32 - top as f32,
+            baseline: baseline + pad_top as f32 - top as f32,
             pixels: frame.pixels,
             anchor_box,
         })
