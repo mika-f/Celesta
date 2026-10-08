@@ -1,6 +1,7 @@
 import type { Scene, Layer, Asset, FontRun, Paint, TextStyle } from './types';
 import { loadFonts, releaseFonts } from './fonts';
 import { cssFont, measureLine, runPieces, textLineRanges, textStyle } from './text-layout';
+import type { RunPiece } from './text-layout';
 
 type Canvas = HTMLCanvasElement;
 type Context = CanvasRenderingContext2D;
@@ -18,6 +19,55 @@ function paint(ctx: Context, value: Paint, x = 0, y = 0): string | CanvasGradien
     : ctx.createRadialGradient(x + value.center.x, y + value.center.y, 0, x + value.center.x, y + value.center.y, value.radius);
   for (const stop of value.stops) gradient.addColorStop(stop.offset, stop.color);
   return gradient;
+}
+
+type Region = { start: number; end: number; x: number; width: number };
+type RunSegment = { text: string; left: number; right: number; rtl: boolean; run?: FontRun };
+
+/**
+ * Cuts each run piece where its clusters stop sitting next to each other on
+ * the shaped line, so a piece that bidi reordering splits (part of a
+ * right-to-left word, say) is drawn as segments that each lie together,
+ * left to right or right to left. `regions` are the line's clusters in
+ * source order with their shaped extents; `tolerance` allows for letter
+ * spacing between neighbors.
+ */
+function runSegments(text: string, pieces: RunPiece[], regions: Region[], tolerance: number): RunSegment[] {
+  const characters = Array.from(text);
+  const segments: RunSegment[] = [];
+  for (const piece of pieces) {
+    const end = piece.start + Array.from(piece.text).length;
+    let current: { start: number; end: number; left: number; right: number; last: Region; direction?: 'ltr' | 'rtl' } | undefined;
+    const flush = () => {
+      if (!current) return;
+      segments.push({
+        text: characters.slice(current.start, current.end).join(''), left: current.left, right: current.right,
+        rtl: current.direction === 'rtl', run: piece.run,
+      });
+    };
+    for (const region of regions) {
+      if (region.start < piece.start || region.start >= end) continue;
+      if (current) {
+        const previous = current.last;
+        const after = Math.abs(region.x - (previous.x + previous.width)) <= tolerance;
+        const before = Math.abs(region.x + region.width - previous.x) <= tolerance;
+        const direction = current.direction
+          ? ((current.direction === 'ltr' ? after : before) ? current.direction : undefined)
+          : after ? 'ltr' : before ? 'rtl' : undefined;
+        if (direction) {
+          Object.assign(current, {
+            end: region.end, left: Math.min(current.left, region.x), right: Math.max(current.right, region.x + region.width),
+            last: region, direction,
+          });
+          continue;
+        }
+        flush();
+      }
+      current = { start: region.start, end: region.end, left: region.x, right: region.x + region.width, last: region };
+    }
+    flush();
+  }
+  return segments;
 }
 
 export class SceneCanvas {
@@ -124,7 +174,6 @@ export class SceneCanvas {
       svg.append(element);
       document.body.append(svg);
       const regions: { start: number; end: number; x: number; width: number }[] = [];
-      let pieceLeft: number[] = [];
       try {
         let point = 0;
         for (const { segment, index } of new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text)) {
@@ -136,30 +185,20 @@ export class SceneCanvas {
           else regions.push({ start: point, end: point + count, x: extent.x, width: extent.width });
           point += count;
         }
-        // A piece's left edge, from its visible characters (an RTL piece
-        // starts at its right); zero-width characters report no position.
-        pieceLeft = (pieces ?? []).map(piece => {
-          let left = Infinity;
-          let index = piece.utf16;
-          // One lookup per code point: a low surrogate is not a character.
-          for (const character of piece.text) {
-            const extent = element.getExtentOfChar(index);
-            if (extent.width > 0) left = Math.min(left, extent.x);
-            index += character.length;
-          }
-          return Number.isFinite(left) ? left : element.getExtentOfChar(piece.utf16).x;
-        });
       } finally { svg.remove(); }
-      // Draws the line, or each font run's piece in its own font where the
-      // tspans put it.
+      const segments = pieces ? runSegments(text, pieces, regions, Math.abs(style.letterSpacing ?? 0) + 0.5) : [];
+      // Draws the line, or each run segment in its run's font and direction
+      // where the tspans put it.
       const drawText = (target: Context, method: 'fillText' | 'strokeText') => {
         if (!pieces) { target[method](text, x, baseline); return; }
-        const font = target.font;
-        pieces.forEach((piece, i) => {
-          target.font = piece.run ? cssFont(style, piece.run) : font;
-          target[method](piece.text, pieceLeft[i], baseline);
-        });
-        target.font = font;
+        const { font, direction, textAlign } = target;
+        for (const segment of segments) {
+          target.font = segment.run ? cssFont(style, segment.run) : font;
+          target.direction = segment.rtl ? 'rtl' : 'ltr';
+          target.textAlign = segment.rtl ? 'right' : 'left';
+          target[method](segment.text, segment.rtl ? segment.right : segment.left, baseline);
+        }
+        Object.assign(target, { font, direction, textAlign });
       };
       const mask = document.createElement('canvas');
       mask.width = Math.max(1, Math.ceil(width));

@@ -94,6 +94,19 @@ try {
       const clusterRun = await raster('e\\u0301X', { ...base, fontRuns: [{ start: 1, end: 2, fontWeight: 700 }] });
       const clusterPlain = await raster('e\\u0301X', { ...base, visibleCharacters: 3 });
       check(clusterRun.every((n, i) => n === clusterPlain[i]), 'a run starting inside a cluster changed it');
+      // A run in the text's own font must draw like no run, also where it
+      // splits right-to-left text.
+      for (const [text, start, end] of [['AV office here', 3, 9], ['אבג דהו זחט', 4, 7], ['abc אבג דהו def', 8, 11], ['abc אבג דהו def', 4, 11]]) {
+        const count = Array.from(text).length;
+        const reference = await raster(text, { ...base, visibleCharacters: count });
+        const spanned = await raster(text, { ...base, fontRuns: [{ start, end, fontWeight: 400 }] });
+        let differing = 0, occupied = 0;
+        for (let i = 3; i < reference.length; i += 4) {
+          if (reference[i] > 0 || spanned[i] > 0) occupied++;
+          if (Math.abs(reference[i] - spanned[i]) > 32) differing++;
+        }
+        check(differing / occupied < 0.05, 'a run moved glyphs in ' + text + ': ' + differing + '/' + occupied);
+      }
       const lastInk = data => { let last = 0; for (let i = 3; i < data.length; i += 4) if (data[i] > 0) last = Math.floor((i - 3) / 4 / canvas.width); return last; };
       const wrappedPlain = await raster('AV AV AV', base, 150);
       const wrappedBold = await raster('AV AV AV', { ...base, fontRuns: [{ start: 0, end: 8, fontWeight: 900 }] }, 150);
