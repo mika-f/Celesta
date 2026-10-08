@@ -10,10 +10,12 @@ added. `Series` and `Transition` are unchanged.
 - Timing: `computeTransitionSeries(items)` takes the children's props in
   order (scenes `{ durationInFrames }`, transitions `{ type,
   durationInFrames? }`, told apart by `type`). The transition element also
-  takes `from` (`'left'` by default; the edge a slide or wipe enters from)
-  and `easing` (linear by default), which only the presentation reads. A transition of n frames
-  starts the next scene n frames before the previous one ends; the total is
-  the last scene's end. `transitions[i].from` is the overlap's start.
+  takes `from`, the edge a slide or wipe enters from (`'left'` by default;
+  only `left`, `right`, `top`, and `bottom`, otherwise `edgeAt` throws when
+  the series renders), and `easing` (linear by default); only the
+  presentation reads them. A transition of n frames starts the next scene n
+  frames before the previous one ends; the total is the last scene's end.
+  `transitions[i].from` is the overlap's start.
 - Validation (throws): no scene, a transition first or last or after
   another, unknown `type`, a `'cut'` with frames, non-integer or
   non-positive lengths, and a scene shorter than its transitions in and out
@@ -36,9 +38,9 @@ added. `Series` and `Transition` are unchanged.
   faded automatically, because multiplying a scene gain into nested
   keyframed volumes is not representable in `Animatable`.
   `useTransitionVolume(volume)` returns `frameKeyframes` ramps over the
-  scene's transitions (the plain `volume` when neither side has frames) for an `<Audio>` directly in the scene (keys count
-  from the scene's start). `useTransitionSeriesScene()` exposes
-  `{ index, enter, exit }`.
+  scene's transitions (the plain `volume` when neither side has frames) for
+  an `<Audio>` directly in the scene (keys count from the scene's start).
+  `useTransitionSeriesScene()` exposes `{ index, enter, exit }`.
 - Tests: `packages/react/test/transition-series.test.mjs` (layout,
   validation, per-frame visibility, each presentation, audio).
   `crates/react-bridge/tests/node_integration.rs` checks
