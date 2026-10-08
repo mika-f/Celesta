@@ -56,6 +56,48 @@ try {
       }
       const wrapped = await raster('AV   AV', { fontSize: 40, lineHeight: 54, colorRuns: [{ start: 5, end: 7, color: '#ff0000' }] }, 80);
       check(wrapped.some((n, i) => i % 4 === 0 && n === 255 && wrapped[i + 1] === 0 && wrapped[i + 2] === 0), 'wrapped source color ranges were lost');
+      // Font runs: one paragraph, each run drawn with its own font.
+      const ink = data => { let n = 0; for (let i = 3; i < data.length; i += 4) n += data[i] > 0 ? 1 : 0; return n; };
+      const base = { fontSize: 40, lineHeight: 54, fontFamily: 'serif' };
+      // Styled lines are drawn through a mask, so compare against a styled
+      // line without runs (a full reveal) rather than the direct path.
+      const plainRuns = await raster('AV office', { ...base, visibleCharacters: 9 });
+      const bold = await raster('AV office', { ...base, fontRuns: [{ start: 3, end: 9, fontWeight: 700 }] });
+      check(ink(bold) > ink(plainRuns) * 1.05, 'a bold run did not draw bolder');
+      // The text before the run is unchanged.
+      const probe = document.createElement('canvas').getContext('2d');
+      probe.font = '400 40px "serif", system-ui, sans-serif';
+      const before = Math.floor(10 + probe.measureText('AV').width);
+      // The run changes the line's ink box, which moves the styled image by
+      // a subpixel and resamples its edges, so compare ink extents and
+      // amounts rather than exact alpha.
+      const region = data => {
+        let left = canvas.width, top = canvas.height, right = 0, bottom = 0, sum = 0;
+        for (let y = 0; y < canvas.height; y++) for (let x = 0; x < before; x++) {
+          const alpha = data[(y * canvas.width + x) * 4 + 3];
+          sum += alpha;
+          if (alpha > 64) { left = Math.min(left, x); top = Math.min(top, y); right = Math.max(right, x); bottom = Math.max(bottom, y); }
+        }
+        return { box: [left, top, right, bottom], sum };
+      };
+      const boldBefore = region(bold), plainBefore = region(plainRuns);
+      check(boldBefore.box.every((n, i) => Math.abs(n - plainBefore.box[i]) <= 1)
+        && Math.abs(boldBefore.sum - plainBefore.sum) <= plainBefore.sum * 0.03,
+        'text before a font run moved or changed ' + JSON.stringify([boldBefore, plainBefore]));
+      // A family name, not a generic one: quoted generic names are no family.
+      const monoRun = await raster('AV office', { ...base, fontRuns: [{ start: 3, end: 9, fontFamily: 'Courier New' }] });
+      check(monoRun.some((n, i) => n !== plainRuns[i]), 'a family run drew the text font');
+      const hiddenRun = await raster('AV office', { ...base, fontRuns: [{ start: 3, end: 9, fontWeight: 700 }], visibleCharacters: 0 });
+      check(hiddenRun.every(n => n === 0), 'zero reveal over a font run draws pixels');
+      const coloredRun = await raster('AV office', { ...base, fontRuns: [{ start: 3, end: 9, fontWeight: 700 }], colorRuns: [{ start: 3, end: 9, color: '#ff0000' }] });
+      check(coloredRun.some((n, i) => i % 4 === 0 && n > 200 && coloredRun[i + 1] < 40 && coloredRun[i + 3] > 200), 'a colored font run lost its color');
+      const clusterRun = await raster('e\\u0301X', { ...base, fontRuns: [{ start: 1, end: 2, fontWeight: 700 }] });
+      const clusterPlain = await raster('e\\u0301X', { ...base, visibleCharacters: 3 });
+      check(clusterRun.every((n, i) => n === clusterPlain[i]), 'a run starting inside a cluster changed it');
+      const lastInk = data => { let last = 0; for (let i = 3; i < data.length; i += 4) if (data[i] > 0) last = Math.floor((i - 3) / 4 / canvas.width); return last; };
+      const wrappedPlain = await raster('AV AV AV', base, 150);
+      const wrappedBold = await raster('AV AV AV', { ...base, fontRuns: [{ start: 0, end: 8, fontWeight: 900 }] }, 150);
+      check(lastInk(wrappedBold) >= lastInk(wrappedPlain), 'bold runs must not wrap later than plain text');
       const compare = (a, b, label) => {
         let differing = 0, occupied = 0;
         for (let i = 0; i < a.length; i += 4) {

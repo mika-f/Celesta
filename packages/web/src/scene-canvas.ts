@@ -1,6 +1,6 @@
-import type { Scene, Layer, Asset, Paint, TextStyle } from './types';
+import type { Scene, Layer, Asset, FontRun, Paint, TextStyle } from './types';
 import { loadFonts, releaseFonts } from './fonts';
-import { textLineRanges, textStyle } from './text-layout';
+import { cssFont, measureLine, runPieces, textLineRanges, textStyle } from './text-layout';
 
 type Canvas = HTMLCanvasElement;
 type Context = CanvasRenderingContext2D;
@@ -83,10 +83,14 @@ export class SceneCanvas {
   }
 
   /** Shape the complete line once, then apply paint and reveals to its glyph mask. */
-  private styledLine(ctx: Context, text: string, style: TextStyle, width: number, height: number, baseline: number, x: number, offset: number, originX: number, originY: number): HTMLCanvasElement {
+  private styledLine(ctx: Context, text: string, style: TextStyle, width: number, height: number, baseline: number, x: number, offset: number, originX: number, originY: number, fontRuns: FontRun[] = []): HTMLCanvasElement {
     const { colorRuns, visibleCharacters, fill, ...geometry } = style;
     const lang = ('lang' in ctx && typeof ctx.lang === 'string' ? ctx.lang : undefined) || style.lang?.trim() || navigator.language;
-    const layoutKey = JSON.stringify({ text, geometry, width, height, baseline, x, originX, originY, lang });
+    // The line's offset decides which font runs apply, so their pieces are
+    // part of the layout.
+    const pieces = fontRuns.length ? runPieces(text, offset, fontRuns) : undefined;
+    const layoutKey = JSON.stringify({ text, geometry, width, height, baseline, x, originX, originY, lang,
+      ...(pieces ? { pieces: pieces.map(p => [p.start, p.run?.fontWeight, p.run?.fontFamily]) } : {}) });
     const key = JSON.stringify({ layoutKey, colorRuns, visibleCharacters, fill, offset });
     this.usedLayouts.add(layoutKey);
     this.usedText.add(key);
@@ -94,6 +98,69 @@ export class SceneCanvas {
     if (cached) return cached;
     let layout = this.textLayouts.get(layoutKey);
     if (!layout) {
+      // SVG exposes character extents from the full shaped line, unlike
+      // Canvas's prefix-only measurement. Fill changes never touch this node.
+      // Font runs are tspans, so their pieces are placed as one paragraph.
+      const ns = 'http://www.w3.org/2000/svg';
+      const svg = document.createElementNS(ns, 'svg');
+      svg.style.cssText = 'position:fixed;left:-100000px;opacity:0;pointer-events:none';
+      const element = document.createElementNS(ns, 'text');
+      element.style.font = ctx.font;
+      element.style.letterSpacing = ctx.letterSpacing;
+      element.style.fontKerning = ctx.fontKerning;
+      element.style.whiteSpace = 'pre';
+      element.setAttribute('x', String(x));
+      element.setAttribute('y', String(baseline));
+      element.setAttributeNS('http://www.w3.org/XML/1998/namespace', 'xml:lang', lang);
+      if (pieces) {
+        for (const piece of pieces) {
+          if (!piece.run) { element.append(piece.text); continue; }
+          const span = document.createElementNS(ns, 'tspan');
+          span.style.font = cssFont(style, piece.run);
+          span.textContent = piece.text;
+          element.append(span);
+        }
+      } else element.textContent = text;
+      svg.append(element);
+      document.body.append(svg);
+      const regions: { start: number; end: number; x: number; width: number }[] = [];
+      let pieceLeft: number[] = [];
+      try {
+        let point = 0;
+        for (const { segment, index } of new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text)) {
+          const extent = element.getExtentOfChar(index);
+          const count = Array.from(segment).length;
+          const previous = regions.at(-1);
+          // SVG reports the same extent for each character of a ligature.
+          if (previous && previous.x === extent.x && previous.width === extent.width) previous.end += count;
+          else regions.push({ start: point, end: point + count, x: extent.x, width: extent.width });
+          point += count;
+        }
+        // A piece's left edge, from its visible characters (an RTL piece
+        // starts at its right); zero-width characters report no position.
+        pieceLeft = (pieces ?? []).map(piece => {
+          let left = Infinity;
+          let index = piece.utf16;
+          // One lookup per code point: a low surrogate is not a character.
+          for (const character of piece.text) {
+            const extent = element.getExtentOfChar(index);
+            if (extent.width > 0) left = Math.min(left, extent.x);
+            index += character.length;
+          }
+          return Number.isFinite(left) ? left : element.getExtentOfChar(piece.utf16).x;
+        });
+      } finally { svg.remove(); }
+      // Draws the line, or each font run's piece in its own font where the
+      // tspans put it.
+      const drawText = (target: Context, method: 'fillText' | 'strokeText') => {
+        if (!pieces) { target[method](text, x, baseline); return; }
+        const font = target.font;
+        pieces.forEach((piece, i) => {
+          target.font = piece.run ? cssFont(style, piece.run) : font;
+          target[method](piece.text, pieceLeft[i], baseline);
+        });
+        target.font = font;
+      };
       const mask = document.createElement('canvas');
       mask.width = Math.max(1, Math.ceil(width));
       mask.height = Math.max(1, Math.ceil(height));
@@ -118,9 +185,9 @@ export class SceneCanvas {
         outline.lineJoin = 'round';
         outline.lineWidth = style.stroke.width * 2;
         outline.strokeStyle = paint(outline, style.stroke.paint, originX, originY);
-        outline.strokeText(text, x, baseline);
+        drawText(outline, 'strokeText');
       }
-      draw.fillText(text, x, baseline);
+      drawText(draw, 'fillText');
       // A black/white probe distinguishes actual color glyphs from monochrome
       // emoji fallbacks, including white pixels within color emoji.
       let probe: ImageData | undefined;
@@ -128,39 +195,10 @@ export class SceneCanvas {
         const pixels = draw.getImageData(0, 0, mask.width, mask.height);
         draw.clearRect(0, 0, mask.width, mask.height);
         draw.fillStyle = '#000';
-        draw.fillText(text, x, baseline);
+        drawText(draw, 'fillText');
         probe = draw.getImageData(0, 0, mask.width, mask.height);
         draw.putImageData(pixels, 0, 0);
       }
-      // SVG exposes character extents from the full shaped line, unlike
-      // Canvas's prefix-only measurement. Fill changes never touch this node.
-      const ns = 'http://www.w3.org/2000/svg';
-      const svg = document.createElementNS(ns, 'svg');
-      svg.style.cssText = 'position:fixed;left:-100000px;opacity:0;pointer-events:none';
-      const element = document.createElementNS(ns, 'text');
-      element.style.font = ctx.font;
-      element.style.letterSpacing = ctx.letterSpacing;
-      element.style.fontKerning = ctx.fontKerning;
-      element.style.whiteSpace = 'pre';
-      element.setAttribute('x', String(x));
-      element.setAttribute('y', String(baseline));
-      element.setAttributeNS('http://www.w3.org/XML/1998/namespace', 'xml:lang', lang);
-      element.textContent = text;
-      svg.append(element);
-      document.body.append(svg);
-      const regions: { start: number; end: number; x: number; width: number }[] = [];
-      try {
-        let point = 0;
-        for (const { segment, index } of new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text)) {
-          const extent = element.getExtentOfChar(index);
-          const count = Array.from(segment).length;
-          const previous = regions.at(-1);
-          // SVG reports the same extent for each character of a ligature.
-          if (previous && previous.x === extent.x && previous.width === extent.width) previous.end += count;
-          else regions.push({ start: point, end: point + count, x: extent.x, width: extent.width });
-          point += count;
-        }
-      } finally { svg.remove(); }
       layout = { mask, stroke, probe, regions };
       this.textLayouts.set(layoutKey, layout);
     }
@@ -385,6 +423,14 @@ export class SceneCanvas {
         }
         previousEnd = run.end;
       }
+      let previousFontEnd = 0;
+      for (const run of style.fontRuns ?? []) {
+        if (!Number.isSafeInteger(run.start) || !Number.isSafeInteger(run.end) || run.start < previousFontEnd || run.end < run.start || run.end > count) {
+          throw new Error('Invalid text font run range');
+        }
+        previousFontEnd = run.end;
+      }
+      const fontRuns = style.fontRuns ?? [];
       if (style.visibleCharacters != null && (!Number.isSafeInteger(style.visibleCharacters) || style.visibleCharacters < 0)) {
         throw new Error('Text visibleCharacters must be a non-negative integer');
       }
@@ -394,8 +440,9 @@ export class SceneCanvas {
       textStyle(ctx, style);
       ctx.textBaseline = 'alphabetic';
       ctx.textAlign = 'left';
-      const lines = textLineRanges(ctx, content.text, content.maxWidth, style.lang);
-      const measured = lines.map(line => ctx.measureText(line.text));
+      const lines = textLineRanges(ctx, content.text, content.maxWidth, style.lang,
+        fontRuns.length ? (text, start) => measureLine(ctx, style, text, start, fontRuns).width : undefined);
+      const measured = lines.map(line => measureLine(ctx, style, line.text, line.start, fontRuns));
       const width = content.maxWidth ?? Math.max(0, ...measured.map(m => m.width));
       const placed = measured.map((m, i) => ({
         x: style.align === 'center' ? (width - m.width) / 2 : style.align === 'right' ? width - m.width : 0,
@@ -409,14 +456,14 @@ export class SceneCanvas {
       ctx.setTransform(matrix.translate(-t.anchor.x * width, y));
       for (let i = 0; i < lines.length; i++) {
         const baseline = placed[i].baseline - top;
-        if (style.colorRuns?.length || style.visibleCharacters != null) {
+        if (style.colorRuns?.length || style.visibleCharacters != null || fontRuns.length) {
           const pad = Math.ceil(style.stroke?.width ?? 0) + 1;
           const m = measured[i];
           const left = Math.floor(placed[i].x - m.actualBoundingBoxLeft) - pad;
           const top = Math.floor(baseline - m.actualBoundingBoxAscent) - pad;
           const right = Math.ceil(placed[i].x + m.actualBoundingBoxRight) + pad;
           const bottom = Math.ceil(baseline + m.actualBoundingBoxDescent) + pad;
-          const image = this.styledLine(ctx, lines[i].text, style, right - left, bottom - top, baseline - top, placed[i].x - left, lines[i].start, -left, -top);
+          const image = this.styledLine(ctx, lines[i].text, style, right - left, bottom - top, baseline - top, placed[i].x - left, lines[i].start, -left, -top, fontRuns);
           ctx.drawImage(image, left, top);
           continue;
         }
