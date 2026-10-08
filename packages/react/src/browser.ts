@@ -20,6 +20,7 @@ export { Camera } from './camera';
 export { TextReveal, useCountUp, useTypewriter } from './text-motion';
 export { frameKeyframes } from './keyframes';
 export { measureText, textCaret, useTextMetrics } from './text-measure';
+export { Span } from './rich-text';
 export { TextBox, fitText, useFitText } from './text-fit';
 export { Transition } from './transition';
 export { Center, Fit, Grid, SafeArea, Stack, useLayoutBounds } from './layout';
