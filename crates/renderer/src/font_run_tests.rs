@@ -95,7 +95,11 @@ fn advance(rasterizer: &mut TextRasterizer, text: &str, style: &TextStyle) -> f6
 }
 
 /// Each glyph's line, byte offset in its line, and first family name.
-fn glyph_families(rasterizer: &mut TextRasterizer, text: &str, style: &TextStyle) -> Vec<(usize, usize, String)> {
+fn glyph_families(
+    rasterizer: &mut TextRasterizer,
+    text: &str,
+    style: &TextStyle,
+) -> Vec<(usize, usize, String)> {
     let buffer = rasterizer.shaped_buffer(text, style, None, 1.0);
     let database = rasterizer.font_system.db();
     let mut families = Vec::new();
@@ -293,10 +297,7 @@ fn phrase_joiners_inside_a_run_keep_its_font() {
     let buffer = rasterizer.shaped_buffer("今日は天気です", &style, Some(400.0), 1.0);
     let line = &buffer.lines[0];
     let mut joiners = 0;
-    for (byte, _) in line
-        .text()
-        .match_indices(crate::linebreak::WORD_JOINER)
-    {
+    for (byte, _) in line.text().match_indices(crate::linebreak::WORD_JOINER) {
         joiners += 1;
         assert_eq!(
             line.attrs_list().get_span(byte).family,
@@ -350,9 +351,7 @@ fn a_run_in_a_taller_family_does_not_move_the_baseline() {
     let spanned_metrics = rasterizer.measure("ABC\nDEF", &spanned, None);
     // The recomputation mirrors cosmic-text's arithmetic; allow f32 rounding.
     assert!((spanned_metrics.ascent - plain_metrics.ascent).abs() < 1e-3);
-    let plain_text = rasterizer
-        .rasterize("ABC\nDEF", &plain, None, 1.0)
-        .unwrap();
+    let plain_text = rasterizer.rasterize("ABC\nDEF", &plain, None, 1.0).unwrap();
     let spanned_text = rasterizer
         .rasterize("ABC\nDEF", &spanned, None, 1.0)
         .unwrap();
@@ -435,4 +434,48 @@ fn a_taller_run_is_not_clipped_by_a_tight_line_box() {
         drawn_b as f64 >= whole_b as f64 * 0.97,
         "the run's glyph was cut off: {drawn_b} < {whole_b}"
     );
+}
+
+#[test]
+fn warnings_judge_each_character_by_the_family_it_asks_for() {
+    use crate::text::MissingGlyphs;
+    let mut rasterizer = two_family_rasterizer();
+    // Bebas has no kana; Plex Mono has the Latin letters Bebas draws.
+    let style = TextStyle {
+        font_runs: vec![run(2, 4, None, Some("IBM Plex Mono"))],
+        ..bebas(48.0)
+    };
+    assert!(rasterizer.font_fallback("title", &style).is_empty());
+    assert_eq!(
+        rasterizer.missing_glyphs("title", "ABabず", &style),
+        vec![MissingGlyphs {
+            layer: "title".to_owned(),
+            family: "Bebas Neue".to_owned(),
+            weight: 400,
+            characters: vec!['ず'],
+        }]
+    );
+    // The run's own characters are judged against Plex Mono.
+    let japanese_run = TextStyle {
+        font_runs: vec![run(0, 1, None, Some("IBM Plex Mono"))],
+        ..bebas(48.0)
+    };
+    let missing = rasterizer.missing_glyphs("title", "ずA", &japanese_run);
+    assert_eq!(missing.len(), 1);
+    assert_eq!(missing[0].family, "IBM Plex Mono");
+    assert_eq!(missing[0].characters, ['ず']);
+}
+
+#[test]
+fn a_run_family_with_no_face_is_a_fallback() {
+    let mut rasterizer = two_family_rasterizer();
+    let style = TextStyle {
+        font_runs: vec![run(1, 2, Some(700), Some("Celesta Missing Family"))],
+        ..bebas(48.0)
+    };
+    let fallbacks = rasterizer.font_fallback("title", &style);
+    assert_eq!(fallbacks.len(), 1);
+    assert_eq!(fallbacks[0].family, "Celesta Missing Family");
+    assert_eq!(fallbacks[0].weight, 700);
+    assert!(rasterizer.missing_glyphs("title", "AB", &style).is_empty());
 }

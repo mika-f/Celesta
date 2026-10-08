@@ -11,8 +11,8 @@ use crate::types::{Color, RgbaFrame};
 use celesta_composition::{LineBreak, TextAlign, TextFontRun, TextStyle};
 use cosmic_text::{
     Align, Attrs, AttrsList, Buffer, BufferLine, Color as CosmicColor, Family, FontSystem,
-    LayoutGlyph, LineEnding, LineIter, Metrics, PhysicalGlyph, Renderer, Shaping, SwashCache, SwashContent,
-    Weight, Wrap,
+    LayoutGlyph, LineEnding, LineIter, Metrics, PhysicalGlyph, Renderer, Shaping, SwashCache,
+    SwashContent, Weight, Wrap,
 };
 use std::sync::Arc;
 
@@ -222,10 +222,7 @@ impl TextRasterizer {
             if style.letter_spacing.is_some() {
                 for (start, joiner) in line.text().match_indices(WORD_JOINER) {
                     let (at, _) = attrs_at(start);
-                    spans.push((
-                        start..start + joiner.len(),
-                        at.clone().letter_spacing(0.0),
-                    ));
+                    spans.push((start..start + joiner.len(), at.clone().letter_spacing(0.0)));
                 }
             }
             if spans.is_empty() {
@@ -789,7 +786,7 @@ impl<F: FnMut(i32, i32, u8, CosmicColor, bool)> Renderer for GlyphPixelRenderer<
 }
 
 /// Translate shaping's line-local UTF-8 offsets to full-source code points.
-fn source_offsets(buffer: &Buffer, text: &str, style: &TextStyle) -> Vec<Vec<usize>> {
+pub(crate) fn source_offsets(buffer: &Buffer, text: &str, style: &TextStyle) -> Vec<Vec<usize>> {
     let mut base = 0;
     buffer
         .lines

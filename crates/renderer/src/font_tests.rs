@@ -222,7 +222,7 @@ fn matches_the_nearest_weight_within_a_loaded_family() {
             text == regular,
             "weight {weight:?} did not draw with Bebas Neue"
         );
-        assert_eq!(rasterizer.font_fallback("title", &style(weight)), None);
+        assert!(rasterizer.font_fallback("title", &style(weight)).is_empty());
     }
 }
 
@@ -234,7 +234,10 @@ fn reports_a_family_with_no_face() {
         font_weight: Some(700),
         ..TextStyle::default()
     };
-    let fallback = rasterizer.font_fallback("title", &style).unwrap();
+    let [fallback]: [FontFallback; 1] = rasterizer
+        .font_fallback("title", &style)
+        .try_into()
+        .unwrap();
     assert_eq!(
         fallback,
         FontFallback {
@@ -250,9 +253,10 @@ fn reports_a_family_with_no_face() {
     // Still drawn, with a fallback font.
     assert!(rasterizer.rasterize("A", &style, None, 1.0).is_ok());
     // No family means the default font, not a fallback.
-    assert_eq!(
-        rasterizer.font_fallback("title", &TextStyle::default()),
-        None
+    assert!(
+        rasterizer
+            .font_fallback("title", &TextStyle::default())
+            .is_empty()
     );
 }
 
@@ -350,7 +354,11 @@ fn loading_fonts_updates_every_language_and_preserves_the_default_in_forks() {
                 font_family: Some(FAMILY.to_owned()),
                 ..TextStyle::default()
             };
-            assert_eq!(rasterizer.missing_glyphs("title", "CELESTA", &style), None);
+            assert!(
+                rasterizer
+                    .missing_glyphs("title", "CELESTA", &style)
+                    .is_empty()
+            );
             assert!(has_family(rasterizer, FAMILY));
             if lang.is_none() || lang == Some("") {
                 assert_eq!(rasterizer.font_system.locale(), rasterizer.default_locale);
@@ -424,8 +432,9 @@ fn reports_characters_the_family_has_no_glyph_for() {
     let mut rasterizer = regular_only_rasterizer();
     // Bebas Neue has Latin glyphs only: the kana and kanji come from
     // another font, once each and in order.
-    let missing = rasterizer
+    let [missing]: [MissingGlyphs; 1] = rasterizer
         .missing_glyphs("title", "CELESTA ずんだもん 2026 だ", &bebas_style())
+        .try_into()
         .unwrap();
     assert_eq!(
         missing,
@@ -442,8 +451,9 @@ fn reports_characters_the_family_has_no_glyph_for() {
     );
 
     // A long list is cut short.
-    let missing = rasterizer
+    let [missing]: [MissingGlyphs; 1] = rasterizer
         .missing_glyphs("title", "あいうえおかきくけこさしすせそ", &bebas_style())
+        .try_into()
         .unwrap();
     assert_eq!(missing.characters.len(), 15);
     assert_eq!(
@@ -467,16 +477,18 @@ fn does_not_report_glyphs_the_family_has_or_emoji() {
         "👩\u{200D}💻",
         "🇯🇵",
     ] {
-        assert_eq!(
-            rasterizer.missing_glyphs("title", text, &bebas_style()),
-            None,
+        assert!(
+            rasterizer
+                .missing_glyphs("title", text, &bebas_style())
+                .is_empty(),
             "{text:?}"
         );
     }
     // Not when the text names no family, either.
-    assert_eq!(
-        rasterizer.missing_glyphs("title", "ずんだもん", &TextStyle::default()),
-        None
+    assert!(
+        rasterizer
+            .missing_glyphs("title", "ずんだもん", &TextStyle::default())
+            .is_empty()
     );
 }
 
@@ -496,8 +508,9 @@ fn reports_emoji_no_font_has_a_glyph_for() {
             &examples,
         )
         .unwrap();
-    let missing = rasterizer
+    let [missing]: [MissingGlyphs; 1] = rasterizer
         .missing_glyphs("title", "CELESTA 🎉 ず ❤\u{FE0F}", &bebas_style())
+        .try_into()
         .unwrap();
     assert_eq!(missing.characters, ['🎉', 'ず', '❤']);
 }
@@ -543,10 +556,11 @@ fn leaves_a_family_with_no_face_to_the_font_fallback() {
         font_family: Some("Celesta Missing Family".to_owned()),
         ..TextStyle::default()
     };
-    assert!(rasterizer.font_fallback("title", &style).is_some());
-    assert_eq!(
-        rasterizer.missing_glyphs("title", "ずんだもん", &style),
-        None
+    assert_eq!(rasterizer.font_fallback("title", &style).len(), 1);
+    assert!(
+        rasterizer
+            .missing_glyphs("title", "ずんだもん", &style)
+            .is_empty()
     );
 }
 
