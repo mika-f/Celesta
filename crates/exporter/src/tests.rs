@@ -1,11 +1,15 @@
 use crate::DEFAULT_REACT_AUDIO_SAMPLE_RATE;
 use crate::error::ExportError;
 use crate::options::{ColorConversion, EncoderPreset, UnknownEncoderPreset, VideoEncoding};
+use crate::project::absolutize_layers;
 use crate::project::{build_audio_graph, merge_react_audio_clips, visual_only_project};
 use crate::range::{ExportRange, resolve_window, shifted_audio_graph};
 use crate::render::{frame_count, open_video_writer, validate_dimensions, validate_output};
 use crate::timecode::{TimecodeError, parse_timecode};
-use celesta_composition::{AssetLocation, LayerContent, Rational, Time};
+use celesta_composition::{
+    AssetLocation, EvaluatedTransform, GroupMask, Layer, LayerContent, MaskMode, Rational,
+    ResolvedAsset, Time,
+};
 use celesta_evaluator::Evaluator;
 use celesta_gpu_renderer::ReadbackFormat;
 use celesta_project::Project;
@@ -315,4 +319,59 @@ fn refuses_non_mp4_and_existing_outputs() {
             height: 64
         })
     ));
+}
+
+#[test]
+fn absolutizes_assets_inside_a_groups_mask() {
+    let image = |path: &str| Layer {
+        id: path.to_owned(),
+        transform: EvaluatedTransform::default(),
+        opacity: 1.0,
+        blend_mode: Default::default(),
+        effects: Default::default(),
+        content: LayerContent::Image {
+            asset: ResolvedAsset {
+                id: path.to_owned(),
+                location: AssetLocation::File {
+                    path: path.to_owned(),
+                },
+            },
+            width: None,
+            height: None,
+            fit: None,
+        },
+    };
+    let mut layers = vec![Layer {
+        content: LayerContent::Group {
+            layers: vec![image("child.png")],
+            clip: None,
+            mask: Some(GroupMask {
+                layers: vec![image("matte.png")],
+                mode: MaskMode::Alpha,
+                invert: false,
+            }),
+        },
+        ..image("group")
+    }];
+    let root = Path::new("/project");
+    absolutize_layers(&mut layers, root);
+    let LayerContent::Group {
+        layers: children,
+        mask: Some(mask),
+        ..
+    } = &layers[0].content
+    else {
+        panic!("the group lost its mask");
+    };
+    for (layer, name) in [(&children[0], "child.png"), (&mask.layers[0], "matte.png")] {
+        let LayerContent::Image { asset, .. } = &layer.content else {
+            panic!("not an image");
+        };
+        assert_eq!(
+            asset.location,
+            AssetLocation::File {
+                path: root.join(name).to_string_lossy().into_owned()
+            }
+        );
+    }
 }

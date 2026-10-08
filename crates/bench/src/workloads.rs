@@ -202,8 +202,16 @@ fn fit(mut scene: Scene, width: u32, height: u32) -> Scene {
             if let Some(glow) = &mut effects.glow {
                 glow.blur *= k;
             }
-            if let LayerContent::Group { layers, .. } = &mut layer.content {
+            if let LayerContent::Group {
+                layers,
+                clip: _,
+                mask,
+            } = &mut layer.content
+            {
                 scale_effects(layers, k);
+                if let Some(mask) = mask {
+                    scale_effects(&mut mask.layers, k);
+                }
             }
         }
     }

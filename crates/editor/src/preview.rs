@@ -335,7 +335,16 @@ pub(crate) fn collect_component_requests(
             LayerContent::MissingComponent { component, props } => {
                 out.push((component.clone(), props.clone()));
             }
-            LayerContent::Group { layers, .. } => collect_component_requests(layers, out),
+            LayerContent::Group {
+                layers,
+                clip: _,
+                mask,
+            } => {
+                collect_component_requests(layers, out);
+                if let Some(mask) = mask {
+                    collect_component_requests(&mask.layers, out);
+                }
+            }
             _ => {}
         }
     }
@@ -346,8 +355,15 @@ pub(crate) fn strip_missing_components(layers: &mut Vec<Layer>) {
     while index < layers.len() {
         match &mut layers[index].content {
             LayerContent::Group {
-                layers: children, ..
-            } => strip_missing_components(children),
+                layers: children,
+                clip: _,
+                mask,
+            } => {
+                strip_missing_components(children);
+                if let Some(mask) = mask {
+                    strip_missing_components(&mut mask.layers);
+                }
+            }
             LayerContent::MissingComponent { .. } => {
                 layers.remove(index);
                 continue;
@@ -373,10 +389,20 @@ pub(crate) fn splice_resolved_components(
         match &layers[index].content {
             LayerContent::Group { .. } => {
                 if let LayerContent::Group {
-                    layers: children, ..
+                    layers: children,
+                    clip: _,
+                    mask,
                 } = &mut layers[index].content
                 {
                     splice_resolved_components(children, resolutions, cursor, unresolved);
+                    if let Some(mask) = mask {
+                        splice_resolved_components(
+                            &mut mask.layers,
+                            resolutions,
+                            cursor,
+                            unresolved,
+                        );
+                    }
                 }
                 index += 1;
             }

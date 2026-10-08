@@ -142,7 +142,16 @@ pub(crate) fn absolutize_layer_content(content: &mut LayerContent, asset_root: &
         | LayerContent::Psd { asset, .. } => {
             absolutize_asset(asset, asset_root);
         }
-        LayerContent::Group { layers, .. } => absolutize_layers(layers, asset_root),
+        LayerContent::Group {
+            layers,
+            clip: _,
+            mask,
+        } => {
+            absolutize_layers(layers, asset_root);
+            if let Some(mask) = mask {
+                absolutize_layers(&mut mask.layers, asset_root);
+            }
+        }
         LayerContent::Text { .. }
         | LayerContent::Rect { .. }
         | LayerContent::Path { .. }
