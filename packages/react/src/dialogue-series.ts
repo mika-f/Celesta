@@ -14,8 +14,8 @@ export interface DialogueLine {
    * Defaults to the line's index as a string. Must be unique.
    */
   id?: string;
-  /** Subtitle text. */
-  text: string;
+  /** Subtitle text; may hold `<Span>`. */
+  text: React.ReactNode;
   /**
    * Voice file, resolved from the entry file like `<Audio src>`. Its length
    * is the line's length unless `durationInFrames` is given.

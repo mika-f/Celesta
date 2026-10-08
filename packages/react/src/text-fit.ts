@@ -4,6 +4,8 @@ import type { ReactNode } from 'react';
 import { Group, Text } from './components';
 import type { CommonProps } from './components';
 import { CompositionRuntimeContext } from './hooks';
+import { flattenTextContent, withTextRuns } from './rich-text';
+import type { FlatText } from './rich-text';
 import type { TextStyle } from './scene';
 import {
   asynchronousMeasurer,
@@ -56,34 +58,46 @@ export interface FitTextResult {
 }
 
 /**
- * Finds the largest font size that fits `text` inside the box, during an
- * entry's async `prepare()`. Draw it with `<Text maxWidth={width}
- * style={result.style}>`.
+ * Finds the largest font size that fits `content` (text, which may hold
+ * `<Span>`) inside the box, during an entry's async `prepare()`. Draw it
+ * with `<Text maxWidth={width} style={result.style}>` and the same content.
  */
-export async function fitText(text: string, options: FitTextOptions): Promise<FitTextResult> {
+export async function fitText(content: ReactNode, options: FitTextOptions): Promise<FitTextResult> {
+  const flat = flattenTextContent(content, 'fitText() text');
   const measure = asynchronousMeasurer('fitText()');
   const fonts = prepareFonts(options.fonts);
   const search = searchFontSize(options);
   let step = search.next();
   while (!step.done) {
-    step = search.next(await measure(fitRequest(text, options, step.value, fonts)));
+    step = search.next(await measure(fitRequest(flat, options, step.value, fonts, 'fitText()')));
   }
   return step.value;
 }
 
 /**
- * Finds the largest font size that fits `text` inside the box during render,
- * with the same fonts and shaping as `<Text>`. Unchanged inputs reuse this
- * hook's last result.
+ * Finds the largest font size that fits `content` (text, which may hold
+ * `<Span>`) inside the box during render, with the same fonts and shaping
+ * as `<Text>`. Unchanged inputs reuse this hook's last result.
  */
-export function useFitText(text: string, options: FitTextOptions): FitTextResult {
+export function useFitText(content: ReactNode, options: FitTextOptions): FitTextResult {
+  return useFitFlatText(flattenTextContent(content, 'useFitText() text'), options, 'useFitText()');
+}
+
+function useFitFlatText(flat: FlatText, options: FitTextOptions, owner: string): FitTextResult {
   const lang = React.useContext(CompositionRuntimeContext)?.lang;
   const style = withTextLanguage(options.style ?? {}, lang);
   const fonts = useMeasurementFonts(options.fonts);
-  const key = JSON.stringify({ text, options: { ...options, style, fonts: undefined }, fonts });
+  // Color does not change the fit, so a span whose color animates reuses
+  // the result, as `useTextMetrics` does.
+  const key = JSON.stringify({
+    text: flat.text, fontRuns: flat.fontRuns, owner,
+    options: { ...options, style, fonts: undefined }, fonts,
+  });
   return React.useMemo(() => {
-    const { text, options, fonts } = JSON.parse(key) as {
+    const { text, fontRuns, owner, options, fonts } = JSON.parse(key) as {
       text: string;
+      fontRuns: FlatText['fontRuns'];
+      owner: string;
       options: FitTextOptions;
       fonts: MeasureTextRequest['fonts'];
     };
@@ -91,19 +105,25 @@ export function useFitText(text: string, options: FitTextOptions): FitTextResult
     const search = searchFontSize(options);
     let step = search.next();
     while (!step.done) {
-      step = search.next(measure(fitRequest(text, options, step.value, fonts)));
+      step = search.next(measure(fitRequest({ text, colorRuns: [], fontRuns }, options, step.value, fonts, owner)));
     }
     return step.value;
   }, [key]);
 }
 
 function fitRequest(
-  text: string,
+  flat: FlatText,
   options: FitTextOptions,
   fontSize: number,
   fonts: MeasureTextRequest['fonts'],
+  owner: string,
 ): MeasureTextRequest {
-  return { text, style: fittedStyle(options, fontSize), maxWidth: options.width, fonts };
+  return {
+    text: flat.text,
+    style: withTextRuns(fittedStyle(options, fontSize), flat, owner),
+    maxWidth: options.width,
+    fonts,
+  };
 }
 
 function fittedStyle(options: FitTextOptions, fontSize: number): TextStyle {
@@ -192,7 +212,7 @@ function validate(options: FitTextOptions): void {
 
 export interface TextBoxProps
   extends Omit<CommonProps, 'anchorX' | 'anchorY'>, Omit<FitTextOptions, 'fonts'> {
-  /** Strings or numbers, as for `<Text>`; `null`, `undefined`, and booleans draw nothing. */
+  /** Strings, numbers, and `<Span>`, as for `<Text>`; `null`, `undefined`, and booleans draw nothing. */
   children: ReactNode;
   /** Where the text sits in the box's height when it is shorter. Defaults to `'top'`. */
   verticalAlign?: 'top' | 'middle' | 'bottom';
@@ -218,8 +238,13 @@ export function TextBox(props: TextBoxProps): ReturnType<typeof React.createElem
     children, width, height, minFontSize, maxFontSize, maxLines, lineHeight, step, style,
     verticalAlign = 'top', overflow = 'clip', ...common
   } = props;
-  const text = textBoxText(children);
-  const fit = useFitText(text, { width, height, minFontSize, maxFontSize, maxLines, lineHeight, step, style });
+  const flat = flattenTextContent(children, '<TextBox> children');
+  const text = flat.text;
+  const fit = useFitFlatText(
+    flat,
+    { width, height, minFontSize, maxFontSize, maxLines, lineHeight, step, style },
+    '<TextBox>',
+  );
   if (!fit.fits && overflow === 'error') {
     const preview = text.length > 40 ? `${text.slice(0, 40)}…` : text;
     const lines = maxLines === undefined ? '' : ` in ${maxLines} line${maxLines === 1 ? '' : 's'}`;
@@ -246,20 +271,7 @@ export function TextBox(props: TextBoxProps): ReturnType<typeof React.createElem
         anchorY: 'baseline',
         maxWidth: width,
         style: fit.style,
-        children: text,
+        children,
       }),
   );
-}
-
-function textBoxText(children: ReactNode): string {
-  if (children === null || children === undefined || typeof children === 'boolean') {
-    return '';
-  }
-  if (typeof children === 'string' || typeof children === 'number') {
-    return String(children);
-  }
-  if (Array.isArray(children)) {
-    return children.map(textBoxText).join('');
-  }
-  throw new Error('<TextBox> children must be a string, a number, or an array of those');
 }

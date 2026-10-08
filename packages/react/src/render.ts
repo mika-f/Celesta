@@ -11,6 +11,7 @@ import * as React from 'react';
 import { isRemoteUrl } from './entry-dir';
 import { CompositionRuntimeContext, RerenderRequestContext, RootRuntimeContext, resolveTextLanguage } from './hooks';
 import { TextMetricsFontsContext, withTextLanguage } from './text-measure';
+import { flattenTextContent, withTextRuns } from './rich-text';
 import { ProjectLayersContext, ProjectTrackLayersContext } from './project-runtime';
 import { resolveVisibleLayers } from './psd-preset';
 import type { PsdCharacterBlink, PsdCharacterLipSync, PsdExpression } from './components';
@@ -255,19 +256,6 @@ function extractClip(value: unknown): Clip | undefined {
     height: fields.height,
     cornerRadius: numberOr(fields.cornerRadius, 0),
   };
-}
-
-function extractText(children: unknown): string {
-  if (typeof children === 'string') {
-    return children;
-  }
-  if (typeof children === 'number') {
-    return String(children);
-  }
-  if (Array.isArray(children)) {
-    return children.map(extractText).join('');
-  }
-  throw new Error('<Text> children must be a string, a number, or an array of those');
 }
 
 function resolveAsset(src: unknown): ResolvedAsset {
@@ -604,12 +592,17 @@ function buildLayer(
     content = { type: 'group', layers };
   } else if (node.type === 'text') {
     const maxWidth = props.maxWidth;
+    const flat = flattenTextContent(props.children as React.ReactNode, '<Text> children');
     content = {
       type: 'text',
-      text: flatString(extractText(props.children)),
-      style: withTextLanguage(
-        (props.style as TextStyle | undefined) ?? {},
-        resolveTextLanguage(props.lang, context.lang),
+      text: flatString(flat.text),
+      style: withTextRuns(
+        withTextLanguage(
+          (props.style as TextStyle | undefined) ?? {},
+          resolveTextLanguage(props.lang, context.lang),
+        ),
+        flat,
+        '<Text>',
       ),
       ...(typeof maxWidth === 'number' ? { maxWidth } : {}),
       ...(props.anchorY === 'baseline' ? { baselineAnchor: true } : {}),
