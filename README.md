@@ -19,9 +19,9 @@ for more examples, see the [examples directory](examples) and the [gallery](docs
 
 - **Compose with React:** use components, hooks, sequences, transitions, and
   layouts to build scenes. Join scenes with cuts, cross-fades, slides, or
-  wipes using `<TransitionSeries>`, which works out the overlaps and length. Animate positions, colors, and effects with
-  interpolation and springs, or hold a scene at a chosen frame with
-  `<FreezeFrame>`.
+  wipes using `<TransitionSeries>`, which works out the overlaps and length.
+  Animate positions, colors, and effects with interpolation and springs, or
+  hold a scene at a chosen frame with `<FreezeFrame>`.
 - **Draw and lay out content:** combine rectangles, circles, ellipses, arrows,
   and paths with text. Load fonts, measure text, fit it into a box, and wrap
   Japanese text at phrase boundaries.

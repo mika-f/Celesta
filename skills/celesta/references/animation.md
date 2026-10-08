@@ -227,9 +227,10 @@ type durationInFrames from? easing?>` between two of them. Prefer it to a
 | `'slide'` | The next scene pushes the previous one out, entering from `from`. |
 | `'wipe'` | The next scene is revealed by a straight edge moving in from `from`. |
 
-`from` is `'left'` (default), `'right'`, `'top'`, or `'bottom'`; `easing`
-shapes the progress (default linear, e.g. `Easings.easeInOutCubic`). Slides
-move by the composition's width or height.
+`from` is `'left'` (default), `'right'`, `'top'`, or `'bottom'`; anything
+else throws when the series renders. `easing` shapes the progress (default
+linear, e.g. `Easings.easeInOutCubic`). Slides move by the composition's
+width or height.
 
 Timing rules:
 
@@ -242,8 +243,9 @@ Timing rules:
   transitions `{ type, durationInFrames? }` (scene items must not have a
   `type` key).
 - It throws for: no scene, a transition first or last, two transitions in a
-  row, an unknown `type`, a cut with frames, and a scene shorter than its
-  transitions in and out together (a scene may spend all of its frames in
+  row, an unknown `type`, a cut with frames, a scene or non-cut transition
+  whose `durationInFrames` is not a positive integer, and a scene shorter
+  than its transitions in and out together (a scene may spend all of its frames in
   transitions, but three scenes never show at once).
 - Each scene is a `<Sequence>`: `useCurrentFrame()` is 0 on the first frame of
   its transition in, and `durationInFrames` includes both overlaps. It is

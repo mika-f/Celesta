@@ -217,7 +217,9 @@ interface SceneEdgeTransition extends TransitionSeriesSceneTransition {
  * Group props for one side of a transition at `frame` frames into it. The
  * progress runs from 1/(n+1) on its first frame to n/(n+1) on its last, so
  * every overlapped frame shows both scenes and the frames either side show
- * one scene whole. The entering scene is drawn above the leaving one.
+ * one scene whole: counting those two frames (progress 0 and 1), the n + 1
+ * steps between consecutive frames are all equal. The entering scene is
+ * drawn above the leaving one.
  */
 function present(
   transition: SceneEdgeTransition,
@@ -233,8 +235,9 @@ function present(
     case 'crossfade':
       return side === 'enter' ? { opacity: Math.min(1, Math.max(0, progress)) } : {};
     case 'slide': {
-      // The entering scene starts one frame width (or height) off the edge
-      // it comes from; the leaving one moves the same distance the other way.
+      // At progress 0 the entering scene would sit one frame width (or
+      // height) off the edge it comes from; the leaving one moves the same
+      // distance the other way.
       const offset = side === 'enter' ? sign * (1 - progress) : -sign * progress;
       return horizontal ? { x: offset * width } : { y: offset * height };
     }

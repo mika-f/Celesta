@@ -14,8 +14,9 @@ import {
 import type { TransitionSeriesTransitionProps } from '@celesta/react';
 
 // Five cards, each entered a different way: a cut, a cross-fade, a slide,
-// and a wipe. Every transition overlaps the cards on either side, so the
-// film is 5 × 60 − 3 × 20 = 240 frames, not 300.
+// and a wipe. The cut takes no frames; the other three overlap the cards on
+// either side by 20 frames each, so the film is 5 × 60 − 3 × 20 = 240
+// frames, not 300.
 const SCENE = 60;
 const CARDS: { label: string; color: string; enter?: TransitionSeriesTransitionProps }[] = [
   { label: 'Start', color: '#22314F' },
@@ -39,7 +40,8 @@ function Card({ label, color }: { label: string; color: string }) {
   const frame = useCurrentFrame();
   const { width, height } = useVideoConfig();
   const { enter } = useTransitionSeriesScene();
-  // Each card's sound fades in and out with its picture.
+  // The card's sound ramps with its picture over each cross-fade, slide, or
+  // wipe; across the cut and at the film's ends it stays at 0.8.
   const volume = useTransitionVolume(0.8);
   const caption = enter ? `in: ${enter.type}, ${enter.durationInFrames} frames` : 'first scene';
   const style = { fontFamily: 'sans-serif', align: 'center', fill: { type: 'solid', color: '#FFFFFF' } } as const;

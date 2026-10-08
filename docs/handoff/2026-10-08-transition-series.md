@@ -9,7 +9,9 @@ added. `Series` and `Transition` are unchanged.
 
 - Timing: `computeTransitionSeries(items)` takes the children's props in
   order (scenes `{ durationInFrames }`, transitions `{ type,
-  durationInFrames? }`, told apart by `type`). A transition of n frames
+  durationInFrames? }`, told apart by `type`). The transition element also
+  takes `from` (`'left'` by default; the edge a slide or wipe enters from)
+  and `easing` (linear by default), which only the presentation reads. A transition of n frames
   starts the next scene n frames before the previous one ends; the total is
   the last scene's end. `transitions[i].from` is the overlap's start.
 - Validation (throws): no scene, a transition first or last or after
@@ -34,7 +36,7 @@ added. `Series` and `Transition` are unchanged.
   faded automatically, because multiplying a scene gain into nested
   keyframed volumes is not representable in `Animatable`.
   `useTransitionVolume(volume)` returns `frameKeyframes` ramps over the
-  scene's transitions for an `<Audio>` directly in the scene (keys count
+  scene's transitions (the plain `volume` when neither side has frames) for an `<Audio>` directly in the scene (keys count
   from the scene's start). `useTransitionSeriesScene()` exposes
   `{ index, enter, exit }`.
 - Tests: `packages/react/test/transition-series.test.mjs` (layout,
