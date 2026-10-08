@@ -835,21 +835,26 @@ pub fn validate_font_runs(text: &str, style: &TextStyle) -> Result<(), RenderErr
     Ok(())
 }
 
-/// The byte offset in `shaped` of each code point of `original`, then
-/// `shaped.len()`. `shaped` is `original` with any word joiners phrase line
+/// Where each code point of `original` starts in `shaped`, then where the
+/// line ends. `shaped` is `original` with any word joiners phrase line
 /// breaking inserted, told apart from original ones as `source_offsets`
-/// does.
+/// does. A code point starts at the first joiner inserted before it, since
+/// `source_offsets` counts those joiners as its own: a run then takes the
+/// joiners before its first character and leaves the ones before the
+/// character after it to that character.
 fn shaped_byte_offsets(shaped: &str, original: &str) -> Vec<usize> {
     let mut offsets = Vec::with_capacity(original.len() + 1);
     let mut original = original.chars().peekable();
+    let mut joiners = None;
     for (byte, character) in shaped.char_indices() {
         if character == WORD_JOINER && original.peek() != Some(&WORD_JOINER) {
+            joiners.get_or_insert(byte);
             continue;
         }
-        offsets.push(byte);
+        offsets.push(joiners.take().unwrap_or(byte));
         original.next();
     }
-    offsets.push(shaped.len());
+    offsets.push(joiners.unwrap_or(shaped.len()));
     offsets
 }
 

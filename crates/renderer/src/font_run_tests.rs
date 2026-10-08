@@ -363,6 +363,42 @@ fn a_run_in_a_taller_family_does_not_move_the_baseline() {
 }
 
 #[test]
+fn a_run_ending_inside_a_phrase_does_not_move_the_baseline() {
+    use celesta_composition::LineBreak;
+    let mut rasterizer = two_family_rasterizer();
+    let plain = TextStyle {
+        line_break: Some(LineBreak::Phrase),
+        ..bebas(48.0)
+    };
+    let text = "今日は天気です";
+    let plain_y = rasterizer
+        .shaped_buffer(text, &plain, Some(1000.0), 1.0)
+        .layout_runs()
+        .next()
+        .unwrap()
+        .line_y;
+    // 日 alone in Plex Mono: the word joiner phrase breaking puts after it
+    // belongs to は, outside the run, and must keep the text's font.
+    for runs in [
+        vec![run(1, 2, None, Some("IBM Plex Mono"))],
+        vec![run(0, 3, None, Some("IBM Plex Mono"))],
+    ] {
+        let spanned = TextStyle {
+            font_runs: runs,
+            ..plain.clone()
+        };
+        let buffer = rasterizer.shaped_buffer(text, &spanned, Some(1000.0), 1.0);
+        let baselines = rasterizer.run_baselines(&buffer, text, &spanned).unwrap();
+        assert!(
+            (baselines[0] - plain_y).abs() < 1e-3,
+            "{:?}: {} vs {plain_y}",
+            spanned.font_runs,
+            baselines[0]
+        );
+    }
+}
+
+#[test]
 fn a_line_entirely_in_a_run_lines_up_with_the_others() {
     let mut rasterizer = two_family_rasterizer();
     let plain = TextStyle {
