@@ -154,6 +154,22 @@ fn a_luminance_mask_shows_the_children_by_the_masks_luma() {
 }
 
 #[test]
+fn a_luminance_mask_weighs_the_channels_by_rec_709() {
+    // Opaque red has luma 0.2126: 255 * 0.2126 + 20 * 0.7874 of the red
+    // channel over the background (20, 22, 28), not the half or the whole
+    // an unweighted or alpha-only mask would show.
+    let frame = render(vec![masked(
+        EvaluatedTransform::default(),
+        GroupMask {
+            mode: MaskMode::Luminance,
+            ..mask(vec![rect(0.0, 0.0, 40.0, 40.0, "#FF0000FF")])
+        },
+        vec![red_square()],
+    )]);
+    assert_close(pixel(&frame, 20, 20), [70, 17, 22, 255]);
+}
+
+#[test]
 fn an_inverted_mask_shows_the_children_where_it_is_not_drawn() {
     let frame = render(vec![masked(
         EvaluatedTransform::default(),

@@ -4775,6 +4775,80 @@ fn a_shadow_follows_a_masked_shape_like_the_cpu_renderer() {
 }
 
 #[test]
+fn masks_on_cropped_canvases_like_the_cpu_renderer() {
+    let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+        return;
+    };
+    // Far bigger than `CanvasRegion::STEP`, so a small mask's canvas is
+    // cropped and sits away from the scene's origin.
+    let masked = || {
+        masked_group(
+            EvaluatedTransform::default(),
+            GroupMask {
+                mode: MaskMode::Luminance,
+                ..alpha_mask(vec![
+                    corner_rect("dark", 170.0, 130.0, 60.0, 60.0, "#404040FF"),
+                    Layer {
+                        blend_mode: BlendMode::Screen,
+                        ..disc("light", 200.0, 160.0, 20.0, "#C0C0C0FF")
+                    },
+                ])
+            },
+            vec![corner_rect("red", 150.0, 120.0, 150.0, 140.0, "#FF0000FF")],
+        )
+    };
+    let cases: Vec<(&str, Vec<Layer>)> = vec![
+        ("cropped", vec![masked()]),
+        (
+            "cropped inside a glowing, translated group",
+            vec![Layer {
+                effects: celesta_composition::LayerEffects {
+                    glow: Some(celesta_composition::LayerGlow {
+                        color: "#00FF00C0".to_owned(),
+                        blur: 6.0,
+                    }),
+                    ..Default::default()
+                },
+                ..group(
+                    EvaluatedTransform {
+                        position: Point { x: 40.0, y: 30.0 },
+                        anchor: Point { x: 0.0, y: 0.0 },
+                        ..EvaluatedTransform::default()
+                    },
+                    vec![masked()],
+                )
+            }],
+        ),
+    ];
+    for (case, layers) in cases {
+        let mut scene = empty_scene(512, 384);
+        scene.layers = layers;
+        let draws = renderer.prepare_draws(&scene).unwrap();
+        let canvas = draws
+            .steps
+            .iter()
+            .find_map(|step| match step {
+                GpuStep::BeginMask { canvas } => Some(*canvas),
+                _ => None,
+            })
+            .expect("the scene has a mask");
+        assert!(
+            canvas.x > 0 && canvas.y > 0 && canvas.width < 512 && canvas.height < 384,
+            "{case}: the mask's canvas is not cropped: {canvas:?}"
+        );
+        let gpu = renderer.render(&scene).unwrap();
+        let cpu = celesta_renderer::CpuRenderer::default()
+            .render(&scene)
+            .unwrap();
+        let difference = max_channel_difference(&gpu, &cpu);
+        assert!(
+            difference <= 5,
+            "{case}: channels differ by up to {difference}"
+        );
+    }
+}
+
+#[test]
 fn a_path_masks_a_group_like_the_cpu_renderer() {
     let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
         return;

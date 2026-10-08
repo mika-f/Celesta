@@ -22,7 +22,7 @@ fn adds_and_reduces_times() {
 }
 
 #[test]
-fn a_group_without_a_clip_serializes_and_parses_as_before() {
+fn a_group_without_a_clip_or_mask_serializes_and_parses_as_before() {
     let content = LayerContent::Group {
         layers: Vec::new(),
         clip: None,
@@ -34,17 +34,6 @@ fn a_group_without_a_clip_serializes_and_parses_as_before() {
         serde_json::from_value::<LayerContent>(json).unwrap(),
         content
     );
-}
-
-#[test]
-fn a_group_without_a_mask_keeps_its_json() {
-    let content = LayerContent::Group {
-        layers: Vec::new(),
-        clip: None,
-        mask: None,
-    };
-    let json = serde_json::to_value(&content).unwrap();
-    assert_eq!(json, serde_json::json!({ "type": "group", "layers": [] }));
 }
 
 #[test]
