@@ -1,5 +1,5 @@
 use crate::types::{Color, RgbaFrame};
-use celesta_composition::BlendMode;
+use celesta_composition::{BlendMode, MaskMode};
 
 /// Composites a same-size coverage `mask` onto `frame`, coloring each pixel
 /// with `color_at(x, y)`.
@@ -149,6 +149,21 @@ pub(crate) fn blend(destination: &mut [u8], source: Color, opacity: f64) {
         destination[channel] = output.round().clamp(0.0, 255.0) as u8;
     }
     destination[3] = (output_alpha * 255.0).round().clamp(0.0, 255.0) as u8;
+}
+
+/// How much of a masked group shows through the straight-alpha mask pixel
+/// `matte`, 0 to 1: its alpha, or the Rec. 709 luma of its sRGB-encoded
+/// color times its alpha; `1 - m` when inverted.
+pub(crate) fn mask_value(mode: MaskMode, invert: bool, matte: &[u8]) -> f64 {
+    let alpha = f64::from(matte[3]) / 255.0;
+    let value = match mode {
+        MaskMode::Alpha => alpha,
+        MaskMode::Luminance => {
+            let [red, green, blue] = [matte[0], matte[1], matte[2]].map(|c| f64::from(c) / 255.0);
+            (0.2126 * red + 0.7152 * green + 0.0722 * blue) * alpha
+        }
+    };
+    if invert { 1.0 - value } else { value }
 }
 
 /// The per-channel mixing function `B(backdrop, source)` of a PSD layer's
