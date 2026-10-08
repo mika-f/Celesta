@@ -119,6 +119,10 @@ pub(crate) fn property_display(
             label,
             default_value,
             ..
+        }
+        | ComponentPropertyField::Path {
+            label,
+            default_value,
         } => (
             label,
             current

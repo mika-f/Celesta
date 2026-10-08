@@ -16,6 +16,7 @@ use celesta_exporter::{
     ReactRuntimeOptions, RenderQuality, VideoEncoding, parse_timecode,
 };
 use celesta_project::Project;
+use celesta_react_bridge::PropertyInputs;
 
 const AFTER_HELP: &str = "\
 Timecodes are HH:MM:SS(.mmm), MM:SS(.mmm) or SS(.mmm); --from/--to select a
@@ -26,6 +27,11 @@ output-000090.png names; frame numbers are zero-based. --every <n> picks
 frames 0, n, 2n, ... of the --from/--to span (or the whole composition) plus
 its last frame. --contact-sheet writes the selection as one labelled grid
 image instead.
+
+--props and --props-file set the values an entry declares with
+defineProjectProperties(). Highest precedence first: --props, --props-file,
+the --project file's properties, the declared defaults. Every value is
+checked against the declaration before anything renders.
 
 --json prints one line of JSON on stdout when the export ends, and nothing
 else: status, the composition's size, fps and frame count, every written
@@ -51,6 +57,13 @@ struct Cli {
     /// Companion JSON project for <ProjectTimeline />/<ProjectTrack />.
     #[arg(long, value_name = "PROJECT", requires = "react")]
     project: Option<PathBuf>,
+    /// Project property values as a JSON object; wins over --props-file.
+    #[arg(long, value_name = "JSON", requires = "react")]
+    props: Option<String>,
+    /// JSON file of project property values; relative paths in it resolve
+    /// from the file's directory.
+    #[arg(long, value_name = "FILE", requires = "react")]
+    props_file: Option<PathBuf>,
     /// Replace an existing output file.
     #[arg(long)]
     overwrite: bool,
@@ -276,7 +289,7 @@ fn export(
         if cli.react {
             exporter.export_react_png_with(
                 &cli.source,
-                &default_react_runtime(),
+                &react_runtime(cli)?,
                 companion,
                 &png_export,
                 &cli.output,
@@ -292,7 +305,7 @@ fn export(
             )
         }
     } else if cli.react {
-        let runtime = default_react_runtime();
+        let runtime = react_runtime(cli)?;
         match companion {
             Some(companion) => exporter.export_react_entry_with_project_and_progress(
                 &cli.source,
@@ -341,7 +354,9 @@ fn export_range(start: Option<Time>, end: Option<Time>) -> Result<Option<ExportR
     }))
 }
 
-fn default_react_runtime() -> ReactRuntimeOptions {
+fn react_runtime(cli: &Cli) -> Result<ReactRuntimeOptions, ExportError> {
     let (node, cli_script) = celesta_react_bridge::runtime_paths();
-    ReactRuntimeOptions::new(node, cli_script)
+    let properties = PropertyInputs::load(cli.props_file.as_deref(), cli.props.as_deref())
+        .map_err(ExportError::Properties)?;
+    Ok(ReactRuntimeOptions::new(node, cli_script).with_properties(properties))
 }

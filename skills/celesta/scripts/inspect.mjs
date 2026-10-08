@@ -6,8 +6,12 @@
 // paths for portrait setup.
 //
 //   node inspect.mjs <entry.tsx> [--frames 0,45,-1] [--every N] [--json]
+//                    [--props-file variant.json] [--props '{"title":"..."}']
 //   node inspect.mjs --psd-layers <file.psd>
 //
+// --props/--props-file pass project property values exactly as
+// Celesta-export does (--props wins; relative paths in the file resolve from
+// the file's directory).
 // Options: --runtime <cli.js> and --node <node> override runtime discovery
 // (also CELESTA_REACT_CLI / CELESTA_NODE). --timeout <seconds> (default 180).
 // Exit code 1 means the entry failed to load, a frame failed, or a
@@ -21,11 +25,15 @@ import * as path from 'node:path';
 import * as readline from 'node:readline';
 
 const USAGE = `usage: node inspect.mjs <entry.tsx> [--frames 0,45,-1] [--every N] [--json]
+                         [--props-file <file.json>] [--props <json>]
        node inspect.mjs --psd-layers <file.psd>
 options: --runtime <cli.js>  --node <node>  --timeout <seconds>`;
 
 function parseArgs(argv) {
-  const options = { frames: null, every: null, json: false, psd: null, runtime: null, node: null, timeout: 180, entry: null };
+  const options = {
+    frames: null, every: null, json: false, psd: null, runtime: null, node: null, timeout: 180, entry: null,
+    props: null, propsFile: null,
+  };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     const value = () => {
@@ -39,6 +47,8 @@ function parseArgs(argv) {
     else if (arg === '--runtime') options.runtime = value();
     else if (arg === '--node') options.node = value();
     else if (arg === '--timeout') options.timeout = Number(value());
+    else if (arg === '--props') options.props = value();
+    else if (arg === '--props-file') options.propsFile = value();
     else if (arg === '-h' || arg === '--help') { console.log(USAGE); process.exit(0); }
     else if (arg.startsWith('--')) fail(`unknown option ${arg}\n${USAGE}`);
     else options.entry = arg;
@@ -132,6 +142,37 @@ function probeMedia(mediaPath) {
 
 // ------------------------------------------------------------ inspection
 
+/** The same layers Celesta-export sends: --props-file, then --props on top. */
+function readPropertyInputs(options) {
+  const layers = [];
+  const object = (text, origin) => {
+    let value;
+    try {
+      value = JSON.parse(text);
+    } catch (error) {
+      fail(`${origin} is not valid JSON: ${error.message}`);
+    }
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+      fail(`${origin} must be a JSON object of property values`);
+    }
+    return value;
+  };
+  if (options.propsFile !== null) {
+    const file = path.resolve(options.propsFile);
+    if (!existsSync(file)) fail(`--props-file not found: ${file}`);
+    layers.push({
+      source: 'propsFile',
+      file: options.propsFile,
+      baseDir: path.dirname(file),
+      values: object(readFileSync(file, 'utf8'), `--props-file ${options.propsFile}`),
+    });
+  }
+  if (options.props !== null) {
+    layers.push({ source: 'props', baseDir: process.cwd(), values: object(options.props, '--props') });
+  }
+  return layers;
+}
+
 async function inspectEntry(options) {
   const entry = path.resolve(options.entry);
   if (!existsSync(entry)) fail(`entry not found: ${entry}`);
@@ -139,7 +180,9 @@ async function inspectEntry(options) {
   const { cli, node } = findRuntime(options, [entryDir, process.cwd()]);
   if (!options.json) console.log(`runtime: ${cli}\nnode:    ${node}\nentry:   ${entry}\n`);
 
-  const child = spawn(node, [cli, entry], { stdio: ['pipe', 'pipe', 'inherit'] });
+  const propertyInputs = readPropertyInputs(options);
+  const args = propertyInputs.length > 0 ? [cli, entry, '--properties-stdin'] : [cli, entry];
+  const child = spawn(node, args, { stdio: ['pipe', 'pipe', 'inherit'] });
   const timer = setTimeout(() => {
     console.error(`timed out after ${options.timeout}s; is prepare() waiting on something?`);
     child.kill();
@@ -153,6 +196,7 @@ async function inspectEntry(options) {
     return JSON.parse(value);
   };
   const send = (message) => child.stdin.write(`${JSON.stringify(message)}\n`);
+  if (propertyInputs.length > 0) send({ propertyInputs });
 
   // `prepare()` may open a side channel before the handshake, and an entry that
   // does is still loadable: answer what can be answered here and let it fall
@@ -184,6 +228,14 @@ async function inspectEntry(options) {
     const message = await receive();
     if (message.error) {
       console.error(`ERROR loading entry: ${message.error}`);
+      child.kill();
+      process.exit(1);
+    }
+    if (message.invalidProperties) {
+      console.error('ERROR invalid project properties:');
+      for (const { key, source, message: text } of message.invalidProperties) {
+        console.error(`  - ${source}: ${key ? `${key}: ` : ''}${text}`);
+      }
       child.kill();
       process.exit(1);
     }

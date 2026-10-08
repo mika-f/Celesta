@@ -33,7 +33,7 @@ test('--length-prefixed frames every message with its UTF-8 byte count', () => {
     }
   `);
   try {
-    const result = spawnSync(process.execPath, [cli, '--length-prefixed', entry], {
+    const result = spawnSync(process.execPath, [cli, entry, '--length-prefixed'], {
       input: `${JSON.stringify({ time: { value: 0, timescale: 1 } })}\n`,
     });
     assert.equal(result.status, 0, result.stderr.toString());

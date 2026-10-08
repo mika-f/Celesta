@@ -47,6 +47,7 @@ use actions::{
     SetUpTypeScript, SetUpTypeScriptInFolder, ToggleLoop, TogglePlayback, ToggleSafeAreas,
     ZoomTimelineIn, ZoomTimelineOut, ZoomTimelineToFit,
 };
+use source::PropertyArgs;
 use view::EditorView;
 
 mod audio_cache;
@@ -82,7 +83,8 @@ fn run() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
     let path = args.path;
-    let mut editor = EditorView::open(path.as_deref(), args.driver)?;
+    let property_args = PropertyArgs::new(args.props_file, args.props);
+    let mut editor = EditorView::open(path.as_deref(), property_args, args.driver)?;
 
     let app = gpui_kit::application().with_assets(CelestaAssets);
     app.run(move |cx: &mut App| {

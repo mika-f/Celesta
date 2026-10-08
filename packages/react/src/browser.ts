@@ -14,6 +14,7 @@ export { Easings, interpolate, interpolateColor, progress, spring } from './anim
 export { frameToTimecode, timecodeToFrame } from './time';
 export { beatAt, cueAt, useBeat, useCue } from './timing';
 export { Series, Stagger, computeSeries } from './series';
+export { TransitionSeries, computeTransitionSeries, useTransitionSeriesScene, useTransitionVolume } from './transition-series';
 export { Arrow, Circle, Ellipse, Line, Path, Polyline, pointOnPolyline } from './shapes';
 export { Camera } from './camera';
 export { TextReveal, useCountUp, useTypewriter } from './text-motion';
@@ -24,5 +25,5 @@ export { Transition } from './transition';
 export { Center, Fit, Grid, SafeArea, Stack, useLayoutBounds } from './layout';
 export { DebugBounds, DebugOverlay } from './debug';
 export { registerComponent, getComponentSchema } from './registry';
-export { defineProjectProperties, listProjectProperties } from './properties';
+export { defineProjectProperties, getProjectProperty, listProjectProperties } from './properties';
 export { mediaDurationInFrames } from './media';

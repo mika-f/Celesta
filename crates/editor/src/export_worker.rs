@@ -3,6 +3,7 @@ use celesta_exporter::{
     GpuDriver, ReactRuntimeOptions,
 };
 use celesta_project::Project;
+use celesta_react_bridge::PropertyInputs;
 use std::error::Error;
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -26,6 +27,8 @@ pub(crate) enum ExportSource {
         entry: PathBuf,
         node: PathBuf,
         cli_script: PathBuf,
+        /// The `--props`/`--props-file` values the preview uses.
+        properties: PropertyInputs,
     },
 }
 
@@ -72,9 +75,11 @@ impl ExportWorker {
                             entry,
                             node,
                             cli_script,
+                            properties,
                         } => exporter.export_react_entry_cancellable(
                             entry,
-                            &ReactRuntimeOptions::new(node.clone(), cli_script.clone()),
+                            &ReactRuntimeOptions::new(node.clone(), cli_script.clone())
+                                .with_properties(properties.clone()),
                             &request.output,
                             &request.cancellation,
                             progress,

@@ -360,10 +360,14 @@
         "freeze-frame-body": "<slot0/> draws its children at root composition frame 60, even when wrapped in a Sequence. Child hooks, video, lip sync, and blinking follow that time; nested sequences still apply their own offsets. Audio inside FreezeFrame is muted."
       },
       "motion-toolkit": {
-        "these-helpers-cover-the-patterns-that-come": "These helpers cover the patterns that come up in almost every video: scenes in a row, lists that cascade in, and cuts on the beat. Each is built on <slot0/>, <slot1/>, and the frame, so everything stays scrubbable and deterministic. Text effects, the camera, and line drawing are on <slot2>the next page</slot2>; seeded randomness and noise are in <slot3><slot4/></slot3>.",
+        "these-helpers-cover-the-patterns-that-come": "These helpers cover the patterns that come up in almost every video: scenes in a row (with transitions between them), lists that cascade in, and cuts on the beat. Each is built on <slot0/>, <slot1/>, and the frame, so everything stays scrubbable and deterministic. Text effects, the camera, and line drawing are on <slot2>the next page</slot2>; seeded randomness and noise are in <slot3><slot4/></slot3>.",
         "scenes-back-to-back": "Scenes back to back",
         "plays-its-children-one-after-another-so": "<slot0/> plays its <slot1/> children one after another, so you write each scene’s length instead of its start frame. A negative <slot2/> overlaps a scene with the one before it. <slot3/> does the same arithmetic without rendering, which is handy for the composition’s total length:",
         "three-scenes-sized-from-their-lengths": "Three scenes, sized from their lengths",
+        "transitions-between-scenes": "Transitions between scenes",
+        "transition-series-body": "<slot0/> lays scenes out like <slot1/>, with a <slot2/> between two of them: <slot3/> cuts, <slot4/> fades the next scene in over the previous one, <slot5/> pushes the previous scene out, and <slot6/> reveals the next scene behind a moving edge. A transition overlaps the scenes on either side by its <slot7/>, so <slot8/> returns each scene’s start and the total length, shortened by every overlap:",
+        "scenes-joined-by-a-cross-fade-and-a-slide": "Scenes joined by a cross-fade and a slide",
+        "transition-series-rules": "Each scene is an ordinary Sequence whose frame 0 is the first frame of its transition in, and the next scene is drawn above. A transition longer than either scene, or a scene too short for its transitions in and out together, throws instead of leaving a gap or showing three scenes at once. Overlapping scenes play their sound together: <slot0/> gives an Audio in the scene a volume that fades with its picture, and <slot1/> reports the scene’s transitions for any other timing.",
         "cascades-and-entrances": "Cascades and entrances",
         "is-a-clamped-0-1-value-for": "<slot0/> is a clamped 0–1 value for “how far through this span are we”: the building block of most entrances. <slot1/> starts each child <slot2/> frames after the previous one, so an entrance written for frame 0 cascades down a list:",
         "rows-that-arrive-one-after-another": "Rows that arrive one after another",
@@ -377,8 +381,8 @@
         "from-formats-for-an-on-screen-clock": "<slot0/>, from <slot1/>, formats <slot2/> for an on-screen clock.",
         "metadata": {
           "title": "Scenes, cues & beats",
-          "description": "Sequencing, staggering, and beat sync.",
-          "keywords": "Series Stagger computeSeries progress useBeat beatAt bpm music useCue cueAt scenes cascade frameToTimecode timecode"
+          "description": "Sequencing, transitions, staggering, and beat sync.",
+          "keywords": "Series TransitionSeries computeTransitionSeries useTransitionVolume crossfade slide wipe transition Stagger computeSeries progress useBeat beatAt bpm music useCue cueAt scenes cascade frameToTimecode timecode"
         }
       },
       "text-camera-lines": {
@@ -597,7 +601,7 @@
         "metadata": {
           "title": "@celesta/react",
           "description": "A compact reference for everything in @celesta/react.",
-          "keywords": "api props Composition Rect Text Group Image Video Audio Font Sequence Series Stagger Transition Camera Line Polyline Path Circle Ellipse Arrow TextReveal useBeat useCue Character CharacterView Dialogue hooks reference"
+          "keywords": "api props Composition Rect Text Group Image Video Audio Font Sequence Series TransitionSeries Stagger Transition Camera Line Polyline Path Circle Ellipse Arrow TextReveal useBeat useCue Character CharacterView Dialogue hooks reference"
         },
         "api": {
           "set-and-optional-supplies-the-default-text": "Set <slot0/>, <slot1/>, <slot2/>, and <slot3/>. Optional <slot4/> supplies the default text language. Return exactly one from your default export.",
@@ -610,6 +614,7 @@
           "draws-its-children-as-the-composition-looked": "Draws its children as the composition looked at an absolute <slot0/>, silently.",
           "a-fade-slide-or-scale-or-several": "A fade, slide, or scale (or several at once) at the start or end of the enclosing sequence.",
           "scenes-back-to-back-by-length-see": "Scenes back to back, by length. See <slot0><slot1/></slot0>.",
+          "transition-series": "Scenes joined by cuts, cross-fades, slides, or wipes, with the overlaps and total length computed. See <slot0><slot1/></slot0>.",
           "starts-each-child-a-fixed-number-of": "Starts each child a fixed number of frames after the previous one.",
           "a-clamped-eased-0-1-value-for": "A clamped, eased 0–1 value for a span of frames.",
           "beats-bars-and-a-pulse-for-a": "Beats, bars, and a pulse for a tempo in BPM.",

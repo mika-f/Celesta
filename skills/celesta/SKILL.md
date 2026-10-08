@@ -18,6 +18,7 @@ watches the result in the app.
 | Motion graphics, generated or data-driven scenes, reusable components, anything computed | React composition (`film.tsx`) |
 | An explicit, hand-placed timeline of clips (gameplay footage, voice lines, simple titles) | JSON project (`project.celesta.json`) |
 | A JSON timeline with React-made overlays or components | Both: a `.tsx` that renders `<ProjectTimeline />`, exported with `--project` |
+| One template rendered with different titles, colors, or data files | React with `defineProjectProperties`, exported with `--props-file` per variant ([project-data.md](references/project-data.md#pass-values-from-the-command-line)) |
 
 When the user already has a file, keep working in that format. Default to
 React for new work: it is more expressive and easier to verify. For a new
@@ -168,13 +169,13 @@ Load only the one you need; each is self-contained.
 | --- | --- |
 | Find `Celesta`/`Celesta-export`, start a project (`--init`), add npm packages, type-check, how the user previews | [setup.md](references/setup.md) |
 | Entry file and `prepare()`, layer props, `Rect`/gradients, `Path`/`Line`/`Polyline`, `Circle`/`Ellipse`/`Arrow`, `Group` clip, `Image`, `Video`, `Audio`, `Font`/`Assets`, layout helpers (`Center`, `SafeArea`, `Stack`, `Grid`, `Fit`), `preloadMedia`, audio keyframes and `frameKeyframes`, debug guides | [react-core.md](references/react-core.md) |
-| Frame hooks, `interpolate`, `interpolateColor`, `Easings`, `spring`, `progress`, `Sequence`, `Series`, `Stagger`, `Transition`, `useBeat`, `useCue`, `Camera`, timecodes | [animation.md](references/animation.md) |
+| Frame hooks, `interpolate`, `interpolateColor`, `Easings`, `spring`, `progress`, `Sequence`, `Series`, `TransitionSeries`, `Stagger`, `Transition`, `useBeat`, `useCue`, `Camera`, timecodes | [animation.md](references/animation.md) |
 | `Text`, `TextStyle`, fonts and fallback, text language (`lang`), emoji, line breaking, `TextReveal`, `useTypewriter`, `useCountUp`, `useTextMetrics`/`measureText`, `TextBox`/`useFitText`/`fitText` | [text.md](references/text.md) |
 | Syntax-highlighted code, typing code, highlighted lines, carets (`@celesta/code`) | [code.md](references/code.md) |
 | Seeded random, noise, clamp/lerp/remap, waves, angles, points (`@celesta/math`) | [math.md](references/math.md) |
 | Characters, portraits, subtitles (incl. custom `subtitle.render` bands and name plates), voices, `planDialogue`/`DialogueSeries`, lip sync (WAV or VOICEVOX), PSD portraits, blinking, in React and JSON | [dialogue.md](references/dialogue.md) |
 | `.celesta.json` schema, time values, tracks, item types, transforms, keyframes, easing names, validation rules, full example | [project-json.md](references/project-json.md) |
-| React reading a project (`useProjectProperty`), `defineProjectProperties`, `<ProjectTimeline />`, `registerComponent` | [project-data.md](references/project-data.md) |
+| Template inputs (`defineProjectProperties`, `useProjectProperty`, `getProjectProperty`, `--props`/`--props-file`), React reading a project, `<ProjectTimeline />`, `registerComponent` | [project-data.md](references/project-data.md) |
 | `inspect.mjs`, PNG frames, contact sheets, checking JSON and audio | [verify.md](references/verify.md) |
 | MP4 export options, `--json` results, progress output, exporting without a GPU | [export.md](references/export.md) |
 | What is slow to render and how to find it | [performance.md](references/performance.md) |

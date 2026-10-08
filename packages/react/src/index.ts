@@ -86,6 +86,21 @@ export type { ActiveCue, Beat, BeatOptions, Cue } from './timing';
 export { Series, Stagger, computeSeries } from './series';
 export type { SeriesItem, SeriesProps, SeriesSequenceProps, SeriesTiming, StaggerProps } from './series';
 
+export { TransitionSeries, computeTransitionSeries, useTransitionSeriesScene, useTransitionVolume } from './transition-series';
+export type {
+  TransitionSeriesEdge,
+  TransitionSeriesItem,
+  TransitionSeriesProps,
+  TransitionSeriesScene,
+  TransitionSeriesSceneItem,
+  TransitionSeriesSceneTransition,
+  TransitionSeriesSequenceProps,
+  TransitionSeriesTiming,
+  TransitionSeriesTransitionItem,
+  TransitionSeriesTransitionProps,
+  TransitionSeriesType,
+} from './transition-series';
+
 export { DialogueSeries, planDialogue } from './dialogue-series';
 export type {
   DialogueLine,
@@ -173,7 +188,7 @@ export type { ProjectProviderProps, ProjectTrackProps } from './project-runtime'
 export { getComponentSchema, registerComponent } from './registry';
 export type { ComponentDefinition, ComponentPropertyField, ComponentPropertySchema } from './registry';
 
-export { defineProjectProperties, listProjectProperties } from './properties';
+export { defineProjectProperties, getProjectProperty, listProjectProperties } from './properties';
 export type { ProjectPropertyField, ProjectPropertySchema } from './properties';
 
 export {

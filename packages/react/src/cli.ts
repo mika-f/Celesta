@@ -18,8 +18,10 @@ import type {
 } from './render';
 import { listComponentSchemas } from './registry';
 import type { ComponentPropertySchema } from './registry';
-import { listProjectProperties } from './properties';
+import { holdProjectPropertyValues, listProjectProperties, setProjectPropertyValues } from './properties';
 import type { ProjectPropertyField } from './properties';
+import { resolvePropertyInputs } from './property-inputs';
+import type { PropertyInputLayer, PropertyIssue } from './property-inputs';
 import { setMediaProbe } from './media';
 import { setTextMeasurer } from './text-measure';
 import type { MeasureTextRequest, TextMetrics } from './text-measure';
@@ -67,16 +69,14 @@ function isResolveRequest(request: Request): request is ResolveRequest {
 }
 
 async function main(): Promise<void> {
-  const args = process.argv.slice(2);
-  // The Rust bridge reads length-prefixed messages; without the flag every
-  // message is one JSON line, which is easier to read from scripts and tests.
-  lengthPrefixed = args[0] === '--length-prefixed';
-  const entry = lengthPrefixed ? args[1] : args[0];
-  if (!entry) {
-    process.stderr.write('usage: celesta-react-render [--length-prefixed] <entry-file>\n');
+  const [entry, ...options] = process.argv.slice(2);
+  if (!entry || options.some((option) => option !== PROPERTIES_STDIN && option !== LENGTH_PREFIXED)) {
+    process.stderr.write(`usage: celesta-react-render <entry-file> [${PROPERTIES_STDIN}] [${LENGTH_PREFIXED}]\n`);
     process.exitCode = 1;
     return;
   }
+
+  lengthPrefixed = options.includes(LENGTH_PREFIXED);
 
   const entryPath = path.resolve(entry);
   // Local-file helpers used during `prepare()` (loadLipSync, loadPsdPreset)
@@ -108,8 +108,20 @@ async function main(): Promise<void> {
     return textMeasureResponse(lines.nextSync());
   });
 
+  let propertyLayers: PropertyInputLayer[] = [];
+  if (options.includes(PROPERTIES_STDIN)) {
+    try {
+      propertyLayers = await readPropertyInputs(lines);
+    } catch (error) {
+      writeLine({ error: describeError(error) });
+      process.exitCode = 1;
+      return;
+    }
+  }
+
   let defaultExport: EntryComponent;
   let prepare: (() => Promise<void>) | undefined;
+  holdProjectPropertyValues();
   try {
     ({ defaultExport, prepare } = await loadEntry(entryPath));
   } catch (error) {
@@ -117,6 +129,23 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
+
+  // The schema exists only once the entry's module scope has run; checking
+  // here reports every bad value before `prepare()` or any frame uses one.
+  let properties: ReturnType<typeof resolvePropertyInputs>;
+  try {
+    properties = resolvePropertyInputs(propertyLayers, listProjectProperties(), path.dirname(entryPath));
+  } catch (error) {
+    writeLine({ error: describeError(error) });
+    process.exitCode = 1;
+    return;
+  }
+  if (properties.issues.length > 0) {
+    writeLine({ invalidProperties: properties.issues });
+    process.exitCode = 1;
+    return;
+  }
+  setProjectPropertyValues(properties.values, properties.defaults);
 
   if (prepare) {
     // Runs once, before the persistent root is mounted and before any frame
@@ -190,6 +219,45 @@ async function main(): Promise<void> {
   }
 }
 
+/** With this option the first stdin line carries `{ "propertyInputs": PropertyInputLayer[] }`. */
+const PROPERTIES_STDIN = '--properties-stdin';
+/**
+ * With this option every message on stdout is a little-endian u32 byte count
+ * followed by the JSON, as the Rust bridge reads it; without it, every
+ * message is one JSON line, which is easier to read from scripts and tests.
+ */
+const LENGTH_PREFIXED = '--length-prefixed';
+
+async function readPropertyInputs(lines: AsyncIterator<string>): Promise<PropertyInputLayer[]> {
+  const next = await lines.next();
+  if (next.done) {
+    throw new Error('Celesta closed stdin before sending the project property inputs');
+  }
+  let message: { propertyInputs?: unknown };
+  try {
+    message = JSON.parse(next.value);
+  } catch (error) {
+    throw new Error(`invalid project property inputs: ${describeError(error)}`);
+  }
+  if (!Array.isArray(message.propertyInputs) || !message.propertyInputs.every(isPropertyInputLayer)) {
+    throw new Error('invalid project property inputs: expected a propertyInputs array of { source, baseDir, values } layers');
+  }
+  return message.propertyInputs;
+}
+
+function isPropertyInputLayer(layer: unknown): layer is PropertyInputLayer {
+  if (layer === null || typeof layer !== 'object') return false;
+  const { source, baseDir, values, file } = layer as Record<string, unknown>;
+  return (
+    (source === 'project' || source === 'propsFile' || source === 'props') &&
+    typeof baseDir === 'string' &&
+    values !== null &&
+    typeof values === 'object' &&
+    !Array.isArray(values) &&
+    (file === undefined || typeof file === 'string')
+  );
+}
+
 async function requestMediaProbe(
   lines: AsyncIterator<string>,
   path: string,
@@ -257,6 +325,7 @@ function writeLine(
     | { components: ComponentResolution[] }
     | { probeMedia: { path: string } }
     | { measureText: MeasureTextRequest }
+    | { invalidProperties: PropertyIssue[] }
     | { error: string },
 ): void {
   // Synchronous hooks may immediately wait for Rust's reply. Flush the whole

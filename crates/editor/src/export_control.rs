@@ -93,6 +93,7 @@ impl EditorView {
                         entry: react.entry.clone(),
                         node,
                         cli_script,
+                        properties: react.properties.clone(),
                     },
                     None,
                 )

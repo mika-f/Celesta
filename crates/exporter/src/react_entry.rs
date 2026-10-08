@@ -8,7 +8,6 @@ use crate::render::{ensure_not_cancelled, validate_dimensions, validate_output};
 use celesta_composition::Time;
 use celesta_media::{AudioMixError, FfmpegBackend, mix_audio_graph_cancellable};
 use celesta_project::Project;
-use celesta_react_bridge::ReactBridge;
 use std::path::Path;
 use std::{fs, io};
 
@@ -151,8 +150,12 @@ impl Exporter {
             source,
         })?;
 
-        let mut bridge = ReactBridge::spawn(&react_runtime.node, &react_runtime.cli_script, entry)
-            .map_err(ExportError::React)?;
+        let mut bridge = react_runtime.spawn(
+            entry,
+            project
+                .as_ref()
+                .map(|(project, root)| (*project, root.as_path())),
+        )?;
         let metadata = bridge.metadata().clone();
         progress(ExportProgress::Composition(CompositionInfo {
             width: metadata.width,

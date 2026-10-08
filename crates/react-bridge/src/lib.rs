@@ -11,6 +11,7 @@ mod bridge;
 mod error;
 mod measure;
 mod probe;
+mod properties;
 mod protocol;
 #[cfg(test)]
 mod tests;
@@ -19,6 +20,9 @@ mod types;
 pub use audio::{merge_react_audio_clips, react_audio_clips};
 pub use bridge::{PendingFrame, ReactBridge};
 pub use error::ReactBridgeError;
+pub use properties::{
+    PropertyInputError, PropertyInputs, PropertyIssue, PropertyLayer, PropertySource,
+};
 pub use types::{
     ComponentPropertyField, ComponentPropertySchema, ComponentResolutionRequest, FrameEvaluation,
     ProjectFrame, ReactAudioClipDescriptor, ReactCompositionMetadata,

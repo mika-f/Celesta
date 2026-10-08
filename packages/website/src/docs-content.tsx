@@ -9,6 +9,7 @@ import firstScene from './examples/first-scene.tsx?raw';
 import dialogueScene from './examples/dialogue.tsx?raw';
 import dialogueProject from './examples/dialogue.celesta.json?raw';
 import dialogueSeriesScene from './examples/dialogue-series.tsx?raw';
+import transitionSeriesScene from './examples/transition-series.tsx?raw';
 import fittedTextScene from './examples/fitted-text.tsx?raw';
 import dataScene from './examples/data.tsx?raw';
 import lipSyncScene from './examples/lip-sync.tsx?raw';
@@ -214,6 +215,9 @@ export const contents: Record<string, ReactNode> = {
       <p>{text('docs.chapters.motion-toolkit.these-helpers-cover-the-patterns-that-come', [<code>Sequence</code>, <code>Group</code>, <a href={docPath('text-camera-lines')} />, <a href={docPath('math')} />, <code>@celesta/math</code>])}</p>
       <h3>{text('docs.chapters.motion-toolkit.scenes-back-to-back')}</h3><p>{text('docs.chapters.motion-toolkit.plays-its-children-one-after-another-so', [<code>{'<Series>'}</code>, <code>{'<Series.Sequence>'}</code>, <code>offset</code>, <code>computeSeries()</code>])}</p>
       <DocCode label={t('docs.chapters.motion-toolkit.three-scenes-sized-from-their-lengths')} language="tsx" code={"const SCENES = [\n  { name: 'intro', durationInFrames: 90, Scene: Intro },\n  { name: 'body', durationInFrames: 240, Scene: Body },\n  { name: 'outro', durationInFrames: 60, Scene: Outro },\n];\nconst { durationInFrames } = computeSeries(SCENES);\n\nexport default function Root() {\n  return (\n    <Composition width={1920} height={1080} fps={30} durationInFrames={durationInFrames}>\n      <Series>\n        {SCENES.map(({ name, durationInFrames, Scene }) => (\n          <Series.Sequence key={name} durationInFrames={durationInFrames}>\n            <Scene />\n          </Series.Sequence>\n        ))}\n      </Series>\n    </Composition>\n  );\n}"} />
+      <h3>{text('docs.chapters.motion-toolkit.transitions-between-scenes')}</h3><p>{text('docs.chapters.motion-toolkit.transition-series-body', [<code>{'<TransitionSeries>'}</code>, <code>Series</code>, <code>{'<TransitionSeries.Transition>'}</code>, <code>'cut'</code>, <code>'crossfade'</code>, <code>'slide'</code>, <code>'wipe'</code>, <code>durationInFrames</code>, <code>computeTransitionSeries()</code>])}</p>
+      <DocCode label={t('docs.chapters.motion-toolkit.scenes-joined-by-a-cross-fade-and-a-slide')} language="tsx" code={transitionSeriesScene.trim()} />
+      <p>{text('docs.chapters.motion-toolkit.transition-series-rules', [<code>useTransitionVolume(volume)</code>, <code>useTransitionSeriesScene()</code>])}</p>
       <h3>{text('docs.chapters.motion-toolkit.cascades-and-entrances')}</h3><p>{text('docs.chapters.motion-toolkit.is-a-clamped-0-1-value-for', [<code>progress(frame, start, durationInFrames, easing?)</code>, <code>{'<Stagger each={n}>'}</code>, <code>n</code>])}</p>
       <DocCode label={t('docs.chapters.motion-toolkit.rows-that-arrive-one-after-another')} language="tsx" code={"function Row({ label, y }: { label: string; y: number }) {\n  const frame = useCurrentFrame(); // 0 when this row starts\n  const p = progress(frame, 0, 20, Easings.easeOutExpo);\n  return <Text x={120 + 40 * (1 - p)} y={y} opacity={p}>{label}</Text>;\n}\n\n<Stagger each={4}>\n  {items.map((item, i) => <Row key={item} label={item} y={200 + i * 64} />)}\n</Stagger>"} />
       <h3>{text('docs.chapters.motion-toolkit.on-the-beat')}</h3><p>{text('docs.chapters.motion-toolkit.returns-the-current-the-through-the-beat', [<code>useBeat({'{ bpm }'})</code>, <code>beat</code>, <code>bar</code>, <code>beatInBar</code>, <code>progress</code>, <code>pulse</code>, <code>offset</code>])}</p>
@@ -386,6 +390,7 @@ export const contents: Record<string, ReactNode> = {
         [<code>FreezeFrame</code>, <>{text('docs.chapters.reference.api.draws-its-children-as-the-composition-looked', [<code>frame</code>])}</>],
         [<code>Transition</code>, <>{text('docs.chapters.reference.api.a-fade-slide-or-scale-or-several')}</>],
         [<><code>Series</code> / <code>computeSeries</code></>, <>{text('docs.chapters.reference.api.scenes-back-to-back-by-length-see', [<a href={docPath('motion-toolkit')} />, text('docs.chapters.reference.scenes-cues-beats')])}</>],
+        [<><code>TransitionSeries</code> / <code>computeTransitionSeries</code></>, <>{text('docs.chapters.reference.api.transition-series', [<a href={docPath('motion-toolkit')} />, text('docs.chapters.reference.scenes-cues-beats')])}</>],
         [<code>Stagger</code>, <>{text('docs.chapters.reference.api.starts-each-child-a-fixed-number-of')}</>],
         [<code>progress</code>, <>{text('docs.chapters.reference.api.a-clamped-eased-0-1-value-for')}</>],
         [<><code>useBeat()</code> / <code>beatAt</code></>, <>{text('docs.chapters.reference.api.beats-bars-and-a-pulse-for-a')}</>],
