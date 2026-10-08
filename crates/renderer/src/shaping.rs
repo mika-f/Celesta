@@ -8,7 +8,7 @@ use crate::paint::{ResolvedPaint, resolve_paint};
 use crate::rect::dilate_mask;
 use crate::text::{AnchorBox, GlyphMetrics, RasterizedText, TextMetrics};
 use crate::types::{Color, RgbaFrame};
-use celesta_composition::{LineBreak, TextAlign, TextStyle};
+use celesta_composition::{LineBreak, TextAlign, TextFontRun, TextStyle};
 use cosmic_text::{
     Align, Attrs, AttrsList, Buffer, BufferLine, Color as CosmicColor, Family, FontSystem,
     LineEnding, LineIter, Metrics, PhysicalGlyph, Renderer, Shaping, SwashCache, SwashContent,
@@ -310,6 +310,7 @@ impl TextRasterizer {
         max_width: Option<f64>,
         scale: f32,
     ) -> Result<RasterizedText, RenderError> {
+        validate_font_runs(text, style)?;
         let scale = scale.abs();
         let width = max_width.map(|width| width as f32 * scale);
         let buffer = self.shaped_buffer(text, style, width, scale);
@@ -620,6 +621,46 @@ fn source_offsets(buffer: &Buffer, text: &str, style: &TextStyle) -> Vec<Vec<usi
             offsets[line.text().len()] = point;
             base += text[range].chars().count() + ending.as_str().chars().count();
             offsets
+        })
+        .collect()
+}
+
+/// Checks `style`'s font runs against `text`: ordered, non-overlapping
+/// code-point ranges within it.
+pub fn validate_font_runs(text: &str, style: &TextStyle) -> Result<(), RenderError> {
+    if style.font_runs.is_empty() {
+        return Ok(());
+    }
+    let count = text.chars().count();
+    let mut previous_end = 0;
+    for (index, run) in style.font_runs.iter().enumerate() {
+        if run.start < previous_end || run.end < run.start || run.end > count {
+            return Err(RenderError::InvalidTextFontRun {
+                index,
+                start: run.start,
+                end: run.end,
+                text_length: count,
+            });
+        }
+        previous_end = run.end;
+    }
+    Ok(())
+}
+
+/// The font runs of `style` that are well-formed for a text of `length`
+/// code points, in order. Runs `validate_font_runs` rejects are left out,
+/// so shaping never panics on them; empty runs are left out too.
+pub(crate) fn usable_font_runs(style: &TextStyle, length: usize) -> Vec<&TextFontRun> {
+    let mut previous_end = 0;
+    style
+        .font_runs
+        .iter()
+        .filter(|run| {
+            let usable = run.start >= previous_end && run.start < run.end && run.end <= length;
+            if usable {
+                previous_end = run.end;
+            }
+            usable
         })
         .collect()
 }

@@ -16,6 +16,12 @@ pub enum RenderError {
         end: usize,
         text_length: usize,
     },
+    InvalidTextFontRun {
+        index: usize,
+        start: usize,
+        end: usize,
+        text_length: usize,
+    },
     UnsupportedRotation {
         layer: String,
         degrees: f64,
@@ -68,6 +74,15 @@ impl fmt::Display for RenderError {
             } => write!(
                 formatter,
                 "text color run {index} ({start}..{end}) is invalid for {text_length} code points; runs must be ordered, non-overlapping ranges within the text"
+            ),
+            Self::InvalidTextFontRun {
+                index,
+                start,
+                end,
+                text_length,
+            } => write!(
+                formatter,
+                "text font run {index} ({start}..{end}) is invalid for {text_length} code points; runs must be ordered, non-overlapping ranges within the text"
             ),
             Self::InvalidColor(color) => write!(formatter, "invalid color `{color}`"),
             Self::UnsupportedRotation { layer, degrees } => write!(

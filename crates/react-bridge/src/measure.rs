@@ -52,6 +52,12 @@ pub(crate) fn measure_text_response(
     measurer: &mut Option<TextRasterizer>,
     request: &MeasureTextRequest,
 ) -> MeasureTextResponse {
+    if let Err(error) = celesta_renderer::validate_font_runs(&request.text, &request.style) {
+        return MeasureTextResponse {
+            metrics: None,
+            error: Some(format!("could not measure text: {error}")),
+        };
+    }
     let measurer = measurer.get_or_insert_with(TextRasterizer::new);
     match measurer.load_fonts(&request.fonts, Path::new(".")) {
         Ok(()) => MeasureTextResponse {
