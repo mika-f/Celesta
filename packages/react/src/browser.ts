@@ -14,6 +14,7 @@ export { Easings, interpolate, interpolateColor, progress, spring } from './anim
 export { frameToTimecode, timecodeToFrame } from './time';
 export { beatAt, cueAt, useBeat, useCue } from './timing';
 export { Series, Stagger, computeSeries } from './series';
+export { TransitionSeries, computeTransitionSeries, useTransitionSeriesScene, useTransitionVolume } from './transition-series';
 export { Arrow, Circle, Ellipse, Line, Path, Polyline, pointOnPolyline } from './shapes';
 export { Camera } from './camera';
 export { TextReveal, useCountUp, useTypewriter } from './text-motion';

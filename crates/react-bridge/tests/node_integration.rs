@@ -671,6 +671,7 @@ fn batched_audio_graph_matches_full_frame_evaluation_when_node_is_available() {
         "examples/with-conditional-audio.tsx",
         "examples/with-sequence.tsx",
         "examples/with-volume-fade.tsx",
+        "examples/with-transition-series.tsx",
         "test/fixtures/audio-collection.tsx",
     ] {
         let entry = package_root.join(fixture);
@@ -818,6 +819,55 @@ fn collects_conditionally_rendered_audio_with_keyframed_volume_when_node_is_avai
     assert_eq!(volume.keyframes.len(), 2);
     assert_eq!(volume.keyframes[0].value, 0.25);
     assert_eq!(volume.keyframes[1].value, 1.0);
+}
+
+#[test]
+fn transition_series_overlaps_scenes_and_cross_fades_their_audio_when_node_is_available() {
+    let Some((node, cli_script, package_root)) = live_react_runtime() else {
+        return;
+    };
+
+    // Five 60-frame cards joined by a cut and three 20-frame transitions.
+    let entry = package_root.join("examples/with-transition-series.tsx");
+    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    assert_eq!(bridge.metadata().duration_in_frames, 240);
+
+    // Frames 100-119 overlap the cut card with the cross-faded one; the cut
+    // at frame 60 swaps cards with no shared frame.
+    let scenes_at = |bridge: &mut ReactBridge, frame: i64| {
+        bridge.scene_at(Time::new(frame, 30)).unwrap().layers.len()
+    };
+    assert_eq!(scenes_at(&mut bridge, 59), 1);
+    assert_eq!(scenes_at(&mut bridge, 60), 1);
+    assert_eq!(scenes_at(&mut bridge, 99), 1);
+    assert_eq!(scenes_at(&mut bridge, 100), 2);
+    assert_eq!(scenes_at(&mut bridge, 119), 2);
+    assert_eq!(scenes_at(&mut bridge, 120), 1);
+
+    let graph = bridge
+        .collect_audio_graph(48_000, 1.0, entry.parent().unwrap())
+        .unwrap();
+    let mut clips: Vec<_> = graph.clips.iter().collect();
+    clips.sort_by(|left, right| left.range.start.cmp_exact(right.range.start).unwrap());
+    let starts: Vec<f64> = clips
+        .iter()
+        .map(|clip| (clip.range.start.as_seconds().unwrap() * 30.0).round())
+        .collect();
+    assert_eq!(starts, [0.0, 60.0, 100.0, 140.0, 180.0]);
+    // The mixer evaluates volume at clip-local time: across the cross-fade
+    // the two cards' volumes add up to the declared 0.8.
+    let volume_at = |clip: &celesta_composition::AudioClip, frame: i64| {
+        celesta_composition::evaluate_f64(&clip.volume, Time::new(frame, 30)).unwrap()
+    };
+    assert_eq!(volume_at(clips[0], 0), 0.8);
+    assert_eq!(volume_at(clips[1], 0), 0.8);
+    for frame in [100, 105, 110, 119] {
+        let sum = volume_at(clips[1], frame - 60) + volume_at(clips[2], frame - 100);
+        assert!((sum - 0.8).abs() < 1e-4, "frame {frame}: {sum}");
+    }
+    assert_eq!(volume_at(clips[2], 0), 0.0);
+    // Keys are rounded to the microsecond, a hair after frame 20's exact time.
+    assert!((volume_at(clips[2], 20) - 0.8).abs() < 1e-4);
 }
 
 #[test]
