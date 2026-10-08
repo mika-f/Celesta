@@ -4549,6 +4549,18 @@ fn masks_groups_like_the_cpu_renderer() {
             )],
         ),
         (
+            "blurred disc",
+            vec![masked_group(
+                EvaluatedTransform::default(),
+                alpha_mask(vec![{
+                    let mut matte = disc("matte", 30.0, 24.0, 14.0, "#FFFFFFFF");
+                    matte.effects.blur = 4.0;
+                    matte
+                }]),
+                vec![red()],
+            )],
+        ),
+        (
             "inverted",
             vec![masked_group(
                 EvaluatedTransform::default(),
