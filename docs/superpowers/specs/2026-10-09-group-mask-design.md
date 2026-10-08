@@ -145,8 +145,11 @@ There are two ways to write a mask, and they meet in one host element:
 
 - `<Mask>` renders a `'mask'` host element carrying `mode` and `invert`.
   Only `<Mask>` carries them: there are no `maskMode` / `maskInvert` props.
-- `Group` renders its `mask` prop as an extra child. A `<Mask>` element goes
-  in as it is; any other node is wrapped in `<Mask>` (alpha, not inverted).
+- `Group` renders its `mask` prop as an extra child after its children,
+  always in the same child slot (`null` when there is no mask). Toggling the
+  mask therefore changes neither the children's tree-path ids nor their
+  React state. A `<Mask>` element goes in as it is; any other node is
+  wrapped in `<Mask>` (alpha, not inverted).
   `null`, `undefined`, and booleans mean no mask, so `mask={on && <Circle />}`
   switches the mask off. A `<Mask>` with no children is an empty mask, which
   hides the group (or shows it whole when inverted); a mask whose content
@@ -243,8 +246,10 @@ axis-aligned.
 - The mask pass is a new pipeline in a new `mask.wgsl`. It draws a
   full-screen triangle that `textureLoad`s the children canvas (group 0) and
   the mask canvas (group 1, the same `texture_layout`) at the same texel, and
-  writes `children × m`. Mode and invert are pipeline-overridable constants:
-  four pipelines, no uniform. The pass is scissored to the planned region.
+  writes `children × m`. Mode and invert pick one of four fragment entry
+  points, so there are four pipelines and no uniform, as `effect.wgsl`
+  picks its passes. The three canvases all cover the planned region, so the
+  pass covers the whole target.
 - Instance and filter-pass accounting (`instance_count`, `begin_frame`'s
   pass reservation) counts the new items. `composited` becomes true for a
   frame with a mask, as it does for any group canvas.
@@ -317,7 +322,7 @@ Two pull requests:
   keys, next to "Clip a group".
 - `skills/celesta/references/react-core.md`.
 - A handoff note `docs/handoff/<date>-group-masks.md`, dated the day it
-  lands, and its line in `HANDOFF.md`.
+  lands.
 
 ## Out of scope
 
