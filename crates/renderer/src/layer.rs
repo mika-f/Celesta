@@ -63,7 +63,7 @@ impl CpuRenderer {
                 *baseline_anchor,
                 &state,
             )?,
-            LayerContent::Group { layers, clip } => {
+            LayerContent::Group { layers, clip, .. } => {
                 let mut child_state = state.clone();
                 if let Some(clip) = clip {
                     if clip.is_empty() {

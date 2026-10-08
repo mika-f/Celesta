@@ -388,6 +388,7 @@ pub(crate) fn splice_resolved_components(
                         layers[index].content = LayerContent::Group {
                             layers: children,
                             clip: None,
+                            mask: None,
                         };
                         index += 1;
                     }

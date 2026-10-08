@@ -374,7 +374,7 @@ impl GpuRenderer {
             return Ok(());
         }
         match &layer.content {
-            LayerContent::Group { layers, clip } => {
+            LayerContent::Group { layers, clip, .. } => {
                 let mut child_state = state;
                 if let Some(clip) = clip {
                     if clip.is_empty() {

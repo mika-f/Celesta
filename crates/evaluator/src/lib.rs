@@ -336,7 +336,11 @@ impl<'project> Evaluator<'project> {
             });
         }
 
-        Ok(LayerContent::Group { layers, clip: None })
+        Ok(LayerContent::Group {
+            layers,
+            clip: None,
+            mask: None,
+        })
     }
 
     fn asset(&self, id: &str) -> Result<ResolvedAsset, EvaluationError> {

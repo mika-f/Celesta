@@ -163,6 +163,7 @@ fn clipped_group(transform: EvaluatedTransform, clip: Clip, children: Vec<Layer>
         content: LayerContent::Group {
             layers: children,
             clip: Some(clip),
+            mask: None,
         },
     }
 }
@@ -1233,6 +1234,7 @@ fn blends_a_layer_with_everything_beneath_it() {
                         BlendMode::Difference,
                     )],
                     clip: None,
+                    mask: None,
                 },
             },
         ],
@@ -1268,6 +1270,7 @@ fn blends_an_isolated_group_as_one_layer() {
                 rect_layer("red", 1.0, 1.0, "#ff0000", BlendMode::Multiply),
             ],
             clip: None,
+            mask: None,
         },
     };
     let render = |opacity: f64| {

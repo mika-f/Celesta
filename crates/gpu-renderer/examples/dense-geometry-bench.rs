@@ -125,6 +125,7 @@ fn scene(frame: usize, ribbons: usize, strands: usize, geometry: Geometry) -> Sc
                     geometry,
                 ),
                 clip: None,
+                mask: None,
             },
         });
     }

@@ -431,7 +431,11 @@ fn blend_group(opacity: f64, blend_mode: BlendMode, layers: Vec<Layer>) -> Layer
         opacity,
         blend_mode,
         effects: Default::default(),
-        content: LayerContent::Group { layers, clip: None },
+        content: LayerContent::Group {
+            layers,
+            clip: None,
+            mask: None,
+        },
     }
 }
 
@@ -806,6 +810,7 @@ fn shades_sheared_rects_like_the_cpu_rasterizer() {
                     content,
                 }],
                 clip: None,
+                mask: None,
             },
         }];
         let layer = LayerState::default()
@@ -1018,6 +1023,7 @@ fn clipped_group(transform: EvaluatedTransform, clip: Clip, layers: Vec<Layer>) 
         content: LayerContent::Group {
             layers,
             clip: Some(clip),
+            mask: None,
         },
     }
 }
@@ -1066,6 +1072,7 @@ fn blurred_group_with_shadow_and_glow_matches_cpu() {
         content: LayerContent::Group {
             layers: vec![corner_rect("child", 20.0, 20.0, 16.0, 12.0, "#ffe080")],
             clip: None,
+            mask: None,
         },
     }];
     let gpu = renderer.render(&scene).unwrap();
@@ -1109,7 +1116,11 @@ fn effects_on_small_layers_match_cpu() {
         opacity: 1.0,
         blend_mode: BlendMode::Normal,
         effects,
-        content: LayerContent::Group { layers, clip: None },
+        content: LayerContent::Group {
+            layers,
+            clip: None,
+            mask: None,
+        },
     };
     let glow = |color: &str, blur: f64| LayerEffects {
         glow: Some(LayerGlow {
@@ -1184,7 +1195,11 @@ fn large_blurs_match_cpu() {
         opacity: 0.55,
         blend_mode: BlendMode::Screen,
         effects,
-        content: LayerContent::Group { layers, clip: None },
+        content: LayerContent::Group {
+            layers,
+            clip: None,
+            mask: None,
+        },
     };
     let mut scene = empty_scene(160, 112);
     scene.layers = vec![
@@ -1869,7 +1884,11 @@ fn group(transform: EvaluatedTransform, layers: Vec<Layer>) -> Layer {
         opacity: 1.0,
         blend_mode: BlendMode::Normal,
         effects: Default::default(),
-        content: LayerContent::Group { layers, clip: None },
+        content: LayerContent::Group {
+            layers,
+            clip: None,
+            mask: None,
+        },
     }
 }
 
@@ -3307,6 +3326,7 @@ fn decodes_and_rotates_a_nested_image_on_the_gpu() {
                 },
             }],
             clip: None,
+            mask: None,
         },
     });
 
@@ -4331,6 +4351,7 @@ fn reduced_resolution_blurs_match_cpu() {
                 content: LayerContent::Group {
                     layers: vec![corner_rect("content", x, y, width, height, "#ff40a0")],
                     clip: None,
+                    mask: None,
                 },
             },
         ];
