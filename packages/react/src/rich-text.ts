@@ -8,7 +8,7 @@ import type { ReactNode } from 'react';
 import type { Paint, TextColorRun, TextFontRun, TextStyle } from './scene';
 
 export interface SpanStyle {
-  /** A hex color (`"#RRGGBB"` or `"#RRGGBBAA"`) or a solid `Paint`. */
+  /** A hex color (`"#RRGGBB"` or `"#RRGGBBAA"`) or a solid `Paint` with one; other formats throw. */
   fill?: string | Paint;
   /** 1–1000; a family without that weight uses its nearest face. */
   fontWeight?: number;
@@ -44,13 +44,19 @@ interface Inherited {
   fontFamily?: string;
 }
 
+/** The color formats the renderer reads; checked here so a bad one fails at the span, not at export. */
+const HEX_COLOR = /^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/;
+
 function resolveSpan(style: SpanStyle | undefined, inherited: Inherited): Inherited {
   const next = { ...inherited };
   if (style?.fill !== undefined) {
     const fill = style.fill;
-    if (typeof fill === 'string') next.color = fill;
-    else if (fill && fill.type === 'solid') next.color = fill.color;
-    else throw new Error('<Span> fill must be a color or a solid paint');
+    const color = typeof fill === 'string' ? fill : fill && fill.type === 'solid' ? fill.color : undefined;
+    if (color === undefined) throw new Error('<Span> fill must be a color or a solid paint');
+    if (typeof color !== 'string' || !HEX_COLOR.test(color)) {
+      throw new Error(`<Span> fill must be a #RRGGBB or #RRGGBBAA color, got ${JSON.stringify(color)}`);
+    }
+    next.color = color;
   }
   if (style?.fontWeight !== undefined) {
     const weight = style.fontWeight;

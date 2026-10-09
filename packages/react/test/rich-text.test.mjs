@@ -4,7 +4,7 @@ import React from 'react';
 
 import {
   Assets, Character, CharacterView, Composition, Dialogue, DialogueSeries, Group, Span, Text, TextBox, TextReveal,
-  planDialogue, useTextMetrics, useTypewriter,
+  planDialogue, useFitText, useTextMetrics, useTypewriter,
 } from '../dist/index.js';
 import { flattenTextContent, sliceTextRuns, withTextRuns } from '../dist/rich-text.js';
 import { mount } from '../dist/render.js';
@@ -40,7 +40,7 @@ test('adjacent runs with the same attributes merge', () => {
 });
 
 test('empty spans emit no runs', () => {
-  const flat = flattenTextContent(['a', h(Span, { style: { fontWeight: 700 } }), h(Span, { style: { fill: '#f00' } }, null, false), 'b'], '<Text> children');
+  const flat = flattenTextContent(['a', h(Span, { style: { fontWeight: 700 } }), h(Span, { style: { fill: '#ff0000' } }, null, false), 'b'], '<Text> children');
   assert.deepEqual(flat, { text: 'ab', colorRuns: [], fontRuns: [] });
 });
 
@@ -52,23 +52,30 @@ test('flattening rejects what it cannot style', () => {
   const Wrapped = () => h(Span, null, 'a');
   assert.throws(() => flattenTextContent(h(Wrapped), '<Text> children'),
     /<Text> children must be a string, a number, or an array of those; style part of the text with <Span>/);
+  // The renderer reads only #RRGGBB and #RRGGBBAA, so anything else fails here, not at export.
+  for (const fill of ['#f00', 'red', '#12345', { type: 'solid', color: 'rgb(0, 0, 0)' }]) {
+    assert.throws(() => flattenTextContent(h(Span, { style: { fill } }, 'a'), '<Text> children'),
+      /<Span> fill must be a #RRGGBB or #RRGGBBAA color/, JSON.stringify(fill));
+  }
+  assert.deepEqual(flattenTextContent(h(Span, { style: { fill: '#ffd44780' } }, 'a'), 'x').colorRuns,
+    [{ start: 0, end: 1, color: '#ffd44780' }]);
 });
 
 test('withTextRuns keeps plain styles as they are and refuses mixed run sources', () => {
   const style = { fontSize: 20 };
   assert.equal(withTextRuns(style, flattenTextContent('plain', 'x'), '<Text>'), style);
-  const flat = flattenTextContent(h(Span, { style: { fill: '#f00', fontWeight: 700 } }, 'a'), 'x');
+  const flat = flattenTextContent(h(Span, { style: { fill: '#ff0000', fontWeight: 700 } }, 'a'), 'x');
   assert.deepEqual(withTextRuns(style, flat, '<Text>'), {
-    fontSize: 20, colorRuns: [{ start: 0, end: 1, color: '#f00' }], fontRuns: [{ start: 0, end: 1, fontWeight: 700 }],
+    fontSize: 20, colorRuns: [{ start: 0, end: 1, color: '#ff0000' }], fontRuns: [{ start: 0, end: 1, fontWeight: 700 }],
   });
   assert.throws(() => withTextRuns({ colorRuns: [{ start: 0, end: 1, color: '#fff' }] }, flat, '<Text>'),
     /<Text> cannot combine style.colorRuns with <Span> fill/);
 });
 
 test('sliceTextRuns clips and rebases runs', () => {
-  const flat = flattenTextContent(['ab', h(Span, { style: { fontWeight: 700, fill: '#f00' } }, 'c\nd'), 'e'], 'x');
+  const flat = flattenTextContent(['ab', h(Span, { style: { fontWeight: 700, fill: '#ff0000' } }, 'c\nd'), 'e'], 'x');
   assert.deepEqual(sliceTextRuns(flat, 4, 6), {
-    text: 'de', colorRuns: [{ start: 0, end: 1, color: '#f00' }], fontRuns: [{ start: 0, end: 1, fontWeight: 700 }],
+    text: 'de', colorRuns: [{ start: 0, end: 1, color: '#ff0000' }], fontRuns: [{ start: 0, end: 1, fontWeight: 700 }],
   });
 });
 
@@ -106,6 +113,18 @@ test('TextBox measures and draws its spans', () => {
   const text = box.content.layers[0];
   assert.equal(text.content.text, 'ab');
   assert.deepEqual(text.content.style.fontRuns, [{ start: 1, end: 2, fontWeight: 700 }]);
+});
+
+test('useFitText refuses style.colorRuns with a Span fill, as fitText does', () => {
+  const metrics = () => ({ width: 1, height: 1, ascent: 1, descent: 0, lineHeight: 1, lines: 1, glyphs: [] });
+  setTextMeasurer(async () => metrics(), metrics);
+  const options = { width: 400, height: 100, minFontSize: 10, maxFontSize: 40, style: { colorRuns: [{ start: 0, end: 1, color: '#ffffff' }] } };
+  const content = ['a', h(Span, { style: { fill: '#ff0000' } }, 'b')];
+  function Probe() {
+    useFitText(content, options);
+    return null;
+  }
+  assert.throws(() => scene(frame(h(Probe))), /useFitText\(\) cannot combine style.colorRuns with <Span> fill/);
 });
 
 test('subtitles carry spans to the text layer and to render', () => {
@@ -163,7 +182,7 @@ test('useTextMetrics measures spans with their font runs; strings measure as bef
   });
   function Probe() {
     useTextMetrics('plain', { fontSize: 10, fill: { type: 'solid', color: '#fff' } });
-    useTextMetrics(['a', h(Span, { style: { fontWeight: 700, fill: '#f00' } }, 'b')], { fontSize: 10 });
+    useTextMetrics(['a', h(Span, { style: { fontWeight: 700, fill: '#ff0000' } }, 'b')], { fontSize: 10 });
     return null;
   }
   scene(frame(h(Probe)));
@@ -193,11 +212,11 @@ function textContents(layers) {
 
 test('TextReveal splits a run that crosses a line', () => {
   const texts = textContents(scene(frame(h(TextReveal, { style: { fontSize: 20 } },
-    'ab', h(Span, { style: { fontWeight: 700, fill: '#f00' } }, 'c\nd'), 'e'))).layers);
+    'ab', h(Span, { style: { fontWeight: 700, fill: '#ff0000' } }, 'c\nd'), 'e'))).layers);
   assert.deepEqual(texts.map((text) => text.text), ['abc', 'de']);
   assert.deepEqual(texts[0].style.fontRuns, [{ start: 2, end: 3, fontWeight: 700 }]);
   assert.deepEqual(texts[1].style.fontRuns, [{ start: 0, end: 1, fontWeight: 700 }]);
-  assert.deepEqual(texts[1].style.colorRuns, [{ start: 0, end: 1, color: '#f00' }]);
+  assert.deepEqual(texts[1].style.colorRuns, [{ start: 0, end: 1, color: '#ff0000' }]);
 });
 
 test('TextReveal keeps string children as they were', () => {

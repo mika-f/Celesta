@@ -86,6 +86,8 @@ export function useFitText(content: ReactNode, options: FitTextOptions): FitText
 function useFitFlatText(flat: FlatText, options: FitTextOptions, owner: string): FitTextResult {
   const lang = React.useContext(CompositionRuntimeContext)?.lang;
   const style = withTextLanguage(options.style ?? {}, lang);
+  // Refuse mixed run sources with the real runs, before the key drops color.
+  withTextRuns(style, flat, owner);
   const fonts = useMeasurementFonts(options.fonts);
   // Color does not change the fit, so a span whose color animates reuses
   // the result, as `useTextMetrics` does.
