@@ -27,6 +27,7 @@ on:
       - "packages/transitions/src/**"
       # Keep the measured scenes and their referenced images and fonts in sync.
       - "examples/spectra/**/*.tsx"
+      - "examples/spectra/**/*.ts"
       - "examples/versus/bench/celesta/**/*.tsx"
       - "examples/versus/bench/assets/fonts/**"
       - "examples/assets/dialogue-demo/portraits/**"
