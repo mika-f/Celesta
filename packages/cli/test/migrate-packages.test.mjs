@@ -11,25 +11,29 @@ import { addDependencies, migrateSource, movedExports } from '../../../skills/ce
 
 const script = fileURLToPath(new URL('../../../skills/celesta/scripts/migrate-packages.mjs', import.meta.url));
 
-/** Every name a package's declarations export, values and types. */
-function exportsOf(pkg) {
-  const file = fileURLToPath(new URL(`../../${pkg}/dist/index.d.ts`, import.meta.url));
-  const program = ts.createProgram([file], { skipLibCheck: true, noEmit: true });
+/** Every name each package's declarations export, values and types, from one program. */
+function exportsOf(pkgs) {
+  const files = pkgs.map((pkg) => fileURLToPath(new URL(`../../${pkg}/dist/index.d.ts`, import.meta.url)));
+  const program = ts.createProgram(files, { skipLibCheck: true, noEmit: true });
   const checker = program.getTypeChecker();
-  return new Set(checker.getExportsOfModule(checker.getSymbolAtLocation(program.getSourceFile(file))).map((s) => s.getName()));
+  return new Map(pkgs.map((pkg, i) => [pkg, new Set(
+    checker.getExportsOfModule(checker.getSymbolAtLocation(program.getSourceFile(files[i]))).map((s) => s.getName()),
+  )]));
 }
 
-test('the moved names match what the packages export', () => {
-  const core = exportsOf('react');
+// Type-checking the declarations takes a few seconds on CI runners.
+test('the moved names match what the packages export', { timeout: 60_000 }, () => {
+  const exported = exportsOf(['react', ...Object.keys(movedExports).map((pkg) => pkg.slice('@celesta/'.length))]);
+  const core = exported.get('react');
   const moved = new Set(Object.values(movedExports).flat());
   for (const [pkg, names] of Object.entries(movedExports)) {
-    const exported = exportsOf(pkg.slice('@celesta/'.length));
+    const own = exported.get(pkg.slice('@celesta/'.length));
     for (const name of names) {
-      assert.ok(exported.has(name), `${pkg} does not export ${name}`);
+      assert.ok(own.has(name), `${pkg} does not export ${name}`);
       assert.ok(!core.has(name), `@celesta/react still exports ${name}`);
     }
     // Names new with the split never were in @celesta/react, so need no move.
-    const unlisted = [...exported].filter((name) => !core.has(name) && !moved.has(name) && name !== 'CharacterReference');
+    const unlisted = [...own].filter((name) => !core.has(name) && !moved.has(name) && name !== 'CharacterReference');
     assert.deepEqual(unlisted, [], `${pkg} exports names the migration does not know`);
   }
 });
