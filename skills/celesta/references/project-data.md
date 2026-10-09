@@ -113,7 +113,7 @@ exports from the editor use the same values.
 ## Read values from a project
 
 ```tsx
-import type { Project } from '@celesta/react';
+import type { Project } from '@celesta/project';
 import projectFile from './project.celesta.json';
 const project = projectFile as Project;
 

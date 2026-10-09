@@ -1,4 +1,5 @@
-import { CharacterView, Dialogue, Group, Rect, Sequence, useCurrentFrame, useLipSync } from '@celesta/react';
+import { Group, Rect, Sequence, useCurrentFrame } from '@celesta/react';
+import { CharacterView, Dialogue, useLipSync } from '@celesta/character';
 import { VOICE, akane, akaneView, lipSync } from '../character';
 import { Label } from '../components/Label';
 import { Rails } from '../components/Rails';

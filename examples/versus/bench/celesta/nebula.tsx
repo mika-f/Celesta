@@ -1,6 +1,7 @@
 // NEBULA benchmark scene, Celesta version. See ../SCENE.md for the spec that
 // the Remotion and fframes versions implement with the same math.
-import { Assets, Composition, Font, Group, Path, Rect, Text, useCurrentFrame } from '@celesta/react';
+import { Assets, Composition, Font, Group, Rect, Text, useCurrentFrame } from '@celesta/react';
+import { Path } from '@celesta/shapes';
 
 const W = 1920;
 const H = 1080;

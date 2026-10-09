@@ -1,8 +1,17 @@
 import { useRef, useState } from 'react';
 import {
-  Assets, Audio, Character, CharacterView, Composition, Dialogue, Font, Group,
-  Sequence, Series, Text, useCurrentFrame, useTextMetrics,
+  Assets,
+  Audio,
+  Composition,
+  Font,
+  Group,
+  Sequence,
+  Series,
+  Text,
+  useCurrentFrame,
+  useTextMetrics,
 } from '@celesta/react';
+import { Character, CharacterView, Dialogue } from '@celesta/character';
 
 function MeasuredSound() {
   const frame = useCurrentFrame();

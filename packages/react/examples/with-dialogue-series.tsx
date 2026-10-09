@@ -14,23 +14,25 @@ import * as React from 'react';
 
 import {
   Assets,
-  Character,
-  CharacterView,
   Composition,
-  DialogueSeries,
   Easings,
   Group,
   Rect,
   Sequence,
   Text,
   interpolate,
-  loadLipSync,
-  planDialogue,
   useCurrentFrame,
   useTextMetrics,
 } from '@celesta/react';
+import {
+  Character,
+  CharacterView,
+  DialogueSeries,
+  loadLipSync,
+  planDialogue,
+} from '@celesta/character';
+import type { AssetReference, TextStyle } from '@celesta/react';
 import type {
-  AssetReference,
   CharacterSubtitle,
   CharacterViewReference,
   DialogueLine,
@@ -38,8 +40,7 @@ import type {
   LipSyncTrack,
   PlannedDialogueLine,
   SubtitleRenderProps,
-  TextStyle,
-} from '@celesta/react';
+} from '@celesta/character';
 
 import script from '../../../examples/assets/dialogue-demo/script.json';
 

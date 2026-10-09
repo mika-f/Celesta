@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'vitest';
-const cli = fileURLToPath(new URL('../bin/celesta-react-render.js', import.meta.url));
+const cli = fileURLToPath(new URL('../../cli/bin/celesta-react-render.js', import.meta.url));
 function render(props) {
   const dir = mkdtempSync(join(tmpdir(), 'celesta-image-'));
   const entry = join(dir, 'entry.tsx');

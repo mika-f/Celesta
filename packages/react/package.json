@@ -2,7 +2,7 @@
   "name": "@celesta/react",
   "version": "0.0.0",
   "private": true,
-  "description": "Declarative React components for Celesta compositions, evaluated into the shared Rust Scene model.",
+  "description": "Core React components, hooks, and renderer for Celesta compositions, evaluated into the shared Rust Scene model.",
   "license": "MIT OR Apache-2.0",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -10,31 +10,33 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
-    }
-  },
-  "bin": {
-    "celesta-react-render": "./bin/celesta-react-render.js"
+    },
+    "./internal": {
+      "types": "./dist/internal.d.ts",
+      "default": "./dist/internal.js"
+    },
+    "./package.json": "./package.json"
   },
   "engines": {
     "node": ">=18"
   },
   "scripts": {
     "codegen": "cd ../.. && cargo test -p celesta-project -p celesta-composition --features codegen",
-    "build": "tsc -b tsconfig.json && tsc -p ../code/tsconfig.json && tsc -p ../voicevox/tsconfig.json && node scripts/stage-project-types.mjs",
+    "build": "tsc -b tsconfig.json",
     "test": "vitest run",
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@celesta/math": "workspace:*"
+    "react-reconciler": "^0.29.2"
+  },
+  "peerDependencies": {
+    "react": "^18.3.1"
   },
   "devDependencies": {
     "@types/node": "^24.13.6",
     "@types/react": "^18.3.18",
     "@types/react-reconciler": "^0.28.9",
-    "ag-psd": "^31.0.2",
-    "esbuild": "^0.24.2",
     "react": "^18.3.1",
-    "react-reconciler": "^0.29.2",
     "typescript": "^5.7.3",
     "vitest": "^5.0.3"
   }

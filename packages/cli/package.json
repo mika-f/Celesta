@@ -1,0 +1,42 @@
+{
+  "name": "@celesta/cli",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The Node.js runtime the Celesta editor and exporter run React compositions in, with every Celesta package it serves to entries.",
+  "license": "MIT OR Apache-2.0",
+  "main": "./dist/cli.js",
+  "bin": {
+    "celesta-react-render": "./bin/celesta-react-render.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsc -b && node scripts/stage-project-types.mjs",
+    "test": "vitest run",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@celesta/character": "workspace:*",
+    "@celesta/code": "workspace:*",
+    "@celesta/debug": "workspace:*",
+    "@celesta/layout": "workspace:*",
+    "@celesta/math": "workspace:*",
+    "@celesta/media-utils": "workspace:*",
+    "@celesta/project": "workspace:*",
+    "@celesta/react": "workspace:*",
+    "@celesta/shapes": "workspace:*",
+    "@celesta/text": "workspace:*",
+    "@celesta/transitions": "workspace:*",
+    "@celesta/voicevox": "workspace:*",
+    "esbuild": "^0.24.2",
+    "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.6",
+    "@types/react": "^18.3.18",
+    "ag-psd": "^31.0.2",
+    "typescript": "^5.7.3",
+    "vitest": "^5.0.3"
+  }
+}

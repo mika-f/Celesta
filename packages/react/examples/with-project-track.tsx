@@ -1,4 +1,5 @@
-import { Composition, ProjectTrack, Text, useProjectTrack } from '@celesta/react';
+import { Composition, Text } from '@celesta/react';
+import { ProjectTrack, useProjectTrack } from '@celesta/project';
 
 function TitlesTrackSummary() {
   const layers = useProjectTrack('titles');

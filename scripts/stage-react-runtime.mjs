@@ -5,7 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolvePackageManifest } from './resolve-package-manifest.mjs';
 
-const source = fileURLToPath(new URL('../packages/react/', import.meta.url));
+const source = fileURLToPath(new URL('../packages/cli/', import.meta.url));
 const destination = resolve(process.argv[2]);
 const copied = new Map();
 mkdirSync(destination, { recursive: true });
@@ -55,11 +55,10 @@ function copyPackage(name, parent) {
   }
 }
 
-// Ship optional packages alongside the core runtime without making the React
-// package depend on or load them itself. Code also brings its tokenizer closure.
-copyPackage('@celesta/code', join(source, '../code'));
-copyPackage('@celesta/voicevox', join(source, '../voicevox'));
-for (const name of ['@celesta/math', 'react', 'react-reconciler', 'esbuild', 'ag-psd']) {
+// The CLI depends on every Celesta package it serves to entries, React, and
+// esbuild; each brings its own closure, such as Code's tokenizers.
+const manifest = JSON.parse(readFileSync(join(source, 'package.json'), 'utf8'));
+for (const name of [...Object.keys(manifest.dependencies), 'ag-psd']) {
   copyPackage(name, source);
 }
 // Confirm the platform-specific binary was included, even if optional deps were disabled.

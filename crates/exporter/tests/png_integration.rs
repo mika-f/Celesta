@@ -496,7 +496,8 @@ fn react_cli_props_win_over_the_companion_project_and_are_checked_first() {
     std::fs::write(
         &entry,
         r##"
-import { Composition, Rect, defineProjectProperties, getProjectProperty, useProjectProperty } from '@celesta/react';
+import { Composition, Rect, defineProjectProperties, getProjectProperty } from '@celesta/react';
+import { useProjectProperty } from '@celesta/project';
 defineProjectProperties({
   fill: { type: 'color', defaultValue: '#ff0000' },
   frames: { type: 'number', defaultValue: 4 },

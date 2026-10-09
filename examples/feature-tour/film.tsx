@@ -1,4 +1,5 @@
-import { Assets, Audio, Character, Composition, Font, Sequence } from '@celesta/react';
+import { Assets, Audio, Composition, Font, Sequence } from '@celesta/react';
+import { Character } from '@celesta/character';
 import { scoreVolume } from './audio';
 import { CHAPTER_AT, CHAPTERS } from './chapters';
 import { ChapterShell } from './components/ChapterShell';

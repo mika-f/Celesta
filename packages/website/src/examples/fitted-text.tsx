@@ -1,4 +1,5 @@
-import { Composition, TextBox } from '@celesta/react';
+import { Composition } from '@celesta/react';
+import { TextBox } from '@celesta/text';
 
 export default function Root() {
   return (

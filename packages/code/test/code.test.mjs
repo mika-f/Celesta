@@ -8,8 +8,7 @@ import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import React from 'react';
 import { Composition, Font, Rect, useCurrentFrame } from '@celesta/react';
-import { mount } from '../../react/dist/render.js';
-import { setTextMeasurer } from '../../react/dist/text-measure.js';
+import { mount, setTextMeasurer } from '@celesta/react/internal';
 import { Code, codeCharacterCount, codeThemes, tokenizeCode, useCodePoint } from '../dist/index.js';
 
 function metrics(request) {
@@ -264,7 +263,8 @@ for (const packaged of [false, true]) test(`${packaged ? 'packaged' : 'source'} 
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const entry = join(directory, 'entry.tsx');
   writeFileSync(entry, `
-    import { Composition, useTypewriter } from '@celesta/react';
+    import { Composition } from '@celesta/react';
+    import { useTypewriter } from '@celesta/text';
     import { Code, codeCharacterCount } from '@celesta/code';
     const source = 'const value = "😀";';
     const maximum: number = codeCharacterCount(source, { line: 1, column: Array.from(source).length + 1 });
@@ -276,7 +276,7 @@ for (const packaged of [false, true]) test(`${packaged ? 'packaged' : 'source'} 
       return <Composition width={800} height={300} fps={30} durationInFrames={20}><Demo /></Composition>;
     }
   `);
-  let cli = fileURLToPath(new URL('../../react/bin/celesta-react-render.js', import.meta.url));
+  let cli = fileURLToPath(new URL('../../cli/bin/celesta-react-render.js', import.meta.url));
   if (packaged) {
     const runtime = join(directory, 'runtime/react');
     const stage = fileURLToPath(new URL('../../../scripts/stage-react-runtime.mjs', import.meta.url));

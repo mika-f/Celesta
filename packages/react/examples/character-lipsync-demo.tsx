@@ -1,18 +1,15 @@
 import * as React from 'react';
 
+import { Assets, Audio, Composition, Rect, Text } from '@celesta/react';
 import {
-  Assets,
-  Audio,
   Character,
   CharacterView,
-  Composition,
-  Rect,
-  Text,
   loadLipSync,
   loadPsdPreset,
   useLipSync,
-} from '@celesta/react';
-import type { AssetReference, LipSyncTrack } from '@celesta/react';
+} from '@celesta/character';
+import type { AssetReference } from '@celesta/react';
+import type { LipSyncTrack } from '@celesta/character';
 
 const WIDTH = 1280;
 const HEIGHT = 720;

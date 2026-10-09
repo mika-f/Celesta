@@ -356,7 +356,7 @@ export const packageContents: Record<string, ReactNode> = {
     <h3>{text('docs.chapters.code-typing.typing-code-in')}</h3>
     <p>{text('docs.chapters.code-typing.pass-s-to', [<code>useTypewriter()</code>, <code>length</code>, <code>visibleCharacters</code>])}</p>
     <DocCode label={t('docs.chapters.code-typing.type-the-source-out')} language="tsx" code={lines(
-      "import { useTypewriter } from '@celesta/react';",
+      "import { useTypewriter } from '@celesta/text';",
       "import { Code } from '@celesta/code';",
       '',
       'function Typed() {',
@@ -375,7 +375,7 @@ export const packageContents: Record<string, ReactNode> = {
     <h3>{text('docs.chapters.code-typing.a-caret-that-follows-the-typing')}</h3>
     <p>{text('docs.chapters.code-typing.measures-a-position-in-the-source-with', [<code>useCodePoint(source, {'{ line, column }'}, style?, tabSize?)</code>, <code>Code</code>, <strong />])}</p>
     <DocCode label={t('docs.chapters.code-typing.a-blinking-caret-at-the-end-of')} language="tsx" code={lines(
-      "import { Group, Rect, useTypewriter } from '@celesta/react';",
+      "import { Group, Rect } from '@celesta/react'; import { useTypewriter } from '@celesta/text';",
       "import { Code, useCodePoint } from '@celesta/code';",
       '',
       'function TypedWithCaret() {',

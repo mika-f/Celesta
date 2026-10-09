@@ -4,14 +4,16 @@ import {
   Easings,
   Rect,
   Text,
-  TransitionSeries,
-  computeTransitionSeries,
   useCurrentFrame,
-  useTransitionSeriesScene,
-  useTransitionVolume,
   useVideoConfig,
 } from '@celesta/react';
-import type { TransitionSeriesTransitionProps } from '@celesta/react';
+import {
+  TransitionSeries,
+  computeTransitionSeries,
+  useTransitionSeriesScene,
+  useTransitionVolume,
+} from '@celesta/transitions';
+import type { TransitionSeriesTransitionProps } from '@celesta/transitions';
 
 // Five cards, each entered a different way: a cut, a cross-fade, a slide,
 // and a wipe. The cut takes no frames; the other three overlap the cards on

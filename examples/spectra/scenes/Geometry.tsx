@@ -1,7 +1,9 @@
 // Chapter 2: six clipped tiles, one per blend mode, full of rotating
 // gradient shapes; stars and polygons as paths; a sine wave that draws itself
 // on; arrows; and a line grid.
-import { Arrow, Circle, Easings, Grid, Group, Line, Path, Polyline, Rect, Text, pointOnPolyline, progress, useCurrentFrame } from '@celesta/react';
+import { Easings, Group, Rect, Text, progress, useCurrentFrame } from '@celesta/react';
+import { Arrow, Circle, Line, Path, Polyline, pointOnPolyline } from '@celesta/shapes';
+import { Grid } from '@celesta/layout';
 import type { BlendMode } from '@celesta/react';
 
 import { DIM, FPS, INK, MONO, PALETTE, polygon, style } from '../shared';

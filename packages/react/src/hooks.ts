@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import type { Time } from './scene';
+import type { Layer, Time } from './scene';
 
 export interface VideoConfig {
   width: number;
@@ -28,13 +28,38 @@ export const CompositionRuntimeContext = React.createContext<CompositionRuntimeC
  */
 export const RootRuntimeContext = React.createContext<CompositionRuntimeContextValue | null>(null);
 
-/** @internal True inside a `<FreezeFrame>`. */
-export const FreezeFrameContext = React.createContext(false);
+/**
+ * @internal Inside a `<FreezeFrame>`, an object unique to that freeze (and
+ * stable across frames), which packages key per-freeze state on; null outside.
+ */
+export const FreezeFrameContext = React.createContext<object | null>(null);
+
+// `<ProjectTimeline />` does not evaluate the project itself: celesta-evaluator
+// (Rust) already does that, once per frame, for whatever project a project-
+// aware export/preview call was given. render.ts wraps each render pass in
+// this Provider with those pre-evaluated layers so `@celesta/project` only has
+// to hand them to the reconciler. There is currently no way to ask Rust to
+// evaluate on demand mid-render — the Rust side is synchronously blocked
+// waiting for this render's response, so any such round trip would deadlock.
+/** @internal */
+export const ProjectLayersContext = React.createContext<Layer[] | null>(null);
+
+// Rust evaluates every track's layers alongside the whole-project ones on
+// every project-aware frame (see celesta-exporter's render_react_video) —
+// it cannot know in advance which track ids, if any, a <ProjectTrack />
+// or useProjectTrack() call in the entry will ask for, so there is no
+// negotiation step; the request just always carries all of them. An id
+// with no matching track (typo, or a track disabled at the project level)
+// evaluates to no layers on the Rust side (celesta-evaluator's
+// `layers_for_track`), so it is absent from this map rather than present
+// with an empty array.
+/** @internal */
+export const ProjectTrackLayersContext = React.createContext<Record<string, Layer[]> | null>(null);
 
 /**
  * @internal Asks render.ts to reconcile the current frame once more, for a
  * component that read a ref this commit had not attached yet (a
- * `<Dialogue>` mounted together with its `<CharacterView>`).
+ * `<Dialogue>` mounted together with its `<CharacterView>`, say).
  */
 export const RerenderRequestContext = React.createContext<() => void>(() => {});
 

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'vitest';
 
-const cli = fileURLToPath(new URL('../bin/celesta-react-render.js', import.meta.url));
+const cli = fileURLToPath(new URL('../../cli/bin/celesta-react-render.js', import.meta.url));
 
 function renderFrame(source, frame = 0) {
   const dir = mkdtempSync(join(tmpdir(), 'celesta-font-'));

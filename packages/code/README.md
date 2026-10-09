@@ -6,7 +6,7 @@ twinkleplop to tokenize source and Celesta's `Text` and `Rect` to draw it.
 
 ## Build and try
 
-Building `@celesta/react` as described in the root README also builds
+Building `@celesta/cli` as described in the root README also builds
 `@celesta/code` and stages its TypeScript support. From the repository root:
 
 ```sh
@@ -19,12 +19,12 @@ cargo run -p celesta-editor --release -- packages/code/examples/highlight.tsx
 Like `@celesta/react`, this package is currently private and has not been
 published to npm. It depends on the matching `@celesta/react` runtime and
 React 18 as peers. Celesta's desktop app ships it as a separate package;
-the CLI resolves it from that runtime and bundles it only when a composition
-imports it, sharing the CLI's React and Celesta instances.
+the CLI resolves it from that runtime when a composition imports it, sharing
+the CLI's React and Celesta instances.
 
 Choose **File > Set Up TypeScript** with a React composition open. Its
 `.celesta/` support directory automatically includes the `@celesta/code`
-declarations and import mapping, alongside `@celesta/react` and `@celesta/math`.
+declarations and import mapping, alongside the other Celesta packages.
 You can import `Code` without adding a dependency or installing from npm,
 including in repository compositions under `examples/<name>`.
 
@@ -40,7 +40,7 @@ tracked in [#100](https://github.com/mika-f/Celesta/issues/100).
 ## Code
 
 ```tsx
-import { useTypewriter } from '@celesta/react';
+import { useTypewriter } from '@celesta/text';
 import { Code, codeThemes } from '@celesta/code';
 
 const source = `const message: string = 'Hello, Celesta.';`;

@@ -1,4 +1,5 @@
-import { Composition, Font, Group, Rect, TextBox, registerComponent } from '@celesta/react';
+import { Composition, Font, Group, Rect, registerComponent } from '@celesta/react';
+import { TextBox } from '@celesta/text';
 import type { ComponentPropertySchema } from '@celesta/react';
 
 // A lower-third caption: change only `text`, and the font size follows from

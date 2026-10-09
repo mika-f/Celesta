@@ -1,5 +1,6 @@
-import { Audio, Composition, Text, mediaDurationInFrames, preloadMedia } from '@celesta/react';
-import type { MediaInfo } from '@celesta/react';
+import { Audio, Composition, Text } from '@celesta/react';
+import { mediaDurationInFrames, preloadMedia } from '@celesta/media-utils';
+import type { MediaInfo } from '@celesta/media-utils';
 
 let voice: MediaInfo;
 

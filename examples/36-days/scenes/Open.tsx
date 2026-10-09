@@ -1,4 +1,6 @@
-import { Camera, Easings, Group, Rect, interpolate, progress, useCurrentFrame, useTypewriter } from '@celesta/react';
+import { Easings, Group, Rect, interpolate, progress, useCurrentFrame } from '@celesta/react';
+import { Camera } from '@celesta/layout';
+import { useTypewriter } from '@celesta/text';
 import { Caret } from '../components/Caret';
 import { Label } from '../components/Label';
 import { BEAT, C, H, MONO_ADVANCE, W } from '../constants';

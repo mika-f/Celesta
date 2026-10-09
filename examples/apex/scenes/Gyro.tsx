@@ -1,4 +1,6 @@
-import { Camera, Easings, Polyline, Rect, interpolate, progress, useBeat, useCurrentFrame } from '@celesta/react';
+import { Easings, Rect, interpolate, progress, useBeat, useCurrentFrame } from '@celesta/react';
+import { Polyline } from '@celesta/shapes';
+import { Camera } from '@celesta/layout';
 import { Disc } from '../components/Disc';
 import { Label } from '../components/Label';
 import { ACID, BONE, CYAN, GREY, H, INK, MAG, TAU, W } from '../constants';

@@ -28,10 +28,10 @@
     "clean": "rm -rf dist"
   },
   "peerDependencies": {
-    "@celesta/react": "0.0.0"
+    "@celesta/character": "0.0.0"
   },
   "devDependencies": {
-    "@celesta/react": "workspace:*",
+    "@celesta/character": "workspace:*",
     "typescript": "^5.7.3"
   }
 }

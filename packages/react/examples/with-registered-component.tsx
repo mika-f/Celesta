@@ -1,4 +1,5 @@
-import { Composition, ProjectTimeline, registerComponent, Text } from '@celesta/react';
+import { Composition, registerComponent, Text } from '@celesta/react';
+import { ProjectTimeline } from '@celesta/project';
 import type { ComponentPropertySchema } from '@celesta/react';
 
 // A `type` alias, not an `interface`: registered props must be JSON

@@ -29,8 +29,10 @@ Dialogue scenes combine three pieces:
 
 ```tsx
 import * as React from 'react';
-import { Assets, Character, CharacterView, Composition, Dialogue, Rect, Sequence } from '@celesta/react';
-import type { AssetReference, CharacterViewReference } from '@celesta/react';
+import { Assets, Composition, Rect, Sequence } from '@celesta/react';
+import { Character, CharacterView, Dialogue } from '@celesta/character';
+import type { AssetReference } from '@celesta/react';
+import type { CharacterViewReference } from '@celesta/character';
 
 const mira = React.createRef<AssetReference>();          // the character
 const miraView = React.createRef<CharacterViewReference>(); // where it is drawn
@@ -114,8 +116,10 @@ pairs, and the plan tells the rest of the video when each line starts.
 
 ```tsx
 import * as React from 'react';
-import { CharacterView, Composition, DialogueSeries, Rect, Sequence, planDialogue } from '@celesta/react';
-import type { AssetReference, CharacterViewReference, DialoguePlan } from '@celesta/react';
+import { Composition, Rect, Sequence } from '@celesta/react';
+import { CharacterView, DialogueSeries, planDialogue } from '@celesta/character';
+import type { AssetReference } from '@celesta/react';
+import type { CharacterViewReference, DialoguePlan } from '@celesta/character';
 
 const zunda = React.createRef<AssetReference>();
 const metan = React.createRef<AssetReference>();
@@ -209,7 +213,8 @@ around the origin and set `x`/`y` on the subtitle:
 
 ```tsx
 import { Group, Rect, Text, interpolate, useTextMetrics } from '@celesta/react';
-import type { CharacterSubtitle, SubtitleRenderProps, TextStyle } from '@celesta/react';
+import type { TextStyle } from '@celesta/react';
+import type { CharacterSubtitle, SubtitleRenderProps } from '@celesta/character';
 
 const PLATE: TextStyle = { fontSize: 24, fontWeight: 800, fill: { type: 'solid', color: '#ffffff' } };
 
