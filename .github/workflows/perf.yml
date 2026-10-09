@@ -12,25 +12,25 @@ name: Performance
 on:
   pull_request:
     paths:
+      # Rust crate changes can affect the benchmark or its build.
       - "crates/**"
-      - "packages/character/**"
-      - "packages/cli/**"
-      - "packages/code/**"
-      - "packages/layout/**"
-      - "packages/math/**"
-      - "packages/media-utils/**"
-      - "packages/react/**"
-      - "packages/shapes/**"
-      - "packages/text/**"
-      - "packages/transitions/**"
-      - "examples/spectra/**"
-      - "examples/assets/**"
-      - "examples/versus/bench/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "pnpm-lock.yaml"
-      - "scripts/bench.py"
-      - ".github/workflows/perf.yml"
+      # These packages are bundled into the React runtime used by the scenes.
+      - "packages/character/src/**"
+      - "packages/cli/src/**"
+      - "packages/code/src/**"
+      - "packages/layout/src/**"
+      - "packages/math/src/**"
+      - "packages/media-utils/src/**"
+      - "packages/react/src/**"
+      - "packages/shapes/src/**"
+      - "packages/text/src/**"
+      - "packages/transitions/src/**"
+      # Keep the measured scenes and their referenced images and fonts in sync.
+      - "examples/spectra/**/*.tsx"
+      - "examples/spectra/**/*.ts"
+      - "examples/versus/bench/celesta/**/*.tsx"
+      - "examples/versus/bench/assets/fonts/**"
+      - "examples/assets/dialogue-demo/portraits/**"
   workflow_dispatch:
     inputs:
       base:
