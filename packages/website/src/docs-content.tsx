@@ -287,7 +287,7 @@ export const contents: Record<string, ReactNode> = {
       <h3>{text('docs.chapters.text-fonts.rich-text')}</h3>
       <p>{text('docs.chapters.text-fonts.rich-text-body', [<code>{'<Span>'}</code>, <code>fill</code>, <code>fontWeight</code>, <code>fontFamily</code>])}</p>
       <DocCode label={t('docs.chapters.text-fonts.an-emphasized-word-in-one-paragraph')} language="tsx" code={"<Text style={{ fontSize: 48, fill: { type: 'solid', color: '#ffffff' } }}>\n  速い、<Span style={{ fill: '#28A34A', fontWeight: 700 }}>カンタン</Span>、頼もしい。\n</Text>"} />
-      <p>{text('docs.chapters.text-fonts.rich-text-where', [<code>{'<Text>'}</code>, <code>{'<TextBox>'}</code>, <code>{'<TextReveal>'}</code>, <code>{'<Dialogue>'}</code>, <code>useTextMetrics()</code>, <code>useFitText()</code>, <code>useTypewriter()</code>, <code>visibleCharacters</code>])}</p>
+      <p>{text('docs.chapters.text-fonts.rich-text-where', [<code>{'<Text>'}</code>, <code>{'<TextBox>'}</code>, <code>{'<TextReveal>'}</code>, <code>{'<Dialogue>'}</code>, <code>DialogueSeries</code>, <code>useTextMetrics()</code>, <code>measureText()</code>, <code>useFitText()</code>, <code>fitText()</code>, <code>useTypewriter()</code>, <code>visibleCharacters</code>, <code>lang</code>])}</p>
       <h3>{text('docs.chapters.text-fonts.text-measurement')}</h3>
       <p>{text('docs.chapters.text-fonts.text-measurement-body')}</p>
       <p>{text('docs.chapters.text-fonts.text-fitting-body')}</p>
