@@ -25,6 +25,12 @@ for more examples, see the [examples directory](examples) and the [gallery](docs
 - **Draw and lay out content:** combine rectangles, circles, ellipses, arrows,
   and paths with text. Load fonts, measure text, fit it into a box, and wrap
   Japanese text at phrase boundaries.
+- **Write compact scenes:** use `Title` for text shortcuts and centering,
+  `Theme` to share title styles, and `Motion enter` for preset entrances.
+  These compose with the existing React components; see
+  [`with-authoring.tsx`](packages/react/examples/with-authoring.tsx) and the
+  [text](skills/celesta/references/text.md#title-and-theme) and
+  [motion](skills/celesta/references/animation.md#motion) references.
 - **Use media:** load local or HTTP(S) video, images, and audio. Remote files
   are downloaded into a cache for native preview and export.
 - **Preview frame by frame:** open a React composition, play it

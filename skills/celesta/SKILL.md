@@ -27,33 +27,22 @@ React project, run `--init` first ([setup.md](references/setup.md#create-a-react
 ## Minimal React composition
 
 ```tsx
-import { Composition, Rect, Text, interpolate, Easings, useCurrentFrame } from '@celesta/react';
-
-function Title() {
-  const frame = useCurrentFrame();
-  const opacity = interpolate(frame, [0, 30], [0, 1], {
-    easing: Easings.easeOutCubic,
-    extrapolateLeft: 'clamp',
-    extrapolateRight: 'clamp',
-  });
-  return (
-    <Text x={960} y={540} anchorX={0.5} anchorY={0.5} opacity={opacity}
-      style={{ fontFamily: 'sans-serif', fontSize: 96, align: 'center',
-        fill: { type: 'solid', color: '#ffffff' } }}>
-      Hello, Celesta.
-    </Text>
-  );
-}
+import { Composition, Rect, Title } from '@celesta/react';
 
 export default function Root() {
   return (
     <Composition width={1920} height={1080} fps={30} durationInFrames={150}>
       <Rect width={1920} height={1080} fill="#20243a" />
-      <Title />
+      <Title center enter="fade">Hello, Celesta.</Title>
     </Composition>
   );
 }
 ```
+
+For short text declarations, use `Title` (`font`, `size`, `weight`, `color`,
+`center`, `enter`) and `Theme` to share its text defaults. Use `Motion enter`
+for entrances on other elements. Details: [text.md](references/text.md#title-and-theme)
+and [animation.md](references/animation.md#motion).
 
 ## Rules that are easy to get wrong
 

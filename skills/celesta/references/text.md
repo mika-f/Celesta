@@ -8,6 +8,7 @@ from `@celesta/react`. Syntax-highlighted code is in [code.md](code.md).
 ## Contents
 
 - [The Text layer](#the-text-layer)
+- [Title and Theme](#title-and-theme)
 - [TextStyle](#textstyle)
 - [Line breaking](#line-breaking)
 - [Fonts, fallback, and emoji](#fonts-fallback-and-emoji)
@@ -36,6 +37,52 @@ Anchoring:
   instead. Use it to line up separate `Text` layers (colored runs,
   per-character animation, mixed font sizes) at one `y`, and with measured
   layouts (`y={padding + metrics.ascent}`).
+
+## Title and Theme
+
+`Title` is a shortcut for `Text`. It accepts the same text and layer props,
+plus `font`, `size`, `weight`, `color` (hex), `align`, `center`, and
+[`enter`](animation.md#motion). Defaults: sans-serif, 96 px, white, at (0, 0).
+
+```tsx
+<Theme font="Inter" size={64} color="#e4daf0">
+  <Title center enter="fade">Hello, Celesta.</Title>
+  <Title x={80} y={600} size={24}>A smaller caption.</Title>
+</Theme>
+```
+
+`center` sets both coordinates to the middle of the current canvas or layout
+bounds (`SafeArea`, `Fit`), both anchors to 0.5, and line alignment to center.
+Explicit `x`, `y`, anchors, `align`, and `style.align` override these defaults.
+Inside a translated `Group`, coordinates still belong to that group's local
+space; use ordinary `x`/`y` when its origin is already centered.
+
+`Theme` shares defaults with descendant **Titles only**; existing `Text`,
+`TextBox`, and `TextReveal` keep their behavior. Nested themes merge styles.
+Precedence: Title defaults → outer/inner Theme → center alignment → Title
+shorthands → Title `style`. Both Theme and Title accept a full `TextStyle`
+through `style`; its explicit fields win over shorthands on that component.
+Load custom fonts with `Font` as usual; a theme does not load them.
+
+`enter` wraps the text in a motion group positioned at the text's x/y, so
+scaling pivots around its anchor rather than the canvas origin. Without
+`enter`, Title evaluates directly to a Text layer. Use `Text` for the most
+explicit form; the two can be mixed freely.
+
+Example: `packages/react/examples/with-authoring.tsx`.
+
+For a 320×240 composition, these declarations evaluate to the same Text
+layer (apart from its generated id):
+
+```tsx
+<Text x={160} y={120} anchorX={0.5} anchorY={0.5} opacity={0.6} style={{ fontFamily: 'Inter', fontSize: 48, fontWeight: 700, align: 'center', fill: { type: 'solid', color: '#ff8800' } }}>Hello</Text>
+<Title center font="Inter" size={48} weight={700} color="#ff8800" opacity={0.6}>Hello</Title>
+```
+
+Measured with js-tiktoken 1.0.21, counting only each declaration (no imports):
+72 → 31 tokens with cl100k_base (56.9% fewer), or 75 → 31 with o200k_base
+(58.7% fewer). Savings vary with the composition and tokenizer. The React
+authoring test checks the evaluated-layer equivalence.
 
 ## TextStyle
 
