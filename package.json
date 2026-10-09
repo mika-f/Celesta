@@ -3,7 +3,11 @@
   "private": true,
   "packageManager": "pnpm@12.9.1",
   "scripts": {
+    "build": "turbo run build",
     "build:runtime": "pnpm --filter \"@celesta/cli...\" run build",
     "test:runtime": "pnpm --filter \"@celesta/cli...\" run test"
+  },
+  "devDependencies": {
+    "turbo": "^2.11.7"
   }
 }

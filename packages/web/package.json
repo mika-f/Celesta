@@ -24,6 +24,16 @@
     "mediabunny": "^1.60.0"
   },
   "devDependencies": {
+    "@celesta/character": "workspace:*",
+    "@celesta/code": "workspace:*",
+    "@celesta/debug": "workspace:*",
+    "@celesta/layout": "workspace:*",
+    "@celesta/math": "workspace:*",
+    "@celesta/media-utils": "workspace:*",
+    "@celesta/react": "workspace:*",
+    "@celesta/shapes": "workspace:*",
+    "@celesta/text": "workspace:*",
+    "@celesta/transitions": "workspace:*",
     "@types/node": "^24.13.6",
     "typescript": "^5.9.3",
     "vite": "^8.3.1"
