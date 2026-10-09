@@ -595,3 +595,153 @@ fn a_run_family_with_no_face_is_a_fallback() {
     assert_eq!(fallbacks[0].weight, 700);
     assert!(rasterizer.missing_glyphs("title", "AB", &style).is_empty());
 }
+
+/// A face fontdb lists under `family` at `weight`, with no glyphs: a `name`
+/// table and an `OS/2` table carrying only the weight. Tests that check which
+/// family and weight shaping asks for use these, so they don't depend on the
+/// fonts a machine has installed.
+fn named_face(family: &str, weight: u16) -> Vec<u8> {
+    let utf16 =
+        |text: &str| -> Vec<u8> { text.encode_utf16().flat_map(u16::to_be_bytes).collect() };
+    let family_name = utf16(family);
+    let post_script = utf16(&format!("{}-{weight}", family.replace(' ', "")));
+    let mut name = Vec::new();
+    for value in [0_u16, 2, 6 + 2 * 12] {
+        name.extend(value.to_be_bytes());
+    }
+    // Windows / Unicode BMP / en-US records for family (1) and PostScript (6) names.
+    for (name_id, length, offset) in [
+        (1_u16, family_name.len(), 0),
+        (6, post_script.len(), family_name.len()),
+    ] {
+        for value in [3_u16, 1, 0x409, name_id, length as u16, offset as u16] {
+            name.extend(value.to_be_bytes());
+        }
+    }
+    name.extend(&family_name);
+    name.extend(&post_script);
+    name.resize(name.len().next_multiple_of(4), 0);
+    // OS/2 version 0 is 78 bytes; usWeightClass sits at offset 4.
+    let mut os2 = vec![0_u8; 78];
+    os2[4..6].copy_from_slice(&weight.to_be_bytes());
+    os2.resize(80, 0);
+
+    let tables: [(&[u8; 4], &Vec<u8>); 2] = [(b"OS/2", &os2), (b"name", &name)];
+    let mut font = Vec::new();
+    font.extend(0x0001_0000_u32.to_be_bytes());
+    for value in [tables.len() as u16, 32, 1, 0] {
+        font.extend(value.to_be_bytes());
+    }
+    let mut offset = 12 + 16 * tables.len();
+    for (tag, data) in &tables {
+        font.extend(*tag);
+        font.extend(0_u32.to_be_bytes());
+        font.extend((offset as u32).to_be_bytes());
+        font.extend((data.len() as u32).to_be_bytes());
+        offset += data.len();
+    }
+    for (_, data) in &tables {
+        font.extend(*data);
+    }
+    font
+}
+
+/// The attributes the buffer's first line asks shaping for at `byte`.
+fn requested_at(buffer: &cosmic_text::Buffer, byte: usize) -> (String, u16) {
+    let attrs = buffer.lines[0].attrs_list().get_span(byte);
+    let family = match attrs.family {
+        cosmic_text::Family::Name(name) => name.to_owned(),
+        other => format!("{other:?}"),
+    };
+    (family, attrs.weight.0)
+}
+
+#[test]
+fn a_weight_run_asks_for_the_family_face_at_that_weight_everywhere() {
+    // Unlike `a_weight_run_draws_its_range_with_the_bold_face`, this needs no
+    // installed bold face: the family's faces are made here.
+    let mut rasterizer = TextRasterizer::new();
+    for weight in [400, 700] {
+        rasterizer
+            .load_font_data(
+                "weight-test",
+                named_face("Celesta Weight Test", weight),
+                None,
+            )
+            .unwrap();
+    }
+    assert_eq!(
+        rasterizer.matched_weight("Celesta Weight Test", 700),
+        Some(700)
+    );
+    let style = TextStyle {
+        font_family: Some("Celesta Weight Test".to_owned()),
+        font_size: Some(48.0),
+        font_runs: vec![run(2, 4, Some(700), None)],
+        ..TextStyle::default()
+    };
+    let buffer = rasterizer.shaped_buffer("abcdef", &style, None, 1.0);
+    for (byte, weight) in [(0, 400), (1, 400), (2, 700), (3, 700), (4, 400), (5, 400)] {
+        assert_eq!(
+            requested_at(&buffer, byte),
+            ("Celesta Weight Test".to_owned(), weight),
+            "byte {byte}"
+        );
+    }
+}
+
+#[test]
+fn emoji_ask_for_the_color_emoji_font_inside_runs_everywhere() {
+    // Only the repository's fonts and a stand-in color emoji family, so the
+    // check runs the same on every machine, with or without a real emoji font.
+    let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/prism");
+    let mut rasterizer = TextRasterizer::new();
+    rasterizer.font_system = cosmic_text::FontSystem::new_with_locale_and_db(
+        "en-US".to_owned(),
+        cosmic_text::fontdb::Database::new(),
+    );
+    rasterizer.initial_db = rasterizer.font_system.db().clone();
+    let font = |path: &str| ResolvedAsset {
+        id: path.to_owned(),
+        location: AssetLocation::File {
+            path: path.to_owned(),
+        },
+    };
+    rasterizer
+        .load_fonts(
+            &[
+                font("assets/fonts/BebasNeue-Regular.ttf"),
+                font("assets/fonts/IBMPlexMono-Regular.ttf"),
+            ],
+            &examples,
+        )
+        .unwrap();
+    rasterizer
+        .load_font_data("emoji-test", named_face("Noto Color Emoji", 400), None)
+        .unwrap();
+    assert_eq!(
+        rasterizer.color_emoji_family().as_deref(),
+        Some("Noto Color Emoji")
+    );
+    // "A❤️B": the heart starts at byte 1. The run covers it in both styles;
+    // in the second, the text's own family is the color emoji font.
+    for base in ["Bebas Neue", "Noto Color Emoji"] {
+        let style = TextStyle {
+            font_family: Some(base.to_owned()),
+            font_size: Some(48.0),
+            font_runs: vec![run(0, 3, None, Some("IBM Plex Mono"))],
+            ..TextStyle::default()
+        };
+        let buffer = rasterizer.shaped_buffer("A❤\u{FE0F}B", &style, None, 1.0);
+        assert_eq!(
+            requested_at(&buffer, 0).0,
+            "IBM Plex Mono",
+            "text family {base}"
+        );
+        assert_eq!(
+            requested_at(&buffer, 1).0,
+            "Noto Color Emoji",
+            "text family {base}"
+        );
+    }
+}
