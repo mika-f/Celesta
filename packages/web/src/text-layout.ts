@@ -23,17 +23,34 @@ export function textStyle(ctx: Context, style: TextStyle) {
 
 export type RunPiece = { text: string; start: number; utf16: number; run?: FontRun };
 
+/** Throws unless `runs` are ordered, non-overlapping ranges within `count` code points. */
+export function checkFontRuns(runs: FontRun[] | undefined, count: number): void {
+  let previousEnd = 0;
+  for (const run of runs ?? []) {
+    if (!Number.isSafeInteger(run.start) || !Number.isSafeInteger(run.end) || run.start < previousEnd || run.end < run.start || run.end > count) {
+      throw new Error('Invalid text font run range');
+    }
+    previousEnd = run.end;
+  }
+}
+
+// Reused: `measureLine` cuts pieces for every width probe while wrapping.
+const graphemes = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
+
 /**
  * `text` (code point `start` of the full text onward) cut where the font run
  * changes: `start` and `utf16` are each piece's code-point and UTF-16 offset
  * within `text`. A grapheme cluster takes the run at its first code point.
+ * `runs` are ordered and non-overlapping (`checkFontRuns`).
  */
 export function runPieces(text: string, start: number, runs: FontRun[]): RunPiece[] {
   const pieces: RunPiece[] = [];
   let point = 0;
-  for (const { segment, index } of new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text)) {
+  let next = 0;
+  for (const { segment, index } of graphemes.segment(text)) {
     const at = start + point;
-    const run = runs.find(r => r.start <= at && at < r.end);
+    while (next < runs.length && runs[next].end <= at) next++;
+    const run = next < runs.length && runs[next].start <= at ? runs[next] : undefined;
     const last = pieces[pieces.length - 1];
     if (last && last.run === run) last.text += segment;
     else pieces.push({ text: segment, start: point, utf16: index, run });
@@ -51,22 +68,23 @@ export type LineMetrics = {
 /**
  * Measures one line (code point `start` of the full text onward) piece by
  * piece in each run's font. The font box comes from the text's own font,
- * which places the baseline, as natively.
+ * which places the baseline, as natively. The ink box is the union of the
+ * pieces' boxes, each placed at its advance.
  */
 export function measureLine(ctx: Context, style: TextStyle, text: string, start: number, runs: FontRun[]): LineMetrics {
   const own = ctx.measureText(text);
   if (runs.length === 0) return own;
   const base = ctx.font;
-  let width = 0, left = 0, right = 0, ascent = 0, descent = 0;
-  runPieces(text, start, runs).forEach((piece, i) => {
+  let width = 0, left = -Infinity, right = -Infinity, ascent = 0, descent = 0;
+  for (const piece of runPieces(text, start, runs)) {
     ctx.font = piece.run ? cssFont(style, piece.run) : base;
     const m = ctx.measureText(piece.text);
-    if (i === 0) left = m.actualBoundingBoxLeft;
-    right = width + m.actualBoundingBoxRight;
+    left = Math.max(left, m.actualBoundingBoxLeft - width);
+    right = Math.max(right, width + m.actualBoundingBoxRight);
     ascent = Math.max(ascent, m.actualBoundingBoxAscent);
     descent = Math.max(descent, m.actualBoundingBoxDescent);
     width += m.width;
-  });
+  }
   ctx.font = base;
   return {
     width, actualBoundingBoxLeft: left, actualBoundingBoxRight: right,
@@ -116,6 +134,7 @@ export function textMeasurer() {
   return ({ text, style, maxWidth }: MeasureTextRequest): TextMetrics => {
     textStyle(ctx, style);
     const runs = style.fontRuns ?? [];
+    checkFontRuns(runs, Array.from(text).length);
     const measure = (text: string, start: number) => measureLine(ctx, style, text, start, runs).width;
     const ranges = textLineRanges(ctx, text, maxWidth, style.lang, runs.length ? measure : undefined);
     const lines = ranges.map(range => range.text);

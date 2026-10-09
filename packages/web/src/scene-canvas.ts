@@ -1,6 +1,6 @@
 import type { Scene, Layer, Asset, FontRun, Paint, TextStyle } from './types';
 import { loadFonts, releaseFonts } from './fonts';
-import { cssFont, measureLine, runPieces, textLineRanges, textStyle } from './text-layout';
+import { checkFontRuns, cssFont, measureLine, runPieces, textLineRanges, textStyle } from './text-layout';
 import type { RunPiece } from './text-layout';
 
 type Canvas = HTMLCanvasElement;
@@ -35,22 +35,34 @@ type RunSegment = { text: string; left: number; right: number; rtl: boolean; run
 function runSegments(text: string, pieces: RunPiece[], regions: Region[], tolerance: number): RunSegment[] {
   const characters = Array.from(text);
   const segments: RunSegment[] = [];
+  const near = (a: number, b: number) => Math.abs(a - b) <= tolerance;
+  // A lone cluster has no neighbor in its segment to show its direction, so
+  // read it from its neighbors on the line: right to left when the cluster
+  // after it in the text sits to its left, or the one before to its right.
+  // Drawn that way, a mirrored character (a parenthesis) keeps its mirroring.
+  const loneDirection = (region: Region): 'ltr' | 'rtl' | undefined => {
+    const index = regions.indexOf(region);
+    const next = regions[index + 1], previous = regions[index - 1];
+    return (next && near(next.x + next.width, region.x)) || (previous && near(region.x + region.width, previous.x))
+      ? 'rtl' : undefined;
+  };
   for (const piece of pieces) {
     const end = piece.start + Array.from(piece.text).length;
-    let current: { start: number; end: number; left: number; right: number; last: Region; direction?: 'ltr' | 'rtl' } | undefined;
+    let current: { start: number; end: number; left: number; right: number; first: Region; last: Region; direction?: 'ltr' | 'rtl' } | undefined;
     const flush = () => {
       if (!current) return;
+      const direction = current.direction ?? (current.first === current.last ? loneDirection(current.first) : undefined);
       segments.push({
         text: characters.slice(current.start, current.end).join(''), left: current.left, right: current.right,
-        rtl: current.direction === 'rtl', run: piece.run,
+        rtl: direction === 'rtl', run: piece.run,
       });
     };
     for (const region of regions) {
       if (region.start < piece.start || region.start >= end) continue;
       if (current) {
         const previous = current.last;
-        const after = Math.abs(region.x - (previous.x + previous.width)) <= tolerance;
-        const before = Math.abs(region.x + region.width - previous.x) <= tolerance;
+        const after = near(region.x, previous.x + previous.width);
+        const before = near(region.x + region.width, previous.x);
         const direction = current.direction
           ? ((current.direction === 'ltr' ? after : before) ? current.direction : undefined)
           : after ? 'ltr' : before ? 'rtl' : undefined;
@@ -63,7 +75,7 @@ function runSegments(text: string, pieces: RunPiece[], regions: Region[], tolera
         }
         flush();
       }
-      current = { start: region.start, end: region.end, left: region.x, right: region.x + region.width, last: region };
+      current = { start: region.start, end: region.end, left: region.x, right: region.x + region.width, first: region, last: region };
     }
     flush();
   }
@@ -462,13 +474,7 @@ export class SceneCanvas {
         }
         previousEnd = run.end;
       }
-      let previousFontEnd = 0;
-      for (const run of style.fontRuns ?? []) {
-        if (!Number.isSafeInteger(run.start) || !Number.isSafeInteger(run.end) || run.start < previousFontEnd || run.end < run.start || run.end > count) {
-          throw new Error('Invalid text font run range');
-        }
-        previousFontEnd = run.end;
-      }
+      checkFontRuns(style.fontRuns, count);
       const fontRuns = style.fontRuns ?? [];
       if (style.visibleCharacters != null && (!Number.isSafeInteger(style.visibleCharacters) || style.visibleCharacters < 0)) {
         throw new Error('Text visibleCharacters must be a non-negative integer');
@@ -481,7 +487,12 @@ export class SceneCanvas {
       ctx.textAlign = 'left';
       const lines = textLineRanges(ctx, content.text, content.maxWidth, style.lang,
         fontRuns.length ? (text, start) => measureLine(ctx, style, text, start, fontRuns).width : undefined);
-      const measured = lines.map(line => measureLine(ctx, style, line.text, line.start, fontRuns));
+      // Only the runs a line reaches; a line none reaches takes the direct path.
+      const lineRuns = lines.map(line => {
+        const end = line.start + Array.from(line.text).length;
+        return fontRuns.filter(run => run.end > line.start && run.start < end);
+      });
+      const measured = lines.map((line, i) => measureLine(ctx, style, line.text, line.start, lineRuns[i]));
       const width = content.maxWidth ?? Math.max(0, ...measured.map(m => m.width));
       const placed = measured.map((m, i) => ({
         x: style.align === 'center' ? (width - m.width) / 2 : style.align === 'right' ? width - m.width : 0,
@@ -495,14 +506,14 @@ export class SceneCanvas {
       ctx.setTransform(matrix.translate(-t.anchor.x * width, y));
       for (let i = 0; i < lines.length; i++) {
         const baseline = placed[i].baseline - top;
-        if (style.colorRuns?.length || style.visibleCharacters != null || fontRuns.length) {
+        if (style.colorRuns?.length || style.visibleCharacters != null || lineRuns[i].length) {
           const pad = Math.ceil(style.stroke?.width ?? 0) + 1;
           const m = measured[i];
           const left = Math.floor(placed[i].x - m.actualBoundingBoxLeft) - pad;
           const top = Math.floor(baseline - m.actualBoundingBoxAscent) - pad;
           const right = Math.ceil(placed[i].x + m.actualBoundingBoxRight) + pad;
           const bottom = Math.ceil(baseline + m.actualBoundingBoxDescent) + pad;
-          const image = this.styledLine(ctx, lines[i].text, style, right - left, bottom - top, baseline - top, placed[i].x - left, lines[i].start, -left, -top, fontRuns);
+          const image = this.styledLine(ctx, lines[i].text, style, right - left, bottom - top, baseline - top, placed[i].x - left, lines[i].start, -left, -top, lineRuns[i]);
           ctx.drawImage(image, left, top);
           continue;
         }

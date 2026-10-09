@@ -1,6 +1,6 @@
 // Run with: node packages/web/test/text-runs.mjs [path-to-chromium]
 import { createRequire } from 'node:module';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +9,8 @@ import assert from 'node:assert/strict';
 const require = createRequire(new URL('../../react/package.json', import.meta.url));
 const { build } = require('esbuild');
 const directory = mkdtempSync(join(tmpdir(), 'celesta-web-text-'));
+// A font every machine has: the repository's IBM Plex Mono, loaded as a web font.
+const plexMono = readFileSync(new URL('../../../examples/afterimage/assets/fonts/IBMPlexMono-Regular.ttf', import.meta.url)).toString('base64');
 try {
   const module = fileURLToPath(new URL('../src/scene-canvas.ts', import.meta.url));
   const { outputFiles } = await build({ stdin: { contents: `
@@ -58,6 +60,8 @@ try {
       check(wrapped.some((n, i) => i % 4 === 0 && n === 255 && wrapped[i + 1] === 0 && wrapped[i + 2] === 0), 'wrapped source color ranges were lost');
       // Font runs: one paragraph, each run drawn with its own font.
       const ink = data => { let n = 0; for (let i = 3; i < data.length; i += 4) n += data[i] > 0 ? 1 : 0; return n; };
+      const testFont = new FontFace('Celesta Test Mono', 'url(data:font/ttf;base64,${plexMono})');
+      document.fonts.add(await testFont.load());
       const base = { fontSize: 40, lineHeight: 54, fontFamily: 'serif' };
       // Styled lines are drawn through a mask, so compare against a styled
       // line without runs (a full reveal) rather than the direct path.
@@ -84,9 +88,25 @@ try {
       check(boldBefore.box.every((n, i) => Math.abs(n - plainBefore.box[i]) <= 1)
         && Math.abs(boldBefore.sum - plainBefore.sum) <= plainBefore.sum * 0.03,
         'text before a font run moved or changed ' + JSON.stringify([boldBefore, plainBefore]));
-      // A family name, not a generic one: quoted generic names are no family.
-      const monoRun = await raster('AV office', { ...base, fontRuns: [{ start: 3, end: 9, fontFamily: 'Courier New' }] });
+      const monoRun = await raster('AV office', { ...base, fontRuns: [{ start: 3, end: 9, fontFamily: 'Celesta Test Mono' }] });
       check(monoRun.some((n, i) => n !== plainRuns[i]), 'a family run drew the text font');
+      // A line no run reaches is drawn exactly as without runs.
+      const direct = await raster('AV\\noffice', base);
+      const secondLineRun = await raster('AV\\noffice', { ...base, fontRuns: [{ start: 3, end: 9, fontWeight: 700 }] });
+      let firstLine = 0;
+      for (let y = 0; y < 90; y++) for (let x = 0; x < canvas.width; x++) {
+        const i = (y * canvas.width + x) * 4 + 3;
+        if (direct[i] !== secondLineRun[i]) firstLine++;
+      }
+      check(firstLine === 0, 'a line without runs changed: ' + firstLine + ' pixels');
+      check(secondLineRun.some((n, i) => n !== direct[i]), 'the second line lost its run');
+      // A run on one mirrored character in right-to-left text keeps its mirroring.
+      const mirrorText = 'אבג (דהו) זחט';
+      const mirrorReference = await raster(mirrorText, { ...base, visibleCharacters: Array.from(mirrorText).length });
+      const mirrorRun = await raster(mirrorText, { ...base, fontRuns: [{ start: 4, end: 5, fontWeight: 400 }] });
+      let mirrorDiff = 0;
+      for (let i = 3; i < mirrorReference.length; i += 4) if (Math.abs(mirrorReference[i] - mirrorRun[i]) > 32) mirrorDiff++;
+      check(mirrorDiff < 40, 'a run on a parenthesis lost its mirroring: ' + mirrorDiff + ' pixels');
       const hiddenRun = await raster('AV office', { ...base, fontRuns: [{ start: 3, end: 9, fontWeight: 700 }], visibleCharacters: 0 });
       check(hiddenRun.every(n => n === 0), 'zero reveal over a font run draws pixels');
       const coloredRun = await raster('AV office', { ...base, fontRuns: [{ start: 3, end: 9, fontWeight: 700 }], colorRuns: [{ start: 3, end: 9, color: '#ff0000' }] });

@@ -75,6 +75,34 @@ test('measuring and wrapping use each run font', () => {
   ]);
 });
 
+test('a line ink box is the union of its pieces', () => {
+  // The bold piece starts at x=2 but its ink reaches 5px left of that, past
+  // the first piece's ink, and its right edge reaches 1px past its advance.
+  const ctx = {
+    font: '',
+    measureText(text) {
+      const bold = this.font.startsWith('700');
+      const width = Array.from(text).length;
+      return { width, actualBoundingBoxLeft: bold ? 5 : 0, actualBoundingBoxRight: bold ? width + 1 : width, actualBoundingBoxAscent: 8, actualBoundingBoxDescent: 2, fontBoundingBoxAscent: 8, fontBoundingBoxDescent: 2 };
+    },
+  };
+  const style = { fontSize: 10 };
+  ctx.font = cssFont(style);
+  const line = measureLine(ctx, style, 'abcdef', 0, [{ start: 2, end: 4, fontWeight: 700 }]);
+  assert.equal(line.actualBoundingBoxLeft, 3);
+  assert.equal(line.actualBoundingBoxRight, 6);
+});
+
+test('the browser measurer rejects invalid font runs like scene rendering', t => {
+  const ctx = { font: '', measureText: text => ({ width: text.length, fontBoundingBoxAscent: 8, fontBoundingBoxDescent: 2 }) };
+  const original = globalThis.OffscreenCanvas;
+  t.after(() => { globalThis.OffscreenCanvas = original; });
+  globalThis.OffscreenCanvas = class { getContext() { return ctx; } };
+  for (const fontRuns of [[{ start: 0, end: 5 }], [{ start: 1, end: 0 }], [{ start: 0, end: 2 }, { start: 1, end: 3 }]]) {
+    assert.throws(() => textMeasurer()({ text: 'abcd', style: { fontRuns }, fonts: [] }), /Invalid text font run range/);
+  }
+});
+
 test('cssFont reads a run weight and family over the style', () => {
   assert.equal(cssFont({ fontSize: 20, fontFamily: 'Serif A' }), '400 20px "Serif A", system-ui, sans-serif');
   assert.equal(cssFont({ fontSize: 20, fontFamily: 'Serif A' }, { start: 0, end: 1, fontWeight: 700, fontFamily: 'Mono B' }), '700 20px "Mono B", system-ui, sans-serif');
