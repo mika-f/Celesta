@@ -29,6 +29,9 @@ pub(crate) struct GroupPlan {
     pub(crate) canvas: CanvasRegion,
     /// What the group's layers cover, in scene pixels.
     pub(crate) content: Option<PixelBounds>,
+    /// The box of the group's layers' shapes, in scene pixels: `content`
+    /// without the margins added for filtering and rounding.
+    pub(crate) shape: Option<PixelBounds>,
     /// Whether anything of the group (or its effect) reaches the scene.
     /// When not, its layers still draw onto `canvas`, a single pixel none
     /// of them can touch, and the group draws nothing onto its parent.
@@ -41,15 +44,15 @@ pub(crate) struct GroupPlan {
 pub(crate) fn plan_groups(items: &[PreparedItem], scene: CanvasRegion) -> Vec<GroupPlan> {
     let mut plans: Vec<GroupPlan> = Vec::new();
     // Each open group's index in `plans` and what its layers cover so far.
-    let mut open: Vec<(usize, Option<PixelBounds>)> = Vec::new();
+    let mut open: Vec<(usize, Covered)> = Vec::new();
     // What each open mask drew, once its group's children have begun.
-    let mut masks: Vec<Option<PixelBounds>> = Vec::new();
-    let cover = |open: &mut Vec<(usize, Option<PixelBounds>)>, bounds: Option<PixelBounds>| {
+    let mut masks: Vec<Covered> = Vec::new();
+    let cover = |open: &mut Vec<(usize, Covered)>, bounds: Covered| {
         if let Some((_, covered)) = open.last_mut() {
-            *covered = PixelBounds::union(*covered, bounds);
+            *covered = covered.union(bounds);
         }
     };
-    let plan = |content: Option<PixelBounds>, output: Option<PixelBounds>| {
+    let plan = |covered: Covered, output: Option<PixelBounds>| {
         let canvas = CanvasRegion::covering(output, scene);
         GroupPlan {
             canvas: canvas.unwrap_or(CanvasRegion {
@@ -58,24 +61,31 @@ pub(crate) fn plan_groups(items: &[PreparedItem], scene: CanvasRegion) -> Vec<Gr
                 width: 1,
                 height: 1,
             }),
-            content,
+            content: covered.content,
+            shape: covered.shape,
             drawn: canvas.is_some(),
         }
     };
     for item in items {
         match item {
-            PreparedItem::Layer(layer) => cover(&mut open, Some(layer.bounds())),
+            PreparedItem::Layer(layer) => cover(
+                &mut open,
+                Covered {
+                    content: Some(layer.bounds()),
+                    shape: Some(layer.shape()),
+                },
+            ),
             PreparedItem::PendingText | PreparedItem::PendingPath => {
                 unreachable!("pending text and paths are resolved")
             }
             PreparedItem::BeginGroup | PreparedItem::BeginMask => {
-                open.push((plans.len(), None));
-                plans.push(plan(None, None));
+                open.push((plans.len(), Covered::default()));
+                plans.push(plan(Covered::default(), None));
             }
             PreparedItem::MaskContent => {
                 let (index, mask) = open.pop().expect("every mask was begun");
                 masks.push(mask);
-                open.push((index, None));
+                open.push((index, Covered::default()));
             }
             PreparedItem::EndMask(_, spec) => {
                 let (index, children) = open.pop().expect("every mask was begun");
@@ -85,25 +95,51 @@ pub(crate) fn plan_groups(items: &[PreparedItem], scene: CanvasRegion) -> Vec<Gr
                 let shown = if spec.invert {
                     children
                 } else {
-                    PixelBounds::intersection(children, mask)
+                    Covered {
+                        content: PixelBounds::intersection(children.content, mask.content),
+                        shape: PixelBounds::intersection(children.shape, mask.shape),
+                    }
                 };
-                plans[index] = plan(shown, shown);
+                plans[index] = plan(shown, shown.content);
                 cover(&mut open, shown);
             }
             PreparedItem::EndGroup(_) => {
-                let (index, content) = open.pop().expect("every group was begun");
-                plans[index] = plan(content, content);
-                cover(&mut open, content);
+                let (index, covered) = open.pop().expect("every group was begun");
+                plans[index] = plan(covered, covered.content);
+                cover(&mut open, covered);
             }
             PreparedItem::EndEffect(_, effects) => {
-                let (index, content) = open.pop().expect("every group was begun");
-                let output = content.map(|content| effects.output_bounds(content));
-                plans[index] = plan(content, output);
-                cover(&mut open, output);
+                let (index, covered) = open.pop().expect("every group was begun");
+                let output = covered.content.map(|content| effects.output_bounds(content));
+                plans[index] = plan(covered, output);
+                // A blur or a shadow spreads the pixels, not the shape.
+                cover(
+                    &mut open,
+                    Covered {
+                        content: output,
+                        shape: covered.shape,
+                    },
+                );
             }
         }
     }
     plans
+}
+
+/// What a group's layers cover so far: `GroupPlan::content` and `shape`.
+#[derive(Clone, Copy, Default)]
+struct Covered {
+    content: Option<PixelBounds>,
+    shape: Option<PixelBounds>,
+}
+
+impl Covered {
+    fn union(self, other: Self) -> Self {
+        Self {
+            content: PixelBounds::union(self.content, other.content),
+            shape: PixelBounds::union(self.shape, other.shape),
+        }
+    }
 }
 
 pub(crate) enum GpuStep {
@@ -135,6 +171,9 @@ pub(crate) enum GpuStep {
         /// The part of the effect's canvas its layers drew on, in that
         /// canvas's pixels; `None` when they drew nothing.
         content: Option<PixelBounds>,
+        /// The box of its layers' shapes, in scene pixels: the content box
+        /// a custom shader sees.
+        shape: Option<PixelBounds>,
         /// As for `EndGroup`.
         area: Option<[u32; 4]>,
     },

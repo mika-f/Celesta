@@ -236,6 +236,7 @@ impl Compositor<'_> {
             inner_instance,
             effects,
             content,
+            shape,
             ..
         } = end
         else {
@@ -254,15 +255,15 @@ impl Compositor<'_> {
                 region.width,
                 region.height,
             );
-            let origin = [region.x, region.y];
-            let scene_content = content.offset([region.x as f32, region.y as f32]);
             let written = effects.shaded_bounds(content);
             self.shaders.pass(
                 encoder,
                 &canvas,
                 &shaded,
-                origin,
-                scene_content,
+                [region.x, region.y],
+                // A mask's shapes can miss each other where their pixels
+                // still meet; the pixels' box stands in then.
+                shape.unwrap_or_else(|| content.offset([region.x as f32, region.y as f32])),
                 written,
                 shader,
             );

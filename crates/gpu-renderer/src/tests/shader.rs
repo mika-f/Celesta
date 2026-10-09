@@ -110,7 +110,7 @@ fn shades_each_pixel_of_the_layer() {
 }
 
 #[test]
-fn uv_spans_the_content_box() {
+fn uv_spans_the_layers_shapes() {
     let Some(mut renderer) = renderer(black_background()) else {
         return;
     };
@@ -119,26 +119,43 @@ fn uv_spans_the_content_box() {
         "fn effect(input: EffectInput) -> vec4f {\n    return vec4f(input.uv, 0.0, 1.0);\n}\n",
         &[],
     );
-    let frame = renderer
-        .render(&scene(
-            vec![uv],
-            vec![shaded(
-                corner_rect("rect", 16.0, 8.0, 32.0, 40.0, "#ffffff"),
-                "uv",
-                Vec::new(),
-                0.0,
-            )],
-        ))
-        .unwrap();
-    // The content box is the conservative box the layer's pixels can
-    // cover, so it holds the rect with a small margin around it.
-    let [left, top, ..] = pixel_at(&frame, 16, 8);
-    let [right, bottom, ..] = pixel_at(&frame, 47, 47);
-    assert!(left > 0 && top > 0 && left < 26 && top < 26, "top left {left}, {top}");
-    assert!(right < 255 && bottom < 255 && right > 229 && bottom > 229, "bottom right {right}, {bottom}");
-    assert!(pixel_at(&frame, 32, 8)[0] > left && pixel_at(&frame, 16, 28)[1] > top);
-    // The shader writes nothing well outside the content box.
-    assert_eq!(pixel_at(&frame, 8, 30), [0, 0, 0, 255]);
+    let near = |value: f32| (value * 255.0).round() as u8;
+    // A rect alone; a group of two rects; a group whose rect is blurred,
+    // which spreads its pixels but not its shape.
+    let mut blurred = corner_rect("blurred", 16.0, 8.0, 32.0, 40.0, "#ffffff");
+    blurred.effects.blur = 4.0;
+    let cases = [
+        ("rect", corner_rect("rect", 16.0, 8.0, 32.0, 40.0, "#ffffff")),
+        (
+            "group",
+            group(
+                EvaluatedTransform::default(),
+                vec![
+                    corner_rect("top", 16.0, 8.0, 10.0, 10.0, "#ffffff"),
+                    corner_rect("bottom", 38.0, 38.0, 10.0, 10.0, "#ffffff"),
+                ],
+            ),
+        ),
+        ("blurred", group(EvaluatedTransform::default(), vec![blurred])),
+    ];
+    for (case, layer) in cases {
+        let frame = renderer
+            .render(&scene(vec![uv.clone()], vec![shaded(layer, "uv", Vec::new(), 0.0)]))
+            .unwrap();
+        // Pixel centres half a pixel inside the box's corners.
+        assert_near(
+            pixel_at(&frame, 16, 8),
+            [near(0.5 / 32.0), near(0.5 / 40.0), 0, 255],
+            1,
+            case,
+        );
+        assert_near(
+            pixel_at(&frame, 47, 47),
+            [near(31.5 / 32.0), near(39.5 / 40.0), 0, 255],
+            1,
+            case,
+        );
+    }
 }
 
 #[test]

@@ -189,24 +189,41 @@ impl PreparedLayer {
     /// `vs_main` draws (a filtered layer's reaches one texel past its edge),
     /// grown by two pixels for the exact-copy rounding.
     pub(crate) fn bounds(&self) -> PixelBounds {
-        let (texel_width, texel_height) = match &self.content {
+        let (texel_width, texel_height) = self.texels();
+        // A rect's quad reaches one pixel past its edge, within the growth
+        // below.
+        let margins = if matches!(self.content, PreparedContent::Rect(_))
+            || self.state.transform.is_uniform_scale(self.raster_scale)
+        {
+            [0.0, 0.0]
+        } else {
+            [1.0 / texel_width as f32, 1.0 / texel_height as f32]
+        };
+        self.quad(margins).expand(2.0, 2.0)
+    }
+
+    /// The box of the layer's own shape in scene pixels: its quad's
+    /// corners, without the margins `bounds` adds.
+    pub(crate) fn shape(&self) -> PixelBounds {
+        self.quad([0.0, 0.0])
+    }
+
+    fn texels(&self) -> (u32, u32) {
+        match &self.content {
             PreparedContent::Texture(texture) => (texture.width, texture.height),
             PreparedContent::Rect(_) => (1, 1),
             PreparedContent::Path(path) => (path.width, path.height),
             PreparedContent::Canvas { .. } => unreachable!("only a group's end draws a canvas"),
-        };
+        }
+    }
+
+    /// The box of the layer's quad, reaching `margin_u` and `margin_v` of
+    /// its size past each edge.
+    fn quad(&self, [margin_u, margin_v]: [f32; 2]) -> PixelBounds {
+        let (texel_width, texel_height) = self.texels();
         let (width, height) = self.size(texel_width, texel_height);
         let transform = self.state.transform;
         let anchor = [self.anchor.x as f32, self.anchor.y as f32];
-        // A rect's quad reaches one pixel past its edge, within the growth
-        // below.
-        let (margin_u, margin_v) = if matches!(self.content, PreparedContent::Rect(_))
-            || transform.is_uniform_scale(self.raster_scale)
-        {
-            (0.0, 0.0)
-        } else {
-            (1.0 / texel_width as f32, 1.0 / texel_height as f32)
-        };
         let (low_u, high_u) = (-margin_u, 1.0 + margin_u);
         let (low_v, high_v) = (-margin_v, 1.0 + margin_v);
         let corners = [
@@ -227,7 +244,7 @@ impl PreparedLayer {
         let ys = corners.map(|(_, y)| y);
         let min = |values: [f32; 4]| values.into_iter().fold(f32::INFINITY, f32::min);
         let max = |values: [f32; 4]| values.into_iter().fold(f32::NEG_INFINITY, f32::max);
-        PixelBounds([min(xs), min(ys), max(xs), max(ys)]).expand(2.0, 2.0)
+        PixelBounds([min(xs), min(ys), max(xs), max(ys)])
     }
 
     /// The layer's size in layer units: a rect's own, or `texel_width` x

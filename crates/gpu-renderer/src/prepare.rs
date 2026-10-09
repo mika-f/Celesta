@@ -111,6 +111,7 @@ impl GpuRenderer {
         let mut open = vec![GroupPlan {
             canvas: root,
             content: None,
+            shape: None,
             drawn: true,
         }];
         for item in items {
@@ -187,6 +188,7 @@ impl GpuRenderer {
                             .content
                             .filter(|_| group.drawn)
                             .map(|content| group.canvas.local(content)),
+                        shape: group.shape,
                         area: target.local_area(group.canvas.bounds()),
                     });
                     index += 2;

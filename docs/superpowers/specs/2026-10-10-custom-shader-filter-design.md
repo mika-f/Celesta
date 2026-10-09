@@ -96,11 +96,14 @@ fn unpremultiply(color: vec4f) -> vec4f;
 and, when the shader declares parameters, a `params` uniform (see
 "Parameters").
 
-- The **content box** is the axis-aligned box of what the layer's pixels can
-  cover, in scene pixels: the bounds the renderer already computes to size
-  the effect canvas. It is conservative (it includes anti-aliasing fringes)
-  and it is not the layout box. A shader that needs an exact local frame
-  takes it as parameters.
+- The **content box** is the axis-aligned box, in scene pixels, of the
+  shapes the layer draws: a rect's own rectangle, an image's or text's
+  quad, after transforms. For a group it is the box of its children's
+  shapes; a child's blur or shadow spreads its pixels, not its shape. It
+  does not include the anti-aliasing fringe or the rounding margin the
+  renderer adds to size canvases, so `uv` is 0,0 and 1,1 at the corners of
+  a rect drawn at whole pixels. The fringe still lies within the area the
+  shader writes (see "Output area").
 - There is no built-in time. Every animated shader takes time as a
   parameter. The author chooses the clock (`useCurrentFrame()` is local to
   the enclosing `<Sequence>`; a global clock is also possible), and a shader
@@ -122,8 +125,9 @@ blending that follow. A NaN result gives an unspecified pixel.
 
 ### Output area
 
-The shader writes the content box expanded by its `padding` on every side,
-clipped to the scene. Pixels outside that area stay transparent. A shader
+The shader writes the box of the layer's pixels (the content box with the
+renderer's anti-aliasing and rounding margin) expanded by its `padding` on
+every side, clipped to the scene. Pixels outside that area stay transparent. A shader
 that displaces pixels outward or draws an outline declares how far it
 reaches; one that only recolors needs no padding.
 
@@ -490,7 +494,11 @@ pipelines. The first frame that uses a new shader pays the compile
 (milliseconds; more for the platform's pipeline compile), and later frames
 pay nothing.
 
-**Planning.** `EffectSpec` gains `shader: Option<ShaderSpec>`: the cache
+**Planning.** `plan_groups` tracks, beside each group's conservative
+`content`, its `shape`: the union of its layers' quads without margins
+(`PreparedLayer::shape`), unioned through groups, intersected through
+masks like `content`, and not spread by a nested effect. `EndEffect`
+carries it as the shader's content box. `EffectSpec` gains `shader: Option<ShaderSpec>`: the cache
 key, the padding (clamped to 0–512), and the byte offset of the pass's
 uniforms in the frame's shader parameter data. `output_bounds` expands the
 content by the padding first, and computes blur, shadow, and glow reach
