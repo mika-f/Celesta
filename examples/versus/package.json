@@ -2,9 +2,12 @@
   "name": "@celesta/example-versus",
   "private": true,
   "dependencies": {
+    "@celesta/code": "workspace:*",
     "@celesta/react": "workspace:*",
     "@celesta/shapes": "workspace:*",
-    "react": "^18.3.1",
-    "@celesta/code": "workspace:*"
+    "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.31"
   }
 }
