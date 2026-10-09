@@ -128,8 +128,10 @@ JavaScript does.
 worth about 11% for NEBULA and reel on the A4000 and about 4% on the Mac,
 and nothing measurable serial. Why is not established. Line-delimited
 reads go through an 8 KiB `BufReader` into a growing `String`;
-length-prefixed ones are a few large `read_exact` calls into a reused
-`Vec`, and Node encodes into a reused `Buffer`. Windows pipe reads may cost
+length-prefixed ones read the four-byte count with `read_exact`, reserve
+that much in a reused `Vec`, and read the JSON into it with
+`take(count).read_to_end` in a few large reads, and Node encodes into a
+reused `Buffer`. Windows pipe reads may cost
 more than macOS ones, and pipelining may put the transfer, rather than the
 decode, on the critical path.
 

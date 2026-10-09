@@ -25,10 +25,12 @@ pipe until the parse is done; `receive_frame` answers them.
 
 ## Length-prefixed messages
 
-`ReactBridge::spawn` passes `--length-prefixed` to the CLI. Every message
-Node writes is then a little-endian `u32` byte count followed by that many
-bytes of JSON, encoded into a `Buffer` reused across messages; Rust reads
-it with `read_exact` into a `Vec` reused across messages and parses it with
+`ReactBridge::spawn` passes `--length-prefixed` to the CLI, after the entry
+like `--properties-stdin`. Every message Node writes is then a
+little-endian `u32` byte count followed by that many bytes of JSON,
+encoded into a `Buffer` reused across messages. Rust reads the four-byte
+count with `read_exact`, then the JSON with `take(count).read_to_end` into
+a `Vec` reused across messages, and parses it with
 `serde_json::from_slice`. Requests from Rust stay JSON lines. Without the
 flag the CLI still writes JSON lines, which the JavaScript tests read.
 

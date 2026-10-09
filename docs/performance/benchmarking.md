@@ -141,8 +141,11 @@ target/release/examples/protocol-bench examples/versus/bench/celesta/nebula.tsx 
 target/release/examples/protocol-bench --pipelined examples/versus/bench/celesta/nebula.tsx 300 60
 ```
 
-It evaluates 30 warmup frames from the start frame, then times the given
-number of frames, and prints per-frame statistics and frames per second.
+The arguments are `[--pipelined] <entry> [frames] [start]` (defaults: 240
+frames, start frame 0). It evaluates 30 warmup frames from the start
+frame, then times the next `frames`, wrapping at the composition's end, so
+`300 60` warms up on frames 60–89 and times frames 90–389. It prints
+per-frame statistics and frames per second.
 `--pipelined` submits each frame's successor before decoding it, as the
 exporter does. It needs a built `packages/react`; compare revisions by
 building each in its own worktree and running them alternately. See

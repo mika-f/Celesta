@@ -37,7 +37,9 @@ test('--length-prefixed frames every message with its UTF-8 byte count', () => {
       input: `${JSON.stringify({ time: { value: 0, timescale: 1 } })}\n`,
     });
     assert.equal(result.status, 0, result.stderr.toString());
-    const [ready, frame] = messages(result.stdout);
+    const framed = messages(result.stdout);
+    assert.equal(framed.length, 2);
+    const [ready, frame] = framed;
     assert.equal(ready.config.width, 64);
     // A multi-byte id checks that the prefix counts bytes, not characters.
     assert.equal(frame.scene.layers[0].id, '四角');

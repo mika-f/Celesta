@@ -19,7 +19,7 @@ fn main() {
     let mut args = std::env::args().skip(1).filter(|arg| arg != "--pipelined");
     let entry = PathBuf::from(
         args.next()
-            .expect("usage: protocol-bench <entry> [frames] [start]"),
+            .expect("usage: protocol-bench [--pipelined] <entry> [frames] [start]"),
     )
     .canonicalize()
     .expect("entry exists");

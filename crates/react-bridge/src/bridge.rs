@@ -38,7 +38,9 @@ impl Drop for ReactBridge {
 }
 
 impl ReactBridge {
-    /// Spawns `node <cli_script> <entry>` and reads its startup configuration.
+    /// Spawns `node <cli_script> <entry> --length-prefixed` and reads its
+    /// startup configuration. The CLI then writes every message as a
+    /// little-endian `u32` byte count followed by the JSON.
     /// Release builds default to production React; an explicit `NODE_ENV`
     /// is preserved so callers can opt into development diagnostics.
     pub fn spawn(
@@ -50,7 +52,8 @@ impl ReactBridge {
     }
 
     /// Same as [`Self::spawn`], also giving the entry project property
-    /// values. They are checked against its `defineProjectProperties()`
+    /// values (with `--properties-stdin` appended when there are any). They
+    /// are checked against its `defineProjectProperties()`
     /// schema before `prepare()`; rejected values fail with
     /// [`ReactBridgeError::InvalidProperties`].
     pub fn spawn_with_properties(
