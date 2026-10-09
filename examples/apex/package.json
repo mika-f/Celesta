@@ -2,11 +2,14 @@
   "name": "@celesta/example-apex",
   "private": true,
   "dependencies": {
-    "@celesta/react": "workspace:*",
     "@celesta/layout": "workspace:*",
+    "@celesta/math": "workspace:*",
+    "@celesta/react": "workspace:*",
     "@celesta/shapes": "workspace:*",
     "@celesta/text": "workspace:*",
-    "react": "^18.3.1",
-    "@celesta/math": "workspace:*"
+    "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.31"
   }
 }

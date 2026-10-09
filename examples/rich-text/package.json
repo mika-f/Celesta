@@ -2,9 +2,12 @@
   "name": "@celesta/example-rich-text",
   "private": true,
   "dependencies": {
-    "@celesta/react": "workspace:*",
     "@celesta/character": "workspace:*",
+    "@celesta/react": "workspace:*",
     "@celesta/text": "workspace:*",
     "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.31"
   }
 }

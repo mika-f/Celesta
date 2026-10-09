@@ -4,5 +4,8 @@
   "dependencies": {
     "@celesta/react": "workspace:*",
     "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.31"
   }
 }
