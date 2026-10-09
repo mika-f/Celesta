@@ -13,6 +13,7 @@ fn scene(layers: Vec<Layer>) -> Scene {
         time: Time::ZERO,
         fonts: Vec::new(),
         layers,
+        shaders: Vec::new(),
     }
 }
 

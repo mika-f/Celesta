@@ -7,6 +7,7 @@ use crate::mask::MaskPipelines;
 use crate::native_preview;
 use crate::path::PendingPath;
 use crate::pipeline::{PipelineKind, create_pipeline};
+use crate::shader::ShaderProcessor;
 use crate::readback::{ReadbackLayout, ReadbackSlot, ReadbackWorker, SlotReadback};
 use crate::text::PendingText;
 use crate::texture::{CachedTexture, CanvasTexture, DecodedImage, LayerTexture, upload_texture};
@@ -50,6 +51,8 @@ pub struct GpuRenderer {
     /// draws onto, taken just before the draw.
     pub(crate) backdrop: Option<BackdropTexture>,
     pub(crate) effects: EffectProcessor,
+    /// Compiles and runs the scene's custom shaders.
+    pub(crate) shaders: ShaderProcessor,
     /// Shows masked groups' children through their masks.
     pub(crate) masks: MaskPipelines,
     /// Every layer's `LayerInstance` for the frame being prepared, reused
@@ -259,6 +262,7 @@ impl GpuRenderer {
             });
         let shader = device.create_shader_module(wgpu::include_wgsl!("layer.wgsl"));
         let effects = EffectProcessor::new(&device, &texture_bind_group_layout);
+        let shaders = ShaderProcessor::new(&device, &texture_bind_group_layout);
         let masks = MaskPipelines::new(&device, &texture_bind_group_layout);
         let pipeline = create_pipeline(
             &device,
@@ -304,6 +308,7 @@ impl GpuRenderer {
             canvas: None,
             backdrop: None,
             effects,
+            shaders,
             masks,
             instances,
             clip_bind_group_layout,

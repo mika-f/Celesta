@@ -180,6 +180,7 @@ fn synthetic(canvas: &Canvas, width: u32, height: u32, layers: Vec<Layer>) -> Sc
         time: Time::ZERO,
         fonts: Vec::new(),
         layers: std::iter::once(background).chain(layers).collect(),
+        shaders: Vec::new(),
     }
 }
 

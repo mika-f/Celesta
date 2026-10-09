@@ -1,6 +1,7 @@
 use crate::effect::EffectProcessor;
 use crate::mask::MaskPipelines;
 use crate::plan::{GpuStep, PreparedDraws};
+use crate::shader::ShaderProcessor;
 use crate::texture::CanvasTexture;
 use celesta_composition::BlendMode;
 
@@ -13,6 +14,7 @@ pub(crate) struct Compositor<'a> {
     pub(crate) backdrop: &'a BackdropTexture,
     pub(crate) draws: &'a PreparedDraws,
     pub(crate) effects: &'a mut EffectProcessor,
+    pub(crate) shaders: &'a mut ShaderProcessor,
     pub(crate) masks: &'a MaskPipelines,
 }
 
@@ -218,7 +220,7 @@ impl Compositor<'_> {
             self.effects.recycle(children);
             return Some(result);
         }
-        let canvas = self.effects.take_canvas(
+        let mut canvas = self.effects.take_canvas(
             self.device,
             self.texture_layout,
             region.width,
@@ -240,10 +242,33 @@ impl Compositor<'_> {
             return Some(canvas);
         };
         // Layers that drew nothing leave nothing to filter.
-        let Some(content) = *content else {
+        let Some(mut content) = *content else {
             self.effects.recycle(canvas);
             return None;
         };
+        // The shader first; the other effects filter its result.
+        if let Some(shader) = effects.shader {
+            let shaded = self.effects.take_canvas(
+                self.device,
+                self.texture_layout,
+                region.width,
+                region.height,
+            );
+            let origin = [region.x, region.y];
+            let scene_content = content.offset([region.x as f32, region.y as f32]);
+            let written = effects.shaded_bounds(content);
+            self.shaders.pass(
+                encoder,
+                &canvas,
+                &shaded,
+                origin,
+                scene_content,
+                written,
+                shader,
+            );
+            self.effects.recycle(std::mem::replace(&mut canvas, shaded));
+            content = written;
+        }
         let result = self.effects.take_canvas(
             self.device,
             self.texture_layout,

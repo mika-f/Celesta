@@ -54,6 +54,7 @@ impl<'project> Evaluator<'project> {
                 .map(|(id, _)| self.asset(id))
                 .collect::<Result<_, _>>()?,
             layers,
+            shaders: Vec::new(),
         })
     }
 

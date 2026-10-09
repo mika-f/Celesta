@@ -5,6 +5,7 @@ use crate::linebreak::{WORD_JOINER, insert_joiners, phrase_segments};
 use crate::rect::rasterize_rect;
 use crate::renderer::CpuRenderer;
 use crate::text::TextMetrics;
+use crate::error::RenderError;
 use crate::types::{Color, RenderOptions, RgbaFrame};
 use celesta_composition::{LineBreak, Point};
 
@@ -105,6 +106,7 @@ fn renders_text_to_a_png() {
                 baseline_anchor: false,
             },
         }],
+        shaders: Vec::new(),
     };
     let mut renderer = CpuRenderer::default();
     let frame = renderer.render(&scene).unwrap();
@@ -127,6 +129,7 @@ fn clip_scene(layers: Vec<Layer>) -> Scene {
         time: Time::ZERO,
         fonts: Vec::new(),
         layers,
+        shaders: Vec::new(),
     }
 }
 
@@ -452,6 +455,7 @@ fn renders_a_filled_rounded_rect_with_a_stroke() {
                 corner_radius: 12.0,
             },
         }],
+        shaders: Vec::new(),
     };
     let mut renderer = CpuRenderer::default();
     let frame = renderer.render(&scene).unwrap();
@@ -524,6 +528,7 @@ fn centers_visible_single_line_text_on_its_transform() {
                 baseline_anchor: false,
             },
         }],
+        shaders: Vec::new(),
     };
     let mut renderer = CpuRenderer::default();
     let frame = renderer.render(&scene).unwrap();
@@ -621,6 +626,7 @@ fn a_text_stroke_does_not_move_the_text() {
                     baseline_anchor: false,
                 },
             }],
+            shaders: Vec::new(),
         };
         let frame = CpuRenderer::default().render(&scene).unwrap();
         // The white fill only: the stroke is black.
@@ -1116,6 +1122,7 @@ fn baseline_anchored_text_layers_share_a_baseline() {
             text_layer("round", "o", 230.0, 64.0),
             text_layer("descender", "y", 320.0, 64.0),
         ],
+        shaders: Vec::new(),
     };
     let frame = CpuRenderer::default().render(&scene).unwrap();
     // The lowest inked row between `left` and `right`, ignoring faint
@@ -1238,6 +1245,7 @@ fn blends_a_layer_with_everything_beneath_it() {
                 },
             },
         ],
+        shaders: Vec::new(),
     };
     let frame = CpuRenderer::new(RenderOptions {
         background: Color::rgba(0, 0, 0, 255),
@@ -1284,6 +1292,7 @@ fn blends_an_isolated_group_as_one_layer() {
                 rect_layer("gray", 0.0, 4.0, "#808080", BlendMode::Normal),
                 group(opacity),
             ],
+            shaders: Vec::new(),
         };
         CpuRenderer::new(RenderOptions {
             background: Color::rgba(0, 0, 0, 255),
@@ -1335,6 +1344,7 @@ fn decodes_and_draws_a_real_image() {
                 },
             },
         }],
+        shaders: Vec::new(),
     };
     let mut renderer = CpuRenderer::default().with_asset_root(env!("CARGO_MANIFEST_DIR"));
     let frame = renderer.render(&scene).unwrap();
@@ -1397,6 +1407,7 @@ fn renders_a_video_frame_from_the_injected_decoder() {
                 },
             },
         }],
+        shaders: Vec::new(),
     };
     let mut renderer = CpuRenderer::default().with_video_decoder(Decoder);
     let frame = renderer.render(&scene).unwrap();
@@ -2125,4 +2136,45 @@ fn metrics_retain_empty_line_source_offsets() {
     let mut rasterizer = TextRasterizer::new();
     let metrics = rasterizer.measure("A\r\n\r\nB\n\n", &TextStyle::default(), None);
     assert_eq!(metrics.line_starts, [0, 3, 5, 7, 8]);
+}
+
+#[test]
+fn refuses_custom_shaders() {
+    use celesta_composition::LayerShader;
+
+    let mut layer = Layer {
+        id: "shaded".to_owned(),
+        transform: EvaluatedTransform::default(),
+        opacity: 1.0,
+        blend_mode: BlendMode::Normal,
+        effects: Default::default(),
+        content: LayerContent::Rect {
+            width: 8.0,
+            height: 8.0,
+            fill: Some(Paint::Solid {
+                color: "#ffffff".to_owned(),
+            }),
+            stroke: None,
+            corner_radius: 0.0,
+        },
+    };
+    layer.effects.shader = Some(LayerShader {
+        id: "identity".to_owned(),
+        params: Vec::new(),
+        padding: 0.0,
+    });
+    let scene = Scene {
+        width: 16,
+        height: 16,
+        frame_rate: Rational::new(30, 1),
+        time: Time::ZERO,
+        fonts: Vec::new(),
+        shaders: Vec::new(),
+        layers: vec![layer],
+    };
+    let error = CpuRenderer::default().render(&scene).unwrap_err();
+    assert!(
+        matches!(&error, RenderError::UnsupportedShader { layer } if layer == "shaded"),
+        "{error}"
+    );
 }

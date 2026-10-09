@@ -257,6 +257,12 @@ impl CpuRenderer {
         parent: ParentState,
         state: ParentState,
     ) -> Result<(), RenderError> {
+        // WGSL runs only on the GPU renderer.
+        if layer.effects.shader.is_some() {
+            return Err(RenderError::UnsupportedShader {
+                layer: layer.id.clone(),
+            });
+        }
         let mut source = RgbaFrame {
             width: frame.width,
             height: frame.height,

@@ -80,6 +80,7 @@ impl GpuRenderer {
             .count();
         self.effects
             .begin_frame(&self.device, effects * 3 * PASSES_PER_FILTER);
+        self.shaders.begin_frame(&self.device);
         let root = self.canvas.clone().expect("prepare_canvases creates it");
         let mut compositor = Compositor {
             device: &self.device,
@@ -89,6 +90,7 @@ impl GpuRenderer {
             backdrop: self.backdrop.as_ref().expect("prepare_canvases creates it"),
             draws,
             effects: &mut self.effects,
+            shaders: &mut self.shaders,
             masks: &self.masks,
         };
         compositor.draw_canvas(
@@ -98,6 +100,7 @@ impl GpuRenderer {
             &draws.steps,
         );
         self.effects.end_frame(&self.queue);
+        self.shaders.end_frame(&self.queue);
     }
 }
 

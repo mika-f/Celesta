@@ -29,6 +29,7 @@ impl GpuRenderer {
         self.text_rasterizer
             .load_fonts(&scene.fonts, &self.asset_root)
             .map_err(GpuRenderError::Text)?;
+        self.shaders.begin_scene(&self.device, scene)?;
         let font_count = self.text_rasterizer.loaded_font_count();
         if font_count != self.text_font_count {
             self.textures
@@ -381,7 +382,10 @@ impl GpuRenderer {
         }
         let blend_mode = layer.blend_mode;
         if !layer.effects.is_empty() {
-            let effects = EffectSpec::parse(&layer.effects)?;
+            let mut effects = EffectSpec::parse(&layer.effects)?;
+            if let Some(shader) = &layer.effects.shader {
+                effects.shader = Some(self.shaders.use_shader(&layer.id, shader)?);
+            }
             output.push(PreparedItem::BeginGroup);
             let mut inner = layer.clone();
             inner.opacity = 1.0;

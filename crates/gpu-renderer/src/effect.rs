@@ -1,6 +1,7 @@
 use crate::bounds::{PixelBounds, blur_reach};
 use crate::compositor::begin_pass;
 use crate::error::GpuRenderError;
+use crate::shader::ShaderSpec;
 use crate::texture::{CanvasTexture, canvas_texture};
 use celesta_composition::LayerEffects;
 use celesta_renderer::Color as CpuColor;
@@ -463,12 +464,16 @@ pub(crate) struct EffectSpec {
     pub(crate) blur: f32,
     pub(crate) shadow: Option<EffectShadow>,
     pub(crate) glow: Option<EffectShadow>,
+    /// Runs before the others, which filter its result.
+    pub(crate) shader: Option<ShaderSpec>,
 }
 
 impl EffectSpec {
     /// The canvas pixels the filtered result of layers covering `content`
-    /// can touch: the content itself, its blur, and each shifted shadow.
+    /// can touch: the content and the shader's padding around it, its blur,
+    /// and each shifted shadow.
     pub(crate) fn output_bounds(&self, content: PixelBounds) -> PixelBounds {
+        let content = self.shaded_bounds(content);
         let mut bounds = content.expand(blur_reach(self.blur), blur_reach(self.blur));
         for shadow in [self.shadow, self.glow].into_iter().flatten() {
             let reach = blur_reach(shadow.blur);
@@ -481,6 +486,16 @@ impl EffectSpec {
         bounds
     }
 
+    /// What the shader can write when the layers cover `content`: the
+    /// content and the padding around it.
+    pub(crate) fn shaded_bounds(&self, content: PixelBounds) -> PixelBounds {
+        match self.shader {
+            Some(shader) => content.expand(shader.padding, shader.padding),
+            None => content,
+        }
+    }
+
+    /// Everything but the shader, which `ShaderProcessor::use_shader` adds.
     pub(crate) fn parse(effects: &LayerEffects) -> Result<Self, GpuRenderError> {
         let parse_color = |color: &str| -> Result<[f32; 4], GpuRenderError> {
             let color = CpuColor::from_hex(color).map_err(GpuRenderError::Effects)?;
@@ -511,6 +526,7 @@ impl EffectSpec {
                     })
                 })
                 .transpose()?,
+            shader: None,
         })
     }
 }

@@ -474,3 +474,74 @@ fn text_font_runs_round_trip_and_stay_out_of_plain_styles() {
     );
     assert_eq!(serde_json::to_value(&style).unwrap(), json);
 }
+
+#[test]
+fn custom_shaders_round_trip_and_omit_their_defaults() {
+    use crate::{LayerEffects, LayerShader, Scene, ShaderParam, ShaderParamType, ShaderSource};
+
+    let scene = serde_json::json!({
+        "width": 64,
+        "height": 64,
+        "frameRate": { "numerator": 30, "denominator": 1 },
+        "time": { "value": 0, "timescale": 1 },
+        "shaders": [{
+            "id": "9f3c",
+            "name": "ripple",
+            "wgsl": "fn effect(input: EffectInput) -> vec4f { return vec4f(0.0); }",
+            "params": [{ "name": "time", "type": "f32" }, { "name": "tint", "type": "vec4" }],
+        }],
+        "layers": [],
+    });
+    let parsed = serde_json::from_value::<Scene>(scene.clone()).unwrap();
+    assert_eq!(
+        parsed.shaders,
+        vec![ShaderSource {
+            id: "9f3c".to_owned(),
+            name: Some("ripple".to_owned()),
+            wgsl: "fn effect(input: EffectInput) -> vec4f { return vec4f(0.0); }".to_owned(),
+            params: vec![
+                ShaderParam {
+                    name: "time".to_owned(),
+                    ty: ShaderParamType::F32,
+                },
+                ShaderParam {
+                    name: "tint".to_owned(),
+                    ty: ShaderParamType::Vec4,
+                },
+            ],
+        }]
+    );
+    assert_eq!(serde_json::to_value(&parsed).unwrap(), scene);
+
+    let mut without = scene;
+    without.as_object_mut().unwrap().remove("shaders");
+    let parsed = serde_json::from_value::<Scene>(without.clone()).unwrap();
+    assert!(parsed.shaders.is_empty());
+    assert_eq!(serde_json::to_value(&parsed).unwrap(), without);
+
+    let effects = LayerEffects {
+        shader: Some(LayerShader {
+            id: "9f3c".to_owned(),
+            params: vec![1.25, 1.0, 0.5, 0.0, 1.0],
+            padding: 8.0,
+        }),
+        ..LayerEffects::default()
+    };
+    assert!(!effects.is_empty());
+    assert_eq!(
+        serde_json::to_value(&effects).unwrap(),
+        serde_json::json!({ "shader": { "id": "9f3c", "params": [1.25, 1.0, 0.5, 0.0, 1.0], "padding": 8.0 } })
+    );
+    let bare = serde_json::json!({ "shader": { "id": "9f3c" } });
+    let parsed = serde_json::from_value::<LayerEffects>(bare.clone()).unwrap();
+    assert_eq!(
+        parsed.shader,
+        Some(LayerShader {
+            id: "9f3c".to_owned(),
+            params: Vec::new(),
+            padding: 0.0,
+        })
+    );
+    assert_eq!(serde_json::to_value(&parsed).unwrap(), bare);
+    assert!(LayerEffects::default().is_empty());
+}

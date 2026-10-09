@@ -795,6 +795,7 @@ mod tests {
             time: Time::ZERO,
             fonts: Vec::new(),
             layers,
+            shaders: Vec::new(),
         })
         .unwrap()
     }

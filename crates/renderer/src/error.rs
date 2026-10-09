@@ -30,6 +30,9 @@ pub enum RenderError {
         x: f64,
         y: f64,
     },
+    UnsupportedShader {
+        layer: String,
+    },
     RemoteAsset {
         asset: String,
         source: RemoteAssetError,
@@ -92,6 +95,10 @@ impl fmt::Display for RenderError {
             Self::UnsupportedNonUniformTextScale { x, y } => write!(
                 formatter,
                 "CPU reference renderer does not support non-uniform text scale ({x}, {y})"
+            ),
+            Self::UnsupportedShader { layer } => write!(
+                formatter,
+                "CPU reference renderer does not support the custom shader on layer `{layer}`"
             ),
             Self::RemoteAsset { asset, source } => {
                 write!(formatter, "could not load remote asset `{asset}`: {source}")
