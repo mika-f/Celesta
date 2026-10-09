@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "pnpm --filter @celesta/web build && vite --host 127.0.0.1",
-    "build": "pnpm --filter @celesta/web build && wrangler types && tsc --noEmit && vite build",
+    "build": "wrangler types && tsc --noEmit && vite build",
     "check:examples": "tsc -p tsconfig.examples.json",
     "preview": "vite preview --host 127.0.0.1",
     "preview:cloudflare": "pnpm build && wrangler dev",

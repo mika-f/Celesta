@@ -1,4 +1,5 @@
 node_modules/
+.turbo/
 /projects
 /target
 *.celesta.json~
