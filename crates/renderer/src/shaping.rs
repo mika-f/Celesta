@@ -139,13 +139,9 @@ impl TextRasterizer {
         // emoji that a text font also has (❤️, a keycap, a flag's letters)
         // came out as a plain glyph. Ask for the color emoji font first for
         // the graphemes meant to look like emoji, unless the family asked
-        // for is a color emoji font itself.
-        let emoji_family = if style
-            .font_family
-            .as_deref()
-            .is_some_and(|family| COLOR_EMOJI_FAMILIES.contains(&family))
-            || emoji_presentation_spans(text).is_empty()
-        {
+        // for where they sit (the text's, or a font run's) is a color emoji
+        // font itself.
+        let emoji_family = if emoji_presentation_spans(text).is_empty() {
             None
         } else {
             self.color_emoji_family()
@@ -204,6 +200,10 @@ impl TextRasterizer {
             if let Some(family) = emoji_family.as_deref() {
                 for range in emoji_presentation_spans(line.text()) {
                     let (at, requested) = attrs_at(range.start);
+                    if matches!(at.family, Family::Name(name) if COLOR_EMOJI_FAMILIES.contains(&name))
+                    {
+                        continue;
+                    }
                     let weight = emoji_weights
                         .iter()
                         .find(|(asked, _)| *asked == requested)

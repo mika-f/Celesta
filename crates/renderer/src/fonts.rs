@@ -48,7 +48,8 @@ fn requested_faces(style: &TextStyle) -> Vec<(&str, u16)> {
         .map(|family| (family, weight))
         .into_iter()
         .collect();
-    for run in &style.font_runs {
+    // An empty run covers nothing and shaping drops it, so it asks for no face.
+    for run in style.font_runs.iter().filter(|run| run.start < run.end) {
         if let Some(family) = run.font_family.as_deref().or(style.font_family.as_deref()) {
             let face = (family, run.font_weight.or(style.font_weight).unwrap_or(400));
             if !faces.contains(&face) {

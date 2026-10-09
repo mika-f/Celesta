@@ -94,19 +94,23 @@ fn advance(rasterizer: &mut TextRasterizer, text: &str, style: &TextStyle) -> f6
     rasterizer.measure(text, style, None).width
 }
 
-/// Each glyph's line, byte offset in its line, and first family name.
+/// Each glyph's line, byte offset in its line, source code point, and first
+/// family name, with the text shaped at `width`.
 fn glyph_families(
     rasterizer: &mut TextRasterizer,
     text: &str,
     style: &TextStyle,
-) -> Vec<(usize, usize, String)> {
-    let buffer = rasterizer.shaped_buffer(text, style, None, 1.0);
+    width: Option<f32>,
+) -> Vec<(usize, usize, usize, String)> {
+    let buffer = rasterizer.shaped_buffer(text, style, width, 1.0);
+    let offsets = crate::shaping::source_offsets(&buffer, text, style);
     let database = rasterizer.font_system.db();
     let mut families = Vec::new();
     for layout in buffer.layout_runs() {
         for glyph in layout.glyphs {
             let family = database.face(glyph.font_id).unwrap().families[0].0.clone();
-            families.push((layout.line_i, glyph.start, family));
+            let point = offsets[layout.line_i][glyph.start];
+            families.push((layout.line_i, glyph.start, point, family));
         }
     }
     families
@@ -138,7 +142,7 @@ fn a_family_run_shapes_its_range_with_that_family() {
     // Measuring and drawing use the same layout.
     let drawn = rasterizer.rasterize("ABCDEF", &spanned, None, 1.0).unwrap();
     assert_eq!(measured.width.ceil() as u32, drawn.anchor_box.width);
-    for (_, start, family) in glyph_families(&mut rasterizer, "ABCDEF", &spanned) {
+    for (_, start, _, family) in glyph_families(&mut rasterizer, "ABCDEF", &spanned, None) {
         let expected = if (2..4).contains(&start) {
             "IBM Plex Mono"
         } else {
@@ -254,12 +258,12 @@ fn font_runs_cross_crlf_line_endings() {
         ..bebas(48.0)
     };
     assert_eq!(
-        glyph_families(&mut rasterizer, "AB\r\nCD", &style),
+        glyph_families(&mut rasterizer, "AB\r\nCD", &style, None),
         [
-            (0, 0, "Bebas Neue".to_owned()),
-            (0, 1, "IBM Plex Mono".to_owned()),
-            (1, 0, "IBM Plex Mono".to_owned()),
-            (1, 1, "Bebas Neue".to_owned()),
+            (0, 0, 0, "Bebas Neue".to_owned()),
+            (0, 1, 1, "IBM Plex Mono".to_owned()),
+            (1, 0, 4, "IBM Plex Mono".to_owned()),
+            (1, 1, 5, "Bebas Neue".to_owned()),
         ]
     );
 }
@@ -306,6 +310,29 @@ fn phrase_joiners_inside_a_run_keep_its_font() {
         );
     }
     assert!(joiners > 0, "phrase breaking inserted no joiners");
+}
+
+#[test]
+fn emoji_in_a_run_use_the_color_emoji_font_when_the_text_family_is_one() {
+    let mut rasterizer = two_family_rasterizer();
+    let Some(emoji_family) = rasterizer.color_emoji_family() else {
+        eprintln!("skipping: no color-emoji font available in this environment");
+        return;
+    };
+    // The text's own family is the color emoji font, so no emoji span is
+    // needed outside the run; inside a Plex Mono run the heart still has to
+    // come from the color emoji font, not from a text font that has ❤.
+    let style = TextStyle {
+        font_family: Some(emoji_family.clone()),
+        font_size: Some(48.0),
+        font_runs: vec![run(0, 3, None, Some("IBM Plex Mono"))],
+        ..TextStyle::default()
+    };
+    let heart = glyph_families(&mut rasterizer, "A❤\u{FE0F}B", &style, None)
+        .into_iter()
+        .find(|glyph| glyph.2 == 1)
+        .unwrap();
+    assert_eq!(heart.3, emoji_family);
 }
 
 #[test]
@@ -401,24 +428,6 @@ fn a_run_ending_inside_a_phrase_does_not_move_the_baseline() {
     }
 }
 
-/// The family each glyph of `text` is drawn with, by line and byte offset.
-fn drawn_families(
-    rasterizer: &mut TextRasterizer,
-    text: &str,
-    style: &TextStyle,
-) -> Vec<(usize, usize, String)> {
-    let buffer = rasterizer.shaped_buffer(text, style, Some(1000.0), 1.0);
-    let database = rasterizer.font_system.db();
-    let mut families = Vec::new();
-    for layout in buffer.layout_runs() {
-        for glyph in layout.glyphs {
-            let family = database.face(glyph.font_id).unwrap().families[0].0.clone();
-            families.push((layout.line_i, glyph.start, family));
-        }
-    }
-    families
-}
-
 #[test]
 fn with_a_language_runs_leave_their_neighbors_fallback_fonts_alone() {
     use celesta_composition::LineBreak;
@@ -438,12 +447,18 @@ fn with_a_language_runs_leave_their_neighbors_fallback_fonts_alone() {
         ..plain.clone()
     };
     let text = "今日は天気です";
-    let before = drawn_families(&mut rasterizer, text, &plain);
-    let after = drawn_families(&mut rasterizer, text, &spanned);
+    let before = glyph_families(&mut rasterizer, text, &plain, Some(1000.0));
+    let after = glyph_families(&mut rasterizer, text, &spanned, Some(1000.0));
+    // Joining 日 to a run in another font must not change how the text is
+    // cut into glyphs, only which font draws the run's own ones.
+    let points = |families: &[(usize, usize, usize, String)]| -> Vec<usize> {
+        families.iter().map(|glyph| glyph.2).collect()
+    };
+    assert_eq!(points(&before), points(&after));
     let changed: Vec<_> = before
         .iter()
         .zip(&after)
-        .filter(|(a, b)| a != b && b.2 != "IBM Plex Mono")
+        .filter(|(a, b)| a.3 != b.3 && !(1..2).contains(&b.2))
         .collect();
     assert!(
         changed.is_empty(),
@@ -553,6 +568,18 @@ fn warnings_judge_each_character_by_the_family_it_asks_for() {
     assert_eq!(missing.len(), 1);
     assert_eq!(missing[0].family, "IBM Plex Mono");
     assert_eq!(missing[0].characters, ['ず']);
+}
+
+#[test]
+fn an_empty_run_asks_for_no_face() {
+    let mut rasterizer = two_family_rasterizer();
+    // Valid but covers nothing, so shaping drops it: no warning either.
+    let style = TextStyle {
+        font_runs: vec![run(1, 1, None, Some("Celesta Missing Family"))],
+        ..bebas(48.0)
+    };
+    assert!(crate::validate_font_runs("AB", &style).is_ok());
+    assert!(rasterizer.font_fallback("title", &style).is_empty());
 }
 
 #[test]
