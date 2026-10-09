@@ -366,8 +366,11 @@ fn a_run_in_a_taller_family_does_not_move_the_baseline() {
 fn a_run_ending_inside_a_phrase_does_not_move_the_baseline() {
     use celesta_composition::LineBreak;
     let mut rasterizer = two_family_rasterizer();
+    // Japanese, so the kanji and kana fall back to the same Japanese font
+    // with or without runs; see `with_a_language_runs_leave_their_neighbors_fallback_fonts_alone`.
     let plain = TextStyle {
         line_break: Some(LineBreak::Phrase),
+        lang: Some("ja".to_owned()),
         ..bebas(48.0)
     };
     let text = "今日は天気です";
@@ -396,6 +399,56 @@ fn a_run_ending_inside_a_phrase_does_not_move_the_baseline() {
             baselines[0]
         );
     }
+}
+
+/// The family each glyph of `text` is drawn with, by line and byte offset.
+fn drawn_families(
+    rasterizer: &mut TextRasterizer,
+    text: &str,
+    style: &TextStyle,
+) -> Vec<(usize, usize, String)> {
+    let buffer = rasterizer.shaped_buffer(text, style, Some(1000.0), 1.0);
+    let database = rasterizer.font_system.db();
+    let mut families = Vec::new();
+    for layout in buffer.layout_runs() {
+        for glyph in layout.glyphs {
+            let family = database.face(glyph.font_id).unwrap().families[0].0.clone();
+            families.push((layout.line_i, glyph.start, family));
+        }
+    }
+    families
+}
+
+#[test]
+fn with_a_language_runs_leave_their_neighbors_fallback_fonts_alone() {
+    use celesta_composition::LineBreak;
+    // A run splits shaping, and cosmic-text picks fallback fonts per shaped
+    // piece. Without a language, a piece next to a run can fall back to
+    // another font than the whole phrase did (in an English locale, は went
+    // from PingFang SC to Hiragino Sans), which can move baselines. With the
+    // text's language, fallback follows it on both sides of the run.
+    let mut rasterizer = two_family_rasterizer();
+    let plain = TextStyle {
+        line_break: Some(LineBreak::Phrase),
+        lang: Some("ja".to_owned()),
+        ..bebas(48.0)
+    };
+    let spanned = TextStyle {
+        font_runs: vec![run(1, 2, None, Some("IBM Plex Mono"))],
+        ..plain.clone()
+    };
+    let text = "今日は天気です";
+    let before = drawn_families(&mut rasterizer, text, &plain);
+    let after = drawn_families(&mut rasterizer, text, &spanned);
+    let changed: Vec<_> = before
+        .iter()
+        .zip(&after)
+        .filter(|(a, b)| a != b && b.2 != "IBM Plex Mono")
+        .collect();
+    assert!(
+        changed.is_empty(),
+        "fallback changed outside the run: {changed:?}"
+    );
 }
 
 #[test]
