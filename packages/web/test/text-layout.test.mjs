@@ -76,21 +76,23 @@ test('measuring and wrapping use each run font', () => {
 });
 
 test('a line ink box is the union of its pieces', () => {
-  // The bold piece starts at x=2 but its ink reaches 5px left of that, past
-  // the first piece's ink, and its right edge reaches 1px past its advance.
+  // The bold middle piece starts at x=2. Its ink reaches 5px left of that,
+  // past the first piece's ink, and 4px past its own advance, to x=8, past
+  // the last piece's right edge at x=6: neither the first nor the last
+  // piece alone bounds the line.
   const ctx = {
     font: '',
     measureText(text) {
       const bold = this.font.startsWith('700');
       const width = Array.from(text).length;
-      return { width, actualBoundingBoxLeft: bold ? 5 : 0, actualBoundingBoxRight: bold ? width + 1 : width, actualBoundingBoxAscent: 8, actualBoundingBoxDescent: 2, fontBoundingBoxAscent: 8, fontBoundingBoxDescent: 2 };
+      return { width, actualBoundingBoxLeft: bold ? 5 : 0, actualBoundingBoxRight: bold ? width + 4 : width, actualBoundingBoxAscent: 8, actualBoundingBoxDescent: 2, fontBoundingBoxAscent: 8, fontBoundingBoxDescent: 2 };
     },
   };
   const style = { fontSize: 10 };
   ctx.font = cssFont(style);
   const line = measureLine(ctx, style, 'abcdef', 0, [{ start: 2, end: 4, fontWeight: 700 }]);
   assert.equal(line.actualBoundingBoxLeft, 3);
-  assert.equal(line.actualBoundingBoxRight, 6);
+  assert.equal(line.actualBoundingBoxRight, 8);
 });
 
 test('the browser measurer rejects invalid font runs like scene rendering', t => {
