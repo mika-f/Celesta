@@ -166,7 +166,7 @@ layers sit; it does not prove the rendered pixels.
 
 | Package | Provides |
 | --- | --- |
-| `@celesta/react` | `Composition`, `Sequence`, `Series`, `Stagger`, `FreezeFrame`, `Group`, `Rect`, `Text`, `Image`, `Video`, `Audio`, `Font`, `Assets`, `useCurrentFrame`/`useCurrentTime`/`useVideoConfig`/`useIsPreview`, `interpolate`, `interpolateColor`, `Easings`, `spring`, `progress`, `frameKeyframes`, `useBeat`/`useCue`, timecodes, `measureText`/`useTextMetrics`/`textCaret`, `registerComponent`, `defineProjectProperties`/`getProjectProperty`, and the scene types |
+| `@celesta/react` | `Composition`, `Sequence`, `Series`, `Stagger`, `FreezeFrame`, `Group`, `Rect`, `Text`, `Span`, `Image`, `Video`, `Audio`, `Font`, `Assets`, `useCurrentFrame`/`useCurrentTime`/`useVideoConfig`/`useIsPreview`, `interpolate`, `interpolateColor`, `Easings`, `spring`, `progress`, `frameKeyframes`, `useBeat`/`useCue`, timecodes, `measureText`/`useTextMetrics`/`textCaret`, `registerComponent`, `defineProjectProperties`/`getProjectProperty`, and the scene types |
 | `@celesta/shapes` | `Line`, `Polyline`, `Path`, `Circle`, `Ellipse`, `Arrow`, `pointOnPolyline` |
 | `@celesta/layout` | `Center`, `Stack`, `Grid`, `Fit`, `SafeArea`, `useLayoutBounds`, `Camera` |
 | `@celesta/transitions` | `Transition`, `TransitionSeries`, `useTransitionSeriesScene`, `useTransitionVolume` |
