@@ -75,10 +75,14 @@ def build(revision, label, target_dir, worktrees, react):
     )
     if react:
         # As in CI: the bridge spawns the compiled packages/cli/dist/cli.js.
+        # Revisions from before the package split build packages/react alone,
+        # whose dist/cli.js their bridge spawns instead.
         pnpm = shutil.which("pnpm") or sys.exit("the nebula workload needs pnpm")
+        build = (["run", "--silent", "build:runtime"] if (source / "packages/cli").is_dir()
+                 else ["--dir", "packages/react", "run", "--silent", "build"])
         for arguments in (["install", "--frozen-lockfile", "--silent"],
                           ["--dir", "packages/react", "run", "--silent", "codegen", "--locked"],
-                          ["run", "--silent", "build:runtime"]):
+                          build):
             subprocess.run([pnpm, *arguments],
                            check=True, cwd=source, env=env, stdout=subprocess.DEVNULL)
     suffix = ".exe" if os.name == "nt" else ""
