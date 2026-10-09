@@ -83,15 +83,33 @@ function importedName(spec) {
 
 /**
  * A list's specifiers, each with the comments beside it: a comment after a
- * name's comma stays with that name. Line comments become block comments, so
- * a specifier stays valid wherever it is rendered.
+ * name's comma, on the same line, stays with that name. Comments are read
+ * whole, so `//` or `,` inside one is never taken for code, and line comments
+ * become block comments so a specifier stays valid on one line.
  */
 function specifiers(body) {
+  const parts = [''];
+  for (let i = 0; i < body.length;) {
+    if (body.startsWith('/*', i)) {
+      const end = body.indexOf('*/', i + 2);
+      const stop = end < 0 ? body.length : end + 2;
+      parts[parts.length - 1] += body.slice(i, stop);
+      i = stop;
+    } else if (body.startsWith('//', i)) {
+      const end = body.indexOf('\n', i);
+      const stop = end < 0 ? body.length : end;
+      const comment = `/*${body.slice(i + 2, stop).trimEnd().replaceAll('*/', '* /')} */`;
+      if (parts.length > 1 && /^[ \t]*$/.test(parts[parts.length - 1])) parts[parts.length - 2] += ` ${comment}`;
+      else parts[parts.length - 1] += comment;
+      i = stop;
+    } else {
+      if (body[i] === ',') parts.push('');
+      else parts[parts.length - 1] += body[i];
+      i += 1;
+    }
+  }
   const specs = [];
-  const text = body
-    .replace(/,([ \t]*)\/\/([^\n]*)/g, (_, space, comment) => ` /*${comment.trimEnd()} */,`)
-    .replace(/\/\/([^\n]*)/g, (_, comment) => `/*${comment.trimEnd()} */`);
-  for (const part of text.split(',')) {
+  for (const part of parts) {
     const spec = part.replace(/\s+/g, ' ').trim();
     if (!spec) continue;
     if (importedName(spec) || specs.length === 0) specs.push(spec);

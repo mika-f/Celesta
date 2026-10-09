@@ -117,6 +117,19 @@ test('comments beside a name move with it', () => {
     "import { Composition /* root */, Text /* body */ } from '@celesta/react';",
     "import { /* drawn */ Circle } from '@celesta/shapes';",
   ].join('\n'));
+
+  // `//` and `,` inside a block comment stay comment text, and a line comment
+  // holding `*/` cannot close the block comment it becomes.
+  const tricky = migrateSource([
+    'import {',
+    '  Composition, /* see https://example.com, a, b */ Circle,',
+    '  Text, // ends with */ here',
+    "} from '@celesta/react';",
+  ].join('\n')).text;
+  assert.equal(tricky, [
+    "import { Composition, Text /* ends with * / here */ } from '@celesta/react';",
+    "import { /* see https://example.com, a, b */ Circle } from '@celesta/shapes';",
+  ].join('\n'));
 });
 
 test('a manifest listing @celesta/react gets the new packages with its range', () => {
