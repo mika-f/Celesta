@@ -221,17 +221,31 @@ and make line spacing uneven. Spans do not move the baseline:
 - Text entirely inside font runs keeps cosmic-text's baseline.
 - Line height stays fixed by `Metrics`. Measure and rasterize use the same
   recomputed baselines, so they agree.
+- Run glyphs can still reach past their line's boxes (a span in a taller
+  family). With font runs, rasterize pads the image above and below by how
+  far any glyph's ascent or descent reaches past the layout box, so nothing
+  is clipped; the image is that much taller, and the anchor box and the
+  returned baseline account for the padding.
 
 Glyph ascent and descent come from each glyph's face metrics (`font_id`) at
-its font size. Whether the layout exposes enough to do this is the first
-thing the implementation verifies.
+its font size.
+
+A run splits shaping, and cosmic-text picks fallback fonts per shaped piece.
+Without `lang`, the characters next to a run can fall back to a different
+font than the whole phrase did (for example a Chinese font for kanji), which
+changes their glyphs and can move the line. With the text's language,
+fallback follows it on both sides of the run, so CJK text with spans should
+set `lang`.
 
 ### Font warnings
 
 `font_fallback` and `missing_glyphs` check only the text's own family today,
 so characters drawn from a span's family would be reported as missing. Both
 check each character against the family and weight in effect at its position
-and return one entry per family/weight (`Option` → `Vec`). The GPU renderer's
+and return one entry per family/weight (`Option` → `Vec`). An empty run
+covers nothing and asks for no face. A family with no loaded face is
+reported only by `font_fallback`; `missing_glyphs` leaves its characters out,
+as it does for the text's own family today. The GPU renderer's
 de-duplication of reported entries is updated accordingly.
 
 ## Browser rendering
@@ -239,13 +253,22 @@ de-duplication of reported entries is updated accordingly.
 The browser runtime aims to match native but is not pixel-identical; native
 is the reference.
 
-- Text without `fontRuns` takes the existing path unchanged.
+- Text without `fontRuns`, and each line no run reaches, takes the existing
+  path unchanged.
 - **Wrapping and measurement.** `textLineRanges` and `textMeasurer` measure
   each run's piece with that run's font and sum the widths. Kerning is kept
-  inside runs and lost across boundaries, as on native.
-- **Drawing.** `styledLine` draws each run's piece with its own `ctx.font`
-  (`fillText`, and `strokeText` for the outline) at the x of its first
-  character. Run pieces are split at grapheme cluster boundaries.
+  inside runs and lost across boundaries, as on native. A line's ink box is
+  the union of its pieces' boxes. The measurer validates run ranges as
+  scene rendering does.
+- **Drawing.** Run pieces are split at grapheme cluster boundaries. Bidi
+  reordering can split a piece or put its parts out of source order, so each
+  piece is cut into segments whose clusters sit next to each other on the
+  shaped line, left to right or right to left. Each segment is drawn with
+  its run's `ctx.font` (`fillText`, and `strokeText` for the outline), left
+  to right from its left edge or with `direction: 'rtl'` from its right
+  edge. A single-cluster segment takes its direction from its neighbors on
+  the line, so a mirrored character (a parenthesis in right-to-left text)
+  keeps its mirroring.
 - **Positions.** Character extents come from an SVG `<text>` with one
   `<tspan>` per run, so color regions and reveals keep working from the same
   extents. `getExtentOfChar` reports positions across `<tspan>` children

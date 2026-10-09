@@ -4513,8 +4513,16 @@ fn font_run_text_matches_cpu() {
                 expected.abs_diff(gpu[channel]) <= 1
             }))
     );
-    // The run's glyphs are drawn at all.
-    assert!(reference.pixels().chunks_exact(4).any(|p| p[3] > 0));
+    // The run changes the glyphs: without it, the CPU reference differs.
+    let mut plain_scene = scene.clone();
+    let LayerContent::Text { style, .. } = &mut plain_scene.layers[0].content else {
+        unreachable!()
+    };
+    style.font_runs.clear();
+    assert_ne!(
+        reference.pixels(),
+        cpu.render(&plain_scene).unwrap().pixels()
+    );
 }
 
 #[test]
