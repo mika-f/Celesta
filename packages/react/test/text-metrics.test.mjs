@@ -97,6 +97,9 @@ test('CLI shares prepare and render RPCs, handles large UTF-8 replies, and forwa
       const message = JSON.parse(line);
       const send = (value) => child.stdin.write(JSON.stringify(value) + '\n');
       if (message.measureText) {
+        // The Rust bridge tells measurements from frames by this prefix
+        // alone, so a frame it receives early is parsed only once.
+        assert.ok(line.startsWith('{"measureText":'), line.slice(0, 40));
         const request = message.measureText;
         measurements.push(request);
         if (request.text.endsWith('2')) {

@@ -189,6 +189,39 @@ fn render_text_metrics_match_loaded_fonts_and_component_preview_when_node_is_ava
 }
 
 #[test]
+fn pipelined_frames_match_serial_evaluation_with_text_measured_meanwhile_when_node_is_available() {
+    let Some((node, cli_script, package_root)) = live_react_runtime() else {
+        return;
+    };
+    // Every frame measures text it has not measured before (`最新 ${frame}`),
+    // so Node asks for measurements while evaluating frame N + 1, after it
+    // was submitted and before frame N is decoded.
+    let entry = package_root.join("examples/with-text-metrics.tsx");
+    let times: Vec<_> = (0..4).map(|frame| Time::new(frame, 30)).collect();
+
+    let mut serial = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let expected: Vec<_> = times
+        .iter()
+        .map(|&time| serial.evaluate_at(time, None).unwrap())
+        .collect();
+
+    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    bridge.submit_frame(times[0], None).unwrap();
+    for (index, expected) in expected.iter().enumerate() {
+        let frame = bridge.receive_frame().unwrap();
+        if let Some(&next) = times.get(index + 1) {
+            bridge.submit_frame(next, None).unwrap();
+        }
+        let evaluation = bridge.decode_frame(frame).unwrap();
+        assert_eq!(evaluation.scene, expected.scene);
+        assert_eq!(evaluation.audio, expected.audio);
+    }
+
+    // With every submitted frame received, ordinary requests work again.
+    assert_eq!(bridge.scene_at(times[0]).unwrap(), expected[0].scene);
+}
+
+#[test]
 fn text_boxes_fit_their_captions_with_the_renderer_shaping_when_node_is_available() {
     let Some((node, cli_script, package_root)) = live_react_runtime() else {
         return;

@@ -15,7 +15,7 @@ use celesta_media::FfmpegBackend;
 use celesta_remote::{RemoteAssetCache, is_remote_url};
 use celesta_renderer::TextRasterizer;
 use serde::Serialize;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{self, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
@@ -24,6 +24,8 @@ pub struct ReactBridge {
     pub(crate) child: Child,
     pub(crate) stdin: ChildStdin,
     pub(crate) stdout: BufReader<ChildStdout>,
+    /// The last message read from `stdout`, kept to reuse its allocation.
+    pub(crate) message: Vec<u8>,
     pub(crate) metadata: ReactCompositionMetadata,
     pub(crate) text_measurer: Option<TextRasterizer>,
 }
@@ -36,7 +38,9 @@ impl Drop for ReactBridge {
 }
 
 impl ReactBridge {
-    /// Spawns `node <cli_script> <entry>` and reads its startup configuration.
+    /// Spawns `node <cli_script> <entry> --length-prefixed` and reads its
+    /// startup configuration. The CLI then writes every message as a
+    /// little-endian `u32` byte count followed by the JSON.
     /// Release builds default to production React; an explicit `NODE_ENV`
     /// is preserved so callers can opt into development diagnostics.
     pub fn spawn(
@@ -48,7 +52,8 @@ impl ReactBridge {
     }
 
     /// Same as [`Self::spawn`], also giving the entry project property
-    /// values. They are checked against its `defineProjectProperties()`
+    /// values (with `--properties-stdin` appended when there are any). They
+    /// are checked against its `defineProjectProperties()`
     /// schema before `prepare()`; rejected values fail with
     /// [`ReactBridgeError::InvalidProperties`].
     pub fn spawn_with_properties(
@@ -67,7 +72,10 @@ impl ReactBridge {
             use std::os::windows::process::CommandExt;
             command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
         }
-        command.arg(cli_script.as_ref()).arg(entry.as_ref());
+        command
+            .arg(cli_script.as_ref())
+            .arg(entry.as_ref())
+            .arg("--length-prefixed");
         if !properties.is_empty() {
             command.arg("--properties-stdin");
         }
@@ -83,6 +91,7 @@ impl ReactBridge {
         let mut stdin = child.stdin.take().ok_or(ReactBridgeError::MissingPipe)?;
         let stdout = child.stdout.take().ok_or(ReactBridgeError::MissingPipe)?;
         let mut stdout = BufReader::new(stdout);
+        let mut message = Vec::new();
         if !properties.is_empty() {
             let payload = serde_json::to_string(&PropertyInputsMessage {
                 property_inputs: properties.layers(),
@@ -97,15 +106,15 @@ impl ReactBridge {
         // Created on the first `measureText`: it scans the system fonts.
         let mut text_measurer: Option<TextRasterizer> = None;
         let metadata = loop {
-            let mut line = String::new();
-            let read = stdout.read_line(&mut line).map_err(ReactBridgeError::Io)?;
-            if read == 0 {
-                let _ = child.wait();
-                return Err(ReactBridgeError::UnexpectedExit);
+            if let Err(error) = read_message(&mut stdout, &mut message) {
+                if matches!(error, ReactBridgeError::UnexpectedExit) {
+                    let _ = child.wait();
+                }
+                return Err(error);
             }
-            let message: ReadyMessage =
-                serde_json::from_str(line.trim()).map_err(ReactBridgeError::Protocol)?;
-            match message {
+            let ready: ReadyMessage =
+                serde_json::from_slice(&message).map_err(ReactBridgeError::Protocol)?;
+            match ready {
                 ReadyMessage::Ready {
                     config,
                     component_schemas,
@@ -170,6 +179,7 @@ impl ReactBridge {
             child,
             stdin,
             stdout,
+            message,
             metadata,
             text_measurer,
         })
@@ -205,7 +215,25 @@ impl ReactBridge {
         time: Time,
         project: Option<ProjectFrame<'_>>,
     ) -> Result<FrameEvaluation, ReactBridgeError> {
-        let request = Request {
+        self.submit_frame(time, project)?;
+        let frame = self.receive_frame()?;
+        self.decode_frame(frame)
+    }
+
+    /// Asks Node to evaluate the frame at `time`, without waiting for it.
+    /// Every submitted frame must be collected, in order, with
+    /// [`Self::receive_frame`] before any other request is made.
+    ///
+    /// Together with [`Self::receive_frame`] and [`Self::decode_frame`] this
+    /// lets a caller that renders consecutive frames pipeline them: submit
+    /// frame N + 1 between receiving frame N and decoding it, so Node
+    /// evaluates the next frame while this side parses the current one.
+    pub fn submit_frame(
+        &mut self,
+        time: Time,
+        project: Option<ProjectFrame<'_>>,
+    ) -> Result<(), ReactBridgeError> {
+        self.write_request(Request {
             time: Some(time),
             project: project.map(|frame| ProjectPayload {
                 layers: frame.layers,
@@ -214,8 +242,27 @@ impl ReactBridge {
             runtime: None,
             components: None,
             compact_transforms: true,
-        };
-        match self.request_response(request)? {
+        })
+    }
+
+    /// Waits for the oldest submitted frame and returns its response still
+    /// encoded. Text measurements Node asks for meanwhile are answered here.
+    pub fn receive_frame(&mut self) -> Result<PendingFrame, ReactBridgeError> {
+        self.receive_message()?;
+        Ok(PendingFrame(std::mem::take(&mut self.message)))
+    }
+
+    /// Decodes a frame from [`Self::receive_frame`].
+    pub fn decode_frame(
+        &mut self,
+        frame: PendingFrame,
+    ) -> Result<FrameEvaluation, ReactBridgeError> {
+        let response = serde_json::from_slice(&frame.0).map_err(ReactBridgeError::Protocol);
+        // Keep the larger allocation for the next message.
+        if frame.0.capacity() > self.message.capacity() {
+            self.message = frame.0;
+        }
+        match response? {
             Response::Ok { scene, audio } => Ok(FrameEvaluation { scene, audio }),
             Response::Components { .. } => Err(ReactBridgeError::UnexpectedResponse),
             Response::CollectedAudio { .. } => Err(ReactBridgeError::UnexpectedResponse),
@@ -301,30 +348,68 @@ impl ReactBridge {
         &mut self,
         request: R,
     ) -> Result<Response, ReactBridgeError> {
+        self.write_request(request)?;
+        self.receive_message()?;
+        serde_json::from_slice(&self.message).map_err(ReactBridgeError::Protocol)
+    }
+
+    fn write_request<R: Serialize>(&mut self, request: R) -> Result<(), ReactBridgeError> {
         let payload = serde_json::to_string(&request).map_err(ReactBridgeError::Protocol)?;
         writeln!(self.stdin, "{payload}").map_err(ReactBridgeError::Io)?;
-        self.stdin.flush().map_err(ReactBridgeError::Io)?;
+        self.stdin.flush().map_err(ReactBridgeError::Io)
+    }
 
+    /// Reads messages into `self.message` until one is not a text
+    /// measurement, answering each measurement as it arrives.
+    fn receive_message(&mut self) -> Result<(), ReactBridgeError> {
         loop {
-            let mut line = String::new();
-            let read = self
-                .stdout
-                .read_line(&mut line)
-                .map_err(ReactBridgeError::Io)?;
-            if read == 0 {
-                return Err(ReactBridgeError::UnexpectedExit);
+            read_message(&mut self.stdout, &mut self.message)?;
+            // The CLI writes the key first; checking it leaves a frame's
+            // scene to be parsed only once, possibly later.
+            if !self.message.starts_with(br#"{"measureText":"#) {
+                return Ok(());
             }
-            let response: Response =
-                serde_json::from_str(line.trim()).map_err(ReactBridgeError::Protocol)?;
-            if let Response::MeasureText { measure_text } = response {
-                let metrics = measure_text_response(&mut self.text_measurer, &measure_text);
-                serde_json::to_writer(&mut self.stdin, &metrics)
-                    .map_err(ReactBridgeError::Protocol)?;
-                writeln!(self.stdin).map_err(ReactBridgeError::Io)?;
-                self.stdin.flush().map_err(ReactBridgeError::Io)?;
-            } else {
-                return Ok(response);
-            }
+            let Response::MeasureText { measure_text } =
+                serde_json::from_slice(&self.message).map_err(ReactBridgeError::Protocol)?
+            else {
+                return Err(ReactBridgeError::UnexpectedResponse);
+            };
+            let metrics = measure_text_response(&mut self.text_measurer, &measure_text);
+            serde_json::to_writer(&mut self.stdin, &metrics).map_err(ReactBridgeError::Protocol)?;
+            writeln!(self.stdin).map_err(ReactBridgeError::Io)?;
+            self.stdin.flush().map_err(ReactBridgeError::Io)?;
         }
+    }
+}
+
+/// A frame's response read by [`ReactBridge::receive_frame`], not yet
+/// decoded.
+pub struct PendingFrame(Vec<u8>);
+
+/// Reads one message from the CLI into `buffer`, reusing its allocation. With
+/// `--length-prefixed` every message is a little-endian `u32` byte count
+/// followed by that many bytes of JSON, so a frame's scene is read in a few
+/// large reads instead of being scanned for its line end.
+fn read_message(
+    stdout: &mut BufReader<ChildStdout>,
+    buffer: &mut Vec<u8>,
+) -> Result<(), ReactBridgeError> {
+    let eof = |error: io::Error| match error.kind() {
+        io::ErrorKind::UnexpectedEof => ReactBridgeError::UnexpectedExit,
+        _ => ReactBridgeError::Io(error),
+    };
+    let mut length = [0; 4];
+    stdout.read_exact(&mut length).map_err(eof)?;
+    let length = u32::from_le_bytes(length) as usize;
+    buffer.clear();
+    buffer.reserve(length);
+    let read = stdout
+        .take(length as u64)
+        .read_to_end(buffer)
+        .map_err(ReactBridgeError::Io)?;
+    if read == length {
+        Ok(())
+    } else {
+        Err(ReactBridgeError::UnexpectedExit)
     }
 }

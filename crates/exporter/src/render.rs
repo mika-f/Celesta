@@ -6,12 +6,12 @@ use crate::options::{ColorConversion, VideoEncoding};
 use crate::project::{absolutize_fonts, absolutize_layers, visual_only_project};
 use crate::range::ExportWindow;
 use crate::react::ReactVideoRequest;
-use celesta_composition::{Rational, Scene, Time, TimeError};
+use celesta_composition::{Rational, Time, TimeError};
 use celesta_evaluator::{EvaluationError, Evaluator};
 use celesta_gpu_renderer::{GpuDriver, GpuRenderOptions, GpuRenderer, ReadbackFormat};
 use celesta_media::FfmpegBackend;
 use celesta_project::Project;
-use celesta_react_bridge::ProjectFrame;
+use celesta_react_bridge::{ProjectFrame, ReactBridge};
 use ez_ffmpeg::{FfmpegContext, Input, Output, VideoWriter};
 use std::collections::{BTreeMap, HashSet};
 use std::ffi::OsStr;
@@ -143,7 +143,10 @@ impl Exporter {
             output,
         )?;
 
-        let evaluate = |offset: u64| -> Result<Scene, ExportError> {
+        // Asks Node for a frame, after evaluating the project layers its
+        // entry embeds. The scene is collected later (see the evaluator
+        // thread below).
+        let submit = |bridge: &mut ReactBridge, offset: u64| -> Result<(), ExportError> {
             let frame_index =
                 i64::try_from(start_frame + offset).map_err(|_| ExportError::TimelineTooLong)?;
             let time = Time::frames(frame_index, metadata.frame_rate).map_err(ExportError::Time)?;
@@ -169,19 +172,15 @@ impl Exporter {
                 )
                 .transpose()
                 .map_err(ExportError::Evaluation)?;
-            let evaluation = bridge
-                .evaluate_at(
+            bridge
+                .submit_frame(
                     time,
                     project_frame.as_ref().map(|(layers, tracks)| ProjectFrame {
                         layers: layers.as_slice(),
                         tracks,
                     }),
                 )
-                .map_err(ExportError::React)?;
-            react_audio.extend(evaluation.audio);
-            let mut scene = evaluation.scene;
-            scene.fonts.extend(project_fonts.iter().cloned());
-            Ok(scene)
+                .map_err(ExportError::React)
         };
 
         let mut reported_fallbacks = ReportedFontWarnings::default();
@@ -195,9 +194,27 @@ impl Exporter {
             // drops `frames`, which stops the evaluator at its next send.
             let (sender, frames) = mpsc::sync_channel(0);
             scope.spawn(move || {
-                let mut evaluate = evaluate;
+                let mut submitted = if frame_count > 0 {
+                    submit(bridge, 0)
+                } else {
+                    Ok(())
+                };
                 for offset in 0..frame_count {
-                    let scene = evaluate(offset);
+                    // Frame `offset + 1` is submitted before this one is
+                    // decoded, so Node evaluates it while this side parses;
+                    // its text measurements are answered once the parse is
+                    // done. A failed submission fails that next frame.
+                    let scene = std::mem::replace(&mut submitted, Ok(())).and_then(|()| {
+                        let frame = bridge.receive_frame().map_err(ExportError::React)?;
+                        if offset + 1 < frame_count {
+                            submitted = submit(bridge, offset + 1);
+                        }
+                        let evaluation = bridge.decode_frame(frame).map_err(ExportError::React)?;
+                        react_audio.extend(evaluation.audio);
+                        let mut scene = evaluation.scene;
+                        scene.fonts.extend(project_fonts.iter().cloned());
+                        Ok(scene)
+                    });
                     let failed = scene.is_err();
                     if sender.send(scene).is_err() || failed {
                         break;
