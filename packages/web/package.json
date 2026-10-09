@@ -16,7 +16,7 @@
   "sideEffects": false,
   "scripts": {
     "test": "node --experimental-strip-types --test test/*.test.mjs",
-    "build": "tsc -p tsconfig.worker.json && vite build && tsc -p tsconfig.json",
+    "build": "pnpm --filter \"@celesta/cli^...\" build && tsc -p tsconfig.worker.json && vite build && tsc -p tsconfig.json",
     "prepack": "npm run build"
   },
   "dependencies": {
@@ -30,12 +30,10 @@
     "@celesta/layout": "workspace:*",
     "@celesta/math": "workspace:*",
     "@celesta/media-utils": "workspace:*",
-    "@celesta/project": "workspace:*",
     "@celesta/react": "workspace:*",
     "@celesta/shapes": "workspace:*",
     "@celesta/text": "workspace:*",
     "@celesta/transitions": "workspace:*",
-    "@celesta/voicevox": "workspace:*",
     "@types/node": "^24.13.6",
     "typescript": "^5.9.3",
     "vite": "^8.3.1"

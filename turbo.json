@@ -9,7 +9,14 @@
       "cache": false
     },
     "@celesta/react#build": {
-      "dependsOn": ["codegen", "^build"]
+      "dependsOn": ["codegen", "^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/Cargo.toml",
+        "$TURBO_ROOT$/Cargo.lock",
+        "$TURBO_ROOT$/.cargo/config.toml",
+        "$TURBO_ROOT$/crates/**"
+      ]
     }
   }
 }

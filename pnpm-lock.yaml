@@ -716,9 +716,6 @@ importers:
       '@celesta/media-utils':
         specifier: workspace:*
         version: link:../media-utils
-      '@celesta/project':
-        specifier: workspace:*
-        version: link:../project
       '@celesta/react':
         specifier: workspace:*
         version: link:../react
@@ -731,9 +728,6 @@ importers:
       '@celesta/transitions':
         specifier: workspace:*
         version: link:../transitions
-      '@celesta/voicevox':
-        specifier: workspace:*
-        version: link:../voicevox
       '@types/node':
         specifier: ^24.13.6
         version: 24.19.0
