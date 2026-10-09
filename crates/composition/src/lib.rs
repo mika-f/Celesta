@@ -19,6 +19,6 @@ mod model;
 pub use animation::{AnimationError, evaluate_f64, integrate_f64};
 pub use model::{
     AssetLocation, AudioClip, AudioGraph, BlendMode, Clip, DEFAULT_MITER_LIMIT, EvaluatedTransform,
-    ImageFit, Layer, LayerContent, LayerEffects, LayerGlow, LayerShadow, LineCap, LineJoin,
-    MediaTiming, PathCommand, Point, ResolvedAsset, Scene,
+    GroupMask, ImageFit, Layer, LayerContent, LayerEffects, LayerGlow, LayerShadow, LineCap,
+    LineJoin, MaskMode, MediaTiming, PathCommand, Point, ResolvedAsset, Scene,
 };

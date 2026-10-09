@@ -196,6 +196,10 @@ pub enum LayerContent {
         /// in), so it moves, scales, and rotates with the group.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         clip: Option<Clip>,
+        /// Shows the children only where this subtree is drawn; see
+        /// `GroupMask`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mask: Option<GroupMask>,
     },
     /// A flat-shaded rectangle, optionally rounded and/or stroked. Has no
     /// natural size the way `Image`/`Video` do, so `width`/`height` are
@@ -291,6 +295,8 @@ enum LayerContentDef {
         layers: Vec<Layer>,
         #[serde(default)]
         clip: Option<Clip>,
+        #[serde(default)]
+        mask: Option<GroupMask>,
     },
     Rect {
         width: f64,
@@ -483,6 +489,44 @@ impl Clip {
             0.0
         };
         radius.max(0.0).min(self.width.min(self.height) / 2.0)
+    }
+}
+
+/// Another drawn subtree that decides, per pixel, how much of a group shows.
+/// Its layers are positioned in the group's own coordinate space, like the
+/// group's children, and drawn at opacity 1 with normal blending and no clip;
+/// they are never shown themselves. Where they draw nothing, nothing of the
+/// group shows (everything does when inverted).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS))]
+#[cfg_attr(feature = "codegen", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct GroupMask {
+    pub layers: Vec<Layer>,
+    #[serde(default, skip_serializing_if = "MaskMode::is_alpha")]
+    pub mode: MaskMode,
+    /// Shows the group where the mask is not drawn instead: `1 - m`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub invert: bool,
+}
+
+/// Which value of a mask pixel shows the group.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS))]
+#[cfg_attr(feature = "codegen", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum MaskMode {
+    /// The mask's alpha.
+    #[default]
+    Alpha,
+    /// The Rec. 709 luma of the mask's sRGB-encoded color times its alpha:
+    /// `(0.2126 R + 0.7152 G + 0.0722 B) × A`, with no linearization.
+    Luminance,
+}
+
+impl MaskMode {
+    pub fn is_alpha(&self) -> bool {
+        *self == Self::Alpha
     }
 }
 

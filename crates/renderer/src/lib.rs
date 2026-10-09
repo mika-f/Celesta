@@ -15,6 +15,8 @@ mod fonts;
 mod images;
 mod layer;
 mod linebreak;
+#[cfg(test)]
+mod mask_tests;
 mod paint;
 mod rect;
 mod renderer;

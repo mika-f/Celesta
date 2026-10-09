@@ -1,7 +1,7 @@
 use crate::time::{Rational, Time};
 use crate::{
-    AssetLocation, Clip, EvaluatedTransform, ImageFit, Layer, LayerContent, LineCap, LineJoin,
-    MediaTiming, Paint, PathCommand, Point, ResolvedAsset, Stroke, TextStyle,
+    AssetLocation, Clip, EvaluatedTransform, GroupMask, ImageFit, Layer, LayerContent, LineCap,
+    LineJoin, MaskMode, MediaTiming, Paint, PathCommand, Point, ResolvedAsset, Stroke, TextStyle,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -22,16 +22,55 @@ fn adds_and_reduces_times() {
 }
 
 #[test]
-fn a_group_without_a_clip_serializes_and_parses_as_before() {
+fn a_group_without_a_clip_or_mask_serializes_and_parses_as_before() {
     let content = LayerContent::Group {
         layers: Vec::new(),
         clip: None,
+        mask: None,
     };
     let json = serde_json::to_value(&content).unwrap();
     assert_eq!(json, serde_json::json!({ "type": "group", "layers": [] }));
     assert_eq!(
         serde_json::from_value::<LayerContent>(json).unwrap(),
         content
+    );
+}
+
+#[test]
+fn a_groups_mask_round_trips_and_omits_its_defaults() {
+    let json = serde_json::json!({
+        "type": "group",
+        "layers": [],
+        "mask": { "layers": [] },
+    });
+    let content = serde_json::from_value::<LayerContent>(json.clone()).unwrap();
+    let LayerContent::Group {
+        mask: Some(mask), ..
+    } = &content
+    else {
+        panic!("the mask was dropped: {content:?}");
+    };
+    assert_eq!(mask.mode, MaskMode::Alpha);
+    assert!(!mask.invert);
+    assert_eq!(serde_json::to_value(&content).unwrap(), json);
+
+    let luminance = LayerContent::Group {
+        layers: Vec::new(),
+        clip: None,
+        mask: Some(GroupMask {
+            layers: Vec::new(),
+            mode: MaskMode::Luminance,
+            invert: true,
+        }),
+    };
+    let json = serde_json::to_value(&luminance).unwrap();
+    assert_eq!(
+        json["mask"],
+        serde_json::json!({ "layers": [], "mode": "luminance", "invert": true })
+    );
+    assert_eq!(
+        serde_json::from_value::<LayerContent>(json).unwrap(),
+        luminance
     );
 }
 
@@ -58,6 +97,7 @@ fn a_groups_clip_round_trips_and_defaults_its_corner_radius() {
     let json = serde_json::to_value(LayerContent::Group {
         layers: Vec::new(),
         clip: Some(rounded),
+        mask: None,
     })
     .unwrap();
     assert_eq!(
@@ -341,6 +381,7 @@ fn every_tagged_variant_round_trips() {
                     content: LayerContent::Group {
                         layers: Vec::new(),
                         clip: None,
+                        mask: None,
                     },
                 }],
                 clip: set.then_some(Clip {
@@ -349,6 +390,11 @@ fn every_tagged_variant_round_trips() {
                     width: 10.0,
                     height: 10.0,
                     corner_radius: 2.0,
+                }),
+                mask: set.then(|| GroupMask {
+                    layers: Vec::new(),
+                    mode: MaskMode::Luminance,
+                    invert: true,
                 }),
             },
             LayerContent::Rect {

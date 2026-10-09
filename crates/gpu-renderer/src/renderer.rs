@@ -2,6 +2,7 @@ use crate::compositor::BackdropTexture;
 use crate::draw::{LAYER_INSTANCE_SIZE, clip_bind_group, clip_buffer, instance_buffer};
 use crate::effect::EffectProcessor;
 use crate::error::GpuRenderError;
+use crate::mask::MaskPipelines;
 #[cfg(target_os = "macos")]
 use crate::native_preview;
 use crate::path::PendingPath;
@@ -40,14 +41,17 @@ pub struct GpuRenderer {
     pub(crate) texture_bind_group_layout: wgpu::BindGroupLayout,
     pub(crate) backdrop_bind_group_layout: wgpu::BindGroupLayout,
     pub(crate) render_quality: RenderQuality,
-    /// The scene-sized texture a frame that uses blend modes or effects
-    /// composites in. Isolated groups and effects draw onto smaller canvases
-    /// from `effects`' pool. Reused across frames of the same size.
+    /// The scene-sized texture a frame that uses blend modes, isolated
+    /// groups, effects or masks composites in. Isolated groups, effects and
+    /// masks draw onto smaller canvases from `effects`' pool. Reused across
+    /// frames of the same size.
     pub(crate) canvas: Option<CanvasTexture>,
     /// What a blended draw reads its backdrop from: a copy of the canvas it
     /// draws onto, taken just before the draw.
     pub(crate) backdrop: Option<BackdropTexture>,
     pub(crate) effects: EffectProcessor,
+    /// Shows masked groups' children through their masks.
+    pub(crate) masks: MaskPipelines,
     /// Every layer's `LayerInstance` for the frame being prepared, reused
     /// (and grown when a frame needs more) across frames.
     pub(crate) instances: wgpu::Buffer,
@@ -255,6 +259,7 @@ impl GpuRenderer {
             });
         let shader = device.create_shader_module(wgpu::include_wgsl!("layer.wgsl"));
         let effects = EffectProcessor::new(&device, &texture_bind_group_layout);
+        let masks = MaskPipelines::new(&device, &texture_bind_group_layout);
         let pipeline = create_pipeline(
             &device,
             &pipeline_layout,
@@ -299,6 +304,7 @@ impl GpuRenderer {
             canvas: None,
             backdrop: None,
             effects,
+            masks,
             instances,
             clip_bind_group_layout,
             clips,

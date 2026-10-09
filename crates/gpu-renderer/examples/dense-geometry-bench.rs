@@ -90,7 +90,14 @@ fn count_layers(layers: &[Layer]) -> usize {
     layers
         .iter()
         .map(|layer| match &layer.content {
-            LayerContent::Group { layers, .. } => 1 + count_layers(layers),
+            LayerContent::Group {
+                layers,
+                clip: _,
+                mask,
+            } => {
+                1 + count_layers(layers)
+                    + mask.as_ref().map_or(0, |mask| count_layers(&mask.layers))
+            }
             _ => 1,
         })
         .sum()
@@ -125,6 +132,7 @@ fn scene(frame: usize, ribbons: usize, strands: usize, geometry: Geometry) -> Sc
                     geometry,
                 ),
                 clip: None,
+                mask: None,
             },
         });
     }

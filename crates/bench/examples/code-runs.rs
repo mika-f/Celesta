@@ -11,7 +11,11 @@ fn texts(layers: &[Layer]) -> usize {
         .iter()
         .map(|layer| match &layer.content {
             LayerContent::Text { .. } => 1,
-            LayerContent::Group { layers, .. } => texts(layers),
+            LayerContent::Group {
+                layers,
+                clip: _,
+                mask,
+            } => texts(layers) + mask.as_ref().map_or(0, |mask| texts(&mask.layers)),
             _ => 0,
         })
         .sum()

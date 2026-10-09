@@ -4,6 +4,7 @@ use crate::draw::{LAYER_INSTANCE_SIZE, RectShape, clip_bind_group, clip_buffer, 
 use crate::effect::EffectSpec;
 use crate::error::GpuRenderError;
 use crate::layer::{PreparedContent, PreparedItem, PreparedLayer};
+use crate::mask::MaskSpec;
 use crate::path::{PathEntries, PendingPath, path_entry_limit};
 use crate::plan::{CompositePlan, GpuDraw, GpuStep, GroupPlan, PreparedDraws, plan_groups};
 use crate::renderer::GpuRenderer;
@@ -70,15 +71,21 @@ impl GpuRenderer {
         self.place_texts(&texts, &jobs, images, &mut items)?;
         self.place_paths(&paths, outlines?, &mut items)?;
 
-        // A frame that blends anything but source-over composites through
-        // scene-sized canvases, so its layers need one more instance: the
-        // one that copies the finished root canvas onto the target.
+        // A frame with an isolated group, an effect, a mask or a layer that
+        // blends anything but source-over composites through canvases, so
+        // its layers need one more instance: the one that copies the
+        // finished root canvas onto the target.
         let composited = items.iter().any(
             |item| !matches!(item, PreparedItem::Layer(layer) if layer.blend_mode.is_normal()),
         );
         let instance_count = items
             .iter()
-            .filter(|item| !matches!(item, PreparedItem::BeginGroup))
+            .filter(|item| {
+                !matches!(
+                    item,
+                    PreparedItem::BeginGroup | PreparedItem::BeginMask | PreparedItem::MaskContent
+                )
+            })
             .count()
             + items
                 .iter()
@@ -118,6 +125,35 @@ impl GpuRenderer {
                         canvas: group.canvas,
                     });
                     open.push(group);
+                    continue;
+                }
+                PreparedItem::BeginMask => {
+                    let group = groups.next().expect("plan_groups plans every mask");
+                    steps.push(GpuStep::BeginMask {
+                        canvas: group.canvas,
+                    });
+                    open.push(group);
+                    continue;
+                }
+                // The children draw onto a canvas covering the mask's region.
+                PreparedItem::MaskContent => {
+                    steps.push(GpuStep::MaskContent);
+                    continue;
+                }
+                PreparedItem::EndMask(layer, mask) => {
+                    let group = open.pop().expect("every mask was begun");
+                    let target = open.last().expect("the root canvas is always open").canvas;
+                    layer.write_instance(target, group.canvas, &mut instances);
+                    steps.push(GpuStep::EndMask {
+                        instance: index,
+                        blend_mode: layer.blend_mode,
+                        mask,
+                        area: group
+                            .drawn
+                            .then(|| target.local_area(group.canvas.bounds()))
+                            .flatten(),
+                    });
+                    index += 1;
                     continue;
                 }
                 PreparedItem::EndGroup(layer) => {
@@ -374,13 +410,49 @@ impl GpuRenderer {
             return Ok(());
         }
         match &layer.content {
-            LayerContent::Group { layers, clip } => {
+            LayerContent::Group { layers, clip, mask } => {
                 let mut child_state = state;
                 if let Some(clip) = clip {
                     if clip.is_empty() {
                         return Ok(());
                     }
                     child_state.clip = Some(self.push_clip(clip, state)?);
+                }
+                if let Some(mask) = mask {
+                    // Always isolated: the mask, drawn without clips, then
+                    // the children, which carry them, each onto a canvas of
+                    // their own; the children shown through the mask then
+                    // draw onto the parent as one layer.
+                    output.push(PreparedItem::BeginMask);
+                    let matte = LayerState {
+                        opacity: 1.0,
+                        clip: None,
+                        ..state
+                    };
+                    for layer in &mask.layers {
+                        self.prepare_layer(layer, matte, output)?;
+                    }
+                    output.push(PreparedItem::MaskContent);
+                    let inner = LayerState {
+                        opacity: 1.0,
+                        ..child_state
+                    };
+                    for child in layers {
+                        self.prepare_layer(child, inner, output)?;
+                    }
+                    output.push(PreparedItem::EndMask(
+                        PreparedLayer::canvas(
+                            LayerState {
+                                transform: Affine::IDENTITY,
+                                opacity: state.opacity,
+                                clip: None,
+                            },
+                            blend_mode,
+                            true,
+                        ),
+                        MaskSpec::new(mask),
+                    ));
+                    return Ok(());
                 }
                 if blend_mode.is_normal() {
                     for child in layers {

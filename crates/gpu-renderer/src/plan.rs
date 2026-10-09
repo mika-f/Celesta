@@ -1,6 +1,7 @@
 use crate::bounds::{CanvasRegion, PixelBounds};
 use crate::effect::EffectSpec;
 use crate::layer::PreparedItem;
+use crate::mask::MaskSpec;
 use crate::texture::LayerTexture;
 use celesta_composition::BlendMode;
 
@@ -21,7 +22,8 @@ pub(crate) struct CompositePlan {
     pub(crate) blit_instance: u32,
 }
 
-/// The canvas an isolated group or an effect draws its layers onto.
+/// The canvas an isolated group, an effect, or a mask and its group's
+/// children draw their layers onto.
 #[derive(Clone, Copy)]
 pub(crate) struct GroupPlan {
     pub(crate) canvas: CanvasRegion,
@@ -33,12 +35,15 @@ pub(crate) struct GroupPlan {
     pub(crate) drawn: bool,
 }
 
-/// Plans the canvas of every isolated group and effect in `items`, in the
-/// order they begin, from the bounds of what their layers draw.
+/// Plans the canvas of every isolated group, effect, and mask in `items`, in
+/// the order they begin, from the bounds of what their layers draw. A
+/// mask's canvas covers where its children show through it.
 pub(crate) fn plan_groups(items: &[PreparedItem], scene: CanvasRegion) -> Vec<GroupPlan> {
     let mut plans: Vec<GroupPlan> = Vec::new();
     // Each open group's index in `plans` and what its layers cover so far.
     let mut open: Vec<(usize, Option<PixelBounds>)> = Vec::new();
+    // What each open mask drew, once its group's children have begun.
+    let mut masks: Vec<Option<PixelBounds>> = Vec::new();
     let cover = |open: &mut Vec<(usize, Option<PixelBounds>)>, bounds: Option<PixelBounds>| {
         if let Some((_, covered)) = open.last_mut() {
             *covered = PixelBounds::union(*covered, bounds);
@@ -63,9 +68,27 @@ pub(crate) fn plan_groups(items: &[PreparedItem], scene: CanvasRegion) -> Vec<Gr
             PreparedItem::PendingText | PreparedItem::PendingPath => {
                 unreachable!("pending text and paths are resolved")
             }
-            PreparedItem::BeginGroup => {
+            PreparedItem::BeginGroup | PreparedItem::BeginMask => {
                 open.push((plans.len(), None));
                 plans.push(plan(None, None));
+            }
+            PreparedItem::MaskContent => {
+                let (index, mask) = open.pop().expect("every mask was begun");
+                masks.push(mask);
+                open.push((index, None));
+            }
+            PreparedItem::EndMask(_, spec) => {
+                let (index, children) = open.pop().expect("every mask was begun");
+                let mask = masks.pop().expect("every mask has content");
+                // Inverted, the children show wherever the mask is not
+                // drawn, which can be anywhere they are.
+                let shown = if spec.invert {
+                    children
+                } else {
+                    PixelBounds::intersection(children, mask)
+                };
+                plans[index] = plan(shown, shown);
+                cover(&mut open, shown);
             }
             PreparedItem::EndGroup(_) => {
                 let (index, content) = open.pop().expect("every group was begun");
@@ -112,6 +135,21 @@ pub(crate) enum GpuStep {
         /// The part of the effect's canvas its layers drew on, in that
         /// canvas's pixels; `None` when they drew nothing.
         content: Option<PixelBounds>,
+        /// As for `EndGroup`.
+        area: Option<[u32; 4]>,
+    },
+    /// Starts drawing a mask onto a fresh transparent canvas covering
+    /// `canvas`; the steps from the matching `MaskContent` draw the group's
+    /// children onto a second one covering the same region.
+    BeginMask { canvas: CanvasRegion },
+    /// Ends the mask's steps; the children's follow, onto the second canvas.
+    MaskContent,
+    /// Draws the children shown through the mask onto the parent with
+    /// `instance`.
+    EndMask {
+        instance: u32,
+        blend_mode: BlendMode,
+        mask: MaskSpec,
         /// As for `EndGroup`.
         area: Option<[u32; 4]>,
     },

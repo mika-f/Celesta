@@ -1,6 +1,7 @@
 use crate::bounds::{CanvasRegion, PixelBounds};
 use crate::draw::RectShape;
 use crate::effect::EffectSpec;
+use crate::mask::MaskSpec;
 use crate::path::ShadedPath;
 use crate::texture::LayerTexture;
 use crate::transform::{Affine, LayerState};
@@ -10,8 +11,9 @@ pub(crate) enum PreparedContent {
     Texture(LayerTexture),
     Rect(RectShape),
     Path(ShadedPath),
-    /// A whole scene-sized canvas: a finished isolated group, or the root
-    /// canvas being copied onto the target.
+    /// A whole canvas: a finished isolated group, a masked group's children
+    /// shown through its mask, or the root canvas being copied onto the
+    /// target.
     Canvas {
         /// Whether the canvas holds premultiplied alpha (an isolated group)
         /// that the shader must unpremultiply.
@@ -28,6 +30,13 @@ pub(crate) enum PreparedItem {
     /// Draws the finished group's canvas onto its parent.
     EndGroup(PreparedLayer),
     EndEffect(PreparedLayer, EffectSpec),
+    /// The items up to the matching `MaskContent` draw a group's mask onto a
+    /// transparent canvas, those from there to the matching `EndMask` its
+    /// children onto another covering the same region.
+    BeginMask,
+    MaskContent,
+    /// Draws the children shown through the mask onto the group's parent.
+    EndMask(PreparedLayer, MaskSpec),
     /// A text layer `place_texts` replaces with a `Layer` before anything
     /// else reads the items.
     PendingText,

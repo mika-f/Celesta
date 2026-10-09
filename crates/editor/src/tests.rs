@@ -11,8 +11,10 @@ use crate::waveform::{
 use celesta_editor_core::ClipKind;
 use celesta_gpu_renderer::GpuDriver;
 
+use crate::preview::{collect_component_requests, strip_missing_components};
 use celesta_composition::{
-    Animatable, AssetLocation, AudioClip, Rational, ResolvedAsset, Time, TimeRange,
+    Animatable, AssetLocation, AudioClip, EvaluatedTransform, GroupMask, Layer, LayerContent,
+    MaskMode, Rational, ResolvedAsset, Time, TimeRange,
 };
 use celesta_editor_core::ClipSummary;
 use celesta_exporter::ExportCancellation;
@@ -236,4 +238,58 @@ fn audio_decoder_reuses_pcm_cache_across_sessions() {
     assert_eq!(decoded, expected);
     assert_eq!(decoder.waveforms.values().next().unwrap(), &[0.25]);
     fs::remove_dir_all(root).unwrap();
+}
+
+fn missing(name: &str) -> Layer {
+    Layer {
+        id: name.to_owned(),
+        transform: EvaluatedTransform::default(),
+        opacity: 1.0,
+        blend_mode: Default::default(),
+        effects: Default::default(),
+        content: LayerContent::MissingComponent {
+            component: name.to_owned(),
+            props: Default::default(),
+        },
+    }
+}
+
+fn masked_group(children: Vec<Layer>, mask: Vec<Layer>) -> Layer {
+    Layer {
+        content: LayerContent::Group {
+            layers: children,
+            clip: None,
+            mask: Some(GroupMask {
+                layers: mask,
+                mode: MaskMode::Alpha,
+                invert: false,
+            }),
+        },
+        ..missing("group")
+    }
+}
+
+#[test]
+fn component_requests_reach_into_masks_after_the_children() {
+    let layers = vec![masked_group(vec![missing("Child")], vec![missing("Matte")])];
+    let mut requests = Vec::new();
+    collect_component_requests(&layers, &mut requests);
+    let names: Vec<_> = requests.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(names, ["Child", "Matte"]);
+}
+
+#[test]
+fn strips_missing_components_inside_masks() {
+    let mut layers = vec![masked_group(vec![missing("Child")], vec![missing("Matte")])];
+    strip_missing_components(&mut layers);
+    let LayerContent::Group {
+        layers: children,
+        mask: Some(mask),
+        ..
+    } = &layers[0].content
+    else {
+        panic!("the group lost its mask");
+    };
+    assert!(children.is_empty());
+    assert!(mask.layers.is_empty());
 }

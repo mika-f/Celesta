@@ -11,6 +11,7 @@ mod effect;
 mod encode;
 mod error;
 mod layer;
+mod mask;
 mod path;
 mod pipeline;
 mod plan;

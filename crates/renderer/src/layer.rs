@@ -1,6 +1,6 @@
 use crate::assets::local_asset_path;
 use crate::clip::{ClipNode, ClipRegion, ParentState, clip_coverage};
-use crate::composite::{blend, blend_with_mode};
+use crate::composite::{blend, blend_with_mode, mask_value};
 use crate::effects::{blur_pixels, premultiply_pixels, render_effect_shadow, unpremultiply_color};
 use crate::error::RenderError;
 use crate::images::{DecodedImage, render_image, render_image_pixels, render_placeholder};
@@ -9,7 +9,7 @@ use crate::renderer::CpuRenderer;
 use crate::types::{Color, RgbaFrame};
 use crate::{PathShape, PathTransform, RasterizedPath, rasterize_path};
 use celesta_composition::{
-    BlendMode, Layer, LayerContent, MediaTiming, Point, ResolvedAsset, TextStyle,
+    BlendMode, GroupMask, Layer, LayerContent, MediaTiming, Point, ResolvedAsset, TextStyle,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -63,7 +63,7 @@ impl CpuRenderer {
                 *baseline_anchor,
                 &state,
             )?,
-            LayerContent::Group { layers, clip } => {
+            LayerContent::Group { layers, clip, mask } => {
                 let mut child_state = state.clone();
                 if let Some(clip) = clip {
                     if clip.is_empty() {
@@ -73,6 +73,9 @@ impl CpuRenderer {
                         region: ClipRegion::new(clip, state.position, state.scale),
                         parent: state.clip.clone(),
                     }));
+                }
+                if let Some(mask) = mask {
+                    return self.render_masked_group(frame, layers, mask, &state, child_state);
                 }
                 if !layer.blend_mode.is_normal() {
                     // Isolated: the children composite onto a transparent layer
@@ -317,6 +320,58 @@ impl CpuRenderer {
                 state.opacity * coverage,
                 state.blend_mode,
             );
+        }
+        Ok(())
+    }
+
+    /// Draws a group with a mask: the children and the mask each onto a
+    /// transparent frame of their own, the children then shown through the
+    /// mask onto `frame` with the group's opacity and blend mode. The
+    /// children carry the clips; the mask draws without any.
+    fn render_masked_group(
+        &mut self,
+        frame: &mut RgbaFrame,
+        layers: &[Layer],
+        mask: &GroupMask,
+        state: &ParentState,
+        child_state: ParentState,
+    ) -> Result<(), RenderError> {
+        let blank = || RgbaFrame {
+            width: frame.width,
+            height: frame.height,
+            pixels: vec![0; frame.pixels.len()],
+        };
+        let mut children = blank();
+        let inner = ParentState {
+            opacity: 1.0,
+            blend_mode: BlendMode::Normal,
+            ..child_state
+        };
+        for child in layers {
+            self.render_layer(&mut children, child, inner.clone())?;
+        }
+        let mut matte = blank();
+        let matte_state = ParentState {
+            opacity: 1.0,
+            clip: None,
+            blend_mode: BlendMode::Normal,
+            ..state.clone()
+        };
+        for layer in &mask.layers {
+            self.render_layer(&mut matte, layer, matte_state.clone())?;
+        }
+        for ((destination, source), matte) in frame
+            .pixels
+            .chunks_exact_mut(4)
+            .zip(children.pixels.chunks_exact(4))
+            .zip(matte.pixels.chunks_exact(4))
+        {
+            let shown = mask_value(mask.mode, mask.invert, matte);
+            if shown == 0.0 {
+                continue;
+            }
+            let source = Color::rgba(source[0], source[1], source[2], source[3]);
+            blend_with_mode(destination, source, state.opacity * shown, state.blend_mode);
         }
         Ok(())
     }

@@ -202,8 +202,16 @@ fn fit(mut scene: Scene, width: u32, height: u32) -> Scene {
             if let Some(glow) = &mut effects.glow {
                 glow.blur *= k;
             }
-            if let LayerContent::Group { layers, .. } = &mut layer.content {
+            if let LayerContent::Group {
+                layers,
+                clip: _,
+                mask,
+            } = &mut layer.content
+            {
                 scale_effects(layers, k);
+                if let Some(mask) = mask {
+                    scale_effects(&mut mask.layers, k);
+                }
             }
         }
     }
@@ -215,7 +223,11 @@ fn fit(mut scene: Scene, width: u32, height: u32) -> Scene {
             scale: Point { x: k, y: k },
             ..EvaluatedTransform::default()
         },
-        LayerContent::Group { layers, clip: None },
+        LayerContent::Group {
+            layers,
+            clip: None,
+            mask: None,
+        },
     )];
     (scene.width, scene.height) = (width, height);
     scene
@@ -482,6 +494,7 @@ fn ribbons(canvas: &Canvas, frame: usize) -> Vec<Layer> {
                 LayerContent::Group {
                     layers: rects,
                     clip: None,
+                    mask: None,
                 },
             )
         })
@@ -622,6 +635,7 @@ fn shapes(canvas: &Canvas, frame: usize) -> Vec<Layer> {
                         height: canvas.len(340.0),
                         corner_radius: canvas.len(32.0),
                     }),
+                    mask: None,
                 },
             );
             layer.blend_mode = *mode;
