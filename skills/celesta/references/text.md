@@ -65,6 +65,11 @@ measures as one, and its baseline stays where the text's own glyphs put it.
   the style at its first character.
 - Kerning and ligatures do not cross a change of weight or family; they do
   cross a change of color.
+- Set `lang` on Japanese, Chinese, or Korean text with spans (or on the
+  composition). A weight or family span splits shaping, and fallback fonts
+  are chosen per shaped piece: without a language, the characters next to a
+  span can fall back to a different font than the rest of the phrase (for
+  example, a Chinese font for kanji), which also shifts the line.
 - `<Span fill>` cannot be combined with `style.colorRuns` on the same text.
 - The browser preview draws each span with its own font and can differ
   slightly from export at span edges.
