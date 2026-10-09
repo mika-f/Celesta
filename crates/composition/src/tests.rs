@@ -440,3 +440,37 @@ fn every_tagged_variant_round_trips() {
         round_trip(content);
     }
 }
+
+#[test]
+fn text_font_runs_round_trip_and_stay_out_of_plain_styles() {
+    use crate::TextFontRun;
+    assert_eq!(
+        serde_json::to_value(TextStyle::default()).unwrap(),
+        serde_json::json!({})
+    );
+    let json = serde_json::json!({
+        "fontRuns": [
+            { "start": 1, "end": 3, "fontWeight": 700 },
+            { "start": 3, "end": 4, "fontFamily": "Bebas Neue" }
+        ]
+    });
+    let style: TextStyle = serde_json::from_value(json.clone()).unwrap();
+    assert_eq!(
+        style.font_runs,
+        vec![
+            TextFontRun {
+                start: 1,
+                end: 3,
+                font_weight: Some(700),
+                font_family: None,
+            },
+            TextFontRun {
+                start: 3,
+                end: 4,
+                font_weight: None,
+                font_family: Some("Bebas Neue".to_owned()),
+            },
+        ]
+    );
+    assert_eq!(serde_json::to_value(&style).unwrap(), json);
+}

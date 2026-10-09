@@ -9,7 +9,9 @@ mod time;
 mod transform;
 
 pub use keyframe::{Animatable, Easing, Keyframe, KeyframeAnimation, KeyframeAnimationType};
-pub use style::{GradientStop, LineBreak, Paint, Stroke, TextAlign, TextColorRun, TextStyle};
+pub use style::{
+    GradientStop, LineBreak, Paint, Stroke, TextAlign, TextColorRun, TextFontRun, TextStyle,
+};
 pub use time::{Rational, Time, TimeError, TimeRange};
 pub use transform::{AnimatablePoint, Transform};
 

@@ -20,6 +20,7 @@ export type PathCommand =
   | { type: 'quadTo'; x1: number; y1: number; x: number; y: number }
   | { type: 'cubicTo'; x1: number; y1: number; x2: number; y2: number; x: number; y: number }
   | { type: 'close' };
+export type FontRun = { start: number; end: number; fontWeight?: number | null; fontFamily?: string | null };
 export type TextStyle = {
   lang?: string | null;
   fontFamily?: string | null;
@@ -31,6 +32,7 @@ export type TextStyle = {
   lineHeight?: number | null;
   letterSpacing?: number | null;
   colorRuns?: { start: number; end: number; color: string }[];
+  fontRuns?: FontRun[];
   visibleCharacters?: number | null;
   lineBreak?: 'normal' | 'phrase' | null;
 };

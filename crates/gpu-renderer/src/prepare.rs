@@ -643,21 +643,22 @@ impl GpuRenderer {
                 max_width,
                 baseline_anchor,
             } => {
-                if let Some(fallback) = self.text_rasterizer.font_fallback(&layer.id, style) {
+                for fallback in self.text_rasterizer.font_fallback(&layer.id, style) {
                     if !self.font_fallbacks.iter().any(|reported| {
                         reported.family == fallback.family && reported.weight == fallback.weight
                     }) {
                         self.font_fallbacks.push(fallback);
                     }
-                } else if let Some(missing) =
-                    self.text_rasterizer.missing_glyphs(&layer.id, text, style)
-                    && !self.missing_glyphs.iter().any(|reported| {
+                }
+                // A family with no face is left out here: it is a fallback.
+                for missing in self.text_rasterizer.missing_glyphs(&layer.id, text, style) {
+                    if !self.missing_glyphs.iter().any(|reported| {
                         reported.family == missing.family
                             && reported.weight == missing.weight
                             && reported.characters == missing.characters
-                    })
-                {
-                    self.missing_glyphs.push(missing);
+                    }) {
+                        self.missing_glyphs.push(missing);
+                    }
                 }
                 let raster_scale = match self.render_quality {
                     RenderQuality::Draft => 1.0,

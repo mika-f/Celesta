@@ -1,6 +1,8 @@
 import * as React from 'react';
+import type { ReactNode } from 'react';
 
 import { entryRelativePath, isRemoteUrl } from './entry-dir';
+import { flattenTextContent, withTextRuns } from './rich-text';
 import { CompositionRuntimeContext } from './hooks';
 import type { ResolvedAsset, TextStyle } from './scene';
 
@@ -74,18 +76,20 @@ export function setTextMeasurer(
 }
 
 /**
- * Measures `text` laid out with `style` — the same shaping `<Text>` renders
- * with — during an entry's async `prepare()`. Stash the result in module
- * state for the synchronous render to read.
+ * Measures `content` laid out with `style` — the same shaping `<Text>`
+ * renders with — during an entry's async `prepare()`. `content` is text,
+ * which may hold `<Span>`. Stash the result in module state for the
+ * synchronous render to read.
  */
 export async function measureText(
-  text: string,
+  content: ReactNode,
   style: TextStyle = {},
   options: MeasureTextOptions = {},
 ): Promise<TextMetrics> {
+  const flat = flattenTextContent(content, 'measureText() text');
   return asynchronousMeasurer('measureText()')({
-    text,
-    style,
+    text: flat.text,
+    style: withTextRuns(style, flat, 'measureText()'),
     ...(options.maxWidth !== undefined ? { maxWidth: options.maxWidth } : {}),
     fonts: prepareFonts(options.fonts),
   });
@@ -131,18 +135,21 @@ export function synchronousMeasurer(caller: string): (request: MeasureTextReques
 
 /**
  * Measures computed text synchronously during render, using the same fonts
- * and shaping as `<Text>`. Unchanged inputs reuse this hook's last result.
+ * and shaping as `<Text>`; `content` may hold `<Span>`, measured with the
+ * spans' weights and families. Unchanged inputs reuse this hook's last
+ * result.
  */
 export function useTextMetrics(
-  text: string,
+  content: ReactNode,
   style: TextStyle = {},
   options: MeasureTextOptions = {},
 ): TextMetrics {
   const lang = React.useContext(CompositionRuntimeContext)?.lang;
-  const resolvedStyle = withTextLanguage(style, lang);
+  const flat = flattenTextContent(content, 'useTextMetrics() text');
+  const resolvedStyle = withTextRuns(withTextLanguage(style, lang), flat, 'useTextMetrics()');
   const fonts = useMeasurementFonts(options.fonts);
   const { colorRuns, visibleCharacters, fill, stroke, ...layoutStyle } = resolvedStyle;
-  const key = JSON.stringify({ text, style: layoutStyle, maxWidth: options.maxWidth, fonts });
+  const key = JSON.stringify({ text: flat.text, style: layoutStyle, maxWidth: options.maxWidth, fonts });
   return React.useMemo(
     () => synchronousMeasurer('useTextMetrics()')(JSON.parse(key) as MeasureTextRequest),
     [key],

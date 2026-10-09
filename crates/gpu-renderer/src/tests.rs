@@ -4440,6 +4440,92 @@ fn colored_text_and_reveals_match_cpu_through_cached_gpu_textures() {
 }
 
 #[test]
+fn font_run_text_matches_cpu() {
+    use celesta_composition::{TextColorRun, TextFontRun};
+    let Some(mut gpu) = renderer(GpuRenderOptions {
+        background: Color::rgba(0, 0, 0, 0),
+        ..Default::default()
+    }) else {
+        return;
+    };
+    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/prism");
+    gpu.set_asset_root(root);
+    let mut cpu = celesta_renderer::CpuRenderer::new(celesta_renderer::RenderOptions {
+        background: CpuColor::rgba(0, 0, 0, 0),
+    })
+    .with_asset_root(root);
+    let mut scene = empty_scene(400, 180);
+    scene.fonts = ["BebasNeue-Regular.ttf", "IBMPlexMono-Regular.ttf"]
+        .map(|file| ResolvedAsset {
+            id: file.to_owned(),
+            location: AssetLocation::File {
+                path: format!("assets/fonts/{file}"),
+            },
+        })
+        .to_vec();
+    scene.layers.push(Layer {
+        id: "spanned".into(),
+        transform: EvaluatedTransform {
+            position: Point { x: 12.0, y: 48.0 },
+            anchor: Point { x: 0.0, y: 0.0 },
+            ..Default::default()
+        },
+        opacity: 1.0,
+        blend_mode: BlendMode::Normal,
+        effects: Default::default(),
+        content: LayerContent::Text {
+            text: "CELESTA plex\nRICH text".into(),
+            baseline_anchor: true,
+            max_width: None,
+            style: TextStyle {
+                font_family: Some("Bebas Neue".into()),
+                font_size: Some(40.0),
+                line_height: Some(48.0),
+                font_runs: vec![TextFontRun {
+                    start: 8,
+                    end: 12,
+                    font_weight: None,
+                    font_family: Some("IBM Plex Mono".into()),
+                }],
+                color_runs: vec![TextColorRun {
+                    start: 18,
+                    end: 22,
+                    color: "#ff0000".into(),
+                }],
+                ..Default::default()
+            },
+        },
+    });
+    let reference = cpu.render(&scene).unwrap();
+    let frame = gpu.render(&scene).unwrap();
+    assert_eq!(reference.pixels().len(), frame.pixels().len());
+    assert!(
+        reference
+            .pixels()
+            .chunks_exact(4)
+            .zip(frame.pixels().chunks_exact(4))
+            .all(|(cpu, gpu)| (0..4).all(|channel| {
+                let expected = if channel == 3 {
+                    cpu[channel]
+                } else {
+                    (u16::from(cpu[channel]) * u16::from(cpu[3]) / 255) as u8
+                };
+                expected.abs_diff(gpu[channel]) <= 1
+            }))
+    );
+    // The run changes the glyphs: without it, the CPU reference differs.
+    let mut plain_scene = scene.clone();
+    let LayerContent::Text { style, .. } = &mut plain_scene.layers[0].content else {
+        unreachable!()
+    };
+    style.font_runs.clear();
+    assert_ne!(
+        reference.pixels(),
+        cpu.render(&plain_scene).unwrap().pixels()
+    );
+}
+
+#[test]
 fn an_unwrapped_colored_line_fits_the_gpu_texture_limit() {
     use crate::text::{PendingText, rasterize_text};
     use celesta_composition::TextColorRun;

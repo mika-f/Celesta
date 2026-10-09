@@ -9,6 +9,7 @@ import {
   resolveTextLanguage,
 } from './hooks';
 import { useOptionalLipSync } from './lipsync';
+import { flattenTextContent, withTextRuns } from './rich-text';
 import { synchronousMeasurer, useMeasurementFonts, withTextLanguage } from './text-measure';
 import type { MeasureTextRequest, TextMetrics } from './text-measure';
 import type { LipSyncTrack } from './lipsync';
@@ -116,6 +117,10 @@ export interface TextProps extends Omit<CommonProps, 'anchorY'> {
    * glyphs or font sizes.
    */
   anchorY?: number | 'baseline';
+  /**
+   * Strings, numbers, and `<Span>` elements (arrays and fragments of
+   * those). `null`, `undefined`, and booleans draw nothing.
+   */
   children: ReactNode;
   style?: TextStyle;
   /** Text language, overriding ancestors; an explicit `style.lang` takes priority. */
@@ -346,6 +351,8 @@ export interface SubtitleCharacter {
 export interface SubtitleRenderProps {
   /** The line's text. */
   text: string;
+  /** The line as given, spans included: draw it with `<Text style={style}>{content}</Text>`. */
+  content: ReactNode;
   character: SubtitleCharacter;
   /** `text` measured with the subtitle's `style` and `maxWidth`, as `<Text>` lays it out. */
   metrics: TextMetrics;
@@ -582,11 +589,17 @@ function useRenderedSubtitle(
   ) as AssetReference | null | undefined;
   const subtitle = character?.subtitle;
   const render = subtitle?.render;
-  const text = render ? subtitleText(children) : '';
+  const flat = render ? flattenTextContent(children, '<Dialogue> children') : null;
+  const text = flat?.text ?? '';
   const style = withTextLanguage(subtitle?.style ?? {}, runtime?.lang);
   const maxWidth = subtitle?.maxWidth;
-  const key = render
-    ? JSON.stringify({ text, style, ...(maxWidth !== undefined ? { maxWidth } : {}), fonts })
+  const key = flat
+    ? JSON.stringify({
+      text,
+      style: withTextRuns(style, flat, '<Dialogue>'),
+      ...(maxWidth !== undefined ? { maxWidth } : {}),
+      fonts,
+    })
     : null;
   const metrics = React.useMemo(
     () => (key === null ? null : synchronousMeasurer('subtitle.render')(JSON.parse(key) as MeasureTextRequest)),
@@ -600,6 +613,7 @@ function useRenderedSubtitle(
   const name = character.name ?? character.id;
   const info: SubtitleRenderProps = {
     text,
+    content: children,
     character: { id: character.id, name, displayName: character.displayName ?? name },
     metrics,
     style,
@@ -619,19 +633,6 @@ function SubtitleRenderer({
   info: SubtitleRenderProps;
 }): ReactNode {
   return render(info);
-}
-
-function subtitleText(children: ReactNode): string {
-  if (typeof children === 'string') {
-    return children;
-  }
-  if (typeof children === 'number') {
-    return String(children);
-  }
-  if (Array.isArray(children)) {
-    return children.map(subtitleText).join('');
-  }
-  throw new Error('<Dialogue> children must be a string, a number, or an array of those');
 }
 
 export const Image = React.forwardRef<AssetReference, ImageProps>(function Image(props, ref) {

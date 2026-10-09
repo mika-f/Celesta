@@ -477,3 +477,31 @@ fn reads_invalid_properties_before_ready() {
         "invalid project properties:\n  - --props: accent: expected a color\n  - --props-file a.json: no schema"
     );
 }
+
+#[test]
+fn measuring_rejects_invalid_font_runs() {
+    use crate::measure::{MeasureTextRequest, measure_text_response};
+    use celesta_composition::{TextFontRun, TextStyle};
+    let request = MeasureTextRequest {
+        text: "AB".to_owned(),
+        style: TextStyle {
+            font_runs: vec![TextFontRun {
+                start: 0,
+                end: 3,
+                font_weight: Some(700),
+                font_family: None,
+            }],
+            ..TextStyle::default()
+        },
+        max_width: None,
+        fonts: Vec::new(),
+    };
+    let response = measure_text_response(&mut None, &request);
+    assert!(response.metrics.is_none());
+    assert_eq!(
+        response.error.as_deref(),
+        Some(
+            "could not measure text: text font run 0 (0..3) is invalid for 2 code points; runs must be ordered, non-overlapping ranges within the text"
+        )
+    );
+}

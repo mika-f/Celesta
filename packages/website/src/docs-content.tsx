@@ -266,7 +266,7 @@ export const contents: Record<string, ReactNode> = {
       <DocCode label={t('docs.chapters.layout.text-sliding-up-from-behind-an-edge')} language="tsx" code={"<Group x={120} y={200} clip={{ width: 720, height: 96 }}>\n  <Text y={96 * (1 - reveal)}\n    style={{ fontSize: 88, fill: { type: 'solid', color: '#332f3b' } }}>\n    Layer it.\n  </Text>\n</Group>"} />
     </>,
   'text-fonts': <>
-      <h3>{text('docs.chapters.text-fonts.text')}</h3><p>{text('docs.chapters.text-fonts.renders-its-children-which-must-be-strings', [<code>Text</code>, <code>style</code>])}</p>
+      <h3>{text('docs.chapters.text-fonts.text')}</h3><p>{text('docs.chapters.text-fonts.renders-its-children-which-must-be-strings', [<code>Text</code>, <code>style</code>, <code>{'<Span>'}</code>])}</p>
       <DocCode label={t('docs.chapters.text-fonts.an-outlined-wrapping-caption')} language="tsx" code={"<Text x={960} y={900} anchorX={0.5} anchorY={0.5} maxWidth={1400}\n  style={{\n    fontFamily: 'Hiragino Sans',\n    fontSize: 64,\n    fontWeight: 700,\n    lineHeight: 80,\n    align: 'center',\n    fill: { type: 'solid', color: '#ffffff' },\n    stroke: { paint: { type: 'solid', color: '#57456c' }, width: 8 },\n  }}>\n  Words that wrap onto a second line when they reach maxWidth.\n</Text>"} />
       <ul>
         <li>{text('docs.chapters.text-fonts.names-a-font-installed-on-the-computer', [<code>fontFamily</code>, <code>{'<Font>'}</code>, <code>fontWeight</code>, <code>font</code>])}</li>
@@ -284,6 +284,10 @@ export const contents: Record<string, ReactNode> = {
         <li>{text('docs.chapters.text-fonts.single-line-text-is-anchored-vertically-by', [<code>anchorY={'{0.5}'}</code>])}</li>
         <li>{text('docs.chapters.text-fonts.anchors-text-on-its-first-line-s', [<code>anchorY="baseline"</code>, <code>y</code>])}</li>
       </ul>
+      <h3>{text('docs.chapters.text-fonts.rich-text')}</h3>
+      <p>{text('docs.chapters.text-fonts.rich-text-body', [<code>{'<Span>'}</code>, <code>fill</code>, <code>fontWeight</code>, <code>fontFamily</code>])}</p>
+      <DocCode label={t('docs.chapters.text-fonts.an-emphasized-word-in-one-paragraph')} language="tsx" code={"<Text style={{ fontSize: 48, fill: { type: 'solid', color: '#ffffff' } }}>\n  速い、<Span style={{ fill: '#28A34A', fontWeight: 700 }}>カンタン</Span>、頼もしい。\n</Text>"} />
+      <p>{text('docs.chapters.text-fonts.rich-text-where', [<code>{'<Text>'}</code>, <code>{'<TextBox>'}</code>, <code>{'<TextReveal>'}</code>, <code>{'<Dialogue>'}</code>, <code>DialogueSeries</code>, <code>useTextMetrics()</code>, <code>measureText()</code>, <code>useFitText()</code>, <code>fitText()</code>, <code>useTypewriter()</code>, <code>visibleCharacters</code>, <code>lang</code>])}</p>
       <h3>{text('docs.chapters.text-fonts.text-measurement')}</h3>
       <p>{text('docs.chapters.text-fonts.text-measurement-body')}</p>
       <p>{text('docs.chapters.text-fonts.text-fitting-body')}</p>
@@ -336,6 +340,7 @@ export const contents: Record<string, ReactNode> = {
       </ol>
       <Note title={t('docs.chapters.dialogue.one-view-many-lines')}>{text('docs.chapters.dialogue.a-points-to-a-view-not-to', [<code>Dialogue</code>, <code>Character</code>])}</Note>
       <p>{text('docs.chapters.dialogue.adjust-a-line-with-or-just-as', [<code>volume</code>, <code>startFrom</code>, <code>playbackRate</code>, <code>muted</code>, <code>Audio</code>, <code>x</code>, <code>y</code>, <code>opacity</code>, <code>Dialogue</code>, <code>Transition</code>])}</p>
+      <p>{text('docs.chapters.dialogue.emphasize-part-of-a-line-with-span', [<code>{'<Span>'}</code>, <code>Dialogue</code>, <code>subtitle.render</code>, <code>content</code>, <code>{'<Text style={style}>{content}</Text>'}</code>, <code>text</code>])}</p>
       <h3>{text('docs.chapters.dialogue.automatic-lip-sync')}</h3><p>{text('docs.chapters.dialogue.listens-to-a-voice-recording-and-spreads', [<code>loadLipSync()</code>, <code>a</code>, <code>i</code>, <code>u</code>, <code>e</code>, <code>o</code>, <code>closed</code>, <code>prepare()</code>, <code>Dialogue</code>, <code>CharacterView</code>, <code>lipSync</code>])}</p>
       <DocCode label="lip-sync.tsx" language="tsx" code={lipSyncScene.trim()} />
       <ul>

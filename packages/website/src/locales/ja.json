@@ -447,7 +447,7 @@
       },
       "text-fonts": {
         "text": "テキスト",
-        "renders-its-children-which-must-be-strings": "<slot0/> の子は文字列または数値です。<slot1/> で装飾します。",
+        "renders-its-children-which-must-be-strings": "<slot0/> の子は文字列、数値、<slot2/> 要素です。<slot1/> で装飾します。",
         "an-outlined-wrapping-caption": "輪郭付きで折り返すキャプション",
         "names-a-font-installed-on-the-computer": "<slot0/> はインストール済み、または <slot1/> で読み込んだフォントのファミリー名です。指定した <slot2/> がなければ、CSS と同様に最も近いウェイトを使います。絵文字など不足する文字は別のインストール済みフォントにフォールバックします。JSON プロジェクトでは <slot3/> 素材として同梱することもできます。",
         "selects-the-language-used-for-fallback-fonts": "<slot0/> は <slot1/> が省略された場合や文字が不足する場合のフォールバック言語を選びます。全体には <slot2/> を設定します。子は <slot6/> を持つ最も近い <slot3/>、<slot4/>、<slot5/> を継承します。字幕、タイムラインのテキスト、<slot7/>、<slot8/>、コンポーネントのプレビューにも適用されます。フレームごとに変更でき、計測と描画は同じ言語を使います。<slot9/> は祖先より優先し、明示的な <slot10/> はさらに優先します。空の <slot11/> はシステムのロケールを選びます。<slot12/>、<slot13/>、<slot14/>、<slot15/>、<slot16/> などに対応します。未設定時はシステムのロケールを使い、使用可能な文字はフォントによって決まります。Canvas の言語選択に対応したブラウザでは <slot17/> を適用します。",
@@ -464,8 +464,12 @@
         "metadata": {
           "title": "テキストとフォント",
           "description": "テキストの装飾と折り返し、ファイルやウェブからのフォント読み込み。",
-          "keywords": "文字 テキスト フォント 日本語 改行 折り返し 計測 自動調整 TextBox fitText useFitText measureText useTextMetrics Text style font Font webfont woff woff2 Google Fonts css fontFamily fontWeight stroke outline lineHeight maxWidth wrap lineBreak phrase BudouX Japanese align baseline emoji"
+          "keywords": "文字 テキスト フォント 日本語 改行 折り返し 計測 自動調整 強調 太字 色分け 部分 リッチテキスト TextBox fitText useFitText measureText useTextMetrics Text Span rich text style font Font webfont woff woff2 Google Fonts css fontFamily fontWeight stroke outline lineHeight maxWidth wrap lineBreak phrase BudouX Japanese align baseline emoji"
         },
+        "rich-text": "文章の一部を強調する",
+        "rich-text-body": "<slot0/> は文章の一部の <slot1/>、<slot2/>、<slot3/> を変えます。文章全体は一つの段落として組まれたままで、折り返し・揃え・計測も一つの段落として行われ、基準線は文章自身の文字が決める位置から動きません。Span は入れ子にでき、書体にないウェイトは最も近いウェイトで描かれます。",
+        "an-emphasized-word-in-one-paragraph": "一つの段落の中で一語を強調する",
+        "rich-text-where": "Span は <slot0/>、<slot1/>、<slot2/>、<slot3/>、<slot4/> の台詞と、<slot5/>、<slot6/>、<slot7/>、<slot8/>、<slot9/> で使えます。打鍵の長さを <slot10/> に渡すと、組版を変えずに装飾付きの文章を打鍵表示できます。Span を返すコンポーネントは文章の中では使えません。日本語・中国語・韓国語の文章で Span を使うときは <slot11/> を指定してください。Span は shaping を分割するため、言語の指定がないと、Span の隣の文字が別の書体で描かれる場合があります。ブラウザーのプレビューは Span ごとにその書体で描くため、Span の境目で書き出し結果とわずかに異なる場合があります。",
         "text-measurement": "文字を測る・枠に収める",
         "text-measurement-body": "デスクトップアプリと CLI では、prepare() 内で非同期の measureText(text, style, options)、描画中に useTextMetrics(text, style, options) を使えます。どちらも Text と同じ組版で、幅、高さ、行数、ベースライン、文字ごとの位置を返します。折り返す幅は maxWidth で指定します。prepare() の時点では Font がまだ読み込まれていないため、options.fonts にフォントファイルを指定してください。フックは現在の言語設定と Font の宣言を引き継ぎます。",
         "text-fitting-body": "デスクトップアプリと CLI で利用できます。TextBox は、width、height、必要に応じて maxLines に収まるよう、minFontSize から maxFontSize の範囲で文字サイズを選びます。x/y は枠の左上、verticalAlign は top、middle、bottom です。最小サイズでも収まらない場合の overflow は clip（既定）、visible、error から選べます。描画せずに調整後のスタイルと fits を得るには、prepare() で fitText()、描画中に useFitText() を使います。"
@@ -530,6 +534,7 @@
         "a-points-to-a-view-not-to": "<slot0/> はキャラクターではなくビューを指すので、台詞を変えても同じ立ち絵が同じ場所に残ります。2 人の会話には、2 つ目の <slot1/> とビューを追加します。",
         "one-view-many-lines": "ひとつのビューに複数の台詞",
         "adjust-a-line-with-or-just-as": "<slot4/> と同様に <slot0/>、<slot1/>、<slot2/>、<slot3/> で台詞を調整します。<slot8/> の <slot5/>、<slot6/>、<slot7/> は字幕を移動・フェードさせ、<slot9/> の中で便利です。",
+        "emphasize-part-of-a-line-with-span": "<slot1/> の子の中で <slot0/> を使うと、台詞の一部を強調できます。<slot2/> には書いたままの台詞が <slot3/> として渡されるので、<slot4/> と描けば強調が保たれます。<slot5/> は同じ台詞のただの文字列です。",
         "automatic-lip-sync": "自動の口パク",
         "listens-to-a-voice-recording-and-spreads": "<slot0/> は音声を分析し、発話区間に文字起こしの母音を配分して、各時点の口の形（<slot1/>、<slot2/>、<slot3/>、<slot4/>、<slot5/>、<slot6/>）を生成します。<slot7/> から呼び出し、<slot8/> または <slot9/> に <slot10/> として渡します。",
         "voices-must-be-uncompressed-wav-files-write": "<slot0>音声</slot0>は非圧縮 WAV が必要です。母音を読めるよう、文字起こしはかなまたはローマ字で書いてください。漢字はスキップされます。",

@@ -447,7 +447,7 @@
       },
       "text-fonts": {
         "text": "Text",
-        "renders-its-children-which-must-be-strings": "<slot0/> renders its children, which must be strings or numbers. Style it with <slot1/>:",
+        "renders-its-children-which-must-be-strings": "<slot0/> renders its children: strings, numbers, and <slot2/> elements. Style it with <slot1/>:",
         "an-outlined-wrapping-caption": "An outlined, wrapping caption",
         "names-a-font-installed-on-the-computer": "<slot0/> names a font installed on the computer, or one loaded with <slot1/>. When the family has no face at the requested <slot2/>, Celesta uses its nearest weight, as CSS does. Characters the font lacks, such as emoji, fall back to another installed font. A JSON project can also bundle a font file as a <slot3/> asset.",
         "selects-the-language-used-for-fallback-fonts": "<slot0/> selects the language used for fallback fonts when <slot1/> is omitted or lacks a character. Set <slot2/> for the whole composition. Children inherit the nearest <slot3/>, <slot4/>, or <slot5/> with a <slot6/> prop, including subtitles, project timeline text, <slot7/>, <slot8/>, and component previews. These scopes can change language between frames; measurement and rendering use the same value. <slot9/> overrides ancestors, and an explicit <slot10/> takes priority over that prop. An empty <slot11/> selects the system locale. Tags such as <slot12/>, <slot13/>, <slot14/>, <slot15/>, and <slot16/> are supported. When neither sets a language, Celesta uses the system locale; installed or bundled fonts still determine the available glyphs. The browser preview applies <slot17/> in browsers supporting Canvas language selection.",
@@ -464,8 +464,12 @@
         "metadata": {
           "title": "Text & fonts",
           "description": "Style text, wrap it, and load font files or web fonts.",
-          "keywords": "TextBox fitText useFitText measureText useTextMetrics Text style font Font webfont woff woff2 Google Fonts css fontFamily fontWeight stroke outline lineHeight maxWidth wrap lineBreak phrase BudouX Japanese align baseline emoji"
+          "keywords": "TextBox fitText useFitText measureText useTextMetrics Text Span rich text emphasis bold highlight colorRuns style font Font webfont woff woff2 Google Fonts css fontFamily fontWeight stroke outline lineHeight maxWidth wrap lineBreak phrase BudouX Japanese align baseline emoji"
         },
+        "rich-text": "Emphasize part of a text",
+        "rich-text-body": "<slot0/> changes the <slot1/>, <slot2/>, or <slot3/> of part of a text. The whole text is still laid out as one paragraph: it wraps, aligns, and measures as one, and its baseline stays where the text’s own letters put it. Spans nest; a weight the family lacks uses its nearest weight.",
+        "an-emphasized-word-in-one-paragraph": "An emphasized word in one paragraph",
+        "rich-text-where": "Spans work in <slot0/>, <slot1/>, <slot2/>, and <slot3/>, in <slot4/> lines, and in <slot5/>, <slot6/>, <slot7/>, <slot8/>, and <slot9/>; pass the typed length to <slot10/> to type rich text without changing its layout. A component that returns a span cannot be used inside text. Set <slot11/> on Japanese, Chinese, or Korean text with spans: a span splits shaping, and without a language the characters next to it can fall back to a different font. The browser preview draws each span with its own font and can differ slightly from export at span edges.",
         "text-measurement": "Measure and fit text",
         "text-measurement-body": "In the desktop app and CLI, measureText(text, style, options) runs asynchronously in prepare(); useTextMetrics(text, style, options) measures during rendering. Both return width, height, lines, baseline metrics, and glyph positions using the same shaping as Text. Pass maxWidth for wrapping. In prepare(), supply font files through options.fonts because Font declarations have not mounted yet. Hooks inherit the current language and declared fonts.",
         "text-fitting-body": "In the desktop app and CLI, TextBox chooses a font size between minFontSize and maxFontSize to fit width, height, and optional maxLines. Its x/y is the box’s top-left; verticalAlign is top, middle, or bottom. If the text does not fit at the minimum size, overflow is clip (default), visible, or error. For the fitted style and a fits flag without drawing, use fitText() in prepare() or useFitText() while rendering."
@@ -530,6 +534,7 @@
         "a-points-to-a-view-not-to": "A <slot0/> points to a view, not to the character, so the same portrait stays in place while lines change around it. Add a second <slot1/> and view for a two-person conversation.",
         "one-view-many-lines": "One view, many lines",
         "adjust-a-line-with-or-just-as": "Adjust a line with <slot0/>, <slot1/>, <slot2/>, or <slot3/>, just as on <slot4/>. Setting <slot5/>, <slot6/>, or <slot7/> on a <slot8/> moves or fades its subtitle, which is handy inside a <slot9/>.",
+        "emphasize-part-of-a-line-with-span": "Emphasize part of a line with <slot0/> inside the <slot1/>. A <slot2/> receives the line as written in <slot3/>: draw it with <slot4/> to keep the emphasis; <slot5/> is the same line as a plain string.",
         "automatic-lip-sync": "Automatic lip sync",
         "listens-to-a-voice-recording-and-spreads": "<slot0/> listens to a voice recording and spreads the vowels of its transcript across the spoken parts, producing a mouth shape (<slot1/>, <slot2/>, <slot3/>, <slot4/>, <slot5/>, or <slot6/>) for every moment. Call it from <slot7/> and pass the result to a <slot8/> or <slot9/> as <slot10/>.",
         "voices-must-be-uncompressed-wav-files-write": "<slot0>Voices</slot0> must be uncompressed WAV files. Write the transcript in kana or romaji so its vowels can be read; kanji are skipped.",

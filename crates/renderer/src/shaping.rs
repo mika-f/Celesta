@@ -8,11 +8,11 @@ use crate::paint::{ResolvedPaint, resolve_paint};
 use crate::rect::dilate_mask;
 use crate::text::{AnchorBox, GlyphMetrics, RasterizedText, TextMetrics};
 use crate::types::{Color, RgbaFrame};
-use celesta_composition::{LineBreak, TextAlign, TextStyle};
+use celesta_composition::{LineBreak, TextAlign, TextFontRun, TextStyle};
 use cosmic_text::{
     Align, Attrs, AttrsList, Buffer, BufferLine, Color as CosmicColor, Family, FontSystem,
-    LineEnding, LineIter, Metrics, PhysicalGlyph, Renderer, Shaping, SwashCache, SwashContent,
-    Weight, Wrap,
+    LayoutGlyph, LineEnding, LineIter, Metrics, PhysicalGlyph, Renderer, Shaping, SwashCache,
+    SwashContent, Weight, Wrap,
 };
 use std::sync::Arc;
 
@@ -26,6 +26,7 @@ impl TextRasterizer {
         width: Option<f32>,
         scale: f32,
     ) -> Arc<Buffer> {
+        let source = text;
         self.select_language(style.lang.as_deref());
         let key = (text.len() <= 100_000).then(|| {
             format!(
@@ -39,6 +40,7 @@ impl TextRasterizer {
                     style.line_height,
                     style.letter_spacing,
                     style.line_break,
+                    &style.font_runs,
                 )
             )
         });
@@ -79,6 +81,37 @@ impl TextRasterizer {
             TextAlign::Center => Align::Center,
             TextAlign::Right => Align::Right,
         });
+        // Font runs become per-range attributes: the run's family (or the
+        // text's) at the weight CSS matching picks within that family.
+        let font_runs = if style.font_runs.is_empty() {
+            Vec::new()
+        } else {
+            usable_font_runs(style, source.chars().count())
+        };
+        let mut run_attrs: Vec<(Attrs, u16)> = Vec::with_capacity(font_runs.len());
+        for run in &font_runs {
+            let family = run.font_family.as_deref().or(style.font_family.as_deref());
+            let requested = run.font_weight.or(style.font_weight).unwrap_or(400);
+            let weight = family
+                .and_then(|family| self.matched_weight(family, requested))
+                .unwrap_or(requested);
+            let mut run_attr = attrs.clone().weight(Weight(weight));
+            if let Some(family) = family {
+                run_attr = run_attr.family(Family::Name(family));
+            }
+            run_attrs.push((run_attr, requested));
+        }
+        // Each buffer line's source text and the code point it starts at,
+        // with the empty line `set_text` adds after a trailing line ending.
+        let mut line_sources: Vec<(&str, usize)> = Vec::new();
+        if !font_runs.is_empty() {
+            let mut base = 0;
+            for (range, ending) in LineIter::new(source) {
+                line_sources.push((&source[range.clone()], base));
+                base += source[range].chars().count() + ending.as_str().chars().count();
+            }
+            line_sources.push(("", base));
+        }
         // `lineBreak: phrase` joins every phrase segment before the text is
         // shaped, so the joined text, as it is laid out, is shaped once. Each
         // line's original text and segments are kept to measure them below.
@@ -106,13 +139,9 @@ impl TextRasterizer {
         // emoji that a text font also has (❤️, a keycap, a flag's letters)
         // came out as a plain glyph. Ask for the color emoji font first for
         // the graphemes meant to look like emoji, unless the family asked
-        // for is a color emoji font itself.
-        let emoji_family = if style
-            .font_family
-            .as_deref()
-            .is_some_and(|family| COLOR_EMOJI_FAMILIES.contains(&family))
-            || emoji_presentation_spans(text).is_empty()
-        {
+        // for where they sit (the text's, or a font run's) is a color emoji
+        // font itself.
+        let emoji_family = if emoji_presentation_spans(text).is_empty() {
             None
         } else {
             self.color_emoji_family()
@@ -124,34 +153,76 @@ impl TextRasterizer {
             Shaping::Advanced,
             alignment,
         );
-        let emoji_attrs = emoji_family.as_deref().map(|family| {
-            let weight = self
-                .matched_weight(family, requested_weight)
-                .unwrap_or(requested_weight);
-            attrs
-                .clone()
-                .family(Family::Name(family))
-                .weight(Weight(weight))
-        });
-        // A word joiner draws nothing, so it gets no letter spacing either.
-        // Letter spacing does not split a shaping run, so the span leaves the
-        // shaping as it is.
-        let joiner_attrs = style
-            .letter_spacing
-            .map(|_| attrs.clone().letter_spacing(0.0));
-        // Added to the lines `set_text` made rather than passed to
-        // `set_rich_text`, which splits lines differently (dropping the
-        // empty line after a trailing newline).
-        let add_spans = |line: &mut BufferLine| {
-            let mut spans: Vec<(std::ops::Range<usize>, &Attrs)> = Vec::new();
-            if let Some(emoji_attrs) = &emoji_attrs {
-                for range in emoji_presentation_spans(line.text()) {
-                    spans.push((range, emoji_attrs));
+        // The emoji font's weight depends on the weight asked for where an
+        // emoji sits: the text's, or a font run's.
+        let mut emoji_weights: Vec<(u16, u16)> = Vec::new();
+        if let Some(family) = emoji_family.as_deref() {
+            for requested in std::iter::once(requested_weight)
+                .chain(run_attrs.iter().map(|(_, requested)| *requested))
+            {
+                if !emoji_weights.iter().any(|(asked, _)| *asked == requested) {
+                    let matched = self.matched_weight(family, requested).unwrap_or(requested);
+                    emoji_weights.push((requested, matched));
                 }
             }
-            if let Some(joiner_attrs) = &joiner_attrs {
+        }
+        // Added to the lines `set_text` made rather than passed to
+        // `set_rich_text`, which splits lines differently (dropping the
+        // empty line after a trailing newline). Emoji and word-joiner spans
+        // start from the attributes in effect where they sit, so they never
+        // switch a font run back to the text's font and split its shaping.
+        let add_spans = |line_i: usize, line: &mut BufferLine| {
+            let runs = line_sources
+                .get(line_i)
+                .map(|&(original, base)| font_run_spans(line.text(), original, base, &font_runs))
+                .unwrap_or_default();
+            let attrs_at = |at: usize| {
+                runs.iter()
+                    .find(|(range, _)| range.contains(&at))
+                    .map_or((&attrs, requested_weight), |(_, index)| {
+                        (&run_attrs[*index].0, run_attrs[*index].1)
+                    })
+            };
+            // cosmic-text shapes an ASCII word in one piece when every added
+            // span it overlaps matches the word's first attributes, ignoring
+            // parts left at the defaults: "CD" starting in a run would come
+            // out in the run's font throughout. Spelling the defaults out as
+            // a span over a line with runs keeps such words split.
+            let mut spans: Vec<(std::ops::Range<usize>, Attrs)> = if runs.is_empty() {
+                Vec::new()
+            } else {
+                vec![(0..line.text().len(), attrs.clone())]
+            };
+            spans.extend(
+                runs.iter()
+                    .map(|(range, index)| (range.clone(), run_attrs[*index].0.clone())),
+            );
+            if let Some(family) = emoji_family.as_deref() {
+                for range in emoji_presentation_spans(line.text()) {
+                    let (at, requested) = attrs_at(range.start);
+                    if matches!(at.family, Family::Name(name) if COLOR_EMOJI_FAMILIES.contains(&name))
+                    {
+                        continue;
+                    }
+                    let weight = emoji_weights
+                        .iter()
+                        .find(|(asked, _)| *asked == requested)
+                        .map_or(requested, |(_, matched)| *matched);
+                    spans.push((
+                        range,
+                        at.clone()
+                            .family(Family::Name(family))
+                            .weight(Weight(weight)),
+                    ));
+                }
+            }
+            // A word joiner draws nothing, so it gets no letter spacing
+            // either. Letter spacing does not split a shaping run, so the
+            // span leaves the shaping as it is.
+            if style.letter_spacing.is_some() {
                 for (start, joiner) in line.text().match_indices(WORD_JOINER) {
-                    spans.push((start..start + joiner.len(), joiner_attrs));
+                    let (at, _) = attrs_at(start);
+                    spans.push((start..start + joiner.len(), at.clone().letter_spacing(0.0)));
                 }
             }
             if spans.is_empty() {
@@ -159,12 +230,12 @@ impl TextRasterizer {
             }
             let mut attrs_list = line.attrs_list().clone();
             for (range, attrs) in spans {
-                attrs_list.add_span(range, attrs);
+                attrs_list.add_span(range, &attrs);
             }
             line.set_attrs_list(attrs_list);
         };
-        for line in &mut buffer.lines {
-            add_spans(line);
+        for (line_i, line) in buffer.lines.iter_mut().enumerate() {
+            add_spans(line_i, line);
         }
 
         if let Some(width) = width
@@ -184,8 +255,12 @@ impl TextRasterizer {
             for run in buffer.layout_runs() {
                 glyphs[run.line_i].extend(run.glyphs.iter().map(|glyph| (glyph.start, glyph.w)));
             }
-            for ((line, (original, segments)), mut glyphs) in
-                buffer.lines.iter_mut().zip(&phrase_lines).zip(glyphs)
+            for (line_i, ((line, (original, segments)), mut glyphs)) in buffer
+                .lines
+                .iter_mut()
+                .zip(&phrase_lines)
+                .zip(glyphs)
+                .enumerate()
             {
                 if segments.is_empty() {
                     continue;
@@ -230,7 +305,7 @@ impl TextRasterizer {
                         AttrsList::new(&attrs),
                     );
                     line.set_align(alignment);
-                    add_spans(line);
+                    add_spans(line_i, line);
                 }
             }
             buffer.set_size(&mut self.font_system, Some(width), None);
@@ -245,6 +320,85 @@ impl TextRasterizer {
             self.shaped_buffers.insert(key, Arc::clone(&buffer));
         }
         buffer
+    }
+
+    /// Each layout run's baseline when `style` has font runs, which do not
+    /// move baselines: placed as cosmic-text places them, but from the
+    /// largest ascent and descent of the glyphs outside font runs on the
+    /// line, or in the whole text for a line whose glyphs are all in runs.
+    /// A line with no glyphs keeps cosmic-text's. `None` without font runs,
+    /// or when every glyph is in a run, so cosmic-text's baselines stand.
+    pub(crate) fn run_baselines(
+        &mut self,
+        buffer: &Buffer,
+        text: &str,
+        style: &TextStyle,
+    ) -> Option<Vec<f32>> {
+        if style.font_runs.is_empty() {
+            return None;
+        }
+        let runs = usable_font_runs(style, text.chars().count());
+        let offsets = source_offsets(buffer, text, style);
+        let in_run = |point: usize| {
+            let index = runs.partition_point(|run| run.end <= point);
+            runs.get(index).is_some_and(|run| run.start <= point)
+        };
+        let widen = |extent: Option<(f32, f32)>, (ascent, descent): (f32, f32)| {
+            Some(extent.map_or((ascent, descent), |(a, d): (f32, f32)| {
+                (a.max(ascent), d.max(descent))
+            }))
+        };
+        let mut lines = Vec::new();
+        let mut overall = None;
+        for layout in buffer.layout_runs() {
+            let mut extent = None;
+            for glyph in layout.glyphs {
+                if in_run(offsets[layout.line_i][glyph.start]) {
+                    continue;
+                }
+                if let Some(glyph_extent) = self.glyph_extent(glyph) {
+                    extent = widen(extent, glyph_extent);
+                }
+            }
+            if let Some(line_extent) = extent {
+                overall = widen(overall, line_extent);
+            }
+            let has_glyphs = !layout.glyphs.is_empty();
+            lines.push((
+                layout.line_top,
+                layout.line_height,
+                layout.line_y,
+                has_glyphs,
+                extent,
+            ));
+        }
+        let overall = overall?;
+        Some(
+            lines
+                .into_iter()
+                .map(|(top, height, line_y, has_glyphs, extent)| {
+                    if !has_glyphs {
+                        return line_y;
+                    }
+                    let (ascent, descent) = extent.unwrap_or(overall);
+                    top + (height - (ascent + descent)) / 2.0 + ascent
+                })
+                .collect(),
+        )
+    }
+
+    /// A glyph's ascent and descent in pixels, from its face's metrics,
+    /// computed as cosmic-text computes them for its line layout.
+    pub(crate) fn glyph_extent(&mut self, glyph: &LayoutGlyph) -> Option<(f32, f32)> {
+        let font = self
+            .font_system
+            .get_font(glyph.font_id, glyph.font_weight)?;
+        let metrics = font.metrics();
+        let units = f32::from(metrics.units_per_em);
+        Some((
+            glyph.font_size * (metrics.ascent / units),
+            glyph.font_size * (-metrics.descent / units),
+        ))
     }
 
     /// Measures `text` in composition units (scale 1) without drawing it,
@@ -262,14 +416,18 @@ impl TextRasterizer {
             .map(|(byte, _)| byte)
             .chain(std::iter::once(text.len()))
             .collect();
+        let baselines = self.run_baselines(&buffer, text, style);
         let mut metrics = TextMetrics::default();
-        for run in buffer.layout_runs() {
+        for (index, run) in buffer.layout_runs().enumerate() {
             metrics.width = metrics.width.max(f64::from(run.line_w));
             metrics.height = metrics
                 .height
                 .max(f64::from(run.line_top + run.line_height));
             if metrics.lines == 0 {
-                metrics.ascent = f64::from(run.line_y - run.line_top);
+                let line_y = baselines
+                    .as_ref()
+                    .map_or(run.line_y, |baselines| baselines[index]);
+                metrics.ascent = f64::from(line_y - run.line_top);
                 metrics.descent = f64::from(run.line_height) - metrics.ascent;
                 metrics.line_height = f64::from(run.line_height);
             }
@@ -310,6 +468,7 @@ impl TextRasterizer {
         max_width: Option<f64>,
         scale: f32,
     ) -> Result<RasterizedText, RenderError> {
+        validate_font_runs(text, style)?;
         let scale = scale.abs();
         let width = max_width.map(|width| width as f32 * scale);
         let buffer = self.shaped_buffer(text, style, width, scale);
@@ -320,7 +479,34 @@ impl TextRasterizer {
         let measured_height = buffer.layout_runs().fold(0.0_f32, |height, run| {
             height.max(run.line_top + run.line_height)
         });
-        let baseline = buffer.layout_runs().next().map_or(0.0, |run| run.line_y);
+        let baselines = self.run_baselines(&buffer, text, style);
+        let line_y = |index: usize, line_y: f32| {
+            baselines
+                .as_ref()
+                .map_or(line_y, |baselines| baselines[index])
+        };
+        let baseline = buffer
+            .layout_runs()
+            .next()
+            .map_or(0.0, |run| line_y(0, run.line_y));
+        // With font runs, a run's glyphs can reach past the line boxes the
+        // text's own glyphs fit; leave room for them above and below.
+        let (overflow_top, overflow_bottom) = match &baselines {
+            None => (0, 0),
+            Some(baselines) => {
+                let mut top = 0.0_f32;
+                let mut bottom = 0.0_f32;
+                for (index, run) in buffer.layout_runs().enumerate() {
+                    for glyph in run.glyphs {
+                        if let Some((ascent, descent)) = self.glyph_extent(glyph) {
+                            top = top.max(ascent - baselines[index]);
+                            bottom = bottom.max(baselines[index] + descent - measured_height);
+                        }
+                    }
+                }
+                (top.ceil() as u32, bottom.ceil() as u32)
+            }
+        };
         let layout_width = width.unwrap_or(measured_width).ceil().max(1.0) as u32;
         let layout_height = measured_height.ceil().max(1.0) as u32;
         // The stroke grows the glyphs by its width in every direction, which
@@ -330,8 +516,10 @@ impl TextRasterizer {
             (stroke.width * f64::from(scale)).round().max(0.0) as u32
         });
         let pad = stroke_radius;
+        // Rows above the layout box's top edge in the image.
+        let pad_top = pad + overflow_top;
         let mask_width = layout_width + 2 * pad;
-        let mask_height = layout_height + 2 * pad;
+        let mask_height = layout_height + 2 * pad + overflow_top + overflow_bottom;
         let fill_paint =
             resolve_paint(style.fill.as_ref())?.map(|paint| paint.scaled(f64::from(scale)));
         // A gradient is painted over white glyphs below.
@@ -382,7 +570,7 @@ impl TextRasterizer {
             visible: true,
             callback: |x: i32, y: i32, coverage: u8, color: CosmicColor, visible: bool| {
                 let pixel_x = x + pad as i32;
-                let pixel_y = y + pad as i32;
+                let pixel_y = y + pad_top as i32;
                 if pixel_x < 0
                     || pixel_y < 0
                     || pixel_x >= mask_width as i32
@@ -406,7 +594,8 @@ impl TextRasterizer {
                 );
             },
         };
-        for run in buffer.layout_runs() {
+        for (line_index, run) in buffer.layout_runs().enumerate() {
+            let run_y = line_y(line_index, run.line_y);
             for glyph in run.glyphs {
                 let start = offsets
                     .as_ref()
@@ -427,7 +616,7 @@ impl TextRasterizer {
                     None
                 };
                 renderer.glyph(
-                    glyph.physical((0.0, run.line_y), 1.0),
+                    glyph.physical((0.0, run_y), 1.0),
                     CosmicColor::rgba(color.red, color.green, color.blue, color.alpha),
                 );
             }
@@ -453,7 +642,7 @@ impl TextRasterizer {
             composite_mask_with(&mut frame, &stroke_mask, mask_width, |x, y| {
                 stroke_paint.color_at(
                     f64::from(x) - f64::from(pad) + 0.5,
-                    f64::from(y) - f64::from(pad) + 0.5,
+                    f64::from(y) - f64::from(pad_top) + 0.5,
                 )
             });
             composite_rgba(&mut frame, &glyph_pixels, mask_width, mask_height, 0, 0);
@@ -486,7 +675,7 @@ impl TextRasterizer {
         } else {
             AnchorBox {
                 left: pad,
-                top: pad,
+                top: pad_top,
                 width: layout_width,
                 height: layout_height,
             }
@@ -494,7 +683,7 @@ impl TextRasterizer {
         Ok(RasterizedText {
             width: frame.width,
             height: frame.height,
-            baseline: baseline + pad as f32 - top as f32,
+            baseline: baseline + pad_top as f32 - top as f32,
             pixels: frame.pixels,
             anchor_box,
         })
@@ -597,7 +786,7 @@ impl<F: FnMut(i32, i32, u8, CosmicColor, bool)> Renderer for GlyphPixelRenderer<
 }
 
 /// Translate shaping's line-local UTF-8 offsets to full-source code points.
-fn source_offsets(buffer: &Buffer, text: &str, style: &TextStyle) -> Vec<Vec<usize>> {
+pub(crate) fn source_offsets(buffer: &Buffer, text: &str, style: &TextStyle) -> Vec<Vec<usize>> {
     let mut base = 0;
     buffer
         .lines
@@ -620,6 +809,95 @@ fn source_offsets(buffer: &Buffer, text: &str, style: &TextStyle) -> Vec<Vec<usi
             offsets[line.text().len()] = point;
             base += text[range].chars().count() + ending.as_str().chars().count();
             offsets
+        })
+        .collect()
+}
+
+/// Checks `style`'s font runs against `text`: ordered, non-overlapping
+/// code-point ranges within it.
+pub fn validate_font_runs(text: &str, style: &TextStyle) -> Result<(), RenderError> {
+    if style.font_runs.is_empty() {
+        return Ok(());
+    }
+    let count = text.chars().count();
+    let mut previous_end = 0;
+    for (index, run) in style.font_runs.iter().enumerate() {
+        if run.start < previous_end || run.end < run.start || run.end > count {
+            return Err(RenderError::InvalidTextFontRun {
+                index,
+                start: run.start,
+                end: run.end,
+                text_length: count,
+            });
+        }
+        previous_end = run.end;
+    }
+    Ok(())
+}
+
+/// Where each code point of `original` starts in `shaped`, then where the
+/// line ends. `shaped` is `original` with any word joiners phrase line
+/// breaking inserted, told apart from original ones as `source_offsets`
+/// does. A code point starts at the first joiner inserted before it, since
+/// `source_offsets` counts those joiners as its own: a run then takes the
+/// joiners before its first character and leaves the ones before the
+/// character after it to that character.
+fn shaped_byte_offsets(shaped: &str, original: &str) -> Vec<usize> {
+    let mut offsets = Vec::with_capacity(original.len() + 1);
+    let mut original = original.chars().peekable();
+    let mut joiners = None;
+    for (byte, character) in shaped.char_indices() {
+        if character == WORD_JOINER && original.peek() != Some(&WORD_JOINER) {
+            joiners.get_or_insert(byte);
+            continue;
+        }
+        offsets.push(joiners.take().unwrap_or(byte));
+        original.next();
+    }
+    offsets.push(joiners.unwrap_or(shaped.len()));
+    offsets
+}
+
+/// The byte range of `shaped` (a buffer line holding source text `original`,
+/// which starts at code point `base`) that each font run covers, with the
+/// run's index in `runs`. cosmic-text applies a cluster's attributes from
+/// its first byte, so a range starting inside a cluster leaves it alone.
+fn font_run_spans(
+    shaped: &str,
+    original: &str,
+    base: usize,
+    runs: &[&TextFontRun],
+) -> Vec<(std::ops::Range<usize>, usize)> {
+    if runs.is_empty() {
+        return Vec::new();
+    }
+    let offsets = shaped_byte_offsets(shaped, original);
+    let end = base + offsets.len() - 1;
+    runs.iter()
+        .enumerate()
+        .filter(|(_, run)| run.start < end && run.end > base)
+        .map(|(index, run)| {
+            let start = run.start.max(base) - base;
+            let stop = run.end.min(end) - base;
+            (offsets[start]..offsets[stop], index)
+        })
+        .collect()
+}
+
+/// The font runs of `style` that are well-formed for a text of `length`
+/// code points, in order. Runs `validate_font_runs` rejects are left out,
+/// so shaping never panics on them; empty runs are left out too.
+pub(crate) fn usable_font_runs(style: &TextStyle, length: usize) -> Vec<&TextFontRun> {
+    let mut previous_end = 0;
+    style
+        .font_runs
+        .iter()
+        .filter(|run| {
+            let usable = run.start >= previous_end && run.start < run.end && run.end <= length;
+            if usable {
+                previous_end = run.end;
+            }
+            usable
         })
         .collect()
 }

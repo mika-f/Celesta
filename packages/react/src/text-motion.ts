@@ -1,16 +1,21 @@
 // Text animation: lines that rise from behind a mask, typing, and counting.
 
 import * as React from 'react';
+import type { ReactNode } from 'react';
 
 import { Easings, progress } from './animation';
 import { Group, Text } from './components';
 import type { CommonProps } from './components';
 import { useCurrentFrame, useVideoConfig } from './hooks';
+import { flattenTextContent, sliceTextRuns, withTextRuns } from './rich-text';
 import type { TextStyle } from './scene';
 
 export interface TextRevealProps extends CommonProps {
-  /** The text; `\n` starts a new line, and each line is revealed on its own. */
-  children: string;
+  /**
+   * The text; may hold `<Span>`. `\n` starts a new line, and each line is
+   * revealed on its own; a span crossing `\n` continues on the next line.
+   */
+  children: ReactNode;
   style?: TextStyle;
   /**
    * Height of each line's mask, and the distance between baselines. Defaults
@@ -62,18 +67,24 @@ export function TextReveal({
   direction = 'in',
   ...groupProps
 }: TextRevealProps): ReturnType<typeof React.createElement> {
-  if (typeof children !== 'string') {
-    throw new Error('<TextReveal> children must be a string');
-  }
+  const flat = flattenTextContent(children, '<TextReveal> children');
+  withTextRuns(style ?? {}, flat, '<TextReveal>');
   const frame = useCurrentFrame();
   const { width } = useVideoConfig();
   const height = lineHeight ?? style?.lineHeight ?? style?.fontSize ?? 48;
   if (!Number.isFinite(height) || height <= 0) {
     throw new Error('<TextReveal> requires a positive `lineHeight`');
   }
-  const lines = children.split('\n');
   // Each line is its own single-line Text, so the multi-line spacing is ours.
   const { lineHeight: _lineHeight, ...lineStyle } = style ?? {};
+  // Each line keeps the runs inside it, rebased to its first code point.
+  const lines: { text: string; style: TextStyle }[] = [];
+  let start = 0;
+  for (const line of flat.text.split('\n')) {
+    const end = start + Array.from(line).length;
+    lines.push({ text: line, style: withTextRuns(lineStyle, sliceTextRuns(flat, start, end), '<TextReveal>') });
+    start = end + 1;
+  }
   // Lines are never measured, so the mask spans far past any line's width.
   const maskWidth = width * 4;
   return React.createElement(
@@ -89,8 +100,8 @@ export function TextReveal({
           y: height * baseline + height * (1 - shown),
           anchorX: align,
           anchorY: 'baseline',
-          style: lineStyle,
-          children: line,
+          style: line.style,
+          children: line.text,
         }),
       );
     }),
@@ -131,8 +142,11 @@ export interface Typewriter {
  * For a caret after the text, use a monospaced font: every character is then
  * the same width (0.6 em in JetBrains Mono), so `length * advance` is where
  * the caret goes.
+ *
+ * `content` may hold `<Span>`: pass `length` to `style.visibleCharacters` of
+ * a `<Text>` with the same content to reveal it without changing its layout.
  */
-export function useTypewriter(text: string, options: TypewriterOptions = {}): Typewriter {
+export function useTypewriter(content: ReactNode, options: TypewriterOptions = {}): Typewriter {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const { from = 0, framesPerChar = 1, blinkFrames = fps } = options;
@@ -142,7 +156,7 @@ export function useTypewriter(text: string, options: TypewriterOptions = {}): Ty
   if (!Number.isFinite(blinkFrames) || blinkFrames <= 0) {
     throw new Error('useTypewriter() requires a positive blinkFrames');
   }
-  const characters = Array.from(text);
+  const characters = Array.from(flattenTextContent(content, 'useTypewriter() text').text);
   const typed = Math.min(characters.length, Math.max(0, Math.floor((frame - from) / framesPerChar) + 1));
   const typing = frame >= from && typed < characters.length;
   const phase = (((frame - from) % blinkFrames) + blinkFrames) % blinkFrames;

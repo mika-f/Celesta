@@ -10,6 +10,8 @@ mod composite;
 mod effects;
 mod error;
 #[cfg(test)]
+mod font_run_tests;
+#[cfg(test)]
 mod font_tests;
 mod fonts;
 mod images;
@@ -32,6 +34,7 @@ pub use fonts::TextRasterizer;
 pub use paint::{GradientStop, ResolvedPaint};
 pub use rect::{RectPaint, rasterize_rect, rasterize_rect_transformed, resolve_rect_paint};
 pub use renderer::CpuRenderer;
+pub use shaping::validate_font_runs;
 pub use text::{FontFallback, GlyphMetrics, MissingGlyphs, RasterizedText, TextMetrics};
 pub use types::{Color, RenderOptions, RgbaFrame};
 
