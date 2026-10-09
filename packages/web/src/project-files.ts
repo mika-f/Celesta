@@ -1,5 +1,20 @@
 import type { Plugin } from 'esbuild-wasm';
 
+/** The packages the web editor provides to compositions. */
+export const runtimeModules = [
+  'react',
+  '@celesta/react',
+  '@celesta/math',
+  '@celesta/shapes',
+  '@celesta/layout',
+  '@celesta/transitions',
+  '@celesta/text',
+  '@celesta/debug',
+  '@celesta/media-utils',
+  '@celesta/character',
+  '@celesta/code',
+] as const;
+
 /** Virtual project files; no filesystem or network module resolution. */
 export function projectFiles(files: Record<string, string>, entry: string): Plugin {
   const normalize = (path: string) => {
@@ -14,7 +29,7 @@ export function projectFiles(files: Record<string, string>, entry: string): Plug
     name: 'composition-files',
     setup(build) {
       build.onResolve({ filter: /.*/ }, args => {
-        if (['react', '@celesta/react', '@celesta/math', '@celesta/code'].includes(args.path)) return { path: args.path, external: true };
+        if ((runtimeModules as readonly string[]).includes(args.path)) return { path: args.path, external: true };
         if (args.kind !== 'entry-point' && !args.path.startsWith('.')) return { errors: [{ text: `Import ${JSON.stringify(args.path)} is unavailable in the web editor.` }] };
         const path = normalize(args.kind === 'entry-point' ? entry : `${args.importer.slice(0, args.importer.lastIndexOf('/') + 1)}${args.path}`);
         const extensions = ['tsx', 'ts', 'jsx', 'js', 'json'];

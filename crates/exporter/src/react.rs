@@ -5,7 +5,7 @@ use celesta_react_bridge::{
 };
 use std::path::{Path, PathBuf};
 
-/// Locates the `@celesta/react` Node.js runtime used to evaluate a React
+/// Locates the `@celesta/cli` Node.js runtime used to evaluate a React
 /// entry, and holds the project property values passed to it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReactRuntimeOptions {

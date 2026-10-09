@@ -119,8 +119,8 @@ from step 1 now. Then build the React runtime and launch the app:
 ```sh
 pnpm install
 pnpm --dir packages/react run codegen
-pnpm --dir packages/react run build
-cargo run -p celesta-editor --release -- packages/react/examples/title.tsx
+pnpm run build:runtime
+cargo run -p celesta-editor --release -- packages/cli/examples/title.tsx
 ```
 
 The app opens the sample title composition. Choose **File › Open…** (Command-O
@@ -134,7 +134,7 @@ cargo run -p celesta-editor --release -- examples/reel/film.tsx
 
 1. **Open a composition.** Choose **File › Open…** and select a React
    composition (`.tsx`, `.jsx`, `.ts`, or `.js`).
-   `packages/react/examples/title.tsx` is a small starting point.
+   `packages/cli/examples/title.tsx` is a small starting point.
 2. **Edit the source file.** Change the composition in your text editor.
    Compositions reload automatically when you save. You can also choose
    **File › Reload** (Command-R on macOS, Ctrl-R elsewhere).
@@ -159,9 +159,9 @@ subsequent runs reuse the cached files.
 
 ### Character dialogue
 
-See [`with-dialogue-series.tsx`](packages/react/examples/with-dialogue-series.tsx)
+See [`with-dialogue-series.tsx`](packages/cli/examples/with-dialogue-series.tsx)
 for a conversation built with `<DialogueSeries>`, or
-[`with-lip-sync.tsx`](packages/react/examples/with-lip-sync.tsx)
+[`with-lip-sync.tsx`](packages/cli/examples/with-lip-sync.tsx)
 for a PSD portrait with lip-sync.
 
 ## Use React compositions
@@ -169,18 +169,33 @@ for a PSD portrait with lip-sync.
 For source builds, complete [Run from source](#run-from-source) first. React
 compositions under `examples/*` are workspace packages too.
 
-Use the files in [`packages/react/examples`](packages/react/examples) as
+Use the files in [`packages/cli/examples`](packages/cli/examples) as
 starting points. They demonstrate text, animation, layout, shapes, dialogue,
-audio, and project properties. Import composition components from
-`@celesta/react`; deterministic random numbers, noise, and other math helpers
-come from `@celesta/math`.
+audio, and project properties. Celesta's API is split into packages, in the
+manner of Remotion; import each piece from the package that provides it:
 
-Syntax-highlighted code is available separately in [`@celesta/code`](packages/code/README.md).
-The React build also builds it, and the desktop app bundles it separately.
-Import `Code` from `@celesta/code`. It supports TSX, TypeScript, JSON,
-Bash, line highlights, and measured caret positions. For typing animations,
-combine it with `useTypewriter()` from `@celesta/react`.
-It is optional and does not add highlighting dependencies to `@celesta/react`.
+| Package | Provides |
+| --- | --- |
+| [`@celesta/react`](packages/react) | `<Composition>`, `<Sequence>`, `<Series>`, `<FreezeFrame>`, `<Group>`, `<Rect>`, `<Text>`, `<Image>`, `<Video>`, `<Audio>`, `<Font>`, `<Assets>`, frame and config hooks, `interpolate`, `spring`, `Easings`, keyframes, beats and cues, text measurement, `registerComponent`, and `defineProjectProperties` |
+| [`@celesta/shapes`](packages/shapes) | `<Line>`, `<Polyline>`, `<Path>`, `<Circle>`, `<Ellipse>`, `<Arrow>`, `pointOnPolyline` |
+| [`@celesta/layout`](packages/layout) | `<Center>`, `<Stack>`, `<Grid>`, `<Fit>`, `<SafeArea>`, `useLayoutBounds`, `<Camera>` |
+| [`@celesta/transitions`](packages/transitions) | `<Transition>`, `<TransitionSeries>` and its hooks |
+| [`@celesta/text`](packages/text) | `<TextReveal>`, `useTypewriter`, `useCountUp`, `<TextBox>`, `fitText`, `useFitText` |
+| [`@celesta/character`](packages/character) | `<Character>`, `<CharacterView>`, `<Dialogue>`, `<DialogueSeries>`, `planDialogue`, lip sync, blinking, PSD presets |
+| [`@celesta/media-utils`](packages/media-utils) | `preloadMedia`, `mediaDurationInFrames` |
+| [`@celesta/project`](packages/project) | `<ProjectProvider>`, `<ProjectTimeline>`, `<ProjectTrack>`, `useProject`, `useProjectProperty`, `loadProject`, and the project file types |
+| [`@celesta/debug`](packages/debug) | `<DebugOverlay>`, `<DebugBounds>` |
+| [`@celesta/math`](packages/math) | Deterministic random numbers, noise, and other math helpers |
+| [`@celesta/code`](packages/code/README.md) | Syntax-highlighted `<Code>` |
+| [`@celesta/voicevox`](packages/voicevox/README.md) | Lip sync from VOICEVOX AudioQuery |
+
+[`@celesta/cli`](packages/cli) is the Node.js runtime the editor and exporter
+evaluate compositions in; it ships every package above.
+
+`@celesta/code` supports TSX, TypeScript, JSON, Bash, line highlights, and
+measured caret positions. For typing animations, combine it with
+`useTypewriter()` from `@celesta/text`. Its highlighting dependencies stay out
+of the other packages.
 
 Visual layers and groups accept `blur`, `shadow`, and `glow`. Radii and shadow
 offsets use output pixels. All three can change each frame through React props:
@@ -250,9 +265,9 @@ cargo run -p celesta-exporter --release -- --react examples/versus/film.tsx outp
 
 For a project outside the repository, run `pnpm add ag-psd` inside the initialized
 directory. Both preview and export resolve external imports from the importing
-file's project `node_modules`. Celesta supplies `@celesta/react`, `@celesta/math`,
-`@celesta/code`, and React from its runtime; these do not need to be added to an
-external project's dependencies. Example manifests use `workspace:*` for the
+file's project `node_modules`. Celesta supplies every `@celesta/*` package above
+and React from its runtime; these do not need to be added to an external
+project's dependencies. Example manifests use `workspace:*` for the
 local Celesta packages so Node tools can also resolve their imports.
 
 Node asset preparation scripts use the same project dependencies directly. For
@@ -280,15 +295,15 @@ compositions; direct Node scripts use your installed Node.
 ### Type-check your compositions
 
 Choose **File > Set Up TypeScript** with a React composition open. Celesta
-copies the `@celesta/react`, `@celesta/math`, `@celesta/code`, React, and Node.js type
-declarations that match its bundled runtime into a `.celesta/` folder in your
+copies the type declarations of every `@celesta/*` package above, React, and
+Node.js that match its bundled runtime into a `.celesta/` folder in your
 project. To start a new
 project before writing its first composition, choose **File > Set Up TypeScript
 in Folder…** and pick the project folder instead. If the project
 has no `tsconfig.json`, Celesta creates one that extends
 `./.celesta/tsconfig.json`. If a `tsconfig.json` already exists, add
 `"extends": "./.celesta/tsconfig.json"` to it. You don't need to install
-`@celesta/react`, `@celesta/math`, `@celesta/code`, `react`, or `@types/*` from npm.
+the `@celesta/*` packages, `react`, or `@types/*` from npm.
 
 Celesta updates `.celesta/` when you open the project in a newer version. The
 folder ignores itself in Git.
@@ -298,7 +313,7 @@ folder ignores itself in Git.
 Export a React composition after completing the source-build setup:
 
 ```sh
-cargo run -p celesta-exporter --release -- --react packages/react/examples/title.tsx output.mp4
+cargo run -p celesta-exporter --release -- --react packages/cli/examples/title.tsx output.mp4
 ```
 
 In a terminal, exports show a [Ratatui](https://github.com/ratatui/ratatui)
@@ -323,7 +338,7 @@ Add `--overwrite` to replace an existing output file. To export a section, add
 `--from` and `--to` with times in `HH:MM:SS.mmm`, `MM:SS.mmm`, or seconds:
 
 ```sh
-cargo run -p celesta-exporter --release -- --react --from 0 --to 1 packages/react/examples/title.tsx section.mp4
+cargo run -p celesta-exporter --release -- --react --from 0 --to 1 packages/cli/examples/title.tsx section.mp4
 ```
 
 The video is encoded with libx264 using `--preset medium --crf 18` by default.
@@ -332,7 +347,7 @@ will be larger, but quality stays about the same. `--crf` takes a value from 0
 to 51. Lower values give higher quality and larger files:
 
 ```sh
-cargo run -p celesta-exporter --release -- --react --preset veryfast packages/react/examples/title.tsx draft.mp4
+cargo run -p celesta-exporter --release -- --react --preset veryfast packages/cli/examples/title.tsx draft.mp4
 ```
 
 On a hardware GPU, frames are converted from RGB to the video's YUV colors
@@ -348,8 +363,8 @@ to lay the selection out as labelled tiles on one image (`--columns`,
 `--tile-width`):
 
 ```sh
-cargo run -p celesta-exporter --release -- --react --frames 0,90 packages/react/examples/title.tsx check.png
-cargo run -p celesta-exporter --release -- --react --every 60 --contact-sheet packages/react/examples/title.tsx sheet.png
+cargo run -p celesta-exporter --release -- --react --frames 0,90 packages/cli/examples/title.tsx check.png
+cargo run -p celesta-exporter --release -- --react --every 60 --contact-sheet packages/cli/examples/title.tsx sheet.png
 ```
 
 ### Render variants of one composition
@@ -389,7 +404,7 @@ compositions render at roughly 10 to 60 frames per second, depending on the
 scene. Check a single frame before exporting the whole video:
 
 ```sh
-cargo run -p celesta-exporter --release -- --react packages/react/examples/title.tsx --frame 0 frame.png
+cargo run -p celesta-exporter --release -- --react packages/cli/examples/title.tsx --frame 0 frame.png
 ```
 
 Minimal containers often have no fonts installed, and text cannot be drawn
@@ -422,7 +437,7 @@ with Celesta's bundled runtime and prints the layers and audio of selected
 frames, and lists PSD layer paths for character portraits:
 
 ```sh
-node skills/celesta/scripts/inspect.mjs packages/react/examples/title.tsx --frames 0,-1
+node skills/celesta/scripts/inspect.mjs packages/cli/examples/title.tsx --frames 0,-1
 node skills/celesta/scripts/inspect.mjs --psd-layers examples/assets/lipsync-fixture.psd
 ```
 

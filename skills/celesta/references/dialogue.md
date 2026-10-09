@@ -1,6 +1,8 @@
 # Character dialogue, portraits, and lip sync
 
-Everything here is imported from `@celesta/react`. Voice, portrait, and
+The components and helpers here are imported from `@celesta/character`; the
+core layers (`Composition`, `Assets`, `Sequence`, …) from `@celesta/react`.
+Voice, portrait, and
 PSD paths are relative to the entry file (JSON: asset ids declared in
 `assets`).
 
@@ -354,7 +356,7 @@ export async function prepare() {
 
 VOICEVOX-specific helpers and types live in `@celesta/voicevox`. The desktop
 runtime includes the package; **File > Set Up TypeScript** installs its
-declarations. Shared WAV lip sync and dialogue components stay in `@celesta/react`.
+declarations. Shared WAV lip sync and dialogue components stay in `@celesta/character`.
 
 When the voice comes from VOICEVOX Engine (or a compatible engine such as
 AivisSpeech), build the track from the `audio_query` JSON instead:

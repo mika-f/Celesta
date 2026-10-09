@@ -1360,12 +1360,12 @@ fn live_react_runtime() -> Option<(PathBuf, PathBuf, PathBuf)> {
         return None;
     };
 
-    let package_root = react_package_root();
+    let package_root = cli_package_root();
     let cli_script = package_root.join("dist/cli.js");
     if !package_root.join("node_modules").is_dir() || !cli_script.is_file() {
         eprintln!(
-            "skipping live Node.js test: run `pnpm install && pnpm run build` in {} first",
-            package_root.display()
+            "skipping live Node.js test: run `pnpm install && pnpm run build:runtime` first ({} is missing)",
+            cli_script.display()
         );
         return None;
     }
@@ -1373,7 +1373,7 @@ fn live_react_runtime() -> Option<(PathBuf, PathBuf, PathBuf)> {
     Some((node, cli_script, package_root))
 }
 
-fn react_package_root() -> PathBuf {
+fn cli_package_root() -> PathBuf {
     // Not `canonicalize()`: on Windows it returns a `\\?\` verbatim path, and
     // the CLI then imports `@celesta/react` as a second module instance whose
     // React contexts the entry's hooks cannot see.
@@ -1381,7 +1381,7 @@ fn react_package_root() -> PathBuf {
         .ancestors()
         .nth(2)
         .expect("crates/react-bridge lives two levels below the workspace root")
-        .join("packages/react")
+        .join("packages/cli")
 }
 
 fn find_executable(environment: &str, command: &str) -> Option<PathBuf> {

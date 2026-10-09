@@ -190,9 +190,9 @@ def main():
     for directory in (resources, helpers, executables):
         directory.mkdir(parents=True)
     if not args.skip_build:
-        run("pnpm", "--dir", "packages/react", "install", "--frozen-lockfile")
+        run("pnpm", "install", "--frozen-lockfile")
         run("pnpm", "--dir", "packages/react", "run", "codegen")
-        run("pnpm", "--dir", "packages/react", "run", "build")
+        run("pnpm", "run", "build:runtime")
         build_env = dict(os.environ)
         # Reserve load-command space for relocating linked Homebrew libraries.
         build_env["CARGO_TARGET_DIR"] = str(ROOT / "target")
@@ -233,7 +233,7 @@ def main():
     examples = resources / "examples"
     examples.mkdir()
     for source in (ROOT / "examples/minimal.celesta.json", ROOT / "examples/editor-demo.celesta.json",
-                   ROOT / "packages/react/examples/title.tsx"):
+                   ROOT / "packages/cli/examples/title.tsx"):
         shutil.copy2(source, examples / source.name)
     collect_licenses(resources, target)
 

@@ -1,5 +1,5 @@
 // Compare the current Code with its implementation at a ref, using the same
-// release renderer for both. Build @celesta/react first.
+// release renderer for both. Build the runtime (`pnpm run build:runtime`) first.
 import { execFileSync } from 'node:child_process';
 import { readFileSync, mkdirSync, writeFileSync, symlinkSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';

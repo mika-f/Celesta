@@ -386,6 +386,33 @@ function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * For an entry importing a name from a Celesta package that does not export
+ * it, such as `Circle` from `@celesta/react`, an error naming the package
+ * that does; undefined for any other error.
+ */
+function misplacedImportError(error: unknown): Error | undefined {
+  const match = error instanceof SyntaxError
+    ? /^Named export '([^']+)' not found\. The requested module '([^']+)'/.exec(error.message)
+    : null;
+  if (!match) return undefined;
+  const [, name, requested] = match;
+  const { dependencies } = require('../package.json') as { dependencies: Record<string, string> };
+  let from: string | undefined;
+  let provider: string | undefined;
+  for (const pkg of Object.keys(dependencies).filter((dependency) => dependency.startsWith('@celesta/'))) {
+    try {
+      if (pathToFileURL(require.resolve(pkg)).href === requested) from = pkg;
+      else if (name in (require(pkg) as object)) provider ??= pkg;
+    } catch {
+      // A package this Node.js cannot require (an ES module before require(esm)) is skipped.
+    }
+  }
+  return from && provider
+    ? new Error(`${from} does not export ${name}; import it from ${provider}`)
+    : undefined;
+}
+
 interface LoadedEntry {
   defaultExport: EntryComponent;
   /** The entry's named `prepare` export, if it has one — see `main()`. */
@@ -449,6 +476,8 @@ async function loadEntry(entryPath: string): Promise<LoadedEntry> {
   try {
     fs.writeFileSync(bundlePath, output.text);
     mod = await import(pathToFileURL(bundlePath).href);
+  } catch (error) {
+    throw misplacedImportError(error) ?? error;
   } finally {
     fs.rmSync(bundleDirectory, { recursive: true, force: true });
   }

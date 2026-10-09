@@ -1,5 +1,5 @@
 //! End-to-end Code evaluation, transfer size and CPU/GPU rendering timings.
-//! Build packages/react first, then run with a TSX entry and an optional frame count.
+//! Build packages/cli first, then run with a TSX entry and an optional frame count.
 use celesta_composition::{Layer, LayerContent, Time};
 use celesta_gpu_renderer::{GpuRenderOptions, GpuRenderer};
 use celesta_react_bridge::ReactBridge;
@@ -33,7 +33,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let started = Instant::now();
     let mut bridge = ReactBridge::spawn(
         "node",
-        root.join("packages/react/bin/celesta-react-render.js"),
+        root.join("packages/cli/bin/celesta-react-render.js"),
         &entry,
     )?;
     let first = bridge.scene_at(Time::new(0, 30))?;

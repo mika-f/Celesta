@@ -75,31 +75,20 @@ jobs:
           cache-dependency-path: pnpm-lock.yaml
 
       # celesta-react-bridge and celesta-exporter tests spawn the compiled
-      # packages/react/dist/cli.js, so build the React package first.
-      - name: Build @celesta/react
+      # packages/cli/dist/cli.js, so build the CLI and every package it serves first.
+      - name: Build Celesta packages
         run: |
-          pnpm --dir packages/react install --frozen-lockfile
+          pnpm install --frozen-lockfile
           pnpm --dir packages/react run codegen --locked --timings
-          pnpm --dir packages/react run build
+          pnpm run build:runtime
 
-      - name: Test @celesta/react
-        run: pnpm --dir packages/react run test
-
-      - name: Test @celesta/code
+      - name: Test Celesta packages
         run: |
-          pnpm --dir packages/code run test
+          pnpm run test:runtime
           pnpm --dir packages/code run check:examples
-
-      - name: Build and test @celesta/voicevox
-        run: |
-          pnpm --dir packages/voicevox run build
-          pnpm --dir packages/voicevox run test
 
       - name: Test @celesta/website
         run: pnpm --dir packages/website test
-
-      - name: Test @celesta/math
-        run: pnpm --dir packages/math run test
 
       - name: Build
         # Compile normal binaries and test targets together so Cargo can schedule

@@ -7,7 +7,7 @@
 // mouth shapes sit at their true small sizes/positions so the renderer's
 // real-coordinate compositing is exercised.
 //
-//   node packages/react/scripts/make-lipsync-fixture.mjs
+//   node packages/cli/scripts/make-lipsync-fixture.mjs
 //
 // `ag-psd` is a devDependency needed only for this script.
 

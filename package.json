@@ -1,5 +1,9 @@
 {
   "name": "@celesta/root",
   "private": true,
-  "packageManager": "pnpm@12.9.1"
+  "packageManager": "pnpm@12.9.1",
+  "scripts": {
+    "build:runtime": "pnpm --filter \"@celesta/cli...\" run build",
+    "test:runtime": "pnpm --filter \"@celesta/cli...\" run test"
+  }
 }

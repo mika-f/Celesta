@@ -21,7 +21,7 @@ pub(crate) struct ReactAudioResult {
     pub(crate) graph: Result<AudioGraph, String>,
 }
 
-/// Spawns a transient `@celesta/react` process, sweeps every frame of a
+/// Spawns a transient `@celesta/cli` process, sweeps every frame of a
 /// standalone entry for its `<Audio>` declarations, and returns the assembled
 /// [`AudioGraph`] — the standalone-preview counterpart of the audio graph
 /// `celesta-exporter` accumulates while rendering. Runs on its own thread

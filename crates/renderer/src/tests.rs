@@ -1406,7 +1406,7 @@ fn renders_a_video_frame_from_the_injected_decoder() {
 // `examples/assets/lipsync-fixture.psd` mimics a real "tachie" PSD: a
 // 240x320 canvas with every folder saved hidden and a `face/mouth`
 // group of six small vowel shapes at their true positions. Regenerate it
-// with `packages/react/scripts/make-lipsync-fixture.mjs`.
+// with `packages/cli/scripts/make-lipsync-fixture.mjs`.
 fn lipsync_fixture_psd() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/assets/lipsync-fixture.psd")
 }

@@ -15,7 +15,7 @@ import dataScene from './examples/data.tsx?raw';
 import lipSyncScene from './examples/lip-sync.tsx?raw';
 import mediaScene from './examples/media.tsx?raw';
 import timelineExample from '../../../examples/editor-demo.celesta.json?raw';
-import withProject from '../../react/examples/with-project.tsx?raw';
+import withProject from '../../cli/examples/with-project.tsx?raw';
 
 export { repository };
 
@@ -34,16 +34,16 @@ function SourceBuild() {
     <h3>{text('docs.chapters.build-from-source.2-get-the-source')}</h3>
     <DocCode label={t('docs.chapters.build-from-source.clone-celesta')} code={`git clone ${repository}.git celesta\ncd celesta`} />
     <h3>{text('docs.chapters.build-from-source.build-runtime')}</h3><p>{text('docs.chapters.build-from-source.for-react-compositions-in-a-source-build')}</p>
-    <DocCode label={t('docs.chapters.build-from-source.build-the-react-runtime-from-source')} code={'pnpm install\npnpm --dir packages/react run codegen\npnpm --dir packages/react run build'} />
+    <DocCode label={t('docs.chapters.build-from-source.build-the-react-runtime-from-source')} code={'pnpm install\npnpm --dir packages/react run codegen\npnpm run build:runtime'} />
     <h3>{text('docs.chapters.build-from-source.open-composition')}</h3>
-    <DocCode label={t('docs.chapters.build-from-source.launch-the-native-app')} code="cargo run -p celesta-editor --release -- packages/react/examples/title.tsx" />
+    <DocCode label={t('docs.chapters.build-from-source.launch-the-native-app')} code="cargo run -p celesta-editor --release -- packages/cli/examples/title.tsx" />
     <p>{text('docs.chapters.build-from-source.celesta-opens-its-built-in-demo-you')}</p>
     <DocCode label={t('docs.chapters.build-from-source.open-the-example-project')} code="cargo run -p celesta-editor --release -- examples/reel/film.tsx" />
     <p>{text('docs.chapters.build-from-source.run-these-commands-from-the-repository-root', [<code>examples/</code>])}</p>
     <DocCode label={t('docs.chapters.build-from-source.initialize-a-project-from-source')} code="cargo run -p celesta-editor --release -- --init my-video" />
     <p>{text('docs.chapters.build-from-source.see-create-a-project-for-the-generated', [<a href={docPath('create-project')} />])}</p>
-    <DocCode label={t('docs.chapters.build-from-source.preview-react-from-source')} code="cargo run -p celesta-editor --release -- packages/react/examples/title.tsx" />
-    <DocCode label={t('docs.chapters.build-from-source.export-react-from-source')} code="cargo run -p celesta-exporter --release -- --react packages/react/examples/title.tsx output.mp4" />
+    <DocCode label={t('docs.chapters.build-from-source.preview-react-from-source')} code="cargo run -p celesta-editor --release -- packages/cli/examples/title.tsx" />
+    <DocCode label={t('docs.chapters.build-from-source.export-react-from-source')} code="cargo run -p celesta-exporter --release -- --react packages/cli/examples/title.tsx output.mp4" />
     <p>{text('docs.chapters.build-from-source.run-cargo-commands-from-the-repository-root', [<a href={docPath('react-compositions')} />])}</p>
   </>;
 }
@@ -102,7 +102,7 @@ function CreateProject() {
     <h3>{text('docs.chapters.create-project.add-npm-dependencies')}</h3>
     <p>{text('docs.chapters.create-project.install-external-packages-in-the-project-that')}</p>
     <DocCode label={t('docs.chapters.create-project.add-a-project-dependency')} code="pnpm add ag-psd" />
-    <p>{text('docs.chapters.create-project.preview-and-export-resolve-external-imports-from', [<code>node_modules</code>, <code>@celesta/react</code>, <code>@celesta/math</code>, <code>@celesta/code</code>, <code>@celesta/voicevox</code>])}</p>
+    <p>{text('docs.chapters.create-project.preview-and-export-resolve-external-imports-from', [<code>node_modules</code>, <code>@celesta/*</code>])}</p>
     <p>{text('docs.chapters.create-project.node-asset-preparation-scripts-use-the-same', [<code>prepare-assets.mjs</code>, <code>package.json</code>, <code>portrait.psd</code>])}</p>
     <DocCode label="prepare-assets.mjs" language="tsx" code={"import { readFileSync, writeFileSync } from 'node:fs';\nimport { readPsd } from 'ag-psd';\n\nconst { width, height } = readPsd(\n  readFileSync(new URL('./portrait.psd', import.meta.url)),\n  { skipLayerImageData: true, skipCompositeImageData: true, skipThumbnail: true },\n);\nwriteFileSync(\n  new URL('./portrait-info.json', import.meta.url),\n  JSON.stringify({ width, height }),\n);"} />
     <DocCode label={t('docs.chapters.create-project.prepare-assets')} code="node prepare-assets.mjs" />
@@ -180,7 +180,7 @@ export const contents: Record<string, ReactNode> = {
         <li>{text('docs.chapters.react-compositions.your-own-components-are-ordinary-react-function', [<code>.map()</code>])}</li>
         <li>{text('docs.chapters.react-compositions.an-optional-named-export-runs-once-before', [<code>prepare()</code>, <a href={docPath('data')} />])}</li>
       </ul>
-      <h3>{text('docs.chapters.react-compositions.set-up-typescript-in-your-editor')}</h3><p>{text('docs.chapters.react-compositions.with-a-react-composition-open-choose-file', [<strong />, <code>@celesta/react</code>, <code>@celesta/math</code>, <code>@celesta/code</code>, <code>.celesta/</code>, <code>@celesta/voicevox</code>])}</p>
+      <h3>{text('docs.chapters.react-compositions.set-up-typescript-in-your-editor')}</h3><p>{text('docs.chapters.react-compositions.with-a-react-composition-open-choose-file', [<strong />, <code>@celesta/*</code>, <code>.celesta/</code>])}</p>
       <p>{text('docs.chapters.react-compositions.starting-a-new-project-with-no-composition', [<strong />])}</p>
       <p>{text('docs.chapters.react-compositions.if-there-is-no-celesta-creates-one', [<code>tsconfig.json</code>, <code>extends</code>])}</p>
       <DocCode label="tsconfig.json" language="json" code={'{\n  "extends": "./.celesta/tsconfig.json"\n}'} />
@@ -354,7 +354,7 @@ export const contents: Record<string, ReactNode> = {
       <DocCode label="dialogue-series.tsx" language="tsx" code={dialogueSeriesScene.trim()} />
       <p>{text('docs.chapters.dialogue.dialogue-subtitles-body')}</p>
       <p>{text('docs.chapters.dialogue.voicevox-link', [<a href={docPath('voicevox')} />])}</p>
-      <h3>{text('docs.chapters.dialogue.see-it-with-real-artwork')}</h3><p>{text('docs.chapters.dialogue.the-repository-s-is-a-complete-json', [<code>packages/react/examples/with-dialogue-series.tsx</code>, <code>packages/react/examples/with-lip-sync.tsx</code>, <a href={repository} />, <strong />, <strong />])}</p>
+      <h3>{text('docs.chapters.dialogue.see-it-with-real-artwork')}</h3><p>{text('docs.chapters.dialogue.the-repository-s-is-a-complete-json', [<code>packages/cli/examples/with-dialogue-series.tsx</code>, <code>packages/cli/examples/with-lip-sync.tsx</code>, <a href={repository} />, <strong />, <strong />])}</p>
     </>,
   'data': <>
       <h3>{text('docs.chapters.data.load-data-before-rendering')}</h3><p>{text('docs.chapters.data.each-frame-is-rendered-synchronously-so-a', [<code>async prepare()</code>])}</p>
@@ -373,7 +373,7 @@ export const contents: Record<string, ReactNode> = {
       <h3>{text('docs.chapters.export.on-linux-without-a-gpu')}</h3><p>{text('docs.chapters.export.on-linux-the-exporter-renders-through-vulkan', [<a href={docPath('build-from-source')} />])}</p>
       <DocCode label={t('docs.chapters.export.install-software-vulkan')} code="sudo apt-get install -y mesa-vulkan-drivers" />
       <p>{text('docs.chapters.export.software-rendering-is-much-slower-than-a')}</p>
-      <DocCode label={t('docs.chapters.export.export-one-frame')} code="cargo run -p celesta-exporter --release -- --react --driver vulkan packages/react/examples/title.tsx --frame 0 frame.png" />
+      <DocCode label={t('docs.chapters.export.export-one-frame')} code="cargo run -p celesta-exporter --release -- --react --driver vulkan packages/cli/examples/title.tsx --frame 0 frame.png" />
       <p>{text('docs.chapters.export.minimal-containers-often-have-no-fonts-installed', [<code>fonts-dejavu-core</code>, <code>fonts-noto-cjk</code>, <code>{'<Font>'}</code>])}</p>
       <p>{text('docs.chapters.export.on-a-software-renderer-leaves-the-rgb', [<code>--color-conversion auto</code>, <code>--render-quality draft</code>, <a href={`${repository}/tree/main/packaging/linux`} />, <code>/work</code>, <code>--user</code>])}</p>
       <DocCode label={t('docs.chapters.export.build-the-container-image')} code="docker build -f packaging/linux/Dockerfile -t celesta-exporter ." />
@@ -383,54 +383,54 @@ export const contents: Record<string, ReactNode> = {
   'reference': <>
       <p>{text('docs.chapters.reference.import-these-apis-from-random-numbers-noise', [<code>@celesta/react</code>, <code>@celesta/math</code>, <a href={docPath('math')} />, <code>@celesta/code</code>, <a href={docPath('code')} />])}</p>
       <Api caption={t('docs.chapters.reference.layers')} rows={[
-        [<code>Composition</code>, <>{text('docs.chapters.reference.api.set-and-optional-supplies-the-default-text', [<code>width</code>, <code>height</code>, <code>fps</code>, <code>durationInFrames</code>, <code>lang</code>])}</>],
-        [<code>Rect</code>, <>{text('docs.chapters.reference.api.a-rectangle-with-and-optional-and', [<code>width</code>, <code>height</code>, <code>fill</code>, <code>stroke</code>, <code>strokeWidth</code>, <code>cornerRadius</code>])}</>],
-        [<code>Text</code>, <>{text('docs.chapters.reference.api.text-from-string-or-number-children-styled', [<code>style</code>, <code>maxWidth</code>, <code>lang</code>, <code>style.lang</code>, <a href={docPath('text-fonts')} />, text('docs.chapters.reference.text-fonts')])}</>],
-        [<code>Group</code>, <>{text('docs.chapters.reference.api.applies-a-shared-position-scale-rotation-and', [<code>lang</code>])}</>],
-        [<><code>Image</code> / <code>Video</code> / <code>Audio</code></>, <>{text('docs.chapters.reference.api.local-media-through-see', [<code>src</code>, <a href={docPath('media')} />, text('docs.chapters.reference.images-video-sound')])}</>],
-        [<code>Font</code>, <>{text('docs.chapters.reference.api.loads-a-local-font-file-through-so', [<code>src</code>, <code>Text</code>, <a href={docPath('text-fonts')} />, text('docs.chapters.reference.text-fonts-label')])}</>],
+        [<code>Composition</code>, <>{text('docs.chapters.reference.api.set-and-optional-supplies-the-default-text', [<code>width</code>, <code>height</code>, <code>fps</code>, <code>durationInFrames</code>, <code>lang</code>])}</>, '@celesta/react'],
+        [<code>Rect</code>, <>{text('docs.chapters.reference.api.a-rectangle-with-and-optional-and', [<code>width</code>, <code>height</code>, <code>fill</code>, <code>stroke</code>, <code>strokeWidth</code>, <code>cornerRadius</code>])}</>, '@celesta/react'],
+        [<code>Text</code>, <>{text('docs.chapters.reference.api.text-from-string-or-number-children-styled', [<code>style</code>, <code>maxWidth</code>, <code>lang</code>, <code>style.lang</code>, <a href={docPath('text-fonts')} />, text('docs.chapters.reference.text-fonts')])}</>, '@celesta/react'],
+        [<code>Group</code>, <>{text('docs.chapters.reference.api.applies-a-shared-position-scale-rotation-and', [<code>lang</code>])}</>, '@celesta/react'],
+        [<><code>Image</code> / <code>Video</code> / <code>Audio</code></>, <>{text('docs.chapters.reference.api.local-media-through-see', [<code>src</code>, <a href={docPath('media')} />, text('docs.chapters.reference.images-video-sound')])}</>, '@celesta/react'],
+        [<code>Font</code>, <>{text('docs.chapters.reference.api.loads-a-local-font-file-through-so', [<code>src</code>, <code>Text</code>, <a href={docPath('text-fonts')} />, text('docs.chapters.reference.text-fonts-label')])}</>, '@celesta/react'],
       ]} />
       <Api caption={t('docs.chapters.reference.time-and-motion')} rows={[
-        [<code>Sequence</code>, <>{text('docs.chapters.reference.api.places-children-at-a-frame-offset-with', [<code>from</code>, <code>durationInFrames</code>, <code>lang</code>])}</>],
-        [<code>FreezeFrame</code>, <>{text('docs.chapters.reference.api.draws-its-children-as-the-composition-looked', [<code>frame</code>])}</>],
-        [<code>Transition</code>, <>{text('docs.chapters.reference.api.a-fade-slide-or-scale-or-several')}</>],
-        [<><code>Series</code> / <code>computeSeries</code></>, <>{text('docs.chapters.reference.api.scenes-back-to-back-by-length-see', [<a href={docPath('motion-toolkit')} />, text('docs.chapters.reference.scenes-cues-beats')])}</>],
-        [<><code>TransitionSeries</code> / <code>computeTransitionSeries</code></>, <>{text('docs.chapters.reference.api.transition-series', [<a href={docPath('motion-toolkit')} />, text('docs.chapters.reference.scenes-cues-beats')])}</>],
-        [<code>Stagger</code>, <>{text('docs.chapters.reference.api.starts-each-child-a-fixed-number-of')}</>],
-        [<code>progress</code>, <>{text('docs.chapters.reference.api.a-clamped-eased-0-1-value-for')}</>],
-        [<><code>useBeat()</code> / <code>beatAt</code></>, <>{text('docs.chapters.reference.api.beats-bars-and-a-pulse-for-a')}</>],
-        [<><code>useCue()</code> / <code>cueAt</code></>, <>{text('docs.chapters.reference.api.the-cue-in-effect-from-a-list', [<code>{'{ at, …data }'}</code>])}</>],
-        [<><code>TextReveal</code>, <code>useTypewriter()</code>, <code>useCountUp()</code></>, <>{text('docs.chapters.reference.api.masked-line-reveals-typing-and-counting-numbers')}</>],
-        [<code>Camera</code>, <>{text('docs.chapters.reference.api.look-at-a-point-of-a-larger')}</>],
-        [<><code>Line</code> / <code>Polyline</code> / <code>Path</code> / <code>pointOnPolyline</code></>, <>{text('docs.chapters.reference.api.segments-curves-and-filled-shapes-polylines-can')}</>],
-        [<><code>Circle</code> / <code>Ellipse</code> / <code>Arrow</code></>, <>{text('docs.chapters.reference.api.diagram-shapes-a-circle-is-a-rounded', [<code>Rect</code>, <code>Path</code>, <code>Rect</code>])}</>],
-        [<><code>interpolate</code> / <code>Easings</code></>, <>{text('docs.chapters.reference.api.map-a-frame-to-a-value-with')}</>],
-        [<code>interpolateColor</code>, <>{text('docs.chapters.reference.api.map-a-frame-to-a-color-blending', [<code>#RRGGBBAA</code>])}</>],
-        [<code>frameKeyframes</code>, <>{text('docs.shared.audio-frame-keyframes')}</>],
-        [<code>spring</code>, <>{text('docs.chapters.reference.api.a-physics-based-value-that-settles-from')}</>],
-        [<><code>useCurrentFrame()</code> / <code>useCurrentTime()</code></>, <>{text('docs.chapters.reference.api.the-current-frame-or-the-exact-time')}</>],
-        [<code>useVideoConfig()</code>, <>{text('docs.chapters.reference.api.the-composition-s-or-sequence-s-dimensions')}</>],
-        [<><code>timecodeToFrame()</code> / <code>frameToTimecode()</code></>, <>{text('docs.chapters.reference.api.convert-a-style-timecode-to-a-frame', [<code>MM:SS.mmm</code>, <code>HH:MM:SS:FF</code>])}</>],
+        [<code>Sequence</code>, <>{text('docs.chapters.reference.api.places-children-at-a-frame-offset-with', [<code>from</code>, <code>durationInFrames</code>, <code>lang</code>])}</>, '@celesta/react'],
+        [<code>FreezeFrame</code>, <>{text('docs.chapters.reference.api.draws-its-children-as-the-composition-looked', [<code>frame</code>])}</>, '@celesta/react'],
+        [<code>Transition</code>, <>{text('docs.chapters.reference.api.a-fade-slide-or-scale-or-several')}</>, '@celesta/transitions'],
+        [<><code>Series</code> / <code>computeSeries</code></>, <>{text('docs.chapters.reference.api.scenes-back-to-back-by-length-see', [<a href={docPath('motion-toolkit')} />, text('docs.chapters.reference.scenes-cues-beats')])}</>, '@celesta/react'],
+        [<><code>TransitionSeries</code> / <code>computeTransitionSeries</code></>, <>{text('docs.chapters.reference.api.transition-series', [<a href={docPath('motion-toolkit')} />, text('docs.chapters.reference.scenes-cues-beats')])}</>, '@celesta/transitions'],
+        [<code>Stagger</code>, <>{text('docs.chapters.reference.api.starts-each-child-a-fixed-number-of')}</>, '@celesta/react'],
+        [<code>progress</code>, <>{text('docs.chapters.reference.api.a-clamped-eased-0-1-value-for')}</>, '@celesta/react'],
+        [<><code>useBeat()</code> / <code>beatAt</code></>, <>{text('docs.chapters.reference.api.beats-bars-and-a-pulse-for-a')}</>, '@celesta/react'],
+        [<><code>useCue()</code> / <code>cueAt</code></>, <>{text('docs.chapters.reference.api.the-cue-in-effect-from-a-list', [<code>{'{ at, …data }'}</code>])}</>, '@celesta/react'],
+        [<><code>TextReveal</code>, <code>useTypewriter()</code>, <code>useCountUp()</code></>, <>{text('docs.chapters.reference.api.masked-line-reveals-typing-and-counting-numbers')}</>, '@celesta/text'],
+        [<code>Camera</code>, <>{text('docs.chapters.reference.api.look-at-a-point-of-a-larger')}</>, '@celesta/layout'],
+        [<><code>Line</code> / <code>Polyline</code> / <code>Path</code> / <code>pointOnPolyline</code></>, <>{text('docs.chapters.reference.api.segments-curves-and-filled-shapes-polylines-can')}</>, '@celesta/shapes'],
+        [<><code>Circle</code> / <code>Ellipse</code> / <code>Arrow</code></>, <>{text('docs.chapters.reference.api.diagram-shapes-a-circle-is-a-rounded', [<code>Rect</code>, <code>Path</code>, <code>Rect</code>])}</>, '@celesta/shapes'],
+        [<><code>interpolate</code> / <code>Easings</code></>, <>{text('docs.chapters.reference.api.map-a-frame-to-a-value-with')}</>, '@celesta/react'],
+        [<code>interpolateColor</code>, <>{text('docs.chapters.reference.api.map-a-frame-to-a-color-blending', [<code>#RRGGBBAA</code>])}</>, '@celesta/react'],
+        [<code>frameKeyframes</code>, <>{text('docs.shared.audio-frame-keyframes')}</>, '@celesta/react'],
+        [<code>spring</code>, <>{text('docs.chapters.reference.api.a-physics-based-value-that-settles-from')}</>, '@celesta/react'],
+        [<><code>useCurrentFrame()</code> / <code>useCurrentTime()</code></>, <>{text('docs.chapters.reference.api.the-current-frame-or-the-exact-time')}</>, '@celesta/react'],
+        [<code>useVideoConfig()</code>, <>{text('docs.chapters.reference.api.the-composition-s-or-sequence-s-dimensions')}</>, '@celesta/react'],
+        [<><code>timecodeToFrame()</code> / <code>frameToTimecode()</code></>, <>{text('docs.chapters.reference.api.convert-a-style-timecode-to-a-frame', [<code>MM:SS.mmm</code>, <code>HH:MM:SS:FF</code>])}</>, '@celesta/react'],
       ]} />
       <Api caption={t('docs.chapters.reference.characters')} rows={[
-        [<><code>Assets</code> / <code>Character</code></>, <>{text('docs.chapters.reference.api.declare-a-character-s-portrait-expressions-lip')}</>],
-        [<code>CharacterView</code>, <>{text('docs.chapters.reference.api.places-a-character-s-portrait-accepts-and', [<code>expression</code>, <code>mouth</code>, <code>lipSync</code>])}</>],
-        [<><code>DialogueSeries</code> / <code>planDialogue</code></>, <>{text('docs.chapters.reference.api.dialogue-series', [<a href={docPath('dialogue')} />])}</>],
-        [<code>Dialogue</code>, <>{text('docs.chapters.reference.api.shows-a-line-as-a-subtitle-plays', [<code>audio</code>])}</>],
-        [<><code>loadLipSync</code> / <code>useLipSync</code></>, <>{text('docs.chapters.reference.api.generate-mouth-shapes-from-a-wav-recording')}</>],
-        [<code>loadPsdPreset</code>, <>{text('docs.chapters.reference.api.load-visible-psd-layers-from-a-psdtool', [<code>.pfv</code>])}</>],
+        [<><code>Assets</code> / <code>Character</code></>, <>{text('docs.chapters.reference.api.declare-a-character-s-portrait-expressions-lip')}</>, '@celesta/react, @celesta/character'],
+        [<code>CharacterView</code>, <>{text('docs.chapters.reference.api.places-a-character-s-portrait-accepts-and', [<code>expression</code>, <code>mouth</code>, <code>lipSync</code>])}</>, '@celesta/character'],
+        [<><code>DialogueSeries</code> / <code>planDialogue</code></>, <>{text('docs.chapters.reference.api.dialogue-series', [<a href={docPath('dialogue')} />])}</>, '@celesta/character'],
+        [<code>Dialogue</code>, <>{text('docs.chapters.reference.api.shows-a-line-as-a-subtitle-plays', [<code>audio</code>])}</>, '@celesta/character'],
+        [<><code>loadLipSync</code> / <code>useLipSync</code></>, <>{text('docs.chapters.reference.api.generate-mouth-shapes-from-a-wav-recording')}</>, '@celesta/character'],
+        [<code>loadPsdPreset</code>, <>{text('docs.chapters.reference.api.load-visible-psd-layers-from-a-psdtool', [<code>.pfv</code>])}</>, '@celesta/character'],
       ]} />
       <Api caption={t('docs.chapters.reference.layout-data-and-tools')} rows={[
-        [<><code>TextBox</code> / <code>fitText</code> / <code>useFitText</code> / <code>measureText</code> / <code>useTextMetrics</code></>, <>{text('docs.chapters.reference.api.text-measure-and-fit', [<a href={docPath('text-fonts')} />])}</>],
-        [<><code>Center</code>, <code>SafeArea</code>, <code>Stack</code>, <code>Grid</code>, <code>Fit</code></>, <>{text('docs.chapters.reference.api.arrange-child-layers-see', [<a href={docPath('layout')} />, text('docs.chapters.reference.layout-helpers')])}</>],
-        [<><code>preloadMedia</code> / <code>mediaDurationInFrames</code></>, <>{text('docs.chapters.reference.api.read-a-media-file-s-length-and', [<code>prepare()</code>])}</>],
-        [<><code>DebugOverlay</code> / <code>DebugBounds</code> / <code>useIsPreview()</code></>, <>{text('docs.chapters.reference.api.preview-only-guides-that-never-appear-in')}</>],
+        [<><code>TextBox</code> / <code>fitText</code> / <code>useFitText</code> / <code>measureText</code> / <code>useTextMetrics</code></>, <>{text('docs.chapters.reference.api.text-measure-and-fit', [<a href={docPath('text-fonts')} />])}</>, '@celesta/text, @celesta/react'],
+        [<><code>Center</code>, <code>SafeArea</code>, <code>Stack</code>, <code>Grid</code>, <code>Fit</code></>, <>{text('docs.chapters.reference.api.arrange-child-layers-see', [<a href={docPath('layout')} />, text('docs.chapters.reference.layout-helpers')])}</>, '@celesta/layout'],
+        [<><code>preloadMedia</code> / <code>mediaDurationInFrames</code></>, <>{text('docs.chapters.reference.api.read-a-media-file-s-length-and', [<code>prepare()</code>])}</>, '@celesta/media-utils'],
+        [<><code>DebugOverlay</code> / <code>DebugBounds</code> / <code>useIsPreview()</code></>, <>{text('docs.chapters.reference.api.preview-only-guides-that-never-appear-in')}</>, '@celesta/debug, @celesta/react'],
       ]} />
       <h3>{text('docs.chapters.reference.legacy-api')}</h3><p>{text('docs.chapters.reference.legacy-api-body')}</p>
       <Api caption={t('docs.chapters.reference.legacy-api')} rows={[
-        [<><code>loadProject</code>, <code>ProjectProvider</code>, <code>useProjectProperty</code></>, <>{text('docs.chapters.reference.api.read-values-from-a-json-project')}</>],
-        [<><code>ProjectTimeline</code> / <code>ProjectTrack</code></>, <>{text('docs.chapters.reference.api.draw-a-companion-json-project-s-timeline')}</>],
-        [<><code>registerComponent</code> / <code>defineProjectProperties</code></>, <>{text('docs.chapters.reference.api.make-components-and-properties-available-to-json')}</>],
+        [<><code>loadProject</code>, <code>ProjectProvider</code>, <code>useProjectProperty</code></>, <>{text('docs.chapters.reference.api.read-values-from-a-json-project')}</>, '@celesta/project'],
+        [<><code>ProjectTimeline</code> / <code>ProjectTrack</code></>, <>{text('docs.chapters.reference.api.draw-a-companion-json-project-s-timeline')}</>, '@celesta/project'],
+        [<><code>registerComponent</code> / <code>defineProjectProperties</code></>, <>{text('docs.chapters.reference.api.make-components-and-properties-available-to-json')}</>, '@celesta/react'],
       ]} />
     </>,
   'examples': <>
@@ -441,8 +441,8 @@ export const contents: Record<string, ReactNode> = {
         <a href={docPath('dialogue')}><span>{text('docs.chapters.examples.03-dialogue')}</span><strong>{text('docs.chapters.examples.give-it-a-voice')}</strong><p>{text('docs.chapters.examples.pair-a-portrait-subtitles-and-a-voice')}</p></a>
       </div>
       <h3>{text('docs.chapters.examples.included-with-the-app')}</h3><p>{text('docs.chapters.examples.copy-an-example-into-your-own-project')}</p><ul><li>{text('docs.chapters.examples.macos-in-finder-right-click-celesta-in', [<strong />, <strong />, <code>Contents/Resources/examples</code>])}</li><li>{text('docs.chapters.examples.windows-open-the-folder-beside-in-the', [<strong />, <code>examples</code>, <code>Celesta.exe</code>])}</li></ul>
-      <p>{text('docs.chapters.examples.the-repository-s-directory-contains-more-scenes', [<code>packages/react/examples</code>, <strong />])}</p>
-      <a className="doc-text-link" href={`${repository}/tree/main/packages/react/examples`}>{text('docs.chapters.examples.browse-all-source-examples-on-github')}</a>
+      <p>{text('docs.chapters.examples.the-repository-s-directory-contains-more-scenes', [<code>packages/cli/examples</code>, <strong />])}</p>
+      <a className="doc-text-link" href={`${repository}/tree/main/packages/cli/examples`}>{text('docs.chapters.examples.browse-all-source-examples-on-github')}</a>
       <p>{text('docs.chapters.examples.you-can-also-open-the-web-editor', [<a href={`${homePath}#playground`} />, <code>.tsx</code>])}</p>
     </>,
   'build-from-source': <SourceBuild />,

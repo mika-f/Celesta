@@ -48,12 +48,15 @@ try {
 
 Pass local media as `new SceneCanvas(new Map<string, File>([['clip.mp4', file]]))`. Use the same file name in a composition's `src`. Remote media must allow CORS. `exportMp4` returns a `video/mp4` Blob and reports completed frames. Abort its signal to cancel.
 
-The source string accepts runtime imports from `@celesta/react`, `@celesta/math`,
-`@celesta/code`, and `react`. It needs a default component returning
-`<Composition>`. Paths, motion helpers, Canvas text measurement, and custom
-OpenType fonts or font CSS URLs are supported. An async `prepare()` may use
-browser APIs and `measureText()`; filesystem helpers, companion JSON projects,
-PSD portraits, and arbitrary npm imports still require the native runtime.
+The source string accepts runtime imports from `react`, `@celesta/react`,
+`@celesta/math`, `@celesta/shapes`, `@celesta/layout`, `@celesta/transitions`,
+`@celesta/text`, `@celesta/debug`, `@celesta/media-utils`, `@celesta/character`,
+and `@celesta/code`. It needs a default component returning `<Composition>`.
+Paths, motion helpers, Canvas text measurement, and custom OpenType fonts or
+font CSS URLs are supported. An async `prepare()` may use browser APIs and
+`measureText()`; filesystem helpers (`preloadMedia`, `loadLipSync`,
+`loadPsdPreset`), `@celesta/project`, PSD portraits, and arbitrary npm imports
+still require the native runtime.
 
 For a multi-file project, pass virtual sources keyed by relative path:
 

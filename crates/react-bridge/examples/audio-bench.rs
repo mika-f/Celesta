@@ -1,5 +1,5 @@
 //! Compare the original per-frame protocol with batched audio collection.
-//! Run after `pnpm --filter @celesta/react... build` and generating any media:
+//! Run after `pnpm run build:runtime` and generating any media:
 //! cargo run --release -p celesta-react-bridge --example audio-bench -- <entry> [runs]
 
 use std::{env, error::Error, path::PathBuf, time::Instant};
@@ -14,7 +14,7 @@ fn main() -> Result<(), Box<dyn Error>> {
         PathBuf::from(args.next().ok_or("usage: audio-bench <entry> [runs]")?).canonicalize()?;
     let runs: usize = args.next().map_or(Ok(5), |value| value.parse())?;
     let entry_dir = entry.parent().ok_or("entry has no parent")?;
-    let cli = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../packages/react/dist/cli.js");
+    let cli = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../packages/cli/dist/cli.js");
     println!("mode,run,frames,clips,spawn_ms,scan_ms,mix_ms,total_ms");
     for run in 0..runs {
         let mut expected = None;

@@ -8,7 +8,7 @@ author-supplied strings that reach a layer go through `flatString()` in
 
 ## Cause
 
-The React bridge (`packages/react/src/cli.ts`) sends each frame's
+The React bridge (`packages/cli/src/cli.ts`) sends each frame's
 `{ scene, audio }` to Rust as one line of `JSON.stringify` output. In
 Node 26, V8's JSON.stringify has a fast path that handles only flat
 strings. At the first ConsString or
@@ -139,9 +139,9 @@ in CI, and within ±9% in local GPU time with nothing marked.
 Build packages/react and the exporter:
 
 ```sh
-pnpm --dir packages/react install --frozen-lockfile
+pnpm install --frozen-lockfile
 pnpm --dir packages/react run codegen --locked
-pnpm --dir packages/react run build
+pnpm run build:runtime
 cargo build --release -p celesta-exporter
 ```
 

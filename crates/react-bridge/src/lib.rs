@@ -1,4 +1,4 @@
-//! Spawns the `@celesta/react` Node.js runtime and evaluates a React
+//! Spawns the `@celesta/cli` Node.js runtime and evaluates a React
 //! composition into the shared `celesta_composition::Scene` model.
 //!
 //! A single Node process is kept alive for the lifetime of a [`ReactBridge`]

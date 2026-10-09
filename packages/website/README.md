@@ -211,8 +211,9 @@ pnpm deploy:check
 ```
 
 `check:examples` type-checks the playground scene and every file in
-`src/examples/` against the declarations staged by `packages/react`'s
-`pnpm run build` (`dist/project-types/`). Build that package first.
+`src/examples/` against the declarations staged by `packages/cli`'s build
+(`dist/project-types/`). Run `pnpm run build:runtime` from the repository root
+first.
 
 Check the page at desktop and mobile widths: navigation, TSX changes,
 playback/pause/scrubbing, source opening/copying/downloading, media import,

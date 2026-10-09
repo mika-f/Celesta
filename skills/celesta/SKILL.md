@@ -1,12 +1,12 @@
 ---
 name: celesta
-description: Write, edit, check, and export Celesta videos. Covers React compositions (.tsx/.jsx files that import @celesta/react, @celesta/math, or @celesta/code), .celesta.json project timelines, starting a project (--init), animation, shapes and diagrams, text and fonts (measuring, fitting, language, Japanese line breaking), syntax-highlighted code, images/video/audio, character dialogue with subtitles, lip sync, and blinking (image or PSD portraits, custom subtitle bands), project properties, registered components, PNG frame and contact-sheet checks, and MP4 export with the Celesta command-line exporter. Use whenever a file imports @celesta/*, a *.celesta.json file is involved, or the user asks to make, change, preview, debug, or render a video with Celesta, even if they only say "the video" or "the scene".
+description: Write, edit, check, and export Celesta videos. Covers React compositions (.tsx/.jsx files that import @celesta/react or another @celesta/* package), .celesta.json project timelines, starting a project (--init), animation, shapes and diagrams, text and fonts (measuring, fitting, language, Japanese line breaking), syntax-highlighted code, images/video/audio, character dialogue with subtitles, lip sync, and blinking (image or PSD portraits, custom subtitle bands), project properties, registered components, PNG frame and contact-sheet checks, and MP4 export with the Celesta command-line exporter. Use whenever a file imports @celesta/*, a *.celesta.json file is involved, or the user asks to make, change, preview, debug, or render a video with Celesta, even if they only say "the video" or "the scene".
 ---
 
 # Celesta
 
 Celesta is a code-first video tool. A video is source code: a React
-composition (`.tsx`) built from `@celesta/react` components, a
+composition (`.tsx`) built from Celesta's React packages, a
 `.celesta.json` project timeline, or both combined. The Celesta app only
 **previews** and exports; it never edits files. You edit the source; the user
 watches the result in the app.
@@ -92,11 +92,12 @@ produces a video that differs between preview and export.
    `<Font>`, voices, PSDs, and `preloadMedia`. JSON project asset paths
    resolve from the project file's folder. `http(s)://` URLs are downloaded
    once and cached forever; change the URL to refresh.
-8. **Imports.** `react`, `@celesta/react`, `@celesta/math`, and
-   `@celesta/code` always come from the runtime bundled with Celesta; never
-   `npm install` them. Relative imports (including
-   `import data from './data.json'`) are bundled. Any other npm package must
-   be installed in the project folder (`pnpm add <pkg>`).
+8. **Imports.** Celesta is split into packages, like Remotion; import each
+   API from the package that provides it (see [Packages](#packages)).
+   `react` and every `@celesta/*` package always come from the runtime
+   bundled with Celesta; never `npm install` them. Relative imports
+   (including `import data from './data.json'`) are bundled. Any other npm
+   package must be installed in the project folder (`pnpm add <pkg>`).
 9. **Draw order is source order.** Later siblings draw on top. In JSON, later
    tracks draw on top of earlier ones.
 10. **Anchors differ between formats.** In React, `x`/`y` place the
@@ -160,6 +161,26 @@ produces a video that differs between preview and export.
 Do not claim the video "looks right" unless you rendered a frame and looked
 at the image. A clean `inspect.mjs` run proves the scene evaluates and where
 layers sit; it does not prove the rendered pixels.
+
+## Packages
+
+| Package | Provides |
+| --- | --- |
+| `@celesta/react` | `Composition`, `Sequence`, `Series`, `Stagger`, `FreezeFrame`, `Group`, `Rect`, `Text`, `Image`, `Video`, `Audio`, `Font`, `Assets`, `useCurrentFrame`/`useCurrentTime`/`useVideoConfig`/`useIsPreview`, `interpolate`, `interpolateColor`, `Easings`, `spring`, `progress`, `frameKeyframes`, `useBeat`/`useCue`, timecodes, `measureText`/`useTextMetrics`/`textCaret`, `registerComponent`, `defineProjectProperties`/`getProjectProperty`, and the scene types |
+| `@celesta/shapes` | `Line`, `Polyline`, `Path`, `Circle`, `Ellipse`, `Arrow`, `pointOnPolyline` |
+| `@celesta/layout` | `Center`, `Stack`, `Grid`, `Fit`, `SafeArea`, `useLayoutBounds`, `Camera` |
+| `@celesta/transitions` | `Transition`, `TransitionSeries`, `useTransitionSeriesScene`, `useTransitionVolume` |
+| `@celesta/text` | `TextReveal`, `useTypewriter`, `useCountUp`, `TextBox`, `fitText`, `useFitText` |
+| `@celesta/character` | `Character`, `CharacterView`, `Dialogue`, `DialogueSeries`, `planDialogue`, `loadLipSync`, `useLipSync`, `blinkPhase`, `loadPsdPreset`, and their types |
+| `@celesta/media-utils` | `preloadMedia`, `mediaDurationInFrames` |
+| `@celesta/project` | `ProjectProvider`, `ProjectTimeline`, `ProjectTrack`, `useProject`, `useProjectProperty`, `useProjectTrack`, `loadProject`, and the project file types |
+| `@celesta/debug` | `DebugOverlay`, `DebugBounds` |
+| `@celesta/math` | `random`, `noise`, and math helpers |
+| `@celesta/code` | `Code` and syntax highlighting |
+| `@celesta/voicevox` | `lipSyncFromVoicevox` |
+
+An import from the wrong package fails with `@celesta/react does not export
+Circle; import it from @celesta/shapes`; move it to the named package.
 
 ## References
 

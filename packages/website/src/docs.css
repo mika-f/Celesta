@@ -127,6 +127,7 @@ kbd { display: inline-block; border: 1px solid var(--line-strong); padding: 0 6p
 .docs-article .doc-downloads .button-secondary { color: var(--text); text-decoration: none; }
 .docs-article .doc-small { font-size: 13px; color: var(--muted); margin-top: 10px; }
 .doc-api th:first-child, .doc-api td:first-child { width: 38%; }
+.doc-api .doc-api-package code { display: block; width: max-content; white-space: nowrap; }
 @media (max-width: 1024px) {
   .docs-layout { grid-template-columns: 200px minmax(0, 1fr); gap: 48px; }
   .doc-example-grid { grid-template-columns: 1fr; }

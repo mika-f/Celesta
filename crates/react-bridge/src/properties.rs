@@ -32,7 +32,7 @@ pub struct PropertyLayer {
 
 /// Project property values a React entry receives from outside its source,
 /// lowest precedence first. The entry validates them against its schema
-/// before `prepare()`; see `packages/react/src/property-inputs.ts`.
+/// before `prepare()`; see `packages/cli/src/property-inputs.ts`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PropertyInputs {
     layers: Vec<PropertyLayer>,

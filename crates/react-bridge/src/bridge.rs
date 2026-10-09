@@ -19,7 +19,7 @@ use std::io::{self, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
-/// A live connection to the `@celesta/react` CLI evaluating one entry module.
+/// A live connection to the `@celesta/cli` process evaluating one entry module.
 pub struct ReactBridge {
     pub(crate) child: Child,
     pub(crate) stdin: ChildStdin,

@@ -32,7 +32,7 @@ fn paths_for(executable: Option<&Path>) -> (PathBuf, PathBuf) {
     }
     (
         PathBuf::from("node"),
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../packages/react/dist/cli.js"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../packages/cli/dist/cli.js"),
     )
 }
 

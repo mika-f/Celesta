@@ -232,7 +232,7 @@ const WEATHER_LATITUDE = 35.6762;
 const WEATHER_LONGITUDE = 139.6503;
 
 /**
- * `celesta-react-render` (`packages/react/src/cli.ts`) awaits this exact export
+ * `celesta-react-render` (`packages/cli/src/cli.ts`) awaits this exact export
  * name exactly once, before mounting the composition and before the first
  * `renderAt()` — see the comment at its call site. That is the one place in
  * the render pipeline async work is allowed: `renderAt()` itself, called once

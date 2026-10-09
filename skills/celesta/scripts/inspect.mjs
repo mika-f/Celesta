@@ -70,10 +70,10 @@ function findRuntime(options, startDirs) {
   const explicit = options.runtime ?? process.env.CELESTA_REACT_CLI;
   const candidates = [];
   if (explicit) candidates.push(path.resolve(explicit));
-  // A source checkout: <repo>/packages/react/dist/cli.js above the entry or cwd.
+  // A source checkout: <repo>/packages/cli/dist/cli.js above the entry or cwd.
   for (const start of startDirs) {
     for (let dir = path.resolve(start); ; dir = path.dirname(dir)) {
-      candidates.push(path.join(dir, 'packages/react/dist/cli.js'));
+      candidates.push(path.join(dir, 'packages/cli/dist/cli.js'));
       if (path.dirname(dir) === dir) break;
     }
   }
@@ -92,7 +92,7 @@ function findRuntime(options, startDirs) {
         'Pass --runtime <path to cli.js>, for example:\n' +
         '  macOS:   /Applications/Celesta.app/Contents/Resources/react/dist/cli.js\n' +
         '  Windows: <Celesta folder>\\runtime\\react\\dist\\cli.js\n' +
-        '  source:  <repo>/packages/react/dist/cli.js (run pnpm install, codegen, build first)',
+        '  source:  <repo>/packages/cli/dist/cli.js (run pnpm install, codegen, build:runtime first)',
     );
   }
   return { cli, node: findNode(options, cli) };

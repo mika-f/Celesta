@@ -51,7 +51,7 @@ export {
 } from './properties';
 
 export { SECONDS_TIMESCALE, secondsFromTime, secondsToTime } from './time';
-export { entryDir, entryRelativePath, isRemoteUrl } from './entry-dir';
+export { entryRelativePath, isRemoteUrl } from './entry-dir';
 
 // Rust types of the project document (`celesta-project`), which
 // `@celesta/project` and `@celesta/character` re-export; ts-rs generates them

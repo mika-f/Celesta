@@ -45,7 +45,7 @@ Outputs are placed in `target/packages`:
 - A unique `staging-*/Celesta` directory for inspecting the package.
 
 Existing output files are never overwritten. `-SkipBuild` reuses already-built
-`target/release` executables and `packages/react/dist`; use it only after building
+`target/release` executables and the built `packages/*/dist` runtime; use it only after building
 the current sources. A custom Cargo target directory is not supported.
 
 The installer installs for the current user without elevation, adds a Start menu

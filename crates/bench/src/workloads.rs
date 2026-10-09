@@ -1,7 +1,7 @@
 //! The scenes each workload renders. `nebula` is the real NEBULA
 //! composition from `examples/versus/bench`, and `spectra` the SPECTRA reel
 //! from `examples/spectra`, both evaluated by the React bridge (Node.js and
-//! a built `packages/react` are required). The others are
+//! a built `packages/cli` are required). The others are
 //! synthetic scenes, one per kind of work the GPU renderer does, laid out on
 //! a 1920x1080 canvas. Every frame moves something, so caches only help
 //! where they would in an export. All are scaled to the requested size, so
@@ -123,7 +123,7 @@ impl Workload {
                 let (node, cli) = runtime_paths();
                 if !cli.is_file() {
                     return Err(format!(
-                        "{} is missing; build packages/react first (see README.md)",
+                        "{} is missing; build packages/cli first (see README.md)",
                         cli.display()
                     ));
                 }

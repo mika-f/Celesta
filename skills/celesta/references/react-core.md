@@ -5,9 +5,11 @@ props every layer takes, each layer type, layout helpers, media loading, and
 preview-only debug guides. For motion see [animation.md](animation.md); for
 text see [text.md](text.md).
 
-Everything here is imported from `@celesta/react`. The runtime bundled with
-Celesta provides `react` (18.x), `@celesta/react`, `@celesta/math`, and
-`@celesta/code`; never install them from npm.
+Everything here is imported from `@celesta/react` unless its section names
+another package: shapes from `@celesta/shapes`, layout helpers from
+`@celesta/layout`, media info from `@celesta/media-utils`, and debug guides
+from `@celesta/debug`. The runtime bundled with Celesta provides `react`
+(18.x) and every `@celesta/*` package; never install them from npm.
 
 ## Contents
 
@@ -49,8 +51,8 @@ export default function Root() {
   `defineProjectProperties()` must be called at module level.
 - `console.log` output goes to the terminal (stderr), which is useful when
   running `scripts/inspect.mjs`.
-- Imports: `react`, `@celesta/react`, `@celesta/math`, and `@celesta/code`
-  come from Celesta's runtime. Relative files (including
+- Imports: `react` and every `@celesta/*` package come from Celesta's
+  runtime. Relative files (including
   `import data from './data.json'`) are bundled. Other npm packages resolve
   from the project's own `node_modules` (see
   [setup.md](setup.md#npm-dependencies)).
@@ -138,6 +140,8 @@ alpha, so a gradient can fade to transparent. At least 2 stops.
 
 ## Path, Line, Polyline
 
+Imported from `@celesta/shapes`.
+
 `<Path>` is a vector shape (lines and Bézier curves) as **one layer**,
 however many segments it has: a translucent stroke that crosses itself is
 painted once, and it stays sharp under `scale`. Prefer it to many thin
@@ -174,6 +178,8 @@ else miter), plus `Path`'s transform, `opacity`, and `blendMode` props.
 `{ x, y }`), for a marker or a label that rides the line.
 
 ## Circle, Ellipse, Arrow
+
+Imported from `@celesta/shapes`.
 
 Diagram shapes, each drawn as one layer, so they take every common layer
 prop (transforms, `opacity`, `blendMode`, effects) and stay sharp under
@@ -213,7 +219,7 @@ Non-finite points or a head size of 0 or less fail the render.
 <Arrow x1={300} y1={600} x2={300 + 400 * progress(frame, 0, 30)} y2={600} strokeWidth={6} heads="both" />
 ```
 
-See `packages/react/examples/with-shapes.tsx` in the Celesta repository for all three side by side.
+See `packages/cli/examples/with-shapes.tsx` in the Celesta repository for all three side by side.
 
 ## Text (summary)
 
@@ -326,6 +332,8 @@ conditional plays only on frames where it is rendered.
 
 ## Layout helpers
 
+Imported from `@celesta/layout`.
+
 Helpers position child **origins**; they do not measure what children draw.
 Anchor children at `0.5` to center them on those points.
 
@@ -355,6 +363,8 @@ For layouts that depend on text size (pills, rows of labels), measure the
 text with `useTextMetrics()`; see [text.md](text.md#measure-text).
 
 ## Media info
+
+Imported from `@celesta/media-utils`.
 
 Call `preloadMedia()` in `prepare()` to learn a file's length and size:
 
@@ -426,9 +436,11 @@ const { fps } = useVideoConfig();
 - An empty list, keys out of order, a non-finite `frame`, `value`, or
   `origin`, and an `fps` that is not positive throw.
 
-See `packages/react/examples/with-volume-fade.tsx`.
+See `packages/cli/examples/with-volume-fade.tsx`.
 
 ## Preview-only debug guides
+
+Imported from `@celesta/debug`.
 
 `<DebugOverlay safeArea? color? showCenter? showFrame? />` draws the safe
 area, center cross, and frame counter. `<DebugBounds width height label?

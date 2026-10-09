@@ -77,7 +77,7 @@ newer Mac does not establish compatibility
 with older macOS releases; test on the oldest version you intend to support.
 
 `--skip-build` reuses the current `target/<native Rust target>/release` binaries
-and `packages/react/dist`. Run the normal script once before using it. Downloads
+and the built `packages/*/dist` runtime. Run the normal script once before using it. Downloads
 are cached in `target/package-downloads`; each run gets a new staging directory.
 Existing DMGs are never overwritten.
 

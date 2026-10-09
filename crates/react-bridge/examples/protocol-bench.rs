@@ -35,7 +35,7 @@ fn main() {
             .parse()
             .expect("start must be a frame number of zero or more")
     });
-    let cli = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../packages/react/dist/cli.js");
+    let cli = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../packages/cli/dist/cli.js");
     let mut bridge = ReactBridge::spawn("node", &cli, &entry).expect("bridge spawns");
     let metadata = bridge.metadata().clone();
     let warmup = 30;

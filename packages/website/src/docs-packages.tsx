@@ -5,14 +5,14 @@ import { DocCode } from './DocCode';
 import { Api, Note } from './docs-shared';
 import voicevoxScene from './examples/voicevox.tsx?raw';
 
-// Chapters for the packages that ship beside @celesta/react.
+// Chapters for the packages that ship beside the core Celesta packages.
 
 /** Joins example lines, so code reads naturally without escaping newlines. */
 const lines = (...rows: string[]) => rows.join('\n');
 
 export const packageContents: Record<string, ReactNode> = {
   'voicevox': <>
-    <p>{text('docs.chapters.voicevox.intro', [<code>@celesta/voicevox</code>, <code>@celesta/react</code>])}</p>
+    <p>{text('docs.chapters.voicevox.intro', [<code>@celesta/voicevox</code>, <code>@celesta/character</code>])}</p>
     <p>{text('docs.chapters.voicevox.runtime')}</p>
     <h3>{text('docs.chapters.voicevox.example')}</h3>
     <p>{text('docs.chapters.voicevox.query')}</p>

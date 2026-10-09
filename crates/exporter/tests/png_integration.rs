@@ -141,12 +141,12 @@ fn json_report_lists_every_written_file_or_a_coded_error() {
 
 #[test]
 fn react_png_preserves_sequence_boundaries_and_prepares_once_without_audio_mix() {
-    let runtime_path = root().join("packages/react/dist/cli.js");
+    let runtime_path = root().join("packages/cli/dist/cli.js");
     if !runtime_path.exists() {
-        eprintln!("skipping React PNG test: build packages/react first");
+        eprintln!("skipping React PNG test: build packages/cli first");
         return;
     }
-    let dir = tempfile::tempdir_in(root().join("packages/react")).unwrap();
+    let dir = tempfile::tempdir_in(root().join("packages/cli")).unwrap();
     let entry = dir.path().join("film.tsx");
     std::fs::write(
         &entry,
@@ -487,11 +487,11 @@ fn rejects_conflicting_and_oversized_png_selections() {
 
 #[test]
 fn react_cli_props_win_over_the_companion_project_and_are_checked_first() {
-    if !root().join("packages/react/dist/cli.js").exists() {
-        eprintln!("skipping React props test: build packages/react first");
+    if !root().join("packages/cli/dist/cli.js").exists() {
+        eprintln!("skipping React props test: build packages/cli first");
         return;
     }
-    let dir = tempfile::tempdir_in(root().join("packages/react")).unwrap();
+    let dir = tempfile::tempdir_in(root().join("packages/cli")).unwrap();
     let entry = dir.path().join("film.tsx");
     std::fs::write(
         &entry,
