@@ -75,6 +75,11 @@ export type {
 export { useCurrentFrame, useCurrentTime, useIsPreview, useVideoConfig } from './hooks';
 export type { VideoConfig } from './hooks';
 
+export { Motion, Theme, Title } from './authoring';
+export type {
+  MotionEntrance, MotionOptions, MotionPreset, MotionProps, ThemeProps, TitleProps, TypographyProps,
+} from './authoring';
+
 export { frameToTimecode, timecodeToFrame } from './time';
 
 export { blinkPhase } from './blink';

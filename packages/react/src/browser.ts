@@ -10,6 +10,10 @@ export {
   FreezeFrame, Group, Image, Rect, Sequence, Text, Video,
 } from './components';
 export { useCurrentFrame, useCurrentTime, useIsPreview, useVideoConfig } from './hooks';
+export { Motion, Theme, Title } from './authoring';
+export type {
+  MotionEntrance, MotionOptions, MotionPreset, MotionProps, ThemeProps, TitleProps, TypographyProps,
+} from './authoring';
 export { Easings, interpolate, interpolateColor, progress, spring } from './animation';
 export { frameToTimecode, timecodeToFrame } from './time';
 export { beatAt, cueAt, useBeat, useCue } from './timing';

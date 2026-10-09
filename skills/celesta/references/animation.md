@@ -24,6 +24,7 @@ For randomness and noise, use [`@celesta/math`](math.md).
 - [TransitionSeries](#transitionseries)
 - [Stagger](#stagger)
 - [Transition](#transition)
+- [Motion](#motion)
 - [useBeat / beatAt](#usebeat--beatat)
 - [useCue / cueAt](#usecue--cueat)
 - [Camera](#camera)
@@ -41,6 +42,7 @@ For randomness and noise, use [`@celesta/math`](math.md).
 | A past frame redrawn in place (rewind, flashback, thumbnails) | `FreezeFrame` |
 | A voiced script back to back | `planDialogue` + `DialogueSeries` ([dialogue.md](dialogue.md#timing-a-script-from-its-voices)) |
 | Items entering one after another | `Stagger` (or `progress(frame, i * each, …)`) |
+| A preset fade, slide, or scale entrance | `Motion enter` or `Title enter` |
 | Fade/slide/scale of one element at a scene's start or end | `Transition` |
 | Motion on the music's beat | `useBeat` |
 | Something that changes at given frames (captions, camera stops, chart callouts) | `useCue` |
@@ -315,6 +317,37 @@ sequence (or composition).
 | `easing` | `(t) => number`, for example `Easings.easeOutCubic`. |
 
 Nest transitions to combine an entrance and an exit.
+
+## Motion
+
+`<Motion enter>` is a preset entrance using `Transition`. It accepts Group
+props (`x`, `y`, `opacity`, `scale`, `clip`, effects, …) and arbitrary Celesta
+children. `Title enter` uses the same presets without an explicit wrapper.
+
+```tsx
+<Motion x={80} y={120} enter="slide-up"><Rect width={200} height={80} fill="#ffffff" /></Motion>
+<Title center enter={{ type: 'fade', durationInFrames: 30, easing: Easings.easeInOutSine }}>Hello</Title>
+```
+
+| `enter` | Effect |
+| --- | --- |
+| `'fade'` | Fade in. |
+| `'slide-up'` / `'slide-down'` | Fade in while moving from below / above. |
+| `'slide-left'` / `'slide-right'` | Fade in while moving from the right / left. |
+| `'scale-in'` | Fade in while scaling from 0.8 to 1. |
+
+An object takes `type` plus optional `durationInFrames`, `distance` (slide px,
+default 64), `scaleFrom` (default 0.8), and `easing` (default easeOutCubic).
+Duration defaults to half a second at the current fps, rounded to at least
+one frame. Duration must be a positive integer; distance and scaleFrom must
+be finite and non-negative. Unknown presets throw.
+
+Entrances follow the enclosing Sequence's local clock and settle on the last
+frame of their span; short sequences clamp the span to their duration. A
+one-frame span is fully visible. Scrubbing backwards gives the same result.
+Position belongs to the Motion group; scale pivots around its local origin.
+Existing opacity and scale multiply the animation. Motion affects pictures,
+not audio volume. For exits or custom effect combinations, use `Transition`.
 
 ## useBeat / beatAt
 
