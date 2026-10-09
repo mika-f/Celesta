@@ -64,6 +64,19 @@ composition imports each API from the package that provides it.
   (`runtimeModules` in `project-files.ts`). Vite and the worker test alias
   every `@celesta/*` import to its source so one core instance is bundled.
 
+## Migrating compositions
+
+`skills/celesta/scripts/migrate-packages.mjs` (Node only, no dependencies, so
+it ships with the skill) rewrites `@celesta/react` named imports and
+`export … from` re-exports by its `movedExports` table, joins an existing
+import of the same kind from the destination package, adds the new packages
+beside `@celesta/react` in a `package.json` that lists it, and reports
+`import * as` namespaces that use moved names. `--dry-run` and `--check`
+report without writing. `packages/cli/test/migrate-packages.test.mjs` checks
+the table against every package's declarations, so a name added to a split
+package without a table entry fails the test. Run on the pre-split examples,
+it reproduces this branch's migration of them.
+
 ## Build and tests
 
 - `pnpm run build:runtime` (root) builds `@celesta/cli` and its dependencies;

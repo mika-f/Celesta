@@ -180,7 +180,10 @@ layers sit; it does not prove the rendered pixels.
 | `@celesta/voicevox` | `lipSyncFromVoicevox` |
 
 An import from the wrong package fails with `@celesta/react does not export
-Circle; import it from @celesta/shapes`; move it to the named package.
+Circle; import it from @celesta/shapes`; move it to the named package. Code
+written before the split imports everything from `@celesta/react`: run
+`node scripts/migrate-packages.mjs <project folder>` (this skill's script) to
+move every import at once, then fix any `import * as` namespace it reports.
 
 ## References
 

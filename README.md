@@ -192,6 +192,19 @@ manner of Remotion; import each piece from the package that provides it:
 [`@celesta/cli`](packages/cli) is the Node.js runtime the editor and exporter
 evaluate compositions in; it ships every package above.
 
+Compositions written before this split import everything from
+`@celesta/react`. Move those imports to the packages above automatically:
+
+```sh
+node skills/celesta/scripts/migrate-packages.mjs path/to/project --dry-run
+node skills/celesta/scripts/migrate-packages.mjs path/to/project
+```
+
+It rewrites named imports and `export … from` re-exports, adds the new
+packages beside `@celesta/react` in a `package.json` that lists it, and reports
+`import * as` namespaces that use moved names, which it leaves for you.
+`--check` exits 1 when anything is left to migrate.
+
 `@celesta/code` supports TSX, TypeScript, JSON, Bash, line highlights, and
 measured caret positions. For typing animations, combine it with
 `useTypewriter()` from `@celesta/text`. Its highlighting dependencies stay out
