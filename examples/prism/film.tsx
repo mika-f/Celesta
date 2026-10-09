@@ -1,4 +1,5 @@
-import { Assets, Audio, Character, Composition, Font, Rect, Sequence } from '@celesta/react';
+import { Assets, Audio, Composition, Font, Rect, Sequence } from '@celesta/react';
+import { Character } from '@celesta/character';
 import { akane, MOUTH, PSD, poseLayers } from './character';
 import { END, FPS, H, INK, PAPER, W } from './constants';
 import { Characters } from './scenes/Characters';

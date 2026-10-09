@@ -2,8 +2,10 @@
 
 Drawing text in a React composition: the `<Text>` layer, `TextStyle`,
 fonts and fallback, line breaking (including Japanese phrases), text
-animation helpers, measuring text, and fitting text into a box. All imported
-from `@celesta/react`. Syntax-highlighted code is in [code.md](code.md).
+animation helpers, measuring text, and fitting text into a box. `Text` and
+measuring come from `@celesta/react`; `TextReveal`, `useTypewriter`,
+`useCountUp`, `TextBox`, `useFitText`, and `fitText` from `@celesta/text`.
+Syntax-highlighted code is in [code.md](code.md).
 
 ## Contents
 
@@ -278,7 +280,7 @@ const m = useTextMetrics(label, style);
 
 A centered row: measure each item, add padding and a fixed gap, and offset
 the row by `(width - total) / 2`. The full example is
-`packages/react/examples/with-text-metrics.tsx` in the Celesta repository.
+`packages/cli/examples/with-text-metrics.tsx` in the Celesta repository.
 
 ### `measureText(text, style, { maxWidth?, fonts? })`
 
@@ -351,7 +353,7 @@ function Title({ text }: { text: string }) {
 
 `fitText(text, options)` does the same in `prepare()` and resolves to the
 same result; pass font files in `options.fonts`, as for `measureText()`.
-The full example is `packages/react/examples/with-text-box.tsx`.
+The full example is `packages/cli/examples/with-text-box.tsx`.
 
 ## Verifying text
 

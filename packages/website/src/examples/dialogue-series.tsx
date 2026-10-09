@@ -1,8 +1,8 @@
 import * as React from 'react';
-import {
-  Assets, Character, CharacterView, Composition, DialogueSeries, Rect, planDialogue,
-} from '@celesta/react';
-import type { AssetReference, CharacterViewReference, DialoguePlan } from '@celesta/react';
+import { Assets, Composition, Rect } from '@celesta/react';
+import { Character, CharacterView, DialogueSeries, planDialogue } from '@celesta/character';
+import type { AssetReference } from '@celesta/react';
+import type { CharacterViewReference, DialoguePlan } from '@celesta/character';
 
 const mira = React.createRef<AssetReference>();
 const miraView = React.createRef<CharacterViewReference>();

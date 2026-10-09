@@ -1,6 +1,6 @@
 # Dialogue demo assets
 
-Assets for `packages/react/examples/with-dialogue-series.tsx`: two original
+Assets for `packages/cli/examples/with-dialogue-series.tsx`: two original
 characters, しずく (Shizuku, a water drop) and こむぎ (Komugi, a bread bun),
 talking through `script.json`.
 

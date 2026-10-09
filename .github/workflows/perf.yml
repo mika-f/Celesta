@@ -13,9 +13,16 @@ on:
   pull_request:
     paths:
       - "crates/**"
+      - "packages/character/**"
+      - "packages/cli/**"
       - "packages/code/**"
+      - "packages/layout/**"
       - "packages/math/**"
+      - "packages/media-utils/**"
       - "packages/react/**"
+      - "packages/shapes/**"
+      - "packages/text/**"
+      - "packages/transitions/**"
       - "examples/spectra/**"
       - "examples/assets/**"
       - "examples/versus/bench/**"

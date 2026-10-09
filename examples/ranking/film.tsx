@@ -9,10 +9,10 @@ import {
   defineProjectProperties,
   getProjectProperty,
   progress,
-  useCountUp,
   useCurrentFrame,
-  useProjectProperty,
 } from '@celesta/react';
+import { useCountUp } from '@celesta/text';
+import { useProjectProperty } from '@celesta/project';
 
 // A ranking card template. The title, colors and data file come from
 // project properties, so one source renders every variant:

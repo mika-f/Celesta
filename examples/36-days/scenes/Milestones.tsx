@@ -1,4 +1,6 @@
-import { Camera, Easings, Group, Rect, TextReveal, interpolate, progress, useCue, useCurrentFrame } from '@celesta/react';
+import { Easings, Group, Rect, interpolate, progress, useCue, useCurrentFrame } from '@celesta/react';
+import { Camera } from '@celesta/layout';
+import { TextReveal } from '@celesta/text';
 import { Exit } from '../components/Exit';
 import { Header } from '../components/Header';
 import { Label, textStyle } from '../components/Label';

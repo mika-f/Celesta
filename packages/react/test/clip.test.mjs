@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'vitest';
 
-const cli = fileURLToPath(new URL('../bin/celesta-react-render.js', import.meta.url));
+const cli = fileURLToPath(new URL('../../cli/bin/celesta-react-render.js', import.meta.url));
 
 /** Renders frame 0 of a composition whose body is `body`, as the CLI's output lines. */
 function render(body) {

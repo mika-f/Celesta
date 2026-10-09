@@ -3,6 +3,7 @@
   "private": true,
   "dependencies": {
     "@celesta/react": "workspace:*",
+    "@celesta/shapes": "workspace:*",
     "react": "^18.3.1",
     "@celesta/code": "workspace:*"
   }

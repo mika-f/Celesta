@@ -24,7 +24,7 @@ fn main() {
     let sequential = env::var("SEQUENTIAL").is_ok();
 
     let cli_script =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../packages/react/dist/cli.js");
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../packages/cli/dist/cli.js");
     let entry = entry.canonicalize().expect("entry exists");
     let asset_root = entry.parent().expect("entry has a parent").to_owned();
 

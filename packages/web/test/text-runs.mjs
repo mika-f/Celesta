@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
-const require = createRequire(new URL('../../react/package.json', import.meta.url));
+const require = createRequire(new URL('../../cli/package.json', import.meta.url));
 const { build } = require('esbuild');
 const directory = mkdtempSync(join(tmpdir(), 'celesta-web-text-'));
 // A font every machine has: the repository's IBM Plex Mono, loaded as a web font.

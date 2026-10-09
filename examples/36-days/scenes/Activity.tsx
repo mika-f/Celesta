@@ -1,5 +1,7 @@
-import type { PolylinePoint } from '@celesta/react';
-import { Easings, Group, Line, Polyline, Rect, pointOnPolyline, progress, useCountUp, useCue, useCurrentFrame } from '@celesta/react';
+import type { PolylinePoint } from '@celesta/shapes';
+import { Easings, Group, Rect, progress, useCue, useCurrentFrame } from '@celesta/react';
+import { Line, Polyline, pointOnPolyline } from '@celesta/shapes';
+import { useCountUp } from '@celesta/text';
 import { Exit } from '../components/Exit';
 import { Header } from '../components/Header';
 import { Label } from '../components/Label';

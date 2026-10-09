@@ -1,11 +1,11 @@
 # @celesta/voicevox
 
 VOICEVOX AudioQuery lip sync for Celesta React compositions, including engines
-that use the same query format. Shared dialogue components, WAV lip sync, and
-`LipSyncTrack` stay in `@celesta/react`.
+that use the same query format. Dialogue components, WAV lip sync, and
+`LipSyncTrack` are in `@celesta/character`.
 
 ```tsx
-import { Dialogue } from '@celesta/react';
+import { Dialogue } from '@celesta/character';
 import { lipSyncFromVoicevox } from '@celesta/voicevox';
 import helloQuery from './voices/hello.json';
 
@@ -25,7 +25,7 @@ Exports: `lipSyncFromVoicevox`, `voicevoxVowelShape`, and the types
 `VoicevoxAudioQuery`, `VoicevoxAccentPhrase`, `VoicevoxMora`,
 `VoicevoxLipSyncOptions`.
 
-Building `@celesta/react` also builds this package and stages its TypeScript
+Building `@celesta/cli` also builds this package and stages its TypeScript
 support. Celesta's desktop runtime ships it separately and the CLI resolves it
 when a composition imports it. **File > Set Up TypeScript** includes its types
 and import mapping, without requiring an install in the composition's project.
@@ -34,9 +34,8 @@ The package is private and has not been published to npm.
 ```sh
 pnpm install
 pnpm --dir packages/react run codegen
-pnpm --dir packages/react run build
+pnpm --filter "@celesta/cli..." run build
 pnpm --dir packages/voicevox run test
 ```
 
-Replace VOICEVOX imports from `@celesta/react` with `@celesta/voicevox`.
-`@celesta/react` does not depend on or re-export the adapter.
+`@celesta/character` does not depend on or re-export the adapter.

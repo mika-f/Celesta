@@ -1,4 +1,5 @@
-import { Easings, Rect, progress, useCountUp, useCurrentFrame, useTypewriter } from '@celesta/react';
+import { Easings, Rect, progress, useCurrentFrame } from '@celesta/react';
+import { useCountUp, useTypewriter } from '@celesta/text';
 import { Label } from '../components/Label';
 import { ACID, BONE, GREY, H, INK, W } from '../constants';
 import { mix } from '../math';

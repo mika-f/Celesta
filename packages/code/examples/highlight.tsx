@@ -1,4 +1,5 @@
-import { Assets, Composition, Font, Group, Rect, useTypewriter } from '@celesta/react';
+import { Assets, Composition, Font, Group, Rect } from '@celesta/react';
+import { useTypewriter } from '@celesta/text';
 import { Code, useCodePoint } from '@celesta/code';
 
 const source = `import { Composition, Text } from '@celesta/react';

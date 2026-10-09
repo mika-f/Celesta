@@ -1,7 +1,8 @@
 // Chapter 3: kinetic words that change size every frame, a Japanese
 // paragraph wrapped by phrase and typed on, a counter with a stroke and a
 // shadow, and a scrolling ticker clipped to a band.
-import { Easings, Group, Rect, Text, TextBox, interpolate, progress, useCountUp, useCurrentFrame, useTextMetrics, useTypewriter } from '@celesta/react';
+import { Easings, Group, Rect, Text, interpolate, progress, useCurrentFrame, useTextMetrics } from '@celesta/react';
+import { TextBox, useCountUp, useTypewriter } from '@celesta/text';
 
 import { DIM, DISPLAY, FPS, INK, MONO, PALETTE, style } from '../shared';
 

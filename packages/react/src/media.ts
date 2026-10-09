@@ -35,11 +35,13 @@ export function setMediaProbe(next: (path: string) => Promise<ProbedMediaInfo>):
 }
 
 /**
- * Probes and caches media metadata during an entry's async `prepare()`.
- * Relative paths resolve from the entry file, matching `<Video>` and `<Audio>`;
- * an `http`/`https` URL is downloaded into Celesta's cache first.
+ * `@celesta/media-utils`' `preloadMedia()`: probes and caches media metadata
+ * during an entry's async `prepare()`. The cache lives here, beside the probe
+ * the CLI installs. Relative paths resolve from the entry file, matching
+ * `<Video>` and `<Audio>`; an `http`/`https` URL is downloaded into Celesta's
+ * cache first.
  */
-export async function preloadMedia(src: string): Promise<MediaInfo> {
+export async function probeMedia(src: string): Promise<MediaInfo> {
   if (!probe) {
     throw new Error('preloadMedia() requires a Celesta editor or exporter runtime');
   }
@@ -50,12 +52,4 @@ export async function preloadMedia(src: string): Promise<MediaInfo> {
     cached.set(path, pending);
   }
   return { src, ...(await pending) };
-}
-
-/** Converts a probed duration to a composition frame count. */
-export function mediaDurationInFrames(media: MediaInfo, fps: number): number | undefined {
-  if (!Number.isFinite(fps) || fps <= 0) {
-    throw new Error('mediaDurationInFrames() requires a positive finite fps');
-  }
-  return media.durationSeconds === undefined ? undefined : Math.ceil(media.durationSeconds * fps);
 }

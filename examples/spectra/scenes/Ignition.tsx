@@ -1,6 +1,8 @@
 // Chapter 1: blurred, screen-blended light, a starfield, rings, and a title
 // that rises in behind a mask and glows.
-import { Circle, Easings, Ellipse, Group, Text, TextReveal, interpolate, spring, useCurrentFrame } from '@celesta/react';
+import { Easings, Group, Text, interpolate, spring, useCurrentFrame } from '@celesta/react';
+import { Circle, Ellipse } from '@celesta/shapes';
+import { TextReveal } from '@celesta/text';
 
 import { DIM, DISPLAY, FPS, H, INK, MONO, PALETTE, W, rand, style } from '../shared';
 

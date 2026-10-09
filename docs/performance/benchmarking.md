@@ -38,9 +38,9 @@ compare` builds it at both revisions, but before running `celesta-bench`
 directly, build it yourself:
 
 ```sh
-pnpm --dir packages/react install --frozen-lockfile
+pnpm install --frozen-lockfile
 pnpm --dir packages/react run codegen --locked
-pnpm --dir packages/react run build
+pnpm run build:runtime
 ```
 
 ```sh

@@ -5,6 +5,7 @@
     "types": ["node"],
     "module": "nodenext",
     "moduleResolution": "nodenext",
+    "composite": true,
     "declaration": true,
     "outDir": "dist",
     "tsBuildInfoFile": "dist/tsconfig.tsbuildinfo",
@@ -15,6 +16,5 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true
   },
-  "include": ["src"],
-  "references": [{ "path": "../math" }]
+  "include": ["src"]
 }

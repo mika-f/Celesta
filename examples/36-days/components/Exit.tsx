@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
-import { Easings, Transition } from '@celesta/react';
+import { Easings } from '@celesta/react';
+import { Transition } from '@celesta/transitions';
 
 export function Exit({ children }: { children: ReactNode }) {
   return (

@@ -10,7 +10,7 @@ for (const packaged of [false, true]) {
   test(`${packaged ? 'packaged' : 'source'} CLI resolves VOICEVOX outside the workspace and shares the lip-sync clock`, () => {
     const root = mkdtempSync(join(tmpdir(), 'celesta-voicevox-'));
     try {
-      let cli = fileURLToPath(new URL('../../react/dist/cli.js', import.meta.url));
+      let cli = fileURLToPath(new URL('../../cli/dist/cli.js', import.meta.url));
       if (packaged) {
         const runtime = join(root, 'runtime');
         const stage = fileURLToPath(new URL('../../../scripts/stage-react-runtime.mjs', import.meta.url));
@@ -34,7 +34,8 @@ for (const packaged of [false, true]) {
       }
       const entry = join(root, 'film.tsx');
       writeFileSync(entry, `
-        import { Composition, Rect, useLipSync, type LipSyncTrack } from '@celesta/react';
+        import { Composition, Rect } from '@celesta/react';
+        import { useLipSync, type LipSyncTrack } from '@celesta/character';
         import { lipSyncFromVoicevox, type VoicevoxAudioQuery } from '@celesta/voicevox';
         const query: VoicevoxAudioQuery = {
           accent_phrases: [{ moras: [
@@ -52,7 +53,7 @@ for (const packaged of [false, true]) {
         }
       `);
       if (packaged) {
-        const tsc = fileURLToPath(new URL('../../react/node_modules/typescript/bin/tsc', import.meta.url));
+        const tsc = fileURLToPath(new URL('../../cli/node_modules/typescript/bin/tsc', import.meta.url));
         const checked = spawnSync(process.execPath, [tsc, '-p', join(root, 'tsconfig.json')], {
           encoding: 'utf8', timeout: 30000,
         });

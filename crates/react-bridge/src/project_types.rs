@@ -1,8 +1,8 @@
 //! Installs and refreshes a project's `.celesta/` TypeScript support
 //! directory from the template staged beside the runtime's `cli.js`
-//! (`packages/react/scripts/stage-project-types.mjs`).
+//! (`packages/cli/scripts/stage-project-types.mjs`).
 //!
-//! Entries always run against the bundled `react` and `@celesta/react`, so
+//! Entries always run against the bundled `react` and `@celesta/*`, so
 //! the project only needs matching declarations for editors and `tsc`.
 //! Copying them from the running Celesta keeps them in step with the runtime
 //! without a package registry or an install step.

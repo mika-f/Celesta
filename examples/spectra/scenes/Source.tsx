@@ -1,7 +1,9 @@
 // Chapter 4: a camera pushes in on an editor card typing highlighted code,
 // beside a contact sheet of portraits drawn with cover and contain.
 import { Code, codeThemes } from '@celesta/code';
-import { Camera, Easings, Group, Image, Rect, Text, interpolate, useCurrentFrame, useTypewriter } from '@celesta/react';
+import { Easings, Group, Image, Rect, Text, interpolate, useCurrentFrame } from '@celesta/react';
+import { Camera } from '@celesta/layout';
+import { useTypewriter } from '@celesta/text';
 
 import { DIM, FPS, INK, MONO, PALETTE, style } from '../shared';
 

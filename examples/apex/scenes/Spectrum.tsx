@@ -1,5 +1,6 @@
 import { noise } from '@celesta/math';
-import { Group, Rect, progress, useBeat, useCountUp, useCurrentFrame } from '@celesta/react';
+import { Group, Rect, progress, useBeat, useCurrentFrame } from '@celesta/react';
+import { useCountUp } from '@celesta/text';
 import { Label } from '../components/Label';
 import { ACID, BONE, CYAN, GREY, H, INK, MAG, W } from '../constants';
 import { mix } from '../math';

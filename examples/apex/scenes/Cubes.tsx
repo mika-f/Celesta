@@ -1,4 +1,6 @@
-import { Camera, Group, Line, Rect, progress, useBeat, useCurrentFrame } from '@celesta/react';
+import { Group, Rect, progress, useBeat, useCurrentFrame } from '@celesta/react';
+import { Line } from '@celesta/shapes';
+import { Camera } from '@celesta/layout';
 import { Disc } from '../components/Disc';
 import { Label } from '../components/Label';
 import { ACID, BONE, CYAN, GREY, H, INK, MAG, W } from '../constants';

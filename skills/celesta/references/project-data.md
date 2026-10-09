@@ -4,7 +4,10 @@ React compositions can declare project properties (template inputs such as a
 title, colors, or a data file) and receive their values from the command
 line, read values from a `.celesta.json` project, draw the project's
 timeline, and render registered components that JSON timeline items name.
-All imported from `@celesta/react`.
+`defineProjectProperties`, `getProjectProperty`, and `registerComponent` are
+imported from `@celesta/react`; `useProjectProperty`, `ProjectProvider`,
+`loadProject`, `loadProjectFromString`, `useProject`, `useProjectTrack`,
+`<ProjectTimeline />`, and `<ProjectTrack />` from `@celesta/project`.
 
 ## Contents
 
@@ -113,7 +116,7 @@ exports from the editor use the same values.
 ## Read values from a project
 
 ```tsx
-import type { Project } from '@celesta/react';
+import type { Project } from '@celesta/project';
 import projectFile from './project.celesta.json';
 const project = projectFile as Project;
 

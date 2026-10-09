@@ -61,7 +61,7 @@ yourself with a `Rect` behind `Code`; themes do not draw one.
 `visibleCharacters` uses the same counting as `useTypewriter().length`:
 
 ```tsx
-import { useTypewriter } from '@celesta/react';
+import { useTypewriter } from '@celesta/text';
 
 function Typing() {
   const { length } = useTypewriter(source, { from: 15, framesPerChar: 0.5 });

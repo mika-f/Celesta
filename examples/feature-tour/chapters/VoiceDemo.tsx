@@ -1,5 +1,6 @@
-import type { LipSyncTrack } from '@celesta/react';
-import { CharacterView, Dialogue, Easings, Group, Rect, Sequence, spring, useCurrentFrame, useLipSync, useVideoConfig } from '@celesta/react';
+import type { LipSyncTrack } from '@celesta/character';
+import { Easings, Group, Rect, Sequence, spring, useCurrentFrame, useVideoConfig } from '@celesta/react';
+import { CharacterView, Dialogue, useLipSync } from '@celesta/character';
 import { Label } from '../components/Label';
 import { C, DW, DX } from '../constants';
 import { clamp, progress } from '../helpers';

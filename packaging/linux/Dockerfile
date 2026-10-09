@@ -42,9 +42,9 @@ COPY . .
 # Use the pnpm version pinned by package.json's `packageManager`.
 RUN npm install -g "$(node -p "require('./package.json').packageManager")"
 
-RUN pnpm --dir packages/react install --frozen-lockfile \
+RUN pnpm install --frozen-lockfile \
   && pnpm --dir packages/react run codegen --locked \
-  && pnpm --dir packages/react run build
+  && pnpm run build:runtime
 RUN cargo build -p celesta-exporter --release --locked
 
 # Lay the exporter out like the Windows package: a `runtime` directory beside

@@ -2,13 +2,35 @@ import * as esbuild from 'esbuild-wasm';
 import wasmURL from 'esbuild-wasm/esbuild.wasm?url';
 import * as math from '../../math/src/index';
 import * as celesta from '../../react/src/browser';
+import { mount, setTextMeasurer } from '../../react/src/internal';
+import type { EntryComponent, MountedComposition } from '../../react/src/internal';
+import * as character from '../../character/src/index';
 import * as codeComponents from '../../code/src/index';
-import { setTextMeasurer } from '../../react/src/text-measure';
+import * as debug from '../../debug/src/index';
+import * as layout from '../../layout/src/index';
+import * as mediaUtils from '../../media-utils/src/index';
+import * as shapes from '../../shapes/src/index';
+import * as text from '../../text/src/index';
+import * as transitions from '../../transitions/src/index';
 import type { CompileOptions } from './engine';
-import { projectFiles } from './project-files';
+import { projectFiles, runtimeModules } from './project-files';
 import { loadFonts, requireLoadedFonts, resetFonts } from './fonts';
 import { textMeasurer } from './text-layout';
-import type { MountedComposition } from '../../react/src/render';
+
+// What compositions may import; `project-files.ts` keeps them external.
+const modules: Record<(typeof runtimeModules)[number], unknown> = {
+  react: celesta.React,
+  '@celesta/react': celesta,
+  '@celesta/math': math,
+  '@celesta/shapes': shapes,
+  '@celesta/layout': layout,
+  '@celesta/transitions': transitions,
+  '@celesta/text': text,
+  '@celesta/debug': debug,
+  '@celesta/media-utils': mediaUtils,
+  '@celesta/character': character,
+  '@celesta/code': codeComponents,
+};
 
 let initialized: Promise<void> | undefined;
 let mounted: MountedComposition | null = null;
@@ -45,11 +67,8 @@ async function handle(data: Request) {
         : (await esbuild.transform(source, transformOptions)).code;
       const module: { exports: Record<string, unknown> } = { exports: {} };
       const require = (name: string): unknown => {
-        if (name === '@celesta/react') return celesta;
-        if (name === '@celesta/math') return math;
-        if (name === '@celesta/code') return codeComponents;
-        if (name === 'react') return celesta.React;
-        throw new Error(`Import ${JSON.stringify(name)} is unavailable in the web editor. Use @celesta/react, @celesta/math, @celesta/code, and react.`);
+        if (Object.hasOwn(modules, name)) return modules[name as keyof typeof modules];
+        throw new Error(`Import ${JSON.stringify(name)} is unavailable in the web editor. Use ${runtimeModules.join(', ')}.`);
       };
       // Visitor-authored code runs in a dedicated worker, away from the page DOM.
       new Function('module', 'exports', 'require', 'React', code)(module, module.exports, require, celesta.React);
@@ -63,9 +82,9 @@ async function handle(data: Request) {
       };
       const measure = textMeasurer();
       setTextMeasurer(async request => { await loadFonts(request.fonts, resolveFont); return measure(request); }, request => { requireLoadedFonts(request.fonts, resolveFont); return measure(request); });
-      const entryComponent = module.exports.default as celesta.EntryComponent;
+      const entryComponent = module.exports.default as EntryComponent;
       if (typeof module.exports.prepare === 'function') await module.exports.prepare();
-      mounted = celesta.mount(entryComponent);
+      mounted = mount(entryComponent);
       await loadFonts([...mounted.fonts], resolveFont);
       silent = options.silent ?? false;
       self.postMessage({ id, value: mounted.config });

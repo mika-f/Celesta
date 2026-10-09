@@ -1,4 +1,5 @@
-import { Group, Line, Rect, frameToTimecode, useCurrentFrame } from '@celesta/react';
+import { Group, Rect, frameToTimecode, useCurrentFrame } from '@celesta/react';
+import { Line } from '@celesta/shapes';
 import { Label } from './Label';
 import { BONE, FPS, H, W } from '../constants';
 

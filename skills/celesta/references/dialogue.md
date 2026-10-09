@@ -1,6 +1,8 @@
 # Character dialogue, portraits, and lip sync
 
-Everything here is imported from `@celesta/react`. Voice, portrait, and
+The components and helpers here are imported from `@celesta/character`; the
+core layers (`Composition`, `Assets`, `Sequence`, …) from `@celesta/react`.
+Voice, portrait, and
 PSD paths are relative to the entry file (JSON: asset ids declared in
 `assets`).
 
@@ -29,8 +31,10 @@ Dialogue scenes combine three pieces:
 
 ```tsx
 import * as React from 'react';
-import { Assets, Character, CharacterView, Composition, Dialogue, Rect, Sequence } from '@celesta/react';
-import type { AssetReference, CharacterViewReference } from '@celesta/react';
+import { Assets, Composition, Rect, Sequence } from '@celesta/react';
+import { Character, CharacterView, Dialogue } from '@celesta/character';
+import type { AssetReference } from '@celesta/react';
+import type { CharacterViewReference } from '@celesta/character';
 
 const mira = React.createRef<AssetReference>();          // the character
 const miraView = React.createRef<CharacterViewReference>(); // where it is drawn
@@ -114,8 +118,10 @@ pairs, and the plan tells the rest of the video when each line starts.
 
 ```tsx
 import * as React from 'react';
-import { CharacterView, Composition, DialogueSeries, Rect, Sequence, planDialogue } from '@celesta/react';
-import type { AssetReference, CharacterViewReference, DialoguePlan } from '@celesta/react';
+import { Composition, Rect, Sequence } from '@celesta/react';
+import { CharacterView, DialogueSeries, planDialogue } from '@celesta/character';
+import type { AssetReference } from '@celesta/react';
+import type { CharacterViewReference, DialoguePlan } from '@celesta/character';
 
 const zunda = React.createRef<AssetReference>();
 const metan = React.createRef<AssetReference>();
@@ -209,7 +215,8 @@ around the origin and set `x`/`y` on the subtitle:
 
 ```tsx
 import { Group, Rect, Text, interpolate, useTextMetrics } from '@celesta/react';
-import type { CharacterSubtitle, SubtitleRenderProps, TextStyle } from '@celesta/react';
+import type { TextStyle } from '@celesta/react';
+import type { CharacterSubtitle, SubtitleRenderProps } from '@celesta/character';
 
 const PLATE: TextStyle = { fontSize: 24, fontWeight: 800, fill: { type: 'solid', color: '#ffffff' } };
 
@@ -349,7 +356,7 @@ export async function prepare() {
 
 VOICEVOX-specific helpers and types live in `@celesta/voicevox`. The desktop
 runtime includes the package; **File > Set Up TypeScript** installs its
-declarations. Shared WAV lip sync and dialogue components stay in `@celesta/react`.
+declarations. Shared WAV lip sync and dialogue components stay in `@celesta/character`.
 
 When the voice comes from VOICEVOX Engine (or a compatible engine such as
 AivisSpeech), build the track from the `audio_query` JSON instead:

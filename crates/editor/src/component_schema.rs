@@ -20,7 +20,7 @@ pub(crate) struct ComponentSchemaResult {
 }
 
 /// Queries a `.tsx` entry's registered `registerComponent()` schemas by
-/// spawning the same `@celesta/react` Node.js runtime `celesta-exporter --react`
+/// spawning the same `@celesta/cli` Node.js runtime `celesta-exporter --react`
 /// uses, reading them off `ReactBridge::metadata` (populated during the
 /// startup handshake, before any frame is requested), then dropping the
 /// process — the editor's own preview never renders React content, so

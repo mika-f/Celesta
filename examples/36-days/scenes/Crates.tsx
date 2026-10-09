@@ -1,4 +1,5 @@
-import { Easings, Group, Rect, Stagger, progress, useCountUp, useCurrentFrame } from '@celesta/react';
+import { Easings, Group, Rect, Stagger, progress, useCurrentFrame } from '@celesta/react';
+import { useCountUp } from '@celesta/text';
 import { Exit } from '../components/Exit';
 import { Header } from '../components/Header';
 import { Label } from '../components/Label';

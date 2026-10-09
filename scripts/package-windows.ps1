@@ -63,9 +63,9 @@ try {
         throw 'Use the x86_64-pc-windows-msvc Rust toolchain.'
     }
     if (-not $SkipBuild) {
-        Invoke-Checked pnpm @('--dir', 'packages/react', 'install', '--frozen-lockfile')
+        Invoke-Checked pnpm @('install', '--frozen-lockfile')
         Invoke-Checked pnpm @('--dir', 'packages/react', 'run', 'codegen')
-        Invoke-Checked pnpm @('--dir', 'packages/react', 'run', 'build')
+        Invoke-Checked pnpm @('run', 'build:runtime')
         Invoke-Checked cargo @('build', '--release', '--locked', '-p', 'celesta-editor', '-p', 'celesta-exporter')
     }
     $binaries = Join-Path $root 'target/release'
@@ -100,7 +100,7 @@ try {
 
     Copy-Item -LiteralPath "$root/README.md" -Destination $package
     New-Item -ItemType Directory "$package/examples" | Out-Null
-    Copy-Item -LiteralPath "$root/examples/minimal.celesta.json", "$root/examples/editor-demo.celesta.json", "$root/packages/react/examples/title.tsx" -Destination "$package/examples"
+    Copy-Item -LiteralPath "$root/examples/minimal.celesta.json", "$root/examples/editor-demo.celesta.json", "$root/packages/cli/examples/title.tsx" -Destination "$package/examples"
     Copy-Item -LiteralPath "$root/packaging/windows/README.txt" -Destination "$package/START-HERE.txt"
 
     $licenses = Join-Path $package 'licenses'

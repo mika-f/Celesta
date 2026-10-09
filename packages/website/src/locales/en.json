@@ -252,7 +252,7 @@
         "add-npm-dependencies": "Add npm dependencies",
         "install-external-packages-in-the-project-that": "Install external packages in the project that imports them. For a project outside the Celesta repository, run this in its folder:",
         "add-a-project-dependency": "Add a project dependency",
-        "preview-and-export-resolve-external-imports-from": "Preview and export resolve external imports from the importing file’s project <slot0/>. Celesta supplies <slot1/>, <slot2/>, <slot3/>, <slot4/>, and React from its runtime; you do not need to install them in an external project.",
+        "preview-and-export-resolve-external-imports-from": "Preview and export resolve external imports from the importing file’s project <slot0/>. Celesta supplies every <slot1/> package and React from its runtime; you do not need to install them in an external project.",
         "node-asset-preparation-scripts-use-the-same": "Node asset preparation scripts use the same dependencies. Save this as <slot0/> beside <slot1/>, with <slot2/> in the same folder:",
         "prepare-assets": "Prepare assets",
         "import-the-generated-json-in-your-composition": "Import the generated JSON in your composition as usual. Direct Node scripts use your installed Node.js; the app’s bundled Node.js evaluates compositions. For <slot0/> scripts, use a Node.js version with TypeScript stripping support or a TypeScript runner installed in the project.",
@@ -312,7 +312,7 @@
         "your-own-components-are-ordinary-react-function": "Your own components are ordinary React function components. Use props, <slot0/>, and conditionals as you would anywhere else.",
         "an-optional-named-export-runs-once-before": "An optional named export, <slot0/>, runs once before the first frame. See <slot1>Data, properties & components</slot1>.",
         "set-up-typescript-in-your-editor": "Set up TypeScript in your editor",
-        "with-a-react-composition-open-choose-file": "With a React composition open, choose <slot0>File → Set Up TypeScript</slot0>. Celesta copies matching declarations for <slot1/>, <slot2/>, <slot3/>, <slot5/>, React, and Node.js into a local <slot4/> directory.",
+        "with-a-react-composition-open-choose-file": "With a React composition open, choose <slot0>File → Set Up TypeScript</slot0>. Celesta copies matching declarations for every <slot1/> package, React, and Node.js into a local <slot2/> directory.",
         "starting-a-new-project-with-no-composition": "Starting a new project with no composition yet? Choose <slot0>File → Set Up TypeScript in Folder…</slot0> and pick the project folder, so your first component is written with types in place.",
         "if-there-is-no-celesta-creates-one": "If there is no <slot0/>, Celesta creates one. If you already have a configuration, add this <slot1/> property while preserving your other settings:",
         "you-do-not-need-to-install-those": "You do not need to install those declaration packages from npm for this editor setup. Celesta refreshes <slot0/> when you open the project in a newer app version; that directory ignores itself in Git.",
@@ -593,7 +593,7 @@
         }
       },
       "reference": {
-        "import-these-apis-from-random-numbers-noise": "Import these APIs from <slot0/>. Random numbers, noise, and other math helpers come from <slot1/> (see <slot2>its guide</slot2>), and syntax-highlighted code from <slot3/> (see <slot4>its guide</slot4>). Celesta’s TypeScript declarations provide the complete prop types and editor completions.",
+        "import-these-apis-from-random-numbers-noise": "Celesta is split into packages, like Remotion. The core APIs come from <slot0/>, and the Package column names the package for the rest. Random numbers, noise, and other math helpers come from <slot1/> (see <slot2>its guide</slot2>), and syntax-highlighted code from <slot3/> (see <slot4>its guide</slot4>). Celesta’s TypeScript declarations provide the complete prop types and editor completions.",
         "layers": "Layers",
         "text-fonts": "Text & fonts",
         "images-video-sound": "Images, video & sound",
@@ -604,8 +604,8 @@
         "layout-data-and-tools": "Layout, data, and tools",
         "layout-helpers": "layout helpers",
         "metadata": {
-          "title": "@celesta/react",
-          "description": "A compact reference for everything in @celesta/react.",
+          "title": "API reference",
+          "description": "A compact reference for every Celesta package.",
           "keywords": "api props Composition Rect Text Group Image Video Audio Font Sequence Series TransitionSeries Stagger Transition Camera Line Polyline Path Circle Ellipse Arrow TextReveal useBeat useCue Character CharacterView Dialogue hooks reference"
         },
         "api": {
@@ -687,8 +687,8 @@
         "must-match-the-family-name-of-a": "<slot0/> must match the family name of a font installed on the computer that renders the video, or of a font file loaded with <slot1/>. When it does not, Celesta falls back to another font and warns: the app lists the family with the preview’s warnings, and <slot2/> prints a warning that names the family, weight, and text layer. Check the exact family name in your system’s font manager. To avoid installing the font on every machine that exports the project, keep the font file next to the entry and load it with <slot3/>.",
         "the-mouth-does-not-move": "The mouth does not move",
         "lip-sync-needs-an-uncompressed-wav-voice": "Lip sync needs an uncompressed WAV voice and a transcript with readable vowels (kana or romaji). Check that <slot0/> runs in <slot1/>, that the track is passed as <slot2/>, and that each mouth path matches a layer in the PSD exactly. For a PSD that shows nothing, set <slot3/> from a PSDTool preset.",
-        "my-editor-cannot-resolve-celesta-react": "My editor cannot resolve @celesta/react",
-        "open-the-composition-in-celesta-and-choose": "Open the composition in Celesta and choose <slot0>File → Set Up TypeScript</slot0>. Check that your <slot1/> extends <slot2/>. When building from source, also complete the React package’s install, codegen, and build steps.",
+        "my-editor-cannot-resolve-celesta-react": "My editor cannot resolve @celesta/react or another Celesta package",
+        "open-the-composition-in-celesta-and-choose": "Open the composition in Celesta and choose <slot0>File → Set Up TypeScript</slot0>. Check that your <slot1/> extends <slot2/>. When building from source, also complete the runtime’s install, codegen, and build steps.",
         "mp4-export-will-not-start": "MP4 export will not start",
         "use-non-zero-even-numbered-dimensions-and": "Use non-zero, even-numbered dimensions and confirm that all local media is available. If the destination file already exists, choose another path or explicitly add <slot0/> to the CLI command.",
         "still-stuck": "Still stuck?",
@@ -924,8 +924,8 @@
           "description": "Lip sync from the AudioQuery used to synthesize a voice.",
           "keywords": "VOICEVOX AudioQuery lipSyncFromVoicevox voicevoxVowelShape voice lip sync phoneme interrogativeUpspeak frameRate"
         },
-        "intro": "<slot0/> converts the AudioQuery used by VOICEVOX synthesis into a LipSyncTrack. Shared dialogue components, WAV-based lip sync, and LipSyncTrack remain in <slot1/>. Import the adapter from its own package; it is no longer re-exported from @celesta/react.",
-        "runtime": "The desktop app and CLI bundle this package separately. Building @celesta/react builds it too, and File → Set Up TypeScript includes its declarations and import mapping. It is private and is not published to npm. The browser playground does not support it.",
+        "intro": "<slot0/> converts the AudioQuery used by VOICEVOX synthesis into a LipSyncTrack. Dialogue components, WAV-based lip sync, and LipSyncTrack are in <slot1/>. Import the adapter from its own package; @celesta/character does not re-export it.",
+        "runtime": "The desktop app and CLI bundle this package separately. Building the runtime builds it too, and File → Set Up TypeScript includes its declarations and import mapping. It is private and is not published to npm. The browser playground does not support it.",
         "example": "Drive a dialogue line from its synthesis query",
         "query": "Use the exact AudioQuery that produced the WAV, including speed and pause settings. Pass the track to Dialogue or CharacterView as lipSync, or read it with useLipSync(). It does not synthesize audio or call a VOICEVOX server. Save that AudioQuery as voicevox-query.json beside voicevox.tsx, and use your own voice and mouth images in the example below.",
         "options": "Timing options",
@@ -935,7 +935,7 @@
           "voicevox-frame-rate": "Defaults to 93.75 Hz, the VOICEVOX phoneme frame grid. Set null for unrounded lengths or the engine’s own rate; this is not the composition’s fps.",
           "voicevox-upspeak": "Defaults to true. Set false when the WAV was synthesized with interrogative upspeak disabled."
         },
-        "types": "Exports also include VoicevoxAudioQuery, VoicevoxAccentPhrase, VoicevoxMora, and VoicevoxLipSyncOptions. LipSyncTrack is imported from @celesta/react."
+        "types": "Exports also include VoicevoxAudioQuery, VoicevoxAccentPhrase, VoicevoxMora, and VoicevoxLipSyncOptions. LipSyncTrack is imported from @celesta/character."
       }
     },
     "shared": {
@@ -950,7 +950,8 @@
       "using-a-source-build-the-developer-instructions": "Using a source build? The <slot0>developer instructions</slot0> include the equivalent Cargo command.",
       "api": {
         "api": "API",
-        "use-it-for": "Use it for"
+        "use-it-for": "Use it for",
+        "package": "Package"
       },
       "encoding-options": "Encoding quality and speed",
       "encoding-options-body": "MP4 uses libx264 with --preset medium and --crf 18 by default. Faster presets such as veryfast reduce encoding time but usually increase file size at similar quality. CRF accepts 0–51; lower values give higher quality and larger files. --color-conversion accepts auto, gpu, or encoder. --render-quality draft speeds up timing checks by skipping scaled-text re-rasterization; use final (the default) to judge the finished image.",

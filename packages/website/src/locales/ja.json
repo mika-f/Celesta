@@ -252,7 +252,7 @@
         "add-npm-dependencies": "npm の依存関係を追加",
         "install-external-packages-in-the-project-that": "外部パッケージは、インポートするプロジェクトにインストールします。Celesta リポジトリの外にあるプロジェクトでは、そのフォルダで実行します。",
         "add-a-project-dependency": "プロジェクトの依存関係を追加",
-        "preview-and-export-resolve-external-imports-from": "プレビューと書き出しでは、読み込み元のプロジェクトの <slot0/> から外部パッケージを解決します。<slot1/>、<slot2/>、<slot3/>、<slot4/>、React はランタイムに含まれているため、外部プロジェクトに追加する必要はありません。",
+        "preview-and-export-resolve-external-imports-from": "プレビューと書き出しでは、読み込み元のプロジェクトの <slot0/> から外部パッケージを解決します。すべての <slot1/> パッケージと React はランタイムに含まれているため、外部プロジェクトに追加する必要はありません。",
         "node-asset-preparation-scripts-use-the-same": "Node の素材準備スクリプトも同じ依存関係を使います。<slot1/> の隣に <slot0/> として保存し、同じフォルダに <slot2/> を置きます。",
         "prepare-assets": "素材を準備",
         "import-the-generated-json-in-your-composition": "生成された JSON は通常どおりコンポジションでインポートします。直接実行する Node スクリプトは自分でインストールした Node.js を、コンポジションの評価はアプリ同梱の Node.js を使います。<slot0/> スクリプトには、TypeScript の型除去に対応した Node.js、またはプロジェクトにインストールした TypeScript ランナーを使ってください。",
@@ -312,7 +312,7 @@
         "your-own-components-are-ordinary-react-function": "自作コンポーネントは通常の React 関数コンポーネントです。props、<slot0/>、条件分岐もいつもどおり使えます。",
         "an-optional-named-export-runs-once-before": "任意の名前付きエクスポート <slot0/> は、最初のフレームの前に一度だけ実行されます。<slot1>データ・プロパティ・コンポーネント</slot1>をご覧ください。",
         "set-up-typescript-in-your-editor": "エディタの TypeScript 設定",
-        "with-a-react-composition-open-choose-file": "React コンポジションを開き、<slot0>File → Set Up TypeScript</slot0> を選びます。Celesta が対応する <slot1/>、<slot2/>、<slot3/>、<slot5/>、React、Node.js の型宣言をローカルの <slot4/> ディレクトリにコピーします。",
+        "with-a-react-composition-open-choose-file": "React コンポジションを開き、<slot0>File → Set Up TypeScript</slot0> を選びます。Celesta がすべての <slot1/> パッケージ、React、Node.js の対応する型宣言をローカルの <slot2/> ディレクトリにコピーします。",
         "starting-a-new-project-with-no-composition": "まだコンポジションがない新規プロジェクトでは、<slot0>File → Set Up TypeScript in Folder…</slot0> でフォルダを選ぶと、最初から型を使って書けます。",
         "if-there-is-no-celesta-creates-one": "<slot0/> がなければ Celesta が作成します。既存の設定がある場合は、ほかの設定を残して以下の <slot1/> を追加します。",
         "you-do-not-need-to-install-those": "この設定に必要な型宣言を npm から入れる必要はありません。新しいアプリでプロジェクトを開くと <slot0/> が更新されます。このディレクトリは Git から自身を除外します。",
@@ -593,7 +593,7 @@
         }
       },
       "reference": {
-        "import-these-apis-from-random-numbers-noise": "以下の API は <slot0/> からインポートします。乱数・ノイズ・数学ヘルパーは <slot1/>（<slot2>ガイド</slot2>）、色付きコードは <slot3/>（<slot4>ガイド</slot4>）にあります。TypeScript 宣言で完全な props の型とエディタ補完を取得できます。",
+        "import-these-apis-from-random-numbers-noise": "Celesta は Remotion のようにパッケージに分かれています。コアの API は <slot0/> から、それ以外はパッケージ列のパッケージからインポートします。乱数・ノイズ・数学ヘルパーは <slot1/>（<slot2>ガイド</slot2>）、色付きコードは <slot3/>（<slot4>ガイド</slot4>）にあります。TypeScript 宣言で完全な props の型とエディタ補完を取得できます。",
         "layers": "レイヤー",
         "text-fonts": "テキストとフォント",
         "images-video-sound": "画像・動画・音声",
@@ -604,8 +604,8 @@
         "layout-data-and-tools": "レイアウト・データ・ツール",
         "layout-helpers": "レイアウトのヘルパー",
         "metadata": {
-          "title": "@celesta/react",
-          "description": "@celesta/react 全体の簡潔なリファレンス。",
+          "title": "API リファレンス",
+          "description": "Celesta の各パッケージの簡潔なリファレンス。",
           "keywords": "参照 関数 型 フック コンポーネント api props Composition Rect Text Group Image Video Audio Font Sequence Series TransitionSeries Stagger Transition Camera Line Polyline Path Circle Ellipse Arrow TextReveal useBeat useCue Character CharacterView Dialogue hooks reference"
         },
         "api": {
@@ -687,8 +687,8 @@
         "must-match-the-family-name-of-a": "<slot0/> は描画するコンピューターのインストール済みフォント、または <slot1/> で読み込んだファイルのファミリー名と一致する必要があります。一致しないと別のフォントに切り替わり、警告が出ます。アプリはプレビューの警告にファミリーを表示し、<slot2/> はファミリー・ウェイト・テキストレイヤーを出力します。OS のフォント管理で正確な名前を確認してください。すべての書き出し環境にインストールする手間を省くには、エントリーの隣にフォントを置き <slot3/> で読み込みます。",
         "the-mouth-does-not-move": "口が動かない",
         "lip-sync-needs-an-uncompressed-wav-voice": "口パクには非圧縮 WAV と、母音を読めるかな・ローマ字の文字起こしが必要です。<slot1/> 内で <slot0/> を実行し、トラックを <slot2/> として渡し、口のパスが PSD のレイヤーと完全一致するか確認します。PSD が何も表示しない場合は、PSDTool のプリセットで <slot3/> を指定します。",
-        "my-editor-cannot-resolve-celesta-react": "エディタが @celesta/react を解決できない",
-        "open-the-composition-in-celesta-and-choose": "Celesta でコンポジションを開き、<slot0>File → Set Up TypeScript</slot0> を選びます。<slot1/> が <slot2/> を継承しているか確認します。ソースビルドの場合は React パッケージのインストール・型生成・ビルドも済ませてください。",
+        "my-editor-cannot-resolve-celesta-react": "エディタが @celesta/react などの Celesta パッケージを解決できない",
+        "open-the-composition-in-celesta-and-choose": "Celesta でコンポジションを開き、<slot0>File → Set Up TypeScript</slot0> を選びます。<slot1/> が <slot2/> を継承しているか確認します。ソースビルドの場合はランタイムのインストール・型生成・ビルドも済ませてください。",
         "mp4-export-will-not-start": "MP4 の書き出しが始まらない",
         "use-non-zero-even-numbered-dimensions-and": "サイズは 0 でない偶数にし、すべてのローカルメディアを利用可能にします。出力先が既存の場合は別のパスを使うか、CLI に <slot0/> を明示します。",
         "still-stuck": "まだ解決しませんか？",
@@ -924,8 +924,8 @@
           "description": "音声合成に使った AudioQuery から口パクを作る。",
           "keywords": "口パク 音声 合成 母音 時間 VOICEVOX AudioQuery lipSyncFromVoicevox voicevoxVowelShape voice lip sync phoneme interrogativeUpspeak frameRate"
         },
-        "intro": "<slot0/> は、VOICEVOX の音声合成に使った AudioQuery を LipSyncTrack に変換します。会話のコンポーネント、WAV から作る口パク、LipSyncTrack は引き続き <slot1/> にあります。変換機能は独立したパッケージから読み込んでください。@celesta/react からは再エクスポートされません。",
-        "runtime": "デスクトップアプリと CLI に同梱されています。@celesta/react のビルド時にこのパッケージもビルドされ、File → Set Up TypeScript で型定義と読み込み設定が追加されます。非公開パッケージのため npm では配布していません。ブラウザのプレイグラウンドには対応していません。",
+        "intro": "<slot0/> は、VOICEVOX の音声合成に使った AudioQuery を LipSyncTrack に変換します。会話のコンポーネント、WAV から作る口パク、LipSyncTrack は <slot1/> にあります。変換機能は独立したパッケージから読み込んでください。@celesta/character からは再エクスポートされません。",
+        "runtime": "デスクトップアプリと CLI に同梱されています。ランタイムのビルド時にこのパッケージもビルドされ、File → Set Up TypeScript で型定義と読み込み設定が追加されます。非公開パッケージのため npm では配布していません。ブラウザのプレイグラウンドには対応していません。",
         "example": "音声合成の情報に合わせて口を動かす",
         "query": "WAV の生成に使った AudioQuery を、速度や間の設定も含めてそのまま使ってください。トラックは Dialogue や CharacterView の lipSync に渡すか、useLipSync() で読み取れます。このパッケージ自体は音声を合成せず、VOICEVOX サーバへの通信も行いません。 AudioQuery を voicevox.tsx と同じフォルダに voicevox-query.json として保存し、以下の例の音声と口の画像は手元の素材に置き換えてください。",
         "options": "タイミングの設定",
@@ -935,7 +935,7 @@
           "voicevox-frame-rate": "既定は VOICEVOX の音素の時間刻みである 93.75 Hz です。丸めない場合は null、別のエンジンではその時間刻みを指定します。動画の fps とは別の設定です。",
           "voicevox-upspeak": "既定は true です。疑問文の語尾上げを無効にして音声を合成した場合は false を指定してください。"
         },
-        "types": "VoicevoxAudioQuery、VoicevoxAccentPhrase、VoicevoxMora、VoicevoxLipSyncOptions もエクスポートされます。LipSyncTrack は @celesta/react から読み込みます。"
+        "types": "VoicevoxAudioQuery、VoicevoxAccentPhrase、VoicevoxMora、VoicevoxLipSyncOptions もエクスポートされます。LipSyncTrack は @celesta/character から読み込みます。"
       }
     },
     "shared": {
@@ -950,7 +950,8 @@
       "using-a-source-build-the-developer-instructions": "ソースビルドを使う場合は、<slot0>開発者向け手順</slot0>に対応する Cargo コマンドがあります。",
       "api": {
         "api": "API",
-        "use-it-for": "用途"
+        "use-it-for": "用途",
+        "package": "パッケージ"
       },
       "encoding-options": "画質と書き出し速度",
       "encoding-options-body": "MP4 は libx264 を使い、既定では --preset medium、--crf 18 で書き出します。veryfast などの速いプリセットは、画質をほぼ保ちながらエンコード時間を短縮しますが、ファイルは大きくなる傾向があります。CRF は 0〜51 で、小さいほど高画質・大容量になります。--color-conversion は auto、gpu、encoder を指定できます。--render-quality draft は拡大した文字の再描画を省略して動きの確認を速くします。仕上がりの確認には既定の final を使ってください。",

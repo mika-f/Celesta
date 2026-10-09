@@ -1,7 +1,9 @@
+import { Audio, Composition, Easings, Rect, useVideoConfig } from '@celesta/react';
 import {
-  Audio, Composition, Easings, Rect, TransitionSeries,
-  computeTransitionSeries, useTransitionVolume, useVideoConfig,
-} from '@celesta/react';
+  TransitionSeries,
+  computeTransitionSeries,
+  useTransitionVolume,
+} from '@celesta/transitions';
 
 const FADE = { type: 'crossfade', durationInFrames: 15 } as const;
 const PUSH = { type: 'slide', durationInFrames: 20, from: 'right', easing: Easings.easeInOutCubic } as const;

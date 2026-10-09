@@ -1,0 +1,23 @@
+import { Composition, Rect, registerComponent } from '@celesta/react';
+import { DebugBounds, DebugOverlay } from '@celesta/debug';
+
+function DebugCard() {
+  return (
+    <>
+      <DebugOverlay safeArea={20} />
+      <DebugBounds width={160} height={90} label="card">
+        <Rect width={160} height={90} fill="#303846" cornerRadius={8} />
+      </DebugBounds>
+    </>
+  );
+}
+
+registerComponent('DebugCard', DebugCard);
+
+export default function Root() {
+  return (
+    <Composition width={640} height={360} fps={30} durationInFrames={30}>
+      <DebugOverlay />
+    </Composition>
+  );
+}

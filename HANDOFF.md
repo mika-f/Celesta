@@ -34,30 +34,39 @@ Build the React runtime before using `celesta-exporter --react` or the live
 bridge tests:
 
 ```sh
-cd packages/react
 pnpm install
-pnpm run codegen
-pnpm run build
+pnpm --dir packages/react run codegen
+pnpm run build:runtime
 ```
 
-`celesta-react-bridge` spawns the compiled `packages/react/dist/cli.js`.
-`pnpm run codegen` generates `src/generated/*.ts` from Rust composition/project
-types through the `codegen` feature and ts-rs. Both `src/generated/` and `dist/`
-are gitignored build output. Regenerate bindings when their Rust types change.
-`.cargo/config.toml` sets the export directory and maps large integers to
-TypeScript `number` for the bridge's JSON protocol.
+`celesta-react-bridge` spawns the compiled `packages/cli/dist/cli.js`.
+`pnpm run build:runtime` builds `@celesta/cli` and every package it depends on,
+in dependency order; `pnpm run test:runtime` runs their tests.
+The codegen script generates `packages/react/src/generated/*.ts` from Rust
+composition/project types through the `codegen` feature and ts-rs. Both
+`src/generated/` and `dist/` are gitignored build output. Regenerate bindings
+when their Rust types change. `.cargo/config.toml` sets the export directory
+and maps large integers to TypeScript `number` for the bridge's JSON protocol.
 
-`@celesta/react` is not published to npm: user entries resolve `react` and
-`@celesta/react` to the bundled runtime. The React build stages declarations,
+The Celesta packages are not published to npm: user entries resolve `react`
+and every `@celesta/*` package to the bundled runtime, which is `@celesta/cli`
+and its dependency closure. The CLI build stages their declarations,
 `@types/react`, `@types/node`, and a base tsconfig in `dist/project-types/`.
 File > Set Up TypeScript copies these into a project's `.celesta/`; the folder
 variant works before an entry exists. Opening a project refreshes the types
 when the staged content hash changes.
 
-`@celesta/code` stays separate from the React module and its dependencies. The
-React build compiles it and stages its types; desktop packaging includes its
-tokenizer dependencies. The entry bundler includes Code while sharing the core
-runtime imports, and Set Up TypeScript supplies its import mapping.
+`@celesta/react` is the core: the reconciler, the scene walker, primitives,
+hooks, and animation helpers. The other packages build on its public API and
+on `@celesta/react/internal` (render, contexts, text measurement, media probe,
+host element registration), which is not for compositions. A package that
+renders host elements of its own registers them with `registerHostElement()`
+when its module loads, as `@celesta/character` does for `<CharacterView>` and
+`<Dialogue>`; the walker rejects unregistered element types. State that the
+CLI installs (the text measurer and media probe) lives in the core.
+`@celesta/code` and `@celesta/voicevox` stay optional imports for
+compositions: no package a composition imports depends on them, though
+`@celesta/cli` includes them in the runtime.
 
 ## Workspace map
 
@@ -78,8 +87,18 @@ runtime imports, and Set Up TypeScript supplies its import mapping.
 | `celesta-remote` | Asset path resolution, remote download cache, and stylesheet font discovery. |
 | `celesta-react-bridge` | Long-lived Node process and frame/component requests over stdin/stdout. |
 | `packages/math` (`@celesta/math`) | Pure, React-free math utilities for compositions. |
-| `packages/react` (`@celesta/react`) | Declarative components, hooks, reconciler, and entry CLI. |
+| `packages/react` (`@celesta/react`) | Core components, hooks, animation helpers, reconciler, and scene walker. |
+| `packages/shapes` (`@celesta/shapes`) | Lines, polylines, paths, circles, ellipses, and arrows. |
+| `packages/layout` (`@celesta/layout`) | Layout containers and `Camera`. |
+| `packages/transitions` (`@celesta/transitions`) | `Transition` and `TransitionSeries`. |
+| `packages/text` (`@celesta/text`) | Text motion and box-fitted text. |
+| `packages/character` (`@celesta/character`) | Characters, dialogue, subtitles, lip sync, blinking, and PSD presets. |
+| `packages/media-utils` (`@celesta/media-utils`) | Media metadata helpers. |
+| `packages/project` (`@celesta/project`) | Companion project data, properties, and timeline layers. |
+| `packages/debug` (`@celesta/debug`) | Debug overlays. |
 | `packages/code` (`@celesta/code`) | Syntax-highlighted code components. |
+| `packages/voicevox` (`@celesta/voicevox`) | VOICEVOX AudioQuery lip sync. |
+| `packages/cli` (`@celesta/cli`) | Entry CLI the bridge spawns; depends on every package it serves. |
 
 Useful entry points:
 
@@ -91,8 +110,9 @@ Useful entry points:
 - `crates/evaluator/src/lib.rs`: project evaluation.
 - `crates/gpu-renderer/src/lib.rs`: GPU rendering and readback APIs.
 - `crates/renderer/src/lib.rs`: CPU renderer and rasterizer exports.
-- `packages/react/src/cli.ts`, `reconciler.ts`, and `render.ts`: entry
-  bundling, persistent React tree, and scene construction.
+- `packages/cli/src/cli.ts`, `packages/react/src/reconciler.ts`, and
+  `packages/react/src/render.ts`: entry bundling, persistent React tree, and
+  scene construction.
 
 ## Architecture boundaries
 
@@ -123,8 +143,9 @@ empty companion layers to discover them, discarding that pass's scene output.
 Layer IDs are derived from the tree path unless an explicit `id` is supplied.
 
 The CLI bundles entries with esbuild without type-checking user source. It
-keeps `react`, its JSX runtimes, and `@celesta/react` shared with the host so
-hooks and contexts use the same module instances. Keep React and
+keeps `react`, its JSX runtimes, and every `@celesta/*` package external,
+resolved from the CLI itself, so hooks, contexts, and registries use the same
+module instances as the host. Keep React and
 `react-reconciler` versions compatible; do not bump either independently.
 
 One reconciler root persists for the lifetime of the Node process. Frame
@@ -232,7 +253,7 @@ across the Objective-C boundary and terminated the app.
 
 ## Examples and validation
 
-`packages/react/examples/` contains focused runtime and integration fixtures;
+`packages/cli/examples/` contains focused runtime and integration fixtures;
 `examples/` contains larger compositions and project fixtures.
 `examples/assets/voices/001.wav` is generated from the macOS Kyoko system voice,
 not a licensed VOICEROID sample.
@@ -240,8 +261,8 @@ not a licensed VOICEROID sample.
 Typical preview and export commands, run from the repository root:
 
 ```sh
-cargo run -p celesta-editor -- packages/react/examples/title.tsx
-cargo run -p celesta-exporter -- --react packages/react/examples/title.tsx output.mp4
+cargo run -p celesta-editor -- packages/cli/examples/title.tsx
+cargo run -p celesta-exporter -- --react packages/cli/examples/title.tsx output.mp4
 ```
 
 Inspect `git status --short` before editing. Use targeted validation while

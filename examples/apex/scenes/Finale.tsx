@@ -1,4 +1,5 @@
-import { Group, Rect, TextReveal, progress, useBeat, useCurrentFrame } from '@celesta/react';
+import { Group, Rect, progress, useBeat, useCurrentFrame } from '@celesta/react';
+import { TextReveal } from '@celesta/text';
 import { Label } from '../components/Label';
 import { Ring } from '../components/Ring';
 import { ACID, BONE, CYAN, GREY, H, INK, MAG, W } from '../constants';

@@ -1,4 +1,6 @@
-import { Grid, Group, Rect, Sequence, Text, Transition } from '@celesta/react';
+import { Group, Rect, Sequence, Text } from '@celesta/react';
+import { Grid } from '@celesta/layout';
+import { Transition } from '@celesta/transitions';
 import { Label } from '../components/Label';
 import { Rails } from '../components/Rails';
 import { BLUE, GREY, H, INK, PAPER, RED, W } from '../constants';

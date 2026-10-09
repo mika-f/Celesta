@@ -67,7 +67,8 @@ test('CLI shares prepare and render RPCs, handles large UTF-8 replies, and forwa
   const dir = mkdtempSync(join(tmpdir(), 'celesta-metrics-'));
   const entry = join(dir, 'entry.tsx');
   writeFileSync(entry, `
-    import { Composition, Rect, measureText, preloadMedia, useCurrentFrame, useTextMetrics } from '@celesta/react';
+    import { Composition, Rect, measureText, useCurrentFrame, useTextMetrics } from '@celesta/react';
+    import { preloadMedia } from '@celesta/media-utils';
     export async function prepare() {
       const [m, media] = await Promise.all([measureText('prepare'), preloadMedia('voice.wav')]);
       if (m.width !== 7 || media.durationSeconds !== 1) throw new Error('incorrect prepare response');
@@ -81,7 +82,7 @@ test('CLI shares prepare and render RPCs, handles large UTF-8 replies, and forwa
       return <Composition width={400} height={200} fps={30} durationInFrames={3}><Label /></Composition>;
     }
   `);
-  const cli = fileURLToPath(new URL('../bin/celesta-react-render.js', import.meta.url));
+  const cli = fileURLToPath(new URL('../../cli/bin/celesta-react-render.js', import.meta.url));
   const child = spawn(process.execPath, [cli, entry], { stdio: ['pipe', 'pipe', 'pipe'] });
   let stderr = '';
   child.stderr.on('data', (chunk) => { stderr += chunk; });

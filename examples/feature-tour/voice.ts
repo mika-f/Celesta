@@ -1,8 +1,9 @@
 import { createRef } from 'react';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { buildEnvelope, decodeWav, loadLipSync, loadPsdPreset } from '@celesta/react';
-import type { AssetReference, CharacterViewReference, LipSyncTrack } from '@celesta/react';
+import { buildEnvelope, decodeWav, loadLipSync, loadPsdPreset } from '@celesta/character';
+import type { AssetReference } from '@celesta/react';
+import type { CharacterViewReference, LipSyncTrack } from '@celesta/character';
 
 // The dialogue chapter's voice line: asset paths, shared refs, and the data loaded in prepare().
 

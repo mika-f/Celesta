@@ -16,7 +16,7 @@
   "sideEffects": false,
   "scripts": {
     "test": "node --experimental-strip-types --test test/*.test.mjs",
-    "build": "pnpm --filter @celesta/react build && tsc -p tsconfig.worker.json && vite build && tsc -p tsconfig.json",
+    "build": "pnpm --filter \"@celesta/cli^...\" build && tsc -p tsconfig.worker.json && vite build && tsc -p tsconfig.json",
     "prepack": "npm run build"
   },
   "dependencies": {
