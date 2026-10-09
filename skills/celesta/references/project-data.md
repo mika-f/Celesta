@@ -6,8 +6,8 @@ line, read values from a `.celesta.json` project, draw the project's
 timeline, and render registered components that JSON timeline items name.
 `defineProjectProperties`, `getProjectProperty`, and `registerComponent` are
 imported from `@celesta/react`; `useProjectProperty`, `ProjectProvider`,
-`loadProject`, `useProject`, `<ProjectTimeline />`, and `<ProjectTrack />` from
-`@celesta/project`.
+`loadProject`, `loadProjectFromString`, `useProject`, `useProjectTrack`,
+`<ProjectTimeline />`, and `<ProjectTrack />` from `@celesta/project`.
 
 ## Contents
 

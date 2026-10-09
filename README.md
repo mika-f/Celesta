@@ -203,7 +203,8 @@ node skills/celesta/scripts/migrate-packages.mjs path/to/project
 It rewrites named imports and `export … from` re-exports, adds the new
 packages beside `@celesta/react` in a `package.json` that lists it, and reports
 `import * as` namespaces that use moved names, which it leaves for you.
-`--check` exits 1 when anything is left to migrate.
+`--check` exits 1 when anything is left to migrate, including such a
+namespace.
 
 `@celesta/code` supports TSX, TypeScript, JSON, Bash, line highlights, and
 measured caret positions. For typing animations, combine it with

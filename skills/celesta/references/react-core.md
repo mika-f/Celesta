@@ -8,8 +8,11 @@ text see [text.md](text.md).
 Everything here is imported from `@celesta/react` unless its section names
 another package: shapes from `@celesta/shapes`, layout helpers from
 `@celesta/layout`, media info from `@celesta/media-utils`, and debug guides
-from `@celesta/debug`. The runtime bundled with Celesta provides `react`
-(18.x) and every `@celesta/*` package; never install them from npm.
+from `@celesta/debug`. Components only mentioned here come from their own
+packages too: `CharacterView` and `Dialogue` from `@celesta/character`,
+`Transition` from `@celesta/transitions`, and `Code` from `@celesta/code`
+(see [SKILL.md](../SKILL.md#packages)). The runtime bundled with Celesta
+provides `react` (18.x) and those packages; never install them from npm.
 
 ## Contents
 
@@ -51,8 +54,8 @@ export default function Root() {
   `defineProjectProperties()` must be called at module level.
 - `console.log` output goes to the terminal (stderr), which is useful when
   running `scripts/inspect.mjs`.
-- Imports: `react` and every `@celesta/*` package come from Celesta's
-  runtime. Relative files (including
+- Imports: `react` and the Celesta packages in [SKILL.md](../SKILL.md#packages) come from
+  Celesta's runtime. Relative files (including
   `import data from './data.json'`) are bundled. Other npm packages resolve
   from the project's own `node_modules` (see
   [setup.md](setup.md#npm-dependencies)).

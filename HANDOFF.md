@@ -64,8 +64,9 @@ renders host elements of its own registers them with `registerHostElement()`
 when its module loads, as `@celesta/character` does for `<CharacterView>` and
 `<Dialogue>`; the walker rejects unregistered element types. State that the
 CLI installs (the text measurer and media probe) lives in the core.
-`@celesta/code` and `@celesta/voicevox` stay optional: no other package
-depends on them.
+`@celesta/code` and `@celesta/voicevox` stay optional imports for
+compositions: no package a composition imports depends on them, though
+`@celesta/cli` includes them in the runtime.
 
 ## Workspace map
 

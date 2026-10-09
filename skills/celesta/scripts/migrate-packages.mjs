@@ -19,7 +19,8 @@
 // rewritten safely, so the moved names it uses are reported instead. A
 // package.json that lists `@celesta/react` gets the new packages with the same
 // version range. --dry-run reports without writing; --check also exits 1 when
-// anything would change. Needs only Node.js.
+// anything would change, or when an `import * as` namespace uses a moved name.
+// Needs only Node.js.
 
 import { readFileSync, readdirSync, statSync, writeFileSync, existsSync } from 'node:fs';
 import * as path from 'node:path';
@@ -75,9 +76,28 @@ const DECLARATION = /\b(import|export)(\s+type)?\s*\{([^}]*)\}\s*from\s*(['"])(@
 const NAMESPACE = /\bimport\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s*(['"])@celesta\/react\2/g;
 const LINE_WIDTH = 100;
 
-/** A specifier's imported name: `type Foo as Bar` → `Foo`. */
+/** A specifier's imported name: `/* note *\/ type Foo as Bar` → `Foo`. */
 function importedName(spec) {
-  return spec.replace(/^type\s+/, '').split(/\s+as\s+/)[0].trim();
+  return spec.replace(/\/\*[\s\S]*?\*\//g, ' ').trim().replace(/^type\s+/, '').split(/\s+as\s+/)[0].trim();
+}
+
+/**
+ * A list's specifiers, each with the comments beside it: a comment after a
+ * name's comma stays with that name. Line comments become block comments, so
+ * a specifier stays valid wherever it is rendered.
+ */
+function specifiers(body) {
+  const specs = [];
+  const text = body
+    .replace(/,([ \t]*)\/\/([^\n]*)/g, (_, space, comment) => ` /*${comment.trimEnd()} */,`)
+    .replace(/\/\/([^\n]*)/g, (_, comment) => `/*${comment.trimEnd()} */`);
+  for (const part of text.split(',')) {
+    const spec = part.replace(/\s+/g, ' ').trim();
+    if (!spec) continue;
+    if (importedName(spec) || specs.length === 0) specs.push(spec);
+    else specs[specs.length - 1] += ` ${spec}`;
+  }
+  return specs;
 }
 
 function lineOf(text, offset) {
@@ -100,7 +120,7 @@ export function migrateSource(text) {
       whole,
       keyword,
       typeKeyword: typeKeyword ? 'type ' : '',
-      specs: body.split(',').map((spec) => spec.trim()).filter(Boolean),
+      specs: specifiers(body),
       quote,
       pkg,
       semi: semi.trim(),
@@ -253,12 +273,14 @@ function main(argv) {
   const targets = argv.filter((arg) => !arg.startsWith('--'));
   const manifests = new Map();
   let changedFiles = 0;
+  let warnings = 0;
   for (const target of targets.length > 0 ? targets : ['.']) {
     for (const file of sourceFiles(target)) {
       const source = readFileSync(file, 'utf8');
       if (!source.includes(CORE)) continue;
       const result = migrateSource(source);
       for (const warning of result.warnings) console.warn(`${file}:${warning.replace(/^line /, '')}`);
+      warnings += result.warnings.length;
       if (result.text === source) continue;
       changedFiles += 1;
       console.log(`${write ? 'updated' : 'would update'} ${file} (${[...result.packages].join(', ')})`);
@@ -278,7 +300,7 @@ function main(argv) {
     if (write) writeFileSync(manifest, text);
   }
   console.log(changedFiles === 0 ? 'Nothing to migrate.' : `${changedFiles} file(s) ${write ? 'migrated' : 'to migrate'}.`);
-  return flags.has('--check') && changedFiles > 0 ? 1 : 0;
+  return flags.has('--check') && (changedFiles > 0 || warnings > 0) ? 1 : 0;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

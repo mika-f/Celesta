@@ -94,8 +94,8 @@ produces a video that differs between preview and export.
    once and cached forever; change the URL to refresh.
 8. **Imports.** Celesta is split into packages, like Remotion; import each
    API from the package that provides it (see [Packages](#packages)).
-   `react` and every `@celesta/*` package always come from the runtime
-   bundled with Celesta; never `npm install` them. Relative imports
+   `react` and the packages listed under [Packages](#packages) always come
+   from the runtime bundled with Celesta; never `npm install` them. Relative imports
    (including `import data from './data.json'`) are bundled. Any other npm
    package must be installed in the project folder (`pnpm add <pkg>`).
 9. **Draw order is source order.** Later siblings draw on top. In JSON, later
@@ -182,8 +182,9 @@ layers sit; it does not prove the rendered pixels.
 An import from the wrong package fails with `@celesta/react does not export
 Circle; import it from @celesta/shapes`; move it to the named package. Code
 written before the split imports everything from `@celesta/react`: run
-`node scripts/migrate-packages.mjs <project folder>` (this skill's script) to
-move every import at once, then fix any `import * as` namespace it reports.
+`node <this skill>/scripts/migrate-packages.mjs <project folder>` to move its
+named imports and re-exports at once, then fix any `import * as` namespace it
+reports by hand.
 
 ## References
 

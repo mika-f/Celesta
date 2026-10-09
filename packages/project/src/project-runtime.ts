@@ -94,10 +94,15 @@ function useProjectTrackLayers(hookName: string): Record<string, Layer[]> {
   return tracks;
 }
 
+/** Own properties only, so an id such as `constructor` is an unknown track rather than `Object.prototype`'s. */
+function trackLayers(tracks: Record<string, Layer[]>, trackId: string): Layer[] {
+  return Object.prototype.hasOwnProperty.call(tracks, trackId) ? tracks[trackId] : [];
+}
+
 /** The given project track's evaluated layers, or `[]` if it has none (including an unknown track id). */
 export function useProjectTrack(trackId: string): Layer[] {
   const tracks = useProjectTrackLayers('useProjectTrack');
-  return tracks[trackId] ?? [];
+  return trackLayers(tracks, trackId);
 }
 
 export interface ProjectTrackProps {
@@ -106,7 +111,7 @@ export interface ProjectTrackProps {
 
 export function ProjectTrack(props: ProjectTrackProps): ReturnType<typeof React.createElement> {
   const tracks = useProjectTrackLayers('<ProjectTrack />');
-  return renderProjectLayers(tracks[props.id] ?? []);
+  return renderProjectLayers(trackLayers(tracks, props.id));
 }
 
 function renderProjectLayers(layers: Layer[]): ReturnType<typeof React.createElement> {

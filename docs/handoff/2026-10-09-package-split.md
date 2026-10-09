@@ -72,7 +72,8 @@ it ships with the skill) rewrites `@celesta/react` named imports and
 import of the same kind from the destination package, adds the new packages
 beside `@celesta/react` in a `package.json` that lists it, and reports
 `import * as` namespaces that use moved names. `--dry-run` and `--check`
-report without writing. `packages/cli/test/migrate-packages.test.mjs` checks
+report without writing; `--check` fails on a reported namespace too. Comments
+inside an import list stay with the name before or after them. `packages/cli/test/migrate-packages.test.mjs` checks
 the table against every package's declarations, so a name added to a split
 package without a table entry fails the test. Run on the pre-split examples,
 it reproduces this branch's migration of them.

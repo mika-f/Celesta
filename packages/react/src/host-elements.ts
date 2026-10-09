@@ -11,8 +11,8 @@ import type { Layer, LayerContent, ResolvedAsset } from './scene';
 export interface HostVisit {
   /**
    * State shared by every host element for one rendered frame, keyed by
-   * whatever the element chooses. `prepare` writes here; `audio` and
-   * `content` read it.
+   * whatever the element chooses. `prepare` writes here and `content` reads
+   * it; audio-only sweeps skip `prepare`, so `audio` must not rely on it.
    */
   readonly frameState: Map<unknown, unknown>;
 }
@@ -38,9 +38,10 @@ export interface HostElement {
   /**
    * Runs for every element of this type the frame shows, in tree order and
    * before any layer is built, so an element can affect one rendered earlier.
+   * Visual frames only: audio-only sweeps skip it.
    */
   prepare?(node: HostNode, visit: HostVisit): void;
-  /** Collects the element's audio; runs for audio-only sweeps too. */
+  /** Collects the element's audio; runs for audio-only sweeps too, without `prepare`. */
   audio?(node: HostNode, walk: HostWalk): void;
   /**
    * The element's layer content; its transform, opacity, blend mode, and

@@ -105,6 +105,20 @@ test('long lists stay multi-line, imports inside a line stay on it, and namespac
   ]);
 });
 
+test('comments beside a name move with it', () => {
+  const { text } = migrateSource([
+    'import {',
+    '  Composition, // root',
+    '  /* drawn */ Circle,',
+    '  Text, // body',
+    "} from '@celesta/react';",
+  ].join('\n'));
+  assert.equal(text, [
+    "import { Composition /* root */, Text /* body */ } from '@celesta/react';",
+    "import { /* drawn */ Circle } from '@celesta/shapes';",
+  ].join('\n'));
+});
+
 test('a manifest listing @celesta/react gets the new packages with its range', () => {
   const manifest = '{\n  "dependencies": {\n    "@celesta/react": "workspace:*",\n    "react": "^18.3.1"\n  }\n}\n';
   const { text, added } = addDependencies(manifest, new Set(['@celesta/text', '@celesta/shapes']));
@@ -138,6 +152,12 @@ test('the command migrates a project, and --check reports without writing', () =
     const again = spawnSync(process.execPath, [script, dir, '--check'], { encoding: 'utf8' });
     assert.equal(again.status, 0, again.stdout);
     assert.match(again.stdout, /Nothing to migrate/);
+
+    // A namespace import of a moved name cannot be rewritten, so it fails the check.
+    writeFileSync(join(dir, 'scenes/Outro.tsx'), "import * as C from '@celesta/react';\nC.Camera;\n");
+    const namespaced = spawnSync(process.execPath, [script, dir, '--check'], { encoding: 'utf8' });
+    assert.equal(namespaced.status, 1, namespaced.stdout);
+    assert.match(namespaced.stderr, /Outro\.tsx:1: `import \* as C` uses moved names.*C\.Camera \(@celesta\/layout\)/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

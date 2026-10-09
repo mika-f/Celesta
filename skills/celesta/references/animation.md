@@ -2,9 +2,10 @@
 
 How a React composition moves: frame hooks, `interpolate`, easings,
 springs, `Sequence` scenes, transitions, and the motion helpers that save
-hand-written timing math. Imported from `@celesta/react`, except
-`Transition` and `TransitionSeries` (`@celesta/transitions`) and `Camera`
-(`@celesta/layout`).
+hand-written timing math. Imported from `@celesta/react`, except `Transition`,
+`TransitionSeries`, `computeTransitionSeries`, `useTransitionSeriesScene`, and
+`useTransitionVolume` (`@celesta/transitions`), `Camera` (`@celesta/layout`),
+and `TextReveal`, `useTypewriter`, and `useCountUp` (`@celesta/text`).
 
 Every frame must be a pure function of the frame number: frames are rendered
 out of order when scrubbing and exporting. Never use `Math.random()`,
