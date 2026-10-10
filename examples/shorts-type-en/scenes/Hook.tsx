@@ -16,7 +16,7 @@ export function Hook() {
   const height = stackHeight(hookLines);
   return (
     <Stage bg={C.ink} tone={tint(C.hot, 0.35)} fg={C.paper} accent={C.hot}
-      tapes={['Write video in code.', 'React + TypeScript → MP4']}
+      tapes={['Write your video in code.', 'React + TypeScript → MP4']}
       zoom={1 + 0.035 * progress(f, 0, BAR * 2) + 0.012 * pulse}>
       <Tag x={COL.x} y={Y - 64} opacity={progress(f, 4, 8)}>{'// film.tsx'}</Tag>
       <FitStack lines={hookLines} x={COL.x} y={Y} from={-8} stagger={3}

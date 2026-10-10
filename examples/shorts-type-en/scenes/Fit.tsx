@@ -20,7 +20,7 @@ export function Fit() {
     <Stage bg={C.sun} tone={tint(C.ink, 0.18)} fg={C.ink} accent={C.hot}
       tapes={['Fit the box.', 'fitText()']}>
       <TextReveal x={COL.x} y={TOP} lineHeight={116} baseline={0.86} from={-6} stagger={4}
-        style={textStyle(116, 'display', C.ink)}>
+        style={{ ...textStyle(116, 'display', C.ink), letterSpacing: -0.02 * 116 }}>
         {'FIT THE\nBOX.'}
       </TextReveal>
       <Group x={COL.x} y={BOX_Y} scale={pop} opacity={progress(f, -2, 6)}>

@@ -21,13 +21,15 @@ export type CopyProps = {
   scale?: number;
   lineHeight?: number;
   maxWidth?: number;
+  // letterSpacing, in pixels.
+  tracking?: number;
 };
 
 export function Copy({ children, x = 0, y = 0, size, font = 'body', weight = 400, color = C.paper,
-  ax = 0, ay = 0, opacity = 1, scale, lineHeight, maxWidth }: CopyProps) {
+  ax = 0, ay = 0, opacity = 1, scale, lineHeight, maxWidth, tracking }: CopyProps) {
   return (
     <Text x={x} y={y} anchorX={ax} anchorY={ay} opacity={opacity} scale={scale} maxWidth={maxWidth}
-      style={{ ...textStyle(size, font, color, weight), lineHeight }}>
+      style={{ ...textStyle(size, font, color, weight), lineHeight, letterSpacing: tracking }}>
       {children}
     </Text>
   );

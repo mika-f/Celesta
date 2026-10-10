@@ -3,7 +3,7 @@ import { Copy, Tag } from '../components/Copy';
 import { FitStack, stackHeight } from '../components/FitStack';
 import { Stage } from '../components/Stage';
 import { BAR, BEAT, BPM, C, COL, TOP, tint } from '../constants';
-import { outroLines } from '../measure';
+import { hookLines } from '../measure';
 
 const Y = TOP + 180;
 
@@ -13,11 +13,11 @@ export function Outro() {
   const f = useCurrentFrame();
   const { pulse } = useBeat({ bpm: BPM });
   const mark = progress(f, BEAT * 2, 12, Easings.easeOutExpo);
-  const rule = Y + stackHeight(outroLines) + 60;
+  const rule = Y + stackHeight(hookLines) + 60;
   return (
     <Stage bg={C.ink} tone={tint(C.hot, 0.35)} fg={C.paper} accent={C.hot}
-      tapes={['Write video in code.', 'Celesta']} zoom={1.03 - 0.03 * progress(f, 0, BAR * 2, Easings.easeOutCubic)}>
-      <FitStack lines={outroLines} x={COL.x} y={Y} from={-6} stagger={BEAT}
+      tapes={['Write your video in code.', 'Celesta']} zoom={1.03 - 0.03 * progress(f, 0, BAR * 2, Easings.easeOutCubic)}>
+      <FitStack lines={hookLines} x={COL.x} y={Y} from={-6} stagger={BEAT}
         glow={{ color: tint(C.hot, 0.35 + 0.4 * pulse), blur: 24 }} />
       <Rect x={COL.x} y={rule} width={COL.width * mark} height={4} fill={C.dim} />
       <Copy x={COL.x} y={rule + 60 + 40 * (1 - mark)} size={176} weight={700} font="mono" opacity={mark}

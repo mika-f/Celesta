@@ -27,6 +27,7 @@ export function Tape({ y, rotation, text, bg, fg, speed, frame, size = 54, mono 
       <Rect x={-W} y={-height / 2} width={W * 2} height={height} fill={bg} />
       <Text x={-W - 1200 - frame * speed} anchorY={0.5}
         style={{ fontFamily: mono ? FONT.mono : FONT.display, fontSize: size, fontWeight: mono ? 700 : 400,
+          letterSpacing: mono ? 0 : -0.02 * size,
           fill: { type: 'solid', color: fg } }}>
         {line}
       </Text>

@@ -5,12 +5,17 @@ import { Stage } from '../components/Stage';
 import { AREA, BEAT, C, COL, TOP, tint } from '../constants';
 import { SPAN_COPY, SPAN_STYLE, segmentsOf, spanLayout } from '../measure';
 
-// One beat per lit word; on the last cue every word lights at once.
-const LIT = ['Same', 'sentence', 'Light', 'word', 'meaning', 'moves'];
+// One beat per lit word; on the last cue every word lights at once. A word
+// takes its trailing punctuation with it, which the bar's padding would
+// otherwise cover.
+const LIT = ['Same', 'sentence.', 'Light', 'word,', 'meaning', 'moves.'];
 const CUES = [...LIT.map((word, i) => ({ at: i * BEAT, words: [word] })), { at: BEAT * 6, words: LIT }];
 const Y = TOP + 300;
 const SIZE = SPAN_STYLE.fontSize ?? 92;
-const PAD = 10;
+// Room around the glyphs; the line height (measure.ts) leaves a gap between
+// the bars of two lit lines.
+const PAD_X = 20;
+const PAD_Y = 16;
 // Inter's ascenders reach ~0.80 em above the baseline, descenders ~0.24 em below.
 const ABOVE = 0.8;
 const BELOW = 0.24;
@@ -49,8 +54,8 @@ export function Emphasis() {
       <Group x={COL.x} y={Y + 30 * (1 - enter)} opacity={enter}>
         {/* Text and highlights both hang from the measured baselines. */}
         {segments.map((s, i) => (
-          <Rect key={i} x={s.x - PAD} y={s.y + spanLayout.ascent - SIZE * ABOVE - PAD}
-            width={(s.width + PAD * 2) * sweep} height={SIZE * (ABOVE + BELOW) + PAD * 2} fill={C.hot} />
+          <Rect key={i} x={s.x - PAD_X} y={s.y + spanLayout.ascent - SIZE * ABOVE - PAD_Y}
+            width={(s.width + PAD_X * 2) * sweep} height={SIZE * (ABOVE + BELOW) + PAD_Y * 2} fill={C.hot} />
         ))}
         <Text y={spanLayout.ascent} anchorY="baseline" maxWidth={COL.width}
           style={{ ...SPAN_STYLE, fill: { type: 'solid', color: C.grey } }}>

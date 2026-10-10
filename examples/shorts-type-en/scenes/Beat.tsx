@@ -34,6 +34,7 @@ export function Beat() {
       <Burst x={middle} y={TOP + look.y} t={(f - i * BEAT) / BEAT} color={accent} seed={i} />
       <Group blur={18 * (1 - drop)}>
         <Copy x={x} y={TOP + look.y - 60 * (1 - drop)} ax={look.ax} ay={0.5} size={word.size} font="display"
+          tracking={word.tracking}
           color={look.fg} scale={1 + 0.05 * pulse}>
           {word.text}
         </Copy>

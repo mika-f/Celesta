@@ -21,19 +21,22 @@ on a downbeat.
 
 | Time | What happens | APIs |
 | --- | --- | --- |
-| 0–4 s | "WRITE / VIDEO / IN CODE." The reveal starts before frame 0, so the first frame already shows the opening line; the headline is up by frame 12 | `fitText` (one size per line), `TextReveal`, `<Span>`, `Camera` |
+| 0–4 s | "WRITE YOUR / VIDEO IN / CODE.", each line larger than the last. The reveal starts before frame 0, so the first frame already shows the opening line; the headline is up by frame 12 | `fitText` (one size per line), `TextReveal`, `<Span>`, `Camera` |
 | 4–8 s | "Every frame is A FUNCTION OF ITS NUMBER.", one line per beat, then the frame number itself | `fitText`, `TextReveal`, `useCurrentFrame` |
-| 8–12 s | A new word every other beat, drawn over its own measurement: a box per glyph advance, the line's top, baseline and bottom, the total width | `measureText`, `fitText`, `useCue` |
-| 12–16 s | The box changes shape every other beat; the same copy refills it as large as it fits | `fitText`, `useCue` |
-| 16–20 s | The lit word moves every beat; the highlight bars are placed from the measured glyphs | `<Span>`, `measureText`, `useCue`, `interpolateColor` |
+| 8–12 s | A new word every other beat, drawn over its own measurement: a box per glyph advance, the line's top, baseline and bottom, the total width. "AVATAR" shows kerning: each glyph is also measured alone, and what its pair took back is marked | `measureText`, `fitText`, `useCue` |
+| 12–16 s | The box changes shape every other beat; the same copy refills it, centred, as large as it fits | `fitText`, `useCue` |
+| 16–20 s | The lit word moves every beat; the highlight bars are placed from the measured glyphs, and a word takes its trailing punctuation with it | `<Span>`, `measureText`, `useCue`, `interpolateColor` |
 | 20–24 s | One word per beat: "CUT / ON / THE / BEAT. / WRITE. / SAVE. / WATCH. / SHIP." | `useBeat`, `fitText` |
 | 24–28 s | The opening line and the wordmark, on the opening background, so a looping player cuts back into the hook without a jump | `fitText`, `TextReveal` |
 
 Headlines are stacked line by line (`components/FitStack.tsx`): `fitText()`
 finds, for each line on its own, the largest Archivo Black size that fits the
 column on one line, so every line runs the full width and the sizes give the
-hierarchy. English has no phrase line breaking to show, so the Japanese
-version's `lineBreak: 'phrase'` scene is replaced by the measurement scene.
+hierarchy. Display type is tracked in by 2% of its size. `letterSpacing` is in
+pixels, so each fit runs twice: once for the size, then with the tracking that
+size implies, and the line is drawn with exactly the tracking it was measured
+with. English has no phrase line breaking to show, so the Japanese version's
+`lineBreak: 'phrase'` scene is replaced by the measurement scene.
 
 ## Safe area
 
