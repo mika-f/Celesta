@@ -468,6 +468,13 @@ fn reports_errors_in_the_authors_code_by_line_and_column() {
         "{binding}"
     );
 
+    // A shader without parameters has no `params` of its own to bind.
+    let params = error(
+        &mut renderer,
+        &format!("@group(1) @binding(1) var<uniform> params: vec4f;\n{IDENTITY}"),
+    );
+    assert!(params.contains("resource `params`"), "{params}");
+
     let entry = error(
         &mut renderer,
         &format!("@compute @workgroup_size(1) fn main() {{}}\n{IDENTITY}"),

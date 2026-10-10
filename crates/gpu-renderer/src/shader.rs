@@ -529,9 +529,14 @@ fn check_declarations(
     }
     for (handle, global) in module.global_variables.iter() {
         let name = global.name.as_deref().unwrap_or("");
-        if global.binding.is_some() && !matches!(name, "celesta_source" | "celesta" | "params") {
+        let at = start(module.global_variables.get_span(handle));
+        // Told apart by where they are declared, not by name: a shader
+        // without parameters could otherwise bind its own `params`.
+        let authored = at.is_none_or(|at| author.contains(&at));
+        let prelude = matches!(name, "celesta_source" | "celesta" | "params");
+        if global.binding.is_some() && (authored || !prelude) {
             return fail(
-                start(module.global_variables.get_span(handle)),
+                at,
                 format!(
                     "declares the resource `{name}`; a custom shader cannot bind resources of its own"
                 ),
