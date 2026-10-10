@@ -1,94 +1,96 @@
-# CELESTA TIPS（縦型ショート）
+# CELESTA TIPS (vertical short)
 
-Celesta の小技を 1 本に 1 つずつ紹介する、縦型ショート動画のテンプレート。
-上半分にハイライトしたコード、下半分にそのコードが描く結果をその場で動かして見せます。
-1080 × 1920 / 30 fps / 24 秒、120 BPM のオリジナルスコアに合わせて展開します。
+English | [日本語](README.ja.md)
 
-ひとつのソースから何本も書き出せます。`properties.ts` が入力（Tip の種類、タイトル、コード、アクセントカラーなど）を
-`defineProjectProperties()` で宣言し、`variants/` の JSON が Tip ごとの値を持ちます。
+A template for vertical short videos that each show one Celesta Tip.
+The upper half shows highlighted code, and the lower half runs the result that code draws.
+1080 × 1920, 30 fps, 24 seconds, cut to an original 120 BPM score.
 
-- `film.tsx` — Celesta の File → Open… で開く React ソース（エントリ）。
-- `properties.ts` — テンプレートの入力。`plan.ts` — コードの配置と各行の出現時刻、`prepare()` での検証。
-- `demos/` — Tip ごとのデモ（1 ファイル 1 デモ、`demos/index.ts` に ID ごとの一覧）。
-- `scenes/` — Hook・Build・Outro の 3 シーン。`components/` — ヘッダー、コード欄、デモの時計、背景。
-- `variants/` — Tip ごとの値。`make-score.py` — BGM を生成する Python スクリプト（標準ライブラリのみ）。
-- `poster.jpg` — 書き出した映像から抽出した静止画。
+One source renders many videos. `properties.ts` declares the inputs (which Tip, the title, the code, the accent color, and so on)
+with `defineProjectProperties()`, and each JSON file in `variants/` holds the values for one Tip.
+
+- `film.tsx` — the React source (entry) to open with Celesta's File → Open….
+- `properties.ts` — the template's inputs. `plan.ts` — code layout, each line's reveal time, and the checks in `prepare()`.
+- `demos/` — one demo per Tip, one file each (`demos/index.ts` lists them by ID).
+- `scenes/` — the three scenes: Hook, Build and Outro. `components/` — the header, the code band, the demo clock and the background.
+- `variants/` — the values for each Tip. `make-score.py` — a Python script that generates the score (standard library only).
+- `poster.jpg` — a still taken from an exported video.
 
 ![poster](poster.jpg)
 
-## 構成
+## Structure
 
-120 BPM（1 拍 = 15 フレーム、1 小節 = 60 フレーム）。シーンは `<TransitionSeries>` でつなぎ、
-切り替えは小節の頭に重なりの中心が来るように置いています。尺はどの variant でも同じです。
+120 BPM (one beat = 15 frames, one bar = 60 frames). The scenes are joined with `<TransitionSeries>`, and each
+transition is centered on a downbeat. Every variant has the same length.
 
-| 時間 | 内容 |
+| Time | What happens |
 | --- | --- |
-| 0–2 秒 | 完成形。コード全文と、すでに動いているデモの上に、フックのひとこと（`hook`）の帯 |
-| 2 秒 | 左からのワイプで、空のエディタへ |
-| 2–16 秒 | コードが拍に合わせて 1 行ずつ打ち込まれ、行がそろうたびに下のデモが組み上がる |
-| 16–24 秒 | クロスフェードで、コード欄が締めのひとこと（`closing`）に替わる。デモは動き続ける |
+| 0–2 s | The finished state: the full code and the demo already running, under a band with the hook line (`hook`) |
+| 2 s | A wipe from the left into an empty editor |
+| 2–16 s | The code types in one line per beat slot, and the demo below builds up as each line lands |
+| 16–24 s | A cross-fade turns the code band into the closing line (`closing`). The demo keeps running |
 
-## variants
+## Variants
 
-| ファイル | Tip | デモ |
+| File | Tip | Demo |
 | --- | --- | --- |
-| `variants/spring.json` | interpolate と spring の違い | 同じ 0 → 1 の移動を 2 つの関数で。値の読み出しと、1 小節分のカーブ |
-| `variants/transition.json` | `<TransitionSeries>` によるシーンのつなぎ | 本物の `TransitionSeries`（Sun → wipe → Moon）を毎小節再生し、重なりをタイムラインで示す |
-| `variants/phrase.json` | 日本語の文節改行（`lineBreak: 'phrase'`） | 同じ文・同じ `maxWidth` で、`'normal'` と `'phrase'` の折り返しを並べる |
+| `variants/spring.json` | interpolate vs spring | The same 0 → 1 move from both functions, their live values, and both curves over one bar |
+| `variants/transition.json` | Joining scenes with `<TransitionSeries>` | A real `TransitionSeries` (Sun → wipe → Moon) replayed every bar, with a timeline that shows the overlap |
+| `variants/phrase.json` | Japanese phrase line breaks (`lineBreak: 'phrase'`) | The same sentence in the same `maxWidth`, wrapped with `'normal'` and with `'phrase'` |
 
-`variants/en/` には同じ 3 本の英語版があります。違うのは `title`・`hook`・`closing` だけで、コードとデモは共通です
-（phrase のデモは日本語の改行を扱うので、例文は日本語のままです）。
-ほかの言語にするときも、この 3 つを書き換えた variant を足せば済みます。
-和文用の Noto Sans JP は欧文も含むので、英語の文字もそのまま描けます。
-英文は和文より横に長いので、`hook` は 1 行 16 字ほどまでにして、`\n` で改行を指定してください。
+`variants/` holds the Japanese versions, and `variants/en/` holds the same three Tips in English.
+Only `title`, `hook` and `closing` differ; the code and the demos are shared.
+The phrase demo is about Japanese line breaking, so its sample sentence stays in Japanese.
+Noto Sans JP, the face used for these texts, includes Latin glyphs, so English needs no other font.
+English runs longer than Japanese: keep each line of `hook` to about 16 characters, and break lines with `\n`.
 
-各 variant が持つ値は次のとおりです。省いた値は `properties.ts` の既定値（spring の Tip）になります。
+Each variant sets these values. Any value it leaves out takes the default from `properties.ts` (the spring Tip).
 
-| キー | 型 | 内容 |
+| Key | Type | Meaning |
 | --- | --- | --- |
-| `tip` | select | 下半分に出すデモの ID（`demos/index.ts` のキー） |
-| `number` | number | `TIPS #01` の番号 |
-| `title` | string | ヘッダーのタイトル。文節で折り返します |
-| `hook` | string | 最初の 2 秒に出すひとこと |
-| `code` | string | 上半分のコード（TSX としてハイライト）。9 行まで |
-| `stages` | string | デモの各段階が始まるコードの行番号（1 始まり、カンマ区切り、昇順）。その行を打ち終えた時点で段階が始まります |
-| `closing` | string | 締めのひとこと |
-| `accent` | color | アクセントカラー |
-| `guides` | boolean | セーフエリア外を赤く塗る確認用の表示。既定は `false` で、完成映像には描きません |
+| `tip` | select | The ID of the demo shown in the lower half (a key of `demos/index.ts`) |
+| `number` | number | The number in `TIPS #01` |
+| `title` | string | The header title. Japanese wraps between phrases |
+| `hook` | string | The line shown over the first 2 seconds |
+| `code` | string | The code in the upper half, highlighted as TSX. Up to 9 lines |
+| `stages` | string | The code line (1-based, comma-separated, ascending) that starts each stage of the demo. A stage starts once its line has been typed |
+| `closing` | string | The closing line |
+| `accent` | color | The accent color |
+| `guides` | boolean | Tints everything outside the safe area red, for checking. Defaults to `false` and is never drawn in a delivered video |
 
-コードの文字サイズは最長の行に合わせて 46〜34 px で決まります。収まらない行や、`stages` の数がデモと合わないときは、
-`prepare()` が最初のフレームより前にエラーで止めます。
+The code's font size follows its longest line, from 46 down to 34 px. If a line does not fit, or the number of `stages`
+does not match the demo, `prepare()` stops with an error before the first frame.
 
-## Tip を足すには
+## Adding a Tip
 
-1. `demos/` にデモを 1 ファイル書きます。描く範囲は下半分（1080 × 960、原点は下半分の左上）です。
-   時間は `components/DemoClock.tsx` のフックから取ります。`useStage(i)` は段階 `i` が始まってからのフレーム数を返します。
-   `useBarLoop(i)` は、段階 `i` のあとの最初の小節の頭から、小節ごとに繰り返す時計を返します。
-   段階の数を `XXX_STAGES` として書き出します。
-2. `demos/index.ts` の `DEMOS` に ID・段階数・コンポーネントを登録します。ID は `tip` の選択肢に自動で加わります。
-3. `variants/` に JSON を足し、`tip` にその ID を、`stages` にデモの段階数と同じ数の行番号を書きます。
+1. Write a demo in `demos/`, one file. It draws in the lower half (1080 × 960, with the origin at that half's top-left).
+   It reads time from the hooks in `components/DemoClock.tsx`: `useStage(i)` returns the frames since stage `i` started,
+   and `useBarLoop(i)` returns a clock that restarts every bar, from the first downbeat after stage `i`.
+   Export the number of stages as `XXX_STAGES`.
+2. Register the ID, the number of stages and the component in `DEMOS` in `demos/index.ts`. The ID is added to the options of `tip` automatically.
+3. Add a JSON file to `variants/`. Set `tip` to the ID, and give `stages` as many line numbers as the demo has stages.
 
-デモに使う値（たとえば spring の `damping`）はコードの断片と同じにしてください。各デモの先頭にある定数がそれです。
-冒頭の 2 秒では、すべての段階がとうに始まったものとしてデモが描かれます。デモの側で完成形を別に用意する必要はありません。
+Keep the values a demo uses (such as spring's `damping`) equal to the ones in the code snippet; they are the constants at the top of each demo.
+During the first 2 seconds, every stage is treated as having started long ago, so a demo needs no separate code for its finished state.
 
-## セーフエリア
+## Safe area
 
-Shorts・TikTok・Reels は、下の約 20%（y ≥ 1536）にキャプションやチャンネル名を、右端（x ≥ 936）にボタンを重ねます。
-背景、コード欄の帯、デモの絵は画面の端から端まで使います。読ませる文字（タイトル、コード、ラベル、ひとこと）は
-`constants.ts` の `SAFE` の内側に置いています。確かめるときは `--props '{"guides":true}'` で書き出すと、その外側が赤く塗られます。
+Shorts, TikTok and Reels draw captions and the channel name over the bottom 20 % or so (y ≥ 1536), and buttons over the right edge (x ≥ 936).
+Backgrounds, the code band and the demos' pictures use the whole frame. Readable text (the title, the code, labels and the hook and closing lines)
+stays inside `SAFE` in `constants.ts`. To check, export with `--props '{"guides":true}'`: everything outside the safe area is tinted red.
 
-## コードの描画について
+## How the code is drawn
 
-コードのハイライトは `@celesta/code` の `tokenizeCode()` で行い、1 行を 1 つの `<Text>` として色を `<Span>` で付けています。
-`<Code>` コンポーネントは描画中に文字幅を測るため、`inspect.mjs` ではフレームを評価できません。
-JetBrains Mono はどの文字も 0.6 em 送るので、ここでは測らずに位置を計算しています。
-JetBrains Mono にない和文は `<Span>` で Noto Sans JP を指定して描き、1 em として扱います。
-OS のフォールバックに任せないので、どの環境でも同じ字形になります。
-そのため `inspect.mjs` で全フレームを確かめられます。
+The code is highlighted with `tokenizeCode()` from `@celesta/code` and drawn as one `<Text>` per line, colored with `<Span>`.
+The `<Code>` component measures text while rendering, so `inspect.mjs` cannot evaluate frames that use it.
+JetBrains Mono advances every glyph by 0.6 em, so positions are computed here without measuring.
+Japanese, which JetBrains Mono lacks, is drawn in Noto Sans JP through `<Span>` and counted as 1 em.
+It does not depend on the operating system's font fallback, so it looks the same on every machine.
+As a result, `inspect.mjs` can check every frame.
 
-## 再生成
+## Regenerating
 
-WAV と MP4 はリポジトリ全体の設定で Git の管理対象外です。クローン後は最初にスコアを生成してください。
+WAV and MP4 files are ignored by the repository-wide Git settings. After cloning, generate the score first.
 
 ```sh
 python3 examples/shorts-tips/make-score.py
@@ -100,20 +102,20 @@ Celesta-export --react examples/shorts-tips/film.tsx transition.mp4 \
   --props-file examples/shorts-tips/variants/transition.json
 Celesta-export --react examples/shorts-tips/film.tsx phrase.mp4 \
   --props-file examples/shorts-tips/variants/phrase.json
-# 英語版
+# English
 Celesta-export --react examples/shorts-tips/film.tsx spring-en.mp4 \
   --props-file examples/shorts-tips/variants/en/spring.json
 ```
 
-英語版の残り 2 本も、`variants/en/` のファイルを指定して同じように書き出します。
+Export the other two English videos the same way, with the files in `variants/en/`.
 
-ソースから実行する場合は `Celesta-export` を
-`cargo run -p celesta-exporter --release --` に置き換えます。
-同じ値でプレビューするには `celesta-editor examples/shorts-tips/film.tsx --props-file examples/shorts-tips/variants/spring.json` を使います。
-フォントは初回に Google Fonts から取得され、以降はキャッシュされます。
+When running from source, replace `Celesta-export` with
+`cargo run -p celesta-exporter --release --`.
+To preview with the same values, use `celesta-editor examples/shorts-tips/film.tsx --props-file examples/shorts-tips/variants/spring.json`.
+The fonts are fetched from Google Fonts on first use and cached after that.
 
-## 素材
+## Credits
 
-フォント：Unbounded、JetBrains Mono、Noto Sans JP（いずれも SIL Open Font License、Google Fonts から配信）。
-タイトルやひとことは variant ごとに変わるため、和文フォントはサブセットにせず丸ごと読み込みます。
-映像とスコアはこのリポジトリのためのオリジナルの手続き的制作です。
+Fonts: Unbounded, JetBrains Mono and Noto Sans JP (all under the SIL Open Font License, served by Google Fonts).
+The titles and lines change with each variant, so the Japanese face is loaded whole rather than subset.
+The picture and the score are original procedural work made for this repository.
