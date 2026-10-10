@@ -1,0 +1,10 @@
+{
+  "tip": "phrase",
+  "number": 3,
+  "title": "Break Japanese headings by phrase",
+  "hook": "Is す left\nalone on a line?",
+  "code": "<Text\n  maxWidth={370}\n  style={{ fontSize: 52,\n    lineBreak: 'phrase' }}>\n  動画をコードで書けるツールです\n</Text>",
+  "stages": "2,4,5,6",
+  "closing": "Japanese headings?\nlineBreak: 'phrase'.",
+  "accent": "#2EC27E"
+}

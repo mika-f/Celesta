@@ -1,0 +1,10 @@
+{
+  "tip": "transition",
+  "number": 2,
+  "title": "Let TransitionSeries join your scenes",
+  "hook": "Stop doing\noverlap math.",
+  "code": "const T = TransitionSeries;\n<T>\n  <T.Sequence durationInFrames={35}>\n    <Sun /></T.Sequence>\n  <T.Transition type=\"wipe\"\n    durationInFrames={10} />\n  <T.Sequence durationInFrames={35}>\n    <Moon /></T.Sequence>\n</T>",
+  "stages": "2,4,6,8",
+  "closing": "List the lengths.\nOverlaps are free.",
+  "accent": "#5B8CFF"
+}

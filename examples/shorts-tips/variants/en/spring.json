@@ -1,0 +1,10 @@
+{
+  "tip": "spring",
+  "number": 1,
+  "title": "interpolate vs spring:\nhow a move lands",
+  "hook": "Same move.\nNew landing.",
+  "code": "const a = interpolate(frame,\n  [0, 20], [0, 1],\n  { extrapolateRight: 'clamp' });\nconst b = spring({ frame, fps,\n  config: { damping: 8 } });\n\n<Ball x={a * 560} />\n<Ball x={b * 560} />",
+  "stages": "1,4,7,8",
+  "closing": "interpolate lands.\nspring lingers.",
+  "accent": "#FF7A59"
+}

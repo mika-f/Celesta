@@ -36,6 +36,12 @@ Celesta の小技を 1 本に 1 つずつ紹介する、縦型ショート動画
 | `variants/transition.json` | `<TransitionSeries>` によるシーンのつなぎ | 本物の `TransitionSeries`（Sun → wipe → Moon）を毎小節再生し、重なりをタイムラインで示す |
 | `variants/phrase.json` | 日本語の文節改行（`lineBreak: 'phrase'`） | 同じ文・同じ `maxWidth` で、`'normal'` と `'phrase'` の折り返しを並べる |
 
+`variants/en/` には同じ 3 本の英語版があります。違うのは `title`・`hook`・`closing` だけで、コードとデモは共通です
+（phrase のデモは日本語の改行を扱うので、例文は日本語のままです）。
+ほかの言語にするときも、この 3 つを書き換えた variant を足せば済みます。
+和文用の Noto Sans JP は欧文も含むので、英語の文字もそのまま描けます。
+英文は和文より横に長いので、`hook` は 1 行 16 字ほどまでにして、`\n` で改行を指定してください。
+
 各 variant が持つ値は次のとおりです。省いた値は `properties.ts` の既定値（spring の Tip）になります。
 
 | キー | 型 | 内容 |
@@ -94,7 +100,12 @@ Celesta-export --react examples/shorts-tips/film.tsx transition.mp4 \
   --props-file examples/shorts-tips/variants/transition.json
 Celesta-export --react examples/shorts-tips/film.tsx phrase.mp4 \
   --props-file examples/shorts-tips/variants/phrase.json
+# 英語版
+Celesta-export --react examples/shorts-tips/film.tsx spring-en.mp4 \
+  --props-file examples/shorts-tips/variants/en/spring.json
 ```
+
+英語版の残り 2 本も、`variants/en/` のファイルを指定して同じように書き出します。
 
 ソースから実行する場合は `Celesta-export` を
 `cargo run -p celesta-exporter --release --` に置き換えます。
