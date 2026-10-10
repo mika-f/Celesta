@@ -595,6 +595,61 @@ fn a_text_stroke_reaches_past_both_ends_of_the_line() {
 }
 
 #[test]
+fn a_text_stroke_around_a_transparent_fill_leaves_the_glyphs_hollow() {
+    let style = |fill: &str, stroke: &str| TextStyle {
+        font_size: Some(96.0),
+        fill: Some(Paint::Solid {
+            color: fill.to_owned(),
+        }),
+        stroke: Some(celesta_composition::Stroke {
+            paint: Paint::Solid {
+                color: stroke.to_owned(),
+            },
+            width: 8.0,
+        }),
+        ..TextStyle::default()
+    };
+    let mut rasterizer = TextRasterizer::new();
+    let mut rasterize = |fill: &str, stroke: &str| {
+        rasterizer
+            .rasterize("MW", &style(fill, stroke), None, 1.0)
+            .unwrap()
+    };
+    let filled = rasterize("#0000FFFF", "#FF0000FF");
+    let hollow = rasterize("#00000000", "#FF0000FF");
+    let faint = rasterize("#00000000", "#FF000033");
+    assert_eq!(
+        (hollow.width(), hollow.height()),
+        (filled.width(), filled.height())
+    );
+
+    let mut inside = 0;
+    let mut outline = 0;
+    for ((filled, hollow), faint) in filled
+        .pixels()
+        .chunks_exact(4)
+        .zip(hollow.pixels().chunks_exact(4))
+        .zip(faint.pixels().chunks_exact(4))
+    {
+        match filled {
+            // Inside a glyph: before, the stroke's color showed through here.
+            [0, 0, 255, 255] => {
+                inside += 1;
+                assert_eq!(hollow[3], 0, "a hollow glyph's inside is drawn");
+            }
+            // Clear of the glyphs, the stroke is the same with either fill.
+            [255, 0, 0, 255] => {
+                outline += 1;
+                assert_eq!(hollow, &[255, 0, 0, 255]);
+            }
+            _ => {}
+        }
+        assert!(faint[3] <= 0x33, "a faint stroke is denser than its color");
+    }
+    assert!(inside > 0 && outline > 0);
+}
+
+#[test]
 fn a_text_stroke_does_not_move_the_text() {
     let ink_center = |stroke: Option<celesta_composition::Stroke>| {
         let scene = Scene {
