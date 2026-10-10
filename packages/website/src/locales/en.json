@@ -432,7 +432,7 @@
         "metadata": {
           "title": "Shapes & layout",
           "description": "Position layers, group them, clip them, and arrange a scene.",
-          "keywords": "Rect Group blendMode blend mode multiply screen overlay difference anchor rotation scale Center SafeArea Stack Grid Fit clip mask layout coordinates"
+          "keywords": "Rect Group shader defineShader WGSL blendMode blend mode multiply screen overlay difference anchor rotation scale Center SafeArea Stack Grid Fit clip mask layout coordinates"
         },
         "api": {
           "moves-the-origin-to-the-center-of": "Moves the origin to the center of the canvas or the enclosing <slot0/>.",
@@ -443,7 +443,10 @@
         },
         "effects": "Blur, shadows, and glow",
         "effects-body": "Visual layers and groups accept blur, shadow, and glow, which can change every frame. Blur radii (up to 64 pixels) and shadow offsets use output pixels. Group effects apply to the combined children.",
-        "effects-example": "A glowing title with a shadow"
+        "effects-example": "A glowing title with a shadow",
+        "custom-shaders": "Custom shaders",
+        "custom-shaders-body": "<slot0/> from <slot1/> defines a filter in WGSL. Write <slot2/>, which returns each output pixel as premultiplied RGBA. Read the layer with <slot3/> (scene pixels, interpolated) or <slot4/>; <slot5/> is the pixel’s place in the layer’s box, from 0,0 to 1,1, and <slot6/> holds the scene size and that box. Declare parameters with <slot7/> and pass their values with every use; time is a parameter too, so a shader follows sequences and freeze frames. Pass the result to any layer’s <slot8/> prop. The shader runs before blur, shadow, and glow, and writes only the layer’s box plus its <slot9/>. Import a <slot10/> file as the source to edit it with highlighting; saving it reloads the preview. Shaders run in preview and export, not in the browser editor.",
+        "custom-shaders-example": "A rippling title"
       },
       "text-fonts": {
         "text": "Text",
@@ -628,6 +631,7 @@
           "look-at-a-point-of-a-larger": "Look at a point of a larger world, with zoom, rotation, and shake.",
           "segments-curves-and-filled-shapes-polylines-can": "Segments, curves, and filled shapes; polylines can draw themselves on.",
           "diagram-shapes-a-circle-is-a-rounded": "Diagram shapes: a circle is a rounded <slot0/>, ellipses and arrows are <slot1/>s; circles and ellipses are placed like a <slot2/>.",
+          "define-a-custom-wgsl-filter": "Define a custom WGSL filter; call it with its parameters and pass the result to <slot0/>.",
           "map-a-frame-to-a-value-with": "Map a frame to a value, with easing and extrapolation.",
           "map-a-frame-to-a-color-blending": "Map a frame to a <slot0/> color, blending with premultiplied alpha.",
           "a-physics-based-value-that-settles-from": "A physics-based value that settles from 0 to 1.",

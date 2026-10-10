@@ -140,7 +140,7 @@ pub(crate) fn watched_mtime(entry: &Path, property_args: &PropertyArgs) -> Optio
     sources.max(props_file)
 }
 
-/// Newest mtime among the JS/TS/JSON source files under `dir` (recursively,
+/// Newest mtime among the JS/TS/JSON/CSS/WGSL source files under `dir` (recursively,
 /// skipping `node_modules`, `dist`, and `.tmp`). Used to notice when a React
 /// composition's code — the entry or any module it bundles — changed on disk.
 pub(crate) fn newest_source_mtime(dir: &Path) -> Option<SystemTime> {
@@ -165,7 +165,7 @@ pub(crate) fn newest_source_mtime(dir: &Path) -> Option<SystemTime> {
                 }
             } else if matches!(
                 path.extension().and_then(OsStr::to_str),
-                Some("tsx" | "ts" | "jsx" | "js" | "mjs" | "cjs" | "json" | "css")
+                Some("tsx" | "ts" | "jsx" | "js" | "mjs" | "cjs" | "json" | "css" | "wgsl")
             ) && let Ok(modified) = entry.metadata().and_then(|meta| meta.modified())
             {
                 *newest = Some(newest.map_or(modified, |current| current.max(modified)));

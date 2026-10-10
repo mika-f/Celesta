@@ -49,7 +49,7 @@ export type Layer = {
   id: string;
   transform: Transform;
   opacity: number;
-  effects?: { blur?: number; shadow?: { color: string; blur: number; offsetX: number; offsetY: number } | null; glow?: { color: string; blur: number } | null };
+  effects?: { blur?: number; shadow?: { color: string; blur: number; offsetX: number; offsetY: number } | null; glow?: { color: string; blur: number } | null; shader?: { id: string } | null };
   blendMode?: 'normal' | 'multiply' | 'screen' | 'overlay' | 'add' | 'difference';
   content: LayerContent;
 };

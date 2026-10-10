@@ -29,6 +29,7 @@ every scene before it starts timing, so only rendering is measured.
 | `text` | scaling text lines, a phrase-wrapped Japanese paragraph with a stroke, and a ticking counter |
 | `shapes` | gradient-filled, stroked rounded rects in clipped, rotated groups with every blend mode |
 | `images` | one 512x512 image drawn 16 times, scaled and rotated, with `cover` and `contain` |
+| `shaders` | the `images` image graded by a full-screen custom shader, under six text lines that each ripple through a padded custom shader ([custom-shaders.md](custom-shaders.md)) |
 
 The synthetic workloads are laid out at 1920x1080 and scaled to `--size`;
 `nebula` and `spectra` are wrapped in a scaling group, with their blur,

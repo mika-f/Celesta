@@ -25,6 +25,7 @@
     "@celesta/media-utils": "workspace:*",
     "@celesta/project": "workspace:*",
     "@celesta/react": "workspace:*",
+    "@celesta/shader": "workspace:*",
     "@celesta/shapes": "workspace:*",
     "@celesta/text": "workspace:*",
     "@celesta/transitions": "workspace:*",

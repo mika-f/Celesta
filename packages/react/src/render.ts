@@ -28,10 +28,12 @@ import type {
   PathCommand,
   ResolvedAsset,
   Scene,
+  ShaderSource,
   Stroke,
   TextStyle,
   Time,
 } from './scene';
+import { ShaderEffect } from './shader';
 import type { JsonValue } from './generated/serde_json/JsonValue';
 import { SECONDS_TIMESCALE, secondsFromTime, secondsToTime } from './time';
 
@@ -350,7 +352,7 @@ function buildLayer(
   const transform = extractTransform(props);
   const opacity = typeof props.rawOpacity === 'number' ? props.rawOpacity : numberOr(props.opacity, 1);
   const blendMode = extractBlendMode(props.blendMode);
-  const effects = extractEffects(props);
+  const effects = extractEffects(props, context);
 
   let content: LayerContent;
   if (node.type === 'group' || node.type === 'sequence') {
@@ -503,7 +505,29 @@ function extractPathCommands(value: unknown): PathCommand[] {
   return value as PathCommand[];
 }
 
-function extractEffects(props: Record<string, unknown>): Layer['effects'] | undefined {
+/** The frame's custom shaders, each once, in `WalkContext.frameState`. */
+const SHADER_SOURCES = Symbol('shader sources');
+
+/** The custom shaders the frame walked with `context` used, each once. */
+function usedShaders(context: WalkContext): ShaderSource[] {
+  return (context.frameState.get(SHADER_SOURCES) as ShaderSource[] | undefined) ?? [];
+}
+
+function extractShader(value: unknown, context: WalkContext): NonNullable<Layer['effects']>['shader'] {
+  if (value === undefined) return undefined;
+  if (!(value instanceof ShaderEffect)) {
+    throw new Error("shader must be a value returned by a shader from @celesta/shader's defineShader()");
+  }
+  const sources = usedShaders(context);
+  context.frameState.set(SHADER_SOURCES, sources);
+  const { source } = ShaderEffect.source(value);
+  // A frame uses a few shaders. Keying a Map by the id would internalize
+  // it into a thin string, which `flat-strings.test.mjs` rejects.
+  if (!sources.some((used) => used.id === source.id)) sources.push(source);
+  return ShaderEffect.serialize(value);
+}
+
+function extractEffects(props: Record<string, unknown>, context: WalkContext): Layer['effects'] | undefined {
   const radius = (value: unknown, name: string): number => {
     if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 64) {
       throw new Error(`${name} must be a finite number between 0 and 64`);
@@ -528,9 +552,11 @@ function extractEffects(props: Record<string, unknown>): Layer['effects'] | unde
   }
   const shadow = props.shadow === undefined ? undefined : props.shadow as Record<string, unknown>;
   const glow = props.glow === undefined ? undefined : props.glow as Record<string, unknown>;
-  if (blur === 0 && !shadow && !glow) return undefined;
+  const shader = extractShader(props.shader, context);
+  if (blur === 0 && !shadow && !glow && !shader) return undefined;
   return {
     blur,
+    ...(shader ? { shader } : {}),
     ...(shadow ? { shadow: {
       color: color(shadow.color, 'shadow.color'),
       blur: radius(shadow.blur, 'shadow.blur'),
@@ -872,6 +898,7 @@ export function mount(defaultExport: EntryComponent): MountedComposition {
       audio,
       audioOnly,
     );
+    const shaders = usedShaders(context);
     return {
       scene: {
         width: config.width,
@@ -879,6 +906,7 @@ export function mount(defaultExport: EntryComponent): MountedComposition {
         frameRate: config.frameRate,
         time,
         ...(fonts.length > 0 ? { fonts } : {}),
+        ...(shaders.length > 0 ? { shaders } : {}),
         layers,
       },
       audio,
@@ -1028,7 +1056,13 @@ export function createResolver(lang?: string): Resolver {
           return null;
         }
         const audio: AudioClipDescriptor[] = [];
-        return walkChildren(child, `resolve.${index}`, walkContext, audio);
+        const layers = walkChildren(child, `resolve.${index}`, walkContext, audio);
+        // Resolutions carry only layers, so a shader's source has no way
+        // into the project's scene.
+        if (usedShaders(walkContext).length > 0) {
+          throw new Error(`${items[index]!.component}: custom shaders are not supported in components placed on project timelines`);
+        }
+        return layers;
       });
     },
   };

@@ -202,6 +202,51 @@ export default function Root() {
     );
 }
 
+#[test]
+fn react_png_runs_a_custom_shader_from_a_wgsl_file() {
+    let runtime_path = root().join("packages/cli/dist/cli.js");
+    if !runtime_path.exists() {
+        eprintln!("skipping React shader test: build packages/cli first");
+        return;
+    }
+    let dir = tempfile::tempdir_in(root().join("packages/cli")).unwrap();
+    std::fs::write(
+        dir.path().join("tint.wgsl"),
+        "fn effect(input: EffectInput) -> vec4f {\n    return premultiply(params.tint) * source_at(input.position).a;\n}\n",
+    )
+    .unwrap();
+    let entry = dir.path().join("film.tsx");
+    std::fs::write(
+        &entry,
+        r##"
+import { Composition, Rect } from '@celesta/react';
+import { defineShader } from '@celesta/shader';
+import source from './tint.wgsl';
+const tint = defineShader({ name: 'tint', wgsl: source, params: { tint: 'color' } });
+export default function Root() {
+  return <Composition width={3} height={3} fps={4} durationInFrames={1}>
+    <Rect width={3} height={3} fill="#ff0000" shader={tint({ tint: '#00ff00' })} />
+  </Composition>;
+}
+"##,
+    )
+    .unwrap();
+    Exporter::new(ExportOptions::default())
+        .export_react_png(
+            &entry,
+            &ReactRuntimeOptions::new("node", runtime_path),
+            None,
+            &[0],
+            &dir.path().join("check.png"),
+            |_| {},
+        )
+        .unwrap();
+    assert_eq!(
+        &pixels(&dir.path().join("check.png"))[..4],
+        &[0, 255, 0, 255]
+    );
+}
+
 fn decode(path: &Path) -> (u32, u32, Vec<u8>) {
     let mut reader = png::Decoder::new(std::io::BufReader::new(std::fs::File::open(path).unwrap()))
         .read_info()

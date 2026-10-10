@@ -42,6 +42,7 @@ export type {
   LayerContent,
   LayerEffects,
   LayerGlow,
+  LayerShader,
   LayerShadow,
   LineBreak,
   LineCap,
@@ -53,6 +54,9 @@ export type {
   Rational,
   ResolvedAsset,
   Scene,
+  ShaderParam,
+  ShaderParamType,
+  ShaderSource,
   Stroke,
   TextAlign,
   TextColorRun,
@@ -60,6 +64,7 @@ export type {
   TextStyle,
   Time,
 } from './scene';
+export type { ShaderEffect } from './shader';
 
 export { useCurrentFrame, useCurrentTime, useIsPreview, useVideoConfig } from './hooks';
 export type { VideoConfig } from './hooks';

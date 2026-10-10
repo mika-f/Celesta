@@ -434,6 +434,8 @@ async function loadEntry(entryPath: string): Promise<LoadedEntry> {
     platform: 'node',
     format: 'esm',
     jsx: 'automatic',
+    // `@celesta/shader` sources, imported as their text.
+    loader: { '.wgsl': 'text' },
     absWorkingDir: path.dirname(entryPath),
     logLevel: 'silent',
     define: {

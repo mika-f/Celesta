@@ -432,7 +432,7 @@
         "metadata": {
           "title": "図形とレイアウト",
           "description": "レイヤーを配置・グループ化・切り抜きし、シーンを構成します。",
-          "keywords": "図形 配置 レイアウト 座標 グループ ぼかし 影 光彩 Rect Group blendMode blend mode multiply screen overlay difference anchor rotation scale Center SafeArea Stack Grid Fit clip mask layout coordinates"
+          "keywords": "図形 配置 レイアウト 座標 グループ ぼかし 影 光彩 シェーダー Rect Group shader defineShader WGSL blendMode blend mode multiply screen overlay difference anchor rotation scale Center SafeArea Stack Grid Fit clip mask layout coordinates"
         },
         "api": {
           "moves-the-origin-to-the-center-of": "原点をキャンバスまたは親 <slot0/> の中心に移動します。",
@@ -443,7 +443,10 @@
         },
         "effects": "ぼかし・影・光彩",
         "effects-body": "映像のレイヤーや Group に blur、shadow、glow を指定できます。値はフレームごとに変更でき、ぼかしの半径（最大 64 ピクセル）と影のずれは出力画像のピクセル単位です。Group では、子要素をまとめた結果に効果を適用します。",
-        "effects-example": "光彩と影の付いたタイトル"
+        "effects-example": "光彩と影の付いたタイトル",
+        "custom-shaders": "カスタムシェーダー",
+        "custom-shaders-body": "<slot1/> の <slot0/> で、WGSL のフィルタを定義できます。<slot2/> を書き、出力の各ピクセルを乗算済みアルファの RGBA で返します。レイヤーの画素は <slot3/>（シーンのピクセル座標、補間あり）か <slot4/> で読みます。<slot5/> はレイヤーの矩形の中での位置（0,0 から 1,1）で、<slot6/> にはシーンの大きさとその矩形が入っています。パラメータは <slot7/> で宣言し、使うたびに値を渡します。時間もパラメータとして渡すので、シーケンスや FreezeFrame の中でも正しく動きます。結果はどのレイヤーの <slot8/> にも渡せます。シェーダーは blur、shadow、glow より先に適用され、レイヤーの矩形と <slot9/> の範囲にだけ書き込みます。ソースは <slot10/> ファイルとして import でき、エディタのハイライトが効くうえ、保存するとプレビューが再読み込みされます。シェーダーはプレビューと書き出しで動き、ブラウザ版エディタでは使えません。",
+        "custom-shaders-example": "波打つタイトル"
       },
       "text-fonts": {
         "text": "テキスト",
@@ -628,6 +631,7 @@
           "look-at-a-point-of-a-larger": "大きなワールドの一部を、ズーム・回転・揺れ付きで映します。",
           "segments-curves-and-filled-shapes-polylines-can": "線分・曲線・塗りつぶした形。折れ線は段階的に描けます。",
           "diagram-shapes-a-circle-is-a-rounded": "図のコンポーネント。円は丸い <slot0/>、楕円と矢印は <slot1/> です。円と楕円は <slot2/> と同様に配置します。",
+          "define-a-custom-wgsl-filter": "WGSL のカスタムフィルタを定義します。パラメータを渡して呼び出し、結果を <slot0/> に渡します。",
           "map-a-frame-to-a-value-with": "フレームを、イージング・外挿付きの値に変換します。",
           "map-a-frame-to-a-color-blending": "フレームを <slot0/> の色に変換し、乗算済みアルファで混ぜます。",
           "a-physics-based-value-that-settles-from": "物理モデルで 0 から 1 に収束する値。",

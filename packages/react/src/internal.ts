@@ -51,6 +51,8 @@ export {
 } from './properties';
 
 export { SECONDS_TIMESCALE, secondsFromTime, secondsToTime } from './time';
+export { shaderEffect, shaderSource } from './shader';
+export type { ShaderSourceHandle } from './shader';
 export { entryRelativePath, isRemoteUrl } from './entry-dir';
 
 // Rust types of the project document (`celesta-project`), which
