@@ -40,6 +40,13 @@ impl CpuRenderer {
             clip: parent.clip.clone(),
             blend_mode: layer.blend_mode,
         };
+        // WGSL runs only on the GPU renderer, so a shader is refused even on
+        // a layer that would draw nothing.
+        if layer.effects.shader.is_some() {
+            return Err(RenderError::UnsupportedShader {
+                layer: layer.id.clone(),
+            });
+        }
         if state.opacity == 0.0 || state.scale.x == 0.0 || state.scale.y == 0.0 {
             return Ok(());
         }
@@ -257,12 +264,6 @@ impl CpuRenderer {
         parent: ParentState,
         state: ParentState,
     ) -> Result<(), RenderError> {
-        // WGSL runs only on the GPU renderer.
-        if layer.effects.shader.is_some() {
-            return Err(RenderError::UnsupportedShader {
-                layer: layer.id.clone(),
-            });
-        }
         let mut source = RgbaFrame {
             width: frame.width,
             height: frame.height,

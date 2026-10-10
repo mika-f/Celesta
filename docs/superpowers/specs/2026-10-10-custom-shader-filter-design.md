@@ -113,9 +113,11 @@ and, when the shader declares parameters, a `params` uniform (see
   limited to the scene, so a shader cannot read layer pixels that lie off
   screen.
 - The author's code may declare its own functions, constants, and structs.
-  It must define `effect` with exactly that signature. It must not declare
-  entry points or resource variables (`@group`/`@binding`), and must not
-  use names the prelude declares or names starting with `celesta`.
+  It must define `effect` with exactly that signature. It uses the
+  prelude's names (`EffectInput`, `source_at`, `celesta`, `params`, …) but
+  must not declare them again, must not declare its own names starting
+  with `celesta`, and must not declare entry points or resource variables
+  (`@group`/`@binding`).
 
 ### Output
 
@@ -442,7 +444,8 @@ parameters, then the author's code, then the entry points:
 @vertex fn celesta_vertex(…)   // the full-screen triangle effect.wgsl uses
 @fragment fn celesta_fragment(@builtin(position) p: vec4f) -> @location(0) vec4f {
   let position = p.xy + celesta_canvas_origin();
-  let size = max(celesta.content.zw - celesta.content.xy, vec2f(1.0));
+  // Only keeps a box of no width or height from dividing by zero.
+  let size = max(celesta.content.zw - celesta.content.xy, vec2f(1e-4));
   let color = effect(EffectInput(position, (position - celesta.content.xy) / size));
   let alpha = clamp(color.a, 0.0, 1.0);
   return vec4f(clamp(color.rgb, vec3f(0.0), vec3f(alpha)), alpha);
@@ -515,11 +518,15 @@ layout rules. The buffer is sized in `begin_frame` from the number of
 **Compositing.** In `compositor.rs` `draw_group`, after the layers have
 drawn onto `canvas` and `content` is known: when the effect has a shader,
 take a pooled canvas of the same size, run the shader pass into it with the
-scissor set to the content expanded by the padding (in canvas pixels),
-recycle the original canvas, and continue with the shader's result and its
-expanded content. The existing blur, shadow, glow, and final draw then run
-unchanged. One pipeline layout (group 0: `texture_layout`; group 1: the
-two dynamic uniforms) serves every custom shader.
+scissor set to the content expanded by the padding (in canvas pixels).
+Planning already sized the effect's canvas to `output_bounds`, which
+includes the padding (and the blur and shadow reach around it), so both
+canvases hold the padded writes; they share the canvas origin the
+uniforms carry. Then recycle the original canvas and continue with the
+shader's result and its expanded content. The existing blur, shadow, glow,
+and final draw then run unchanged. One pipeline layout (group 0:
+`texture_layout`; group 1: the two dynamic uniforms) serves every custom
+shader.
 
 Scenes without shaders take exactly the code paths they take today.
 

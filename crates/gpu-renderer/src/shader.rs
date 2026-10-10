@@ -240,7 +240,12 @@ impl ShaderProcessor {
                 shader.params.len()
             )));
         }
-        if !shader.params.iter().all(|value| value.is_finite()) {
+        // The values are uploaded as `f32`, which a finite `f64` can overflow.
+        if !shader
+            .params
+            .iter()
+            .all(|value| (*value as f32).is_finite())
+        {
             return Err(error(format!(
                 "layer `{layer}` gives a parameter value that is not finite"
             )));
@@ -376,7 +381,7 @@ impl ShaderProcessor {
                 .map(|range| range.start);
             locate(&code, &author, at, error.message().to_owned())
         })?;
-        check_declarations(&module)?;
+        check_declarations(&module, &code, &author)?;
         naga::valid::Validator::new(
             naga::valid::ValidationFlags::all(),
             naga::valid::Capabilities::default(),
@@ -499,21 +504,71 @@ fn assemble(source: &ShaderSource) -> Result<(String, Range<usize>), String> {
 
 /// Rejects entry points and resources the author declared: the prelude
 /// binds everything a custom shader gets.
-fn check_declarations(module: &naga::Module) -> Result<(), String> {
+fn check_declarations(
+    module: &naga::Module,
+    code: &str,
+    author: &Range<usize>,
+) -> Result<(), String> {
+    let start = |span: naga::Span| span.to_range().map(|range| range.start);
+    let fail = |at: Option<usize>, message: String| Err(locate(code, author, at, message));
     for entry in &module.entry_points {
         if !matches!(entry.name.as_str(), "celesta_vertex" | "celesta_fragment") {
-            return Err(format!(
-                "declares the entry point `{}`; a custom shader defines `effect` instead",
-                entry.name
-            ));
+            // naga keeps no span for an entry point; its `fn` is in the
+            // author's code.
+            let at = code[author.clone()]
+                .find(&format!("fn {}", entry.name))
+                .map(|offset| author.start + offset);
+            return fail(
+                at,
+                format!(
+                    "declares the entry point `{}`; a custom shader defines `effect` instead",
+                    entry.name
+                ),
+            );
         }
     }
-    for (_, global) in module.global_variables.iter() {
+    for (handle, global) in module.global_variables.iter() {
         let name = global.name.as_deref().unwrap_or("");
         if global.binding.is_some() && !matches!(name, "celesta_source" | "celesta" | "params") {
-            return Err(format!(
-                "declares the resource `{name}`; a custom shader cannot bind resources of its own"
-            ));
+            return fail(
+                start(module.global_variables.get_span(handle)),
+                format!(
+                    "declares the resource `{name}`; a custom shader cannot bind resources of its own"
+                ),
+            );
+        }
+    }
+    // Names starting with `celesta` belong to the prelude, whose own
+    // declarations lie outside the author's code.
+    let declared = module
+        .functions
+        .iter()
+        .map(|(handle, function)| (function.name.as_deref(), module.functions.get_span(handle)))
+        .chain(module.global_variables.iter().map(|(handle, global)| {
+            (
+                global.name.as_deref(),
+                module.global_variables.get_span(handle),
+            )
+        }))
+        .chain(module.constants.iter().map(|(handle, constant)| {
+            (constant.name.as_deref(), module.constants.get_span(handle))
+        }))
+        .chain(
+            module
+                .types
+                .iter()
+                .map(|(handle, ty)| (ty.name.as_deref(), module.types.get_span(handle))),
+        );
+    for (name, span) in declared {
+        let at = start(span);
+        if let Some(name) = name
+            && name.starts_with("celesta")
+            && at.is_some_and(|at| author.contains(&at))
+        {
+            return fail(
+                at,
+                format!("declares `{name}`; names starting with `celesta` belong to Celesta"),
+            );
         }
     }
     Ok(())

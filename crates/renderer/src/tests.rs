@@ -1,11 +1,11 @@
 use crate::assets::rasterize_psd;
 use crate::composite::{blend, blend_with_mode, psd_blend_channel};
+use crate::error::RenderError;
 use crate::fonts::TextRasterizer;
 use crate::linebreak::{WORD_JOINER, insert_joiners, phrase_segments};
 use crate::rect::rasterize_rect;
 use crate::renderer::CpuRenderer;
 use crate::text::TextMetrics;
-use crate::error::RenderError;
 use crate::types::{Color, RenderOptions, RgbaFrame};
 use celesta_composition::{LineBreak, Point};
 
@@ -2175,6 +2175,15 @@ fn refuses_custom_shaders() {
     let error = CpuRenderer::default().render(&scene).unwrap_err();
     assert!(
         matches!(&error, RenderError::UnsupportedShader { layer } if layer == "shaded"),
+        "{error}"
+    );
+
+    // Also on a layer that would draw nothing.
+    let mut invisible = scene;
+    invisible.layers[0].opacity = 0.0;
+    let error = CpuRenderer::default().render(&invisible).unwrap_err();
+    assert!(
+        matches!(error, RenderError::UnsupportedShader { .. }),
         "{error}"
     );
 }

@@ -463,12 +463,30 @@ fn reports_errors_in_the_authors_code_by_line_and_column() {
         &format!("@group(2) @binding(0) var<uniform> extra: vec4f;\n{IDENTITY}"),
     );
     assert!(binding.contains("resource `extra`"), "{binding}");
+    assert!(
+        binding.starts_with("invalid custom shader broken: 1:"),
+        "{binding}"
+    );
 
     let entry = error(
         &mut renderer,
         &format!("@compute @workgroup_size(1) fn main() {{}}\n{IDENTITY}"),
     );
     assert!(entry.contains("entry point `main`"), "{entry}");
+    assert!(
+        entry.starts_with("invalid custom shader broken: 1:"),
+        "{entry}"
+    );
+
+    let reserved = error(
+        &mut renderer,
+        &format!("{IDENTITY}fn celesta_helper() -> f32 {{\n    return 1.0;\n}}\n"),
+    );
+    assert!(reserved.contains("`celesta_helper`"), "{reserved}");
+    assert!(
+        reserved.starts_with("invalid custom shader broken: 4:"),
+        "{reserved}"
+    );
 
     let keyword = render_error(
         &mut renderer,
@@ -520,6 +538,16 @@ fn rejects_uses_that_do_not_match_the_scenes_shaders() {
         ),
     );
     assert!(count.contains("gives 1 parameter values"), "{count}");
+
+    // Finite as `f64`, but not as the `f32` the shader gets.
+    let overflow = render_error(
+        &mut renderer,
+        &scene(
+            vec![one.clone()],
+            vec![shaded(rect(), "one", vec![1e39, 0.0], 0.0)],
+        ),
+    );
+    assert!(overflow.contains("not finite"), "{overflow}");
 
     let twice = render_error(&mut renderer, &scene(vec![one.clone(), one], Vec::new()));
     assert!(twice.contains("two shaders with this id"), "{twice}");
