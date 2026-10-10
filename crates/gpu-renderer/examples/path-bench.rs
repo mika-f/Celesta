@@ -162,6 +162,7 @@ fn scene(frame: usize) -> Scene {
                 }
             })
             .collect(),
+        shaders: Vec::new(),
     }
 }
 

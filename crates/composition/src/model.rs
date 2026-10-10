@@ -18,6 +18,9 @@ pub struct Scene {
     /// Project-provided fonts available to text layout, in addition to system fonts.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fonts: Vec<ResolvedAsset>,
+    /// The custom shaders the scene's layers use, each once.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shaders: Vec<ShaderSource>,
     /// Bottom-to-top painter's order.
     pub layers: Vec<Layer>,
 }
@@ -54,11 +57,83 @@ pub struct LayerEffects {
     pub shadow: Option<LayerShadow>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub glow: Option<LayerGlow>,
+    /// A custom WGSL filter, applied before `blur`, `shadow`, and `glow`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shader: Option<LayerShader>,
 }
 
 impl LayerEffects {
     pub fn is_empty(&self) -> bool {
-        self.blur <= 0.0 && self.shadow.is_none() && self.glow.is_none()
+        self.blur <= 0.0 && self.shadow.is_none() && self.glow.is_none() && self.shader.is_none()
+    }
+}
+
+/// One use of a custom shader on a layer.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS))]
+#[cfg_attr(feature = "codegen", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct LayerShader {
+    /// A `ShaderSource::id` in the scene's `shaders`.
+    pub id: String,
+    /// Every parameter's components in declared order: 1 for `f32`, and 2,
+    /// 3, or 4 for the vectors.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub params: Vec<f64>,
+    /// Output pixels the shader may write beyond the content box.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub padding: f64,
+}
+
+/// A custom shader's WGSL source and parameters, shared by every layer
+/// that uses it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS))]
+#[cfg_attr(feature = "codegen", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct ShaderSource {
+    /// Identifies the shader across frames.
+    pub id: String,
+    /// Names the shader in error messages.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// The author's code: the `effect` function and its helpers, without
+    /// the prelude.
+    pub wgsl: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub params: Vec<ShaderParam>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS))]
+#[cfg_attr(feature = "codegen", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub struct ShaderParam {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub ty: ShaderParamType,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "codegen", derive(ts_rs::TS))]
+#[cfg_attr(feature = "codegen", ts(export))]
+#[serde(rename_all = "camelCase")]
+pub enum ShaderParamType {
+    F32,
+    Vec2,
+    Vec3,
+    Vec4,
+}
+
+impl ShaderParamType {
+    /// How many numbers a value of this type has.
+    pub const fn components(self) -> usize {
+        match self {
+            Self::F32 => 1,
+            Self::Vec2 => 2,
+            Self::Vec3 => 3,
+            Self::Vec4 => 4,
+        }
     }
 }
 

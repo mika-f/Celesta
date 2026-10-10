@@ -69,7 +69,12 @@ test('file font URLs are reused across frames and isolated opacity is applied on
     { alpha: 1, filter: 'blur(2px)', mode: 'source-over', x: 0, y: 0 },
   ]);
   assert.deepEqual(composites.filter(([, id]) => id === output.id).map(([, , alpha, from, filter]) => [alpha, from, filter]), [[0.5, result, 'none']]);
+  await assert.rejects(
+    renderer.draw(output, { ...scene, layers: [{ ...rect, effects: { shader: { id: 'ripple' } } }] }),
+    /custom shaders are not supported in the browser renderer/,
+  );
   renderer.dispose();
   assert.equal(revokeURL.mock.callCount(), 1);
   assert.equal(faces.size, 0);
+
 });

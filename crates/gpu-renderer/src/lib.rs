@@ -18,6 +18,7 @@ mod plan;
 mod prepare;
 mod readback;
 mod renderer;
+mod shader;
 #[cfg(test)]
 mod tests;
 mod text;

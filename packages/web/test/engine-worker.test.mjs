@@ -113,4 +113,7 @@ test('compiles serialize, fonts refresh the same mount, and recompile unmounts t
   assert.deepEqual(view.content.layers[0].content.asset.location, { type: 'file', path: 'n.png' });
   const missing = await send({ id: 11, type: 'compile', source: `import { ProjectTimeline } from '@celesta/project'; export default ProjectTimeline;` });
   assert.match(missing.error, /unavailable in the web editor/);
+  // Canvas 2D cannot run WGSL, so the worker does not serve shaders.
+  const shader = await send({ id: 12, type: 'compile', source: `import { defineShader } from '@celesta/shader'; export default defineShader;` });
+  assert.match(shader.error, /unavailable in the web editor/);
 });

@@ -46,6 +46,8 @@ pub(crate) fn evaluate_effects(
                 })
             })
             .transpose()?,
+        // Project timelines have no custom shaders.
+        shader: None,
     })
 }
 

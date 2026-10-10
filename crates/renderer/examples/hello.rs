@@ -36,6 +36,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 baseline_anchor: false,
             },
         }],
+        shaders: Vec::new(),
     };
 
     let mut renderer = CpuRenderer::default();

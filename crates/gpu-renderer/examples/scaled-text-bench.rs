@@ -124,5 +124,6 @@ fn scene(frame: usize, count: usize) -> Scene {
         time: Time::ZERO,
         fonts: Vec::new(),
         layers,
+        shaders: Vec::new(),
     }
 }

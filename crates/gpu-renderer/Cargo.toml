@@ -13,9 +13,10 @@ celesta-composition = { path = "../composition" }
 celesta-remote = { path = "../remote" }
 celesta-media = { path = "../media" }
 celesta-renderer = { path = "../renderer" }
+naga = { version = "30.0.1", features = ["wgsl-in"] }
 pollster = "0.4.0"
 rayon = "1.12.0"
-wgpu = "30.0.1"
+wgpu = { version = "30.0.1", features = ["naga-ir"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.10.0"

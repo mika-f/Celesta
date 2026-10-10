@@ -10,6 +10,7 @@ import * as React from 'react';
 
 import { Composition, Group, Image, Rect, Text } from '../dist/index.js';
 import { mount } from '../dist/render.js';
+import { shaderEffect, shaderSource } from '../dist/internal.js';
 
 v8.setFlagsFromString('--allow-natives-syntax');
 const sameMap = new Function('a', 'b', 'return %HaveSameMap(a, b)');
@@ -35,10 +36,15 @@ test('the check catches a string built by a template literal', () => {
   assert.deepEqual(nonFlatStrings({ text: `FRAME ${frame} / 600` }).length, 1);
 });
 
-test('a frame has no cons or sliced strings in ids, text, colors, or asset paths', () => {
+test('a frame has no cons or sliced strings in ids, text, colors, asset paths, or shaders', () => {
   const nest = (depth, child) => (depth === 0 ? child : h(Group, null, nest(depth - 1, child)));
   const Scene = () => {
     const frame = String(Math.floor(Math.random() * 1000)).padStart(4, '0');
+    const shader = shaderSource({
+      name: `ripple-${frame}-shader`,
+      wgsl: `fn effect(input: EffectInput) -> vec4f { return vec4f(${frame}.0); }`,
+      params: [{ name: `amount_${frame}_value`, type: 'f32' }],
+    });
     return h(
       Composition,
       { width: 10, height: 10, fps: 30, durationInFrames: 30 },
@@ -50,6 +56,7 @@ test('a frame has no cons or sliced strings in ids, text, colors, or asset paths
           h(Text, null, `FRAME ${frame} / 600`),
           h(Rect, { id: `authored-${frame}-rect`, width: 1, height: 1, fill: `rgba(${frame}, 0, 0, 0.5)` }),
           h(Image, { src: `images/frame-${frame}.png`.slice(0, 20) }),
+          h(Rect, { width: 1, height: 1, shader: shaderEffect(shader, [1], 0) }),
         ),
       ),
     );

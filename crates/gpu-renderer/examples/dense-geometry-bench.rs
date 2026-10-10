@@ -154,6 +154,7 @@ fn scene(frame: usize, ribbons: usize, strands: usize, geometry: Geometry) -> Sc
         time: Time::ZERO,
         fonts: Vec::new(),
         layers,
+        shaders: Vec::new(),
     }
 }
 

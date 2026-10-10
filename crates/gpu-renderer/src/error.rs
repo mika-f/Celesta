@@ -30,6 +30,12 @@ pub enum GpuRenderError {
     Media(MediaError),
     Text(RenderError),
     Effects(RenderError),
+    /// A custom shader that does not compile, or a layer's use of one that
+    /// does not match it. `shader` is its name, or its id when unnamed.
+    Shader {
+        shader: String,
+        message: String,
+    },
     InvalidImageData {
         width: u32,
         height: u32,
@@ -110,6 +116,9 @@ impl fmt::Display for GpuRenderError {
             Self::Media(error) => write!(formatter, "could not decode GPU video frame: {error}"),
             Self::Text(error) => write!(formatter, "could not rasterize GPU text: {error}"),
             Self::Effects(error) => write!(formatter, "invalid GPU layer effect: {error}"),
+            Self::Shader { shader, message } => {
+                write!(formatter, "invalid custom shader {shader}: {message}")
+            }
             Self::InvalidImageData {
                 width,
                 height,
@@ -207,6 +216,7 @@ impl Error for GpuRenderError {
             | Self::TooManyLayers(_)
             | Self::ClipsNestedTooDeep(_)
             | Self::PathsTooComplex(_)
+            | Self::Shader { .. }
             | Self::InvalidImageData { .. }
             | Self::MissingVideoDecoder(_)
             | Self::UnsupportedContent { .. }
