@@ -1,0 +1,15 @@
+{
+  "name": "@celesta/example-shorts-tips",
+  "private": true,
+  "dependencies": {
+    "@celesta/code": "workspace:*",
+    "@celesta/project": "workspace:*",
+    "@celesta/react": "workspace:*",
+    "@celesta/shapes": "workspace:*",
+    "@celesta/transitions": "workspace:*",
+    "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.31"
+  }
+}
