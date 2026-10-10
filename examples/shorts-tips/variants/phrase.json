@@ -1,0 +1,10 @@
+{
+  "tip": "phrase",
+  "number": 3,
+  "title": "日本語の見出しは文節で改行する",
+  "hook": "「す」だけの行、\n出ていませんか？",
+  "code": "<Text\n  maxWidth={370}\n  style={{ fontSize: 52,\n    lineBreak: 'phrase' }}>\n  動画をコードで書けるツールです\n</Text>",
+  "stages": "2,4,5,6",
+  "closing": "日本語の見出しには\nlineBreak: 'phrase'。",
+  "accent": "#2EC27E"
+}

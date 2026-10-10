@@ -1,0 +1,10 @@
+{
+  "tip": "transition",
+  "number": 2,
+  "title": "シーンのつなぎは TransitionSeries に任せる",
+  "hook": "重なりの計算、\nもう要らない。",
+  "code": "const T = TransitionSeries;\n<T>\n  <T.Sequence durationInFrames={35}>\n    <Sun /></T.Sequence>\n  <T.Transition type=\"wipe\"\n    durationInFrames={10} />\n  <T.Sequence durationInFrames={35}>\n    <Moon /></T.Sequence>\n</T>",
+  "stages": "2,4,6,8",
+  "closing": "長さを並べるだけ。\n重なりは自動。",
+  "accent": "#5B8CFF"
+}

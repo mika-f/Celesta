@@ -1,0 +1,10 @@
+{
+  "tip": "spring",
+  "number": 1,
+  "title": "interpolate と spring、止まり方の違い",
+  "hook": "その動き、\n止まり方で化ける。",
+  "code": "const a = interpolate(frame,\n  [0, 20], [0, 1],\n  { extrapolateRight: 'clamp' });\nconst b = spring({ frame, fps,\n  config: { damping: 8 } });\n\n<Ball x={a * 560} />\n<Ball x={b * 560} />",
+  "stages": "1,4,7,8",
+  "closing": "着地は interpolate、\n余韻は spring。",
+  "accent": "#FF7A59"
+}
