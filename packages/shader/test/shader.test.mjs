@@ -128,6 +128,7 @@ test('definitions and values are checked with messages naming the shader', () =>
     [`{ amount: 1, axis: [0] }`, /shader ripple: axis must be an array of 2 finite numbers/],
     [`{ amount: 1, axis: [0, 0], tint: '#ff00' }`, /shader ripple: tint must be a #RRGGBB or #RRGGBBAA color/],
     [`{ amount: 1, axis: [0, 0], speed: 1 }`, /shader ripple: has no parameter "speed"/],
+    [`{ amount: 1, axis: [0, , ] }`, /shader ripple: axis must be an array of 2 finite numbers/],
   ];
   for (const [values, error] of uses) {
     const frame = render(
@@ -136,4 +137,21 @@ test('definitions and values are checked with messages naming the shader', () =>
     );
     assert.match(frame.error ?? '', error, values);
   }
+});
+
+test('a parameter named like an Object method takes its default when omitted', () => {
+  const frame = render(
+    `const odd = defineShader({ name: 'odd', wgsl, params: { toString: { type: 'f32', default: 3 } } });`,
+    `<Rect width={8} height={8} shader={odd()} />`,
+  );
+  assert.equal(frame.error, undefined, frame.error);
+  assert.deepEqual(frame.scene.layers[0].effects.shader.params, [3]);
+});
+
+test('a sparse default is refused when the shader is defined', () => {
+  const frame = render(
+    `defineShader({ name: 'x', wgsl, params: { axis: { type: 'vec2', default: [1, , ] } } });`,
+    `<Rect width={8} height={8} />`,
+  );
+  assert.match(frame.error ?? '', /shader x: the default of axis must be an array of 2 finite numbers/);
 });

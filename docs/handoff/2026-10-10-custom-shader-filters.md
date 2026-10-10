@@ -22,8 +22,9 @@ note records what landed and where it differs.
 - Content box: `uv` and `celesta.content` use the box of the layers'
   shapes (`PreparedLayer::shape`, tracked as `GroupPlan::shape`), not the
   conservative canvas bounds, which are 2px wider for rounding. A nested
-  effect's blur does not spread it. Masks intersect it; when the shape boxes
-  miss but the pixel boxes meet, the pixel box stands in.
+  effect's blur does not spread it. A mask intersects it with the mask's
+  box, and an inverted mask keeps the children's box; when the intersected
+  shape boxes miss but the pixel boxes meet, the pixel box stands in.
 - CPU reference renderer: `RenderError::UnsupportedShader`. GPU tests
   (`crates/gpu-renderer/src/tests/shader.rs`) compare against expected
   pixels instead.

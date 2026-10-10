@@ -126,11 +126,13 @@ export function shaderEffect(
   if (!Array.isArray(params) || params.length !== source.components) {
     throw new Error(`shaderEffect: expected ${source.components} parameter values`);
   }
-  if (!params.every((value) => typeof value === 'number' && Number.isFinite(value))) {
+  // A dense copy: `every` would skip the holes of a sparse array.
+  const values = Array.from(params);
+  if (!values.every((value) => typeof value === 'number' && Number.isFinite(value))) {
     throw new Error('shaderEffect: parameter values must be finite numbers');
   }
   if (typeof padding !== 'number' || !Number.isFinite(padding) || padding < 0) {
     throw new Error('shaderEffect: padding must be a finite number of at least 0');
   }
-  return new ShaderEffect(source, [...params], padding);
+  return new ShaderEffect(source, values, padding);
 }

@@ -87,10 +87,12 @@ function pack(type: ShaderParamType, value: unknown, label: string): number[] {
     return [value];
   }
   const length = COMPONENTS[type];
-  if (!Array.isArray(value) || value.length !== length || !value.every(finite)) {
+  // A dense copy: `every` would skip the holes of a sparse array.
+  const numbers = Array.isArray(value) ? Array.from(value as unknown[]) : [];
+  if (numbers.length !== length || !numbers.every(finite)) {
     throw new Error(`${label} must be an array of ${length} finite numbers`);
   }
-  return [...value];
+  return numbers as number[];
 }
 
 /**
@@ -161,7 +163,9 @@ export function defineShader<const P extends Record<string, ShaderParamSpec> = {
     }
     const packed: number[] = [];
     for (const param of declared) {
-      const value = values[param.name];
+      // Own properties only, so a parameter named `toString` is not
+      // mistaken for one the object inherits.
+      const value = Object.prototype.hasOwnProperty.call(values, param.name) ? values[param.name] : undefined;
       if (value === undefined) {
         if (!param.fallback) throw fail(`${param.name} is required`);
         packed.push(...param.fallback);

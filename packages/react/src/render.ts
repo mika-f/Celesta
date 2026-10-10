@@ -513,6 +513,10 @@ function usedShaders(context: WalkContext): ShaderSource[] {
   return (context.frameState.get(SHADER_SOURCES) as ShaderSource[] | undefined) ?? [];
 }
 
+function sameShaderSource(a: ShaderSource, b: ShaderSource): boolean {
+  return a.wgsl === b.wgsl && JSON.stringify(a.params ?? []) === JSON.stringify(b.params ?? []);
+}
+
 function extractShader(value: unknown, context: WalkContext): NonNullable<Layer['effects']>['shader'] {
   if (value === undefined) return undefined;
   if (!(value instanceof ShaderEffect)) {
@@ -523,7 +527,14 @@ function extractShader(value: unknown, context: WalkContext): NonNullable<Layer[
   const { source } = ShaderEffect.source(value);
   // A frame uses a few shaders. Keying a Map by the id would internalize
   // it into a thin string, which `flat-strings.test.mjs` rejects.
-  if (!sources.some((used) => used.id === source.id)) sources.push(source);
+  const used = sources.find((other) => other.id === source.id);
+  if (!used) {
+    sources.push(source);
+  } else if (used !== source && !sameShaderSource(used, source)) {
+    // The scene names each source once, so two shaders whose ids collide
+    // cannot both reach the renderer.
+    throw new Error(`two different shaders share the id ${source.id}; change either one's source`);
+  }
   return ShaderEffect.serialize(value);
 }
 

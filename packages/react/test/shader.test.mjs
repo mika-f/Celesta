@@ -9,6 +9,7 @@ import * as React from 'react';
 import { Composition, Group, Rect } from '../dist/index.js';
 import { createResolver, mount } from '../dist/render.js';
 import { shaderEffect, shaderSource } from '../dist/internal.js';
+import { ShaderSourceHandle } from '../dist/shader.js';
 import { registerComponent } from '../dist/registry.js';
 
 const h = React.createElement;
@@ -87,6 +88,8 @@ test('shaderSource and shaderEffect check their invariants', () => {
   assert.throws(() => shaderEffect({ id: source.id }, [1, 2, 3], 0), /must come from shaderSource/);
   assert.throws(() => shaderEffect(source, [1, 2], 0), /expected 3 parameter values/);
   assert.throws(() => shaderEffect(source, [1, 2, Number.NaN], 0), /finite numbers/);
+  // eslint-disable-next-line no-sparse-arrays -- the hole is the point.
+  assert.throws(() => shaderEffect(source, [1, , 3], 0), /finite numbers/);
   assert.throws(() => shaderEffect(source, [1, 2, 3], -1), /padding/);
 });
 
@@ -97,4 +100,15 @@ test('components resolved for project timelines refuse shaders', () => {
     () => createResolver().resolve([{ component: 'ShadedForTimeline', props: {} }]),
     /ShadedForTimeline: custom shaders are not supported in components placed on project timelines/,
   );
+});
+
+test('two different shaders with the same id in one frame are refused', () => {
+  // Real ids are hashes; colliding ones are built directly.
+  const first = new ShaderSourceHandle({ id: 'collide', wgsl: WGSL }, 0);
+  const second = new ShaderSourceHandle({ id: 'collide', wgsl: `${WGSL}\n` }, 0);
+  const same = new ShaderSourceHandle({ id: 'collide', wgsl: WGSL }, 0);
+  const rect = (key, source) => h(Rect, { key, width: 4, height: 4, shader: shaderEffect(source, [], 0) });
+  assert.throws(() => frame([rect('a', first), rect('b', second)]), /two different shaders share the id collide/);
+  // Separately defined but identical shaders are one source.
+  assert.equal(frame([rect('a', first), rect('b', same)]).shaders.length, 1);
 });

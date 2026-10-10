@@ -59,7 +59,9 @@ fn effect(input: EffectInput) -> vec4f {
     let center = mix(celesta.content.xy, celesta.content.zw, vec2f(0.5));
     let offset = input.position - center;
     let wave = sin(length(offset) * 0.06 - params.time * 6.0) * params.amplitude;
-    return source_at(input.position - normalize(offset) * wave);
+    // Guarded: `normalize` of the zero vector at the centre is undefined.
+    let direction = offset / max(length(offset), 1e-4);
+    return source_at(input.position - direction * wave);
 }
 ```
 
@@ -105,10 +107,11 @@ the parameter. Animate values like any prop (`interpolate`, `spring`,
 
 ## Padding
 
-The shader writes only the layer's box. A shader that moves pixels outward
-or draws past the edge (ripple, outline, RGB split) declares how far with
-`padding` in output pixels, on the definition or per use:
-`ripple({ time }, { padding: 16 })`. The most is 512. A shader that only
+Without padding, the shader writes only the layer's box. A shader that
+moves pixels outward or draws past the edge (ripple, outline, RGB split)
+declares how far with `padding` in output pixels, on the definition or per
+use: `ripple({ time }, { padding: 16 })`. The shader then writes the box
+grown by that much on every side. The most is 512. A shader that only
 recolors needs none.
 
 ## Errors
