@@ -12,8 +12,9 @@ use std::path::{Path, PathBuf};
 
 use celesta_composition::{
     AssetLocation, BlendMode, Clip, EvaluatedTransform, GradientStop, ImageFit, Layer,
-    LayerContent, LayerEffects, LayerGlow, LayerShadow, LineBreak, LineCap, LineJoin, Paint,
-    PathCommand, Point, Rational, ResolvedAsset, Scene, Stroke, TextStyle, Time,
+    LayerContent, LayerEffects, LayerGlow, LayerShader, LayerShadow, LineBreak, LineCap, LineJoin,
+    Paint, PathCommand, Point, Rational, ResolvedAsset, Scene, ShaderParam, ShaderParamType,
+    ShaderSource, Stroke, TextStyle, Time,
 };
 use celesta_react_bridge::{ReactBridge, runtime_paths};
 
@@ -29,6 +30,8 @@ pub struct Workload {
 enum Source {
     /// Builds a frame's layers on the 1920x1080 canvas.
     Synthetic(fn(&Canvas, usize) -> Vec<Layer>),
+    /// As `Synthetic`, with the custom shaders the layers use.
+    Shaded(fn(&Canvas, usize) -> Vec<Layer>, fn() -> Vec<ShaderSource>),
     /// A React entry, relative to the repository root, and where its runs
     /// of frames start: the measured frames are split evenly into runs of
     /// consecutive frames, one from each start (see `run_frame`), so a film
@@ -81,6 +84,11 @@ pub const WORKLOADS: &[Workload] = &[
         description: "a 512x512 image drawn 16 times, scaled and rotated",
         source: Source::Synthetic(images),
     },
+    Workload {
+        name: "shaders",
+        description: "a full-screen color grade on an image and a padded ripple on text",
+        source: Source::Shaded(shaders, shader_sources),
+    },
 ];
 
 impl Workload {
@@ -98,12 +106,19 @@ impl Workload {
     ) -> Result<(Vec<Scene>, PathBuf), String> {
         let count = warmup + frames;
         match self.source {
-            Source::Synthetic(build) => {
+            Source::Synthetic(build) | Source::Shaded(build, _) => {
                 let canvas = Canvas {
                     k: f64::from(width) / 1920.0,
                 };
+                let shaders = match self.source {
+                    Source::Shaded(_, sources) => sources(),
+                    _ => Vec::new(),
+                };
                 let scenes = (0..count)
-                    .map(|frame| synthetic(&canvas, width, height, build(&canvas, frame)))
+                    .map(|frame| Scene {
+                        shaders: shaders.clone(),
+                        ..synthetic(&canvas, width, height, build(&canvas, frame))
+                    })
                     .collect();
                 Ok((scenes, images.map_or_else(PathBuf::new, Path::to_owned)))
             }
@@ -679,6 +694,106 @@ fn images(canvas: &Canvas, frame: usize) -> Vec<Layer> {
             image
         })
         .collect()
+}
+
+const GRADE_WGSL: &str = "\
+fn effect(input: EffectInput) -> vec4f {
+    let color = unpremultiply(source_load(vec2i(floor(input.position))));
+    let luma = dot(color.rgb, vec3f(0.2126, 0.7152, 0.0722));
+    let graded = mix(vec3f(luma), color.rgb, params.saturation) * params.tint.rgb;
+    let vignette = 1.0 - params.vignette * pow(length(input.uv - vec2f(0.5)) * 1.4, 2.0);
+    return premultiply(vec4f(graded * vignette, color.a));
+}
+";
+
+const RIPPLE_WGSL: &str = "\
+fn effect(input: EffectInput) -> vec4f {
+    let center = mix(celesta.content.xy, celesta.content.zw, vec2f(0.5));
+    let offset = input.position - center;
+    let distance = length(offset);
+    let wave = sin(distance * params.frequency - params.time * 6.0) * params.amplitude;
+    return source_at(input.position - offset / max(distance, 1e-4) * wave);
+}
+";
+
+fn shader_sources() -> Vec<ShaderSource> {
+    let param = |name: &str, ty| ShaderParam {
+        name: name.to_owned(),
+        ty,
+    };
+    vec![
+        ShaderSource {
+            id: "bench-grade".to_owned(),
+            name: Some("grade".to_owned()),
+            wgsl: GRADE_WGSL.to_owned(),
+            params: vec![
+                param("saturation", ShaderParamType::F32),
+                param("tint", ShaderParamType::Vec4),
+                param("vignette", ShaderParamType::F32),
+            ],
+        },
+        ShaderSource {
+            id: "bench-ripple".to_owned(),
+            name: Some("ripple".to_owned()),
+            wgsl: RIPPLE_WGSL.to_owned(),
+            params: vec![
+                param("time", ShaderParamType::F32),
+                param("amplitude", ShaderParamType::F32),
+                param("frequency", ShaderParamType::F32),
+            ],
+        },
+    ]
+}
+
+/// The bench image graded over the whole canvas, and text lines that each
+/// ripple, reaching past their edges into the padding.
+fn shaders(canvas: &Canvas, frame: usize) -> Vec<Layer> {
+    let t = seconds(frame);
+    let mut backdrop = layer(
+        "graded".to_owned(),
+        at(canvas.at(960.0, 540.0)),
+        LayerContent::Image {
+            asset: ResolvedAsset {
+                id: "bench-image".to_owned(),
+                location: AssetLocation::File {
+                    path: IMAGE_PATH.to_owned(),
+                },
+            },
+            width: Some(canvas.len(1920.0)),
+            height: Some(canvas.len(1080.0)),
+            fit: Some(ImageFit::Cover),
+        },
+    );
+    backdrop.effects.shader = Some(LayerShader {
+        id: "bench-grade".to_owned(),
+        params: vec![0.5 + 0.5 * (t * 0.8).sin(), 1.0, 0.92, 0.85, 1.0, 0.6],
+        padding: 0.0,
+    });
+    let amplitude = canvas.len(6.0);
+    let mut layers = vec![backdrop];
+    layers.extend((0..6).map(|index| {
+        let mut line = layer(
+            format!("ripple-{index}"),
+            at(canvas.at(960.0, 140.0 + index as f64 * 160.0)),
+            LayerContent::Text {
+                text: format!("Ripple {index}: 波紋が広がる"),
+                style: TextStyle {
+                    font_size: Some(canvas.len(72.0)),
+                    fill: Some(solid("#FFFFFF")),
+                    ..TextStyle::default()
+                },
+                max_width: None,
+                baseline_anchor: false,
+            },
+        );
+        line.effects.shader = Some(LayerShader {
+            id: "bench-ripple".to_owned(),
+            params: vec![t + index as f64 * 0.4, amplitude, 0.06 / canvas.k],
+            padding: amplitude + 2.0,
+        });
+        line
+    }));
+    layers
 }
 
 /// The image `images` draws: a gradient with a checkerboard, so filtering

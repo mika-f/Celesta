@@ -647,5 +647,9 @@ Two pull requests:
 - Shaders in project JSON timelines.
 - Shaders in the browser renderer (`@celesta/web`). It would need a WebGPU
   path beside Canvas 2D.
+- Shaders in components resolved for project timelines (`createResolver`).
+  Resolutions carry only layers, so the bridge protocol would have to carry
+  the sources and the editor merge them into the project's scene. The
+  resolver throws instead.
 - Protection against shaders that hang the GPU. A shader that runs too
   long can trigger the driver's timeout; the docs warn about it.

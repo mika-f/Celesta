@@ -8,6 +8,7 @@ import {
   resolveTextLanguage,
 } from './hooks';
 import type { Animatable, BlendMode, Paint, TextStyle, LayerShadow, LayerGlow } from './scene';
+import type { ShaderEffect } from './shader';
 import { secondsFromTime, secondsToTime } from './time';
 
 // Unlike the pre-reconciler tree walker, these are real function components:
@@ -53,6 +54,11 @@ export interface CommonProps {
   shadow?: LayerShadow;
   /** A centered colored halo behind the composited layer. */
   glow?: LayerGlow;
+  /**
+   * A custom WGSL filter from `@celesta/shader`, applied to the composited
+   * layer before `blur`, `shadow`, and `glow`.
+   */
+  shader?: ShaderEffect;
 }
 
 export interface CompositionProps {

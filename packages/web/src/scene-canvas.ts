@@ -364,6 +364,8 @@ export class SceneCanvas {
     const mode = blend[layer.blendMode ?? 'normal'];
     if (!mode) throw new Error(`Unsupported blend mode: ${layer.blendMode}`);
     const effects = layer.effects;
+    // Canvas 2D cannot run WGSL; drawing the layer without it would be wrong.
+    if (effects?.shader) throw new Error('custom shaders are not supported in the browser renderer');
     if (effects && (effects.blur || effects.shadow || effects.glow)) {
       const source = this.surface(ctx);
       await this.layer(source, { ...layer, opacity: 1, blendMode: 'normal', effects: undefined }, parent, 1);
