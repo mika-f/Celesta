@@ -1,14 +1,12 @@
 import { createRef } from 'react';
 import type { AssetReference } from '@celesta/react';
 import type { CharacterViewReference, PsdCharacterPortrait, PsdExpression } from '@celesta/character';
-import type { SpeakerId } from './script';
+import type { Face, SpeakerId } from './script';
 
 // The two portraits: official 東北ずん子・ずんだもんプロジェクト PSDs, shrunk
 // into assets/ by prepare-assets.ts. Both files name their face layers the
 // same way (目 / 眉 / クチ / 頬, one closed and one open mouth per face), so
 // one table builds every expression; only the folder prefixes differ.
-
-export type Face = 'normal' | 'smile' | 'happy' | 'smug' | 'puzzled';
 
 type PsdNames = {
   src: string;

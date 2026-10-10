@@ -13,7 +13,9 @@ export const SPEAKERS = {
 } as const;
 export type SpeakerId = keyof typeof SPEAKERS;
 
-export type SceneId = 'hook' | 'react' | 'frame' | 'voice' | 'psd' | 'sync' | 'outro';
+export type Face = 'normal' | 'smile' | 'happy' | 'smug' | 'puzzled';
+
+export type SceneId ='hook' | 'react' | 'frame' | 'voice' | 'psd' | 'sync' | 'outro';
 
 export interface ScriptLine {
   id: string;
@@ -21,8 +23,10 @@ export interface ScriptLine {
   speaker: SpeakerId;
   text: string;
   reading?: string;
-  // A face from character.ts; 'normal' when omitted.
-  expression?: 'smile' | 'happy' | 'smug' | 'puzzled';
+  // A face from character.ts; 'normal' when omitted. A list changes face
+  // within the line: one face per clause, the voice split at its pauses
+  // (、。), switching as the pause starts. Timed from the AudioQuery.
+  expression?: Face | Face[];
   speed?: number;
   gap?: number;
 }
@@ -54,7 +58,7 @@ export const SCRIPT: ScriptLine[] = [
 
   { id: 'psd-1', scene: 'psd', speaker: 'zunko',
     text: 'まばたきや表情も？' },
-  { id: 'psd-2', scene: 'psd', speaker: 'kiritan', expression: 'smile',
+  { id: 'psd-2', scene: 'psd', speaker: 'kiritan', expression: ['smile', 'smug'],
     text: '【PSD のレイヤー】を、フレームごとに切り替えています。',
     reading: 'ピーエスディーのレイヤーを、フレームごとに切り替えています。' },
 

@@ -4,7 +4,7 @@ import { Label } from '../components/Label';
 import { BODY, Panel } from '../components/Panel';
 import { CAST } from '../character';
 import { C } from '../constants';
-import { lineAt, plan } from '../voice';
+import { faceAt, lineAt, plan } from '../voice';
 
 export const TEXT = ['レイヤーを切り替え', '目', '口', '表情', 'ひらき', '半目', 'とじ', 'ふつう', 'えがお', 'にっこり', 'ドヤ', 'こまり'];
 
@@ -20,7 +20,7 @@ export function PsdScene() {
   const planned = lineAt(absolute);
   const line = planned.line;
   const cast = CAST[line.speaker];
-  const face = line.script.expression ?? 'normal';
+  const face = faceAt(planned, absolute);
   // A portrait blinks with its character's id as the seed; <Character> has no
   // `id` here, so the id is `name`. Keep the two in step if an id is added.
   const eyes = face === 'happy' ? 'happy' : blinkPhase(absolute, fps, { seed: cast.name });

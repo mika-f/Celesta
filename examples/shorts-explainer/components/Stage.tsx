@@ -3,7 +3,7 @@ import { CharacterView } from '@celesta/character';
 import { CAST } from '../character';
 import { C, SAFE, STAGE_Y, TAG_Y } from '../constants';
 import type { SpeakerId } from '../script';
-import { lineAt, plan } from '../voice';
+import { faceAt, lineAt, plan } from '../voice';
 import { Label } from './Label';
 
 // Where each portrait stands. The PSDs are both 2400 px tall but draw their
@@ -26,10 +26,11 @@ function focus(speaker: SpeakerId, frame: number) {
   return was + (is - was) * t;
 }
 
-// The two portraits in the bottom half. The speaker steps forward; the
-// listener sinks back a little.
+// The two portraits in the bottom half. The speaker steps forward, wearing
+// the faces the script gives the line; the listener sinks back a little.
 export function Stage() {
   const frame = useCurrentFrame();
+  const current = lineAt(frame);
   return (
     <>
       {(Object.keys(SPOTS) as SpeakerId[]).map((id) => {
@@ -41,7 +42,8 @@ export function Stage() {
         });
         return (
           <Group key={id} x={spot.x} y={spot.y + enter + 24 * (1 - f)} scale={0.95 + 0.05 * f} anchorX={0.5} anchorY={0}>
-            <CharacterView ref={CAST[id].view} character={CAST[id].ref} scale={spot.scale} anchorX={0.5} />
+            <CharacterView ref={CAST[id].view} character={CAST[id].ref} scale={spot.scale} anchorX={0.5}
+              expression={current.line.speaker === id ? faceAt(current, frame) : undefined} />
           </Group>
         );
       })}
