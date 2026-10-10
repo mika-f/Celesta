@@ -47,7 +47,9 @@ export function CodePanel({ frame, accent }: { frame?: number; accent: string })
               fontFamily: FONT.mono, fontSize, fill: { type: 'solid', color: THEME.foreground },
               visibleCharacters: typed < line.length ? typed : undefined,
             }}>
-            {line.runs.map((run, j) => <Span key={j} style={{ fill: run.color }}>{run.text}</Span>)}
+            {line.runs.map((run, j) => (
+              <Span key={j} style={{ fill: run.color, fontFamily: run.wide ? FONT.ja : undefined }}>{run.text}</Span>
+            ))}
           </Text>
         );
       })}
