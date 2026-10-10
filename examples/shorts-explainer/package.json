@@ -1,0 +1,16 @@
+{
+  "name": "@celesta/example-shorts-explainer",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@celesta/character": "workspace:*",
+    "@celesta/react": "workspace:*",
+    "@celesta/shapes": "workspace:*",
+    "@celesta/voicevox": "workspace:*",
+    "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.31",
+    "ag-psd": "^31.0.2"
+  }
+}

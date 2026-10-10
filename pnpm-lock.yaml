@@ -341,6 +341,31 @@ importers:
         specifier: ^18.3.31
         version: 18.3.31
 
+  examples/shorts-explainer:
+    dependencies:
+      '@celesta/character':
+        specifier: workspace:*
+        version: link:../../packages/character
+      '@celesta/react':
+        specifier: workspace:*
+        version: link:../../packages/react
+      '@celesta/shapes':
+        specifier: workspace:*
+        version: link:../../packages/shapes
+      '@celesta/voicevox':
+        specifier: workspace:*
+        version: link:../../packages/voicevox
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+    devDependencies:
+      '@types/react':
+        specifier: ^18.3.31
+        version: 18.3.31
+      ag-psd:
+        specifier: ^31.0.2
+        version: 31.0.2
+
   examples/signal:
     dependencies:
       '@celesta/react':
