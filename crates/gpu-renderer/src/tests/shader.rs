@@ -4,7 +4,8 @@
 use super::*;
 use celesta_composition::{LayerEffects, LayerShader, ShaderParam, ShaderParamType, ShaderSource};
 
-const IDENTITY: &str = "fn effect(input: EffectInput) -> vec4f {\n    return source_at(input.position);\n}\n";
+const IDENTITY: &str =
+    "fn effect(input: EffectInput) -> vec4f {\n    return source_at(input.position);\n}\n";
 
 fn black_background() -> GpuRenderOptions {
     GpuRenderOptions {
@@ -125,7 +126,10 @@ fn uv_spans_the_layers_shapes() {
     let mut blurred = corner_rect("blurred", 16.0, 8.0, 32.0, 40.0, "#ffffff");
     blurred.effects.blur = 4.0;
     let cases = [
-        ("rect", corner_rect("rect", 16.0, 8.0, 32.0, 40.0, "#ffffff")),
+        (
+            "rect",
+            corner_rect("rect", 16.0, 8.0, 32.0, 40.0, "#ffffff"),
+        ),
         (
             "group",
             group(
@@ -136,11 +140,17 @@ fn uv_spans_the_layers_shapes() {
                 ],
             ),
         ),
-        ("blurred", group(EvaluatedTransform::default(), vec![blurred])),
+        (
+            "blurred",
+            group(EvaluatedTransform::default(), vec![blurred]),
+        ),
     ];
     for (case, layer) in cases {
         let frame = renderer
-            .render(&scene(vec![uv.clone()], vec![shaded(layer, "uv", Vec::new(), 0.0)]))
+            .render(&scene(
+                vec![uv.clone()],
+                vec![shaded(layer, "uv", Vec::new(), 0.0)],
+            ))
             .unwrap();
         // Pixel centres half a pixel inside the box's corners.
         assert_near(
@@ -182,14 +192,26 @@ fn padding_lets_a_shader_write_beyond_the_content() {
             .unwrap()
     };
     let padded = render(&mut renderer, 10.0);
-    assert_eq!(pixel_at(&padded, 12, 16), [0, 0, 0, 255], "left of the moved rect");
+    assert_eq!(
+        pixel_at(&padded, 12, 16),
+        [0, 0, 0, 255],
+        "left of the moved rect"
+    );
     assert_eq!(pixel_at(&padded, 20, 16), [255, 255, 255, 255]);
-    assert_eq!(pixel_at(&padded, 34, 16), [255, 255, 255, 255], "in the padding");
+    assert_eq!(
+        pixel_at(&padded, 34, 16),
+        [255, 255, 255, 255],
+        "in the padding"
+    );
     assert_eq!(pixel_at(&padded, 40, 16), [0, 0, 0, 255]);
 
     let unpadded = render(&mut renderer, 0.0);
     assert_eq!(pixel_at(&unpadded, 20, 16), [255, 255, 255, 255]);
-    assert_eq!(pixel_at(&unpadded, 34, 16), [0, 0, 0, 255], "cut at the content box");
+    assert_eq!(
+        pixel_at(&unpadded, 34, 16),
+        [0, 0, 0, 255],
+        "cut at the content box"
+    );
 }
 
 #[test]
@@ -422,13 +444,19 @@ fn reports_errors_in_the_authors_code_by_line_and_column() {
     assert!(typo.contains("positon"), "{typo}");
 
     let missing = error(&mut renderer, "fn other() {}\n");
-    assert!(missing.contains("fn effect(input: EffectInput) -> vec4f"), "{missing}");
+    assert!(
+        missing.contains("fn effect(input: EffectInput) -> vec4f"),
+        "{missing}"
+    );
 
     let signature = error(
         &mut renderer,
         "fn effect(input: EffectInput) -> f32 {\n    return 1.0;\n}\n",
     );
-    assert!(signature.contains("fn effect(input: EffectInput) -> vec4f"), "{signature}");
+    assert!(
+        signature.contains("fn effect(input: EffectInput) -> vec4f"),
+        "{signature}"
+    );
 
     let binding = error(
         &mut renderer,
@@ -445,7 +473,11 @@ fn reports_errors_in_the_authors_code_by_line_and_column() {
     let keyword = render_error(
         &mut renderer,
         &scene(
-            vec![source("keyword", IDENTITY, &[("celestaTime", ShaderParamType::F32)])],
+            vec![source(
+                "keyword",
+                IDENTITY,
+                &[("celestaTime", ShaderParamType::F32)],
+            )],
             vec![shaded(rect(), "keyword", vec![0.0], 0.0)],
         ),
     );
@@ -470,20 +502,26 @@ fn rejects_uses_that_do_not_match_the_scenes_shaders() {
 
     let unknown = render_error(
         &mut renderer,
-        &scene(vec![one.clone()], vec![shaded(rect(), "two", Vec::new(), 0.0)]),
+        &scene(
+            vec![one.clone()],
+            vec![shaded(rect(), "two", Vec::new(), 0.0)],
+        ),
     );
-    assert!(unknown.contains("layer `rect` uses a shader the scene does not list"), "{unknown}");
+    assert!(
+        unknown.contains("layer `rect` uses a shader the scene does not list"),
+        "{unknown}"
+    );
 
     let count = render_error(
         &mut renderer,
-        &scene(vec![one.clone()], vec![shaded(rect(), "one", vec![1.0], 0.0)]),
+        &scene(
+            vec![one.clone()],
+            vec![shaded(rect(), "one", vec![1.0], 0.0)],
+        ),
     );
     assert!(count.contains("gives 1 parameter values"), "{count}");
 
-    let twice = render_error(
-        &mut renderer,
-        &scene(vec![one.clone(), one], Vec::new()),
-    );
+    let twice = render_error(&mut renderer, &scene(vec![one.clone(), one], Vec::new()));
     assert!(twice.contains("two shaders with this id"), "{twice}");
 }
 
@@ -500,7 +538,10 @@ fn compiles_each_shader_once_until_it_changes() {
     for _ in 0..3 {
         render_error(&mut renderer, &broken);
     }
-    assert_eq!(renderer.shaders.compiles, 1, "a broken shader compiles once");
+    assert_eq!(
+        renderer.shaders.compiles, 1,
+        "a broken shader compiles once"
+    );
 
     let fixed = scene(
         vec![source("edited", IDENTITY, &[])],
@@ -509,7 +550,10 @@ fn compiles_each_shader_once_until_it_changes() {
     for _ in 0..3 {
         renderer.render(&fixed).unwrap();
     }
-    assert_eq!(renderer.shaders.compiles, 2, "a changed source compiles again");
+    assert_eq!(
+        renderer.shaders.compiles, 2,
+        "a changed source compiles again"
+    );
 
     let other = scene(
         vec![source("other", IDENTITY, &[])],
@@ -519,7 +563,10 @@ fn compiles_each_shader_once_until_it_changes() {
     assert_eq!(renderer.shaders.cached(), 2);
     let renderer: &mut GpuRenderer = &mut renderer;
     for _ in 0..300 {
-        renderer.shaders.begin_scene(&renderer.device, &other).unwrap();
+        renderer
+            .shaders
+            .begin_scene(&renderer.device, &other)
+            .unwrap();
     }
     assert_eq!(renderer.shaders.cached(), 1, "unused shaders are dropped");
 }
@@ -544,5 +591,112 @@ fn draws_nothing_for_a_layer_that_draws_nothing() {
             vec![shaded(empty, "fill", Vec::new(), 8.0)],
         ))
         .unwrap();
-    assert!(frame.pixels().chunks_exact(4).all(|pixel| pixel == [0, 0, 0, 255]));
+    assert!(
+        frame
+            .pixels()
+            .chunks_exact(4)
+            .all(|pixel| pixel == [0, 0, 0, 255])
+    );
+}
+
+#[test]
+fn uv_follows_a_texture_moved_onto_whole_pixels() {
+    let Some(mut renderer) = renderer(black_background()) else {
+        return;
+    };
+    let uv = source(
+        "uv",
+        "fn effect(input: EffectInput) -> vec4f {\n    return vec4f(input.uv, 0.0, 1.0);\n}\n",
+        &[],
+    );
+    renderer.image_sources.insert_raster(
+        "square",
+        image::RgbaImage::from_raw(8, 8, [255, 255, 255, 255].repeat(64)).unwrap(),
+    );
+    // Drawn texel for texel, the image lands on x = 10, not 10.4.
+    let image = Layer {
+        id: "square".to_owned(),
+        transform: EvaluatedTransform {
+            position: Point { x: 10.4, y: 8.0 },
+            anchor: Point { x: 0.0, y: 0.0 },
+            ..EvaluatedTransform::default()
+        },
+        opacity: 1.0,
+        blend_mode: BlendMode::Normal,
+        effects: Default::default(),
+        content: LayerContent::Image {
+            width: None,
+            height: None,
+            fit: None,
+            asset: ResolvedAsset {
+                id: "square".to_owned(),
+                location: AssetLocation::File {
+                    path: "square.png".to_owned(),
+                },
+            },
+        },
+    };
+    let frame = renderer
+        .render(&scene(vec![uv], vec![shaded(image, "uv", Vec::new(), 0.0)]))
+        .unwrap();
+    let near = |value: f32| (value * 255.0).round() as u8;
+    assert_near(
+        pixel_at(&frame, 10, 8),
+        [near(0.5 / 8.0), near(0.5 / 8.0), 0, 255],
+        1,
+        "top left",
+    );
+    assert_near(
+        pixel_at(&frame, 17, 15),
+        [near(7.5 / 8.0), near(7.5 / 8.0), 0, 255],
+        1,
+        "bottom right",
+    );
+}
+
+#[test]
+fn uv_spans_a_box_narrower_than_a_pixel() {
+    let Some(mut renderer) = renderer(black_background()) else {
+        return;
+    };
+    let uv = source(
+        "uv",
+        "fn effect(input: EffectInput) -> vec4f {\n    return vec4f(input.uv.x, 0.0, 0.0, 1.0);\n}\n",
+        &[],
+    );
+    let frame = renderer
+        .render(&scene(
+            vec![uv],
+            vec![shaded(
+                corner_rect("thin", 8.0, 8.0, 0.5, 32.0, "#ffffff"),
+                "uv",
+                Vec::new(),
+                0.0,
+            )],
+        ))
+        .unwrap();
+    // The pixel centre 8.5 is the box's right edge.
+    assert_near(pixel_at(&frame, 8, 20), [255, 0, 0, 255], 1, "right edge");
+}
+
+#[test]
+fn refuses_more_shader_uses_than_one_buffer_holds() {
+    let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+        return;
+    };
+    renderer.shaders.max_uses = 1;
+    let layers = (0..2)
+        .map(|index| {
+            shaded(
+                corner_rect(&format!("rect-{index}"), 8.0, 8.0, 4.0, 4.0, "#ffffff"),
+                "identity",
+                Vec::new(),
+                0.0,
+            )
+        })
+        .collect();
+    let error = renderer
+        .render(&scene(vec![source("identity", IDENTITY, &[])], layers))
+        .unwrap_err();
+    assert!(matches!(error, GpuRenderError::TooManyLayers(2)), "{error}");
 }

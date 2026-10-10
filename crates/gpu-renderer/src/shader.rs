@@ -72,6 +72,8 @@ pub(crate) struct ShaderProcessor {
     data: Vec<u8>,
     builtins_stride: u32,
     params_stride: u32,
+    /// The most uses one frame's uniforms buffer can hold.
+    pub(crate) max_uses: usize,
     /// How many times a shader was compiled, for tests of the cache.
     #[cfg(test)]
     pub(crate) compiles: usize,
@@ -103,6 +105,8 @@ impl ShaderProcessor {
         let alignment = device.limits().min_uniform_buffer_offset_alignment;
         let builtins_stride = (BUILTINS_SIZE as u32).next_multiple_of(alignment);
         let params_stride = (PARAMS_SIZE as u32).next_multiple_of(alignment);
+        let max_uses =
+            (device.limits().max_buffer_size / u64::from(builtins_stride + params_stride)) as usize;
         let (uniforms, bind_group) = Self::uniform_buffer(
             device,
             &layout,
@@ -120,6 +124,7 @@ impl ShaderProcessor {
             data: Vec::new(),
             builtins_stride,
             params_stride,
+            max_uses,
             #[cfg(test)]
             compiles: 0,
         }
@@ -224,7 +229,11 @@ impl ShaderProcessor {
         };
         let source = &cached.source;
         let error = |message: String| shader_error(source, message);
-        let expected: usize = source.params.iter().map(|param| param.ty.components()).sum();
+        let expected: usize = source
+            .params
+            .iter()
+            .map(|param| param.ty.components())
+            .sum();
         if shader.params.len() != expected {
             return Err(error(format!(
                 "layer `{layer}` gives {} parameter values, but the shader's parameters take {expected}",
@@ -237,7 +246,12 @@ impl ShaderProcessor {
             )));
         }
         if !shader.padding.is_finite() {
-            return Err(error(format!("layer `{layer}` gives a padding that is not finite")));
+            return Err(error(format!(
+                "layer `{layer}` gives a padding that is not finite"
+            )));
+        }
+        if self.uses.len() >= self.max_uses {
+            return Err(GpuRenderError::TooManyLayers(self.uses.len() + 1));
         }
         let mut params = [[0.0; 4]; MAX_SHADER_PARAMS];
         let mut values = shader.params.iter();
@@ -262,14 +276,17 @@ impl ShaderProcessor {
         self.shaders.len()
     }
 
-    /// Starts encoding the prepared frame's shader passes.
+    /// Starts encoding the prepared frame's shader passes. `use_shader`
+    /// keeps their uniforms within the device's largest buffer.
     pub(crate) fn begin_frame(&mut self, device: &wgpu::Device) {
         self.data.clear();
         let size = u64::from(self.builtins_stride + self.params_stride) * self.uses.len() as u64;
         if size > self.uniforms.size() {
+            let size = size
+                .next_power_of_two()
+                .min(device.limits().max_buffer_size);
             // In-flight frames keep the old buffer alive until they finish.
-            (self.uniforms, self.bind_group) =
-                Self::uniform_buffer(device, &self.layout, size.next_power_of_two());
+            (self.uniforms, self.bind_group) = Self::uniform_buffer(device, &self.layout, size);
         }
     }
 
@@ -327,8 +344,7 @@ impl ShaderProcessor {
                 .copied()
                 .flat_map(f32::to_ne_bytes),
         );
-        self.data
-            .resize(params_at + self.params_stride as usize, 0);
+        self.data.resize(params_at + self.params_stride as usize, 0);
         let mut pass = begin_pass(
             encoder,
             &target.view,
@@ -442,7 +458,9 @@ fn assemble(source: &ShaderSource) -> Result<(String, Range<usize>), String> {
     for (index, param) in source.params.iter().enumerate() {
         let name = &param.name;
         let mut chars = name.chars();
-        let identifier = chars.next().is_some_and(|first| first.is_ascii_alphabetic())
+        let identifier = chars
+            .next()
+            .is_some_and(|first| first.is_ascii_alphabetic())
             && chars.all(|char| char.is_ascii_alphanumeric() || char == '_');
         if !identifier || name.starts_with("celesta") {
             return Err(format!(
@@ -460,8 +478,13 @@ fn assemble(source: &ShaderSource) -> Result<(String, Range<usize>), String> {
     if !source.params.is_empty() {
         code.push_str("\nstruct Params {\n");
         for param in &source.params {
-            writeln!(code, "    @align(16) {}: {},", param.name, wgsl_type(param.ty))
-                .expect("writing to a String cannot fail");
+            writeln!(
+                code,
+                "    @align(16) {}: {},",
+                param.name,
+                wgsl_type(param.ty)
+            )
+            .expect("writing to a String cannot fail");
         }
         code.push_str("};\n\n@group(1) @binding(1)\nvar<uniform> params: Params;\n");
     }

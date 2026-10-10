@@ -199,13 +199,22 @@ impl PreparedLayer {
         } else {
             [1.0 / texel_width as f32, 1.0 / texel_height as f32]
         };
-        self.quad(margins).expand(2.0, 2.0)
+        self.quad(self.state.transform, margins).expand(2.0, 2.0)
     }
 
-    /// The box of the layer's own shape in scene pixels: its quad's
-    /// corners, without the margins `bounds` adds.
+    /// The box of the layer's own shape in scene pixels: the corners of the
+    /// quad `write_instance` draws, without the margins `bounds` adds. A
+    /// layer copied texel for texel lands on whole pixels, so its box does
+    /// too.
     pub(crate) fn shape(&self) -> PixelBounds {
-        self.quad([0.0, 0.0])
+        let mut transform = self.state.transform;
+        let is_rect = matches!(self.content, PreparedContent::Rect(_));
+        if !is_rect && transform.is_uniform_scale(self.raster_scale) {
+            let (texel_width, texel_height) = self.texels();
+            (transform.tx, transform.ty) =
+                self.pixel_aligned_translation(transform, texel_width, texel_height);
+        }
+        self.quad(transform, [0.0, 0.0])
     }
 
     fn texels(&self) -> (u32, u32) {
@@ -217,12 +226,11 @@ impl PreparedLayer {
         }
     }
 
-    /// The box of the layer's quad, reaching `margin_u` and `margin_v` of
-    /// its size past each edge.
-    fn quad(&self, [margin_u, margin_v]: [f32; 2]) -> PixelBounds {
+    /// The box of the layer's quad placed by `transform`, reaching
+    /// `margin_u` and `margin_v` of its size past each edge.
+    fn quad(&self, transform: Affine, [margin_u, margin_v]: [f32; 2]) -> PixelBounds {
         let (texel_width, texel_height) = self.texels();
         let (width, height) = self.size(texel_width, texel_height);
-        let transform = self.state.transform;
         let anchor = [self.anchor.x as f32, self.anchor.y as f32];
         let (low_u, high_u) = (-margin_u, 1.0 + margin_u);
         let (low_v, high_v) = (-margin_v, 1.0 + margin_v);
