@@ -4,6 +4,7 @@
 「動画を、コードで書く。」から始まる短いマニフェストを、横幅の狭い画面に 120 BPM の拍に合わせて流し込みます。28 秒、30 fps。
 
 横幅が狭いほど、文節での改行、テキストの計測と箱に収める処理、`<Span>` による部分的な強調の効き目がはっきり見えます。各シーンがそのまま使用例になっています。
+英語のコピーで同じ構成にした版は [`shorts-type-en`](../shorts-type-en/) です。
 
 - `film.tsx` — Celesta の File → Open… で開く React ソース（エントリ）。シーンは `scenes/`、共通部品は `components/`、シーンの並びは `timeline.ts`、`prepare()` で行う計測は `measure.ts` にあります。
 - `make-score.py` — BGM を生成する Python スクリプト。標準ライブラリのみ。

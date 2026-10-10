@@ -372,6 +372,37 @@ importers:
         specifier: ^18.3.31
         version: 18.3.31
 
+  examples/shorts-type-en:
+    dependencies:
+      '@celesta/layout':
+        specifier: workspace:*
+        version: link:../../packages/layout
+      '@celesta/math':
+        specifier: workspace:*
+        version: link:../../packages/math
+      '@celesta/react':
+        specifier: workspace:*
+        version: link:../../packages/react
+      '@celesta/shader':
+        specifier: workspace:*
+        version: link:../../packages/shader
+      '@celesta/shapes':
+        specifier: workspace:*
+        version: link:../../packages/shapes
+      '@celesta/text':
+        specifier: workspace:*
+        version: link:../../packages/text
+      '@celesta/transitions':
+        specifier: workspace:*
+        version: link:../../packages/transitions
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+    devDependencies:
+      '@types/react':
+        specifier: ^18.3.31
+        version: 18.3.31
+
   examples/signal:
     dependencies:
       '@celesta/react':
