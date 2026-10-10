@@ -2,7 +2,7 @@ import { Rect, Span, progress, useBeat, useCurrentFrame } from '@celesta/react';
 import { TextReveal } from '@celesta/text';
 import { Copy, Tag, textStyle } from '../components/Copy';
 import { Stage } from '../components/Stage';
-import { BAR, BEAT, BPM, C, COL, TOP } from '../constants';
+import { BAR, BEAT, BPM, C, COL, TOP, tint } from '../constants';
 import { HOOK_SIZE, hookCaretX } from '../measure';
 
 const LINE = 196;
@@ -16,10 +16,11 @@ export function Hook() {
   const { pulse } = useBeat({ bpm: BPM });
   const caretOn = f < BEAT * 2 || Math.floor(f / (BEAT / 2)) % 2 === 0;
   return (
-    <Stage bg={C.ink} zoom={1 + 0.035 * progress(f, 0, BAR * 2) + 0.012 * pulse}>
+    <Stage bg={C.ink} tone={tint(C.hot, 0.35)} fg={C.paper} accent={C.hot}
+      tapes={['動画を、コードで書く。', 'React + TypeScript → MP4']} zoom={1 + 0.035 * progress(f, 0, BAR * 2) + 0.012 * pulse}>
       <Tag x={COL.x} y={Y - 64} opacity={progress(f, 4, 8)}>{'// film.tsx'}</Tag>
       <TextReveal x={COL.x} y={Y} lineHeight={LINE} baseline={0.8} from={-8} stagger={3} durationInFrames={14}
-        style={textStyle(HOOK_SIZE, 900)}>
+        glow={{ color: tint(C.hot, 0.45 + 0.4 * pulse), blur: 28 }} style={textStyle(HOOK_SIZE, 900)}>
         {'動画を、\n'}<Span style={{ fill: C.hot }}>コード</Span>{'で\n書く。'}
       </TextReveal>
       <Rect x={COL.x + hookCaretX + 12} y={Y + LINE * 2 + 30} width={18} height={LINE * 0.72}

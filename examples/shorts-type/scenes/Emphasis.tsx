@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { Easings, Group, Rect, Span, Text, interpolateColor, progress, useCue, useCurrentFrame } from '@celesta/react';
 import { Copy, Tag } from '../components/Copy';
 import { Stage } from '../components/Stage';
-import { AREA, BEAT, C, COL, TOP } from '../constants';
+import { AREA, BEAT, C, COL, TOP, tint } from '../constants';
 import { SPAN_COPY, SPAN_STYLE, segmentsOf, spanLayout } from '../measure';
 
 // One beat per lit phrase; on the last cue every phrase lights at once.
@@ -36,7 +36,8 @@ export function Emphasis() {
   // Starts a few frames before the cut, so the scene's first frame has copy.
   const enter = progress(f, -4, 10, Easings.easeOutExpo);
   return (
-    <Stage bg={C.ink} y={AREA.height / 2 + (focus - spanLayout.height / 2) * 0.15} zoom={1.02}>
+    <Stage bg={C.ink} tone={tint(C.hot, 0.3)} fg={C.paper} accent={C.hot}
+      tapes={['光らせる言葉で、意味が変わる。', '<Span>']} y={AREA.height / 2 + (focus - spanLayout.height / 2) * 0.15} zoom={1.02}>
       <Tag x={COL.x} y={TOP + 140} color={C.hot} opacity={enter}>{'<Span style={{ fontWeight: 900 }}>'}</Tag>
       <Group x={COL.x} y={Y + 30 * (1 - enter)} opacity={enter}>
         {segments.map((s, i) => (

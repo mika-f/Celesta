@@ -2,7 +2,7 @@ import { Easings, Group, Rect, Text, progress, useCue, useCurrentFrame } from '@
 import { TextReveal } from '@celesta/text';
 import { Copy, Tag, textStyle } from '../components/Copy';
 import { Stage } from '../components/Stage';
-import { BEAT, C, COL, TOP } from '../constants';
+import { BEAT, C, COL, TOP, tint } from '../constants';
 import { FIT_BOXES, FIT_COPY, FIT_PAD, fits } from '../measure';
 
 // The box snaps to a new shape every other beat and the copy refills it at
@@ -17,7 +17,8 @@ export function Fit() {
   const fit = fits[box.fit];
   const pop = 1 + 0.04 * (1 - progress(stop?.frame ?? 0, 0, 8, Easings.easeOutCubic));
   return (
-    <Stage bg={C.sun}>
+    <Stage bg={C.sun} tone={tint(C.ink, 0.18)} fg={C.ink} accent={C.hot}
+      tapes={['箱に、収める。', 'fitText()']}>
       <TextReveal x={COL.x} y={TOP} lineHeight={124} baseline={0.8} from={-6} stagger={4} style={textStyle(108, 900, C.ink)}>
         {'箱に、\n収める。'}
       </TextReveal>

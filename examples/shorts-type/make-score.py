@@ -105,11 +105,15 @@ for beat in range(0, 48):
     if beat % 4 == 0:
         add(at, BAR, pad(CHORDS[bar % 4], BAR), 0.04, -0.1)
 
-# A swell into every scene, an impact on its first frame.
+# A swell into every scene, an impact on its first frame, and on every cut
+# a stutter of clicks under the glitch slices (Fx in film.tsx: 7 frames,
+# a new slice pattern every 2 frames).
 for scene in range(7):
     at = scene * SCENE
     if at > 0:
         add(at - 0.4, 0.4, swell(0.4), 0.1)
+        for k in range(4):
+            add(at + k * 2 / 30, 0.04, click, 0.1 * (1 - k / 4), rng.uniform(-0.6, 0.6))
     impact(at, 1.4 if scene in (0, 6) else 1)
 
 # HOOK: the headline is up by frame 12, a stab on each bar.

@@ -3,7 +3,10 @@
   "private": true,
   "dependencies": {
     "@celesta/layout": "workspace:*",
+    "@celesta/math": "workspace:*",
     "@celesta/react": "workspace:*",
+    "@celesta/shader": "workspace:*",
+    "@celesta/shapes": "workspace:*",
     "@celesta/text": "workspace:*",
     "@celesta/transitions": "workspace:*",
     "react": "^18.3.1"

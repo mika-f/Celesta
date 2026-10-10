@@ -346,9 +346,18 @@ importers:
       '@celesta/layout':
         specifier: workspace:*
         version: link:../../packages/layout
+      '@celesta/math':
+        specifier: workspace:*
+        version: link:../../packages/math
       '@celesta/react':
         specifier: workspace:*
         version: link:../../packages/react
+      '@celesta/shader':
+        specifier: workspace:*
+        version: link:../../packages/shader
+      '@celesta/shapes':
+        specifier: workspace:*
+        version: link:../../packages/shapes
       '@celesta/text':
         specifier: workspace:*
         version: link:../../packages/text

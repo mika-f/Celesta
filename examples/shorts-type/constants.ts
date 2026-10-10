@@ -28,6 +28,9 @@ export const C = {
   grey: '#7C7C86',
   dim: '#2C2C33',
 } as const;
+// A palette colour with alpha, as #RRGGBBAA.
+export const tint = (color: string, alpha: number) =>
+  color + Math.round(alpha * 255).toString(16).padStart(2, '0').toUpperCase();
 
 export const FONT = {
   ja: 'Noto Sans JP',

@@ -2,7 +2,7 @@ import { Easings, Rect, progress, useCurrentFrame } from '@celesta/react';
 import { TextReveal } from '@celesta/text';
 import { Copy, Tag, textStyle } from '../components/Copy';
 import { Stage } from '../components/Stage';
-import { BAR, BEAT, C, COL, TOP } from '../constants';
+import { BAR, BEAT, C, COL, TOP, tint } from '../constants';
 
 // A small line, then a heavy one entering a line per beat, then the frame
 // number itself: the copy is the thing it describes.
@@ -11,7 +11,8 @@ export function Frame() {
   const settle = progress(f, 0, BAR, Easings.easeOutCubic);
   const counterIn = progress(f, BEAT * 4, 8, Easings.easeOutExpo);
   return (
-    <Stage bg={C.paper} rotation={-2.5 * (1 - settle)} zoom={1.04 - 0.04 * settle}>
+    <Stage bg={C.paper} tone={tint(C.ink, 0.14)} fg={C.ink} accent={C.hot}
+      tapes={['すべてのフレームは、フレーム番号の関数。', 'useCurrentFrame()']} rotation={-2.5 * (1 - settle)} zoom={1.04 - 0.04 * settle}>
       <Copy x={COL.x} y={TOP + 40} size={60} weight={400} color={C.ink} opacity={progress(f, -3, 6)}>
         すべてのフレームは、
       </Copy>

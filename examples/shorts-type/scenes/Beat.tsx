@@ -1,7 +1,8 @@
-import { Easings, Rect, progress, useBeat, useCurrentFrame } from '@celesta/react';
+import { Easings, Group, Rect, progress, useBeat, useCurrentFrame } from '@celesta/react';
+import { Burst } from '../components/Burst';
 import { Copy } from '../components/Copy';
 import { Stage } from '../components/Stage';
-import { AREA, BEAT, BPM, C, COL, TOP } from '../constants';
+import { AREA, BEAT, BPM, C, COL, TOP, tint } from '../constants';
 
 // One word per beat. Sizes are picked so every word fits the column on one
 // line with room for the punch (characters × size ≤ 720).
@@ -23,12 +24,20 @@ export function Beat() {
   const word = WORDS[i];
   const drop = progress(f - i * BEAT, 0, 6, Easings.easeOutExpo);
   const x = COL.x + COL.width * word.ax;
+  const accent = word.bg === C.hot ? C.ink : C.hot;
+  // The word's middle, for the speed lines (one em per Japanese glyph).
+  const middle = x + (0.5 - word.ax) * word.text.length * word.size;
   return (
-    <Stage bg={word.bg} rotation={i % 2 === 0 ? -1.5 : 1.5} zoom={1 + 0.025 * pulse} shake={3}>
-      <Copy x={x} y={TOP + word.y - 60 * (1 - drop)} ax={word.ax} ay={0.5} size={word.size} weight={word.weight}
-        color={word.fg} scale={1 + 0.05 * pulse}>
-        {word.text}
-      </Copy>
+    <Stage bg={word.bg} tone={tint(word.fg, 0.2)} fg={word.fg} accent={accent}
+      tapes={['拍に合わせて、言葉を落とす。', 'useBeat()']}
+      rotation={i % 2 === 0 ? -1.5 : 1.5} zoom={1 + 0.025 * pulse} shake={3}>
+      <Burst x={middle} y={TOP + word.y} t={(f - i * BEAT) / BEAT} color={accent} seed={i} />
+      <Group blur={18 * (1 - drop)}>
+        <Copy x={x} y={TOP + word.y - 60 * (1 - drop)} ax={word.ax} ay={0.5} size={word.size} weight={word.weight}
+          color={word.fg} scale={1 + 0.05 * pulse}>
+          {word.text}
+        </Copy>
+      </Group>
       <Copy x={COL.x} y={AREA.height - 60} size={24} weight={700} font="mono" color={word.fg} opacity={0.7}>
         {`useBeat() → beat ${beat}`}
       </Copy>
