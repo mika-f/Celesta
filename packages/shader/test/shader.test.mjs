@@ -152,9 +152,15 @@ test('definitions and values are checked with messages naming the shader', () =>
   }
 });
 
-test('an error in a definition reaches the CLI with its message', () => {
-  const frame = render(`defineShader({ name: 'x', wgsl, padding: -1 });`, `<Rect width={8} height={8} />`);
-  assert.match(frame.error ?? '', /shader x: padding must be a finite number of at least 0/);
+test('errors in a definition and in a use reach the CLI with their messages', () => {
+  // A definition fails as the entry loads; a use fails while a frame renders.
+  const definition = render(`defineShader({ name: 'x', wgsl, padding: -1 });`, `<Rect width={8} height={8} />`);
+  assert.match(definition.error ?? '', /shader x: padding must be a finite number of at least 0/);
+  const use = render(
+    `const ripple = defineShader({ name: 'ripple', wgsl, params: { amount: 'f32' } });`,
+    `<Rect width={8} height={8} shader={ripple({ amount: Number.NaN })} />`,
+  );
+  assert.match(use.error ?? '', /shader ripple: amount must be a finite number/);
 });
 
 test('a parameter named like an Object method takes its default when omitted', () => {
