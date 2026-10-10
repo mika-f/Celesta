@@ -1,0 +1,14 @@
+{
+  "name": "@celesta/example-shorts-type",
+  "private": true,
+  "dependencies": {
+    "@celesta/layout": "workspace:*",
+    "@celesta/react": "workspace:*",
+    "@celesta/text": "workspace:*",
+    "@celesta/transitions": "workspace:*",
+    "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.31"
+  }
+}
