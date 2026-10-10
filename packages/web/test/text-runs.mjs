@@ -159,6 +159,21 @@ try {
       const gradient = { type: 'linear', start: { x: 0, y: 0 }, end: { x: 100, y: 70 }, stops: [{ offset: 0, color: '#f00' }, { offset: 1, color: '#00f' }] };
       const stroked = { fontSize: 40, lineHeight: 54, fill: gradient, stroke: { width: 5, paint: gradient } };
       compare(await raster('AV é', stroked), await raster('AV é', { ...stroked, visibleCharacters: 5 }), 'padded gradient origin');
+      // A stroke around a transparent fill leaves the glyphs hollow, on the
+      // direct path and through a styled line alike.
+      for (const extra of [{}, { visibleCharacters: 2 }]) {
+        const outlined = fill => ({ fontSize: 60, lineHeight: 80, fill: { type: 'solid', color: fill }, stroke: { width: 4, paint: { type: 'solid', color: '#ff0000' } }, ...extra });
+        const filled = await raster('AV', outlined('#0000ff'));
+        const hollow = await raster('AV', outlined('#0000ff00'));
+        let inside = 0, drawn = 0;
+        for (let i = 0; i < filled.length; i += 4) {
+          if (filled[i] > 2 || filled[i + 2] < 253 || filled[i + 3] < 253) continue;
+          inside++;
+          if (hollow[i + 3] > 2) drawn++;
+        }
+        check(inside > 0 && drawn === 0, 'a hollow glyph is drawn inside ' + JSON.stringify(extra) + ': ' + drawn + '/' + inside);
+        check(hollow.some((n, i) => i % 4 === 0 && n > 250 && hollow[i + 3] > 250), 'a hollow glyph lost its outline ' + JSON.stringify(extra));
+      }
       const mono = { fontSize: 40, lineHeight: 54, fill: { type: 'solid', color: '#ff0000' } };
       compare(await raster('A\\uFE0F', mono), await raster('A\\uFE0F', { ...mono, colorRuns: [{ start: 0, end: 2, color: '#ff0000' }] }), 'monochrome variation glyph');
       // Inspect locale propagation at the platform boundary.

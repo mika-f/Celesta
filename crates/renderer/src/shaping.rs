@@ -1,4 +1,4 @@
-use crate::composite::{blend, composite_mask_with, composite_rgba};
+use crate::composite::blend;
 use crate::error::RenderError;
 use crate::fonts::{COLOR_EMOJI_FAMILIES, TextRasterizer};
 use crate::linebreak::{
@@ -527,9 +527,9 @@ impl TextRasterizer {
             .as_ref()
             .map_or(Some(Color::WHITE), ResolvedPaint::solid)
             .unwrap_or(Color::WHITE);
-        // A coverage-only alpha mask, used for the stroke's dilation below —
-        // meaningful for both ordinary glyphs and color glyphs (an emoji's
-        // silhouette dilates the same way plain text would).
+        // A coverage-only alpha mask, which the stroke below dilates and
+        // keeps out of — meaningful for both ordinary glyphs and color
+        // glyphs (an emoji's silhouette dilates the same way plain text would).
         let mut mask = vec![0_u8; mask_width as usize * mask_height as usize];
         // The actual per-pixel glyph color. cosmic-text/swash already decode
         // color glyphs (COLR, sbix, CBDT/CBLC — how system emoji fonts like
@@ -633,19 +633,42 @@ impl TextRasterizer {
         if let Some(stroke) = &style.stroke
             && stroke_radius > 0
         {
-            let glyph_pixels = std::mem::replace(
-                &mut frame.pixels,
-                vec![0; mask_width as usize * mask_height as usize * 4],
-            );
             let stroke_mask = dilate_mask(&mask, mask_width, mask_height, stroke_radius);
             let stroke_paint = ResolvedPaint::from_paint(&stroke.paint)?.scaled(f64::from(scale));
-            composite_mask_with(&mut frame, &stroke_mask, mask_width, |x, y| {
-                stroke_paint.color_at(
+            // The stroke only takes the part of each pixel the glyphs leave
+            // uncovered, so a transparent or translucent fill shows what lies
+            // beneath the text, not the stroke. Glyph and stroke then add up
+            // side by side: drawing the glyphs over the stroke instead would
+            // leave a seam of partial alpha along every antialiased edge.
+            for (index, pixel) in frame.pixels.chunks_exact_mut(4).enumerate() {
+                let uncovered = 1.0 - f64::from(mask[index]) / 255.0;
+                let share = f64::from(stroke_mask[index]) / 255.0 * uncovered;
+                if share == 0.0 {
+                    continue;
+                }
+                let (x, y) = (index as u32 % mask_width, index as u32 / mask_width);
+                let color = stroke_paint.color_at(
                     f64::from(x) - f64::from(pad) + 0.5,
                     f64::from(y) - f64::from(pad_top) + 0.5,
-                )
-            });
-            composite_rgba(&mut frame, &glyph_pixels, mask_width, mask_height, 0, 0);
+                );
+                let stroke_alpha = share * f64::from(color.alpha) / 255.0;
+                let glyph_alpha = f64::from(pixel[3]) / 255.0;
+                let total = glyph_alpha + stroke_alpha;
+                if total == 0.0 {
+                    continue;
+                }
+                for (value, stroke_value) in
+                    pixel[..3]
+                        .iter_mut()
+                        .zip([color.red, color.green, color.blue])
+                {
+                    *value = ((glyph_alpha * f64::from(*value)
+                        + stroke_alpha * f64::from(stroke_value))
+                        / total)
+                        .round() as u8;
+                }
+                pixel[3] = (total.min(1.0) * 255.0).round() as u8;
+            }
         }
         // Single-line text keeps its advance width, so leading and trailing
         // spaces still take up room, but drops the empty rows above and below

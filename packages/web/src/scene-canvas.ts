@@ -91,6 +91,8 @@ export class SceneCanvas {
   private fontKey = '';
   private usedLayouts = new Set<string>();
   private usedText = new Set<string>();
+  /** Where stroked text is composed; see `strokeSurface`. */
+  private strokeCanvas?: Context;
 
   constructor(private assets: Map<string, File> = new Map(), private baseURL?: string) {}
 
@@ -103,6 +105,7 @@ export class SceneCanvas {
     for (const url of this.urls.values()) URL.revokeObjectURL(url);
     this.urls.clear();
     for (const video of this.videos.values()) void video.then(v => { v.pause(); v.removeAttribute('src'); v.load(); });
+    this.strokeCanvas = undefined;
   }
 
   private src(asset: Asset): string {
@@ -239,6 +242,14 @@ export class SceneCanvas {
         drawText(outline, 'strokeText');
       }
       drawText(draw, 'fillText');
+      if (stroke) {
+        // The stroke stays outside the glyphs; see the direct path in
+        // `layer`. Cutting them out with the mask itself, not with text
+        // drawn again on the stroke's canvas, makes the two meet exactly.
+        const outline = stroke.getContext('2d')!;
+        outline.globalCompositeOperation = 'destination-out';
+        outline.drawImage(mask, 0, 0);
+      }
       // A black/white probe distinguishes actual color glyphs from monochrome
       // emoji fallbacks, including white pixels within color emoji.
       let probe: ImageData | undefined;
@@ -300,7 +311,7 @@ export class SceneCanvas {
       const stroke = document.createElement('canvas');
       stroke.width = result.width; stroke.height = result.height;
       stroke.getContext('2d')!.putImageData(outline, 0, 0);
-      draw.globalCompositeOperation = 'destination-over';
+      draw.globalCompositeOperation = 'lighter';
       draw.drawImage(stroke, 0, 0);
     }
     if (visibleCharacters === 0) draw.clearRect(0, 0, result.width, result.height);
@@ -508,25 +519,65 @@ export class SceneCanvas {
       ctx.setTransform(matrix.translate(-t.anchor.x * width, y));
       for (let i = 0; i < lines.length; i++) {
         const baseline = placed[i].baseline - top;
+        // The line's ink box, stroke included.
+        const pad = Math.ceil(style.stroke?.width ?? 0) + 1;
+        const m = measured[i];
+        const left = Math.floor(placed[i].x - m.actualBoundingBoxLeft) - pad;
+        const inkTop = Math.floor(baseline - m.actualBoundingBoxAscent) - pad;
+        const right = Math.ceil(placed[i].x + m.actualBoundingBoxRight) + pad;
+        const bottom = Math.ceil(baseline + m.actualBoundingBoxDescent) + pad;
         if (style.colorRuns?.length || style.visibleCharacters != null || lineRuns[i].length) {
-          const pad = Math.ceil(style.stroke?.width ?? 0) + 1;
-          const m = measured[i];
-          const left = Math.floor(placed[i].x - m.actualBoundingBoxLeft) - pad;
-          const top = Math.floor(baseline - m.actualBoundingBoxAscent) - pad;
-          const right = Math.ceil(placed[i].x + m.actualBoundingBoxRight) + pad;
-          const bottom = Math.ceil(baseline + m.actualBoundingBoxDescent) + pad;
-          const image = this.styledLine(ctx, lines[i].text, style, right - left, bottom - top, baseline - top, placed[i].x - left, lines[i].start, -left, -top, lineRuns[i]);
-          ctx.drawImage(image, left, top);
+          const image = this.styledLine(ctx, lines[i].text, style, right - left, bottom - inkTop, baseline - inkTop, placed[i].x - left, lines[i].start, -left, -inkTop, lineRuns[i]);
+          ctx.drawImage(image, left, inkTop);
           continue;
         }
-        if (style.stroke?.width) {
-          ctx.lineJoin = 'round';
-          ctx.lineWidth = style.stroke.width * 2;
-          ctx.strokeStyle = paint(ctx, style.stroke.paint);
-          ctx.strokeText(lines[i].text, placed[i].x, baseline);
+        if (!style.stroke?.width) {
+          ctx.fillStyle = style.fill ? paint(ctx, style.fill) : '#fff';
+          ctx.fillText(lines[i].text, placed[i].x, baseline);
+          continue;
         }
-        ctx.fillStyle = style.fill ? paint(ctx, style.fill) : '#fff';
-        ctx.fillText(lines[i].text, placed[i].x, baseline);
+        // The stroke stays outside the glyphs, as in the native renderers:
+        // it is drawn on a surface of its own, the glyphs are cut out of it
+        // and their fill added beside it, so a transparent or translucent
+        // fill shows what lies beneath the text. The surface is in this
+        // canvas's pixels, so scaled text stays sharp, and only the line's
+        // box is cleared and copied.
+        const transform = ctx.getTransform();
+        const corners = [[left, inkTop], [right, inkTop], [left, bottom], [right, bottom]]
+          .map(([x, y]) => transform.transformPoint(new DOMPoint(x, y)));
+        const x0 = Math.max(0, Math.floor(Math.min(...corners.map(p => p.x))));
+        const y0 = Math.max(0, Math.floor(Math.min(...corners.map(p => p.y))));
+        const x1 = Math.min(ctx.canvas.width, Math.ceil(Math.max(...corners.map(p => p.x))));
+        const y1 = Math.min(ctx.canvas.height, Math.ceil(Math.max(...corners.map(p => p.y))));
+        if (x1 <= x0 || y1 <= y0) continue;
+        const outline = this.strokeSurface(ctx);
+        outline.resetTransform();
+        outline.clearRect(x0, y0, x1 - x0, y1 - y0);
+        outline.setTransform(transform);
+        outline.font = ctx.font;
+        outline.letterSpacing = ctx.letterSpacing;
+        outline.fontKerning = ctx.fontKerning;
+        outline.direction = ctx.direction;
+        outline.textBaseline = 'alphabetic';
+        outline.textAlign = 'left';
+        if ('lang' in outline && 'lang' in ctx) outline.lang = ctx.lang;
+        outline.lineJoin = 'round';
+        outline.lineWidth = style.stroke.width * 2;
+        outline.strokeStyle = paint(outline, style.stroke.paint);
+        outline.strokeText(lines[i].text, placed[i].x, baseline);
+        outline.globalCompositeOperation = 'destination-out';
+        outline.fillStyle = '#000';
+        outline.fillText(lines[i].text, placed[i].x, baseline);
+        // Adding the fill keeps antialiased edges opaque where fill and
+        // stroke meet, which drawing it over the cut-out stroke would not.
+        outline.globalCompositeOperation = 'lighter';
+        outline.fillStyle = style.fill ? paint(outline, style.fill) : '#fff';
+        outline.fillText(lines[i].text, placed[i].x, baseline);
+        outline.globalCompositeOperation = 'source-over';
+        ctx.save();
+        ctx.resetTransform();
+        ctx.drawImage(outline.canvas, x0, y0, x1 - x0, y1 - y0, x0, y0, x1 - x0, y1 - y0);
+        ctx.restore();
       }
     } else if (content.type === 'image' || content.type === 'video') {
       let image: HTMLImageElement | HTMLVideoElement;
@@ -561,6 +612,13 @@ export class SceneCanvas {
       throw new Error(`The web renderer does not support ${content.type} layers yet.`);
     }
     ctx.restore();
+  }
+
+  /** A `surface` kept for stroked text, which reuses it line after line. */
+  private strokeSurface(ctx: Context): Context {
+    const surface = this.strokeCanvas;
+    if (surface && surface.canvas.width === ctx.canvas.width && surface.canvas.height === ctx.canvas.height) return surface;
+    return this.strokeCanvas = this.surface(ctx);
   }
 
   private surface(ctx: Context): Context {
