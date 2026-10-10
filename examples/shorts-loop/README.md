@@ -2,10 +2,11 @@
 
 A 12.8-second vertical loop for YouTube Shorts and TikTok, made to be watched
 on repeat: the last frame runs into the first, picture and sound alike, so
-the player's restart is invisible. Three custom WGSL shaders from
+the player's restart is invisible. Four custom WGSL shaders from
 `@celesta/shader` do the work. `silk` computes the whole background per
 pixel, `kaleido` folds a group of plain Celesta shapes into a kaleidoscope,
-and `lens` sends a refracting ring across the finished frame on every bar.
+`sheen` runs a band of light across the copy, and `lens` sends a refracting
+ring across the finished frame on every bar.
 1080 × 1920 / 30 fps / 12.8 s.
 
 The composition is `film.tsx` (the one scene in `scenes/`, its pieces in
@@ -53,7 +54,7 @@ License).
 
 The picture fills the whole frame. Only the words keep clear of the
 platforms' UI: nothing to read sits in the bottom fifth (from y = 1536), near
-the right edge, or under the top tabs. The copy, "NO START. NO END.", reads
-the same from wherever a viewer joins the loop. The frame is already at full
-strength on frame 0, and the first ring crosses the copy within the first
-second.
+the right edge, or under the top tabs. The copy, "LIGHT, FOLDED.", names what
+the shaders do, so it reads the same from wherever a viewer joins the loop.
+The frame is already at full strength on frame 0, and the first ring crosses
+the copy within the first second.

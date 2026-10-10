@@ -8,7 +8,7 @@ import { Loop } from './scenes/Loop';
 //
 //   scenes/        Loop, the one scene
 //   components/    Field (background), Bloom (kaleidoscope), Gem, Copy (text)
-//   shaders/       the three WGSL filters and their definitions
+//   shaders/       the four WGSL filters and their definitions
 //   loop.ts        clocks that repeat every loop, beat, or bar
 //   constants.ts   canvas, tempo, palette, safe area
 

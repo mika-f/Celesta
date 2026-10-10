@@ -22,6 +22,6 @@ export function Loop() {
   return <Group shader={lens({ center: [CX, CY], radius, width: 60 + 100 * p, strength, tint: CYAN })}>
     <Field frame={frame} pulse={pulse} />
     <Bloom frame={frame} pulse={pulse} />
-    <Copy />
+    <Copy frame={frame} pulse={pulse} />
   </Group>;
 }
