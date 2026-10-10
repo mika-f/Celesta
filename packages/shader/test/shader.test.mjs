@@ -6,6 +6,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'vitest';
 
+import { defineShader } from '../dist/index.js';
+
 const cli = fileURLToPath(new URL('../../cli/bin/celesta-react-render.js', import.meta.url));
 
 const WGSL = 'fn effect(input: EffectInput) -> vec4f { return source_at(input.position); }';
@@ -108,38 +110,51 @@ test('shader.id is the id the scene carries', () => {
   assert.equal(frame.scene.layers[0].id, frame.scene.shaders[0].id);
 });
 
+// In-process: each error would otherwise cost a CLI start, and the many
+// together outlast a slow runner's test timeout.
 test('definitions and values are checked with messages naming the shader', () => {
   const cases = [
-    [`defineShader({ wgsl: '' })`, /shader: wgsl must be a non-empty string/],
-    [`defineShader({ name: 'x', wgsl, padding: -1 })`, /shader x: padding must be a finite number of at least 0/],
-    [`defineShader({ name: 'x', wgsl, params: { 'bad-name': 'f32' } })`, /shader x: parameter name "bad-name"/],
-    [`defineShader({ name: 'x', wgsl, params: { celestaTime: 'f32' } })`, /shader x: parameter name "celestaTime"/],
-    [`defineShader({ name: 'x', wgsl, params: { a: 'mat4' } })`, /shader x: a must have a type of f32, vec2, vec3, vec4, or color/],
-    [`defineShader({ name: 'x', wgsl, params: { fn: 'f32' } })`, /shader x: parameter name "fn" is a WGSL keyword or reserved word/],
-    [`defineShader({ name: 'x', wgsl, params: { self: 'f32' } })`, /shader x: parameter name "self" is a WGSL keyword or reserved word/],
-    [`defineShader({ name: 'x', wgsl, params: { a: { type: 'f32', default: undefined } } })`, /shader x: the default of a must be a finite number/],
-    [`defineShader({ name: 'x', wgsl, params: { a: { type: 'color', default: 'red' } } })`, /shader x: the default of a must be a #RRGGBB or #RRGGBBAA color/],
-    [`defineShader({ name: 'x', wgsl, params: Object.fromEntries(Array.from({ length: 17 }, (_, i) => ['p' + i, 'f32'])) })`, /shader x: declares 17 parameters; the most is 16/],
+    [() => defineShader({ wgsl: '' }), /shader: wgsl must be a non-empty string/],
+    [() => defineShader({ name: 'x', wgsl: WGSL, padding: -1 }), /shader x: padding must be a finite number of at least 0/],
+    [() => defineShader({ name: 'x', wgsl: WGSL, params: { 'bad-name': 'f32' } }), /shader x: parameter name "bad-name"/],
+    [() => defineShader({ name: 'x', wgsl: WGSL, params: { celestaTime: 'f32' } }), /shader x: parameter name "celestaTime"/],
+    [() => defineShader({ name: 'x', wgsl: WGSL, params: { a: 'mat4' } }), /shader x: a must have a type of f32, vec2, vec3, vec4, or color/],
+    [() => defineShader({ name: 'x', wgsl: WGSL, params: { fn: 'f32' } }), /shader x: parameter name "fn" is a WGSL keyword or reserved word/],
+    [() => defineShader({ name: 'x', wgsl: WGSL, params: { self: 'f32' } }), /shader x: parameter name "self" is a WGSL keyword or reserved word/],
+    [() => defineShader({ name: 'x', wgsl: WGSL, params: { a: { type: 'f32', default: undefined } } }), /shader x: the default of a must be a finite number/],
+    [() => defineShader({ name: 'x', wgsl: WGSL, params: { a: { type: 'color', default: 'red' } } }), /shader x: the default of a must be a #RRGGBB or #RRGGBBAA color/],
+    // eslint-disable-next-line no-sparse-arrays -- the hole is the point.
+    [() => defineShader({ name: 'x', wgsl: WGSL, params: { axis: { type: 'vec2', default: [1, , ] } } }), /shader x: the default of axis must be an array of 2 finite numbers/],
+    [
+      () => defineShader({ name: 'x', wgsl: WGSL, params: Object.fromEntries(Array.from({ length: 17 }, (_, i) => [`p${i}`, 'f32'])) }),
+      /shader x: declares 17 parameters; the most is 16/,
+    ],
   ];
-  for (const [setup, error] of cases) {
-    const frame = render(`${setup};`, `<Rect width={8} height={8} />`);
-    assert.match(frame.error ?? '', error, setup);
+  for (const [define, error] of cases) {
+    assert.throws(define, error, String(define));
   }
+  const ripple = defineShader({
+    name: 'ripple',
+    wgsl: WGSL,
+    params: { amount: 'f32', axis: 'vec2', tint: { type: 'color', default: '#ffffff' } },
+  });
   const uses = [
-    [`{ amount: Number.NaN, axis: [0, 0] }`, /shader ripple: amount must be a finite number/],
-    [`{ axis: [0, 0] }`, /shader ripple: amount is required/],
-    [`{ amount: 1, axis: [0] }`, /shader ripple: axis must be an array of 2 finite numbers/],
-    [`{ amount: 1, axis: [0, 0], tint: '#ff00' }`, /shader ripple: tint must be a #RRGGBB or #RRGGBBAA color/],
-    [`{ amount: 1, axis: [0, 0], speed: 1 }`, /shader ripple: has no parameter "speed"/],
-    [`{ amount: 1, axis: [0, , ] }`, /shader ripple: axis must be an array of 2 finite numbers/],
+    [{ amount: Number.NaN, axis: [0, 0] }, /shader ripple: amount must be a finite number/],
+    [{ axis: [0, 0] }, /shader ripple: amount is required/],
+    [{ amount: 1, axis: [0] }, /shader ripple: axis must be an array of 2 finite numbers/],
+    [{ amount: 1, axis: [0, 0], tint: '#ff00' }, /shader ripple: tint must be a #RRGGBB or #RRGGBBAA color/],
+    [{ amount: 1, axis: [0, 0], speed: 1 }, /shader ripple: has no parameter "speed"/],
+    // eslint-disable-next-line no-sparse-arrays -- the hole is the point.
+    [{ amount: 1, axis: [0, , ] }, /shader ripple: axis must be an array of 2 finite numbers/],
   ];
   for (const [values, error] of uses) {
-    const frame = render(
-      `const ripple = defineShader({ name: 'ripple', wgsl, params: { amount: 'f32', axis: 'vec2', tint: { type: 'color', default: '#ffffff' } } });`,
-      `<Rect width={8} height={8} shader={ripple(${values})} />`,
-    );
-    assert.match(frame.error ?? '', error, values);
+    assert.throws(() => ripple(values), error, JSON.stringify(values));
   }
+});
+
+test('an error in a definition reaches the CLI with its message', () => {
+  const frame = render(`defineShader({ name: 'x', wgsl, padding: -1 });`, `<Rect width={8} height={8} />`);
+  assert.match(frame.error ?? '', /shader x: padding must be a finite number of at least 0/);
 });
 
 test('a parameter named like an Object method takes its default when omitted', () => {
@@ -149,12 +164,4 @@ test('a parameter named like an Object method takes its default when omitted', (
   );
   assert.equal(frame.error, undefined, frame.error);
   assert.deepEqual(frame.scene.layers[0].effects.shader.params, [3]);
-});
-
-test('a sparse default is refused when the shader is defined', () => {
-  const frame = render(
-    `defineShader({ name: 'x', wgsl, params: { axis: { type: 'vec2', default: [1, , ] } } });`,
-    `<Rect width={8} height={8} />`,
-  );
-  assert.match(frame.error ?? '', /shader x: the default of axis must be an array of 2 finite numbers/);
 });
