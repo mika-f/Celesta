@@ -23,7 +23,7 @@ export type ShaderParamValue = ShaderParamValueOf[ShaderParamType];
 /** A parameter's type, or its type and the value used when a use omits it. */
 export type ShaderParamSpec =
   | ShaderParamType
-  | { readonly type: ShaderParamType; readonly default?: ShaderParamValue };
+  | { [T in ShaderParamType]: { readonly type: T; readonly default?: ShaderParamValueOf[T] } }[ShaderParamType];
 
 type SpecType<S> = S extends ShaderParamType ? S : S extends { readonly type: infer T } ? T : never;
 type HasDefault<S> = S extends { readonly default: unknown } ? true : false;
@@ -64,6 +64,34 @@ export interface Shader<P> {
 
 const MAX_PARAMS = 16;
 const NAME = /^[A-Za-z][A-Za-z0-9_]*$/;
+
+/**
+ * WGSL's keywords and reserved words (naga 30's list, from the WGSL
+ * candidate recommendation of 2025-08-09). A parameter becomes a `Params`
+ * member of its name, which cannot be one of these.
+ */
+const RESERVED = new Set([
+  'alias', 'break', 'case', 'const', 'const_assert', 'continue', 'continuing', 'default',
+  'diagnostic', 'discard', 'else', 'enable', 'false', 'fn', 'for', 'if', 'let', 'loop',
+  'override', 'requires', 'return', 'struct', 'switch', 'true', 'var', 'while', 'NULL', 'Self',
+  'abstract', 'active', 'alignas', 'alignof', 'as', 'asm', 'asm_fragment', 'async', 'attribute',
+  'auto', 'await', 'become', 'cast', 'catch', 'class', 'co_await', 'co_return', 'co_yield',
+  'coherent', 'column_major', 'common', 'compile', 'compile_fragment', 'concept', 'const_cast',
+  'consteval', 'constexpr', 'constinit', 'crate', 'debugger', 'decltype', 'delete', 'demote',
+  'demote_to_helper', 'do', 'dynamic_cast', 'enum', 'explicit', 'export', 'extends', 'extern',
+  'external', 'fallthrough', 'filter', 'final', 'finally', 'friend', 'from', 'fxgroup', 'get',
+  'goto', 'groupshared', 'highp', 'impl', 'implements', 'import', 'inline', 'instanceof',
+  'interface', 'layout', 'lowp', 'macro', 'macro_rules', 'match', 'mediump', 'meta', 'mod',
+  'module', 'move', 'mut', 'mutable', 'namespace', 'new', 'nil', 'noexcept', 'noinline',
+  'nointerpolation', 'non_coherent', 'noncoherent', 'noperspective', 'null', 'nullptr', 'of',
+  'operator', 'package', 'packoffset', 'partition', 'pass', 'patch', 'pixelfragment', 'precise',
+  'precision', 'premerge', 'priv', 'protected', 'pub', 'public', 'readonly', 'ref', 'regardless',
+  'register', 'reinterpret_cast', 'require', 'resource', 'restrict', 'self', 'set', 'shared',
+  'sizeof', 'smooth', 'snorm', 'static', 'static_assert', 'static_cast', 'std', 'subroutine',
+  'super', 'target', 'template', 'this', 'thread_local', 'throw', 'trait', 'try', 'type',
+  'typedef', 'typeid', 'typename', 'typeof', 'union', 'unless', 'unorm', 'unsafe', 'unsized',
+  'use', 'using', 'varying', 'virtual', 'volatile', 'wgsl', 'where', 'with', 'writeonly', 'yield',
+]);
 const COLOR = /^#([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})?$/;
 const COMPONENTS: Record<Exclude<ShaderParamType, 'color'>, number> = { f32: 1, vec2: 2, vec3: 3, vec4: 4 };
 
@@ -137,11 +165,16 @@ export function defineShader<const P extends Record<string, ShaderParamSpec> = {
     if (!NAME.test(paramName) || paramName.startsWith('celesta')) {
       throw fail(`parameter name ${JSON.stringify(paramName)} must be letters, digits, and underscores, start with a letter, and not start with "celesta"`);
     }
+    if (RESERVED.has(paramName)) {
+      throw fail(`parameter name ${JSON.stringify(paramName)} is a WGSL keyword or reserved word`);
+    }
     const type = typeof spec === 'string' ? spec : spec?.type;
     if (!isType(type)) {
       throw fail(`${paramName} must have a type of f32, vec2, vec3, vec4, or color`);
     }
-    const fallback = typeof spec === 'object' && spec.default !== undefined
+    // A `default` key counts even when its value is `undefined`, as the
+    // types treat it, so `pack` rejects it here rather than at a use.
+    const fallback = typeof spec === 'object' && 'default' in spec
       ? pack(type, spec.default, `${prefix}: the default of ${paramName}`)
       : undefined;
     return { name: paramName, type, fallback };

@@ -115,6 +115,9 @@ test('definitions and values are checked with messages naming the shader', () =>
     [`defineShader({ name: 'x', wgsl, params: { 'bad-name': 'f32' } })`, /shader x: parameter name "bad-name"/],
     [`defineShader({ name: 'x', wgsl, params: { celestaTime: 'f32' } })`, /shader x: parameter name "celestaTime"/],
     [`defineShader({ name: 'x', wgsl, params: { a: 'mat4' } })`, /shader x: a must have a type of f32, vec2, vec3, vec4, or color/],
+    [`defineShader({ name: 'x', wgsl, params: { fn: 'f32' } })`, /shader x: parameter name "fn" is a WGSL keyword or reserved word/],
+    [`defineShader({ name: 'x', wgsl, params: { self: 'f32' } })`, /shader x: parameter name "self" is a WGSL keyword or reserved word/],
+    [`defineShader({ name: 'x', wgsl, params: { a: { type: 'f32', default: undefined } } })`, /shader x: the default of a must be a finite number/],
     [`defineShader({ name: 'x', wgsl, params: { a: { type: 'color', default: 'red' } } })`, /shader x: the default of a must be a #RRGGBB or #RRGGBBAA color/],
     [`defineShader({ name: 'x', wgsl, params: Object.fromEntries(Array.from({ length: 17 }, (_, i) => ['p' + i, 'f32'])) })`, /shader x: declares 17 parameters; the most is 16/],
   ];

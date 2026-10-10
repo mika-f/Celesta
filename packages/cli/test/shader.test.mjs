@@ -78,6 +78,9 @@ typed({ time: 1, axis: [0] });
 // @ts-expect-error there is no such parameter.
 typed({ time: 1, axis: [0, 1], speed: 2 });
 defineShader({ wgsl: rippleSource })();
+defineShader({ wgsl: rippleSource, params: { tint: { type: 'color', default: '#ffffff' } } })();
+// @ts-expect-error a default must match its parameter's type.
+defineShader({ wgsl: rippleSource, params: { amount: { type: 'f32', default: '#ffffff' } } });
 `,
     'ripple.wgsl': RIPPLE,
     'tsconfig.json': JSON.stringify({ extends: projectTypes, include: ['entry.tsx'] }),
