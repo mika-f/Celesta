@@ -12,7 +12,7 @@ const PH = 560;
 
 const VERDICT = [
   ['remotion', 'Writes like React. Renders like a browser.'],
-  ['fframes', 'Fastest render. Rust, and a rebuild per edit.'],
+  ['fframes', 'Rust and Skia. A rebuild per edit.'],
   ['celesta', 'Writes like React. Renders on the GPU.'],
 ] as const;
 

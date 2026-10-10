@@ -2,11 +2,11 @@
 // the video always matches the last measurement (bench/run.mjs, bench/loop.mjs).
 import loop from './bench/loop.json';
 import runs from './bench/results.json';
-import type { ToolId } from './constants';
+import { ORDER, type ToolId } from './constants';
 
-type Run = { name: string; seconds: number };
+type Run = { name: string; seconds: number; remotionFlags?: string };
 type BenchRecord = { machine: { cpu: string; threads: number; gpu: string; memoryGiB: number; os: string };
-  remotionFlags: string; results: Run[] };
+  remotionFlags?: string; results: Run[] };
 
 const records = runs as BenchRecord[];
 const median = (values: number[]) => {
@@ -14,13 +14,20 @@ const median = (values: number[]) => {
   const mid = sorted.length >> 1;
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 };
+// Interleaved batches tag each Remotion run with its flags; older batches set
+// them once for the whole record.
+const flagsOf = (record: BenchRecord, run: Run) => run.remotionFlags ?? record.remotionFlags ?? '';
+const TUNED_FLAGS = '--gl=angle --concurrency=100%';
+const runsOf = (record: BenchRecord, name: string, flags = '') =>
+  record.results.filter((r) => r.name === name && (name !== 'remotion' || flagsOf(record, r) === flags)).map((r) => r.seconds);
 // The latest run.mjs invocation that measured `name` with these Remotion
 // flags. Batches are never pooled, so each median is over one batch.
 const latest = (name: string, flags = '') =>
-  [...records].reverse().find((r) => (name !== 'remotion' || r.remotionFlags === flags)
-    && r.results.some((x) => x.name === name));
-const batch = (name: string, flags = '') =>
-  latest(name, flags)?.results.filter((r) => r.name === name).map((r) => r.seconds) ?? [];
+  [...records].reverse().find((r) => runsOf(r, name, flags).length);
+const batch = (name: string, flags = '') => {
+  const record = latest(name, flags);
+  return record ? runsOf(record, name, flags) : [];
+};
 const required = (values: number[], what: string) => {
   if (!values.length) throw new Error(`no measurements for ${what}; run bench/run.mjs and bench/loop.mjs first`);
   return median(values);
@@ -29,9 +36,14 @@ const required = (values: number[], what: string) => {
 export const FRAMES = 600;
 
 // Remotion with --gl=angle --concurrency=100%, or null when it was not measured.
+// `baseline` is default Remotion from the same batch when there is one, so the
+// comparison is not skewed by drift between sessions.
 export const TUNED = (() => {
-  const t = batch('remotion', '--gl=angle --concurrency=100%');
-  return t.length ? { min: Math.min(...t), max: Math.max(...t), median: median(t) } : null;
+  const record = latest('remotion', TUNED_FLAGS);
+  if (!record) return null;
+  const t = runsOf(record, 'remotion', TUNED_FLAGS);
+  const same = runsOf(record, 'remotion');
+  return { min: Math.min(...t), max: Math.max(...t), median: median(t), baseline: same.length ? median(same) : null };
 })();
 
 // Complete 600-frame MP4 export, median seconds of the latest batch.
@@ -40,6 +52,17 @@ export const EXPORT: Record<ToolId, number> = {
   fframes: required(batch('fframes'), 'the fframes export'),
   celesta: required(batch('celesta'), 'the Celesta export'),
 };
+
+// Medians closer than this are reported as a tie, not a win. The measured
+// run-to-run spread within one tool is of the same size, and the ranking of
+// the two fastest tools differed between machines.
+export const TIE = 0.05;
+export const FASTEST = ORDER.reduce((best, id) => EXPORT[id] < EXPORT[best] ? id : best);
+export const TIED_WITH_FASTEST = ORDER.filter((id) => id !== FASTEST && EXPORT[id] <= EXPORT[FASTEST] * (1 + TIE));
+
+// Seconds saved by Remotion's tuned flags as a fraction of default Remotion,
+// compared within one batch when possible.
+export const TUNING_GAIN = TUNED ? 1 - TUNED.median / (TUNED.baseline ?? EXPORT.remotion) : null;
 
 // How many runs the medians above summarize, for the footnotes.
 const summary = (counts: number[]) => {
