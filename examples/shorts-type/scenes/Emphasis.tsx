@@ -9,6 +9,8 @@ import { SPAN_COPY, SPAN_STYLE, segmentsOf, spanLayout } from '../measure';
 const LIT = ['同じ', '一文', '光らせる', '言葉', '意味', '変わる'];
 const CUES = [...LIT.map((phrase, i) => ({ at: i * BEAT, phrases: [phrase] })), { at: BEAT * 6, phrases: LIT }];
 const Y = TOP + 300;
+const SIZE = SPAN_STYLE.fontSize ?? 100;
+const PAD = 12;
 
 // The paragraph with the given phrases wrapped in <Span>s. It stays one
 // paragraph, so the lines wrap exactly as in the measured layout.
@@ -40,11 +42,17 @@ export function Emphasis() {
       tapes={['光らせる言葉で、意味が変わる。', '<Span>']} y={AREA.height / 2 + (focus - spanLayout.height / 2) * 0.15} zoom={1.02}>
       <Tag x={COL.x} y={TOP + 140} color={C.hot} opacity={enter}>{'<Span style={{ fontWeight: 900 }}>'}</Tag>
       <Group x={COL.x} y={Y + 30 * (1 - enter)} opacity={enter}>
+        {/* Text and highlights both hang from the measured baselines. A
+            Japanese glyph's ink sits in its em square, ~0.88 em above the
+            baseline to ~0.12 em below; the bar pads that square evenly. The
+            last glyph usually leaves blank space inside its advance, so the
+            right side gets less padding than the left. */}
         {segments.map((s, i) => (
-          <Rect key={i} x={s.x - 8} y={s.y + spanLayout.lineHeight * 0.1} width={(s.width + 16) * sweep}
-            height={spanLayout.lineHeight * 0.82} fill={C.hot} />
+          <Rect key={i} x={s.x - PAD} y={s.y + spanLayout.ascent - SIZE * 0.88 - PAD}
+            width={(s.width + PAD * 1.5) * sweep} height={SIZE + PAD * 2} fill={C.hot} />
         ))}
-        <Text maxWidth={COL.width} style={{ ...SPAN_STYLE, fill: { type: 'solid', color: C.grey }, lineBreak: 'phrase' }}>
+        <Text y={spanLayout.ascent} anchorY="baseline" maxWidth={COL.width}
+          style={{ ...SPAN_STYLE, fill: { type: 'solid', color: C.grey }, lineBreak: 'phrase' }}>
           {lit(phrases, interpolateColor(sweep, [0, 1], [C.paper, C.ink]))}
         </Text>
       </Group>
