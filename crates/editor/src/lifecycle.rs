@@ -11,13 +11,19 @@ use celesta_react_bridge::{
 };
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dialog::{DialogAction, DialogClose, DialogDescription, DialogFooter};
-use gpui_kit::component::radio::{Radio, RadioGroup};
-use gpui_kit::component::{ActiveTheme as _, WindowExt as _, v_flex};
+use gpui_kit::component::radio::Radio;
+use gpui_kit::component::scroll::ScrollableElement as _;
+use gpui_kit::component::{ActiveTheme as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
-use gpui_kit::{ClickEvent, Context, PathPromptOptions, SharedString, Window, div};
+use gpui_kit::{ClickEvent, Context, PathPromptOptions, Pixels, Window, div, px};
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+
+/// Wide enough for a two-line Japanese description per template.
+const TEMPLATE_DIALOG_WIDTH: Pixels = px(520.);
+/// About four templates; more scroll inside the dialog.
+const TEMPLATE_LIST_MAX_HEIGHT: Pixels = px(360.);
 
 impl EditorView {
     pub(crate) fn create_new_project_action(
@@ -70,22 +76,51 @@ impl EditorView {
         let view = cx.entity().downgrade();
         window.open_dialog(cx, move |dialog, _, cx| {
             let muted = cx.theme().muted_foreground;
-            let radios = templates.iter().map(|template| {
-                Radio::new(SharedString::from(template.name.clone()))
-                    .label(template.title.clone())
+            // `Radio` draws only the indicator: its own label column is
+            // `w_full()` beside the indicator, so long descriptions would run
+            // past the dialog's right padding. The text column here can shrink.
+            let rows = templates.iter().enumerate().map(|(index, template)| {
+                let select = {
+                    let selected = selected.clone();
+                    move |window: &mut Window| {
+                        selected.set(index);
+                        window.refresh();
+                    }
+                };
+                let select_from_radio = select.clone();
+                h_flex()
+                    .id(("project-template", index))
+                    .w_full()
+                    .items_start()
+                    .gap_2()
+                    .cursor_pointer()
+                    .on_click(move |_, window, _| select(window))
                     .child(
-                        div()
-                            .text_sm()
-                            .text_color(muted)
-                            .child(template.description.clone()),
+                        Radio::new(("project-template-radio", index))
+                            .checked(selected.get() == index)
+                            .accessibility_label(template.title.clone())
+                            .on_click(move |_, window, _| select_from_radio(window)),
+                    )
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .gap_1()
+                            .child(div().child(template.title.clone()))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(muted)
+                                    .child(template.description.clone()),
+                            ),
                     )
             });
-            let selected_on_click = selected.clone();
             let templates_on_ok = templates.clone();
             let selected_on_ok = selected.clone();
             let view = view.clone();
             dialog
                 .title("Create New Project")
+                .w(TEMPLATE_DIALOG_WIDTH)
                 .child(
                     v_flex()
                         .gap_3()
@@ -93,14 +128,15 @@ impl EditorView {
                             DialogDescription::new()
                                 .child("Choose a template. You’ll pick the project folder next."),
                         )
+                        // Only the list scrolls once there are more templates
+                        // than fit, so the description and buttons stay put.
                         .child(
-                            RadioGroup::vertical("project-templates")
-                                .children(radios)
-                                .selected_index(Some(selected.get()))
-                                .on_click(move |index, window, _| {
-                                    selected_on_click.set(*index);
-                                    window.refresh();
-                                }),
+                            v_flex()
+                                .id("project-templates")
+                                .max_h(TEMPLATE_LIST_MAX_HEIGHT)
+                                .gap_3()
+                                .children(rows)
+                                .overflow_y_scrollbar(),
                         ),
                 )
                 .footer(
