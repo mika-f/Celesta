@@ -358,8 +358,9 @@ VOICEVOX-specific helpers and types live in `@celesta/voicevox`. The desktop
 runtime includes the package; **File > Set Up TypeScript** installs its
 declarations. Shared WAV lip sync and dialogue components stay in `@celesta/character`.
 
-When the voice comes from VOICEVOX Engine (or a compatible engine such as
-AivisSpeech), build the track from the `audio_query` JSON instead:
+When the voice comes from VOICEVOX Engine, build the track from the
+`audio_query` JSON instead (engines that take the same query but choose their
+own phoneme lengths, such as AivisSpeech, are not timed exactly):
 `lipSyncFromVoicevox(query)` reads every consonant and vowel length, so the
 mouth stays in step with the voice. It is synchronous; save the query next to
 the WAV and import it or read it in `prepare()`.
@@ -404,6 +405,44 @@ const hello = lipSyncFromVoicevox(helloQuery);
   with `lipSyncFromKeyframes([{ seconds, mouth }, ...], durationInSeconds)`;
   each keyframe holds until the next, and the mouth is `closed` before the
   first and after `durationInSeconds`.
+
+### Mora and phoneme timing from VOICEVOX
+
+`timingFromVoicevox(query, options?)` returns the timing the VOICEVOX lip-sync
+track is built from: seconds from the start of the WAV (`start` / `end`, not
+frames) for every phoneme, mora, pause, and accent phrase. Use it to light
+moras as they are spoken, time an effect to a mora, or change a face at a
+pause, and build the mouth from the same timing so they agree:
+
+```ts
+import { lipSyncFromVoicevox, timingFromVoicevox } from '@celesta/voicevox';
+
+const timing = timingFromVoicevox(query);
+const line = {
+  id: 'voice-1', audio: './voices/voice-1.wav', text: 'じゃあ、わたしたちの声は？',
+  lipSync: lipSyncFromVoicevox(timing),
+};
+
+// Per frame, inside the line: seconds since the voice started.
+const seconds = (frame - planned.from) / fps;
+const current = timing.moras.find((m) => m.start <= seconds && seconds < m.end);
+const secondClause = timing.pauses[0]?.start ?? Infinity; // face change point
+```
+
+- `timing.moras` lists every mora in order; `timing.accentPhrases[i].moras[j]`
+  is `query.accent_phrases[i].moras[j]` (read `pitch` and other fields there).
+- `timing.pauses[k]` is the k-th pause (`、`); a clause boundary is its `start`.
+- `timing.speech` spans the voice without `prePhonemeLength` /
+  `postPhonemeLength`; `timing.durationInSeconds` is the WAV length.
+- A question's upspeak mora (0.15 s, `upspeak: true`, `text` the vowel's
+  kana) comes last in its phrase; skip it with `!m.upspeak` for display.
+- Moras or phonemes rounded to zero frames have `start === end` and are never
+  current.
+- Options (`frameRate`, `interrogativeUpspeak`) go to `timingFromVoicevox`;
+  `lipSyncFromVoicevox(timing, options)` throws.
+
+`examples/shorts-explainer/voice.ts` uses this for its lit mora panel and its
+in-line face changes.
 
 ### Image mouths
 

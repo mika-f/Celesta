@@ -1,6 +1,8 @@
 // The parts of a VOICEVOX Engine `audio_query` result that Celesta reads.
 // Engines that share VOICEVOX's API (AivisSpeech, COEIROINK v2, ...) return
-// the same shape. Fields not listed here are allowed and ignored.
+// the same shape, but AivisSpeech ignores the phoneme and pause lengths when
+// synthesizing, so times computed from its queries do not match its WAVs.
+// Fields not listed here are allowed and ignored.
 
 /** One mora of a VOICEVOX AudioQuery. */
 export interface VoicevoxMora {

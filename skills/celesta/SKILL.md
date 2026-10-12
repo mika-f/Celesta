@@ -185,7 +185,7 @@ layers sit; it does not prove the rendered pixels.
 | `@celesta/debug` | `DebugOverlay`, `DebugBounds` |
 | `@celesta/math` | `random`, `noise`, `loopNoise`, and math helpers |
 | `@celesta/code` | `Code`, `highlightCode`, and syntax highlighting |
-| `@celesta/voicevox` | `lipSyncFromVoicevox` |
+| `@celesta/voicevox` | `lipSyncFromVoicevox`, `timingFromVoicevox`, `voicevoxVowelShape`, and their types |
 
 An import from the wrong package fails with `@celesta/react does not export
 Circle; import it from @celesta/shapes`; move it to the named package. Code

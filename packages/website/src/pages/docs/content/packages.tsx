@@ -20,6 +20,8 @@ export const packageContents: Record<string, ReactNode> = {
     <DocCode label="voicevox.tsx" language="tsx" code={voicevoxScene.trim()} />
     <Api caption="@celesta/voicevox" rows={[
       [<code>lipSyncFromVoicevox(query, options?)</code>, text('docs.chapters.voicevox.api.voicevox-convert')],
+      [<code>lipSyncFromVoicevox(timing)</code>, text('docs.chapters.voicevox.api.voicevox-convert-timing')],
+      [<code>timingFromVoicevox(query, options?)</code>, text('docs.chapters.voicevox.api.voicevox-timing')],
       [<code>voicevoxVowelShape(vowel)</code>, text('docs.chapters.voicevox.api.voicevox-vowel')],
     ]} />
     <Api caption={t('docs.chapters.voicevox.options')} rows={[
