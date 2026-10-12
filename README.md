@@ -189,6 +189,7 @@ manner of Remotion; import each piece from the package that provides it:
 | [`@celesta/math`](packages/math) | Deterministic random numbers, noise, and other math helpers |
 | [`@celesta/code`](packages/code/README.md) | Syntax-highlighted `<Code>` |
 | [`@celesta/voicevox`](packages/voicevox/README.md) | Lip sync from VOICEVOX AudioQuery |
+| [`@celesta/aivis-speech`](packages/aivis-speech/README.md) | Lip sync from AivisSpeech AudioQuery and WAV |
 
 [`@celesta/cli`](packages/cli) is the Node.js runtime the editor and exporter
 evaluate compositions in; it ships every package above.

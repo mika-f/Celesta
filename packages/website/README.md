@@ -162,7 +162,7 @@ assets and runs `pnpm run deploy`. It needs the `CLOUDFLARE_API_TOKEN` and
   a package's sub-page names its `parent`, follows it, and has a short
   `metadata.nav-title` for the indented sidebar entry. Add a page there, then add its content under the same slug in
   `src/pages/docs/content/guides.tsx` (app, React, and guides) or `src/pages/docs/content/packages.tsx`
-  (`@celesta/math`, `@celesta/code`, and `@celesta/voicevox`). `src/pages/docs/DocsPage.tsx` renders the grouped
+  (`@celesta/math`, `@celesta/code`, `@celesta/voicevox`, and `@celesta/aivis-speech`). `src/pages/docs/DocsPage.tsx` renders the grouped
   sidebar, topic search, previous/next links, and the overview. Old
   `/docs/#<chapter>` links redirect to the matching page. Link between pages
   with `docPath(slug)` from `src/site/routes.ts`; `src/pages/docs/content/shared.tsx` has the `Note` and `Api` helpers.
@@ -170,9 +170,9 @@ assets and runs `pnpm run deploy`. It needs the `CLOUDFLARE_API_TOKEN` and
   `src/pages/docs/syntax.ts` highlights code with [twinkleplop](https://twinkleplop.pngwn.at)
   (TSX, JSON, and shell) in documentation.
 - `src/pages/docs/examples/`: complete documentation examples (including title, media, dialogue, dialogue sequencing,
-  fitted text, reusable data, and VOICEVOX entries). The
+  fitted text, reusable data, VOICEVOX, and AivisSpeech entries). The
   docs import them as raw text. They are excluded from the site's own
-  type-check and checked against the real `@celesta/react` and the separately staged `@celesta/voicevox` instead.
+  type-check and checked against the real `@celesta/react` and the separately staged `@celesta/voicevox` and `@celesta/aivis-speech` instead.
   The JSON chapter imports `../../examples/editor-demo.celesta.json` from the
   repository so its example stays in sync. Build with the repository present.
 - `src/features/playground/demo/title-scene.tsx`: editable starting composition.
@@ -242,7 +242,8 @@ chapter is for compatibility with existing files; new project, preview, and
 export instructions use React entries. Keep CLI flags aligned with
 `crates/exporter/src/main.rs` and `crates/editor/src/cli.rs`, and package import
 examples aligned with each package's public `src/index.ts`. In particular,
-VOICEVOX adapters are imported from `@celesta/voicevox`, not `@celesta/react`.
+VOICEVOX and AivisSpeech adapters are imported from `@celesta/voicevox` and
+`@celesta/aivis-speech`, not `@celesta/react`.
 
 Catalogs currently ship together in the shared JavaScript bundle. This is a
 simple tradeoff for two languages; switch to loading a catalog per language if

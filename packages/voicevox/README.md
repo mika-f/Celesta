@@ -2,8 +2,8 @@
 
 VOICEVOX AudioQuery timing and lip sync for Celesta React compositions, for
 VOICEVOX Engine. Engines that accept the same query but choose their own phoneme
-lengths (such as AivisSpeech) are not timed exactly. Dialogue components, WAV
-lip sync, and `LipSyncTrack` are in `@celesta/character`.
+lengths are not timed exactly; for AivisSpeech, use `@celesta/aivis-speech`.
+Dialogue components, WAV lip sync, and `LipSyncTrack` are in `@celesta/character`.
 
 ```tsx
 import { Dialogue } from '@celesta/character';

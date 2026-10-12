@@ -17,6 +17,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@celesta/aivis-speech": "workspace:*",
     "@celesta/character": "workspace:*",
     "@celesta/code": "workspace:*",
     "@celesta/debug": "workspace:*",

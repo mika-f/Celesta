@@ -525,6 +525,15 @@ importers:
         specifier: ^18.3.31
         version: 18.3.31
 
+  packages/aivis-speech:
+    devDependencies:
+      '@celesta/character':
+        specifier: workspace:*
+        version: link:../character
+      typescript:
+        specifier: ^5.7.3
+        version: 5.9.3
+
   packages/character:
     dependencies:
       '@celesta/math':
@@ -555,6 +564,9 @@ importers:
 
   packages/cli:
     dependencies:
+      '@celesta/aivis-speech':
+        specifier: workspace:*
+        version: link:../aivis-speech
       '@celesta/character':
         specifier: workspace:*
         version: link:../character

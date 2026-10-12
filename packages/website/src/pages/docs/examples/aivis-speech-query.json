@@ -1,0 +1,134 @@
+{
+  "accent_phrases": [
+    {
+      "moras": [
+        {
+          "text": "コ",
+          "consonant": "k",
+          "consonant_length": 0.0,
+          "vowel": "o",
+          "vowel_length": 0.0,
+          "pitch": 0.0
+        },
+        {
+          "text": "ン",
+          "consonant": null,
+          "consonant_length": null,
+          "vowel": "N",
+          "vowel_length": 0.0,
+          "pitch": 0.0
+        },
+        {
+          "text": "ニ",
+          "consonant": "n",
+          "consonant_length": 0.0,
+          "vowel": "i",
+          "vowel_length": 0.0,
+          "pitch": 0.0
+        },
+        {
+          "text": "チ",
+          "consonant": "ch",
+          "consonant_length": 0.0,
+          "vowel": "i",
+          "vowel_length": 0.0,
+          "pitch": 0.0
+        },
+        {
+          "text": "ワ",
+          "consonant": "w",
+          "consonant_length": 0.0,
+          "vowel": "a",
+          "vowel_length": 0.0,
+          "pitch": 0.0
+        },
+        {
+          "text": ",",
+          "consonant": null,
+          "consonant_length": null,
+          "vowel": "pau",
+          "vowel_length": 0.0,
+          "pitch": 0.0
+        }
+      ],
+      "accent": 5,
+      "pause_mora": null,
+      "is_interrogative": false
+    },
+    {
+      "moras": [
+        {
+          "text": "ハ",
+          "consonant": "h",
+          "consonant_length": 0.0,
+          "vowel": "a",
+          "vowel_length": 0.0,
+          "pitch": 0.0
+        },
+        {
+          "text": "ジ",
+          "consonant": "j",
+          "consonant_length": 0.0,
+          "vowel": "i",
+          "vowel_length": 0.0,
+          "pitch": 0.0
+        },
+        {
+          "text": "メ",
+          "consonant": "m",
+          "consonant_length": 0.0,
+          "vowel": "e",
+          "vowel_length": 0.0,
+          "pitch": 0.0
+        },
+        {
+          "text": "マ",
+          "consonant": "m",
+          "consonant_length": 0.0,
+          "vowel": "a",
+          "vowel_length": 0.0,
+          "pitch": 0.0
+        },
+        {
+          "text": "シ",
+          "consonant": "sh",
+          "consonant_length": 0.0,
+          "vowel": "i",
+          "vowel_length": 0.0,
+          "pitch": 0.0
+        },
+        {
+          "text": "テ",
+          "consonant": "t",
+          "consonant_length": 0.0,
+          "vowel": "e",
+          "vowel_length": 0.0,
+          "pitch": 0.0
+        },
+        {
+          "text": ".",
+          "consonant": null,
+          "consonant_length": null,
+          "vowel": "pau",
+          "vowel_length": 0.0,
+          "pitch": 0.0
+        }
+      ],
+      "accent": 4,
+      "pause_mora": null,
+      "is_interrogative": false
+    }
+  ],
+  "speedScale": 1.0,
+  "intonationScale": 1.0,
+  "tempoDynamicsScale": 1.0,
+  "pitchScale": 0.0,
+  "volumeScale": 1.0,
+  "prePhonemeLength": 0.1,
+  "postPhonemeLength": 0.1,
+  "pauseLength": null,
+  "pauseLengthScale": 1.0,
+  "outputSamplingRate": 44100,
+  "outputStereo": false,
+  "kana": "こんにちは、はじめまして。"
+}

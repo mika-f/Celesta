@@ -357,7 +357,7 @@ export const contents: Record<string, ReactNode> = {
       <p>{text('docs.chapters.dialogue.dialogue-series-body')}</p>
       <DocCode label="dialogue-series.tsx" language="tsx" code={dialogueSeriesScene.trim()} />
       <p>{text('docs.chapters.dialogue.dialogue-subtitles-body')}</p>
-      <p>{text('docs.chapters.dialogue.voicevox-link', [<a href={docPath('voicevox')} />])}</p>
+      <p>{text('docs.chapters.dialogue.voicevox-link', [<a href={docPath('voicevox')} />, <a href={docPath('aivis-speech')} />])}</p>
       <h3>{text('docs.chapters.dialogue.see-it-with-real-artwork')}</h3><p>{text('docs.chapters.dialogue.the-repository-s-is-a-complete-json', [<code>packages/cli/examples/with-dialogue-series.tsx</code>, <code>packages/cli/examples/with-lip-sync.tsx</code>, <a href={repository} />, <strong />, <strong />])}</p>
     </>,
   'data': <>

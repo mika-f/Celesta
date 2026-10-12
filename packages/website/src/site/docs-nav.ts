@@ -58,6 +58,7 @@ const groupMessages: { title: Message; pages: PageMessages[] }[] = [
       { slug: 'code', title: 'docs.chapters.code.metadata.title', description: 'docs.chapters.code.metadata.description', keywords: 'docs.chapters.code.metadata.keywords' },
       { slug: 'code-typing', parent: 'code', title: 'docs.chapters.code-typing.metadata.title', navTitle: 'docs.chapters.code-typing.metadata.nav-title', description: 'docs.chapters.code-typing.metadata.description', keywords: 'docs.chapters.code-typing.metadata.keywords' },
       { slug: 'voicevox', title: 'docs.chapters.voicevox.metadata.title', description: 'docs.chapters.voicevox.metadata.description', keywords: 'docs.chapters.voicevox.metadata.keywords' },
+      { slug: 'aivis-speech', title: 'docs.chapters.aivis-speech.metadata.title', description: 'docs.chapters.aivis-speech.metadata.description', keywords: 'docs.chapters.aivis-speech.metadata.keywords' },
     ],
   },
   {

@@ -322,7 +322,8 @@ portrait is drawn at its natural size; use `scale` for large artwork.
 vowels of `text` across its voiced parts, producing a mouth shape for every
 moment. Call it in `prepare()`. For VOICEVOX voices, prefer
 [`lipSyncFromVoicevox`](#lip-sync-from-voicevox-timing), which uses the
-engine's own phoneme timing.
+engine's own phoneme timing; for AivisSpeech voices, prefer
+[`lipSyncFromAivisSpeech`](#lip-sync-from-aivisspeech).
 
 ```tsx
 let voice: LipSyncTrack | null = null;
@@ -360,7 +361,8 @@ declarations. Shared WAV lip sync and dialogue components stay in `@celesta/char
 
 When the voice comes from VOICEVOX Engine, build the track from the
 `audio_query` JSON instead (engines that take the same query but choose their
-own phoneme lengths, such as AivisSpeech, are not timed exactly):
+own phoneme lengths are not timed exactly; for AivisSpeech, see
+[Lip sync from AivisSpeech](#lip-sync-from-aivisspeech)):
 `lipSyncFromVoicevox(query)` reads every consonant and vowel length, so the
 mouth stays in step with the voice. It is synchronous; save the query next to
 the WAV and import it or read it in `prepare()`.
@@ -443,6 +445,49 @@ const secondClause = timing.pauses[0]?.start ?? Infinity; // face change point
 
 `examples/shorts-explainer/voice.ts` uses this for its lit mora panel and its
 in-line face changes.
+
+### Lip sync from AivisSpeech
+
+AivisSpeech Engine serves VOICEVOX's API (default port 10101), but its model
+chooses every phoneme length itself: the `audio_query` lengths are dummy
+zeros, so `@celesta/voicevox` cannot time it. Use `@celesta/aivis-speech`,
+which reads the query **and the WAV synthesized from it**: the query gives
+the moras in order (punctuation included), the WAV where they fall. The
+voice's start and end are exact; times inside it are estimated from the
+WAV's loudness (pauses land on the model's silences; mora starts are
+typically within a few tens of milliseconds). The desktop runtime includes
+the package; **File > Set Up TypeScript** installs its declarations.
+
+```tsx
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import type { LipSyncTrack } from '@celesta/character';
+import { lipSyncFromAivisSpeech, timingFromAivisSpeech } from '@celesta/aivis-speech';
+import helloQuery from './voices/hello.json';
+
+let hello: LipSyncTrack;
+export async function prepare() {
+  const wav = await readFile(join(import.meta.dirname, 'voices/hello.wav'));
+  const timing = timingFromAivisSpeech(helloQuery, wav); // same shape as timingFromVoicevox
+  hello = lipSyncFromAivisSpeech(timing);                // or lipSyncFromAivisSpeech(helloQuery, wav)
+}
+```
+
+- **Use the query that produced the WAV**: its `speedScale`,
+  `prePhonemeLength` and `postPhonemeLength` locate the voice in the WAV.
+  Pass the WAV's bytes (or `decodeWav`'s result); it is synchronous and
+  takes about 10 ms per second of voice, so call it in `prepare()`.
+- The timing has the same fields as `timingFromVoicevox`'s (`moras`,
+  `pauses`, `phonemes`, `accentPhrases`, `speech`, `durationInSeconds`),
+  without `upspeak` (AivisSpeech ignores interrogative upspeak) or options.
+- AivisSpeech keeps punctuation as moras with vowel `pau` and the normalized
+  mark as `text` (`,` `.` `!` `?` `…`). They stay in `moras` (skip them for
+  display with `m.vowel.phoneme !== 'pau'`) and are listed in `pauses`
+  together with any `pause_mora`, **sentence-final marks included**; a mark
+  the model did not pause at is short or has `start === end`.
+- Mouth shapes follow the VOICEVOX rules above.
+  `lipSyncFromAivisSpeech(query)` without the WAV, or
+  `lipSyncFromAivisSpeech(timing, wav)`, throws.
 
 ### Image mouths
 

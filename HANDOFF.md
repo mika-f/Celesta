@@ -64,7 +64,7 @@ renders host elements of its own registers them with `registerHostElement()`
 when its module loads, as `@celesta/character` does for `<CharacterView>` and
 `<Dialogue>`; the walker rejects unregistered element types. State that the
 CLI installs (the text measurer and media probe) lives in the core.
-`@celesta/code` and `@celesta/voicevox` stay optional imports for
+`@celesta/code`, `@celesta/voicevox`, and `@celesta/aivis-speech` stay optional imports for
 compositions: no package a composition imports depends on them, though
 `@celesta/cli` includes them in the runtime.
 
@@ -99,6 +99,7 @@ compositions: no package a composition imports depends on them, though
 | `packages/debug` (`@celesta/debug`) | Debug overlays. |
 | `packages/code` (`@celesta/code`) | Syntax-highlighted code components. |
 | `packages/voicevox` (`@celesta/voicevox`) | VOICEVOX AudioQuery lip sync. |
+| `packages/aivis-speech` (`@celesta/aivis-speech`) | AivisSpeech AudioQuery and WAV lip sync. |
 | `packages/cli` (`@celesta/cli`) | Entry CLI the bridge spawns; depends on every package it serves. |
 
 Useful entry points:

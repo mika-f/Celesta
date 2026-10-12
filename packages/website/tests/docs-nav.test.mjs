@@ -7,7 +7,7 @@ const slugs = groups => groups.flatMap(group => group.pages).map(page => page.sl
 
 test('chapters keep their addresses', () => {
   assert.deepEqual(slugs(getDocGroups('en')).sort(), [
-    'animation', 'build-from-source', 'code', 'code-typing', 'create-project', 'data', 'dialogue', 'examples', 'export',
+    'aivis-speech', 'animation', 'build-from-source', 'code', 'code-typing', 'create-project', 'data', 'dialogue', 'examples', 'export',
     'installation', 'layout', 'math', 'math-noise', 'math-shaping', 'media', 'motion-toolkit', 'preview', 'react-compositions',
     'reference', 'text-camera-lines', 'text-fonts', 'timelines', 'troubleshooting', 'voicevox',
   ]);
@@ -40,5 +40,5 @@ test('sub-pages use a short label in the navigation and keep the full title', ()
 test('the API reference has its own group, apart from the add-on packages', () => {
   const groups = getDocGroups('ja').map(group => [group.title, slugs([group])]);
   assert.deepEqual(groups.find(([, pages]) => pages.includes('reference')), ['リファレンス', ['reference']]);
-  assert.deepEqual(groups.find(([, pages]) => pages.includes('math')), ['追加パッケージ', ['math', 'math-noise', 'math-shaping', 'code', 'code-typing', 'voicevox']]);
+  assert.deepEqual(groups.find(([, pages]) => pages.includes('math')), ['追加パッケージ', ['math', 'math-noise', 'math-shaping', 'code', 'code-typing', 'voicevox', 'aivis-speech']]);
 });

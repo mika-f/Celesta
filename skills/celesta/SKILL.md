@@ -186,6 +186,7 @@ layers sit; it does not prove the rendered pixels.
 | `@celesta/math` | `random`, `noise`, `loopNoise`, and math helpers |
 | `@celesta/code` | `Code`, `highlightCode`, and syntax highlighting |
 | `@celesta/voicevox` | `lipSyncFromVoicevox`, `timingFromVoicevox`, `voicevoxVowelShape`, and their types |
+| `@celesta/aivis-speech` | `lipSyncFromAivisSpeech`, `timingFromAivisSpeech`, `aivisSpeechVowelShape`, and their types |
 
 An import from the wrong package fails with `@celesta/react does not export
 Circle; import it from @celesta/shapes`; move it to the named package. Code
@@ -209,7 +210,7 @@ Load only the one you need; each is self-contained.
 | Seeded random, noise, clamp/lerp/remap, waves, angles, points (`@celesta/math`) | [math.md](references/math.md) |
 | A seamless loop (Shorts, TikTok): loop length from beats and bars, periodic motion, looping noise, folding the music's tail back, `inspect.mjs --loop` | [loops.md](references/loops.md) |
 | Custom WGSL filters: ripples, RGB splits, color grades (`@celesta/shader`, the `shader` prop) | [shader.md](references/shader.md) |
-| Characters, portraits, subtitles (incl. custom `subtitle.render` bands and name plates), voices, `planDialogue`/`DialogueSeries`, lip sync (WAV or VOICEVOX), PSD portraits, blinking, in React and JSON | [dialogue.md](references/dialogue.md) |
+| Characters, portraits, subtitles (incl. custom `subtitle.render` bands and name plates), voices, `planDialogue`/`DialogueSeries`, lip sync (WAV, VOICEVOX, or AivisSpeech), PSD portraits, blinking, in React and JSON | [dialogue.md](references/dialogue.md) |
 | `.celesta.json` schema, time values, tracks, item types, transforms, keyframes, easing names, validation rules, full example | [project-json.md](references/project-json.md) |
 | Template inputs (`defineProjectProperties`, `useProjectProperty`, `getProjectProperty`, `props.json`, `--props`/`--props-file`), React reading a project, `<ProjectTimeline />`, `registerComponent` | [project-data.md](references/project-data.md) |
 | `inspect.mjs`, PNG frames, contact sheets, checking JSON and audio | [verify.md](references/verify.md) |

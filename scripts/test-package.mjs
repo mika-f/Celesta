@@ -74,6 +74,10 @@ export default function Root() {
     'Set Up TypeScript must include VOICEVOX declarations',
   );
   assert.ok(
+    existsSync(join(runtime, 'react/dist/project-types/node_modules/@celesta/aivis-speech/dist/index.d.ts')),
+    'Set Up TypeScript must include AivisSpeech declarations',
+  );
+  assert.ok(
     existsSync(join(runtime, 'react/dist/project-types/node_modules/@celesta/character/dist/index.d.ts')),
     'Set Up TypeScript must include the split package declarations',
   );
@@ -83,8 +87,12 @@ import { Code, codeCharacterCount } from '@celesta/code';
 import { Center } from '@celesta/layout';
 import { Circle } from '@celesta/shapes';
 import { lipSyncFromVoicevox } from '@celesta/voicevox';
+import { lipSyncFromAivisSpeech } from '@celesta/aivis-speech';
 const track = lipSyncFromVoicevox({ accent_phrases: [{ moras: [{ vowel: 'a', vowel_length: 0.2 }] }] });
 if (track.mouthAtSeconds(0.1) !== 'a') throw new Error('VOICEVOX lip sync failed');
+const aivis = lipSyncFromAivisSpeech({ accent_phrases: [{ moras: [{ text: 'ア', vowel: 'a' }] }] },
+  { sampleRate: 8000, samples: Float32Array.from({ length: 1600 }, (_, i) => 0.3 * Math.sin(i / 4)) });
+if (aivis.mouthAtSeconds(0.15) !== 'a') throw new Error('AivisSpeech lip sync failed');
 const source = '{ "id": "broll" }';
 export default function Root() {
   return <Composition width={320} height={120} fps={1} durationInFrames={1}>
@@ -97,7 +105,7 @@ export default function Root() {
   const codeOutput = join(directory, 'code.png');
   run(exporter, ['--react', entry, '--frame', '0', codeOutput]);
   assert.deepEqual([...readFileSync(codeOutput).subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
-  console.log('Package smoke test passed: bundled React hooks, Celesta packages, Code, VOICEVOX, TypeScript support, and export, without Node.js on PATH.');
+  console.log('Package smoke test passed: bundled React hooks, Celesta packages, Code, VOICEVOX, AivisSpeech, TypeScript support, and export, without Node.js on PATH.');
 } finally {
   assert.ok(directory.startsWith(join(tmpdir(), 'Celesta package 日本語 ')));
   rmSync(directory, { recursive: true, force: true });
