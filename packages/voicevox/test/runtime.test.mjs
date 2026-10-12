@@ -35,7 +35,7 @@ for (const packaged of [false, true]) {
       const entry = join(root, 'film.tsx');
       writeFileSync(entry, `
         import { Composition, Rect } from '@celesta/react';
-        import { useLipSync, type LipSyncTrack } from '@celesta/character';
+        import { useLipSync, type LipSyncTrack, type SpeechTiming } from '@celesta/character';
         import { lipSyncFromVoicevox, timingFromVoicevox, type VoicevoxAudioQuery, type VoicevoxTiming } from '@celesta/voicevox';
         const query: VoicevoxAudioQuery = {
           accent_phrases: [{ moras: [
@@ -48,8 +48,10 @@ for (const packaged of [false, true]) {
         // Every public call shape type-checks against the shipped declarations.
         const fromQuery: LipSyncTrack = lipSyncFromVoicevox(query, { frameRate: null });
         const fromEither = (input: VoicevoxAudioQuery | VoicevoxTiming): LipSyncTrack => lipSyncFromVoicevox(input);
+        const shared: SpeechTiming = timing;
         void fromQuery;
         void fromEither;
+        void shared;
         function Mouth() {
           const mouth = useLipSync(track);
           return <Rect id={mouth} width={mouth === 'a' ? 20 : 10} height={10} />;

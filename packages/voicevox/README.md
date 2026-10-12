@@ -48,6 +48,11 @@ zero frames stay in the lists with `start === end`. Pass options to
 `timingFromVoicevox`, not to `lipSyncFromVoicevox(timing)`, which throws when
 given both.
 
+The timing is a `SpeechTiming` from `@celesta/character` with `exact: true`,
+the shape `@celesta/aivis-speech` returns too (with `exact: false`), so code
+that reads timings takes either engine's. Its mouth rules are
+`lipSyncFromSpeechTiming`'s, and `voicevoxVowelShape` is `speechVowelShape`.
+
 Exports: `timingFromVoicevox`, `lipSyncFromVoicevox`, `voicevoxVowelShape`,
 and the types `VoicevoxAudioQuery`, `VoicevoxAccentPhrase`, `VoicevoxMora`,
 `VoicevoxTiming`, `VoicevoxTimedAccentPhrase`, `VoicevoxTimedMora`,

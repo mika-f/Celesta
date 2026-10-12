@@ -179,14 +179,14 @@ layers sit; it does not prove the rendered pixels.
 | `@celesta/layout` | `Center`, `Stack`, `Grid`, `Fit`, `SafeArea`, `useLayoutBounds`, `Camera` |
 | `@celesta/transitions` | `Transition`, `TransitionSeries`, `useTransitionSeriesScene`, `useTransitionVolume` |
 | `@celesta/text` | `TextReveal`, `useTypewriter`, `useCountUp`, `TextBox`, `fitText`, `useFitText` |
-| `@celesta/character` | `Character`, `CharacterView`, `Dialogue`, `DialogueSeries`, `planDialogue`, `loadLipSync`, `useLipSync`, `blinkPhase`, `loadPsdPreset`, and their types |
+| `@celesta/character` | `Character`, `CharacterView`, `Dialogue`, `DialogueSeries`, `planDialogue`, `loadLipSync`, `useLipSync`, `lipSyncFromSpeechTiming`, `speechVowelShape`, `blinkPhase`, `loadPsdPreset`, and their types |
 | `@celesta/media-utils` | `preloadMedia`, `mediaDurationInFrames` |
 | `@celesta/project` | `ProjectProvider`, `ProjectTimeline`, `ProjectTrack`, `useProject`, `useProjectProperty`, `useProjectTrack`, `loadProject`, and the project file types |
 | `@celesta/debug` | `DebugOverlay`, `DebugBounds` |
 | `@celesta/math` | `random`, `noise`, `loopNoise`, and math helpers |
 | `@celesta/code` | `Code`, `highlightCode`, and syntax highlighting |
 | `@celesta/voicevox` | `lipSyncFromVoicevox`, `timingFromVoicevox`, `voicevoxVowelShape`, and their types |
-| `@celesta/aivis-speech` | `lipSyncFromAivisSpeech`, `timingFromAivisSpeech`, `aivisSpeechVowelShape`, and their types |
+| `@celesta/aivis-speech` | `lipSyncFromAivisSpeech`, `timingFromAivisSpeech`, and their types |
 
 An import from the wrong package fails with `@celesta/react does not export
 Circle; import it from @celesta/shapes`; move it to the named package. Code

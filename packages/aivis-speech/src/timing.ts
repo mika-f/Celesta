@@ -14,76 +14,27 @@
 // where a stop's closure is silent) and for straying from their typical
 // length, scaled to the line's speaking rate.
 
-import { decodeWav, type WavAudio } from '@celesta/character';
+import {
+  decodeWav,
+  type SpeechAccentPhrase,
+  type SpeechMora,
+  type SpeechPause,
+  type SpeechPhoneme,
+  type SpeechTiming,
+  type WavAudio,
+} from '@celesta/character';
 
 import type { AivisSpeechAudioQuery, AivisSpeechMora } from './query.js';
 
-/** A stretch of the WAV, in seconds from its first sample. `end >= start`. */
-export interface AivisSpeechSpan {
-  readonly start: number;
-  readonly end: number;
-}
-
-export interface AivisSpeechTimedPhoneme extends AivisSpeechSpan {
-  /**
-   * As in the query: 'k', 'o', 'N', 'cl', and 'pau' for punctuation. The
-   * pre/post silence is 'sil'.
-   */
-  readonly phoneme: string;
-}
-
-export interface AivisSpeechTimedMora extends AivisSpeechSpan {
-  /** The query's `text`: 'コ', or the mark (',', '.', '!') for punctuation. */
-  readonly text: string;
-  readonly consonant: AivisSpeechTimedPhoneme | null;
-  /** 'pau' for punctuation. */
-  readonly vowel: AivisSpeechTimedPhoneme;
-  /** Index into `query.accent_phrases`. */
-  readonly accentPhrase: number;
-}
-
-export interface AivisSpeechTimedPause extends AivisSpeechSpan {
-  /** The punctuation mora's `text`, or ',' for a `pause_mora`. */
-  readonly text: string;
-  readonly accentPhrase: number;
-}
-
 /**
- * From the first mora's start to the last mora's end, punctuation included;
- * the `pause_mora` after it is not. A phrase without moras has
- * `start === end`.
+ * A `SpeechTiming` estimated from the WAV (`exact: false`). Punctuation
+ * moras stay in `moras` (vowel 'pau', `text` the mark) and are listed in
+ * `pauses` too, together with any `pause_mora` (`text` ','), sentence-final
+ * marks included; a mark the model did not pause at is short or empty.
+ * `speech` is exact; the times inside it are estimated.
  */
-export interface AivisSpeechTimedAccentPhrase extends AivisSpeechSpan {
-  /** Its moras' text joined, punctuation included. */
-  readonly text: string;
-  /** `moras[j]` is `query.accent_phrases[i].moras[j]`. */
-  readonly moras: readonly AivisSpeechTimedMora[];
-  /** The `pause_mora`, when the query has one. */
-  readonly pause: AivisSpeechTimedPause | null;
-}
-
-export interface AivisSpeechTiming {
-  /** The WAV's length; equal to the `LipSyncTrack`'s. */
-  readonly durationInSeconds: number;
-  /**
-   * The voice without the pre/post silence: exact, unlike the times inside
-   * it, which are estimated.
-   */
-  readonly speech: AivisSpeechSpan;
-  /** One per `query.accent_phrases`, same order. */
-  readonly accentPhrases: readonly AivisSpeechTimedAccentPhrase[];
-  /** Every mora in order, punctuation included. The same objects as in `accentPhrases`. */
-  readonly moras: readonly AivisSpeechTimedMora[];
-  /**
-   * Every punctuation mora and `pause_mora` in order, sentence-final marks
-   * included; a mark the model did not pause at is short or empty.
-   */
-  readonly pauses: readonly AivisSpeechTimedPause[];
-  /**
-   * Every phoneme in order, `sil` and `pau` included; together they cover
-   * [0, durationInSeconds] without gaps.
-   */
-  readonly phonemes: readonly AivisSpeechTimedPhoneme[];
+export interface AivisSpeechTiming extends SpeechTiming {
+  readonly exact: false;
 }
 
 // Alignment resolution: 10 ms, about VOICEVOX's phoneme frame.
@@ -302,16 +253,16 @@ export function timingFromAivisSpeech(
   const seconds = (frame: number): number =>
     frame >= frames ? speechEnd : speechStart + ((speechEnd - speechStart) * frame) / Math.max(1, frames);
 
-  const phonemes: AivisSpeechTimedPhoneme[] = [];
-  const phoneme = (name: string, start: number, end: number): AivisSpeechTimedPhoneme => {
+  const phonemes: SpeechPhoneme[] = [];
+  const phoneme = (name: string, start: number, end: number): SpeechPhoneme => {
     const timed = { phoneme: name, start, end };
     phonemes.push(timed);
     return timed;
   };
   phoneme('sil', 0, speechStart);
-  const timedMoras: AivisSpeechTimedMora[][] = query.accent_phrases.map(() => []);
-  const phrasePauses: (AivisSpeechTimedPause | null)[] = query.accent_phrases.map(() => null);
-  const pauses: AivisSpeechTimedPause[] = [];
+  const timedMoras: SpeechMora[][] = query.accent_phrases.map(() => []);
+  const phrasePauses: (SpeechPause | null)[] = query.accent_phrases.map(() => null);
+  const pauses: SpeechPause[] = [];
   sources.forEach(({ mora, accentPhrase, pauseMora }, u) => {
     const start = seconds(bounds[u]);
     const end = seconds(bounds[u + 1]);
@@ -336,12 +287,12 @@ export function timingFromAivisSpeech(
   phoneme('sil', speechEnd, durationInSeconds);
 
   let cursor = speechStart;
-  const accentPhrases = timedMoras.map((moras, index): AivisSpeechTimedAccentPhrase => {
+  const accentPhrases = timedMoras.map((moras, index): SpeechAccentPhrase => {
     const start = moras.length > 0 ? moras[0].start : cursor;
     const end = moras.length > 0 ? moras[moras.length - 1].end : start;
     cursor = phrasePauses[index]?.end ?? end;
     return { text: moras.map((m) => m.text).join(''), start, end, moras, pause: phrasePauses[index] };
   });
   const moras = accentPhrases.flatMap((phrase) => phrase.moras);
-  return { durationInSeconds, speech: { start: speechStart, end: speechEnd }, accentPhrases, moras, pauses, phonemes };
+  return { exact: false, durationInSeconds, speech: { start: speechStart, end: speechEnd }, accentPhrases, moras, pauses, phonemes };
 }

@@ -43,6 +43,16 @@ export {
 } from './lipsync';
 export type { LipSyncOptions, LipSyncTrack, MouthKeyframe, WavAudio } from './lipsync';
 
+export { lipSyncFromSpeechTiming, speechVowelShape } from './speech-timing';
+export type {
+  SpeechAccentPhrase,
+  SpeechMora,
+  SpeechPause,
+  SpeechPhoneme,
+  SpeechSpan,
+  SpeechTiming,
+} from './speech-timing';
+
 export { loadPsdPreset, parsePfv, resolveVisibleLayers } from './psd-preset';
 export type { LoadPsdPresetOptions, ParsedPfv, PfvFavorite } from './psd-preset';
 

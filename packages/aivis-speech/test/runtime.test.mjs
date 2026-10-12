@@ -35,7 +35,7 @@ for (const packaged of [false, true]) {
       const entry = join(root, 'film.tsx');
       writeFileSync(entry, `
         import { Composition, Rect } from '@celesta/react';
-        import { useLipSync, type LipSyncTrack } from '@celesta/character';
+        import { lipSyncFromSpeechTiming, useLipSync, type LipSyncTrack, type SpeechTiming } from '@celesta/character';
         import { lipSyncFromAivisSpeech, timingFromAivisSpeech, type AivisSpeechAudioQuery, type AivisSpeechTiming } from '@celesta/aivis-speech';
         const query: AivisSpeechAudioQuery = {
           accent_phrases: [{ moras: [
@@ -53,8 +53,12 @@ for (const packaged of [false, true]) {
         const fromQuery: LipSyncTrack = lipSyncFromAivisSpeech(query, { sampleRate: 8000, samples });
         const fromEither = (input: AivisSpeechAudioQuery | AivisSpeechTiming): LipSyncTrack =>
           lipSyncFromAivisSpeech(input, 'accent_phrases' in input ? { sampleRate: 8000, samples } : undefined);
+        // An AivisSpeech timing is the engine-neutral SpeechTiming.
+        const shared: SpeechTiming = timing;
+        const fromShared: LipSyncTrack = lipSyncFromSpeechTiming(shared);
         void fromQuery;
         void fromEither;
+        void fromShared;
         function Mouth() {
           const mouth = useLipSync(track);
           return <Rect id={mouth} width={mouth === 'a' ? 20 : 10} height={10} />;

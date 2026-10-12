@@ -42,9 +42,10 @@ export const packageContents: Record<string, ReactNode> = {
       [<code>lipSyncFromAivisSpeech(query, wav)</code>, text('docs.chapters.aivis-speech.api.convert')],
       [<code>lipSyncFromAivisSpeech(timing)</code>, text('docs.chapters.aivis-speech.api.convert-timing')],
       [<code>timingFromAivisSpeech(query, wav)</code>, text('docs.chapters.aivis-speech.api.timing')],
-      [<code>aivisSpeechVowelShape(vowel)</code>, text('docs.chapters.aivis-speech.api.vowel')],
     ]} />
     <p>{text('docs.chapters.aivis-speech.punctuation')}</p>
+    <p>{text('docs.chapters.aivis-speech.shared', [<code>SpeechTiming</code>, <code>@celesta/character</code>, <code>lipSyncFromSpeechTiming</code>])}</p>
+    <p>{text('docs.chapters.aivis-speech.accuracy')}</p>
     <p>{text('docs.chapters.aivis-speech.types')}</p>
   </>,
   'math': <>

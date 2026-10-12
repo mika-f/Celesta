@@ -38,6 +38,12 @@ test('timingFromVoicevox: duration matches the WAV and the lip-sync track', () =
   }
 });
 
+test('timingFromVoicevox: the timing is a SpeechTiming marked exact', () => {
+  for (const [name, query] of allQueries) {
+    assert.equal(timingFromVoicevox(query).exact, true, name);
+  }
+});
+
 test('timingFromVoicevox: phonemes cover the WAV without gaps', () => {
   for (const [name, query] of allQueries) {
     assertContiguous(timingFromVoicevox(query), name);

@@ -5,7 +5,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { aivisSpeechVowelShape, lipSyncFromAivisSpeech, timingFromAivisSpeech } from '../dist/index.js';
+import { lipSyncFromSpeechTiming } from '@celesta/character';
+import { lipSyncFromAivisSpeech, timingFromAivisSpeech } from '../dist/index.js';
 import { KONNICHIWA, queryOf, synthesize } from './fixtures/voice.mjs';
 
 const query = queryOf(KONNICHIWA);
@@ -73,9 +74,7 @@ test('lipSyncFromAivisSpeech: a query without its WAV, or a timing with one, thr
   );
 });
 
-test('aivisSpeechVowelShape maps phonemes to mouth shapes', () => {
-  assert.deepEqual(
-    ['a', 'i', 'u', 'e', 'o', 'A', 'I', 'U', 'E', 'O', 'N', 'cl', 'pau', 'sil'].map(aivisSpeechVowelShape),
-    ['a', 'i', 'u', 'e', 'o', 'a', 'i', 'u', 'e', 'o', 'closed', 'closed', 'closed', 'closed'],
-  );
+test('lipSyncFromAivisSpeech: the timing is a SpeechTiming marked approximate', () => {
+  assert.equal(timing.exact, false);
+  assert.deepEqual(shapesOf(lipSyncFromSpeechTiming(timing)), shapesOf(lipSyncFromAivisSpeech(timing)));
 });

@@ -455,7 +455,8 @@ which reads the query **and the WAV synthesized from it**: the query gives
 the moras in order (punctuation included), the WAV where they fall. The
 voice's start and end are exact; times inside it are estimated from the
 WAV's loudness (pauses land on the model's silences; mora starts are
-typically within a few tens of milliseconds). The desktop runtime includes
+typically within a few tens of milliseconds, worse in the middle of a long
+clause voiced without a break). The desktop runtime includes
 the package; **File > Set Up TypeScript** installs its declarations.
 
 ```tsx
@@ -476,10 +477,14 @@ export async function prepare() {
 - **Use the query that produced the WAV**: its `speedScale`,
   `prePhonemeLength` and `postPhonemeLength` locate the voice in the WAV.
   Pass the WAV's bytes (or `decodeWav`'s result); it is synchronous and
-  takes about 10 ms per second of voice, so call it in `prepare()`.
-- The timing has the same fields as `timingFromVoicevox`'s (`moras`,
-  `pauses`, `phonemes`, `accentPhrases`, `speech`, `durationInSeconds`),
-  without `upspeak` (AivisSpeech ignores interrogative upspeak) or options.
+  takes under 10 ms per second of voice, so call it in `prepare()`.
+- Both engines' timings are a `SpeechTiming` from `@celesta/character`
+  (`moras`, `pauses`, `phonemes`, `accentPhrases`, `speech`,
+  `durationInSeconds`): `exact: true` from `timingFromVoicevox`,
+  `exact: false` from `timingFromAivisSpeech`. Type shared code (lit moras,
+  faces at pauses) as `SpeechTiming` and it takes either;
+  `lipSyncFromSpeechTiming(timing)` builds the mouth from any of them.
+  AivisSpeech moras have no `upspeak` (it ignores interrogative upspeak).
 - AivisSpeech keeps punctuation as moras with vowel `pau` and the normalized
   mark as `text` (`,` `.` `!` `?` `…`). They stay in `moras` (skip them for
   display with `m.vowel.phoneme !== 'pau'`) and are listed in `pauses`
@@ -488,6 +493,9 @@ export async function prepare() {
 - Mouth shapes follow the VOICEVOX rules above.
   `lipSyncFromAivisSpeech(query)` without the WAV, or
   `lipSyncFromAivisSpeech(timing, wav)`, throws.
+- Don't time VOICEVOX voices with it: their queries leave out the upspeak
+  mora the WAV contains, so the estimate drifts at questions. Use
+  `timingFromVoicevox`, which is exact.
 
 ### Image mouths
 

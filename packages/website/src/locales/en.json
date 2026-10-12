@@ -962,7 +962,7 @@
         "metadata": {
           "title": "@celesta/aivis-speech",
           "description": "Mora timing and lip sync from an AivisSpeech AudioQuery and the WAV synthesized from it.",
-          "keywords": "AivisSpeech AudioQuery WAV lipSyncFromAivisSpeech timingFromAivisSpeech aivisSpeechVowelShape voice lip sync phoneme mora timing karaoke pause Style-Bert-VITS2"
+          "keywords": "AivisSpeech AudioQuery WAV lipSyncFromAivisSpeech timingFromAivisSpeech SpeechTiming lipSyncFromSpeechTiming speechVowelShape voice lip sync phoneme mora timing karaoke pause Style-Bert-VITS2"
         },
         "intro": "<slot0/> reads an AivisSpeech AudioQuery together with the WAV synthesized from it: where each mora, phoneme, and pause falls in the WAV, and a LipSyncTrack built from that timing. Dialogue components and LipSyncTrack are in <slot1/>; VOICEVOX voices use <slot2>@celesta/voicevox</slot2>.",
         "estimate": "AivisSpeech serves the VOICEVOX API, but its model chooses every phoneme length itself, so the query’s lengths are dummy zeros. The query gives the moras in order, including ん, っ, and punctuation; the WAV gives where they fall. The voice’s start and end are exact; the times inside it are estimated from the WAV’s loudness, so pauses land on the silences the model made.",
@@ -972,11 +972,12 @@
         "api": {
           "convert": "Convert an AudioQuery and its WAV (bytes or the result of decodeWav) into a LipSyncTrack, with time zero at the start of the WAV, including leading silence.",
           "convert-timing": "The same track from a timing already computed, so the mouth and the timing cannot disagree.",
-          "timing": "Seconds from the start of the WAV for every mora, phoneme, pause, and accent phrase, shaped like the query (accentPhrases[i].moras[j] is accent_phrases[i].moras[j]). Use it to light moras as they are spoken or change a face at a pause.",
-          "vowel": "Map a phoneme to a/i/u/e/o/closed. Uppercase devoiced vowels keep their shape; N, cl, pau, sil, and unknown values map to closed."
+          "timing": "Seconds from the start of the WAV for every mora, phoneme, pause, and accent phrase, shaped like the query (accentPhrases[i].moras[j] is accent_phrases[i].moras[j]). Use it to light moras as they are spoken or change a face at a pause."
         },
         "punctuation": "AivisSpeech keeps punctuation as moras whose vowel is pau and whose text is the normalized mark (, . ! ? …). They stay in moras and are also listed in pauses, sentence-final marks included; a mark the model did not pause at is short or empty.",
-        "types": "Exports also include AivisSpeechAudioQuery, AivisSpeechAccentPhrase, AivisSpeechMora, AivisSpeechTiming, AivisSpeechTimedAccentPhrase, AivisSpeechTimedMora, AivisSpeechTimedPause, AivisSpeechTimedPhoneme, and AivisSpeechSpan. LipSyncTrack is imported from @celesta/character."
+        "shared": "Both engines’ timings are a <slot0/> from <slot1/>: exact: true from timingFromVoicevox, exact: false from timingFromAivisSpeech. Code that reads timings, such as lit moras or a face change at a pause, takes either, and <slot2/> builds the mouth from any of them.",
+        "accuracy": "Against VOICEVOX voices with known phoneme times (138 lines, six voices, three speeds), mora starts were within 14 ms at the median and 71 ms at the 90th percentile, and the mouth matched 83% of the time, against 51% for loadLipSync. Pauses anchor the estimate; in the middle of a long clause voiced without a break, errors grow. For VOICEVOX voices use timingFromVoicevox, which is exact.",
+        "types": "Exports also include AivisSpeechTiming, AivisSpeechAudioQuery, AivisSpeechAccentPhrase, and AivisSpeechMora. SpeechTiming, its parts, speechVowelShape, and LipSyncTrack are imported from @celesta/character."
       }
     },
     "shared": {

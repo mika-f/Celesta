@@ -12,71 +12,45 @@
 // sample; without it the error accumulates (about 50 ms over a 1.7 s line at
 // `speedScale: 1.5`).
 
+import type { SpeechAccentPhrase, SpeechMora, SpeechPause, SpeechPhoneme, SpeechSpan, SpeechTiming } from '@celesta/character';
+
 import type { VoicevoxAudioQuery, VoicevoxMora } from './query.js';
 
 /** A stretch of the WAV, in seconds from its first sample. `end >= start`. */
-export interface VoicevoxSpan {
-  readonly start: number;
-  readonly end: number;
-}
+export type VoicevoxSpan = SpeechSpan;
 
-export interface VoicevoxTimedPhoneme extends VoicevoxSpan {
-  /**
-   * As in the query: 'k', 'o', 'N', 'cl', 'pau'. The pre/post silence is
-   * 'sil', the engine's mora name for it (its decoder folds it into 'pau');
-   * keeping 'sil' tells the surrounding silence apart from a pause.
-   */
-  readonly phoneme: string;
-}
+/**
+ * Phonemes as in the query: 'k', 'o', 'N', 'cl', 'pau'. The pre/post
+ * silence is 'sil', the engine's mora name for it (its decoder folds it into
+ * 'pau'); keeping 'sil' tells the surrounding silence apart from a pause.
+ */
+export type VoicevoxTimedPhoneme = SpeechPhoneme;
 
-export interface VoicevoxTimedMora extends VoicevoxSpan {
+export interface VoicevoxTimedMora extends SpeechMora {
   /** The query's `text` ('コ'); for an upspeak mora, its vowel's kana like the engine ('ア'). */
   readonly text: string;
-  readonly consonant: VoicevoxTimedPhoneme | null;
-  readonly vowel: VoicevoxTimedPhoneme;
-  /** Index into `query.accent_phrases`. */
-  readonly accentPhrase: number;
   /** True for the mora interrogative upspeak appended; it is not in the query. */
   readonly upspeak: boolean;
 }
 
-export interface VoicevoxTimedPause extends VoicevoxSpan {
-  /** The pause mora's `text`, usually the punctuation ('、'). Empty when absent. */
-  readonly text: string;
-  readonly accentPhrase: number;
+/** A pause mora; its `text` is usually the punctuation ('、'). */
+export type VoicevoxTimedPause = SpeechPause;
+
+export interface VoicevoxTimedAccentPhrase extends SpeechAccentPhrase {
+  /** `moras[j]` is `query.accent_phrases[i].moras[j]`; an upspeak mora comes last. */
+  readonly moras: readonly VoicevoxTimedMora[];
 }
 
 /**
- * From the first mora's start to the last mora's end; the pause after it is
- * not included. A phrase without moras has `start === end`.
+ * A `SpeechTiming` with the engine's own times (`exact: true`). Without
+ * moras, `speech` starts and ends at the end of the pre silence.
  */
-export interface VoicevoxTimedAccentPhrase extends VoicevoxSpan {
-  /** Its moras' text joined. */
-  readonly text: string;
-  /** `moras[j]` is `query.accent_phrases[i].moras[j]`; an upspeak mora comes last. */
-  readonly moras: readonly VoicevoxTimedMora[];
-  readonly pause: VoicevoxTimedPause | null;
-}
-
-export interface VoicevoxTiming {
-  /** The WAV's length; equal to the `LipSyncTrack`'s. */
-  readonly durationInSeconds: number;
-  /**
-   * From the first mora's start to the last mora's end: the voice without
-   * pre/post silence. Without moras, both are the end of the pre silence.
-   */
-  readonly speech: VoicevoxSpan;
+export interface VoicevoxTiming extends SpeechTiming {
+  readonly exact: true;
   /** One per `query.accent_phrases`, same order. */
   readonly accentPhrases: readonly VoicevoxTimedAccentPhrase[];
   /** Every mora in order, upspeak moras included. The same objects as in `accentPhrases`. */
   readonly moras: readonly VoicevoxTimedMora[];
-  /** Every pause in order. The same objects as in `accentPhrases`. */
-  readonly pauses: readonly VoicevoxTimedPause[];
-  /**
-   * Every phoneme the engine synthesizes, in order, `sil` and `pau`
-   * included; together they cover [0, durationInSeconds] without gaps.
-   */
-  readonly phonemes: readonly VoicevoxTimedPhoneme[];
 }
 
 export interface VoicevoxTimingOptions {
@@ -191,5 +165,5 @@ export function timingFromVoicevox(
   const speech = moras.length > 0
     ? { start: moras[0].start, end: moras[moras.length - 1].end }
     : { start: leading.end, end: leading.end };
-  return { durationInSeconds: seconds(clock), speech, accentPhrases, moras, pauses, phonemes };
+  return { exact: true, durationInSeconds: seconds(clock), speech, accentPhrases, moras, pauses, phonemes };
 }

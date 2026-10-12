@@ -962,7 +962,7 @@
         "metadata": {
           "title": "@celesta/aivis-speech",
           "description": "AivisSpeech の AudioQuery と合成した WAV から、モーラの時刻と口パクを作る。",
-          "keywords": "口パク 音声 合成 母音 時間 AivisSpeech AudioQuery WAV lipSyncFromAivisSpeech timingFromAivisSpeech aivisSpeechVowelShape voice lip sync phoneme モーラ 時刻 カラオケ 間 Style-Bert-VITS2"
+          "keywords": "口パク 音声 合成 母音 時間 AivisSpeech AudioQuery WAV lipSyncFromAivisSpeech timingFromAivisSpeech SpeechTiming lipSyncFromSpeechTiming speechVowelShape voice lip sync phoneme モーラ 時刻 カラオケ 間 Style-Bert-VITS2"
         },
         "intro": "<slot0/> は、AivisSpeech の音声合成に使った AudioQuery と、合成された WAV から、各モーラ・音素・間が WAV のどこにあるかを求め、その時刻から LipSyncTrack を作ります。会話のコンポーネントと LipSyncTrack は <slot1/> にあります。VOICEVOX の音声には <slot2>@celesta/voicevox</slot2> を使います。",
         "estimate": "AivisSpeech は VOICEVOX と同じ API を提供しますが、各音素の長さはモデルが決めるため、AudioQuery の長さはすべてダミーの 0 です。モーラの並び（ん・っ・句読点を含む）は AudioQuery から、その位置は WAV から求めます。声の開始と終了は正確で、その間の時刻は WAV の音量から推定するため、間はモデルが実際に作った無音に合わせて置かれます。",
@@ -972,11 +972,12 @@
         "api": {
           "convert": "AudioQuery と WAV（バイト列または decodeWav の結果）を LipSyncTrack に変換します。先頭の無音も含め、WAV の開始時点が 0 秒です。",
           "convert-timing": "計算済みの時刻から同じトラックを作ります。口と時刻が食い違いません。",
-          "timing": "すべてのモーラ・音素・間・アクセント句について、WAV の開始からの秒数を返します。形はクエリと同じで、accentPhrases[i].moras[j] が accent_phrases[i].moras[j] に対応します。声に合わせてモーラを点灯させたり、間で表情を変えたりするのに使います。",
-          "vowel": "音素を a/i/u/e/o/closed に対応付けます。大文字の無声化した母音も同じ形になり、N、cl、pau、sil、未知の値は closed になります。"
+          "timing": "すべてのモーラ・音素・間・アクセント句について、WAV の開始からの秒数を返します。形はクエリと同じで、accentPhrases[i].moras[j] が accent_phrases[i].moras[j] に対応します。声に合わせてモーラを点灯させたり、間で表情を変えたりするのに使います。"
         },
         "punctuation": "AivisSpeech では句読点も、母音が pau で text が正規化した記号（, . ! ? …）のモーラになります。句読点は moras に残り、文末の記号も含めて pauses にも並びます。モデルが間を置かなかった記号は短いか、長さが 0 になります。",
-        "types": "AivisSpeechAudioQuery、AivisSpeechAccentPhrase、AivisSpeechMora、AivisSpeechTiming、AivisSpeechTimedAccentPhrase、AivisSpeechTimedMora、AivisSpeechTimedPause、AivisSpeechTimedPhoneme、AivisSpeechSpan もエクスポートされます。LipSyncTrack は @celesta/character から読み込みます。"
+        "shared": "どちらのエンジンのタイミングも <slot1/> の <slot0/> です。timingFromVoicevox は exact: true、timingFromAivisSpeech は exact: false を返します。モーラの点灯や間での表情の切り替えなど、タイミングを読むコードはどちらも受け取れ、<slot2/> でどちらからも口パクを作れます。",
+        "accuracy": "音素の時刻がわかっている VOICEVOX の音声（138 本、6 話者、3 種類の速度）で測ると、モーラの開始時刻の誤差は中央値 14 ms・90 パーセンタイル 71 ms で、口の形は 83% の時間で一致しました（loadLipSync は 51%）。推定は間を手掛かりにするため、途切れずに続く長い句の中ほどでは誤差が大きくなります。VOICEVOX の音声には、正確な timingFromVoicevox を使ってください。",
+        "types": "AivisSpeechTiming、AivisSpeechAudioQuery、AivisSpeechAccentPhrase、AivisSpeechMora もエクスポートされます。SpeechTiming とその部品、speechVowelShape、LipSyncTrack は @celesta/character から読み込みます。"
       }
     },
     "shared": {
