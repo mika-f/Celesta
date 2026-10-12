@@ -151,6 +151,12 @@ docs name `VoicevoxTimingOptions`.
   index.
 - **`consonant` / `vowel` instead of `phonemes[]`.** A VOICEVOX mora is at
   most one consonant and one vowel; the fields match `VoicevoxMora`.
+  `consonant` is non-null exactly when the query mora's `consonant` is a
+  non-empty string, like the engine's `if mora.consonant`; a null
+  `consonant_length` then gives it zero length.
+- **Silence is always listed.** `phonemes` always starts with the `sil` of
+  `prePhonemeLength` and ends with the `sil` of `postPhonemeLength`, even when
+  they are zero-length, as the engine always adds both moras.
 - **Flat views are the same objects.** `moras`, `pauses`, and `phonemes` are
   for the common loops (light the current mora, find the n-th pause, build the
   mouth track) and cost one array each.
@@ -168,6 +174,15 @@ even), accumulated as integers, and converted to seconds once per boundary
 (`moras[i].end === moras[i + 1].start` when no pause is between them), and
 `durationInSeconds` is `totalFrames / frameRate`. With `frameRate: null`,
 unrounded seconds are accumulated directly.
+
+Each phoneme's frame count is `roundHalfToEven((length / speedScale) * frameRate)`,
+in that order, as the engine does and as today's code does, so values that
+land exactly on .5 round the same way. Pause lengths are
+`(pauseLength ?? pause_mora.vowel_length) * pauseLengthScale` before that.
+
+Accumulating integers can move a boundary by a few ulps compared with today's
+`cursor += seconds`; frame counts and durations do not change, and the
+existing tests sample midpoints or compare with a 1e-9 tolerance.
 
 ### Validation
 
@@ -190,7 +205,10 @@ Both overloads go through one function that walks `timing.phonemes`:
   the same keyframes as before.
 
 `lipSyncFromVoicevox(query, options)` is `lipSyncFromVoicevox(timingFromVoicevox(query, options))`.
-The overloads are told apart by `'accent_phrases' in input`.
+The overloads are told apart by `'accent_phrases' in input`. Passing options
+together with a timing throws (`lipSyncFromVoicevox: options apply when the
+timing is computed; pass them to timingFromVoicevox`) instead of silently
+ignoring them.
 
 ## Not included
 
@@ -263,10 +281,12 @@ existing fixtures):
 - Zero-length phonemes keep `start === end`.
 - `speech` spans the first mora's start to the last mora's end.
 - Validation errors for `speedScale`, `frameRate`, negative lengths.
+- A consonant with a null `consonant_length` is listed with zero length.
 
 `lipsync.test.mjs`: the existing tests pass unchanged; add one that samples
 `lipSyncFromVoicevox(query)` and `lipSyncFromVoicevox(timingFromVoicevox(query))`
-every 1 ms over each fixture and asserts identical shapes.
+every 1 ms over each fixture and asserts identical shapes, and one that
+`lipSyncFromVoicevox(timing, options)` throws.
 
 `runtime.test.mjs`: the composition it writes also imports
 `timingFromVoicevox`, so the packaged runtime and its `.d.ts` are checked.
