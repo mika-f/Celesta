@@ -134,9 +134,15 @@ export type VoicevoxLipSyncOptions = VoicevoxTimingOptions;
 
 export function timingFromVoicevox(query: VoicevoxAudioQuery, options?: VoicevoxTimingOptions): VoicevoxTiming;
 
-export function lipSyncFromVoicevox(query: VoicevoxAudioQuery, options?: VoicevoxTimingOptions): LipSyncTrack;
 export function lipSyncFromVoicevox(timing: VoicevoxTiming): LipSyncTrack;
+export function lipSyncFromVoicevox(input: VoicevoxAudioQuery | VoicevoxTiming): LipSyncTrack;
+export function lipSyncFromVoicevox(query: VoicevoxAudioQuery, options?: VoicevoxTimingOptions): LipSyncTrack;
 ```
+
+The union overload lets a caller that holds either one pass it without
+narrowing; it takes no options, so passing options with a timing stays a type
+error. The query overload is declared last so `Parameters<typeof
+lipSyncFromVoicevox>` is still `[query, options?]`.
 
 `VoicevoxLipSyncOptions` stays as a plain alias (no deprecation warning); the
 docs name `VoicevoxTimingOptions`.

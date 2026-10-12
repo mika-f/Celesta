@@ -55,8 +55,9 @@ export function voicevoxVowelShape(vowel: string): MouthShape {
  * voice, so speed and pause edits are reflected. Time 0 is the start of the
  * WAV, including `prePhonemeLength`.
  */
-export function lipSyncFromVoicevox(query: VoicevoxAudioQuery, options?: VoicevoxTimingOptions): LipSyncTrack;
 export function lipSyncFromVoicevox(timing: VoicevoxTiming): LipSyncTrack;
+export function lipSyncFromVoicevox(input: VoicevoxAudioQuery | VoicevoxTiming): LipSyncTrack;
+export function lipSyncFromVoicevox(query: VoicevoxAudioQuery, options?: VoicevoxTimingOptions): LipSyncTrack;
 export function lipSyncFromVoicevox(
   input: VoicevoxAudioQuery | VoicevoxTiming,
   options?: VoicevoxTimingOptions,

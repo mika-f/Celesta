@@ -45,6 +45,11 @@ for (const packaged of [false, true]) {
         };
         const timing: VoicevoxTiming = timingFromVoicevox(query, { frameRate: null });
         const track: LipSyncTrack = lipSyncFromVoicevox(timing);
+        // Every public call shape type-checks against the shipped declarations.
+        const fromQuery: LipSyncTrack = lipSyncFromVoicevox(query, { frameRate: null });
+        const fromEither = (input: VoicevoxAudioQuery | VoicevoxTiming): LipSyncTrack => lipSyncFromVoicevox(input);
+        void fromQuery;
+        void fromEither;
         function Mouth() {
           const mouth = useLipSync(track);
           return <Rect id={mouth} width={mouth === 'a' ? 20 : 10} height={10} />;
