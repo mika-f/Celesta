@@ -19,36 +19,7 @@
 
 import { lipSyncFromKeyframes, type LipSyncTrack, type MouthKeyframe, type MouthShape } from '@celesta/character';
 
-/** One mora of a VOICEVOX AudioQuery. Only the fields lip sync reads. */
-export interface VoicevoxMora {
-  text?: string;
-  consonant?: string | null;
-  consonant_length?: number | null;
-  vowel: string;
-  vowel_length: number;
-  pitch?: number;
-}
-
-export interface VoicevoxAccentPhrase {
-  moras: readonly VoicevoxMora[];
-  pause_mora?: VoicevoxMora | null;
-  is_interrogative?: boolean;
-}
-
-/**
- * The JSON returned by VOICEVOX Engine's `POST /audio_query` (and passed to
- * `POST /synthesis`). Fields lip sync does not need are allowed but ignored.
- */
-export interface VoicevoxAudioQuery {
-  accent_phrases: readonly VoicevoxAccentPhrase[];
-  speedScale?: number;
-  prePhonemeLength?: number;
-  postPhonemeLength?: number;
-  /** Newer engines: when not null, replaces the length of every pause mora. */
-  pauseLength?: number | null;
-  /** Newer engines: multiplies the length of every pause mora. */
-  pauseLengthScale?: number;
-}
+import type { VoicevoxAudioQuery } from './query.js';
 
 export interface VoicevoxLipSyncOptions {
   /**
