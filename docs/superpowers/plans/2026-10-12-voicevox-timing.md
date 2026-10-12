@@ -22,6 +22,7 @@
 - No changes to `@celesta/character`. `VoicevoxLipSyncOptions` stays exported as an alias of `VoicevoxTimingOptions`.
 - Code comments and docs are English except Japanese docs/locales; match the surrounding comment density.
 - Edit files with the Edit tool, not `sed`/`python` rewrites.
+- Scratch files (baselines, renders) go in a temporary directory outside the repository, written `<scratch>` below; substitute its path in each command.
 
 ## Review Focus
 
@@ -625,7 +626,7 @@ git commit -m "feat(voicevox): expose mora and phoneme timing with timingFromVoi
 
 - [ ] **Step 1: Capture the current mouth output as a baseline**
 
-Before editing `lipsync.ts`, with Task 1's build in `dist`, write the current track for every fixture to the scratchpad (not committed). Sample at half-millisecond offsets so no sample lands exactly on a frame boundary (k / 93.75 s hits whole milliseconds every 32 ms):
+Before editing `lipsync.ts`, with Task 1's build in `dist`, write the current track for every fixture to `<scratch>` (not committed). Sample at half-millisecond offsets so no sample lands exactly on a frame boundary (k / 93.75 s hits whole milliseconds every 32 ms):
 
 ```bash
 node --input-type=module -e "
@@ -641,10 +642,10 @@ for (const [name, q] of queries) for (const [label, opts] of [['grid', {}], ['ex
   out[name + '/' + label] = { duration: t.durationInSeconds, shapes: shapes.join(',') };
 }
 writeFileSync(process.argv[1], JSON.stringify(out));
-" "$SCRATCH/lipsync-baseline.json"
+" "<scratch>/lipsync-baseline.json"
 ```
 
-(`$SCRATCH` is the session scratchpad directory.) Expected: the file exists with 18 entries.
+Expected: the file exists with 18 entries.
 
 - [ ] **Step 2: Write the failing tests**
 
@@ -842,7 +843,7 @@ for (const [name, q] of queries) for (const [label, opts] of [['grid', {}], ['ex
   if (Math.abs(b.duration - t.durationInSeconds) > 1e-9 || b.shapes !== shapes.join(',')) { diffs += 1; console.log('DIFF', name, label); }
 }
 console.log(diffs === 0 ? 'identical' : diffs + ' differences');
-" "$SCRATCH/lipsync-baseline.json"
+" "<scratch>/lipsync-baseline.json"
 ```
 
 Expected: `identical`. Any `DIFF` is a regression: stop and find which keyframe changed.
@@ -875,7 +876,7 @@ Start VOICEVOX Engine and generate the assets (the voices are not committed):
 docker run --rm -d -p 50021:50021 --name celesta-voicevox voicevox/voicevox_engine:cpu-ubuntu24.04-latest
 node examples/shorts-explainer/make-voices.ts
 node examples/shorts-explainer/prepare-assets.ts
-node skills/celesta/scripts/inspect.mjs examples/shorts-explainer/film.tsx --every 6 > "$SCRATCH/explainer-before.txt"
+node skills/celesta/scripts/inspect.mjs examples/shorts-explainer/film.tsx --every 6 > "<scratch>/explainer-before.txt"
 ```
 
 Wait for the engine (`curl -s http://127.0.0.1:50021/version`) before `make-voices.ts`. Keep the frame PNGs/contact sheet inspect.mjs reports for the 03 (voice) and 04 (psd) scenes. If docker or the engine image is unavailable, skip Steps 1 and 4's rendering, say so in the PR, and rely on Step 4's evaluation of `prepareVoices()` with a hand-written query instead (see Step 4).
@@ -976,12 +977,12 @@ Expected: no output.
 - [ ] **Step 4: Render again and compare**
 
 ```bash
-node skills/celesta/scripts/inspect.mjs examples/shorts-explainer/film.tsx --every 6 > "$SCRATCH/explainer-after.txt"
+node skills/celesta/scripts/inspect.mjs examples/shorts-explainer/film.tsx --every 6 > "<scratch>/explainer-after.txt"
 ```
 
 Expected: no errors; the 03 panel's lit chip follows the voice, and the question line `じゃあ、わたしたちの声は？` (`voice-1`) shows one extra trailing chip (the upspeak mora, the vowel's kana) lit during its last 0.15 s. Differences from the "before" render are limited to chip highlight changes of at most a frame at mora boundaries, the upspeak chip, and the `N moras` label of question lines. The 04 (psd) scene's face changes at the same frames, give or take one frame. Look at the contact sheet / frames for both scenes rather than only diffing the text output.
 
-Without docker: write a one-line query to `$SCRATCH/q.json` and evaluate `timingFromVoicevox` / `voicevoxVowelShape` mapping the same way `prepareVoices()` does in a `node --input-type=module -e` snippet against `packages/voicevox/dist/index.js`, and state in the PR that the example itself was not rendered.
+Without docker: write a one-line query to `<scratch>/q.json` and evaluate `timingFromVoicevox` / `voicevoxVowelShape` mapping the same way `prepareVoices()` does in a `node --input-type=module -e` snippet against `packages/voicevox/dist/index.js`, and state in the PR that the example itself was not rendered.
 
 Stop the engine: `docker stop celesta-voicevox`.
 
