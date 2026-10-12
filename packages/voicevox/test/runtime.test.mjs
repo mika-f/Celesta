@@ -36,14 +36,15 @@ for (const packaged of [false, true]) {
       writeFileSync(entry, `
         import { Composition, Rect } from '@celesta/react';
         import { useLipSync, type LipSyncTrack } from '@celesta/character';
-        import { lipSyncFromVoicevox, type VoicevoxAudioQuery } from '@celesta/voicevox';
+        import { lipSyncFromVoicevox, timingFromVoicevox, type VoicevoxAudioQuery, type VoicevoxTiming } from '@celesta/voicevox';
         const query: VoicevoxAudioQuery = {
           accent_phrases: [{ moras: [
             { vowel: 'a', vowel_length: 0.2 },
             { vowel: 'i', vowel_length: 0.2 },
           ] }],
         };
-        const track: LipSyncTrack = lipSyncFromVoicevox(query, { frameRate: null });
+        const timing: VoicevoxTiming = timingFromVoicevox(query, { frameRate: null });
+        const track: LipSyncTrack = lipSyncFromVoicevox(timing);
         function Mouth() {
           const mouth = useLipSync(track);
           return <Rect id={mouth} width={mouth === 'a' ? 20 : 10} height={10} />;

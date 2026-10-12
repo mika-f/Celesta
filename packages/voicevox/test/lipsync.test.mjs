@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
-import { lipSyncFromVoicevox, voicevoxVowelShape } from '../dist/index.js';
+import { lipSyncFromVoicevox, timingFromVoicevox, voicevoxVowelShape } from '../dist/index.js';
 
 const fixture = JSON.parse(
   readFileSync(new URL('./fixtures/voicevox-zundamon-konnichiwa.json', import.meta.url), 'utf8'),
@@ -191,4 +191,51 @@ test('voicevoxVowelShape maps phonemes to mouth shapes', () => {
     ['a', 'i', 'u', 'e', 'o', 'A', 'I', 'U', 'E', 'O', 'N', 'cl', 'pau', 'sil'].map(voicevoxVowelShape),
     ['a', 'i', 'u', 'e', 'o', 'a', 'i', 'u', 'e', 'o', 'closed', 'closed', 'closed', 'closed'],
   );
+});
+
+// Every 0.5 ms offset, so samples never sit exactly on a frame boundary.
+function shapesOf(track) {
+  const shapes = [];
+  for (let i = 0; i < Math.ceil(track.durationInSeconds * 1000) + 5; i += 1) {
+    shapes.push(track.mouthAtSeconds((i + 0.5) / 1000));
+  }
+  return shapes;
+}
+
+test('lipSyncFromVoicevox: a timing gives the same track as its query', () => {
+  const queries = [fixture, ...synthesized.map((s) => s.query)];
+  for (const query of queries) {
+    for (const options of [{}, exact, { interrogativeUpspeak: false }]) {
+      const fromQuery = lipSyncFromVoicevox(query, options);
+      const fromTiming = lipSyncFromVoicevox(timingFromVoicevox(query, options));
+      assert.equal(fromTiming.durationInSeconds, fromQuery.durationInSeconds);
+      assert.deepEqual(shapesOf(fromTiming), shapesOf(fromQuery));
+    }
+  }
+});
+
+test('lipSyncFromVoicevox: a cloned timing gives the same track', () => {
+  const timing = timingFromVoicevox(fixture);
+  const copied = JSON.parse(JSON.stringify(timing));
+  assert.deepEqual(shapesOf(lipSyncFromVoicevox(copied)), shapesOf(lipSyncFromVoicevox(timing)));
+  assert.deepEqual(shapesOf(lipSyncFromVoicevox(structuredClone(timing))), shapesOf(lipSyncFromVoicevox(timing)));
+  // The bilabial m of モ still closes the lips in the copy.
+  const mo = timing.moras[8];
+  const track = lipSyncFromVoicevox(copied);
+  assert.equal(track.mouthAtSeconds((mo.consonant.start + mo.consonant.end) / 2), 'closed');
+  assert.equal(track.mouthAtSeconds((mo.vowel.start + mo.vowel.end) / 2), 'o');
+});
+
+test('lipSyncFromVoicevox: options with a timing throw', () => {
+  const timing = timingFromVoicevox(fixture);
+  assert.throws(
+    () => lipSyncFromVoicevox(timing, { frameRate: null }),
+    /lipSyncFromVoicevox: options apply when the timing is computed; pass them to timingFromVoicevox/,
+  );
+});
+
+test('lipSyncFromVoicevox: empty query is closed', () => {
+  const track = lipSyncFromVoicevox({ accent_phrases: [], prePhonemeLength: 0.1, postPhonemeLength: 0.1 }, exact);
+  assert.ok(Math.abs(track.durationInSeconds - 0.2) < 1e-9);
+  assert.ok(shapesOf(track).every((shape) => shape === 'closed'));
 });
