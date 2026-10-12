@@ -8,7 +8,7 @@
 - `film.tsx` — Celesta の File → Open… で開く React ソース（エントリ）。シーンごとの解説パネルは `scenes/`、共通部品は `components/` にあります。
 - `script.ts` — 台本。話者・字幕・読み・表情を 1 行ずつ書きます。
 - `make-voices.ts` — 台本を VOICEVOX Engine で読み上げ、`voices/<行>.wav` と `voices/<行>.json`（AudioQuery）を書き出します。
-- `voice.ts` — `prepare()` で WAV の長さから台本を並べ（`planDialogue`）、AudioQuery から口パク（`lipSyncFromVoicevox`）とモーラの時刻を作ります。
+- `voice.ts` — `prepare()` で WAV の長さから台本を並べ（`planDialogue`）、AudioQuery からモーラの時刻（`timingFromVoicevox`）と口パク（`lipSyncFromVoicevox`）を作ります。
 - `character.ts` — 2 人の PSD 立ち絵の表情・口・まばたきの設定。
 - `prepare-assets.ts` — 立ち絵の PSD を公式サイトから取得し、縮小して `assets/` に置きます。
 - `make-score.py` — BGM を生成する Python スクリプト。標準ライブラリのみ。

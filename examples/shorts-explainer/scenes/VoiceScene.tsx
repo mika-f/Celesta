@@ -33,8 +33,8 @@ export function VoiceScene() {
       {moras.map((mora, i) => {
         const x = BODY.x + (i % COLUMNS) * (CHIP + GAP);
         const y = BODY.y + 40 + Math.floor(i / COLUMNS) * (CHIP + 12);
-        const now = seconds >= mora.from && seconds < mora.to;
-        const past = seconds >= mora.to;
+        const now = seconds >= mora.start && seconds < mora.end;
+        const past = seconds >= mora.end;
         const open = mora.mouth === 'a' || mora.mouth === 'e' || mora.mouth === 'o';
         return (
           <Group key={i} x={x + CHIP / 2} y={y + CHIP / 2} scale={now ? 1.12 : 1}>
