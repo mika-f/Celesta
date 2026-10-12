@@ -194,7 +194,11 @@ changes; the existing tests match on the field name only.
 
 ### `lipSyncFromVoicevox`
 
-Both overloads go through one function that walks `timing.phonemes`:
+Both overloads go through one function that walks the timing in phoneme
+order through its structure (the leading `sil`, then each accent phrase's
+moras and pause, then the trailing `sil`), not by object identity, so a
+timing that was copied (`structuredClone`, JSON round trip) gives the same
+track:
 
 - `sil` and `pau` → `closed`;
 - a vowel → `voicevoxVowelShape(vowel)`;
