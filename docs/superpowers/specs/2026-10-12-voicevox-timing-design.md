@@ -68,7 +68,11 @@ export interface VoicevoxSpan {
 }
 
 export interface VoicevoxTimedPhoneme extends VoicevoxSpan {
-  /** As in the query: 'k', 'o', 'N', 'cl', 'pau'; 'sil' for the pre/post silence. */
+  /**
+   * As in the query: 'k', 'o', 'N', 'cl', 'pau'. The pre/post silence is
+   * 'sil', the engine's mora name for it (its decoder folds it into 'pau');
+   * keeping 'sil' tells the surrounding silence apart from a pause.
+   */
   readonly phoneme: string;
 }
 
@@ -210,7 +214,11 @@ The overloads are told apart by `'accent_phrases' in input`.
   fields lip sync reads").
 - `timing.ts` — `timingFromVoicevox`, the span types, `VoicevoxTimingOptions`,
   half-to-even rounding, the upspeak kana table (`a i u e o N` →
-  `ア イ ウ エ オ ン`; other vowels never qualify because their pitch is 0).
+  `ア イ ウ エ オ ン`, checked against `mora_phonemes_to_mora_kana` in
+  voicevox_engine's `tts_pipeline/mora_mapping.py`). Devoiced vowels, `cl`,
+  and `pau` have pitch 0 and never qualify; if an edited query gives one a
+  positive pitch, the engine's lookup would fail, so here the mora's `text`
+  falls back to the vowel string instead of throwing.
 - `lipsync.ts` — `lipSyncFromVoicevox` (both overloads), `voicevoxVowelShape`,
   the bilabial set.
 - `index.ts` — exports `timingFromVoicevox`, `lipSyncFromVoicevox`,
