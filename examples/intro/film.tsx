@@ -1,4 +1,4 @@
-import { Assets, Composition, Font, Rect, Sequence } from '@celesta/react';
+import { Assets, Audio, Composition, Font, Rect, Sequence } from '@celesta/react';
 import { FrameCounter } from './components/FrameCounter';
 import { C, DURATION, FONT_SRC, FPS, H, W } from './constants';
 import { HOLD } from './shared/cues';
@@ -14,6 +14,7 @@ import { SCENES } from './timeline';
 //   scenes/          one file per scene
 //   components/      shared drawing parts
 //   shared/          values that are both drawn and shown as code (tested in test/)
+//   make-score.py    generates music.wav: python3 examples/intro/make-score.py
 
 export default function Root() {
   return (
@@ -26,6 +27,7 @@ export default function Root() {
         <Sequence key={from} from={from} durationInFrames={to - from}><Scene /></Sequence>
       ))}
       <Sequence from={0} durationInFrames={HOLD}><FrameCounter /></Sequence>
+      <Audio src="./music.wav" />
     </Composition>
   );
 }
