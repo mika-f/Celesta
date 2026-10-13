@@ -4,6 +4,7 @@ import { DURATION } from './constants';
 import { ColdOpen } from './scenes/ColdOpen';
 import { Components } from './scenes/Components';
 import { Idea } from './scenes/Idea';
+import { LiveEdit } from './scenes/LiveEdit';
 import { Problem } from './scenes/Problem';
 import { Reveal } from './scenes/Reveal';
 import { S, SCENE_ORDER, type SceneName } from './shared/cues';
@@ -14,7 +15,7 @@ const SCENE: Record<SceneName, () => ReactNode> = {
   problem: Problem,
   idea: Idea,
   components: Components,
-  liveEdit: placeholder('Live edit'),
+  liveEdit: LiveEdit,
   export: placeholder('Export'),
   outro: placeholder('Outro'),
 };
