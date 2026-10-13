@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { placeholder } from './components/Placeholder';
 import { DURATION } from './constants';
 import { ColdOpen } from './scenes/ColdOpen';
+import { Components } from './scenes/Components';
 import { Idea } from './scenes/Idea';
 import { Problem } from './scenes/Problem';
 import { Reveal } from './scenes/Reveal';
@@ -12,7 +13,7 @@ const SCENE: Record<SceneName, () => ReactNode> = {
   reveal: Reveal,
   problem: Problem,
   idea: Idea,
-  components: placeholder('Components'),
+  components: Components,
   liveEdit: placeholder('Live edit'),
   export: placeholder('Export'),
   outro: placeholder('Outro'),
