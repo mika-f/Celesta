@@ -6,7 +6,7 @@ import { KeyCap } from '../components/KeyCap';
 import { Label } from '../components/Label';
 import { BEAT, C, FONT, H, W } from '../constants';
 import { S } from '../shared/cues';
-import { EDITS, SAVE_FRAMES, savedAt, typedAt } from '../shared/live-edit';
+import { EDITS, SAVE_FRAMES, TITLE, savedAt, typedAt } from '../shared/live-edit';
 
 const FONT_SIZE = 26;
 const PREVIEW = { x: 980, y: 200, width: 860, scale: 860 / W } as const;
@@ -34,7 +34,7 @@ export function LiveEdit() {
       </CodePanel>
 
       <Group x={PREVIEW.x} y={PREVIEW.y} scale={PREVIEW.scale}>
-        <Text x={960} y={540} anchorX={0.5} anchorY={0.5}
+        <Text x={TITLE.x} y={TITLE.y} anchorX={TITLE.anchorX} anchorY={0.5}
           style={{ fontFamily: FONT.display, fontWeight: 700, fontSize: props.fontSize, fill: { type: 'solid', color: props.fill } }}>
           Hello, Celesta.
         </Text>

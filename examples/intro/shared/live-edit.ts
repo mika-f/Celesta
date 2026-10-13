@@ -31,7 +31,10 @@ function typedValue(edit: Edit, local: number): string {
   return edit.to.slice(0, typed);
 }
 
-const PREFIX = { fontSize: '        fontSize: ', fill: "        fill: '" } as const;
+// Where the preview draws the title; the source shows the same numbers.
+export const TITLE = { x: 960, y: 540, anchorX: 0.5 } as const;
+
+const PREFIX = { fontSize: '        fontSize: ', fill: "        fill: { type: 'solid', color: '" } as const;
 const LINE = { fontSize: 5, fill: 6 } as const;
 
 export function typedAt(local: number): { source: string; caret: { line: number; column: number } } {
@@ -39,10 +42,10 @@ export function typedAt(local: number): { source: string; caret: { line: number;
   const fill = typedValue(EDITS[1], local);
   const source = `export default function Title() {
   return (
-    <Text x={960} y={540} anchorX={0.5}
+    <Text x={${TITLE.x}} y={${TITLE.y}} anchorX={${TITLE.anchorX}}
       style={{
 ${PREFIX.fontSize}${size},
-${PREFIX.fill}${fill}',
+${PREFIX.fill}${fill}' },
       }}>
       Hello, Celesta.
     </Text>

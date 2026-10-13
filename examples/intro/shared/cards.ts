@@ -37,12 +37,15 @@ export function cardsSource(data: CardDatum[]): string {
   return ['[', ...rows, ']'].join('\n');
 }
 
+// Where Card draws its value and bar; CARD_SOURCE shows the same numbers.
+export const CARD_LAYOUT = { valueY: 40, barY: 120, barScale: 2.2, barHeight: 6 } as const;
+
 export const CARD_SOURCE = `function Card({ x, y, title, value }) {
   return (
     <Group x={x} y={y}>
       <Text>{title}</Text>
-      <Text y={40}>{value}</Text>
-      <Rect y={120} width={value * 2.2} height={6} />
+      <Text y={${CARD_LAYOUT.valueY}}>{value}</Text>
+      <Rect y={${CARD_LAYOUT.barY}} width={value * ${CARD_LAYOUT.barScale}} height={${CARD_LAYOUT.barHeight}} />
     </Group>
   );
 }`;
