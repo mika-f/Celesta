@@ -287,6 +287,31 @@ importers:
         specifier: ^18.3.31
         version: 18.3.31
 
+  examples/intro:
+    dependencies:
+      '@celesta/code':
+        specifier: workspace:*
+        version: link:../../packages/code
+      '@celesta/math':
+        specifier: workspace:*
+        version: link:../../packages/math
+      '@celesta/react':
+        specifier: workspace:*
+        version: link:../../packages/react
+      '@celesta/shapes':
+        specifier: workspace:*
+        version: link:../../packages/shapes
+      '@celesta/text':
+        specifier: workspace:*
+        version: link:../../packages/text
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+    devDependencies:
+      '@types/react':
+        specifier: ^18.3.31
+        version: 18.3.31
+
   examples/perfect-loop:
     devDependencies:
       typescript:
