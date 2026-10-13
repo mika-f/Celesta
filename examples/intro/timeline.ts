@@ -3,6 +3,7 @@ import { placeholder } from './components/Placeholder';
 import { DURATION } from './constants';
 import { ColdOpen } from './scenes/ColdOpen';
 import { Components } from './scenes/Components';
+import { Export } from './scenes/Export';
 import { Idea } from './scenes/Idea';
 import { LiveEdit } from './scenes/LiveEdit';
 import { Problem } from './scenes/Problem';
@@ -16,7 +17,7 @@ const SCENE: Record<SceneName, () => ReactNode> = {
   idea: Idea,
   components: Components,
   liveEdit: LiveEdit,
-  export: placeholder('Export'),
+  export: Export,
   outro: placeholder('Outro'),
 };
 
