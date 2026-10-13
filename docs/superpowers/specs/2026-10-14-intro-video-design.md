@@ -88,7 +88,7 @@ noted.
 | 26–34 s | 780–1020 | 14–17 | Components | A `<Card title value />` snippet and a data array on the left; a grid of 12 cards generated from the array on the right. Values in the array change and the matching cards and their bars follow. | `Write it once.` `Feed it data.` |
 | 34–44 s | 1020–1320 | 18–22 | Live edit | Editor on the left, preview on the right. A caret rewrites `fontSize: 96` to `160`, then the fill from `fg` to `accent`. A ⌘S key cap (a `Rect` with `S` as `Text` and the ⌘ symbol drawn as a `Path`, since neither font has it) presses after each edit, and the preview updates on that frame. | `Save.` `It reloads.` `Frame-exact.` |
 | 44–52 s | 1320–1560 | 23–26 | Export + agents | A terminal types `celesta-exporter --react film.tsx intro.mp4`. A mosaic of frame thumbnails fills while a counter climbs to 1800; it ends with `intro.mp4` and a drawn check mark. For the last two bars, an agent log shows an agent reading the Celesta skill and writing `film.tsx`. | `One command to MP4.` `Your agent can write it too.` |
-| 52–60 s | 1560–1800 | 27–30 | Outro | `CELESTA` wordmark, tagline, a detail line, and the URL. From 56 s (frame 1680) nothing moves, leaving room for YouTube end-screen elements. | `Video, written in code.` / `React · TypeScript · macOS / Windows` / `github.com/mika-f/celesta` |
+| 52–60 s | 1560–1800 | 27–30 | Outro | `CELESTA` wordmark, tagline, a detail line, and the URL. From 55 s (frame 1650) nothing moves, leaving the 5 seconds YouTube end-screen elements need. | `Video, written in code.` / `React · TypeScript · macOS / Windows` / `github.com/mika-f/celesta` |
 
 The tagline `Video, written in code.` is a working line, chosen not to repeat
 `reel`'s "Code is the cut."; it can change without affecting anything else.
