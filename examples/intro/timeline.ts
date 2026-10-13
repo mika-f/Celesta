@@ -2,11 +2,12 @@ import type { ReactNode } from 'react';
 import { placeholder } from './components/Placeholder';
 import { DURATION } from './constants';
 import { ColdOpen } from './scenes/ColdOpen';
+import { Reveal } from './scenes/Reveal';
 import { S, SCENE_ORDER, type SceneName } from './shared/cues';
 
 const SCENE: Record<SceneName, () => ReactNode> = {
   coldOpen: ColdOpen,
-  reveal: placeholder('Reveal'),
+  reveal: Reveal,
   problem: placeholder('Problem'),
   idea: placeholder('Idea'),
   components: placeholder('Components'),
