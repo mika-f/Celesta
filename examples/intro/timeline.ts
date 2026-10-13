@@ -1,11 +1,11 @@
 import type { ReactNode } from 'react';
-import { placeholder } from './components/Placeholder';
 import { DURATION } from './constants';
 import { ColdOpen } from './scenes/ColdOpen';
 import { Components } from './scenes/Components';
 import { Export } from './scenes/Export';
 import { Idea } from './scenes/Idea';
 import { LiveEdit } from './scenes/LiveEdit';
+import { Outro } from './scenes/Outro';
 import { Problem } from './scenes/Problem';
 import { Reveal } from './scenes/Reveal';
 import { S, SCENE_ORDER, type SceneName } from './shared/cues';
@@ -18,7 +18,7 @@ const SCENE: Record<SceneName, () => ReactNode> = {
   components: Components,
   liveEdit: LiveEdit,
   export: Export,
-  outro: placeholder('Outro'),
+  outro: Outro,
 };
 
 // Each scene runs from its start to the next scene's start.
