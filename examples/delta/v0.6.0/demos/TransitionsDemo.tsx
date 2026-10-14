@@ -1,6 +1,6 @@
 import { Easings, Group, Rect, Sequence, Text } from '@celesta/react';
 import { TransitionSeries, computeTransitionSeries } from '@celesta/transitions';
-import type { TransitionSeriesTransitionProps } from '@celesta/transitions';
+import type { TransitionSeriesTransitionProps, TransitionSeriesType } from '@celesta/transitions';
 import { CUT, STAGE, enter } from '../../components/ChapterShell';
 import type { DemoProps } from '../../components/ChapterShell';
 import { C, FONT, H, W, solid } from '../../components/theme';
@@ -14,7 +14,8 @@ const SCENES = [
   { name: 'C', fill: C.violet, ink: C.ink },
   { name: 'D', fill: C.green, ink: C.ink },
 ];
-const TRANSITIONS: Omit<TransitionSeriesTransitionProps, 'children'>[] = [
+// Named types only, so each label can print its type.
+const TRANSITIONS: (TransitionSeriesTransitionProps & { type: TransitionSeriesType })[] = [
   { type: 'crossfade', durationInFrames: 10 },
   { type: 'slide', from: 'right', durationInFrames: 10, easing: Easings.easeInOutCubic },
   { type: 'wipe', from: 'bottom', durationInFrames: 10, easing: Easings.easeInOutCubic },
