@@ -225,17 +225,82 @@ durationInFrames>` scenes with an optional `<TransitionSeries.Transition
 type durationInFrames from? easing?>` between two of them. Prefer it to a
 `Series` with negative `offset`s plus hand-matched `Transition`s.
 
-| `type` | What happens over `durationInFrames` |
-| --- | --- |
-| `'cut'` | Nothing: no overlap, omit `durationInFrames` (same as no transition). |
-| `'crossfade'` | The next scene fades in over the previous one, which stays opaque. |
-| `'slide'` | The next scene pushes the previous one out, entering from `from`. |
-| `'wipe'` | The next scene is revealed by a straight edge moving in from `from`. |
+| `type` | What happens over `durationInFrames` | Options (function of the same name) |
+| --- | --- | --- |
+| `'cut'` | Nothing: no overlap, omit `durationInFrames` (same as no transition). | — |
+| `'crossfade'` | The next scene fades in over the previous one, which stays opaque. | `crossfade()` |
+| `'slide'` | The next scene pushes the previous one out, entering from `from`. | `slide()` |
+| `'wipe'` | The next scene is revealed by a straight edge moving in from `from`. | `wipe()` |
+| `'iris'` | The next scene opens out of a circle that grows past the farthest corner. | `iris({ center, direction: 'open' \| 'close', feather })` |
+| `'clock-wipe'` | A hand sweeps once around a point, revealing the next scene. | `clockWipe({ center, startAngle, direction: 'clockwise' \| 'counterclockwise' })` |
+| `'zoom'` | Both scenes zoom about a point while the next fades in. | `zoom({ direction: 'in' \| 'out', scale, center })` |
+| `'dissolve'` | The next scene shows through square by square, in a seeded order. | `dissolve({ cellSize, seed })` |
+| `'blur'` | The previous scene blurs away; the next comes into focus and fades in. | `blur({ amount })` |
+| `'flip'` | The series turns over like a card about the axis `from` picks. | `flip({ shade })` |
+| `'cube'` | Two faces of a cube turn a quarter turn, the next from `from`. | `cube({ shade })` |
+
+A name uses the defaults: `center` `{ x: 0.5, y: 0.5 }` (fractions of the
+series' size), iris `direction: 'open'` and `feather: 0` px, clock-wipe
+`startAngle: 0` (12 o'clock, degrees clockwise) and `'clockwise'`, zoom
+`'in'` and `scale: 1.5`, dissolve `cellSize: 16` px and `seed: 0`, blur
+`amount: 32` px (0–64), flip and cube `shade: 0.4` (0–1). Call the function
+(imported from `@celesta/transitions`) for other values:
+`type={iris({ center: { x: 0.3, y: 0.5 }, feather: 40 })}`. Bad options
+throw when the function is called.
 
 `from` is `'left'` (default), `'right'`, `'top'`, or `'bottom'`; anything
-else throws when the series renders. `easing` shapes the progress (default
-linear, e.g. `Easings.easeInOutCubic`). Slides move by the composition's
-width or height.
+else throws when the series renders. It is the edge `'slide'`, `'wipe'`,
+and `'cube'` come from, and the axis `'flip'` turns about (left/right and
+top/bottom look the same without perspective). `easing` shapes the progress
+(default linear, e.g. `Easings.easeInOutCubic`). `flip` and `cube` are drawn
+without perspective: faces narrow and darken (`shade`), and a cube is
+scaled down mid-turn so its two faces always span the series.
+
+### Size: a series in a frame
+
+Transitions move and cut across the series' size: how far a slide pushes,
+where a wipe ends, where an iris centres. It is `<TransitionSeries width
+height>`, or else the enclosing `<SafeArea>`'s or `<Fit>`'s bounds
+(`useLayoutBounds()`), or else the composition's size. For a series in a
+small frame, position it with a `Group` and give it the frame's size (and a
+`clip` if the scenes must not spill out of the frame while they slide):
+
+```tsx
+<Group x={260} y={400} clip={{ width: 560, height: 315 }}>
+  <TransitionSeries width={560} height={315}>…</TransitionSeries>
+</Group>
+```
+
+### Defining a transition
+
+`defineTransition({ name, present })` makes a transition for `type`.
+`present` gets `{ progress, frame, durationInFrames, from, width, height }`
+for each overlapped frame (`progress` already eased) and returns
+`{ enter?, exit? }`: `Group` props for each scene's group, such as `x`,
+`scale`, `opacity`, `clip`, `blur`, `brightness`, `shader`, or `mask`. The
+groups sit at the series' origin; a side left out is drawn as it is. The
+built-in transitions other than `'cut'` are written the same way, and
+`useTransitionSeriesScene()` reports a defined transition by its `name`.
+
+```tsx
+const blinds = defineTransition({
+  name: 'blinds',
+  present: ({ progress, width, height }) => ({
+    enter: {
+      mask: <>{Array.from({ length: 8 }, (_, i) => (
+        <Rect key={i} y={(i * height) / 8} width={width} height={(height / 8) * progress} fill="#FFFFFF" />
+      ))}</>,
+    },
+    exit: { brightness: 1 - 0.5 * progress },
+  }),
+});
+<TransitionSeries.Transition type={blinds} durationInFrames={24} />
+```
+
+A mask or a shader in a style comes and goes with the transition without
+changing the scene's layer ids. Custom WGSL shaders run in preview and
+export only; masks, clips, blur, and color filters also run in
+`@celesta/web`, so every built-in type does.
 
 Timing rules:
 
@@ -246,7 +311,7 @@ Timing rules:
   durationInFrames }], durationInFrames }`: use it for the `<Composition>`.
   Items are the children's props in order: scenes `{ durationInFrames }`,
   transitions `{ type, durationInFrames? }` (scene items must not have a
-  `type` key).
+  `type` key; `type` may be a name or a defined transition).
 - It throws for: no scene, a transition first or last, two transitions in a
   row, an unknown `type`, a cut with frames, a scene or non-cut transition
   whose `durationInFrames` is not a positive integer, and a scene shorter
@@ -284,8 +349,9 @@ function Body() {
 }
 ```
 
-`packages/cli/examples/with-transition-series.tsx` compares all four
-types.
+`packages/cli/examples/with-transition-types.tsx` plays every type in turn,
+and `packages/cli/examples/with-custom-transition.tsx` defines one with a
+mask and one with a shader.
 
 ## Stagger
 

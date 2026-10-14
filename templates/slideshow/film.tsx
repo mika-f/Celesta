@@ -28,7 +28,7 @@ import type { TransitionSeriesItem, TransitionSeriesType } from '@celesta/transi
 //
 // - props.json holds the values this project renders with: the title and
 //   subtitle, the accent color, the format (16:9 / 9:16), the transition
-//   (crossfade / slide / wipe), the seconds each slide stays, and the slides
+//   (crossfade, slide, wipe, iris, …), the seconds each slide stays, and the slides
 //   and music files.
 // - slides.json lists the slides: an array of { "image", "caption"? }.
 //   Image paths resolve from the folder holding slides.json, and the video
@@ -119,7 +119,12 @@ defineProjectProperties({
   subtitle: { type: 'string', label: 'Subtitle', defaultValue: '2026 秋' },
   format: { type: 'select', label: 'Format', defaultValue: '16:9', options: ['16:9', '9:16'] },
   accent: { type: 'color', label: 'Accent', defaultValue: '#f2c14e' },
-  transition: { type: 'select', label: 'Transition', defaultValue: 'crossfade', options: ['crossfade', 'slide', 'wipe'] },
+  transition: {
+    type: 'select',
+    label: 'Transition',
+    defaultValue: 'crossfade',
+    options: ['crossfade', 'slide', 'wipe', 'iris', 'clock-wipe', 'zoom', 'dissolve', 'blur', 'flip', 'cube'],
+  },
   secondsPerSlide: { type: 'number', label: 'Seconds per slide', defaultValue: 4 },
   slides: { type: 'path', label: 'Slides', defaultValue: './slides.json' },
   music: { type: 'path', label: 'Music', defaultValue: './assets/music.wav' },

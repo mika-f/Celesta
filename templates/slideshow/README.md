@@ -46,7 +46,7 @@ To change these without editing JSON, open `film.tsx` in Celesta and use the pre
 | `subtitle` | string | `2026 秋` | The line under the heading, in the accent color. |
 | `format` | `16:9` / `9:16` | `16:9` | 1920 × 1080, or 1080 × 1920 with captions kept higher. |
 | `accent` | color | `#f2c14e` | The rule and subtitle on the title card. |
-| `transition` | `crossfade` / `slide` / `wipe` | `crossfade` | How each scene gives way to the next. |
+| `transition` | `crossfade` / `slide` / `wipe` / `iris` / `clock-wipe` / `zoom` / `dissolve` / `blur` / `flip` / `cube` | `crossfade` | How each scene gives way to the next. |
 | `secondsPerSlide` | number | `4` | How long each slide stays, including its transitions; at least 1.33. |
 | `slides` | path | `./slides.json` | The slides to show. An http(s) URL is fetched instead. |
 | `music` | path | `./assets/music.wav` | The music; `""` for none. |

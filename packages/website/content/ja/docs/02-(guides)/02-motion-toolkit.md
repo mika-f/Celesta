@@ -29,12 +29,45 @@ export default function Root() {
 
 ## シーンをトランジションでつなぐ
 
-`<TransitionSeries>` は `Series` と同じくシーンを順に並べ、2 つのシーンの間に `<TransitionSeries.Transition>` を置けます。`'cut'` はカット、`'crossfade'` は次のシーンを前のシーンの上にフェードイン、`'slide'` は次のシーンが前のシーンを押し出し、`'wipe'` は動く直線の境界の向こうに次のシーンを見せます。トランジションは前後のシーンを `durationInFrames` の分だけ重ねるので、`computeTransitionSeries()` で各シーンの開始位置と、重なりの分だけ短くなった全体の長さを求められます。
+`<TransitionSeries>` は `Series` と同じくシーンを順に並べ、2 つのシーンの間に `<TransitionSeries.Transition>` を置けます。トランジションは前後のシーンを `durationInFrames` の分だけ重ねるので、`computeTransitionSeries()` で各シーンの開始位置と、重なりの分だけ短くなった全体の長さを求められます。
 
 ```tsx file=examples/transition-series.tsx title="クロスフェードとスライドでつないだシーン"
 ```
 
 各シーンは通常の Sequence で、入りのトランジションの最初のフレームがフレーム 0 です。後のシーンが手前に描かれます。前後どちらかのシーンより長いトランジションや、入りと出のトランジションを合わせた長さに満たないシーンはエラーになるので、空白や 3 つのシーンの同時表示は起こりません。重なったシーンの音声は同時に再生されます。`useTransitionVolume(volume)` はシーン内の Audio に映像と一緒にフェードする音量を返し、`useTransitionSeriesScene()` はほかのタイミング調整のためにシーン前後のトランジションを返します。
+
+`type` には次の名前を指定します。名前だけなら括弧内の既定値を使います。ほかの値にするときは、`@celesta/transitions` の同名の関数を `type={iris({ center: { x: 0.3, y: 0.5 }, feather: 40 })}` のように呼びます。`from`（既定は `'left'`）は `'slide'`・`'wipe'`・`'cube'` で次のシーンが来る辺、`'flip'` で回る軸です。`easing` はどの種類でも進み方を変えます。
+
+| `type` | 動き | オプション |
+| --- | --- | --- |
+| `'cut'` | 重ねずに次のシーンへ切り替えます。 | |
+| `'crossfade'` | 次のシーンを前のシーンの上にフェードインします。 | |
+| `'slide'` | 次のシーンが前のシーンを押し出します。 | |
+| `'wipe'` | 動く直線の境界の向こうに次のシーンを見せます。 | |
+| `'iris'` | 広がる円の中に次のシーンが現れます。 | `center`（`{ x: 0.5, y: 0.5 }`、大きさに対する割合）、`direction`（`'open'`。`'close'` で前のシーンが縮む円に吸い込まれる）、`feather`（0 px） |
+| `'clock-wipe'` | 時計の針のように 1 周して次のシーンを見せます。 | `center`、`startAngle`（0。12 時から時計回りの度）、`direction`（`'clockwise'` か `'counterclockwise'`） |
+| `'zoom'` | 両方のシーンが点を中心に拡縮し、次のシーンがフェードインします。 | `direction`（`'in'` か `'out'`）、`scale`（1.5）、`center` |
+| `'dissolve'` | 次のシーンがマスごとに現れます。 | `cellSize`（16 px）、`seed`（0） |
+| `'blur'` | 前のシーンがぼけて消え、次のシーンのぼけが取れながら現れます。 | `amount`（32 px、最大 64） |
+| `'flip'` | カードのように裏返ります。 | `shade`（0.4）：横を向いた面の暗さ |
+| `'cube'` | 立方体の 2 面が 4 分の 1 回転します。 | `shade`（0.4） |
+
+`'flip'` と `'cube'` は遠近法を使わずに描きます。面は細くなりながら暗くなり、立方体は回転の途中で縮んで常にシリーズの幅に収まります。どの種類もプレビュー、書き出し、ブラウザのエディタで同じように描かれます。
+
+トランジションの動きや切り抜きは、シリーズの大きさを基準にします。スライドで押し出す距離、ワイプの終わる位置、アイリスの中心がこれで決まります。既定ではコンポジションの大きさ、`<SafeArea>` や `<Fit>` の中ではその領域の大きさです。小さな枠の中で使うときは、`<TransitionSeries>` に枠の `width` と `height` を指定し、`Group` で配置します（シーンが枠の外にはみ出さないようにするには `clip` も指定します）。
+
+```tsx title="幅 560 px の枠の中のシリーズ"
+<Group x={260} y={400} clip={{ width: 560, height: 315 }}>
+  <TransitionSeries width={560} height={315}>…</TransitionSeries>
+</Group>
+```
+
+### トランジションを定義する
+
+`defineTransition({ name, present })` で `type` に渡すトランジションを作れます。`present` は重なった各フレームで、イージング後の `progress`、重なりの中の `frame` と `durationInFrames`、`from`、シリーズの `width` と `height` を受け取ります。そして、次のシーン（`enter`）と前のシーン（`exit`）の `Group` の props を返します。位置、拡縮、透明度、`clip`、`blur`、色補正、`shader`、`mask` を指定できます。組み込みの種類も同じ仕組みで書かれており、`useTransitionSeriesScene()` は定義したトランジションを `name` で返します。カスタム WGSL シェーダーはプレビューと書き出しで動き、ブラウザのエディタでは動きません。
+
+```tsx file=examples/custom-transition.tsx title="マスクで定義したブラインドと、中心をずらしたアイリス"
+```
 
 ## 順番に入場させる
 

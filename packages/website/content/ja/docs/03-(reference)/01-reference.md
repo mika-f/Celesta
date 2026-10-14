@@ -22,7 +22,8 @@ Celesta は Remotion のようにパッケージに分かれています。コ�
 | `FreezeFrame` | `@celesta/react` | 子要素を、コンポジション全体の `frame` 時点（絶対フレーム）の状態で、音声なしで描画します。 |
 | `Transition` | `@celesta/transitions` | 親シーケンスの開始・終了に、フェード・スライド・拡縮を単独または組み合わせて適用します。 |
 | `Series` / `computeSeries` | `@celesta/react` | 長さでシーンを続けて並べます。[シーン・キュー・拍](/ja/docs/motion-toolkit/)を参照。 |
-| `TransitionSeries` / `computeTransitionSeries` | `@celesta/transitions` | シーンの間をカット・クロスフェード・スライド・ワイプでつなぎ、重なりと全体の長さを計算します。[シーン・キュー・拍](/ja/docs/motion-toolkit/)を参照。 |
+| `TransitionSeries` / `computeTransitionSeries` | `@celesta/transitions` | シーンの間をカット・クロスフェード・スライド・ワイプ・アイリス・クロックワイプ・ズーム・ディゾルブ・ぼかし・フリップ・キューブでつなぎ、重なりと全体の長さを計算します。[シーン・キュー・拍](/ja/docs/motion-toolkit/)を参照。 |
+| `defineTransition` / `iris`、`clockWipe`、`zoom`、`dissolve`、`blur`、`flip`、`cube`、`crossfade`、`slide`、`wipe` | `@celesta/transitions` | `TransitionSeries` のトランジションを関数で定義したり、組み込みのトランジションのオプションを指定したりします。 |
 | `Stagger` | `@celesta/react` | 各子を前の子から一定フレーム遅れて開始します。 |
 | `progress` | `@celesta/react` | フレームの区間を、イージング付きの 0〜1 に制限した値にします。 |
 | `useBeat()` / `beatAt` | `@celesta/react` | BPM のテンポから拍・小節・パルスを取得します。 |

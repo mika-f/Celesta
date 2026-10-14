@@ -29,12 +29,45 @@ export default function Root() {
 
 ## Transitions between scenes
 
-`<TransitionSeries>` lays scenes out like `Series`, with a `<TransitionSeries.Transition>` between two of them: `'cut'` cuts, `'crossfade'` fades the next scene in over the previous one, `'slide'` pushes the previous scene out, and `'wipe'` reveals the next scene behind a moving edge. A transition overlaps the scenes on either side by its `durationInFrames`, so `computeTransitionSeries()` returns each scene’s start and the total length, shortened by every overlap:
+`<TransitionSeries>` lays scenes out like `Series`, with a `<TransitionSeries.Transition>` between two of them. A transition overlaps the scenes on either side by its `durationInFrames`, so `computeTransitionSeries()` returns each scene’s start and the total length, shortened by every overlap:
 
 ```tsx file=examples/transition-series.tsx title="Scenes joined by a cross-fade and a slide"
 ```
 
 Each scene is an ordinary Sequence whose frame 0 is the first frame of its transition in, and the next scene is drawn above. A transition longer than either scene, or a scene too short for its transitions in and out together, throws instead of leaving a gap or showing three scenes at once. Overlapping scenes play their sound together: `useTransitionVolume(volume)` gives an Audio in the scene a volume that fades with its picture, and `useTransitionSeriesScene()` reports the scene’s transitions for any other timing.
+
+`type` names one of these. A name uses the defaults in brackets; call the function of the same name from `@celesta/transitions` for other values, as in `type={iris({ center: { x: 0.3, y: 0.5 }, feather: 40 })}`. `from` (`'left'` by default) is the edge `'slide'`, `'wipe'`, and `'cube'` come from, and the axis `'flip'` turns about. `easing` shapes every type’s progress.
+
+| `type` | What happens | Options |
+| --- | --- | --- |
+| `'cut'` | The next scene replaces the previous one, with no overlap. | |
+| `'crossfade'` | The next scene fades in over the previous one. | |
+| `'slide'` | The next scene pushes the previous one out. | |
+| `'wipe'` | A straight edge reveals the next scene. | |
+| `'iris'` | The next scene opens out of a circle. | `center` (`{ x: 0.5, y: 0.5 }`, fractions of the size), `direction` (`'open'`, or `'close'` to shrink the previous scene into a circle), `feather` (0 px) |
+| `'clock-wipe'` | A hand sweeps once around a point. | `center`, `startAngle` (0, degrees clockwise from 12 o’clock), `direction` (`'clockwise'` or `'counterclockwise'`) |
+| `'zoom'` | Both scenes zoom about a point while the next fades in. | `direction` (`'in'` or `'out'`), `scale` (1.5), `center` |
+| `'dissolve'` | The next scene shows through square by square. | `cellSize` (16 px), `seed` (0) |
+| `'blur'` | The previous scene blurs away as the next comes into focus. | `amount` (32 px, up to 64) |
+| `'flip'` | The picture turns over like a card. | `shade` (0.4): how dark a face gets as it turns |
+| `'cube'` | Two faces of a cube turn a quarter turn. | `shade` (0.4) |
+
+`'flip'` and `'cube'` are drawn without perspective: the faces narrow and darken, and the cube is scaled down mid-turn so it always spans the series. Every type draws the same in preview, export, and the browser editor.
+
+Transitions move and cut across the series’ size: how far a slide pushes, where a wipe ends, where an iris centres. That is the composition’s size, or the area of an enclosing `<SafeArea>` or `<Fit>`. For a series in a smaller frame, give `<TransitionSeries>` the frame’s `width` and `height`, and place it with a `Group` (with a `clip` if the scenes must not slide out of the frame):
+
+```tsx title="A series in a 560 px frame"
+<Group x={260} y={400} clip={{ width: 560, height: 315 }}>
+  <TransitionSeries width={560} height={315}>…</TransitionSeries>
+</Group>
+```
+
+### Your own transitions
+
+`defineTransition({ name, present })` makes a transition to pass as `type`. On every overlapped frame, `present` gets the eased `progress`, the `frame` and `durationInFrames` of the overlap, `from`, and the series’ `width` and `height`, and returns `Group` props for the scene coming in (`enter`) and the one going out (`exit`): a position, scale, opacity, `clip`, `blur`, color filter, `shader`, or `mask`. The built-in types are written the same way, and `useTransitionSeriesScene()` reports a defined transition by its `name`. Custom WGSL shaders run in preview and export, not in the browser editor.
+
+```tsx file=examples/custom-transition.tsx title="Blinds defined with a mask, then an off-centre iris"
+```
 
 ## Cascades and entrances
 

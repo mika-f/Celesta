@@ -182,7 +182,7 @@ layers sit; it does not prove the rendered pixels.
 | `@celesta/shapes` | `Line`, `Polyline`, `Path`, `Circle`, `Ellipse`, `Arrow`, `Triangle`, `Polygon`, `Star`, `Pie`, `Heart`, `pointOnPolyline`, `trianglePath`/`polygonPath`/`starPath`/`piePath`/`heartPath` |
 | `@celesta/shader` | `defineShader` (custom WGSL filters for the `shader` prop), and the color filters `brightness`, `contrast`, `saturation`, `hue`, `grayscale`, `invert`, `tint`, `vignette` for the same array |
 | `@celesta/layout` | `Center`, `Stack`, `Grid`, `Fit`, `SafeArea`, `safeAreaInsets`, `useLayoutBounds`, `Camera` |
-| `@celesta/transitions` | `Transition`, `TransitionSeries`, `useTransitionSeriesScene`, `useTransitionVolume` |
+| `@celesta/transitions` | `Transition`, `TransitionSeries`, `useTransitionSeriesScene`, `useTransitionVolume`, `defineTransition`, and the transition functions `iris`, `clockWipe`, `zoom`, `dissolve`, `blur`, `flip`, `cube`, `crossfade`, `slide`, `wipe` |
 | `@celesta/text` | `TextReveal`, `useTypewriter`, `useCountUp`, `TextBox`, `fitText`, `useFitText` |
 | `@celesta/character` | `Character`, `CharacterView`, `Dialogue`, `DialogueSeries`, `planDialogue`, `loadLipSync`, `useLipSync`, `lipSyncFromSpeechTiming`, `speechVowelShape`, `blinkPhase`, `loadPsdPreset`, and their types |
 | `@celesta/media-utils` | `preloadMedia`, `mediaDurationInFrames` |

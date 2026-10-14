@@ -19,8 +19,10 @@ for more examples, see the [examples directory](examples) and the [gallery](docs
 ## What you can do
 
 - **Compose with React:** use components, hooks, sequences, transitions, and
-  layouts to build scenes. Join scenes with cuts, cross-fades, slides, or
-  wipes using `<TransitionSeries>`, which works out the overlaps and length.
+  layouts to build scenes. Join scenes with cuts, cross-fades, slides, wipes,
+  irises, clock wipes, zooms, dissolves, blurs, flips, cubes, or transitions
+  of your own using `<TransitionSeries>`, which works out the overlaps and
+  length. Mask a group with text, shapes, or any drawing.
   Animate positions, colors, and effects with interpolation and springs, or
   hold a scene at a chosen frame with `<FreezeFrame>`.
 - **Draw and lay out content:** combine rectangles, circles, ellipses, arrows,
