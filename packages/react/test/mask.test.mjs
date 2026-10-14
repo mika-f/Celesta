@@ -3,6 +3,7 @@ import React from 'react';
 
 import { Audio, Composition, FreezeFrame, Group, Mask, Rect, Sequence, Text, Video, useCurrentFrame } from '../dist/index.js';
 import { mount } from '../dist/render.js';
+import * as browser from '../dist/browser.js';
 
 const h = React.createElement;
 const at = (frame) => ({ value: frame, timescale: 30 });
@@ -13,6 +14,10 @@ function scene(children, frame = 0) {
 }
 
 const square = (fill) => h(Rect, { width: 10, height: 10, fill });
+
+test('the browser entry exports <Mask> too', () => {
+  expect(browser.Mask).toBe(Mask);
+});
 
 test('a <Mask> child becomes the group mask at any sibling position', () => {
   for (const children of [
