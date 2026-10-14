@@ -29,6 +29,10 @@ const NEVER_IN_REACT = new Set([
   ...['Triangle', 'Polygon', 'Star', 'Pie', 'Heart'].flatMap((shape) => [
     shape, `${shape}Props`, `${shape}PathOptions`, `${shape.toLowerCase()}Path`,
   ]),
+  'TransitionSeriesTransitionType', 'defineTransition', 'TransitionDefinition', 'TransitionPresentation',
+  'TransitionPresentInput', 'TransitionSceneStyle', 'TransitionCenter',
+  'blur', 'clockWipe', 'crossfade', 'cube', 'dissolve', 'flip', 'iris', 'slide', 'wipe', 'zoom',
+  'BlurOptions', 'ClockWipeOptions', 'CubeOptions', 'DissolveOptions', 'FlipOptions', 'IrisOptions', 'ZoomOptions',
 ]);
 
 // Type-checking the declarations takes a few seconds on CI runners.
