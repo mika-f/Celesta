@@ -210,9 +210,11 @@ covered by the dated handoff notes.
   dropped. Text cache keys include the loaded-font count. React host child
   insertion must move existing children rather than duplicate them.
 - Group clips follow the group's transform and intersect through nested
-  clips. GPU clip nesting is limited to eight levels. General group masks
-  are not implemented. Distance scaling is exact for uniform scales and
-  approximate for non-uniform scales.
+  clips. GPU clip nesting is limited to eight levels. Distance scaling is
+  exact for uniform scales and approximate for non-uniform scales.
+- `<Group mask>` / `<Mask>` show a group's children where another subtree
+  draws, by alpha or luminance, optionally inverted. Masked groups are
+  always isolated, in the GPU and CPU renderers and in `@celesta/web`.
 - Paths use SVG-style absolute commands with non-zero fill and stroked
   outlines. Their position is the origin; anchors are ignored. Ordinary GPU
   paths use tiled coverage; tiles exceeding 64 edges or paths exceeding the

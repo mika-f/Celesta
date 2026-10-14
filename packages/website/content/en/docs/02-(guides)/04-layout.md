@@ -139,3 +139,18 @@ Give a `Group` a `clip` to draw its children only inside a rectangle, `{ x, y, w
   </Text>
 </Group>
 ```
+
+## Mask a group
+
+Give a `Group` a `mask` to show its children only where another drawing is: text, a path, an image, or a whole subtree, in the group’s own coordinates. The mask is never shown itself. Wrap it in `<Mask mode="luminance" invert>` to use its brightness instead of its alpha, or to show the children where the mask is not drawn. A masked group is isolated, so its children’s blend modes mix only with each other, and its blur, shadow, and glow follow the cut-out shape. Masks draw the same in preview, export, and the browser editor.
+
+```tsx title="Stripes inside letters"
+<Group mask={
+  <Text x={960} y={540} anchorX={0.5} anchorY={0.5}
+    style={{ fontSize: 360, fontWeight: 900 }}>
+    CELESTA
+  </Text>
+}>
+  <Stripes />
+</Group>
+```

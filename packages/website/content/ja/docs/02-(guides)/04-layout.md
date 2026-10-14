@@ -139,3 +139,18 @@ const ripple = defineShader({
   </Text>
 </Group>
 ```
+
+## グループをマスクする
+
+`Group` に `mask` を指定すると、別に描いたもの（テキスト、パス、画像、部分木全体）がある場所にだけ子を表示します。マスクはグループの座標系に置かれ、それ自体は表示されません。`<Mask mode="luminance" invert>` で包むと、alpha の代わりに明るさで表示したり、マスクのない場所に表示したりできます。マスクしたグループは分離されるため、子の描画モードは子どうしでだけ混ざり、ぼかし・影・光彩は切り抜いた形に付きます。マスクはプレビュー、書き出し、ブラウザのエディタで同じように描かれます。
+
+```tsx title="文字の中のストライプ"
+<Group mask={
+  <Text x={960} y={540} anchorX={0.5} anchorY={0.5}
+    style={{ fontSize: 360, fontWeight: 900 }}>
+    CELESTA
+  </Text>
+}>
+  <Stripes />
+</Group>
+```

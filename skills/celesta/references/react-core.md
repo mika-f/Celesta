@@ -311,6 +311,7 @@ group's `x`/`y`, and its rotation, scale, and opacity apply to all of them.
 | --- | --- |
 | `lang` | Default text language for the children (inherited, overridable). |
 | `clip` | `{ x, y, width, height, cornerRadius }`: draw the children only inside this rectangle. `x`/`y` (default `0`) are its top-left corner and `cornerRadius` (default `0`) rounds it, both in the group's own coordinates, so the clip moves, scales, and rotates with the group. |
+| `mask` | A drawing (or `<Mask mode invert>`) that decides where the children show; see "Masks" below. |
 
 Use `clip` for a mask reveal (text sliding up from behind an invisible edge),
 a wipe, or content scrolling inside a panel. The edge is anti-aliased, and
@@ -328,6 +329,42 @@ are drawn together first, and the result blends with what is beneath the
 group as one layer, faded by the group's `opacity`. A HUD that must stay
 readable over light and dark scenes can be drawn in a light color inside
 `<Group blendMode="difference">`.
+
+### Masks
+
+`<Group mask={…}>` shows the children only where the mask is drawn: text,
+a path, an image, or any subtree, positioned in the group's own coordinates.
+The mask itself is never shown. `<Mask>` sets how it is read, and works as
+the prop's value or as a direct child of the `<Group>`:
+
+```tsx
+<Group mask={<Text style={{ fontSize: 360, fontWeight: 900 }}>CELESTA</Text>}>
+  <Video src="./clip.mp4" />
+</Group>
+
+<Group>
+  <Mask mode="luminance" invert>
+    <Circle x={960} y={540} anchorX={0.5} anchorY={0.5} radius={r} fill="#ffffff" blur={24} />
+  </Mask>
+  <SceneB />
+</Group>
+```
+
+- `mode="alpha"` (default) uses the mask's alpha. `mode="luminance"` uses
+  `(0.2126 R + 0.7152 G + 0.0722 B) × A` of its sRGB values. `invert` flips
+  the mask.
+- Where the mask draws nothing, nothing shows. `mask={null}` or
+  `mask={false}` turns the mask off, and an empty `<Mask />` hides the group.
+  Toggling the mask keeps the children's layer ids and state.
+- A masked group is isolated, like one with a blend mode: children's blend
+  modes mix only with each other. Its blur, shadow, and glow apply after the
+  mask, so they follow the cut-out shape. Its `opacity` and `blendMode`
+  apply once to the result.
+- The group's `clip` limits the children, not the mask.
+- `<Mask>` only works directly in a `<Group>` (not in `<Sequence>` or
+  `<FreezeFrame>`), and a group takes one mask.
+- Audio inside a mask plays normally.
+- Masks draw the same in preview, export, and `@celesta/web`.
 
 ## Image
 
