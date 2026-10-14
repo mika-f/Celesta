@@ -94,7 +94,7 @@ Every visual layer (`Rect`, `Circle`, `Ellipse`, `Text`, `Group`, `Image`, `Vide
 | `anchorX`, `anchorY` | `0` | Normalized pivot: `0` left/top, `0.5` center, `1` right/bottom. Positioning, rotation, and scale all use it. |
 | `rotation` | `0` | Degrees, clockwise. |
 | `scale` | `1` | Uniform scale. `scaleX`/`scaleY` override one axis. |
-| `opacity` | `1` | `0`–`1`; multiplies down through groups. |
+| `opacity` | `1` | `0`–`1`; multiplies down through groups. A `Group` below 1 fades as one picture. |
 | `blendMode` | `'normal'` | How the layer combines with what is beneath it: `'normal'`, `'multiply'`, `'screen'`, `'overlay'`, `'add'`, or `'difference'`, as in CSS `mix-blend-mode`. |
 | `blur` | `0` | Gaussian blur radius in output pixels, from 0 to 64. |
 | `shadow` | none | `{ color, blur, offsetX, offsetY }`; hex color, 0–64 px blur, output-pixel offsets. |
@@ -329,6 +329,12 @@ are drawn together first, and the result blends with what is beneath the
 group as one layer, faded by the group's `opacity`. A HUD that must stay
 readable over light and dark scenes can be drawn in a light color inside
 `<Group blendMode="difference">`.
+
+An `opacity` below 1 isolates the group too, as CSS `opacity` does: a scene
+fading in over another fades as one picture, and its card does not let its
+own backdrop show through. Children's blend modes then mix only with each
+other. A group whose only child is one shape (not a `Group` or
+`<Instances>`) blended `'normal'` just passes its opacity to that child.
 
 ### Masks
 

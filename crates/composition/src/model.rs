@@ -34,17 +34,51 @@ pub struct Layer {
     pub id: String,
     pub transform: EvaluatedTransform,
     /// 1 when left out, as the React bridge leaves it out of compact frames.
+    /// A `Group` below 1 fades as one picture; see `isolates_group`.
     #[serde(default = "full_opacity")]
     pub opacity: f64,
     /// How the layer's pixels combine with what is already drawn beneath
-    /// it. A `Group` with a mode other than `Normal` is isolated: its
-    /// children composite onto a transparent layer first, and that result
-    /// blends with the backdrop as one layer.
+    /// it. A `Group` with a mode other than `Normal` blends as one layer;
+    /// see `isolates_group`.
     #[serde(default, skip_serializing_if = "BlendMode::is_normal")]
     pub blend_mode: BlendMode,
     #[serde(default, skip_serializing_if = "LayerEffects::is_empty")]
     pub effects: LayerEffects,
     pub content: LayerContent,
+}
+
+impl Layer {
+    /// Whether this `Group` is isolated: its children composite onto a
+    /// transparent layer first, and that result blends with the backdrop
+    /// as one layer through the group's opacity and blend mode. A group
+    /// with a mask, a mode other than `Normal`, or an opacity below 1 is,
+    /// so its overlapping children fade together, as under CSS `opacity`,
+    /// instead of each letting the ones beneath show through. A group whose
+    /// only child is one shape (not a `Group` or `Instances`) blended
+    /// `Normal` is not: that child just takes the group's opacity as well.
+    /// Any other layer is never isolated as a group.
+    pub fn isolates_group(&self) -> bool {
+        let LayerContent::Group { layers, mask, .. } = &self.content else {
+            return false;
+        };
+        if mask.is_some() || !self.blend_mode.is_normal() {
+            return true;
+        }
+        if self.opacity >= 1.0 {
+            return false;
+        }
+        match layers.as_slice() {
+            [] => false,
+            [child] => {
+                !child.blend_mode.is_normal()
+                    || matches!(
+                        child.content,
+                        LayerContent::Group { .. } | LayerContent::Instances { .. }
+                    )
+            }
+            _ => true,
+        }
+    }
 }
 
 /// Effects applied to the composited pixels of one visual layer or group.

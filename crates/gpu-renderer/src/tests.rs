@@ -564,6 +564,102 @@ fn blends_layers_and_isolated_groups_like_the_cpu_renderer() {
         .unwrap();
 }
 
+/// A scene fading in over another, as a cross-fade draws it: its backing,
+/// a card over it, a nested translucent group, a lone shape, and a lone
+/// blended child, each in a group at partial opacity.
+fn fade_scene() -> Scene {
+    let mut scene = empty_scene(24, 16);
+    scene.layers = vec![
+        blend_rect("previous", 0.0, 0.0, 24.0, "#22314f", BlendMode::Normal),
+        blend_group(
+            0.5,
+            BlendMode::Normal,
+            vec![
+                blend_rect("backing", 0.0, 0.0, 24.0, "#f2e8d5", BlendMode::Normal),
+                blend_rect("card", 2.0, 2.0, 8.0, "#c0392b", BlendMode::Normal),
+                blend_group(
+                    0.6,
+                    BlendMode::Normal,
+                    vec![
+                        blend_rect("under", 12.0, 2.0, 6.0, "#3c6382", BlendMode::Normal),
+                        blend_rect("over", 14.0, 4.0, 6.0, "#f8c291a0", BlendMode::Normal),
+                    ],
+                ),
+                blend_group(
+                    0.7,
+                    BlendMode::Normal,
+                    vec![blend_rect(
+                        "lone",
+                        2.0,
+                        11.0,
+                        4.0,
+                        "#6ab04c",
+                        BlendMode::Normal,
+                    )],
+                ),
+                blend_group(
+                    0.7,
+                    BlendMode::Normal,
+                    vec![blend_rect(
+                        "blended",
+                        8.0,
+                        11.0,
+                        4.0,
+                        "#e0e0e0",
+                        BlendMode::Difference,
+                    )],
+                ),
+            ],
+        ),
+    ];
+    scene
+}
+
+#[test]
+fn fades_translucent_groups_as_one_layer_like_the_cpu_renderer() {
+    let Some(mut renderer) = renderer(GpuRenderOptions {
+        background: Color::rgba(10, 20, 30, 255),
+        ..GpuRenderOptions::default()
+    }) else {
+        return;
+    };
+    let scene = fade_scene();
+    let draws = renderer.prepare_draws(&scene).unwrap();
+    assert!(draws.composite.is_some(), "the groups are not isolated");
+
+    let expected = celesta_renderer::CpuRenderer::new(celesta_renderer::RenderOptions {
+        background: celesta_renderer::Color::rgba(10, 20, 30, 255),
+    })
+    .render(&scene)
+    .unwrap();
+    let frame = renderer.render(&scene).unwrap();
+    for (index, (gpu, cpu)) in frame
+        .pixels()
+        .chunks_exact(4)
+        .zip(expected.pixels().chunks_exact(4))
+        .enumerate()
+    {
+        let close = gpu
+            .iter()
+            .zip(cpu)
+            .all(|(gpu, cpu)| gpu.abs_diff(*cpu) <= 2);
+        assert!(
+            close,
+            "pixel ({}, {}): GPU {gpu:?}, CPU {cpu:?}",
+            index % 24,
+            index / 24,
+        );
+    }
+    // The card covers the backing: half of it over the previous scene.
+    let card = &frame.pixels()[(4 * 24 + 4) * 4..][..4];
+    for (channel, (card, expected)) in card.iter().zip([113, 53, 61]).enumerate() {
+        assert!(
+            card.abs_diff(expected) <= 2,
+            "card channel {channel}: {card}, not {expected}"
+        );
+    }
+}
+
 #[test]
 fn shades_rects_like_the_cpu_rasterizer() {
     let Some(mut renderer) = renderer(GpuRenderOptions {

@@ -8,7 +8,7 @@ The canvas origin is the top-left corner, measured in pixels. A layer’s `x` an
   rotation={12} scale={0.8} opacity={0.9} fill="#a68bbf" />
 ```
 
-`scaleX` and `scaleY` override `scale` on one axis. `opacity` multiplies down through groups.
+`scaleX` and `scaleY` override `scale` on one axis. `opacity` multiplies down through groups. A `Group` below 1 fades its children together as one picture, as CSS `opacity` does, so overlapping children do not show through one another.
 
 ## Shapes
 

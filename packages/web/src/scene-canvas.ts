@@ -18,6 +18,24 @@ const blend: Record<string, GlobalCompositeOperation> = {
   overlay: 'overlay', add: 'lighter', difference: 'difference',
 };
 
+/**
+ * Whether a group draws its children onto a canvas of its own first, which
+ * then blends onto its parent as one layer: as `Layer::isolates_group` in the
+ * native renderers, a group with a mask, a blend mode other than normal, or
+ * an opacity below 1, unless its only child is one shape (not a group)
+ * blended normally.
+ */
+function isolatesGroup(layer: WebLayer): boolean {
+  const content = layer.content;
+  if (content.type !== 'group') return false;
+  if (content.mask || (layer.blendMode ?? 'normal') !== 'normal') return true;
+  if (layer.opacity >= 1) return false;
+  const [child, ...rest] = content.layers;
+  if (!child) return false;
+  if (rest.length > 0) return true;
+  return (child.blendMode ?? 'normal') !== 'normal' || child.content.type === 'group';
+}
+
 function paint(ctx: Context, value: Paint, x = 0, y = 0): string | CanvasGradient {
   if (value.type === 'solid') return value.color;
   const gradient = value.type === 'linear'
@@ -515,7 +533,7 @@ export class SceneCanvas {
     }
     if (content.type === 'group') {
       let target = ctx;
-      if (mode !== 'source-over') target = this.surface(ctx);
+      if (isolatesGroup(layer)) target = this.surface(ctx);
       target.save();
       const clip = content.clip;
       if (clip) {

@@ -182,6 +182,52 @@ test('a masked group draws its children and its mask apart, then keeps the child
   renderer.dispose();
 });
 
+test('a translucent group draws its children onto a canvas of its own and fades that once', async t => {
+  const originals = { document: globalThis.document, DOMMatrix: globalThis.DOMMatrix };
+  t.after(() => Object.assign(globalThis, originals));
+  globalThis.DOMMatrix = class { translate() { return this; } rotate() { return this; } scale() { return this; } };
+  const operations = [];
+  let nextCanvas = 0;
+  const canvas = () => {
+    const element = { id: nextCanvas++, width: 2, height: 1, getContext() { return context; } };
+    const context = {
+      canvas: element, globalAlpha: 1, filter: 'none', globalCompositeOperation: 'source-over',
+      save() {}, restore() {}, setTransform() {}, fillRect() {}, beginPath() {}, roundRect() {},
+      fill() { operations.push(['fill', element.id, this.globalAlpha, this.fillStyle]); },
+      drawImage(source) { operations.push(['composite', element.id, this.globalAlpha, source.id, this.globalCompositeOperation]); },
+    };
+    return element;
+  };
+  globalThis.document = { fonts: new Set(), createElement: canvas };
+  const renderer = new SceneCanvas(new Map());
+  const transform = { position: { x: 0, y: 0 }, scale: { x: 1, y: 1 }, anchor: { x: 0, y: 0 }, rotation: 0 };
+  const rect = (color, blendMode) => ({ opacity: 1, transform, blendMode, content: { type: 'rect', width: 1, height: 1, cornerRadius: 0, fill: { type: 'solid', color } } });
+  const output = canvas();
+  const draw = async layers => {
+    operations.length = 0;
+    await renderer.draw(output, { width: 2, height: 1, layers: [{ opacity: 0.5, transform, content: { type: 'group', layers } }] });
+  };
+
+  // Overlapping children draw opaque onto the group's canvas, which reaches
+  // the output once, at the group's opacity.
+  await draw([rect('#fff'), rect('#f00')]);
+  const fills = operations.filter(([kind]) => kind === 'fill');
+  assert.deepEqual(fills.map(([, id, alpha, color]) => [alpha, color]), [[1, '#fff'], [1, '#f00']]);
+  assert.notEqual(fills[0][1], output.id);
+  assert.deepEqual(operations.filter(([kind, id]) => kind === 'composite' && id === output.id), [['composite', output.id, 0.5, fills[0][1], 'source-over']]);
+
+  // A lone shape just takes the group's opacity.
+  await draw([rect('#f00')]);
+  assert.deepEqual(operations, [['fill', output.id, 0.5, '#f00']]);
+
+  // A lone blended child blends with the group's own canvas.
+  await draw([rect('#f00', 'multiply')]);
+  const [fill] = operations.filter(([kind]) => kind === 'fill');
+  assert.notEqual(fill[1], output.id);
+  assert.deepEqual(operations.filter(([kind, id]) => kind === 'composite' && id === output.id), [['composite', output.id, 0.5, fill[1], 'source-over']]);
+  renderer.dispose();
+});
+
 test('a vignette spans the layer\'s shapes as the GPU renderer places them', async t => {
   const originals = { document: globalThis.document, DOMMatrix: globalThis.DOMMatrix, DOMPoint: globalThis.DOMPoint };
   t.after(() => Object.assign(globalThis, originals));

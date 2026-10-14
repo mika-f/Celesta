@@ -42,6 +42,12 @@ export interface CommonProps {
   anchorX?: number;
   /** Vertical pivot: 0 top, 1 bottom, 0.5 centre. Defaults to 0. See `anchorX`. */
   anchorY?: number;
+  /**
+   * 0–1, multiplied down through groups. A `Group` below 1 is isolated like
+   * one with a `blendMode`, as under CSS `opacity`: its children composite
+   * together first and fade as one layer, so overlapping children do not
+   * show through one another.
+   */
   opacity?: number;
   /**
    * How the object's pixels combine with what is drawn beneath it, like CSS

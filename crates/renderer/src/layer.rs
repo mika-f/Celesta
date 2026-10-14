@@ -84,7 +84,7 @@ impl CpuRenderer {
                 if let Some(mask) = mask {
                     return self.render_masked_group(frame, layers, mask, &state, child_state);
                 }
-                if !layer.blend_mode.is_normal() {
+                if layer.isolates_group() {
                     // The children carry the clip; the layer itself does not.
                     return self.render_isolated(
                         frame,
@@ -99,7 +99,8 @@ impl CpuRenderer {
                     );
                 }
                 // Not isolated: each child composites straight onto the
-                // backdrop, through its own blend mode.
+                // backdrop, through its own blend mode and the group's
+                // opacity.
                 for child in layers {
                     self.render_layer(frame, child, child_state.clone())?;
                 }

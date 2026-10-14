@@ -202,8 +202,11 @@ covered by the dated handoff notes.
   advance width, including leading/trailing spaces. Multiline text retains
   its layout box. Baseline anchoring uses the first line's baseline.
 - Blend modes operate on non-premultiplied color values. Groups with a
-  non-normal blend mode are isolated, and their opacity applies to the
-  composited group. GPU isolation uses pooled canvases bounded to the affected
+  non-normal blend mode or an opacity below 1 are isolated, and their opacity
+  applies to the composited group, as CSS `opacity` does; a group whose only
+  child is one non-group, non-instances shape blended normally passes its
+  opacity down instead (`Layer::isolates_group`, mirrored in `@celesta/web`).
+  GPU isolation uses pooled canvases bounded to the affected
   region, with a scene-sized root canvas for blending/effects.
 - Consecutive layers sharing a texture can batch into an instanced draw.
   Textures are cached across frames by their inputs; unused entries are

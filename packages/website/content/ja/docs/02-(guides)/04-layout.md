@@ -8,7 +8,7 @@
   rotation={12} scale={0.8} opacity={0.9} fill="#a68bbf" />
 ```
 
-`scaleX` と `scaleY` は各軸の `scale` を上書きします。`opacity` はグループを通じて乗算されます。
+`scaleX` と `scaleY` は各軸の `scale` を上書きします。`opacity` はグループを通じて乗算されます。1 未満の `Group` は、CSS の `opacity` と同じく子をまとめて一枚の絵として半透明にするため、重なった子どうしが透けて見えることはありません。
 
 ## 図形
 

@@ -70,9 +70,9 @@ the composition's size. `@celesta/transitions` now depends on
 playground's Vite aliases resolve them from source, so the layout context
 is shared.
 
-## Not done
+## Follow-up
 
-- A normal-blend `Group`'s `opacity` is not isolated, so overlapping
-  children of a fading scene fade separately. This applies to the old
-  `crossfade` and every new type that fades. It was left for its own
-  issue.
+- A normal-blend `Group`'s `opacity` was not isolated, so overlapping
+  children of a fading scene faded separately. mika-f/Celesta#356 isolates
+  every group below opacity 1, so the scenes of `crossfade` and every type
+  that fades now fade as one picture.

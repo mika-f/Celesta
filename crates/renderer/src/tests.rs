@@ -1480,6 +1480,81 @@ fn blends_an_isolated_group_as_one_layer() {
 }
 
 #[test]
+fn fades_a_translucent_group_as_one_layer() {
+    let render = |layers: Vec<Layer>| {
+        let scene = Scene {
+            width: 4,
+            height: 1,
+            frame_rate: Rational::new(30, 1),
+            time: Time::ZERO,
+            fonts: Vec::new(),
+            layers: vec![
+                rect_layer("gray", 0.0, 4.0, "#808080", BlendMode::Normal),
+                Layer {
+                    id: "group".to_owned(),
+                    transform: EvaluatedTransform {
+                        anchor: Point { x: 0.0, y: 0.0 },
+                        ..EvaluatedTransform::default()
+                    },
+                    opacity: 0.5,
+                    blend_mode: BlendMode::Normal,
+                    effects: Default::default(),
+                    content: LayerContent::Group {
+                        layers,
+                        clip: None,
+                        mask: None,
+                    },
+                },
+            ],
+            shaders: Vec::new(),
+        };
+        CpuRenderer::new(RenderOptions {
+            background: Color::rgba(0, 0, 0, 255),
+        })
+        .render(&scene)
+        .unwrap()
+    };
+    let faded = |color: Color| {
+        let mut destination = [128, 128, 128, 255];
+        blend(&mut destination, color, 0.5);
+        destination.to_vec()
+    };
+    let white = Color::rgba(255, 255, 255, 255);
+    let red = Color::rgba(255, 0, 0, 255);
+
+    // The white backing does not show through the red card over it.
+    let frame = render(vec![
+        rect_layer("white", 0.0, 3.0, "#ffffff", BlendMode::Normal),
+        rect_layer("red", 1.0, 1.0, "#ff0000", BlendMode::Normal),
+    ]);
+    let pixel = |x: usize| frame.pixels()[x * 4..x * 4 + 4].to_vec();
+    assert_eq!(pixel(0), faded(white));
+    assert_eq!(pixel(1), faded(red));
+    assert_eq!(pixel(3), [128, 128, 128, 255]);
+
+    // A lone shape just takes the group's opacity as well.
+    let frame = render(vec![rect_layer(
+        "red",
+        1.0,
+        1.0,
+        "#ff0000",
+        BlendMode::Normal,
+    )]);
+    assert_eq!(frame.pixels()[4..8], faded(red));
+
+    // A lone blended child blends with the group's own transparent layer,
+    // so it composites unchanged, rather than multiplying the gray.
+    let frame = render(vec![rect_layer(
+        "red",
+        1.0,
+        1.0,
+        "#ff0000",
+        BlendMode::Multiply,
+    )]);
+    assert_eq!(frame.pixels()[4..8], faded(red));
+}
+
+#[test]
 fn decodes_and_draws_a_real_image() {
     let scene = Scene {
         width: 2,

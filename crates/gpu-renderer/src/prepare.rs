@@ -492,7 +492,7 @@ impl GpuRenderer {
                     ));
                     return Ok(());
                 }
-                if blend_mode.is_normal() {
+                if !layer.isolates_group() {
                     for child in layers {
                         self.prepare_layer(child, child_state, output)?;
                     }
