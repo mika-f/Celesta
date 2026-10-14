@@ -164,6 +164,30 @@ test('the series size comes from width and height, then the layout bounds, then 
   assert.throws(() => groups(MIDDLE, { type: 'slide' }, { props: { height: Number.NaN } }), /height must be a positive finite number/);
 });
 
+test('in a 560 px frame, a wipe crosses the frame over every frame and a slide moves by its width', () => {
+  const frames = 20;
+  const composition = mount(() => h(Composition, { width: 1080, height: 1920, fps: FPS, durationInFrames: 40 },
+    h(Group, { x: 260, y: 400 },
+      h(TransitionSeries, { width: 560, height: 315 },
+        h(TransitionSeries.Sequence, { durationInFrames: 30 }, h(Scene, { name: 'a' })),
+        h(TransitionSeries.Transition, { type: 'wipe', durationInFrames: frames }),
+        h(TransitionSeries.Sequence, { durationInFrames: 30 }, h(Scene, { name: 'b' })),
+      ),
+    ),
+  ));
+  let previous = 0;
+  for (let frame = 0; frame < frames; frame++) {
+    const [, b] = at(composition, 10 + frame).scene.layers[0].content.layers;
+    const edge = b.content.layers[0].content.clip.width;
+    // Equal steps from the frame's left edge to its right one, never past it.
+    near(edge, (560 * (frame + 1)) / (frames + 1), `edge on frame ${frame}`);
+    assert.ok(edge > previous && edge < 560);
+    previous = edge;
+  }
+  const [, entering] = groups(MIDDLE, { type: 'slide' }, { props: { width: 560, height: 315 } });
+  assert.equal(entering.transform.position.x, -560 * 0.6);
+});
+
 test('without width and height, a series keeps drawing as it did', () => {
   const plain = groups(MIDDLE, { type: 'wipe', from: 'right' });
   const sized = groups(MIDDLE, { type: 'wipe', from: 'right' }, { props: { width: 100, height: 50 } });
