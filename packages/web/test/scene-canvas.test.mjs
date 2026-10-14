@@ -125,6 +125,63 @@ test('color filters change the layer\'s pixels before its other effects', async 
   renderer.dispose();
 });
 
+test('a masked group draws its children and its mask apart, then keeps the children where the mask is', async t => {
+  const originals = { document: globalThis.document, DOMMatrix: globalThis.DOMMatrix };
+  t.after(() => Object.assign(globalThis, originals));
+  globalThis.DOMMatrix = class { translate() { return this; } rotate() { return this; } scale() { return this; } };
+  const operations = [];
+  let nextCanvas = 0;
+  // The mask canvas reads back one opaque white pixel and one half-covered red one.
+  const read = [255, 255, 255, 255, 255, 0, 0, 128];
+  const canvas = () => {
+    const element = { id: nextCanvas++, width: 2, height: 1, getContext() { return context; } };
+    const context = {
+      canvas: element, globalAlpha: 1, filter: 'none', globalCompositeOperation: 'source-over',
+      save() {}, restore() {}, setTransform() {}, fillRect() {}, beginPath() {}, roundRect() {},
+      clip() { operations.push(['clip', element.id]); },
+      fill() { operations.push(['fill', element.id, this.globalAlpha, this.fillStyle]); },
+      getImageData() { return { data: Uint8ClampedArray.from(read) }; },
+      putImageData(image) { operations.push(['write', element.id, Array.from(image.data)]); },
+      drawImage(source) { operations.push(['composite', element.id, this.globalAlpha, source.id, this.globalCompositeOperation]); },
+    };
+    return element;
+  };
+  globalThis.document = { fonts: new Set(), createElement: canvas };
+  const renderer = new SceneCanvas(new Map());
+  const transform = { position: { x: 0, y: 0 }, scale: { x: 1, y: 1 }, anchor: { x: 0, y: 0 }, rotation: 0 };
+  const rect = color => ({ opacity: 1, transform, content: { type: 'rect', width: 1, height: 1, cornerRadius: 0, fill: { type: 'solid', color } } });
+  const group = mask => ({
+    opacity: 0.5, transform,
+    content: { type: 'group', layers: [rect('#f00')], clip: { x: 0, y: 0, width: 1, height: 1, cornerRadius: 0 }, mask },
+  });
+  const output = canvas();
+  const draw = async mask => {
+    operations.length = 0;
+    await renderer.draw(output, { width: 2, height: 1, layers: [group(mask)] });
+    const child = operations.find(([kind, , , color]) => kind === 'fill' && color === '#f00');
+    const matte = operations.find(([kind, , , color]) => kind === 'fill' && color === '#fff');
+    return { child, matte };
+  };
+
+  const { child, matte } = await draw({ layers: [rect('#fff')] });
+  // Both draw at full opacity; only the children are clipped.
+  assert.equal(child[2], 1);
+  assert.equal(matte[2], 1);
+  assert.deepEqual(operations.filter(([kind]) => kind === 'clip').map(([, id]) => id), [child[1]]);
+  assert.deepEqual(operations.filter(([kind, id]) => kind === 'composite' && id === child[1]), [['composite', child[1], 1, matte[1], 'destination-in']]);
+  // The masked result reaches the output once, at the group's opacity.
+  assert.deepEqual(operations.filter(([kind, id]) => kind === 'composite' && id === output.id), [['composite', output.id, 0.5, child[1], 'source-over']]);
+  assert.ok(!operations.some(([kind]) => kind === 'write'));
+
+  const inverted = await draw({ layers: [rect('#fff')], invert: true });
+  assert.deepEqual(operations.filter(([kind, id]) => kind === 'composite' && id === inverted.child[1]).map(([, , , , mode]) => mode), ['destination-out']);
+
+  // Luminance: Rec. 709 luma times alpha, written as the mask's alpha.
+  const luminance = await draw({ layers: [rect('#fff')], mode: 'luminance' });
+  assert.deepEqual(operations.filter(([kind]) => kind === 'write'), [['write', luminance.matte[1], [0, 0, 0, 255, 0, 0, 0, 27]]]);
+  renderer.dispose();
+});
+
 test('a vignette spans the layer\'s shapes as the GPU renderer places them', async t => {
   const originals = { document: globalThis.document, DOMMatrix: globalThis.DOMMatrix, DOMPoint: globalThis.DOMPoint };
   t.after(() => Object.assign(globalThis, originals));
@@ -169,6 +226,14 @@ test('a vignette spans the layer\'s shapes as the GPU renderer places them', asy
   const hidden = { ...rect, opacity: 0, transform: at(-50, -50) };
   const scaled = text('A', at(100.25, 0, { scale: { x: 2, y: 2 } }));
   assert.deepEqual(await box({ opacity: 1, transform: at(0, 0), content: { type: 'group', layers: [rect, hidden, scaled] } }), [0, 0, 120.25, 20]);
+  // A masked group: where its children and its mask meet, or its children
+  // alone when the mask is inverted, as the GPU plans it.
+  const matte = { ...rect, transform: at(5, 5) };
+  const masked = mask => ({ opacity: 1, transform: at(0, 0), content: { type: 'group', layers: [rect], mask } });
+  assert.deepEqual(await box(masked({ layers: [matte] })), [5, 5, 10, 10]);
+  assert.deepEqual(await box(masked({ layers: [matte], invert: true })), [0, 0, 10, 10]);
+  assert.equal(await box(masked({ layers: [{ ...rect, transform: at(50, 50) }] })), null);
+  assert.equal(await box(masked({ layers: [] })), null);
   // A path: its points, control points included, grown by half the stroke;
   // a path that does not start with moveTo draws from 0,0.
   const stroke = { width: 4, paint: { type: 'solid', color: '#fff' } };

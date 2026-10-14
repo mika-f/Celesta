@@ -42,6 +42,34 @@ export function canvasDash(dash: LineDash | null | undefined): { pattern: number
   return { pattern: lengths, offset: ((offset % period) + period) % period };
 }
 
+/**
+ * Multiplies every pixel of `shown` by the mask value `matte` gives there:
+ * its alpha, or with `'luminance'` the Rec. 709 luma of its straight sRGB
+ * color times its alpha (`mask.wgsl` in the GPU renderer), or one minus
+ * either when inverted. `matte` is turned into an alpha mask in place.
+ */
+function applyMask(shown: Context, matte: Context, mode: 'alpha' | 'luminance', invert: boolean): void {
+  if (mode === 'luminance') {
+    const { width, height } = matte.canvas;
+    const pixels = matte.getImageData(0, 0, width, height);
+    const data = pixels.data;
+    for (let i = 0; i < data.length; i += 4) {
+      const luma = 0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2];
+      data[i + 3] = Math.round(luma * data[i + 3] / 255);
+      data[i] = data[i + 1] = data[i + 2] = 0;
+    }
+    matte.putImageData(pixels, 0, 0);
+  }
+  shown.save();
+  shown.setTransform(1, 0, 0, 1, 0, 0);
+  shown.globalAlpha = 1;
+  shown.filter = 'none';
+  // Kept where the mask is drawn, or where it is not.
+  shown.globalCompositeOperation = invert ? 'destination-out' : 'destination-in';
+  shown.drawImage(matte.canvas, 0, 0);
+  shown.restore();
+}
+
 type Region = { start: number; end: number; x: number; width: number };
 type RunSegment = { text: string; left: number; right: number; rtl: boolean; run?: FontRun };
 
@@ -456,6 +484,35 @@ export class SceneCanvas {
       source.canvas.width = result.canvas.width = 0;
       return;
     }
+    if (content.type === 'group' && content.mask) {
+      // Always isolated, as in the native renderers: the children, which
+      // carry the group's clip, and the mask, drawn without any clip, each
+      // onto a canvas of their own. The children shown through the mask
+      // then draw onto the parent once, through the parent's clips.
+      const shown = this.surface(ctx);
+      shown.save();
+      if (content.clip) {
+        const clip = content.clip;
+        shown.setTransform(matrix);
+        shown.beginPath();
+        shown.roundRect(clip.x, clip.y, clip.width, clip.height, clip.cornerRadius ?? 0);
+        shown.clip();
+      }
+      for (const child of content.layers) await this.layer(shown, child as WebLayer, matrix, 1);
+      shown.restore();
+      const matte = this.surface(ctx);
+      for (const child of content.mask.layers) await this.layer(matte, child as WebLayer, matrix, 1);
+      applyMask(shown, matte, content.mask.mode ?? 'alpha', content.mask.invert === true);
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.globalAlpha = alpha;
+      ctx.globalCompositeOperation = mode;
+      ctx.filter = 'none';
+      ctx.drawImage(shown.canvas, 0, 0);
+      ctx.restore();
+      shown.canvas.width = matte.canvas.width = 0;
+      return;
+    }
     if (content.type === 'group') {
       let target = ctx;
       if (mode !== 'source-over') target = this.surface(ctx);
@@ -671,12 +728,22 @@ export class SceneCanvas {
     if (!(opacity * layer.opacity > 0)) return null;
     const content = layer.content;
     if (content.type === 'group') {
-      let union: Box | null = null;
-      for (const child of content.layers) {
-        const box = await this.shapeBox(ctx, child as WebLayer, matrix, opacity * layer.opacity);
-        if (box) union = union ? [Math.min(union[0], box[0]), Math.min(union[1], box[1]), Math.max(union[2], box[2]), Math.max(union[3], box[3])] : box;
-      }
-      return union;
+      const union = async (layers: Layer[], alpha: number): Promise<Box | null> => {
+        let result: Box | null = null;
+        for (const child of layers) {
+          const box = await this.shapeBox(ctx, child as WebLayer, matrix, alpha);
+          if (box) result = result ? [Math.min(result[0], box[0]), Math.min(result[1], box[1]), Math.max(result[2], box[2]), Math.max(result[3], box[3])] : box;
+        }
+        return result;
+      };
+      const children = await union(content.layers, opacity * layer.opacity);
+      // As the GPU plans a mask: the children show only where the mask
+      // draws, or anywhere they are when it is inverted.
+      if (!content.mask || content.mask.invert || !children) return children;
+      const mask = await union(content.mask.layers, 1);
+      if (!mask) return null;
+      const box: Box = [Math.max(children[0], mask[0]), Math.max(children[1], mask[1]), Math.min(children[2], mask[2]), Math.min(children[3], mask[3])];
+      return box[0] < box[2] && box[1] < box[3] ? box : null;
     }
     // Corners of a box in the layer's own units, placed by `matrix`.
     const place = (left: number, top: number, right: number, bottom: number, align = false): Box => {
