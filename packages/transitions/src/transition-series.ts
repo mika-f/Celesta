@@ -65,7 +65,13 @@ function definitionOf(type: unknown, index: number): TransitionDefinition | null
   if (isTransitionDefinition(type)) {
     return type;
   }
-  const shown = typeof type === 'string' ? JSON.stringify(type) : typeof type === 'function' ? 'a function' : String(type);
+  // A transition function passed without calling it, such as `iris`.
+  const shown =
+    typeof type === 'string'
+      ? JSON.stringify(type)
+      : typeof type === 'function'
+        ? `a function${type.name ? ` (call it: ${type.name}())` : ''}`
+        : String(type);
   throw new Error(
     `transition series item ${index} has unknown type ${shown}; expected ${TYPES.join(', ')}, ` +
       'or a transition from defineTransition()',
