@@ -247,6 +247,45 @@ export default function Root() {
     );
 }
 
+#[test]
+fn react_png_draws_a_masked_group() {
+    let runtime_path = root().join("packages/cli/dist/cli.js");
+    if !runtime_path.exists() {
+        eprintln!("skipping React mask test: build packages/cli first");
+        return;
+    }
+    let dir = tempfile::tempdir_in(root().join("packages/cli")).unwrap();
+    let entry = dir.path().join("film.tsx");
+    std::fs::write(
+        &entry,
+        r##"
+import { Composition, Group, Rect } from '@celesta/react';
+export default function Root() {
+  return <Composition width={3} height={3} fps={4} durationInFrames={1}>
+    <Group mask={<Rect width={1} height={3} fill="#ffffff" />}>
+      <Rect width={3} height={3} fill="#ff0000" />
+    </Group>
+  </Composition>;
+}
+"##,
+    )
+    .unwrap();
+    Exporter::new(ExportOptions::default())
+        .export_react_png(
+            &entry,
+            &ReactRuntimeOptions::new("node", runtime_path),
+            None,
+            &[0],
+            &dir.path().join("check.png"),
+            |_| {},
+        )
+        .unwrap();
+    let pixels = pixels(&dir.path().join("check.png"));
+    // The mask's first column shows the red; the last column does not.
+    assert_eq!(&pixels[..4], &[255, 0, 0, 255]);
+    assert_ne!(&pixels[8..12], &[255, 0, 0, 255]);
+}
+
 fn decode(path: &Path) -> (u32, u32, Vec<u8>) {
     let mut reader = png::Decoder::new(std::io::BufReader::new(std::fs::File::open(path).unwrap()))
         .read_info()
