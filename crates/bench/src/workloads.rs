@@ -11,9 +11,10 @@ use std::f64::consts::{PI, TAU};
 use std::path::{Path, PathBuf};
 
 use celesta_composition::{
-    AssetLocation, BlendMode, Clip, EvaluatedTransform, GradientStop, ImageFit, Layer,
+    AssetLocation, BlendMode, Clip, EvaluatedTransform, GradientStop, GroupMask, ImageFit, Layer,
     LayerContent, LayerEffects, LayerFilter, LayerGlow, LayerShader, LayerShadow, LineBreak,
-    LineCap, LineJoin, Paint, PathCommand, Point, Rational, ResolvedAsset, Scene, ShaderParam,
+    LineCap, LineJoin, MaskMode, Paint, PathCommand, Point, Rational, ResolvedAsset, Scene,
+    ShaderParam,
     ShaderParamType, ShaderSource, Stroke, TextStyle, Time,
 };
 use celesta_react_bridge::{ReactBridge, runtime_paths};
@@ -78,6 +79,11 @@ pub const WORKLOADS: &[Workload] = &[
         name: "shapes",
         description: "gradient rounded rects in clipped, rotated, blended groups",
         source: Source::Synthetic(shapes),
+    },
+    Workload {
+        name: "masks",
+        description: "text masking moving stripes, and a blurred circular wipe",
+        source: Source::Synthetic(masks),
     },
     Workload {
         name: "images",
@@ -595,6 +601,89 @@ fn text(canvas: &Canvas, frame: usize) -> Vec<Layer> {
         },
     ));
     layers
+}
+
+fn masks(canvas: &Canvas, frame: usize) -> Vec<Layer> {
+    let t = seconds(frame);
+    let stripes: Vec<Layer> = (0..24)
+        .map(|index| {
+            let x = (index as f64 * 90.0 + t * 240.0) % 2160.0 - 120.0;
+            layer(
+                format!("stripe-{index}"),
+                EvaluatedTransform {
+                    anchor: Point { x: 0.0, y: 0.0 },
+                    ..at(canvas.at(x, 0.0))
+                },
+                LayerContent::Rect {
+                    width: canvas.len(45.0),
+                    height: canvas.len(540.0),
+                    fill: Some(solid(if index % 2 == 0 { "#F2C14E" } else { "#4E8CF2" })),
+                    stroke: None,
+                    corner_radius: 0.0,
+                },
+            )
+        })
+        .collect();
+    let letters = layer(
+        "letters".to_owned(),
+        at(canvas.at(960.0, 270.0)),
+        LayerContent::Text {
+            text: "CELESTA".to_owned(),
+            style: Box::new(TextStyle {
+                font_size: Some(canvas.len(300.0)),
+                fill: Some(solid("#FFFFFF")),
+                ..TextStyle::default()
+            }),
+            max_width: None,
+            baseline_anchor: false,
+        },
+    );
+    let radius = canvas.len(100.0 + 400.0 * (0.5 + 0.5 * (t * PI).sin()));
+    let mut disc = layer(
+        "wipe-disc".to_owned(),
+        at(canvas.at(960.0, 810.0)),
+        LayerContent::Rect {
+            width: radius * 2.0,
+            height: radius * 2.0,
+            fill: Some(solid("#FFFFFF")),
+            stroke: None,
+            corner_radius: radius,
+        },
+    );
+    disc.effects.blur = canvas.len(24.0);
+    let masked = |id: &str, mask: Vec<Layer>, layers: Vec<Layer>| {
+        layer(
+            id.to_owned(),
+            EvaluatedTransform::default(),
+            LayerContent::Group {
+                layers,
+                clip: None,
+                mask: Some(GroupMask {
+                    layers: mask,
+                    mode: MaskMode::Alpha,
+                    invert: false,
+                }),
+            },
+        )
+    };
+    let lower = layer(
+        "lower".to_owned(),
+        EvaluatedTransform {
+            anchor: Point { x: 0.0, y: 0.0 },
+            ..at(canvas.at(0.0, 540.0))
+        },
+        LayerContent::Rect {
+            width: canvas.len(1920.0),
+            height: canvas.len(540.0),
+            fill: Some(solid("#E85D75")),
+            stroke: None,
+            corner_radius: 0.0,
+        },
+    );
+    vec![
+        masked("text-mask", vec![letters], stripes),
+        masked("wipe", vec![disc], vec![lower]),
+    ]
 }
 
 fn shapes(canvas: &Canvas, frame: usize) -> Vec<Layer> {
