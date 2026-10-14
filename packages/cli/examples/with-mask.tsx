@@ -1,29 +1,11 @@
-// Two uses of a group mask: moving stripes seen only through letters, then a
-// soft-edged circular wipe from one scene to the next.
-import { Composition, Group, Mask, Rect, Sequence, Text, interpolate, useCurrentFrame } from '@celesta/react';
+// Two uses of a group mask: video seen only through letters, then a
+// soft-edged circular wipe from one scene to the next. Put a clip.mp4 next
+// to this file, as for with-video.tsx.
+import { Composition, Group, Mask, Rect, Sequence, Text, Video, interpolate, useCurrentFrame } from '@celesta/react';
 import { Circle } from '@celesta/shapes';
 
 const WIDTH = 1920;
 const HEIGHT = 1080;
-
-function Stripes() {
-  const frame = useCurrentFrame();
-  return (
-    <>
-      {Array.from({ length: 26 }, (_, index) => (
-        <Rect
-          key={index}
-          x={((index * 90 + frame * 8) % 2340) - 180}
-          y={-200}
-          rotation={20}
-          width={45}
-          height={HEIGHT + 400}
-          fill={index % 2 === 0 ? '#F2C14E' : '#4E8CF2'}
-        />
-      ))}
-    </>
-  );
-}
 
 function Letters() {
   return (
@@ -36,7 +18,7 @@ function Letters() {
           </Text>
         }
       >
-        <Stripes />
+        <Video src="./clip.mp4" />
       </Group>
     </>
   );
