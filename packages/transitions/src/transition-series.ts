@@ -2,10 +2,18 @@ import * as React from 'react';
 import type { ReactNode } from 'react';
 
 import { Group, Sequence, frameKeyframes, useCurrentFrame, useVideoConfig } from '@celesta/react';
-import type { AnimatedNumber, CommonProps, GroupProps } from '@celesta/react';
+import type { AnimatedNumber, CommonProps } from '@celesta/react';
+import { useLayoutBounds } from '@celesta/layout';
 
-export type TransitionSeriesType = 'cut' | 'crossfade' | 'slide' | 'wipe';
-export type TransitionSeriesEdge = 'left' | 'right' | 'top' | 'bottom';
+import { BUILT_IN_TRANSITIONS } from './built-in-transitions';
+import { isTransitionDefinition } from './presentation';
+import type { TransitionDefinition, TransitionSceneStyle, TransitionSeriesEdge } from './presentation';
+
+/** The built-in transitions by name; each but `'cut'` is also a function of the same name with options. */
+export type TransitionSeriesType = 'cut' | keyof typeof BUILT_IN_TRANSITIONS;
+
+/** A built-in transition's name, or a transition from `defineTransition()` or one of the built-in functions. */
+export type TransitionSeriesTransitionType = TransitionSeriesType | TransitionDefinition;
 
 export interface TransitionSeriesSceneItem {
   /** Length in frames, including the frames shared with its neighbours. */
@@ -14,7 +22,7 @@ export interface TransitionSeriesSceneItem {
 }
 
 export interface TransitionSeriesTransitionItem {
-  type: TransitionSeriesType;
+  type: TransitionSeriesTransitionType;
   /**
    * Frames the scenes on either side share. A `'cut'` takes 0 (the default
    * for a cut); every other type needs a positive integer.
@@ -33,28 +41,48 @@ export interface TransitionSeriesTiming {
   durationInFrames: number;
 }
 
-const TYPES: readonly TransitionSeriesType[] = ['cut', 'crossfade', 'slide', 'wipe'];
+const TYPES: readonly TransitionSeriesType[] = [
+  'cut',
+  ...(Object.keys(BUILT_IN_TRANSITIONS) as (keyof typeof BUILT_IN_TRANSITIONS)[]),
+];
 const EDGES: readonly TransitionSeriesEdge[] = ['left', 'right', 'top', 'bottom'];
 
 function isTransition(item: TransitionSeriesItem): item is TransitionSeriesTransitionItem {
   return item.type !== undefined;
 }
 
-function transitionFrames(item: TransitionSeriesTransitionItem, index: number): number {
-  if (!TYPES.includes(item.type)) {
-    throw new Error(
-      `transition series item ${index} has unknown type ${JSON.stringify(item.type)}; expected ${TYPES.join(', ')}`,
-    );
+/**
+ * The definition `type` names, or null for a cut. Throws for anything else
+ * as `transition series item ${index}`.
+ */
+function definitionOf(type: unknown, index: number): TransitionDefinition | null {
+  if (type === 'cut') {
+    return null;
   }
+  if (typeof type === 'string' && Object.prototype.hasOwnProperty.call(BUILT_IN_TRANSITIONS, type)) {
+    return BUILT_IN_TRANSITIONS[type as keyof typeof BUILT_IN_TRANSITIONS];
+  }
+  if (isTransitionDefinition(type)) {
+    return type;
+  }
+  const shown = typeof type === 'string' ? JSON.stringify(type) : typeof type === 'function' ? 'a function' : String(type);
+  throw new Error(
+    `transition series item ${index} has unknown type ${shown}; expected ${TYPES.join(', ')}, ` +
+      'or a transition from defineTransition()',
+  );
+}
+
+function transitionFrames(item: TransitionSeriesTransitionItem, index: number): number {
+  const definition = definitionOf(item.type, index);
   const { durationInFrames } = item;
-  if (item.type === 'cut') {
+  if (definition === null) {
     if (durationInFrames !== undefined && durationInFrames !== 0) {
       throw new Error(`transition series item ${index} is a cut, which takes no frames; omit durationInFrames`);
     }
     return 0;
   }
   if (!Number.isInteger(durationInFrames) || (durationInFrames as number) <= 0) {
-    throw new Error(`transition series item ${index} (${item.type}) requires a positive integer durationInFrames`);
+    throw new Error(`transition series item ${index} (${definition.name}) requires a positive integer durationInFrames`);
   }
   return durationInFrames as number;
 }
@@ -132,13 +160,21 @@ export interface TransitionSeriesSequenceProps extends CommonProps {
 export interface TransitionSeriesTransitionProps {
   /**
    * `'cut'` (no overlap), `'crossfade'` (the next scene fades in over this
-   * one), `'slide'` (the next scene pushes this one out), or `'wipe'` (the
-   * next scene is revealed behind a moving straight edge).
+   * one), `'slide'` (the next scene pushes this one out), `'wipe'` (the
+   * next scene is revealed behind a moving straight edge), `'iris'`,
+   * `'clock-wipe'`, `'zoom'`, `'dissolve'`, `'blur'`, `'flip'`, or
+   * `'cube'`. A name uses the transition's defaults; call the function of
+   * the same name (`iris({ center })`, `clockWipe()`, …) for its options,
+   * or pass your own from `defineTransition()`.
    */
-  type: TransitionSeriesType;
+  type: TransitionSeriesTransitionType;
   /** Frames the two scenes overlap. Positive; omit it for a cut. */
   durationInFrames?: number;
-  /** Edge the next scene enters from, for `'slide'` and `'wipe'`. Defaults to `'left'`. */
+  /**
+   * Edge the next scene enters from, for `'slide'`, `'wipe'`, and `'cube'`,
+   * and the axis `'flip'` turns about. Passed to a defined transition as
+   * `from`. Defaults to `'left'`.
+   */
   from?: TransitionSeriesEdge;
   /** Shapes the transition's 0–1 progress, for example `Easings.easeInOutCubic`. Defaults to linear. */
   easing?: (progress: number) => number;
@@ -155,7 +191,8 @@ function TransitionSeriesTransition(_props: TransitionSeriesTransitionProps): ne
 }
 
 export interface TransitionSeriesSceneTransition {
-  type: TransitionSeriesType;
+  /** The built-in transition's name, or the `name` of a defined one. */
+  type: TransitionSeriesType | (string & {});
   /** Frames this scene shares with its neighbour on that side; 0 for a cut. */
   durationInFrames: number;
 }
@@ -206,7 +243,10 @@ export function useTransitionVolume(volume = 1): AnimatedNumber {
   return frameKeyframes(keys, { fps });
 }
 
-interface SceneEdgeTransition extends TransitionSeriesSceneTransition {
+interface SceneEdgeTransition {
+  /** Null for a cut. */
+  definition: TransitionDefinition | null;
+  durationInFrames: number;
   from: TransitionSeriesEdge;
   easing: (progress: number) => number;
 }
@@ -225,67 +265,89 @@ function present(
   side: 'enter' | 'exit',
   width: number,
   height: number,
-): GroupProps {
-  const progress = transition.easing((frame + 1) / (transition.durationInFrames + 1));
-  const sign = transition.from === 'left' || transition.from === 'top' ? -1 : 1;
-  const horizontal = transition.from === 'left' || transition.from === 'right';
-  switch (transition.type) {
-    case 'crossfade':
-      return side === 'enter' ? { opacity: Math.min(1, Math.max(0, progress)) } : {};
-    case 'slide': {
-      // At progress 0 the entering scene would sit one frame width (or
-      // height) off the edge it comes from; the leaving one moves the same
-      // distance the other way.
-      const offset = side === 'enter' ? sign * (1 - progress) : -sign * progress;
-      return horizontal ? { x: offset * width } : { y: offset * height };
-    }
-    case 'wipe': {
-      if (side === 'exit') return {};
-      // The strip from the far edge ends exactly on it: size - size * shown.
-      const shown = Math.min(1, Math.max(0, progress));
-      if (horizontal) {
-        const strip = width * shown;
-        return { clip: { x: sign < 0 ? 0 : width - strip, y: 0, width: strip, height } };
-      }
-      const strip = height * shown;
-      return { clip: { x: 0, y: sign < 0 ? 0 : height - strip, width, height: strip } };
-    }
-    default:
-      return {};
+): TransitionSceneStyle {
+  const { definition, durationInFrames, from } = transition;
+  if (definition === null) {
+    return {};
   }
+  const progress = transition.easing((frame + 1) / (durationInFrames + 1));
+  const presentation = definition.present({ progress, frame, durationInFrames, from, width, height });
+  if (presentation === null || typeof presentation !== 'object') {
+    throw new Error(`transition ${definition.name}'s present must return an object with enter and exit styles`);
+  }
+  const style = presentation[side];
+  if (style === undefined) {
+    return {};
+  }
+  if (style === null || typeof style !== 'object') {
+    throw new Error(`transition ${definition.name}'s ${side} style must be an object of Group props`);
+  }
+  if ('children' in style) {
+    throw new Error(`transition ${definition.name}'s ${side} style cannot set children`);
+  }
+  return style;
 }
 
 function SceneFrame({
   enter,
   exit,
   durationInFrames,
+  width,
+  height,
   children,
 }: {
   enter: SceneEdgeTransition | null;
   exit: SceneEdgeTransition | null;
   durationInFrames: number;
+  width: number;
+  height: number;
   children?: ReactNode;
 }): ReturnType<typeof React.createElement> {
   const frame = useCurrentFrame();
-  const { width, height } = useVideoConfig();
   const exitStart = durationInFrames - (exit?.durationInFrames ?? 0);
   // computeTransitionSeries keeps a scene's transitions in and out apart, so
   // at most one of them applies on any frame. The group is kept even when
-  // idle so layer ids inside do not change as transitions start and end.
-  const props =
+  // idle so layer ids inside do not change as transitions start and end;
+  // a style's `mask` goes after the children for the same reason.
+  const style =
     enter && frame < enter.durationInFrames
       ? present(enter, frame, 'enter', width, height)
       : exit && exit.durationInFrames > 0 && frame >= exitStart
         ? present(exit, frame - exitStart, 'exit', width, height)
         : {};
-  return React.createElement(Group, props, children);
+  return React.createElement(Group, style, children);
 }
 
 export interface TransitionSeriesProps {
+  /**
+   * The width transitions move and cut the scenes across: how far a
+   * `'slide'` pushes, where a `'wipe'` ends, where an `'iris'` centres, and
+   * the `width` a defined transition gets. Set it, with `height`, when the
+   * series plays in a frame smaller than the composition, positioned by an
+   * enclosing `Group`. Defaults to the enclosing `<SafeArea>`'s or `<Fit>`'s
+   * width (see `useLayoutBounds()` in `@celesta/layout`), or the
+   * composition's.
+   */
+  width?: number;
+  /** The height transitions use, as `width`. */
+  height?: number;
   children?: ReactNode;
 }
 
-function TransitionSeriesRoot({ children }: TransitionSeriesProps): ReturnType<typeof React.createElement> {
+function dimension(value: number | undefined, fallback: number, label: string): number {
+  if (value === undefined) return fallback;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    throw new Error(`<TransitionSeries> ${label} must be a positive finite number`);
+  }
+  return value;
+}
+
+function TransitionSeriesRoot({ width, height, children }: TransitionSeriesProps): ReturnType<typeof React.createElement> {
+  const bounds = useLayoutBounds();
+  const size = {
+    width: dimension(width, bounds.width, 'width'),
+    height: dimension(height, bounds.height, 'height'),
+  };
   const elements: React.ReactElement<TransitionSeriesSequenceProps | TransitionSeriesTransitionProps>[] = [];
   React.Children.forEach(children, (child) => {
     if (child === null || child === undefined || typeof child === 'boolean') {
@@ -303,7 +365,7 @@ function TransitionSeriesRoot({ children }: TransitionSeriesProps): ReturnType<t
     if (element.type === TransitionSeriesTransition) {
       const { type, durationInFrames } = element.props as TransitionSeriesTransitionProps;
       // A missing `type` must not read as a scene.
-      return { type: type ?? ('' as TransitionSeriesType), durationInFrames };
+      return { type: type ?? ('' as TransitionSeriesTransitionType), durationInFrames };
     }
     return { durationInFrames: (element.props as TransitionSeriesSequenceProps).durationInFrames };
   });
@@ -321,8 +383,10 @@ function TransitionSeriesRoot({ children }: TransitionSeriesProps): ReturnType<t
     if (!EDGES.includes(from)) {
       throw new Error(`transition series item ${index} has unknown from ${JSON.stringify(from)}; expected ${EDGES.join(', ')}`);
     }
-    return { type, durationInFrames: durationInFrames ?? 0, from, easing };
+    return { definition: definitionOf(type, index), durationInFrames: durationInFrames ?? 0, from, easing };
   };
+  const described = (edge: SceneEdgeTransition | null): TransitionSeriesSceneTransition | null =>
+    edge && { type: edge.definition?.name ?? 'cut', durationInFrames: edge.durationInFrames };
 
   const scenes: React.ReactElement[] = [];
   elements.forEach((element, index) => {
@@ -335,8 +399,8 @@ function TransitionSeriesRoot({ children }: TransitionSeriesProps): ReturnType<t
     const { durationInFrames, children: inner, ...props } = element.props as TransitionSeriesSequenceProps;
     const scene: TransitionSeriesScene = {
       index: sceneIndex,
-      enter: enter && { type: enter.type, durationInFrames: enter.durationInFrames },
-      exit: exit && { type: exit.type, durationInFrames: exit.durationInFrames },
+      enter: described(enter),
+      exit: described(exit),
     };
     scenes.push(
       React.createElement(
@@ -345,7 +409,7 @@ function TransitionSeriesRoot({ children }: TransitionSeriesProps): ReturnType<t
         React.createElement(
           SceneContext.Provider,
           { value: scene },
-          React.createElement(SceneFrame, { enter, exit, durationInFrames }, inner),
+          React.createElement(SceneFrame, { enter, exit, durationInFrames, ...size }, inner),
         ),
       ),
     );

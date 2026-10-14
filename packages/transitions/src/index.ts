@@ -8,7 +8,6 @@ export type {
 
 export { TransitionSeries, computeTransitionSeries, useTransitionSeriesScene, useTransitionVolume } from './transition-series';
 export type {
-  TransitionSeriesEdge,
   TransitionSeriesItem,
   TransitionSeriesProps,
   TransitionSeriesScene,
@@ -18,5 +17,27 @@ export type {
   TransitionSeriesTiming,
   TransitionSeriesTransitionItem,
   TransitionSeriesTransitionProps,
+  TransitionSeriesTransitionType,
   TransitionSeriesType,
 } from './transition-series';
+
+export { defineTransition } from './presentation';
+export type {
+  TransitionDefinition,
+  TransitionPresentation,
+  TransitionPresentInput,
+  TransitionSceneStyle,
+  TransitionSeriesEdge,
+} from './presentation';
+
+export { blur, clockWipe, crossfade, cube, dissolve, flip, iris, slide, wipe, zoom } from './built-in-transitions';
+export type {
+  BlurOptions,
+  ClockWipeOptions,
+  CubeOptions,
+  DissolveOptions,
+  FlipOptions,
+  IrisOptions,
+  TransitionCenter,
+  ZoomOptions,
+} from './built-in-transitions';

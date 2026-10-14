@@ -17,6 +17,9 @@
   },
   "include": ["src"],
   "references": [
-    { "path": "../react" }
+    { "path": "../react" },
+    { "path": "../layout" },
+    { "path": "../math" },
+    { "path": "../shapes" }
   ]
 }

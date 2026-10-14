@@ -22,12 +22,18 @@
     "test": "vitest run",
     "clean": "rm -rf dist"
   },
+  "dependencies": {
+    "@celesta/layout": "workspace:*",
+    "@celesta/math": "workspace:*",
+    "@celesta/shapes": "workspace:*"
+  },
   "peerDependencies": {
     "@celesta/react": "0.0.0",
     "react": "^19.3.0"
   },
   "devDependencies": {
     "@celesta/react": "workspace:*",
+    "@celesta/shader": "workspace:*",
     "@types/node": "^24.13.6",
     "@types/react": "^19.3.0",
     "react": "^19.3.0",
