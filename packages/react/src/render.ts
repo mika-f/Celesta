@@ -26,11 +26,13 @@ import type {
   CompositionConfig,
   CompositionInfo,
   EvaluatedTransform,
+  GroupMask,
   KeyframeAnimation,
   Layer,
   LayerContent,
   LayerFilter,
   LineDash,
+  MaskMode,
   Paint,
   PathCommand,
   ResolvedAsset,
@@ -53,6 +55,7 @@ const HOST_TYPES = new Set([
   'asset-audio',
   'asset-font',
   'group',
+  'mask',
   'image',
   'instances',
   'static',
@@ -380,6 +383,28 @@ function extractClip(value: unknown): Clip | undefined {
   };
 }
 
+const MASK_MODES: readonly MaskMode[] = ['alpha', 'luminance'];
+
+/** A group's `<Mask>` host child as the scene's `GroupMask`. */
+function buildMask(node: HostNode, path: string, context: WalkContext, audio: AudioClipDescriptor[]): GroupMask {
+  const mode = extractMaskMode(node.props.mode);
+  return {
+    layers: walkChildren(node, path, context, audio),
+    ...(mode !== 'alpha' ? { mode } : {}),
+    ...(node.props.invert === true ? { invert: true } : {}),
+  };
+}
+
+function extractMaskMode(value: unknown): MaskMode {
+  if (value === undefined) {
+    return 'alpha';
+  }
+  if (!MASK_MODES.includes(value as MaskMode)) {
+    throw new Error(`unknown mask mode ${JSON.stringify(value)}; expected one of ${MASK_MODES.join(', ')}`);
+  }
+  return value as MaskMode;
+}
+
 function resolveAsset(src: unknown): ResolvedAsset {
   const reference =
     src && typeof src === 'object' && 'current' in src
@@ -494,6 +519,7 @@ function recordBuiltLayers(context: WalkContext, layers: readonly Layer[], node:
     }
     if (layer.content.type === 'group') {
       recordBuiltLayers(context, layer.content.layers, node);
+      if (layer.content.mask) recordBuiltLayers(context, layer.content.mask.layers, node);
     }
   }
 }
@@ -521,10 +547,25 @@ function buildLayer(
   let content: LayerContent;
   if (node.type === 'group' || node.type === 'sequence') {
     const clip = node.type === 'group' ? extractClip(props.clip) : undefined;
+    let mask: GroupMask | undefined;
+    // Siblings in order, so audio is collected in the order the audio-only
+    // walk collects it.
+    const layers = node.children.flatMap((child, index) => {
+      const childPath = [path, index].join('.');
+      if (node.type === 'group' && child.type === 'mask') {
+        if (mask) {
+          throw new Error('a <Group> takes at most one mask');
+        }
+        mask = buildMask(child, childPath, context, audio);
+        return [];
+      }
+      return walkNode(child, childPath, context, audio);
+    });
     content = {
       type: 'group',
-      layers: walkChildren(node, path, context, audio),
+      layers,
       ...(clip ? { clip } : {}),
+      ...(mask ? { mask } : {}),
     };
   } else if (node.type === 'freeze-frame') {
     // Frozen children are always silent: their audio goes nowhere.
@@ -564,6 +605,7 @@ function buildLayer(
     content = hostElement(node.type)!.content!(node, hostWalk(id, context, audio));
     if (content.type === 'group') {
       recordBuiltLayers(context, content.layers, node);
+      if (content.mask) recordBuiltLayers(context, content.mask.layers, node);
     }
   } else if (node.type === 'text') {
     const maxWidth = props.maxWidth;
@@ -1024,6 +1066,14 @@ function walkNode(
     recordBuiltLayers(context, layers, node);
     return layers;
   }
+  if (node.type === 'mask') {
+    // A group's mask is taken out by buildLayer; anywhere else is misplaced.
+    // The audio-only walk does not check placement, the visual one does.
+    if (audioOnly) {
+      return walkChildren(node, path, context, audio, true);
+    }
+    throw new Error('`<Mask>` must be a direct child of `<Group>`');
+  }
   if (
     node.type === 'assets' ||
     node.type === 'asset-image' ||
@@ -1169,7 +1219,14 @@ function inheritTextLanguage(layers: Layer[], lang?: string): Layer[] {
       return { ...layer, content: { ...content, style: withTextLanguage(content.style, lang) } };
     }
     if (content.type === 'group') {
-      return { ...layer, content: { ...content, layers: inheritTextLanguage(content.layers, lang) } };
+      return {
+        ...layer,
+        content: {
+          ...content,
+          layers: inheritTextLanguage(content.layers, lang),
+          ...(content.mask ? { mask: { ...content.mask, layers: inheritTextLanguage(content.mask.layers, lang) } } : {}),
+        },
+      };
     }
     return layer;
   });

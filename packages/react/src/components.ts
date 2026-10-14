@@ -112,6 +112,14 @@ export interface ClipRect {
   cornerRadius?: number;
 }
 
+export interface MaskProps {
+  /** What decides visibility: the mask's alpha (default) or its luminance. */
+  mode?: 'alpha' | 'luminance';
+  /** Shows the group where the mask is not drawn instead. Defaults to false. */
+  invert?: boolean;
+  children?: ReactNode;
+}
+
 export interface GroupProps extends CommonProps {
   /** Default text language within this group; inherited when omitted. */
   lang?: string;
@@ -123,6 +131,14 @@ export interface GroupProps extends CommonProps {
    * hides the children.
    */
   clip?: ClipRect;
+  /**
+   * Shows the children only where this is drawn: by its alpha, or as a
+   * `<Mask>` element sets. Drawn in the group's own coordinate space and
+   * never shown itself. `null`, `undefined`, and booleans mean no mask; an
+   * empty `<Mask />` hides the group (shows it whole when inverted).
+   * Masking isolates the group, like a blend mode other than `'normal'`.
+   */
+  mask?: ReactNode;
   children?: ReactNode;
 }
 
@@ -387,13 +403,40 @@ export function Composition(props: CompositionProps): ReturnType<typeof React.cr
   );
 }
 
-export function Group(props: GroupProps): ReturnType<typeof React.createElement> {
+export function Group({ mask, children, ...props }: GroupProps): ReturnType<typeof React.createElement> {
   const runtime = React.useContext(CompositionRuntimeContext);
   const lang = resolveTextLanguage(props.lang, runtime?.lang);
-  const element = React.createElement('group', props);
+  // The mask goes after the children, always in the same slot, so turning it
+  // on or off changes neither their tree-path ids nor their state. The
+  // fragment keeps React from asking the children, often a static list, for
+  // keys.
+  const element = React.createElement(
+    'group',
+    props,
+    React.createElement(React.Fragment, null, children),
+    maskElement(mask),
+  );
   return runtime && props.lang !== undefined
     ? React.createElement(CompositionRuntimeContext.Provider, { value: { ...runtime, lang } }, element)
     : element;
+}
+
+/** A `mask` prop as a `<Mask>` element, or null without a mask. */
+function maskElement(mask: ReactNode): ReactNode {
+  if (mask === null || mask === undefined || typeof mask === 'boolean') {
+    return null;
+  }
+  return React.isValidElement(mask) && mask.type === Mask ? mask : React.createElement(Mask, null, mask);
+}
+
+/**
+ * Decides, per pixel, how much of the enclosing `<Group>` shows: by alpha, or
+ * by luminance with `mode="luminance"`. Put it directly in a `<Group>`, or
+ * pass it as the group's `mask` prop. Its children are positioned in the
+ * group's coordinate space and never shown themselves.
+ */
+export function Mask(props: MaskProps): ReturnType<typeof React.createElement> {
+  return React.createElement('mask', props);
 }
 
 export const Image = React.forwardRef<AssetReference, ImageProps>(function Image(props, ref) {

@@ -20,6 +20,9 @@ function render(request) {
         <Group id="group" x={3} rotation={10} anchorX={0.5} anchorY={0.5}>
           <Rect id="centred" x={1} y={2} scale={2} anchorX={0.5} anchorY={0.5} width={4} height={4} />
         </Group>
+        <Group id="masked" mask={<Rect id="matte" x={5} y={6} width={1} height={1} fill="#ffffff" />}>
+          <Rect id="child" width={1} height={1} fill="#ff0000" />
+        </Group>
       </Composition>;
     }
   `);
@@ -62,6 +65,16 @@ test('compactTransforms also leaves out full opacity and square corners', () => 
   assert.equal('cornerRadius' in plain.content, false);
   assert.equal(faded.opacity, 0.5);
   assert.equal(faded.content.cornerRadius, 2);
+});
+
+test('compactTransforms reaches the layers of a mask', () => {
+  const [, , , masked] = render({ time: { value: 0, timescale: 1 }, compactTransforms: true });
+  // React's default anchor is the top-left corner, Rust's is the centre.
+  assert.deepEqual(masked.content.layers[0].transform, { anchor: { x: 0, y: 0 } });
+  assert.deepEqual(masked.content.mask.layers[0].transform, {
+    position: { x: 5, y: 6 },
+    anchor: { x: 0, y: 0 },
+  });
 });
 
 test('frames requested without compactTransforms keep opacity and corner radius', () => {
