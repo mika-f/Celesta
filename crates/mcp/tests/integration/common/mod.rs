@@ -1,5 +1,4 @@
 //! Starts the built `celesta-mcp` and talks to it as an MCP client.
-#![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
 

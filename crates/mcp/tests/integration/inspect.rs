@@ -1,6 +1,4 @@
-mod common;
-
-use common::{call, client, entry, is_error, root, runtime_built, structured, text};
+use crate::common::{call, client, entry, is_error, root, runtime_built, structured, text};
 use serde_json::json;
 
 const RECT: &str = r##"

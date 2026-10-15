@@ -1,8 +1,6 @@
-mod common;
-
 use std::collections::BTreeSet;
 
-use common::{call, client, is_error, runtime_built, structured, text};
+use crate::common::{call, client, is_error, runtime_built, structured, text};
 use serde_json::json;
 
 #[tokio::test]
