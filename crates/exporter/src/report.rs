@@ -116,6 +116,9 @@ enum Output {
     Subtitles {
         path: PathBuf,
         format: &'static str,
+        /// The language of its `<Subtitles lang>` cues, when they have one.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        lang: Option<String>,
         cues: usize,
     },
     ContactSheet {
@@ -320,9 +323,15 @@ fn output(file: ExportedFile, frame_rate: Option<Rational>) -> Output {
             frame,
             time: seconds(frame, rate),
         },
-        ExportedFile::Subtitles { path, format, cues } => Output::Subtitles {
+        ExportedFile::Subtitles {
+            path,
+            format,
+            lang,
+            cues,
+        } => Output::Subtitles {
             path: absolute(&path),
             format: format.as_str(),
+            lang,
             cues,
         },
         ExportedFile::ContactSheet {
@@ -395,6 +404,23 @@ fn error_report(error: &ExportError, hints: HintStyle) -> ErrorReport {
         ExportError::UnsupportedSubtitles(_) => (
             "unsupported_subtitles",
             Some("write subtitles to a .srt or .vtt path"),
+        ),
+        ExportError::SubtitleLanguages { languages, .. } => (
+            "subtitle_languages",
+            Some(if languages.is_empty() {
+                "give <Subtitles> a lang, or leave {lang} out of the path"
+            } else {
+                "put {lang} in the path, such as film.{lang}.srt, to write one file per language"
+            }),
+        ),
+        ExportError::DuplicateOutput(_) => ("duplicate_output", None),
+        ExportError::NothingToExport => (
+            "nothing_to_export",
+            Some(if cli {
+                "give an <OUTPUT> file, --subtitles, or both"
+            } else {
+                "give output, subtitles, or both"
+            }),
         ),
         ExportError::EncoderUnavailable { .. } => ("encoder_unavailable", None),
         ExportError::UnsupportedDimensions { .. } => (

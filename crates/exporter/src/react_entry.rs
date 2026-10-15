@@ -9,6 +9,7 @@ use crate::subtitles;
 use celesta_composition::Time;
 use celesta_media::{AudioMixError, FfmpegBackend, mix_audio_graph_cancellable};
 use celesta_project::Project;
+use celesta_react_bridge::ReactCompositionMetadata;
 use std::path::Path;
 use std::{fs, io};
 
@@ -137,9 +138,7 @@ impl Exporter {
             self.options.overwrite,
         )?;
         ensure_encoders(self.options.video_format)?;
-        if let Some(path) = &self.options.subtitles {
-            subtitles::check_output(path, self.options.overwrite)?;
-        }
+        subtitles::check_outputs(&self.options.subtitles, self.options.overwrite)?;
 
         // Absolutize the asset roots up front: `absolutize_layers` and
         // `build_audio_graph` rewrite relative asset paths into absolute ones
@@ -167,36 +166,14 @@ impl Exporter {
                 .map(|(project, root)| (*project, root.as_path())),
         )?;
         let metadata = bridge.metadata().clone();
-        progress(ExportProgress::ReactCompositions {
-            selected: metadata.composition_id.clone(),
-            compositions: metadata.compositions.clone(),
-        });
-        progress(ExportProgress::Composition(CompositionInfo {
-            width: metadata.width,
-            height: metadata.height,
-            frame_rate: metadata.frame_rate,
-            frames: metadata.duration_in_frames,
-        }));
+        report_compositions(&metadata, &mut progress);
         validate_dimensions(metadata.width, metadata.height)?;
-        if metadata.duration_in_frames == 0 {
-            return Err(ExportError::EmptyTimeline);
-        }
-
-        let (start_frame, frame_count, window_start) = match self.options.range {
-            None => (0, metadata.duration_in_frames, Time::ZERO),
-            Some(range) => {
-                let full = Time::frames(
-                    i64::try_from(metadata.duration_in_frames)
-                        .map_err(|_| ExportError::TimelineTooLong)?,
-                    metadata.frame_rate,
-                )
-                .map_err(ExportError::Time)?;
-                let window = resolve_window(&range, full, metadata.frame_rate)?;
-                let start_frame =
-                    u64::try_from(window.start_frame).map_err(|_| ExportError::TimelineTooLong)?;
-                (start_frame, window.frames, window.start)
-            }
-        };
+        let Span {
+            start_frame,
+            frame_count,
+            window_start,
+            duration,
+        } = self.react_span(&metadata)?;
 
         // Video frames stream into a staged file first; every frame's
         // response reports the `<Audio>` clips its tree declares (see
@@ -234,12 +211,19 @@ impl Exporter {
             &mut progress,
         )?;
         ensure_not_cancelled(cancellation)?;
+        // The languages a `{lang}` path writes are known only now; their
+        // files are checked before the video is published.
+        let subtitle_files = if self.options.subtitles.is_empty() {
+            Vec::new()
+        } else {
+            let window = subtitles::Window::new(window_start, duration)?;
+            subtitles::files(
+                &self.options.subtitles,
+                &subtitles::react_cues(&react_subtitles, window),
+                self.options.overwrite,
+            )?
+        };
 
-        let duration = Time::frames(
-            i64::try_from(frame_count).map_err(|_| ExportError::TimelineTooLong)?,
-            metadata.frame_rate,
-        )
-        .map_err(ExportError::Time)?;
         let graph = build_audio_graph(&react_audio, asset_root, project_refs)?;
         let audio = !graph.clips.is_empty();
         let output_file = if !audio {
@@ -296,17 +280,103 @@ impl Exporter {
             audio,
             format: self.options.video_format,
         }));
-        if let Some(path) = &self.options.subtitles {
-            let window = subtitles::Window {
-                start: window_start.as_seconds().map_err(ExportError::Time)?,
-                duration: duration.as_seconds().map_err(ExportError::Time)?,
-            };
-            self.write_subtitles(
-                path,
-                &subtitles::react_cues(&react_subtitles, window),
-                &mut progress,
-            )?;
-        }
-        Ok(())
+        self.write_subtitles(&subtitle_files, &mut progress)
     }
+
+    /// Writes a React entry's `ExportOptions::subtitles` without rendering
+    /// anything: the `<Subtitles>` cues and `<Dialogue>` lines a video export
+    /// of the same span would write. `companion` is the entry's
+    /// `<ProjectTimeline />` project, as for a video.
+    pub fn export_react_subtitles(
+        &self,
+        entry: impl AsRef<Path>,
+        react_runtime: &ReactRuntimeOptions,
+        companion: Option<CompanionProject<'_>>,
+        cancellation: &ExportCancellation,
+        mut progress: impl FnMut(ExportProgress),
+    ) -> Result<(), ExportError> {
+        ensure_not_cancelled(cancellation)?;
+        if self.options.subtitles.is_empty() {
+            return Err(ExportError::NothingToExport);
+        }
+        subtitles::check_outputs(&self.options.subtitles, self.options.overwrite)?;
+        let mut bridge = react_runtime.spawn(
+            entry.as_ref(),
+            companion.map(|companion| (companion.project, companion.project_asset_root)),
+        )?;
+        let metadata = bridge.metadata().clone();
+        report_compositions(&metadata, &mut progress);
+        let span = self.react_span(&metadata)?;
+        let reports = bridge
+            .collect_subtitles(span.start_frame, span.frame_count)
+            .map_err(ExportError::React)?;
+        ensure_not_cancelled(cancellation)?;
+        let window = subtitles::Window::new(span.window_start, span.duration)?;
+        let files = subtitles::files(
+            &self.options.subtitles,
+            &subtitles::react_cues(&reports, window),
+            self.options.overwrite,
+        )?;
+        self.write_subtitles(&files, &mut progress)
+    }
+
+    /// The frames of the composition `metadata` describes that the export
+    /// covers: all of them, or `ExportOptions::range`.
+    fn react_span(&self, metadata: &ReactCompositionMetadata) -> Result<Span, ExportError> {
+        if metadata.duration_in_frames == 0 {
+            return Err(ExportError::EmptyTimeline);
+        }
+        let (start_frame, frame_count, window_start) = match self.options.range {
+            None => (0, metadata.duration_in_frames, Time::ZERO),
+            Some(range) => {
+                let full = Time::frames(
+                    i64::try_from(metadata.duration_in_frames)
+                        .map_err(|_| ExportError::TimelineTooLong)?,
+                    metadata.frame_rate,
+                )
+                .map_err(ExportError::Time)?;
+                let window = resolve_window(&range, full, metadata.frame_rate)?;
+                let start_frame =
+                    u64::try_from(window.start_frame).map_err(|_| ExportError::TimelineTooLong)?;
+                (start_frame, window.frames, window.start)
+            }
+        };
+        let duration = Time::frames(
+            i64::try_from(frame_count).map_err(|_| ExportError::TimelineTooLong)?,
+            metadata.frame_rate,
+        )
+        .map_err(ExportError::Time)?;
+        Ok(Span {
+            start_frame,
+            frame_count,
+            window_start,
+            duration,
+        })
+    }
+}
+
+/// The exported frames of a React composition.
+struct Span {
+    start_frame: u64,
+    frame_count: u64,
+    /// Composition time of `start_frame`.
+    window_start: Time,
+    /// The length of `frame_count` frames.
+    duration: Time,
+}
+
+fn report_compositions(
+    metadata: &ReactCompositionMetadata,
+    progress: &mut impl FnMut(ExportProgress),
+) {
+    progress(ExportProgress::ReactCompositions {
+        selected: metadata.composition_id.clone(),
+        compositions: metadata.compositions.clone(),
+    });
+    progress(ExportProgress::Composition(CompositionInfo {
+        width: metadata.width,
+        height: metadata.height,
+        frame_rate: metadata.frame_rate,
+        frames: metadata.duration_in_frames,
+    }));
 }

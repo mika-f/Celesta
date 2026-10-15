@@ -50,10 +50,12 @@ pub enum ExportedFile {
         audio: bool,
         format: VideoFormat,
     },
-    /// The subtitle file beside a video, with its number of cues.
+    /// A subtitle file, with its number of cues and the language of its
+    /// `<Subtitles lang>` cues, when they have one.
     Subtitles {
         path: PathBuf,
         format: SubtitleFormat,
+        lang: Option<String>,
         cues: usize,
     },
     /// One PNG of composition frame `frame`.

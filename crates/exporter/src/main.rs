@@ -1,5 +1,5 @@
 use std::num::{NonZeroU32, NonZeroU64};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::builder::{PossibleValuesParser, TypedValueParser};
@@ -14,8 +14,8 @@ mod progress;
 use celesta_composition::Time;
 use celesta_exporter::{
     BitDepth, ColorConversion, ContactSheet, EncoderPreset, ExportCancellation, ExportError,
-    ExportJob, ExportOptions, ExportProgress, ExportRange, FrameSelection, GpuDriver, PngExport,
-    ReactRuntimeOptions, RenderQuality, VideoEncoding, VideoFormat, parse_timecode,
+    ExportJob, ExportOptions, ExportProgress, ExportRange, ExportedFile, FrameSelection, GpuDriver,
+    PngExport, ReactRuntimeOptions, RenderQuality, VideoEncoding, VideoFormat, parse_timecode,
 };
 use celesta_react_bridge::{PropsFileChoice, resolve_props_file};
 
@@ -26,7 +26,11 @@ span of the composition to export (the output starts at its own 00:00).
 --subtitles writes a video's subtitles beside it as SRT (.srt) or WebVTT
 (.vtt): a React entry's <Subtitles> cues and <Dialogue> lines, or a
 project's dialogue items, each for as long as it is shown. With --from/--to
-the times start at the span's start, and cues are cut to the span.
+the times start at the span's start, and cues are cut to the span. Repeat it
+to write several files. A path with {lang}, such as 'film.{lang}.vtt', is
+written once per <Subtitles lang>, with that language's cues and the ones
+without a lang; quote it in the shell. Without <OUTPUT>, only the subtitle
+files are written, and nothing is rendered.
 
 PNG output is selected by --frame/--frames or --every. Multiple frames use
 output-000090.png names; frame numbers are zero-based. --every <n> picks
@@ -67,8 +71,8 @@ struct Cli {
     /// The project (.celesta.json), or with --react the entry (.tsx), to export.
     source: PathBuf,
     /// The .mp4, .mov (ProRes 4444 with alpha) or .webm (VP9 with alpha) file to
-    /// write, or the .png file for frame exports.
-    #[arg(required_unless_present = "inspect")]
+    /// write, or the .png file for frame exports. Optional with --subtitles.
+    #[arg(required_unless_present_any = ["inspect", "subtitles"])]
     output: Option<PathBuf>,
     /// Evaluate frames requested on stdin as JSON lines instead of exporting.
     #[arg(
@@ -113,9 +117,10 @@ struct Cli {
     /// Export up to (excluding) this timecode.
     #[arg(long, value_name = "TIMECODE", value_parser = parse_timecode)]
     to: Option<Time>,
-    /// Also write the video's subtitles to this .srt or .vtt file.
+    /// Also write the video's subtitles to this .srt or .vtt file; repeatable.
+    /// {lang} in the path writes one file per <Subtitles lang>.
     #[arg(long, value_name = "FILE")]
-    subtitles: Option<PathBuf>,
+    subtitles: Vec<PathBuf>,
     /// Export these zero-based frames as PNG; repeatable and comma-separated.
     #[arg(
         long = "frame",
@@ -211,18 +216,33 @@ struct Cli {
 }
 
 impl Cli {
-    fn output(&self) -> &Path {
-        self.output
-            .as_deref()
-            .expect("clap requires <OUTPUT> without --inspect")
-    }
-
     fn video(&self) -> VideoEncoding {
         VideoEncoding {
             preset: self.preset,
             crf: self.crf,
             color_conversion: self.color_conversion,
             bit_depth: self.bit_depth,
+        }
+    }
+}
+
+/// What an export writes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Target {
+    /// PNG stills of the selected frames.
+    Png,
+    /// A video, with any --subtitles files.
+    Video(VideoFormat),
+    /// Only the --subtitles files; nothing renders.
+    Subtitles,
+}
+
+impl Target {
+    /// The video format, or the default where nothing is encoded.
+    fn video_format(self) -> VideoFormat {
+        match self {
+            Self::Video(format) => format,
+            Self::Png | Self::Subtitles => VideoFormat::default(),
         }
     }
 }
@@ -281,14 +301,14 @@ fn main() -> ExitCode {
             "--runtime and --node require --inspect",
         );
     }
-    let format = output_choice(&cli, &|id| {
+    let target = output_choice(&cli, &|id| {
         matches.value_source(id) == Some(ValueSource::CommandLine)
     })
     .unwrap_or_else(|error| usage_error(cli.json, ErrorKind::ArgumentConflict, &error));
     let range = export_range(cli.from, cli.to)
         .unwrap_or_else(|error| usage_error(cli.json, ErrorKind::ValueValidation, &error));
     let export =
-        |on_progress: &mut dyn FnMut(ExportProgress)| export(&cli, format, range, on_progress);
+        |on_progress: &mut dyn FnMut(ExportProgress)| export(&cli, target, range, on_progress);
     // JSON projects carry their own properties, so only React exports have a props file.
     let props_file = cli
         .react
@@ -301,19 +321,35 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         };
     }
+    let Some(output) = cli.output.as_deref() else {
+        // Nothing renders, so there is no progress to show.
+        return match export(&mut |event| match event {
+            ExportProgress::Wrote(ExportedFile::Subtitles { path, .. }) => {
+                eprintln!("wrote {}", path.display());
+            }
+            ExportProgress::Warning(warning) => eprintln!("warning: {warning}"),
+            _ => {}
+        }) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                eprintln!("Celesta export: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    };
     let settings = progress::Settings {
         source: &cli.source,
-        output: cli.output(),
+        output,
         react: cli.react,
-        png: format.is_none(),
-        format: format.unwrap_or_default(),
+        png: target == Target::Png,
+        format: target.video_format(),
         video: cli.video(),
         render_quality: cli.render_quality,
         props: props_file.as_ref().map(props_label),
     };
     match progress::run(settings, cli.no_ui, export) {
         Ok(()) => {
-            eprintln!("export complete: {}", cli.output().display());
+            eprintln!("export complete: {}", output.display());
             ExitCode::SUCCESS
         }
         Err(error) => {
@@ -384,13 +420,33 @@ fn usage_error(json: bool, kind: ErrorKind, message: &str) -> ! {
     error.exit()
 }
 
-/// The video format `cli` exports, or `None` for PNG stills, checking the
-/// combinations of selection, format and encoder flags clap cannot express.
-/// `explicit` tells whether the argument with that id was given on the command line.
-fn output_choice(
-    cli: &Cli,
-    explicit: &dyn Fn(&str) -> bool,
-) -> Result<Option<VideoFormat>, String> {
+/// What `cli` exports, checking the combinations of selection, format and
+/// encoder flags clap cannot express. `explicit` tells whether the argument
+/// with that id was given on the command line.
+fn output_choice(cli: &Cli, explicit: &dyn Fn(&str) -> bool) -> Result<Target, String> {
+    // clap requires --subtitles without <OUTPUT>.
+    let Some(output) = cli.output.as_deref() else {
+        for (id, flag) in [
+            ("frames", "--frame"),
+            ("every", "--every"),
+            ("contact_sheet", "--contact-sheet"),
+            ("debug_guides", "--debug-guides"),
+            ("output_format", "--output-format"),
+            ("preset", "--preset"),
+            ("crf", "--crf"),
+            ("bit_depth", "--bit-depth"),
+            ("color_conversion", "--color-conversion"),
+            ("render_quality", "--render-quality"),
+            ("driver", "--driver"),
+        ] {
+            if explicit(id) {
+                return Err(format!(
+                    "{flag} needs an <OUTPUT> file; without one only the --subtitles files are written"
+                ));
+            }
+        }
+        return Ok(Target::Subtitles);
+    };
     let selected = !cli.frames.is_empty() || cli.every.is_some();
     let named = cli.output_format.and_then(OutputFormat::video);
     if (selected || cli.contact_sheet) && named.is_some() {
@@ -401,13 +457,13 @@ fn output_choice(
         return Err("PNG output requires --frame, --frames or --every".into());
     }
     if png {
-        if cli.subtitles.is_some() {
+        if !cli.subtitles.is_empty() {
             return Err("--subtitles applies to video output, not PNG frames".into());
         }
         if cli.bit_depth != BitDepth::Eight {
             return Err("--bit-depth applies to MP4 output; PNG stills are 8-bit".into());
         }
-        return Ok(None);
+        return Ok(Target::Png);
     }
     if cli.debug_guides {
         return Err(
@@ -417,7 +473,7 @@ fn output_choice(
     // An output with no video extension is left to the exporter, which reports
     // it as `unsupported_output`; only a video extension that contradicts
     // `--output-format` is a usage error.
-    let format = match VideoFormat::from_extension(cli.output()) {
+    let format = match VideoFormat::from_extension(output) {
         Some(format) => {
             if let Some(named) = named.filter(|&named| named != format) {
                 return Err(format!(
@@ -442,12 +498,12 @@ fn output_choice(
             }
         }
     }
-    Ok(Some(format))
+    Ok(Target::Video(format))
 }
 
 fn export(
     cli: &Cli,
-    format: Option<VideoFormat>,
+    target: Target,
     range: Option<ExportRange>,
     on_progress: &mut dyn FnMut(ExportProgress),
 ) -> Result<(), ExportError> {
@@ -458,8 +514,8 @@ fn export(
         companion: cli.project.clone(),
         props_file: cli.props_file.clone(),
         props: cli.props.clone(),
-        output: cli.output().to_owned(),
-        png: format.is_none().then(|| PngExport {
+        output: cli.output.clone(),
+        png: (target == Target::Png).then(|| PngExport {
             frames: match cli.every {
                 Some(step) => FrameSelection::Every(step.get()),
                 None => FrameSelection::Frames(cli.frames.clone()),
@@ -473,7 +529,7 @@ fn export(
         options: ExportOptions {
             overwrite: cli.overwrite,
             range,
-            video_format: format.unwrap_or_default(),
+            video_format: target.video_format(),
             video: cli.video(),
             render_quality: cli.render_quality,
             driver: cli.driver,
@@ -510,7 +566,7 @@ fn export_range(start: Option<Time>, end: Option<Time>) -> Result<Option<ExportR
 mod tests {
     use super::*;
 
-    fn choice(args: &[&str]) -> Result<Option<VideoFormat>, String> {
+    fn choice(args: &[&str]) -> Result<Target, String> {
         let matches = Cli::command()
             .try_get_matches_from(
                 ["celesta-exporter", "project.celesta.json"]
@@ -530,12 +586,12 @@ mod tests {
 
     #[test]
     fn the_output_extension_selects_the_video_format() {
-        assert_eq!(choice(&["out.mov"]), Ok(Some(VideoFormat::Mov)));
-        assert_eq!(choice(&["out.WEBM"]), Ok(Some(VideoFormat::Webm)));
-        assert_eq!(choice(&["out.mp4"]), Ok(Some(VideoFormat::Mp4)));
+        assert_eq!(choice(&["out.mov"]), Ok(Target::Video(VideoFormat::Mov)));
+        assert_eq!(choice(&["out.WEBM"]), Ok(Target::Video(VideoFormat::Webm)));
+        assert_eq!(choice(&["out.mp4"]), Ok(Target::Video(VideoFormat::Mp4)));
         assert_eq!(
             choice(&["--output-format", "webm", "out.webm"]),
-            Ok(Some(VideoFormat::Webm))
+            Ok(Target::Video(VideoFormat::Webm))
         );
     }
 
@@ -547,11 +603,11 @@ mod tests {
     #[test]
     fn an_unknown_extension_is_left_to_the_exporter() {
         // The library reports it as `unsupported_output`, with its PNG hint.
-        assert_eq!(choice(&["out.gif"]), Ok(Some(VideoFormat::Mp4)));
-        assert_eq!(choice(&["out.png"]), Ok(Some(VideoFormat::Mp4)));
+        assert_eq!(choice(&["out.gif"]), Ok(Target::Video(VideoFormat::Mp4)));
+        assert_eq!(choice(&["out.png"]), Ok(Target::Video(VideoFormat::Mp4)));
         assert_eq!(
             choice(&["--output-format", "webm", "out.gif"]),
-            Ok(Some(VideoFormat::Webm))
+            Ok(Target::Video(VideoFormat::Webm))
         );
     }
 
@@ -572,7 +628,7 @@ mod tests {
         }
         assert_eq!(
             choice(&["out.mp4", "--crf", "20"]),
-            Ok(Some(VideoFormat::Mp4))
+            Ok(Target::Video(VideoFormat::Mp4))
         );
     }
 
@@ -595,7 +651,7 @@ mod tests {
 
     #[test]
     fn png_selections_keep_their_rules() {
-        assert_eq!(choice(&["--frame", "0", "out.png"]), Ok(None));
+        assert_eq!(choice(&["--frame", "0", "out.png"]), Ok(Target::Png));
         assert!(error(&["--output-format", "png", "out.png"]).contains("requires --frame"));
         assert!(error(&["--frame", "0", "--bit-depth", "10", "out.png"]).contains("--bit-depth"));
     }
@@ -604,10 +660,61 @@ mod tests {
     fn subtitles_go_with_video_only() {
         assert_eq!(
             choice(&["out.mp4", "--subtitles", "out.srt"]),
-            Ok(Some(VideoFormat::Mp4))
+            Ok(Target::Video(VideoFormat::Mp4))
         );
         assert!(
             error(&["--frame", "0", "--subtitles", "out.srt", "out.png"]).contains("--subtitles")
         );
+    }
+
+    fn parse(args: &[&str]) -> Result<Cli, clap::Error> {
+        let matches = Cli::command().try_get_matches_from(
+            ["celesta-exporter", "film.tsx"]
+                .into_iter()
+                .chain(args.iter().copied()),
+        )?;
+        Cli::from_arg_matches(&matches)
+    }
+
+    #[test]
+    fn subtitles_repeat_and_keep_their_order() {
+        let cli = parse(&[
+            "out.mp4",
+            "--subtitles",
+            "a.{lang}.srt",
+            "--subtitles",
+            "a.{lang}.vtt",
+        ])
+        .unwrap();
+        assert_eq!(
+            cli.subtitles,
+            [PathBuf::from("a.{lang}.srt"), PathBuf::from("a.{lang}.vtt")]
+        );
+    }
+
+    #[test]
+    fn subtitles_alone_need_no_output_and_render_nothing() {
+        assert!(
+            parse(&[]).is_err(),
+            "<OUTPUT> is required without --subtitles"
+        );
+        let cli = parse(&["--subtitles", "a.srt", "--subtitles", "a.vtt"]).unwrap();
+        assert_eq!(cli.output, None);
+        assert_eq!(choice(&["--subtitles", "a.srt"]), Ok(Target::Subtitles));
+        assert_eq!(
+            choice(&["--subtitles", "a.srt", "--from", "1", "--overwrite"]),
+            Ok(Target::Subtitles)
+        );
+        for (args, flag) in [
+            (["--frame", "0"], "--frame"),
+            (["--crf", "20"], "--crf"),
+            (["--output-format", "webm"], "--output-format"),
+            (["--render-quality", "draft"], "--render-quality"),
+        ] {
+            let args: Vec<&str> = ["--subtitles", "a.srt"].into_iter().chain(args).collect();
+            let message = error(&args);
+            assert!(message.contains(flag), "{message}");
+            assert!(message.contains("<OUTPUT>"), "{message}");
+        }
     }
 }

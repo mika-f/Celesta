@@ -38,6 +38,16 @@ pub enum ExportError {
     },
     /// The subtitle file's extension is neither `.srt` nor `.vtt`.
     UnsupportedSubtitles(PathBuf),
+    /// Without `{lang}`, a subtitle path would hold cues of all these
+    /// `languages`; with it, no cue is tagged with one (`languages` is empty).
+    SubtitleLanguages {
+        path: PathBuf,
+        languages: Vec<String>,
+    },
+    /// Two of the export's files are the same path.
+    DuplicateOutput(PathBuf),
+    /// Neither an output file nor a subtitle file was given.
+    NothingToExport,
     /// The linked FFmpeg build lacks an encoder `format` needs.
     EncoderUnavailable {
         format: VideoFormat,
@@ -89,6 +99,27 @@ impl fmt::Display for ExportError {
                 "subtitles must use the .srt or .vtt extension: {}",
                 path.display()
             ),
+            Self::SubtitleLanguages { path, languages } if languages.is_empty() => write!(
+                formatter,
+                "{} names a language with {{lang}}, but no <Subtitles> has a lang",
+                path.display()
+            ),
+            Self::SubtitleLanguages { path, languages } => write!(
+                formatter,
+                "{} would hold subtitles in {}; put {{lang}} in the path to write one file per language",
+                path.display(),
+                languages.join(", ")
+            ),
+            Self::DuplicateOutput(path) => {
+                write!(
+                    formatter,
+                    "two outputs write the same file: {}",
+                    path.display()
+                )
+            }
+            Self::NothingToExport => {
+                formatter.write_str("nothing to export: give an output file or a subtitle file")
+            }
             Self::EncoderUnavailable { format, encoder } => write!(
                 formatter,
                 "this FFmpeg build has no {encoder} encoder, which {format} export needs"
@@ -128,6 +159,9 @@ impl Error for ExportError {
             | Self::InvalidSelection(_)
             | Self::UnsupportedOutput { .. }
             | Self::UnsupportedSubtitles(_)
+            | Self::SubtitleLanguages { .. }
+            | Self::DuplicateOutput(_)
+            | Self::NothingToExport
             | Self::EncoderUnavailable { .. }
             | Self::UnsupportedDimensions { .. }
             | Self::InvalidCrf(_)

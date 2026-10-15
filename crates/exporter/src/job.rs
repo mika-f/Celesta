@@ -8,7 +8,8 @@ use celesta_project::Project;
 use std::path::{Path, PathBuf};
 
 /// One export as `Celesta-export` and the MCP server describe it: a JSON
-/// project or a React entry, written as PNG stills or a video (MP4, MOV or WebM).
+/// project or a React entry, written as PNG stills, a video (MP4, MOV or
+/// WebM), or only its subtitle files.
 #[derive(Clone, Debug)]
 pub struct ExportJob {
     pub source: PathBuf,
@@ -22,14 +23,15 @@ pub struct ExportJob {
     pub props_file: Option<PathBuf>,
     /// Property values as a JSON object, over `props_file`'s.
     pub props: Option<String>,
-    pub output: PathBuf,
+    /// `None` renders nothing and writes only `options.subtitles`.
+    pub output: Option<PathBuf>,
     /// `Some` writes PNG stills instead of a video.
     pub png: Option<PngExport>,
     pub options: ExportOptions,
 }
 
 impl ExportJob {
-    /// Runs the export. Only video exports check `cancellation`.
+    /// Runs the export. Only video and subtitle exports check `cancellation`.
     pub fn run(
         &self,
         cancellation: &ExportCancellation,
@@ -54,20 +56,38 @@ impl ExportJob {
             )
             .map(|runtime| runtime.with_composition(self.composition_id.clone()))
         };
+        let Some(output) = &self.output else {
+            if self.png.is_some() {
+                return Err(ExportError::InvalidSelection(
+                    "PNG frames need an output path".into(),
+                ));
+            }
+            return if self.react {
+                exporter.export_react_subtitles(
+                    &self.source,
+                    &runtime()?,
+                    companion,
+                    cancellation,
+                    progress,
+                )
+            } else {
+                exporter.export_project_subtitles(&load(&self.source)?, progress)
+            };
+        };
         match (&self.png, self.react) {
             (Some(png), true) => exporter.export_react_png_with(
                 &self.source,
                 &runtime()?,
                 companion,
                 png,
-                &self.output,
+                output,
                 progress,
             ),
             (Some(png), false) => exporter.export_project_png_with(
                 &load(&self.source)?,
                 asset_root(&self.source),
                 png,
-                &self.output,
+                output,
                 progress,
             ),
             (None, true) => {
@@ -77,14 +97,14 @@ impl ExportJob {
                         &self.source,
                         &runtime,
                         companion,
-                        &self.output,
+                        output,
                         cancellation,
                         progress,
                     ),
                     None => exporter.export_react_entry_cancellable(
                         &self.source,
                         &runtime,
-                        &self.output,
+                        output,
                         cancellation,
                         progress,
                     ),
@@ -93,7 +113,7 @@ impl ExportJob {
             (None, false) => exporter.export_project_cancellable(
                 &load(&self.source)?,
                 asset_root(&self.source),
-                &self.output,
+                output,
                 cancellation,
                 progress,
             ),

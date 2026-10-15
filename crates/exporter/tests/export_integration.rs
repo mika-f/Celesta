@@ -756,12 +756,15 @@ export default function Root() {
     );
 }
 
-#[test]
-fn writes_a_react_entrys_subtitles_shifted_to_the_exported_range() {
+/// A React entry with English cues from an SRT file and their French
+/// counterparts, both inside a sequence that starts at 0.5 s, in a
+/// temporary directory beside the runtime; `None` when the runtime is not
+/// built.
+fn bilingual_subtitle_entry() -> Option<(tempfile::TempDir, PathBuf, ReactRuntimeOptions)> {
     let runtime_path = workspace_root().join("packages/cli/dist/cli.js");
     if !runtime_path.exists() {
         eprintln!("skipping React subtitle test: build packages/cli first");
-        return;
+        return None;
     }
     let directory = tempfile::tempdir_in(workspace_root().join("packages/cli")).unwrap();
     let entry = directory.path().join("film.tsx");
@@ -779,33 +782,83 @@ fn writes_a_react_entrys_subtitles_shifted_to_the_exported_range() {
 import { Composition, Rect, Sequence, Subtitles, parseSubtitles } from '@celesta/react';
 import captions from './captions.srt';
 const cues = parseSubtitles(captions, { fps: 10 });
+const french = cues.map((cue) => ({ ...cue, text: `fr: ${cue.text}` }));
 export default function Root() {
-  return <Composition width={64} height={64} fps={10} durationInFrames={40}>
+  return <Composition width={64} height={64} fps={10} durationInFrames={40} lang="ja-JP">
     <Rect width={32} height={32} fill="#ff0000" />
-    <Sequence from={5}><Subtitles cues={cues} /></Sequence>
+    <Sequence from={5}>
+      <Subtitles lang="en" cues={cues} />
+      <Subtitles lang="fr" cues={french} />
+    </Sequence>
   </Composition>;
 }
 "##,
     )
     .unwrap();
+    Some((
+        directory,
+        entry,
+        ReactRuntimeOptions::new("node", runtime_path),
+    ))
+}
+
+/// The sequence shifts the cues by 0.5 s; a 2 s to 3.5 s range starts the
+/// files at 2 s and ends them at 3.5 s, so "Before" is never shown and the
+/// cues on either edge are cut.
+const ENGLISH_VTT: &str = "WEBVTT\n\n\
+    00:00:00.000 --> 00:00:00.500\nAcross start\n\n\
+    00:00:00.500 --> 00:00:01.000\nInside\n\n\
+    00:00:01.000 --> 00:00:01.500\nAcross end\n";
+const FRENCH_SRT: &str = "1\n00:00:00,000 --> 00:00:00,500\nfr: Across start\n\n\
+    2\n00:00:00,500 --> 00:00:01,000\nfr: Inside\n\n\
+    3\n00:00:01,000 --> 00:00:01,500\nfr: Across end\n";
+
+fn subtitle_range() -> Option<ExportRange> {
+    Some(ExportRange::new(Time::new(2, 1), Time::new(7, 2)))
+}
+
+/// The subtitle files `written` reports, as (file name, format, language,
+/// cues).
+fn written_subtitles(written: &[ExportedFile]) -> Vec<(String, &'static str, Option<&str>, usize)> {
+    written
+        .iter()
+        .filter_map(|file| match file {
+            ExportedFile::Subtitles {
+                path,
+                format,
+                lang,
+                cues,
+            } => Some((
+                path.file_name().unwrap().to_string_lossy().into_owned(),
+                format.as_str(),
+                lang.as_deref(),
+                *cues,
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn writes_a_react_entrys_subtitles_per_language_and_format_shifted_to_the_exported_range() {
+    let Some((directory, entry, runtime)) = bilingual_subtitle_entry() else {
+        return;
+    };
     let output = directory.path().join("film.mp4");
-    let subtitles = directory.path().join("film.vtt");
     let mut written = Vec::new();
     match Exporter::new(ExportOptions {
-        range: Some(ExportRange::new(Time::new(2, 1), Time::new(7, 2))),
-        subtitles: Some(subtitles.clone()),
+        range: subtitle_range(),
+        subtitles: vec![
+            directory.path().join("film.{lang}.vtt"),
+            directory.path().join("film.{lang}.srt"),
+        ],
         ..ExportOptions::default()
     })
-    .export_react_entry_with_progress(
-        &entry,
-        &ReactRuntimeOptions::new("node", runtime_path),
-        &output,
-        |event| {
-            if let ExportProgress::Wrote(file) = event {
-                written.push(file);
-            }
-        },
-    ) {
+    .export_react_entry_with_progress(&entry, &runtime, &output, |event| {
+        if let ExportProgress::Wrote(file) = event {
+            written.push(file);
+        }
+    }) {
         Ok(()) => {}
         Err(ExportError::Render(GpuRenderError::RequestAdapter(error))) => {
             eprintln!("skipping live export test: no GPU adapter is available: {error}");
@@ -814,24 +867,142 @@ export default function Root() {
         Err(error) => panic!("React subtitle export failed: {error}"),
     }
 
-    // The sequence shifts the cues by 0.5 s; the range starts the file at
-    // 2 s and ends it at 3.5 s, so "Before" is never shown and the cues on
-    // either edge are cut.
+    let read = |name: &str| std::fs::read_to_string(directory.path().join(name)).unwrap();
+    assert_eq!(read("film.en.vtt"), ENGLISH_VTT);
+    assert_eq!(read("film.fr.srt"), FRENCH_SRT);
+    assert!(read("film.fr.vtt").contains("fr: Inside"));
+    assert!(read("film.en.srt").contains("\nInside\n"));
+    assert!(
+        matches!(&written[0], ExportedFile::Video { frames: 15, .. }),
+        "{written:?}"
+    );
     assert_eq!(
-        std::fs::read_to_string(&subtitles).unwrap(),
-        "WEBVTT\n\n\
-         00:00:00.000 --> 00:00:00.500\nAcross start\n\n\
-         00:00:00.500 --> 00:00:01.000\nInside\n\n\
-         00:00:01.000 --> 00:00:01.500\nAcross end\n"
+        written_subtitles(&written),
+        [
+            ("film.en.vtt".to_owned(), "vtt", Some("en"), 3),
+            ("film.fr.vtt".to_owned(), "vtt", Some("fr"), 3),
+            ("film.en.srt".to_owned(), "srt", Some("en"), 3),
+            ("film.fr.srt".to_owned(), "srt", Some("fr"), 3),
+        ]
+    );
+}
+
+#[test]
+fn writes_a_react_entrys_subtitles_without_rendering_it() {
+    let Some((directory, entry, runtime)) = bilingual_subtitle_entry() else {
+        return;
+    };
+    let mut written = Vec::new();
+    let exporter = |subtitles: Vec<PathBuf>| {
+        Exporter::new(ExportOptions {
+            range: subtitle_range(),
+            subtitles,
+            ..ExportOptions::default()
+        })
+    };
+    exporter(vec![
+        directory.path().join("film.{lang}.vtt"),
+        directory.path().join("film.{lang}.srt"),
+    ])
+    .export_react_subtitles(
+        &entry,
+        &runtime,
+        None,
+        &ExportCancellation::default(),
+        |event| {
+            if let ExportProgress::Wrote(file) = event {
+                written.push(file);
+            }
+        },
+    )
+    .unwrap();
+
+    // The same files a video export of the span writes, and nothing else.
+    let read = |name: &str| std::fs::read_to_string(directory.path().join(name)).unwrap();
+    assert_eq!(read("film.en.vtt"), ENGLISH_VTT);
+    assert_eq!(read("film.fr.srt"), FRENCH_SRT);
+    assert_eq!(written_subtitles(&written).len(), written.len());
+    assert_eq!(written.len(), 4);
+    assert!(!directory.path().join("film.mp4").exists());
+
+    // One file cannot hold both languages.
+    let error = exporter(vec![directory.path().join("both.srt")])
+        .export_react_subtitles(
+            &entry,
+            &runtime,
+            None,
+            &ExportCancellation::default(),
+            |_| {},
+        )
+        .unwrap_err();
+    assert!(
+        matches!(&error, ExportError::SubtitleLanguages { languages, .. } if languages == &["en", "fr"]),
+        "{error}"
+    );
+    assert!(!directory.path().join("both.srt").exists());
+}
+
+#[test]
+fn writes_a_projects_dialogue_as_subtitles_without_rendering_it() {
+    let directory = tempfile::tempdir().unwrap();
+    let project = Project::from_json(
+        r#"{
+            "version": 0,
+            "settings": {"width": 64, "height": 64, "frameRate": {"numerator": 10, "denominator": 1}, "sampleRate": 48000},
+            "assets": {},
+            "characters": {"akane": {"name": "Akane"}},
+            "tracks": [{"id": "a", "name": "A", "kind": "dialogue", "items": [
+                {"id": "one", "range": {"start": {"value": 0, "timescale": 1}, "duration": {"value": 1, "timescale": 1}},
+                 "content": {"type": "dialogue", "character": "akane", "text": "First"}},
+                {"id": "two", "range": {"start": {"value": 2, "timescale": 1}, "duration": {"value": 1, "timescale": 1}},
+                 "content": {"type": "dialogue", "character": "akane", "text": "Second"}}
+            ]}],
+            "properties": {}
+        }"#,
+    )
+    .unwrap();
+    let srt = directory.path().join("dialogue.srt");
+    let vtt = directory.path().join("dialogue.vtt");
+    let mut written = Vec::new();
+    Exporter::new(ExportOptions {
+        subtitles: vec![srt.clone(), vtt.clone()],
+        ..ExportOptions::default()
+    })
+    .export_project_subtitles(&project, |event| {
+        if let ExportProgress::Wrote(file) = event {
+            written.push(file);
+        }
+    })
+    .unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(&srt).unwrap(),
+        "1\n00:00:00,000 --> 00:00:01,000\nFirst\n\n\
+         2\n00:00:02,000 --> 00:00:03,000\nSecond\n"
     );
     assert!(
-        matches!(
-            &written[..],
-            [
-                ExportedFile::Video { frames: 15, .. },
-                ExportedFile::Subtitles { cues: 3, .. }
-            ]
-        ),
-        "{written:?}"
+        std::fs::read_to_string(&vtt)
+            .unwrap()
+            .starts_with("WEBVTT\n\n")
+    );
+    assert_eq!(
+        written_subtitles(&written),
+        [
+            ("dialogue.srt".to_owned(), "srt", None, 2),
+            ("dialogue.vtt".to_owned(), "vtt", None, 2),
+        ]
+    );
+
+    // A project's dialogue has no language for `{lang}` to name.
+    let error = Exporter::new(ExportOptions {
+        subtitles: vec![directory.path().join("dialogue.{lang}.srt")],
+        overwrite: true,
+        ..ExportOptions::default()
+    })
+    .export_project_subtitles(&project, |_| {})
+    .unwrap_err();
+    assert!(
+        matches!(&error, ExportError::SubtitleLanguages { languages, .. } if languages.is_empty()),
+        "{error}"
     );
 }

@@ -24,10 +24,12 @@ pub struct ExportOptions {
     pub render_quality: RenderQuality,
     /// The graphics API frames are rendered through.
     pub driver: GpuDriver,
-    /// A video export also writes its subtitles here, as SRT or WebVTT by
-    /// the extension, timed like the video: a React entry's `<Subtitles>`
-    /// cues and `<Dialogue>` lines, or a project's dialogue items.
-    pub subtitles: Option<PathBuf>,
+    /// A video export, or an export without an output, writes its subtitles
+    /// to each of these, as SRT or WebVTT by the extension, timed like the
+    /// video: a React entry's `<Subtitles>` cues and `<Dialogue>` lines, or a
+    /// project's dialogue items. A path with `{lang}` is one file per
+    /// `<Subtitles lang>`, holding that language's cues and the untagged ones.
+    pub subtitles: Vec<PathBuf>,
 }
 
 /// The container (and, with it, the codecs) an exported video is written in.

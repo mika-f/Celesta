@@ -85,33 +85,9 @@ impl Exporter {
             self.options.overwrite,
         )?;
         ensure_encoders(self.options.video_format)?;
-        if let Some(path) = &self.options.subtitles {
-            subtitles::check_output(path, self.options.overwrite)?;
-        }
-        let duration = project.effective_duration().map_err(ExportError::Time)?;
-        let full_frame_count = frame_count(duration, project.settings.frame_rate)?;
-        progress(ExportProgress::Composition(CompositionInfo {
-            width: project.settings.width,
-            height: project.settings.height,
-            frame_rate: project.settings.frame_rate,
-            frames: full_frame_count,
-        }));
-        validate_dimensions(project.settings.width, project.settings.height)?;
-        if full_frame_count == 0 {
-            return Err(ExportError::EmptyTimeline);
-        }
-        // With no range this is the whole composition; the audio mixdown then
-        // keeps covering the exact `effective_duration` (not its frame-snapped
-        // rounding), so that path stays byte-for-byte unchanged.
-        let window = match self.options.range {
-            Some(range) => resolve_window(&range, duration, project.settings.frame_rate)?,
-            None => ExportWindow {
-                start: Time::ZERO,
-                start_frame: 0,
-                frames: full_frame_count,
-                duration,
-            },
-        };
+        subtitles::check_outputs(&self.options.subtitles, self.options.overwrite)?;
+        let window = self.project_window(project, true, &mut progress)?;
+        let subtitle_files = self.project_subtitle_files(project, window)?;
 
         let parent = output_path.parent().unwrap_or_else(|| Path::new("."));
         fs::create_dir_all(parent).map_err(|source| ExportError::Io {
@@ -139,14 +115,12 @@ impl Exporter {
 
         let evaluator = Evaluator::new(project).map_err(ExportError::Evaluation)?;
         let graph = evaluator.audio_graph().map_err(ExportError::Evaluation)?;
-        let (graph, audio_duration) = if self.options.range.is_some() {
-            (
-                shifted_audio_graph(&graph, window.start).map_err(ExportError::Time)?,
-                window.duration,
-            )
+        let graph = if self.options.range.is_some() {
+            shifted_audio_graph(&graph, window.start).map_err(ExportError::Time)?
         } else {
-            (graph, duration)
+            graph
         };
+        let audio_duration = window.duration;
 
         // The audio mixdown does not depend on the rendered video, so it runs
         // on its own thread while the frames render instead of after them.
@@ -213,30 +187,91 @@ impl Exporter {
             audio: true,
             format: self.options.video_format,
         }));
-        if let Some(path) = &self.options.subtitles {
-            let window = subtitles::Window {
-                start: window.start.as_seconds().map_err(ExportError::Time)?,
-                duration: window.duration.as_seconds().map_err(ExportError::Time)?,
-            };
-            let cues = subtitles::project_cues(project, window).map_err(ExportError::Time)?;
-            self.write_subtitles(path, &cues, &mut progress)?;
-        }
-        Ok(())
+        self.write_subtitles(&subtitle_files, &mut progress)
     }
 
-    /// Writes the subtitle file of a finished video export and reports it.
+    /// Writes a project's `ExportOptions::subtitles` without rendering
+    /// anything: its dialogue items, timed as a video export of the same
+    /// span would time them.
+    pub fn export_project_subtitles(
+        &self,
+        project: &Project,
+        mut progress: impl FnMut(ExportProgress),
+    ) -> Result<(), ExportError> {
+        if self.options.subtitles.is_empty() {
+            return Err(ExportError::NothingToExport);
+        }
+        subtitles::check_outputs(&self.options.subtitles, self.options.overwrite)?;
+        let window = self.project_window(project, false, &mut progress)?;
+        let files = self.project_subtitle_files(project, window)?;
+        self.write_subtitles(&files, &mut progress)
+    }
+
+    /// Reports the project's composition and resolves the exported span,
+    /// checking its dimensions only for a `video`.
+    fn project_window(
+        &self,
+        project: &Project,
+        video: bool,
+        progress: &mut impl FnMut(ExportProgress),
+    ) -> Result<ExportWindow, ExportError> {
+        let duration = project.effective_duration().map_err(ExportError::Time)?;
+        let full_frame_count = frame_count(duration, project.settings.frame_rate)?;
+        progress(ExportProgress::Composition(CompositionInfo {
+            width: project.settings.width,
+            height: project.settings.height,
+            frame_rate: project.settings.frame_rate,
+            frames: full_frame_count,
+        }));
+        if video {
+            validate_dimensions(project.settings.width, project.settings.height)?;
+        }
+        if full_frame_count == 0 {
+            return Err(ExportError::EmptyTimeline);
+        }
+        // With no range this is the whole composition; the audio mixdown then
+        // keeps covering the exact `effective_duration` (not its frame-snapped
+        // rounding), so that path stays byte-for-byte unchanged.
+        Ok(match self.options.range {
+            Some(range) => resolve_window(&range, duration, project.settings.frame_rate)?,
+            None => ExportWindow {
+                start: Time::ZERO,
+                start_frame: 0,
+                frames: full_frame_count,
+                duration,
+            },
+        })
+    }
+
+    /// The subtitle files of a project exported over `window`.
+    fn project_subtitle_files(
+        &self,
+        project: &Project,
+        window: ExportWindow,
+    ) -> Result<Vec<subtitles::SubtitleFile>, ExportError> {
+        if self.options.subtitles.is_empty() {
+            return Ok(Vec::new());
+        }
+        let window = subtitles::Window::new(window.start, window.duration)?;
+        let cues = subtitles::project_cues(project, window).map_err(ExportError::Time)?;
+        subtitles::files(&self.options.subtitles, &cues, self.options.overwrite)
+    }
+
+    /// Writes an export's subtitle files and reports each.
     pub(crate) fn write_subtitles(
         &self,
-        path: &Path,
-        cues: &[subtitles::Cue],
+        files: &[subtitles::SubtitleFile],
         progress: &mut impl FnMut(ExportProgress),
     ) -> Result<(), ExportError> {
-        let format = subtitles::write(path, cues, self.options.overwrite)?;
-        progress(ExportProgress::Wrote(ExportedFile::Subtitles {
-            path: path.to_owned(),
-            format,
-            cues: cues.len(),
-        }));
+        for file in files {
+            subtitles::write(file, self.options.overwrite)?;
+            progress(ExportProgress::Wrote(ExportedFile::Subtitles {
+                path: file.path.clone(),
+                format: file.format,
+                lang: file.lang.clone(),
+                cues: file.cues.len(),
+            }));
+        }
         Ok(())
     }
 }
