@@ -113,6 +113,60 @@ async fn export_video_cancel_stops_and_frees_the_gpu() {
 }
 
 #[tokio::test]
+async fn export_video_without_output_writes_each_languages_subtitles() {
+    if !runtime_built() {
+        return;
+    }
+    let (dir, entry) = entry(
+        r#"
+import { Composition, Subtitles } from '@celesta/react';
+export default function Root() {
+  return <Composition width={64} height={64} fps={10} durationInFrames={20}>
+    <Subtitles lang="en" cues={[{ from: 0, durationInFrames: 10, text: 'Hello' }]} />
+    <Subtitles lang="ja" cues={[{ from: 0, durationInFrames: 10, text: 'こんにちは' }]} />
+  </Composition>;
+}
+"#,
+    );
+    let (client, _) = client().await;
+    let result = call(
+        &client,
+        "export_video",
+        json!({
+            "source": entry,
+            "subtitles": [dir.path().join("a.{lang}.srt"), dir.path().join("a.{lang}.vtt")],
+        }),
+    )
+    .await;
+    assert!(!is_error(&result), "{}", text(&result));
+    let outputs = structured(&result)["outputs"].as_array().unwrap().clone();
+    let summary: Vec<_> = outputs
+        .iter()
+        .map(|output| {
+            (
+                output["type"].as_str().unwrap().to_owned(),
+                output["lang"].as_str().unwrap().to_owned(),
+                output["format"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            ("subtitles", "en", "srt"),
+            ("subtitles", "ja", "srt"),
+            ("subtitles", "en", "vtt"),
+            ("subtitles", "ja", "vtt"),
+        ]
+        .map(|(kind, lang, format)| (kind.to_owned(), lang.to_owned(), format.to_owned()))
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("a.ja.srt")).unwrap(),
+        "1\n00:00:00,000 --> 00:00:01,000\nこんにちは\n"
+    );
+}
+
+#[tokio::test]
 async fn export_video_refuses_png_output() {
     let (client, _) = client().await;
     let result = call(

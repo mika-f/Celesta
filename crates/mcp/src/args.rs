@@ -90,9 +90,9 @@ pub struct ExportVideoArgs {
     #[serde(flatten)]
     source: SourceArgs,
     /// The .mp4, .mov (ProRes 4444 with alpha) or .webm (VP9 with alpha) to
-    /// write.
-    output: PathBuf,
-    /// Replace `output` if it exists.
+    /// write. Leave it out to write only `subtitles`, rendering nothing.
+    output: Option<PathBuf>,
+    /// Replace `output` and subtitle files that exist.
     overwrite: Option<bool>,
     /// libx264 preset, `ultrafast` to `veryslow`; default `medium`.
     preset: Option<String>,
@@ -102,13 +102,32 @@ pub struct ExportVideoArgs {
     /// hardware decoders).
     bit_depth: Option<u8>,
     /// Also write the subtitles (`<Subtitles>` cues, `<Dialogue>` lines, or
-    /// a project's dialogue items) to this .srt or .vtt file, timed like
-    /// the video.
-    subtitles: Option<PathBuf>,
+    /// a project's dialogue items) to this .srt or .vtt file, or each of
+    /// these, timed like the video. A path with `{lang}` (`film.{lang}.vtt`)
+    /// is one file per `<Subtitles lang>`, holding that language's cues and
+    /// those without a lang.
+    subtitles: Option<OneOrMore>,
     /// Arguments no field above takes; any are a usage error.
     #[serde(flatten)]
     #[schemars(skip)]
     unknown: Map<String, Value>,
+}
+
+/// A path, or a list of them.
+#[derive(Deserialize, JsonSchema)]
+#[serde(untagged)]
+enum OneOrMore {
+    One(PathBuf),
+    More(Vec<PathBuf>),
+}
+
+impl OneOrMore {
+    fn paths(&self) -> &[PathBuf] {
+        match self {
+            Self::One(path) => std::slice::from_ref(path),
+            Self::More(paths) => paths,
+        }
+    }
 }
 
 /// The checked parts of [`SourceArgs`].
@@ -227,7 +246,7 @@ fn png_path(output: &Path) -> Result<PathBuf, String> {
 
 fn job(
     source: Source,
-    output: PathBuf,
+    output: Option<PathBuf>,
     png: Option<PngExport>,
     options: ExportOptions,
 ) -> ExportJob {
@@ -269,7 +288,7 @@ impl RenderFramesArgs {
             contact_sheet: None,
             debug_guides,
         };
-        Ok(job(source, dir.join("frame.png"), Some(png), options))
+        Ok(job(source, Some(dir.join("frame.png")), Some(png), options))
     }
 }
 
@@ -307,7 +326,7 @@ impl ContactSheetArgs {
             }),
             debug_guides,
         };
-        Ok(job(source, output, Some(png), options))
+        Ok(job(source, Some(output), Some(png), options))
     }
 }
 
@@ -315,10 +334,39 @@ impl ExportVideoArgs {
     pub fn job(&self) -> Result<ExportJob, String> {
         reject_unknown(&self.unknown)?;
         let source = self.source.check(false)?;
-        let Some(video_format) = VideoFormat::from_extension(&self.output) else {
+        let subtitles: Vec<PathBuf> = self
+            .subtitles
+            .as_ref()
+            .map_or(&[][..], OneOrMore::paths)
+            .iter()
+            .map(|path| absolute(path))
+            .collect();
+        let Some(output) = &self.output else {
+            if subtitles.is_empty() {
+                return Err("give output, subtitles, or both".into());
+            }
+            let given = [
+                ("preset", self.preset.is_some()),
+                ("crf", self.crf.is_some()),
+                ("bitDepth", self.bit_depth.is_some()),
+            ];
+            if let Some((field, _)) = given.into_iter().find(|(_, given)| *given) {
+                return Err(format!(
+                    "{field} applies to a video; without output only the subtitle files are written"
+                ));
+            }
+            let options = ExportOptions {
+                overwrite: self.overwrite.unwrap_or(false),
+                range: source.range,
+                subtitles,
+                ..ExportOptions::default()
+            };
+            return Ok(job(source, None, None, options));
+        };
+        let Some(video_format) = VideoFormat::from_extension(output) else {
             return Err(format!(
                 "output must be a .mp4, .mov or .webm file, not {}; use render_frames for PNG",
-                self.output.display()
+                output.display()
             ));
         };
         if video_format.has_alpha() {
@@ -356,10 +404,10 @@ impl ExportVideoArgs {
                 bit_depth,
                 ..defaults
             },
-            subtitles: self.subtitles.as_deref().map(absolute),
+            subtitles,
             ..ExportOptions::default()
         };
-        Ok(job(source, absolute(&self.output), None, options))
+        Ok(job(source, Some(absolute(output)), None, options))
     }
 }
 
@@ -518,12 +566,45 @@ mod tests {
         assert_eq!(job.options.video.crf, 20);
         assert_eq!(job.options.video.bit_depth, BitDepth::Ten);
         assert!(job.png.is_none());
-        assert_eq!(job.options.subtitles, None);
+        assert!(job.options.subtitles.is_empty());
         let job = video_job(json!({
             "source": "a.tsx", "output": "a.mp4", "subtitles": "a.srt"
         }))
         .unwrap();
-        assert!(job.options.subtitles.unwrap().is_absolute());
+        assert_eq!(job.options.subtitles.len(), 1);
+        assert!(job.options.subtitles[0].is_absolute());
+    }
+
+    #[test]
+    fn subtitles_take_a_list_and_go_without_a_video() {
+        let job = video_job(json!({
+            "source": "a.tsx", "output": "a.mp4",
+            "subtitles": ["a.{lang}.srt", "a.{lang}.vtt"]
+        }))
+        .unwrap();
+        let names: Vec<_> = job
+            .options
+            .subtitles
+            .iter()
+            .map(|path| path.file_name().unwrap().to_str().unwrap())
+            .collect();
+        assert_eq!(names, ["a.{lang}.srt", "a.{lang}.vtt"]);
+        assert!(job.output.is_some());
+
+        let job = video_job(json!({
+            "source": "a.tsx", "subtitles": ["a.srt"], "start": "1", "overwrite": true
+        }))
+        .unwrap();
+        assert_eq!(job.output, None);
+        assert!(job.png.is_none());
+        assert!(job.options.overwrite);
+        assert!(job.options.range.is_some());
+
+        rejects(video_job(json!({ "source": "a.tsx" })), "output");
+        rejects(
+            video_job(json!({ "source": "a.tsx", "subtitles": "a.srt", "crf": 20 })),
+            "crf",
+        );
     }
 
     #[test]
@@ -531,7 +612,7 @@ mod tests {
         let job = frames_job(json!({ "source": "a.tsx", "frames": [0, -1] })).unwrap();
         assert!(job.source.is_absolute());
         assert!(job.react);
-        assert!(job.output.is_absolute());
+        assert!(job.output.unwrap().is_absolute());
         assert_eq!(
             job.png.unwrap().frames,
             celesta_exporter::FrameSelection::FromEnd(vec![0, -1])
@@ -547,8 +628,8 @@ mod tests {
             serde_json::from_value::<RenderFramesArgs>(json!({ "source": "a.tsx", "frames": [0] }))
                 .unwrap()
         };
-        let first = args().job(&outputs).unwrap().output;
-        let second = args().job(&outputs).unwrap().output;
+        let first = args().job(&outputs).unwrap().output.unwrap();
+        let second = args().job(&outputs).unwrap().output.unwrap();
         assert_ne!(first.parent(), second.parent());
         assert!(first.parent().unwrap().is_dir());
     }

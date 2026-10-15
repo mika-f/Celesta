@@ -123,7 +123,8 @@ async fn optional_arguments_are_not_required() {
         required("read_docs")
     );
     assert_eq!(required("inspect"), ["entry"]);
-    assert_eq!(required("export_video"), ["source", "output"]);
+    // Without output, export_video writes only the subtitle files.
+    assert_eq!(required("export_video"), ["source"]);
 }
 
 #[tokio::test]
