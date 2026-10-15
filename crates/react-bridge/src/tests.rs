@@ -8,7 +8,9 @@ use crate::properties::{
 use crate::protocol::{
     PropertyInputsMessage, ReadyMessage, Request, Response, ready_property_order,
 };
-use crate::types::{ComponentPropertyField, LayerSource, ReactAudioClipDescriptor};
+use crate::types::{
+    ComponentPropertyField, LayerSource, ReactAudioClipDescriptor, ReactSubtitleDescriptor,
+};
 use celesta_composition::{
     Animatable, AssetLocation, LayerFilter, ShaderParam, ShaderParamType, ShaderSource, Time,
 };
@@ -425,6 +427,37 @@ fn deserializes_errors_and_rejects_unknown_responses() {
     };
     assert_eq!(error, "boom");
     assert!(serde_json::from_str::<Response>(r#"{"unexpected":1}"#).is_err());
+}
+
+#[test]
+fn deserializes_collected_subtitles_with_their_languages() {
+    let json = r#"{"collectedSubtitles":[
+        {"text":"Hello","start":0,"end":1.5,"lang":"en"},
+        {"text":"line","start":1.5,"end":2}
+    ]}"#;
+    let Response::CollectedSubtitles {
+        collected_subtitles,
+    } = serde_json::from_str(json).unwrap()
+    else {
+        panic!("expected a CollectedSubtitles response");
+    };
+    assert_eq!(
+        collected_subtitles,
+        [
+            ReactSubtitleDescriptor {
+                text: "Hello".to_owned(),
+                start: 0.0,
+                end: 1.5,
+                lang: Some("en".to_owned()),
+            },
+            ReactSubtitleDescriptor {
+                text: "line".to_owned(),
+                start: 1.5,
+                end: 2.0,
+                lang: None,
+            },
+        ]
+    );
 }
 
 #[test]

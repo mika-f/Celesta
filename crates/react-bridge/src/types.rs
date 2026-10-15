@@ -110,6 +110,10 @@ pub struct ReactSubtitleDescriptor {
     pub text: String,
     pub start: f64,
     pub end: f64,
+    /// The language tag of its `<Subtitles lang>`; `None` for a `<Dialogue>`
+    /// line or a `<Subtitles>` without one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lang: Option<String>,
 }
 
 /// One field of a `ComponentPropertySchema` declared on the TypeScript side

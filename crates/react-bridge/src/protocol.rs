@@ -97,6 +97,10 @@ pub(crate) enum Response {
         #[serde(rename = "collectedAudio")]
         collected_audio: Vec<ReactAudioClipDescriptor>,
     },
+    CollectedSubtitles {
+        #[serde(rename = "collectedSubtitles")]
+        collected_subtitles: Vec<ReactSubtitleDescriptor>,
+    },
     MeasureText {
         #[serde(rename = "measureText")]
         measure_text: Box<MeasureTextRequest>,
@@ -147,6 +151,7 @@ pub(crate) struct LayerSourceReply {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RawResponse {
     pub(crate) collected_audio: Option<Vec<ReactAudioClipDescriptor>>,
+    pub(crate) collected_subtitles: Option<Vec<ReactSubtitleDescriptor>>,
     pub(crate) measure_text: Option<Box<MeasureTextRequest>>,
     pub(crate) scene: Option<Scene>,
     #[serde(default)]
@@ -174,6 +179,10 @@ impl TryFrom<RawResponse> for Response {
         // The order the untagged enum used to try its variants in.
         if let Some(collected_audio) = raw.collected_audio {
             Ok(Self::CollectedAudio { collected_audio })
+        } else if let Some(collected_subtitles) = raw.collected_subtitles {
+            Ok(Self::CollectedSubtitles {
+                collected_subtitles,
+            })
         } else if let Some(measure_text) = raw.measure_text {
             Ok(Self::MeasureText { measure_text })
         } else if let Some(scene) = raw.scene {
@@ -197,7 +206,7 @@ impl TryFrom<RawResponse> for Response {
             Ok(Self::Err { error })
         } else {
             Err(
-                "response has none of collectedAudio, measureText, scene, components, layerSource or error",
+                "response has none of collectedAudio, collectedSubtitles, measureText, scene, components, layerSource or error",
             )
         }
     }

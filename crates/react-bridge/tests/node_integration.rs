@@ -572,6 +572,33 @@ fn evaluates_a_react_dialogue_as_a_character_and_subtitle_when_node_is_available
 }
 
 #[test]
+fn collects_the_subtitles_frames_would_report_when_node_is_available() {
+    let Some((node, cli_script, package_root)) = live_react_runtime() else {
+        return;
+    };
+
+    let entry = package_root.join("examples/with-dialogue.tsx");
+    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let rate = bridge.metadata().frame_rate;
+    let frames = bridge.metadata().duration_in_frames.min(30);
+    let mut rendered = Vec::new();
+    for frame in 0..frames {
+        let time = Time::frames(i64::try_from(frame).unwrap(), rate).unwrap();
+        for subtitle in bridge.evaluate_at(time, None).unwrap().subtitles {
+            if !rendered.contains(&subtitle) {
+                rendered.push(subtitle);
+            }
+        }
+    }
+
+    let collected = bridge.collect_subtitles(0, frames).unwrap();
+    assert!(!collected.is_empty());
+    assert_eq!(collected, rendered);
+    assert!(collected.iter().all(|subtitle| subtitle.lang.is_none()));
+    assert_eq!(bridge.collect_subtitles(frames, 0).unwrap(), []);
+}
+
+#[test]
 fn resolves_a_psd_portrait_preset_into_visible_layers_when_node_is_available() {
     let Some((node, cli_script, package_root)) = live_react_runtime() else {
         return;
