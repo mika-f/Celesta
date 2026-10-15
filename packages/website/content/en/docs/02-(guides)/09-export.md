@@ -69,7 +69,9 @@ const cues = parseSubtitles(captions, { fps: 30 });
 ))}
 ```
 
-`--subtitles` writes a subtitle file beside the video: SRT for a `.srt` path, WebVTT for `.vtt`. It holds the cues `<Subtitles>` declares and the `<Dialogue>` lines, each for as long as it is shown. With `--from` and `--to`, the times start at the span's start and cues are cut to the span.
+`--subtitles` writes a subtitle file beside the video: SRT for a `.srt` path, WebVTT for `.vtt`. It holds the cues `<Subtitles>` declares and the `<Dialogue>` lines, each for as long as it is shown. With `--from` and `--to`, the times start at the span's start and cues are cut to the span. Repeat `--subtitles` to write several files at once, such as an SRT and a WebVTT.
+
+For captions in several languages, give each `<Subtitles>` a `lang` (`<Subtitles lang="en" cues={english} />`) and put `{lang}` in the path: `--subtitles 'output.{lang}.srt'` writes `output.en.srt`, `output.ja.srt`, and so on. `<Dialogue>` lines, which have no language, go into every file. Quote the path so the shell keeps `{lang}`. Leave out the video file (`--react first-scene.tsx --subtitles output.srt`) to write only the subtitle files, without rendering the video.
 
 ::::tabs[Exporter platform]{default="macOS"}
 :::tab[macOS]

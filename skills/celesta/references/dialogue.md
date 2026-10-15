@@ -318,7 +318,8 @@ portrait is drawn at its natural size; use `scale` for large artwork.
 
 An export with `--subtitles film.srt` writes every line that is not `held`
 into an SRT or WebVTT file, for as long as its sequence shows it
-([subtitles.md](subtitles.md#write-the-subtitle-file-on-export)).
+([subtitles.md](subtitles.md#write-the-subtitle-files-on-export)). A line
+has no language, so a `{lang}` path writes it into every language's file.
 
 ## Automatic lip sync
 

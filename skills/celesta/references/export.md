@@ -24,7 +24,11 @@ Celesta-export [options] project.celesta.json out.mp4
 Celesta-export [options] --react scene.tsx out.mp4
 Celesta-export [options] --react scene.tsx --project project.celesta.json out.mp4
 Celesta-export [options] --react card.tsx --props-file variants/spring.json spring.mp4
+Celesta-export [options] --react scene.tsx --subtitles 'scene.{lang}.srt'
 ```
+
+The last writes only subtitle files, rendering nothing; see
+[subtitles.md](subtitles.md#only-the-subtitle-files).
 
 The source comes before the output. With `--react`, the source is the
 entry file. Relative asset paths resolve from the entry's (or project
@@ -55,8 +59,8 @@ Celesta-export --json --react scene.tsx out.mp4
 | `--props-file <file>` | JSON object of project property values for the entry (needs `--react`). Without it, a `props.json` in the entry's folder is used automatically; this option replaces it. See [project-data.md](project-data.md#pass-values-from-the-command-line). |
 | `--props <json>` | Inline JSON object of project property values (needs `--react`); wins over `--props-file`. |
 | `--from <t>`, `--to <t>` | Export only this span (`--to` exclusive); the output starts at 00:00. Times are seconds, `MM:SS.mmm`, or `HH:MM:SS.mmm`. |
-| `--subtitles <file>` | Also write the video's subtitles (`<Subtitles>` cues, `<Dialogue>` lines, a project's dialogue items) as `.srt` or `.vtt`, timed like the video. Video only. See [subtitles.md](subtitles.md#write-the-subtitle-file-on-export). |
-| `--overwrite` | Replace an existing output file. |
+| `--subtitles <file>` | Also write the video's subtitles (`<Subtitles>` cues, `<Dialogue>` lines, a project's dialogue items) as `.srt` or `.vtt`, timed like the video. Repeatable. `{lang}` in the path (quoted: `'film.{lang}.vtt'`) writes one file per `<Subtitles lang>`. Without the video path, only these files are written. Not with PNG output. See [subtitles.md](subtitles.md#write-the-subtitle-files-on-export). |
+| `--overwrite` | Replace existing output files. |
 | `--preset <p>` | libx264 preset, `ultrafast` … `veryslow` (default `medium`). Encoding speed against file size only; it does not change what is rendered. MP4 only. |
 | `--crf <n>` | 0–51, lower is better quality (default 18). MP4 only. |
 | `--color-conversion <w>` | `auto` (default), `gpu`, or `encoder`: where RGB becomes YUV. MP4 only. |
@@ -124,8 +128,9 @@ props file, the result also has `propsFile` (its path) and `propsFileAuto`
     `"webm"`), and `alpha` (`true` when the format carries transparency:
     `mov` and `webm`);
   - `frame`: one PNG, with `frame` and `time`;
-  - `subtitles`: the `--subtitles` file, with `format` (`"srt"` or `"vtt"`)
-    and the number of `cues`;
+  - `subtitles`: one `--subtitles` file, with `format` (`"srt"` or `"vtt"`),
+    the number of `cues`, and `lang` when its cues have a `<Subtitles lang>`
+    (each language of a `{lang}` path is its own entry);
   - `contactSheet`: one PNG, with `columns` and the tile `frames` in
     reading order.
 - `stats.renderFps` is the average rendering speed. Compare it between
@@ -146,6 +151,8 @@ props file, the result also has `propsFile` (its path) and `propsFileAuto`
 | `encoder_unavailable` | This FFmpeg build lacks an encoder the format needs (video: H.264, ProRes, or VP9; audio: AAC, PCM, or Opus). |
 | `unsupported_dimensions` | Video needs non-zero even width and height. |
 | `unsupported_subtitles` | The `--subtitles` path is not a `.srt` or `.vtt` file. |
+| `subtitle_languages` | A `--subtitles` path without `{lang}` would hold cues in two or more languages, or a path with `{lang}` has no `<Subtitles lang>` cue to name. |
+| `duplicate_output` | Two outputs are the same file: a `--subtitles` path given twice, or a `{lang}` file that another path also names. |
 | `project_io`, `project_json` | The project file could not be read or is not valid JSON. |
 | `project_validation` | The project is invalid; `error.issues` lists each `{path, message}`. |
 | `react` | The React entry failed to load or render; read `message` and look it up in [errors.md](errors.md). |

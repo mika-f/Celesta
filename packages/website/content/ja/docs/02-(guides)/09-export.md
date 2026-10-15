@@ -69,7 +69,9 @@ const cues = parseSubtitles(captions, { fps: 30 });
 ))}
 ```
 
-`--subtitles` を付けると、動画と一緒に字幕ファイルを書き出します。拡張子が `.srt` なら SRT、`.vtt` なら WebVTT です。`<Subtitles>` で宣言した字幕と `<Dialogue>` の台詞が、表示されている間の時刻で入ります。`--from` / `--to` と組み合わせると、字幕の時刻も区間の開始を 0 として詰め、区間の外にはみ出す部分は切ります。
+`--subtitles` を付けると、動画と一緒に字幕ファイルを書き出します。拡張子が `.srt` なら SRT、`.vtt` なら WebVTT です。`<Subtitles>` で宣言した字幕と `<Dialogue>` の台詞が、表示されている間の時刻で入ります。`--from` / `--to` と組み合わせると、字幕の時刻も区間の開始を 0 として詰め、区間の外にはみ出す部分は切ります。`--subtitles` を繰り返すと、SRT と WebVTT のように複数のファイルを一度に書き出せます。
+
+複数の言語の字幕は、`<Subtitles>` ごとに `lang` を付け（`<Subtitles lang="ja" cues={japanese} />`）、パスに `{lang}` を入れます。`--subtitles 'output.{lang}.srt'` で `output.ja.srt`・`output.en.srt` のように言語ごとのファイルになります。言語のない `<Dialogue>` の台詞は、どの言語のファイルにも入ります。シェルが `{lang}` を書き換えないよう、パスは引用符で囲んでください。動画のファイルを省くと（`--react first-scene.tsx --subtitles output.srt`）、動画を描画せずに字幕ファイルだけを書き出します。
 
 ::::tabs[書き出しを行う OS]{default="macOS"}
 :::tab[macOS]
