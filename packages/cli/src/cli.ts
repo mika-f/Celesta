@@ -99,7 +99,12 @@ interface LayerSourceRequest {
   preview?: boolean;
 }
 
-type Request = FrameRequest | ResolveRequest | LayerSourceRequest | { collectAudio: true };
+/** Asks for the subtitles frames `[startFrame, startFrame + frameCount)` show; see `MountedComposition.collectSubtitles`. */
+interface CollectSubtitlesRequest {
+  collectSubtitles: { startFrame: number; frameCount: number };
+}
+
+type Request = FrameRequest | ResolveRequest | LayerSourceRequest | CollectSubtitlesRequest | { collectAudio: true };
 
 interface ProbeMediaResponse {
   media?: ProbedMediaInfo;
@@ -272,6 +277,12 @@ async function main(): Promise<void> {
       if ('collectAudio' in request) {
         if (request.collectAudio !== true) throw new Error('collectAudio must be true');
         writeLine({ collectedAudio: mounted.collectAudio() });
+      } else if ('collectSubtitles' in request) {
+        const { startFrame, frameCount } = request.collectSubtitles;
+        if (!Number.isSafeInteger(startFrame) || startFrame < 0 || !Number.isSafeInteger(frameCount) || frameCount < 0) {
+          throw new Error('collectSubtitles requires a non-negative integer startFrame and frameCount');
+        }
+        writeLine({ collectedSubtitles: mounted.collectSubtitles(startFrame, frameCount) });
       } else if (isLayerSourceRequest(request)) {
         const chain = mounted.layerSource(
           request.time,
@@ -462,6 +473,7 @@ function writeLine(
         droppedStatics?: number[];
       }
     | { collectedAudio: AudioClipDescriptor[] }
+    | { collectedSubtitles: SubtitleDescriptor[] }
     | { layerSource: { chain: LayerSourceEntry[] | null } }
     | ComponentResolutions
     | { probeMedia: { path: string } }

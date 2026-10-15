@@ -130,12 +130,14 @@ export interface AudioClipDescriptor {
  * One subtitle shown at a requested frame, from `<Subtitles>` or a
  * `<Dialogue>` line: its text and the composition seconds it is shown for,
  * cut to the enclosing `<Sequence>`s. Each frame reports the subtitles it
- * shows; the exporter merges the reports into its subtitle file.
+ * shows; the exporter merges the reports into its subtitle files.
  */
 export interface SubtitleDescriptor {
   text: string;
   start: number;
   end: number;
+  /** The `<Subtitles lang>` the cue is in. Present only when set. */
+  lang?: string;
 }
 
 /**
@@ -240,6 +242,12 @@ export interface MountedComposition {
   ): { scene: Scene; audio: AudioClipDescriptor[]; subtitles: SubtitleDescriptor[]; statics?: StaticsFrame };
   /** Sweeps every frame without constructing visual layers; hooks and font measurements still run. */
   collectAudio(): AudioClipDescriptor[];
+  /**
+   * Sweeps frames `[startFrame, startFrame + frameCount)` as `collectAudio()`
+   * does and returns the subtitles they show, each distinct one once, in the
+   * order first shown.
+   */
+  collectSubtitles(startFrame: number, frameCount: number): SubtitleDescriptor[];
   /**
    * The JSX that produced the layer `id` in the frame at `time`, innermost
    * first (see `sourceChain`), or null when the frame has no such layer.
@@ -1144,35 +1152,49 @@ function collectAudioClip(
 
 /**
  * Reports `text` as shown from local second `startLocalSec` to `endLocalSec`
- * of the enclosing `<Sequence>`, cut to its window.
+ * of the enclosing `<Sequence>`, cut to its window, in language `lang`.
  */
-function collectSubtitle(text: string, startLocalSec: number, endLocalSec: number, context: WalkContext): void {
+function collectSubtitle(
+  text: string,
+  startLocalSec: number,
+  endLocalSec: number,
+  context: WalkContext,
+  lang?: string,
+): void {
   if (!context.subtitles || text.trim() === '') {
     return;
   }
   const start = Math.max(context.rangeStartSec, context.originSec + startLocalSec);
   const end = Math.min(context.rangeEndSec, context.originSec + endLocalSec);
   if (end > start) {
-    context.subtitles.push({ text, start, end });
+    context.subtitles.push({ text, start, end, ...(lang ? { lang } : {}) });
   }
 }
+
+// A BCP 47 language tag's shape: letters and digits in hyphen-separated
+// subtags. It also names the subtitle file, so nothing else is allowed.
+const SUBTITLE_LANGUAGE = /^[A-Za-z0-9]{1,8}(?:-[A-Za-z0-9]{1,8})*$/;
 
 /** Reports the `<Subtitles>` cues shown at this frame. */
 function collectSubtitleCues(props: Record<string, unknown>, context: WalkContext): void {
   if (!context.subtitles) {
     return;
   }
-  const { cues } = props;
+  const { cues, lang } = props;
   if (!Array.isArray(cues)) {
     throw new Error('<Subtitles> requires a `cues` array');
   }
+  if (lang !== undefined && (typeof lang !== 'string' || (lang !== '' && !SUBTITLE_LANGUAGE.test(lang)))) {
+    throw new Error('<Subtitles> requires `lang` to be a language tag such as "en" or "pt-BR"');
+  }
+  const language = lang as string | undefined;
   const localSec = secondsFromTime(context.time);
   cues.forEach((cue: unknown, index) => {
     checkCue(cue, index, '<Subtitles>');
     const startLocalSec = cue.from / context.fps;
     const endLocalSec = (cue.from + cue.durationInFrames) / context.fps;
     if (localSec >= startLocalSec && localSec < endLocalSec) {
-      collectSubtitle(cue.text, startLocalSec, endLocalSec, context);
+      collectSubtitle(cue.text, startLocalSec, endLocalSec, context, language);
     }
   });
 }
@@ -1515,7 +1537,7 @@ export function mount(defaultExport: EntryComponent, compositionId?: string): Mo
       compact,
       audioOnly ? null : { cache: staticSubtrees, refer: statics !== undefined, referenced: new Set() },
       null,
-      audioOnly ? null : subtitles,
+      subtitles,
     );
     if (!audioOnly && hasHostElementPreparation()) {
       for (const child of instance.children) {
@@ -1574,6 +1596,17 @@ export function mount(defaultExport: EntryComponent, compositionId?: string): Mo
         for (const clip of renderFrame(time, null, true).audio) audio.push(clip);
       }
       return audio;
+    },
+    collectSubtitles(startFrame, frameCount) {
+      const shown = new Map<string, SubtitleDescriptor>();
+      for (let frame = startFrame; frame < startFrame + frameCount; frame++) {
+        const time = { value: frame * config.frameRate.denominator, timescale: config.frameRate.numerator };
+        for (const subtitle of renderFrame(time, null, true).subtitles) {
+          const key = JSON.stringify([subtitle.lang ?? null, subtitle.text, subtitle.start, subtitle.end]);
+          if (!shown.has(key)) shown.set(key, subtitle);
+        }
+      }
+      return [...shown.values()];
     },
     layerSource(time, id, resolveFile, options) {
       const instance = settleTree(time, null, false, false, options?.preview === true);

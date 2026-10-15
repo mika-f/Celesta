@@ -142,3 +142,46 @@ test('<Subtitles> checks its cues', () => {
     h(Subtitles, { cues: [{ from: 0, durationInFrames: 1 }] }));
   expect(() => frames(Root, 1)).toThrow(/<Subtitles>: cue 0 requires a string `text`/);
 });
+
+test('<Subtitles lang> tags its cues; a composition or sequence lang does not', () => {
+  const cue = (text) => [{ from: 0, durationInFrames: 10, text }];
+  const Root = () => h(Composition, { width: 10, height: 10, fps: 10, durationInFrames: 1, lang: 'ja-JP' },
+    h(Subtitles, { lang: 'en', cues: cue('Hello') }),
+    h(Subtitles, { lang: 'pt-BR', cues: cue('Olá') }),
+    h(Subtitles, { lang: '', cues: cue('untagged') }),
+    h(Sequence, { lang: 'fr' }, h(Subtitles, { cues: cue('inherited nothing') })));
+  // The one-frame composition cuts every cue to 0.1 s.
+  expect(frames(Root, 1)[0]).toEqual([
+    { text: 'Hello', start: 0, end: 0.1, lang: 'en' },
+    { text: 'Olá', start: 0, end: 0.1, lang: 'pt-BR' },
+    { text: 'untagged', start: 0, end: 0.1 },
+    { text: 'inherited nothing', start: 0, end: 0.1 },
+  ]);
+  for (const lang of ['en_US', '../en', 'en-', 42]) {
+    const Bad = () => h(Composition, { width: 10, height: 10, fps: 10, durationInFrames: 1 },
+      h(Subtitles, { lang, cues: cue('x') }));
+    expect(() => frames(Bad, 1)).toThrow(/<Subtitles> requires `lang` to be a language tag/);
+  }
+});
+
+test('collectSubtitles() sweeps a span of frames and reports each subtitle once', () => {
+  const cues = [
+    { from: 0, durationInFrames: 3, text: 'first' },
+    { from: 3, durationInFrames: 4, text: 'second' },
+    { from: 9, durationInFrames: 3, text: 'third' },
+  ];
+  const Root = () => h(Composition, { width: 10, height: 10, fps: 10, durationInFrames: 12 },
+    h(Subtitles, { lang: 'en', cues }),
+    h(Sequence, { from: 2, durationInFrames: 4 }, h(Subtitles, { cues: [{ from: 0, durationInFrames: 9, text: 'cut' }] })),
+    h(FreezeFrame, { frame: 0 }, h(Subtitles, { cues: [{ from: 0, durationInFrames: 12, text: 'frozen' }] })));
+  const mounted = mount(Root);
+  expect(mounted.collectSubtitles(2, 6)).toEqual([
+    { text: 'first', start: 0, end: 0.3, lang: 'en' },
+    { text: 'cut', start: 0.2, end: 0.6 },
+    { text: 'second', start: 0.3, end: 0.7, lang: 'en' },
+  ]);
+  // The sweep reports what rendering the same frames reports.
+  const rendered = frames(Root, 12).flat();
+  expect(mounted.collectSubtitles(0, 12)).toEqual(rendered.filter((subtitle, index) =>
+    rendered.findIndex((other) => JSON.stringify(other) === JSON.stringify(subtitle)) === index));
+});
