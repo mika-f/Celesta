@@ -58,8 +58,8 @@ SPECTRUM からはリードを足して 2 回目のドロップにしていま�
 - `prepare()` で BGM を `loadAudioSpectrum()` に通し、右上のメーター（`useAudioSpectrum()`）、冒頭の色収差、SPECTRUM 章、
   エディタ章の波形、アウトロの輪が同じ解析結果で動きます。
 - 欧文の 3 書体は `<Font google="…">` で名前から読み込み、和文は使う文字だけの Noto Sans JP です。
-- 各場面の字幕（日本語と英語）を `<Subtitles>` に渡しており、`--subtitles` で SRT または WebVTT として書き出せます（画面には描きません）。
-  言語はプロジェクトプロパティ `captions`（`ja` / `en`、既定は `ja`）で選び、書き出し時は `--props` で渡します。
+- 各場面の字幕を日本語と英語の `<Subtitles lang>` で宣言しており、`--subtitles` で SRT と WebVTT として書き出せます（画面には描きません）。
+  パスに `{lang}` を入れると言語ごとのファイルになるので、1 回の書き出しで 2 言語 × 2 形式の 4 ファイルが揃います。
 - エントリには `film` と `poster` の 2 つのコンポジションがあります。`poster` はアウトロの 1 フレームを `<FreezeFrame>` で描いたものです。
 - MCP 章のフレーム、エディタ章のプレビュー、MASK 章のカード、アウトロのサムネイルは、この映像そのものを `<FreezeFrame>` で描き直したものです。
 
@@ -143,16 +143,16 @@ WAV と MP4 はリポジトリ全体の設定で Git の管理対象外です。
 ```sh
 python3 examples/delta/make-score-0.7.0.py
 node skills/celesta/scripts/inspect.mjs examples/delta/film-0.7.0.tsx --frames 0,1360,2719
-Celesta-export --json --react examples/delta/film-0.7.0.tsx examples/delta/delta-0.7.0.mp4 --subtitles examples/delta/delta-0.7.0.ja.srt
+Celesta-export --json --react examples/delta/film-0.7.0.tsx examples/delta/delta-0.7.0.mp4 --subtitles 'examples/delta/delta-0.7.0.{lang}.srt' --subtitles 'examples/delta/delta-0.7.0.{lang}.vtt'
 Celesta-export --json --react --composition poster examples/delta/film-0.7.0.tsx --frame 0 examples/delta/poster-0.7.0.png
 ```
 
-字幕は 1 回の書き出しで 1 ファイルです。英語は `--props`、WebVTT は拡張子で選びます（映像は毎回同じものが書き出されます）。
+1 本目の書き出しで、映像と一緒に `delta-0.7.0.ja.srt`・`delta-0.7.0.en.srt`・`delta-0.7.0.ja.vtt`・`delta-0.7.0.en.vtt` が書き出されます。
+`{lang}` は `<Subtitles lang>` の言語に置き換わります。シェルが `{lang}` を展開しないよう、パスは引用符で囲みます。
+字幕だけを書き直すときは、映像のパスを省くと描画せずに字幕ファイルだけを書き出します。
 
 ```sh
-Celesta-export --json --react --overwrite --props '{"captions":"ja"}' examples/delta/film-0.7.0.tsx examples/delta/delta-0.7.0.mp4 --subtitles examples/delta/delta-0.7.0.ja.vtt
-Celesta-export --json --react --overwrite --props '{"captions":"en"}' examples/delta/film-0.7.0.tsx examples/delta/delta-0.7.0.mp4 --subtitles examples/delta/delta-0.7.0.en.srt
-Celesta-export --json --react --overwrite --props '{"captions":"en"}' examples/delta/film-0.7.0.tsx examples/delta/delta-0.7.0.mp4 --subtitles examples/delta/delta-0.7.0.en.vtt
+Celesta-export --json --react --overwrite examples/delta/film-0.7.0.tsx --subtitles 'examples/delta/delta-0.7.0.{lang}.srt' --subtitles 'examples/delta/delta-0.7.0.{lang}.vtt'
 ```
 
 ショート版の書き出しと、セーフエリアの補助線付きのコンタクトシートです。

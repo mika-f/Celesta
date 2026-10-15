@@ -1,9 +1,8 @@
-import { Assets, Font, Group, Subtitles, defineProjectProperties, getProjectProperty, progress, useCurrentFrame } from '@celesta/react';
+import { Assets, Font, Group, Subtitles, progress, useCurrentFrame } from '@celesta/react';
 import { TransitionSeries, computeTransitionSeries } from '@celesta/transitions';
 import { CUT, ChapterShell } from '../components/ChapterShell';
 import { japaneseFonts } from '../components/theme';
 import { CAPTIONS, CAPTION_LANGUAGES } from './captions';
-import type { CaptionLanguage } from './captions';
 import { CHAPTERS } from './chapters';
 import { CUTS, CUT_EASING } from './cuts';
 import { Hud } from './Hud';
@@ -90,13 +89,14 @@ export function ChapterHud({ layout }: { layout: Layout }) {
   );
 }
 
-// Which language --subtitles writes: --props '{"captions":"en"}'.
-defineProjectProperties({
-  captions: { type: 'select', label: 'Captions', defaultValue: 'ja', options: [...CAPTION_LANGUAGES] },
-});
-
+// Every language at once: --subtitles 'delta-0.7.0.{lang}.srt' writes one
+// file per language.
 export function Captions() {
-  return <Subtitles cues={CAPTIONS[getProjectProperty<CaptionLanguage>('captions')]} />;
+  return (
+    <>
+      {CAPTION_LANGUAGES.map((lang) => <Subtitles key={lang} lang={lang} cues={CAPTIONS[lang]} />)}
+    </>
+  );
 }
 
 const JA_STRINGS = [...PRS.map(([, title]) => title), ...MORE_STRINGS];

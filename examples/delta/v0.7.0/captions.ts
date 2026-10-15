@@ -3,8 +3,8 @@ import { PRS } from './prs';
 import { CHAPTER_COUNT, CHAPTER_LENGTHS, OPEN_LENGTH, OUTRO_AT, OUTRO_LENGTH, chapterAt } from './timeline';
 
 // One caption per scene, in Japanese and English. <Subtitles> draws nothing;
-// the export writes the language the `captions` property picks with
-// --subtitles, as SRT or WebVTT by the file's extension.
+// the export writes each language to its own file with
+// --subtitles 'delta-0.7.0.{lang}.srt', as SRT or WebVTT by the extension.
 export const CAPTION_LANGUAGES = ['ja', 'en'] as const;
 export type CaptionLanguage = (typeof CAPTION_LANGUAGES)[number];
 
