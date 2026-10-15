@@ -28,17 +28,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Windows and macOS build only what the tests run; Linux also
-          # compiles the examples and the normal binaries no test spawns.
           - name: Windows x64
             os: windows-latest
-            cargo-targets: --tests
           - name: macOS arm64
             os: macos-latest
-            cargo-targets: --tests
           - name: Linux x64
             os: ubuntu-latest
-            cargo-targets: --all-targets
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -129,12 +124,9 @@ jobs:
           pnpm run typecheck:examples
 
       - name: Build
-        # Compile everything the Test step needs here so Cargo can schedule it in
-        # parallel and --timings covers it; the Test step reuses the result.
-        # `--tests` still builds the binaries the integration tests spawn
-        # (CARGO_BIN_EXE_*) but skips the examples, which `cargo test` and
-        # nextest would otherwise build.
-        run: cargo build --workspace ${{ matrix.cargo-targets }} --locked --timings
+        # Compile normal binaries and test targets together so Cargo can schedule
+        # them in parallel; the Test step reuses the compiled test targets.
+        run: cargo build --workspace --all-targets --locked --timings
 
       # A failed type check fails the job here, before the Rust tests start.
       - wait: typecheck
@@ -144,12 +136,10 @@ jobs:
       # crates/gpu-renderer/src/tests.rs), so under `cargo test` they ran one by
       # one. nextest skips doctests; the workspace has none.
       # Linux has lavapipe; missing it must fail rather than skip GPU tests.
-      # `--tests` runs the same tests as the default but does not build the
-      # examples; `--all-targets` would also build and run them as tests.
       - name: Test
         env:
           CELESTA_REQUIRE_GPU: ${{ runner.os == 'Linux' && '1' || '0' }}
-        run: cargo nextest run --workspace --tests --locked --no-fail-fast
+        run: cargo nextest run --workspace --locked --no-fail-fast
 
       - name: Upload Cargo build timings
         if: always()
