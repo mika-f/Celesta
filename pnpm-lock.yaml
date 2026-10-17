@@ -311,6 +311,12 @@ importers:
         specifier: ^5.7.3
         version: 5.9.3
 
+  examples/dont-blink:
+    devDependencies:
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+
   examples/feature-tour:
     dependencies:
       '@celesta/character':
