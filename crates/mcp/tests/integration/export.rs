@@ -1,11 +1,9 @@
-mod common;
-
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
 
-use common::{call, client, entry, is_error, params, runtime_built, structured, text};
+use crate::common::{call, client, entry, is_error, params, runtime_built, structured, text};
 use rmcp::model::{ClientRequest, Request, ServerResult};
 use rmcp::service::PeerRequestOptions;
 use serde_json::{Value, json};

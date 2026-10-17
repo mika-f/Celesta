@@ -1,7 +1,5 @@
-mod common;
-
+use crate::common::{call, client, entry, is_error, runtime_built, structured, text};
 use base64::Engine;
-use common::{call, client, entry, is_error, runtime_built, structured, text};
 use rmcp::model::CallToolResult;
 use serde_json::json;
 

@@ -1,7 +1,7 @@
 // skills/celesta/scripts/inspect.mjs --no-native cannot shape text: an
 // entry that measures and does not catch the refusal is reported as an
 // inspection the inspector does not support (exit code 2), not as a broken
-// scene. The native mode is covered by crates/exporter/tests/inspect_integration.rs.
+// scene. The native mode is covered by crates/exporter/tests/integration/inspect.rs.
 // Run after `pnpm run build`.
 
 import assert from 'node:assert/strict';
