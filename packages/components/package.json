@@ -2,7 +2,7 @@
   "name": "@celesta/components",
   "version": "0.7.0",
   "private": true,
-  "description": "High-level components for Celesta compositions: FrameChrome (corner brackets, title, timecode, chapter, and progress bar around the picture) and PatternBackground (dots, grids, stripes, and custom repeating patterns).",
+  "description": "High-level components for Celesta compositions: FrameChrome (corner brackets, title, timecode, chapter, and progress bar around the picture), PatternBackground (dots, grids, stripes, and custom repeating patterns), and Badge (a label on a background sized to its measured text).",
   "license": "MIT OR Apache-2.0",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

@@ -322,6 +322,9 @@ importers:
       '@celesta/character':
         specifier: workspace:*
         version: link:../../packages/character
+      '@celesta/components':
+        specifier: workspace:*
+        version: link:../../packages/components
       '@celesta/react':
         specifier: workspace:*
         version: link:../../packages/react

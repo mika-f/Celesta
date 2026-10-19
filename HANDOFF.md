@@ -97,7 +97,7 @@ compositions: no package a composition imports depends on them, though
 | `packages/lottie` (`@celesta/lottie`) | `<Lottie>`: Lottie JSON animations drawn as paths, groups, and masks; see [`docs/handoff/2026-10-19-lottie.md`](docs/handoff/2026-10-19-lottie.md). |
 | `packages/shader` (`@celesta/shader`) | `defineShader`: custom WGSL filters for a layer's `shader` prop. |
 | `packages/layout` (`@celesta/layout`) | Layout containers and `Camera`. |
-| `packages/components` (`@celesta/components`) | High-level components built on the core's public API, such as `FrameChrome` and `PatternBackground`. |
+| `packages/components` (`@celesta/components`) | High-level components built on the core's public API, such as `FrameChrome`, `PatternBackground`, and `Badge`. |
 | `packages/transitions` (`@celesta/transitions`) | `Transition` and `TransitionSeries`. |
 | `packages/text` (`@celesta/text`) | Text motion and box-fitted text. |
 | `packages/character` (`@celesta/character`) | Characters, dialogue, subtitles, lip sync, blinking, and PSD presets. |

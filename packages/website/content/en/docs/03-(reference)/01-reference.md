@@ -68,6 +68,7 @@ Celesta is split into packages, like Remotion. The core APIs come from `@celesta
 | API | Package | Use it for |
 | --- | --- | --- |
 | `TextBox` / `fitText` / `useFitText` / `measureText` / `useTextMetrics` | `@celesta/text` `@celesta/react` | Measure shaped text or choose a font size for a box; see [Text & fonts](/en/docs/text-fonts/). |
+| `Badge` | `@celesta/components` | A short label on a background sized to its measured text plus padding, with an optional dot or icon before it. |
 | `FrameChrome` | `@celesta/components` | Corner brackets, a title, the timecode, the current chapter, and a progress bar around the picture, laid out from the canvas size. |
 | `PatternBackground` | `@celesta/components` | Dots, a grid, stripes, or marks of your own repeated over the canvas or an area, clipped to it, and moved with the frame. |
 | `Center`, `SafeArea`, `Stack`, `Grid`, `Fit` | `@celesta/layout` | Arrange child layers. See [layout helpers](/en/docs/layout/). |

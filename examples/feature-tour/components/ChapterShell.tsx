@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
-import { Easings, Group, Rect, progress, useCurrentFrame, useTextMetrics, useVideoConfig } from '@celesta/react';
+import { Badge } from '@celesta/components';
+import { Easings, Group, Rect, progress, useCurrentFrame, useVideoConfig } from '@celesta/react';
 import { CHAPTERS } from '../chapters';
 import { Label } from './Label';
 import { Swap } from './Swap';
@@ -54,15 +55,12 @@ export function ChapterShell({ index, children }: { index: number; children: Rea
 
 // The API pill under a chapter's caption, sized to its measured text.
 function ApiChip({ text, opacity, onBlue }: { text: string; opacity: number; onBlue: boolean }) {
-  const { width } = useTextMetrics(text, { fontFamily: FONT.mono, fontSize: 22, fontWeight: 500 });
   return (
-    <Group x={120} y={840} opacity={opacity}>
-      <Rect y={-28} width={width + 56} height={56} cornerRadius={28}
-        fill={onBlue ? C.ink : C.panel} stroke={onBlue ? undefined : C.line} strokeWidth={onBlue ? undefined : 1} />
-      <Rect x={24} y={-4} width={8} height={8} cornerRadius={4} fill={onBlue ? C.paper : C.blue} />
-      <Label x={44} y={0} size={22} font="mono" weight={500} color={onBlue ? C.paper : C.sky} ay={0.5}>
-        {text}
-      </Label>
-    </Group>
+    <Badge x={120} y={840} anchorY={0.5} opacity={opacity} padding={{ horizontal: 24, vertical: 14 }}
+      cornerRadius="pill" fill={onBlue ? C.ink : C.panel} stroke={onBlue ? undefined : C.line} strokeWidth={onBlue ? undefined : 1}
+      leading={<Rect y={-4} width={8} height={8} cornerRadius={4} fill={onBlue ? C.paper : C.blue} />} leadingWidth={8} gap={12}
+      fontFamily={FONT.mono} fontSize={22} fontWeight={500} color={onBlue ? C.paper : C.sky}>
+      {text}
+    </Badge>
   );
 }

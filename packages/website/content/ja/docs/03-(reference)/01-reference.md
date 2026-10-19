@@ -68,6 +68,7 @@ Celesta は Remotion のようにパッケージに分かれています。コ�
 | API | パッケージ | 用途 |
 | --- | --- | --- |
 | `TextBox` / `fitText` / `useFitText` / `measureText` / `useTextMetrics` | `@celesta/text` `@celesta/react` | 組版後の文字を測ったり、枠に収まる文字サイズを選んだりします。詳しくは[テキストとフォント](/ja/docs/text-fonts/)を参照してください。 |
+| `Badge` | `@celesta/components` | 短いラベルを、組版後の文字幅に余白を足した大きさの背景に載せて描きます。先頭にドットやアイコンも置けます。 |
 | `FrameChrome` | `@celesta/components` | 四隅のブラケット・タイトル・タイムコード・現在の章・プログレスバーを、キャンバスの大きさに合わせて画面の周りに描きます。 |
 | `PatternBackground` | `@celesta/components` | ドット・格子・ストライプ、または自前のマークを、キャンバスや指定した領域いっぱいに繰り返して描き、クリップします。フレームに合わせて動かせます。 |
 | `Center`, `SafeArea`, `Stack`, `Grid`, `Fit` | `@celesta/layout` | 子のレイヤーを配置します。[レイアウトのヘルパー](/ja/docs/layout/)を参照。 |

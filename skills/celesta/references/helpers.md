@@ -19,6 +19,7 @@ preview and export, and other people (and agents) reading the file know them.
 | `text.length * fontSize * 0.6` | `useTextMetrics(text, style).width`, `textCaret(metrics, offset)` | `@celesta/react` |
 | A text width measured during `prepare()` | `measureText(text, style, { fonts })` | `@celesta/react` |
 | `[...items].reverse().find((s) => f >= s.at)` | `useCue(cues)`, `cueAt(cues, f)` | `@celesta/react` |
+| A `Rect` sized to `useTextMetrics(text).width` plus padding behind a label | `<Badge padding={…} fill={…}>{text}</Badge>` | `@celesta/components` |
 | Corner brackets, a timecode, and a progress bar drawn by hand in a HUD | `<FrameChrome corners timecode progress />` | `@celesta/components` |
 | `Array.from({ length: cols * rows }, …)` of `<Rect>` dots or grid lines | `<PatternBackground pattern="dots" spacing={80} size={3} />` | `@celesta/components` |
 | `from: i * 6` on each item | `<Stagger each={6}>` | `@celesta/react` |

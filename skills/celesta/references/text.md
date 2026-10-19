@@ -4,7 +4,8 @@ Drawing text in a React composition: the `<Text>` layer, `TextStyle`,
 fonts and fallback, line breaking (including Japanese phrases), text
 animation helpers, measuring text, and fitting text into a box. `Text` and
 measuring come from `@celesta/react`; `TextReveal`, `useTypewriter`,
-`useCountUp`, `TextBox`, `useFitText`, and `fitText` from `@celesta/text`.
+`useCountUp`, `TextBox`, `useFitText`, and `fitText` from `@celesta/text`;
+`Badge` from `@celesta/components`.
 Syntax-highlighted code is in [code.md](code.md).
 
 ## Contents
@@ -20,6 +21,7 @@ Syntax-highlighted code is in [code.md](code.md).
 - [Text motion](#text-motion): TextReveal, useTypewriter, useCountUp
 - [Measure text](#measure-text): useTextMetrics, measureText
 - [Fit text into a box](#fit-text-into-a-box): TextBox, useFitText, fitText
+- [Labels on a background](#labels-on-a-background): Badge
 - [Verifying text](#verifying-text)
 
 ## The Text layer
@@ -591,11 +593,57 @@ same result; pass font files in `options.fonts` and font and color names in
 `options.theme`, as for `measureText()`.
 The full example is `packages/cli/examples/with-text-box.tsx`.
 
+## Labels on a background
+
+`<Badge>` (from `@celesta/components`) draws a short label (a chapter tag,
+a status chip, an API name) on a background sized to the measured text plus
+`padding`. The width comes from the renderer's shaping, so Japanese, Latin,
+and proportional fonts fit without estimating from the character count, and
+the box follows the text as it changes. Use it instead of a `Rect` sized by
+`useTextMetrics` by hand.
+
+```tsx
+import { Badge } from '@celesta/components';
+
+<Badge x={120} y={80} padding={{ horizontal: 20, vertical: 10 }}
+  fill="#204060" fontFamily="sans" fontSize={28} fontWeight={700}>第1章</Badge>
+
+<Badge x={120} y={840} anchorY={0.5} cornerRadius="pill" fill="ink" color="paper"
+  leading={<Rect y={-4} width={8} height={8} cornerRadius={4} fill="#FF4D1F" />} leadingWidth={8} gap={12}
+  fontFamily="mono" fontSize={22}>{api}</Badge>
+```
+
+| Prop | Notes |
+| --- | --- |
+| children | Text as for `<Text>`: strings, numbers, and `<Span>`. |
+| `style`, `fontFamily`, `fontSize`, `fontWeight`, `color` | As for `<Text>`; `style` wins over the shorthand. Defaults: `fontSize` 24, `color` `#ffffff`. |
+| `padding` | A number for every side, or `{ horizontal, vertical, top, right, bottom, left }` (sides win over axes; missing ones are 0). Default `{ horizontal: 16, vertical: 8 }`. |
+| `fill`, `stroke`, `strokeWidth` | The background and its outline: a hex color, a `<Theme>` color name, or a `Paint`. `fill` defaults to `#1f1f1f`. |
+| `cornerRadius` | Pixels, or `'pill'` for half the height. Default 0. |
+| `leading`, `leadingWidth`, `gap` | Drawn before the text (a dot, an icon) with its origin at the left padding edge and the middle of the text's lines, so draw it from `y = -height / 2`. It takes `leadingWidth` (default 0) plus `gap` (default 8) of the row. |
+| `maxWidth` | Widest the whole badge may be, padding included. Longer text wraps, as `<Text maxWidth>` does, and the badge grows taller; a word wider than the room is cut off. Default: no limit. |
+| `anchorX`, `anchorY` | The point of the badge `x`/`y` place, and that `rotation`/`scale` turn about: 0 left/top, 1 right/bottom. Default 0. |
+| common props | `x`, `y`, `rotation`, `scale`, `opacity`, `shadow`, effects, … apply to the background and the text together. |
+
+- The height is the text's line boxes plus `padding`, and the text sits on
+  its first line's baseline, so badges with the same style line up and keep
+  their height whatever their letters.
+- Empty text (or no children) keeps the height of one line, so the badge
+  does not collapse while its text changes, and drops the `gap` after
+  `leading`.
+- Wrapped left-aligned text hugs its widest line; with `style.align`
+  `'center'` or `'right'`, the text area is the whole room, since the lines
+  align across it.
+- There is no ellipsis: for long text, set `maxWidth` to wrap, or fit the
+  size with `useFitText` and pass its `fontSize`.
+
+The full example is `packages/cli/examples/with-badge.tsx`.
+
 ## Verifying text
 
 `scripts/inspect.mjs` shows each text layer's string, position, font, and
 color. **An entry that uses `useTextMetrics`, `measureText`, `TextBox`,
-`useFitText`, `fitText`, or `@celesta/code` is inspected through the
+`useFitText`, `fitText`, `Badge`, or `@celesta/code` is inspected through the
 exporter**, which shapes text like an export; `inspect.mjs` finds it or
 takes `--native <Celesta-export>`. Without one, those frames report
 `UNSUPPORTED inspection` (unless `prepare()` catches the error and falls
