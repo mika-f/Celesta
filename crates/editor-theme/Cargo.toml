@@ -7,5 +7,5 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-gpui-kit = "0.6"
+gpui-kit = "0.8"
 celesta-project = { path = "../project" }
