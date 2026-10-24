@@ -16,6 +16,7 @@ import type {
   LayerChromaKey, LayerChromaticAberration, LayerHalftone, LayerNoise, LayerPixelate, LayerScanlines, LayerTint,
   LayerVignette, LayerWave, LayerZoomBlur, ShaderEffect,
 } from './shader';
+import { createdAtOverride } from './jsx-dev-runtime';
 import { markPrimitive, markTransparent, markWindow } from './source-chain';
 import { themeTextContent } from './rich-text';
 import { type TextShorthand, ThemeContext, themedShapePaint, themedTextStyle } from './theme';
@@ -379,7 +380,13 @@ function sameDeps(previous: StaticProps, next: StaticProps): boolean {
  */
 export const Static = React.memo(function Static({ children }: StaticProps) {
   return React.createElement('static', null, children);
-}, sameDeps);
+}, (previous, next) =>
+  // The editor's drag preview creates elements with its prop overrides (see
+  // `PropOverride`); children written here at an override's position render
+  // on every frame of the drag, others are kept as without one. The cached
+  // layers stay valid: they are walked again only when a host node below
+  // changed.
+  sameDeps(previous, next) && !createdAtOverride(next.children));
 
 /** One value per particle: a `Float32Array` (fastest) or an array of numbers. */
 export type InstanceColumn = Float32Array | ArrayLike<number>;

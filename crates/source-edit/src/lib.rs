@@ -4,13 +4,20 @@
 //! comments and formatting outside the edited spans survive byte-for-byte.
 
 mod apply;
+mod inputs;
 mod locate;
+mod pass_through;
 mod resolve;
+mod scope;
+mod shape;
 
-pub use apply::{ApplyError, Edit, apply, format_number};
+pub use apply::{ApplyError, Edit, apply, format_number, write_value};
+pub use inputs::resolve_inputs;
 pub use locate::{ElementRef, element_at};
+pub use pass_through::{Parameter, enclosing_component, parameter_of, resolve_through};
 pub use resolve::{
-    EditTarget, LockReason, ResolveContext, Span, default_for, has_attribute, resolve,
+    EditTarget, EditValue, LiteralForm, LockReason, ResolveContext, Span, default_for,
+    has_attribute, resolve,
 };
 
 use oxc_allocator::Allocator;

@@ -3,17 +3,21 @@
 //! or blur, and the target's state (keyframe, between keyframes, locked).
 
 use crate::icons::CelestaIcon;
-use crate::transform_edit::{Resolved, TransformProp, keyframe_jump_frames, reason_text};
+use crate::layer_select::display_path;
+use crate::transform_edit::{
+    Resolved, Target, TransformProp, editable, inner_target, keyframe_jump_frames, reason_text,
+};
 use crate::view::EditorView;
 use crate::widgets::inspector_section;
-use celesta_react_bridge::LayerSourceReport;
-use celesta_source_edit::{EditTarget, LockReason, format_number};
+use celesta_react_bridge::{LayerSourceReport, SourcePos};
+use celesta_source_edit::{EditTarget, EditValue, LockReason, format_number};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Escape, Input, InputEvent, InputState};
 use gpui_kit::component::{ActiveTheme as _, Icon, IconName, Sizable as _};
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, Context, Entity, SharedString, Subscription, Window, div, px};
 use std::collections::HashMap;
+use std::path::Path;
 
 const PROPS: [TransformProp; 6] = [
     TransformProp::X,
@@ -50,39 +54,68 @@ pub(crate) fn field_text(
     report: &LayerSourceReport,
 ) -> (String, String) {
     match target {
-        EditTarget::Literal { value, .. } | EditTarget::Keyframe { value, .. } => {
-            (format_number(*value), String::new())
-        }
-        EditTarget::Missing { default, .. } => (
+        EditTarget::Literal { value, .. } => (
+            value.as_number().map(format_number).unwrap_or_default(),
             String::new(),
-            format_number(absent_value(prop, *default, report)),
         ),
+        EditTarget::Keyframe { value, .. } => (format_number(*value), String::new()),
+        EditTarget::Missing {
+            default: Some(default),
+            ..
+        } => (
+            String::new(),
+            format_number(absent_value(prop, Some(default), report)),
+        ),
+        // A parameter without a literal default: the element draws what it
+        // received (`{ scale = base * 2 }`), or its own default when it
+        // received nothing (`{ scale }`).
+        EditTarget::Missing { default: None, .. } => (
+            String::new(),
+            format_number(
+                prop.received(&report.props)
+                    .unwrap_or_else(|| prop_default(prop, report)),
+            ),
+        ),
+        EditTarget::PassThrough { target, .. } => field_text(prop, target, report),
         EditTarget::Locked(_) => match prop.received(&report.props) {
             Some(value) => (format_number(value), String::new()),
-            None => (
-                String::new(),
-                format_number(absent_value(
-                    prop,
-                    celesta_source_edit::default_for(prop.name()),
-                    report,
-                )),
-            ),
+            None => (String::new(), format_number(prop_default(prop, report))),
         },
     }
 }
 
+/// [`absent_value`] with the prop's own default.
+fn prop_default(prop: TransformProp, report: &LayerSourceReport) -> f64 {
+    absent_value(
+        prop,
+        celesta_source_edit::default_for(prop.name()).as_ref(),
+        report,
+    )
+}
+
+/// A pass-through row's line naming the call site its value is written at,
+/// the file relative to the entry's directory as [`display_path`] shows it.
+pub(crate) fn set_at_text(call_site: &SourcePos, entry_dir: &Path) -> String {
+    format!(
+        "Set at {}:{}",
+        display_path(&call_site.file, entry_dir),
+        call_site.line
+    )
+}
+
 /// The value an absent prop is drawn with: a missing scale axis takes the
 /// `scale` the element received (`<Rect scale={2} scaleX={3} />` draws Y at
-/// 2), anything else its default.
-fn absent_value(prop: TransformProp, default: f64, report: &LayerSourceReport) -> f64 {
+/// 2), anything else its default (every transform prop has a numeric one).
+fn absent_value(
+    prop: TransformProp,
+    default: Option<&EditValue>,
+    report: &LayerSourceReport,
+) -> f64 {
+    let default = default.and_then(EditValue::as_number).unwrap_or(0.0);
     match prop {
         TransformProp::ScaleX | TransformProp::ScaleY => report.props.scale.unwrap_or(default),
         _ => default,
     }
-}
-
-fn editable(target: &EditTarget) -> bool {
-    !matches!(target, EditTarget::Locked(_))
 }
 
 impl EditorView {
@@ -111,7 +144,7 @@ impl EditorView {
             };
             let shown = match self.transform.written_value(Some(&resolved.layer), *prop) {
                 Some(value) => (format_number(value), String::new()),
-                None => field_text(*prop, target, &resolved.report),
+                None => field_text(*prop, &target.target, &resolved.report),
             };
             // Typed text stays until committed, but never under another layer.
             let same_layer = field.layer.as_deref() == Some(resolved.layer.as_str());
@@ -217,11 +250,14 @@ impl EditorView {
         let resolved = self.transform.resolved(self.selected_layer.as_deref());
         match resolved {
             Some((resolved, current)) => match &resolved.outcome {
-                Ok(targets) => group
-                    .children(targets.targets.iter().map(|(prop, target)| {
-                        self.transform_row(*prop, target, resolved, current, cx)
-                    }))
-                    .into_any_element(),
+                Ok(targets) => {
+                    let entry_dir = self.entry_dir();
+                    group
+                        .children(targets.targets.iter().map(|(prop, target)| {
+                            self.transform_row(*prop, target, resolved, current, &entry_dir, cx)
+                        }))
+                        .into_any_element()
+                }
                 Err(error) => group
                     .child(
                         div()
@@ -239,22 +275,29 @@ impl EditorView {
         }
     }
 
-    /// `label  [field]  icon`, plus the reason or the keyframe jumps below
-    /// when the target cannot be edited.
+    /// `label  [field]  icon`, plus, below, where a pass-through value is set
+    /// and the reason or the keyframe jumps when the target cannot be
+    /// edited.
     fn transform_row(
         &self,
         prop: TransformProp,
-        target: &EditTarget,
+        target: &Target,
         resolved: &Resolved,
         current: bool,
+        entry_dir: &Path,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let muted = cx.theme().muted_foreground;
-        let icon = match target {
+        let (call_site, target) = (target.call_site.as_ref(), &target.target);
+        // A pass-through row shows the state of the value at the call site.
+        let shown = inner_target(target);
+        let icon = match shown {
             EditTarget::Keyframe { .. } => Some(CelestaIcon::DiamondFilled),
             EditTarget::Locked(LockReason::BetweenKeyframes { .. }) => Some(CelestaIcon::Diamond),
             EditTarget::Locked(_) => Some(CelestaIcon::Lock),
-            EditTarget::Literal { .. } | EditTarget::Missing { .. } => None,
+            EditTarget::Literal { .. }
+            | EditTarget::Missing { .. }
+            | EditTarget::PassThrough { .. } => None,
         };
         let field = self.transform_inputs.fields.get(&prop).map(|field| {
             let escape = cx.listener(move |this, _: &Escape, _, cx| {
@@ -266,9 +309,9 @@ impl EditorView {
                     .disabled(!(current && editable(target))),
             )
         });
-        let detail = match target {
+        let detail = match shown {
             EditTarget::Locked(reason @ LockReason::BetweenKeyframes { .. }) => {
-                keyframe_jump_frames(target, resolved.timeline_frame)
+                keyframe_jump_frames(shown, resolved.timeline_frame)
                     .map(|frames| self.keyframe_jumps(prop, reason, frames, cx))
             }
             EditTarget::Locked(reason) => Some(
@@ -280,6 +323,24 @@ impl EditorView {
             ),
             _ => None,
         };
+        let set_at = call_site.map(|call_site| {
+            div()
+                .flex()
+                .items_center()
+                .gap_1()
+                .text_xs()
+                .text_color(muted)
+                .child(Icon::new(CelestaIcon::CornerDownRight).xsmall())
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .child(set_at_text(call_site, entry_dir)),
+                )
+        });
         div()
             .flex()
             .flex_col()
@@ -313,6 +374,7 @@ impl EditorView {
                             .children(icon.map(|icon| Icon::new(icon).xsmall())),
                     ),
             )
+            .children(set_at)
             .children(detail)
             .into_any_element()
     }

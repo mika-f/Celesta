@@ -129,6 +129,27 @@ pub(crate) fn parent_layer_id(entry: &LayerSource) -> Option<&str> {
     }
 }
 
+/// The chain entry that calls the component enclosing the selected element:
+/// the nearest `Component` entry above it whose `name` equals `component`.
+/// Wrappers, and components the element is only passed to as children, are
+/// skipped. When none matches, the nearest component the runtime calls
+/// "Anonymous" (`memo` or `forwardRef` of an arrow function has no name).
+pub(crate) fn owner_call_site<'a>(
+    report: &'a LayerSourceReport,
+    component: &str,
+) -> Option<&'a LayerSource> {
+    let components = || {
+        report
+            .chain
+            .iter()
+            .skip(1)
+            .filter(|entry| entry.kind == ElementKind::Component)
+    };
+    components()
+        .find(|entry| entry.name == component)
+        .or_else(|| components().find(|entry| entry.name == "Anonymous"))
+}
+
 /// The quads to outline for the selection: its own hit regions, or, for a
 /// group that has none, the box `layer_frame` measured around its children.
 pub(crate) fn outline_quads(

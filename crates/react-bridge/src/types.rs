@@ -67,9 +67,23 @@ pub enum ElementKind {
     Component,
 }
 
-/// The transform props an element received, as written in the source; each
-/// is `None` when the element was not given it (or it was not a plain number).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Deserialize)]
+/// One scalar prop value an element received.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(untagged)]
+pub enum ReceivedValue {
+    /// A finite number.
+    Number(f64),
+    /// A string.
+    String(String),
+    /// A boolean.
+    Bool(bool),
+}
+
+/// The scalar props an element received, as written in the source. Each
+/// transform prop is `None` when the element was not given it (or it was not
+/// a plain number); every other number, string, or boolean prop is in
+/// `others`.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReceivedProps {
     /// The `x` prop.
@@ -84,6 +98,27 @@ pub struct ReceivedProps {
     pub scale_x: Option<f64>,
     /// The `scaleY` prop.
     pub scale_y: Option<f64>,
+    /// Every other scalar prop, keyed as written (`fontSize`, `children`);
+    /// a scalar in the `style` object is keyed `style.<key>`.
+    #[serde(flatten)]
+    pub others: BTreeMap<String, ReceivedValue>,
+}
+
+impl ReceivedProps {
+    /// The value of `prop` (`x`, `fontSize`, `style.fontSize`, ...), from the
+    /// named fields for the transform props and `others` for the rest.
+    pub fn get(&self, prop: &str) -> Option<ReceivedValue> {
+        let transform = match prop {
+            "x" => self.x,
+            "y" => self.y,
+            "rotation" => self.rotation,
+            "scale" => self.scale,
+            "scaleX" => self.scale_x,
+            "scaleY" => self.scale_y,
+            _ => return self.others.get(prop).cloned(),
+        };
+        transform.map(ReceivedValue::Number)
+    }
 }
 
 /// Everything the runtime knows about where a layer came from (see
@@ -103,7 +138,7 @@ pub struct LayerSourceReport {
     /// uses sits above it, so that frame is one of these. Empty from runtimes
     /// that do not report them; read those as `[local_frame]`.
     pub candidate_frames: Vec<f64>,
-    /// The transform props the innermost element received.
+    /// The scalar props the innermost element received.
     pub props: ReceivedProps,
     /// How many layers of the frame the innermost element rendered; 1 from
     /// runtimes that do not count.
@@ -126,6 +161,21 @@ pub struct SourcePos {
     pub line: u32,
     /// 1-based column of the element's opening `<`.
     pub column: u32,
+}
+
+/// A value the elements written at one position take for one frame, in
+/// place of the written one: the editor's preview of a drag (see
+/// [`ReactBridge::scene_at_with_overrides`](crate::ReactBridge::scene_at_with_overrides)).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct PropOverride {
+    /// The module holding the element, as an absolute path.
+    pub file: PathBuf,
+    /// 1-based line of the element's opening `<`, as in [`SourcePos`].
+    pub line: u32,
+    /// 1-based column of the element's opening `<`.
+    pub column: u32,
+    pub prop: String,
+    pub value: f64,
 }
 
 impl From<&LayerSource> for SourcePos {

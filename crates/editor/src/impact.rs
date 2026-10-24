@@ -7,7 +7,9 @@ use celesta_react_bridge::{
     scenes_of,
 };
 
-/// What an edit of the selected instance changes, in scenes.
+/// What an edit of the selected instance changes, in scenes. "Instances" are
+/// the element's instances the edit changes: all of them, or those made by
+/// the call site it writes (see [`impact_view`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Impact {
     /// Outermost chapters this instance's occurrences overlap (names).
@@ -48,12 +50,16 @@ pub(crate) enum ImpactView {
 /// The impact of editing the layer `report` describes, with the playhead at
 /// `frame`. The current scene is the outermost chapter at `frame`; without
 /// chapters of any length the whole timeline is one scene, and in a gap
-/// between chapters no occurrence is in the current scene.
+/// between chapters no occurrence is in the current scene. `written_at` is
+/// the call site an edit writes when every editable prop passes through to
+/// it: only the instances whose chain contains it change, so only those are
+/// counted, listed, and banded.
 pub(crate) fn impact_view(
     report: &LayerSourceReport,
     occurrences: Option<&OccurrenceState>,
     chapters: &[ReactChapter],
     frame: u64,
+    written_at: Option<&SourcePos>,
 ) -> ImpactView {
     let span_only = |note: String| ImpactView::SpanOnly {
         // `to <= from` when the layer's windows start past the composition end.
@@ -74,6 +80,11 @@ pub(crate) fn impact_view(
     let Some((element, own)) = index.instance_for(report) else {
         return span_only("Not found in the scene scan".to_owned());
     };
+    let instances: Vec<&InstanceOccurrences> = element
+        .instances
+        .iter()
+        .filter(|instance| written_at.is_none_or(|site| instance.chain.contains(site)))
+        .collect();
 
     let current = outermost_chapter_at(chapters, frame);
     let no_scenes = chapters
@@ -89,8 +100,7 @@ pub(crate) fn impact_view(
     };
 
     let appears = scenes_of(&own.ranges, chapters);
-    let all_ranges: Vec<(u64, u64)> = element
-        .instances
+    let all_ranges: Vec<(u64, u64)> = instances
         .iter()
         .flat_map(|instance| instance.ranges.iter().copied())
         .collect();
@@ -102,10 +112,10 @@ pub(crate) fn impact_view(
 
     let mut own_bands = Vec::new();
     let mut other_bands = Vec::new();
-    for (index, instance) in element.instances.iter().enumerate() {
+    for (index, instance) in instances.iter().enumerate() {
         for &range in &instance.ranges {
             match scene {
-                Some(scene) if std::ptr::eq(instance, own) => {
+                Some(scene) if std::ptr::eq(*instance, own) => {
                     cut(range, scene, index, &mut own_bands, &mut other_bands);
                 }
                 _ => other_bands.push((range, index)),
@@ -118,14 +128,13 @@ pub(crate) fn impact_view(
         appears_in_ids: appears.iter().map(|chapter| chapter.id.clone()).collect(),
         own_ranges: own.ranges.clone(),
         other_scenes,
-        instance_count: element.instances.len(),
-        places_in_scene: element
-            .instances
+        instance_count: instances.len(),
+        places_in_scene: instances
             .iter()
             .filter(|instance| in_scene(instance))
             .map(|instance| instance.max_per_frame)
             .sum(),
-        call_sites: call_sites(&element.element, &element.instances),
+        call_sites: call_sites(&element.element, &instances),
         own_bands,
         other_bands,
     })
@@ -136,7 +145,7 @@ pub(crate) fn impact_view(
 /// same for every instance; the first entry that differs is the call. An
 /// instance with an empty chain is called from `element`, so the bands'
 /// indices still line up with the instances.
-fn call_sites(element: &SourcePos, instances: &[InstanceOccurrences]) -> Vec<SourcePos> {
+fn call_sites(element: &SourcePos, instances: &[&InstanceOccurrences]) -> Vec<SourcePos> {
     let Some(first) = instances.first() else {
         return Vec::new();
     };
@@ -324,6 +333,7 @@ mod tests {
             Some(&occurrences),
             &chapters,
             40,
+            None,
         );
         let line = impact_line(&view);
         let impact = known(view);
@@ -355,11 +365,73 @@ mod tests {
             Some(&occurrences),
             &chapters,
             10,
+            None,
         );
         assert_eq!(
             impact_line(&view),
             ("Also changes 11 other scenes".to_owned(), true)
         );
+    }
+
+    #[test]
+    fn impact_scoped_to_a_call_site() {
+        // `<Card>` is called at 8 (in Intro) and 20 (in Price); the edit
+        // writes the call at 20.
+        let chapters = [
+            chapter("intro", "Intro", 0, 30),
+            chapter("price", "Price", 30, 60),
+        ];
+        let occurrences = index(vec![
+            instance(vec![pos(3), pos(8)], vec![(0, 30)]),
+            instance(vec![pos(3), pos(20)], vec![(30, 90)]),
+        ]);
+        let view = impact_view(
+            &report(&[pos(3), pos(20)], Some((30.0, 90.0))),
+            Some(&occurrences),
+            &chapters,
+            40,
+            Some(&pos(20)),
+        );
+        let line = impact_line(&view);
+        let impact = known(view);
+        assert_eq!(impact.other_scenes, Vec::<String>::new());
+        assert_eq!(impact.instance_count, 1);
+        assert_eq!(impact.places_in_scene, 1);
+        assert_eq!(impact.call_sites, vec![pos(20)]);
+        assert_eq!(impact.own_bands, vec![((30, 90), 0)]);
+        assert!(impact.other_bands.is_empty());
+        assert_eq!(line, ("Changes this scene only".to_owned(), false));
+    }
+
+    #[test]
+    fn a_call_site_inside_a_reused_component_counts_every_instance_through_it() {
+        // `<Card>` is called at 20 inside a component that Intro calls at 30
+        // and Outro at 40; Price calls `<Card>` at 8. The edit writes 20.
+        let chapters = [
+            chapter("intro", "Intro", 0, 30),
+            chapter("outro", "Outro", 30, 30),
+            chapter("price", "Price", 60, 30),
+        ];
+        let occurrences = index(vec![
+            instance(vec![pos(3), pos(20), pos(30)], vec![(0, 30)]),
+            instance(vec![pos(3), pos(20), pos(40)], vec![(30, 60)]),
+            instance(vec![pos(3), pos(8)], vec![(60, 90)]),
+        ]);
+        let view = impact_view(
+            &report(&[pos(3), pos(20), pos(30)], Some((0.0, 30.0))),
+            Some(&occurrences),
+            &chapters,
+            10,
+            Some(&pos(20)),
+        );
+        let line = impact_line(&view);
+        let impact = known(view);
+        assert_eq!(impact.other_scenes, vec!["Outro"]);
+        assert_eq!(impact.instance_count, 2);
+        assert_eq!(impact.call_sites, vec![pos(30), pos(40)]);
+        assert_eq!(impact.own_bands, vec![((0, 30), 0)]);
+        assert_eq!(impact.other_bands, vec![((30, 60), 1)]);
+        assert_eq!(line, ("Also changes Outro".to_owned(), true));
     }
 
     #[test]
@@ -371,6 +443,7 @@ mod tests {
             Some(&occurrences),
             &chapters,
             10,
+            None,
         ));
         assert_eq!(impact.appears_in, vec!["A", "B"]);
         assert_eq!(impact.other_scenes, vec!["B"]);
@@ -389,6 +462,7 @@ mod tests {
             Some(&occurrences),
             &[],
             40,
+            None,
         ));
         assert_eq!(impact.call_sites, vec![pos(8), pos(20)]);
     }
@@ -401,6 +475,7 @@ mod tests {
             Some(&occurrences),
             &[],
             10,
+            None,
         ));
         assert_eq!(impact.call_sites, vec![pos(8)]);
     }
@@ -422,6 +497,7 @@ mod tests {
             Some(&occurrences),
             &[],
             80,
+            None,
         ));
         // The empty chain shares nothing, so every call site is the element.
         assert_eq!(impact.call_sites, vec![pos(3), pos(3), pos(3)]);
@@ -442,6 +518,7 @@ mod tests {
             Some(&occurrences),
             &chapters,
             10,
+            None,
         );
         assert_eq!(
             impact_line(&view),
@@ -460,6 +537,7 @@ mod tests {
             Some(&occurrences),
             &[],
             20,
+            None,
         );
         let line = impact_line(&view);
         let impact = known(view);
@@ -476,6 +554,7 @@ mod tests {
             Some(&alone),
             &[],
             20,
+            None,
         );
         assert_eq!(
             impact_line(&view),
@@ -492,6 +571,7 @@ mod tests {
             Some(&occurrences),
             &chapters,
             20,
+            None,
         ));
         assert!(impact.appears_in.is_empty());
         assert_eq!(impact.places_in_scene, 1);
@@ -506,6 +586,7 @@ mod tests {
             Some(&occurrences),
             &[],
             20,
+            None,
         );
         assert_eq!(
             view,
@@ -532,8 +613,15 @@ mod tests {
             Some(&OccurrenceState::Refreshing(last.clone())),
             &chapters,
             10,
+            None,
         );
-        let ready = impact_view(&report, Some(&OccurrenceState::Ready(last)), &chapters, 10);
+        let ready = impact_view(
+            &report,
+            Some(&OccurrenceState::Ready(last)),
+            &chapters,
+            10,
+            None,
+        );
         assert_eq!(refreshing, ready);
         assert_eq!(known(refreshing).other_scenes, vec!["B"]);
     }
@@ -542,11 +630,11 @@ mod tests {
     fn scanning_and_failed_notes() {
         let report = report(&[pos(3)], Some((15.0, 35.0)));
         assert_eq!(
-            impact_view(&report, Some(&OccurrenceState::Scanning), &[], 20),
+            impact_view(&report, Some(&OccurrenceState::Scanning), &[], 20, None),
             span_only(Some((15.0, 35.0)), "Scanning scenes…")
         );
         assert_eq!(
-            impact_view(&report, None, &[], 20),
+            impact_view(&report, None, &[], 20, None),
             span_only(Some((15.0, 35.0)), "Scanning scenes…")
         );
         assert_eq!(
@@ -554,7 +642,8 @@ mod tests {
                 &report,
                 Some(&OccurrenceState::Failed("boom".to_owned())),
                 &[],
-                20
+                20,
+                None
             ),
             span_only(Some((15.0, 35.0)), "Couldn't scan scenes: boom")
         );
@@ -562,9 +651,9 @@ mod tests {
 
     #[test]
     fn a_span_past_the_composition_end_is_no_span() {
-        let view = impact_view(&report(&[pos(3)], Some((120.0, 90.0))), None, &[], 20);
+        let view = impact_view(&report(&[pos(3)], Some((120.0, 90.0))), None, &[], 20, None);
         assert_eq!(view, span_only(None, "Scanning scenes…"));
-        let view = impact_view(&report(&[pos(3)], Some((90.0, 90.0))), None, &[], 20);
+        let view = impact_view(&report(&[pos(3)], Some((90.0, 90.0))), None, &[], 20, None);
         assert_eq!(view, span_only(None, "Scanning scenes…"));
     }
 
@@ -580,6 +669,7 @@ mod tests {
             Some(&occurrences),
             &chapters,
             10,
+            None,
         ));
         assert_eq!(impact.own_bands, vec![((0, 30), 0)]);
         assert_eq!(impact.other_bands, vec![((60, 90), 0), ((100, 120), 1)]);
@@ -594,6 +684,7 @@ mod tests {
             Some(&occurrences),
             &chapters,
             40,
+            None,
         ));
         assert_eq!(impact.own_bands, vec![((30, 50), 0)]);
         assert_eq!(impact.other_bands, vec![((20, 30), 0)]);
@@ -608,6 +699,7 @@ mod tests {
             Some(&occurrences),
             &chapters,
             45,
+            None,
         ));
         assert_eq!(impact.other_scenes, vec!["A", "B"]);
         assert_eq!(impact.places_in_scene, 0);

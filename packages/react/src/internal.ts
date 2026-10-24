@@ -8,6 +8,7 @@ export type {
   ComponentResolutionRequest,
   ComponentResolutions,
   EntryComponent,
+  FramePropOverrides,
   MountedComposition,
   OccurrenceIndex,
   ProjectFrame,
@@ -71,7 +72,7 @@ export type { ShaderSourceHandle } from './shader';
 export { entryRelativePath, isRemoteUrl, prepareDependencies, trackPrepareDependency } from './entry-dir';
 export type { PrepareDependency } from './entry-dir';
 export { sourceOfProps } from './jsx-dev-runtime';
-export type { SourcePosition } from './jsx-dev-runtime';
+export type { PropOverride, SourcePosition } from './jsx-dev-runtime';
 
 // Rust types of the project document (`celesta-project`), which
 // `@celesta/project` and `@celesta/character` re-export; ts-rs generates them

@@ -14,8 +14,8 @@ use crate::statics::StaticCache;
 use crate::stderr::StderrCapture;
 use crate::types::{
     ComponentResolutionRequest, ComponentResolutions, FrameEvaluation, LayerSourceReport,
-    ProjectFrame, ReactCompositionInfo, ReactCompositionMetadata, ReactSubtitleDescriptor,
-    SpawnOptions,
+    ProjectFrame, PropOverride, ReactCompositionInfo, ReactCompositionMetadata,
+    ReactSubtitleDescriptor, SpawnOptions,
 };
 use celesta_composition::{AudioGraph, Scene, Time};
 use celesta_media::FfmpegBackend;
@@ -370,6 +370,7 @@ impl ReactBridge {
             statics: Some(StaticsRequest {
                 decoded: self.statics.decoded(),
             }),
+            prop_overrides: &[],
         })?;
         let frame = self.receive_frame()?;
         match self.decode_response(frame)? {
@@ -402,6 +403,32 @@ impl ReactBridge {
         time: Time,
         project: Option<ProjectFrame<'_>>,
     ) -> Result<(), ReactBridgeError> {
+        self.submit(time, project, &[])
+    }
+
+    /// Same as [`Self::scene_at`], but the elements written at each
+    /// override's position take its value in this frame only, as if the
+    /// source said so: everything computed from the value follows. For the
+    /// editor's preview of a drag; the runtime must have been spawned with
+    /// source locations (see [`SpawnOptions`]), or the overrides match
+    /// nothing. The next frame asked for without overrides draws the written
+    /// values again.
+    pub fn scene_at_with_overrides(
+        &mut self,
+        time: Time,
+        prop_overrides: &[PropOverride],
+    ) -> Result<Scene, ReactBridgeError> {
+        self.submit(time, None, prop_overrides)?;
+        let frame = self.receive_frame()?;
+        Ok(self.decode_frame(frame)?.scene)
+    }
+
+    fn submit(
+        &mut self,
+        time: Time,
+        project: Option<ProjectFrame<'_>>,
+        prop_overrides: &[PropOverride],
+    ) -> Result<(), ReactBridgeError> {
         self.write_request(Request {
             time: Some(time),
             project: project.map(|frame| ProjectPayload {
@@ -417,6 +444,7 @@ impl ReactBridge {
             statics: Some(StaticsRequest {
                 decoded: self.statics.decoded(),
             }),
+            prop_overrides,
         })
     }
 
@@ -525,6 +553,7 @@ impl ReactBridge {
             debug_guides: false,
             preview: false,
             statics: None,
+            prop_overrides: &[],
         };
         match self.request_response(request)? {
             Response::Components {

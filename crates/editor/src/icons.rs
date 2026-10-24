@@ -27,12 +27,13 @@ pub enum CelestaIcon {
     Film,
     Group,
     Shapes,
+    CornerDownRight,
 }
 
 const SVG_OPEN: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">"#;
 
 /// `(asset path, SVG body)` for every icon, served by [`CelestaAssets`].
-const ICONS: [(&str, &str); 15] = [
+const ICONS: [(&str, &str); 16] = [
     (
         "celesta/icons/skip-back.svg",
         r#"<polygon points="19 20 9 12 19 4 19 20"/><line x1="5" x2="5" y1="19" y2="5"/>"#,
@@ -87,6 +88,10 @@ const ICONS: [(&str, &str); 15] = [
         "celesta/icons/shapes.svg",
         r#"<path d="M8.3 10a.7.7 0 0 1-.626-1.079L11.4 3a.7.7 0 0 1 1.198-.043L16.3 8.9a.7.7 0 0 1-.572 1.1Z"/><rect x="3" y="14" width="7" height="7" rx="1"/><circle cx="17.5" cy="17.5" r="3.5"/>"#,
     ),
+    (
+        "celesta/icons/corner-down-right.svg",
+        r#"<path d="m15 10 5 5-5 5"/><path d="M4 4v7a4 4 0 0 0 4 4h12"/>"#,
+    ),
 ];
 
 const DIAMOND: &str = r#"<path d="M2.7 10.3a2.41 2.41 0 0 0 0 3.41l7.59 7.59a2.41 2.41 0 0 0 3.41 0l7.59-7.59a2.41 2.41 0 0 0 0-3.41l-7.59-7.59a2.41 2.41 0 0 0-3.41 0Z"/>"#;
@@ -110,6 +115,7 @@ impl IconNamed for CelestaIcon {
             Self::Film => 12,
             Self::Group => 13,
             Self::Shapes => 14,
+            Self::CornerDownRight => 15,
         };
         ICONS[index].0.into()
     }
@@ -164,6 +170,7 @@ mod tests {
             CelestaIcon::Film,
             CelestaIcon::Group,
             CelestaIcon::Shapes,
+            CelestaIcon::CornerDownRight,
         ] {
             let svg = CelestaAssets
                 .load(&icon.path())

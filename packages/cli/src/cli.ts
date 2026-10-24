@@ -39,6 +39,7 @@ import type {
   PrepareDependency,
   ProbedMediaInfo,
   ProjectFrame,
+  PropOverride,
   ResolutionRuntime,
   Resolver,
   SubtitleDescriptor,
@@ -89,6 +90,12 @@ export interface FrameRequest {
    * exports, inspection and older bridges.
    */
   preview?: boolean;
+  /**
+   * Sent only by the editor's preview while a layer is dragged: values the
+   * elements written at these positions take for this frame (see
+   * `PropOverride`). Needs `--source-locations`; absent or empty means none.
+   */
+  propOverrides?: PropOverride[];
 }
 
 export interface ResolveRequest {
@@ -369,6 +376,9 @@ async function main(): Promise<void> {
           statics: request.statics,
           debugGuides: request.debugGuides === true,
           preview: request.preview === true,
+          ...(request.propOverrides
+            ? { propOverrides: { overrides: request.propOverrides, resolveFile: resolveSourceFile } }
+            : {}),
         });
         writeLine({
           scene,

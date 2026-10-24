@@ -7,8 +7,8 @@ use crate::props_edit::OrderedObject;
 use crate::statics::StaticDefinition;
 use crate::types::{
     ComponentPropertyField, ComponentPropertySchema, FrameSpan, LayerSource, LayerSourceReport,
-    PrepareDependency, ReactAudioClipDescriptor, ReactCompositionConfig, ReactCompositionInfo,
-    ReactSubtitleDescriptor, ReceivedProps, TimingWindow,
+    PrepareDependency, PropOverride, ReactAudioClipDescriptor, ReactCompositionConfig,
+    ReactCompositionInfo, ReactSubtitleDescriptor, ReceivedProps, TimingWindow,
 };
 use celesta_composition::{Layer, Scene, ShaderSource, Time};
 use serde::{Deserialize, Serialize};
@@ -57,6 +57,10 @@ pub(crate) struct Request<'a> {
     /// subtrees by key (see [`crate::statics`]).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) statics: Option<StaticsRequest>,
+    /// Values elements take in this frame only (see
+    /// [`crate::ReactBridge::scene_at_with_overrides`]); left out when empty.
+    #[serde(rename = "propOverrides", skip_serializing_if = "<[_]>::is_empty")]
+    pub(crate) prop_overrides: &'a [PropOverride],
 }
 
 /// Which frames' `<Static>` definitions this side has taken in.

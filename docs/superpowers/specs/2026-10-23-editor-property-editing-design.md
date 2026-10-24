@@ -41,7 +41,9 @@ pub enum EditTarget {
     Literal { span: Span, value: EditValue },
     Keyframe { span: Span, value: f64, frame: f64 },
     Missing { insert_at: u32, default: Option<EditValue> },
-    PassThrough { call_site: ElementRef, prop: String, target: Box<EditTarget> },
+    /// `param`: the prop name at the call site (it may differ from the
+    /// element's prop, as with `{ label: text }`).
+    PassThrough { call_site: ElementRef, param: String, target: Box<EditTarget> },
     Locked(LockReason),
 }
 ```
@@ -50,10 +52,11 @@ Recognized literal forms, besides the numeric ones resolved today:
 
 | Form | Value | Written back as |
 | --- | --- | --- |
-| `name="text"`, `name={'text'}`, `` name={`text`} `` (no `${}`) | String | the same quote style; a value with that quote or a newline becomes `{"…"}` with JSON escapes |
+| `name="text"`, `name={'text'}`, `` name={`text`} `` (no `${}`) | String | the same quote style. JSX attribute strings have no escapes, so a value with the attribute's quote, `&`, or a newline becomes `{"…"}` with JSON escapes; inside `{'…'}` and `` {`…`} `` the quote, `\`, and (for templates) `${` are escaped in place. An attribute string containing `&` is locked (it may be an HTML entity the source spells differently) |
 | `name` (bare) | Bool(true) | `name` for true, `name={false}` for false |
 | `name={true}` / `name={false}` | Bool | `{true}` / `{false}` |
 | Text children: one JSXText, or one `{'…'}` child | String | JSXText when it has no `{`, `}`, `<`, `>` and no leading or trailing whitespace; otherwise `{"…"}` |
+| Text children: one `{name}` child | String | resolved like an attribute value that is an identifier: a const, or a pass-through |
 | `style={{ fontSize: 48 }}` (object literal property) | per property | the property's value |
 
 Colors are strings; the panel validates them (`#RRGGBB`, `#RRGGBBAA`, or a
@@ -106,9 +109,19 @@ the prop ("Can't find where `PriceTag` is called"). At that call site:
 
 Renamed destructuring (`{ label: text }`) and one level of `props.label`
 (a parameter named `props`, read as `props.label`) are followed; anything else
-is `UnresolvedIdentifier` as today. One hop only: a call site that itself
-passes a parameter through is locked as `PassThrough` of a parameter
-("Comes from `<Card>`'s caller").
+is `UnresolvedIdentifier` as today. Only the parameter of the function that
+encloses the element counts: a parameter of an outer component read inside a
+nested component (`const Inner = () => <Text label={label} />`) stays
+`UnresolvedIdentifier`. One hop only: a call site that itself passes a
+parameter through is locked (`ParameterOfCaller`, "Comes from `<Card>`'s
+caller").
+
+A component element's own call site would otherwise be locked as
+`NotPrimitive`; while resolving a pass-through, the call site is read as a
+component element on purpose. An element rendered more than once by its
+component's callers is not locked as `Repeated` when its value passes
+through: each edit targets one call site. A call site inside `.map()` is not
+locked yet.
 
 Pass-through edits change one call site, so they change only the instances
 that call site produces. Design 1's impact line counts them that way.
@@ -134,6 +147,52 @@ struct HistoryEntry { files: Vec<FileEdit> }
 - The resolver is re-run against every file at commit time, as the drag
   commit does today; if any target moved, the commit aborts with "The source
   changed while editing".
+
+### Drag preview through the runtime
+
+With pass-through, a dragged value often feeds more than the dragged layer:
+the other layers of the same component call, the lines a `.map()` call
+makes, layout computed from it. Patching the dragged layer's transform after
+evaluation moves that layer alone until the write reloads the code. Instead,
+the preview hands the drag's values to the React runtime as prop overrides
+for the frame it asks for anyway (no extra evaluations), so the frame shows
+what the write will produce:
+
+```text
+PropOverride { file (absolute), line, column, prop, value }
+```
+
+- Each value overrides the prop its write changes: the element's own prop
+  (`report.chain[0]`) for a `Literal`, `Keyframe`, or `Missing` target, and
+  the parameter's prop at the call site (`Target.call_site`, `param`) for a
+  `PassThrough`. Locked props are never dragged. The positions are taken
+  when the drag starts and kept while a released drag writes, until the
+  reload's frame is shown. From the pointer's first move on, every prop the
+  handle can change is overridden (`x` and `y` for a move), with the value
+  the runtime saw until the drag changes it, so the set of positions stays
+  the same for the whole drag.
+- The frame request carries `propOverrides` (left out when empty; exports
+  never send it). `jsxDEV` creates an element written at an override's
+  position with the value, comparing the recorded file name resolved as
+  `layerSource` resolves it. Without overrides it checks one variable.
+- A component renders only when something it reads changed, so `jsxDEV`
+  subscribes a component that creates an element at an override's position
+  to a context whose value changes with the values; a `memo` component that
+  reads no frame renders again too, and every other component keeps React's
+  bailouts as without a drag. Components that rendered before a position was
+  overridden never subscribed, and an element cached with `useMemo` while
+  overrides were set would keep the value after: the entry remounts when the
+  overridden positions change, never for new values alone: with a fixed set
+  of positions, once when a drag starts and once when it is cancelled.
+  `<Static>` renders a child written in it at an override's position on
+  every drag frame and keeps the others; its cached layers are walked again
+  only when a host node below changed. Elements created outside any render
+  (at module scope) keep their written values, and an element cached with
+  `useMemo` at an override's position follows only the first drag frame:
+  later frames reuse the element created then, so `jsxDEV` never sees their
+  values (a known limitation; a test pins it).
+- Field edits (typing in a Transform row) write without a preview, and need
+  no overrides.
 
 ## Property tables (`packages/react`, `packages/shapes`)
 
@@ -256,10 +315,10 @@ text in place, in its own font, size, wrapping, and transform:
 
 - **Live, without writing.** The editor replaces the layer's `text` in the
   held scene (the scene's `LayerContent::Text` carries the string, and the
-  Rust renderer lays it out) and re-renders on every keystroke, as a drag
-  overrides the transform. Nothing is written while typing, and the React
-  code is not run: what the code computes from the text (a frame sized to
-  it) keeps its old size until the commit's reload. (Decided with the user:
+  Rust renderer lays it out) and re-renders on every keystroke. Nothing is
+  written while typing, and, unlike a drag (see "Drag preview through the
+  runtime"), the React code is not run: what the code computes from the
+  text (a frame sized to it) keeps its old size until the commit's reload. (Decided with the user:
   a frame changing size while typing gets in the way.)
 - **Caret and selection** come from the layout's `TextMetrics`
   (`line_starts`, and each glyph cluster's code-point range, left edge, and
@@ -312,12 +371,32 @@ Rust (`crates/editor`):
   multi-line, rotated, and combining-character text; the held scene's text is
   replaced and restored on Escape; seeking or selecting another layer
   commits; a locked `text` row does not enter editing.
+- Drag overrides: a `Literal` or `Missing` target overrides the element's
+  prop, a `PassThrough` the call site's `param`, a locked one nothing; a
+  move overrides `x` and `y` from its first frame, an unmoved axis with its
+  start value, at the same positions on every frame; each handle's props
+  (rotate, uniform and per-axis corners, an edge); no overrides before the
+  pointer moves or while playing.
+
+Rust (`crates/react-bridge`): a frame request carries `propOverrides` only
+when there are some.
 
 TypeScript (Vitest):
 
 - Property tables type test for every primitive.
 - Tables reach the ready message.
 - Received props carry strings, booleans, and string `children`.
+- Prop overrides: a written prop replaced on the element at the position
+  only, an absent prop added, a call-site override reaching every layer that
+  reads the parameter, an element in a `memo` component that reads no frame
+  following two override frames, an override at a new position mid-drag
+  reaching one, a drag frame rendering only the creator of the overridden
+  element (not another `memo` component, nor a `<Static>` without one), the
+  written values back after a frame without overrides (an element cached
+  with `useMemo` too), an element cached with `useMemo` at an override's
+  position keeping the first drag frame's value (the limitation, pinned),
+  and an element inside `<Static>` following the drag; a CLI frame request
+  with `propOverrides`.
 
 Manual, with before/after screenshots of the same scene: edit a `Text`'s
 content inline (including Japanese input through the IME) and its font size, a `Rect`'s fill and corner radius, resize a `Rect` from

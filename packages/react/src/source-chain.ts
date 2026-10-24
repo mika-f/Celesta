@@ -20,15 +20,13 @@ export interface LayerSourceEntry {
   layerId?: string;
 }
 
-/** The transform props a primitive element received, finite numbers only. */
-export interface ReceivedProps {
-  x?: number;
-  y?: number;
-  rotation?: number;
-  scale?: number;
-  scaleX?: number;
-  scaleY?: number;
-}
+/**
+ * The scalar props a primitive element received: each finite number, string,
+ * or boolean, keyed as written (`fontSize`, `children`), and each such value
+ * of its `style` object as `style.<key>`. The transform props (`x`, `y`,
+ * `rotation`, `scale`, `scaleX`, `scaleY`) appear only as finite numbers.
+ */
+export type ReceivedProps = Record<string, number | string | boolean>;
 
 export interface LayerSourceReport {
   chain: LayerSourceEntry[];
@@ -246,13 +244,31 @@ function firstHostNode(fiber: Fiber): HostNode | null {
   return null;
 }
 
-const TRANSFORM_PROPS = ['x', 'y', 'rotation', 'scale', 'scaleX', 'scaleY'] as const;
+// The bridge reads these as numbers; any other value would fail the report.
+const TRANSFORM_PROPS: ReadonlySet<string> = new Set(['x', 'y', 'rotation', 'scale', 'scaleX', 'scaleY']);
+
+function isScalar(value: unknown): value is number | string | boolean {
+  return typeof value === 'string' || typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value));
+}
+
+/** The scalar props in `received`, as `ReceivedProps` describes. */
+function scalarProps(received: Record<string, unknown>): ReceivedProps {
+  const props: ReceivedProps = {};
+  for (const [key, value] of Object.entries(received)) {
+    if (isScalar(value) && (typeof value === 'number' || !TRANSFORM_PROPS.has(key))) props[key] = value;
+  }
+  const style = received.style;
+  if (typeof style === 'object' && style !== null && !Array.isArray(style)) {
+    for (const [key, value] of Object.entries(style)) if (isScalar(value)) props[`style.${key}`] = value;
+  }
+  return props;
+}
 
 /**
- * `sourceChain` plus what the editor needs to write a transform back into
- * the source: the frame local to the layer's element, the transform props
- * its innermost primitive received, how many layers that element produced,
- * and the timing windows it is shown in. `layerNodes` is the frame's layer
+ * `sourceChain` plus what the editor needs to write a prop back into the
+ * source: the frame local to the layer's element, the scalar props its
+ * innermost primitive received, how many layers that element produced, and
+ * the timing windows it is shown in. `layerNodes` is the frame's layer
  * id -> node map.
  */
 export function layerSourceReport(
@@ -272,12 +288,7 @@ export function layerSourceReport(
   const primitive = found.find(({ entry }) => entry.kind === 'primitive');
   const element = primitive?.fiber ?? (start ? committed(start) : null);
 
-  const props: ReceivedProps = {};
-  const received = (primitive?.fiber.memoizedProps ?? primitive?.fiber.pendingProps ?? {}) as Record<string, unknown>;
-  for (const key of TRANSFORM_PROPS) {
-    const value = received[key];
-    if (typeof value === 'number' && Number.isFinite(value)) props[key] = value;
-  }
+  const props = scalarProps((primitive?.fiber.memoizedProps ?? primitive?.fiber.pendingProps ?? {}) as Record<string, unknown>);
 
   let renderCount = 0;
   const innermost = chain[0];

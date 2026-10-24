@@ -1,6 +1,7 @@
 use crate::EDITOR_DEMO_PROJECT;
 use crate::audio::{AudioCacheKey, CachedAudioDecoder, take_latest};
 use crate::audio_cache::DiskAudioCache;
+use crate::edit_history::Texts;
 use crate::editor_launch::{
     Invocation, LaunchError, default_opener, editor_invocation, editor_value,
     parse_login_shell_output, read_until_closing_marker, split_command,
@@ -13,33 +14,36 @@ use crate::helpers::{
     export_suggested_name, loop_range_for,
 };
 use crate::layer_select::{
-    SourceLookup, display_path, launch_outcome_applies, letterbox, outline_quads, parent_layer_id,
-    scene_point, source_lookup, source_lookup_target, source_position,
+    SourceLookup, display_path, launch_outcome_applies, letterbox, outline_quads, owner_call_site,
+    parent_layer_id, scene_point, source_lookup, source_lookup_target, source_position,
 };
 use crate::react_audio::{react_audio_clip_id, react_tracks};
 use crate::refresh::{LookupFate, SelectionKeep};
 use crate::source::is_react_entry;
-use crate::transform_drag::presses_body;
+use crate::transform_drag::{
+    OverrideSite, TransformDrag, override_sites, presses_body, prop_overrides,
+};
 use crate::transform_edit::{
-    CommitError, TransformEdit, TransformProp, commit_text, inside_project, keyframe_jump_frames,
-    keyframe_timeline_frame, lock_outside_project, reason_text, resolve_targets,
+    CommitError, Target, TransformEdit, TransformProp, TransformTargets, commit_files,
+    inside_project, keyframe_jump_frames, keyframe_timeline_frame, lock_outside_project,
+    reason_text, resolve_targets,
 };
 use crate::transform_handles::{
-    Handle, drag_label, drag_values, handle_at, handles, override_transform, prop_values,
+    Handle, drag_label, drag_values, handle_at, handles, preview_values, prop_values,
     shown_handles, turn,
 };
-use crate::transform_rows::field_text;
+use crate::transform_rows::{field_text, set_at_text};
 use crate::waveform::{
     clip_level_envelope, level_at_time, map_clip_waveform, master_volume_from_drag, waveform_peaks,
     waveform_segment,
 };
 use celesta_editor_core::ClipKind;
 use celesta_gpu_renderer::{GpuDriver, LayerFrame};
-use celesta_source_edit::{EditTarget, LockReason};
+use celesta_source_edit::{EditTarget, EditValue, LockReason};
 
 use crate::preview::{
-    ReactPreviewContext, ReactPreviewMode, apply_override, collect_component_requests,
-    records_hit_regions, splice_component_resolutions, strip_missing_components,
+    ReactPreviewContext, ReactPreviewMode, collect_component_requests, records_hit_regions,
+    splice_component_resolutions, strip_missing_components,
 };
 use celesta_composition::{
     Animatable, AssetLocation, AudioClip, EvaluatedTransform, GroupMask, Keyframe,
@@ -53,7 +57,8 @@ use celesta_exporter::{
 use celesta_media::{AudioBuffer, AudioDecoder};
 use celesta_project::{Project, TrackKind};
 use celesta_react_bridge::{
-    ComponentResolutions, ElementKind, LayerSource, LayerSourceReport, ReceivedProps,
+    ComponentResolutions, ElementKind, LayerSource, LayerSourceReport, PropOverride, ReceivedProps,
+    SourcePos,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -610,57 +615,6 @@ fn masked_group(children: Vec<Layer>, mask: Vec<Layer>) -> Layer {
         },
         ..missing("group")
     }
-}
-
-fn scene_of(layers: Vec<Layer>) -> Scene {
-    Scene {
-        width: 64,
-        height: 64,
-        frame_rate: Rational::new(30, 1),
-        time: Time::default(),
-        fonts: Vec::new(),
-        shaders: Vec::new(),
-        layers,
-    }
-}
-
-#[test]
-fn an_override_replaces_the_transform_of_a_nested_layer() {
-    let inner = Layer {
-        content: LayerContent::Group {
-            layers: vec![missing("target"), missing("other")],
-            clip: None,
-            mask: None,
-            motion_blur: false,
-        },
-        ..missing("group")
-    };
-    let mut scene = scene_of(vec![missing("first"), inner]);
-    let moved = EvaluatedTransform {
-        rotation: 30.0,
-        ..EvaluatedTransform::default()
-    };
-
-    assert!(apply_override(&mut scene, "target", &moved));
-
-    let LayerContent::Group { layers, .. } = &scene.layers[1].content else {
-        unreachable!()
-    };
-    assert_eq!(layers[0].transform, moved);
-    assert_eq!(layers[1].transform, EvaluatedTransform::default());
-    assert_eq!(scene.layers[0].transform, EvaluatedTransform::default());
-}
-
-#[test]
-fn an_override_of_an_absent_layer_changes_nothing() {
-    let mut scene = scene_of(vec![missing("a")]);
-    let moved = EvaluatedTransform {
-        rotation: 30.0,
-        ..EvaluatedTransform::default()
-    };
-
-    assert!(!apply_override(&mut scene, "b", &moved));
-    assert_eq!(scene, scene_of(vec![missing("a")]));
 }
 
 #[test]
@@ -1238,6 +1192,26 @@ fn x_only() -> ReceivedProps {
     }
 }
 
+/// Resolves `report` with `text` as the text of every file.
+fn resolve_in(text: &str, report: &LayerSourceReport) -> Result<TransformTargets, String> {
+    resolve_targets(|_| Ok(text.to_owned()), report)
+}
+
+/// Commits `values` with `text` as the element's file, returning its new text.
+fn commit_in(
+    text: &str,
+    expected: &TransformTargets,
+    report: &LayerSourceReport,
+    values: &[(TransformProp, f64)],
+) -> Result<String, CommitError> {
+    let texts = Texts::from([(expected.file.clone(), text.to_owned())]);
+    let files = commit_files(&texts, expected, report, values)?;
+    Ok(files
+        .into_iter()
+        .next()
+        .map_or_else(|| text.to_owned(), |(_, text)| text))
+}
+
 #[test]
 fn transform_resolve_targets_prefers_scale_xy() {
     let text = "export const Scene = () => (\n  <Rect x={1} scaleX={2} />\n);\n";
@@ -1251,7 +1225,7 @@ fn transform_resolve_targets_prefers_scale_xy() {
         },
     );
 
-    let targets = resolve_targets(text, &report).expect("the element resolves");
+    let targets = resolve_in(text, &report).expect("the element resolves");
 
     let props: Vec<_> = targets.targets.iter().map(|(prop, _)| *prop).collect();
     assert_eq!(
@@ -1265,19 +1239,19 @@ fn transform_resolve_targets_prefers_scale_xy() {
         ]
     );
     assert!(matches!(
-        targets.targets[3].1,
-        EditTarget::Literal { value, .. } if value == 2.0
+        targets.targets[3].1.target,
+        EditTarget::Literal { value: EditValue::Number(value), .. } if value == 2.0
     ));
     assert!(matches!(
-        targets.targets[4].1,
-        EditTarget::Missing { default, .. } if default == 1.0
+        targets.targets[4].1.target,
+        EditTarget::Missing { default: Some(EditValue::Number(default)), .. } if default == 1.0
     ));
     assert_eq!(targets.file, PathBuf::from("/project/scene.tsx"));
 }
 
 #[test]
 fn transform_resolve_targets_uniform_scale() {
-    let targets = resolve_targets(TRANSFORM_FIXTURE, &primitive_report(2, 3, x_only()))
+    let targets = resolve_in(TRANSFORM_FIXTURE, &primitive_report(2, 3, x_only()))
         .expect("the element resolves");
 
     let props: Vec<_> = targets.targets.iter().map(|(prop, _)| *prop).collect();
@@ -1292,23 +1266,23 @@ fn transform_resolve_targets_uniform_scale() {
     );
     assert_eq!(TransformProp::ScaleX.name(), "scaleX");
     assert!(matches!(
-        targets.targets[0].1,
-        EditTarget::Literal { value, .. } if value == 100.0
+        targets.targets[0].1.target,
+        EditTarget::Literal { value: EditValue::Number(value), .. } if value == 100.0
     ));
 }
 
 #[test]
 fn transform_resolve_targets_fails_without_the_element() {
-    assert!(resolve_targets(TRANSFORM_FIXTURE, &primitive_report(1, 1, x_only())).is_err());
-    assert!(resolve_targets(TRANSFORM_FIXTURE, &report_of(Vec::new())).is_err());
+    assert!(resolve_in(TRANSFORM_FIXTURE, &primitive_report(1, 1, x_only())).is_err());
+    assert!(resolve_in(TRANSFORM_FIXTURE, &report_of(Vec::new())).is_err());
 }
 
 #[test]
 fn transform_commit_writes_literal_and_inserts() {
     let report = primitive_report(2, 3, x_only());
-    let expected = resolve_targets(TRANSFORM_FIXTURE, &report).unwrap();
+    let expected = resolve_in(TRANSFORM_FIXTURE, &report).unwrap();
 
-    let written = commit_text(
+    let written = commit_in(
         TRANSFORM_FIXTURE,
         &expected,
         &report,
@@ -1325,27 +1299,27 @@ fn transform_commit_writes_literal_and_inserts() {
 #[test]
 fn transform_commit_aborts_when_target_moved() {
     let report = primitive_report(2, 3, x_only());
-    let expected = resolve_targets(TRANSFORM_FIXTURE, &report).unwrap();
+    let expected = resolve_in(TRANSFORM_FIXTURE, &report).unwrap();
     // The element moved within its line, so the report's position misses it.
     let moved = TRANSFORM_FIXTURE.replace("  <Rect", "    <Rect");
     // The element stayed but its `x` became longer, so the span moved.
     let widened = TRANSFORM_FIXTURE.replace("x={100}", "x={1000}");
 
     for text in [moved, widened] {
-        let error = commit_text(&text, &expected, &report, &[(TransformProp::X, 120.0)])
+        let error = commit_in(&text, &expected, &report, &[(TransformProp::X, 120.0)])
             .expect_err("the source changed");
         assert_eq!(error, CommitError::SourceChanged);
-        assert_eq!(error.to_string(), "The source changed during the edit");
+        assert_eq!(error.to_string(), "The source changed while editing");
     }
 }
 
 #[test]
 fn transform_commit_refuses_locked_and_non_finite_values() {
     let report = primitive_report(2, 3, x_only());
-    let expected = resolve_targets(TRANSFORM_FIXTURE, &report).unwrap();
+    let expected = resolve_in(TRANSFORM_FIXTURE, &report).unwrap();
 
     assert!(matches!(
-        commit_text(
+        commit_in(
             TRANSFORM_FIXTURE,
             &expected,
             &report,
@@ -1355,7 +1329,7 @@ fn transform_commit_refuses_locked_and_non_finite_values() {
     ));
     // `scaleX` is not a target of a uniformly scaled element.
     assert!(matches!(
-        commit_text(
+        commit_in(
             TRANSFORM_FIXTURE,
             &expected,
             &report,
@@ -1435,6 +1409,22 @@ fn transform_reason_texts_match_spec() {
 }
 
 #[test]
+fn pass_through_reason_texts() {
+    assert_eq!(
+        reason_text(&LockReason::ParameterOfCaller {
+            component: "Card".to_owned()
+        }),
+        "Comes from `<Card>`'s caller"
+    );
+    assert_eq!(
+        reason_text(&LockReason::CallSiteNotFound {
+            component: "PriceTag".to_owned()
+        }),
+        "Can't find where `<PriceTag>` is called"
+    );
+}
+
+#[test]
 fn transform_own_write_reload_keeps_selection() {
     let mut keep = SelectionKeep::default();
 
@@ -1475,7 +1465,7 @@ fn transform_kept_selection_waits_for_the_reloaded_frame() {
 fn transform_state_drops_stale_resolutions() {
     let report = primitive_report(2, 3, x_only());
     let moved = primitive_report(2, 3, ReceivedProps::default());
-    let targets = || resolve_targets(TRANSFORM_FIXTURE, &report);
+    let targets = || resolve_in(TRANSFORM_FIXTURE, &report);
     let mut state = TransformEdit::default();
 
     let first = state.begin("a", &report, 0).expect("nothing resolved yet");
@@ -1519,7 +1509,7 @@ fn transform_resolve_targets_ignores_a_scale_axis_only_a_parent_sets() {
         },
     );
 
-    let targets = resolve_targets(TRANSFORM_FIXTURE, &report).expect("the element resolves");
+    let targets = resolve_in(TRANSFORM_FIXTURE, &report).expect("the element resolves");
 
     let props: Vec<_> = targets.targets.iter().map(|(prop, _)| *prop).collect();
     assert_eq!(
@@ -1543,20 +1533,20 @@ fn transform_reset_resolves_an_identical_report_again() {
     let mut state = TransformEdit::default();
 
     let first = state.begin("a", &report, 0).unwrap();
-    assert!(state.finish(first, Some("a"), resolve_targets(before, &report)));
+    assert!(state.finish(first, Some("a"), resolve_in(before, &report)));
     state.set_error(
         Some("a"),
-        Some("The source changed during the edit".to_owned()),
+        Some("The source changed while editing".to_owned()),
     );
 
     // The reload cleared the selection; selecting the layer again.
     state.reset();
     assert_eq!(state.error(Some("a")), None, "the old error is gone");
     let second = state.begin("a", &report, 0).expect("resolved again");
-    assert!(state.finish(second, Some("a"), resolve_targets(&after, &report)));
+    assert!(state.finish(second, Some("a"), resolve_in(&after, &report)));
 
     let (targets, report) = state.targets(Some("a"), Some((&report, 0))).unwrap();
-    let written = commit_text(&after, targets, report, &[(TransformProp::X, 120.0)]).unwrap();
+    let written = commit_in(&after, targets, report, &[(TransformProp::X, 120.0)]).unwrap();
     assert_eq!(written, after.replace("x={100}", "x={120}"));
 }
 
@@ -1582,11 +1572,7 @@ fn transform_explains_why_there_is_nothing_to_commit() {
     assert_eq!(state.unavailable(Some("a")), "Couldn't read scene.tsx");
 
     let request = state.begin("a", &report, 1).unwrap();
-    assert!(state.finish(
-        request,
-        Some("a"),
-        resolve_targets(TRANSFORM_FIXTURE, &report)
-    ));
+    assert!(state.finish(request, Some("a"), resolve_in(TRANSFORM_FIXTURE, &report)));
     state.invalidate();
     assert_eq!(state.unavailable(Some("a")), "Select the layer again");
 }
@@ -1617,7 +1603,7 @@ fn transform_keyframe_jumps_use_the_candidate_frame() {
             },
         )
     };
-    let targets = resolve_targets(text, &report).unwrap();
+    let targets = resolve_in(text, &report).unwrap();
     let target = targets.target(TransformProp::X).unwrap();
     assert_eq!(
         target,
@@ -1889,7 +1875,7 @@ fn transform_handle_at_prefers_handles_then_the_body() {
 }
 
 #[test]
-fn transform_drag_override_and_props() {
+fn transform_drag_props() {
     let mut frame = drag_frame(IDENTITY, pt(10.0, 20.0));
     frame.transform.scale = pt(2.0, 2.0);
     let values = [
@@ -1897,10 +1883,6 @@ fn transform_drag_override_and_props() {
         (TransformProp::Rotation, 15.0),
         (TransformProp::Scale, 3.0),
     ];
-    let transform = override_transform(&frame, &values);
-    assert_eq!(transform.position, pt(30.0, 20.0));
-    assert_eq!(transform.rotation, 15.0);
-    assert_eq!(transform.scale, pt(3.0, 3.0));
 
     // A prop the runtime saw as another value than the transform's keeps its
     // offset; a scale its ratio.
@@ -2096,7 +2078,7 @@ fn above_sequence_report(candidate_frames: Vec<f64>) -> LayerSourceReport {
 
 #[test]
 fn transform_keyframe_is_the_one_the_owner_frame_reads() {
-    let targets = resolve_targets(ABOVE_SEQUENCE, &above_sequence_report(vec![])).unwrap();
+    let targets = resolve_in(ABOVE_SEQUENCE, &above_sequence_report(vec![])).unwrap();
     let Some(EditTarget::Keyframe { span, frame, .. }) = targets.target(TransformProp::X) else {
         panic!(
             "expected a keyframe, got {:?}",
@@ -2108,8 +2090,7 @@ fn transform_keyframe_is_the_one_the_owner_frame_reads() {
 
     // The frame could be the Sequence's 30 as well, which is the keyframe
     // whose value is also 100: no telling which.
-    let targets =
-        resolve_targets(ABOVE_SEQUENCE, &above_sequence_report(vec![30.0, 60.0])).unwrap();
+    let targets = resolve_in(ABOVE_SEQUENCE, &above_sequence_report(vec![30.0, 60.0])).unwrap();
     assert_eq!(
         targets.target(TransformProp::X),
         Some(&EditTarget::Locked(LockReason::FrameUncertain))
@@ -2127,11 +2108,7 @@ fn transform_targets_need_the_current_lookup() {
     let other = primitive_report(2, 3, ReceivedProps::default());
     let mut state = TransformEdit::default();
     let request = state.begin("a", &report, 10).unwrap();
-    assert!(state.finish(
-        request,
-        Some("a"),
-        resolve_targets(TRANSFORM_FIXTURE, &report)
-    ));
+    assert!(state.finish(request, Some("a"), resolve_in(TRANSFORM_FIXTURE, &report)));
     assert!(state.targets(Some("a"), Some((&report, 10))).is_some());
 
     // Seeked: the lookup at the new frame has not been resolved yet.
@@ -2148,31 +2125,19 @@ fn transform_only_a_reset_clears_an_own_write() {
     let newer = primitive_report(2, 3, ReceivedProps::default());
     let mut state = TransformEdit::default();
     let request = state.begin("a", &report, 0).unwrap();
-    assert!(state.finish(
-        request,
-        Some("a"),
-        resolve_targets(TRANSFORM_FIXTURE, &report)
-    ));
+    assert!(state.finish(request, Some("a"), resolve_in(TRANSFORM_FIXTURE, &report)));
 
     // A lookup answered by the old runtime after the write resolves, but the
     // file it was read from is about to be reloaded.
     state.invalidate();
     let request = state.begin("a", &newer, 0).unwrap();
-    assert!(state.finish(
-        request,
-        Some("a"),
-        resolve_targets(TRANSFORM_FIXTURE, &newer)
-    ));
+    assert!(state.finish(request, Some("a"), resolve_in(TRANSFORM_FIXTURE, &newer)));
     assert!(state.targets(Some("a"), Some((&newer, 0))).is_none());
 
     // The kept reload resets the state.
     state.reset();
     let request = state.begin("a", &newer, 0).unwrap();
-    assert!(state.finish(
-        request,
-        Some("a"),
-        resolve_targets(TRANSFORM_FIXTURE, &newer)
-    ));
+    assert!(state.finish(request, Some("a"), resolve_in(TRANSFORM_FIXTURE, &newer)));
     assert!(state.targets(Some("a"), Some((&newer, 0))).is_some());
 }
 
@@ -2181,11 +2146,7 @@ fn expire_keeps_the_resolution_visible_but_not_current() {
     let report = primitive_report(2, 3, x_only());
     let mut state = TransformEdit::default();
     let request = state.begin("a", &report, 0).unwrap();
-    assert!(state.finish(
-        request,
-        Some("a"),
-        resolve_targets(TRANSFORM_FIXTURE, &report)
-    ));
+    assert!(state.finish(request, Some("a"), resolve_in(TRANSFORM_FIXTURE, &report)));
 
     state.invalidate();
     state.expire();
@@ -2202,20 +2163,12 @@ fn finish_after_expire_is_current_again() {
     let report = primitive_report(2, 3, x_only());
     let mut state = TransformEdit::default();
     let request = state.begin("a", &report, 0).unwrap();
-    assert!(state.finish(
-        request,
-        Some("a"),
-        resolve_targets(TRANSFORM_FIXTURE, &report)
-    ));
+    assert!(state.finish(request, Some("a"), resolve_in(TRANSFORM_FIXTURE, &report)));
     state.invalidate();
 
     state.expire();
     let request = state.begin("a", &report, 0).unwrap();
-    assert!(state.finish(
-        request,
-        Some("a"),
-        resolve_targets(TRANSFORM_FIXTURE, &report)
-    ));
+    assert!(state.finish(request, Some("a"), resolve_in(TRANSFORM_FIXTURE, &report)));
     assert!(state.resolved(Some("a")).unwrap().1);
     assert!(state.targets(Some("a"), Some((&report, 0))).is_some());
 }
@@ -2224,7 +2177,7 @@ fn finish_after_expire_is_current_again() {
 fn expire_then_another_write_stays_stale() {
     let report = primitive_report(2, 3, x_only());
     let newer = primitive_report(2, 3, ReceivedProps::default());
-    let targets = |report| resolve_targets(TRANSFORM_FIXTURE, report);
+    let targets = |report| resolve_in(TRANSFORM_FIXTURE, report);
     let mut state = TransformEdit::default();
     state.invalidate();
     state.expire();
@@ -2242,7 +2195,7 @@ fn expire_then_another_write_stays_stale() {
 #[test]
 fn written_values_show_until_the_reloaded_code_resolves() {
     let report = primitive_report(2, 3, x_only());
-    let targets = || resolve_targets(TRANSFORM_FIXTURE, &report);
+    let targets = || resolve_in(TRANSFORM_FIXTURE, &report);
     let mut state = TransformEdit::default();
     let request = state.begin("a", &report, 0).unwrap();
     assert!(state.finish(request, Some("a"), targets()));
@@ -2293,7 +2246,7 @@ fn a_current_resolution_ignores_written_values() {
 #[test]
 fn an_own_write_reload_keeps_the_lookup() {
     let report = primitive_report(2, 3, x_only());
-    let targets = || resolve_targets(TRANSFORM_FIXTURE, &report);
+    let targets = || resolve_in(TRANSFORM_FIXTURE, &report);
     let mut keep = SelectionKeep::default();
     let mut state = TransformEdit::default();
     let request = state.begin("a", &report, 0).unwrap();
@@ -2365,7 +2318,7 @@ fn transform_missing_scale_axis_shows_the_written_scale() {
     );
     let missing = EditTarget::Missing {
         insert_at: 0,
-        default: 1.0,
+        default: Some(EditValue::Number(1.0)),
     };
     assert_eq!(
         field_text(TransformProp::ScaleY, &missing, &report),
@@ -2390,11 +2343,63 @@ fn transform_missing_scale_axis_shows_the_written_scale() {
             TransformProp::X,
             &EditTarget::Missing {
                 insert_at: 0,
-                default: 0.0
+                default: Some(EditValue::Number(0.0))
             },
             &report
         ),
         (String::new(), "0".to_owned())
+    );
+}
+
+#[test]
+fn transform_missing_parameter_without_a_default_shows_the_drawn_value() {
+    // `({ scale }) => <Rect scale={scale} />` called as `<Tag />`: no
+    // default is known, and the layer draws at the primitive's own default.
+    let missing = EditTarget::Missing {
+        insert_at: 0,
+        default: None,
+    };
+    let plain = primitive_report(2, 3, ReceivedProps::default());
+    assert_eq!(
+        field_text(TransformProp::Scale, &missing, &plain),
+        (String::new(), "1".to_owned())
+    );
+    assert_eq!(
+        field_text(TransformProp::X, &missing, &plain),
+        (String::new(), "0".to_owned())
+    );
+    // `({ scale = base * 2 })`: the value received is the one drawn, also
+    // for a scale axis next to a written `scale`.
+    let received = primitive_report(
+        2,
+        3,
+        ReceivedProps {
+            scale: Some(2.0),
+            scale_x: Some(3.0),
+            ..ReceivedProps::default()
+        },
+    );
+    assert_eq!(
+        field_text(TransformProp::Scale, &missing, &received),
+        (String::new(), "2".to_owned())
+    );
+    assert_eq!(
+        field_text(TransformProp::ScaleX, &missing, &received),
+        (String::new(), "3".to_owned())
+    );
+    // Through the call site, as the row shows it.
+    let through = EditTarget::PassThrough {
+        call_site: celesta_source_edit::ElementRef {
+            start: 0,
+            end_of_attributes: 0,
+            children: None,
+        },
+        param: "scale".to_owned(),
+        target: Box::new(missing),
+    };
+    assert_eq!(
+        field_text(TransformProp::Scale, &through, &plain),
+        (String::new(), "1".to_owned())
     );
 }
 
@@ -2427,22 +2432,733 @@ fn transform_files_outside_the_project_are_locked() {
     ));
 
     let report = primitive_report(2, 3, x_only());
-    let mut targets = resolve_targets(TRANSFORM_FIXTURE, &report).unwrap();
-    lock_outside_project(&mut targets);
+    let mut targets = resolve_in(TRANSFORM_FIXTURE, &report).unwrap();
+    lock_outside_project(&mut targets, |_| true);
     assert!(
         targets
             .targets
             .iter()
-            .all(|(_, target)| *target == EditTarget::Locked(LockReason::OutsideProject))
+            .all(|(_, target)| target.target == EditTarget::Locked(LockReason::OutsideProject))
     );
     // A commit refuses a locked target before reading the file's targets.
     assert_eq!(
-        commit_text(
+        commit_in(
             TRANSFORM_FIXTURE,
             &targets,
             &report,
             &[(TransformProp::X, 5.0)]
         ),
         Err(CommitError::NotEditable(TransformProp::X))
+    );
+}
+
+const PRICE_TAG: &str =
+    "export const PriceTag = ({ x }) => (\n  <Rect x={x} rotation={10} />\n);\n";
+const PRICE_TAG_SCENE: &str = "export const Scene = () => (\n  <PriceTag x={40} />\n);\n";
+
+fn entry_at(name: &str, kind: ElementKind, file: &str, line: u32) -> LayerSource {
+    LayerSource {
+        name: name.to_owned(),
+        file: PathBuf::from(file),
+        line,
+        column: 3,
+        kind,
+        layer_id: None,
+    }
+}
+
+/// `<Rect x={x}>` in `PriceTag`, called from the scene as `<PriceTag x={40} />`.
+fn price_tag_report() -> LayerSourceReport {
+    LayerSourceReport {
+        props: ReceivedProps {
+            x: Some(40.0),
+            rotation: Some(10.0),
+            ..ReceivedProps::default()
+        },
+        ..report_of(vec![
+            entry_at("Rect", ElementKind::Primitive, "/project/component.tsx", 2),
+            entry_at("PriceTag", ElementKind::Component, "/project/scene.tsx", 2),
+        ])
+    }
+}
+
+fn price_tag_files() -> Texts {
+    Texts::from([
+        (
+            PathBuf::from("/project/component.tsx"),
+            PRICE_TAG.to_owned(),
+        ),
+        (
+            PathBuf::from("/project/scene.tsx"),
+            PRICE_TAG_SCENE.to_owned(),
+        ),
+    ])
+}
+
+/// Reads `texts`; any other file fails.
+fn read_from(texts: &Texts) -> impl Fn(&Path) -> Result<String, String> + '_ {
+    |path| {
+        texts
+            .get(path)
+            .cloned()
+            .ok_or_else(|| format!("Couldn't read {}", path.display()))
+    }
+}
+
+#[test]
+fn owner_call_site_skips_wrappers_and_children_hosts() {
+    // `PriceTag` passes the `<Rect>` it wrote to `<Later>` as children.
+    let report = report_of(vec![
+        entry_at("Rect", ElementKind::Primitive, "/project/component.tsx", 2),
+        entry_at(
+            "Sequence",
+            ElementKind::Wrapper,
+            "/project/component.tsx",
+            3,
+        ),
+        entry_at("Later", ElementKind::Component, "/project/component.tsx", 4),
+        entry_at("PriceTag", ElementKind::Component, "/project/scene.tsx", 2),
+    ]);
+
+    assert_eq!(owner_call_site(&report, "PriceTag"), Some(&report.chain[3]));
+    assert_eq!(owner_call_site(&report, "Card"), None);
+}
+
+#[test]
+fn owner_call_site_falls_back_to_an_anonymous_component() {
+    // `memo(({ x }) => …)` reports no name at runtime.
+    let anonymous = report_of(vec![
+        entry_at("Rect", ElementKind::Primitive, "/project/component.tsx", 2),
+        entry_at(
+            "Sequence",
+            ElementKind::Wrapper,
+            "/project/component.tsx",
+            3,
+        ),
+        entry_at("Anonymous", ElementKind::Component, "/project/scene.tsx", 2),
+        entry_at("Anonymous", ElementKind::Component, "/project/index.tsx", 2),
+    ]);
+    assert_eq!(
+        owner_call_site(&anonymous, "PriceTag"),
+        Some(&anonymous.chain[2])
+    );
+
+    // A component with the name wins over a nearer anonymous one.
+    let named = report_of(vec![
+        entry_at("Rect", ElementKind::Primitive, "/project/component.tsx", 2),
+        entry_at(
+            "Anonymous",
+            ElementKind::Component,
+            "/project/component.tsx",
+            4,
+        ),
+        entry_at("PriceTag", ElementKind::Component, "/project/scene.tsx", 2),
+    ]);
+    assert_eq!(owner_call_site(&named, "PriceTag"), Some(&named.chain[2]));
+
+    // The element itself is never its own call site.
+    let alone = report_of(vec![entry_at(
+        "Anonymous",
+        ElementKind::Component,
+        "/project/component.tsx",
+        2,
+    )]);
+    assert_eq!(owner_call_site(&alone, "PriceTag"), None);
+}
+
+#[test]
+fn x_passed_at_the_call_site_is_a_pass_through_target() {
+    let report = price_tag_report();
+    let targets =
+        resolve_targets(read_from(&price_tag_files()), &report).expect("the element resolves");
+
+    assert_eq!(targets.file, PathBuf::from("/project/component.tsx"));
+    assert_eq!(
+        targets.file_of(TransformProp::X),
+        Path::new("/project/scene.tsx")
+    );
+    let Some(EditTarget::PassThrough { param, target, .. }) = targets.target(TransformProp::X)
+    else {
+        panic!("x passes through: {:?}", targets.target(TransformProp::X));
+    };
+    assert_eq!(param, "x");
+    assert!(matches!(
+        **target,
+        EditTarget::Literal { value: EditValue::Number(value), .. } if value == 40.0
+    ));
+    assert_eq!(
+        targets.targets[0].1.call_site,
+        Some(SourcePos {
+            file: PathBuf::from("/project/scene.tsx"),
+            line: 2,
+            column: 3,
+        })
+    );
+
+    // `rotation` is written on the element itself.
+    assert_eq!(
+        targets.file_of(TransformProp::Rotation),
+        Path::new("/project/component.tsx")
+    );
+    assert!(matches!(
+        targets.target(TransformProp::Rotation),
+        Some(EditTarget::Literal { value: EditValue::Number(value), .. }) if *value == 10.0
+    ));
+    assert_eq!(targets.targets[2].1.call_site, None);
+}
+
+/// The override sites of `<Rect x={left} rotation={10} scale={size * 2} />`
+/// in `PriceTag`, called as `<PriceTag left={40} size={1} />`: `left` is set
+/// at the call site, `rotation` on the element, `y` nowhere, and `scale` is
+/// computed.
+fn mixed_override_sites() -> Vec<(TransformProp, OverrideSite)> {
+    let files = Texts::from([
+        (
+            PathBuf::from("/project/component.tsx"),
+            "export const PriceTag = ({ left, size }) => (\n  <Rect x={left} rotation={10} scale={size * 2} />\n);\n"
+                .to_owned(),
+        ),
+        (
+            PathBuf::from("/project/scene.tsx"),
+            "export const Scene = () => (\n  <PriceTag left={40} size={1} />\n);\n".to_owned(),
+        ),
+    ]);
+    let report = price_tag_report();
+    let targets = resolve_targets(read_from(&files), &report).expect("the element resolves");
+    override_sites(&targets, &report)
+}
+
+/// An override of the element or call site at line 2, column 3 of `file`.
+fn override_at(file: &str, prop: &str, value: f64) -> PropOverride {
+    PropOverride {
+        file: PathBuf::from(file),
+        line: 2,
+        column: 3,
+        prop: prop.to_owned(),
+        value,
+    }
+}
+
+#[test]
+fn a_drag_overrides_the_prop_its_write_changes() {
+    let sites = mixed_override_sites();
+    let at = override_at;
+    assert_eq!(
+        prop_overrides(
+            &sites,
+            &[
+                (TransformProp::X, 64.0),
+                (TransformProp::Y, 8.0),
+                (TransformProp::Rotation, 25.0),
+            ]
+        ),
+        vec![
+            at("/project/scene.tsx", "left", 64.0),
+            at("/project/component.tsx", "y", 8.0),
+            at("/project/component.tsx", "rotation", 25.0),
+        ]
+    );
+    assert_eq!(prop_overrides(&sites, &[(TransformProp::Scale, 3.0)]), []);
+}
+
+#[test]
+fn a_drag_overrides_nothing_before_the_pointer_moves_or_while_playing() {
+    let frame = drag_frame(IDENTITY, pt(10.0, 20.0));
+    let editable = vec![TransformProp::X, TransformProp::Y, TransformProp::Rotation];
+    let mut drag = TransformDrag::new(
+        frame.clone(),
+        Handle::Move,
+        pt(0.0, 0.0),
+        editable.clone(),
+        price_tag_report().props,
+        mixed_override_sites(),
+    );
+    assert_eq!(drag.overrides(false), []);
+
+    let values = drag_values(
+        &frame,
+        Handle::Move,
+        (pt(0.0, 0.0), pt(4.0, 0.0)),
+        false,
+        0.0,
+        &editable,
+    );
+    assert!(drag.follow(values.clone()));
+    assert!(!drag.follow(values));
+    assert_eq!(drag.overrides(false).len(), 2);
+    assert_eq!(drag.overrides(true), []);
+}
+
+#[test]
+fn each_handle_previews_every_prop_it_changes() {
+    let frame = drag_frame(IDENTITY, pt(10.0, 20.0));
+    let received = ReceivedProps {
+        rotation: Some(5.0),
+        ..ReceivedProps::default()
+    };
+    let preview = |handle, editable: &[TransformProp], values: &[(TransformProp, f64)]| {
+        preview_values(&frame, handle, editable, values, &received)
+    };
+    // Unchanged props keep the value the runtime saw, or the frame's.
+    assert_values(
+        &preview(Handle::Rotate, &UNIFORM, &[]),
+        &[(TransformProp::Rotation, 5.0)],
+    );
+    assert_values(
+        &preview(Handle::Rotate, &UNIFORM, &[(TransformProp::Rotation, 30.0)]),
+        &[(TransformProp::Rotation, 35.0)],
+    );
+    assert_values(
+        &preview(Handle::Corner(0), &UNIFORM, &[]),
+        &[(TransformProp::Scale, 1.0)],
+    );
+    assert_values(
+        &preview(
+            Handle::Corner(2),
+            &PER_AXIS,
+            &[(TransformProp::ScaleX, 2.0)],
+        ),
+        &[(TransformProp::ScaleX, 2.0), (TransformProp::ScaleY, 1.0)],
+    );
+    // Edges 1 and 3 scale x, edges 0 and 2 y; a uniform scale either way.
+    assert_values(
+        &preview(Handle::Edge(1), &PER_AXIS, &[]),
+        &[(TransformProp::ScaleX, 1.0)],
+    );
+    assert_values(
+        &preview(Handle::Edge(0), &PER_AXIS, &[]),
+        &[(TransformProp::ScaleY, 1.0)],
+    );
+    assert_values(
+        &preview(Handle::Edge(0), &UNIFORM, &[]),
+        &[(TransformProp::Scale, 1.0)],
+    );
+    // A locked prop is left out.
+    assert_values(
+        &preview(Handle::Corner(0), &[TransformProp::ScaleX], &[]),
+        &[(TransformProp::ScaleX, 1.0)],
+    );
+}
+
+#[test]
+fn a_move_drag_overrides_both_axes_from_its_first_frame() {
+    // The runtime saw `x` 40 (`left`) and no `y`; the layer is drawn at
+    // (10, 20).
+    let sites = mixed_override_sites();
+    let frame = drag_frame(IDENTITY, pt(10.0, 20.0));
+    let received = price_tag_report().props;
+    let editable = [TransformProp::X, TransformProp::Y, TransformProp::Rotation];
+    let overrides = |now: Point| {
+        let values = drag_values(
+            &frame,
+            Handle::Move,
+            (pt(0.0, 0.0), now),
+            false,
+            0.0,
+            &editable,
+        );
+        prop_overrides(
+            &sites,
+            &preview_values(&frame, Handle::Move, &editable, &values, &received),
+        )
+    };
+    // Only `x` moved; `y` keeps its start value, at the element.
+    assert_eq!(
+        overrides(pt(4.0, 0.0)),
+        vec![
+            override_at("/project/scene.tsx", "left", 44.0),
+            override_at("/project/component.tsx", "y", 20.0),
+        ]
+    );
+    // The positions stay the same for the whole drag, so the runtime does
+    // not remount: only the values change.
+    assert_eq!(
+        overrides(pt(4.0, 6.0)),
+        vec![
+            override_at("/project/scene.tsx", "left", 44.0),
+            override_at("/project/component.tsx", "y", 26.0),
+        ]
+    );
+    assert_eq!(
+        overrides(pt(0.0, 0.0)),
+        vec![
+            override_at("/project/scene.tsx", "left", 40.0),
+            override_at("/project/component.tsx", "y", 20.0),
+        ]
+    );
+}
+
+#[test]
+fn a_value_written_on_the_element_reads_only_its_file() {
+    // Only the element's file can be read: no prop passes through.
+    let texts = Texts::from([(
+        PathBuf::from("/project/scene.tsx"),
+        TRANSFORM_FIXTURE.to_owned(),
+    )]);
+    let report = LayerSourceReport {
+        chain: vec![
+            primitive_report(2, 3, x_only()).chain[0].clone(),
+            entry_at("Scene", ElementKind::Component, "/project/index.tsx", 2),
+        ],
+        ..primitive_report(2, 3, x_only())
+    };
+
+    let targets = resolve_targets(read_from(&texts), &report).expect("the element resolves");
+
+    assert!(
+        targets
+            .targets
+            .iter()
+            .all(|(_, target)| target.file == Path::new("/project/scene.tsx"))
+    );
+}
+
+#[test]
+fn a_drag_writes_two_files() {
+    let texts = price_tag_files();
+    let report = price_tag_report();
+    let targets = resolve_targets(read_from(&texts), &report).unwrap();
+
+    let written = commit_files(
+        &texts,
+        &targets,
+        &report,
+        &[(TransformProp::X, 60.0), (TransformProp::Rotation, 45.0)],
+    )
+    .expect("both targets are editable");
+
+    assert_eq!(
+        written,
+        vec![
+            (
+                PathBuf::from("/project/component.tsx"),
+                PRICE_TAG.replace("rotation={10}", "rotation={45}")
+            ),
+            (
+                PathBuf::from("/project/scene.tsx"),
+                PRICE_TAG_SCENE.replace("x={40}", "x={60}")
+            ),
+        ]
+    );
+}
+
+#[test]
+fn a_value_missing_at_the_call_site_is_inserted_there() {
+    let component = PRICE_TAG.replace("({ x })", "({ x = 0 })");
+    let scene = PRICE_TAG_SCENE.replace(" x={40}", "");
+    let texts = Texts::from([
+        (PathBuf::from("/project/component.tsx"), component),
+        (PathBuf::from("/project/scene.tsx"), scene.clone()),
+    ]);
+    let report = LayerSourceReport {
+        props: ReceivedProps {
+            x: Some(0.0),
+            rotation: Some(10.0),
+            ..ReceivedProps::default()
+        },
+        ..price_tag_report()
+    };
+    let targets = resolve_targets(read_from(&texts), &report).unwrap();
+    let Some(EditTarget::PassThrough { target, .. }) = targets.target(TransformProp::X) else {
+        panic!("x passes through: {:?}", targets.target(TransformProp::X));
+    };
+    assert!(matches!(**target, EditTarget::Missing { .. }));
+
+    let written = commit_files(&texts, &targets, &report, &[(TransformProp::X, 60.0)]).unwrap();
+
+    assert_eq!(
+        written,
+        vec![(
+            PathBuf::from("/project/scene.tsx"),
+            scene.replace("<PriceTag />", "<PriceTag x={60} />")
+        )]
+    );
+}
+
+#[test]
+fn a_component_called_in_its_own_file_is_written_once() {
+    let text = format!("{PRICE_TAG}{PRICE_TAG_SCENE}");
+    let texts = Texts::from([(PathBuf::from("/project/scene.tsx"), text.clone())]);
+    let report = LayerSourceReport {
+        chain: vec![
+            entry_at("Rect", ElementKind::Primitive, "/project/scene.tsx", 2),
+            entry_at("PriceTag", ElementKind::Component, "/project/scene.tsx", 5),
+        ],
+        ..price_tag_report()
+    };
+    let targets = resolve_targets(read_from(&texts), &report).unwrap();
+
+    let written = commit_files(
+        &texts,
+        &targets,
+        &report,
+        &[(TransformProp::X, 60.0), (TransformProp::Rotation, 45.0)],
+    )
+    .unwrap();
+
+    assert_eq!(
+        written,
+        vec![(
+            PathBuf::from("/project/scene.tsx"),
+            text.replace("rotation={10}", "rotation={45}")
+                .replace("x={40}", "x={60}")
+        )]
+    );
+}
+
+#[test]
+fn a_changed_call_site_aborts() {
+    let report = price_tag_report();
+    let targets = resolve_targets(read_from(&price_tag_files()), &report).unwrap();
+    // `<PriceTag` moved within its line, so the report's position misses it.
+    let moved = PRICE_TAG_SCENE.replace("  <PriceTag", "    <PriceTag");
+    // The call stayed but its `x` became longer, so the span moved.
+    let widened = PRICE_TAG_SCENE.replace("x={40}", "x={400}");
+
+    for scene in [moved, widened] {
+        let mut texts = price_tag_files();
+        texts.insert(PathBuf::from("/project/scene.tsx"), scene);
+        // Rotation is in the unchanged file, but the edit is one: nothing
+        // is written.
+        assert_eq!(
+            commit_files(
+                &texts,
+                &targets,
+                &report,
+                &[(TransformProp::X, 60.0), (TransformProp::Rotation, 45.0)],
+            ),
+            Err(CommitError::SourceChanged)
+        );
+    }
+}
+
+#[test]
+fn a_call_site_outside_the_project_locks_only_its_targets() {
+    let texts = price_tag_files();
+    let report = price_tag_report();
+    let mut targets = resolve_targets(read_from(&texts), &report).unwrap();
+
+    lock_outside_project(&mut targets, |file| file == Path::new("/project/scene.tsx"));
+
+    assert_eq!(
+        targets.target(TransformProp::X),
+        Some(&EditTarget::Locked(LockReason::OutsideProject))
+    );
+    assert_eq!(
+        commit_files(&texts, &targets, &report, &[(TransformProp::X, 60.0)]),
+        Err(CommitError::NotEditable(TransformProp::X))
+    );
+    // The element's own file is still written.
+    assert_eq!(
+        commit_files(
+            &texts,
+            &targets,
+            &report,
+            &[(TransformProp::Rotation, 45.0)]
+        ),
+        Ok(vec![(
+            PathBuf::from("/project/component.tsx"),
+            PRICE_TAG.replace("rotation={10}", "rotation={45}")
+        )])
+    );
+}
+
+#[test]
+fn a_value_passed_on_again_still_commits_the_element_s_own_props() {
+    // `Card` passes its own `x` on to `<PriceTag>`: a second hop.
+    let mut texts = price_tag_files();
+    texts.insert(
+        PathBuf::from("/project/scene.tsx"),
+        "export const Card = ({ x }) => (\n  <PriceTag x={x} />\n);\n".to_owned(),
+    );
+    let report = price_tag_report();
+    let targets = resolve_targets(read_from(&texts), &report).unwrap();
+
+    assert_eq!(
+        targets.target(TransformProp::X),
+        Some(&EditTarget::Locked(LockReason::ParameterOfCaller {
+            component: "Card".to_owned()
+        }))
+    );
+    // The call site was read, so a commit reads it again.
+    assert_eq!(
+        targets.files,
+        [
+            PathBuf::from("/project/component.tsx"),
+            PathBuf::from("/project/scene.tsx")
+        ]
+    );
+    let read: Texts = targets
+        .files
+        .iter()
+        .map(|file| (file.clone(), texts[file].clone()))
+        .collect();
+    assert_eq!(
+        commit_files(&read, &targets, &report, &[(TransformProp::Rotation, 45.0)]),
+        Ok(vec![(
+            PathBuf::from("/project/component.tsx"),
+            PRICE_TAG.replace("rotation={10}", "rotation={45}")
+        )])
+    );
+}
+
+/// `PriceTag` and the `Frame` it passes `<Rect>` to as children are both
+/// `memo` of an arrow, which the runtime reports as "Anonymous".
+const MEMO_PRICE_TAG: &str = "export const Frame = memo(({ children }) => <Group>{children}</Group>);\nexport const PriceTag = memo(({ x = 0 }) => (\n  <Frame>\n    <Rect x={x} />\n  </Frame>\n));\n";
+
+fn memo_report(chain: Vec<LayerSource>) -> LayerSourceReport {
+    LayerSourceReport {
+        props: ReceivedProps {
+            x: Some(40.0),
+            ..ReceivedProps::default()
+        },
+        ..report_of(chain)
+    }
+}
+
+#[test]
+fn an_anonymous_call_site_must_call_the_enclosing_component() {
+    let texts = Texts::from([
+        (
+            PathBuf::from("/project/component.tsx"),
+            MEMO_PRICE_TAG.to_owned(),
+        ),
+        (
+            PathBuf::from("/project/scene.tsx"),
+            PRICE_TAG_SCENE.to_owned(),
+        ),
+    ]);
+    let rect = LayerSource {
+        column: 5,
+        ..entry_at("Rect", ElementKind::Primitive, "/project/component.tsx", 4)
+    };
+    let price_tag_call = entry_at("Anonymous", ElementKind::Component, "/project/scene.tsx", 2);
+
+    // The nearest anonymous entry is `<Frame>`, not a call of `PriceTag`.
+    let report = memo_report(vec![
+        rect.clone(),
+        entry_at(
+            "Anonymous",
+            ElementKind::Component,
+            "/project/component.tsx",
+            3,
+        ),
+        price_tag_call.clone(),
+    ]);
+    let targets = resolve_targets(read_from(&texts), &report).unwrap();
+    assert_eq!(
+        targets.target(TransformProp::X),
+        Some(&EditTarget::Locked(LockReason::CallSiteNotFound {
+            component: "PriceTag".to_owned()
+        }))
+    );
+    assert_eq!(
+        commit_files(&texts, &targets, &report, &[(TransformProp::X, 60.0)]),
+        Err(CommitError::NotEditable(TransformProp::X))
+    );
+
+    // An anonymous entry whose tag is `<PriceTag>` is its call.
+    let report = memo_report(vec![rect, price_tag_call]);
+    let targets = resolve_targets(read_from(&texts), &report).unwrap();
+    assert_eq!(
+        targets.file_of(TransformProp::X),
+        Path::new("/project/scene.tsx")
+    );
+    assert!(matches!(
+        targets.target(TransformProp::X),
+        Some(EditTarget::PassThrough { .. })
+    ));
+}
+
+#[test]
+fn an_unreadable_call_site_locks_only_the_props_passed_through() {
+    let texts = Texts::from([(
+        PathBuf::from("/project/component.tsx"),
+        PRICE_TAG.to_owned(),
+    )]);
+    let report = price_tag_report();
+
+    let targets = resolve_targets(read_from(&texts), &report).expect("the element resolves");
+
+    assert_eq!(
+        targets.target(TransformProp::X),
+        Some(&EditTarget::Locked(LockReason::CallSiteNotFound {
+            component: "PriceTag".to_owned()
+        }))
+    );
+    assert_eq!(targets.files, [PathBuf::from("/project/component.tsx")]);
+    assert_eq!(
+        commit_files(
+            &texts,
+            &targets,
+            &report,
+            &[(TransformProp::Rotation, 45.0)]
+        ),
+        Ok(vec![(
+            PathBuf::from("/project/component.tsx"),
+            PRICE_TAG.replace("rotation={10}", "rotation={45}")
+        )])
+    );
+}
+
+#[test]
+fn an_edit_is_written_at_the_call_site_only_when_every_editable_prop_passes_through() {
+    let price_tag_call = SourcePos {
+        file: PathBuf::from("/project/scene.tsx"),
+        line: 2,
+        column: 3,
+    };
+    let component = "export const PriceTag = ({ x, y = 0, rotation = 0, scale = 1 }) => (\n  <Rect x={x} y={y} rotation={rotation} scale={scale} />\n);\n";
+    let texts = Texts::from([
+        (
+            PathBuf::from("/project/component.tsx"),
+            component.to_owned(),
+        ),
+        (
+            PathBuf::from("/project/scene.tsx"),
+            PRICE_TAG_SCENE.to_owned(),
+        ),
+    ]);
+    let report = LayerSourceReport {
+        props: ReceivedProps {
+            x: Some(40.0),
+            y: Some(0.0),
+            rotation: Some(0.0),
+            scale: Some(1.0),
+            ..ReceivedProps::default()
+        },
+        ..price_tag_report()
+    };
+    let mut targets = resolve_targets(read_from(&texts), &report).unwrap();
+    assert_eq!(targets.written_at(), Some(&price_tag_call));
+
+    // A locked prop on the element is not written, so it does not count.
+    targets.targets[2].1 = Target {
+        file: PathBuf::from("/project/component.tsx"),
+        target: EditTarget::Locked(LockReason::Spread),
+        call_site: None,
+    };
+    assert_eq!(targets.written_at(), Some(&price_tag_call));
+
+    // `rotation` written on the element changes every instance.
+    let targets = resolve_targets(read_from(&price_tag_files()), &price_tag_report()).unwrap();
+    assert_eq!(targets.written_at(), None);
+
+    // Nothing editable writes nowhere.
+    let mut locked = targets;
+    lock_outside_project(&mut locked, |_| true);
+    assert_eq!(locked.written_at(), None);
+}
+
+#[test]
+fn a_pass_through_row_names_its_call_site() {
+    let call_site = SourcePos {
+        file: PathBuf::from("/project/scenes/price.tsx"),
+        line: 18,
+        column: 5,
+    };
+    assert_eq!(
+        set_at_text(&call_site, Path::new("/project")),
+        "Set at scenes/price.tsx:18"
     );
 }

@@ -43,8 +43,9 @@ select layer ─> layerSource (chain + kind + received props + localFrame)
              ─> celesta-source-edit::resolve per prop ─> EditTarget
              ─> Layer section Transform rows + canvas handles
 
-drag ─> local delta via inverse parent transform ─> override the layer's
-        transform in the held scene, re-render (no file write)
+drag ─> local delta via inverse parent transform ─> prop values
+     ─> evaluate the frame with them as prop overrides, re-render
+        (no file write)
 mouse-up / Enter ─> re-read file, resolve again, apply edits
                ─> atomic write ─> EditHistory entry ─> resample
                   watched_mtime ─> reload, keep selection
@@ -208,12 +209,12 @@ on its own); otherwise `scale` is, and scaling is uniform.
 - The local delta is computed from the scene-space pointer delta through
   the inverse of the parent's world transform, composed from the
   `Group` layers above the selected layer in the held `Scene`.
-- During the drag nothing is written. The editor clones the held scene,
-  changes the selected layer's `EvaluatedTransform` (position by the local
-  delta, rotation by the angle delta, scale by the ratio), and re-renders
-  it. This assumes position is the props' `x`/`y` plus a constant offset
-  for primitives; an implementation step checks that against
-  `buildLayer` and adjusts the override if a primitive deviates.
+- During the drag nothing is written. The editor turns the local delta,
+  angle delta, and scale ratio into the prop values the write will put into
+  the source, and asks the React runtime for the frame with those values as
+  prop overrides, so everything computed from them moves too (see
+  "Drag preview through the runtime" in
+  `2026-10-23-editor-property-editing-design.md`).
 - Axes whose target is `Locked` do not move. Uniform-scale targets keep
   the aspect.
 - On mouse-up: re-read the file, `resolve` again, and if any target's

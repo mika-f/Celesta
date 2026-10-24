@@ -10,10 +10,10 @@ use crate::layer_select::{
     SourceLookup, display_path, launch_outcome_applies, parent_layer_id, source_position,
 };
 use crate::timecode::format_timecode;
-use crate::transform_edit::{TransformTargets, reason_text};
+use crate::transform_edit::{TransformTargets, inner_target, reason_text};
 use crate::view::EditorView;
 use crate::widgets::{inspector_row, inspector_section};
-use celesta_react_bridge::{ElementKind, LayerSource, LayerSourceReport};
+use celesta_react_bridge::{ElementKind, LayerSource, LayerSourceReport, SourcePos};
 use celesta_source_edit::EditTarget;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::spinner::Spinner;
@@ -56,7 +56,7 @@ pub(crate) fn owner_label(report: &LayerSourceReport) -> Option<String> {
 pub(crate) fn locked_summary(targets: &TransformTargets) -> Vec<String> {
     let mut reasons: Vec<(String, Vec<&str>)> = Vec::new();
     for (prop, target) in &targets.targets {
-        let EditTarget::Locked(reason) = target else {
+        let EditTarget::Locked(reason) = inner_target(&target.target) else {
             continue;
         };
         let reason = reason_text(reason);
@@ -108,14 +108,30 @@ impl EditorView {
     }
 
     /// Which scenes an edit of the selected layer changes, with the playhead
-    /// where it is now, or `None` until its source is found.
+    /// where it is now, or `None` until its source is found. An edit that
+    /// writes only a call site in the layer's chain changes only the
+    /// instances that call makes.
     pub(crate) fn selection_impact(&self) -> Option<ImpactView> {
         let report = self.found_report()?;
+        let written_at = self
+            .transform
+            .resolved(self.selected_layer.as_deref())
+            .and_then(|(resolved, _)| resolved.outcome.as_ref().ok())
+            .and_then(TransformTargets::written_at)
+            // Targets resolved for an older answer may name a call this
+            // chain no longer has.
+            .filter(|site| {
+                report
+                    .chain
+                    .iter()
+                    .any(|entry| SourcePos::from(entry) == **site)
+            });
         Some(impact_view(
             report,
             self.occurrences.as_ref().map(|(_, state)| state),
             self.react_chapters().unwrap_or_default(),
             u64::try_from(self.clock.frame()).unwrap_or(0),
+            written_at,
         ))
     }
 
@@ -547,9 +563,9 @@ impl EditorView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transform_edit::TransformProp;
-    use celesta_react_bridge::{ElementKind, ReceivedProps};
-    use celesta_source_edit::{EditTarget, ElementRef, LockReason, Span};
+    use crate::transform_edit::{Target, TransformProp};
+    use celesta_react_bridge::{ElementKind, ReceivedProps, SourcePos};
+    use celesta_source_edit::{EditTarget, EditValue, ElementRef, LiteralForm, LockReason, Span};
 
     fn entry(name: &str, kind: ElementKind) -> LayerSource {
         LayerSource {
@@ -632,25 +648,48 @@ mod tests {
                 source: "W / 2".to_owned(),
             })
         };
+        let element = ElementRef {
+            start: 0,
+            end_of_attributes: 5,
+            children: None,
+        };
+        let local = |target| Target {
+            file: "/a/card.tsx".into(),
+            target,
+            call_site: None,
+        };
+        // `y` comes from the call site, where it is written as an expression.
+        let passed = Target {
+            file: "/a/scene.tsx".into(),
+            target: EditTarget::PassThrough {
+                call_site: element,
+                param: "y".to_owned(),
+                target: Box::new(expression()),
+            },
+            call_site: Some(SourcePos {
+                file: "/a/scene.tsx".into(),
+                line: 1,
+                column: 1,
+            }),
+        };
         let targets = TransformTargets {
             file: "/a/card.tsx".into(),
-            element: ElementRef {
-                start: 0,
-                end_of_attributes: 5,
-            },
+            files: vec!["/a/card.tsx".into(), "/a/scene.tsx".into()],
+            element,
             targets: vec![
-                (TransformProp::X, expression()),
-                (TransformProp::Y, expression()),
+                (TransformProp::X, local(expression())),
+                (TransformProp::Y, passed),
                 (
                     TransformProp::Rotation,
-                    EditTarget::Literal {
+                    local(EditTarget::Literal {
                         span: Span { start: 1, end: 2 },
-                        value: 0.0,
-                    },
+                        value: EditValue::Number(0.0),
+                        form: LiteralForm::Number,
+                    }),
                 ),
                 (
                     TransformProp::Scale,
-                    EditTarget::Locked(LockReason::OutsideKeyframes),
+                    local(EditTarget::Locked(LockReason::OutsideKeyframes)),
                 ),
             ],
         };

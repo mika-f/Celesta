@@ -1,11 +1,12 @@
 use celesta_source_edit::{
-    Edit, EditTarget, ElementRef, LockReason, ResolveContext, Span, apply, element_at,
-    has_attribute, resolve,
+    Edit, EditTarget, EditValue, ElementRef, LiteralForm, LockReason, ResolveContext, Span, apply,
+    element_at, has_attribute, resolve,
 };
 
 fn ctx() -> ResolveContext {
     ResolveContext {
         primitive: true,
+        component_props: false,
         candidate_frames: vec![0.0],
         received: None,
         render_count: 1,
@@ -14,9 +15,22 @@ fn ctx() -> ResolveContext {
 
 fn with_received(received: f64) -> ResolveContext {
     ResolveContext {
-        received: Some(received),
+        received: Some(EditValue::Number(received)),
         ..ctx()
     }
+}
+
+/// The numeric literal `target` points at, as `(source, value)`.
+fn number_literal<'t>(text: &'t str, target: &EditTarget) -> (&'t str, f64) {
+    let EditTarget::Literal {
+        span,
+        value: EditValue::Number(value),
+        form: LiteralForm::Number,
+    } = target
+    else {
+        panic!("expected a numeric Literal, got {target:?}");
+    };
+    (span_text(text, *span), *value)
 }
 
 /// Resolves `prop` on the first `<Rect` in `text` (ASCII only).
@@ -49,6 +63,14 @@ fn not_primitive_locks() {
         ..ctx()
     };
     assert_eq!(run(&text, "x", &c), locked(LockReason::NotPrimitive));
+
+    // A call site's props are read on purpose.
+    let c = ResolveContext {
+        primitive: false,
+        component_props: true,
+        ..with_received(1.0)
+    };
+    assert!(matches!(run(&text, "x", &c), EditTarget::Literal { .. }));
 }
 
 #[test]
@@ -72,6 +94,7 @@ fn syntax_error_locks() {
     let element = ElementRef {
         start,
         end_of_attributes: text.find(" />").unwrap() as u32,
+        children: None,
     };
     assert_eq!(
         resolve(text, &element, "x", &with_received(1.0)),
@@ -87,14 +110,14 @@ fn missing_inserts_default() {
         run(&text, "x", &ctx()),
         EditTarget::Missing {
             insert_at: at,
-            default: 0.0
+            default: Some(EditValue::Number(0.0))
         }
     );
     assert_eq!(
         run(&text, "scale", &ctx()),
         EditTarget::Missing {
             insert_at: at,
-            default: 1.0
+            default: Some(EditValue::Number(1.0))
         }
     );
 }
@@ -106,37 +129,34 @@ fn missing_with_spread_locks() {
 
     let text = component("  return <Rect {...p} x={3} />;");
     let target = run(&text, "x", &with_received(3.0));
-    let EditTarget::Literal { span, value } = target else {
-        panic!("expected Literal, got {target:?}");
-    };
-    assert_eq!((span_text(&text, span), value), ("3", 3.0));
+    assert_eq!(number_literal(&text, &target), ("3", 3.0));
 }
 
 #[test]
 fn literal() {
     let text = component("  return <Rect x={120} />;");
     let target = run(&text, "x", &with_received(120.0));
-    let EditTarget::Literal { span, value } = target else {
-        panic!("expected Literal, got {target:?}");
-    };
-    assert_eq!((span_text(&text, span), value), ("120", 120.0));
+    assert_eq!(number_literal(&text, &target), ("120", 120.0));
 
     let text = component("  return <Rect x={-12} />;");
     let target = run(&text, "x", &with_received(-12.0));
-    let EditTarget::Literal { span, value } = target else {
-        panic!("expected Literal, got {target:?}");
-    };
-    assert_eq!((span_text(&text, span), value), ("-12", -12.0));
+    assert_eq!(number_literal(&text, &target), ("-12", -12.0));
+    // The sign is part of the span, so a write replaces it whole.
+    assert_eq!(
+        apply(
+            &text,
+            &[target.to_edit("x", &EditValue::Number(8.0)).unwrap()]
+        )
+        .unwrap(),
+        component("  return <Rect x={8} />;")
+    );
 }
 
 #[test]
 fn const_literal() {
     let text = component("  const X = 40;\n  return <Rect x={X} />;");
     let target = run(&text, "x", &with_received(40.0));
-    let EditTarget::Literal { span, value } = target else {
-        panic!("expected Literal, got {target:?}");
-    };
-    assert_eq!((span_text(&text, span), value), ("40", 40.0));
+    assert_eq!(number_literal(&text, &target), ("40", 40.0));
 }
 
 #[test]
@@ -220,9 +240,17 @@ fn overridden_by_parent() {
 fn to_edit_rejects_non_finite_values() {
     let text = component("  return <Rect x={120} />;");
     let target = run(&text, "x", &with_received(120.0));
-    assert!(target.to_edit("x", f64::NAN).is_none());
-    assert!(target.to_edit("x", f64::INFINITY).is_none());
-    assert!(locked(LockReason::Spread).to_edit("x", 1.0).is_none());
+    assert!(target.to_edit("x", &EditValue::Number(f64::NAN)).is_none());
+    assert!(
+        target
+            .to_edit("x", &EditValue::Number(f64::INFINITY))
+            .is_none()
+    );
+    assert!(
+        locked(LockReason::Spread)
+            .to_edit("x", &EditValue::Number(1.0))
+            .is_none()
+    );
 }
 
 #[test]
@@ -231,8 +259,8 @@ fn to_edit_round_trips_through_apply() {
     let literal = run(&text, "x", &with_received(120.0));
     let missing = run(&text, "y", &ctx());
     let edits: Vec<Edit> = [
-        literal.to_edit("x", 130.5).unwrap(),
-        missing.to_edit("y", 7.0).unwrap(),
+        literal.to_edit("x", &EditValue::Number(130.5)).unwrap(),
+        missing.to_edit("y", &EditValue::Number(7.0)).unwrap(),
     ]
     .into();
     assert_eq!(
@@ -254,7 +282,7 @@ fn at_frame(local_frame: f64, received: Option<f64>) -> ResolveContext {
 fn at_frames(frames: &[f64], received: Option<f64>) -> ResolveContext {
     ResolveContext {
         candidate_frames: frames.to_vec(),
-        received,
+        received: received.map(EditValue::Number),
         ..ctx()
     }
 }
@@ -415,6 +443,7 @@ fn has_attribute_ignores_spreads_and_absent_props() {
     let element = ElementRef {
         start: offset as u32,
         end_of_attributes: 0,
+        children: None,
     };
 
     assert!(has_attribute(&text, &element, "scaleX"));

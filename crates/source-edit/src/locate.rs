@@ -1,11 +1,12 @@
 use oxc_allocator::Allocator;
-use oxc_ast::ast::JSXOpeningElement;
+use oxc_ast::ast::JSXElement;
 use oxc_ast_visit::Visit;
 use oxc_span::GetSpan;
 
 use crate::parse;
+use crate::resolve::Span;
 
-/// Byte offsets of a located JSX opening element.
+/// Byte offsets of a located JSX element.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ElementRef {
     /// Offset of the opening `<`.
@@ -13,6 +14,9 @@ pub struct ElementRef {
     /// Insertion point: after the last attribute, or after the tag name (and
     /// its type arguments).
     pub end_of_attributes: u32,
+    /// Everything between the opening and the closing tag; `None` when the
+    /// element is self-closing.
+    pub children: Option<Span>,
 }
 
 /// Finds the JSX element whose `<` sits at the 1-based `line`/`column` that
@@ -58,19 +62,27 @@ struct Finder {
 }
 
 impl<'a> Visit<'a> for Finder {
-    fn visit_jsx_opening_element(&mut self, it: &JSXOpeningElement<'a>) {
-        if it.span.start == self.offset && self.found.is_none() {
+    fn visit_jsx_element(&mut self, it: &JSXElement<'a>) {
+        let opening = &it.opening_element;
+        if opening.span.start == self.offset && self.found.is_none() {
             // `<Foo<T>>`: after the type arguments, not inside them.
-            let after_name = it
+            let after_name = opening
                 .type_arguments
                 .as_ref()
-                .map_or(it.name.span().end, |args| args.span.end);
-            let end_of_attributes = it.attributes.last().map_or(after_name, |a| a.span().end);
+                .map_or(opening.name.span().end, |args| args.span.end);
+            let end_of_attributes = opening
+                .attributes
+                .last()
+                .map_or(after_name, |a| a.span().end);
             self.found = Some(ElementRef {
-                start: it.span.start,
+                start: opening.span.start,
                 end_of_attributes,
+                children: it.closing_element.as_ref().map(|closing| Span {
+                    start: opening.span.end,
+                    end: closing.span.start,
+                }),
             });
         }
-        oxc_ast_visit::walk::walk_jsx_opening_element(self, it);
+        oxc_ast_visit::walk::walk_jsx_element(self, it);
     }
 }

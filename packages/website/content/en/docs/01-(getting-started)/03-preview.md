@@ -68,18 +68,23 @@ Above the **Transform** rows, one line says what committing a change would do:
 | Couldn't scan scenes: `<error>` | The composition failed on some frame during the scan; the rest of the preview works as before |
 | Not found in the scene scan | The scan did not see this element, such as when it has no source position |
 
-On the timeline, the **Composition** row marks where the element is drawn: a filled band for the selected layer in the current scene, and an outlined band for each other place the same element is drawn. Hover over a band to see its scene (or its timecodes in a composition without chapters), its frames, and where that instance is rendered from; click a band to jump to its first frame. Bands of one instance less than a pixel apart at the current zoom are drawn as one, whose tooltip says how many ranges it covers. In the **Chapters** row, the chapters the selected layer appears in are underlined. Until the scan finishes, a single filled band shows the frames the layer's sequences let it be drawn in.
+When `x`, `y`, `rotation`, and `scale` (or `scaleX` and `scaleY`) are all props of your component, set at the call (see the next section), a change writes only that call, so only the instances that call renders count; a locked prop does not matter. With `const PriceTag = ({ x = 0, y = 0, rotation = 0, scale = 1 }) => <Rect x={x} y={y} rotation={rotation} scale={scale} />` used in Intro and Price, selecting it in Price, where it is called as `<PriceTag x={40} />`, reads **Changes this scene only**: moving it writes that call and leaves the one in Intro alone. If any of them is written on the element itself, or left out of it as with `({ x }) => <Rect x={x} />`, a change can write the element, which every instance draws, and every instance counts. The **Shared** row and the timeline bands count the same instances as the line.
+
+On the timeline, the **Composition** row marks where the element is drawn: a filled band for the selected layer in the current scene, and an outlined band for each other place an edit of it also changes. Hover over a band to see its scene (or its timecodes in a composition without chapters), its frames, and where that instance is rendered from; click a band to jump to its first frame. Bands of one instance less than a pixel apart at the current zoom are drawn as one, whose tooltip says how many ranges it covers. In the **Chapters** row, the chapters the selected layer appears in are underlined. Until the scan finishes, a single filled band shows the frames the layer's sequences let it be drawn in.
 
 ## Move layers on the canvas
 
-In interactive mode, a selected layer can be moved, rotated, and scaled, and the result is written into your source. Drag inside the outline to move it, drag a square handle at a corner or an edge to scale it about its anchor, and drag the handle above the top edge to rotate it (hold Shift to snap to 15°). You can also type a value into the **Transform** rows below the header of the **Properties** tab and press Enter or leave the field. One drag or one committed field is one change to the file: Celesta replaces only the number it changes and leaves the rest of your formatting and comments as they are, and the preview keeps the selection when it reloads.
+In interactive mode, a selected layer can be moved, rotated, and scaled, and the result is written into your source. Drag inside the outline to move it, drag a square handle at a corner or an edge to scale it about its anchor, and drag the handle above the top edge to rotate it (hold Shift to snap to 15°). You can also type a value into the **Transform** rows below the header of the **Properties** tab and press Enter or leave the field. One drag or one committed field is one change, even when it writes two files: Celesta replaces only the number it changes and leaves the rest of your formatting and comments as they are, and the preview keeps the selection when it reloads.
 
-Celesta writes a value only where your source states it plainly, on an element written directly in your file:
+Celesta writes a value only where your source states it plainly, on an element written directly in your file, or at the call of the component that element is written in:
 
 - A number such as `x={80}` or `rotation={-12}` is replaced.
 - A prop you left out is added, such as `x={140}` on a `<Rect>` with no `x`.
 - A prop written as `interpolate(frame, [0, 30, 60], [100, 600, 300])` can be edited on a frame that is one of the listed keyframes, such as 30; the matching output value is changed. The frame is the value `frame` has where the element is written, so a `<Sequence>` between the `useCurrentFrame()` call and the element does not shift it. Between keyframes the field is read-only and shows **Between keyframes at 0 and 30**, with buttons that jump to them. Celesta does not insert keyframes.
 - A `const x = 80` used by one element is replaced where it is declared.
+- A prop of your component, such as `x` in `const PriceTag = ({ x }) => <Rect x={x} />`, is written where the component is called, such as `<PriceTag x={40} />`, by the rules above. When the call leaves the prop out and the parameter has a default (`{ x = 0 }`), the prop is added to the call. Renamed props (`{ x: left }`) and `props.x` are followed too.
+
+A row whose value is set at a component's call site shows an arrow and **Set at `<file>`:`<line>`** under its field, such as **Set at scenes/price.tsx:12**, with the file relative to the entry file's folder. Dragging the layer or typing into the row writes that call, which may be in another file than the element. One drag can write both files, such as a call site's `x` and a `rotation` written on the element; it is still one change, and one undo restores both files. Because each call is edited on its own, an element in a component you call in several places is not locked as rendered more than once when its value is set at the call. A value passed at a call inside `.map()` is editable too, and changes every copy that call renders.
 
 Anything else is locked: its field shows a lock icon and the reason, the header's **Can't move** rows list it, and the outline turns dashed when nothing on the layer can be moved. The reasons are below; a word in angle brackets, such as `<name>`, stands for the part taken from your source.
 
@@ -87,7 +92,9 @@ Anything else is locked: its field shows a lock icon and the reason, the header'
 | --- | --- |
 | Set by a component, not written on this element | The element nearest the layer is your own component (or another library's), not a Celesta element such as `<Rect>` |
 | Written as an expression: `<expression>` | A value such as `W / 2` or `i * 24` |
-| Comes from `<name>`, which can't be traced | An import, a `let`, a parameter, an object property, or a name declared more than once in the component, such as again inside a block or loop |
+| Comes from `<name>`, which can't be traced | An import, a `let`, a parameter of an outer component read inside a nested one, an object property, or a name declared more than once in the component, such as again inside a block or loop |
+| Comes from `<component>`'s caller | The call site passes on a prop it received itself, such as `<PriceTag x={x} />` inside `Card`. Celesta follows one call, not the call of that call |
+| Can't find where `<component>` is called | The value is a prop of the component, but Celesta can't find the call that renders this layer, or can't read its file |
 | `<name>` is used in `<count>` places | Editing the shared `const` would move other elements too |
 | Between keyframes at `<frame>` and `<frame>` | The frame is not one of the keyframes; use the buttons to jump to one |
 | Outside the keyframes | The frame is before the first or after the last keyframe |
@@ -96,14 +103,14 @@ Anything else is locked: its field shows a lock icon and the reason, the header'
 | May be set by a spread ({...props}) | The element has `{...props}` and no value of its own, or the spread comes after the value |
 | Rendered `<count>` times from this element | An element in `.map()`; editing it would move every copy |
 | Can't tell which frame this animation reads | `frame` could hold more than one frame (each `<Sequence>` or `<FreezeFrame>` around the element gives another), and those frames give different keyframes with the same value |
-| This file is outside the project | The element is written in a file outside the entry file's folder, or inside `node_modules` |
+| This file is outside the project | The value is written in a file outside the entry file's folder, or inside `node_modules`: the element's file, or the call site's for a value set there |
 | Couldn't find this element in the source | The file no longer has the element where the preview found it, such as while a save is still reloading |
 | The source has syntax errors | Fix the file first; every field is locked until it parses |
 
-If the file changes while you drag, Celesta discards the drag and says so instead of writing over your edit. Only `x`, `y`, `rotation`, and `scale` (or `scaleX` and `scaleY`, when written) are edited; size props such as `width`, the anchor, and skew are not.
+If a file the drag would write changes while you drag, Celesta discards the drag and says so instead of writing over your edit. Only `x`, `y`, `rotation`, and `scale` (or `scaleX` and `scaleY`, when written) are edited; size props such as `width`, the anchor, and skew are not.
 
 A layer inside a `<Group>` or `<Stack>` moves with its parent. A child of a `<Stack>` stays editable: its `x` and `y` are offsets from the place the `<Stack>` gives it. Under **Source chain**, each row of **Called from** that is a Celesta element drawing its own layer, such as a `<Group>`, has a **Select** button that selects that layer; a group is outlined as the box around its children, and dragging anywhere inside it moves the whole group. A `<Stack>` or `<SafeArea>` row has no **Select** button: they are components, and the groups they create are not written in your source.
 
 ## Undo
 
-Undo (`⌘ Z`, `Ctrl Z`) and redo (`⌘ Shift Z`, `Ctrl Shift Z`) step through the changes Celesta wrote, whether from the canvas, the **Transform** rows, or the props file's **Properties** section, in one history that holds up to 100 changes and is cleared when you open another file. If the file was edited elsewhere since the change, Celesta refuses to undo it rather than overwrite your edit.
+Undo (`⌘ Z`, `Ctrl Z`) and redo (`⌘ Shift Z`, `Ctrl Shift Z`) step through the changes Celesta wrote, whether from the canvas, the **Transform** rows, or the props file's **Properties** section, in one history that holds up to 100 changes and is cleared when you open another file. A change that wrote two files, such as a component's call site and the component, is undone and redone as one step. If a file the change wrote was edited elsewhere since, Celesta refuses to undo it rather than overwrite your edit, and neither file changes.

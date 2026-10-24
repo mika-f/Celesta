@@ -240,30 +240,6 @@ fn unturn(transform: &EvaluatedTransform) -> Option<[f64; 4]> {
     invert_affine([l[0][0], l[1][0], l[0][1], l[1][1], 0.0, 0.0]).map(|m| [m[0], m[1], m[2], m[3]])
 }
 
-/// `frame`'s transform with the drag's `values` in place, to draw while
-/// dragging.
-pub(crate) fn override_transform(
-    frame: &LayerFrame,
-    values: &[(TransformProp, f64)],
-) -> EvaluatedTransform {
-    let mut transform = frame.transform;
-    for &(prop, value) in values {
-        match prop {
-            TransformProp::X => transform.position.x = value,
-            TransformProp::Y => transform.position.y = value,
-            TransformProp::Rotation => transform.rotation = value,
-            TransformProp::Scale => {
-                let ratio = ratio(frame.transform.scale.x, value);
-                transform.scale.x *= ratio;
-                transform.scale.y *= ratio;
-            }
-            TransformProp::ScaleX => transform.scale.x = value,
-            TransformProp::ScaleY => transform.scale.y = value,
-        }
-    }
-    transform
-}
-
 fn ratio(was: f64, now: f64) -> f64 {
     if was.abs() > 1e-12 { now / was } else { 1.0 }
 }
@@ -317,6 +293,56 @@ pub(crate) fn prop_values(
         .into_iter()
         .filter(|&(_, was, now)| format_number(was) != format_number(now))
         .map(|(prop, _, now)| (prop, now))
+        .collect()
+}
+
+/// The value of every prop `handle` changes in a drag (of those in
+/// `editable`), for the preview: the drag's for the props it changed (see
+/// `prop_values`), and the one the runtime saw when the drag started for the
+/// others. The props are the same on every frame of the drag, so the
+/// preview's overrides keep their positions and the runtime never remounts
+/// for a new one.
+pub(crate) fn preview_values(
+    frame: &LayerFrame,
+    handle: Handle,
+    editable: &[TransformProp],
+    values: &[(TransformProp, f64)],
+    received: &ReceivedProps,
+) -> Vec<(TransformProp, f64)> {
+    let changed = prop_values(frame, values, received);
+    handle_props(handle, editable)
+        .into_iter()
+        .map(|prop| {
+            let value = changed
+                .iter()
+                .find(|(candidate, _)| *candidate == prop)
+                .map_or_else(
+                    || {
+                        prop.received(received)
+                            .unwrap_or_else(|| start_value(frame, prop))
+                    },
+                    |&(_, value)| value,
+                );
+            (prop, value)
+        })
+        .collect()
+}
+
+/// The props of `editable` a drag of `handle` may change (see `drag_values`).
+fn handle_props(handle: Handle, editable: &[TransformProp]) -> Vec<TransformProp> {
+    let uniform = editable.contains(&TransformProp::Scale);
+    let props: &[TransformProp] = match handle {
+        Handle::Move => &[TransformProp::X, TransformProp::Y],
+        Handle::Rotate => &[TransformProp::Rotation],
+        _ if uniform => &[TransformProp::Scale],
+        Handle::Edge(i) if i % 2 == 1 => &[TransformProp::ScaleX],
+        Handle::Edge(_) => &[TransformProp::ScaleY],
+        Handle::Corner(_) => &[TransformProp::ScaleX, TransformProp::ScaleY],
+    };
+    props
+        .iter()
+        .copied()
+        .filter(|prop| editable.contains(prop))
         .collect()
 }
 

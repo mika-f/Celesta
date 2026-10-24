@@ -795,7 +795,7 @@ impl EditorView {
         match result {
             Ok((edit, watched)) => {
                 if edit.changes() {
-                    self.edit_history.push(edit);
+                    self.edit_history.push(edit.into());
                 }
                 let next_reload = self.apply_own_write_sample(watched);
                 self.property_panel.reload_needed = true;

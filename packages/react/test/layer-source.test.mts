@@ -5,7 +5,7 @@ import { createContext, createElement as h, useContext } from 'react';
 import type { ReactElement, ReactNode } from 'react';
 import { test } from 'vitest';
 
-import { Composition, FreezeFrame, Group, Instances, Loop, MotionBlur, Rect, Scenes, Sequence, Series, Stagger, Static, Theme, defineScenes } from '../src/index.js';
+import { Composition, FreezeFrame, Group, Instances, Loop, MotionBlur, Rect, Scenes, Sequence, Series, Stagger, Static, Text, Theme, defineScenes } from '../src/index.js';
 import type { Layer, Time } from '../src/index.js';
 import { jsxDEV } from '../src/jsx-dev-runtime.js';
 import type { SourcePosition } from '../src/jsx-dev-runtime.js';
@@ -154,11 +154,37 @@ test('the report reads the frame just rendered when the element props did not ch
   }
 });
 
-test('props are the transform props the primitive received', () => {
+test('props are the scalar props the primitive received', () => {
   const composition = mount(() =>
     comp(jsxDEV(Rect, { x: 12, rotation: 5, width: 1, height: 1, fill: '#ffffff' }, undefined, false, at('entry.tsx', 5, 7))),
   );
-  assert.deepEqual(reportFor(composition, 0).props, { x: 12, rotation: 5 });
+  assert.deepEqual(reportFor(composition, 0).props, { x: 12, rotation: 5, width: 1, height: 1, fill: '#ffffff' });
+});
+
+test('props carry every scalar prop the primitive received', () => {
+  // <Text color="#ffffff" fontSize={48} wrap style={{ fontSize: 48 }}>{'Sale'}</Text>
+  const text = jsxDEV(
+    Text,
+    { color: '#ffffff', fontSize: 48, wrap: true, style: { fontSize: 48, fontFamily: ['Inter'] }, onFrame: () => {}, data: { a: 1 }, children: 'Sale' },
+    undefined,
+    false,
+    at('entry.tsx', 5, 7),
+  );
+  const composition = mount(() => comp(text));
+  assert.deepEqual(reportFor(composition, 0).props, {
+    color: '#ffffff',
+    fontSize: 48,
+    wrap: true,
+    children: 'Sale',
+    'style.fontSize': 48,
+  });
+});
+
+test('a transform prop that is not a finite number is left out', () => {
+  const composition = mount(() =>
+    comp(jsxDEV(Rect, { x: '12', y: Number.NaN, width: 1, height: 1 }, undefined, false, at('entry.tsx', 5, 7))),
+  );
+  assert.deepEqual(reportFor(composition, 0).props, { width: 1, height: 1 });
 });
 
 test('renderCount counts the layers one element produced', () => {

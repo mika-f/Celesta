@@ -1,4 +1,6 @@
-use celesta_source_edit::{ApplyError, Edit, apply, element_at, format_number};
+use celesta_source_edit::{
+    ApplyError, Edit, EditValue, LiteralForm, apply, element_at, format_number,
+};
 
 fn at(text: &str, needle: &str) -> u32 {
     text.find(needle).unwrap() as u32
@@ -71,12 +73,13 @@ fn apply_replace_and_insert_in_one_pass() {
         Edit::Insert {
             at: at(text, " />"),
             name: "rotation".into(),
-            value: 15.0,
+            value: EditValue::Number(15.0),
         },
         Edit::Replace {
             start: at(text, "1}"),
             end: at(text, "1}") + 1,
-            value: 40.0,
+            value: EditValue::Number(40.0),
+            form: LiteralForm::Number,
         },
     ];
     assert_eq!(
@@ -94,7 +97,8 @@ fn apply_keeps_comments_and_spacing() {
         &[Edit::Replace {
             start: s,
             end: s + 1,
-            value: 2.5,
+            value: EditValue::Number(2.5),
+            form: LiteralForm::Number,
         }],
     )
     .unwrap();
@@ -110,12 +114,14 @@ fn apply_overlap_is_error() {
         Edit::Replace {
             start: 2,
             end: 6,
-            value: 1.0,
+            value: EditValue::Number(1.0),
+            form: LiteralForm::Number,
         },
         Edit::Replace {
             start: 4,
             end: 8,
-            value: 2.0,
+            value: EditValue::Number(2.0),
+            form: LiteralForm::Number,
         },
     ];
     assert_eq!(apply("0123456789", &edits), Err(ApplyError::Overlap));
@@ -132,7 +138,7 @@ fn element_at_generic_tag_inserts_after_type_arguments() {
         &[Edit::Insert {
             at: element.end_of_attributes,
             name: "x".into(),
-            value: 4.0,
+            value: EditValue::Number(4.0),
         }],
     )
     .unwrap();

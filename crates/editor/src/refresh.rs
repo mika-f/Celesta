@@ -271,8 +271,10 @@ impl EditorView {
         } else {
             ReactPreviewMode::ResolveComponents
         };
-        // A drag redraws the frame on every move; the runtime's answer does
-        // not change with the override, so it is not asked again. Playback
+        // A drag redraws the frame on every move; the runtime's answer is
+        // about the written source, which the drag does not change until it
+        // writes, so it is not asked again (the runtime looks it up without
+        // the drag's overrides, and remounts to drop them). Playback
         // asks only for an answer it does not have yet, or a stale one.
         let source_of = source_lookup_target(
             self.selected_layer.as_deref(),
@@ -299,7 +301,7 @@ impl EditorView {
                         RenderQuality::Final
                     },
                     source_of,
-                    transform_override: self.transform_override(),
+                    prop_overrides: self.prop_overrides(),
                     frame_of: self
                         .selected_layer
                         .clone()
