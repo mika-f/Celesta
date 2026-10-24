@@ -27,7 +27,7 @@ celesta-react-bridge = { path = "../react-bridge" }
 celesta-source-edit = { path = "../source-edit" }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 clap = { version = "4.6.7", features = ["derive"] }
-rodio = { version = "0.22.2", default-features = false, features = ["playback"] }
+rodio = { version = "0.23.0", default-features = false, features = ["playback"] }
 serde_json.workspace = true
 shlex = "1"
 unicode-segmentation = "1.13.3"
