@@ -47,7 +47,10 @@ that wrote it. Later designs need to tell these apart:
 
 - `LayerSourceEntry.kind` gains `'wrapper'` for components marked transparent
   (`Composition`, `Sequence`, `FreezeFrame`, the motion-blur wrappers).
-  `Loop` is marked transparent too; it is not today.
+  `Loop` is marked transparent too; it is not today. So are `Scenes`,
+  `Series`, and `Stagger`, which build a `<Sequence>` per scene or child
+  with `createElement`: a `<Rect>` written in a `defineScenes` scene
+  function has no owner, not "in `<Scenes>`".
 - The header's "in `<Component>`" (below) and the instance key skip
   `'wrapper'` entries.
 - Finding the call site of the component that *wrote* an element (not its
@@ -141,6 +144,11 @@ as `layerSource` reports it.
 
 Ranges are clipped to the requested frames; the bridge joins chunks.
 
+Copies are told apart by where they sit in the host tree. The moments of a
+`<MotionBlur>` or `<Trail>` (each a group layer of its own around the
+children drawn at that moment) sit at the blur's place, so a blurred element
+counts once, as an edit moves its moments together.
+
 Cost: one tree walk per frame, like `collectAudio`, plus a chain walk per
 layer from a committed-fiber set computed once per frame. Chains are not
 cached across frames: fibers alternate between renders, and a cached chain
@@ -175,6 +183,11 @@ keeps `occurrences: OccurrenceState` = `Scanning` | `Ready(index)` |
 belongs to. A result for an older generation is dropped, and so is one that
 lands after Select layers was turned off.
 
+The editor does not redraw every frame while a sweep runs: a task looks for
+its result every 200 ms and redraws only when it lands. A sweep held back for
+the reloaded frame still keeps the editor drawing until that frame is in, since
+the poll that takes it in starts the sweep.
+
 Until the index is ready, the impact is shown from the report's `span` only,
 with "Scanning scenes…" in place of the scene list.
 
@@ -199,7 +212,9 @@ one block:
 - "Appears in": the scenes this instance's occurrences overlap.
 - "Shared": shown when the element's occurrences (all instances) overlap
   more than one scene; it names the other scenes and the instance count.
-  Hovering lists the call sites.
+  Past three other scenes it counts them instead ("also in 11 other scenes
+  (71 instances)"). Hovering lists the call sites, after the scene names when
+  the row only counts them.
 - The existing "Source" and "Called from" rows move under a collapsed "Source
   chain" disclosure.
 
@@ -210,7 +225,8 @@ states what a commit changes:
 
 - not shared: "Changes this scene only", or "Changes 3 places in this scene"
   when the element renders more than once in it;
-- shared: "Also changes Intro, Outro", in the warning color.
+- shared: "Also changes Intro, Outro", in the warning color; past three other
+  scenes, "Also changes 11 other scenes", with the names on hover.
 
 For a pass-through target (design 2) the scenes are those of the instances
 that the written call site produces.
@@ -238,7 +254,11 @@ On the React composition row (V1):
 
 Bands draw beneath the playhead and above the row background, are hit-tested
 for a tooltip (scene, frames, the instance's call site), and a click seeks to
-the band's first frame.
+the band's first frame. Bands of one instance and kind less than a pixel apart
+at the current zoom merge into one, whose tooltip counts the ranges it covers,
+so an element shown every other frame draws at most a band per pixel.
+Without chapters, "Appears in" lists the first three ranges and counts the
+rest ("and 2397 more").
 
 On the chapter row, the chapters this instance appears in are underlined with
 a 2 px accent bottom border; the current chapter keeps its own highlight.
@@ -273,8 +293,9 @@ today, and the scan starts over from `Scanning`.
 
 TypeScript (Vitest, `packages/react`, `packages/cli`):
 
-- `kind: 'wrapper'` for a written `<Sequence>`, `<FreezeFrame>`, and
-  `<Loop>`; a `component` for a user component.
+- `kind: 'wrapper'` for a written `<Sequence>`, `<FreezeFrame>`, `<Loop>`,
+  `<Scenes>`, `<Series>`, and `<Stagger>`; a `component` for a user
+  component.
 - `windows` and `span` for nested `Sequence`s, a `Series` item (source at the
   `<Series.Sequence>`), a `Scenes` scene (no source), a `Loop` and a
   `Sequence` inside a `FreezeFrame` (`remapped`), and an element with no

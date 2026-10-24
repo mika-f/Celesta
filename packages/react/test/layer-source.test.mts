@@ -5,7 +5,7 @@ import { createContext, createElement as h, useContext } from 'react';
 import type { ReactElement, ReactNode } from 'react';
 import { test } from 'vitest';
 
-import { Composition, FreezeFrame, Group, Loop, MotionBlur, Rect, Scenes, Sequence, Series, defineScenes } from '../src/index.js';
+import { Composition, FreezeFrame, Group, Loop, MotionBlur, Rect, Scenes, Sequence, Series, Stagger, defineScenes } from '../src/index.js';
 import type { Layer, Time } from '../src/index.js';
 import { jsxDEV } from '../src/jsx-dev-runtime.js';
 import type { SourcePosition } from '../src/jsx-dev-runtime.js';
@@ -217,6 +217,41 @@ test('timing wrappers written in the source are wrapper entries', () => {
       ['Composition', 'wrapper'],
     ],
   );
+});
+
+test('Scenes, Series and Stagger are wrapper entries', () => {
+  const kinds = (composition: MountedComposition, frame: number) =>
+    reportFor(composition, frame).chain.map(({ name, kind }) => [name, kind]);
+  const scenes = defineScenes([{ id: 'a', durationInFrames: 30, Scene: () => rectAt(5) }]);
+  const played = mount(() => comp(jsxDEV(Scenes, { scenes }, undefined, false, at('entry.tsx', 3, 5))));
+  assert.deepEqual(kinds(played, 10), [
+    ['Rect', 'primitive'],
+    ['Scenes', 'wrapper'],
+    ['Composition', 'wrapper'],
+  ]);
+
+  const series = mount(() =>
+    comp(
+      jsxDEV(Series, {
+        children: jsxDEV(Series.Sequence, { durationInFrames: 30, children: rectAt(6) }, undefined, false, at('scene.tsx', 5, 7)),
+      }, undefined, false, at('scene.tsx', 4, 5)),
+    ),
+  );
+  assert.deepEqual(kinds(series, 10), [
+    ['Rect', 'primitive'],
+    ['Sequence', 'wrapper'],
+    ['SeriesRoot', 'wrapper'],
+    ['Composition', 'wrapper'],
+  ]);
+
+  const staggered = mount(() =>
+    comp(jsxDEV(Stagger, { each: 5, children: [rectAt(6), rectAt(7)] }, undefined, true, at('scene.tsx', 4, 5))),
+  );
+  assert.deepEqual(kinds(staggered, 10), [
+    ['Rect', 'primitive'],
+    ['Stagger', 'wrapper'],
+    ['Composition', 'wrapper'],
+  ]);
 });
 
 test('a user component named Sequence is a component entry', () => {

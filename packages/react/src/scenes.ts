@@ -7,6 +7,7 @@ import type { ComponentType } from 'react';
 
 import { Sequence } from './components';
 import { CompositionRuntimeContext, RootRuntimeContext, runtimeFrame, useCurrentFrame } from './hooks';
+import { markTransparent } from './source-chain';
 
 export interface SceneEntry {
   /** Unique key of the scene, for code and for the preview's chapter list. */
@@ -234,3 +235,6 @@ export function useScene<T extends SceneEntry>(list?: SceneList<T>, options?: Us
   }
   return sceneAt(list, clock === 'root' ? rootFrame : localFrame);
 }
+
+// Draws the `Scene` components its caller lists, each in a `<Sequence>`.
+markTransparent(Scenes);

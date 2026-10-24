@@ -189,12 +189,31 @@ fn cut(
     push(outside, from.max(end), to);
 }
 
+/// More other scenes than this are counted instead of named.
+const NAMED_SCENES: usize = 3;
+
+/// The other scenes as the Shared row and the impact line name them:
+/// "Intro, Outro" up to [`NAMED_SCENES`], "11 other scenes" past that.
+pub(crate) fn other_scenes_label(scenes: &[String]) -> String {
+    if scenes.len() > NAMED_SCENES {
+        format!("{} other scenes", scenes.len())
+    } else {
+        scenes.join(", ")
+    }
+}
+
+/// Every other scene's name, for a hover over a label that only counts
+/// them; `None` when [`other_scenes_label`] names them all.
+pub(crate) fn counted_scenes(scenes: &[String]) -> Option<String> {
+    (scenes.len() > NAMED_SCENES).then(|| scenes.join(", "))
+}
+
 /// The impact line's text and whether it uses the warning color.
 pub(crate) fn impact_line(view: &ImpactView) -> (String, bool) {
     match view {
         ImpactView::SpanOnly { note, .. } => (note.clone(), false),
         ImpactView::Known(impact) if !impact.other_scenes.is_empty() => (
-            format!("Also changes {}", impact.other_scenes.join(", ")),
+            format!("Also changes {}", other_scenes_label(&impact.other_scenes)),
             true,
         ),
         ImpactView::Known(impact) if impact.places_in_scene > 1 => (
@@ -315,6 +334,32 @@ mod tests {
         assert_eq!(impact.places_in_scene, 1);
         assert_eq!(impact.call_sites, vec![pos(8), pos(20)]);
         assert_eq!(line, ("Also changes Intro".to_owned(), true));
+    }
+
+    #[test]
+    fn three_other_scenes_are_named_and_more_are_counted() {
+        let names = |count: usize| -> Vec<String> {
+            (1..=count).map(|scene| format!("S{scene}")).collect()
+        };
+        assert_eq!(other_scenes_label(&names(3)), "S1, S2, S3");
+        assert_eq!(counted_scenes(&names(3)), None);
+        assert_eq!(other_scenes_label(&names(4)), "4 other scenes");
+        assert_eq!(counted_scenes(&names(4)).as_deref(), Some("S1, S2, S3, S4"));
+
+        let chapters: Vec<ReactChapter> = (0..12)
+            .map(|scene| chapter(&format!("s{scene}"), &format!("S{scene}"), scene * 30, 30))
+            .collect();
+        let occurrences = index(vec![instance(vec![pos(3)], vec![(0, 360)])]);
+        let view = impact_view(
+            &report(&[pos(3)], Some((0.0, 360.0))),
+            Some(&occurrences),
+            &chapters,
+            10,
+        );
+        assert_eq!(
+            impact_line(&view),
+            ("Also changes 11 other scenes".to_owned(), true)
+        );
     }
 
     #[test]

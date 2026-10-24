@@ -3,14 +3,20 @@ use crate::problems::error_chain;
 use crate::view::EditorView;
 use celesta_react_bridge::runtime_paths as react_runtime_paths;
 use celesta_react_bridge::{OccurrenceIndex, PropertyInputs, ReactBridge, SpawnOptions};
+use gpui_kit::Context;
 use std::error::Error;
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
+use std::time::Duration;
 
 /// Frames asked of the bridge per `collectOccurrences` request; a reload
 /// abandons the running sweep at the next chunk boundary.
 pub(crate) const CHUNK_FRAMES: u64 = 240;
+
+/// How often a running sweep's result is looked for. A sweep takes seconds,
+/// so the result shows at most this much later than it lands.
+const RESULT_POLL: Duration = Duration::from_millis(200);
 
 pub(crate) struct OccurrenceRequest {
     pub(crate) generation: u64,
@@ -180,6 +186,29 @@ pub(crate) fn sweep_due(after: Option<u64>, shown: u64) -> bool {
     after.is_some_and(|after| shown >= after)
 }
 
+/// Puts a sweep's `result` in `slot` if it lands (see [`accepts`]), for
+/// reload `current`; whether it did.
+pub(crate) fn land(
+    slot: &mut Option<(u64, OccurrenceState)>,
+    current: u64,
+    result: OccurrenceResult,
+) -> bool {
+    if !accepts(current, result.generation, slot.is_some()) {
+        return false;
+    }
+    let state = match result.index {
+        Ok(index) => OccurrenceState::Ready(index),
+        Err(error) => OccurrenceState::Failed(error),
+    };
+    *slot = Some((result.generation, state));
+    true
+}
+
+/// Whether `slot` holds a sweep whose result is still to land.
+fn sweeping(slot: Option<&(u64, OccurrenceState)>) -> bool {
+    slot.is_some_and(|(_, state)| state.is_sweeping())
+}
+
 impl EditorView {
     /// Starts sweeping the React entry for where each element renders,
     /// tagged with the current reload. Only a preview that picks layers
@@ -211,6 +240,59 @@ impl EditorView {
             self.occurrence_sweep_after = None;
             self.request_occurrence_sweep();
         }
+    }
+
+    /// Takes in the sweep results the worker sent; whether the state changed.
+    pub(crate) fn poll_occurrence_results(&mut self) -> bool {
+        let mut changed = false;
+        loop {
+            match self.occurrence_worker.results.try_recv() {
+                Ok(result) => {
+                    changed |= land(&mut self.occurrences, self.react_reload_generation, result);
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    if let Some((_, state)) = self
+                        .occurrences
+                        .as_mut()
+                        .filter(|(_, state)| state.is_sweeping())
+                    {
+                        *state = OccurrenceState::Failed(
+                            "occurrence worker stopped unexpectedly".to_owned(),
+                        );
+                        changed = true;
+                    }
+                    break;
+                }
+            }
+        }
+        changed
+    }
+
+    /// While a sweep runs, looks for its result every [`RESULT_POLL`] and
+    /// redraws only when it lands, instead of redrawing every frame for the
+    /// whole sweep. One watch runs at a time; it ends with the sweep.
+    pub(crate) fn watch_occurrence_sweep(&mut self, cx: &mut Context<Self>) {
+        if self.occurrence_watch || !sweeping(self.occurrences.as_ref()) {
+            return;
+        }
+        self.occurrence_watch = true;
+        cx.spawn(async move |view, cx| {
+            loop {
+                cx.background_executor().timer(RESULT_POLL).await;
+                let watching = view.update(cx, |this, cx| {
+                    if this.poll_occurrence_results() {
+                        cx.notify();
+                    }
+                    this.occurrence_watch = sweeping(this.occurrences.as_ref());
+                    this.occurrence_watch
+                });
+                if !matches!(watching, Ok(true)) {
+                    break;
+                }
+            }
+        })
+        .detach();
     }
 
     fn request_occurrence_sweep(&mut self) {
@@ -349,6 +431,43 @@ mod tests {
         assert!(sweep_due(Some(7), 7));
         // A frame drawn later than the one waited for also lets it start.
         assert!(sweep_due(Some(7), 8));
+    }
+
+    #[test]
+    fn a_result_for_the_current_reload_lands_and_ends_the_watch() {
+        let result = |generation, index| OccurrenceResult { generation, index };
+        let mut slot = Some((3, OccurrenceState::Scanning));
+        assert!(sweeping(slot.as_ref()));
+
+        // An older reload's result changes nothing, so nothing is redrawn.
+        assert!(!land(&mut slot, 3, result(2, Ok(rendered(0, 30)))));
+        assert_eq!(slot, Some((3, OccurrenceState::Scanning)));
+
+        assert!(land(&mut slot, 3, result(3, Ok(rendered(0, 30)))));
+        assert_eq!(slot, Some((3, OccurrenceState::Ready(rendered(0, 30)))));
+        assert!(!sweeping(slot.as_ref()));
+
+        let mut failed = Some((3, OccurrenceState::Refreshing(rendered(0, 30))));
+        assert!(land(&mut failed, 3, result(3, Err("boom".to_owned()))));
+        assert_eq!(
+            failed,
+            Some((3, OccurrenceState::Failed("boom".to_owned())))
+        );
+    }
+
+    #[test]
+    fn a_result_after_select_layers_turned_off_does_not_land() {
+        let mut slot = None;
+        assert!(!land(
+            &mut slot,
+            3,
+            OccurrenceResult {
+                generation: 3,
+                index: Ok(rendered(0, 30)),
+            }
+        ));
+        assert_eq!(slot, None);
+        assert!(!sweeping(slot.as_ref()));
     }
 
     #[test]

@@ -97,7 +97,7 @@ export function markPrimitive(component: unknown): void {
 
 /**
  * Marks a Celesta component that draws JSX written by its caller
- * (`<Sequence>`, `<FreezeFrame>`, `<MotionBlur>`'s moments, ...): it never
+ * (`<Sequence>`, `<FreezeFrame>`, `<MotionBlur>`'s moments, `<Scenes>`, ...): it never
  * owns that JSX, so the frame an `interpolate(frame, …)` reads is looked up
  * above it. A source chain also reports it as a `'wrapper'` entry.
  */
@@ -304,24 +304,51 @@ export function layerSourceReport(
  * The element and instance keys of every distinct node in `layerNodes`: the
  * positions of its source chain other than `'wrapper'` entries, innermost
  * first, and the first of them. A node whose chain has no such entry is left
- * out.
+ * out. `place` tells the copies of one instance in a frame apart (see
+ * `placeOf`).
  */
 export function occurrenceKeys(
   layerNodes: ReadonlyMap<string, HostNode>,
   resolveFile: (fileName: string) => string,
-): Array<{ element: SourcePos; chain: SourcePos[] }> {
+): Array<{ element: SourcePos; chain: SourcePos[]; place: string }> {
   const nodes = new Set(layerNodes.values());
   const [first] = nodes;
   if (!first) return [];
   const committed = committedFibers((first.fiber as Fiber | null | undefined) ?? null);
-  const keys: Array<{ element: SourcePos; chain: SourcePos[] }> = [];
+  const placeOf = places();
+  const keys: Array<{ element: SourcePos; chain: SourcePos[]; place: string }> = [];
   for (const node of nodes) {
     const chain = sourceFibers(node, resolveFile, undefined, committed)
       .filter(({ entry }) => entry.kind !== 'wrapper')
       .map(({ entry: { file, line, column } }) => ({ file, line, column }));
-    if (chain.length > 0) keys.push({ element: chain[0], chain });
+    if (chain.length > 0) keys.push({ element: chain[0], chain, place: placeOf(node) });
   }
   return keys;
+}
+
+/**
+ * Where a node sits in the host tree: its index under each ancestor, root
+ * first. Every `<MotionBlur>` sample and `<Trail>` copy (a 'time-sample',
+ * drawn as a group layer of its own) is at the place of the blur or trail
+ * around it: an edit moves the moments of a blurred element together, so
+ * they are one place, where the copies a `.map()` makes are not. Remembers
+ * what it has seen, for one tree.
+ */
+function places(): (node: HostNode) => string {
+  const placed = new Map<HostNode, string>();
+  const indices = new Map<HostNode, number>();
+  const placeOf = (node: HostNode): string => {
+    const { parent } = node;
+    if (!parent) return '';
+    if (node.type === 'time-sample') return placeOf(parent);
+    let place = placed.get(node);
+    if (place !== undefined) return place;
+    if (!indices.has(node)) parent.children.forEach((child, index) => indices.set(child, index));
+    place = `${placeOf(parent)}/${indices.get(node)}`;
+    placed.set(node, place);
+    return place;
+  };
+  return placeOf;
 }
 
 type RuntimeValue = {

@@ -120,6 +120,9 @@ pub(crate) struct EditorView {
     /// The preview frame a sweep held back after the editor's own write
     /// waits for before it starts.
     pub(crate) occurrence_sweep_after: Option<u64>,
+    /// Whether a task looks for the running sweep's result (see
+    /// `watch_occurrence_sweep`).
+    pub(crate) occurrence_watch: bool,
     /// Numbers the React entry's reloads so a slow older one is not applied
     /// over a newer one.
     pub(crate) react_reloads: ReloadOrder,
@@ -348,6 +351,7 @@ impl EditorView {
             occurrence_worker,
             occurrences: None,
             occurrence_sweep_after: None,
+            occurrence_watch: false,
             react_reloads: ReloadOrder::default(),
             watched_since: 0,
             property_panel: PropertyPanelState::default(),

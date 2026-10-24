@@ -306,7 +306,10 @@ export interface OccurrenceIndex {
       chain: SourcePos[];
       /** `[from, to)` composition frames, joined where adjacent. */
       ranges: Array<[number, number]>;
-      /** Most copies of this instance in any one frame (`.map()`). */
+      /**
+       * Most copies of this instance in any one frame (`.map()`); the moments
+       * a `<MotionBlur>` or `<Trail>` draws of one copy count once.
+       */
       maxPerFrame: number;
     }>;
   }>;
@@ -1803,8 +1806,8 @@ export function mount(defaultExport: EntryComponent, compositionId?: string): Mo
       for (let frame = Math.max(0, from); frame < end; frame++) {
         const time = { value: frame * config.frameRate.denominator, timescale: config.frameRate.numerator };
         const { layerNodes } = walkLayerNodes(time, options?.preview === true);
-        const counts = new Map<Instance, number>();
-        for (const { element, chain } of occurrenceKeys(layerNodes, resolveFile)) {
+        const places = new Map<Instance, Set<string>>();
+        for (const { element, chain, place } of occurrenceKeys(layerNodes, resolveFile)) {
           const elementKey = keyOf(element);
           let entry = elements.get(elementKey);
           if (!entry) {
@@ -1817,10 +1820,15 @@ export function mount(defaultExport: EntryComponent, compositionId?: string): Mo
             instance = { chain, ranges: [], maxPerFrame: 0 };
             entry.instances.set(instanceKey, instance);
           }
-          counts.set(instance, (counts.get(instance) ?? 0) + 1);
+          let seen = places.get(instance);
+          if (!seen) {
+            seen = new Set();
+            places.set(instance, seen);
+          }
+          seen.add(place);
         }
-        for (const [instance, count] of counts) {
-          instance.maxPerFrame = Math.max(instance.maxPerFrame, count);
+        for (const [instance, seen] of places) {
+          instance.maxPerFrame = Math.max(instance.maxPerFrame, seen.size);
           const last = instance.ranges[instance.ranges.length - 1];
           if (last && last[1] === frame) last[1] = frame + 1;
           else instance.ranges.push([frame, frame + 1]);

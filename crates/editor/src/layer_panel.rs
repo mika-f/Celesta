@@ -5,7 +5,7 @@
 
 use crate::editor_launch::open_source;
 use crate::icons::CelestaIcon;
-use crate::impact::{ImpactView, impact_line, impact_view};
+use crate::impact::{ImpactView, counted_scenes, impact_line, impact_view, other_scenes_label};
 use crate::layer_select::{
     SourceLookup, display_path, launch_outcome_applies, parent_layer_id, source_position,
 };
@@ -20,7 +20,7 @@ use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ActiveTheme as _, Icon, IconName, Sizable as _};
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyElement, Context, Div, Hsla, SharedString, div, px};
+use gpui_kit::{AnyElement, Context, Div, Hsla, SharedString, Stateful, div, px};
 use std::path::{Path, PathBuf};
 
 /// The header rows' label column, as wide as the Transform rows' so the
@@ -69,6 +69,24 @@ pub(crate) fn locked_summary(targets: &TransformTargets) -> Vec<String> {
         .into_iter()
         .map(|(reason, props)| format!("{} — {reason}", props.join(", ")))
         .collect()
+}
+
+/// More ranges than this are counted after the first ones in "Appears in".
+const LISTED_RANGES: usize = 3;
+
+/// "Appears in" without chapters: the first [`LISTED_RANGES`] ranges as
+/// `from–to` timecodes, then "and N more" for the rest.
+fn ranges_label(ranges: &[(u64, u64)], timecode: impl Fn(u64) -> String) -> String {
+    let listed = ranges
+        .iter()
+        .take(LISTED_RANGES)
+        .map(|&(from, to)| format!("{}–{}", timecode(from), timecode(to)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    match ranges.len().saturating_sub(LISTED_RANGES) {
+        0 => listed,
+        more => format!("{listed} and {more} more"),
+    }
 }
 
 /// "1 instance", "3 instances".
@@ -206,27 +224,22 @@ impl EditorView {
                         self.frame_rate_value,
                     )
                 };
-                let ranges = impact
-                    .own_ranges
-                    .iter()
-                    .map(|&(from, to)| format!("{}–{}", timecode(from), timecode(to)))
-                    .collect::<Vec<_>>();
-                text(ranges.join(", "), foreground)
+                text(ranges_label(&impact.own_ranges, timecode), foreground)
             }
         };
         let shared = match impact {
             ImpactView::Known(impact) if !impact.other_scenes.is_empty() => {
-                let sites: Vec<String> = impact
-                    .call_sites
-                    .iter()
-                    .map(|site| {
+                // A label that only counts the scenes names them first.
+                let lines: Vec<String> = counted_scenes(&impact.other_scenes)
+                    .into_iter()
+                    .chain(impact.call_sites.iter().map(|site| {
                         format!(
                             "{}:{}:{}",
                             display_path(&site.file, &entry_dir),
                             site.line,
                             site.column
                         )
-                    })
+                    }))
                     .collect();
                 Some(
                     div()
@@ -234,16 +247,16 @@ impl EditorView {
                         .text_color(warning)
                         .child(format!(
                             "also in {} ({})",
-                            impact.other_scenes.join(", "),
+                            other_scenes_label(&impact.other_scenes),
                             instances(impact.instance_count)
                         ))
                         .tooltip(move |window, cx| {
-                            let sites = sites.clone();
+                            let lines = lines.clone();
                             Tooltip::element(move |_, _| {
                                 div()
                                     .flex()
                                     .flex_col()
-                                    .children(sites.iter().map(|site| div().child(site.clone())))
+                                    .children(lines.iter().map(|line| div().child(line.clone())))
                             })
                             .build(window, cx)
                         })
@@ -286,10 +299,15 @@ impl EditorView {
     }
 
     /// What a commit of the Transform rows changes, in the warning color when
-    /// it reaches other scenes.
-    pub(crate) fn impact_line(&self, impact: &ImpactView, cx: &mut Context<Self>) -> Div {
+    /// it reaches other scenes; a hover names the scenes it only counts.
+    pub(crate) fn impact_line(&self, impact: &ImpactView, cx: &mut Context<Self>) -> Stateful<Div> {
         let (text, warn) = impact_line(impact);
+        let counted = match impact {
+            ImpactView::Known(impact) => counted_scenes(&impact.other_scenes),
+            ImpactView::SpanOnly { .. } => None,
+        };
         div()
+            .id("selection-impact")
             .px_3()
             .py_2()
             .border_b_1()
@@ -301,6 +319,9 @@ impl EditorView {
             })
             .when(!warn, |line| line.text_color(cx.theme().muted_foreground))
             .child(text)
+            .when_some(counted, |line, scenes| {
+                line.tooltip(move |window, cx| Tooltip::new(scenes.clone()).build(window, cx))
+            })
     }
 
     /// The selected layer's Transform rows and the error of its last edit, or
@@ -579,6 +600,29 @@ mod tests {
             entry("Composition", ElementKind::Wrapper),
         ]);
         assert_eq!(owner_label(&in_scene), None);
+        // A Rect written in a `defineScenes` scene function.
+        let in_scenes = report(vec![
+            entry("Rect", ElementKind::Primitive),
+            entry("Scenes", ElementKind::Wrapper),
+            entry("Composition", ElementKind::Wrapper),
+        ]);
+        assert_eq!(owner_label(&in_scenes), None);
+    }
+
+    #[test]
+    fn ranges_past_three_are_counted() {
+        let timecode = |frame: u64| frame.to_string();
+        assert_eq!(
+            ranges_label(&[(0, 1), (2, 3), (4, 5)], timecode),
+            "0–1, 2–3, 4–5"
+        );
+        let every_other: Vec<(u64, u64)> =
+            (0..2400).map(|frame| (frame * 2, frame * 2 + 1)).collect();
+        assert_eq!(
+            ranges_label(&every_other, timecode),
+            "0–1, 2–3, 4–5 and 2397 more"
+        );
+        assert_eq!(ranges_label(&[], timecode), "");
     }
 
     #[test]

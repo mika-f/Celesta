@@ -59,8 +59,8 @@ pub struct LayerSource {
 pub enum ElementKind {
     /// A built-in element such as `<Rect>` that emits a layer itself.
     Primitive,
-    /// A Celesta timing wrapper such as `<Sequence>` that draws its caller's
-    /// JSX.
+    /// A Celesta component that draws its caller's JSX, such as
+    /// `<Sequence>` or `<Scenes>`.
     Wrapper,
     /// A user-written component that renders other elements.
     #[default]

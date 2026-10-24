@@ -10,6 +10,7 @@ use gpui_kit::{Context, KeyDownEvent, MouseButton, Window, div, px};
 impl Render for EditorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.poll_background_work();
+        self.watch_occurrence_sweep(cx);
         self.sync_transform_targets(cx);
         self.sync_transform_inputs(window, cx);
         self.update_playback(window);
@@ -20,10 +21,9 @@ impl Render for EditorView {
             || self.media_pending
             || self.audio_pending
             || self.component_schema_pending
-            || self
-                .occurrences
-                .as_ref()
-                .is_some_and(|(_, state)| state.is_sweeping())
+            // A sweep held back for the reloaded frame starts from the poll
+            // that takes that frame in; a running one is watched instead.
+            || self.occurrence_sweep_after.is_some()
             || self.export_cancellation.is_some()
         {
             window.request_animation_frame();

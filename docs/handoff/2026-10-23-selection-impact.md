@@ -137,20 +137,23 @@ chunk boundary, so at most 240 frames of stale work run after a save.
 
 ## Verifying by hand
 
-Manual checks are pending the app check:
+Checked in the app:
 
-- Drag a layer and release: the Properties tab keeps its rows (read-only, with
-  a spinner in the header) and the layer does not jump back before the
-  reload.
-- A component used in two chapters: "Shared also in …" and "Also changes …",
-  the hover list of call sites, outlined bands in the other chapter, and the
-  underlines in the Chapters row.
-- A composition without chapters: "Appears in" shows timecode ranges and
-  "Changes N places in this scene" counts copies.
+- The selection header, the impact line, the timeline bands, and the
+  underlines in the Chapters row show as designed.
+- Drag a layer and release: the Properties tab no longer blanks, and its
+  numbers update right after the release.
+
+Not yet checked:
+
 - Save from outside Celesta during a long sweep: "Scanning scenes…" until
   the new sweep finishes, never the old result.
-- Nudge a layer with the Transform rows: the Shared row, "Also changes …",
-  the outlined bands, and the chapter underlines stay shown through the
-  reload and the re-sweep.
-- With Select layers off, saving starts no sweep (no extra Node process);
-  turning it on shows "Scanning scenes…" and then the scan.
+- An entry that throws on a late frame: "Couldn't scan scenes: …" in the
+  impact line, the preview of earlier frames unaffected.
+- A reload that fails right after a drag: the old code's frame is drawn
+  without the drag's override.
+
+The other checks listed for this design were not part of that round: a
+composition without chapters ("Appears in" as timecode ranges, "Changes N
+places in this scene"), and Select layers off (saving starts no sweep;
+turning it on shows "Scanning scenes…" and then the scan).

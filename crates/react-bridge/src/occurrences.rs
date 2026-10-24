@@ -14,7 +14,7 @@ pub struct OccurrenceIndex {
 /// Every instance of one element: the place it was written.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub struct ElementOccurrences {
-    /// The first entry of the source chain that is not a timing wrapper.
+    /// The first entry of the source chain that is not a wrapper.
     pub element: SourcePos,
     pub instances: Vec<InstanceOccurrences>,
 }
@@ -24,7 +24,7 @@ pub struct ElementOccurrences {
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstanceOccurrences {
-    /// The source chain without its timing wrappers, innermost first.
+    /// The source chain without its wrapper entries, innermost first.
     pub chain: Vec<SourcePos>,
     /// `[from, to)` composition frames, joined where adjacent.
     pub ranges: Vec<(u64, u64)>,
@@ -67,7 +67,7 @@ impl OccurrenceIndex {
     }
 
     /// The element and instance the layer `report` describes: its chain
-    /// without timing wrappers, whose first entry is the element. `None` when
+    /// without wrapper entries, whose first entry is the element. `None` when
     /// the chain has no other entries or the index never saw that instance.
     pub fn instance_for(
         &self,
@@ -215,6 +215,19 @@ mod tests {
         assert_eq!(element.element, pos(3));
         assert_eq!(instance.chain, vec![pos(3), pos(8)]);
         assert_eq!(instance.ranges, vec![(30, 60)]);
+
+        // A `defineScenes` scene: `<Scenes>` is a wrapper too, so a Rect
+        // written in the scene function is the element alone.
+        let in_scene = LayerSourceReport {
+            chain: vec![
+                entry("Rect", 3, ElementKind::Primitive),
+                entry("Scenes", 12, ElementKind::Wrapper),
+                entry("Composition", 1, ElementKind::Wrapper),
+            ],
+            ..report
+        };
+        let (_, instance) = occurrences.instance_for(&in_scene).expect("found");
+        assert_eq!(instance.chain, vec![pos(3)]);
     }
 
     #[test]

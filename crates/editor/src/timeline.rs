@@ -194,6 +194,37 @@ struct SelectionBand {
     /// The instance's index, `None` for the span.
     instance: Option<usize>,
     call_site: Option<SourcePos>,
+    /// How many of the instance's ranges the band covers: more than one once
+    /// [`merge_close_bands`] joined them.
+    ranges: usize,
+}
+
+/// `bands` with each run of one instance's bands (filled or outlined alike)
+/// less than a pixel apart at `view` on a lane `lane_width` pixels wide
+/// joined into one, so an element shown every other frame draws a band per
+/// pixel at most, not one per range. Bands of one kind come in frame order,
+/// as [`selection_bands`] lists them.
+fn merge_close_bands(
+    bands: Vec<SelectionBand>,
+    view: LaneView,
+    lane_width: f32,
+) -> Vec<SelectionBand> {
+    // The frames one pixel of the lane shows.
+    let frames_per_pixel = view.end_frame / (view.zoom * f64::from(lane_width));
+    let mut merged: Vec<SelectionBand> = Vec::with_capacity(bands.len());
+    for band in bands {
+        if let Some(last) = merged.last_mut()
+            && last.filled == band.filled
+            && last.instance == band.instance
+            && (band.range.0.saturating_sub(last.range.1) as f64) < frames_per_pixel
+        {
+            last.range.1 = last.range.1.max(band.range.1);
+            last.ranges += band.ranges;
+            continue;
+        }
+        merged.push(band);
+    }
+    merged
 }
 
 /// The bands `impact` draws: this instance's ranges in the current scene, or
@@ -207,6 +238,7 @@ fn selection_bands(impact: &ImpactView) -> Vec<SelectionBand> {
                 filled: true,
                 instance: None,
                 call_site: None,
+                ranges: 1,
             })
             .collect(),
         ImpactView::Known(impact) => {
@@ -216,6 +248,7 @@ fn selection_bands(impact: &ImpactView) -> Vec<SelectionBand> {
                     filled,
                     instance: Some(instance),
                     call_site: impact.call_sites.get(instance).cloned(),
+                    ranges: 1,
                 }
             };
             impact
@@ -1088,9 +1121,8 @@ impl EditorView {
             .and_then(|react| react.entry.file_name())
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default();
-        let bands = impact
-            .map(selection_bands)
-            .unwrap_or_default()
+        let bands = impact.map(selection_bands).unwrap_or_default();
+        let bands = merge_close_bands(bands, view, self.lane_width())
             .into_iter()
             .filter_map(|band| {
                 let (left, width) = *band_geometry(&[band.range], view).first()?;
@@ -1191,7 +1223,10 @@ impl EditorView {
         } else {
             scenes.join(", ")
         };
-        let mut lines = vec![format!("{place} · frames {from}–{to}")];
+        let mut lines = vec![match band.ranges {
+            1 => format!("{place} · frames {from}–{to}"),
+            ranges => format!("{place} · frames {from}–{to} · {ranges} ranges"),
+        }];
         let entry_dir = self.entry_dir();
         lines.extend(band.call_site.map(|site| {
             format!(
@@ -1755,8 +1790,8 @@ fn wheel_zoom_factor(delta_y: f32) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        LaneGesture, LaneView, LaneWheel, band_geometry, chapter_lanes, edit_points,
-        follow_playhead, scrub_frames, selection_bands, timeline_rows,
+        LaneGesture, LaneView, LaneWheel, SelectionBand, band_geometry, chapter_lanes, edit_points,
+        follow_playhead, merge_close_bands, scrub_frames, selection_bands, timeline_rows,
     };
     use crate::impact::ImpactView;
     use celesta_composition::Time;
@@ -1832,6 +1867,57 @@ mod tests {
         assert_eq!(bands[0].range, (10, 21));
         assert!(bands[0].filled);
         assert!(bands[0].call_site.is_none());
+    }
+
+    /// Every other frame of `[0, 40)` for instance 0, outlined, then a
+    /// filled band and instance 1's band.
+    fn alternating() -> Vec<SelectionBand> {
+        let band = |range, filled, instance| SelectionBand {
+            range,
+            filled,
+            instance: Some(instance),
+            call_site: None,
+            ranges: 1,
+        };
+        let mut bands: Vec<SelectionBand> = (0..20)
+            .map(|frame| band((frame * 2, frame * 2 + 1), false, 0))
+            .collect();
+        bands.push(band((40, 41), true, 0));
+        bands.push(band((42, 43), false, 1));
+        bands
+    }
+
+    fn ranges(bands: &[SelectionBand]) -> Vec<((u64, u64), usize)> {
+        bands.iter().map(|band| (band.range, band.ranges)).collect()
+    }
+
+    #[test]
+    fn bands_less_than_a_pixel_apart_merge() {
+        // 1000 frames on a 100 px lane: 10 frames a pixel.
+        let view = LaneView {
+            zoom: 1.0,
+            view_start: 0.0,
+            end_frame: 1000.0,
+        };
+        let merged = merge_close_bands(alternating(), view, 100.0);
+        // Only bands of one instance and one kind merge.
+        assert_eq!(
+            ranges(&merged),
+            vec![((0, 39), 20), ((40, 41), 1), ((42, 43), 1)]
+        );
+    }
+
+    #[test]
+    fn bands_a_pixel_apart_or_more_stay_apart() {
+        // Zoomed in to 100 frames over 1000 px: 10 px a frame.
+        let view = LaneView {
+            zoom: 10.0,
+            view_start: 0.0,
+            end_frame: 1000.0,
+        };
+        let merged = merge_close_bands(alternating(), view, 1000.0);
+        assert_eq!(merged.len(), 22);
+        assert!(merged.iter().all(|band| band.ranges == 1));
     }
 
     fn track(id: &str, kind: TrackKind, clips: &[(i64, i64)]) -> TrackSummary {

@@ -2,7 +2,6 @@ use crate::audio::AudioMixRequest;
 use crate::export_worker::ExportEvent;
 use crate::helpers::export_loudness_label;
 use crate::layer_select::source_lookup;
-use crate::occurrences::{OccurrenceState, accepts};
 use crate::preview::AudioPreview;
 use crate::problems::{Source, error_chain};
 use crate::refresh::LookupFate;
@@ -177,37 +176,7 @@ impl EditorView {
             }
         }
 
-        loop {
-            match self.occurrence_worker.results.try_recv() {
-                Ok(result) => {
-                    if !accepts(
-                        self.react_reload_generation,
-                        result.generation,
-                        self.occurrences.is_some(),
-                    ) {
-                        continue;
-                    }
-                    let state = match result.index {
-                        Ok(index) => OccurrenceState::Ready(index),
-                        Err(error) => OccurrenceState::Failed(error),
-                    };
-                    self.occurrences = Some((result.generation, state));
-                }
-                Err(mpsc::TryRecvError::Empty) => break,
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    if let Some((_, state)) = self
-                        .occurrences
-                        .as_mut()
-                        .filter(|(_, state)| state.is_sweeping())
-                    {
-                        *state = OccurrenceState::Failed(
-                            "occurrence worker stopped unexpectedly".to_owned(),
-                        );
-                    }
-                    break;
-                }
-            }
-        }
+        self.poll_occurrence_results();
 
         loop {
             match self.audio_mix_worker.results.try_recv() {

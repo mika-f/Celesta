@@ -4,6 +4,7 @@ import type { ReactNode } from 'react';
 import { Sequence } from './components';
 import type { CommonProps } from './components';
 import { copySourcePosition } from './jsx-dev-runtime';
+import { markTransparent } from './source-chain';
 
 export interface SeriesItem {
   /** Length in frames. */
@@ -152,3 +153,6 @@ export function Stagger({ each, from = 0, durationInFrames, children }: StaggerP
     ),
   );
 }
+
+// Both draw their caller's children, each in a `<Sequence>` of their own.
+for (const wrapper of [SeriesRoot, Stagger]) markTransparent(wrapper);
