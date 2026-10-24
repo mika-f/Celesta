@@ -4499,6 +4499,70 @@ fn lists_text_layers_with_characters_their_family_has_no_glyph_for() {
     assert!(renderer.missing_glyphs().is_empty());
 }
 
+#[test]
+fn a_text_s_anchor_box_is_its_layout_box() {
+    let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+        return;
+    };
+    let mut scene = empty_scene(800, 800);
+    // A stroke pads the texture past the layout box on its left and right;
+    // a single line's box keeps the stroked rows, so not above or below.
+    let stroked = |id: &str, rotation: f64| {
+        let mut text = text_layer(id, Point { x: 100.0, y: 50.0 }, 1.0, 24.0);
+        text.transform.rotation = rotation;
+        if let LayerContent::Text {
+            style, max_width, ..
+        } = &mut text.content
+        {
+            style.stroke = Some(
+                Stroke {
+                    paint: Paint::Solid {
+                        color: "#000000".to_owned(),
+                    },
+                    width: 16.0,
+                }
+                .into(),
+            );
+            *max_width = Some(300.0);
+        }
+        text
+    };
+    scene.layers = vec![
+        stroked("flat", 0.0),
+        stroked("turned", 90.0),
+        corner_rect("r", 5.0, 5.0, 10.0, 10.0, "#ff0000"),
+    ];
+    renderer.set_record_hit_regions(true);
+    renderer.render(&scene).unwrap();
+    let regions = renderer.hit_regions();
+    let near = |a: f64, b: f64| (a - b).abs() <= 1.0;
+
+    let flat = &regions[0];
+    let [top_left, top_right, _, bottom_left] = flat.anchor_box.expect("a text has an anchor box");
+    // `x`/`y` place the layout box's top-left; it is `maxWidth` wide.
+    assert!(
+        near(top_left.x, 100.0) && near(top_left.y, 50.0),
+        "{top_left:?}"
+    );
+    assert!(near(top_right.x - top_left.x, 300.0), "{top_right:?}");
+    assert!(bottom_left.y - top_left.y > 10.0, "{bottom_left:?}");
+    // The texture's quad reaches past it, by the stroke on either side.
+    assert!(flat.corners[0].x < top_left.x - 8.0, "{:?}", flat.corners);
+    assert!(flat.corners[1].x > top_right.x + 8.0, "{:?}", flat.corners);
+
+    // Mapped like the corners: turned 90°, its top edge runs down.
+    let [top_left, top_right, ..] = regions[1].anchor_box.expect("an anchor box");
+    assert!(
+        near(top_left.x, 100.0) && near(top_left.y, 50.0),
+        "{top_left:?}"
+    );
+    assert!(near(top_right.x, 100.0), "{top_right:?}");
+    assert!(near(top_right.y - top_left.y, 300.0), "{top_right:?}");
+
+    // A rect's quad is its anchor box: nothing more to record.
+    assert_eq!(regions[2].anchor_box, None);
+}
+
 fn assert_corners(region: &HitRegion, expected: [(f64, f64); 4]) {
     for (corner, (x, y)) in region.corners.iter().zip(expected) {
         assert!(

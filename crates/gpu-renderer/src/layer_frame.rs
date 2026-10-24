@@ -18,6 +18,11 @@ pub struct LayerFrame {
     /// A leaf's quad in scene pixels, in the order of its `HitRegion`; for a
     /// group, the axis-aligned box around its descendants' regions.
     pub outline: [Point; 4],
+    /// The box the renderer anchors the layer in, in scene pixels in the
+    /// order of `outline`: what `anchor` is a fraction of. A text's layout
+    /// box (see `HitRegion::anchor_box`), a rect's, image's or video's quad.
+    /// `None` where the anchor has no effect: a group, a path, instances.
+    pub anchor_box: Option<[Point; 4]>,
     /// The leaf layers a hit test can name for this layer: the layer itself,
     /// or a group's descendant leaves.
     pub leaves: Vec<String>,
@@ -34,19 +39,33 @@ pub fn layer_frame(scene: &Scene, regions: &[HitRegion], id: &str) -> Option<Lay
     }
     let mut ids = Vec::new();
     leaf_ids(layer, &mut ids);
-    let outline = if matches!(layer.content, LayerContent::Group { .. }) {
-        bounding_box(
-            regions
-                .iter()
-                .filter(|region| ids.contains(&region.layer_id.as_str())),
-        )?
-    } else {
-        regions.iter().find(|region| region.layer_id == id)?.corners
+    let (outline, anchor_box) = match &layer.content {
+        LayerContent::Group { .. } => (
+            bounding_box(
+                regions
+                    .iter()
+                    .filter(|region| ids.contains(&region.layer_id.as_str())),
+            )?,
+            None,
+        ),
+        content => {
+            let region = regions.iter().find(|region| region.layer_id == id)?;
+            // A path and instances are placed by their own origin.
+            let anchored = !matches!(
+                content,
+                LayerContent::Path { .. } | LayerContent::Instances { .. }
+            );
+            (
+                region.corners,
+                anchored.then(|| region.anchor_box.unwrap_or(region.corners)),
+            )
+        }
     };
     Some(LayerFrame {
         transform: layer.transform,
         parent: [parent.a, parent.b, parent.c, parent.d, parent.tx, parent.ty].map(f64::from),
         outline,
+        anchor_box,
         leaves: ids.into_iter().map(str::to_owned).collect(),
     })
 }
@@ -193,8 +212,59 @@ mod tests {
             layer_id: id.to_owned(),
             corners: [min, at(max.x, min.y), max, at(min.x, max.y)],
             hole: None,
+            anchor_box: None,
             clips: Vec::new(),
         }
+    }
+
+    #[test]
+    fn a_frame_carries_the_box_its_anchor_refers_to() {
+        let text = layer(
+            "t",
+            EvaluatedTransform::default(),
+            LayerContent::Text {
+                text: "A".to_owned(),
+                style: Box::default(),
+                max_width: None,
+                baseline_anchor: false,
+            },
+        );
+        let path = layer(
+            "p",
+            EvaluatedTransform::default(),
+            LayerContent::Path {
+                commands: Vec::new(),
+                fill: None,
+                stroke: None,
+                line_cap: Default::default(),
+                line_join: Default::default(),
+                miter_limit: 4.0,
+                line_dash: None,
+            },
+        );
+        let scene = scene(vec![
+            leaf("a"),
+            text,
+            path,
+            group("g", EvaluatedTransform::default(), vec![leaf("b")]),
+        ]);
+        let layout = [at(2.0, 2.0), at(8.0, 2.0), at(8.0, 6.0), at(2.0, 6.0)];
+        let regions = [
+            region("a", at(0.0, 0.0), at(5.0, 5.0)),
+            HitRegion {
+                anchor_box: Some(layout),
+                ..region("t", at(0.0, 0.0), at(10.0, 8.0))
+            },
+            region("p", at(0.0, 0.0), at(5.0, 5.0)),
+            region("b", at(0.0, 0.0), at(5.0, 5.0)),
+        ];
+        let frame = |id| layer_frame(&scene, &regions, id).expect("a frame");
+        // A rect's quad is the box; a text's is padded past its layout box.
+        assert_eq!(frame("a").anchor_box, Some(regions[0].corners));
+        assert_eq!(frame("t").anchor_box, Some(layout));
+        // A path and a group have no box to anchor in.
+        assert_eq!(frame("p").anchor_box, None);
+        assert_eq!(frame("g").anchor_box, None);
     }
 
     /// A leaf the frame is asked about: only its id and transform matter.

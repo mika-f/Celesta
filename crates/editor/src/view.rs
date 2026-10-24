@@ -17,6 +17,7 @@ use crate::refresh::{ReloadOrder, SelectionKeep};
 use crate::source::{PropertyArgs, load_source};
 use crate::timeline::LaneGesture;
 use crate::transform_drag::TransformDrag;
+use crate::transform_handles::{PivotMode, ResizeTool};
 use celesta_composition::{AudioClip, Rational};
 use celesta_editor_core::{AssetSummary, EditorDocument, TimelineClock, TrackSummary};
 use celesta_exporter::{ExportCancellation, ExportProgress};
@@ -285,6 +286,14 @@ pub(crate) struct EditorView {
     /// The canvas drag of the selected layer's transform, if one is running
     /// or being written.
     pub(crate) transform_drag: Option<TransformDrag>,
+    /// What canvas rotation and scale turn about, as the viewer's toggle
+    /// chose it for the session (the pivot unless Center is chosen); a layer
+    /// that can't keep its center uses its pivot whatever this says.
+    pub(crate) pivot_mode: PivotMode,
+    /// What the canvas's corner and edge handles do, as the viewer's toggle
+    /// chose it for the session; a layer without editable size props scales
+    /// whatever this says.
+    pub(crate) resize_tool: ResizeTool,
 }
 
 impl EditorView {
@@ -443,6 +452,8 @@ impl EditorView {
             element_rows: ElementRows::default(),
             layer_frame: None,
             transform_drag: None,
+            pivot_mode: PivotMode::default(),
+            resize_tool: ResizeTool::default(),
         };
         editor.refresh_preview();
         editor.refresh_audio_preview();

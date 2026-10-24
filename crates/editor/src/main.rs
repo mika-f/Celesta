@@ -20,6 +20,7 @@ mod actions;
 mod audio;
 mod audio_control;
 mod background;
+mod canvas_geometry;
 mod cli;
 mod component_schema;
 mod edit_history;

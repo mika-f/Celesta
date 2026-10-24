@@ -1322,20 +1322,30 @@ impl GpuRenderer {
             .hit_leaves
             .drain(..)
             .filter_map(|leaf| {
-                let (corners, hole) = match &items[leaf.item] {
-                    PreparedItem::Layer(layer) => (layer.corners(), layer.hole_corners()),
-                    PreparedItem::Instances(particles) => (particles.shape().corners(), None),
+                let (corners, hole, anchor_box) = match &items[leaf.item] {
+                    PreparedItem::Layer(layer) => (
+                        layer.corners(),
+                        layer.hole_corners(),
+                        layer.anchor_box_corners(),
+                    ),
+                    PreparedItem::Instances(particles) => (particles.shape().corners(), None, None),
                     _ => return None,
                 };
                 // A leaf in a plane is in the plane's canvas pixels.
                 let corners = corners_to_scene(planes, leaf.plane, corners)?;
-                let hole = hole.map_or(Some(None), |hole| {
-                    corners_to_scene(planes, leaf.plane, hole).map(Some)
-                })?;
+                let to_scene = |quad: Option<[Point; 4]>| {
+                    quad.map_or(Some(None), |quad| {
+                        corners_to_scene(planes, leaf.plane, quad).map(Some)
+                    })
+                };
                 let region = HitRegion {
                     layer_id: leaf.layer_id,
                     corners,
-                    hole,
+                    hole: to_scene(hole)?,
+                    // A box that doesn't map leaves the layer hittable,
+                    // without an anchor box.
+                    anchor_box: anchor_box
+                        .and_then(|quad| corners_to_scene(planes, leaf.plane, quad)),
                     clips: hit_clips(clips, planes, leaf.plane, leaf.clip)?,
                 };
                 (region.area() > 0.0).then_some(region)

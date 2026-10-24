@@ -1,6 +1,7 @@
-//! The viewer: the rendered frame, its overlays, and the transport bar under
-//! it, plus the audio monitor (master meter and preview volume) that sits
-//! beside the timeline.
+//! The viewer: the canvas tools' row above it while a layer is selected in
+//! interactive mode, the rendered frame and its overlays, and the transport
+//! bar under it, plus the audio monitor (master meter and preview volume)
+//! that sits beside the timeline.
 
 use celesta_composition::Point;
 use celesta_editor_theme as theme;
@@ -11,10 +12,10 @@ use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ActiveTheme as _, Icon, IconName, Selectable as _, Sizable as _};
 use gpui_kit::{
-    AnyElement, BorderStyle, Bounds, Context, CursorStyle, Hitbox, HitboxBehavior, Hsla,
-    IntoElement, MouseButton, MouseDownEvent, ObjectFit, ParentElement as _, PathBuilder, Pixels,
-    StyledImage as _, Window, canvas, div, fill, img, outline, point, prelude::*, px, relative,
-    rems, size,
+    AnyElement, App, BorderStyle, Bounds, ClickEvent, Context, CursorStyle, Hitbox, HitboxBehavior,
+    Hsla, IntoElement, MouseButton, MouseDownEvent, ObjectFit, ParentElement as _, PathBuilder,
+    Pixels, StyledImage as _, Window, canvas, div, fill, img, outline, point, prelude::*, px,
+    relative, rems, size,
 };
 
 use crate::actions::{
@@ -29,8 +30,14 @@ use crate::preview::PreviewPresentation;
 use crate::problems::{ActiveProblem, Source, flow_line_breaks, summarize_warnings};
 use crate::problems_panel::{detail_block, show_in_problems_row};
 use crate::timecode::format_timecode;
-use crate::transform_drag::{DragState, HANDLE_SIZE, NO_AFFINE_FRAME, ROTATE_STEM};
-use crate::transform_handles::{Handle, rotate_stem, shown_handles};
+use crate::transform_drag::{
+    DragState, HANDLE_SIZE, NO_AFFINE_FRAME, ROTATE_STEM, TransformDrag, pivot_note_text,
+    turns_about_pivot,
+};
+use crate::transform_handles::{
+    Handle, Marker, PivotMode, Resize, ResizeTool, anchor_handle, handle_quad, marker, pivot_cross,
+    rotate_stem, shown_handles,
+};
 use crate::view::EditorView;
 use celesta_gpu_renderer::LayerFrame;
 
@@ -43,10 +50,159 @@ pub(crate) const VOLUME_SLIDER_WIDTH: f32 = 88.0;
 /// Width of the audio monitor column beside the timeline.
 pub(crate) const AUDIO_PANEL_WIDTH: f32 = 112.0;
 
-/// Below these transport-bar widths the In/Out readout and the duration,
-/// then the In/Out buttons, give way to the playback controls.
+/// The transport bar's layout at `width` (viewer pixels): whether the In/Out
+/// readout and the duration show (`full`), then whether the In/Out buttons
+/// do; below these widths they give way to the playback controls.
+fn transport_layout(width: f32) -> (bool, bool) {
+    (
+        width >= TRANSPORT_FULL_WIDTH,
+        width >= TRANSPORT_MARKS_WIDTH,
+    )
+}
+
 const TRANSPORT_FULL_WIDTH: f32 = 820.0;
 const TRANSPORT_MARKS_WIDTH: f32 = 600.0;
+
+/// Whether the canvas-tool row shows above the viewer: in a React preview's
+/// interactive mode (Select layers on) with a layer selected, which the
+/// tools act on.
+fn shows_tool_row(react_preview: bool, interactive: bool, selected: bool) -> bool {
+    react_preview && interactive && selected
+}
+
+/// Height of the canvas-tool row docked above the viewer.
+const TOOL_ROW_HEIGHT: f32 = 34.0;
+/// Width of a canvas-tool tab, fixed so a warning or a selection never
+/// changes the row.
+const TAB_WIDTH: f32 = 58.0;
+/// Height of a tab's pill inside its list.
+const TAB_HEIGHT: f32 = 22.0;
+/// The gap between a tab list's edge and its selected pill.
+const TAB_LIST_INSET: f32 = 3.0;
+/// The slot a toggle's warning sits in, reserved whether it shows or not.
+const NOTE_SLOT_WIDTH: f32 = 20.0;
+
+/// What clicking a tab does.
+type TabClick = Box<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
+
+/// One tab of a canvas-tool toggle.
+struct ToolTab {
+    id: &'static str,
+    label: &'static str,
+    tooltip: &'static str,
+    /// The chosen one: the selected pill.
+    chosen: bool,
+    on_click: TabClick,
+}
+
+/// A canvas-tool toggle as a tabs list (shadcn's Tabs): a rounded, darker
+/// container with a few pixels of padding, the chosen tab an inset, smaller
+/// rounded pill in a lighter surface with a border and foreground text, so
+/// the gap around it shows which is chosen; the other tab unfilled with
+/// muted text. Fixed widths; then a warning icon (with `note` as its
+/// tooltip) in a reserved slot when the choice is not in effect on the
+/// selected layer. The row is in the muted chrome color already, so the
+/// list takes the theme's background to stand apart from it, and the pill
+/// the secondary surface with the input border.
+fn mode_toggle(
+    note_id: &'static str,
+    tabs: [ToolTab; 2],
+    note: Option<String>,
+    cx: &App,
+) -> impl IntoElement {
+    let theme = cx.theme();
+    let (warning, muted, foreground) = (theme.warning, theme.muted_foreground, theme.foreground);
+    let (pill, pill_border) = (theme.secondary, theme.input);
+    // An unselected tab under the pointer: a step from muted toward the
+    // foreground.
+    let muted_hover = foreground.opacity(0.8);
+    let slot = div()
+        .id(note_id)
+        .flex_none()
+        .w(px(NOTE_SLOT_WIDTH))
+        .h_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .when_some(note, |slot, note| {
+            slot.child(
+                Icon::new(IconName::TriangleAlert)
+                    .xsmall()
+                    .text_color(warning),
+            )
+            .tooltip(move |window, cx| Tooltip::new(note.clone()).build(window, cx))
+        });
+    let list = div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .p(px(TAB_LIST_INSET))
+        .rounded_md()
+        .bg(theme.background)
+        .children(tabs.map(|tab| {
+            let tooltip = tab.tooltip;
+            div()
+                .id(tab.id)
+                .flex()
+                .flex_none()
+                .items_center()
+                .justify_center()
+                .w(px(TAB_WIDTH))
+                .h(px(TAB_HEIGHT))
+                .rounded_sm()
+                .border_1()
+                .text_xs()
+                .cursor_pointer()
+                // Both tabs carry a hover style, the chosen one restating its
+                // own colors: GPUI tracks a div's hover flag (by its id, one
+                // per value) only while it has a hover style, and reads that
+                // flag for text colors before the frame's hitboxes exist. A
+                // tab without one keeps a stale "hovered" from when it was
+                // clicked, and would show it the next time it is unselected.
+                .map(|this| {
+                    if tab.chosen {
+                        this.bg(pill)
+                            .border_color(pill_border)
+                            .text_color(foreground)
+                            .shadow_sm()
+                            .hover(move |this| {
+                                this.bg(pill)
+                                    .border_color(pill_border)
+                                    .text_color(foreground)
+                            })
+                    } else {
+                        this.border_color(gpui_kit::transparent_black())
+                            .text_color(muted)
+                            .hover(move |this| this.text_color(muted_hover))
+                    }
+                })
+                .child(tab.label)
+                .tooltip(move |window, cx| Tooltip::new(tooltip).build(window, cx))
+                .on_click(tab.on_click)
+        }));
+    div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .child(list)
+        .child(slot)
+}
+
+/// One group of the tool row: a muted label and its toggle.
+fn tool_group(label: &'static str, toggle: impl IntoElement, cx: &App) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_none()
+        .items_center()
+        .gap_2()
+        .child(
+            div()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child(label),
+        )
+        .child(toggle)
+}
 
 impl EditorView {
     pub(crate) fn viewer_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -56,11 +212,40 @@ impl EditorView {
         let preview_problem = self.problems.active(Source::Preview).cloned();
         let has_warnings = !self.problems.preview_warnings().is_empty();
         let show_safe_areas = self.show_safe_areas;
+        let drag_state = self.drag_state();
+        // Why a chosen Center is not in effect: the toggle's warning and the
+        // handles' note.
+        let pivot_note = self.pivot_note();
+        // The canvas tools' row docks above the canvas while Select layers
+        // is on and a layer is selected: they act on the selection.
+        let shows_tools = shows_tool_row(
+            self.is_react_preview(),
+            self.interactive,
+            self.selected_layer.is_some(),
+        );
         // Every region of the selected layer in the shown frame; none when
-        // the frame does not draw it.
+        // the frame does not draw it. The Size tool's handles sit on the box
+        // they resize, which is then the outline drawn (a stroked text's
+        // layout box, a rotated dashed rect's own corners).
+        // An anchor drag holds the overlay on its start frame, the outline
+        // too (the preview's regions would jitter).
+        let held = self
+            .transform_drag
+            .as_ref()
+            .is_some_and(TransformDrag::holds_overlay);
+        let resized_box = match &drag_state {
+            DragState::Editable(frame, _, _, resize) if held => {
+                Some(handle_quad(frame, resize.as_ref()))
+            }
+            DragState::Editable(frame, _, _, resize @ Some(_)) if frame.anchor_box.is_some() => {
+                Some(handle_quad(frame, resize.as_ref()))
+            }
+            _ => None,
+        };
         let selected_quads: Vec<[Point; 4]> = self
             .selected_layer
             .as_ref()
+            .filter(|_| resized_box.is_none())
             .map(|id| {
                 let regions = self
                     .hit_regions
@@ -75,13 +260,52 @@ impl EditorView {
                 };
                 outline_quads(regions, frame)
             })
+            .or_else(|| resized_box.map(|quad| vec![quad]))
             .unwrap_or_default();
         let viewer_bounds = self.viewer_bounds.clone();
-        let drag_state = self.drag_state();
+        let view = cx.entity_id();
         let dashed = matches!(drag_state, DragState::Locked(..));
         let handle_fill = cx.theme().background;
         let editable_frame = match &drag_state {
-            DragState::Editable(frame, editable) => Some((frame.clone(), editable.clone())),
+            DragState::Editable(frame, editable, pivot, resize) => {
+                Some((frame.clone(), editable.clone(), *pivot, resize.clone()))
+            }
+            _ => None,
+        };
+        // The cross of every selected layer with a frame: the point a drag
+        // turns about (the box's middle with Center in effect, else the
+        // pivot), and whether Alt drags it.
+        // During an anchor drag the overlay stays on the start frame and only
+        // the cross follows, where the written anchor puts the pivot.
+        let anchor_cross = self
+            .transform_drag
+            .as_ref()
+            .and_then(TransformDrag::anchor_cross);
+        let marked = match &drag_state {
+            DragState::Editable(..) if anchor_cross.is_some() => anchor_cross.map(Marker::Pivot),
+            DragState::Editable(frame, _, pivot, _) => Some(marker(frame, *pivot)),
+            DragState::Locked(frame, _) => Some(Marker::Pivot(pivot_cross(frame))),
+            _ => None,
+        };
+        // Why it can't, when it can't: every cause, shown on hover; the
+        // center marks a point only.
+        let cross_reason = match (&drag_state, marked) {
+            (DragState::Editable(frame, ..), Some(Marker::Center(_))) => {
+                Some(self.center_cross_text(frame))
+            }
+            (DragState::Editable(frame, ..) | DragState::Locked(frame, _), _) => {
+                self.anchor_lock_reason(frame)
+            }
+            _ => None,
+        };
+        let cross = match &drag_state {
+            DragState::Editable(frame, editable, ..) => Some((
+                marked.map_or_else(|| pivot_cross(frame), Marker::at),
+                CrossDrag::of(anchor_handle(frame, editable).is_some(), &cross_reason),
+            )),
+            DragState::Locked(frame, _) => {
+                Some((pivot_cross(frame), CrossDrag::of(false, &cross_reason)))
+            }
             _ => None,
         };
         let notice = match drag_state {
@@ -103,9 +327,35 @@ impl EditorView {
         };
         let label = self.transform_drag_label().and_then(|label| {
             let bounds = last_bounds?;
-            let (frame, _) = editable_frame.as_ref()?;
+            let (frame, ..) = editable_frame.as_ref()?;
             Some((outline_box(bounds, frame_size, frame)?, label))
         });
+        // An anchor Alt can't move: the cross says why it stays.
+        let cross_lock = cross.and_then(|(at, _)| {
+            let reason = cross_reason.clone()?;
+            Some((cross_box(last_bounds?, frame_size, at)?, reason))
+        });
+        // Center chosen but not in effect: the handles that turn or scale
+        // about the pivot say why. While a drag runs, its label says it
+        // instead.
+        let handle_note = pivot_note
+            .filter(|_| self.transform_drag.is_none())
+            .map(pivot_note_text);
+        let note_boxes: Vec<Bounds<Pixels>> = match (&handle_note, &editable_frame, last_bounds) {
+            (Some(_), Some((frame, editable, pivot, resize)), Some(bounds)) => {
+                letterbox(bounds, frame_size)
+                    .map(|(_, _, scale)| {
+                        let stem = f64::from(ROTATE_STEM / scale);
+                        shown_handles(frame, editable, stem, *pivot, resize.as_ref())
+                            .into_iter()
+                            .filter(|(handle, _)| turns_about_pivot(*handle, resize.as_ref()))
+                            .filter_map(|(_, at)| cross_box(bounds, frame_size, at))
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            }
+            _ => Vec::new(),
+        };
         let canvas_area = div()
             .relative()
             .flex()
@@ -130,23 +380,41 @@ impl EditorView {
             .child(
                 canvas(
                     move |bounds, window, _| {
-                        viewer_bounds.set(Some(bounds));
+                        // The overlays placed by these bounds (the cross's
+                        // and the locked box's tooltips, the drag label, the
+                        // "Pivot —" notes) were laid out with the previous
+                        // ones. When they change (the tool row appears or
+                        // goes), schedule one more frame that re-renders the
+                        // view with them: a notify made during the draw only
+                        // marks the view dirty and would wait for some other
+                        // redraw, while a next-frame callback wakes the
+                        // window.
+                        if viewer_bounds.replace(Some(bounds)) != Some(bounds) {
+                            window.on_next_frame(move |_, cx| cx.notify(view));
+                        }
                         // Each handle's square, with a hitbox for its cursor.
-                        editable_frame
-                            .map(|(frame, editable)| {
-                                place_handles(bounds, frame_size, &frame, &editable, window)
-                            })
-                            .unwrap_or_default()
+                        let handles =
+                            editable_frame.and_then(|(frame, editable, pivot, resize)| {
+                                let tools = (pivot, resize.as_ref());
+                                place_handles(bounds, frame_size, &frame, &editable, tools, window)
+                            });
+                        let cross = cross.and_then(|(at, drag)| {
+                            place_cross(bounds, frame_size, at, drag, window)
+                        });
+                        (handles, cross)
                     },
-                    move |bounds, placed, window, _| {
+                    move |bounds, (handles, cross), window, _| {
                         if show_safe_areas {
                             paint_safe_areas(bounds, frame_size, overlay_color, window);
                         }
                         for corners in &selected_quads {
                             paint_layer_outline(bounds, frame_size, corners, dashed, window);
                         }
-                        if let Some(placed) = placed {
-                            paint_handles(&placed, handle_fill, window);
+                        if let Some(handles) = handles {
+                            paint_handles(&handles, handle_fill, window);
+                        }
+                        if let Some(cross) = cross {
+                            paint_cross(&cross, window);
                         }
                     },
                 )
@@ -157,7 +425,36 @@ impl EditorView {
             )
             .when(self.picks_layers(), |area| {
                 area.on_mouse_down(MouseButton::Left, cx.listener(Self::select_layer_at))
+                    // Alt over the pivot cross changes its cursor.
+                    .on_modifiers_changed(cx.listener(|this, _, _, cx| {
+                        if this.selected_layer.is_some() {
+                            cx.notify();
+                        }
+                    }))
             })
+            .when_some(cross_lock, |area, (cross, reason)| {
+                area.child(
+                    div()
+                        .id("pivot-locked")
+                        .absolute()
+                        .left(cross.origin.x)
+                        .top(cross.origin.y)
+                        .w(cross.size.width)
+                        .h(cross.size.height)
+                        .tooltip(move |window, cx| Tooltip::new(reason.clone()).build(window, cx)),
+                )
+            })
+            .children(note_boxes.into_iter().enumerate().map(|(i, square)| {
+                let note = handle_note.clone().unwrap_or_default();
+                div()
+                    .id(("pivot-note", i))
+                    .absolute()
+                    .left(square.origin.x)
+                    .top(square.origin.y)
+                    .w(square.size.width)
+                    .h(square.size.height)
+                    .tooltip(move |window, cx| Tooltip::new(note.clone()).build(window, cx))
+            }))
             // Nothing to drag: say why where the pointer is.
             .when_some(locked_box, |area, (locked, reason)| {
                 area.child(
@@ -229,6 +526,9 @@ impl EditorView {
             .flex_1()
             .min_w_0()
             .h_full()
+            .when(shows_tools, |panel| {
+                panel.child(self.tool_row(pivot_note, cx))
+            })
             .child(canvas_area)
             .child(self.transport_bar(cx))
     }
@@ -382,8 +682,7 @@ impl EditorView {
             .transport_width
             .get()
             .map_or(TRANSPORT_FULL_WIDTH, f32::from);
-        let full = width >= TRANSPORT_FULL_WIDTH;
-        let show_marks = width >= TRANSPORT_MARKS_WIDTH;
+        let (full, show_marks) = transport_layout(width);
         let has_range = full && (self.export_in_frame.is_some() || self.export_out_frame.is_some());
         let mark = |frame: Option<i64>| {
             frame.map_or_else(
@@ -606,6 +905,105 @@ impl EditorView {
             .child(trailing)
     }
 
+    /// The canvas tools, one row docked above the viewer (part of its
+    /// layout, so the canvas shrinks while it shows; see `shows_tool_row`):
+    /// "Rotate about" [Center | Pivot] (what rotation and scale turn about)
+    /// and "Handles" [Size | Scale] (what the corner and edge handles do).
+    /// The chosen tab is the selected pill; when it is not in effect on the
+    /// selected layer, a warning after its tabs gives the reason
+    /// (`pivot_note`, see `EditorView::pivot_note`, and `resize_note`).
+    fn tool_row(
+        &self,
+        pivot_note: Option<&'static str>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let pivot = |id, label, tooltip, mode: PivotMode| ToolTab {
+            id,
+            label,
+            tooltip,
+            chosen: self.pivot_mode == mode,
+            on_click: Box::new(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.set_pivot_mode(mode, cx);
+            })),
+        };
+        let pivot_tabs = [
+            pivot(
+                "pivot-center",
+                "Center",
+                "Rotate and scale about the layer's center",
+                PivotMode::Center,
+            ),
+            pivot(
+                "pivot-pivot",
+                "Pivot",
+                "Rotate and scale about the pivot (anchor + origin)",
+                PivotMode::Pivot,
+            ),
+        ];
+        let tool = |id, label, tooltip, tool: ResizeTool| ToolTab {
+            id,
+            label,
+            tooltip,
+            chosen: self.resize_tool == tool,
+            on_click: Box::new(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.set_resize_tool(tool, cx);
+            })),
+        };
+        let tool_tabs = [
+            tool(
+                "handles-size",
+                "Size",
+                "Resize the layer's box, keeping the opposite edge",
+                ResizeTool::Size,
+            ),
+            tool(
+                "handles-scale",
+                "Scale",
+                "Scale the layer",
+                ResizeTool::Scale,
+            ),
+        ];
+        let rotate = mode_toggle(
+            "pivot-mode-note",
+            pivot_tabs,
+            pivot_note.map(str::to_owned),
+            cx,
+        );
+        let handles = mode_toggle("handles-note", tool_tabs, self.resize_note(), cx);
+        div()
+            .id("canvas-tools")
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap_6()
+            .h(px(TOOL_ROW_HEIGHT))
+            .w_full()
+            // A narrow viewer clips the row rather than painting it over
+            // the dock beside it.
+            .min_w_0()
+            .overflow_hidden()
+            .px_3()
+            .bg(cx.theme().secondary)
+            .border_b_1()
+            .border_color(cx.theme().border)
+            .child(tool_group("Rotate about", rotate, cx))
+            .child(tool_group("Handles", handles, cx))
+    }
+
+    fn set_pivot_mode(&mut self, mode: PivotMode, cx: &mut Context<Self>) {
+        if self.pivot_mode != mode {
+            self.pivot_mode = mode;
+            cx.notify();
+        }
+    }
+
+    fn set_resize_tool(&mut self, tool: ResizeTool, cx: &mut Context<Self>) {
+        if self.resize_tool != tool {
+            self.resize_tool = tool;
+            cx.notify();
+        }
+    }
+
     /// The master meter over the preview volume. Sits at the timeline's
     /// trailing edge, as a mixer's master strip does.
     pub(crate) fn audio_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -814,7 +1212,7 @@ impl EditorView {
             .and_then(|point| hit_test(&self.hit_regions, point))
             .map(str::to_owned);
         // A press on the selection's handles, or on its body, drags it.
-        if self.begin_transform_drag(event.position, hit.as_deref()) {
+        if self.begin_transform_drag(event.position, hit.as_deref(), event.modifiers.alt) {
             cx.notify();
             return;
         }
@@ -943,55 +1341,142 @@ struct PlacedHandles {
     squares: Vec<(Handle, Bounds<Pixels>, Hitbox)>,
     /// The rotation handle's stem, from the top edge's middle.
     stem: Option<(gpui_kit::Point<Pixels>, gpui_kit::Point<Pixels>)>,
-    /// Where the anchor is.
-    anchor: Option<gpui_kit::Point<Pixels>>,
 }
 
-/// Places the handles `editable` allows on the frame fitted into `bounds`.
+/// The pivot cross, placed on the viewer.
+struct PlacedCross {
+    at: gpui_kit::Point<Pixels>,
+    /// Sets the cursor while Alt is held: a grab when Alt-dragging it moves
+    /// the anchor, not-allowed when something keeps the anchor.
+    hitbox: Option<(Hitbox, CrossDrag)>,
+}
+
+/// What Alt does on the pivot cross.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CrossDrag {
+    /// Alt-dragging it moves the anchor.
+    Moves,
+    /// Something keeps the anchor; its tooltip says what.
+    Blocked,
+    /// The element has no anchor to move (a `<Path>`).
+    NoAnchor,
+}
+
+impl CrossDrag {
+    fn of(draggable: bool, reason: &Option<String>) -> Self {
+        match (draggable, reason) {
+            (true, _) => Self::Moves,
+            (false, Some(_)) => Self::Blocked,
+            (false, None) => Self::NoAnchor,
+        }
+    }
+}
+
+/// The square a handle centered on `at` (scene pixels) covers on the frame
+/// fitted into `bounds`, in window pixels.
+fn handle_square(
+    bounds: Bounds<Pixels>,
+    frame_size: (f32, f32),
+    at: Point,
+) -> Option<Bounds<Pixels>> {
+    let (left, top, scale) = letterbox(bounds, frame_size)?;
+    let half = px(HANDLE_SIZE / 2.0);
+    let center = point(
+        px(left + at.x as f32 * scale),
+        px(top + at.y as f32 * scale),
+    );
+    Some(Bounds::new(
+        point(center.x - half, center.y - half),
+        size(px(HANDLE_SIZE), px(HANDLE_SIZE)),
+    ))
+}
+
+/// Places the pivot cross at `at` (scene pixels), with a hitbox for its
+/// cursor when Alt does something there (see `CrossDrag`).
+fn place_cross(
+    bounds: Bounds<Pixels>,
+    frame_size: (f32, f32),
+    at: Point,
+    drag: CrossDrag,
+    window: &mut Window,
+) -> Option<PlacedCross> {
+    let square = handle_square(bounds, frame_size, at)?;
+    Some(PlacedCross {
+        at: square.center(),
+        hitbox: (drag != CrossDrag::NoAnchor).then(|| {
+            let hitbox = window.insert_hitbox(square.dilate(px(2.0)), HitboxBehavior::Normal);
+            (hitbox, drag)
+        }),
+    })
+}
+
+/// The pivot cross, a handle wide, in the accent color; a grab cursor over
+/// it while Alt is held, when that drags the anchor.
+fn paint_cross(cross: &PlacedCross, window: &mut Window) {
+    let accent = theme::accent();
+    let arm = px(HANDLE_SIZE / 2.0);
+    let at = cross.at;
+    window.paint_quad(fill(
+        Bounds::new(point(at.x - arm, at.y), size(arm * 2.0, px(1.0))),
+        accent,
+    ));
+    window.paint_quad(fill(
+        Bounds::new(point(at.x, at.y - arm), size(px(1.0), arm * 2.0)),
+        accent,
+    ));
+    if let Some((hitbox, drag)) = &cross.hitbox
+        && window.modifiers().alt
+    {
+        let cursor = match drag {
+            CrossDrag::Moves => CursorStyle::OpenHand,
+            _ => CursorStyle::OperationNotAllowed,
+        };
+        window.set_cursor_style(cursor, hitbox);
+    }
+}
+
+/// The square of the pivot cross at `at` (scene pixels) on the frame fitted
+/// into `bounds`, relative to `bounds`' origin.
+fn cross_box(bounds: Bounds<Pixels>, frame_size: (f32, f32), at: Point) -> Option<Bounds<Pixels>> {
+    let square = handle_square(bounds, frame_size, at)?;
+    Some(Bounds::new(square.origin - bounds.origin, square.size))
+}
+
+/// Places the handles `editable` allows on the frame fitted into `bounds`,
+/// for the pivot mode and the Size tool in use.
 fn place_handles(
     bounds: Bounds<Pixels>,
     frame_size: (f32, f32),
     frame: &LayerFrame,
-    editable: &[crate::element_edit::TransformProp],
+    editable: &[crate::element_edit::PropKey],
+    (pivot, resize): (PivotMode, Option<&Resize>),
     window: &mut Window,
 ) -> Option<PlacedHandles> {
     let (left, top, scale) = letterbox(bounds, frame_size)?;
     let on_viewer = |p: Point| point(px(left + p.x as f32 * scale), px(top + p.y as f32 * scale));
     let stem = f64::from(ROTATE_STEM / scale);
-    let squares = shown_handles(frame, editable, stem)
+    let squares = shown_handles(frame, editable, stem, pivot, resize)
         .into_iter()
-        .map(|(handle, at)| {
-            let center = on_viewer(at);
-            let half = px(HANDLE_SIZE / 2.0);
-            let square = Bounds::new(
-                point(center.x - half, center.y - half),
-                size(px(HANDLE_SIZE), px(HANDLE_SIZE)),
-            );
+        .filter_map(|(handle, at)| {
+            let square = handle_square(bounds, frame_size, at)?;
             let hitbox = window.insert_hitbox(square.dilate(px(2.0)), HitboxBehavior::Normal);
-            (handle, square, hitbox)
+            Some((handle, square, hitbox))
         })
         .collect::<Vec<_>>();
     let rotates = squares
         .iter()
         .any(|(handle, _, _)| *handle == Handle::Rotate);
-    let [a, b, c, d, tx, ty] = frame.parent;
-    let position = frame.transform.position;
-    let anchor = Point {
-        x: a * position.x + c * position.y + tx,
-        y: b * position.x + d * position.y + ty,
-    };
     Some(PlacedHandles {
         squares,
         stem: rotates.then(|| {
-            let (from, to) = rotate_stem(frame, stem);
+            let (from, to) = rotate_stem(frame, stem, resize);
             (on_viewer(from), on_viewer(to))
         }),
-        anchor: Some(on_viewer(anchor)),
     })
 }
 
-/// Square handles in the accent color, a stem to the rotation handle, and a
-/// small cross on the anchor. Sets each handle's cursor.
+/// Square handles in the accent color and a stem to the rotation handle.
+/// Sets each handle's cursor.
 fn paint_handles(placed: &PlacedHandles, handle_fill: Hsla, window: &mut Window) {
     let accent = theme::accent();
     if let Some((from, to)) = placed.stem {
@@ -1001,17 +1486,6 @@ fn paint_handles(placed: &PlacedHandles, handle_fill: Hsla, window: &mut Window)
         if let Ok(path) = path.build() {
             window.paint_path(path, accent);
         }
-    }
-    if let Some(anchor) = placed.anchor {
-        let arm = px(5.0);
-        window.paint_quad(fill(
-            Bounds::new(point(anchor.x - arm, anchor.y), size(arm * 2.0, px(1.0))),
-            accent,
-        ));
-        window.paint_quad(fill(
-            Bounds::new(point(anchor.x, anchor.y - arm), size(px(1.0), arm * 2.0)),
-            accent,
-        ));
     }
     for (handle, square, hitbox) in &placed.squares {
         window.paint_quad(fill(*square, handle_fill));
@@ -1027,6 +1501,7 @@ fn handle_cursor(handle: Handle) -> CursorStyle {
         Handle::Edge(1 | 3) => CursorStyle::ResizeLeftRight,
         Handle::Edge(_) => CursorStyle::ResizeUpDown,
         Handle::Rotate => CursorStyle::Crosshair,
+        Handle::Anchor => CursorStyle::OpenHand,
         Handle::Move => CursorStyle::Arrow,
     }
 }
@@ -1047,4 +1522,28 @@ fn outline_box(
         point(px(min(xs)) - bounds.origin.x, px(min(ys)) - bounds.origin.y),
         size(px(max(xs) - min(xs)), px(max(ys) - min(ys))),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_tool_row_shows_only_with_a_selection_in_interactive_mode() {
+        // (React preview, Select layers on, a layer selected)
+        assert!(shows_tool_row(true, true, true));
+        assert!(!shows_tool_row(true, true, false));
+        assert!(!shows_tool_row(true, false, true));
+        assert!(!shows_tool_row(false, true, true));
+    }
+
+    #[test]
+    fn the_transport_bar_collapses_at_its_own_widths() {
+        // The canvas tools sit in a row above the viewer, not in the bar:
+        // its breakpoints are the bar's own.
+        assert_eq!(transport_layout(820.0), (true, true));
+        assert_eq!(transport_layout(819.0), (false, true));
+        assert_eq!(transport_layout(600.0), (false, true));
+        assert_eq!(transport_layout(599.0), (false, false));
+    }
 }

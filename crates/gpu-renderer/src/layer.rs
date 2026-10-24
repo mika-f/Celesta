@@ -341,6 +341,30 @@ impl PreparedLayer {
         )
     }
 
+    /// For a text, the corners of its layout box (what its anchor is a
+    /// fraction of) in scene pixels, in the order of `corners`: the part of
+    /// its texture's quad between the anchor box's edges, which can lie
+    /// outside a window's texture. `None` when the anchor box is the whole
+    /// texture, and for every other layer.
+    pub(crate) fn anchor_box_corners(&self) -> Option<[Point; 4]> {
+        let PreparedContent::Texture(texture) = &self.content else {
+            return None;
+        };
+        let ((left, top), (width, height)) = (texture.anchor_origin, texture.anchor_span);
+        if (left, top, width, height) == (0.0, 0.0, 1.0, 1.0) {
+            return None;
+        }
+        let low = [left as f32, top as f32];
+        let high = [(left + width) as f32, (top + height) as f32];
+        Some(
+            self.quad_corners_between(self.drawn_transform(), low, high)
+                .map(|(x, y)| Point {
+                    x: f64::from(x),
+                    y: f64::from(y),
+                }),
+        )
+    }
+
     /// The transform `write_instance` places the layer's quad with: a layer
     /// copied texel for texel lands on whole pixels.
     fn drawn_transform(&self) -> Affine {
@@ -376,11 +400,24 @@ impl PreparedLayer {
 
     /// The corners of the quad `quad` boxes, in order around it.
     fn quad_corners(&self, transform: Affine, [margin_u, margin_v]: [f32; 2]) -> [(f32, f32); 4] {
+        self.quad_corners_between(
+            transform,
+            [-margin_u, -margin_v],
+            [1.0 + margin_u, 1.0 + margin_v],
+        )
+    }
+
+    /// The corners of the part of the quad from `low` to `high`, in
+    /// fractions of it (`[u, v]`, 0 to 1 the whole quad), in order around it.
+    fn quad_corners_between(
+        &self,
+        transform: Affine,
+        [low_u, low_v]: [f32; 2],
+        [high_u, high_v]: [f32; 2],
+    ) -> [(f32, f32); 4] {
         let (texel_width, texel_height) = self.texels();
         let (width, height) = self.size(texel_width, texel_height);
         let anchor = [self.anchor.x as f32, self.anchor.y as f32];
-        let (low_u, high_u) = (-margin_u, 1.0 + margin_u);
-        let (low_v, high_v) = (-margin_v, 1.0 + margin_v);
         [
             [low_u, low_v],
             [high_u, low_v],
