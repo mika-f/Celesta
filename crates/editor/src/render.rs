@@ -14,6 +14,7 @@ impl Render for EditorView {
         self.settle_row_requests(cx);
         self.settle_interactive_mode();
         self.sync_element_targets(cx);
+        self.settle_inline_text(window, cx);
         self.sync_element_rows(window, cx);
         self.update_playback(window);
         self.sync_property_panel(window, cx);
@@ -94,6 +95,17 @@ impl EditorView {
                     && (this.escape_transform_drag() || this.escape_row_scrub())
                 {
                     cx.stop_propagation();
+                    cx.notify();
+                }
+            }))
+            // Any press ends a note on why a double-click did not edit a
+            // text or why an edit was cancelled, and drops a double-click
+            // waiting for its layer's source (the canvas sets them again).
+            .capture_any_mouse_down(cx.listener(|this, _, _, cx| {
+                let note = this.inline_note.take().is_some();
+                let notice = this.inline_notice.take().is_some();
+                this.inline_pending = None;
+                if note || notice {
                     cx.notify();
                 }
             }))

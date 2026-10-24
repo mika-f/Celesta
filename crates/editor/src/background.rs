@@ -39,6 +39,8 @@ impl EditorView {
                     self.problems.set_preview_warnings(result.warnings);
                     self.hit_regions = result.hit_regions;
                     self.layer_frame = result.layer_frame;
+                    self.text_layout = result.text_layout;
+                    self.refit_inline_text();
                     // An answer for a layer that is no longer selected is stale.
                     if let Some((id, source)) = result.layer_source
                         && self.selected_layer.as_ref() == Some(&id)
@@ -49,7 +51,7 @@ impl EditorView {
                             .lookup_arrived(result.generation, absent)
                         {
                             LookupFate::Stale => {}
-                            LookupFate::Gone => self.clear_layer_selection(),
+                            LookupFate::Gone => self.clear_layer_selection(false),
                             LookupFate::Show => {
                                 self.source_lookup = Some(source_lookup(source));
                                 self.source_lookup_frame = result.timeline_frame;

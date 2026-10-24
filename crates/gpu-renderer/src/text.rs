@@ -3,7 +3,9 @@ use crate::error::GpuRenderError;
 use crate::layer::PreparedLayer;
 use crate::texture::{DecodedImage, LayerTexture};
 use crate::transform::{Affine, LayerState};
-use celesta_composition::{BlendMode, Point, TextStroke, TextStyle};
+use celesta_composition::{
+    BlendMode, Layer, LayerContent, Point, TextAlign, TextStroke, TextStyle,
+};
 use celesta_renderer::{TextMetrics, TextRasterizer, TextWindow};
 
 /// A text layer whose texture was not cached when `prepare_layer` reached
@@ -25,15 +27,16 @@ pub(crate) struct PendingText {
     /// The whole text's box in its target, for a windowed text, whose quad
     /// is only the window's.
     pub(crate) shape: Option<PixelBounds>,
+    /// Its layout, measured without drawing it.
+    pub(crate) size: TextSize,
 }
 
 impl PendingText {
     /// The box the text covers once rasterized, placed by its state, from
-    /// its layout measured without drawing it (see `TextPlacement`).
-    pub(crate) fn measured_bounds(&self, rasterizer: &mut TextRasterizer) -> PixelBounds {
-        let metrics = rasterizer.measure(&self.text, &self.style, self.max_width);
+    /// its measured layout (see `TextPlacement`).
+    pub(crate) fn measured_bounds(&self) -> PixelBounds {
         TextPlacement::new(
-            &TextSize::of(&metrics, 0),
+            &self.size,
             &self.style,
             self.max_width,
             self.anchor,
@@ -51,8 +54,9 @@ pub(crate) struct TextSize {
     pub(crate) height: f64,
     /// The first line's top edge to its baseline.
     pub(crate) ascent: f64,
-    /// Whether it is more than one line, which a raster window needs.
-    pub(crate) multiline: bool,
+    pub(crate) line_height: f64,
+    /// How many lines it is; a raster window needs more than one.
+    pub(crate) lines: usize,
     /// `GpuRenderer::texture_generation` when a frame last used it.
     pub(crate) last_used: u64,
 }
@@ -63,10 +67,38 @@ impl TextSize {
             width: metrics.width,
             height: metrics.height,
             ascent: metrics.ascent,
-            multiline: metrics.lines > 1,
+            line_height: metrics.line_height,
+            lines: metrics.lines,
             last_used: generation,
         }
     }
+}
+
+/// How a text layer is laid out (`GpuRenderer::text_layout`): what an
+/// editor needs to place a caret in it, in layout units from its first
+/// line's top-left.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextLayout {
+    /// The text it was laid out for.
+    pub text: String,
+    pub metrics: TextMetrics,
+    pub max_width: Option<f64>,
+    /// The style's `align`, `Left` when unset.
+    pub align: TextAlign,
+}
+
+/// Layer `id` among `layers`, their groups' children and their masks'
+/// layers.
+pub(crate) fn find_layer<'a>(layers: &'a [Layer], id: &str) -> Option<&'a Layer> {
+    layers.iter().find_map(|layer| {
+        if layer.id == id {
+            return Some(layer);
+        }
+        let LayerContent::Group { layers, mask, .. } = &layer.content else {
+            return None;
+        };
+        find_layer(layers, id).or_else(|| find_layer(&mask.as_ref()?.layers, id))
+    })
 }
 
 /// How much of a text layer to rasterize.
@@ -234,10 +266,23 @@ pub(crate) fn rasterize_text(
     let baseline = text.baseline_anchor();
     let origin = text.anchor_in_image(0.0, 0.0);
     let end = text.anchor_in_image(1.0, 1.0);
+    // The layout box starts at the anchor box's left edge (where the lines
+    // start) and an ascent above the first baseline, which a single line's
+    // anchor box, trimmed to its ink, does not reach.
+    let units = f64::from(scale);
+    let left = origin.0 * f64::from(text.width()) / units;
+    let top = f64::from(text.baseline()) / units - job.size.ascent;
+    let text_box = [
+        left,
+        top,
+        left + job.max_width.unwrap_or(job.size.width),
+        top + job.size.lines as f64 * job.size.line_height,
+    ];
     let mut image = DecodedImage::new(text.width(), text.height(), text.into_pixels())?;
     image.baseline_anchor = baseline;
     image.anchor_origin = origin;
     image.anchor_span = (end.0 - origin.0, end.1 - origin.1);
+    image.text_box = Some(text_box);
     image.raster_scale = scale;
     Ok(image)
 }

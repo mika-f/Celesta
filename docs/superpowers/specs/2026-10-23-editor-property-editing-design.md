@@ -470,36 +470,118 @@ Double-clicking a `Text` layer whose children resolve to an editable string
 (the `text` row's target is a literal, a const, or a pass-through) edits the
 text in place, in its own font, size, wrapping, and transform:
 
-- **Live, without writing.** The editor replaces the layer's `text` in the
-  held scene (the scene's `LayerContent::Text` carries the string, and the
-  Rust renderer lays it out) and re-renders on every keystroke. Nothing is
-  written while typing, and, unlike a drag (see "Drag preview through the
-  runtime"), the React code is not run: what the code computes from the
-  text (a frame sized to it) keeps its old size until the commit's reload. (Decided with the user:
-  a frame changing size while typing gets in the way.)
-- **Caret and selection** come from the layout's `TextMetrics`
-  (`line_starts`, and each glyph cluster's code-point range, left edge, and
-  advance), mapped through the layer's world transform as the handles are, so
-  they follow rotated and scaled text. Arrow keys, Home/End, Shift to select,
-  Cmd+A, copy, cut, and paste (as plain text) work as in a text field;
-  clicking and dragging inside the text places the caret and selects.
-- **IME.** The view implements GPUI's input handler for the editing layer;
-  marked (composing) text is shown in the live render, underlined by the
-  editor using the same caret geometry, and the candidate window is placed at
-  the caret.
-- **Commit and cancel.** Enter commits, Shift+Enter breaks the line, Escape
-  restores the scene and leaves without writing. Clicking outside the text,
-  selecting another layer, seeking, or starting playback commits first. A
-  commit goes through the same resolve, apply, write, and history path as the
-  Properties tab (one history entry), with design 3's scope when the element
-  is shared. An outside change to the file while editing cancels with "The
-  source changed while editing".
-- **Not editable.** On a `Text` whose `text` row is locked (an expression,
-  `<Span>` children, a value that can't be traced), double-click shows the
-  row's lock reason beside the layer and does not enter editing.
+- **Entry.** A double-click on the selected `Text` begins an edit when its
+  `text` row is editable (a fresh double-click selects the layer with its
+  first press). While the layer's source is still being looked up or read,
+  the entry waits and begins or refuses when it answers; any other press or
+  selection change drops it. The edit starts from the `children` the code
+  passed (the received value), after the Properties rows' typed text is
+  submitted, so a value typed there first goes first. Beginning pauses
+  playback (its next frame would end the edit). No edit begins while a
+  committed text is still drawn by its override (see "Commit"): the entry
+  waits, and refuses with "The code is reloading" while the reload runs.
+- **Not editable.** A refusal shows its reason in a note beside the layer,
+  styled as the drag label, until the next press or selection change: the
+  `text` row's lock reason (an expression, `<Span>` children, a value that
+  can't be traced), why the source is unavailable ("Not in this frame", …),
+  "The code is reloading", "The text can't be edited here" (no writable
+  `text` row), "The text isn't drawn in this frame" (the renderer recorded
+  no text box for it, also when a corner is behind the viewer), or "The text
+  is edge-on to the view" (the box has no area or is not convex). A
+  double-click on any other layer acts as an ordinary press.
+- **Live, without writing.** The preview worker keeps the last scene the
+  React runtime evaluated (keyed by its time, reload generation, and React
+  context); a keystroke
+  re-renders it with the edited layer's `text` replaced (the scene's
+  `LayerContent::Text` carries the string, and the Rust renderer lays it
+  out), and the frame returns the layer's `TextMetrics`. Nothing is written
+  while typing, and, unlike a drag (see "Drag preview through the
+  runtime"), the React code is not run and no source is looked up: what the
+  code computes from the text (a frame sized to it) keeps its old size until
+  the commit's reload. (Decided with the user: a frame changing size while
+  typing gets in the way.) A keystroke after a seek or a reload evaluates
+  the new frame first. The text keeps its runs: `color_runs` and
+  `font_runs` are carried through the edit by the common prefix and suffix
+  of the original and edited text (runs in the prefix kept, in the suffix
+  shifted by the length change, a run across the changed span stretched or
+  cut to it, an emptied run dropped). `visibleCharacters` is cleared while
+  editing, so all of the text shows; the reload restores what the code
+  computes.
+- **Caret and selection** are computed in layout coordinates from the
+  layout's `TextMetrics` (`line_starts`, and each glyph cluster's code-point
+  range, left edge, and advance; line `i` from `i · line_height`), and mapped
+  to the scene by the homography that takes the layout rectangle
+  (`maxWidth` or the measured width, by `lines · line_height`) to the text's
+  layout box as the renderer drew it (`HitRegion::text_box`, recorded for
+  every drawn text, through its planes, and stored on the text texture so a
+  cached raster keeps it). The anchor box is not used: a single line's is
+  trimmed to its ink. One map serves a flat, rotated, mirrored, and 3D-tilted
+  text; its inverse maps a press back. The caret is a steady (not blinking)
+  1px segment in the accent color that slants with the text, its top and
+  bottom the line box's; the selection is one quad per covered line in the
+  accent at 30%. Indices are code points (UTF-16 only at GPUI's input
+  handler). Moves and deletions step by grapheme cluster, and a caret inside
+  a ligature is interpolated between its graphemes; an RTL glyph's leading
+  edge is its right edge. At a soft wrap the caret draws at the next line's
+  start, except after End or a press past a line's end, which draw it at the
+  end of the line before. Up and Down keep a goal column; Up from the first
+  line goes to the start, Down from the last to the end. An empty line's
+  caret sits at its alignment's x. While the frame lags a keystroke, nothing
+  is painted.
+- **Keys.** The editing element has the key context `Input CanvasText`, so
+  the Input bindings apply and the editor's `!Input` shortcuts (Space, the
+  arrows, I/O, V, …) do not. Arrows, Home/End, Shift to select (also
+  Shift+Home/End and Shift+Cmd+Left/Right), Cmd+A, copy, cut, and paste (as
+  plain text; `\r\n` and `\r` become `\n`) work as in a text field. Enter and
+  Cmd+Enter commit, Shift+Enter inserts `\n`, Tab does nothing, and Undo and
+  Redo do nothing inside an edit. The bindings that replace or leave the
+  project (New, Open, Reload, Close, Export, Quit) commit the edit first;
+  Reload reloads, Close removes the window, and Quit quits once the commit
+  is written, waiting at most 5 s (past it they go on without it). Toggle
+  loop and Show problems leave the edit running.
+- **Pointer.** A press inside the layout box places the caret (Shift
+  extends) and a drag selects, past the box's edges too. Before the first
+  frame drawn with the edit, a press on the edited layer counts as inside and
+  leaves the caret. The press that begins an edit and every canvas press
+  while editing keep the focus on the editing element.
+- **IME.** The view implements GPUI's input handler for the edit; marked
+  (composing) text is shown in the live render, underlined 1px at its line's
+  bottom, and the candidate window is placed at the caret (from the newest
+  layout even while it lags). Unmarking accepts the composition; a
+  commit accepts one still marked, so what is shown is what is written.
+- **Ending.** Commits: Enter, a canvas press outside the layout box (then
+  the press acts as usual), the editing element losing the focus (a click in
+  the Properties tab, the layer list, the tool row), selecting another layer
+  or clearing the selection, toggling interactive mode, seeking, starting
+  playback, and the project bindings above. Cancels: Escape, which restores
+  the scene and leaves without writing; and a selection cleared by a reload
+  or by the layer disappearing, with "The source changed while editing" in
+  the viewer's notice when the file changed outside the editor. An own
+  write's reload keeps the edit. After Enter, Escape, or another end that
+  comes with the focus still on the edit, the focus returns to the editor (so
+  Cmd+Z then undoes the commit); never after a blur, which leaves it on the
+  control the user pressed.
+- **Commit.** An unchanged text, or an emptied one (the `text` row is
+  required), leaves without writing. Otherwise the commit is the `text` row's
+  (`children`): the same resolve, "The source changed while editing" check,
+  apply, re-parse, write, and history path as the Properties tab, one history
+  entry, held while another write or reload runs; a pass-through writes the
+  call site. A shared element's text is committed exactly as that row
+  commits it (design 3's scope applies when it is built). The committed text
+  stays drawn, without a flash of the old one, while the commit is held or
+  written; once written, it is dropped on an error and when no reload comes
+  (the targets are still current), and otherwise kept until the first reload
+  numbered at or after the write that applies, whatever that reload does to
+  the selection. Dropping or forgetting the held commit drops it too. A
+  commit that is not written (its write failed, or it was dropped while
+  held) puts its reason in the viewer's notice as well as in the row, so the
+  revert is not silent when the Properties tab is hidden.
+- **The Properties `Text` row stays enabled** while editing: pressing it
+  moves the focus, so the canvas edit commits on the blur first, and the row
+  then shows the written value as after any row commit.
 
-While editing, the transform handles are hidden and the layer keeps its
-outline.
+While editing, the transform handles and the pivot cross are hidden and the
+layer keeps its outline.
 
 ## Testing
 

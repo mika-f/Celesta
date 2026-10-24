@@ -366,6 +366,11 @@ pub(crate) enum DragState {
     Editable(LayerFrame, Vec<PropKey>, PivotMode, Option<Resize>),
 }
 
+/// The handles and cross shown: none while editing (the outline stays).
+pub(crate) fn editing_drag_state(state: DragState, editing: bool) -> DragState {
+    if editing { DragState::Unknown } else { state }
+}
+
 /// The props that hold the element's box (its table's `size`), each with
 /// its field's bounds, when every one is editable (a literal, a keyframe,
 /// or absent); `None` otherwise, and the Size tool falls back to Scale.
@@ -818,8 +823,13 @@ impl EditorView {
             .map(|(_, frame)| frame.as_ref())
     }
 
-    /// What dragging the selected layer can change, for the canvas.
+    /// What dragging the selected layer can change, for the canvas; nothing
+    /// while its text is edited there.
     pub(crate) fn drag_state(&self) -> DragState {
+        editing_drag_state(self.transform_state(), self.inline_text.is_some())
+    }
+
+    fn transform_state(&self) -> DragState {
         if !self.picks_layers() || self.playing {
             return DragState::Unknown;
         }

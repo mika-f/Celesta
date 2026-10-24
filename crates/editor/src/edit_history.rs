@@ -424,11 +424,11 @@ impl EditorView {
     /// new texts from the files' current texts (`""` when missing), the write
     /// goes through `write_all_recorded`, and the watched files are sampled
     /// once after all of them are written. Back on the UI thread the files
-    /// written are pushed to the history as one entry, the sample is applied
-    /// and the entry reloads; then `done` gets the result. An edit that leaves
-    /// every text as it was writes nothing, records nothing and reloads
-    /// nothing, and `done` gets `Ok`. When the history or a property write is
-    /// busy, `done` gets an error at once.
+    /// written are pushed to the history as one entry and the sample is
+    /// applied; then `done` gets the result, and the entry reloads. An edit
+    /// that leaves every text as it was writes nothing, records nothing and
+    /// reloads nothing, and `done` gets `Ok`. When the history or a property
+    /// write is busy, `done` gets an error at once.
     pub(crate) fn record_own_writes(
         &mut self,
         paths: Vec<PathBuf>,
@@ -453,22 +453,27 @@ impl EditorView {
                 })
                 .await;
             view.update(cx, |this, cx| {
-                let outcome = match result {
+                let (outcome, reload) = match result {
                     Ok((files, watched)) => {
                         let changes = !files.is_empty();
                         let entry = changes.then_some(HistoryEntry { files });
-                        if this.edit_history.finish_write(epoch, entry) && changes {
+                        let reload = this.edit_history.finish_write(epoch, entry) && changes;
+                        if reload {
                             this.apply_own_write_sample(watched);
-                            this.request_react_reload(cx);
                         }
-                        Ok(())
+                        (Ok(()), reload)
                     }
                     Err(message) => {
                         this.edit_history.finish_write(epoch, None);
-                        Err(message)
+                        (Err(message), false)
                     }
                 };
+                // Before the reload is requested, so `done` sees the number
+                // it gets as `react_reloads.next()`.
                 done(this, outcome, cx);
+                if reload {
+                    this.request_react_reload(cx);
+                }
                 this.drain_property_commits(cx);
                 this.drain_held_rows(cx);
                 cx.notify();

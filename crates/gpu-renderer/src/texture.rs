@@ -99,6 +99,7 @@ impl GpuRenderer {
             baseline_anchor: 0.0,
             anchor_origin: (0.0, 0.0),
             anchor_span: (1.0, 1.0),
+            text_box: None,
             raster_scale: 1.0,
         }))
     }
@@ -184,6 +185,7 @@ pub(crate) fn upload_texture(
         baseline_anchor: image.baseline_anchor,
         anchor_origin: image.anchor_origin,
         anchor_span: image.anchor_span,
+        text_box: image.text_box,
         raster_scale: image.raster_scale,
     }))
 }
@@ -272,6 +274,12 @@ pub(crate) struct DecodedImage {
     /// stroke reaches past it); everything else is `(0, 0)` and `(1, 1)`.
     pub(crate) anchor_origin: (f64, f64),
     pub(crate) anchor_span: (f64, f64),
+    /// A text's layout box (see `HitRegion::text_box`) as `[left, top,
+    /// right, bottom]`, in layout units from the image's top-left: kept with
+    /// the image, as a cached text is not measured again. Its width is the
+    /// layout's own, where the anchor box's is rounded up to whole texels.
+    /// `None` for non-text images.
+    pub(crate) text_box: Option<[f64; 4]>,
     /// Texels per layer unit: the scale text was rasterized at, else 1.
     pub(crate) raster_scale: f32,
 }
@@ -306,6 +314,7 @@ impl DecodedImage {
             baseline_anchor: 0.0,
             anchor_origin: (0.0, 0.0),
             anchor_span: (1.0, 1.0),
+            text_box: None,
             raster_scale: 1.0,
         })
     }
@@ -343,6 +352,8 @@ pub(crate) struct TextureData {
     /// See `DecodedImage::anchor_origin`.
     pub(crate) anchor_origin: (f64, f64),
     pub(crate) anchor_span: (f64, f64),
+    /// See `DecodedImage::text_box`.
+    pub(crate) text_box: Option<[f64; 4]>,
     /// See `DecodedImage::raster_scale`.
     pub(crate) raster_scale: f32,
 }

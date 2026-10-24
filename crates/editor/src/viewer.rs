@@ -12,10 +12,10 @@ use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ActiveTheme as _, Icon, IconName, Selectable as _, Sizable as _};
 use gpui_kit::{
-    AnyElement, App, BorderStyle, Bounds, ClickEvent, Context, CursorStyle, Hitbox, HitboxBehavior,
-    Hsla, IntoElement, MouseButton, MouseDownEvent, ObjectFit, ParentElement as _, PathBuilder,
-    Pixels, StyledImage as _, Window, canvas, div, fill, img, outline, point, prelude::*, px,
-    relative, rems, size,
+    AnyElement, App, BorderStyle, Bounds, ClickEvent, Context, CursorStyle, ElementInputHandler,
+    Hitbox, HitboxBehavior, Hsla, IntoElement, MouseButton, MouseDownEvent, ObjectFit,
+    ParentElement as _, PathBuilder, Pixels, StyledImage as _, Window, canvas, div, fill, img,
+    outline, point, prelude::*, px, relative, rems, size,
 };
 
 use crate::actions::{
@@ -24,6 +24,7 @@ use crate::actions::{
 };
 use crate::element_rows::{InteractiveToggle, interactive_toggle};
 use crate::icons::CelestaIcon;
+use crate::inline_text_view::{EditEvent, InlineEntry, paint_inline_text};
 use crate::layer_select::{SourceLookup, letterbox, outline_quads, scene_point};
 use crate::meter::audio_meter;
 use crate::preview::PreviewPresentation;
@@ -316,9 +317,30 @@ impl EditorView {
             self.element_edit
                 .error(self.selected_layer.as_deref())
                 .map(str::to_owned)
-        });
+        })
+        .or_else(|| self.inline_notice.clone());
         // Placed by the viewer's last painted bounds, relative to them.
         let last_bounds = self.viewer_bounds.get();
+        // Why a double-click did not edit the text, beside it.
+        let inline_note = self
+            .inline_note
+            .as_ref()
+            .filter(|(layer, _)| self.selected_layer.as_ref() == Some(layer))
+            .and_then(|(_, reason)| {
+                let corners = selected_quads.iter().flatten().copied();
+                Some((
+                    points_box(last_bounds?, frame_size, corners)?,
+                    reason.clone(),
+                ))
+            });
+        // The edited text's caret, selection and marked text, and the
+        // platform's text input while it has the focus.
+        let inline_paint = self.inline_text_paint();
+        let inline_input = self
+            .inline_text_focus
+            .clone()
+            .filter(|_| self.inline_text.is_some())
+            .map(|focus| (focus, cx.entity()));
         let locked_box = match &drag_state {
             DragState::Locked(frame, reason) => last_bounds
                 .and_then(|bounds| outline_box(bounds, frame_size, frame))
@@ -403,12 +425,19 @@ impl EditorView {
                         });
                         (handles, cross)
                     },
-                    move |bounds, (handles, cross), window, _| {
+                    move |bounds, (handles, cross), window, cx| {
                         if show_safe_areas {
                             paint_safe_areas(bounds, frame_size, overlay_color, window);
                         }
                         for corners in &selected_quads {
                             paint_layer_outline(bounds, frame_size, corners, dashed, window);
+                        }
+                        if let Some(paint) = &inline_paint {
+                            paint_inline_text(bounds, frame_size, paint, window);
+                        }
+                        if let Some((focus, view)) = &inline_input {
+                            let input = ElementInputHandler::new(bounds, view.clone());
+                            window.handle_input(focus, input, cx);
                         }
                         if let Some(handles) = handles {
                             paint_handles(&handles, handle_fill, window);
@@ -432,6 +461,13 @@ impl EditorView {
                         }
                     }))
             })
+            // A text edited here takes the keys: the canvas holds its focus.
+            .when_some(
+                self.inline_text_focus
+                    .as_ref()
+                    .filter(|_| self.inline_text.is_some()),
+                |area, focus| self.inline_text_keys(area.track_focus(focus), cx),
+            )
             .when_some(cross_lock, |area, (cross, reason)| {
                 area.child(
                     div()
@@ -469,23 +505,21 @@ impl EditorView {
                         .tooltip(move |window, cx| Tooltip::new(reason.clone()).build(window, cx)),
                 )
             })
-            .when_some(label, |area, (beside, label)| {
-                area.child(
-                    div()
-                        .absolute()
-                        .left(beside.origin.x + beside.size.width + px(8.0))
-                        .top(beside.origin.y)
-                        .px_1()
-                        .border_1()
-                        .border_color(cx.theme().border)
-                        .bg(cx.theme().popover)
-                        .text_xs()
-                        .font_family(cx.theme().mono_font_family.clone())
-                        .text_color(cx.theme().foreground)
-                        .whitespace_nowrap()
-                        .child(label),
-                )
-            })
+            .children(label.into_iter().chain(inline_note).map(|(beside, label)| {
+                div()
+                    .absolute()
+                    .left(beside.origin.x + beside.size.width + px(8.0))
+                    .top(beside.origin.y)
+                    .px_1()
+                    .border_1()
+                    .border_color(cx.theme().border)
+                    .bg(cx.theme().popover)
+                    .text_xs()
+                    .font_family(cx.theme().mono_font_family.clone())
+                    .text_color(cx.theme().foreground)
+                    .whitespace_nowrap()
+                    .child(label)
+            }))
             .when_some(notice, |area, notice| {
                 area.child(
                     div()
@@ -1155,6 +1189,7 @@ impl EditorView {
         if !self.is_react_preview() {
             return;
         }
+        self.end_inline_text(EditEvent::ToggleInteractive, cx);
         let leaving = self.element_rows.leaving_interactive;
         if self.interactive && !leaving {
             self.select_layer(None, cx);
@@ -1202,15 +1237,43 @@ impl EditorView {
     /// Selects the topmost layer under the click in the shown frame, or
     /// clears the selection when the click hits none, and looks up the new
     /// selection's source.
-    fn select_layer_at(&mut self, event: &MouseDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn select_layer_at(
+        &mut self,
+        event: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(bounds) = self.viewer_bounds.get() else {
             return;
         };
+        // While a text is edited, the focus stays on it (the root would take
+        // it); a press in the text places the caret, and one outside ends
+        // the edit, then acts as usual.
+        if self.inline_text.is_some() {
+            window.prevent_default();
+            if self.press_inline_text(event, window, cx) {
+                return;
+            }
+        }
         let settings = &self.document.project().settings;
         let frame_size = (settings.width as f32, settings.height as f32);
         let hit = scene_point(bounds, frame_size, event.position)
             .and_then(|point| hit_test(&self.hit_regions, point))
             .map(str::to_owned);
+        // A double-click on the selected text edits it in place.
+        if event.click_count >= 2
+            && self.inline_text.is_none()
+            && let Some(layer) = hit
+                .clone()
+                .filter(|hit| self.selected_layer.as_ref() == Some(hit))
+            && let Some(entry) = self.inline_entry_for(&layer)
+        {
+            if matches!(entry, InlineEntry::Begin(_)) {
+                window.prevent_default();
+            }
+            self.enter_inline_text(layer, entry, window, cx);
+            return;
+        }
         // A press on the selection's handles, or on its body, drags it.
         if self.begin_transform_drag(event.position, hit.as_deref(), event.modifiers.alt) {
             cx.notify();
@@ -1225,7 +1288,11 @@ impl EditorView {
         if layer == self.selected_layer {
             return;
         }
-        self.clear_layer_selection();
+        // A text edited on the canvas is committed, not cancelled with the
+        // selection it belongs to. (The viewer's notice stays: one set while
+        // this change waited says why a held commit was dropped.)
+        self.end_inline_text(EditEvent::SelectionChange, cx);
+        self.clear_layer_selection(false);
         self.selected_layer = layer;
         if self.selected_layer.is_some() {
             self.source_lookup = Some(SourceLookup::Pending);
@@ -1237,8 +1304,13 @@ impl EditorView {
     }
 
     /// Forgets the selected layer and its source, the commits held for it,
-    /// and a selection change waiting for them.
-    pub(crate) fn clear_layer_selection(&mut self) {
+    /// and a selection change waiting for them. A text edited on the canvas
+    /// is cancelled, saying so when `outside_change` (the file changed
+    /// outside the editor); a double-click's note goes.
+    pub(crate) fn clear_layer_selection(&mut self, outside_change: bool) {
+        self.inline_pending = None;
+        self.inline_note = None;
+        self.inline_text_selection_cleared(outside_change);
         self.forget_held_rows();
         self.selected_layer = None;
         self.source_lookup = None;
@@ -1513,14 +1585,27 @@ fn outline_box(
     frame_size: (f32, f32),
     frame: &LayerFrame,
 ) -> Option<Bounds<Pixels>> {
+    points_box(bounds, frame_size, frame.outline)
+}
+
+/// The box around `points` (scene pixels) on the frame fitted into
+/// `bounds`, relative to `bounds`' origin; `None` without points.
+fn points_box(
+    bounds: Bounds<Pixels>,
+    frame_size: (f32, f32),
+    points: impl IntoIterator<Item = Point>,
+) -> Option<Bounds<Pixels>> {
     let (left, top, scale) = letterbox(bounds, frame_size)?;
-    let xs = frame.outline.map(|p| left + p.x as f32 * scale);
-    let ys = frame.outline.map(|p| top + p.y as f32 * scale);
-    let min = |values: [f32; 4]| values.into_iter().fold(f32::INFINITY, f32::min);
-    let max = |values: [f32; 4]| values.into_iter().fold(f32::NEG_INFINITY, f32::max);
+    let (min, max) = points
+        .into_iter()
+        .map(|p| (left + p.x as f32 * scale, top + p.y as f32 * scale))
+        .fold(None, |extent: Option<((f32, f32), (f32, f32))>, (x, y)| {
+            let ((min_x, min_y), (max_x, max_y)) = extent.unwrap_or(((x, y), (x, y)));
+            Some(((min_x.min(x), min_y.min(y)), (max_x.max(x), max_y.max(y))))
+        })?;
     Some(Bounds::new(
-        point(px(min(xs)) - bounds.origin.x, px(min(ys)) - bounds.origin.y),
-        size(px(max(xs) - min(xs)), px(max(ys) - min(ys))),
+        point(px(min.0) - bounds.origin.x, px(min.1) - bounds.origin.y),
+        size(px(max.0 - min.0), px(max.1 - min.1)),
     ))
 }
 

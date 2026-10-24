@@ -213,6 +213,7 @@ mod tests {
             corners: [min, at(max.x, min.y), max, at(min.x, max.y)],
             hole: None,
             anchor_box: None,
+            text_box: None,
             clips: Vec::new(),
         }
     }

@@ -2,6 +2,7 @@ use crate::actions::{
     CloseWindow, CreateNewProject, OpenProject, ReloadProject, SetUpTypeScript,
     SetUpTypeScriptInFolder,
 };
+use crate::inline_text_view::EditEvent;
 use crate::problems::{Source, error_chain};
 use crate::source::load_source;
 use crate::view::EditorView;
@@ -14,17 +15,73 @@ use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dialog::{DialogAction, DialogClose, DialogDescription, DialogFooter};
 use gpui_kit::component::radio::Radio;
 use gpui_kit::component::scroll::ScrollableElement as _;
-use gpui_kit::component::{ActiveTheme as _, WindowExt as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Root, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
-use gpui_kit::{ClickEvent, Context, PathPromptOptions, Pixels, ScrollHandle, Window, div, px};
+use gpui_kit::{
+    App, ClickEvent, Context, Entity, PathPromptOptions, Pixels, ScrollHandle, Window, div, px,
+};
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::time::Duration;
 
 /// Wide enough for a two-line Japanese description per template.
 const TEMPLATE_DIALOG_WIDTH: Pixels = px(520.);
 /// About four templates; more scroll inside the dialog.
 const TEMPLATE_LIST_MAX_HEIGHT: Pixels = px(360.);
+
+/// How often closing, quitting, or reloading looks whether a committed
+/// text's write finished.
+const COMMIT_POLL: Duration = Duration::from_millis(20);
+/// The longest closing, quitting, or reloading waits for a committed text's
+/// write; past it, it goes on without the write, so Quit always quits.
+const COMMIT_WAIT_LIMIT: Duration = Duration::from_secs(5);
+
+/// Whether closing, quitting, or reloading still waits, `waited` into the
+/// wait, while a committed text is held or being written (`writing`).
+pub(crate) fn commit_wait_continues(writing: bool, waited: Duration) -> bool {
+    writing && waited < COMMIT_WAIT_LIMIT
+}
+
+/// Quit: a text edited on the canvas in any window is committed first, and
+/// the app quits once those commits are written (or the wait reaches its
+/// limit).
+pub(crate) fn quit_after_inline_commits(cx: &mut App) {
+    let editors: Vec<Entity<EditorView>> = cx
+        .windows()
+        .into_iter()
+        .filter_map(|window| window.downcast::<Root>())
+        .filter_map(|root| {
+            root.read(cx)
+                .ok()?
+                .view()
+                .clone()
+                .downcast::<EditorView>()
+                .ok()
+        })
+        .collect();
+    for editor in &editors {
+        editor.update(cx, |this, cx| {
+            this.end_inline_text(EditEvent::ProjectCommand, cx);
+        });
+    }
+    cx.spawn(async move |cx| {
+        let mut waited = Duration::ZERO;
+        while commit_wait_continues(
+            cx.update(|cx| {
+                editors
+                    .iter()
+                    .any(|editor| editor.read(cx).inline_commit_writing())
+            }),
+            waited,
+        ) {
+            cx.background_executor().timer(COMMIT_POLL).await;
+            waited += COMMIT_POLL;
+        }
+        cx.update(|cx| cx.quit());
+    })
+    .detach();
+}
 
 impl EditorView {
     pub(crate) fn create_new_project_action(
@@ -33,6 +90,7 @@ impl EditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.end_inline_text(EditEvent::ProjectCommand, cx);
         self.request_create_project(window, cx);
     }
 
@@ -276,6 +334,7 @@ impl EditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.end_inline_text(EditEvent::ProjectCommand, cx);
         self.request_open(window, cx);
     }
 
@@ -334,6 +393,14 @@ impl EditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Committed first, and reloaded once the commit is written: a commit
+        // held for its turn would be forgotten with the selection the reload
+        // clears (or with the view a reopen replaces).
+        self.end_inline_text(EditEvent::ProjectCommand, cx);
+        self.after_inline_commit(window, cx, Self::reload_project);
+    }
+
+    fn reload_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.is_react_preview() {
             self.request_react_reload(cx);
             cx.notify();
@@ -459,13 +526,47 @@ impl EditorView {
         .detach();
     }
 
+    /// Closes the window once a text edited on the canvas is committed and
+    /// its write finished (one held for its turn goes with the frames the
+    /// window still draws), so the edit is not lost with the view.
     pub(crate) fn close_window_action(
         &mut self,
         _: &CloseWindow,
         window: &mut Window,
-        _: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) {
-        window.remove_window();
+        self.end_inline_text(EditEvent::ProjectCommand, cx);
+        self.after_inline_commit(window, cx, |_, window, _| window.remove_window());
+    }
+
+    /// Runs `then` at once when no committed text is held or being written,
+    /// else once its write finished, polling while the window keeps drawing
+    /// (so a held commit can drain); past [`COMMIT_WAIT_LIMIT`], `then` runs
+    /// without it.
+    fn after_inline_commit(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        then: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+    ) {
+        if !commit_wait_continues(self.inline_commit_writing(), Duration::ZERO) {
+            then(self, window, cx);
+            return;
+        }
+        cx.spawn_in(window, async move |view, cx| {
+            let mut waited = Duration::ZERO;
+            while commit_wait_continues(
+                view.update(cx, |this, _| this.inline_commit_writing())
+                    .unwrap_or(false),
+                waited,
+            ) {
+                cx.background_executor().timer(COMMIT_POLL).await;
+                waited += COMMIT_POLL;
+            }
+            view.update_in(cx, |this, window, cx| then(this, window, cx))
+                .ok();
+        })
+        .detach();
     }
 
     /// Replacing the contents drops the export worker, so a running export
@@ -536,9 +637,13 @@ impl EditorView {
     /// Swaps in a freshly opened view while keeping the window-owned UI state
     /// (focus, pane sizes, menu bar, and the preview volume).
     pub(crate) fn replace_contents(&mut self, mut next: EditorView, cx: &mut Context<Self>) {
+        // A text edited meanwhile belongs to the file going away.
+        self.inline_text_selection_cleared(false);
+        next.inline_refocus = self.inline_refocus;
         next.session = self.session.wrapping_add(1);
         next.focus_handle = self.focus_handle.take();
         next.master_volume_focus = self.master_volume_focus.take();
+        next.inline_text_focus = self.inline_text_focus.take();
         next.dock_split = self.dock_split.take();
         next.body_split = self.body_split.take();
         #[cfg(not(target_os = "macos"))]
@@ -574,11 +679,32 @@ fn template_argument(name: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::template_argument;
+    use super::{COMMIT_POLL, COMMIT_WAIT_LIMIT, commit_wait_continues, template_argument};
+    use std::time::Duration;
 
     #[test]
     fn blank_template_uses_the_default_initialization() {
         assert_eq!(template_argument("blank"), None);
         assert_eq!(template_argument("slideshow"), Some("slideshow".to_owned()));
+    }
+
+    #[test]
+    fn a_held_or_running_commit_defers_reload_close_and_quit() {
+        // Nothing held or being written: at once.
+        assert!(!commit_wait_continues(false, Duration::ZERO));
+        // A commit held for its turn or being written: they wait for it.
+        assert!(commit_wait_continues(true, Duration::ZERO));
+        assert!(commit_wait_continues(true, COMMIT_WAIT_LIMIT - COMMIT_POLL));
+        // Its write finished mid-wait: they go.
+        assert!(!commit_wait_continues(false, COMMIT_POLL));
+    }
+
+    #[test]
+    fn the_wait_for_a_commit_ends_at_its_limit() {
+        assert!(!commit_wait_continues(true, COMMIT_WAIT_LIMIT));
+        assert!(!commit_wait_continues(
+            true,
+            COMMIT_WAIT_LIMIT + COMMIT_POLL
+        ));
     }
 }

@@ -4,6 +4,7 @@ use crate::actions::{
     TogglePlayback, ToggleSafeAreas,
 };
 use crate::helpers::loop_range_for;
+use crate::inline_text_view::EditEvent;
 use crate::problems::{Source, error_chain};
 use crate::view::EditorView;
 use crate::{timecode, timeline};
@@ -45,6 +46,10 @@ impl EditorView {
         if !self.playing {
             self.element_rows.submit_requested = true;
         }
+        // A text edited on the canvas ends, as on a blur.
+        if self.inline_text.is_some() {
+            self.inline_end_due = Some(EditEvent::Seek);
+        }
         self.clock.seek(frame);
         self.refresh_preview();
     }
@@ -74,8 +79,12 @@ impl EditorView {
     /// opening) — waits for it, so the soundtrack starts with the picture
     /// instead of joining part-way through.
     pub(crate) fn start_playback(&mut self) {
-        // Playing leaves the rows, as a seek does.
+        // Playing leaves the rows, as a seek does, and a text edited on the
+        // canvas.
         self.element_rows.submit_requested = true;
+        if self.inline_text.is_some() {
+            self.inline_end_due = Some(EditEvent::Play);
+        }
         if self.playing || self.clock.end_frame() <= 0 {
             return;
         }
@@ -338,9 +347,11 @@ impl EditorView {
         self.continue_master_volume_drag(event, window, cx);
         self.continue_transform_drag(event, cx);
         self.continue_row_scrub(event, cx);
+        self.continue_inline_selection(event, window, cx);
     }
 
     pub(crate) fn drag_end(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
+        self.end_inline_selection();
         let ended = self.end_scrub() | self.end_overview_drag();
         let ended = self.master_volume_drag.take().is_some() | ended;
         let ended = self.end_transform_drag(cx) | ended;

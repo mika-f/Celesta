@@ -1,6 +1,7 @@
 use crate::actions::{ClearExportRange, ExportProject, SetExportIn, SetExportOut};
 use crate::export_worker::{ExportRequest, ExportSource};
 use crate::helpers::{ExportLoudness, export_output, export_range_for, export_suggested_name};
+use crate::inline_text_view::EditEvent;
 use crate::problems::{Source, error_chain};
 use crate::view::EditorView;
 use celesta_exporter::{ExportCancellation, ExportProgress, VideoFormat};
@@ -15,6 +16,7 @@ impl EditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.end_inline_text(EditEvent::ProjectCommand, cx);
         self.request_export(window, cx);
     }
 

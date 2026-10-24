@@ -1,6 +1,7 @@
 use crate::component_schema::ComponentSchemaRequest;
 use crate::element_edit::RELOAD_FAILED;
 use crate::helpers::format_time;
+use crate::inline_text_view::{KeptOverride, kept_override_on_reload};
 use crate::layer_select::{lookup_allowed, source_lookup_target};
 use crate::media_probe::{MediaProbeRequest, ProbeAsset};
 use crate::preview::{
@@ -280,14 +281,25 @@ impl EditorView {
         // changes until it writes, so it is not asked again (the runtime
         // looks it up without the overrides, and remounts to drop them).
         // A released scrub asks (see `lookup_allowed`). Playback asks only
-        // for an answer it does not have yet, or a stale one.
+        // for an answer it does not have yet, or a stale one. A text edited
+        // on the canvas asks nothing; one committed asks, as a released
+        // scrub does.
         let source_of = source_lookup_target(
             self.selected_layer.as_deref(),
             self.picks_layers(),
             self.playing && !self.source_lookup_stale,
             self.source_lookup.as_ref(),
         )
-        .filter(|_| lookup_allowed(self.transform_drag.is_some(), self.row_scrub_active()));
+        .filter(|_| {
+            lookup_allowed(
+                self.transform_drag.is_some(),
+                self.row_scrub_active(),
+                self.inline_text.is_some(),
+            )
+        });
+        // Only the request it was set for reuses the held scene; any other
+        // frame is evaluated again.
+        let reuse_scene = std::mem::take(&mut self.reuse_scene);
         match self.document.scene_at(self.current_time()) {
             // The warnings stay until the result replaces them, so their
             // counts don't flicker while frames are in flight.
@@ -312,6 +324,9 @@ impl EditorView {
                         .clone()
                         .filter(|_| self.picks_layers() && !self.playing),
                     timeline_frame: self.clock.frame(),
+                    // On every request, so coalescing never drops it.
+                    text_override: self.text_override.clone(),
+                    reuse_scene,
                 }) {
                     self.preview_pending = false;
                     self.problems.set_preview_warnings(Vec::new());
@@ -371,9 +386,11 @@ impl EditorView {
         let session = self.session;
         let sequence = self.react_reloads.request();
         // The reloaded code may not produce the same layers, unless only the
-        // editor's own write changed it.
+        // editor's own write changed it. Reloading the same composition
+        // otherwise means the file changed outside the editor (File > Reload
+        // commits a text edit before it reloads).
         if !self.selection_keep.requested(sequence, same_composition) {
-            self.clear_layer_selection();
+            self.clear_layer_selection(same_composition);
         }
         cx.spawn(async move |view, cx| {
             let reload = cx
@@ -495,6 +512,14 @@ impl EditorView {
                 }
                 self.react_reload_generation = self.react_reload_generation.wrapping_add(1);
                 let keep = self.selection_keep.applies(sequence) && self.selected_layer.is_some();
+                // A text committed on the canvas is drawn by the reloaded
+                // code once a reload requested after its write applies,
+                // whatever it does to the selection. Dropped before the
+                // frame below, so that frame looks the layer up and draws
+                // the code's own runs.
+                if !kept_override_on_reload(&self.kept_override, sequence) {
+                    self.drop_kept_override();
+                }
                 if keep {
                     // Looked up again in the reloaded code, which decides
                     // whether the layer still exists. Until it answers, the
@@ -512,7 +537,7 @@ impl EditorView {
                     }
                 } else {
                     // A layer picked while the reload ran belongs to the old code.
-                    self.clear_layer_selection();
+                    self.clear_layer_selection(false);
                 }
                 self.problems.clear(Source::Preview);
                 self.refresh_preview();
@@ -535,6 +560,13 @@ impl EditorView {
                 }
                 if !self.row_scrub_active() {
                     self.cancel_row_scrub();
+                }
+                // Nor a committed text's, once written; one still held is
+                // dropped with the held commits below.
+                if matches!(self.kept_override, KeptOverride::UntilReload(_))
+                    && self.drop_kept_override()
+                {
+                    self.refresh_preview();
                 }
                 // No reload will make the targets current: the commits
                 // waiting for one are not written, and new ones fail.

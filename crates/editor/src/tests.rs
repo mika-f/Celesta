@@ -78,6 +78,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 mod element_edit;
 mod element_rows;
+mod held_scene;
+mod inline_text_view;
 
 #[test]
 fn background_workers_coalesce_queued_requests() {
@@ -2514,9 +2516,17 @@ fn removable_rect() -> (String, ElementTargets, LayerSourceReport) {
 #[test]
 fn a_released_scrub_lets_the_frame_look_its_source_up() {
     // A pressed scrub and any drag redraw on every move: no lookup.
-    assert!(!lookup_allowed(false, true));
-    assert!(!lookup_allowed(true, false));
+    assert!(!lookup_allowed(false, true, false));
+    assert!(!lookup_allowed(true, false, false));
     // Released (its write held for a reload): the lookup goes, or the write
     // would wait for targets that are never resolved.
-    assert!(lookup_allowed(false, false));
+    assert!(lookup_allowed(false, false, false));
+}
+
+#[test]
+fn lookup_is_not_allowed_while_editing_text() {
+    // A keystroke asks the runtime nothing. (A committed text's frames are
+    // drawn with no edit running, so they look the layer up, as a released
+    // scrub's do.)
+    assert!(!lookup_allowed(false, false, true));
 }

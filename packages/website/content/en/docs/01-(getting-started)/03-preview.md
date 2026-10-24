@@ -229,6 +229,42 @@ When the element is written inside one of your components and Celesta finds the 
 
 The impact line and **Can't move** look at the transform props only. Editing another prop written on the element, such as **Fill**, or a size or the anchor dragged on the canvas, changes every instance even when the line counts only one call's instances; a value set at the call, in a row with **Set at** or in the **Component** section, changes only that call.
 
+## Edit text on the canvas
+
+In interactive mode, double-click a `<Text>` in the preview to edit its text where it is drawn, in its own font, size, colors, and wrapping, also when it is rotated, mirrored, or tilted in 3D. A text that isn't selected yet is selected by the first click, and the edit begins as soon as Celesta has read its source. Playback pauses. While you edit, the handles and the cross go and the outline stays; a steady caret in the accent color marks where you type, and a selection is shaded in it.
+
+The preview redraws the text with every key you press, but nothing is written until you commit, and your code is not run meanwhile: what it computes from the text, such as a frame sized to it, keeps its old size until the commit's reload. A text revealed with `visibleCharacters` shows in full while you edit; the reload brings the reveal back.
+
+| Key | What it does |
+| --- | --- |
+| Arrows, `Home` / `End` | Move the caret; with Shift, select. Up and down keep the caret's column across a shorter line |
+| `⌘ A`, `⌘ C`, `⌘ X`, `⌘ V` (`Ctrl` on Windows and Linux) | Select all, copy, cut, and paste. Pasted text is plain, and its line breaks become ordinary ones |
+| `Shift Enter` | Start a new line |
+| `Enter`, `⌘ Enter` | Commit the edit |
+| `Escape` | Leave without writing; the preview shows your source's text again |
+| `Tab`, `⌘ Z`, `⌘ Shift Z` | Nothing while you edit; after the commit, one undo restores the whole edit |
+
+While you edit, the keys go to the text: `Space`, `V`, `I`, `O`, and the arrows type or move the caret instead of playing, seeking, or switching modes. **File → New**, **Open…**, **Reload**, **Close**, and **Export** (and their shortcuts) commit the edit first, and **Reload**, **Close**, and quitting wait until it is written, for up to five seconds; `⌘ /` (loop) and **Show problems** leave it running.
+
+Click inside the text to move the caret, drag to select, and Shift-click to extend the selection. A click outside the text's layout box commits the edit and then acts as usual. On a single line without `maxWidth`, the box ends at the last letter, so a click just past it is outside. A click anywhere else in the window, such as in the **Properties** tab or the tool row, commits the edit too, and the keyboard focus stays in what you clicked; the tab's **Text** row stays editable and shows the written text after the commit. Selecting another layer, clearing the selection, turning interactive mode off, moving the playhead, and starting playback also commit.
+
+Japanese and other languages entered through an input method work as in a text field: the text being composed is drawn in the preview, underlined, and the candidate window opens at the caret. While composing, the first Escape goes to the input method and cancels the composition; the next one leaves the edit. Ending the edit in the middle of a composition, such as by clicking outside the text, writes what is shown.
+
+A commit is written the way the **Text** row writes it: into the JSX text or the string where your source states it, into a `const` used once, or at your component's call for a text passed through a prop, such as `<Label text="Sale" />`. A text with line breaks is written as a string, such as `{"Sale\nToday"}`. It is one change, and one undo restores it. A text left as it was, or emptied, writes nothing (a `<Text>` needs its text, so emptying it puts the source's back). The preview keeps the new text after the commit, without flashing the old one, until the reload draws it. When another value is still being written, the commit waits its turn, as a row's does. If the write fails, such as when the file changed since you began, the preview shows the source's text again. The reason shows at the top-left of the preview, until your next click, and in the **Properties** tab.
+
+A double-click doesn't begin an edit on a text Celesta can't write. It shows the reason beside the layer, styled like the label of a drag, until your next click:
+
+| Note | Meaning |
+| --- | --- |
+| The **Text** row's lock reason, such as **Written as an expression: a + b** | The text is not written plainly in your source, such as a value computed in your code or `<Span>` children; the reasons are listed under "Move layers on the canvas" |
+| Why the layer's source couldn't be read, such as **Not in this frame** | As the **Layer** section says |
+| The code is reloading | The composition is reloading; double-click again when it has finished |
+| The text isn't drawn in this frame | The text is not in the frame shown, or a corner of it is behind the viewer |
+| The text is edge-on to the view | The text is turned so far in 3D that it has no area to type in |
+| The text can't be edited here | The **Text** row has nothing Celesta can write |
+
+A double-click on a text you have just committed waits while the commit is written, then shows **The code is reloading** while the composition reloads; once it has, double-click again to edit the new text. If your file changes outside Celesta while you edit, the edit ends without writing, and **The source changed while editing** shows at the top-left of the preview until your next click.
+
 ## Undo
 
-Undo (`⌘ Z`, `Ctrl Z`) and redo (`⌘ Shift Z`, `Ctrl Shift Z`) step through the changes Celesta wrote, whether from the canvas, the property rows, or the props file's **Properties** section, in one history that holds up to 100 changes and is cleared when you open another file. Each committed row, switch, menu choice, picked color, chosen file, scrub, and removed prop is one change. A change that wrote two files, such as a component's call site and the component, is undone and redone as one step. If a file the change wrote was edited elsewhere since, Celesta refuses to undo it rather than overwrite your edit, and neither file changes.
+Undo (`⌘ Z`, `Ctrl Z`) and redo (`⌘ Shift Z`, `Ctrl Shift Z`) step through the changes Celesta wrote, whether from the canvas, the property rows, or the props file's **Properties** section, in one history that holds up to 100 changes and is cleared when you open another file. Each committed row, switch, menu choice, picked color, chosen file, scrub, removed prop, and text edited on the canvas is one change. A change that wrote two files, such as a component's call site and the component, is undone and redone as one step. If a file the change wrote was edited elsewhere since, Celesta refuses to undo it rather than overwrite your edit, and neither file changes.

@@ -365,6 +365,27 @@ impl PreparedLayer {
         )
     }
 
+    /// For a text, the corners of its layout box (`HitRegion::text_box`) in
+    /// scene pixels, in the order of `corners`: placed like
+    /// `anchor_box_corners`. `None` for every other layer.
+    pub(crate) fn text_box_corners(&self) -> Option<[Point; 4]> {
+        let PreparedContent::Texture(texture) = &self.content else {
+            return None;
+        };
+        let [left, top, right, bottom] = texture.text_box?;
+        let (width, height) = self.size(texture.width, texture.height);
+        let (width, height) = (f64::from(width), f64::from(height));
+        let low = [(left / width) as f32, (top / height) as f32];
+        let high = [(right / width) as f32, (bottom / height) as f32];
+        Some(
+            self.quad_corners_between(self.drawn_transform(), low, high)
+                .map(|(x, y)| Point {
+                    x: f64::from(x),
+                    y: f64::from(y),
+                }),
+        )
+    }
+
     /// The transform `write_instance` places the layer's quad with: a layer
     /// copied texel for texel lands on whole pixels.
     fn drawn_transform(&self) -> Affine {

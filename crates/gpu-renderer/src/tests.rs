@@ -8,7 +8,7 @@ use crate::path::{
 use crate::plan::GpuStep;
 use crate::readback::ReadbackLayout;
 use crate::renderer::GpuRenderer;
-use crate::text::text_raster_scale;
+use crate::text::{TextLayout, text_raster_scale};
 use crate::texture::{DecodedImage, downsample};
 use crate::transform::{Affine, LayerState, MAX_CLIP_DEPTH, path_transform};
 use crate::types::{
@@ -28,7 +28,7 @@ use std::sync::{Mutex, MutexGuard};
 use celesta_composition::{
     AssetLocation, BlendMode, Clip, EvaluatedTransform, GroupMask, ImageAnimation, ImageFit, Layer,
     LayerContent, LayerShadow, MaskMode, MediaTiming, Paint, Point, Rational, ResolvedAsset, Scene,
-    Stroke, TextStyle, Time,
+    Stroke, TextAlign, TextStyle, Time,
 };
 use celesta_media::{MediaError, VideoFrame, VideoFrameDecoder};
 
@@ -4563,6 +4563,369 @@ fn a_text_s_anchor_box_is_its_layout_box() {
     assert_eq!(regions[2].anchor_box, None);
 }
 
+/// `text_layer` saying `text` at 40 px, wrapped at `max_width`.
+fn text_saying(id: &str, text: &str, position: Point, max_width: Option<f64>) -> Layer {
+    let mut layer = text_layer(id, position, 1.0, 40.0);
+    if let LayerContent::Text {
+        text: said,
+        max_width: wrap,
+        ..
+    } = &mut layer.content
+    {
+        *said = text.to_owned();
+        *wrap = max_width;
+    }
+    layer
+}
+
+/// The text, style and `maxWidth` of text layer `layer`.
+fn text_content(layer: &Layer) -> (&str, &TextStyle, Option<f64>) {
+    let LayerContent::Text {
+        text,
+        style,
+        max_width,
+        ..
+    } = &layer.content
+    else {
+        panic!("{} is not a text", layer.id);
+    };
+    (text, style, *max_width)
+}
+
+/// Sets `layer` in IBM Plex Mono from the prism example's fonts, so its
+/// metrics are the same on every platform's system fonts.
+fn in_bundled_font(renderer: &mut GpuRenderer, scene: &mut Scene, layer: &mut Layer) {
+    renderer.set_asset_root(concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/prism"));
+    scene.fonts = vec![ResolvedAsset {
+        id: "IBMPlexMono-Regular.ttf".to_owned(),
+        location: AssetLocation::File {
+            path: "assets/fonts/IBMPlexMono-Regular.ttf".to_owned(),
+        },
+    }];
+    if let LayerContent::Text { style, .. } = &mut layer.content {
+        style.font_family = Some("IBM Plex Mono".into());
+    }
+}
+
+/// Asserts each of `actual`'s corners is within a pixel of `expected`'s.
+fn assert_near_corners(actual: [Point; 4], expected: [Point; 4]) {
+    assert_corners_within(actual, expected, 1.0);
+}
+
+/// Asserts each of `actual`'s corners is within `tolerance` of `expected`'s.
+fn assert_corners_within(actual: [Point; 4], expected: [Point; 4], tolerance: f64) {
+    for (corner, want) in actual.iter().zip(expected) {
+        assert!(
+            (corner.x - want.x).abs() <= tolerance && (corner.y - want.y).abs() <= tolerance,
+            "{actual:?} is not {expected:?} within {tolerance}"
+        );
+    }
+}
+
+/// The scene's only region's text box, rendering `layer` alone.
+fn rendered_text_box(renderer: &mut GpuRenderer, scene: &mut Scene, layer: Layer) -> HitRegion {
+    scene.layers = vec![layer];
+    renderer.set_record_hit_regions(true);
+    renderer.render(scene).unwrap();
+    let region = renderer.hit_regions()[0].clone();
+    assert!(region.text_box.is_some(), "a drawn text has a text box");
+    region
+}
+
+#[test]
+fn measure_text_matches_the_rendered_layout() {
+    let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+        return;
+    };
+    let mut scene = empty_scene(400, 300);
+    let layer = text_saying(
+        "t",
+        "Celesta\nrenders text",
+        Point { x: 20.0, y: 20.0 },
+        None,
+    );
+    scene.layers = vec![layer.clone()];
+    renderer.render(&scene).unwrap();
+    let (text, style, max_width) = text_content(&layer);
+    let used = renderer.text_sizes[&format!("{text}\0{style:?}\0{max_width:?}")];
+    let metrics = renderer.measure_text(text, style, max_width);
+    assert_eq!(
+        (metrics.width, metrics.height, metrics.ascent),
+        (used.width, used.height, used.ascent)
+    );
+    assert_eq!(metrics.lines, 2);
+}
+
+#[test]
+fn text_layout_finds_a_text_inside_a_group() {
+    let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+        return;
+    };
+    let mut inner = text_saying("inner", "Inside", Point { x: 20.0, y: 20.0 }, Some(200.0));
+    if let LayerContent::Text { style, .. } = &mut inner.content {
+        style.align = Some(TextAlign::Center);
+    }
+    let masked = text_saying("masked", "Mask", Point { x: 20.0, y: 20.0 }, None);
+    let mut outer = group(
+        EvaluatedTransform::default(),
+        vec![
+            inner.clone(),
+            corner_rect("r", 5.0, 5.0, 10.0, 10.0, "#ff0000"),
+        ],
+    );
+    if let LayerContent::Group { mask, .. } = &mut outer.content {
+        *mask = Some(alpha_mask(vec![masked]));
+    }
+    let mut scene = empty_scene(400, 300);
+    scene.layers = vec![outer];
+    renderer.render(&scene).unwrap();
+
+    let (text, style, max_width) = text_content(&inner);
+    let metrics = renderer.measure_text(text, style, max_width);
+    assert_eq!(
+        renderer.text_layout(&scene, "inner"),
+        Some(TextLayout {
+            text: text.to_owned(),
+            metrics,
+            max_width,
+            align: TextAlign::Center,
+        })
+    );
+    // Through a group's mask too; an unset `align` is `Left`.
+    let layout = renderer
+        .text_layout(&scene, "masked")
+        .expect("a masked text");
+    assert_eq!(
+        (layout.text.as_str(), layout.align),
+        ("Mask", TextAlign::Left)
+    );
+    assert_eq!(renderer.text_layout(&scene, "r"), None);
+    assert_eq!(renderer.text_layout(&scene, "group"), None);
+    assert_eq!(renderer.text_layout(&scene, "missing"), None);
+}
+
+#[test]
+fn a_multi_line_text_s_box_is_its_anchor_box() {
+    let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+        return;
+    };
+    let mut scene = empty_scene(500, 300);
+    let layer = text_saying(
+        "t",
+        "First line\nSecond line",
+        Point { x: 100.0, y: 50.0 },
+        Some(300.0),
+    );
+    let (text, style, max_width) = text_content(&layer);
+    let metrics = renderer.measure_text(text, style, max_width);
+    let region = rendered_text_box(&mut renderer, &mut scene, layer.clone());
+    let text_box = region.text_box.unwrap();
+    // Unstroked, the texture is the anchor box: it records none.
+    assert_near_corners(text_box, region.anchor_box.unwrap_or(region.corners));
+    let height = 2.0 * metrics.line_height;
+    assert_near_corners(
+        text_box,
+        [
+            (100.0, 50.0),
+            (400.0, 50.0),
+            (400.0, 50.0 + height),
+            (100.0, 50.0 + height),
+        ]
+        .map(|(x, y)| Point { x, y }),
+    );
+}
+
+#[test]
+fn a_single_line_text_s_box_is_its_line_box() {
+    let Some(mut renderer) = transform_3d::transparent_renderer() else {
+        return;
+    };
+    let mut scene = empty_scene(400, 300);
+    let mut layer = text_saying("t", "HHH", Point { x: 200.0, y: 150.0 }, None);
+    layer.transform.anchor = Point { x: 0.5, y: 0.5 };
+    if let LayerContent::Text { style, .. } = &mut layer.content {
+        style.font_size = Some(96.0);
+    }
+    in_bundled_font(&mut renderer, &mut scene, &mut layer);
+    scene.layers = vec![layer.clone()];
+    renderer.set_record_hit_regions(true);
+    let frame = renderer.render(&scene).unwrap();
+    // Measured once the frame loaded the scene's fonts.
+    let (text, style, max_width) = text_content(&layer);
+    let metrics = renderer.measure_text(text, style, max_width);
+    assert!(metrics.cap_height > 0.0, "the font says how tall an H is");
+    let [top_left, top_right, _, bottom_left] =
+        renderer.hit_regions()[0].text_box.expect("a text box");
+    assert!(
+        (bottom_left.y - top_left.y - metrics.line_height).abs() <= 1.0,
+        "{top_left:?} {bottom_left:?} is not {} tall",
+        metrics.line_height
+    );
+    assert!((top_right.x - top_left.x - metrics.width).abs() <= 1.0);
+
+    // The glyphs' ink: how much of each row the H's stems cover, so a row
+    // the ink's top edge crosses counts for the part of it inked.
+    let coverage = (0..frame.height())
+        .map(|y| {
+            let alpha = (0..frame.width())
+                .map(|x| pixel_at(&frame, x, y)[3])
+                .max()
+                .unwrap_or(0);
+            f64::from(alpha) / 255.0
+        })
+        .collect::<Vec<_>>();
+    let last = coverage.iter().rposition(|&row| row > 0.5).expect("ink");
+    let ink_bottom = (last + 1) as f64;
+    let ink_top = ink_bottom - coverage.iter().sum::<f64>();
+    assert!(
+        ink_top >= top_left.y && ink_bottom <= bottom_left.y,
+        "ink {ink_top}..{ink_bottom} is outside {top_left:?}..{bottom_left:?}"
+    );
+    // A pixel each way, and one more: cosmic-text draws glyphs on their
+    // baseline moved up to a whole row (`LayoutGlyph::physical`), and the
+    // font's cap height is a table's value, not the H's drawn outline.
+    let cap_top = top_left.y + metrics.ascent - metrics.cap_height;
+    let baseline = top_left.y + metrics.ascent;
+    assert!(
+        (ink_top - cap_top).abs() <= 2.0,
+        "ink from {ink_top}, caps from {cap_top}"
+    );
+    assert!(
+        (ink_bottom - baseline).abs() <= 2.0,
+        "ink to {ink_bottom}, baseline at {baseline}"
+    );
+}
+
+#[test]
+fn a_cached_text_texture_keeps_its_box() {
+    let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+        return;
+    };
+    let mut scene = empty_scene(400, 300);
+    let mut layer = text_saying("t", "Cached", Point { x: 40.0, y: 60.0 }, None);
+    in_bundled_font(&mut renderer, &mut scene, &mut layer);
+    let first = rendered_text_box(&mut renderer, &mut scene, layer.clone());
+    let (text, style, max_width) = text_content(&layer);
+    let metrics = renderer.measure_text(text, style, max_width);
+    let second = rendered_text_box(&mut renderer, &mut scene, layer.clone());
+    assert_eq!(second.text_box, first.text_box);
+    let [top_left, top_right, _, bottom_left] = first.text_box.unwrap();
+    assert!((bottom_left.y - top_left.y - metrics.line_height).abs() <= 1.0);
+    assert!((top_right.x - top_left.x - metrics.width).abs() <= 1.0);
+
+    // Rasterized smaller than drawn, to fit a smaller texture limit.
+    renderer.textures.clear();
+    renderer.max_texture_dimension = 64;
+    let shrunk = rendered_text_box(&mut renderer, &mut scene, layer.clone());
+    let raster_scale = renderer
+        .textures
+        .values()
+        .map(|cached| cached.texture.raster_scale)
+        .fold(f32::INFINITY, f32::min);
+    assert!(raster_scale < 1.0);
+    let cached = rendered_text_box(&mut renderer, &mut scene, layer);
+    assert_eq!(cached.text_box, shrunk.text_box);
+    // The glyphs sit on a baseline moved to a whole texture row, which is
+    // `1 / raster_scale` drawn pixels tall once the texture is shrunk.
+    assert_corners_within(
+        shrunk.text_box.unwrap(),
+        first.text_box.unwrap(),
+        1.0 / f64::from(raster_scale) + 1.0,
+    );
+}
+
+#[test]
+fn a_baseline_anchored_text_s_box_starts_an_ascent_above_its_position() {
+    let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+        return;
+    };
+    let mut scene = empty_scene(400, 300);
+    let mut layer = text_saying("t", "Baseline", Point { x: 50.0, y: 120.0 }, None);
+    if let LayerContent::Text {
+        baseline_anchor, ..
+    } = &mut layer.content
+    {
+        *baseline_anchor = true;
+    }
+    let (text, style, max_width) = text_content(&layer);
+    let metrics = renderer.measure_text(text, style, max_width);
+    let region = rendered_text_box(&mut renderer, &mut scene, layer);
+    let top = 120.0 - metrics.ascent;
+    let (right, bottom) = (50.0 + metrics.width, top + metrics.line_height);
+    assert_near_corners(
+        region.text_box.unwrap(),
+        [(50.0, top), (right, top), (right, bottom), (50.0, bottom)].map(|(x, y)| Point { x, y }),
+    );
+}
+
+#[test]
+fn a_mirrored_text_s_box_reverses_its_order() {
+    let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+        return;
+    };
+    let mut scene = empty_scene(400, 300);
+    let mut layer = text_saying(
+        "t",
+        "First\nSecond",
+        Point { x: 300.0, y: 50.0 },
+        Some(200.0),
+    );
+    layer.transform.scale = Point { x: -1.0, y: 1.0 };
+    let (text, style, max_width) = text_content(&layer);
+    let metrics = renderer.measure_text(text, style, max_width);
+    let region = rendered_text_box(&mut renderer, &mut scene, layer);
+    let text_box = region.text_box.unwrap();
+    // The layout's top-left is drawn at the right, as the quad's is.
+    let bottom = 50.0 + 2.0 * metrics.line_height;
+    assert_near_corners(
+        text_box,
+        [
+            (300.0, 50.0),
+            (100.0, 50.0),
+            (100.0, bottom),
+            (300.0, bottom),
+        ]
+        .map(|(x, y)| Point { x, y }),
+    );
+    assert!(
+        region.corners[0].x > region.corners[1].x,
+        "{:?}",
+        region.corners
+    );
+}
+
+#[test]
+fn a_tilted_text_s_box_is_projected() {
+    let Some(mut renderer) = renderer(GpuRenderOptions::default()) else {
+        return;
+    };
+    let mut scene = empty_scene(600, 400);
+    let layer = transform_3d::in_perspective(
+        text_saying(
+            "t",
+            "First line\nSecond line",
+            Point { x: 100.0, y: 100.0 },
+            Some(300.0),
+        ),
+        40.0,
+        0.0,
+        800.0,
+    );
+    let homography = layer.transform.homography();
+    let (text, style, max_width) = text_content(&layer);
+    let metrics = renderer.measure_text(text, style, max_width);
+    let region = rendered_text_box(&mut renderer, &mut scene, layer);
+    let text_box = region.text_box.unwrap();
+    // The layout rectangle, from the anchor (its top-left), projected.
+    let height = 2.0 * metrics.line_height;
+    let projected = [(0.0, 0.0), (300.0, 0.0), (300.0, height), (0.0, height)].map(|(x, y)| {
+        let [x, y, _] = celesta_composition::project(&homography, x, y);
+        Point { x, y }
+    });
+    assert_near_corners(text_box, projected);
+    assert_near_corners(text_box, region.anchor_box.unwrap_or(region.corners));
+}
+
 fn assert_corners(region: &HitRegion, expected: [(f64, f64); 4]) {
     for (corner, (x, y)) in region.corners.iter().zip(expected) {
         assert!(
@@ -5498,22 +5861,24 @@ fn font_run_text_matches_cpu() {
 
 #[test]
 fn an_unwrapped_colored_line_fits_the_gpu_texture_limit() {
-    use crate::text::{PendingText, rasterize_text};
+    use crate::text::{PendingText, TextSize, rasterize_text};
     use celesta_composition::TextColorRun;
     let mut rasterizer = celesta_renderer::TextRasterizer::new();
     let text = "const n = 1; ".repeat(100);
+    let style = TextStyle {
+        font_size: Some(24.0),
+        color_runs: vec![TextColorRun {
+            start: 0,
+            end: text.chars().count(),
+            color: "#ff0000".into(),
+        }],
+        ..Default::default()
+    };
     let job = PendingText {
         item: 0,
         key: "long-line".into(),
-        style: TextStyle {
-            font_size: Some(24.0),
-            color_runs: vec![TextColorRun {
-                start: 0,
-                end: text.chars().count(),
-                color: "#ff0000".into(),
-            }],
-            ..Default::default()
-        },
+        size: TextSize::of(&rasterizer.measure(&text, &style, None), 0),
+        style,
         text,
         max_width: None,
         raster_scale: 1.0,

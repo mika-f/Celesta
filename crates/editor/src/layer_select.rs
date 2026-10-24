@@ -95,9 +95,12 @@ pub(crate) fn source_lookup_target(
 /// reload), nor while a row's scrub is pressed. A released scrub's frame
 /// asks, so the targets its held write waits for get resolved. The runtime
 /// looks the source up without the overrides after drawing the frame with
-/// them, so the drawn frame keeps the scrubbed value.
-pub(crate) fn lookup_allowed(transform_drag: bool, scrub_pressed: bool) -> bool {
-    !transform_drag && !scrub_pressed
+/// them, so the drawn frame keeps the scrubbed value. Nor while a text is
+/// edited on the canvas (`text_edit`): a keystroke asks the runtime
+/// nothing. A committed text, drawn until its reload, asks as a released
+/// scrub does.
+pub(crate) fn lookup_allowed(transform_drag: bool, scrub_pressed: bool, text_edit: bool) -> bool {
+    !transform_drag && !scrub_pressed && !text_edit
 }
 
 /// Whether the outcome of opening a source belongs in the panel: `started`

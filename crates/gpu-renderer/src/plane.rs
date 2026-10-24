@@ -701,10 +701,7 @@ impl GpuRenderer {
             // What the text and paths still pending cover, by item.
             let mut pending: Vec<(usize, Option<PixelBounds>)> = Vec::new();
             for text in &self.pending_texts[texts..] {
-                pending.push((
-                    text.item,
-                    Some(text.measured_bounds(&mut self.text_rasterizer)),
-                ));
+                pending.push((text.item, Some(text.measured_bounds())));
             }
             for path in &self.pending_paths[paths..] {
                 pending.push((path.item, path.shape_box()));

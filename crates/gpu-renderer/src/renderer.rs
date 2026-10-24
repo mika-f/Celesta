@@ -13,7 +13,7 @@ use crate::plane::PlaneEntry;
 use crate::quantize::{QuantizeOutput, Quantizer};
 use crate::readback::{ReadbackLayout, ReadbackSlot, ReadbackWorker, SlotReadback, rgba_texture};
 use crate::shader::ShaderProcessor;
-use crate::text::{PendingText, TextSize};
+use crate::text::{PendingText, TextLayout, TextSize, find_layer};
 use crate::texture::{
     CachedTexture, CanvasTexture, DecodedImage, LayerTexture, canvas_format, upload_texture,
 };
@@ -26,9 +26,9 @@ use crate::types::{
 };
 use crate::yuv::YuvConverter;
 use crate::{BYTES_PER_PIXEL, PIPELINE_DEPTH};
-use celesta_composition::Scene;
+use celesta_composition::{LayerContent, Scene, TextAlign, TextStyle};
 use celesta_media::{VideoFrame, VideoFrameDecoder};
-use celesta_renderer::{FontFallback, MissingGlyphs, TextRasterizer};
+use celesta_renderer::{FontFallback, MissingGlyphs, TextMetrics, TextRasterizer};
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::mpsc;
@@ -417,6 +417,38 @@ impl GpuRenderer {
     /// family and weight are listed once, with the first of them.
     pub fn missing_glyphs(&self) -> &[MissingGlyphs] {
         &self.missing_glyphs
+    }
+
+    /// Lays `text` out as the last rendered frame's fonts do (call after a
+    /// render), in layout units.
+    pub fn measure_text(
+        &mut self,
+        text: &str,
+        style: &TextStyle,
+        max_width: Option<f64>,
+    ) -> TextMetrics {
+        self.text_rasterizer.measure(text, style, max_width)
+    }
+
+    /// The layout of text layer `layer` of `scene` (through groups and
+    /// masks), measured as `measure_text` does; `None` when there is no such
+    /// text layer.
+    pub fn text_layout(&mut self, scene: &Scene, layer: &str) -> Option<TextLayout> {
+        let LayerContent::Text {
+            text,
+            style,
+            max_width,
+            ..
+        } = &find_layer(&scene.layers, layer)?.content
+        else {
+            return None;
+        };
+        Some(TextLayout {
+            text: text.clone(),
+            metrics: self.measure_text(text, style, *max_width),
+            max_width: *max_width,
+            align: style.align.unwrap_or(TextAlign::Left),
+        })
     }
 
     /// Whether later frames record `hit_regions`; off by default, when
