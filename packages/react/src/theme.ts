@@ -8,6 +8,7 @@ import type { ReactNode } from 'react';
 
 import { checkFontFeatures } from './font-features';
 import type { FontFamily, Paint, TextStyle } from './scene';
+import { markTransparent } from './source-chain';
 
 /** Font stacks and colors by name, as `<Theme>` takes them and `useTheme()` returns them. */
 export interface ThemeValues {
@@ -71,6 +72,9 @@ export function Theme({ fonts, colors, children }: ThemeProps): ReturnType<typeo
   const value = React.useMemo(() => mergeTheme(outer, { fonts, colors }), [outer, fonts, colors]);
   return React.createElement(ThemeContext.Provider, { value }, children);
 }
+
+// Hands its caller's children a context and draws nothing of its own.
+markTransparent(Theme);
 
 /** The fonts and colors the nearest `<Theme>`s define; empty outside any. */
 export function useTheme(): ResolvedTheme {

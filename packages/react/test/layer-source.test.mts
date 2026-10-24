@@ -5,7 +5,7 @@ import { createContext, createElement as h, useContext } from 'react';
 import type { ReactElement, ReactNode } from 'react';
 import { test } from 'vitest';
 
-import { Composition, FreezeFrame, Group, Loop, MotionBlur, Rect, Scenes, Sequence, Series, Stagger, defineScenes } from '../src/index.js';
+import { Composition, FreezeFrame, Group, Instances, Loop, MotionBlur, Rect, Scenes, Sequence, Series, Stagger, Static, Theme, defineScenes } from '../src/index.js';
 import type { Layer, Time } from '../src/index.js';
 import { jsxDEV } from '../src/jsx-dev-runtime.js';
 import type { SourcePosition } from '../src/jsx-dev-runtime.js';
@@ -250,6 +250,40 @@ test('Scenes, Series and Stagger are wrapper entries', () => {
   assert.deepEqual(kinds(staggered, 10), [
     ['Rect', 'primitive'],
     ['Stagger', 'wrapper'],
+    ['Composition', 'wrapper'],
+  ]);
+});
+
+test('Theme is a wrapper entry', () => {
+  const composition = mount(() =>
+    comp(jsxDEV(Theme, { colors: { paper: '#f4f1ea' }, children: rectAt(5, { fill: 'paper' }) }, undefined, false, at('scene.tsx', 4, 5))),
+  );
+  assert.deepEqual(reportFor(composition, 0).chain.map(({ name, kind }) => [name, kind]), [
+    ['Rect', 'primitive'],
+    ['Theme', 'wrapper'],
+    ['Composition', 'wrapper'],
+  ]);
+});
+
+// `<Static>` and `<Instances>` draw a layer of their own, which their entry is
+// the element of; as wrappers, that layer would take its caller's position.
+test('Static and Instances stay component entries', () => {
+  const statics = mount(() => comp(jsxDEV(Static, { children: rectAt(5) }, undefined, false, at('scene.tsx', 4, 5))));
+  assert.deepEqual(reportFor(statics, 0, 0).chain.map(({ name, kind }) => [name, kind]), [
+    ['Static', 'component'],
+    ['Composition', 'wrapper'],
+  ]);
+  assert.deepEqual(reportFor(statics, 0).chain.map(({ name, kind }) => [name, kind]), [
+    ['Rect', 'primitive'],
+    ['Static', 'component'],
+    ['Composition', 'wrapper'],
+  ]);
+
+  const instances = mount(() =>
+    comp(jsxDEV(Instances, { count: 1, x: [0], y: [0], width: 1, height: 1 }, undefined, false, at('scene.tsx', 4, 5))),
+  );
+  assert.deepEqual(reportFor(instances, 0).chain.map(({ name, kind }) => [name, kind]), [
+    ['Instances', 'component'],
     ['Composition', 'wrapper'],
   ]);
 });
