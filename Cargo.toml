@@ -28,7 +28,7 @@ repository = "https://github.com/mika-f/celesta"
 rust-version = "1.89"
 
 [workspace.dependencies]
-ez-ffmpeg = { version = "0.18" }
+ez-ffmpeg = { version = "0.19" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 signalsmith-stretch = "0.1.3"
