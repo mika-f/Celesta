@@ -21,6 +21,7 @@ use crate::actions::{
     ClearExportRange, GoToEnd, GoToStart, NextFrame, PreviousFrame, SetExportIn, SetExportOut,
     ToggleInteractive, ToggleLoop, TogglePlayback, ToggleSafeAreas,
 };
+use crate::element_rows::{InteractiveToggle, interactive_toggle};
 use crate::icons::CelestaIcon;
 use crate::layer_select::{SourceLookup, letterbox, outline_quads, scene_point};
 use crate::meter::audio_meter;
@@ -88,7 +89,7 @@ impl EditorView {
             _ => None,
         }
         .or_else(|| {
-            self.transform
+            self.element_edit
                 .error(self.selected_layer.as_deref())
                 .map(str::to_owned)
         });
@@ -736,18 +737,43 @@ impl EditorView {
     /// without source positions; entering interactive mode sweeps the
     /// composition for scenes, and leaving it drops the selection and the
     /// sweep's index.
+    ///
+    /// Leaving is a click on nothing first: the rows' typed text is
+    /// submitted, and when their commits are held the mode stays until they
+    /// are written (frames go on looking the source up, which they wait
+    /// for); toggling again meanwhile stays in the mode.
     pub(crate) fn toggle_interactive(&mut self, cx: &mut Context<Self>) {
         if !self.is_react_preview() {
             return;
         }
-        self.interactive = !self.interactive;
-        if !self.interactive {
-            self.clear_layer_selection();
-            self.hit_regions.clear();
+        let leaving = self.element_rows.leaving_interactive;
+        if self.interactive && !leaving {
+            self.select_layer(None, cx);
         }
+        let waits = self.element_rows.selection.waiting();
+        match interactive_toggle(self.interactive, leaving, waits) {
+            InteractiveToggle::Enter => {
+                self.interactive = true;
+                self.refresh_preview();
+                self.refresh_occurrences(false);
+            }
+            InteractiveToggle::Leave => self.leave_interactive(),
+            InteractiveToggle::LeaveAfterCommits => self.element_rows.leaving_interactive = true,
+            InteractiveToggle::StayInteractive => {
+                self.element_rows.leaving_interactive = false;
+                self.element_rows.selection.clear();
+            }
+        }
+        cx.notify();
+    }
+
+    /// Leaves the interactive mode, its selection already cleared.
+    fn leave_interactive(&mut self) {
+        self.element_rows.leaving_interactive = false;
+        self.interactive = false;
+        self.hit_regions.clear();
         self.refresh_preview();
         self.refresh_occurrences(false);
-        cx.notify();
     }
 
     /// Selects the topmost layer under the click in the shown frame, or
@@ -770,8 +796,9 @@ impl EditorView {
         self.select_layer(hit, cx);
     }
 
-    /// Makes `layer` the selection (or clears it), looking up its source.
-    pub(crate) fn select_layer(&mut self, layer: Option<String>, cx: &mut Context<Self>) {
+    /// Makes `layer` the selection (or clears it) at once, looking up its
+    /// source; `select_layer` is what a person's request goes through.
+    pub(crate) fn change_selection(&mut self, layer: Option<String>, cx: &mut Context<Self>) {
         if layer == self.selected_layer {
             return;
         }
@@ -786,15 +813,22 @@ impl EditorView {
         cx.notify();
     }
 
-    /// Forgets the selected layer and its source.
+    /// Forgets the selected layer and its source, the commits held for it,
+    /// and a selection change waiting for them.
     pub(crate) fn clear_layer_selection(&mut self) {
+        self.forget_held_rows();
         self.selected_layer = None;
         self.source_lookup = None;
         self.source_lookup_stale = false;
         self.launch_error = None;
-        self.transform.reset();
+        self.element_edit.reset();
         self.layer_frame = None;
         self.transform_drag = None;
+        self.element_rows.scrub = None;
+        // A leave of the interactive mode waited for this.
+        if self.element_rows.leaving_interactive {
+            self.leave_interactive();
+        }
     }
 }
 
@@ -893,7 +927,7 @@ fn place_handles(
     bounds: Bounds<Pixels>,
     frame_size: (f32, f32),
     frame: &LayerFrame,
-    editable: &[crate::transform_edit::TransformProp],
+    editable: &[crate::element_edit::TransformProp],
     window: &mut Window,
 ) -> Option<PlacedHandles> {
     let (left, top, scale) = letterbox(bounds, frame_size)?;

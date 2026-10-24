@@ -1,6 +1,6 @@
 use celesta_source_edit::{
     Edit, EditTarget, EditValue, ElementRef, LiteralForm, LockReason, ResolveContext, Span, apply,
-    element_at, has_attribute, resolve,
+    element_at, has_attribute, resolve, resolve_call_site_prop,
 };
 
 fn ctx() -> ResolveContext {
@@ -760,4 +760,38 @@ fn spread_after_the_attribute_locks() {
         run(&text, "x", &with_received(5.0)),
         EditTarget::Literal { .. }
     ));
+}
+
+#[test]
+fn a_component_call_s_props_resolve_without_a_received_value() {
+    let text = "export const Scene = ({ title }) => (\n  <PriceTag label=\"Sale\" tone={2} on name={title} />\n);\n";
+    let call = element_at(text, 2, 3).expect("the call is at 2:3");
+    let ctx = ResolveContext {
+        primitive: false,
+        component_props: true,
+        ..ctx()
+    };
+    let prop = |name: &str| resolve_call_site_prop(text, &call, name, &ctx);
+
+    assert!(matches!(
+        prop("label"),
+        EditTarget::Literal { value: EditValue::String(label), form: LiteralForm::Quoted('"'), .. }
+            if label == "Sale"
+    ));
+    assert_eq!(number_literal(text, &prop("tone")), ("2", 2.0));
+    assert!(matches!(
+        prop("on"),
+        EditTarget::Literal {
+            value: EditValue::Bool(true),
+            form: LiteralForm::BareTrue,
+            ..
+        }
+    ));
+    assert!(matches!(prop("name"), EditTarget::Locked(_)));
+    // `resolve` checks a literal against the value the runtime received,
+    // which a component's own props have none of.
+    assert_eq!(
+        resolve(text, &call, "label", &ctx),
+        locked(LockReason::OverriddenByParent)
+    );
 }

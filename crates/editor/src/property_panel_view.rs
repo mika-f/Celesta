@@ -1,22 +1,18 @@
 //! Renders the Properties section of the React Preview panel; the state and
 //! the commit flow live in `property_panel.rs`.
 
+use crate::property_controls::{number_hint, render_control};
 use crate::property_panel::{
-    PropertyRow, RowControl, TextUpdate, differs_from_default, field_label, issues_by_key,
-    number_hint, ordered_keys, parse_color, value_text,
+    PropertyRow, TextUpdate, differs_from_default, field_label, issues_by_key, ordered_keys,
+    property_control_handler, value_text,
 };
 use crate::view::EditorView;
 use celesta_react_bridge::{ComponentPropertyField, EffectiveValue, ValueSource, effective_values};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::color_picker::ColorPicker;
-use gpui_kit::component::input::{Escape, Input, InputState};
-use gpui_kit::component::select::Select;
 use gpui_kit::component::spinner::Spinner;
-use gpui_kit::component::switch::Switch;
-use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _};
+use gpui_kit::component::{ActiveTheme as _, Sizable as _};
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyElement, Context, ElementId, Entity, Hsla, SharedString, div};
-use serde_json::Value;
+use gpui_kit::{AnyElement, Context, ElementId, SharedString, div};
 
 /// A row control's id, namespaced by the property key.
 fn row_id(control: &str, key: &str) -> ElementId {
@@ -152,119 +148,21 @@ impl EditorView {
         locked: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        match (&row.control, &row.field) {
-            (RowControl::Text(input), ComponentPropertyField::Path { .. }) => {
-                let choose_key = key.to_owned();
-                let none_key = key.to_owned();
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .child(Self::property_input(key, input, locked, None, cx)),
-                    )
-                    .child(
-                        Button::new(row_id("choose", key))
-                            .outline()
-                            .small()
-                            .label("Choose…")
-                            .disabled(locked)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.choose_property_path(&choose_key, cx);
-                            })),
-                    )
-                    .child(
-                        Button::new(row_id("none", key))
-                            .ghost()
-                            .small()
-                            .label("None")
-                            .disabled(locked)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                let none = Some(Value::String(String::new()));
-                                this.commit_property(&none_key, none, TextUpdate::Always, cx);
-                            })),
-                    )
-                    .into_any_element()
-            }
-            (RowControl::Text(input), field) => {
-                let hint = match field {
-                    ComponentPropertyField::Number { min, max, .. } => number_hint(*min, *max),
-                    _ => None,
-                };
-                Self::property_input(key, input, locked, hint, cx).into_any_element()
-            }
-            (RowControl::Switch, _) => {
-                let key = key.to_owned();
-                Switch::new(row_id("switch", &key))
-                    .small()
-                    .checked(row.state.shown.as_bool().unwrap_or(false))
-                    .disabled(locked)
-                    .on_click(cx.listener(move |this, checked: &bool, _, cx| {
-                        let value = Some(Value::Bool(*checked));
-                        this.commit_property(&key, value, TextUpdate::Keep, cx);
-                    }))
-                    .into_any_element()
-            }
-            (RowControl::Select(select), _) => Select::new(select)
-                .small()
-                .disabled(locked)
-                .placeholder(value_text(&row.state.shown))
-                .into_any_element(),
-            (RowControl::Color { text, picker }, _) => div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .child(if locked {
-                    Self::color_swatch(parse_color(&row.state.shown), cx).into_any_element()
-                } else {
-                    ColorPicker::new(picker).small().into_any_element()
-                })
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .child(Self::property_input(key, text, locked, None, cx)),
-                )
-                .into_any_element(),
-        }
-    }
-
-    /// A row's text input. Escape shows the row's value again.
-    fn property_input(
-        key: &str,
-        input: &Entity<InputState>,
-        locked: bool,
-        hint: Option<String>,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let key = key.to_owned();
-        let muted = cx.theme().muted_foreground;
-        div()
-            .w_full()
-            .on_action(cx.listener(move |this, _: &Escape, _, cx| {
-                this.restore_property_text(&key, cx);
-            }))
-            .child(
-                Input::new(input)
-                    .small()
-                    .disabled(locked)
-                    .when_some(hint, |input, hint| {
-                        input.suffix(div().text_xs().text_color(muted).child(hint))
-                    }),
-            )
-    }
-
-    /// The color a disabled color row shows in place of the picker.
-    fn color_swatch(color: Option<Hsla>, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .flex_none()
-            .size_5()
-            .rounded(cx.theme().radius)
-            .border_1()
-            .border_color(cx.theme().input)
-            .when_some(color, |swatch, color| swatch.bg(color))
+        let hint = match &row.field {
+            ComponentPropertyField::Number { min, max, .. } => number_hint(*min, *max),
+            // What the select shows when the value is none of its options.
+            ComponentPropertyField::Select { .. } => Some(value_text(&row.state.shown)),
+            _ => None,
+        };
+        render_control(
+            row_id("control", key),
+            &row.kind,
+            &row.control,
+            locked,
+            row.state.shown.as_bool().unwrap_or(false),
+            hint,
+            cx,
+            property_control_handler(key),
+        )
     }
 }

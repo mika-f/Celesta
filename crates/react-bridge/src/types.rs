@@ -268,6 +268,11 @@ pub struct ReactCompositionMetadata {
     /// a `ReactBridge`. A registered component with no `schema` argument has
     /// no entry here.
     pub component_schemas: BTreeMap<String, ComponentPropertySchema>,
+    /// Every primitive's property table, keyed by the primitive's name as a
+    /// source chain reports it: Celesta's own, and those of the packages the
+    /// entry imports (`@celesta/shapes`). The order inside a table is its
+    /// `Vec`s'. Empty from a runtime that sends none.
+    pub primitive_properties: BTreeMap<String, PrimitivePropertyTable>,
     /// The project property schema declared via `defineProjectProperties()`,
     /// or `None` when the entry declared none (distinct from an empty
     /// schema). Fields share `ComponentPropertyField`'s shape with component
@@ -449,6 +454,124 @@ impl ComponentPropertyField {
 /// Rust-side counterpart of `ComponentPropertySchema<Props>` in
 /// `packages/react/src/registry.ts`.
 pub type ComponentPropertySchema = BTreeMap<String, ComponentPropertyField>;
+
+/// How the editor edits one prop of a primitive, and the value it has when
+/// the element does not write it (`PrimitivePropertyField` in
+/// `packages/react/src/property-tables.ts`).
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum PrimitivePropertyField {
+    Number {
+        #[serde(default)]
+        default_value: Option<f64>,
+        #[serde(default)]
+        min: Option<f64>,
+        #[serde(default)]
+        max: Option<f64>,
+        /// How much one pixel of a scrub changes the value.
+        #[serde(default)]
+        step: Option<f64>,
+        /// Only whole numbers (a polygon's `sides`).
+        #[serde(default)]
+        integer: Option<bool>,
+    },
+    String {
+        #[serde(default)]
+        default_value: Option<String>,
+    },
+    /// A `<Text>`'s children.
+    Text {
+        #[serde(default)]
+        default_value: Option<String>,
+    },
+    Boolean {
+        #[serde(default)]
+        default_value: Option<bool>,
+    },
+    Color {
+        #[serde(default)]
+        default_value: Option<String>,
+    },
+    Select {
+        options: Vec<String>,
+        #[serde(default)]
+        default_value: Option<String>,
+    },
+    /// A file path, as an `<Image>`'s `src`.
+    Path,
+}
+
+/// The props that hold a primitive's box: `width`/`height`, `radius`, or
+/// only a width (`<Text>`'s `maxWidth`).
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrimitiveSize {
+    #[serde(default)]
+    pub width: Option<String>,
+    #[serde(default)]
+    pub height: Option<String>,
+    #[serde(default)]
+    pub radius: Option<String>,
+}
+
+/// One prop of a [`PrimitivePropertyGroup`].
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(from = "WirePropertyRow")]
+pub struct PrimitivePropertyRow {
+    pub key: String,
+    pub field: PrimitivePropertyField,
+    /// The props type requires the prop, so the editor never removes it.
+    /// Sent inside `field` (`{ "type": "number", "required": true }`), as the
+    /// table declares it.
+    pub required: bool,
+}
+
+/// [`PrimitivePropertyRow`] as the runtime sends it.
+#[derive(Deserialize)]
+struct WirePropertyRow {
+    key: String,
+    field: WirePropertyField,
+}
+
+#[derive(Deserialize)]
+struct WirePropertyField {
+    #[serde(flatten)]
+    field: PrimitivePropertyField,
+    #[serde(default)]
+    required: bool,
+}
+
+impl From<WirePropertyRow> for PrimitivePropertyRow {
+    fn from(row: WirePropertyRow) -> Self {
+        Self {
+            key: row.key,
+            field: row.field.field,
+            required: row.field.required,
+        }
+    }
+}
+
+/// One section of a primitive's properties, its props in declaration order.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrimitivePropertyGroup {
+    pub name: String,
+    pub fields: Vec<PrimitivePropertyRow>,
+}
+
+/// What the editor edits on one primitive (`<Rect>`, `<Star>`, ...): its
+/// sections in declaration order.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrimitivePropertyTable {
+    #[serde(default)]
+    pub size: Option<PrimitiveSize>,
+    pub groups: Vec<PrimitivePropertyGroup>,
+}
 
 /// One component-resolution request: a `registerComponent()` name plus the
 /// timeline item's configured props (see [`ReactBridge::resolve_components`]).

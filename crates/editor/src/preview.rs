@@ -7,7 +7,7 @@ use celesta_composition::{Layer, LayerContent, Scene, ShaderSource, Time};
 use celesta_gpu_renderer::{GpuRenderer, HitRegion, LayerFrame, RenderQuality, layer_frame};
 use celesta_react_bridge::{
     ComponentPropertyField, ComponentResolutionRequest, ComponentResolutions, PrepareDependency,
-    PropOverride, PropertyInputs, PropertyIssue, ReactBridge, ReactChapter,
+    PrimitivePropertyTable, PropOverride, PropertyInputs, PropertyIssue, ReactBridge, ReactChapter,
     ReactCompositionMetadata, SpawnOptions,
 };
 use gpui_kit::RenderImage;
@@ -131,6 +131,9 @@ pub(crate) struct ReactPreview {
     /// The selected composition's `<Composition chapters>` as last loaded;
     /// kept across failed reloads.
     pub(crate) chapters: Vec<ReactChapter>,
+    /// The primitives' property tables as last loaded, keyed by primitive
+    /// name; kept across failed reloads.
+    pub(crate) primitive_properties: BTreeMap<String, PrimitivePropertyTable>,
     pub(crate) entry: PathBuf,
     /// Newest source-file modification time seen under the entry's directory
     /// (or of the `--props-file`). The reload watcher compares against this
@@ -159,6 +162,14 @@ pub(crate) struct ReactPreview {
     pub(crate) property_load_error: Option<String>,
     /// The number of the newest applied reload that read the props file.
     pub(crate) properties_read_reload: u64,
+}
+
+impl ReactPreview {
+    /// The property table of the primitive `name` (`Rect`, `Star`, ...), as
+    /// a source chain names it.
+    pub(crate) fn primitive_table(&self, name: &str) -> Option<&PrimitivePropertyTable> {
+        self.primitive_properties.get(name)
+    }
 }
 
 /// The entry's project property schema with the order it declared its keys in

@@ -59,8 +59,11 @@ Recognized literal forms, besides the numeric ones resolved today:
 | Text children: one `{name}` child | String | resolved like an attribute value that is an identifier: a const, or a pass-through |
 | `style={{ fontSize: 48 }}` (object literal property) | per property | the property's value |
 
-Colors are strings; the panel validates them (`#RRGGBB`, `#RRGGBBAA`, or a
-`<Theme>` color name). A const binding (`const LABEL = 'Sale'`) resolves as
+Colors are strings; the panel validates them: `#RRGGBB`, `#RRGGBBAA`, or a
+`<Theme>` color name, a word matching `^[A-Za-z][A-Za-z0-9_-]*$` written as
+typed. The editor has no list of theme names, so the picker shows no color
+for a name. Anything else is refused with "Enter a color: #RRGGBB,
+#RRGGBBAA, or a theme color name". A const binding (`const LABEL = 'Sale'`) resolves as
 numbers do today, with the same `SharedBinding` lock. The same comparison with
 the received value runs for every type (`OverriddenByParent`). Today the
 runtime reports only the six transform numbers as received props; the report's
@@ -69,10 +72,18 @@ table, as JSON (finite numbers, strings, booleans; other values omitted), plus
 `children` when it is a string.
 
 `Text`'s `fontFamily`, `fontSize`, `fontWeight`, and `color` are shorthand for
-`style`, and `style` wins. A Text row edits `style={{ … }}`'s property when
-`style` is an object literal that sets it, and the shorthand otherwise. When
-`style` is not an object literal (`style={mono(20, C.paper)}`), those rows are
-locked ("May be set by `style`").
+`style`, and `style` wins. They map to `style.fontFamily`, `style.fontSize`,
+`style.fontWeight`, and `style.fill` (`themedTextStyle` fills `fill` from
+`color`). A Text row edits `style={{ … }}`'s property when `style` is an
+object literal whose own properties set it (`{ ...base, fontSize: 48 }`
+counts, since the key after the spread wins), and the shorthand otherwise,
+also when there is no `style`: beside `style={{ fontWeight: 700 }}`, editing
+Font Size inserts `fontSize={48}` and leaves the object alone. Those rows are
+locked ("May be set by `style`") when `style` is not an object literal
+(`style={mono(20, C.paper)}`), when the object has a spread that may set the
+key (`{ fontSize: 48, ...base }`), and when the element has a spread with no
+`style` written after it (`<Text {...rest} fontSize={48}>`: `rest.style`
+may set it).
 
 ### Non-primitive elements
 
@@ -191,8 +202,15 @@ PropOverride { file (absolute), line, column, prop, value }
   `useMemo` at an override's position follows only the first drag frame:
   later frames reuse the element created then, so `jsxDEV` never sees their
   values (a known limitation; a test pins it).
-- Field edits (typing in a Transform row) write without a preview, and need
-  no overrides.
+- Field edits (typing in a row) write without a preview, and need no
+  overrides. Scrubbing a number row's label previews as a drag does: from
+  the first move, the row's value overrides the prop its write changes (the
+  element's prop, `style.<key>` for a `Text` font row, whose override sets
+  that key in a copy of `style`, or the call site's `param` for a
+  pass-through), at positions fixed for the scrub; release writes once,
+  Escape drops the overrides and writes nothing. Input rows do not scrub (a
+  `const` is not a prop to override), nor do locked and keyframe rows. A
+  scrub and a canvas drag never run together.
 
 ## Property tables (`packages/react`, `packages/shapes`)
 
@@ -201,23 +219,47 @@ are declared next to the components, so they cannot drift from the props
 types:
 
 ```ts
-// packages/react/src/property-tables.ts
-export const primitiveProperties = {
-  Rect: {
-    size: { width: 'width', height: 'height' },
-    groups: {
-      Transform: { x: num(0), y: num(0), rotation: num(0), scale: num(1), anchorX: num(0), anchorY: num(0), opacity: num(1, 0, 1) },
-      Size: { width: num(), height: num(), cornerRadius: num(0) },
-      Appearance: { fill: color(), stroke: color(), strokeWidth: num(0) },
+// packages/react/src/components.ts, beside <Rect>
+registerPrimitiveProperties('Rect', propertyTable<RectProps>({
+  size: { width: 'width', height: 'height' },
+  groups: {
+    Transform: {
+      x: num(0), y: num(0), rotation: num(0), scale: num(1, { step: 0.01 }),
+      anchorX: num(0, { step: 0.01 }), anchorY: num(0, { step: 0.01 }), opacity: num(1, { min: 0, max: 1 }),
     },
+    Size: {
+      width: required(num(undefined, { min: 0 })),
+      height: required(num(undefined, { min: 0 })),
+      cornerRadius: num(0, { min: 0 }),
+    },
+    Appearance: { fill: color(), stroke: color(), strokeWidth: num(0, { min: 0 }) },
   },
-  // Group, Image, Text, Video, and @celesta/shapes' Ellipse, Circle,
-  // Triangle, Polygon, Star, Pie, Heart
-} satisfies PropertyTables;
+}));
+// Group, Image, Text, Video likewise, and @celesta/shapes' Ellipse,
+// Circle, Triangle, Polygon, Star, Pie, Heart beside theirs
 ```
 
-- Field types reuse `ComponentPropertyField` (`string`, `number`, `boolean`,
-  `color`, `select`, `path`) plus `text` for children.
+- Fields are their own type, `PrimitivePropertyField`: `ComponentPropertyField`'s
+  types (`string`, `number`, `boolean`, `color`, `select`, `path`) plus `text`
+  for children, with no `label` (the row label is the key in words) and an
+  optional `defaultValue` (`Rect`'s `width` has none). `number` may carry
+  `min`/`max` (`opacity` 0–1): a typed value outside is refused with "Enter a
+  number from {min} to {max}" ("Enter a number of at least {min}" or "Enter
+  a number of at most {max}" when only one bound is set), and a scrub
+  clamps. It may carry `step`, what one pixel of a scrub changes. The bounds
+  are the components' own: `min: 0` where a negative value is rejected or
+  draws nothing (sizes, radii, strokes, `fontSize`, `maxWidth`, a video's
+  `startFrom`, `playbackRate`, `volume`), the smallest sensible inclusive
+  bound where the value must be positive (an `Image`'s size 1, a shape's
+  `strokeWidth` 0.1), whole numbers of at least 3 for `sides` and `points`
+  (`integer: true`, never implied by a step of 1: a typed fraction is
+  refused, "Enter a whole number of at least 3", and a scrub rounds), and
+  `fontWeight` 1–1000 in
+  steps of 100 (static faces are picked by weight class).
+- A prop the props type requires is declared `required(…)` (`Rect`'s
+  `width`/`height`, `Image`'s and `Video`'s `src`, `Text`'s `children`, a
+  `Circle`'s `radius`, …): its row is never removed. The table's type
+  rejects a required prop not declared so, and an optional one declared so.
 - `size` names the props that hold the box: `width`/`height`, `radius`
   (uniform), or `maxWidth` (width only, for `Text`). Primitives without one
   (`Group`) have no resize handles.
@@ -237,7 +279,7 @@ Locked with its reason) and a control by type:
 
 | Type | Control |
 | --- | --- |
-| number | numeric field; drag on the label scrubs it |
+| number | numeric field; drag on the label scrubs it (the field's declared `step` per pixel, else 0.01 when `max` ≤ 1, else 1; Shift ×10; clamped to `min`/`max`), previewed through the runtime and written once on release |
 | string | single-line field |
 | text | multi-line field; Enter commits, Shift+Enter breaks the line, blur commits |
 | boolean | switch |
@@ -248,6 +290,35 @@ Locked with its reason) and a control by type:
 A pass-through row shows a small `corner-down-right` icon and the call site
 ("Set at `Price.tsx:18`"). Commits go through the existing resolve, apply,
 write, and history path; one committed field is one history entry.
+
+A written optional prop can be removed, so its default applies again:
+emptying its field and committing (Enter or blur), or the "×" (lucide `X`,
+ghost, tooltip "Remove") that shows at the row's end on hover, for every
+control kind. The removal deletes bytes only, never across a line break:
+the attribute with the spaces around it on its line (the whole line when it
+stands alone there), a `style` object's property with its separating comma
+(the only one leaves `{}`), or for a pass-through the attribute at the call
+site, so the parameter's default applies. It is one history entry, and the
+row shows the default dimmed until the reload resolves. A required prop, an
+input, a `Text`'s children, and an absent, locked, or keyframed prop are
+never removed; an emptied field of such a row shows the source's value
+again. A Component-section prop is removable (the component's own default
+applies).
+
+A row's control is disabled only when its target can't be written. While the
+editor's own write reloads, the fields stay enabled and keep their focus and
+caret; a commit made meanwhile (or while another write runs) waits and is
+written once the targets are current again, one at a time in the order made,
+the latest value per row winning. If the code fails to reload, the waiting
+commits are dropped, each row saying "Not saved: the code failed to reload".
+Every text a commit would write is parsed first; one with syntax errors is
+not written.
+
+Leaving a field commits it, as a blur does: before the selection changes (a
+canvas click, the layer list, clearing it) and when the playhead is moved by
+hand or playback starts, the rows' typed text is submitted, and text that
+does not parse is dropped. While commits wait for the selected layer, a
+selection change waits for them to be written; a newer one replaces it.
 
 When the selected element is a component call's root (the chain's nearest
 component entry exists), a "Component" section lists the props written at that

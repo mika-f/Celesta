@@ -2,8 +2,10 @@
 //! change, the prop overrides the preview evaluates the scene with while it
 //! runs, and the one write on release.
 
+use crate::element_edit::{
+    ElementTargets, PropKey, TransformProp, editable, inner_target, reason_text,
+};
 use crate::layer_select::{letterbox, to_scene};
-use crate::transform_edit::{TransformProp, TransformTargets, editable, inner_target, reason_text};
 use crate::transform_handles::{
     Handle, drag_label, drag_values, handle_at, preview_values, prop_values, shown_handles, turn,
 };
@@ -11,7 +13,7 @@ use crate::view::EditorView;
 use celesta_composition::Point;
 use celesta_gpu_renderer::LayerFrame;
 use celesta_react_bridge::{LayerSourceReport, PropOverride, ReceivedProps, SourcePos};
-use celesta_source_edit::EditTarget;
+use celesta_source_edit::{EditTarget, EditValue};
 use gpui_kit::{Context, MouseMoveEvent};
 
 /// Side of a square handle, in viewer pixels.
@@ -36,7 +38,7 @@ pub(crate) struct TransformDrag {
     received: ReceivedProps,
     /// Where the runtime takes each editable prop's dragged value, kept from
     /// the start: the targets are gone while the write runs.
-    sites: Vec<(TransformProp, OverrideSite)>,
+    sites: Vec<(PropKey, OverrideSite)>,
     /// How far a rotation drag has turned so far, unsnapped, in degrees.
     turned: f64,
     /// The transform values the pointer has made so far.
@@ -56,7 +58,7 @@ impl TransformDrag {
         start: Point,
         editable: Vec<TransformProp>,
         received: ReceivedProps,
-        sites: Vec<(TransformProp, OverrideSite)>,
+        sites: Vec<(PropKey, OverrideSite)>,
     ) -> Self {
         Self {
             frame,
@@ -103,30 +105,54 @@ impl TransformDrag {
 }
 
 /// The prop `prop` of the elements written at `position`: where the runtime
-/// takes a dragged value while the drag runs.
+/// takes a dragged or scrubbed value while the pointer moves.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct OverrideSite {
     position: SourcePos,
     prop: String,
 }
 
-/// Where each editable prop of `targets` takes its dragged value: the prop
-/// itself on the element (`report`'s innermost entry) for a value written
-/// there or absent, and the parameter's prop at the call site for a value
-/// passed through, which also moves everything else computed from it. The
-/// same prop the write changes.
+impl OverrideSite {
+    /// The override drawing `value` here.
+    pub(crate) fn with(&self, value: f64) -> PropOverride {
+        PropOverride {
+            file: self.position.file.clone(),
+            line: self.position.line,
+            column: self.position.column,
+            prop: self.prop.clone(),
+            value,
+        }
+    }
+}
+
+/// Where each editable row and component prop of `targets` takes a value
+/// the pointer makes: the prop at the row's resolved path on the element
+/// (`report`'s innermost entry; `style.fontSize` for a `Text` font row the
+/// `style` object sets) for a value written there or absent, the
+/// parameter's prop at the call site for a value passed through, which also
+/// moves everything else computed from it, and a component prop at the
+/// component's call. The same prop the write changes. Inputs have none: a
+/// value an expression reads is not a prop.
 pub(crate) fn override_sites(
-    targets: &TransformTargets,
+    targets: &ElementTargets,
     report: &LayerSourceReport,
-) -> Vec<(TransformProp, OverrideSite)> {
-    let Some(element) = report.chain.first() else {
-        return Vec::new();
-    };
+) -> Vec<(PropKey, OverrideSite)> {
+    let element = report.chain.first().map(SourcePos::from);
+    let component = targets
+        .component
+        .as_ref()
+        .map(|component| &component.call_site);
     targets
-        .targets
-        .iter()
+        .entries()
+        .into_iter()
         .filter(|(_, target)| editable(&target.target))
-        .filter_map(|(prop, target)| {
+        .filter_map(|(key, target)| {
+            // Where a value not passed through is written.
+            let written = match &key {
+                PropKey::Prop(_) => element.as_ref(),
+                PropKey::CallSite(_) => component,
+                PropKey::Input { .. } => return None,
+            };
             let site = match (&target.target, &target.call_site) {
                 (EditTarget::PassThrough { param, .. }, Some(call_site)) => OverrideSite {
                     position: call_site.clone(),
@@ -134,31 +160,27 @@ pub(crate) fn override_sites(
                 },
                 (EditTarget::PassThrough { .. }, None) => return None,
                 _ => OverrideSite {
-                    position: SourcePos::from(element),
-                    prop: prop.name().to_owned(),
+                    position: written?.clone(),
+                    prop: target.path.clone(),
                 },
             };
-            Some((*prop, site))
+            Some((key, site))
         })
         .collect()
 }
 
-/// The overrides that draw the prop values `values` (see `prop_values`).
+/// The overrides that draw the transform values `values` (see
+/// `prop_values`).
 pub(crate) fn prop_overrides(
-    sites: &[(TransformProp, OverrideSite)],
+    sites: &[(PropKey, OverrideSite)],
     values: &[(TransformProp, f64)],
 ) -> Vec<PropOverride> {
     values
         .iter()
         .filter_map(|&(prop, value)| {
-            let (_, site) = sites.iter().find(|(candidate, _)| *candidate == prop)?;
-            Some(PropOverride {
-                file: site.position.file.clone(),
-                line: site.position.line,
-                column: site.position.column,
-                prop: site.prop.clone(),
-                value,
-            })
+            let key = prop.key();
+            let (_, site) = sites.iter().find(|(candidate, _)| *candidate == key)?;
+            Some(site.with(value))
         })
         .collect()
 }
@@ -200,20 +222,23 @@ impl EditorView {
         if let Some(drag) = &self.transform_drag {
             return DragState::Editable(frame, drag.editable.clone());
         }
-        let Some((targets, _)) = self.transform_targets() else {
+        let Some((targets, _)) = self.element_targets() else {
             return DragState::Unknown;
         };
-        let props: Vec<TransformProp> = targets
-            .targets
+        // The transform rows, in row order.
+        let transform: Vec<(TransformProp, &EditTarget)> = TransformProp::ALL
+            .into_iter()
+            .filter_map(|prop| Some((prop, targets.transform(prop)?)))
+            .collect();
+        let props: Vec<TransformProp> = transform
             .iter()
-            .filter(|(_, target)| editable(&target.target))
+            .filter(|(_, target)| editable(target))
             .map(|(prop, _)| *prop)
             .collect();
         if props.is_empty() {
-            let reason = targets
-                .targets
+            let reason = transform
                 .iter()
-                .find_map(|(_, target)| match inner_target(&target.target) {
+                .find_map(|(_, target)| match inner_target(target) {
                     EditTarget::Locked(reason) => Some(reason_text(reason)),
                     _ => None,
                 })
@@ -224,11 +249,19 @@ impl EditorView {
     }
 
     /// The prop overrides the preview evaluates the scene with while a drag
-    /// runs (see `TransformDrag::overrides`).
+    /// or a row's scrub runs (see `TransformDrag::overrides`,
+    /// `Scrub::overrides`); the two never run together.
     pub(crate) fn prop_overrides(&self) -> Vec<PropOverride> {
-        self.transform_drag
-            .as_ref()
-            .map_or_else(Vec::new, |drag| drag.overrides(self.playing))
+        let drag = self
+            .transform_drag
+            .iter()
+            .flat_map(|drag| drag.overrides(self.playing));
+        let scrub = self
+            .element_rows
+            .scrub
+            .iter()
+            .flat_map(|scrub| scrub.overrides(self.playing));
+        drag.chain(scrub).collect()
     }
 
     /// The drag's `x 120 → 184` label, once the pointer changed something.
@@ -246,6 +279,14 @@ impl EditorView {
             .is_some_and(|drag| !drag.released)
     }
 
+    /// Whether a released drag is being written, or waits for the reload
+    /// that draws its values.
+    pub(crate) fn transform_drag_released(&self) -> bool {
+        self.transform_drag
+            .as_ref()
+            .is_some_and(|drag| drag.released)
+    }
+
     /// Starts a drag when `position` (window pixels) is on a handle of the
     /// selected layer, or on its body with the layer topmost there. True when
     /// a drag started.
@@ -259,11 +300,16 @@ impl EditorView {
         if let Some(drag) = &self.transform_drag {
             return !drag.released;
         }
+        // Nor while a released scrub is: its override stays until the reload
+        // draws the written value.
+        if self.row_scrub_released() {
+            return false;
+        }
         let DragState::Editable(frame, editable) = self.drag_state() else {
             return false;
         };
         let Some((received, sites)) = self
-            .transform_targets()
+            .element_targets()
             .map(|(targets, report)| (report.props.clone(), override_sites(targets, report)))
         else {
             return false;
@@ -290,6 +336,10 @@ impl EditorView {
             Some(Handle::Move) | None => return false,
             Some(handle) => handle,
         };
+        // A pressed scrub ends unwritten: the two never run together.
+        if self.row_scrub_active() {
+            self.cancel_row_scrub();
+        }
         self.transform_drag = Some(TransformDrag::new(
             frame, handle, start, editable, received, sites,
         ));
@@ -353,10 +403,12 @@ impl EditorView {
             return true;
         }
         drag.released = true;
-        if self.transform_targets().is_none() {
+        if self.element_targets().is_none() {
             // The targets went stale mid-drag (a reload); nothing to write to.
-            let message = self.transform.unavailable(self.selected_layer.as_deref());
-            self.transform
+            let message = self
+                .element_edit
+                .unavailable(self.selected_layer.as_deref());
+            self.element_edit
                 .set_error(self.selected_layer.as_deref(), Some(message));
             self.cancel_transform_drag();
             return true;
@@ -366,13 +418,17 @@ impl EditorView {
         // shows the dragged position. A failure (the source changed while
         // dragging, the history is busy) puts the layer back where it was.
         // The error shows in the Layer section and over the canvas.
-        self.commit_transform(
+        let values = values
+            .into_iter()
+            .map(|(prop, value)| (prop.key(), Some(EditValue::Number(value))))
+            .collect();
+        self.commit_element(
             values,
             |this, result, cx| {
                 // Targets still current after a success mean nothing was
                 // written (the text came out the same), so no reload comes
                 // to drop the drag.
-                if result.is_err() || this.transform_targets().is_some() {
+                if result.is_err() || this.element_targets().is_some() {
                     this.cancel_transform_drag();
                 }
                 cx.notify();

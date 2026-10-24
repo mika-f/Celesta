@@ -10,9 +10,9 @@ use crate::protocol::{
     PropertyInputsMessage, ReadyMessage, Request, Response, ready_property_order,
 };
 use crate::types::{
-    ComponentPropertyField, ElementKind, FrameSpan, LayerSource, LayerSourceReport, PropOverride,
-    ReactAudioClipDescriptor, ReactChapter, ReceivedProps, ReceivedValue, SourcePos, TimingWindow,
-    chapter_at,
+    ComponentPropertyField, ElementKind, FrameSpan, LayerSource, LayerSourceReport,
+    PrimitivePropertyField, PrimitiveSize, PropOverride, ReactAudioClipDescriptor, ReactChapter,
+    ReceivedProps, ReceivedValue, SourcePos, TimingWindow, chapter_at,
 };
 use celesta_composition::{
     Animatable, AssetLocation, AudioDuck, LayerFilter, ShaderParam, ShaderParamType, ShaderSource,
@@ -123,6 +123,148 @@ fn ready_message_without_component_schemas_defaults_to_empty() {
         panic!("expected a Ready message");
     };
     assert!(component_schemas.is_empty());
+}
+
+#[test]
+fn ready_message_carries_primitive_tables_in_order() {
+    let json = serde_json::json!({
+        "config": {
+            "width": 640,
+            "height": 360,
+            "frameRate": {"numerator": 30, "denominator": 1},
+            "durationInFrames": 30
+        },
+        "primitiveProperties": {
+            "Rect": {
+                "size": {"width": "width", "height": "height"},
+                "groups": [
+                    {"name": "Transform", "fields": [
+                        {"key": "x", "field": {"type": "number", "defaultValue": 0}},
+                        {"key": "opacity", "field": {"type": "number", "defaultValue": 1, "min": 0, "max": 1}},
+                        {"key": "anchorX", "field": {"type": "number", "defaultValue": 0, "step": 0.01}}
+                    ]},
+                    {"name": "Size", "fields": [
+                        {"key": "width", "field": {"type": "number", "required": true}},
+                        {"key": "cornerRadius", "field": {"type": "number", "defaultValue": 0}},
+                        {"key": "sides", "field": {"type": "number", "min": 3, "integer": true}}
+                    ]},
+                    {"name": "Source", "fields": [
+                        {"key": "src", "field": {"type": "path", "required": true}}
+                    ]}
+                ]
+            }
+        }
+    })
+    .to_string();
+
+    let ReadyMessage::Ready {
+        primitive_properties,
+        ..
+    } = serde_json::from_str(&json).unwrap()
+    else {
+        panic!("expected a Ready message");
+    };
+    let rect = &primitive_properties["Rect"];
+    assert_eq!(
+        rect.size,
+        Some(PrimitiveSize {
+            width: Some("width".to_owned()),
+            height: Some("height".to_owned()),
+            radius: None,
+        })
+    );
+    let names: Vec<&str> = rect
+        .groups
+        .iter()
+        .map(|group| group.name.as_str())
+        .collect();
+    assert_eq!(names, ["Transform", "Size", "Source"]);
+    let keys: Vec<&str> = rect.groups[0]
+        .fields
+        .iter()
+        .map(|row| row.key.as_str())
+        .collect();
+    assert_eq!(keys, ["x", "opacity", "anchorX"]);
+    assert_eq!(
+        rect.groups[0].fields[1].field,
+        PrimitivePropertyField::Number {
+            default_value: Some(1.0),
+            min: Some(0.0),
+            max: Some(1.0),
+            step: None,
+            integer: None,
+        }
+    );
+    assert_eq!(
+        rect.groups[0].fields[2].field,
+        PrimitivePropertyField::Number {
+            default_value: Some(0.0),
+            min: None,
+            max: None,
+            step: Some(0.01),
+            integer: None,
+        }
+    );
+    assert_eq!(
+        rect.groups[1].fields[0].field,
+        PrimitivePropertyField::Number {
+            default_value: None,
+            min: None,
+            max: None,
+            step: None,
+            integer: None,
+        }
+    );
+    // `required` rides in the field and is lifted onto the row; a field
+    // that says nothing is optional.
+    let required: Vec<(&str, bool)> = rect.groups[1..]
+        .iter()
+        .flat_map(|group| &group.fields)
+        .map(|row| (row.key.as_str(), row.required))
+        .collect();
+    assert_eq!(
+        required,
+        [
+            ("width", true),
+            ("cornerRadius", false),
+            ("sides", false),
+            ("src", true)
+        ]
+    );
+    // A whole-number field says so; the others leave it out.
+    assert_eq!(
+        rect.groups[1].fields[2].field,
+        PrimitivePropertyField::Number {
+            default_value: None,
+            min: Some(3.0),
+            max: None,
+            step: None,
+            integer: Some(true),
+        }
+    );
+    assert_eq!(rect.groups[2].fields[0].field, PrimitivePropertyField::Path);
+}
+
+#[test]
+fn ready_message_without_tables_has_none() {
+    let json = serde_json::json!({
+        "config": {
+            "width": 640,
+            "height": 360,
+            "frameRate": {"numerator": 30, "denominator": 1},
+            "durationInFrames": 30
+        }
+    })
+    .to_string();
+
+    let ReadyMessage::Ready {
+        primitive_properties,
+        ..
+    } = serde_json::from_str(&json).unwrap()
+    else {
+        panic!("expected a Ready message");
+    };
+    assert!(primitive_properties.is_empty());
 }
 
 #[test]

@@ -5,14 +5,15 @@ use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::status_bar::StatusBar;
 use gpui_kit::component::{ActiveTheme as _, Root, Sizable as _};
 use gpui_kit::prelude::*;
-use gpui_kit::{Context, KeyDownEvent, MouseButton, Window, div, px};
+use gpui_kit::{Context, CursorStyle, KeyDownEvent, MouseButton, Window, canvas, div, px};
 
 impl Render for EditorView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.poll_background_work();
         self.watch_occurrence_sweep(cx);
-        self.sync_transform_targets(cx);
-        self.sync_transform_inputs(window, cx);
+        self.settle_row_requests(cx);
+        self.sync_element_targets(cx);
+        self.sync_element_rows(window, cx);
         self.update_playback(window);
         self.sync_property_panel(window, cx);
         self.announce_problems(window, cx);
@@ -85,9 +86,12 @@ impl EditorView {
             .when_some(self.focus_handle.as_ref(), |view, focus_handle| {
                 view.track_focus(focus_handle)
             })
-            // Escape cancels a canvas drag before any other key handling.
+            // Escape cancels a canvas drag or a row's scrub before any other
+            // key handling.
             .capture_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
-                if event.keystroke.key == "escape" && this.escape_transform_drag() {
+                if event.keystroke.key == "escape"
+                    && (this.escape_transform_drag() || this.escape_row_scrub())
+                {
                     cx.stop_propagation();
                     cx.notify();
                 }
@@ -104,6 +108,19 @@ impl EditorView {
             .child(self.title_bar(cx))
             .child(self.workspace(cx))
             .child(self.status_bar(cx))
+            // A scrub keeps its cursor wherever the pointer goes.
+            .when(self.row_scrub_active(), |root| {
+                root.child(
+                    canvas(
+                        |_, _, _| {},
+                        |_, _, window, _| {
+                            window.set_window_cursor_style(CursorStyle::ResizeLeftRight);
+                        },
+                    )
+                    .absolute()
+                    .size_0(),
+                )
+            })
     }
 
     /// The resizable shell: the asset list, the viewer, and the inspector,

@@ -17,7 +17,8 @@ export interface SourcePosition {
 /**
  * A value the editor's drag preview gives the prop `prop` of every element
  * written at `file:line:column` (an absolute path; 1-based, as reported in a
- * layer source chain) for one frame, in place of the written one.
+ * layer source chain) for one frame, in place of the written one. `prop` is a
+ * prop name, or `style.<key>` for one key of the `style` prop.
  */
 export interface PropOverride {
   file: string;
@@ -74,12 +75,17 @@ export function createdAtOverride(children: unknown): boolean {
     (atOverride.has(props) || createdAtOverride((props as { children?: unknown }).children));
 }
 
+/** An override's `prop` prefix naming a key inside the `style` prop. */
+const STYLE_KEY = 'style.';
+
 /**
  * `props` with the overrides for `source`, or `undefined` when `source` is
- * no override's position. Only a component creating an element at an
- * override's position subscribes to later ones (`use` reads a context
- * without a hook slot, so it may be called conditionally); every other
- * component keeps React's bailouts on drag frames.
+ * no override's position. A `style.<key>` override sets that key in a copy
+ * of `style` (an object holding only it when `style` is not written). Only a
+ * component creating an element at an override's position subscribes to
+ * later ones (`use` reads a context without a hook slot, so it may be called
+ * conditionally); every other component keeps React's bailouts on drag
+ * frames.
  */
 function overridden(props: Record<string, unknown>, source: SourcePosition): Record<string, unknown> | undefined {
   const matches = overrides?.get(`${source.lineNumber}:${source.columnNumber}`);
@@ -90,6 +96,8 @@ function overridden(props: Record<string, unknown>, source: SourcePosition): Rec
     resolvedFiles.set(source.fileName, file);
   }
   let result = props;
+  /** This call's copy of `style`, once a `style.<key>` override needs one. */
+  let style: Record<string, unknown> | undefined;
   let subscribed = false;
   for (const { file: target, prop, value } of matches) {
     if (target !== file) continue;
@@ -101,7 +109,17 @@ function overridden(props: Record<string, unknown>, source: SourcePosition): Rec
         // Not called while a component renders (an effect, say): nothing to subscribe.
       }
     }
-    if (!Object.is(result[prop], value)) {
+    if (prop.startsWith(STYLE_KEY)) {
+      const key = prop.slice(STYLE_KEY.length);
+      const current = result.style as Record<string, unknown> | null | undefined;
+      if (Object.is(current?.[key], value)) continue;
+      if (style === undefined) {
+        style = { ...current };
+        if (result === props) result = { ...props };
+        result.style = style;
+      }
+      style[key] = value;
+    } else if (!Object.is(result[prop], value)) {
       if (result === props) result = { ...props };
       result[prop] = value;
     }

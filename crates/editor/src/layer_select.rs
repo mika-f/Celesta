@@ -90,6 +90,16 @@ pub(crate) fn source_lookup_target(
         .map(str::to_owned)
 }
 
+/// Whether a frame may ask for the selected layer's source while a value is
+/// being changed: not during a canvas drag (a released one until its
+/// reload), nor while a row's scrub is pressed. A released scrub's frame
+/// asks, so the targets its held write waits for get resolved. The runtime
+/// looks the source up without the overrides after drawing the frame with
+/// them, so the drawn frame keeps the scrubbed value.
+pub(crate) fn lookup_allowed(transform_drag: bool, scrub_pressed: bool) -> bool {
+    !transform_drag && !scrub_pressed
+}
+
 /// Whether the outcome of opening a source belongs in the panel: `started`
 /// is the session and selected layer when the open began, `now` the ones the
 /// panel shows. A late error must not appear under another layer.

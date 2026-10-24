@@ -29,9 +29,33 @@ fn scene(consts: &str, jsx: &str) -> String {
     format!("export function Scene() {{\n  {consts}\n  return {jsx};\n}}\n")
 }
 
-/// The inputs of `prop` on the first `<{tag}` of `text`.
+/// The inputs of `prop` on the first `<{tag}` of `text`, with no call site.
 fn inputs(text: &str, tag: &str, prop: &str) -> Vec<(String, EditTarget)> {
-    resolve_inputs(text, &element(text, &format!("<{tag}")), prop, &ctx())
+    resolve_inputs(text, &element(text, &format!("<{tag}")), prop, &ctx(), None)
+}
+
+/// The inputs of `prop` on the first `<{tag}` of `text`, called by the first
+/// `<{caller}` of `call_site`.
+fn inputs_through(
+    text: &str,
+    tag: &str,
+    prop: &str,
+    call_site: &str,
+    caller: &str,
+) -> Vec<(String, EditTarget)> {
+    let call = element(call_site, &format!("<{caller}"));
+    resolve_inputs(
+        text,
+        &element(text, &format!("<{tag}")),
+        prop,
+        &ctx(),
+        Some((call_site, &call)),
+    )
+}
+
+/// The names of `inputs`, in order.
+fn names(inputs: &[(String, EditTarget)]) -> Vec<&str> {
+    inputs.iter().map(|(name, _)| name.as_str()).collect()
 }
 
 fn unresolved(name: &str) -> (String, EditTarget) {
@@ -232,5 +256,189 @@ fn parameter_input_needs_a_call_site() {
             ),
             unresolved("offset"),
         ]
+    );
+}
+
+const TAG: &str = "function Tag({ padding = 8 }) { const w = 100; return <Rect width={w + padding * 2} height={10} />; }";
+
+#[test]
+fn parameter_input_resolves_at_the_call_site() {
+    let call_site = "<Tag padding={16} />";
+    assert_eq!(
+        inputs_through(TAG, "Rect", "width", call_site, "Tag"),
+        vec![
+            (
+                "w".to_string(),
+                literal(
+                    TAG,
+                    "w =",
+                    "100",
+                    EditValue::Number(100.0),
+                    LiteralForm::Number
+                ),
+            ),
+            (
+                "padding".to_string(),
+                EditTarget::PassThrough {
+                    call_site: element(call_site, "<Tag"),
+                    param: "padding".to_string(),
+                    target: Box::new(literal(
+                        call_site,
+                        "padding=",
+                        "16",
+                        EditValue::Number(16.0),
+                        LiteralForm::Number
+                    )),
+                },
+            ),
+        ]
+    );
+}
+
+#[test]
+fn parameter_input_missing_at_the_call_site() {
+    let call_site = "<Tag />";
+    let found = inputs_through(TAG, "Rect", "width", call_site, "Tag");
+    assert_eq!(
+        found[1],
+        (
+            "padding".to_string(),
+            EditTarget::PassThrough {
+                call_site: element(call_site, "<Tag"),
+                param: "padding".to_string(),
+                target: Box::new(EditTarget::Missing {
+                    insert_at: element(call_site, "<Tag").end_of_attributes,
+                    default: Some(EditValue::Number(8.0)),
+                }),
+            },
+        )
+    );
+}
+
+#[test]
+fn parameter_input_passed_on_by_the_caller() {
+    // A second hop: the call site passes a parameter of its own component.
+    let call_site = "function Card({ pad }) { return <Tag padding={pad} />; }";
+    let found = inputs_through(TAG, "Rect", "width", call_site, "Tag");
+    assert_eq!(
+        found[1],
+        (
+            "padding".to_string(),
+            EditTarget::Locked(LockReason::ParameterOfCaller {
+                component: "Card".to_string(),
+            }),
+        )
+    );
+}
+
+#[test]
+fn parameter_input_without_a_call_site() {
+    assert_eq!(
+        inputs(TAG, "Rect", "width")[1],
+        (
+            "padding".to_string(),
+            EditTarget::Locked(LockReason::CallSiteNotFound {
+                component: "Tag".to_string(),
+            }),
+        )
+    );
+}
+
+#[test]
+fn an_animated_input_has_an_unknown_frame() {
+    // The runtime reports the expression's result, not `w`, so no received
+    // value tells the candidate frames apart.
+    let text = scene(
+        "const frame = useCurrentFrame(); const w = interpolate(frame, [0, 10], [0, 100]);",
+        "<Rect width={w + 2} />",
+    );
+    assert_eq!(
+        inputs(&text, "Rect", "width"),
+        vec![(
+            "w".to_string(),
+            EditTarget::Locked(LockReason::FrameUncertain)
+        )]
+    );
+
+    // The same at the call site.
+    let tag = "function Tag({ w }) { return <Rect width={w + 2} />; }";
+    let call_site = "function Scene() { const frame = useCurrentFrame(); return <Tag w={interpolate(frame, [0, 10], [0, 100])} />; }";
+    assert_eq!(
+        inputs_through(tag, "Rect", "width", call_site, "Tag"),
+        vec![(
+            "w".to_string(),
+            EditTarget::PassThrough {
+                call_site: element(call_site, "<Tag"),
+                param: "w".to_string(),
+                target: Box::new(EditTarget::Locked(LockReason::FrameUncertain)),
+            }
+        )]
+    );
+}
+
+#[test]
+fn an_input_used_twice_in_one_expression_is_one_place() {
+    let text = scene("const padding = 16;", "<Rect width={padding + padding} />");
+    assert_eq!(
+        inputs(&text, "Rect", "width"),
+        vec![(
+            "padding".to_string(),
+            literal(
+                &text,
+                "padding =",
+                "16",
+                EditValue::Number(16.0),
+                LiteralForm::Number
+            ),
+        )]
+    );
+
+    // Read elsewhere too: two places.
+    let text = scene(
+        "const padding = 16;",
+        "<Rect width={padding + padding} height={padding} />",
+    );
+    assert_eq!(
+        inputs(&text, "Rect", "width"),
+        vec![(
+            "padding".to_string(),
+            EditTarget::Locked(LockReason::SharedBinding {
+                name: "padding".to_string(),
+                uses: 2,
+            }),
+        )]
+    );
+}
+
+#[test]
+fn a_lambda_parameter_only_hides_its_own_body() {
+    let text = scene(
+        "const padding = 16;",
+        "<Rect width={items.map((padding) => padding).length + padding} />",
+    );
+    assert_eq!(
+        inputs(&text, "Rect", "width"),
+        vec![(
+            "padding".to_string(),
+            literal(
+                &text,
+                "padding =",
+                "16",
+                EditValue::Number(16.0),
+                LiteralForm::Number
+            ),
+        )]
+    );
+}
+
+#[test]
+fn every_callee_form_skips_only_the_function_name() {
+    let text = scene(
+        "const size = 1, gap = 2, depth = 3, i = 0;",
+        "<Rect width={new Box(size).w + tag`${gap}`.length + fns[i](depth)} />",
+    );
+    assert_eq!(
+        names(&inputs(&text, "Rect", "width")),
+        vec!["size", "gap", "fns", "i", "depth"]
     );
 }

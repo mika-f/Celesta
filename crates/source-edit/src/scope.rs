@@ -10,7 +10,7 @@ use oxc_ast::ast::{
 };
 
 use crate::pass_through::{component_function, is_component_name};
-use crate::resolve::EditValue;
+use crate::resolve::{EditValue, Span};
 use crate::shape::{Shape, shape_of};
 
 /// A parameter's default value.
@@ -70,7 +70,8 @@ pub(crate) struct Scopes {
     /// Every binding the file declares (variables, parameters, catch
     /// parameters, destructured names, functions, imports), with its offset.
     declarations: Vec<(String, u32)>,
-    refs: HashMap<String, usize>,
+    /// The offsets of every read of a name in the file.
+    refs: HashMap<String, Vec<u32>>,
     /// Functions a `const` names (`const PriceTag = …`), by their offset.
     names: Vec<(u32, String)>,
 }
@@ -158,9 +159,22 @@ impl Scopes {
             > 1
     }
 
-    /// How many times the file reads `name`.
+    /// How many times the file reads `name` (an expression read as
+    /// [`Self::one_place`] counting once).
     pub(crate) fn uses(&self, name: &str) -> usize {
-        self.refs.get(name).copied().unwrap_or(0)
+        self.refs.get(name).map_or(0, Vec::len)
+    }
+
+    /// Reads the expression at `span` as one place, as its inputs are: the
+    /// names it declares itself (an arrow's parameters) bind only inside
+    /// it, so they are dropped, and its reads of a name count as one use.
+    pub(crate) fn one_place(&mut self, span: Span) {
+        let inside = |at: u32| span.start <= at && at < span.end;
+        self.declarations.retain(|(_, at)| !inside(*at));
+        for reads in self.refs.values_mut() {
+            let mut seen = false;
+            reads.retain(|&at| !inside(at) || !std::mem::replace(&mut seen, true));
+        }
     }
 
     /// A function, before its body is visited. Scopes stay pushed: only
@@ -212,7 +226,10 @@ impl Scopes {
     }
 
     pub(crate) fn reference(&mut self, it: &IdentifierReference<'_>) {
-        *self.refs.entry(it.name.to_string()).or_insert(0) += 1;
+        self.refs
+            .entry(it.name.to_string())
+            .or_default()
+            .push(it.span.start);
     }
 
     /// The name a `const` gives the function starting at `start`.

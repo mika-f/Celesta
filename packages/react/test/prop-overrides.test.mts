@@ -7,8 +7,8 @@ import { memo, useMemo } from 'react';
 import type { ReactNode } from 'react';
 import { test } from 'vitest';
 
-import { Composition, Rect, Static } from '../src/index.js';
-import type { Layer, Time } from '../src/index.js';
+import { Composition, Rect, Static, Text } from '../src/index.js';
+import type { Layer, LayerContent, Time } from '../src/index.js';
 import type { PropOverride } from '../src/internal.js';
 import { jsxDEV } from '../src/jsx-dev-runtime.js';
 import type { SourcePosition } from '../src/jsx-dev-runtime.js';
@@ -145,6 +145,25 @@ test('an element cached with useMemo at an override position follows only the fi
   assert.deepEqual(positions(composition, [override(3, 'x', 60)], 'a'), [[50, 0]]);
   assert.deepEqual(positions(composition, [override(3, 'x', 70)], 'a'), [[50, 0]]);
   assert.deepEqual(positions(composition, [], 'a'), [[10, 0]]);
+});
+
+test('a style key override replaces that key only', () => {
+  const style = { fontSize: 40, fontWeight: 700 };
+  const text = (props: Record<string, unknown>) =>
+    jsxDEV(Text, { id: 't', children: 'a', ...props }, undefined, false, at('entry.tsx', 3, 7));
+  const textStyle = (composition: MountedComposition) => {
+    const { scene } = composition.renderAt(time(0), null, { propOverrides: { overrides: [override(3, 'style.fontSize', 48)], resolveFile } });
+    const layer = find(scene.layers, 't');
+    assert.equal(layer?.content.type, 'text');
+    return (layer.content as Extract<LayerContent, { type: 'text' }>).style;
+  };
+
+  const written = textStyle(mount(() => comp(text({ style }))));
+  assert.equal(written.fontSize, 48);
+  assert.equal(written.fontWeight, 700);
+  assert.deepEqual(style, { fontSize: 40, fontWeight: 700 });
+
+  assert.equal(textStyle(mount(() => comp(text({})))).fontSize, 48);
 });
 
 test('an override inside <Static> follows the drag and leaves the cache valid', () => {

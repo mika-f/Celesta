@@ -3,18 +3,20 @@
 
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
-    BindingIdentifier, CallExpression, IdentifierReference, JSXElementName, TSType,
+    ArrowFunctionExpression, BindingIdentifier, CallExpression, Expression, Function,
+    IdentifierReference, JSXElementName, NewExpression, TSType, TaggedTemplateExpression,
 };
 use oxc_ast_visit::Visit;
+use oxc_syntax::scope::ScopeFlags;
 
 use crate::locate::ElementRef;
 use crate::parse_checked;
+use crate::pass_through::resolve_parameter;
 use crate::resolve::{
-    EditTarget, Gather, LockReason, PropPath, Read, ResolveContext, Span, resolve,
+    EditTarget, Gather, LockReason, PropPath, ResolveContext, Span, read_written,
     resolve_identifier,
 };
-use crate::scope::Binding;
-use crate::shape::{Children, Shape, StyleProperty};
+use crate::shape::Shape;
 
 /// For a prop locked as `Expression`, each identifier the expression reads
 /// (in order of first appearance, member objects only: `C.x` gives `C`),
@@ -22,114 +24,177 @@ use crate::shape::{Children, Shape, StyleProperty};
 /// `const` is itself an expression is not expanded, and locks as
 /// `UnresolvedIdentifier` as a prop reading it would.
 ///
-/// Callees, JSX tag names, types, and names the expression binds itself
-/// (an arrow's parameters) are not inputs. An input that is a parameter of
-/// the enclosing component is `Locked(CallSiteNotFound)`: no call site is
-/// given here. `ctx.received` is ignored for the inputs, since the runtime
-/// reports the expression's result, not its inputs.
+/// Not inputs: a callee or tag that names a function (`f(…)`, `Math.max(…)`,
+/// `new Box(…)`, `` tag`…` ``; a computed one, as `fns[i](…)`, is read like
+/// any expression), JSX tag names, types, and a name a function inside the
+/// expression binds, within that function (`(padding) => padding`). The
+/// expression's reads of a name count as one place for `SharedBinding`.
+///
+/// An input that is a parameter of the component enclosing `element`
+/// resolves at `call_site` (the same text/element pair `resolve_through`
+/// takes) as `PassThrough { call_site, param, target }`, following the
+/// pass-through rules (literal, `Missing` with the parameter's default,
+/// `ParameterOfCaller` for a second hop); without a call site it is
+/// `CallSiteNotFound`. `ctx.received` is ignored for the inputs, since the
+/// runtime reports the expression's result, not its inputs; so an input
+/// whose value is `interpolate(frame, …)` is `FrameUncertain`, as no
+/// received value tells the candidate frames apart.
 pub fn resolve_inputs(
     text: &str,
     element: &ElementRef,
     prop: &str,
     ctx: &ResolveContext,
+    call_site: Option<(&str, &ElementRef)>,
 ) -> Vec<(String, EditTarget)> {
-    if !matches!(
-        resolve(text, element, prop, ctx),
-        EditTarget::Locked(LockReason::Expression { .. })
-    ) {
+    let alloc = Allocator::default();
+    let (program, failed) = parse_checked(text, &alloc);
+    if failed {
         return Vec::new();
     }
-    let alloc = Allocator::default();
-    let (program, _) = parse_checked(text, &alloc);
     let mut gather = Gather::new(element.start, PropPath::parse(prop));
     gather.visit_program(&program);
-    let Some(span) = locked_span(&gather) else {
+    // `resolve`'s rules, up to an absent prop, which never locks as an
+    // expression.
+    let locked = read_written(&gather, text, prop, ctx, true);
+    let (Ok(EditTarget::Locked(LockReason::Expression { .. })), Some(span)) =
+        (locked, gather.locked.get())
+    else {
         return Vec::new();
     };
 
-    let mut names = Names {
-        span,
-        read: Vec::new(),
-        bound: Vec::new(),
-    };
+    let mut names = Names::new(span);
     names.visit_program(&program);
+    gather.scopes.one_place(span);
     let ctx = ResolveContext {
         received: None,
         ..ctx.clone()
     };
     names
-        .read
+        .inputs()
         .into_iter()
-        .filter(|name| !names.bound.contains(name))
         .map(|name| {
             let target = match gather.scopes.parameter(&Shape::Ident(name.clone())) {
-                Some(parameter) => EditTarget::Locked(LockReason::CallSiteNotFound {
-                    component: parameter.component,
-                }),
-                None => resolve_identifier(&name, &gather, text, &ctx),
+                Some(parameter) => resolve_parameter(parameter, &ctx, call_site, false),
+                None => resolve_identifier(&name, &gather, text, &ctx, false),
             };
             (name, target)
         })
         .collect()
 }
 
-/// The span of the expression `resolve` locked on: the value written for
-/// the prop, or the `interpolate()` call of the `const` it names.
-fn locked_span(gather: &Gather) -> Option<Span> {
-    let shape = match gather.read()? {
-        Read::Children(Children::Other(span)) | Read::Property(StyleProperty::NotObject(span)) => {
-            return Some(*span);
-        }
-        Read::Children(Children::Reference { shape })
-        | Read::Property(StyleProperty::Value(shape))
-        | Read::Attribute(shape) => shape,
-        Read::Children(_) | Read::Property(_) => return None,
-    };
-    match shape {
-        Shape::Member { span, .. } | Shape::Other(span) => Some(*span),
-        Shape::Interpolate(call) => Some(call.call),
-        Shape::Ident(name) => match gather.scopes.lookup(name)? {
-            Binding::Const(Shape::Interpolate(call)) => Some(call.call),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
-/// The names read and bound inside `span`.
+/// The names read inside `span`, and those the functions inside it bind.
 struct Names {
     span: Span,
-    /// In order of first appearance.
-    read: Vec<String>,
-    bound: Vec<String>,
+    /// Each read, in source order, with its offset.
+    reads: Vec<(String, u32)>,
+    /// The expression, then each function inside it, with the names it
+    /// binds itself (not those of the functions inside it).
+    scopes: Vec<(Span, Vec<String>)>,
+    /// Indices into `scopes` of those being visited, innermost last.
+    open: Vec<usize>,
 }
 
 impl Names {
+    fn new(span: Span) -> Self {
+        Self {
+            span,
+            reads: Vec::new(),
+            scopes: vec![(span, Vec::new())],
+            open: vec![0],
+        }
+    }
+
     fn contains(&self, span: oxc_span::Span) -> bool {
         self.span.start <= span.start && span.end <= self.span.end
+    }
+
+    /// Each name read, once, in order of first appearance, but where a
+    /// scope around the read binds it.
+    fn inputs(&self) -> Vec<String> {
+        let mut inputs: Vec<String> = Vec::new();
+        for (name, at) in &self.reads {
+            let bound = self
+                .scopes
+                .iter()
+                .any(|(span, bound)| span.start <= *at && *at < span.end && bound.contains(name));
+            if !bound && !inputs.contains(name) {
+                inputs.push(name.clone());
+            }
+        }
+        inputs
+    }
+
+    /// Opens the scope of a function inside the expression.
+    fn open(&mut self, span: oxc_span::Span) {
+        self.open.push(self.scopes.len());
+        self.scopes.push((
+            Span {
+                start: span.start,
+                end: span.end,
+            },
+            Vec::new(),
+        ));
     }
 }
 
 impl<'a> Visit<'a> for Names {
     fn visit_identifier_reference(&mut self, it: &IdentifierReference<'a>) {
-        if self.contains(it.span) && !self.read.iter().any(|name| name == it.name.as_str()) {
-            self.read.push(it.name.to_string());
+        if self.contains(it.span) {
+            self.reads.push((it.name.to_string(), it.span.start));
         }
     }
 
     fn visit_binding_identifier(&mut self, it: &BindingIdentifier<'a>) {
-        if self.contains(it.span) {
-            self.bound.push(it.name.to_string());
+        if self.contains(it.span)
+            && let Some(&scope) = self.open.last()
+        {
+            self.scopes[scope].1.push(it.name.to_string());
         }
     }
 
-    fn visit_call_expression(&mut self, it: &CallExpression<'a>) {
-        // A callee names a function, not a value to edit.
-        if self.contains(it.span) {
-            self.visit_arguments(&it.arguments);
-        } else {
-            oxc_ast_visit::walk::walk_call_expression(self, it);
+    fn visit_function(&mut self, it: &Function<'a>, flags: ScopeFlags) {
+        if !self.contains(it.span) {
+            return oxc_ast_visit::walk::walk_function(self, it, flags);
         }
+        // A declaration's name binds in the scope around it, too.
+        if it.is_declaration()
+            && let Some(id) = &it.id
+        {
+            self.visit_binding_identifier(id);
+        }
+        self.open(it.span);
+        oxc_ast_visit::walk::walk_function(self, it, flags);
+        self.open.pop();
+    }
+
+    fn visit_arrow_function_expression(&mut self, it: &ArrowFunctionExpression<'a>) {
+        if !self.contains(it.span) {
+            return oxc_ast_visit::walk::walk_arrow_function_expression(self, it);
+        }
+        self.open(it.span);
+        oxc_ast_visit::walk::walk_arrow_function_expression(self, it);
+        self.open.pop();
+    }
+
+    fn visit_call_expression(&mut self, it: &CallExpression<'a>) {
+        if !names_function(&it.callee) {
+            self.visit_expression(&it.callee);
+        }
+        self.visit_arguments(&it.arguments);
+    }
+
+    fn visit_new_expression(&mut self, it: &NewExpression<'a>) {
+        if !names_function(&it.callee) {
+            self.visit_expression(&it.callee);
+        }
+        self.visit_arguments(&it.arguments);
+    }
+
+    fn visit_tagged_template_expression(&mut self, it: &TaggedTemplateExpression<'a>) {
+        if !names_function(&it.tag) {
+            self.visit_expression(&it.tag);
+        }
+        self.visit_template_literal(&it.quasi);
     }
 
     // A tag names a component, not a value.
@@ -137,4 +202,14 @@ impl<'a> Visit<'a> for Names {
 
     // Types are erased.
     fn visit_ts_type(&mut self, _: &TSType<'a>) {}
+}
+
+/// Whether a callee or tag names a function, not a value to edit: a name
+/// or a chain of names (`f`, `Math.max`), unlike a computed one (`fns[i]`).
+fn names_function(callee: &Expression<'_>) -> bool {
+    match callee.without_parentheses() {
+        Expression::Identifier(_) => true,
+        Expression::StaticMemberExpression(member) => names_function(&member.object),
+        _ => false,
+    }
 }

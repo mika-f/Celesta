@@ -88,6 +88,23 @@ pub fn resolve_through(
     if !ctx.primitive && !ctx.component_props {
         return EditTarget::Locked(LockReason::NotPrimitive);
     }
+    resolve_parameter(parameter, ctx, call_site, true)
+}
+
+/// The value of `parameter` at `call_site`, by the pass-through rules of
+/// [`resolve_through`]: wrapped in `PassThrough`, `Missing` with the
+/// parameter's default when the call site omits it, `ParameterOfCaller`
+/// for a second hop, and `CallSiteNotFound` without a call site.
+///
+/// `checked`: the call site's value must be `ctx.received`. A prop the
+/// element reads as the parameter is; an expression's input is not
+/// reported by the runtime, so it is not checked.
+pub(crate) fn resolve_parameter(
+    parameter: ParamInfo,
+    ctx: &ResolveContext,
+    call_site: Option<(&str, &ElementRef)>,
+    checked: bool,
+) -> EditTarget {
     let Some((call_site_text, call_site)) = call_site else {
         return EditTarget::Locked(LockReason::CallSiteNotFound {
             component: parameter.component,
@@ -104,14 +121,20 @@ pub fn resolve_through(
         render_count: 1,
         ..ctx.clone()
     };
-    let target = match resolve_written(call_site_text, call_site, &parameter.param, &call_site_ctx)
-    {
+    let target = match resolve_written(
+        call_site_text,
+        call_site,
+        &parameter.param,
+        &call_site_ctx,
+        checked,
+    ) {
         Ok(target) => target,
         Err(absent) => missing_parameter(
             call_site,
             &absent,
             &parameter.default,
             call_site_ctx.received.as_ref(),
+            checked,
         ),
     };
     EditTarget::PassThrough {
@@ -147,12 +170,13 @@ fn parameter_in(text: &str, element: &ElementRef, prop: &str) -> Option<ParamInf
 
 /// A prop absent at a call site takes the parameter's default. The
 /// primitive must have received that default when it is a literal, and
-/// nothing when there is none.
+/// nothing when there is none, when `checked`.
 fn missing_parameter(
     element: &ElementRef,
     absent: &Absent,
     default: &ParamDefault,
     received: Option<&EditValue>,
+    checked: bool,
 ) -> EditTarget {
     let same = match (default, received) {
         (ParamDefault::Other, _) | (ParamDefault::None, None) => true,
@@ -162,7 +186,7 @@ fn missing_parameter(
         (ParamDefault::Literal(value), Some(received)) => value == received,
         _ => false,
     };
-    if !same {
+    if checked && !same {
         return EditTarget::Locked(LockReason::OverriddenByParent);
     }
     EditTarget::Missing {

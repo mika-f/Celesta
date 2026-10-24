@@ -27,6 +27,9 @@ pub enum Edit {
         key: String,
         value: EditValue,
     },
+    /// Deletes the bytes `start..end`: a prop with what separates it (see
+    /// [`removal`](crate::removal)).
+    Remove { start: u32, end: u32 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,7 +54,7 @@ impl std::error::Error for ApplyError {}
 impl Edit {
     fn span(&self) -> (u32, u32) {
         match self {
-            Self::Replace { start, end, .. } => (*start, *end),
+            Self::Replace { start, end, .. } | Self::Remove { start, end } => (*start, *end),
             Self::Insert { at, .. } | Self::InsertProperty { at, .. } => (*at, *at),
         }
     }
@@ -80,6 +83,7 @@ pub fn apply(text: &str, edits: &[Edit]) -> Result<String, ApplyError> {
         out.push_str(&text[cursor..start]);
         match edit {
             Edit::Replace { value, form, .. } => out.push_str(&write_value(value, *form)),
+            Edit::Remove { .. } => {}
             Edit::Insert { name, value, .. } => {
                 out.push_str(&format!(" {name}{}", after_name(value)));
             }

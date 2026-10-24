@@ -156,6 +156,18 @@ pub fn set_property_text(
 /// Writes `text` to a temporary file beside `file` and renames it over `file`,
 /// so a reader never sees a half-written props file.
 pub fn replace_file(file: &Path, text: &str) -> io::Result<()> {
+    let temporary = write_temp(file, text)?;
+    let result = fs::rename(&temporary, file);
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
+/// Writes `text` to a temporary file beside `file`, named
+/// `.<file name>.tmp-<process id>`, and returns its path for the caller to
+/// rename over `file`. Removes the temporary file again when the write fails.
+pub fn write_temp(file: &Path, text: &str) -> io::Result<PathBuf> {
     let name = file
         .file_name()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "not a file path"))?
@@ -166,11 +178,13 @@ pub fn replace_file(file: &Path, text: &str) -> io::Result<()> {
         handle.write_all(text.as_bytes())?;
         handle.sync_all()
     });
-    let result = written.and_then(|()| fs::rename(&temporary, file));
-    if result.is_err() {
-        let _ = fs::remove_file(&temporary);
+    match written {
+        Ok(()) => Ok(temporary),
+        Err(error) => {
+            let _ = fs::remove_file(&temporary);
+            Err(error)
+        }
     }
-    result
 }
 
 /// The value to store for `chosen` in a props file in `props_dir`. A file

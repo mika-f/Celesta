@@ -1,7 +1,16 @@
 import * as React from 'react';
 
 import { Group, Rect } from '@celesta/react';
-import { ThemeContext, markPrimitive, themedShapePaint } from '@celesta/react/internal';
+import {
+  ThemeContext,
+  color,
+  markPrimitive,
+  num,
+  propertyTable,
+  registerPrimitiveProperties,
+  required,
+  themedShapePaint,
+} from '@celesta/react/internal';
 import type { CommonProps, LineCap, LineJoin, Paint, PathCommand } from '@celesta/react';
 
 import { trimCommands, trimStartIntoSubpath } from './path-geometry';
@@ -1173,3 +1182,89 @@ export function Heart({
 for (const shape of [Path, Line, Polyline, Ellipse, Circle, Arrow, Triangle, Polygon, Star, Pie, Heart]) {
   markPrimitive(shape);
 }
+
+// What the editor's Properties tab edits on each, by section. The bounds are
+// the shapes' own: sizes and radii of at least 0 (`sizeOf`, `dimensionOf`),
+// a whole number of at least 3 sides or points (`countOf`), and a stroke
+// wider than nothing (`strokeWidthOf`; the field's bounds are inclusive, so
+// 0.1).
+const size = (defaultValue?: number) => num(defaultValue, { min: 0 });
+const count = () => num(undefined, { min: 3, integer: true });
+const strokeWidth = () => num(2, { min: 0.1 });
+registerPrimitiveProperties('Ellipse', propertyTable<EllipseProps>({
+  size: { width: 'width', height: 'height' },
+  groups: {
+    Transform: {
+      x: num(0), y: num(0), rotation: num(0), scale: num(1, { step: 0.01 }),
+      anchorX: num(0, { step: 0.01 }), anchorY: num(0, { step: 0.01 }), opacity: num(1, { min: 0, max: 1 }),
+    },
+    Size: { width: required(size()), height: required(size()) },
+    Appearance: { fill: color(), stroke: color(), strokeWidth: strokeWidth() },
+  },
+}));
+registerPrimitiveProperties('Circle', propertyTable<CircleProps>({
+  size: { radius: 'radius' },
+  groups: {
+    Transform: {
+      x: num(0), y: num(0), rotation: num(0), scale: num(1, { step: 0.01 }),
+      anchorX: num(0, { step: 0.01 }), anchorY: num(0, { step: 0.01 }), opacity: num(1, { min: 0, max: 1 }),
+    },
+    Size: { radius: required(size()) },
+    Appearance: { fill: color(), stroke: color(), strokeWidth: strokeWidth() },
+  },
+}));
+registerPrimitiveProperties('Triangle', propertyTable<TriangleProps>({
+  size: { width: 'width', height: 'height' },
+  groups: {
+    Transform: {
+      x: num(0), y: num(0), rotation: num(0), scale: num(1, { step: 0.01 }),
+      anchorX: num(0, { step: 0.01 }), anchorY: num(0, { step: 0.01 }), opacity: num(1, { min: 0, max: 1 }),
+    },
+    Size: { width: required(size()), height: required(size()), apex: num(0.5, { min: 0, max: 1 }), cornerRadius: size(0) },
+    Appearance: { fill: color(), stroke: color(), strokeWidth: strokeWidth() },
+  },
+}));
+registerPrimitiveProperties('Polygon', propertyTable<PolygonProps>({
+  size: { radius: 'radius' },
+  groups: {
+    Transform: {
+      x: num(0), y: num(0), rotation: num(0), scale: num(1, { step: 0.01 }),
+      anchorX: num(0, { step: 0.01 }), anchorY: num(0, { step: 0.01 }), opacity: num(1, { min: 0, max: 1 }),
+    },
+    Size: { radius: required(size()), sides: required(count()), cornerRadius: size(0) },
+    Appearance: { fill: color(), stroke: color(), strokeWidth: strokeWidth() },
+  },
+}));
+registerPrimitiveProperties('Star', propertyTable<StarProps>({
+  size: { radius: 'radius' },
+  groups: {
+    Transform: {
+      x: num(0), y: num(0), rotation: num(0), scale: num(1, { step: 0.01 }),
+      anchorX: num(0, { step: 0.01 }), anchorY: num(0, { step: 0.01 }), opacity: num(1, { min: 0, max: 1 }),
+    },
+    Size: { radius: required(size()), points: required(count()), innerRatio: num(0.5, { min: 0, max: 1 }), cornerRadius: size(0) },
+    Appearance: { fill: color(), stroke: color(), strokeWidth: strokeWidth() },
+  },
+}));
+registerPrimitiveProperties('Pie', propertyTable<PieProps>({
+  size: { radius: 'radius' },
+  groups: {
+    Transform: {
+      x: num(0), y: num(0), rotation: num(0), scale: num(1, { step: 0.01 }),
+      anchorX: num(0, { step: 0.01 }), anchorY: num(0, { step: 0.01 }), opacity: num(1, { min: 0, max: 1 }),
+    },
+    Size: { radius: required(size()), startAngle: num(0), endAngle: required(num()), cornerRadius: size(0) },
+    Appearance: { fill: color(), stroke: color(), strokeWidth: strokeWidth() },
+  },
+}));
+registerPrimitiveProperties('Heart', propertyTable<HeartProps>({
+  size: { width: 'width', height: 'height' },
+  groups: {
+    Transform: {
+      x: num(0), y: num(0), rotation: num(0), scale: num(1, { step: 0.01 }),
+      anchorX: num(0, { step: 0.01 }), anchorY: num(0, { step: 0.01 }), opacity: num(1, { min: 0, max: 1 }),
+    },
+    Size: { width: required(size()), height: required(size()) },
+    Appearance: { fill: color(), stroke: color(), strokeWidth: strokeWidth() },
+  },
+}));

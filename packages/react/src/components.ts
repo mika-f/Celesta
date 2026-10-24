@@ -17,6 +17,18 @@ import type {
   LayerVignette, LayerWave, LayerZoomBlur, ShaderEffect,
 } from './shader';
 import { createdAtOverride } from './jsx-dev-runtime';
+import {
+  bool,
+  color,
+  num,
+  path,
+  propertyTable,
+  registerPrimitiveProperties,
+  required,
+  select,
+  str,
+  text,
+} from './property-tables';
 import { markPrimitive, markTransparent, markWindow } from './source-chain';
 import { themeTextContent } from './rich-text';
 import { type TextShorthand, ThemeContext, themedShapePaint, themedTextStyle } from './theme';
@@ -1078,6 +1090,79 @@ export const Audio = React.forwardRef<AssetReference, AudioProps>(function Audio
 // Layer primitives, so a source chain can tell `<Rect>` from a component the
 // author named `Rect`.
 for (const primitive of [Group, Image, Text, Rect, Video, Mask]) markPrimitive(primitive);
+
+// What the editor's Properties tab edits on each, by section.
+registerPrimitiveProperties('Group', propertyTable<GroupProps>({
+  groups: {
+    Transform: {
+      x: num(0), y: num(0), rotation: num(0), scale: num(1, { step: 0.01 }),
+      anchorX: num(0, { step: 0.01 }), anchorY: num(0, { step: 0.01 }), opacity: num(1, { min: 0, max: 1 }),
+    },
+  },
+}));
+registerPrimitiveProperties('Image', propertyTable<ImageProps>({
+  size: { width: 'width', height: 'height' },
+  groups: {
+    Transform: {
+      x: num(0), y: num(0), rotation: num(0), scale: num(1, { step: 0.01 }),
+      anchorX: num(0, { step: 0.01 }), anchorY: num(0, { step: 0.01 }), opacity: num(1, { min: 0, max: 1 }),
+    },
+    Source: { src: required(path()) },
+    // A size must be positive (`Image width must be finite and positive`).
+    Size: { width: num(undefined, { min: 1 }), height: num(undefined, { min: 1 }), fit: select(['contain', 'cover']) },
+  },
+}));
+registerPrimitiveProperties('Text', propertyTable<TextProps>({
+  size: { width: 'maxWidth' },
+  groups: {
+    Transform: {
+      x: num(0), y: num(0), rotation: num(0), scale: num(1, { step: 0.01 }),
+      anchorX: num(0, { step: 0.01 }), anchorY: num(0, { step: 0.01 }), opacity: num(1, { min: 0, max: 1 }),
+    },
+    Text: {
+      children: required(text()),
+      fontFamily: str(),
+      // A size of 0 or less draws nothing.
+      fontSize: num(undefined, { min: 0 }),
+      // The nearest static face is picked by its weight class, 100 apart.
+      fontWeight: num(undefined, { min: 1, max: 1000, step: 100 }),
+      color: color(),
+    },
+    Layout: { maxWidth: num(undefined, { min: 0 }) },
+  },
+}));
+registerPrimitiveProperties('Rect', propertyTable<RectProps>({
+  size: { width: 'width', height: 'height' },
+  groups: {
+    Transform: {
+      x: num(0), y: num(0), rotation: num(0), scale: num(1, { step: 0.01 }),
+      anchorX: num(0, { step: 0.01 }), anchorY: num(0, { step: 0.01 }), opacity: num(1, { min: 0, max: 1 }),
+    },
+    // A negative size, radius, or stroke draws nothing more than 0 does.
+    Size: {
+      width: required(num(undefined, { min: 0 })),
+      height: required(num(undefined, { min: 0 })),
+      cornerRadius: num(0, { min: 0 }),
+    },
+    Appearance: { fill: color(), stroke: color(), strokeWidth: num(0, { min: 0 }) },
+  },
+}));
+registerPrimitiveProperties('Video', propertyTable<VideoProps>({
+  groups: {
+    Transform: {
+      x: num(0), y: num(0), rotation: num(0), scale: num(1, { step: 0.01 }),
+      anchorX: num(0, { step: 0.01 }), anchorY: num(0, { step: 0.01 }), opacity: num(1, { min: 0, max: 1 }),
+    },
+    // No time before the file's start; no negative speed or volume.
+    Source: {
+      src: required(path()),
+      startFrom: num(0, { min: 0 }),
+      playbackRate: num(1, { min: 0, step: 0.01 }),
+      loop: bool(false),
+    },
+    Audio: { volume: num(1, { min: 0, step: 0.01 }), muted: bool(false) },
+  },
+}));
 for (const wrapper of [Composition, Sequence, FreezeFrame, Loop]) markTransparent(wrapper);
 markWindow(Sequence, 'Sequence');
 markWindow(FreezeFrame, 'FreezeFrame');

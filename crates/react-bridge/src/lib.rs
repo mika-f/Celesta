@@ -36,9 +36,11 @@ pub use properties::{
 pub use types::{
     ComponentPropertyField, ComponentPropertySchema, ComponentResolutionRequest,
     ComponentResolutions, ElementKind, FrameEvaluation, FrameSpan, LayerSource, LayerSourceReport,
-    PrepareDependency, ProjectFrame, PropOverride, ReactAudioClipDescriptor, ReactChapter,
-    ReactCompositionInfo, ReactCompositionMetadata, ReactDuck, ReactSubtitleDescriptor,
-    ReceivedProps, ReceivedValue, SourcePos, SpawnOptions, TimingWindow, chapter_at,
+    PrepareDependency, PrimitivePropertyField, PrimitivePropertyGroup, PrimitivePropertyRow,
+    PrimitivePropertyTable, PrimitiveSize, ProjectFrame, PropOverride, ReactAudioClipDescriptor,
+    ReactChapter, ReactCompositionInfo, ReactCompositionMetadata, ReactDuck,
+    ReactSubtitleDescriptor, ReceivedProps, ReceivedValue, SourcePos, SpawnOptions, TimingWindow,
+    chapter_at,
 };
 
 mod project_templates;
@@ -55,5 +57,6 @@ pub use project_types::{
 };
 pub use props_edit::{
     OrderedObject, PropsEditError, import_path, replace_file, set_property, set_property_text,
+    write_temp,
 };
 pub use runtime::runtime_paths;

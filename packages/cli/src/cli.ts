@@ -19,6 +19,7 @@ import {
   createResolver,
   holdProjectPropertyValues,
   listComponentSchemas,
+  listPrimitiveProperties,
   mount,
   prepareDependencies,
   setAudioDecoder,
@@ -43,6 +44,7 @@ import type {
   ResolutionRuntime,
   Resolver,
   SubtitleDescriptor,
+  WirePropertyTable,
 } from '@celesta/react/internal';
 
 import { resolvePropertyInputs } from './property-inputs';
@@ -135,6 +137,8 @@ export interface ReadyMessage {
   compositionId: string;
   compositions: readonly CompositionInfo[];
   componentSchemas: Record<string, ComponentPropertySchema>;
+  /** Every primitive's property table, keyed by the primitive's name. */
+  primitiveProperties: Record<string, WirePropertyTable>;
   propertySchema: Record<string, ProjectPropertyField> | null;
   dependencies: PrepareDependency[];
 }
@@ -311,6 +315,9 @@ async function main(): Promise<void> {
     compositionId: mounted.compositionId,
     compositions: mounted.compositions,
     componentSchemas: listComponentSchemas(),
+    // Listed after the entry ran, so the tables of the packages it imports
+    // (`@celesta/shapes`) are in.
+    primitiveProperties: listPrimitiveProperties(),
     propertySchema: listProjectProperties() ?? null,
     // Files `prepare()` read outside the sources the editor already watches.
     dependencies: prepareDependencies(),

@@ -4,7 +4,13 @@
 //! `property_panel_view.rs` renders it.
 
 use crate::edit_history::{FileEdit, write_recorded};
+use crate::element_edit::schema_field;
+use crate::element_rows::control_kind;
 use crate::preview::{KeptSchema, ReactPreview};
+use crate::property_controls::{
+    Control, ControlEvent, ControlKind, build_control, parse_color, parse_color_input,
+    parse_number_input, take_picked_color,
+};
 use crate::source::{PropertyArgs, watched_mtime};
 use crate::view::EditorView;
 use crate::widgets::{format_component_number, json_display};
@@ -12,13 +18,7 @@ use celesta_react_bridge::{
     ComponentPropertyField, ENTRY_PROPS_FILE, PropertyInputs, PropertyIssue, effective_values,
     import_path, resolve_props_file, set_property_text,
 };
-use gpui_kit::component::color_picker::{ColorPickerEvent, ColorPickerState};
-use gpui_kit::component::input::{InputEvent, InputState};
-use gpui_kit::component::select::{SelectEvent, SelectState};
-use gpui_kit::{
-    App, AppContext as _, Context, Entity, Focusable as _, Hsla, PathPromptOptions, Rgba,
-    Subscription, Window,
-};
+use gpui_kit::{App, Context, PathPromptOptions, Subscription, Window};
 use serde_json::Value;
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -49,30 +49,6 @@ impl CommitQueue {
 
     pub(crate) fn is_empty(&self) -> bool {
         self.commits.is_empty()
-    }
-}
-
-/// A typed number: surrounding spaces are ignored, and only finite values
-/// count (`1e3` is fine, `NaN`, `inf`, and `1,5` are not).
-pub(crate) fn parse_number_input(text: &str) -> Result<f64, String> {
-    text.trim()
-        .parse::<f64>()
-        .ok()
-        .filter(|value| value.is_finite())
-        .ok_or_else(|| "Enter a number".to_owned())
-}
-
-/// A typed color: `#RRGGBB` or `#RRGGBBAA` in either case, returned as typed
-/// (without surrounding spaces).
-pub(crate) fn parse_color_input(text: &str) -> Result<String, String> {
-    let text = text.trim();
-    let valid = text.strip_prefix('#').is_some_and(|digits| {
-        matches!(digits.len(), 6 | 8) && digits.chars().all(|digit| digit.is_ascii_hexdigit())
-    });
-    if valid {
-        Ok(text.to_owned())
-    } else {
-        Err("Enter a color as #RRGGBB or #RRGGBBAA".to_owned())
     }
 }
 
@@ -155,29 +131,6 @@ pub(crate) fn value_text(value: &Value) -> String {
     }
 }
 
-/// `#RRGGBB`, or `#RRGGBBAA` when the color is not opaque.
-pub(crate) fn color_hex(color: Hsla) -> String {
-    let rgba = Rgba::from(color);
-    let channel = |value: f32| (value.clamp(0.0, 1.0) * 255.0).round() as u8;
-    let rgb = format!(
-        "#{:02X}{:02X}{:02X}",
-        channel(rgba.r),
-        channel(rgba.g),
-        channel(rgba.b)
-    );
-    if channel(rgba.a) == u8::MAX {
-        rgb
-    } else {
-        format!("{rgb}{:02X}", channel(rgba.a))
-    }
-}
-
-/// A `#RRGGBB`/`#RRGGBBAA` string as a color, for the swatch.
-pub(crate) fn parse_color(value: &Value) -> Option<Hsla> {
-    let text = parse_color_input(value.as_str()?).ok()?;
-    Rgba::try_from(text.as_str()).ok().map(Hsla::from)
-}
-
 /// The schema's keys in declaration order, then any key the order missed.
 pub(crate) fn ordered_keys(schema: &KeptSchema) -> Vec<&str> {
     let mut keys: Vec<&str> = schema
@@ -205,17 +158,6 @@ pub(crate) fn field_label<'a>(key: &'a str, field: &'a ComponentPropertyField) -
         | ComponentPropertyField::Path { label, .. } => label,
     };
     label.as_deref().unwrap_or(key)
-}
-
-/// The range hint a number field shows: `0–1`, `≥ 0`, or `≤ 10`.
-pub(crate) fn number_hint(min: Option<f64>, max: Option<f64>) -> Option<String> {
-    let number = format_component_number;
-    match (min, max) {
-        (Some(min), Some(max)) => Some(format!("{}–{}", number(min), number(max))),
-        (Some(min), None) => Some(format!("≥ {}", number(min))),
-        (None, Some(max)) => Some(format!("≤ {}", number(max))),
-        (None, None) => None,
-    }
 }
 
 /// The value the preview uses for one key, from the inputs last read from disk.
@@ -398,31 +340,28 @@ pub(crate) enum TextUpdate {
     Always,
 }
 
-/// The control a row edits its value with.
-pub(crate) enum RowControl {
-    /// `string`, `number`, and `path` fields.
-    Text(Entity<InputState>),
-    /// `boolean` fields; the switch shows `RowState::shown`.
-    Switch,
-    Select(Entity<SelectState<Vec<String>>>),
-    Color {
-        text: Entity<InputState>,
-        picker: Entity<ColorPickerState>,
-    },
+/// Sends what the person does in a row's controls to the row for `key`.
+pub(crate) fn property_control_handler(
+    key: &str,
+) -> impl Fn(&mut EditorView, ControlEvent, &mut Window, &mut Context<EditorView>) + Clone + 'static
+{
+    let key = key.to_owned();
+    move |this, event, _, cx| this.property_control_event(&key, event, cx)
 }
 
 /// One declared property's controls and what they show.
 pub(crate) struct PropertyRow {
     pub(crate) field: ComponentPropertyField,
-    pub(crate) control: RowControl,
+    pub(crate) kind: ControlKind,
+    /// A switch shows `RowState::shown`.
+    pub(crate) control: Control,
     /// The row's value and when it changes; applied to `control` on render,
     /// which has the window the controls need.
     pub(crate) state: RowState,
     /// Why the typed text was not committed (not a number, not a color).
     pub(crate) invalid: Option<String>,
-    /// The color picker's open state at its last notification, and whether a
-    /// color was picked since it opened. The pick is committed on close.
-    picker_open: bool,
+    /// A color was picked since the picker last closed; the pick is
+    /// committed when it closes.
     picked: bool,
     _subscriptions: Vec<Subscription>,
 }
@@ -459,35 +398,33 @@ fn update_controls(
     window: &mut Window,
     cx: &mut App,
 ) {
-    let mut set_text = |input: &Entity<InputState>, window: &mut Window, cx: &mut App| {
-        let replace = match text {
-            TextUpdate::Keep => false,
-            TextUpdate::UnlessFocused => !input.focus_handle(cx).is_focused(window),
-            TextUpdate::Always => true,
-        };
-        if replace {
-            let shown = value_text(&value);
-            input.update(cx, |input, cx| input.set_value(shown, window, cx));
-            row.invalid = None;
-            row.state.text_replaced();
-        }
+    let replace = match text {
+        TextUpdate::Keep => false,
+        TextUpdate::UnlessFocused => !row.control.text_focused(window, cx),
+        TextUpdate::Always => true,
     };
+    if replace && row.control.set_text(value_text(&value), window, cx) {
+        row.invalid = None;
+        row.state.text_replaced();
+    }
     match &row.control {
-        RowControl::Text(input) => set_text(input, window, cx),
-        RowControl::Switch => {}
-        RowControl::Select(select) => {
+        Control::Select(select) => {
             let choice = value.as_str().map(str::to_owned);
             select.update(cx, |select, cx| match &choice {
                 Some(choice) => select.set_selected_value(choice, window, cx),
                 None => select.set_selected_index(None, window, cx),
             });
         }
-        RowControl::Color { text, picker } => {
-            set_text(text, window, cx);
-            if let Some(color) = parse_color(&value) {
-                picker.update(cx, |picker, cx| picker.set_value(color, window, cx));
-            }
+        // A value that is not a color clears the swatch, which a locked row
+        // shows in place of the picker.
+        Control::Color { picker, .. } => {
+            let color = parse_color(&value);
+            picker.update(cx, |picker, cx| match color {
+                Some(color) => picker.set_value(color, window, cx),
+                None => picker.clear_value(window, cx),
+            });
         }
+        Control::Text(_) | Control::Textarea(_) | Control::Switch => {}
     }
 }
 
@@ -563,87 +500,50 @@ impl EditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> PropertyRow {
-        let (control, subscriptions) = match field {
-            ComponentPropertyField::String { .. }
-            | ComponentPropertyField::Number { .. }
-            | ComponentPropertyField::Path { .. } => {
-                let (input, subscription) = Self::property_text_input(key, window, cx);
-                (RowControl::Text(input), vec![subscription])
-            }
-            ComponentPropertyField::Boolean { .. } => (RowControl::Switch, Vec::new()),
-            ComponentPropertyField::Select { options, .. } => {
-                let select = cx.new(|cx| SelectState::new(options.clone(), None, window, cx));
-                let key = key.to_owned();
-                let subscription = cx.subscribe_in(
-                    &select,
-                    window,
-                    move |this, _, event: &SelectEvent<Vec<String>>, _, cx| {
-                        if let SelectEvent::Confirm(Some(choice)) = event {
-                            let value = Value::String(choice.clone());
-                            this.commit_property(&key, Some(value), TextUpdate::Keep, cx);
-                        }
-                    },
-                );
-                (RowControl::Select(select), vec![subscription])
-            }
-            ComponentPropertyField::Color { .. } => {
-                let (text, typed) = Self::property_text_input(key, window, cx);
-                let picker = cx.new(|cx| ColorPickerState::new(window, cx));
-                let picked_key = key.to_owned();
-                let picked = cx.subscribe_in(
-                    &picker,
-                    window,
-                    move |this, _, _: &ColorPickerEvent, _, _| {
-                        if let Some(row) = this.property_panel.rows.get_mut(&picked_key) {
-                            row.picked = true;
-                        }
-                    },
-                );
-                let closed_key = key.to_owned();
-                let closed = cx.observe_in(&picker, window, move |this, picker, _, cx| {
-                    this.color_picker_notified(&closed_key, &picker, cx);
-                });
-                (
-                    RowControl::Color { text, picker },
-                    vec![typed, picked, closed],
-                )
-            }
-        };
+        let kind = control_kind(&schema_field(field));
+        let built = build_control(&kind, window, cx, property_control_handler(key));
         PropertyRow {
             field: field.clone(),
-            control,
+            kind,
+            control: built.control,
             // Differs from every effective value, so the first sync fills the controls.
             state: RowState::for_field(field),
             invalid: None,
-            picker_open: false,
             picked: false,
-            _subscriptions: subscriptions,
+            _subscriptions: built.subscriptions,
         }
     }
 
-    /// A single-line input that commits its row on Enter or blur.
-    fn property_text_input(
-        key: &str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> (Entity<InputState>, Subscription) {
-        let input = cx.new(|cx| InputState::new(window, cx));
-        let key = key.to_owned();
-        let subscription =
-            cx.subscribe_in(&input, window, move |this, _, event: &InputEvent, _, cx| {
-                match event {
-                    // `set_value` emits no change, so this is the person typing.
-                    InputEvent::Change => {
-                        if let Some(row) = this.property_panel.rows.get_mut(&key) {
-                            row.state.text_edited();
-                        }
-                    }
-                    InputEvent::PressEnter { .. } => this.submit_property_text(&key, false, cx),
-                    InputEvent::Blur => this.submit_property_text(&key, true, cx),
-                    InputEvent::Focus => {}
+    /// What the person did in the controls of the row for `key`.
+    fn property_control_event(&mut self, key: &str, event: ControlEvent, cx: &mut Context<Self>) {
+        match event {
+            ControlEvent::Edited => {
+                if let Some(row) = self.property_panel.rows.get_mut(key) {
+                    row.state.text_edited();
                 }
-            });
-        (input, subscription)
+            }
+            ControlEvent::Submit { blur } => self.submit_property_text(key, blur, cx),
+            ControlEvent::Escape => self.restore_property_text(key, cx),
+            ControlEvent::Toggled(checked) => {
+                let value = Some(Value::Bool(checked));
+                self.commit_property(key, value, TextUpdate::Keep, cx);
+            }
+            ControlEvent::Chosen(choice) => {
+                let value = Some(Value::String(choice));
+                self.commit_property(key, value, TextUpdate::Keep, cx);
+            }
+            ControlEvent::ColorPicked => {
+                if let Some(row) = self.property_panel.rows.get_mut(key) {
+                    row.picked = true;
+                }
+            }
+            ControlEvent::ColorPickerClosed => self.color_picker_closed(key, cx),
+            ControlEvent::ChoosePath => self.choose_property_path(key, cx),
+            ControlEvent::ClearPath => {
+                let none = Some(Value::String(String::new()));
+                self.commit_property(key, none, TextUpdate::Always, cx);
+            }
+        }
     }
 
     /// Enter (`blur` false) or blur in a row's text: commits an edit, or
@@ -659,11 +559,9 @@ impl EditorView {
             TextSubmit::Refresh => return cx.notify(),
             TextSubmit::Ignore => return,
         }
-        let input = match &row.control {
-            RowControl::Text(input) | RowControl::Color { text: input, .. } => input,
-            RowControl::Switch | RowControl::Select(_) => return,
+        let Some(text) = row.control.text(cx) else {
+            return;
         };
-        let text = input.read(cx).value();
         let parsed = match row.field {
             ComponentPropertyField::Number { .. } => parse_number_input(&text).map(number_value),
             ComponentPropertyField::Color { .. } => parse_color_input(&text).map(Value::String),
@@ -688,29 +586,12 @@ impl EditorView {
     }
 
     /// Commits the picked color when the picker closes.
-    fn color_picker_notified(
-        &mut self,
-        key: &str,
-        picker: &Entity<ColorPickerState>,
-        cx: &mut Context<Self>,
-    ) {
-        let (open, color) = {
-            let picker = picker.read(cx);
-            (picker.is_open(), picker.value())
-        };
+    fn color_picker_closed(&mut self, key: &str, cx: &mut Context<Self>) {
         let Some(row) = self.property_panel.rows.get_mut(key) else {
             return;
         };
-        let was_open = std::mem::replace(&mut row.picker_open, open);
-        if open && !was_open {
-            row.picked = false;
-        }
-        if !was_open || open || !std::mem::take(&mut row.picked) {
-            return;
-        }
-        if let Some(color) = color {
-            let value = Value::String(color_hex(color));
-            self.commit_property(key, Some(value), TextUpdate::Always, cx);
+        if let Some(color) = take_picked_color(&row.control, &mut row.picked, cx) {
+            self.commit_property(key, Some(Value::String(color)), TextUpdate::Always, cx);
         }
     }
 
@@ -822,6 +703,7 @@ impl EditorView {
             }
         }
         self.drain_property_commits(cx);
+        self.drain_held_rows(cx);
         cx.notify();
     }
 
@@ -900,6 +782,7 @@ impl EditorView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui_kit::{Hsla, Rgba};
     use serde_json::json;
 
     #[test]
@@ -912,25 +795,6 @@ mod tests {
         assert_eq!(queue.pop(), Some(("a".to_owned(), Some(json!(3)))));
         assert_eq!(queue.pop(), Some(("b".to_owned(), Some(json!(2)))));
         assert_eq!(queue.pop(), None);
-    }
-
-    #[test]
-    fn number_input_accepts_finite_numbers_only() {
-        assert_eq!(parse_number_input("1.5"), Ok(1.5));
-        assert_eq!(parse_number_input(" 2 "), Ok(2.0));
-        assert_eq!(parse_number_input("1e3"), Ok(1000.0));
-        for text in ["1,5", "", "NaN", "inf"] {
-            assert!(parse_number_input(text).is_err(), "{text:?} was accepted");
-        }
-    }
-
-    #[test]
-    fn color_input_accepts_six_or_eight_hex_digits() {
-        assert_eq!(parse_color_input("#AABBCC"), Ok("#AABBCC".to_owned()));
-        assert_eq!(parse_color_input("#aabbccdd"), Ok("#aabbccdd".to_owned()));
-        for text in ["#fff", "red", "AABBCC"] {
-            assert!(parse_color_input(text).is_err(), "{text:?} was accepted");
-        }
     }
 
     #[test]
@@ -1028,24 +892,6 @@ mod tests {
     }
 
     #[test]
-    fn picked_colors_are_written_as_hex() {
-        let opaque = Hsla::from(gpui_kit::Rgba {
-            r: 1.0,
-            g: 0.0,
-            b: 0x80 as f32 / 255.0,
-            a: 1.0,
-        });
-        assert_eq!(color_hex(opaque), "#FF0080");
-        let translucent = Hsla::from(gpui_kit::Rgba {
-            r: 0.0,
-            g: 0.0,
-            b: 0.0,
-            a: 0x40 as f32 / 255.0,
-        });
-        assert_eq!(color_hex(translucent), "#00000040");
-    }
-
-    #[test]
     fn keys_follow_the_declaration_order() {
         let text = |default: &str| ComponentPropertyField::String {
             label: None,
@@ -1060,14 +906,6 @@ mod tests {
             order: vec!["c".to_owned(), "gone".to_owned(), "a".to_owned()],
         };
         assert_eq!(ordered_keys(&schema), vec!["c", "a", "b"]);
-    }
-
-    #[test]
-    fn number_hints_show_the_declared_range() {
-        assert_eq!(number_hint(Some(0.0), Some(1.0)), Some("0–1".to_owned()));
-        assert_eq!(number_hint(Some(0.5), None), Some("≥ 0.5".to_owned()));
-        assert_eq!(number_hint(None, Some(10.0)), Some("≤ 10".to_owned()));
-        assert_eq!(number_hint(None, None), None);
     }
 
     #[test]

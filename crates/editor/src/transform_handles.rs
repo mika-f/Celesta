@@ -11,7 +11,7 @@
 //! for the layers that deviate (an `<Instances>`, whose x, y and rotation are
 //! its particles').
 
-use crate::transform_edit::TransformProp;
+use crate::element_edit::{TransformProp, received_number};
 use celesta_composition::{EvaluatedTransform, Point};
 use celesta_gpu_renderer::{LayerFrame, invert_affine};
 use celesta_react_bridge::ReceivedProps;
@@ -269,7 +269,7 @@ fn prop_changes(
         .iter()
         .map(|&(prop, value)| {
             let start = start_value(frame, prop);
-            let was = prop.received(received).unwrap_or(start);
+            let was = received_number(received, prop.name()).unwrap_or(start);
             let now = match prop {
                 TransformProp::Scale | TransformProp::ScaleX | TransformProp::ScaleY => {
                     was * ratio(start, value)
@@ -318,7 +318,7 @@ pub(crate) fn preview_values(
                 .find(|(candidate, _)| *candidate == prop)
                 .map_or_else(
                     || {
-                        prop.received(received)
+                        received_number(received, prop.name())
                             .unwrap_or_else(|| start_value(frame, prop))
                     },
                     |&(_, value)| value,

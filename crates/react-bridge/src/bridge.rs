@@ -173,6 +173,7 @@ impl ReactBridge {
                         composition_id,
                         mut compositions,
                         component_schemas,
+                        primitive_properties,
                         project_property_schema,
                         dependencies,
                     } => {
@@ -201,6 +202,7 @@ impl ReactBridge {
                             frame_rate: config.frame_rate,
                             duration_in_frames: config.duration_in_frames,
                             component_schemas,
+                            primitive_properties,
                             project_property_schema,
                             project_property_order,
                             prepare_dependencies: dependencies,

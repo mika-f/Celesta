@@ -1,6 +1,8 @@
 use crate::audio::{AudioMixWorker, MasterVolumeDrag};
 use crate::component_schema::ComponentSchemaWorker;
 use crate::edit_history::EditHistory;
+use crate::element_edit::ElementEdit;
+use crate::element_rows::ElementRows;
 use crate::export_worker::ExportWorker;
 use crate::helpers::ExportLoudness;
 use crate::layer_select::SourceLookup;
@@ -15,14 +17,14 @@ use crate::refresh::{ReloadOrder, SelectionKeep};
 use crate::source::{PropertyArgs, load_source};
 use crate::timeline::LaneGesture;
 use crate::transform_drag::TransformDrag;
-use crate::transform_edit::TransformEdit;
-use crate::transform_rows::TransformInputs;
 use celesta_composition::{AudioClip, Rational};
 use celesta_editor_core::{AssetSummary, EditorDocument, TimelineClock, TrackSummary};
 use celesta_exporter::{ExportCancellation, ExportProgress};
 use celesta_gpu_renderer::{GpuDriver, GpuRenderOptions, GpuRenderer, HitRegion, LayerFrame};
 use celesta_media::FfmpegBackend;
-use celesta_react_bridge::{ComponentPropertyField, ComponentPropertySchema};
+use celesta_react_bridge::{
+    ComponentPropertyField, ComponentPropertySchema, PrimitivePropertyTable,
+};
 use chrono::{DateTime, Local};
 #[cfg(not(target_os = "macos"))]
 use gpui_kit::component::menu::AppMenuBar;
@@ -269,10 +271,10 @@ pub(crate) struct EditorView {
     pub(crate) source_chain_open: bool,
     /// Which reloads keep `selected_layer` (those after the editor's own writes).
     pub(crate) selection_keep: SelectionKeep,
-    /// The selected layer's transform targets in its source.
-    pub(crate) transform: TransformEdit,
-    /// The Layer section's Transform fields.
-    pub(crate) transform_inputs: TransformInputs,
+    /// The selected layer's targets in its source.
+    pub(crate) element_edit: ElementEdit,
+    /// The controls of the selected layer's property rows.
+    pub(crate) element_rows: ElementRows,
     /// The selected layer's frame as the shown frame measured it: the layer
     /// id, and `None` inside when it has no affine frame. `None` when the
     /// frame measured nothing (during playback, or with no selection).
@@ -433,8 +435,8 @@ impl EditorView {
             launch_error: None,
             source_chain_open: false,
             selection_keep: SelectionKeep::default(),
-            transform: TransformEdit::default(),
-            transform_inputs: TransformInputs::default(),
+            element_edit: ElementEdit::default(),
+            element_rows: ElementRows::default(),
             layer_frame: None,
             transform_drag: None,
         };
@@ -446,6 +448,13 @@ impl EditorView {
             editor.refresh_component_schemas();
         }
         Ok(editor)
+    }
+
+    /// The property table of the primitive `name` (`Rect`, `Star`, ...) as
+    /// the React preview last loaded it; `None` for a project, or a name the
+    /// runtime declares no table for.
+    pub(crate) fn primitive_table(&self, name: &str) -> Option<&PrimitivePropertyTable> {
+        self.react_preview.as_ref()?.primitive_table(name)
     }
 }
 

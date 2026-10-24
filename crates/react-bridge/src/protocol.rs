@@ -7,8 +7,9 @@ use crate::props_edit::OrderedObject;
 use crate::statics::StaticDefinition;
 use crate::types::{
     ComponentPropertyField, ComponentPropertySchema, FrameSpan, LayerSource, LayerSourceReport,
-    PrepareDependency, PropOverride, ReactAudioClipDescriptor, ReactCompositionConfig,
-    ReactCompositionInfo, ReactSubtitleDescriptor, ReceivedProps, TimingWindow,
+    PrepareDependency, PrimitivePropertyTable, PropOverride, ReactAudioClipDescriptor,
+    ReactCompositionConfig, ReactCompositionInfo, ReactSubtitleDescriptor, ReceivedProps,
+    TimingWindow,
 };
 use celesta_composition::{Layer, Scene, ShaderSource, Time};
 use serde::{Deserialize, Serialize};
@@ -295,6 +296,8 @@ pub(crate) enum ReadyMessage {
         compositions: Vec<ReactCompositionInfo>,
         #[serde(default, rename = "componentSchemas")]
         component_schemas: BTreeMap<String, ComponentPropertySchema>,
+        #[serde(default, rename = "primitiveProperties")]
+        primitive_properties: BTreeMap<String, PrimitivePropertyTable>,
         /// `null` (or absent) when the entry never called
         /// `defineProjectProperties()`; an empty object means it declared an
         /// intentionally empty schema.
