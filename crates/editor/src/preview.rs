@@ -6,9 +6,9 @@ use crate::source::PropertyArgs;
 use celesta_composition::{Layer, LayerContent, Scene, ShaderSource, Time};
 use celesta_gpu_renderer::{GpuRenderer, HitRegion, LayerFrame, RenderQuality, layer_frame};
 use celesta_react_bridge::{
-    ComponentPropertyField, ComponentResolutionRequest, ComponentResolutions, PrepareDependency,
-    PrimitivePropertyTable, PropOverride, PropertyInputs, PropertyIssue, ReactBridge, ReactChapter,
-    ReactCompositionMetadata, SpawnOptions,
+    ComponentPropertyField, ComponentPropertySchema, ComponentResolutionRequest,
+    ComponentResolutions, PrepareDependency, PrimitivePropertyTable, PropOverride, PropertyInputs,
+    PropertyIssue, ReactBridge, ReactChapter, ReactCompositionMetadata, SpawnOptions,
 };
 use gpui_kit::RenderImage;
 use rodio::Player;
@@ -134,6 +134,9 @@ pub(crate) struct ReactPreview {
     /// The primitives' property tables as last loaded, keyed by primitive
     /// name; kept across failed reloads.
     pub(crate) primitive_properties: BTreeMap<String, PrimitivePropertyTable>,
+    /// What `registerComponent()` declared, keyed by component name, as last
+    /// loaded; kept across failed reloads. It types the Component section.
+    pub(crate) component_schemas: BTreeMap<String, ComponentPropertySchema>,
     pub(crate) entry: PathBuf,
     /// Newest source-file modification time seen under the entry's directory
     /// (or of the `--props-file`). The reload watcher compares against this

@@ -408,6 +408,9 @@ pub enum ComponentPropertyField {
         max: Option<f64>,
         #[serde(default)]
         step: Option<f64>,
+        /// Only whole numbers (a count of items).
+        #[serde(default)]
+        integer: Option<bool>,
     },
     Boolean {
         #[serde(default)]

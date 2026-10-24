@@ -65,6 +65,9 @@ impl EditorView {
                         self.problems
                             .fail(Source::Preview, "preview worker stopped unexpectedly");
                     }
+                    // No lookup answers again: the held row commits are
+                    // dropped on the next render (`settle_row_requests`).
+                    self.element_edit.preview_stopped();
                     break;
                 }
             }

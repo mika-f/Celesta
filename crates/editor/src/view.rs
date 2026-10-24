@@ -175,6 +175,9 @@ pub(crate) struct EditorView {
     /// layer and shows its JSX source. Off, the preview skips recording
     /// source positions and hit regions, which large scenes pay for.
     pub(crate) interactive: bool,
+    /// The interactive mode was left and the frame and sweep without it are
+    /// still to be asked for (see `settle_interactive_mode`).
+    pub(crate) interactive_refresh_due: bool,
     pub(crate) scrubbing: bool,
     /// Playback gain for the preview only (0..=2). It scales the mixed
     /// buffer at the output device and never touches the project, so it has
@@ -382,6 +385,7 @@ impl EditorView {
             play_when_audio_ready: false,
             show_safe_areas: false,
             interactive: false,
+            interactive_refresh_due: false,
             scrubbing: false,
             monitor_volume: 1.0,
             master_volume_drag: None,

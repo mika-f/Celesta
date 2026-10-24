@@ -26,7 +26,17 @@ export type ComponentDefinition<Props extends Record<string, JsonValue> = Record
 // own rendering reads today.
 export type ComponentPropertyField =
   | { type: 'string'; label?: string; defaultValue: string }
-  | { type: 'number'; label?: string; defaultValue: number; min?: number; max?: number; step?: number }
+  // `integer: true` takes whole numbers only in the editor; like `min` and
+  // `max`, it is not checked against values passed with --props.
+  | {
+      type: 'number';
+      label?: string;
+      defaultValue: number;
+      min?: number;
+      max?: number;
+      step?: number;
+      integer?: boolean;
+    }
   | { type: 'boolean'; label?: string; defaultValue: boolean }
   | { type: 'color'; label?: string; defaultValue: string }
   | { type: 'select'; label?: string; defaultValue: string; options: readonly string[] }

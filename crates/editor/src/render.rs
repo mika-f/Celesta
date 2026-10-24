@@ -12,6 +12,7 @@ impl Render for EditorView {
         self.poll_background_work();
         self.watch_occurrence_sweep(cx);
         self.settle_row_requests(cx);
+        self.settle_interactive_mode();
         self.sync_element_targets(cx);
         self.sync_element_rows(window, cx);
         self.update_playback(window);

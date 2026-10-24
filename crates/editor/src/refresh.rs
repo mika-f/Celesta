@@ -211,6 +211,7 @@ pub(crate) fn apply_property_outcome(preview: &mut ReactPreview, reload: &ReactR
             }
             preview.property_schema = KeptSchema::from_metadata(metadata);
             preview.primitive_properties = metadata.primitive_properties.clone();
+            preview.component_schemas = metadata.component_schemas.clone();
             preview.property_issues.clear();
         }
         Err(error) => preview.property_issues = error.property_issues.clone(),
@@ -704,6 +705,7 @@ mod property_outcome {
             compositions: Vec::new(),
             chapters: Vec::new(),
             primitive_properties: BTreeMap::new(),
+            component_schemas: BTreeMap::new(),
             entry: PathBuf::from("film.tsx"),
             watched_mtime: None,
             dependencies: Vec::new(),
@@ -898,6 +900,40 @@ mod property_outcome {
         };
         apply_property_outcome(&mut preview, &failed);
         assert_eq!(preview.primitive_table("Rect"), Some(&rect_table()));
+    }
+
+    #[test]
+    fn a_load_brings_the_registered_component_schemas() {
+        let mut preview = preview(None);
+        let schema = BTreeMap::from([(
+            "caption".to_owned(),
+            ComponentPropertyField::String {
+                label: Some("Caption".to_owned()),
+                default_value: String::new(),
+            },
+        )]);
+        let mut loaded = metadata(&[]);
+        loaded
+            .component_schemas
+            .insert("Badge".to_owned(), schema.clone());
+        let reload = ReactReload {
+            watched: None,
+            dependencies: Vec::new(),
+            properties: None,
+            result: Ok((PathBuf::from("film.tsx"), loaded)),
+        };
+        apply_property_outcome(&mut preview, &reload);
+        assert_eq!(preview.component_schemas.get("Badge"), Some(&schema));
+
+        // A failed load keeps them, as it keeps the tables.
+        let failed = ReactReload {
+            watched: None,
+            dependencies: Vec::new(),
+            properties: None,
+            result: Err(PreviewLoadError::from("node exited".to_owned())),
+        };
+        apply_property_outcome(&mut preview, &failed);
+        assert_eq!(preview.component_schemas.get("Badge"), Some(&schema));
     }
 
     #[test]

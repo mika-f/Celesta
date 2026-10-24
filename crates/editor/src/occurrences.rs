@@ -218,6 +218,8 @@ impl EditorView {
     /// preview draws the reloaded code, so the two do not compete while the
     /// written values are on their way to the screen.
     pub(crate) fn refresh_occurrences(&mut self, keep: bool) {
+        // Called with `refresh_preview`: both carry the current mode.
+        self.interactive_refresh_due = false;
         if self.react_preview.is_none() || !self.picks_layers() {
             self.occurrences = None;
             self.occurrence_sweep_after = None;

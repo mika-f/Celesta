@@ -68,7 +68,8 @@ fn deserializes_component_schemas_from_the_ready_message() {
                     "type": "number",
                     "defaultValue": 1,
                     "min": 1,
-                    "max": 999
+                    "max": 999,
+                    "integer": true
                 }
             }
         }
@@ -100,6 +101,7 @@ fn deserializes_component_schemas_from_the_ready_message() {
             min: Some(1.0),
             max: Some(999.0),
             step: None,
+            integer: Some(true),
         })
     );
 }
@@ -380,6 +382,7 @@ fn deserializes_the_project_property_schema_from_the_ready_message() {
             min: Some(0.0),
             max: Some(1.0),
             step: None,
+            integer: None,
         })
     );
     assert_eq!(

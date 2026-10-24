@@ -5,14 +5,15 @@
 //! the row state, and the commit flow; `element_rows_view.rs` renders them.
 
 use crate::element_edit::{
-    ElementTargets, PropKey, Target, edit_value, editable, field_of, inner_target, required_of,
-    table_default, text_style_key,
+    ComponentTargets, ElementTargets, PREVIEW_STOPPED, PropKey, Target, edit_value, editable,
+    field_of, inner_target, required_of, table_default, text_style_key,
 };
 use crate::layer_select::{SourceLookup, display_path};
 use crate::property_controls::{
     Control, ControlEvent, ControlKind, build_control, parse_color, parse_color_input,
     parse_number_input, take_picked_color,
 };
+use crate::property_panel::field_label;
 use crate::transform_drag::override_sites;
 use crate::view::EditorView;
 use celesta_react_bridge::{
@@ -68,6 +69,18 @@ pub(crate) fn row_label(key: &str) -> String {
         })
         .collect::<Vec<String>>()
         .join(" ")
+}
+
+/// The label of the Component-section row for the prop `name`: the `label`
+/// its `registerComponent()` schema gives it, else the name as written
+/// (the author's identifier, not put into words as [`row_label`] does).
+pub(crate) fn component_row_label(component: &ComponentTargets, name: &str) -> String {
+    component
+        .schema
+        .as_ref()
+        .and_then(|schema| schema.get(name))
+        .map_or(name, |field| field_label(name, field))
+        .to_owned()
 }
 
 /// How a value shows in a row's text: numbers as written to the source,
@@ -193,6 +206,40 @@ fn theme_color_name(text: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
 }
 
+/// Parses a typed number for a number `field`, inside its range and, with
+/// `integer`, whole; the error says what to enter.
+pub(crate) fn parse_field_number(
+    field: Option<&PrimitivePropertyField>,
+    text: &str,
+) -> Result<f64, String> {
+    let value = parse_number_input(text)?;
+    let (min, max, integer) = match field {
+        Some(PrimitivePropertyField::Number {
+            min, max, integer, ..
+        }) => (*min, *max, integer.unwrap_or(false)),
+        _ => (None, None, false),
+    };
+    let inside = min.is_none_or(|min| value >= min)
+        && max.is_none_or(|max| value <= max)
+        && (!integer || value.fract() == 0.0);
+    let what = if integer {
+        "a whole number"
+    } else {
+        "a number"
+    };
+    match (min, max) {
+        _ if inside => Ok(value),
+        (Some(min), Some(max)) => Err(format!(
+            "Enter {what} from {} to {}",
+            format_number(min),
+            format_number(max)
+        )),
+        (Some(min), None) => Err(format!("Enter {what} of at least {}", format_number(min))),
+        (None, Some(max)) => Err(format!("Enter {what} of at most {}", format_number(max))),
+        (None, None) => Err(format!("Enter {what}")),
+    }
+}
+
 /// Parses typed text for `kind`; the error is the row's message.
 pub(crate) fn parse_row_value(
     kind: &ControlKind,
@@ -200,36 +247,7 @@ pub(crate) fn parse_row_value(
     text: &str,
 ) -> Result<EditValue, String> {
     match kind {
-        ControlKind::Number => {
-            let value = parse_number_input(text)?;
-            let (min, max, integer) = match field {
-                Some(PrimitivePropertyField::Number {
-                    min, max, integer, ..
-                }) => (*min, *max, integer.unwrap_or(false)),
-                _ => (None, None, false),
-            };
-            let inside = min.is_none_or(|min| value >= min)
-                && max.is_none_or(|max| value <= max)
-                && (!integer || value.fract() == 0.0);
-            let what = if integer {
-                "a whole number"
-            } else {
-                "a number"
-            };
-            match (min, max) {
-                _ if inside => Ok(EditValue::Number(value)),
-                (Some(min), Some(max)) => Err(format!(
-                    "Enter {what} from {} to {}",
-                    format_number(min),
-                    format_number(max)
-                )),
-                (Some(min), None) => {
-                    Err(format!("Enter {what} of at least {}", format_number(min)))
-                }
-                (None, Some(max)) => Err(format!("Enter {what} of at most {}", format_number(max))),
-                (None, None) => Err(format!("Enter {what}")),
-            }
-        }
+        ControlKind::Number => parse_field_number(field, text).map(EditValue::Number),
         ControlKind::String | ControlKind::Text | ControlKind::Path => {
             Ok(EditValue::String(text.to_owned()))
         }
@@ -511,9 +529,10 @@ impl Scrub {
         let (_, site) = override_sites(targets, report)
             .into_iter()
             .find(|(candidate, _)| candidate == key)?;
-        // The value or the placeholder the row shows, unrounded, moved
-        // inside the field's range: a pointer back at the start pixel then
-        // gives the start value, which writes nothing.
+        // The value or the placeholder the row shows, as the value it is
+        // (not its text), moved inside the field's range and, for a
+        // whole-number field, rounded: a pointer back at the start pixel
+        // then gives the start value, which writes nothing.
         let field = row_field(targets, key).cloned();
         let shown = match entry_value(targets, key, target, report) {
             Some(EditValue::Number(value)) => value,
@@ -696,6 +715,10 @@ impl HeldCommits {
             .any(|held| Some(held.layer.as_str()) == layer)
     }
 
+    pub(crate) fn is_empty(&self) -> bool {
+        self.commits.is_empty()
+    }
+
     /// Every held commit, oldest first, none held after.
     pub(crate) fn take_all(&mut self) -> Vec<HeldCommit> {
         self.commits.drain(..).collect()
@@ -833,6 +856,12 @@ pub(crate) struct ElementRows {
 impl ElementRows {
     pub(crate) fn get(&self, key: &PropKey) -> Option<&ElementRow> {
         self.rows.get(key)
+    }
+
+    /// Whether a commit of the row `key` of `layer` waits its turn to be
+    /// written (the row says "Saving…").
+    pub(crate) fn saving(&self, layer: Option<&str>, key: &PropKey) -> bool {
+        layer.is_some_and(|layer| self.held.contains(layer, key))
     }
 }
 
@@ -1283,12 +1312,17 @@ impl EditorView {
 
     /// What happened to the rows since the last render, done now that a
     /// context is at hand: the playhead moved or playback started (submit
-    /// the typed text, see [`ElementRows::submit_requested`]), or the
-    /// selected layer's source lookup answered without a source, so the
-    /// held commits can never be written.
+    /// the typed text, see [`ElementRows::submit_requested`]), or the held
+    /// commits can never be written: the preview worker stopped, or the
+    /// selected layer's source lookup answered without a source.
     pub(crate) fn settle_row_requests(&mut self, cx: &mut Context<Self>) {
         if std::mem::take(&mut self.element_rows.submit_requested) {
             self.submit_edited_rows(cx);
+        }
+        // Dropping them releases a selection change (and a leave of the
+        // interactive mode) waiting for them.
+        if self.element_edit.preview_has_stopped() && !self.element_rows.held.is_empty() {
+            self.drop_held_rows(PREVIEW_STOPPED, cx);
         }
         let lost = !matches!(
             self.source_lookup,

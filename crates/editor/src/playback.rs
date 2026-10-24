@@ -8,8 +8,21 @@ use crate::problems::{Source, error_chain};
 use crate::view::EditorView;
 use crate::{timecode, timeline};
 use celesta_composition::Time;
-use gpui_kit::{ClickEvent, Context, MouseMoveEvent, MouseUpEvent, Window};
+use gpui_kit::{ClickEvent, Context, KeyContext, MouseMoveEvent, MouseUpEvent, Window};
 use std::time::Instant;
+
+/// Whether the focus, by its key contexts, is in a text field (a property
+/// row, the props file's Properties). The playhead's arrow, Home, and End
+/// actions do nothing then, however they come: macOS hands a key the field
+/// does not use to the menu, whose items take those keys.
+pub(crate) fn in_text_field(contexts: &[KeyContext]) -> bool {
+    contexts.iter().any(|context| context.contains("Input"))
+}
+
+/// [`in_text_field`] for the window's focus.
+fn typing(window: &Window) -> bool {
+    in_text_field(&window.context_stack())
+}
 
 impl EditorView {
     pub(crate) fn pause(&mut self) {
@@ -191,40 +204,60 @@ impl EditorView {
     pub(crate) fn jump_backward_action(
         &mut self,
         _: &JumpBackward,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if typing(window) {
+            return;
+        }
         self.step_frames(-timecode::nominal_fps(self.frame_rate_value), cx);
     }
 
     pub(crate) fn jump_forward_action(
         &mut self,
         _: &JumpForward,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if typing(window) {
+            return;
+        }
         self.step_frames(timecode::nominal_fps(self.frame_rate_value), cx);
     }
 
     pub(crate) fn go_to_start_action(
         &mut self,
         _: &GoToStart,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if typing(window) {
+            return;
+        }
         self.go_to_frame(0, cx);
     }
 
-    pub(crate) fn go_to_end_action(&mut self, _: &GoToEnd, _: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn go_to_end_action(
+        &mut self,
+        _: &GoToEnd,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if typing(window) {
+            return;
+        }
         self.go_to_frame(self.clock.end_frame(), cx);
     }
 
     pub(crate) fn previous_edit_point_action(
         &mut self,
         _: &PreviousEditPoint,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if typing(window) {
+            return;
+        }
         if let Some(frame) = self.adjacent_edit_point(false) {
             self.go_to_frame(frame, cx);
         }
@@ -233,9 +266,12 @@ impl EditorView {
     pub(crate) fn next_edit_point_action(
         &mut self,
         _: &NextEditPoint,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if typing(window) {
+            return;
+        }
         if let Some(frame) = self.adjacent_edit_point(true) {
             self.go_to_frame(frame, cx);
         }
@@ -340,18 +376,24 @@ impl EditorView {
     pub(crate) fn previous_frame_action(
         &mut self,
         _: &PreviousFrame,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if typing(window) {
+            return;
+        }
         self.step_frames(-1, cx);
     }
 
     pub(crate) fn next_frame_action(
         &mut self,
         _: &NextFrame,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if typing(window) {
+            return;
+        }
         self.step_frames(1, cx);
     }
 }

@@ -12,8 +12,8 @@ use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _};
 use gpui_kit::prelude::*;
 use gpui_kit::{
-    AnyElement, App, Context, ElementId, Entity, EventEmitter, Focusable as _, Hsla, Rgba,
-    SharedString, Subscription, Window, div,
+    AnyElement, App, Context, ElementId, Entity, EventEmitter, Focusable as _, Hsla, KeyDownEvent,
+    Keystroke, Rgba, SharedString, Subscription, Window, div,
 };
 use serde_json::Value;
 use std::sync::Arc;
@@ -427,7 +427,16 @@ fn text_input(
     escapable(input, cx, on)
 }
 
-/// Wraps a text input so Escape in it reaches `on`.
+/// Whether a text field keeps `keystroke` though it does nothing with it.
+/// The input passes on Left at the start of its text and Right at the end,
+/// and macOS then gives an unhandled key to the menu, whose Previous Frame
+/// and Next Frame items take those keys: the playhead moved while typing.
+pub(crate) fn field_keeps_key(keystroke: &Keystroke) -> bool {
+    matches!(keystroke.key.as_str(), "left" | "right") && !keystroke.modifiers.modified()
+}
+
+/// Wraps a text input so Escape in it reaches `on`, and the arrow keys it
+/// passes on stay with it ([`field_keeps_key`]).
 fn escapable(
     input: impl IntoElement,
     cx: &mut Context<EditorView>,
@@ -438,6 +447,11 @@ fn escapable(
         .on_action(cx.listener(move |this, _: &Escape, window, cx| {
             on(this, ControlEvent::Escape, window, cx);
         }))
+        .on_key_down(|event: &KeyDownEvent, _, cx| {
+            if field_keeps_key(&event.keystroke) {
+                cx.stop_propagation();
+            }
+        })
         .child(input)
         .into_any_element()
 }
@@ -456,6 +470,18 @@ fn color_swatch(color: Option<Hsla>, cx: &mut Context<EditorView>) -> impl IntoE
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_field_keeps_the_plain_arrows_it_passes_on() {
+        let keeps = |key: &str| field_keeps_key(&Keystroke::parse(key).unwrap());
+        assert!(keeps("left"));
+        assert!(keeps("right"));
+        // The input handles these itself, or they are the editor's own.
+        assert!(!keeps("shift-left"));
+        assert!(!keeps("cmd-right"));
+        assert!(!keeps("up"));
+        assert!(!keeps("space"));
+    }
 
     #[test]
     fn shift_enter_breaks_the_line_in_multi_line_text() {

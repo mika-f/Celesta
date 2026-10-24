@@ -219,7 +219,23 @@ These differ from, or settle what the spec left open:
   order, without `key`, `ref`, spreads, `children`, and the props a row
   above shows with "Set at"; locked rows for anything but a literal. It is
   hidden when nothing is left. Its rows show no received value or table
-  default as a placeholder.
+  default as a placeholder. A row is labeled with the schema field's
+  `label` (`component_row_label`), else the prop's name as written: an
+  author's identifier is not put into words as a table key is. A React
+  composition's schemas come with its loads
+  (`ReactPreview.component_schemas`, kept across a failed reload, as the
+  tables are); a JSON project's from the entry query
+  (`EditorView.component_schemas`). Before, a composition opened directly
+  typed its Component rows from their literals only, so no label, range,
+  or `integer` applied.
+- **`integer` on component number fields.** `registerComponent()` and
+  `defineProjectProperties()` number fields take `integer: true`
+  (`ComponentPropertyField::Number.integer`), which `schema_field` passes
+  on, so a Component row refuses a fraction and its scrub rounds. The
+  project Properties panel parses typed numbers with the same
+  `parse_field_number`, so it now keeps to a field's `min`/`max` too. The
+  runtime does not check `integer` against `--props` values, as it does
+  not check `min`/`max`.
 - **The call-site file is read whenever the owner call site is found**, for
   the Component section, so it is in `files`: a commit of any row is refused
   with "The source changed while editing" when the call's props moved
@@ -267,9 +283,27 @@ These differ from, or settle what the spec left open:
   scrub) made while the targets are being read again, or while another write
   runs, waits in `HeldCommits` for that layer and is written once they are
   current: one at a time (each its own history entry), in the order made,
-  the latest value per row winning. It fails at once only when the source
-  can't be read, or the code failed to reload. A row's sync never sets text
+  the latest value per row winning. While it waits, its row says
+  "Saving…" (muted, in the message line under the row; a typed value's
+  error takes the line). A write that starts at once shows nothing: it
+  lasts milliseconds, and a line for it would make the rows jump. It
+  fails at once only when the source can't be read, or the code failed to
+  reload. A row's sync never sets text
   equal to what its field holds, so the caret stays.
+- **The playhead's keys rest while a text field has the focus.** The
+  arrows, Shift+arrows, Home, and End moved the playhead while typing in a
+  field, though the keymap's `EDITOR_KEYS` excludes `Input`. One path is
+  known: gpui-base's input passes on Left at the start of its text and
+  Right at the end, and macOS offers an unhandled key to the menu, whose
+  Previous Frame and Next Frame items take those keys. `escapable`, which
+  wraps every text field and the multi-line text, keeps a plain Left or
+  Right (`field_keeps_key`). Up and Down leaked by a path not found in
+  the source, so the actions themselves (`PreviousFrame`, `NextFrame`,
+  `JumpBackward`, `JumpForward`, `PreviousEditPoint`, `NextEditPoint`,
+  `GoToStart`, `GoToEnd`) do nothing while the focus's key contexts
+  include `Input` (`in_text_field`). The trade-off: while a field has the
+  focus, those menu items do nothing either; clicking outside the field
+  brings them back.
 - **Leaving a field commits it** (as Unity's inspector does). Before the
   selection changes by a canvas click, the layer list, clearing it, or
   leaving the interactive mode (`select_layer`), and after a seek by hand
@@ -283,11 +317,23 @@ These differ from, or settle what the spec left open:
   targets were looked up at. They are dropped when the code fails to reload
   ("Not saved: the code failed to reload" on each row, or the Layer section
   for a layer no longer shown; later commits fail with it until the next
-  reload), when the layer's lookup answers without a source ("Not saved:
-  the layer's source was not found again"), and when the selection clears
-  without waiting (the reloaded code lacks the layer). A held commit to a
-  keyframe made before a seek is not written to another keyframe ("Not
-  saved: the playhead moved off this keyframe"); a plain value is.
+  reload), when the preview worker stops ("Not saved: the preview stopped
+  unexpectedly"; no lookup answers again, so later commits fail with it
+  for the rest of the session, `ElementEdit::preview_stopped`), when the
+  layer's lookup answers without a source ("Not saved: the layer's source
+  was not found again"), and when the selection clears without waiting
+  (the reloaded code lacks the layer). A held commit to a keyframe made
+  before a seek is not written to another keyframe ("Not saved: the
+  playhead moved off this keyframe"); a plain value is.
+- **Leaving the interactive mode waits with the selection change**
+  (`InteractiveToggle::LeaveAfterCommits`): the mode, and its source
+  lookups, stay until the held commits are written or dropped, so they can
+  drain; meanwhile the toggle stays selected with a spinner for its icon
+  ("Turning off Select layers once saved…") and stays clickable. Toggling
+  again, or picking a layer, cancels the leave and keeps the selection.
+  The leave asks for the frame and the sweep without the mode once: a
+  reload handler that set it off asks for both itself, and
+  `settle_interactive_mode` (each render, once no reload runs) otherwise.
 
 2a carry-overs closed: inputs that are parameters resolve at the call site;
 the lambda, one-place, and callee gaps in `resolve_inputs`; the scale-axis
@@ -312,9 +358,9 @@ scaleX={sx} />` shows 3); the duplicated readers (`TransformProp::received`,
   top-aligned.
 - 2a's `useMemo` limitation applies to scrubs as to drags: an element cached
   with `useMemo` at an override's position follows the first frame only.
-- A commit that waits shows its value in the row, and a selection change
-  that waits for it shows nothing either; both normally last only until the
-  editor's own write reloads.
+- A selection change that waits for a held commit shows nothing beyond
+  that row's "Saving…"; it normally lasts only until the editor's own
+  write reloads.
 - A seek or the start of playback submits typed text on the next render,
   after the playhead moved; a commit made then still writes against the
   targets read before the seek (the new frame's lookup has not answered).
@@ -322,8 +368,13 @@ scaleX={sx} />` shows 3); the duplicated readers (`TransformProp::received`,
   (`({ width = 100 }) => <Rect width={width} … />` called as
   `<Card width={240} />`) is not removable at the call site, though the
   parameter's default would apply there.
-- `crates/editor/src/tests.rs`, `element_rows.rs`, and `element_edit.rs`
-  are large; splitting them is a follow-up.
+- `element_rows.rs` is still large (about 1.5k lines); splitting its
+  commit flow from its pure helpers is a follow-up. `element_edit.rs` keeps
+  the targets' types, the `ElementEdit` state, and its sync, with the
+  resolution in `element_edit/resolve.rs` and the commit in
+  `element_edit/commit.rs`; the element tests are in
+  `src/tests/element_edit.rs` and `src/tests/element_rows.rs` (the editor is
+  a binary crate, so a top-level `tests/` directory can't reach them).
 
 ## What 2c–2d build on
 
@@ -382,5 +433,19 @@ content these rows supersede, so no example changed):
   file still parses.
 - Scrub Font weight: it moves by 100 and stops at 1 and 1000. Scrub Corner
   radius below 0: it stops at 0; type `-4`: "Enter a number of at least 0".
+- Select a layer inside a component registered with
+  `registerComponent("PriceTag", …, { label: { type: "string", label:
+  "Caption", defaultValue: "" } })`: the Component row reads "Caption";
+  a prop the schema leaves out shows its name as written. With
+  `count: { type: "number", defaultValue: 3, integer: true }`, typing
+  `2.5` says "Enter a whole number".
+- Type a value in a field and press Enter, then at once type another and
+  press Enter: the row says "Saving…" (muted) until the first write's
+  reload ends and the second value is written.
+- Commit a value and turn **Select layers** off before the reload ends:
+  the button keeps its selected look with a spinner for its icon, the
+  layer stays selected, and the mode turns off once the value is written.
+  Repeat, and click the button again while it spins: the mode and the
+  selection stay.
 - Undo each of the above: each is one step and restores the file it wrote
   byte for byte.

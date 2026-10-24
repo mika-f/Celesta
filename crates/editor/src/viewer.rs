@@ -557,14 +557,25 @@ impl EditorView {
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_safe_areas(cx))),
             )
             .when(self.is_react_preview(), |bar| {
-                bar.child(
-                    Button::new("toggle-interactive")
-                        .small()
-                        .ghost()
+                let button = Button::new("toggle-interactive")
+                    .small()
+                    .ghost()
+                    .selected(self.interactive);
+                // Leaving waits for held commits: still on, and clickable to
+                // stay.
+                let button = if self.element_rows.leaving_interactive {
+                    button.icon(Spinner::new()).tooltip_with_action(
+                        "Turning off Select layers once saved…",
+                        &ToggleInteractive,
+                        KEY_CONTEXT,
+                    )
+                } else {
+                    button
                         .icon(CelestaIcon::MousePointerClick)
-                        .selected(self.interactive)
                         .tooltip_with_action("Select layers", &ToggleInteractive, KEY_CONTEXT)
-                        .on_click(cx.listener(|this, _, _, cx| this.toggle_interactive(cx))),
+                };
+                bar.child(
+                    button.on_click(cx.listener(|this, _, _, cx| this.toggle_interactive(cx))),
                 )
             });
         div()
@@ -757,7 +768,10 @@ impl EditorView {
                 self.refresh_preview();
                 self.refresh_occurrences(false);
             }
-            InteractiveToggle::Leave => self.leave_interactive(),
+            InteractiveToggle::Leave => {
+                self.leave_interactive();
+                self.settle_interactive_mode();
+            }
             InteractiveToggle::LeaveAfterCommits => self.element_rows.leaving_interactive = true,
             InteractiveToggle::StayInteractive => {
                 self.element_rows.leaving_interactive = false;
@@ -767,13 +781,24 @@ impl EditorView {
         cx.notify();
     }
 
-    /// Leaves the interactive mode, its selection already cleared.
+    /// Leaves the interactive mode, its selection already cleared. The
+    /// frame and the sweep without it are asked for once, not here: a
+    /// reload handler that clears the selection asks for both right after,
+    /// and `settle_interactive_mode` does otherwise.
     fn leave_interactive(&mut self) {
         self.element_rows.leaving_interactive = false;
         self.interactive = false;
         self.hit_regions.clear();
-        self.refresh_preview();
-        self.refresh_occurrences(false);
+        self.interactive_refresh_due = true;
+    }
+
+    /// Asks for the frame and the sweep a leave of the interactive mode
+    /// left due, unless a reload runs: its answer asks for both.
+    pub(crate) fn settle_interactive_mode(&mut self) {
+        if self.interactive_refresh_due && !self.react_reloads.is_running() {
+            self.refresh_preview();
+            self.refresh_occurrences(false);
+        }
     }
 
     /// Selects the topmost layer under the click in the shown frame, or

@@ -5,11 +5,11 @@
 
 use crate::edit_history::{FileEdit, write_recorded};
 use crate::element_edit::schema_field;
-use crate::element_rows::control_kind;
+use crate::element_rows::{control_kind, parse_field_number};
 use crate::preview::{KeptSchema, ReactPreview};
 use crate::property_controls::{
     Control, ControlEvent, ControlKind, build_control, parse_color, parse_color_input,
-    parse_number_input, take_picked_color,
+    take_picked_color,
 };
 use crate::source::{PropertyArgs, watched_mtime};
 use crate::view::EditorView;
@@ -118,6 +118,22 @@ pub(crate) fn number_value(value: f64) -> Value {
         return Value::from(value as i64);
     }
     serde_json::Number::from_f64(value).map_or(Value::Null, Value::Number)
+}
+
+/// Parses a row's typed text for `field`; the error is the row's message.
+/// A number keeps to the field's range and, with `integer`, to whole
+/// numbers, as a Component row of the same schema does.
+pub(crate) fn parse_property_text(
+    field: &ComponentPropertyField,
+    text: &str,
+) -> Result<Value, String> {
+    match field {
+        ComponentPropertyField::Number { .. } => {
+            parse_field_number(Some(&schema_field(field)), text).map(number_value)
+        }
+        ComponentPropertyField::Color { .. } => parse_color_input(text).map(Value::String),
+        _ => Ok(Value::String(text.to_owned())),
+    }
 }
 
 /// The text an input shows for a value: strings unquoted, numbers without a
@@ -562,12 +578,7 @@ impl EditorView {
         let Some(text) = row.control.text(cx) else {
             return;
         };
-        let parsed = match row.field {
-            ComponentPropertyField::Number { .. } => parse_number_input(&text).map(number_value),
-            ComponentPropertyField::Color { .. } => parse_color_input(&text).map(Value::String),
-            _ => Ok(Value::String(text.to_string())),
-        };
-        match parsed {
+        match parse_property_text(&row.field, &text) {
             Ok(value) => {
                 row.invalid = None;
                 self.commit_property(key, Some(value), TextUpdate::Keep, cx);
@@ -861,6 +872,7 @@ mod tests {
             min: None,
             max: None,
             step: None,
+            integer: None,
         };
         assert!(!differs_from_default(&number, &json!(1)));
         assert!(!differs_from_default(&number, &json!(1.0)));
@@ -873,6 +885,27 @@ mod tests {
         };
         assert!(!differs_from_default(&text, &json!("Hello")));
         assert!(differs_from_default(&text, &json!("Bye")));
+    }
+
+    #[test]
+    fn typed_numbers_keep_to_the_fields_range_and_whole_numbers() {
+        let count = ComponentPropertyField::Number {
+            label: None,
+            default_value: 3.0,
+            min: Some(1.0),
+            max: Some(10.0),
+            step: None,
+            integer: Some(true),
+        };
+        assert_eq!(parse_property_text(&count, "4"), Ok(json!(4)));
+        let refused = Err("Enter a whole number from 1 to 10".to_owned());
+        assert_eq!(parse_property_text(&count, "2.5"), refused);
+        assert_eq!(parse_property_text(&count, "12"), refused);
+        let text = ComponentPropertyField::String {
+            label: None,
+            default_value: String::new(),
+        };
+        assert_eq!(parse_property_text(&text, "2.5"), Ok(json!("2.5")));
     }
 
     #[test]
