@@ -2,5 +2,107 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "config:recommended"
+  ],
+  "customManagers": [
+    {
+      "description": "Node.js bundled into the Windows and macOS packages, and the Windows download cache keyed on it",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^scripts/package-windows\\.ps1$/",
+        "/^scripts/package-macos\\.py$/",
+        "/^\\.github/workflows/package-build\\.yml$/"
+      ],
+      "matchStrings": [
+        "\\$NodeVersion = '(?<currentValue>\\d+\\.\\d+\\.\\d+)'",
+        "\"--node-version\", default=\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\"",
+        "key: windows-node-runtime-v(?<currentValue>\\d+\\.\\d+\\.\\d+)"
+      ],
+      "depNameTemplate": "node",
+      "datasourceTemplate": "node-version",
+      "versioningTemplate": "node"
+    },
+    {
+      "description": "FFmpeg built from source for Linux, in CI and in the Dockerfile",
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^packaging/linux/Dockerfile$/",
+        "/^\\.github/actions/setup-ffmpeg/action\\.yml$/",
+        "/^scripts/build-ffmpeg-linux\\.sh$/"
+      ],
+      "matchStrings": [
+        "ARG FFMPEG_VERSION=(?<currentValue>\\d+\\.\\d+(?:\\.\\d+)?)",
+        "FFMPEG_VERSION: '(?<currentValue>\\d+\\.\\d+(?:\\.\\d+)?)'",
+        "\\$\\{FFMPEG_VERSION:-(?<currentValue>\\d+\\.\\d+(?:\\.\\d+)?)\\}"
+      ],
+      "depNameTemplate": "FFmpeg",
+      "packageNameTemplate": "FFmpeg/FFmpeg",
+      "datasourceTemplate": "github-tags",
+      "extractVersionTemplate": "^n(?<version>\\d+\\.\\d+(?:\\.\\d+)?)$",
+      "versioningTemplate": "semver-coerced"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Workspace packages, which are not published.",
+      "matchPackageNames": [
+        "@celesta/**"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "Only 8.1.x: ffmpeg-sys-next, Homebrew's ffmpeg@8, and the Windows package from ffmpeg-windows.yml follow FFmpeg's minor release, so a newer one is a change of its own.",
+      "matchDepNames": [
+        "FFmpeg"
+      ],
+      "allowedVersions": "<8.2"
+    },
+    {
+      "description": "One toolchain version across mise, the workflows, and the Linux Dockerfile. Majors join the group so every place moves at once.",
+      "matchDepNames": [
+        "rust"
+      ],
+      "groupName": "Rust toolchain",
+      "separateMajorMinor": false
+    },
+    {
+      "description": "mise.lock and packageManager pin the same pnpm.",
+      "matchDepNames": [
+        "pnpm"
+      ],
+      "groupName": "pnpm",
+      "separateMajorMinor": false
+    },
+    {
+      "description": "mise, the Linux Dockerfile, and the Node.js bundled into the Windows and macOS packages.",
+      "matchDepNames": [
+        "node"
+      ],
+      "groupName": "Node.js",
+      "separateMajorMinor": false
+    },
+    {
+      "description": "oxc crates are released together and depend on each other's exact version.",
+      "matchDatasources": [
+        "crate"
+      ],
+      "matchPackageNames": [
+        "oxc_*"
+      ],
+      "groupName": "oxc",
+      "separateMajorMinor": false
+    },
+    {
+      "description": "wgpu, wgpu-hal, and naga are released together from gfx-rs/wgpu.",
+      "matchDatasources": [
+        "crate"
+      ],
+      "matchPackageNames": [
+        "wgpu",
+        "wgpu-hal",
+        "naga"
+      ],
+      "groupName": "wgpu",
+      "separateMajorMinor": false
+    }
   ]
 }
