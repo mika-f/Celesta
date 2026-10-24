@@ -40,8 +40,9 @@ pub(crate) struct TransformDrag {
     turned: f64,
     /// The transform values the pointer has made so far.
     values: Vec<(TransformProp, f64)>,
-    /// Released; the write is running and the override stays until it ends,
-    /// so the old position does not flash before the reload.
+    /// Released; the override stays while the write runs and, after a
+    /// successful one, until its reload, so the old position does not flash
+    /// before the reloaded code draws the new one.
     released: bool,
 }
 
@@ -255,16 +256,18 @@ impl EditorView {
             self.cancel_transform_drag();
             return true;
         }
-        // A success reloads the code, which draws the written values; a
-        // failure (the source changed while dragging, the history is busy)
-        // puts the layer back where it was. The error shows in the Layer
-        // section and over the canvas.
+        // A success reloads the code, which draws the written values; the
+        // released drag stays until that reload so a redraw before it still
+        // shows the dragged position. A failure (the source changed while
+        // dragging, the history is busy) puts the layer back where it was.
+        // The error shows in the Layer section and over the canvas.
         self.commit_transform(
             values,
             |this, result, cx| {
-                if result.is_ok() {
-                    this.transform_drag = None;
-                } else {
+                // Targets still current after a success mean nothing was
+                // written (the text came out the same), so no reload comes
+                // to drop the drag.
+                if result.is_err() || this.transform_targets().is_some() {
                     this.cancel_transform_drag();
                 }
                 cx.notify();

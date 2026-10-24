@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 
 import { Sequence } from './components';
 import type { CommonProps } from './components';
+import { copySourcePosition } from './jsx-dev-runtime';
 
 export interface SeriesItem {
   /** Length in frames. */
@@ -79,11 +80,14 @@ function SeriesRoot({ children }: SeriesProps): ReturnType<typeof React.createEl
     null,
     items.map((item, index) => {
       const { durationInFrames: _duration, offset: _offset, children: inner, ...props } = item.props;
-      return React.createElement(
+      const sequence = React.createElement(
         Sequence,
         { key: item.key ?? index, ...props, ...sequences[index] },
         inner,
       );
+      // `createElement` copies the config into a props object of its own.
+      copySourcePosition(item.props, sequence.props);
+      return sequence;
     }),
   );
 }

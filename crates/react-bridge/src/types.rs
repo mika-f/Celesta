@@ -41,8 +41,9 @@ pub struct LayerSource {
     pub line: u32,
     /// 1-based column of the element's opening `<`.
     pub column: u32,
-    /// Whether the element is a built-in primitive (`<Rect>`) or a
-    /// user-written component. Older runtimes do not say; they read as
+    /// Whether the element is a built-in primitive (`<Rect>`), a timing
+    /// wrapper (`<Sequence>`), or a user-written component. Older runtimes do
+    /// not say; they read as
     /// [`ElementKind::Component`].
     #[serde(default)]
     pub kind: ElementKind,
@@ -58,6 +59,9 @@ pub struct LayerSource {
 pub enum ElementKind {
     /// A built-in element such as `<Rect>` that emits a layer itself.
     Primitive,
+    /// A Celesta timing wrapper such as `<Sequence>` that draws its caller's
+    /// JSX.
+    Wrapper,
     /// A user-written component that renders other elements.
     #[default]
     Component,
@@ -104,6 +108,62 @@ pub struct LayerSourceReport {
     /// How many layers of the frame the innermost element rendered; 1 from
     /// runtimes that do not count.
     pub render_count: u32,
+    /// The timing wrappers around the innermost element, nearest first.
+    /// Empty from runtimes that do not report them.
+    pub windows: Vec<TimingWindow>,
+    /// The composition frames the innermost element can show in: where all
+    /// of `windows` overlap, cut to the composition. Empty when `to` is not
+    /// past `from`. `None` from runtimes that do not report it.
+    pub span: Option<FrameSpan>,
+}
+
+/// Where a JSX element was written.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Deserialize)]
+pub struct SourcePos {
+    /// The module holding the element, as an absolute path.
+    pub file: PathBuf,
+    /// 1-based line of the element's opening `<`.
+    pub line: u32,
+    /// 1-based column of the element's opening `<`.
+    pub column: u32,
+}
+
+impl From<&LayerSource> for SourcePos {
+    fn from(source: &LayerSource) -> Self {
+        Self {
+            file: source.file.clone(),
+            line: source.line,
+            column: source.column,
+        }
+    }
+}
+
+/// The frames a timing wrapper around an element shows its children in (see
+/// [`LayerSourceReport::windows`]).
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct TimingWindow {
+    /// The wrapper: `Sequence`, `FreezeFrame` or `Loop`.
+    pub kind: String,
+    /// First frame, in composition frames; may be fractional.
+    pub from: f64,
+    /// The frame after the last, in composition frames; may be fractional.
+    pub to: f64,
+    /// Where the wrapper was written; `None` for one the runtime made, such
+    /// as a `<Scenes>` scene.
+    #[serde(default)]
+    pub source: Option<SourcePos>,
+    /// Inside a `<Loop>` or `<FreezeFrame>` (or that wrapper itself), whose
+    /// children see other frames than the composition's: `from` and `to` are
+    /// then the window around the remapping, not one of the wrapper's own.
+    #[serde(default)]
+    pub remapped: bool,
+}
+
+/// A span of composition frames, `to` exclusive; may be fractional.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+pub struct FrameSpan {
+    pub from: f64,
+    pub to: f64,
 }
 
 /// A file or directory the entry's `prepare()` read (for instance a voice

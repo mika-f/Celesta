@@ -20,6 +20,10 @@ impl Render for EditorView {
             || self.media_pending
             || self.audio_pending
             || self.component_schema_pending
+            || self
+                .occurrences
+                .as_ref()
+                .is_some_and(|(_, state)| state.is_sweeping())
             || self.export_cancellation.is_some()
         {
             window.request_animation_frame();

@@ -10,12 +10,14 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'vitest';
 
-import type { LayerSourceReport } from '@celesta/react/internal';
+import type { LayerSourceReport, OccurrenceIndex } from '@celesta/react/internal';
 import type { FrameMessage, Request } from '../src/cli.js';
 import { contentOf } from './layer-content.mjs';
 
 /** The answer to a `LayerSourceRequest`. */
 type LayerSourceMessage = { layerSource: LayerSourceReport | { chain: null } };
+/** The answer to a `CollectOccurrencesRequest`. */
+type CollectedOccurrencesMessage = { collectedOccurrences: OccurrenceIndex };
 
 const cli = fileURLToPath(new URL('../bin/celesta-react-render.js', import.meta.url));
 
@@ -49,7 +51,7 @@ function run(requests: Request[], flags = ['--source-locations']) {
       input: requests.map((request) => `${JSON.stringify(request)}\n`).join(''),
       encoding: 'utf8',
     });
-    const responses: (FrameMessage | LayerSourceMessage)[] = result.stdout.trim().split('\n').slice(1).map((line) => JSON.parse(line));
+    const responses: (FrameMessage | LayerSourceMessage | CollectedOccurrencesMessage)[] = result.stdout.trim().split('\n').slice(1).map((line) => JSON.parse(line));
     return { dir, entry, title, result, responses };
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -104,6 +106,19 @@ test('does not change scenes', () => {
   const without = run(requests, []).responses.map((frame) => (frame as FrameMessage).scene);
   assert.equal(withFlag.length, 3);
   assert.deepEqual(withFlag, without);
+});
+
+test('collects where each element renders', () => {
+  const { responses, title, entry, result } = run([{ collectOccurrences: { from: 0, frames: 10, preview: true } }]);
+  assert.equal(result.status, 0, result.stderr);
+  const { elements } = (responses[0] as CollectedOccurrencesMessage).collectedOccurrences;
+  const rect = elements.find(({ element }) => element.file === title);
+  assert.ok(rect, JSON.stringify(responses));
+  assert.deepEqual(rect.element, { file: title, line: 3, column: 10 });
+  assert.equal(rect.instances.length, 1);
+  assert.equal(rect.instances[0].chain[1].file, entry);
+  // Clipped to the composition's 3 frames.
+  assert.deepEqual(rect.instances[0].ranges, [[0, 3]]);
 });
 
 test('rejects unknown options', () => {

@@ -797,11 +797,13 @@ impl EditorView {
         )
     }
 
-    /// The Properties tab in React-preview mode: what can be edited first
-    /// (the selected layer's Transform rows, then the props file's
-    /// properties), then where the selected layer was written.
+    /// The Properties tab in React-preview mode: what the selected layer is
+    /// and which scenes an edit of it changes, what can be edited (its
+    /// Transform rows, then the props file's properties), then where it was
+    /// written.
     pub(crate) fn properties_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let muted = cx.theme().muted_foreground;
+        let impact = self.selection_impact();
         let layer = self.layer_section(cx).unwrap_or_else(|| {
             div()
                 .flex()
@@ -833,6 +835,12 @@ impl EditorView {
                     .min_h_0()
                     .overflow_x_hidden()
                     .overflow_y_scroll()
+                    .children(
+                        impact
+                            .as_ref()
+                            .and_then(|impact| self.selection_header(impact, cx)),
+                    )
+                    .children(impact.as_ref().map(|impact| self.impact_line(impact, cx)))
                     .children(self.layer_edit_section(cx))
                     .children(self.property_section(cx))
                     .child(layer),

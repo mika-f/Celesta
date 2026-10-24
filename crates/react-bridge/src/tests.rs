@@ -1,6 +1,7 @@
 use crate::audio::{merge_react_audio_clips, react_audio_clips, react_video_clip_ids};
 use crate::bridge::ReactBridge;
 use crate::error::ReactBridgeError;
+use crate::occurrences::{ElementOccurrences, InstanceOccurrences, OccurrenceIndex};
 use crate::properties::{
     ENTRY_PROPS_FILE, EffectiveValue, PropertyInputError, PropertyInputs, PropertySource,
     ValueSource, effective_values, resolve_props_file,
@@ -9,8 +10,8 @@ use crate::protocol::{
     PropertyInputsMessage, ReadyMessage, Request, Response, ready_property_order,
 };
 use crate::types::{
-    ComponentPropertyField, ElementKind, LayerSource, LayerSourceReport, ReactAudioClipDescriptor,
-    ReactChapter, ReceivedProps, chapter_at,
+    ComponentPropertyField, ElementKind, FrameSpan, LayerSource, LayerSourceReport,
+    ReactAudioClipDescriptor, ReactChapter, ReceivedProps, SourcePos, TimingWindow, chapter_at,
 };
 use celesta_composition::{
     Animatable, AssetLocation, AudioDuck, LayerFilter, ShaderParam, ShaderParamType, ShaderSource,
@@ -515,6 +516,8 @@ fn deserializes_layer_source_replies() {
             candidate_frames: vec![],
             props: ReceivedProps::default(),
             render_count: 1,
+            windows: vec![],
+            span: None,
         })
     );
 
@@ -539,6 +542,8 @@ fn deserializes_layer_source_replies() {
             candidate_frames: vec![],
             props: ReceivedProps::default(),
             render_count: 1,
+            windows: vec![],
+            span: None,
         })
     );
 
@@ -572,6 +577,122 @@ fn deserializes_layer_source_replies() {
         }
     );
     assert_eq!(report.render_count, 3);
+}
+
+#[test]
+fn layer_source_reads_wrapper_entries() {
+    let json = r#"{"layerSource":{"chain":[
+        {"name":"Rect","file":"/a/title.tsx","line":3,"column":10,"kind":"primitive","layerId":"root.2"},
+        {"name":"Sequence","file":"/a/title.tsx","line":2,"column":8,"kind":"wrapper"},
+        {"name":"Title","file":"/a/main.tsx","line":8,"column":4,"kind":"component"}]}}"#;
+    let Response::LayerSource { report } = serde_json::from_str(json).unwrap() else {
+        panic!("expected a LayerSource response");
+    };
+    let report = report.expect("found");
+    let kinds: Vec<_> = report.chain.iter().map(|entry| entry.kind).collect();
+    assert_eq!(
+        kinds,
+        vec![
+            ElementKind::Primitive,
+            ElementKind::Wrapper,
+            ElementKind::Component
+        ]
+    );
+    assert_eq!(report.chain[1].layer_id, None);
+}
+
+#[test]
+fn layer_source_reply_reads_windows_span_and_wrapper_kind() {
+    let json = r#"{"layerSource":{"chain":[
+        {"name":"Rect","file":"/a/title.tsx","line":3,"column":10,"kind":"primitive","layerId":"root.2"},
+        {"name":"Sequence","file":"/a/title.tsx","line":2,"column":8,"kind":"wrapper"}],
+        "windows":[
+            {"kind":"Sequence","from":30.5,"to":90,"source":{"file":"/a/title.tsx","line":2,"column":8}},
+            {"kind":"Loop","from":0,"to":120,"remapped":true}],
+        "span":{"from":30.5,"to":90}}}"#;
+    let Response::LayerSource { report } = serde_json::from_str(json).unwrap() else {
+        panic!("expected a LayerSource response");
+    };
+    let report = report.expect("found");
+    assert_eq!(report.chain[1].kind, ElementKind::Wrapper);
+    assert_eq!(
+        report.windows,
+        vec![
+            TimingWindow {
+                kind: "Sequence".to_owned(),
+                from: 30.5,
+                to: 90.0,
+                source: Some(SourcePos {
+                    file: "/a/title.tsx".into(),
+                    line: 2,
+                    column: 8,
+                }),
+                remapped: false,
+            },
+            TimingWindow {
+                kind: "Loop".to_owned(),
+                from: 0.0,
+                to: 120.0,
+                source: None,
+                remapped: true,
+            },
+        ]
+    );
+    assert_eq!(
+        report.span,
+        Some(FrameSpan {
+            from: 30.5,
+            to: 90.0
+        })
+    );
+}
+
+#[test]
+fn layer_source_reply_from_an_older_runtime_has_no_windows() {
+    let json =
+        r#"{"layerSource":{"chain":[{"name":"Rect","file":"/a/title.tsx","line":3,"column":10}]}}"#;
+    let Response::LayerSource { report } = serde_json::from_str(json).unwrap() else {
+        panic!("expected a LayerSource response");
+    };
+    let report = report.expect("found");
+    assert!(report.windows.is_empty());
+    assert_eq!(report.span, None);
+}
+
+#[test]
+fn collected_occurrences_response_parses() {
+    let json = r#"{"collectedOccurrences":{"elements":[{
+        "element":{"file":"/a/title.tsx","line":3,"column":10},
+        "instances":[{
+            "chain":[
+                {"file":"/a/title.tsx","line":3,"column":10},
+                {"file":"/a/main.tsx","line":8,"column":4}],
+            "ranges":[[0,30],[60,90]],
+            "maxPerFrame":2}]}]}}"#;
+    let Response::CollectedOccurrences {
+        collected_occurrences,
+    } = serde_json::from_str(json).unwrap()
+    else {
+        panic!("expected a CollectedOccurrences response");
+    };
+    let pos = |file: &str, line, column| SourcePos {
+        file: file.into(),
+        line,
+        column,
+    };
+    assert_eq!(
+        collected_occurrences,
+        OccurrenceIndex {
+            elements: vec![ElementOccurrences {
+                element: pos("/a/title.tsx", 3, 10),
+                instances: vec![InstanceOccurrences {
+                    chain: vec![pos("/a/title.tsx", 3, 10), pos("/a/main.tsx", 8, 4)],
+                    ranges: vec![(0, 30), (60, 90)],
+                    max_per_frame: 2,
+                }],
+            }],
+        }
+    );
 }
 
 fn audio_descriptor(src: &str, start: f64) -> ReactAudioClipDescriptor {

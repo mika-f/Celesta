@@ -86,7 +86,8 @@ fn editable(target: &EditTarget) -> bool {
 }
 
 impl EditorView {
-    /// Builds the fields once and puts newly resolved values into those not
+    /// Builds the fields once and puts newly resolved values (or, until the
+    /// reload after an own write resolves, the written ones) into those not
     /// being typed in. Runs from `render`, which has the window inputs need.
     pub(crate) fn sync_transform_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.is_react_preview() {
@@ -108,7 +109,10 @@ impl EditorView {
             let Some(field) = self.transform_inputs.fields.get_mut(prop) else {
                 continue;
             };
-            let shown = field_text(*prop, target, &resolved.report);
+            let shown = match self.transform.written_value(Some(&resolved.layer), *prop) {
+                Some(value) => (format_number(value), String::new()),
+                None => field_text(*prop, target, &resolved.report),
+            };
             // Typed text stays until committed, but never under another layer.
             let same_layer = field.layer.as_deref() == Some(resolved.layer.as_str());
             if same_layer && (field.edited || field.shown.as_ref() == Some(&shown)) {

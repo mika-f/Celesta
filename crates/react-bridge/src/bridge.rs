@@ -3,6 +3,7 @@ use crate::audio::{react_audio_clips, react_video_clip_ids};
 use crate::decode::{DecodedAudioFiles, decode_audio_response};
 use crate::error::ReactBridgeError;
 use crate::measure::measure_text_response;
+use crate::occurrences::OccurrenceIndex;
 use crate::probe::{MediaProbeResponse, animation_probe_payload, media_probe_payload};
 use crate::properties::PropertyInputs;
 use crate::protocol::{
@@ -534,9 +535,9 @@ impl ReactBridge {
                 shaders,
             }),
             Response::Ok { .. } => Err(ReactBridgeError::UnexpectedResponse),
-            Response::CollectedAudio { .. } | Response::CollectedSubtitles { .. } => {
-                Err(ReactBridgeError::UnexpectedResponse)
-            }
+            Response::CollectedAudio { .. }
+            | Response::CollectedSubtitles { .. }
+            | Response::CollectedOccurrences { .. } => Err(ReactBridgeError::UnexpectedResponse),
             Response::Err { error } => Err(ReactBridgeError::Render(error)),
             Response::MeasureText { .. } => Err(ReactBridgeError::UnexpectedResponse),
             Response::LayerSource { .. } => Err(ReactBridgeError::UnexpectedResponse),
@@ -626,6 +627,30 @@ impl ReactBridge {
             Response::CollectedSubtitles {
                 collected_subtitles,
             } => Ok(collected_subtitles),
+            Response::Err { error } => Err(ReactBridgeError::Render(error)),
+            _ => Err(ReactBridgeError::UnexpectedResponse),
+        }
+    }
+
+    /// Where each element renders in `frames` frames from zero-based frame
+    /// `from` (cut to the composition), by instance. The frames are evaluated
+    /// as [`Self::set_preview`] says, like [`Self::layer_source`], so an
+    /// instance found there is in this index. Sweep the composition in
+    /// chunks and [`OccurrenceIndex::merge`] them to index all of it.
+    /// The index is empty unless the bridge was spawned with
+    /// [`SpawnOptions::source_locations`].
+    pub fn collect_occurrences(
+        &mut self,
+        from: u64,
+        frames: u64,
+    ) -> Result<OccurrenceIndex, ReactBridgeError> {
+        let request = serde_json::json!({
+            "collectOccurrences": { "from": from, "frames": frames, "preview": self.preview },
+        });
+        match self.request_response(request)? {
+            Response::CollectedOccurrences {
+                collected_occurrences,
+            } => Ok(collected_occurrences),
             Response::Err { error } => Err(ReactBridgeError::Render(error)),
             _ => Err(ReactBridgeError::UnexpectedResponse),
         }

@@ -5,7 +5,7 @@ import { createContext, createElement as h, useContext } from 'react';
 import type { ReactElement, ReactNode } from 'react';
 import { test } from 'vitest';
 
-import { Composition, Group, MotionBlur, Rect, Sequence } from '../src/index.js';
+import { Composition, FreezeFrame, Group, Loop, MotionBlur, Rect, Scenes, Sequence, Series, defineScenes } from '../src/index.js';
 import type { Layer, Time } from '../src/index.js';
 import { jsxDEV } from '../src/jsx-dev-runtime.js';
 import type { SourcePosition } from '../src/jsx-dev-runtime.js';
@@ -191,6 +191,166 @@ test('a Group entry carries its layerId', () => {
   assert.equal(group.kind, 'primitive');
   assert.equal(group.layerId, scene.layers[0].id);
   assert.equal(report.chain[0].layerId, inner);
+});
+
+test('timing wrappers written in the source are wrapper entries', () => {
+  // <Sequence><Loop><FreezeFrame><Rect /></FreezeFrame></Loop></Sequence> inside <Scene>
+  function Scene() {
+    return sequence(
+      10,
+      jsxDEV(Loop, {
+        durationInFrames: 20,
+        children: jsxDEV(FreezeFrame, { frame: 0, children: rectAt(7) }, undefined, false, at('scene.tsx', 6, 9)),
+      }, undefined, false, at('scene.tsx', 5, 7)),
+    );
+  }
+  const composition = mount(() => comp(jsxDEV(Scene, {}, undefined, false, at('entry.tsx', 3, 5))));
+  const { chain } = reportFor(composition, 30);
+  assert.deepEqual(
+    chain.map(({ name, kind }) => [name, kind]),
+    [
+      ['Rect', 'primitive'],
+      ['FreezeFrame', 'wrapper'],
+      ['Loop', 'wrapper'],
+      ['Sequence', 'wrapper'],
+      ['Scene', 'component'],
+      ['Composition', 'wrapper'],
+    ],
+  );
+});
+
+test('a user component named Sequence is a component entry', () => {
+  function Sequence() {
+    return rectAt(5);
+  }
+  const composition = mount(() => comp(jsxDEV(Sequence, {}, undefined, false, at('entry.tsx', 3, 5))));
+  const entry = reportFor(composition, 0).chain[1];
+  assert.equal(entry.name, 'Sequence');
+  assert.equal(entry.kind, 'component');
+});
+
+// `windows`: the timing wrappers around the element, in composition frames.
+
+const pos = (line: number, column: number) => ({ file: '/abs/scene.tsx', line, column });
+
+test('windows lists nested Sequences in composition frames, nearest first', () => {
+  const composition = mount(() =>
+    comp(
+      jsxDEV(Sequence, {
+        from: 10,
+        durationInFrames: 50,
+        children: jsxDEV(Sequence, { from: 5, durationInFrames: 20, children: rectAt(6) }, undefined, false, at('scene.tsx', 5, 7)),
+      }, undefined, false, at('scene.tsx', 4, 5)),
+    ),
+  );
+  const report = reportFor(composition, 20);
+  assert.deepEqual(report.windows, [
+    { kind: 'Sequence', from: 15, to: 35, source: pos(5, 7) },
+    { kind: 'Sequence', from: 10, to: 60, source: pos(4, 5) },
+  ]);
+  assert.deepEqual(report.span, { from: 15, to: 35 });
+});
+
+test('a Series item window points at the Series.Sequence', () => {
+  const composition = mount(() =>
+    comp(
+      jsxDEV(Series, {
+        children: [
+          jsxDEV(Series.Sequence, { durationInFrames: 30 }, undefined, false, at('scene.tsx', 5, 7)),
+          jsxDEV(Series.Sequence, { durationInFrames: 40, children: rectAt(7) }, undefined, false, at('scene.tsx', 6, 7)),
+        ],
+      }, undefined, true, at('scene.tsx', 4, 5)),
+    ),
+  );
+  const report = reportFor(composition, 40);
+  assert.deepEqual(report.windows?.[0], { kind: 'Sequence', from: 30, to: 70, source: pos(6, 7) });
+});
+
+test('a Scenes scene window has no source', () => {
+  const scenes = defineScenes([
+    { id: 'a', durationInFrames: 30, Scene: () => rectAt(5) },
+    { id: 'b', durationInFrames: 40, Scene: () => rectAt(9) },
+  ]);
+  const composition = mount(() => comp(jsxDEV(Scenes, { scenes }, undefined, false, at('scene.tsx', 12, 5))));
+  const report = reportFor(composition, 35);
+  assert.equal(report.chain[0].line, 9);
+  const nearest = report.windows?.[0];
+  assert.deepEqual(nearest, { kind: 'Sequence', from: 30, to: 70 });
+  assert.equal('source' in nearest!, false);
+});
+
+test('a Loop reports its outer window, remapped, and windows inside it inherit it', () => {
+  const composition = mount(() =>
+    comp(
+      jsxDEV(Loop, {
+        from: 10,
+        durationInFrames: 20,
+        times: 3,
+        children: jsxDEV(Sequence, { from: 5, children: rectAt(6) }, undefined, false, at('scene.tsx', 5, 7)),
+      }, undefined, false, at('scene.tsx', 4, 5)),
+    ),
+  );
+  const report = reportFor(composition, 37);
+  assert.deepEqual(report.windows, [
+    { kind: 'Sequence', from: 10, to: 70, remapped: true, source: pos(5, 7) },
+    { kind: 'Loop', from: 10, to: 70, remapped: true, source: pos(4, 5) },
+  ]);
+  assert.deepEqual(report.span, { from: 10, to: 70 });
+});
+
+test('a FreezeFrame window and windows inside it take the enclosing window', () => {
+  const composition = mount(() =>
+    comp(
+      jsxDEV(Sequence, {
+        from: 10,
+        durationInFrames: 50,
+        children: jsxDEV(FreezeFrame, {
+          frame: 80,
+          children: jsxDEV(Sequence, { from: 70, children: rectAt(7) }, undefined, false, at('scene.tsx', 6, 9)),
+        }, undefined, false, at('scene.tsx', 5, 7)),
+      }, undefined, false, at('scene.tsx', 4, 5)),
+    ),
+  );
+  const report = reportFor(composition, 20);
+  assert.deepEqual(report.windows, [
+    { kind: 'Sequence', from: 10, to: 60, remapped: true, source: pos(6, 9) },
+    { kind: 'FreezeFrame', from: 10, to: 60, remapped: true, source: pos(5, 7) },
+    { kind: 'Sequence', from: 10, to: 60, source: pos(4, 5) },
+  ]);
+  assert.deepEqual(report.span, { from: 10, to: 60 });
+});
+
+test('a Sequence inside a MotionBlur is placed at its own from, not at the shifted moment', () => {
+  const composition = mount(() =>
+    comp(
+      jsxDEV(MotionBlur, {
+        samples: 4,
+        children: jsxDEV(Sequence, { from: 10, durationInFrames: 50, children: rectAt(6) }, undefined, false, at('scene.tsx', 5, 7)),
+      }, undefined, false, at('scene.tsx', 4, 5)),
+    ),
+  );
+  const { scene } = composition.renderAt(time(30), null);
+  const rects = layerIds(scene.layers).filter((id) => composition.layerSource(time(30), id, resolve)?.chain[0]?.name === 'Rect');
+  assert.ok(rects.length > 1, 'one Rect layer per sample');
+  for (const id of rects) {
+    const report = composition.layerSource(time(30), id, resolve);
+    assert.deepEqual(report?.windows, [{ kind: 'Sequence', from: 10, to: 60, source: pos(5, 7) }], id);
+    assert.deepEqual(report?.span, { from: 10, to: 60 }, id);
+  }
+});
+
+test('a fractional Sequence from is kept', () => {
+  const composition = mount(() => comp(jsxDEV(Sequence, { from: 10.5, durationInFrames: 20, children: rectAt(5) }, undefined, false, at('scene.tsx', 4, 5))));
+  const report = reportFor(composition, 20);
+  assert.deepEqual(report.windows, [{ kind: 'Sequence', from: 10.5, to: 30.5, source: pos(4, 5) }]);
+  assert.deepEqual(report.span, { from: 10.5, to: 30.5 });
+});
+
+test('an element without wrappers spans the composition', () => {
+  const composition = mount(() => comp(rectAt(5)));
+  const report = reportFor(composition, 0);
+  assert.deepEqual(report.windows, []);
+  assert.deepEqual(report.span, { from: 0, to: 100 });
 });
 
 test('a missing layer reports null', () => {

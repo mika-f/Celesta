@@ -2,6 +2,7 @@ use crate::audio::AudioMixRequest;
 use crate::export_worker::ExportEvent;
 use crate::helpers::export_loudness_label;
 use crate::layer_select::source_lookup;
+use crate::occurrences::{OccurrenceState, accepts};
 use crate::preview::AudioPreview;
 use crate::problems::{Source, error_chain};
 use crate::refresh::LookupFate;
@@ -53,6 +54,7 @@ impl EditorView {
                             LookupFate::Show => {
                                 self.source_lookup = Some(source_lookup(source));
                                 self.source_lookup_frame = result.timeline_frame;
+                                self.source_lookup_stale = false;
                             }
                         }
                     }
@@ -68,6 +70,8 @@ impl EditorView {
                 }
             }
         }
+        // The reloaded code is on screen: a sweep held back for it starts.
+        self.start_due_occurrence_sweep();
 
         loop {
             match self.media_probe_worker.results.try_recv() {
@@ -167,6 +171,38 @@ impl EditorView {
                         self.audio_pending = false;
                         self.problems
                             .fail(Source::Audio, "react audio worker stopped unexpectedly");
+                    }
+                    break;
+                }
+            }
+        }
+
+        loop {
+            match self.occurrence_worker.results.try_recv() {
+                Ok(result) => {
+                    if !accepts(
+                        self.react_reload_generation,
+                        result.generation,
+                        self.occurrences.is_some(),
+                    ) {
+                        continue;
+                    }
+                    let state = match result.index {
+                        Ok(index) => OccurrenceState::Ready(index),
+                        Err(error) => OccurrenceState::Failed(error),
+                    };
+                    self.occurrences = Some((result.generation, state));
+                }
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    if let Some((_, state)) = self
+                        .occurrences
+                        .as_mut()
+                        .filter(|(_, state)| state.is_sweeping())
+                    {
+                        *state = OccurrenceState::Failed(
+                            "occurrence worker stopped unexpectedly".to_owned(),
+                        );
                     }
                     break;
                 }

@@ -1,6 +1,6 @@
 use crate::component_schema::ComponentSchemaRequest;
 use crate::helpers::format_time;
-use crate::layer_select::{SourceLookup, source_lookup_target};
+use crate::layer_select::source_lookup_target;
 use crate::media_probe::{MediaProbeRequest, ProbeAsset};
 use crate::preview::{
     KeptSchema, PreviewRequest, ReactPreview, ReactPreviewContext, ReactPreviewMode,
@@ -272,11 +272,12 @@ impl EditorView {
             ReactPreviewMode::ResolveComponents
         };
         // A drag redraws the frame on every move; the runtime's answer does
-        // not change with the override, so it is not asked again.
+        // not change with the override, so it is not asked again. Playback
+        // asks only for an answer it does not have yet, or a stale one.
         let source_of = source_lookup_target(
             self.selected_layer.as_deref(),
             self.picks_layers(),
-            self.playing,
+            self.playing && !self.source_lookup_stale,
             self.source_lookup.as_ref(),
         )
         .filter(|_| self.transform_drag.is_none());
@@ -489,9 +490,15 @@ impl EditorView {
                 let keep = self.selection_keep.applies(sequence) && self.selected_layer.is_some();
                 if keep {
                     // Looked up again in the reloaded code, which decides
-                    // whether the layer still exists.
-                    self.source_lookup = Some(SourceLookup::Pending);
-                    self.transform.reset();
+                    // whether the layer still exists. Until it answers, the
+                    // old answer stays shown, read-only.
+                    self.source_lookup_stale = true;
+                    self.transform.expire();
+                    // A released drag's values are drawn by the reloaded
+                    // code now; a pressed one goes on.
+                    if !self.transform_drag_active() {
+                        self.transform_drag = None;
+                    }
                 } else {
                     // A layer picked while the reload ran belongs to the old code.
                     self.clear_layer_selection();
@@ -502,6 +509,7 @@ impl EditorView {
                     self.selection_keep.confirm_from(self.preview_generation);
                 }
                 self.refresh_audio_preview();
+                self.refresh_occurrences(keep);
             }
             Err(error) => {
                 self.problems.report(
@@ -509,6 +517,11 @@ impl EditorView {
                     "React reload failed",
                     error.message.clone(),
                 );
+                // No reloaded frame will replace a released drag's override;
+                // the old code's frame is drawn without it.
+                if !self.transform_drag_active() {
+                    self.cancel_transform_drag();
+                }
             }
         }
         cx.notify();

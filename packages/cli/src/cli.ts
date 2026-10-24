@@ -35,6 +35,7 @@ import type {
   LayerSourceReport,
   MeasureTextRequest,
   MountedComposition,
+  OccurrenceIndex,
   PrepareDependency,
   ProbedMediaInfo,
   ProjectFrame,
@@ -108,11 +109,17 @@ export interface CollectSubtitlesRequest {
   collectSubtitles: { from: number; frames: number };
 }
 
+/** Asks where each element renders in `frames` frames from `from`; see `MountedComposition.collectOccurrences`. */
+export interface CollectOccurrencesRequest {
+  collectOccurrences: { from: number; frames: number; preview?: boolean };
+}
+
 export type Request =
   | FrameRequest
   | ResolveRequest
   | LayerSourceRequest
   | CollectSubtitlesRequest
+  | CollectOccurrencesRequest
   | { collectAudio: true };
 
 /** The first message: what the entry declares. */
@@ -143,6 +150,7 @@ export type Message =
   | FrameMessage
   | { collectedAudio: AudioClipDescriptor[] }
   | { collectedSubtitles: SubtitleDescriptor[] }
+  | { collectedOccurrences: OccurrenceIndex }
   | { layerSource: LayerSourceReport | { chain: null } }
   | ComponentResolutions
   | { probeMedia: { path: string } }
@@ -302,6 +310,8 @@ async function main(): Promise<void> {
   });
 
   let resolver: Resolver | null = null;
+  // A JSX position's file name, relative to the entry, as the path to report.
+  const resolveSourceFile = (fileName: string) => path.resolve(path.dirname(entryPath), fileName);
 
   while (true) {
     const next = await lines.next();
@@ -330,11 +340,19 @@ async function main(): Promise<void> {
           throw new Error('collectSubtitles requires integer `from` and `frames`');
         }
         writeLine({ collectedSubtitles: mounted.collectSubtitles(from, frames) });
+      } else if ('collectOccurrences' in request) {
+        const { from, frames, preview } = request.collectOccurrences;
+        if (!Number.isInteger(from) || !Number.isInteger(frames)) {
+          throw new Error('collectOccurrences requires integer `from` and `frames`');
+        }
+        writeLine({
+          collectedOccurrences: mounted.collectOccurrences(from, frames, resolveSourceFile, { preview: preview === true }),
+        });
       } else if (isLayerSourceRequest(request)) {
         const report = mounted.layerSource(
           request.time,
           request.layerSource,
-          (fileName) => path.resolve(path.dirname(entryPath), fileName),
+          resolveSourceFile,
           { preview: request.preview === true },
         );
         writeLine({ layerSource: report ?? { chain: null } });

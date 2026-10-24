@@ -1,13 +1,14 @@
 use crate::decode::DecodeAudioRequest;
 use crate::measure::MeasureTextRequest;
+use crate::occurrences::OccurrenceIndex;
 use crate::probe::MediaProbeRequest;
 use crate::properties::{PropertyIssue, PropertyLayer};
 use crate::props_edit::OrderedObject;
 use crate::statics::StaticDefinition;
 use crate::types::{
-    ComponentPropertyField, ComponentPropertySchema, LayerSource, LayerSourceReport,
+    ComponentPropertyField, ComponentPropertySchema, FrameSpan, LayerSource, LayerSourceReport,
     PrepareDependency, ReactAudioClipDescriptor, ReactCompositionConfig, ReactCompositionInfo,
-    ReactSubtitleDescriptor, ReceivedProps,
+    ReactSubtitleDescriptor, ReceivedProps, TimingWindow,
 };
 use celesta_composition::{Layer, Scene, ShaderSource, Time};
 use serde::{Deserialize, Serialize};
@@ -102,6 +103,10 @@ pub(crate) enum Response {
         #[serde(rename = "collectedSubtitles")]
         collected_subtitles: Vec<ReactSubtitleDescriptor>,
     },
+    CollectedOccurrences {
+        #[serde(rename = "collectedOccurrences")]
+        collected_occurrences: OccurrenceIndex,
+    },
     MeasureText {
         #[serde(rename = "measureText")]
         measure_text: Box<MeasureTextRequest>,
@@ -155,6 +160,12 @@ pub(crate) struct LayerSourceReply {
     /// for a repeated element by accident.
     #[serde(default = "one")]
     pub(crate) render_count: u32,
+    /// Absent from older runtimes.
+    #[serde(default)]
+    pub(crate) windows: Vec<TimingWindow>,
+    /// Absent from older runtimes.
+    #[serde(default)]
+    pub(crate) span: Option<FrameSpan>,
 }
 
 fn one() -> u32 {
@@ -169,6 +180,8 @@ impl From<LayerSourceReply> for Option<LayerSourceReport> {
             candidate_frames: reply.candidate_frames,
             props: reply.props,
             render_count: reply.render_count,
+            windows: reply.windows,
+            span: reply.span,
         })
     }
 }
@@ -181,6 +194,7 @@ impl From<LayerSourceReply> for Option<LayerSourceReport> {
 pub(crate) struct RawResponse {
     pub(crate) collected_audio: Option<Vec<ReactAudioClipDescriptor>>,
     pub(crate) collected_subtitles: Option<Vec<ReactSubtitleDescriptor>>,
+    pub(crate) collected_occurrences: Option<OccurrenceIndex>,
     pub(crate) measure_text: Option<Box<MeasureTextRequest>>,
     pub(crate) scene: Option<Scene>,
     #[serde(default)]
@@ -212,6 +226,10 @@ impl TryFrom<RawResponse> for Response {
             Ok(Self::CollectedSubtitles {
                 collected_subtitles,
             })
+        } else if let Some(collected_occurrences) = raw.collected_occurrences {
+            Ok(Self::CollectedOccurrences {
+                collected_occurrences,
+            })
         } else if let Some(measure_text) = raw.measure_text {
             Ok(Self::MeasureText { measure_text })
         } else if let Some(scene) = raw.scene {
@@ -237,7 +255,7 @@ impl TryFrom<RawResponse> for Response {
             Ok(Self::Err { error })
         } else {
             Err(
-                "response has none of collectedAudio, collectedSubtitles, measureText, scene, components, layerSource or error",
+                "response has none of collectedAudio, collectedSubtitles, collectedOccurrences, measureText, scene, components, layerSource or error",
             )
         }
     }

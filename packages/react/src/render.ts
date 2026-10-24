@@ -19,7 +19,7 @@ import { instancesContent } from './instances';
 import { type StaticsFrame, StaticSubtrees } from './static';
 import { resolveComponent } from './registry';
 import { type HostNode, type RootContainer, createRoot } from './reconciler';
-import { type LayerSourceReport, layerSourceReport } from './source-chain';
+import { type LayerSourceReport, type SourcePos, layerSourceReport, occurrenceKeys } from './source-chain';
 import { checkCue } from './subtitles';
 import { type ChapterSource, compositionChapters } from './chapters';
 import type {
@@ -282,6 +282,34 @@ export interface MountedComposition {
     resolveFile: (fileName: string) => string,
     options?: { preview?: boolean },
   ): LayerSourceReport | null;
+  /**
+   * Where each element renders in the `frames` frames from frame `from`,
+   * clipped to the composition: per element, each instance's frame ranges
+   * (see `occurrenceKeys`). The frames are walked as `layerSource` walks
+   * them, so every scene is discarded and the `<Static>` cache is left as
+   * it was.
+   */
+  collectOccurrences(
+    from: number,
+    frames: number,
+    resolveFile: (fileName: string) => string,
+    options?: { preview?: boolean },
+  ): OccurrenceIndex;
+}
+
+/** The frames each element renders in, by instance; the answer to `collectOccurrences`. */
+export interface OccurrenceIndex {
+  elements: Array<{
+    element: SourcePos;
+    instances: Array<{
+      /** The positions of the source chain other than `'wrapper'` entries, innermost first. */
+      chain: SourcePos[];
+      /** `[from, to)` composition frames, joined where adjacent. */
+      ranges: Array<[number, number]>;
+      /** Most copies of this instance in any one frame (`.map()`). */
+      maxPerFrame: number;
+    }>;
+  }>;
 }
 
 function findCompositionInstance(container: RootContainer): HostNode {
@@ -1694,6 +1722,32 @@ export function mount(defaultExport: EntryComponent, compositionId?: string): Mo
     };
   };
 
+  /** Settles the frame at `time` and maps each of its layer ids to the host node behind it. */
+  const walkLayerNodes = (time: Time, preview: boolean) => {
+    const instance = settleTree(time, null, false, false, preview);
+    const layerNodes = new Map<string, HostNode>();
+    // No statics: a <Static> is walked, not referenced, so its layers are
+    // reachable, and its cached layers and sequence numbers stay as they
+    // were (no sweep either). The scene itself is thrown away.
+    const context = rootWalkContext(
+      config.frameRate.numerator,
+      config.durationInFrames,
+      time,
+      compositionText(instance),
+      false,
+      false,
+      null,
+      layerNodes,
+    );
+    if (hasHostElementPreparation()) {
+      for (const child of instance.children) {
+        prepareHostElements(child, context);
+      }
+    }
+    walkChildren(instance, 'root', context, []);
+    return { instance, layerNodes };
+  };
+
   return {
     dispose() { root.render(null); },
     config,
@@ -1737,29 +1791,44 @@ export function mount(defaultExport: EntryComponent, compositionId?: string): Mo
       return subtitles;
     },
     layerSource(time, id, resolveFile, options) {
-      const instance = settleTree(time, null, false, false, options?.preview === true);
-      const layerNodes = new Map<string, HostNode>();
-      // No statics: a <Static> is walked, not referenced, so its layers are
-      // reachable, and its cached layers and sequence numbers stay as they
-      // were (no sweep either). The scene itself is thrown away.
-      const context = rootWalkContext(
-        config.frameRate.numerator,
-        config.durationInFrames,
-        time,
-        compositionText(instance),
-        false,
-        false,
-        null,
-        layerNodes,
-      );
-      if (hasHostElementPreparation()) {
-        for (const child of instance.children) {
-          prepareHostElements(child, context);
-        }
-      }
-      walkChildren(instance, 'root', context, []);
+      const { layerNodes } = walkLayerNodes(time, options?.preview === true);
       const node = layerNodes.get(id);
       return node ? layerSourceReport(node, layerNodes, resolveFile) : null;
+    },
+    collectOccurrences(from, frames, resolveFile, options) {
+      type Instance = OccurrenceIndex['elements'][number]['instances'][number];
+      const elements = new Map<string, { element: SourcePos; instances: Map<string, Instance> }>();
+      const keyOf = ({ file, line, column }: SourcePos) => `${file}:${line}:${column}`;
+      const end = Math.min(from + frames, config.durationInFrames);
+      for (let frame = Math.max(0, from); frame < end; frame++) {
+        const time = { value: frame * config.frameRate.denominator, timescale: config.frameRate.numerator };
+        const { layerNodes } = walkLayerNodes(time, options?.preview === true);
+        const counts = new Map<Instance, number>();
+        for (const { element, chain } of occurrenceKeys(layerNodes, resolveFile)) {
+          const elementKey = keyOf(element);
+          let entry = elements.get(elementKey);
+          if (!entry) {
+            entry = { element, instances: new Map() };
+            elements.set(elementKey, entry);
+          }
+          const instanceKey = chain.map(keyOf).join('\n');
+          let instance = entry.instances.get(instanceKey);
+          if (!instance) {
+            instance = { chain, ranges: [], maxPerFrame: 0 };
+            entry.instances.set(instanceKey, instance);
+          }
+          counts.set(instance, (counts.get(instance) ?? 0) + 1);
+        }
+        for (const [instance, count] of counts) {
+          instance.maxPerFrame = Math.max(instance.maxPerFrame, count);
+          const last = instance.ranges[instance.ranges.length - 1];
+          if (last && last[1] === frame) last[1] = frame + 1;
+          else instance.ranges.push([frame, frame + 1]);
+        }
+      }
+      return {
+        elements: [...elements.values()].map(({ element, instances }) => ({ element, instances: [...instances.values()] })),
+      };
     },
   };
 }

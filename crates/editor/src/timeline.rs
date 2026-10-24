@@ -8,8 +8,9 @@
 
 use celesta_editor_core::{ClipSummary, TrackSummary};
 use celesta_project::TrackKind;
-use celesta_react_bridge::{ReactChapter, chapter_at};
+use celesta_react_bridge::{ReactChapter, SourcePos, chapter_at, scenes_of};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Selectable as _, Sizable as _,
 };
@@ -22,6 +23,8 @@ use gpui_kit::{
 
 use crate::actions::{ZoomTimelineIn, ZoomTimelineOut, ZoomTimelineToFit};
 use crate::icons::CelestaIcon;
+use crate::impact::ImpactView;
+use crate::layer_select::display_path;
 use crate::timecode::{format_timecode, nominal_fps, ruler_scale};
 use crate::view::EditorView;
 use crate::waveform::{level_at_time, waveform_segment};
@@ -166,6 +169,63 @@ fn chapter_lanes(chapters: &[ReactChapter]) -> Vec<usize> {
             }
         })
         .collect()
+}
+
+/// Left and width of each `[from, to)` frame range as lane fractions, dropping
+/// ranges outside the visible window. A range that runs past an edge keeps
+/// its full extent; the lane clips it.
+fn band_geometry(ranges: &[(u64, u64)], view: LaneView) -> Vec<(f32, f32)> {
+    let view_end = view.view_start + 1.0 / view.zoom;
+    ranges
+        .iter()
+        .filter(|(from, to)| from < to)
+        .map(|&(from, to)| (from as f64 / view.end_frame, to as f64 / view.end_frame))
+        .filter(|&(start, end)| end > view.view_start && start < view_end)
+        .map(|(start, end)| (view.x(start), view.width(end - start)))
+        .collect()
+}
+
+/// One band of the selection on the composition lane.
+struct SelectionBand {
+    range: (u64, u64),
+    /// Filled for this instance in the current scene (or the span before the
+    /// scan is ready); outlined for every other occurrence.
+    filled: bool,
+    /// The instance's index, `None` for the span.
+    instance: Option<usize>,
+    call_site: Option<SourcePos>,
+}
+
+/// The bands `impact` draws: this instance's ranges in the current scene, or
+/// the span rounded outward to whole frames, then every other occurrence.
+fn selection_bands(impact: &ImpactView) -> Vec<SelectionBand> {
+    match impact {
+        ImpactView::SpanOnly { span, .. } => span
+            .iter()
+            .map(|&(from, to)| SelectionBand {
+                range: (from.floor() as u64, to.ceil() as u64),
+                filled: true,
+                instance: None,
+                call_site: None,
+            })
+            .collect(),
+        ImpactView::Known(impact) => {
+            let band = |filled: bool| {
+                move |&(range, instance): &((u64, u64), usize)| SelectionBand {
+                    range,
+                    filled,
+                    instance: Some(instance),
+                    call_site: impact.call_sites.get(instance).cloned(),
+                }
+            };
+            impact
+                .own_bands
+                .iter()
+                .map(band(true))
+                .chain(impact.other_bands.iter().map(band(false)))
+                .collect()
+        }
+    }
 }
 
 impl EditorView {
@@ -486,9 +546,14 @@ impl EditorView {
         let (visual, audio) = timeline_rows(self.timeline_tracks(), usize::from(react));
         let border = cx.theme().border;
         let tracks_empty = visual.is_empty() && audio.is_empty();
+        // `None` while nothing is selected, so the highlight clears with it.
+        let impact = self.selection_impact();
         let mut rows: Vec<gpui_kit::AnyElement> = Vec::new();
         if let Some(chapters) = self.react_chapters() {
-            rows.push(self.chapter_row(chapters, view, cx).into_any_element());
+            rows.push(
+                self.chapter_row(chapters, impact.as_ref(), view, cx)
+                    .into_any_element(),
+            );
         }
         rows.extend(visual.iter().map(|row| {
             self.track_row(row, VIDEO_TRACK_HEIGHT, view, cx)
@@ -496,7 +561,10 @@ impl EditorView {
         }));
         // A React composition's own row is V1, under its videos.
         if react {
-            rows.push(self.react_composition_row(view, cx).into_any_element());
+            rows.push(
+                self.react_composition_row(impact.as_ref(), view, cx)
+                    .into_any_element(),
+            );
         }
         if (self.is_react_preview() || !visual.is_empty()) && !audio.is_empty() {
             rows.push(
@@ -1005,14 +1073,30 @@ impl EditorView {
     }
 
     /// The single row a standalone React composition shows: it has no
-    /// project tracks, but the ruler, playhead, and In/Out still apply.
-    fn react_composition_row(&self, view: LaneView, cx: &mut Context<Self>) -> impl IntoElement {
+    /// project tracks, but the ruler, playhead, and In/Out still apply. Over
+    /// the composition block, the selection's bands: filled where an edit
+    /// lands in this scene, outlined everywhere else it shows.
+    fn react_composition_row(
+        &self,
+        impact: Option<&ImpactView>,
+        view: LaneView,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let entry = self
             .react_preview
             .as_ref()
             .and_then(|react| react.entry.file_name())
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default();
+        let bands = impact
+            .map(selection_bands)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|band| {
+                let (left, width) = *band_geometry(&[band.range], view).first()?;
+                Some(self.selection_band(band, left, width, cx))
+            })
+            .collect::<Vec<_>>();
         div()
             .flex()
             .flex_none()
@@ -1076,8 +1160,84 @@ impl EditorView {
                             .text_xs()
                             .text_color(theme::waveform())
                             .child(entry),
-                    ),
+                    )
+                    .children(bands),
             )
+    }
+
+    /// One selection band at `left`/`width` lane fractions; its tooltip names
+    /// the scene (or the timecodes), the frames, and the instance's call
+    /// site, and a click seeks to its first frame.
+    fn selection_band(
+        &self,
+        band: SelectionBand,
+        left: f32,
+        width: f32,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::AnyElement {
+        let (from, to) = band.range;
+        let scenes = scenes_of(&[band.range], self.react_chapters().unwrap_or_default())
+            .into_iter()
+            .map(|chapter| chapter.name.as_str())
+            .collect::<Vec<_>>();
+        let place = if scenes.is_empty() {
+            let timecode = |frame: u64| {
+                format_timecode(
+                    i64::try_from(frame).unwrap_or(i64::MAX),
+                    self.frame_rate_value,
+                )
+            };
+            format!("{}–{}", timecode(from), timecode(to))
+        } else {
+            scenes.join(", ")
+        };
+        let mut lines = vec![format!("{place} · frames {from}–{to}")];
+        let entry_dir = self.entry_dir();
+        lines.extend(band.call_site.map(|site| {
+            format!(
+                "{}:{}:{}",
+                display_path(&site.file, &entry_dir),
+                site.line,
+                site.column
+            )
+        }));
+        let id = match band.instance {
+            Some(instance) if band.filled => format!("timeline-band-own-{instance}-{from}-{to}"),
+            Some(instance) => format!("timeline-band-other-{instance}-{from}-{to}"),
+            None => format!("timeline-band-span-{from}-{to}"),
+        };
+        div()
+            .id(SharedString::from(id))
+            .absolute()
+            .top(px(3.0))
+            .bottom(px(3.0))
+            .left(relative(left))
+            .w(relative(width))
+            .min_w(px(2.0))
+            .rounded_sm()
+            .map(|block| {
+                if band.filled {
+                    block.bg(theme::accent().opacity(0.42))
+                } else {
+                    block.border_1().border_color(theme::accent())
+                }
+            })
+            .cursor_pointer()
+            .tooltip(move |window, cx| {
+                let lines = lines.clone();
+                Tooltip::element(move |_, _| {
+                    div()
+                        .flex()
+                        .flex_col()
+                        .children(lines.iter().map(|line| div().child(line.clone())))
+                })
+                .build(window, cx)
+            })
+            .on_click(cx.listener(move |this, _, _, cx| {
+                cx.stop_propagation();
+                this.seek_to_frame(from, cx);
+            }))
+            .into_any_element()
     }
 
     /// The chapters a standalone React composition declares, or `None` when
@@ -1091,8 +1251,13 @@ impl EditorView {
 
     /// Pauses and moves the playhead to the start of `chapter`.
     pub(crate) fn seek_chapter(&mut self, chapter: &ReactChapter, cx: &mut Context<Self>) {
+        self.seek_to_frame(chapter.from, cx);
+    }
+
+    /// Pauses and moves the playhead to `frame`.
+    fn seek_to_frame(&mut self, frame: u64, cx: &mut Context<Self>) {
         self.pause();
-        self.seek_frame(i64::try_from(chapter.from).unwrap_or(i64::MAX));
+        self.seek_frame(i64::try_from(frame).unwrap_or(i64::MAX));
         cx.notify();
     }
 
@@ -1100,15 +1265,21 @@ impl EditorView {
     /// block per chapter, the current one highlighted; a click seeks to its
     /// start. A chapter of length 0 is a thin mark. Overlapping chapters (a
     /// scene and the parts listed inside it) stack on lanes of their own, so
-    /// none hides another.
+    /// none hides another. The chapters the selection appears in are
+    /// underlined.
     fn chapter_row(
         &self,
         chapters: &[ReactChapter],
+        impact: Option<&ImpactView>,
         view: LaneView,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let frame = u64::try_from(self.clock.frame()).unwrap_or(0);
         let current = chapter_at(chapters, frame).map(|chapter| chapter.id.clone());
+        let appears_in: &[String] = match impact {
+            Some(ImpactView::Known(impact)) => &impact.appears_in_ids,
+            _ => &[],
+        };
         let lanes = chapter_lanes(chapters);
         let lane_count = lanes.iter().max().map_or(1, |lane| lane + 1);
         let blocks = chapters
@@ -1139,6 +1310,7 @@ impl EditorView {
                     .overflow_hidden()
                     .rounded_sm()
                     .border_l_2()
+                    .when(appears_in.contains(&chapter.id), |block| block.border_b_2())
                     .border_color(theme::accent())
                     .bg(theme::accent().opacity(if is_current { 0.42 } else { 0.16 }))
                     .cursor_pointer()
@@ -1583,9 +1755,10 @@ fn wheel_zoom_factor(delta_y: f32) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        LaneGesture, LaneWheel, chapter_lanes, edit_points, follow_playhead, scrub_frames,
-        timeline_rows,
+        LaneGesture, LaneView, LaneWheel, band_geometry, chapter_lanes, edit_points,
+        follow_playhead, scrub_frames, selection_bands, timeline_rows,
     };
+    use crate::impact::ImpactView;
     use celesta_composition::Time;
     use celesta_editor_core::{ClipKind, ClipSummary, TrackSummary};
     use celesta_project::TrackKind;
@@ -1612,6 +1785,53 @@ mod tests {
         .collect();
         assert_eq!(chapter_lanes(&chapters), [0, 0, 1, 1, 0, 1]);
         assert!(chapter_lanes(&[]).is_empty());
+    }
+
+    fn assert_bands(actual: Vec<(f32, f32)>, expected: &[(f32, f32)]) {
+        assert_eq!(actual.len(), expected.len(), "{actual:?}");
+        for ((left, width), (expected_left, expected_width)) in actual.iter().zip(expected) {
+            assert!(
+                (left - expected_left).abs() < 1e-5 && (width - expected_width).abs() < 1e-5,
+                "{actual:?} != {expected:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn band_geometry_places_ranges_on_the_lane() {
+        let view = LaneView {
+            zoom: 1.0,
+            view_start: 0.0,
+            end_frame: 100.0,
+        };
+        assert_bands(band_geometry(&[(25, 50)], view), &[(0.25, 0.25)]);
+        assert!(band_geometry(&[(50, 50), (60, 40)], view).is_empty());
+    }
+
+    #[test]
+    fn band_geometry_drops_ranges_outside_the_view() {
+        // The lane shows frames 50 to 75.
+        let view = LaneView {
+            zoom: 4.0,
+            view_start: 0.5,
+            end_frame: 100.0,
+        };
+        assert_bands(
+            band_geometry(&[(0, 10), (40, 60), (75, 90)], view),
+            &[(-0.4, 0.8)],
+        );
+    }
+
+    #[test]
+    fn the_span_before_the_scan_is_one_filled_band_rounded_outward() {
+        let bands = selection_bands(&ImpactView::SpanOnly {
+            span: Some((10.4, 20.2)),
+            note: String::new(),
+        });
+        assert_eq!(bands.len(), 1);
+        assert_eq!(bands[0].range, (10, 21));
+        assert!(bands[0].filled);
+        assert!(bands[0].call_site.is_none());
     }
 
     fn track(id: &str, kind: TrackKind, clips: &[(i64, i64)]) -> TrackSummary {

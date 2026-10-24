@@ -1,4 +1,5 @@
-//! Transport and viewer icons that gpui-kit's default icon set does not ship.
+//! Transport, viewer and layer icons that gpui-kit's default icon set does
+//! not ship.
 //!
 //! The shapes are Lucide icons (ISC license), the family the default set is
 //! drawn from, so they sit beside `IconName` glyphs without a style break.
@@ -19,12 +20,19 @@ pub enum CelestaIcon {
     Diamond,
     /// `Diamond` filled with the icon color.
     DiamondFilled,
+    Square,
+    Circle,
+    Type,
+    Image,
+    Film,
+    Group,
+    Shapes,
 }
 
 const SVG_OPEN: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">"#;
 
 /// `(asset path, SVG body)` for every icon, served by [`CelestaAssets`].
-const ICONS: [(&str, &str); 8] = [
+const ICONS: [(&str, &str); 15] = [
     (
         "celesta/icons/skip-back.svg",
         r#"<polygon points="19 20 9 12 19 4 19 20"/><line x1="5" x2="5" y1="19" y2="5"/>"#,
@@ -51,6 +59,34 @@ const ICONS: [(&str, &str); 8] = [
     ),
     ("celesta/icons/diamond.svg", DIAMOND),
     ("celesta/icons/diamond-filled.svg", DIAMOND_FILLED),
+    (
+        "celesta/icons/square.svg",
+        r#"<rect width="18" height="18" x="3" y="3" rx="2"/>"#,
+    ),
+    (
+        "celesta/icons/circle.svg",
+        r#"<circle cx="12" cy="12" r="10"/>"#,
+    ),
+    (
+        "celesta/icons/type.svg",
+        r#"<path d="M12 4v16"/><path d="M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2"/><path d="M9 20h6"/>"#,
+    ),
+    (
+        "celesta/icons/image.svg",
+        r#"<rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/>"#,
+    ),
+    (
+        "celesta/icons/film.svg",
+        r#"<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 3v18"/><path d="M3 7.5h4"/><path d="M3 12h18"/><path d="M3 16.5h4"/><path d="M17 3v18"/><path d="M17 7.5h4"/><path d="M17 16.5h4"/>"#,
+    ),
+    (
+        "celesta/icons/group.svg",
+        r#"<path d="M3 7V5c0-1.1.9-2 2-2h2"/><path d="M17 3h2c1.1 0 2 .9 2 2v2"/><path d="M21 17v2c0 1.1-.9 2-2 2h-2"/><path d="M7 21H5c-1.1 0-2-.9-2-2v-2"/><rect width="7" height="5" x="7" y="7" rx="1"/><rect width="7" height="5" x="10" y="12" rx="1"/>"#,
+    ),
+    (
+        "celesta/icons/shapes.svg",
+        r#"<path d="M8.3 10a.7.7 0 0 1-.626-1.079L11.4 3a.7.7 0 0 1 1.198-.043L16.3 8.9a.7.7 0 0 1-.572 1.1Z"/><rect x="3" y="14" width="7" height="7" rx="1"/><circle cx="17.5" cy="17.5" r="3.5"/>"#,
+    ),
 ];
 
 const DIAMOND: &str = r#"<path d="M2.7 10.3a2.41 2.41 0 0 0 0 3.41l7.59 7.59a2.41 2.41 0 0 0 3.41 0l7.59-7.59a2.41 2.41 0 0 0 0-3.41l-7.59-7.59a2.41 2.41 0 0 0-3.41 0Z"/>"#;
@@ -67,6 +103,13 @@ impl IconNamed for CelestaIcon {
             Self::MousePointerClick => 5,
             Self::Diamond => 6,
             Self::DiamondFilled => 7,
+            Self::Square => 8,
+            Self::Circle => 9,
+            Self::Type => 10,
+            Self::Image => 11,
+            Self::Film => 12,
+            Self::Group => 13,
+            Self::Shapes => 14,
         };
         ICONS[index].0.into()
     }
@@ -114,6 +157,13 @@ mod tests {
             CelestaIcon::MousePointerClick,
             CelestaIcon::Diamond,
             CelestaIcon::DiamondFilled,
+            CelestaIcon::Square,
+            CelestaIcon::Circle,
+            CelestaIcon::Type,
+            CelestaIcon::Image,
+            CelestaIcon::Film,
+            CelestaIcon::Group,
+            CelestaIcon::Shapes,
         ] {
             let svg = CelestaAssets
                 .load(&icon.path())

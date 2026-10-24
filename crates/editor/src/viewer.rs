@@ -733,8 +733,9 @@ impl EditorView {
 
     /// Switches the React preview between its plain mode and the
     /// interactive mode that picks layers. The bridge respawns with or
-    /// without source positions; leaving interactive mode drops the
-    /// selection.
+    /// without source positions; entering interactive mode sweeps the
+    /// composition for scenes, and leaving it drops the selection and the
+    /// sweep's index.
     pub(crate) fn toggle_interactive(&mut self, cx: &mut Context<Self>) {
         if !self.is_react_preview() {
             return;
@@ -745,6 +746,7 @@ impl EditorView {
             self.hit_regions.clear();
         }
         self.refresh_preview();
+        self.refresh_occurrences(false);
         cx.notify();
     }
 
@@ -788,6 +790,7 @@ impl EditorView {
     pub(crate) fn clear_layer_selection(&mut self) {
         self.selected_layer = None;
         self.source_lookup = None;
+        self.source_lookup_stale = false;
         self.launch_error = None;
         self.transform.reset();
         self.layer_frame = None;

@@ -6,6 +6,7 @@ use crate::helpers::ExportLoudness;
 use crate::layer_select::SourceLookup;
 use crate::media_probe::{MediaAssetInfo, MediaProbeWorker};
 use crate::meter::MasterLevels;
+use crate::occurrences::{OccurrenceState, OccurrenceWorker};
 use crate::preview::{AudioPreview, PreviewPresentation, PreviewWorker, ReactPreview};
 use crate::problems::{Problems, Source};
 use crate::property_panel::PropertyPanelState;
@@ -111,6 +112,14 @@ pub(crate) struct EditorView {
     /// threaded into `PreviewRequest::react_reload` so the preview worker
     /// respawns Node against the freshly re-bundled code.
     pub(crate) react_reload_generation: u64,
+    pub(crate) occurrence_worker: OccurrenceWorker,
+    /// Where each element of the React entry renders, tagged with the
+    /// `react_reload_generation` it was swept for. `None` outside React
+    /// preview and while Select layers is off.
+    pub(crate) occurrences: Option<(u64, OccurrenceState)>,
+    /// The preview frame a sweep held back after the editor's own write
+    /// waits for before it starts.
+    pub(crate) occurrence_sweep_after: Option<u64>,
     /// Numbers the React entry's reloads so a slow older one is not applied
     /// over a newer one.
     pub(crate) react_reloads: ReloadOrder,
@@ -245,11 +254,16 @@ pub(crate) struct EditorView {
     pub(crate) source_lookup: Option<SourceLookup>,
     /// The timeline frame `source_lookup`'s answer was looked up at.
     pub(crate) source_lookup_frame: i64,
+    /// `source_lookup` was answered by the code before an own write's reload;
+    /// it stays shown until the reloaded code answers.
+    pub(crate) source_lookup_stale: bool,
     /// Window bounds of the viewer's frame area as last painted, for mapping
     /// clicks onto the scene.
     pub(crate) viewer_bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
     /// Why the last attempt to open a source position failed.
     pub(crate) launch_error: Option<String>,
+    /// The Properties tab's "Source chain" disclosure is expanded.
+    pub(crate) source_chain_open: bool,
     /// Which reloads keep `selected_layer` (those after the editor's own writes).
     pub(crate) selection_keep: SelectionKeep,
     /// The selected layer's transform targets in its source.
@@ -314,6 +328,7 @@ impl EditorView {
         let export_worker = ExportWorker::spawn()?;
         let component_schema_worker = ComponentSchemaWorker::spawn()?;
         let react_audio_worker = ReactAudioWorker::spawn()?;
+        let occurrence_worker = OccurrenceWorker::spawn()?;
         let mut editor = Self {
             source_path,
             session: 0,
@@ -330,6 +345,9 @@ impl EditorView {
             react_audio_clips: Vec::new(),
             react_tracks: Vec::new(),
             react_reload_generation: 0,
+            occurrence_worker,
+            occurrences: None,
+            occurrence_sweep_after: None,
             react_reloads: ReloadOrder::default(),
             watched_since: 0,
             property_panel: PropertyPanelState::default(),
@@ -406,8 +424,10 @@ impl EditorView {
             hit_regions: Vec::new(),
             source_lookup: None,
             source_lookup_frame: 0,
+            source_lookup_stale: false,
             viewer_bounds: Rc::default(),
             launch_error: None,
+            source_chain_open: false,
             selection_keep: SelectionKeep::default(),
             transform: TransformEdit::default(),
             transform_inputs: TransformInputs::default(),
@@ -416,6 +436,7 @@ impl EditorView {
         };
         editor.refresh_preview();
         editor.refresh_audio_preview();
+        editor.refresh_occurrences(false);
         if editor.react_preview.is_none() {
             editor.refresh_media_cache();
             editor.refresh_component_schemas();

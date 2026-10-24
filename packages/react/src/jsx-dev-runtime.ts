@@ -33,3 +33,13 @@ export function jsxDEV(
 export function sourceOfProps(props: unknown): SourcePosition | undefined {
   return typeof props === 'object' && props !== null ? positions.get(props) : undefined;
 }
+
+/**
+ * Gives the props object `to` the position recorded for `from`, if any: for a
+ * component that renders the element it was handed as another one
+ * (`<Series.Sequence>` as a `<Sequence>`), so that one points at the JSX.
+ */
+export function copySourcePosition(from: object, to: object): void {
+  const source = positions.get(from);
+  if (source) positions.set(to, source);
+}

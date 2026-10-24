@@ -124,6 +124,7 @@ pub(crate) fn source_position(source: &LayerSource, entry_dir: &Path) -> String 
 pub(crate) fn parent_layer_id(entry: &LayerSource) -> Option<&str> {
     match entry.kind {
         ElementKind::Primitive => entry.layer_id.as_deref(),
+        ElementKind::Wrapper => None,
         ElementKind::Component => None,
     }
 }
