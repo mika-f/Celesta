@@ -567,6 +567,7 @@ fn parameter_defaults(
 /// Why lifting every row a lift would take (a literal or an absent prop
 /// written on the element, outside `style`) into new props of the
 /// component enclosing `element` fails, if it does: a dry run of the lift.
+/// `None` without such rows.
 fn lift_lock(text: &str, element: &ElementRef, targets: &[(PropKey, Target)]) -> Option<LiftLock> {
     let rows: Vec<(&str, &EditTarget, EditValue)> = targets
         .iter()
@@ -584,6 +585,9 @@ fn lift_lock(text: &str, element: &ElementRef, targets: &[(PropKey, Target)]) ->
             Some((row.path.as_str(), &row.target, value))
         })
         .collect();
+    if rows.is_empty() {
+        return None;
+    }
     let props: Vec<LiftProp> = rows
         .iter()
         .map(|(prop, target, value)| LiftProp {

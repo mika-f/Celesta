@@ -292,6 +292,11 @@ fn an_unanswered_index_is_unknown() {
         )],
     });
     assert_eq!(state(Some(&moved)), unknown("Scanning scenes…"));
+    // A commit refused or held for it says the same.
+    let lock = ScopeLock::Unknown {
+        note: "Scanning scenes…".to_owned(),
+    };
+    assert_eq!(lock.text(), "Scanning scenes…");
 }
 
 #[test]
@@ -835,6 +840,21 @@ fn scoped_row_follows_the_table() {
         both(&targets, prop("anchorY")),
         (ScopedRow::AsResolved, ScopedRow::AsResolved)
     );
+    // A parameter no pattern key holds a default for.
+    targets
+        .targets
+        .push((prop("anchorX"), passed("rectAnchorX")));
+    let not_found = ScopeLock::DefaultNotFound {
+        param: "rectAnchorX".to_owned(),
+    };
+    assert_eq!(
+        both(&targets, prop("anchorX")),
+        (ScopedRow::AsResolved, ScopedRow::Locked(not_found.clone()))
+    );
+    assert_eq!(
+        not_found.text(),
+        "Can't find where `rectAnchorX`'s shared value is written"
+    );
 
     // The lift can't extend the props type.
     let imported = price_tag(|component| ScopeLock::ImportedPropsType { component });
@@ -883,6 +903,60 @@ fn scoped_row_follows_the_table() {
         .text(),
         "This scene sets its own `rectWidth`"
     );
+}
+
+#[test]
+fn shared_value_writes_the_default_whatever_s_passes() {
+    // S passes `rectWidth` and `rectOpacity` as expressions.
+    let call = "export const Price = () => (\n  <PriceTag label=\"Sale\" rectWidth={size * 2} rectHeight={40} rectOpacity={size / 2} />\n);\n";
+    let texts = Texts::from([
+        (PathBuf::from(TAG_FILE), TAG.to_owned()),
+        (PathBuf::from(SCENES_FILE), call.to_owned()),
+    ]);
+    let report = price_report();
+    let mut targets = tag_targets(&report, &texts);
+    assert!(matches!(
+        targets.target(&prop("width")),
+        Some(EditTarget::PassThrough { target, .. })
+            if matches!(**target, EditTarget::Locked(LockReason::Expression { .. }))
+    ));
+
+    let both = |targets: &ElementTargets, key: PropKey| {
+        (
+            scoped_row(Scope::ThisScene, targets, &key, None),
+            scoped_row(Scope::Shared, targets, &key, None),
+        )
+    };
+    assert_eq!(
+        both(&targets, prop("width")),
+        (
+            ScopedRow::AsResolved,
+            ScopedRow::Default {
+                shown: Some(EditValue::Number(200.0)),
+                own: true
+            }
+        )
+    );
+    let expression = ScopeLock::DefaultIsExpression {
+        param: "rectOpacity".to_owned(),
+    };
+    assert_eq!(
+        both(&targets, prop("opacity")),
+        (ScopedRow::AsResolved, ScopedRow::Locked(expression.clone()))
+    );
+
+    // With only that row, it decides the option.
+    targets.targets.retain(|(key, _)| *key == prop("opacity"));
+    let options = options_of(scope_state(
+        &report,
+        &targets,
+        Some(&three_scenes()),
+        None,
+        &chapters(),
+        FRAME,
+    ));
+    assert_eq!(options.shared, Err(expression));
+    assert_eq!(options.this_scene, Ok(()));
 }
 
 #[test]

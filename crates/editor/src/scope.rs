@@ -56,6 +56,8 @@ pub(crate) enum ScopeLock {
     DefaultIsExpression { param: String },
     /// The occurrence index can't answer yet, or failed.
     Unknown { note: String },
+    /// No pattern key in `C` holds `param`'s default.
+    DefaultNotFound { param: String },
 }
 
 impl ScopeLock {
@@ -91,6 +93,9 @@ impl ScopeLock {
                 format!("`{param}`'s shared value is written as an expression")
             }
             Self::Unknown { note } => note.clone(),
+            Self::DefaultNotFound { param } => {
+                format!("Can't find where `{param}`'s shared value is written")
+            }
         }
     }
 }
@@ -385,6 +390,15 @@ fn read_params(targets: &ElementTargets) -> Vec<&str> {
         .collect()
 }
 
+/// Whether `scope` decides what `target` writes: an editable target, and
+/// under "Shared value" any pass-through, since its default is written in
+/// `C` whatever `S` holds. A call site that is not found leaves a bare
+/// `Locked(CallSiteNotFound)`, no pass-through (and no `defaults` entry);
+/// "This scene" is locked as `NoCall` then.
+fn in_scope(scope: Scope, target: &EditTarget) -> bool {
+    editable(target) || scope == Scope::Shared && matches!(target, EditTarget::PassThrough { .. })
+}
+
 /// `scope`'s text-level lock: the first row's, when no editable row or
 /// input of the element can be written under it. Component-section rows
 /// are outside the scope.
@@ -395,7 +409,7 @@ fn row_lock(
 ) -> Result<(), ScopeLock> {
     let mut first = None;
     for (key, target) in targets.entries() {
-        if matches!(key, PropKey::CallSite(_)) || !editable(&target.target) {
+        if matches!(key, PropKey::CallSite(_)) || !in_scope(scope, &target.target) {
             continue;
         }
         match scoped_row(scope, targets, &key, calls) {
@@ -485,9 +499,10 @@ pub(crate) enum ScopedRow {
 /// scene. "Shared value": a pass-through writes its parameter's default
 /// (see [`ScopedRow::Default`]), or is locked when every call passes it
 /// without one, or the default is an expression or has no pattern to go
-/// in; anything else writes as resolved. A target that is locked as
-/// resolved, a Component-section row, and every row of an element in no
-/// component write as resolved under either.
+/// in, whatever `S` passes (an expression too); anything else writes as
+/// resolved. Any other target that is locked as resolved, a
+/// Component-section row, and every row of an element in no component
+/// write as resolved under either.
 pub(crate) fn scoped_row(
     scope: Scope,
     targets: &ElementTargets,
@@ -497,7 +512,7 @@ pub(crate) fn scoped_row(
     let (Some(component), Some(target)) = (targets.enclosing.as_deref(), targets.entry(key)) else {
         return ScopedRow::AsResolved;
     };
-    if matches!(key, PropKey::CallSite(_)) || !editable(&target.target) {
+    if matches!(key, PropKey::CallSite(_)) || !in_scope(scope, &target.target) {
         return ScopedRow::AsResolved;
     }
     match &target.target {
@@ -507,6 +522,7 @@ pub(crate) fn scoped_row(
             ..
         } => match scope {
             Scope::ThisScene => ScopedRow::AsResolved,
+            // However `S` passes it: the default is written in `C`.
             Scope::Shared => shared_default(targets, component, param, at_call, calls),
         },
         _ if scope == Scope::Shared => ScopedRow::AsResolved,
@@ -560,8 +576,8 @@ fn shared_default(
         Some(DefaultTarget::NoPattern) => ScopedRow::Locked(ScopeLock::NotObjectPattern {
             component: component.to_owned(),
         }),
-        None => ScopedRow::Locked(ScopeLock::Unknown {
-            note: format!("Can't find where `{param}`'s shared value is written"),
+        None => ScopedRow::Locked(ScopeLock::DefaultNotFound {
+            param: param.to_owned(),
         }),
     }
 }
