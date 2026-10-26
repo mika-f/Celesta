@@ -62,10 +62,10 @@ properties" point to it).
   Unknown { note }, Options(ScopeOptions) }`; `chosen_scope`, `commit_scope`,
   `previewed_scope`, `scope_line`; `scoped_row` → `ScopedRow { AsResolved,
   Lift, Default { shown }, Locked(lock) }`, the one per-row rule, with
-  `ScopedRow::removes_as_resolved`; `scoped_removable`; `gesture_lock`; `commit_gate`, `drain_gate` (a row
-  commit's gate), `gesture_gate` and `held_gate` (a held commit's, by its
-  `HeldOrigin`) → `CommitGate { Go(scope), Hold(note),
-  Refuse(text) }`; `gesture_start_refusal`; `impact_filter`;
+  `ScopedRow::removes_as_resolved`; `scoped_removable`; `gesture_lock`;
+  `commit_gate`, `drain_gate` (a row commit's gate), `gesture_gate` and
+  `held_gate` (a held commit's, by its `HeldOrigin`) → `CommitGate {
+  Go(scope), Hold(note), Refuse(text) }`; `gesture_start_refusal`; `impact_filter`;
   `scope_in_effect`; `remove_tooltip`; `ScopeChoices { get, set, carry,
   forget_in, clear }`.
 - Targets (`crates/editor/src/element_edit.rs`, `element_edit/resolve.rs`):
@@ -218,7 +218,14 @@ amended to match.
   shared value" on a row passed at `S`, under "This scene" and under "Shared
   value" alike; a literal at `E` has no button under "This scene"; a default
   has none under "Shared value". Component-section rows are outside the
-  scope.
+  scope. A value passed at `S` for a prop the element requires (a `<Rect>`'s
+  `width`) is removable when its parameter has a literal default, which then
+  applies (`removable`, so every option and none agree); with an absent
+  default the prop stays required, and a row this scene sets itself under
+  "Shared value" then has no way out but a scene that leaves it out. A
+  remembered "Shared value" disabled because this scene sets every row
+  itself shows the rows unscoped, and `commit_gate` refuses their removal
+  with the lock's text.
 - **The scope control stays in view.** The box `impact_line` returns (the
   control, its scanning note, or design 1's line) is a non-scrolling child
   above the Properties panel's scroll area, so it can be seen and switched

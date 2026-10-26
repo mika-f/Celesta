@@ -163,7 +163,7 @@ the panel shows is what gets written:
 | --- | --- | --- |
 | Literal or absent prop at `E` (attribute or children) | lift (or the lift's lock) | as resolved |
 | Keyframe; a path under `style.`; a literal input (a `const` an expression reads) | locked: "Can't be set per scene yet" | as resolved |
-| Pass-through, `S` passes it (an expression too) | at `S` | locked: "This scene sets its own `rectWidth`"; removable at `S` |
+| Pass-through, `S` passes it (an expression too) | at `S` | locked: "This scene sets its own `rectWidth`"; removable at `S` when the value there is a literal (else the default is edited from a scene that leaves it out) |
 | Pass-through, `S` leaves it out | at `S` | the default |
 | Pass-through without a default, every call passes it | at `S` | locked: "Every scene sets `rectWidth` itself" |
 | Pass-through whose default is an expression / `props.rectWidth` | at `S` | locked: "`rectWidth`'s shared value is written as an expression" / "`PriceTag` doesn't take its props as `{ … }`" |
@@ -178,11 +178,16 @@ the panel shows is what gets written:
   "modified here" and edits it where it is set). The row shows this scene's
   value, the one the canvas draws, keeps its "Set at" line naming the call,
   and is locked with "This scene sets its own `rectWidth`": its input takes no
-  commit, and drag, scrub and inline text lock with the same text. Its remove
-  button stays, with the tooltip "Use the shared value": it deletes the
-  attribute at `S`, after which the row shows and edits the default. A lock
+  commit, and drag, scrub and inline text lock with the same text. When the
+  value at `S` is a literal, its remove button stays, with the tooltip "Use
+  the shared value": it deletes the attribute at `S`, after which the row
+  shows and edits the default. A value computed at `S` has no remove button;
+  the default is edited from a scene whose call leaves the prop out. A lock
   of the default itself (no default and every call passes it, an expression,
   no pattern, not found) comes first.
+- A value passed at `S` for a prop the element requires (a `<Rect>`'s
+  `width`) is removable when the parameter has a literal default, which then
+  applies, under either option and without one; with no default it is not.
 - A literal const used once inside `C` lifts like a literal at `E`: the
   `const` takes the new prop as its value.
 - Component-section rows are outside the scope: written and removed at `S`.
