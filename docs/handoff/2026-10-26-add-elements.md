@@ -52,7 +52,8 @@ of the Size handles and property sections); `<Video width height>` in
   has a perspective (`turns_in_3d`, shared with `find`).
 - Insertion (`crates/source-edit/src/add.rs`): `NewKind` (`tag`, `module`),
   `NewElement`, `Timing { from, duration }`, `AddLock { NoChildrenRegion,
-  Import(ImportLock) }`, `accepts_children`, `add_lock`, and
+  Import(ImportLock) }`, `accepts_children`, `add_lock`, `add_locks` (every
+  kind's lock from one parse; `None` without a children region), and
   `add_child(text, parent, new, timing) -> Result<Added { edits, line,
   column }, AddLock>`. One `ensure_imports` per module (`@celesta/react`
   with the tag and `Sequence` when wrapped; `@celesta/shapes` for `Ellipse`
@@ -83,9 +84,15 @@ of the Size handles and property sections); `<Video width height>` in
   `playback.rs`, `background.rs`, `refresh.rs`, `view.rs`): `AddState` on the
   view. `sync_add_facts` reads the chain's files on the background executor
   once per lookup (layer, report, frame); `add_target` runs `pick_parent` on
-  them with design 3's scope; `add_menu` builds the header, the reason line,
-  and the items. `shows_tool_row(react_preview, interactive)` no longer takes
-  the selection: the row shows the Add button (gpui-kit `dropdown_menu`,
+  them with design 3's scope, keeping the pick until the groups are read
+  again or the scope, the scene scan's generation or the chapters change;
+  `ask_add_space` (each render) draws a frame asking for the parent's space
+  once per parent until it is reported (`space_request_due`), so a parent
+  known later (a scope switch, the targets or the scan answering, a pause)
+  gets its space without waiting for another frame; `add_menu` builds the
+  header, the reason line, and the items, "The source is still being read"
+  while the space is unreported. `shows_tool_row(react_preview,
+  interactive)` no longer takes the selection: the row shows the Add button (gpui-kit `dropdown_menu`,
   `IconName::Plus`) alone, and the Rotate about and Handles toggles after it
   with a selection. `choose_add_kind` pauses, stores the `ChosenParent`, and
   for Image/Video runs `prompt_for_paths` → `import_path` → `media_aspect`
@@ -98,7 +105,9 @@ of the Size handles and property sections); `<Video width height>` in
   ends the mode, drops the facts and the space, and gives the pending
   selection its first generation; `add_reload_failed` drops it;
   `take_add_answers` (from `background.rs`) applies `added_fate`;
-  `settle_added_selection` selects on the next render; `added_lookup_holds`
+  `settle_added_selection` selects on the next render; a selection the user
+  makes meanwhile (also while the file is written, or one waiting for held
+  commits) drops the pending one; `added_lookup_holds`
   checks the selected layer's first lookup. The overlay strokes
   `drawn_outline` in the accent color; the cursor is a crosshair while armed
   or drawing; the notice joins the viewer's notice chain.
@@ -160,6 +169,15 @@ of the Size handles and property sections); `<Video width height>` in
   shared component) falls back outward under "This scene" and without a
   scope control; adding into it needs "Shared value", which such an element
   does not offer.
+- A `<Group>` at the composition root that spans more than one scene (one
+  around `<Scenes>`) counts as shared. An element written once at the root
+  offers no scope control, so adding with it selected is refused with "No
+  group in this scene's own code to add into" rather than writing into every
+  scene unasked.
+- The parent's space is asked for only while nothing plays, so a parent first
+  known during playback reads "The source is still being read" until the
+  playback pauses. A parent the preview never reports a space for keeps that
+  reason until the groups are read again or the code reloads.
 - The Rust renderers do not reject an invalid `Video` size (zero, negative,
   NaN); only the React runtime does. `display_size` could return a `Result`
   as the image path does. `render.ts` repeats the image's size check instead
@@ -201,8 +219,8 @@ of the Size handles and property sections); `<Video width height>` in
 - With an element armed, Escape ends the add mode and stops there: an inline
   text edit open at the same time needs a second Escape.
 - `parent_facts`'s skip branches (outside the project, unreadable, no
-  region) are untested; `sync_add_facts` clones the report on every render
-  to compare it.
+  region) are untested. It still parses a group's file three times
+  (`element_at`, `add_locks`, `enclosing_component`).
 - `take_add_answers` accepts a parent space from a preview generation
   before the reload (it could check `generation >= from`), and a parent read
   started before a reload can land after it.
@@ -277,3 +295,10 @@ own (before and after each addition):
   mode without writing; an edit saved outside Celesta does too, through its
   reload. A refusal at the release (such as a group scaled to zero after the
   item was chosen) shows its notice at the top-left until the next click.
+- With an item armed in a shared component's group, switch **Edits change**
+  between **This scene** and **Shared value**: the header names the other
+  parent, and drawing outlines the element at once, without seeking first.
+- Add twice in a row into a file whose import list spans several lines: each
+  addition extends the list, and the file still type-checks.
+- Click another layer between the release and the reload: that layer stays
+  selected after the reload, not the added one.

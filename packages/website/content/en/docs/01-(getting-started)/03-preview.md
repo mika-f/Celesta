@@ -554,8 +554,8 @@ The line under the parent's name says why every item is disabled, and an item's 
 | Reason | Meaning |
 | --- | --- |
 | Select a group, or a layer inside one, to add into | Nothing is selected, or no group around the selected layer can be the parent |
-| No group in this scene's own code to add into | Under **This scene**, every group that could be the parent is shared |
-| The source is still being read | The selected layer's source is still being looked up or read, such as right after a reload |
+| No group in this scene's own code to add into | Under **This scene**, every group that could be the parent is shared. This also happens when the selected element is written once at the composition's root, inside a `<Group>` that spans several scenes (such as one around `<Scenes>`): such an element offers no **Edits change** control, and Celesta does not add into every scene unasked |
+| The source is still being read | The selected layer's source, or the group's space on the canvas, is still being looked up or read, such as right after a reload. The space is read while playback is paused |
 | Scanning scenes…, Couldn't scan scenes: `<error>`, Not found in the scene scan, The scenes are not scanned | Celesta can't tell yet whether the group is shared; see "See what an edit changes" |
 | A reason from "When an option can't be chosen" | The **Edits change** option in effect for the selected element is disabled: the one you chose earlier, or both options when you chose none. The tab's tooltip gives the same reason |
 | Can't add inside a loop or freeze frame | The nearest window around the group is a `<Loop>` or `<FreezeFrame>` |
