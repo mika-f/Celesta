@@ -78,6 +78,7 @@ mod icons;
 mod meter;
 mod timecode;
 mod timeline;
+mod timeline_drag;
 mod viewer;
 
 const EDITOR_DEMO_PROJECT: &str = include_str!("../../../examples/editor-demo.celesta.json");

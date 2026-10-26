@@ -90,11 +90,13 @@ impl EditorView {
             .when_some(self.focus_handle.as_ref(), |view, focus_handle| {
                 view.track_focus(focus_handle)
             })
-            // Escape cancels a canvas drag or a row's scrub before any other
-            // key handling.
+            // Escape cancels a canvas drag, a band drag or a row's scrub
+            // before any other key handling.
             .capture_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                 if event.keystroke.key == "escape"
-                    && (this.escape_transform_drag() || this.escape_row_scrub())
+                    && (this.escape_transform_drag()
+                        || this.escape_band_drag()
+                        || this.escape_row_scrub())
                 {
                     cx.stop_propagation();
                     cx.notify();
@@ -102,12 +104,14 @@ impl EditorView {
             }))
             // Any press ends a note on why a double-click did not edit a
             // text or why an edit was cancelled, and drops a double-click
-            // waiting for its layer's source (the canvas sets them again).
+            // waiting for its layer's source (the canvas sets them again);
+            // likewise a note on why a band drag wrote nothing.
             .capture_any_mouse_down(cx.listener(|this, _, _, cx| {
                 let note = this.inline_note.take().is_some();
                 let notice = this.inline_notice.take().is_some();
+                let band = this.band_notice.take().is_some();
                 this.inline_pending = None;
-                if note || notice {
+                if note || notice || band {
                     cx.notify();
                 }
             }))
@@ -123,8 +127,9 @@ impl EditorView {
             .child(self.title_bar(cx))
             .child(self.workspace(cx))
             .child(self.status_bar(cx))
-            // A scrub keeps its cursor wherever the pointer goes.
-            .when(self.row_scrub_active(), |root| {
+            // A scrub or a band drag keeps its cursor wherever the pointer
+            // goes.
+            .when(self.row_scrub_active() || self.band_drag_active(), |root| {
                 root.child(
                     canvas(
                         |_, _, _| {},

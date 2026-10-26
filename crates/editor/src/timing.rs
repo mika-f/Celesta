@@ -5,7 +5,6 @@
 use celesta_react_bridge::{LayerSourceReport, ReactChapter, TimingWindow, outermost_chapter_at};
 
 /// What `report.windows[0]`, the window nearest the element, is.
-#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum WindowRole<'a> {
     /// A wrapper written around the element: its timing is the element's own.
@@ -22,7 +21,6 @@ pub(crate) enum WindowRole<'a> {
 /// scene's when it has no source, or when its span, cut at
 /// `composition_end` and rounded to whole frames, is the span of a chapter
 /// holding `frame` (a part or the scene around it).
-#[allow(dead_code)]
 pub(crate) fn window_role<'a>(
     report: &'a LayerSourceReport,
     chapters: &[ReactChapter],

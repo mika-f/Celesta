@@ -26,6 +26,7 @@ use crate::icons::CelestaIcon;
 use crate::impact::ImpactView;
 use crate::layer_select::display_path;
 use crate::timecode::{format_timecode, nominal_fps, ruler_scale};
+use crate::timeline_drag::{BandGrip, BandGrips, edge_width};
 use crate::view::EditorView;
 use crate::waveform::{level_at_time, waveform_segment};
 use celesta_editor_theme as theme;
@@ -114,20 +115,20 @@ pub(crate) fn edit_points(
 /// Horizontal geometry of the visible window, shared by everything that
 /// positions itself along the lane.
 #[derive(Clone, Copy)]
-struct LaneView {
-    zoom: f64,
-    view_start: f64,
-    end_frame: f64,
+pub(crate) struct LaneView {
+    pub(crate) zoom: f64,
+    pub(crate) view_start: f64,
+    pub(crate) end_frame: f64,
 }
 
 impl LaneView {
     /// Lane fraction (0 at the leading edge, 1 at the trailing edge) of a
     /// whole-composition fraction.
-    fn x(self, fraction: f64) -> f32 {
+    pub(crate) fn x(self, fraction: f64) -> f32 {
         ((fraction - self.view_start) * self.zoom) as f32
     }
 
-    fn width(self, fraction: f64) -> f32 {
+    pub(crate) fn width(self, fraction: f64) -> f32 {
         (fraction * self.zoom) as f32
     }
 
@@ -262,7 +263,7 @@ fn selection_bands(impact: &ImpactView) -> Vec<SelectionBand> {
 }
 
 impl EditorView {
-    fn lane_view(&self) -> LaneView {
+    pub(crate) fn lane_view(&self) -> LaneView {
         let (zoom, view_start) = self.timeline_view();
         LaneView {
             zoom,
@@ -271,14 +272,30 @@ impl EditorView {
         }
     }
 
-    fn lane_bounds(&self) -> Option<Bounds<Pixels>> {
+    pub(crate) fn lane_bounds(&self) -> Option<Bounds<Pixels>> {
         self.timeline_lane_bounds.get()
     }
 
-    fn lane_width(&self) -> f32 {
+    pub(crate) fn lane_width(&self) -> f32 {
         self.lane_bounds()
             .map_or(FALLBACK_LANE_WIDTH, |bounds| f32::from(bounds.size.width))
             .max(1.0)
+    }
+
+    /// Window x of composition frame `frame` on the lanes, which may lie
+    /// outside them.
+    pub(crate) fn frame_x(&self, frame: f64) -> f32 {
+        let left = self
+            .lane_bounds()
+            .map_or(TRACK_HEADER_WIDTH, |bounds| f32::from(bounds.origin.x));
+        let view = self.lane_view();
+        left + view.x(frame / view.end_frame) * self.lane_width()
+    }
+
+    /// How many pixels one frame takes on the lanes at the current zoom.
+    pub(crate) fn pixels_per_frame(&self) -> f64 {
+        let (zoom, _) = self.timeline_view();
+        f64::from(self.lane_width()) * zoom / self.clock.end_frame().max(1) as f64
     }
 
     /// Composition fraction under window position `x`.
@@ -408,7 +425,7 @@ impl EditorView {
     fn scrub_timeline_pixels(&mut self, delta_pixels: f32) {
         let (zoom, view_start) = self.timeline_view();
         let end_frame = self.clock.end_frame();
-        let pixels_per_frame = f64::from(self.lane_width()) * zoom / end_frame.max(1) as f64;
+        let pixels_per_frame = self.pixels_per_frame();
         let frames = scrub_frames(
             delta_pixels,
             pixels_per_frame,
@@ -580,7 +597,8 @@ impl EditorView {
         let border = cx.theme().border;
         let tracks_empty = visual.is_empty() && audio.is_empty();
         // `None` while nothing is selected, so the highlight clears with it.
-        let impact = self.selection_impact();
+        // A band drag moves the bands it moves.
+        let impact = self.timeline_impact();
         let mut rows: Vec<gpui_kit::AnyElement> = Vec::new();
         if let Some(chapters) = self.react_chapters() {
             rows.push(
@@ -594,8 +612,9 @@ impl EditorView {
         }));
         // A React composition's own row is V1, under its videos.
         if react {
+            let label_above = self.react_chapters().is_some() || !visual.is_empty();
             rows.push(
-                self.react_composition_row(impact.as_ref(), view, cx)
+                self.react_composition_row(impact.as_ref(), view, label_above, cx)
                     .into_any_element(),
             );
         }
@@ -1113,6 +1132,7 @@ impl EditorView {
         &self,
         impact: Option<&ImpactView>,
         view: LaneView,
+        label_above: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let entry = self
@@ -1122,14 +1142,32 @@ impl EditorView {
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default();
         let bands = impact.map(selection_bands).unwrap_or_default();
-        let bands = merge_close_bands(bands, view, self.lane_width())
+        let bands = merge_close_bands(bands, view, self.lane_width());
+        let ranges: Vec<(f64, f64)> = bands
+            .iter()
+            .map(|band| (band.range.0 as f64, band.range.1 as f64))
+            .collect();
+        // This instance's bands in the current scene come first.
+        let filled = bands.iter().take_while(|band| band.filled).count();
+        let grips = self.band_grips(&ranges[..filled]);
+        let bands = bands
             .into_iter()
             .filter_map(|band| {
                 let (left, width) = *band_geometry(&[band.range], view).first()?;
                 Some(self.selection_band(band, left, width, cx))
             })
             .collect::<Vec<_>>();
+        let label = grips
+            .as_ref()
+            .and_then(|grips| grips.label.clone())
+            .map(|(at, lines)| (at, lines, false))
+            .or_else(|| {
+                let notice = self.band_notice.as_ref()?;
+                Some((notice.at, vec![notice.text.clone()], true))
+            });
+        let grips = grips.map(|grips| self.band_grip_overlay(&grips, ranges, filled, view, cx));
         div()
+            .relative()
             .flex()
             .flex_none()
             .h(px(VIDEO_TRACK_HEIGHT))
@@ -1193,8 +1231,110 @@ impl EditorView {
                             .text_color(theme::waveform())
                             .child(entry),
                     )
-                    .children(bands),
+                    .children(bands)
+                    .children(grips),
             )
+            // Outside the lane, so its edges don't cut the label.
+            .when_some(label, |row, (at, lines, notice)| {
+                let x =
+                    (view.x(at / view.end_frame) * self.lane_width()).clamp(0.0, self.lane_width());
+                let label = div()
+                    .absolute()
+                    .left(px(TRACK_HEADER_WIDTH + x))
+                    .px_2()
+                    .py_1()
+                    .border_1()
+                    .border_color(cx.theme().border)
+                    .bg(cx.theme().popover)
+                    .text_xs()
+                    .whitespace_nowrap()
+                    .map(|label| {
+                        if notice {
+                            label.text_color(cx.theme().muted_foreground)
+                        } else {
+                            label
+                                .font_family(cx.theme().mono_font_family.clone())
+                                .text_color(cx.theme().foreground)
+                        }
+                    })
+                    .children(lines.into_iter().map(|line| div().child(line)));
+                // Over the row above when there is one in the scroll area,
+                // else over the band.
+                row.child(if label_above {
+                    label.bottom(px(VIDEO_TRACK_HEIGHT))
+                } else {
+                    label.top(px(3.0))
+                })
+            })
+    }
+
+    /// The grips of the selected element's own timing window, at its
+    /// edges over the band holding the lookup frame: `bands` are the bands
+    /// drawn (frames), the first `filled` of them this instance's in the
+    /// current scene. A press on a grip that drags starts a band drag; a
+    /// locked grip shows why.
+    fn band_grip_overlay(
+        &self,
+        grips: &BandGrips,
+        bands: Vec<(f64, f64)>,
+        filled: usize,
+        view: LaneView,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::AnyElement {
+        let (from, to) = grips.window;
+        let start = from / view.end_frame;
+        let length = (to - from) / view.end_frame;
+        let edge = edge_width((view.width(length) * self.lane_width()).max(2.0));
+        let zone = |grip: BandGrip| {
+            let (id, zone) = match grip {
+                BandGrip::Start => ("band-grip-start", div().left_0().w(px(edge))),
+                BandGrip::End => ("band-grip-end", div().right_0().w(px(edge))),
+                BandGrip::Body => ("band-grip-body", div().left(px(edge)).right(px(edge))),
+            };
+            let zone = zone.id(id).absolute().top_0().bottom_0();
+            match (grips.lock(grip).map(str::to_owned), grip) {
+                (Some(reason), _) => zone
+                    .cursor(CursorStyle::OperationNotAllowed)
+                    .tooltip(move |window, cx| Tooltip::new(reason.clone()).build(window, cx)),
+                (None, BandGrip::Body) => zone.cursor_pointer(),
+                (None, BandGrip::Start | BandGrip::End) => zone
+                    .cursor(CursorStyle::ResizeLeftRight)
+                    // The edge, drawn as a bar.
+                    .child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .bottom_0()
+                            .w(px(2.0))
+                            .when(grip == BandGrip::Start, |bar| bar.left_0())
+                            .when(grip == BandGrip::End, |bar| bar.right_0())
+                            .bg(theme::accent()),
+                    ),
+            }
+        };
+        div()
+            .id("band-grips")
+            .absolute()
+            .top(px(3.0))
+            .bottom(px(3.0))
+            .left(relative(view.x(start)))
+            .w(relative(view.width(length)))
+            .min_w(px(2.0))
+            .child(zone(BandGrip::Start))
+            .child(zone(BandGrip::Body))
+            .child(zone(BandGrip::End))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                    // The band below doesn't take the press as a click: the
+                    // drag seeks when it ends as one.
+                    if this.begin_band_drag(f32::from(event.position.x), &bands, filled) {
+                        cx.stop_propagation();
+                        cx.notify();
+                    }
+                }),
+            )
+            .into_any_element()
     }
 
     /// One selection band at `left`/`width` lane fractions; its tooltip names
@@ -1290,7 +1430,7 @@ impl EditorView {
     }
 
     /// Pauses and moves the playhead to `frame`.
-    fn seek_to_frame(&mut self, frame: u64, cx: &mut Context<Self>) {
+    pub(crate) fn seek_to_frame(&mut self, frame: u64, cx: &mut Context<Self>) {
         self.pause();
         self.seek_frame(i64::try_from(frame).unwrap_or(i64::MAX));
         cx.notify();

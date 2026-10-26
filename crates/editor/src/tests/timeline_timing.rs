@@ -358,3 +358,27 @@ fn window_files_refuses_a_changed_source() {
     assert_eq!(result.err(), Some(CommitError::SourceChanged.to_string()));
     assert_eq!(files.read("scene.tsx"), moved);
 }
+
+#[test]
+fn a_window_that_does_not_resolve_keeps_why() {
+    let files = Files::new("unresolved", &[("scene.tsx", SEQUENCE)]);
+    let report = sequence_report(&files);
+    let read = |path: &Path| fs::read_to_string(path).map_err(|error| error.to_string());
+    // A window whose source no chain entry has.
+    let elsewhere = resolve_window(read, &report, &files.pos("scene.tsx", 2, 1));
+    let why = "Couldn't find this element in the source";
+    assert_eq!(elsewhere.as_ref().err().map(String::as_str), Some(why));
+
+    let mut state = ElementEdit::default();
+    let request = state.begin("a", &report, 0).unwrap();
+    assert!(state.finish_with_window(
+        request,
+        Some("a"),
+        Err("no rows".to_owned()),
+        Some(elsewhere)
+    ));
+    let (window, _) = state
+        .window_targets(Some("a"), Some((&report, 0)))
+        .expect("the window's outcome is kept beside the element's");
+    assert_eq!(window.err(), Some(why));
+}

@@ -2,6 +2,7 @@
 //! sweep (see [`crate::occurrences`]) and the layer's own report.
 
 use crate::occurrences::OccurrenceState;
+use crate::timeline_drag::{DragPreview, preview_occurrences};
 use celesta_react_bridge::{
     InstanceOccurrences, LayerSourceReport, ReactChapter, SourcePos, outermost_chapter_at,
     scenes_of,
@@ -81,6 +82,19 @@ pub(crate) fn impact_view(
     frame: u64,
     filter: &ImpactFilter,
 ) -> ImpactView {
+    moved_impact_view(report, occurrences, chapters, frame, written_at, None)
+}
+
+/// [`impact_view`] with the element's instances where `preview`, a running
+/// band drag, moves them (see [`preview_occurrences`]).
+pub(crate) fn moved_impact_view(
+    report: &LayerSourceReport,
+    occurrences: Option<&OccurrenceState>,
+    chapters: &[ReactChapter],
+    frame: u64,
+    written_at: Option<&SourcePos>,
+    preview: Option<&DragPreview>,
+) -> ImpactView {
     let span_only = |note: String| ImpactView::SpanOnly {
         // `to <= from` when the layer's windows start past the composition end.
         span: report
@@ -99,6 +113,22 @@ pub(crate) fn impact_view(
     };
     let Some((element, own)) = index.instance_for(report) else {
         return span_only("Not found in the scene scan".to_owned());
+    };
+    let moved;
+    let (element, own) = match preview {
+        None => (element, own),
+        Some(preview) => {
+            moved = preview_occurrences(element, preview);
+            // The instance key is the chain, which a preview keeps.
+            let Some(own) = moved
+                .instances
+                .iter()
+                .find(|instance| instance.chain == own.chain)
+            else {
+                return span_only("Not found in the scene scan".to_owned());
+            };
+            (&moved, own)
+        }
     };
     let instances: Vec<&InstanceOccurrences> = element
         .instances
@@ -776,6 +806,40 @@ mod tests {
         ));
         assert_eq!(impact.own_bands, vec![((30, 50), 0)]);
         assert_eq!(impact.other_bands, vec![((20, 30), 0)]);
+    }
+
+    #[test]
+    fn a_band_drag_moves_the_bands_through_its_window() {
+        use crate::timeline_drag::{BandGrip, DragPreview};
+
+        // The `<Sequence>` the report puts at `pos(1)` holds the first
+        // instance; the second renders elsewhere.
+        let chapters = [chapter("a", "A", 0, 120)];
+        let occurrences = index(vec![
+            InstanceOccurrences {
+                wrappers: vec![pos(1)],
+                ..instance(vec![pos(3), pos(8)], vec![(30, 90)])
+            },
+            instance(vec![pos(3), pos(20)], vec![(200, 260)]),
+        ]);
+        let preview = DragPreview {
+            source: pos(1),
+            window: (30.0, 90.0),
+            grip: BandGrip::End,
+            delta: 15,
+            followers: vec![],
+        };
+        let impact = known(moved_impact_view(
+            &report(&[pos(3), pos(8)], Some((30.0, 90.0))),
+            Some(&occurrences),
+            &chapters,
+            40,
+            None,
+            Some(&preview),
+        ));
+        assert_eq!(impact.own_ranges, vec![(30, 105)]);
+        assert_eq!(impact.own_bands, vec![((30, 105), 0)]);
+        assert_eq!(impact.other_bands, vec![((200, 260), 1)]);
     }
 
     #[test]

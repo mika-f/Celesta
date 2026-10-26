@@ -8,12 +8,9 @@
 mod commit;
 mod resolve;
 
-pub(crate) use commit::commit_files;
 #[cfg(test)]
-pub(crate) use commit::{CommitError, apply_checked};
-// The band drag, which is not drawn yet, commits a window.
-#[cfg_attr(not(test), expect(unused_imports))]
-pub(crate) use commit::{commit_scoped, window_files};
+pub(crate) use commit::{CommitError, apply_checked, commit_scoped};
+pub(crate) use commit::{commit_files, window_files};
 #[cfg(test)]
 pub(crate) use resolve::window_report;
 pub(crate) use resolve::{
@@ -356,10 +353,14 @@ pub(crate) struct Resolved {
     pub(crate) timeline_frame: i64,
     pub(crate) outcome: Result<ElementTargets, String>,
     /// The element's own timing window (a wrapper written around it, see
-    /// [`WindowRole::Own`]) with its timing props as rows; `None` for any
-    /// other window, or when it doesn't resolve.
-    pub(crate) window_targets: Option<WindowTargets>,
+    /// [`WindowRole::Own`]) with its timing props as rows, or why it can't
+    /// be dragged (it doesn't resolve, or it is inside a loop or a freeze
+    /// frame); `None` for a scene's window, or none.
+    pub(crate) window_targets: Option<Result<WindowTargets, String>>,
 }
+
+/// Why a window inside a `<Loop>` or `<FreezeFrame>` doesn't drag.
+pub(crate) const REMAPPED_WINDOW: &str = "Timing inside a loop or freeze frame can't be dragged";
 
 /// The values own writes put into rows; `None` removed the prop.
 type WrittenValues = Vec<(PropKey, Option<EditValue>)>;
@@ -444,14 +445,15 @@ impl ElementEdit {
     }
 
     /// Keeps the outcome of resolution `request`, and `window_targets`, the
-    /// element's own timing window, when it is the newest one and
-    /// `selected` is still the layer it was for. True when kept.
+    /// element's own timing window (see [`Resolved::window_targets`]), when
+    /// it is the newest one and `selected` is still the layer it was for.
+    /// True when kept.
     pub(crate) fn finish_with_window(
         &mut self,
         request: u64,
         selected: Option<&str>,
         outcome: Result<ElementTargets, String>,
-        window_targets: Option<WindowTargets>,
+        window_targets: Option<Result<WindowTargets, String>>,
     ) -> bool {
         let Some((layer, report, timeline_frame)) = self.wanted.as_ref() else {
             return false;
@@ -633,16 +635,17 @@ impl ElementEdit {
     }
 
     /// The element's own timing window a commit for `selected` writes to,
-    /// with the element's report, under the same conditions as
-    /// [`Self::targets`] (the element's own targets may have failed).
+    /// or why it can't be dragged, with the element's report, under the
+    /// same conditions as [`Self::targets`] (the element's own targets may
+    /// have failed).
     pub(crate) fn window_targets(
         &self,
         selected: Option<&str>,
         lookup: Option<(&LayerSourceReport, i64)>,
-    ) -> Option<(&WindowTargets, &LayerSourceReport)> {
+    ) -> Option<(Result<&WindowTargets, &str>, &LayerSourceReport)> {
         let resolved = self.committable(selected, lookup)?;
         let window = resolved.window_targets.as_ref()?;
-        Some((window, &resolved.report))
+        Some((window.as_ref().map_err(String::as_str), &resolved.report))
     }
 
     /// The newest resolution for `selected` when it is current and was
@@ -741,15 +744,17 @@ impl EditorView {
             None => self.component_schemas.clone(),
         };
         // The wrapper written around the element, when its timing is the
-        // element's own: resolved as an element of its own beside it.
+        // element's own: resolved as an element of its own beside it. A
+        // loop's or a freeze frame's window is locked unread.
         let window = match window_role(
             report,
             self.react_chapters().unwrap_or_default(),
             u64::try_from(self.clock.end_frame()).unwrap_or(0),
             u64::try_from(frame).unwrap_or(0),
         ) {
-            WindowRole::Own(window) => window.source.clone(),
-            WindowRole::Scene(_) | WindowRole::Remapped | WindowRole::None => None,
+            WindowRole::Own(window) => window.source.clone().map(Ok),
+            WindowRole::Remapped => Some(Err(REMAPPED_WINDOW.to_owned())),
+            WindowRole::Scene(_) | WindowRole::None => None,
         };
         let report = report.clone();
         let entry_dir = self
@@ -777,12 +782,11 @@ impl EditorView {
                             lock_outside_project(&mut targets, outside);
                             targets
                         });
-                    let window = window
-                        .and_then(|source| resolve_window(read, &report, &source).ok())
-                        .map(|mut window| {
-                            lock_outside_project(&mut window.targets, outside);
-                            window
-                        });
+                    let window = window.map(|source| {
+                        let mut window = resolve_window(read, &report, &source?)?;
+                        lock_outside_project(&mut window.targets, outside);
+                        Ok(window)
+                    });
                     (outcome, window)
                 })
                 .await;
@@ -835,9 +839,11 @@ impl EditorView {
         Some((targets, commit_report(resolved, targets, report)))
     }
 
-    /// The selected element's own timing window and the element's report,
-    /// when they can be committed to.
-    pub(crate) fn window_targets(&self) -> Option<(&WindowTargets, &LayerSourceReport)> {
+    /// The selected element's own timing window (or why it can't be
+    /// dragged) and the element's report, when they can be committed to.
+    pub(crate) fn window_targets(
+        &self,
+    ) -> Option<(Result<&WindowTargets, &str>, &LayerSourceReport)> {
         let lookup = match &self.source_lookup {
             Some(SourceLookup::Found(report)) => Some((report, self.source_lookup_frame)),
             _ => None,
@@ -886,7 +892,7 @@ impl EditorView {
     /// element's: read at that call's place in the selected instance's
     /// chain, for the element's instances.
     fn sync_window_scene_calls(&mut self, cx: &mut Context<Self>) {
-        let Some((window, report)) = self.window_targets() else {
+        let Some((Ok(window), report)) = self.window_targets() else {
             return;
         };
         let Some((call, false)) = self.window_call(window) else {
@@ -946,7 +952,10 @@ impl EditorView {
 
     /// The occurrences of the element `report` describes, in the index in
     /// use (a refreshing one too).
-    fn indexed_element(&self, report: &LayerSourceReport) -> Option<&ElementOccurrences> {
+    pub(crate) fn indexed_element(
+        &self,
+        report: &LayerSourceReport,
+    ) -> Option<&ElementOccurrences> {
         let index = match self.occurrences.as_ref()? {
             (_, OccurrenceState::Ready(index) | OccurrenceState::Refreshing(index)) => index,
             (_, OccurrenceState::Scanning | OccurrenceState::Failed(_)) => return None,

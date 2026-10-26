@@ -103,8 +103,6 @@ pub(crate) fn commit_files(
 
 /// [`commit_scoped`] for the timing window `window` around the element
 /// `report` describes: its rows resolved again with [`resolve_window`].
-// Called by the band drag, which is not drawn yet.
-#[cfg_attr(not(test), expect(dead_code))]
 pub(crate) fn window_files(
     texts: &Texts,
     window: &WindowTargets,
