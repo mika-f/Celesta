@@ -22,7 +22,7 @@ use crate::occurrences::OccurrenceState;
 use crate::property_controls::ControlKind;
 use crate::scope::{
     CommitGate, SceneCalls, Scope, ScopeLock, ScopeState, calls_of, chosen_scope, commit_gate,
-    current_calls, gesture_lock, read_scene_calls, scope_state, scoped_removable,
+    current_calls, gesture_lock, previewed_scope, read_scene_calls, scope_state, scoped_removable,
 };
 use crate::view::EditorView;
 use celesta_react_bridge::{
@@ -33,6 +33,7 @@ use celesta_source_edit::{
     DefaultTarget, EditTarget, EditValue, ElementRef, LiftLock, LockReason, format_number,
 };
 use gpui_kit::Context;
+use std::cell::RefCell;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -352,6 +353,8 @@ type WrittenValues = Vec<(PropKey, Option<EditValue>)>;
 #[derive(Debug, Default)]
 pub(crate) struct ElementEdit {
     request: u64,
+    /// Counts the resolutions kept: names the targets `resolved` holds.
+    resolution: u64,
     /// The layer, report and lookup frame the newest resolution was started for.
     wanted: Option<(String, LayerSourceReport, i64)>,
     /// A resolution is running.
@@ -426,6 +429,7 @@ impl ElementEdit {
             self.stale = false;
             self.written = None;
         }
+        self.resolution += 1;
         self.resolved = Some(Resolved {
             layer: layer.clone(),
             report: report.clone(),
@@ -465,6 +469,7 @@ impl ElementEdit {
     pub(crate) fn reset(&mut self) {
         *self = Self {
             request: self.request + 1,
+            resolution: self.resolution,
             preview_stopped: self.preview_stopped,
             ..Self::default()
         };
@@ -560,6 +565,11 @@ impl ElementEdit {
             }
             Some(_) => "Select the layer again".to_owned(),
         }
+    }
+
+    /// Which resolution `resolved` holds: a new one counts up.
+    pub(crate) fn resolution(&self) -> u64 {
+        self.resolution
     }
 
     /// The newest resolution for `selected`, and whether it may be committed
@@ -813,28 +823,64 @@ impl EditorView {
         }
     }
 
-    /// The scope choice remembered for the selected element.
-    pub(crate) fn remembered_scope(&self) -> Option<Scope> {
-        let (_, report) = self.element_targets()?;
-        let element = report.chain.first()?;
-        self.scope_choices.get(&SourcePos::from(element))
+    /// The selected element's position, which its scope choice is kept
+    /// under: the current lookup answer's, also while the targets are read
+    /// again (an edit made then waits with the choice).
+    pub(crate) fn selected_element(&self) -> Option<SourcePos> {
+        self.selected_layer.as_ref()?;
+        match &self.source_lookup {
+            Some(SourceLookup::Found(report)) => report.chain.first().map(SourcePos::from),
+            _ => None,
+        }
     }
 
-    /// The selected element's targets, its scope state with the playhead
-    /// where it is now (as the impact line reads it), and the scene calls
-    /// that count; `None` without targets to commit to.
-    fn scope_context(&self) -> Option<(&ElementTargets, ScopeState, Option<&SceneCalls>)> {
-        let (targets, report) = self.element_targets()?;
+    /// The scope choice remembered for the selected element.
+    pub(crate) fn remembered_scope(&self) -> Option<Scope> {
+        self.scope_choices.get(&self.selected_element()?)
+    }
+
+    /// The scope context of the targets the rows show (see
+    /// [`ScopeContext`]), current or not; `None` until they are resolved.
+    pub(crate) fn shown_scope_context(&self) -> Option<ScopeContext<'_>> {
+        let (resolved, current) = self.element_edit.resolved(self.selected_layer.as_deref())?;
+        let targets = resolved.outcome.as_ref().ok()?;
+        let report = &resolved.report;
         let calls = self.current_scene_calls(targets, report);
-        let state = scope_state(
-            report,
+        let key = ScopeKey {
+            resolution: self.element_edit.resolution(),
+            occurrence_generation: self.occurrence_generation,
+            frame: u64::try_from(self.clock.frame()).unwrap_or(0),
+            calls: calls.cloned(),
+        };
+        let mut cache = self.scope_cache.0.borrow_mut();
+        let state = match cache.as_ref() {
+            Some((cached, state)) if *cached == key => state.clone(),
+            _ => {
+                let state = scope_state(
+                    report,
+                    targets,
+                    self.occurrences.as_ref().map(|(_, state)| state),
+                    calls,
+                    self.react_chapters().unwrap_or_default(),
+                    key.frame,
+                );
+                *cache = Some((key, state.clone()));
+                state
+            }
+        };
+        Some(ScopeContext {
             targets,
-            self.occurrences.as_ref().map(|(_, state)| state),
+            state,
             calls,
-            self.react_chapters().unwrap_or_default(),
-            u64::try_from(self.clock.frame()).unwrap_or(0),
-        );
-        Some((targets, state, calls))
+            current,
+        })
+    }
+
+    /// The scope context of the targets a commit writes to; `None` without
+    /// targets to commit to.
+    fn scope_context(&self) -> Option<ScopeContext<'_>> {
+        self.element_targets()?;
+        self.shown_scope_context().filter(|context| context.current)
     }
 
     /// The gate for committing `keys` of the selected element with the
@@ -846,17 +892,64 @@ impl EditorView {
         keys: &[PropKey],
     ) -> CommitGate {
         match self.scope_context() {
-            Some((targets, state, _)) => commit_gate(&state, remembered, targets, keys),
+            Some(context) => commit_gate(&context.state, remembered, context.targets, keys),
             None => CommitGate::Go(None),
         }
     }
 
     /// The scope an edit of the selected element uses now, when its options
     /// are known and allow one.
-    fn scope_in_effect(&self, state: &ScopeState) -> Option<Scope> {
+    pub(crate) fn effective_scope(&self, state: &ScopeState) -> Option<Scope> {
         match state {
             ScopeState::Options(options) => chosen_scope(self.remembered_scope(), options).ok(),
             ScopeState::NotShared | ScopeState::Unknown { .. } => None,
+        }
+    }
+
+    /// The scope a drag of the selected element writes with now (see
+    /// [`Self::effective_scope`]).
+    pub(crate) fn gesture_scope(&self) -> Option<Scope> {
+        self.effective_scope(&self.scope_context()?.state)
+    }
+
+    /// The scope the rows of `targets` show and remove under, and the scene
+    /// calls that count: the scope in effect, when `targets` are the ones
+    /// the rows show and the element offers a scope.
+    pub(crate) fn rows_scope(
+        &self,
+        targets: &ElementTargets,
+    ) -> Option<(Scope, Option<&SceneCalls>)> {
+        let context = self
+            .shown_scope_context()
+            .filter(|context| std::ptr::eq(context.targets, targets))?;
+        Some((self.effective_scope(&context.state)?, context.calls))
+    }
+
+    /// The scope the impact shows: the hovered option of the control (a
+    /// preview), else the one in effect (see [`previewed_scope`]), with the
+    /// scene calls that count and the targets it was read for.
+    pub(crate) fn impact_scope(
+        &self,
+    ) -> Option<(Option<Scope>, &ElementTargets, Option<&SceneCalls>)> {
+        let context = self.shown_scope_context()?;
+        let scope = match &context.state {
+            ScopeState::Options(options) => {
+                previewed_scope(self.scope_hover, options, self.remembered_scope())
+            }
+            ScopeState::NotShared | ScopeState::Unknown { .. } => None,
+        };
+        Some((scope, context.targets, context.calls))
+    }
+
+    /// Clears the hovered option when the control is not drawn: it reports
+    /// no leave once gone, and the bands would keep its preview.
+    pub(crate) fn settle_scope_hover(&mut self) {
+        if self.scope_hover.is_some()
+            && !self
+                .shown_scope_context()
+                .is_some_and(|context| matches!(context.state, ScopeState::Options(_)))
+        {
+            self.scope_hover = None;
         }
     }
 
@@ -871,32 +964,25 @@ impl EditorView {
     /// [`Self::gesture_scope_lock`] of each of `keys`, in order, the scope
     /// state read once.
     pub(crate) fn gesture_scope_locks(&self, keys: &[PropKey]) -> Vec<Option<ScopeLock>> {
-        let Some((targets, state, calls)) = self.scope_context() else {
+        let Some(context) = self.scope_context() else {
             return vec![None; keys.len()];
         };
-        let scope = self.scope_in_effect(&state);
+        let scope = self.effective_scope(&context.state);
         keys.iter()
-            .map(|key| gesture_lock(scope, targets, key, calls))
+            .map(|key| gesture_lock(scope, context.targets, key, context.calls))
             .collect()
     }
 
     /// Whether the row `key` (`target` in `targets`) offers its removal:
-    /// under the scope in effect, the removal [`scoped_removable`] allows.
+    /// under the scope the rows show, the removal [`scoped_removable`]
+    /// allows (see [`Self::rows_scope`]).
     pub(crate) fn row_removable(
         &self,
         targets: &ElementTargets,
         key: &PropKey,
         target: &Target,
     ) -> bool {
-        // Targets that are not current (being read again) have no scope.
-        let scoped = self
-            .scope_context()
-            .filter(|(current, ..)| std::ptr::eq(*current, targets))
-            .and_then(|(_, state, calls)| Some((self.scope_in_effect(&state)?, calls)));
-        match scoped {
-            Some((scope, calls)) => scoped_removable(scope, targets, key, calls),
-            None => removable(targets, key, target),
-        }
+        row_removable_under(self.rows_scope(targets), targets, key, target)
     }
 
     /// Writes `values` for the selected layer into its source as one undo
@@ -941,6 +1027,46 @@ impl EditorView {
             },
             cx,
         );
+    }
+}
+
+/// The selected element's targets, its scope state with the playhead where
+/// it is now (as the impact line reads it), the scene calls that count,
+/// and whether a commit may write to the targets.
+pub(crate) struct ScopeContext<'v> {
+    pub(crate) targets: &'v ElementTargets,
+    pub(crate) state: ScopeState,
+    pub(crate) calls: Option<&'v SceneCalls>,
+    pub(crate) current: bool,
+}
+
+/// What a [`ScopeState`] is read from, besides what changes with these
+/// (the report with the targets, the index with its generation, the
+/// chapters with a reload, which sweeps again).
+#[derive(Debug, PartialEq)]
+struct ScopeKey {
+    resolution: u64,
+    occurrence_generation: u64,
+    frame: u64,
+    calls: Option<SceneCalls>,
+}
+
+/// The selected element's scope state, kept while what it is read from
+/// stays: the panel, the rows, the timeline and the canvas read it many
+/// times a render.
+#[derive(Debug, Default)]
+pub(crate) struct ScopeCache(RefCell<Option<(ScopeKey, ScopeState)>>);
+
+/// [`removable`] under the scope the rows show (`None`: as resolved).
+pub(crate) fn row_removable_under(
+    scope: Option<(Scope, Option<&SceneCalls>)>,
+    targets: &ElementTargets,
+    key: &PropKey,
+    target: &Target,
+) -> bool {
+    match scope {
+        Some((scope, calls)) => scoped_removable(scope, targets, key, calls),
+        None => removable(targets, key, target),
     }
 }
 

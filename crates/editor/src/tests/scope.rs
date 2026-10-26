@@ -3,11 +3,13 @@
 //! writes under them.
 
 use super::*;
-use crate::impact::{impact_line, impact_view};
+use crate::element_rows::default_row_text;
+use crate::impact::{ImpactFilter, ImpactView, impact_line, impact_view};
 use crate::occurrences::OccurrenceState;
 use crate::scope::{
     SceneCalls, Scope, ScopeChoices, ScopeLock, ScopeOptions, ScopeState, ScopedRow, calls_of,
-    chosen_scope, scope_line, scope_state, scoped_removable, scoped_row,
+    chosen_scope, impact_filter, previewed_scope, remove_tooltip, scope_in_effect, scope_line,
+    scope_state, scoped_removable, scoped_row,
 };
 use celesta_react_bridge::{
     ElementOccurrences, InstanceOccurrences, OccurrenceIndex, ReactChapter,
@@ -222,7 +224,7 @@ fn an_element_with_one_instance_is_not_shared() {
         Some(&occurrences),
         &chapters(),
         FRAME,
-        targets.written_at(),
+        &impact_filter(None, &targets, None),
     );
     assert_eq!(
         impact_line(&view),
@@ -257,7 +259,13 @@ fn an_element_outside_a_component_is_not_shared() {
     let state = scope_state(&report, &targets, Some(&occurrences), None, &chapters(), 10);
 
     assert_eq!(state, ScopeState::NotShared);
-    let view = impact_view(&report, Some(&occurrences), &chapters(), 10, None);
+    let view = impact_view(
+        &report,
+        Some(&occurrences),
+        &chapters(),
+        10,
+        &ImpactFilter::All,
+    );
     assert_eq!(impact_line(&view), ("Also changes Outro".to_owned(), true));
 }
 
@@ -1034,6 +1042,199 @@ fn a_choice_moves_with_the_element_after_a_kept_reload() {
     choices.carry(&elsewhere, &before);
     assert_eq!(choices.get(&after), Some(Scope::Shared));
     assert_eq!(choices.get(&before), None);
+}
+
+/// The impact of an edit of the selected `<Rect>` (in Price) under
+/// `filter`, with `PriceTag` called once per scene.
+fn impact_under(filter: &ImpactFilter) -> crate::impact::Impact {
+    match impact_view(
+        &price_report(),
+        Some(&three_scenes()),
+        &chapters(),
+        FRAME,
+        filter,
+    ) {
+        ImpactView::Known(impact) => impact,
+        other => panic!("expected a known impact, got {other:?}"),
+    }
+}
+
+#[test]
+fn impact_filter_follows_the_chosen_scope() {
+    let report = price_report();
+    let targets = tag_targets(&report, &tag_texts(SCENES_FILE));
+    let calls = price_sets_its_own();
+
+    // This scene: the instances `S` makes.
+    let this_scene = impact_filter(Some(Scope::ThisScene), &targets, Some(&calls));
+    assert_eq!(this_scene, ImpactFilter::Through(s()));
+    let impact = impact_under(&this_scene);
+    assert_eq!(impact.instance_count, 1);
+    assert!(impact.other_scenes.is_empty());
+
+    // Shared value: every instance but those whose call sets its own.
+    let shared = impact_filter(Some(Scope::Shared), &targets, Some(&calls));
+    assert_eq!(shared, ImpactFilter::Except(vec![s()]));
+    let impact = impact_under(&shared);
+    assert_eq!(impact.instance_count, 2);
+    assert_eq!(impact.other_scenes, ["Intro", "Outro"]);
+    // Until the calls are read, no scene is known to set its own.
+    assert_eq!(
+        impact_filter(Some(Scope::Shared), &targets, None),
+        ImpactFilter::Except(Vec::new())
+    );
+    // A call that sets only props no row reads keeps the shared value.
+    let label_only = SceneCalls {
+        calls: vec![
+            Some((s(), vec!["label".to_owned()])),
+            Some((intro_call(), vec!["label".to_owned()])),
+            Some((outro_call(), vec!["label".to_owned()])),
+        ],
+        ..calls.clone()
+    };
+    assert_eq!(
+        impact_filter(Some(Scope::Shared), &targets, Some(&label_only)),
+        ImpactFilter::Except(Vec::new())
+    );
+
+    // No scope: design 2's rule. `x` is written on the element, so an
+    // edit reaches every instance...
+    assert_eq!(targets.written_at(), None);
+    assert_eq!(
+        impact_filter(None, &targets, Some(&calls)),
+        ImpactFilter::All
+    );
+    // ...and only those of the call it writes when every editable
+    // transform prop passes through to it.
+    let tag = "export function PriceTag({ rectX }: { rectX: number }) {\n  return <Rect x={rectX} />;\n}\n";
+    let call = "export const Price = () => (\n  <PriceTag rectX={5} />\n);\n";
+    let texts = Texts::from([
+        (PathBuf::from(TAG_FILE), tag.to_owned()),
+        (PathBuf::from(SCENES_FILE), call.to_owned()),
+    ]);
+    let mut passed = report.clone();
+    passed.props.x = Some(5.0);
+    let table = property_table(vec![("Transform", vec![("x", number_field(Some(0.0)))])]);
+    let through = resolve_targets(read_from(&texts), &passed, Some(&table)).unwrap();
+    assert_eq!(through.written_at(), Some(&s()));
+    assert_eq!(
+        impact_filter(None, &through, None),
+        ImpactFilter::Through(s())
+    );
+}
+
+#[test]
+fn hovering_previews_the_other_option() {
+    let open = options(Ok(()), Ok(()));
+    // Nothing hovered: the chosen scope, "This scene" by default.
+    assert_eq!(previewed_scope(None, &open, None), Some(Scope::ThisScene));
+    assert_eq!(
+        previewed_scope(None, &open, Some(Scope::Shared)),
+        Some(Scope::Shared)
+    );
+    // Hovering an option previews it, whichever is chosen.
+    assert_eq!(
+        previewed_scope(Some(Scope::Shared), &open, None),
+        Some(Scope::Shared)
+    );
+    assert_eq!(
+        previewed_scope(Some(Scope::ThisScene), &open, Some(Scope::Shared)),
+        Some(Scope::ThisScene)
+    );
+    // A locked option previews nothing: the chosen one stays.
+    let reused = options(Err(ScopeLock::ReusedCall), Ok(()));
+    assert_eq!(
+        previewed_scope(Some(Scope::ThisScene), &reused, None),
+        Some(Scope::Shared)
+    );
+    // A remembered choice now locked shows no scope until one is hovered.
+    assert_eq!(previewed_scope(None, &reused, Some(Scope::ThisScene)), None);
+    assert_eq!(
+        previewed_scope(Some(Scope::Shared), &reused, Some(Scope::ThisScene)),
+        Some(Scope::Shared)
+    );
+
+    // The bands follow the previewed option.
+    let report = price_report();
+    let targets = tag_targets(&report, &tag_texts(SCENES_FILE));
+    let calls = price_sets_its_own();
+    let hovered = previewed_scope(Some(Scope::Shared), &open, None);
+    let impact = impact_under(&impact_filter(hovered, &targets, Some(&calls)));
+    assert_eq!(impact.instance_count, 2);
+    assert!(impact.own_bands.is_empty());
+    let chosen = previewed_scope(None, &open, None);
+    let impact = impact_under(&impact_filter(chosen, &targets, Some(&calls)));
+    assert_eq!(impact.instance_count, 1);
+    assert_eq!(impact.own_bands, vec![((30, 60), 0)]);
+}
+
+#[test]
+fn scope_in_effect_names_the_scope() {
+    assert_eq!(scope_in_effect(Scope::ThisScene), "Edits change this scene");
+    assert_eq!(
+        scope_in_effect(Scope::Shared),
+        "Edits change the shared value"
+    );
+}
+
+#[test]
+fn the_remove_button_says_use_the_shared_value_at_s() {
+    let report = price_report();
+    let targets = tag_targets(&report, &tag_texts(SCENES_FILE));
+    let tooltip = |scope: Option<Scope>, key: &str| {
+        let row = scope.map_or(ScopedRow::AsResolved, |scope| {
+            scoped_row(scope, &targets, &prop(key), None)
+        });
+        remove_tooltip(scope, &row)
+    };
+
+    // This scene: removing the value passed at S uses the shared one.
+    assert!(scoped_removable(
+        Scope::ThisScene,
+        &targets,
+        &prop("width"),
+        None
+    ));
+    assert_eq!(
+        tooltip(Some(Scope::ThisScene), "width"),
+        "Use the shared value"
+    );
+    // Shared value: the literal at the element is removed as today.
+    assert!(scoped_removable(Scope::Shared, &targets, &prop("x"), None));
+    assert_eq!(tooltip(Some(Scope::Shared), "x"), "Remove");
+    // Not shared.
+    assert_eq!(tooltip(None, "width"), "Remove");
+}
+
+#[test]
+fn a_default_row_shows_the_default() {
+    let report = price_report();
+    let targets = tag_targets(&report, &tag_texts(SCENES_FILE));
+    let calls = price_sets_its_own();
+    let shown = |scope: Scope, key: &str| {
+        let key = prop(key);
+        let row = scoped_row(scope, &targets, &key, Some(&calls));
+        default_row_text(&row, &key, row_field(&targets, &key))
+    };
+
+    // Price passes 260; the shared value is the default, 200.
+    assert_eq!(
+        shown(Scope::Shared, "width"),
+        Some(("200".to_owned(), String::new()))
+    );
+    // Left out at S: the default it draws with.
+    assert_eq!(
+        shown(Scope::Shared, "cornerRadius"),
+        Some(("8".to_owned(), String::new()))
+    );
+    // No default written yet: none to show, nor a table default.
+    assert_eq!(
+        shown(Scope::Shared, "height"),
+        Some((String::new(), String::new()))
+    );
+    // Any other row shows as resolved.
+    assert_eq!(shown(Scope::ThisScene, "width"), None);
+    assert_eq!(shown(Scope::Shared, "x"), None);
 }
 
 #[test]

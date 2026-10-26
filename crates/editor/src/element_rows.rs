@@ -15,7 +15,7 @@ use crate::property_controls::{
     parse_number_input, take_picked_color,
 };
 use crate::property_panel::field_label;
-use crate::scope::{CommitGate, Scope};
+use crate::scope::{CommitGate, Scope, ScopedRow, scoped_row};
 use crate::transform_drag::override_sites;
 use crate::view::EditorView;
 use celesta_react_bridge::{
@@ -411,6 +411,25 @@ pub(crate) fn written_text(
                 default.as_ref().map(value_text).unwrap_or_default(),
             )
         }
+    }
+}
+
+/// What a row shows when it writes a parameter's default (see
+/// [`ScopedRow::Default`]): that default, which is the value it edits
+/// whatever this scene passes; with none written yet, what the element
+/// draws without one, dimmed (see [`written_text`]). `None` for any other
+/// row, which shows as resolved.
+pub(crate) fn default_row_text(
+    row: &ScopedRow,
+    key: &PropKey,
+    field: Option<&PrimitivePropertyField>,
+) -> Option<(String, String)> {
+    match row {
+        ScopedRow::Default { shown, .. } => Some(match shown {
+            Some(value) => (value_text(value), String::new()),
+            None => written_text(key, field, None),
+        }),
+        ScopedRow::AsResolved | ScopedRow::Lift | ScopedRow::Locked(_) => None,
     }
 }
 
@@ -964,6 +983,7 @@ impl EditorView {
             return;
         };
         let layer = resolved.layer.clone();
+        let scope = self.rows_scope(targets);
         type Spec = (
             PropKey,
             ControlKind,
@@ -976,9 +996,16 @@ impl EditorView {
             .map(|(key, target)| {
                 let kind = row_kind(targets, &key, target);
                 let field = row_field(targets, &key).cloned();
+                // A row writing a parameter's default shows that default.
+                let default = || {
+                    let (scope, calls) = scope?;
+                    let row = scoped_row(scope, targets, &key, calls);
+                    default_row_text(&row, &key, field.as_ref())
+                };
                 let shown = match self.element_edit.written_value(Some(&layer), &key) {
                     Some(written) => written_text(&key, field.as_ref(), written.as_ref()),
-                    None => entry_text(targets, &key, target, &resolved.report),
+                    None => default()
+                        .unwrap_or_else(|| entry_text(targets, &key, target, &resolved.report)),
                 };
                 (key, kind, field, shown)
             })

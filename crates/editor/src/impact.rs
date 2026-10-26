@@ -47,19 +47,39 @@ pub(crate) enum ImpactView {
     Known(Impact),
 }
 
+/// Which of the element's instances an edit changes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ImpactFilter {
+    All,
+    /// Those whose chain contains this call: the call site the edit writes.
+    Through(SourcePos),
+    /// Those whose chain contains none of these calls: the shared value,
+    /// which the calls that set their own value keep out.
+    Except(Vec<SourcePos>),
+}
+
+impl ImpactFilter {
+    fn changes(&self, instance: &InstanceOccurrences) -> bool {
+        match self {
+            Self::All => true,
+            Self::Through(site) => instance.chain.contains(site),
+            Self::Except(calls) => !calls.iter().any(|call| instance.chain.contains(call)),
+        }
+    }
+}
+
 /// The impact of editing the layer `report` describes, with the playhead at
 /// `frame`. The current scene is the outermost chapter at `frame`; without
 /// chapters of any length the whole timeline is one scene, and in a gap
-/// between chapters no occurrence is in the current scene. `written_at` is
-/// the call site an edit writes when every editable prop passes through to
-/// it: only the instances whose chain contains it change, so only those are
-/// counted, listed, and banded.
+/// between chapters no occurrence is in the current scene. Only the
+/// instances `filter` keeps change, so only those are counted, listed, and
+/// banded.
 pub(crate) fn impact_view(
     report: &LayerSourceReport,
     occurrences: Option<&OccurrenceState>,
     chapters: &[ReactChapter],
     frame: u64,
-    written_at: Option<&SourcePos>,
+    filter: &ImpactFilter,
 ) -> ImpactView {
     let span_only = |note: String| ImpactView::SpanOnly {
         // `to <= from` when the layer's windows start past the composition end.
@@ -83,7 +103,7 @@ pub(crate) fn impact_view(
     let instances: Vec<&InstanceOccurrences> = element
         .instances
         .iter()
-        .filter(|instance| written_at.is_none_or(|site| instance.chain.contains(site)))
+        .filter(|instance| filter.changes(instance))
         .collect();
 
     let current = outermost_chapter_at(chapters, frame);
@@ -333,7 +353,7 @@ mod tests {
             Some(&occurrences),
             &chapters,
             40,
-            None,
+            &ImpactFilter::All,
         );
         let line = impact_line(&view);
         let impact = known(view);
@@ -365,7 +385,7 @@ mod tests {
             Some(&occurrences),
             &chapters,
             10,
-            None,
+            &ImpactFilter::All,
         );
         assert_eq!(
             impact_line(&view),
@@ -390,7 +410,7 @@ mod tests {
             Some(&occurrences),
             &chapters,
             40,
-            Some(&pos(20)),
+            &ImpactFilter::Through(pos(20)),
         );
         let line = impact_line(&view);
         let impact = known(view);
@@ -422,7 +442,7 @@ mod tests {
             Some(&occurrences),
             &chapters,
             10,
-            Some(&pos(20)),
+            &ImpactFilter::Through(pos(20)),
         );
         let line = impact_line(&view);
         let impact = known(view);
@@ -435,6 +455,54 @@ mod tests {
     }
 
     #[test]
+    fn impact_view_filters_through_and_except() {
+        // `<Card>` is called at 8 (Intro), 20 (Price) and 30 (Outro); the
+        // playhead is in Price.
+        let chapters = [
+            chapter("intro", "Intro", 0, 30),
+            chapter("price", "Price", 30, 30),
+            chapter("outro", "Outro", 60, 30),
+        ];
+        let occurrences = index(vec![
+            instance(vec![pos(3), pos(8)], vec![(0, 30)]),
+            instance(vec![pos(3), pos(20)], vec![(30, 60)]),
+            instance(vec![pos(3), pos(30)], vec![(60, 90)]),
+        ]);
+        let report = report(&[pos(3), pos(20)], Some((30.0, 60.0)));
+        let view = |filter: &ImpactFilter| {
+            known(impact_view(
+                &report,
+                Some(&occurrences),
+                &chapters,
+                40,
+                filter,
+            ))
+        };
+
+        let all = view(&ImpactFilter::All);
+        assert_eq!(all.instance_count, 3);
+        assert_eq!(all.other_scenes, vec!["Intro", "Outro"]);
+
+        let through = view(&ImpactFilter::Through(pos(20)));
+        assert_eq!(through.instance_count, 1);
+        assert!(through.other_scenes.is_empty());
+        assert_eq!(through.own_bands, vec![((30, 60), 0)]);
+        assert!(through.other_bands.is_empty());
+
+        // Price sets its own: the shared value reaches Intro and Outro.
+        let except = view(&ImpactFilter::Except(vec![pos(20)]));
+        assert_eq!(except.instance_count, 2);
+        assert_eq!(except.other_scenes, vec!["Intro", "Outro"]);
+        assert_eq!(except.call_sites, vec![pos(8), pos(30)]);
+        assert!(except.own_bands.is_empty());
+        assert_eq!(except.other_bands, vec![((0, 30), 0), ((60, 90), 1)]);
+        // This scene's own range is still where it appears.
+        assert_eq!(except.appears_in, vec!["Price"]);
+
+        assert_eq!(view(&ImpactFilter::Except(Vec::new())), all);
+    }
+
+    #[test]
     fn one_scene_component_reused_by_scenes_is_shared() {
         let chapters = [chapter("a", "A", 0, 30), chapter("b", "B", 30, 30)];
         let occurrences = index(vec![instance(vec![pos(3)], vec![(0, 20), (40, 60)])]);
@@ -443,7 +511,7 @@ mod tests {
             Some(&occurrences),
             &chapters,
             10,
-            None,
+            &ImpactFilter::All,
         ));
         assert_eq!(impact.appears_in, vec!["A", "B"]);
         assert_eq!(impact.other_scenes, vec!["B"]);
@@ -462,7 +530,7 @@ mod tests {
             Some(&occurrences),
             &[],
             40,
-            None,
+            &ImpactFilter::All,
         ));
         assert_eq!(impact.call_sites, vec![pos(8), pos(20)]);
     }
@@ -475,7 +543,7 @@ mod tests {
             Some(&occurrences),
             &[],
             10,
-            None,
+            &ImpactFilter::All,
         ));
         assert_eq!(impact.call_sites, vec![pos(8)]);
     }
@@ -497,7 +565,7 @@ mod tests {
             Some(&occurrences),
             &[],
             80,
-            None,
+            &ImpactFilter::All,
         ));
         // The empty chain shares nothing, so every call site is the element.
         assert_eq!(impact.call_sites, vec![pos(3), pos(3), pos(3)]);
@@ -518,7 +586,7 @@ mod tests {
             Some(&occurrences),
             &chapters,
             10,
-            None,
+            &ImpactFilter::All,
         );
         assert_eq!(
             impact_line(&view),
@@ -537,7 +605,7 @@ mod tests {
             Some(&occurrences),
             &[],
             20,
-            None,
+            &ImpactFilter::All,
         );
         let line = impact_line(&view);
         let impact = known(view);
@@ -554,7 +622,7 @@ mod tests {
             Some(&alone),
             &[],
             20,
-            None,
+            &ImpactFilter::All,
         );
         assert_eq!(
             impact_line(&view),
@@ -571,7 +639,7 @@ mod tests {
             Some(&occurrences),
             &chapters,
             20,
-            None,
+            &ImpactFilter::All,
         ));
         assert!(impact.appears_in.is_empty());
         assert_eq!(impact.places_in_scene, 1);
@@ -586,7 +654,7 @@ mod tests {
             Some(&occurrences),
             &[],
             20,
-            None,
+            &ImpactFilter::All,
         );
         assert_eq!(
             view,
@@ -613,14 +681,14 @@ mod tests {
             Some(&OccurrenceState::Refreshing(last.clone())),
             &chapters,
             10,
-            None,
+            &ImpactFilter::All,
         );
         let ready = impact_view(
             &report,
             Some(&OccurrenceState::Ready(last)),
             &chapters,
             10,
-            None,
+            &ImpactFilter::All,
         );
         assert_eq!(refreshing, ready);
         assert_eq!(known(refreshing).other_scenes, vec!["B"]);
@@ -630,11 +698,17 @@ mod tests {
     fn scanning_and_failed_notes() {
         let report = report(&[pos(3)], Some((15.0, 35.0)));
         assert_eq!(
-            impact_view(&report, Some(&OccurrenceState::Scanning), &[], 20, None),
+            impact_view(
+                &report,
+                Some(&OccurrenceState::Scanning),
+                &[],
+                20,
+                &ImpactFilter::All
+            ),
             span_only(Some((15.0, 35.0)), "Scanning scenes…")
         );
         assert_eq!(
-            impact_view(&report, None, &[], 20, None),
+            impact_view(&report, None, &[], 20, &ImpactFilter::All),
             span_only(Some((15.0, 35.0)), "Scanning scenes…")
         );
         assert_eq!(
@@ -643,7 +717,7 @@ mod tests {
                 Some(&OccurrenceState::Failed("boom".to_owned())),
                 &[],
                 20,
-                None
+                &ImpactFilter::All
             ),
             span_only(Some((15.0, 35.0)), "Couldn't scan scenes: boom")
         );
@@ -651,9 +725,21 @@ mod tests {
 
     #[test]
     fn a_span_past_the_composition_end_is_no_span() {
-        let view = impact_view(&report(&[pos(3)], Some((120.0, 90.0))), None, &[], 20, None);
+        let view = impact_view(
+            &report(&[pos(3)], Some((120.0, 90.0))),
+            None,
+            &[],
+            20,
+            &ImpactFilter::All,
+        );
         assert_eq!(view, span_only(None, "Scanning scenes…"));
-        let view = impact_view(&report(&[pos(3)], Some((90.0, 90.0))), None, &[], 20, None);
+        let view = impact_view(
+            &report(&[pos(3)], Some((90.0, 90.0))),
+            None,
+            &[],
+            20,
+            &ImpactFilter::All,
+        );
         assert_eq!(view, span_only(None, "Scanning scenes…"));
     }
 
@@ -669,7 +755,7 @@ mod tests {
             Some(&occurrences),
             &chapters,
             10,
-            None,
+            &ImpactFilter::All,
         ));
         assert_eq!(impact.own_bands, vec![((0, 30), 0)]);
         assert_eq!(impact.other_bands, vec![((60, 90), 0), ((100, 120), 1)]);
@@ -684,7 +770,7 @@ mod tests {
             Some(&occurrences),
             &chapters,
             40,
-            None,
+            &ImpactFilter::All,
         ));
         assert_eq!(impact.own_bands, vec![((30, 50), 0)]);
         assert_eq!(impact.other_bands, vec![((20, 30), 0)]);
@@ -699,7 +785,7 @@ mod tests {
             Some(&occurrences),
             &chapters,
             45,
-            None,
+            &ImpactFilter::All,
         ));
         assert_eq!(impact.other_scenes, vec!["A", "B"]);
         assert_eq!(impact.places_in_scene, 0);

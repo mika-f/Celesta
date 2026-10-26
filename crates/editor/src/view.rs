@@ -1,7 +1,7 @@
 use crate::audio::{AudioMixWorker, MasterVolumeDrag};
 use crate::component_schema::ComponentSchemaWorker;
 use crate::edit_history::EditHistory;
-use crate::element_edit::ElementEdit;
+use crate::element_edit::{ElementEdit, ScopeCache};
 use crate::element_rows::ElementRows;
 use crate::export_worker::ExportWorker;
 use crate::helpers::ExportLoudness;
@@ -17,7 +17,7 @@ use crate::problems::{Problems, Source};
 use crate::property_panel::PropertyPanelState;
 use crate::react_audio::ReactAudioWorker;
 use crate::refresh::{ReloadOrder, SelectionKeep};
-use crate::scope::{SceneCalls, ScopeChoices};
+use crate::scope::{SceneCalls, Scope, ScopeChoices};
 use crate::source::{PropertyArgs, load_source};
 use crate::timeline::LaneGesture;
 use crate::transform_drag::TransformDrag;
@@ -139,6 +139,11 @@ pub(crate) struct EditorView {
     pub(crate) scene_calls_wanted: Option<(SourcePos, u64, Vec<Option<SourcePos>>)>,
     /// The scope chosen per element for the session.
     pub(crate) scope_choices: ScopeChoices,
+    /// The scope control's option under the pointer: the timeline bands
+    /// preview what it would change.
+    pub(crate) scope_hover: Option<Scope>,
+    /// The selected element's scope state, kept while its inputs stay.
+    pub(crate) scope_cache: ScopeCache,
     /// After a kept reload: the selected element's position before it,
     /// whose scope choice moves to where the reloaded code's first lookup
     /// puts the element.
@@ -423,6 +428,8 @@ impl EditorView {
             scene_calls: None,
             scene_calls_wanted: None,
             scope_choices: ScopeChoices::default(),
+            scope_hover: None,
+            scope_cache: ScopeCache::default(),
             scope_carry_from: None,
             occurrence_sweep_after: None,
             occurrence_watch: false,

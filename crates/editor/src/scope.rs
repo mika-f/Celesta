@@ -9,6 +9,7 @@
 
 use crate::element_edit::{ElementTargets, PropKey, editable, reason_text};
 use crate::element_rows::removable;
+use crate::impact::ImpactFilter;
 use crate::occurrences::OccurrenceState;
 use celesta_react_bridge::{
     ElementKind, ElementOccurrences, InstanceOccurrences, LayerSourceReport, ReactChapter,
@@ -306,7 +307,7 @@ pub(crate) fn scope_state(
     let sets_own = |index: usize| {
         calls
             .and_then(|calls| calls.calls[index].as_ref())
-            .is_some_and(|(_, written)| written.iter().any(|name| params.contains(&name.as_str())))
+            .is_some_and(|(_, written)| writes_any(written, &params))
     };
     let scenes = |own: bool| {
         let ranges: Vec<(u64, u64)> = element
@@ -452,6 +453,76 @@ fn read_params(targets: &ElementTargets) -> Vec<&str> {
         .collect()
 }
 
+/// Whether a call writing the attributes `written` sets its own value for
+/// any of `params`.
+fn writes_any(written: &[String], params: &[&str]) -> bool {
+    written.iter().any(|name| params.contains(&name.as_str()))
+}
+
+/// Which instances an edit of the element changes under `scope` (the
+/// hovered option, else the chosen one), for the timeline bands and the
+/// header: "This scene", those `S` makes; "Shared value", all but those
+/// whose call sets its own value (as `calls` know them); no scope, design
+/// 2's rule (those of [`ElementTargets::written_at`], else all).
+pub(crate) fn impact_filter(
+    scope: Option<Scope>,
+    targets: &ElementTargets,
+    calls: Option<&SceneCalls>,
+) -> ImpactFilter {
+    let call = targets
+        .component
+        .as_ref()
+        .map(|component| &component.call_site);
+    match (scope, call) {
+        (Some(Scope::ThisScene), Some(call)) => ImpactFilter::Through(call.clone()),
+        (Some(Scope::Shared), _) => {
+            let params = read_params(targets);
+            let own = calls
+                .into_iter()
+                .flat_map(|calls| &calls.calls)
+                .flatten()
+                .filter(|(_, written)| writes_any(written, &params))
+                .map(|(call, _)| call.clone());
+            ImpactFilter::Except(own.collect())
+        }
+        _ => targets.written_at().map_or(ImpactFilter::All, |site| {
+            ImpactFilter::Through(site.clone())
+        }),
+    }
+}
+
+/// The scope the impact shows: the `hovered` option while it is allowed
+/// (a preview), else the one an edit uses ([`chosen_scope`]); `None` when
+/// that is locked too.
+pub(crate) fn previewed_scope(
+    hovered: Option<Scope>,
+    options: &ScopeOptions,
+    remembered: Option<Scope>,
+) -> Option<Scope> {
+    hovered
+        .filter(|scope| options.option(*scope).is_ok())
+        .or_else(|| chosen_scope(remembered, options).ok())
+}
+
+/// What an edit changes under `scope`, said while a drag runs.
+pub(crate) fn scope_in_effect(scope: Scope) -> &'static str {
+    match scope {
+        Scope::ThisScene => "Edits change this scene",
+        Scope::Shared => "Edits change the shared value",
+    }
+}
+
+/// The remove button's tooltip on a row that writes `row` under `scope`
+/// (`None` for a row outside the scope, a Component-section one too): under
+/// "This scene" the button deletes the value passed at `S`, so the shared
+/// value applies again.
+pub(crate) fn remove_tooltip(scope: Option<Scope>, row: &ScopedRow) -> &'static str {
+    match (scope, row) {
+        (Some(Scope::ThisScene), ScopedRow::AsResolved) => "Use the shared value",
+        _ => "Remove",
+    }
+}
+
 /// Whether `scope` decides what `target` writes: an editable target, and
 /// under "Shared value" any pass-through, since its default is written in
 /// `C` whatever `S` holds. A call site that is not found leaves a bare
@@ -502,11 +573,8 @@ pub(crate) fn chosen_scope(
 }
 
 /// More scenes than this are counted instead of named.
-// Read by the scope control's line, which is not drawn yet.
-#[cfg_attr(not(test), expect(dead_code))]
 const NAMED_SCENES: usize = 3;
 
-#[cfg_attr(not(test), expect(dead_code))]
 fn scenes_label(scenes: &[String]) -> String {
     if scenes.len() > NAMED_SCENES {
         format!("{} scenes", scenes.len())
@@ -518,7 +586,6 @@ fn scenes_label(scenes: &[String]) -> String {
 /// The line under the scope control: the reason a locked option (the
 /// `chosen` one first) is disabled; otherwise the scenes the shared value
 /// reaches and those that set their own.
-#[cfg_attr(not(test), expect(dead_code))]
 pub(crate) fn scope_line(options: &ScopeOptions, chosen: Option<Scope>) -> String {
     let locked = chosen
         .into_iter()
@@ -784,8 +851,6 @@ impl ScopeChoices {
         self.chosen.get(element).copied()
     }
 
-    // Choosing in the scope control, which is not drawn yet, sets it.
-    #[cfg_attr(not(test), expect(dead_code))]
     pub(crate) fn set(&mut self, element: SourcePos, scope: Scope) {
         self.chosen.insert(element, scope);
     }

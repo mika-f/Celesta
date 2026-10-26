@@ -3,7 +3,7 @@
 
 use crate::element_edit::{
     ElementTargets, PropKey, Resolved, Target, editable, inner_target, keyframe_jump_frames,
-    reason_text, table_key,
+    reason_text, row_removable_under, table_key,
 };
 use crate::element_rows::{
     component_row_label, element_control_handler, row_field, row_label, scrubs, set_at_text,
@@ -11,6 +11,7 @@ use crate::element_rows::{
 use crate::icons::CelestaIcon;
 use crate::layer_panel::LABEL_WIDTH;
 use crate::property_controls::{ControlKind, number_hint, render_control};
+use crate::scope::{SceneCalls, Scope, ScopedRow, gesture_lock, remove_tooltip, scoped_row};
 use crate::view::EditorView;
 use crate::widgets::inspector_section;
 use celesta_react_bridge::{PrimitivePropertyField, SourcePos};
@@ -107,6 +108,8 @@ impl EditorView {
             }
         };
         let entry_dir = self.entry_dir();
+        // The scope the rows show and write under, read once.
+        let scope = self.rows_scope(targets);
         let mut column = div().flex().flex_col();
         for (name, rows) in sections(targets) {
             column = column.child(inspector_section(name, cx));
@@ -123,6 +126,7 @@ impl EditorView {
                     false,
                     resolved,
                     current,
+                    scope,
                     &entry_dir,
                     cx,
                 ));
@@ -139,6 +143,7 @@ impl EditorView {
                         true,
                         resolved,
                         current,
+                        scope,
                         &entry_dir,
                         cx,
                     ));
@@ -175,6 +180,7 @@ impl EditorView {
                     false,
                     resolved,
                     current,
+                    scope,
                     &entry_dir,
                     cx,
                 ));
@@ -186,7 +192,10 @@ impl EditorView {
     /// `label  [control]  icon`, plus, below, where a pass-through value is
     /// set, the reason or the keyframe jumps when the target cannot be
     /// edited, and why typed text was not written. An input sub-row
-    /// (`indented`) keeps its control on its row's spine.
+    /// (`indented`) keeps its control on its row's spine. Under `scope`
+    /// (with the scene calls that count) the row shows, locks and removes
+    /// as [`scoped_row`] says: a row writing a parameter's default is
+    /// edited there, not at the call site.
     #[allow(clippy::too_many_arguments)]
     fn element_row(
         &self,
@@ -197,18 +206,30 @@ impl EditorView {
         indented: bool,
         resolved: &Resolved,
         current: bool,
+        scope: Option<(Scope, Option<&SceneCalls>)>,
         entry_dir: &Path,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let muted = cx.theme().muted_foreground;
         let row = self.element_rows.get(key);
+        let targets = resolved.outcome.as_ref().ok();
+        // A Component-section row is outside the scope.
+        let in_scope = scope.filter(|_| !matches!(key, PropKey::CallSite(_)));
+        let scoped = in_scope
+            .zip(targets)
+            .map(|((scope, calls), targets)| scoped_row(scope, targets, key, calls));
+        let scope_locked = matches!(scoped, Some(ScopedRow::Locked(_)));
+        let default = matches!(scoped, Some(ScopedRow::Default { .. }));
+        // Why the scope can't write the row, or why a drag or scrub of it
+        // would not show in this scene.
+        let scope_note = in_scope
+            .zip(targets)
+            .and_then(|((scope, calls), targets)| gesture_lock(Some(scope), targets, key, calls));
         // Dragging the label scrubs an editable number (not while playing).
         let scrubbable = current
             && !self.playing
-            && resolved
-                .outcome
-                .as_ref()
-                .is_ok_and(|targets| scrubs(targets, key, target));
+            && !scope_locked
+            && targets.is_some_and(|targets| scrubs(targets, key, target));
         // A written optional value offers its removal on hover, except while
         // a scrub runs or the removal is already being written.
         let removing = row.is_some_and(|row| row.removing())
@@ -218,14 +239,19 @@ impl EditorView {
                 .is_some_and(Option::is_none);
         let can_remove = !removing
             && self.element_rows.scrub.is_none()
-            && resolved
-                .outcome
-                .as_ref()
-                .is_ok_and(|targets| self.row_removable(targets, key, target));
-        let (call_site, target) = (target.call_site.as_ref(), &target.target);
+            && targets.is_some_and(|targets| row_removable_under(scope, targets, key, target));
+        let remove_tooltip = remove_tooltip(
+            in_scope.map(|(scope, _)| scope),
+            scoped.as_ref().unwrap_or(&ScopedRow::AsResolved),
+        );
+        // A default is written in the component, not at the call site.
+        let call_site = target.call_site.as_ref().filter(|_| !default);
+        let target = &target.target;
         // A pass-through row shows the state of the value at the call site.
         let shown = inner_target(target);
         let icon = match shown {
+            _ if scope_locked => Some(CelestaIcon::Lock),
+            _ if default => None,
             EditTarget::Keyframe { .. } => Some(CelestaIcon::DiamondFilled),
             EditTarget::Locked(LockReason::BetweenKeyframes { .. }) => Some(CelestaIcon::Diamond),
             EditTarget::Locked(_) => Some(CelestaIcon::Lock),
@@ -235,8 +261,9 @@ impl EditorView {
         };
         // Only a target that can't be written disables its control: while an
         // own write's reload runs, the field keeps its focus and caret, and
-        // a commit made meanwhile waits for the reload.
-        let locked = !editable(target);
+        // a commit made meanwhile waits for the reload. A default is written
+        // whatever the call site holds.
+        let locked = scope_locked || !default && !editable(target);
         let control = row.map(|row| {
             let hint = match (&row.kind, field) {
                 (ControlKind::Number, Some(PrimitivePropertyField::Number { min, max, .. })) => {
@@ -263,24 +290,27 @@ impl EditorView {
                 element_control_handler(key.clone()),
             ))
         });
+        // One line: a long expression is cut by `reason_text`, and anything
+        // still wider than the panel ends in an ellipsis.
+        let reason_line = |text: String| {
+            div()
+                .min_w_0()
+                .overflow_hidden()
+                .whitespace_nowrap()
+                .text_ellipsis()
+                .text_xs()
+                .text_color(muted)
+                .child(text)
+                .into_any_element()
+        };
         let detail = match shown {
+            _ if scope_note.is_some() => scope_note.map(|lock| reason_line(lock.text())),
+            _ if default => None,
             EditTarget::Locked(reason @ LockReason::BetweenKeyframes { .. }) => {
                 keyframe_jump_frames(shown, resolved.timeline_frame)
                     .map(|frames| self.keyframe_jumps(key, reason, frames, cx))
             }
-            // One line: a long expression is cut by `reason_text`, and
-            // anything still wider than the panel ends in an ellipsis.
-            EditTarget::Locked(reason) => Some(
-                div()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .text_ellipsis()
-                    .text_xs()
-                    .text_color(muted)
-                    .child(reason_text(reason))
-                    .into_any_element(),
-            ),
+            EditTarget::Locked(reason) => Some(reason_line(reason_text(reason))),
             _ => None,
         };
         let set_at = call_site.map(|call_site| set_at_line(call_site, entry_dir, cx));
@@ -310,7 +340,7 @@ impl EditorView {
                         .ghost()
                         .xsmall()
                         .icon(IconName::Close)
-                        .tooltip("Remove")
+                        .tooltip(remove_tooltip)
                         .on_click(
                             cx.listener(move |this, _, _, cx| this.remove_element_row(&key, cx)),
                         ),

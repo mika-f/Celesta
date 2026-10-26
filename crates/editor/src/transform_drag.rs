@@ -7,7 +7,7 @@ use crate::element_edit::{
     ElementTargets, PropKey, TransformProp, editable, field_of, inner_target, reason_text,
 };
 use crate::layer_select::{letterbox, to_scene};
-use crate::scope::CommitGate;
+use crate::scope::{CommitGate, Scope, scope_in_effect};
 use crate::transform_handles::{
     Handle, Marker, PivotMode, Resize, ResizeTool, SizeField, SizeProps, anchor_handle,
     anchor_keys, drag_label, drag_values, marker, pressed_handle, preview_values, prop_values,
@@ -52,6 +52,9 @@ pub(crate) struct TransformDrag {
     /// Why a rotation or scale turns about the pivot though Center is
     /// chosen (see `EditorView::pivot_note`), shown in the label.
     note: Option<&'static str>,
+    /// The edit scope the drag writes with, when the element offers one:
+    /// the label's second line says it.
+    scope: Option<Scope>,
     /// The props the runtime saw when the drag started.
     received: ReceivedProps,
     /// Where the runtime takes each editable prop's dragged value, kept from
@@ -88,6 +91,7 @@ impl TransformDrag {
             resize: None,
             primitive: String::new(),
             note: None,
+            scope: None,
             received,
             sites,
             turned: 0.0,
@@ -116,9 +120,15 @@ impl TransformDrag {
         Self { note, ..self }
     }
 
+    /// The drag of an element whose edits write under `scope`.
+    pub(crate) fn with_scope(self, scope: Option<Scope>) -> Self {
+        Self { scope, ..self }
+    }
+
     /// The label beside the layer: the props the drag writes (`x 120 →
     /// 184`), after the note why it turns about the pivot (see
-    /// `with_note`); `None` while it has neither.
+    /// `with_note`), and under them what the edit changes (see
+    /// `with_scope`); `None` while it has neither props nor note.
     pub(crate) fn label(&self) -> Option<String> {
         let written = drag_label(
             &self.frame,
@@ -127,12 +137,16 @@ impl TransformDrag {
             self.resize.as_ref(),
         );
         let note = self.note.map(pivot_note_text);
-        match (note, written.is_empty()) {
+        let line = match (note, written.is_empty()) {
             (None, true) => None,
             (None, false) => Some(written),
             (Some(note), true) => Some(note),
             (Some(note), false) => Some(format!("{note}  {written}")),
-        }
+        }?;
+        Some(match self.scope {
+            Some(scope) => format!("{line}\n{}", scope_in_effect(scope)),
+            None => line,
+        })
     }
 
     /// `frame` (drawn with the drag's overrides) with the box its element's
@@ -960,6 +974,12 @@ impl EditorView {
         self.transform_drag.as_ref()?.label()
     }
 
+    /// The edit scope the running drag writes with, for the Properties
+    /// header.
+    pub(crate) fn transform_drag_scope(&self) -> Option<Scope> {
+        self.transform_drag.as_ref()?.scope
+    }
+
     /// Whether a drag is running with the button down (not one released and
     /// being written).
     pub(crate) fn transform_drag_active(&self) -> bool {
@@ -1049,11 +1069,13 @@ impl EditorView {
             self.cancel_row_scrub();
         }
         let note = self.pivot_note();
+        let scope = self.gesture_scope();
         self.transform_drag = Some(
             TransformDrag::new(frame, handle, start, editable, pivot, received, sites)
                 .with_resize(resize)
                 .with_primitive(&primitive)
-                .with_note(note),
+                .with_note(note)
+                .with_scope(scope),
         );
         true
     }
@@ -1794,6 +1816,40 @@ mod tests {
             .into_iter()
             .map(|(handle, _)| handle)
             .collect()
+    }
+
+    #[test]
+    fn the_drag_label_says_what_edits_change() {
+        let drag = |scope| {
+            TransformDrag::new(
+                rect_frame(),
+                Handle::Rotate,
+                at(200.0, 20.0),
+                vec![TransformProp::Rotation.key()],
+                PivotMode::Pivot,
+                ReceivedProps::default(),
+                Vec::new(),
+            )
+            .with_scope(scope)
+        };
+        let mut shared = drag(Some(Scope::Shared));
+        // Nothing written yet: no label.
+        assert_eq!(shared.label(), None);
+        shared.follow(vec![(TransformProp::Rotation.key(), 30.0)]);
+        assert_eq!(
+            shared.label().as_deref(),
+            Some("rotation 0 → 30\nEdits change the shared value")
+        );
+        let mut this_scene = drag(Some(Scope::ThisScene));
+        this_scene.follow(vec![(TransformProp::Rotation.key(), 30.0)]);
+        assert_eq!(
+            this_scene.label().as_deref(),
+            Some("rotation 0 → 30\nEdits change this scene")
+        );
+        // An element that is not shared: one line.
+        let mut alone = drag(None);
+        alone.follow(vec![(TransformProp::Rotation.key(), 30.0)]);
+        assert_eq!(alone.label().as_deref(), Some("rotation 0 → 30"));
     }
 
     #[test]

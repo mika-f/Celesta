@@ -15,6 +15,7 @@ impl Render for EditorView {
         self.settle_interactive_mode();
         self.sync_element_targets(cx);
         self.sync_scene_calls(cx);
+        self.settle_scope_hover();
         self.settle_inline_text(window, cx);
         self.sync_element_rows(window, cx);
         self.update_playback(window);

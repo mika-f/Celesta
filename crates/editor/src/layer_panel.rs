@@ -7,9 +7,14 @@ use crate::editor_launch::open_source;
 use crate::element_edit::{ElementTargets, TransformProp, inner_target, reason_text};
 use crate::element_rows::row_label;
 use crate::icons::CelestaIcon;
-use crate::impact::{ImpactView, counted_scenes, impact_line, impact_view, other_scenes_label};
+use crate::impact::{
+    ImpactFilter, ImpactView, counted_scenes, impact_line, impact_view, other_scenes_label,
+};
 use crate::layer_select::{
     SourceLookup, display_path, launch_outcome_applies, parent_layer_id, source_position,
+};
+use crate::scope::{
+    Scope, ScopeOptions, ScopeState, chosen_scope, impact_filter, scope_in_effect, scope_line,
 };
 use crate::timecode::format_timecode;
 use crate::view::EditorView;
@@ -21,7 +26,7 @@ use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ActiveTheme as _, Icon, IconName, Sizable as _};
 use gpui_kit::prelude::*;
-use gpui_kit::{AnyElement, Context, Div, Hsla, SharedString, Stateful, div, px};
+use gpui_kit::{AnyElement, App, ClickEvent, Context, Div, Hsla, SharedString, Window, div, px};
 use std::path::{Path, PathBuf};
 
 /// The label column of the header rows and the property rows, so the labels
@@ -103,6 +108,138 @@ fn instances(count: usize) -> String {
     }
 }
 
+/// Height of a scope tab's pill inside its list, and the gap between the
+/// list's edge and the pill: the canvas tool row's (see `mode_toggle` in
+/// `viewer.rs`).
+const TAB_HEIGHT: f32 = 22.0;
+const TAB_LIST_INSET: f32 = 3.0;
+
+/// What clicking or hovering a scope tab does.
+type TabListener<E> = Box<dyn Fn(&E, &mut Window, &mut App)>;
+
+/// One option of the scope control.
+struct ScopeTab {
+    id: &'static str,
+    label: &'static str,
+    /// What the option writes, or why it is locked.
+    tooltip: SharedString,
+    /// The option in effect: the selected pill.
+    chosen: bool,
+    /// Not locked: it takes clicks and previews on hover.
+    enabled: bool,
+    on_click: TabListener<ClickEvent>,
+    on_hover: TabListener<bool>,
+}
+
+/// The scope options as the canvas tool row draws its toggles (shadcn's
+/// Tabs, see `mode_toggle` in `viewer.rs`): a rounded list in the theme's
+/// background with a few pixels of padding, the chosen tab an inset,
+/// smaller rounded pill in the secondary surface with the input border and
+/// foreground text, so the gap around it shows which is chosen; the other
+/// unfilled with muted text. The tabs share the panel's width; a locked one
+/// is dimmed, and takes no click and no hover preview.
+fn scope_tabs(tabs: [ScopeTab; 2], cx: &App) -> impl IntoElement {
+    let theme = cx.theme();
+    let (muted, foreground) = (theme.muted_foreground, theme.foreground);
+    let (pill, pill_border) = (theme.secondary, theme.input);
+    // An unselected tab under the pointer: a step from muted toward the
+    // foreground.
+    let muted_hover = foreground.opacity(0.8);
+    let disabled = muted.opacity(0.5);
+    div()
+        .flex()
+        .w_full()
+        .items_center()
+        .p(px(TAB_LIST_INSET))
+        .rounded_md()
+        .bg(theme.background)
+        .children(tabs.map(|tab| {
+            let ScopeTab {
+                id,
+                label,
+                tooltip,
+                chosen,
+                enabled,
+                on_click,
+                on_hover,
+            } = tab;
+            div()
+                .id(id)
+                .flex()
+                .flex_1()
+                .min_w_0()
+                .items_center()
+                .justify_center()
+                .h(px(TAB_HEIGHT))
+                .rounded_sm()
+                .border_1()
+                .text_xs()
+                .whitespace_nowrap()
+                .overflow_hidden()
+                // Every tab carries a hover style, the chosen and the locked
+                // ones restating their own colors: GPUI tracks a div's hover
+                // flag (by its id) only while it has a hover style, and a tab
+                // without one keeps a stale "hovered" from when it was
+                // clicked (see `mode_toggle`).
+                .map(|this| {
+                    if chosen {
+                        this.bg(pill)
+                            .border_color(pill_border)
+                            .text_color(foreground)
+                            .shadow_sm()
+                            .hover(move |this| {
+                                this.bg(pill)
+                                    .border_color(pill_border)
+                                    .text_color(foreground)
+                            })
+                    } else if enabled {
+                        this.border_color(gpui_kit::transparent_black())
+                            .text_color(muted)
+                            .hover(move |this| this.text_color(muted_hover))
+                    } else {
+                        this.border_color(gpui_kit::transparent_black())
+                            .text_color(disabled)
+                            .hover(move |this| this.text_color(disabled))
+                    }
+                })
+                .child(label)
+                .tooltip(move |window, cx| Tooltip::new(tooltip.clone()).build(window, cx))
+                .when(enabled, move |this| {
+                    this.cursor_pointer().on_click(on_click).on_hover(on_hover)
+                })
+        }))
+}
+
+/// A line of the scope control: `label` in the label column, `value`
+/// beside it.
+fn labelled(label: &'static str, value: impl IntoElement, cx: &App) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap_2()
+        .child(
+            div()
+                .flex_none()
+                .w(px(LABEL_WIDTH))
+                .text_color(cx.theme().muted_foreground)
+                .child(label),
+        )
+        .child(div().flex_1().min_w_0().child(value))
+}
+
+/// The scope control's place, where the impact line is otherwise.
+fn scope_box(cx: &App) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .px_3()
+        .py_2()
+        .border_b_1()
+        .border_color(cx.theme().border)
+        .text_xs()
+}
+
 impl EditorView {
     /// The selected layer's report while its source is found.
     fn found_report(&self) -> Option<&LayerSourceReport> {
@@ -114,37 +251,41 @@ impl EditorView {
     }
 
     /// Which scenes an edit of the selected layer changes, with the playhead
-    /// where it is now, or `None` until its source is found. An edit that
-    /// writes only a call site in the layer's chain changes only the
-    /// instances that call makes.
+    /// where it is now, or `None` until its source is found: the instances
+    /// the scope control's hovered option, else the scope in effect, would
+    /// change (see [`impact_filter`]).
     pub(crate) fn selection_impact(&self) -> Option<ImpactView> {
         let report = self.found_report()?;
-        let written_at = self
-            .element_edit
-            .resolved(self.selected_layer.as_deref())
-            .and_then(|(resolved, _)| resolved.outcome.as_ref().ok())
-            .and_then(ElementTargets::written_at)
+        let filter = match self.impact_scope() {
+            Some((scope, targets, calls)) => impact_filter(scope, targets, calls),
+            None => ImpactFilter::All,
+        };
+        let filter = match filter {
             // Targets resolved for an older answer may name a call this
             // chain no longer has.
-            .filter(|site| {
-                report
+            ImpactFilter::Through(site)
+                if !report
                     .chain
                     .iter()
-                    .any(|entry| SourcePos::from(entry) == **site)
-            });
+                    .any(|entry| SourcePos::from(entry) == site) =>
+            {
+                ImpactFilter::All
+            }
+            filter => filter,
+        };
         Some(impact_view(
             report,
             self.occurrences.as_ref().map(|(_, state)| state),
             self.react_chapters().unwrap_or_default(),
             u64::try_from(self.clock.frame()).unwrap_or(0),
-            written_at,
+            &filter,
         ))
     }
 
-    /// What the selection is: its element and owning component, its position
-    /// (a button that opens it), the scenes it appears in, the other scenes
-    /// that share it, and why its props can't move. `None` until its source
-    /// is found.
+    /// What the selection is: its element and owning component, what edits
+    /// change while a drag runs, its position (a button that opens it), the
+    /// scenes it appears in, the other scenes that share it, and why its
+    /// props can't move. `None` until its source is found.
     pub(crate) fn selection_header(
         &self,
         impact: &ImpactView,
@@ -304,6 +445,13 @@ impl EditorView {
                 .border_b_1()
                 .border_color(cx.theme().border)
                 .child(title)
+                // While a drag runs: the scope it writes with.
+                .children(self.transform_drag_scope().map(|scope| {
+                    div()
+                        .text_xs()
+                        .text_color(foreground)
+                        .child(scope_in_effect(scope))
+                }))
                 .child(position)
                 .child(row("Appears in", appears_in))
                 .children(shared.map(|shared| row("Shared", shared)))
@@ -320,9 +468,99 @@ impl EditorView {
         )
     }
 
+    /// What an edit of the selected element changes: for a shared one, the
+    /// scope control ("Edits change" [This scene] [Shared value]) with the
+    /// line under it, or why its options are not known yet; otherwise the
+    /// impact line.
+    pub(crate) fn impact_line(&self, impact: &ImpactView, cx: &mut Context<Self>) -> AnyElement {
+        let state = self.shown_scope_context().map(|context| context.state);
+        match state {
+            Some(ScopeState::Options(options)) => self.scope_control(&options, cx),
+            Some(ScopeState::Unknown { note }) => {
+                let muted = cx.theme().muted_foreground;
+                scope_box(cx)
+                    .child(labelled(
+                        "Edits change",
+                        div().text_color(muted).child(note),
+                        cx,
+                    ))
+                    .into_any_element()
+            }
+            Some(ScopeState::NotShared) | None => self.plain_impact_line(impact, cx),
+        }
+    }
+
+    /// The scope control: two tabs, the chosen one the selected pill
+    /// (neither while the remembered choice is locked), a locked one
+    /// disabled with its reason as tooltip; then [`scope_line`]. Clicking
+    /// an option remembers it for the element; hovering one previews what
+    /// it changes in the timeline bands.
+    fn scope_control(&self, options: &ScopeOptions, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme();
+        let (muted, warning) = (theme.muted_foreground, theme.warning);
+        let remembered = self.remembered_scope();
+        let chosen = chosen_scope(remembered, options).ok();
+        let element = self.selected_element();
+        let tab = |id: &'static str, label: &'static str, tooltip: &'static str, scope: Scope| {
+            let lock = match scope {
+                Scope::ThisScene => options.this_scene.as_ref().err(),
+                Scope::Shared => options.shared.as_ref().err(),
+            };
+            let element = element.clone();
+            ScopeTab {
+                id,
+                label,
+                tooltip: lock.map_or_else(|| tooltip.into(), |lock| lock.text().into()),
+                chosen: chosen == Some(scope),
+                enabled: lock.is_none(),
+                on_click: Box::new(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    if let Some(element) = element.clone() {
+                        this.scope_choices.set(element, scope);
+                        cx.notify();
+                    }
+                })),
+                on_hover: Box::new(cx.listener(move |this, hovered: &bool, _, cx| {
+                    if *hovered {
+                        this.scope_hover = Some(scope);
+                    } else if this.scope_hover == Some(scope) {
+                        this.scope_hover = None;
+                    }
+                    cx.notify();
+                })),
+            }
+        };
+        let tabs = [
+            tab(
+                "scope-this-scene",
+                "This scene",
+                "Write the edit for the instances in this scene only",
+                Scope::ThisScene,
+            ),
+            tab(
+                "scope-shared",
+                "Shared value",
+                "Write the value every scene uses unless it sets its own",
+                Scope::Shared,
+            ),
+        ];
+        let line = scope_line(options, chosen.or(remembered));
+        scope_box(cx)
+            .child(labelled("Edits change", scope_tabs(tabs, cx), cx))
+            .child(labelled(
+                "",
+                // No option in effect: a commit is refused until one is
+                // picked.
+                div()
+                    .text_color(if chosen.is_some() { muted } else { warning })
+                    .child(line),
+                cx,
+            ))
+            .into_any_element()
+    }
+
     /// What a commit of the Transform rows changes, in the warning color when
     /// it reaches other scenes; a hover names the scenes it only counts.
-    pub(crate) fn impact_line(&self, impact: &ImpactView, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn plain_impact_line(&self, impact: &ImpactView, cx: &mut Context<Self>) -> AnyElement {
         let (text, warn) = impact_line(impact);
         let counted = match impact {
             ImpactView::Known(impact) => counted_scenes(&impact.other_scenes),
@@ -344,6 +582,7 @@ impl EditorView {
             .when_some(counted, |line, scenes| {
                 line.tooltip(move |window, cx| Tooltip::new(scenes.clone()).build(window, cx))
             })
+            .into_any_element()
     }
 
     /// The selected layer's property sections and the error of its last
