@@ -217,7 +217,8 @@ amended to match.
   position, so the reload of an own write forgets every other choice made in
   the files it wrote (a lift's added lines may move a sibling onto a
   remembered position), and a change from outside the editor forgets them
-  all; forgetting falls back to the default, "This scene".
+  all; forgetting falls back to the default (`chosen_scope` with nothing
+  remembered: "This scene" unless it is locked).
 - **A shared edit's impact is conservative.** Under "Shared value",
   `impact_filter` leaves out the scenes that set their own (`Except`) only
   when every row it writes passes through to a parameter; a value written
@@ -279,8 +280,9 @@ amended to match.
   and doesn't retry until the index generation changes.
 - With the Size tool chosen and the size handles hidden by the scope, the
   toggle's warning (`resize_note`) says nothing about why.
-- An edit outside the editor forgets every scope choice, not only those in
-  the files it changed: the reload watcher knows only that some file did.
+- An edit outside the editor (and the manual Reload) forgets every scope
+  choice, not only those in the files it changed: the reload watcher knows
+  only that some file did. Loading another composition forgets none.
 - The dry lift can lock every row as "Can't be set per scene yet" when a
   `const` in an outer function around `C` is read.
 - A lifted pattern entry is always written inline (`, rectWidth = 200`), even
