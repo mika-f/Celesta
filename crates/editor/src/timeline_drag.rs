@@ -502,8 +502,9 @@ pub(crate) fn drag_end(moved_px: f32, delta: i64, escaped: bool) -> DragEnd {
     }
 }
 
-/// The notice of a released drag that nothing was written for: the scope
-/// gate held or refused it, or the window was not current.
+/// The notice of a released drag (or a "Set timing") that nothing was
+/// written for: the scope gate held or refused it, the window or the entry
+/// was not current, or the write failed.
 pub(crate) fn not_written(note: &str) -> String {
     format!("Not written: {note}")
 }
@@ -884,12 +885,10 @@ impl EditorView {
     /// Escape during a band drag: drops it, writing nothing. True when a
     /// pressed drag was cancelled.
     pub(crate) fn escape_band_drag(&mut self) -> bool {
-        let Some(drag) = self.band_drag.as_ref().filter(|drag| !drag.released) else {
+        if !self.band_drag_active() {
             return false;
-        };
-        if drag_end(drag.moved_px, drag.preview.delta, true) == DragEnd::Cancel {
-            self.band_drag = None;
         }
+        self.band_drag = None;
         true
     }
 
@@ -929,7 +928,7 @@ impl EditorView {
                 if let Err(text) = &result {
                     this.band_notice = Some(BandNotice {
                         at,
-                        text: text.clone(),
+                        text: not_written(text),
                     });
                 }
                 if result.is_err() || this.window_targets().is_some() {
@@ -1264,12 +1263,10 @@ impl EditorView {
     /// Escape during a scene drag: drops it, writing nothing. True when a
     /// pressed drag was cancelled.
     pub(crate) fn escape_scene_drag(&mut self) -> bool {
-        let Some(drag) = self.scene_drag.as_ref().filter(|drag| !drag.released) else {
+        if !self.scene_drag_active() {
             return false;
-        };
-        if drag_end(drag.moved_px, drag.delta, true) == DragEnd::Cancel {
-            self.scene_drag = None;
         }
+        self.scene_drag = None;
         true
     }
 
@@ -1308,7 +1305,10 @@ impl EditorView {
             move |texts| scene_files(texts, &id, &edge, written).map_err(|error| error.to_string()),
             move |this, result, cx| {
                 if let Err(text) = result {
-                    this.scene_notice = Some(BandNotice { at, text });
+                    this.scene_notice = Some(BandNotice {
+                        at,
+                        text: not_written(&text),
+                    });
                     this.scene_drag = None;
                 }
                 cx.notify();
