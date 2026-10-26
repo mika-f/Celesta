@@ -7,12 +7,13 @@ use crate::element_edit::{editable, inner_target};
 use crate::inline_text::{TextEdit, TextMap};
 use crate::inline_text_view::{
     EditEnd, EditEvent, InlineEntry, InlineTextSession, KeptOverride, cancel_session,
-    committed_override, edit_end, held_commit_override, inline_commit_value, inline_entry,
-    is_text_layer, kept_override_after_write, kept_override_on_reload, live_override, press_inside,
-    pressed_index,
+    committed_override, edit_end, held_commit_override, inline_commit_refusal, inline_commit_value,
+    inline_entry, is_text_layer, kept_override_after_write, kept_override_on_reload, live_override,
+    press_inside, pressed_index,
 };
 use crate::preview::TextOverride;
 use crate::refresh::ReloadOrder;
+use crate::scope::CommitGate;
 use crate::transform_drag::{DragState, editing_drag_state};
 use celesta_composition::TextAlign;
 use celesta_gpu_renderer::{GlyphMetrics, TextLayout, TextMetrics};
@@ -289,6 +290,53 @@ fn inline_entry_refuses_an_edge_on_text() {
         ),
         InlineEntry::Begin("Sale".to_owned())
     );
+}
+
+#[test]
+fn a_refused_commit_keeps_the_edit_the_person_ended() {
+    let refused =
+        CommitGate::Refuse("The scenes were scanned while editing; edit again".to_owned());
+    let kept =
+        |event, writes, gate: Option<&CommitGate>| inline_commit_refusal(event, writes, gate);
+
+    // Enter, a blur or a press outside the text: the edit stays, its text
+    // and caret with it, and the refusal shows.
+    for event in [
+        EditEvent::Enter,
+        EditEvent::Blur,
+        EditEvent::CanvasPress { inside: false },
+    ] {
+        assert_eq!(
+            kept(event, true, Some(&refused)),
+            Some("The scenes were scanned while editing; edit again".to_owned())
+        );
+    }
+    // Written, held, or nothing to write: the edit ends as before.
+    assert_eq!(
+        kept(EditEvent::Enter, true, Some(&CommitGate::Go(None))),
+        None
+    );
+    assert_eq!(
+        kept(
+            EditEvent::Enter,
+            true,
+            Some(&CommitGate::Hold("Scanning scenes…".to_owned()))
+        ),
+        None
+    );
+    // Waiting its turn: held, and gated when it goes.
+    assert_eq!(kept(EditEvent::Enter, true, None), None);
+    assert_eq!(kept(EditEvent::Enter, false, Some(&refused)), None);
+    // The selection, the playhead or the project moving on ends the edit.
+    for event in [
+        EditEvent::SelectionChange,
+        EditEvent::ToggleInteractive,
+        EditEvent::Seek,
+        EditEvent::Play,
+        EditEvent::ProjectCommand,
+    ] {
+        assert_eq!(kept(event, true, Some(&refused)), None);
+    }
 }
 
 #[test]

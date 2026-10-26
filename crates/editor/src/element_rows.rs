@@ -1324,7 +1324,7 @@ impl EditorView {
     /// Whether a row commit made now waits its turn in [`HeldCommits`]:
     /// another write runs, or the targets are not current but will be (the
     /// source is being read, or an own write's reload is coming).
-    fn row_commit_waits(&self) -> bool {
+    pub(crate) fn row_commit_waits(&self) -> bool {
         if self.edit_history.is_busy() || self.property_panel.is_writing() {
             return true;
         }
