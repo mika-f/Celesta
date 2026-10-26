@@ -22,8 +22,8 @@ use crate::occurrences::OccurrenceState;
 use crate::property_controls::ControlKind;
 use crate::scope::{
     CommitGate, SceneCalls, Scope, ScopeLock, ScopeState, calls_of, chosen_scope, commit_gate,
-    commit_scope, current_calls, gesture_lock, previewed_scope, read_scene_calls, scope_state,
-    scoped_removable,
+    commit_scope, current_calls, gesture_gate, gesture_lock, previewed_scope, read_scene_calls,
+    scope_state, scoped_removable,
 };
 use crate::view::EditorView;
 use celesta_react_bridge::{
@@ -904,12 +904,6 @@ impl EditorView {
         }
     }
 
-    /// The scope a drag of the selected element writes with now (see
-    /// [`Self::effective_scope`]).
-    pub(crate) fn gesture_scope(&self) -> Option<Scope> {
-        self.effective_scope(&self.scope_context()?.state)
-    }
-
     /// The scope the rows of `targets` show and remove under, and the scene
     /// calls that count: the scope in effect, when `targets` are the ones
     /// the rows show and the element offers a scope.
@@ -962,31 +956,37 @@ impl EditorView {
     /// [`Self::gesture_scope_lock`] of each of `keys`, in order, the scope
     /// state read once.
     pub(crate) fn gesture_scope_locks(&self, keys: &[PropKey]) -> Vec<Option<ScopeLock>> {
-        let scope = self
-            .scope_context()
-            .and_then(|context| self.effective_scope(&context.state));
-        self.gesture_scope_locks_under(scope, keys)
-    }
-
-    /// [`Self::gesture_scope_locks`] under `scope` (a drag's, kept from its
-    /// start) instead of the scope in effect now.
-    pub(crate) fn gesture_scope_locks_under(
-        &self,
-        scope: Option<Scope>,
-        keys: &[PropKey],
-    ) -> Vec<Option<ScopeLock>> {
         let Some(context) = self.scope_context() else {
             return vec![None; keys.len()];
         };
+        let scope = self.effective_scope(&context.state);
         keys.iter()
             .map(|key| gesture_lock(scope, context.targets, key, context.calls))
             .collect()
     }
 
-    /// The scope a row commit made now keeps until it is written (see
+    /// The gate for writing `keys` of the selected element at the end of a
+    /// drag, a scrub or an inline text edit that started under `started`
+    /// (see [`gesture_gate`]); without targets, it goes (and fails as
+    /// [`Self::commit_element`] says).
+    pub(crate) fn gesture_gate_for(&self, started: Option<Scope>, keys: &[PropKey]) -> CommitGate {
+        match self.scope_context() {
+            Some(context) => gesture_gate(
+                started,
+                &context.state,
+                context.targets,
+                keys,
+                context.calls,
+            ),
+            None => CommitGate::Go(None),
+        }
+    }
+
+    /// The scope an edit made now keeps until it is written (see
     /// [`commit_scope`]): the remembered choice, else the option the
-    /// control shows in effect.
-    pub(crate) fn row_commit_scope(&self) -> Option<Scope> {
+    /// control shows in effect. A held row commit, a drag, a scrub and an
+    /// inline text edit (from their start) keep it.
+    pub(crate) fn kept_scope(&self) -> Option<Scope> {
         let shown = self
             .shown_scope_context()
             .map_or(ScopeState::NotShared, |context| context.state);

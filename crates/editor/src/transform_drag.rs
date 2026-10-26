@@ -52,8 +52,9 @@ pub(crate) struct TransformDrag {
     /// Why a rotation or scale turns about the pivot though Center is
     /// chosen (see `EditorView::pivot_note`), shown in the label.
     note: Option<&'static str>,
-    /// The edit scope the drag writes with, when the element offers one:
-    /// the label's second line says it.
+    /// The edit scope the control showed when the drag started (see
+    /// `EditorView::kept_scope`): the drag is written under it or refused,
+    /// and the label's second line says it.
     scope: Option<Scope>,
     /// The props the runtime saw when the drag started.
     received: ReceivedProps,
@@ -1069,7 +1070,7 @@ impl EditorView {
             self.cancel_row_scrub();
         }
         let note = self.pivot_note();
-        let scope = self.gesture_scope();
+        let scope = self.kept_scope();
         self.transform_drag = Some(
             TransformDrag::new(frame, handle, start, editable, pivot, received, sites)
                 .with_resize(resize)
@@ -1144,7 +1145,6 @@ impl EditorView {
             return true;
         }
         drag.released = true;
-        // The scope its label said, kept from the start.
         let drag_scope = drag.scope;
         let refuse = |this: &mut Self, message: String| {
             this.element_edit
@@ -1159,17 +1159,14 @@ impl EditorView {
                 .unavailable(self.selected_layer.as_deref());
             return refuse(self, message);
         }
-        // Written under the scope the drag started with, never held: while
-        // the scenes are scanned, a drag that the scan decides is refused
-        // with that note, as is one that scope can't write (now locked, a
-        // sweep that landed mid-drag say), never written under another.
+        // Written under the scope the drag started with (its label said
+        // it), never held and never under another (see `gesture_gate`):
+        // refused with the note while the scenes are scanned, with the lock
+        // when that scope can't write a prop by now (a sweep that landed
+        // mid-drag, say), and when the drag started with no scope shown
+        // but the scan has since found one.
         let keys: Vec<PropKey> = values.iter().map(|(key, _)| key.clone()).collect();
-        let locks = self.gesture_scope_locks_under(drag_scope, &keys);
-        if let Some(lock) = locks.into_iter().flatten().next() {
-            return refuse(self, lock.text());
-        }
-        let kept = drag_scope.or(self.remembered_scope());
-        let scope = match self.commit_gate_for(kept, &keys) {
+        let scope = match self.gesture_gate_for(drag_scope, &keys) {
             CommitGate::Go(scope) => scope,
             CommitGate::Hold(note) | CommitGate::Refuse(note) => return refuse(self, note),
         };

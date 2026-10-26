@@ -546,6 +546,9 @@ pub(crate) struct Scrub {
     /// Released; the override stays while the write runs and, after a
     /// successful one, until its reload, as a released canvas drag's does.
     released: bool,
+    /// The edit scope the control showed when the scrub started: it is
+    /// written under it or refused (see `EditorView::commit_gesture_row`).
+    scope: Option<Scope>,
 }
 
 impl Scrub {
@@ -584,6 +587,7 @@ impl Scrub {
             field,
             moved: false,
             released: false,
+            scope: None,
         })
     }
 
@@ -1186,18 +1190,35 @@ impl EditorView {
         value: Option<EditValue>,
         cx: &mut Context<Self>,
     ) {
-        let scope = self.row_commit_scope();
-        self.commit_row_with(key, value, scope, cx);
+        let scope = self.kept_scope();
+        self.commit_row_with(key, value, scope, false, cx);
+    }
+
+    /// [`Self::commit_element_row`] at the end of a scrub or an inline
+    /// text edit that started under `started` (see `kept_scope`): written
+    /// under it, or refused, as a drag is (see
+    /// [`crate::scope::gesture_gate`]).
+    pub(crate) fn commit_gesture_row(
+        &mut self,
+        key: &PropKey,
+        value: Option<EditValue>,
+        started: Option<Scope>,
+        cx: &mut Context<Self>,
+    ) {
+        self.commit_row_with(key, value, started, true, cx);
     }
 
     /// [`Self::commit_element_row`] with the scope `remembered` it keeps
     /// (the one a held commit was made with): written under it, or refused
-    /// with its lock, never under another one.
+    /// with its lock, never under another one. A `gesture` passes the
+    /// gesture's gate when it goes at once; held, it drains as a row
+    /// commit.
     fn commit_row_with(
         &mut self,
         key: &PropKey,
         value: Option<EditValue>,
         remembered: Option<Scope>,
+        gesture: bool,
         cx: &mut Context<Self>,
     ) {
         if let Some(row) = self.element_rows.rows.get_mut(key) {
@@ -1210,8 +1231,14 @@ impl EditorView {
         // or another write runs, the commit waits its turn; it fails at once
         // only when the source can't be read. While the occurrence index
         // can't say where the edit reaches, it waits for the sweep.
-        let gate = (!self.row_commit_waits())
-            .then(|| self.commit_gate_for(remembered, std::slice::from_ref(key)));
+        let keys = std::slice::from_ref(key);
+        let gate = (!self.row_commit_waits()).then(|| {
+            if gesture {
+                self.gesture_gate_for(remembered, keys)
+            } else {
+                self.commit_gate_for(remembered, keys)
+            }
+        });
         let held = match &gate {
             None => Some(None),
             Some(CommitGate::Hold(note)) => Some(Some(note.clone())),
@@ -1340,7 +1367,7 @@ impl EditorView {
                 self.drop_row_commit(&held.key, FRAME_MOVED);
                 continue;
             }
-            self.commit_row_with(&held.key, held.value, held.scope, cx);
+            self.commit_row_with(&held.key, held.value, held.scope, false, cx);
         }
         self.release_selection(cx);
     }
@@ -1513,12 +1540,13 @@ impl EditorView {
         if self.playing || self.element_rows.scrub.is_some() || self.transform_drag_released() {
             return;
         }
-        let Some(scrub) = self
+        let Some(mut scrub) = self
             .element_targets()
             .and_then(|(targets, report)| Scrub::start(targets, report, key, x))
         else {
             return;
         };
+        scrub.scope = self.kept_scope();
         // A scrub the scope would not show in this scene says why instead.
         if let Some(lock) = self.gesture_scope_lock(key) {
             self.set_row_message(key, lock.text(), cx);
@@ -1611,10 +1639,11 @@ impl EditorView {
             return true;
         }
         scrub.released = true;
-        let (key, value) = (scrub.key.clone(), scrub.value);
+        let (key, value, scope) = (scrub.key.clone(), scrub.value, scrub.scope);
         // The row shows the value until the write finishes; a failure (the
-        // targets went stale, the source changed) drops the override.
-        self.commit_element_row(&key, Some(EditValue::Number(value)), cx);
+        // targets went stale, the source changed, the scope it started
+        // under is locked by now) drops the override.
+        self.commit_gesture_row(&key, Some(EditValue::Number(value)), scope, cx);
         true
     }
 

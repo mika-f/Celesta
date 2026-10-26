@@ -13,6 +13,7 @@ use crate::inline_text::{
 };
 use crate::layer_select::{SourceLookup, letterbox, scene_point, to_scene};
 use crate::preview::TextOverride;
+use crate::scope::Scope;
 use crate::view::EditorView;
 use celesta_composition::Point;
 use celesta_editor_theme as theme;
@@ -60,6 +61,9 @@ pub(crate) struct InlineTextSession {
     /// The layout or the map changed since the IME was told where the text
     /// is.
     pub(crate) moved: bool,
+    /// The edit scope the control showed when the edit started: the text
+    /// is written under it or refused (see `EditorView::commit_gesture_row`).
+    pub(crate) scope: Option<Scope>,
 }
 
 impl InlineTextSession {
@@ -72,6 +76,7 @@ impl InlineTextSession {
             map: None,
             selecting: false,
             moved: false,
+            scope: None,
         }
     }
 }
@@ -553,7 +558,10 @@ impl EditorView {
     ) {
         self.submit_edited_rows(cx);
         self.pause();
-        let session = InlineTextSession::new(layer, original);
+        let session = InlineTextSession {
+            scope: self.kept_scope(),
+            ..InlineTextSession::new(layer, original)
+        };
         self.text_override = Some(live_override(&session));
         self.inline_text = Some(session);
         self.inline_pending = None;
@@ -611,7 +619,7 @@ impl EditorView {
             self.text_override = Some(committed);
             // Before the commit, which may finish at once (a failure).
             self.kept_override = KeptOverride::Writing;
-            self.commit_element_row(&children_key(), Some(value), cx);
+            self.commit_gesture_row(&children_key(), Some(value), session.scope, cx);
         } else if self
             .text_override
             .as_ref()

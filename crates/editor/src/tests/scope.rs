@@ -8,9 +8,10 @@ use crate::element_rows::default_row_text;
 use crate::impact::{ImpactFilter, ImpactView, impact_line, impact_view};
 use crate::occurrences::OccurrenceState;
 use crate::scope::{
-    CommitGate, SceneCalls, Scope, ScopeChoices, ScopeLock, ScopeOptions, ScopeState, ScopedRow,
-    calls_of, chosen_scope, commit_gate, commit_scope, impact_filter, previewed_scope,
-    remove_tooltip, scope_in_effect, scope_line, scope_state, scoped_removable, scoped_row,
+    CommitGate, SCANNED_MEANWHILE, SceneCalls, Scope, ScopeChoices, ScopeLock, ScopeOptions,
+    ScopeState, ScopedRow, calls_of, chosen_scope, commit_gate, commit_scope, gesture_gate,
+    impact_filter, previewed_scope, remove_tooltip, scope_in_effect, scope_line, scope_state,
+    scoped_removable, scoped_row,
 };
 use celesta_react_bridge::{
     ElementOccurrences, InstanceOccurrences, OccurrenceIndex, ReactChapter,
@@ -1272,6 +1273,57 @@ fn a_commit_keeps_the_scope_shown_when_it_was_made() {
     assert_eq!(
         commit_gate(&reused, kept, &targets, &[prop("x")]),
         CommitGate::Refuse(ScopeLock::ReusedCall.text())
+    );
+}
+
+#[test]
+fn a_gesture_writes_under_the_scope_it_started_with() {
+    let report = price_report();
+    let targets = tag_targets(&report, &tag_texts(SCENES_FILE));
+    let calls = price_sets_its_own();
+    let open = ScopeState::Options(options(Ok(()), Ok(())));
+    let reused = ScopeState::Options(options(Err(ScopeLock::ReusedCall), Ok(())));
+    let scanning = ScopeState::Unknown {
+        note: "Scanning scenes…".to_owned(),
+    };
+    let gate = |started, state: &ScopeState, key: &str| {
+        gesture_gate(started, state, &targets, &[prop(key)], Some(&calls))
+    };
+
+    // Under the scope it started with, whatever is chosen by now.
+    assert_eq!(
+        gate(Some(Scope::Shared), &open, "x"),
+        CommitGate::Go(Some(Scope::Shared))
+    );
+    // That scope locked by the end: refused, never another one.
+    assert_eq!(
+        gate(Some(Scope::ThisScene), &reused, "x"),
+        CommitGate::Refuse(ScopeLock::ReusedCall.text())
+    );
+    // A row it can't write, or whose shared edit this scene would not
+    // show, under that scope.
+    assert_eq!(
+        gate(Some(Scope::Shared), &open, "width"),
+        CommitGate::Refuse(
+            ScopeLock::SetsOwn {
+                param: "rectWidth".to_owned()
+            }
+            .text()
+        )
+    );
+    // Started with no scope shown (the scenes being scanned), and the
+    // options known by the end: no scope was shown, so none is written.
+    assert_eq!(
+        gate(None, &open, "x"),
+        CommitGate::Refuse(SCANNED_MEANWHILE.to_owned())
+    );
+    assert_eq!(
+        gate(None, &scanning, "x"),
+        CommitGate::Hold("Scanning scenes…".to_owned())
+    );
+    assert_eq!(
+        gate(None, &ScopeState::NotShared, "x"),
+        CommitGate::Go(None)
     );
 }
 

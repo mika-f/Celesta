@@ -839,6 +839,38 @@ pub(crate) fn commit_gate(
     }
 }
 
+/// Why a gesture that started while the scenes were being scanned (no
+/// scope shown) is not written once they are.
+pub(crate) const SCANNED_MEANWHILE: &str = "The scenes were scanned while editing; edit again";
+
+/// The gate for a drag, a scrub or an inline text edit of `keys` that
+/// started under `started`, the scope the control showed then (see
+/// [`commit_scope`]): refused with the lock of a row `started` can't write,
+/// or whose edit this scene would not show ([`gesture_lock`]); else
+/// [`commit_gate`] with `started`, so it goes under that scope or is
+/// refused with its lock, never under another. One that started with no
+/// scope shown is refused once the options are known.
+pub(crate) fn gesture_gate(
+    started: Option<Scope>,
+    state: &ScopeState,
+    targets: &ElementTargets,
+    keys: &[PropKey],
+    calls: Option<&SceneCalls>,
+) -> CommitGate {
+    if let Some(lock) = keys
+        .iter()
+        .find_map(|key| gesture_lock(started, targets, key, calls))
+    {
+        return CommitGate::Refuse(lock.text());
+    }
+    match commit_gate(state, started, targets, keys) {
+        CommitGate::Go(Some(_)) if started.is_none() => {
+            CommitGate::Refuse(SCANNED_MEANWHILE.to_owned())
+        }
+        gate => gate,
+    }
+}
+
 /// `removable` under `scope`: only an `AsResolved` row.
 pub(crate) fn scoped_removable(
     scope: Scope,
