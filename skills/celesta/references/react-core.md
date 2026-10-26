@@ -890,7 +890,8 @@ import { Static } from '@celesta/react';
 
 | Prop | Notes |
 | --- | --- |
-| `src` | Path or URL. Drawn at natural pixel size. |
+| `src` | Path or URL. Without `width` or `height`, drawn at natural pixel size. |
+| `width`, `height` | Display size in pixels, as on `<Image>`: one alone keeps the frame's aspect ratio; both stretch the frame to that box. Finite and positive. No `fit`. `scale` applies afterwards. |
 | `startFrom` | Seconds into the file at the enclosing sequence's frame 0. Default `0`. |
 | `playbackRate` | Static number only. Default `1`. |
 | `volume` | Linear gain of the soundtrack, number or [keyframes](#keyframe-values). Default `1`. |
@@ -907,8 +908,9 @@ an audio stream is silent. Set `muted` to keep only the picture.
 sound would play twice. Compositions written for earlier versions, where a
 `<Video>` was silent, did this: remove that `<Audio>`, or mute the `<Video>`.
 
-To show a 1280×720 clip full-screen in a 1920×1080 composition, wrap it in
-`<Fit sourceWidth={1280} sourceHeight={720}>` (see
+To show a 1280×720 clip full-screen in a 1920×1080 composition, give it
+`width={1920}`. To contain or cover footage of another aspect ratio, wrap it
+in `<Fit sourceWidth={…} sourceHeight={…} mode="cover">` (see
 [Layout helpers](#layout-helpers)). To fit it into a framed box with rounded
 corners and a caption, use [`MediaFrame`](#mediaframe-images-and-videos-in-a-frame).
 
@@ -933,7 +935,7 @@ with an optional caption under it. Use it instead of a `<Rect>` behind a
 | `src`, `name` | required, none | As `<Image>` / `<Video>` take them (paths, URLs, asset refs). |
 | `width`, `height` | required | The frame, padding included. |
 | `fit` | `'contain'` | `'contain'` shows all of the media, centred, on the `fill`; `'cover'` fills the area, cropped, centred. |
-| `sourceWidth`, `sourceHeight` | required for video | The video's size: `<Video>` draws at its own size, so it is needed to fit it. Read it once with `preloadMedia()` in `prepare()`. |
+| `sourceWidth`, `sourceHeight` | required for video | The video's size: `<Video>` has no `fit`, so `MediaFrame` scales it to fit and needs its size. Read it once with `preloadMedia()` in `prepare()`. |
 | `padding` | `0` | A mat between the frame's edge and the media, as `Panel` takes it. |
 | `fill`, `stroke`, `strokeWidth`, `cornerRadius`, `shadow`, `anchorX`, `anchorY` | as `Panel` | The border draws over the media. |
 | `caption`, `captionStyle`, `captionGap` | none, `{ fontSize: 20 }`, `12` | Text under the frame, wrapped to its width (`captionStyle.align` aligns it), its line box `captionGap` below the frame. |

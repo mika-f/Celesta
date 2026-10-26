@@ -9,7 +9,7 @@ Celesta は Remotion のようにパッケージに分かれています。コ�
 | `Text` | `@celesta/react` | 文字列・数値の子を `style` で装飾し、`maxWidth` で折り返します。`lang` で言語を選び、`style.lang` はさらに優先されます。[テキストとフォント](/ja/docs/text-fonts/)を参照。 |
 | `Group` | `@celesta/react` | 子のレイヤーに共通の位置・拡縮・回転・スキュー・3D 回転（`rotationX`、`rotationY`、`perspective`）・透明度を適用します。回転などの軸は自身の原点、または `originX`/`originY` で指定した点です。`lang` で既定のテキスト言語を、`fontFallback` でフォールバック先を、`clip` で矩形を、`mask` で任意の描画を指定して子の見える範囲を決められます。[図形とレイアウト](/ja/docs/layout/)を参照。 |
 | `Mask` | `@celesta/react` | `Group` のマスクの読み方を決めます。`mode="luminance"` と `invert` を指定できます。 |
-| `Image` / `Video` / `Audio` | `@celesta/react` | `src` でローカルファイルや HTTP(S) の素材を指定します。[画像・動画・音声](/ja/docs/media/)も参照してください。 |
+| `Image` / `Video` / `Audio` | `@celesta/react` | `src` でローカルファイルや HTTP(S) の素材を指定します。`Image` と `Video` は `width` と `height` で表示サイズを決められ、片方だけなら縦横比を保ちます。[画像・動画・音声](/ja/docs/media/)も参照してください。 |
 | `defineShader` | `@celesta/shader` | WGSL のカスタムフィルタを定義します。パラメータを渡して呼び出し、結果を `shader` に渡します。 |
 | `brightness`、`contrast`、`saturation`、`hue`、`grayscale`、`invert`、`tint`、`vignette` | `@celesta/shader` | `shader` の配列でカスタムシェーダーの間に入れる色補正です。同名の props でどのレイヤーにも指定できます。[レイアウトの「色補正」](/ja/docs/layout/)を参照してください。 |
 | `pixelate`、`halftone`、`chromaticAberration`、`wave`、`noise`、`scanlines`、`zoomBlur`、`chromaKey` | `@celesta/shader` | `shader` の配列に入れるスタイライズのエフェクトとクロマキーです。同名の props でどのレイヤーにも指定できます。[レイアウトの「スタイライズ」「クロマキー」](/ja/docs/layout/)を参照してください。 |

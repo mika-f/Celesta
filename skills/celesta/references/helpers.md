@@ -26,7 +26,7 @@ preview and export, and other people (and agents) reading the file know them.
 | `useCountUp(n)` printed with `toLocaleString()` and a unit in a `<Text>` | `<Counter value={n} suffix=" 件" anchorX={1} />` (`<StatCard>` with a label) | `@celesta/components` |
 | Bars as `<Rect width={track * value / max * grow}>` with a counting value beside each and `from: start + i * stagger` | `<BarChart data width stagger />` (`<Ranking order>` with ranks) | `@celesta/components` |
 | A note as a `<Rect>` and `<Text>` sized by hand, with a `<Line>` or `<Arrow>` from its edge to the thing it points at | `<Callout target={{ x, y }} x y width title text />` | `@celesta/components` |
-| A `<Rect>` frame behind a `<Group clip>` around `<Group scale={w / 1920}><Video /></Group>`, and a `<Text>` caption under it | `<MediaFrame kind="video" sourceWidth sourceHeight width height fit cornerRadius caption />` | `@celesta/components` |
+| A `<Rect>` frame behind a `<Group clip>` around a `<Video width={w} />` centred by hand, and a `<Text>` caption under it | `<MediaFrame kind="video" sourceWidth sourceHeight width height fit cornerRadius caption />` | `@celesta/components` |
 | `opacity={progress(f, 0, 12) * (1 - progress(f, d - 10, 10))}`, or an entrance `<Transition>` nested in an exit one | `<Motion enter="fade-up" exit="fade">` | `@celesta/components` |
 | A chapter number, kicker, title, and subtitle placed and staggered by hand | `<TitleCard chapter="01" kicker="…" title="…" subtitle="…" />` | `@celesta/components` |
 | A name and role on a `<Rect>` band measured with `useTextMetrics` and slid in from a corner | `<LowerThird title="…" subtitle="…" placement="bottom-left" />` | `@celesta/components` |

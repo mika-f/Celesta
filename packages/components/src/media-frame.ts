@@ -44,9 +44,9 @@ export interface MediaFrameImageProps extends MediaFrameCommonProps {
 export interface MediaFrameVideoProps extends MediaFrameCommonProps {
   kind: 'video';
   /**
-   * The video's size in pixels, which `<Video>` draws at, so it can be
-   * fitted: `preloadMedia(src)` in `prepare()` gives it as `video.width` and
-   * `video.height`.
+   * The video's size in pixels, which the frame scales it from, as
+   * `<Video>` has no `fit`: `preloadMedia(src)` in `prepare()` gives it as
+   * `video.width` and `video.height`.
    */
   sourceWidth: number;
   sourceHeight: number;
@@ -100,7 +100,7 @@ function defined<T extends object>(props: T): Partial<T> {
  * padding edge.
  *
  * An image is an `<Image>` given the area and `fit`, so it fits whatever
- * its size. A `<Video>` is drawn at its own size, so a video needs
+ * its size. A `<Video>` has no `fit`, so a video is scaled to fit and needs
  * `sourceWidth` and `sourceHeight`, read once with `preloadMedia()` in
  * `prepare()`. Its `startFrom`, `playbackRate`, `volume`, `muted`, and
  * `loop` reach the `<Video>` unchanged: it starts with the enclosing
