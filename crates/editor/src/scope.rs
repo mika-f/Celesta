@@ -307,7 +307,7 @@ pub(crate) fn scope_state(
     };
     let shared = element.instances.len() > 1;
     options_over(
-        report, targets, component, element, shared, calls, chapters, frame,
+        report, targets, component, element, shared, calls, chapters, frame, false,
     )
 }
 
@@ -402,6 +402,7 @@ pub(crate) fn window_scope_state(
         calls.as_ref(),
         chapters,
         frame,
+        true,
     );
     (state, calls)
 }
@@ -452,7 +453,9 @@ fn window_calls(
 
 /// The options of an edit reaching the instances of `element` (`shared`
 /// when they are more than the selected one), whose targets are `targets`,
-/// written in `component`: see [`scope_state`].
+/// written in `component`: see [`scope_state`]. For a timing `window` (see
+/// [`window_scope_state`]), the current scene's calls of `C` are not
+/// counted (`called_here` is `None`) and `S` draws it alone.
 #[allow(clippy::too_many_arguments)]
 fn options_over(
     report: &LayerSourceReport,
@@ -463,6 +466,7 @@ fn options_over(
     calls: Option<&SceneCalls>,
     chapters: &[ReactChapter],
     frame: u64,
+    window: bool,
 ) -> ScopeState {
     if !shared {
         return ScopeState::NotShared;
@@ -496,14 +500,23 @@ fn options_over(
         .component
         .as_ref()
         .map(|component| &component.call_site);
-    let (times, drawn_alone) = call.map_or((0, false), |call| here(report, element, &scene, call));
-    let this_scene = confined(report, targets, element, &scene, component).and_then(|()| {
-        row_lock(
-            Scope::ThisScene,
-            this_scene_targets(targets, drawn_alone),
-            calls,
-        )
-    });
+    // A window is resolved as rendered once (see `window_report`), and its
+    // own sharing rule already says which calls it reaches; its instances,
+    // of every element it wraps, don't line up with the selected chain, so
+    // its calls are not counted.
+    let (times, drawn_alone) = match call {
+        _ if window => (0, true),
+        Some(call) => here(report, element, &scene, call),
+        None => (0, false),
+    };
+    let this_scene =
+        confined(report, targets, element, &scene, component, drawn_alone).and_then(|()| {
+            row_lock(
+                Scope::ThisScene,
+                this_scene_targets(targets, drawn_alone),
+                calls,
+            )
+        });
     ScopeState::Options(ScopeOptions {
         this_scene,
         shared: row_lock(Scope::Shared, targets, calls),
@@ -596,13 +609,15 @@ impl<'c> Scene<'c> {
 }
 
 /// Whether `S` is confined to the current scene: see [`scope_state`]'s
-/// order.
+/// order. `drawn_alone` is whether `S` draws the selected instance alone
+/// in it (see [`drawn_alone`]).
 fn confined(
     report: &LayerSourceReport,
     targets: &ElementTargets,
     element: &ElementOccurrences,
     scene: &Scene,
     component: &str,
+    drawn_alone: bool,
 ) -> Result<(), ScopeLock> {
     let no_call = || ScopeLock::NoCall {
         component: component.to_owned(),
@@ -651,7 +666,7 @@ fn confined(
         .instances
         .iter()
         .any(|instance| !instance.chain.contains(call) && scene.shows(instance));
-    if another_here && !drawn_alone(element, scene, call) {
+    if another_here && !drawn_alone {
         return Err(ScopeLock::DrawsMoreThanOnce {
             component: component.to_owned(),
         });

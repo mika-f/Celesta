@@ -538,6 +538,65 @@ fn a_window_two_scenes_call_is_shared_by_its_own_instances() {
     assert_eq!(files.read("main.tsx"), MAIN_DELAYED);
 }
 
+/// Intro calls `Delayed` at 3:5 around a `<Rect>` at 4:7 and a `<Circle>`
+/// at 5:7, and again at 7:5 around a `<Text>` at 8:7.
+const INTRO_DELAYED_TWICE: &str = "export const Intro = () => (\n  <>\n    <Delayed>\n      <Rect />\n      <Circle />\n    </Delayed>\n    <Delayed>\n      <Text>Hi</Text>\n    </Delayed>\n  </>\n);\n";
+
+#[test]
+fn a_window_a_scene_calls_twice_writes_this_call_under_this_scene() {
+    // Intro calls `Delayed` twice: the first call draws the window around
+    // two elements, which is no window drawn more than once, so "This
+    // scene" stays open and writes the first call only.
+    let files = Files::new(
+        "delayed-twice",
+        &[("delayed.tsx", DELAYED), ("intro.tsx", INTRO_DELAYED_TWICE)],
+    );
+    let report = report_of(vec![
+        files.entry("Rect", ElementKind::Primitive, "intro.tsx", (4, 7)),
+        files.entry("Sequence", ElementKind::Wrapper, "delayed.tsx", (4, 10)),
+        files.entry("Delayed", ElementKind::Component, "intro.tsx", (3, 5)),
+    ]);
+    let source = files.pos("delayed.tsx", 4, 10);
+    let window = files.window(&report, &source);
+    let first = files.pos("intro.tsx", 3, 5);
+    let second = files.pos("intro.tsx", 7, 5);
+    let element = |at: SourcePos, call: &SourcePos| ElementOccurrences {
+        element: at.clone(),
+        instances: vec![instance_of(
+            vec![at, call.clone()],
+            vec![(30, 90)],
+            vec![source.clone()],
+        )],
+    };
+    let occurrences = OccurrenceState::Ready(OccurrenceIndex {
+        elements: vec![
+            element(files.pos("intro.tsx", 4, 7), &first),
+            element(files.pos("intro.tsx", 5, 7), &first),
+            element(files.pos("intro.tsx", 8, 7), &second),
+        ],
+    });
+    let chapters = [scene("intro", 0, 90)];
+
+    let (state, _) = window_scope_state(&report, &window, Some(&occurrences), None, &chapters, 45);
+
+    let ScopeState::Options(options) = &state else {
+        panic!("the window is shared: {state:?}");
+    };
+    assert_eq!(options.this_scene, Ok(()));
+    // A window's calls are not counted.
+    assert_eq!(options.called_here, None);
+    let scope = commit_scope(None, &state);
+    assert_eq!(scope, Some(Scope::ThisScene));
+    files
+        .commit(&window, &report, scope, &[number("from", 45.0)])
+        .unwrap();
+    assert_eq!(
+        files.read("intro.tsx"),
+        INTRO_DELAYED_TWICE.replacen("<Delayed>", "<Delayed sequenceFrom={45}>", 1)
+    );
+    assert!(files.read("delayed.tsx").contains("from={sequenceFrom}"));
+}
+
 /// Intro writes `<Sequence from={30}>` at 5:5 around its `<Tag>` call at
 /// 6:7.
 const INTRO_TAGGED: &str = "import { Sequence } from \"@celesta/react\";\n\nexport function Intro() {\n  return (\n    <Sequence from={30}>\n      <Tag />\n    </Sequence>\n  );\n}\n";
@@ -855,6 +914,8 @@ fn a_grip_the_kept_scope_would_refuse_is_locked_before_the_press() {
         shared: Ok(()),
         shared_reaches: vec!["Intro".to_owned()],
         sets_own: vec!["Price".to_owned()],
+        called_here: None,
+        drawn_alone: true,
     });
     let refusal = |grip, remembered| {
         grip_refusal(window.kind, grip, &window.targets, &open, remembered, None)
@@ -889,6 +950,8 @@ fn set_timing_offer_follows_the_scope() {
         shared: Ok(()),
         shared_reaches: vec!["Intro".to_owned(), "Price".to_owned()],
         sets_own: Vec::new(),
+        called_here: None,
+        drawn_alone: false,
     });
 
     // A choice remembered for the element counts only where it is shared.
