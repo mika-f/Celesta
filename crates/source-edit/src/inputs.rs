@@ -4,7 +4,7 @@
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
     ArrowFunctionExpression, BindingIdentifier, CallExpression, Expression, Function,
-    IdentifierReference, JSXElementName, NewExpression, TSType, TaggedTemplateExpression,
+    IdentifierReference, JSXElementName, NewExpression, Program, TSType, TaggedTemplateExpression,
 };
 use oxc_ast_visit::Visit;
 use oxc_syntax::scope::ScopeFlags;
@@ -13,8 +13,8 @@ use crate::locate::ElementRef;
 use crate::parse_checked;
 use crate::pass_through::resolve_parameter;
 use crate::resolve::{
-    EditTarget, Gather, LockReason, PropPath, ResolveContext, Span, read_written,
-    resolve_identifier,
+    Absent, EditTarget, Gather, LockReason, PropPath, ResolveContext, Span, read_written,
+    resolve_identifier, value_context,
 };
 use crate::shape::Shape;
 
@@ -56,6 +56,34 @@ pub fn resolve_inputs(
     // `resolve`'s rules, up to an absent prop, which never locks as an
     // expression.
     let locked = read_written(&gather, text, prop, ctx, true);
+    inputs_of(&program, gather, locked, text, ctx, call_site)
+}
+
+/// [`resolve_inputs`] for the expression at `value` in `program` (parsed
+/// from `text`), read as [`crate::resolve::resolve_value_at`] reads it:
+/// when it locks as an expression, each identifier it reads, resolved by
+/// the same rules.
+pub(crate) fn inputs_at(
+    program: &Program<'_>,
+    text: &str,
+    value: Span,
+) -> Vec<(String, EditTarget)> {
+    let gather = Gather::at_value(program, value);
+    let ctx = value_context();
+    let locked = read_written(&gather, text, "", &ctx, false);
+    inputs_of(program, gather, locked, text, &ctx, None)
+}
+
+/// The inputs of the expression `gather` locked the value on, when
+/// `locked` is that lock.
+fn inputs_of(
+    program: &Program<'_>,
+    mut gather: Gather<'_>,
+    locked: Result<EditTarget, Absent>,
+    text: &str,
+    ctx: &ResolveContext,
+    call_site: Option<(&str, &ElementRef)>,
+) -> Vec<(String, EditTarget)> {
     let (Ok(EditTarget::Locked(LockReason::Expression { .. })), Some(span)) =
         (locked, gather.locked.get())
     else {
@@ -63,7 +91,7 @@ pub fn resolve_inputs(
     };
 
     let mut names = Names::new(span);
-    names.visit_program(&program);
+    names.visit_program(program);
     gather.scopes.one_place(span);
     let ctx = ResolveContext {
         received: None,

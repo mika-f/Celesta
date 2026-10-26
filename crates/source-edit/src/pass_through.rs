@@ -9,7 +9,7 @@ use crate::locate::ElementRef;
 use crate::parse_checked;
 use crate::resolve::{
     Absent, EditTarget, EditValue, Gather, LiteralForm, LockReason, PropPath, Read, ResolveContext,
-    Span, TOLERANCE, resolve, resolve_written,
+    Span, TOLERANCE, resolve, resolve_call_site_prop, resolve_written,
 };
 use crate::scope::{ParamDefault, ParamInfo};
 use crate::shape::{Children, StyleProperty};
@@ -128,6 +128,29 @@ pub fn resolve_through(
         return EditTarget::Locked(LockReason::NotPrimitive);
     }
     resolve_parameter(parameter, ctx, call_site, true)
+}
+
+/// `prop` of `element` by [`resolve_through`]'s rules, not compared with a
+/// received value (the runtime reports none for a wrapper's props): a
+/// literal is `Literal`, a parameter resolves at `call_site` unchecked, an
+/// absent prop is `Missing { default: None }`.
+pub fn resolve_unchecked(
+    text: &str,
+    element: &ElementRef,
+    prop: &str,
+    call_site: Option<(&str, &ElementRef)>,
+) -> EditTarget {
+    let ctx = ResolveContext {
+        primitive: false,
+        component_props: true,
+        candidate_frames: Vec::new(),
+        received: None,
+        render_count: 1,
+    };
+    match parameter_in(text, element, prop) {
+        Some(parameter) => resolve_parameter(parameter, &ctx, call_site, false),
+        None => resolve_call_site_prop(text, element, prop, &ctx),
+    }
 }
 
 /// The value of `parameter` at `call_site`, by the pass-through rules of

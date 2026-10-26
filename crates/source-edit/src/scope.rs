@@ -4,9 +4,9 @@
 use std::collections::HashMap;
 
 use oxc_ast::ast::{
-    ArrowFunctionBody, ArrowFunctionExpression, BindingIdentifier, BindingPattern, Expression,
-    FormalParameters, Function, FunctionBody, IdentifierReference, Statement,
-    VariableDeclarationKind, VariableDeclarator,
+    ArrowFunctionBody, ArrowFunctionExpression, BindingIdentifier, BindingPattern, Declaration,
+    Expression, FormalParameters, Function, FunctionBody, IdentifierReference, Program, Statement,
+    VariableDeclaration, VariableDeclarationKind, VariableDeclarator,
 };
 
 use crate::pass_through::{component_function, is_component_name};
@@ -311,23 +311,54 @@ impl Scopes {
             other_bindings(&rest.rest.argument, &mut bindings);
         }
         for stmt in body.iter().flat_map(|b| &b.statements) {
-            let Statement::VariableDeclaration(decl) = stmt else {
-                continue;
-            };
-            for d in &decl.declarations {
-                let simple = d.id.get_binding_identifier();
-                match (decl.kind, simple, &d.init) {
-                    (VariableDeclarationKind::Const, Some(id), Some(init)) => {
-                        bindings.push((id.name.to_string(), Binding::Const(shape_of(init))));
-                    }
-                    _ => other_bindings(&d.id, &mut bindings),
-                }
+            if let Statement::VariableDeclaration(decl) = stmt {
+                declaration_bindings(decl, &mut bindings);
             }
         }
         self.stack.push(Scope {
             component,
             bindings,
         });
+    }
+
+    /// The module's scope, when no function encloses the anchor: its
+    /// top-level declarations, `export const` included, read as a
+    /// function's are. Called after the visit, for a value anchored at an
+    /// expression only; an element's module-level names stay unresolved.
+    pub(crate) fn enter_module(&mut self, program: &Program<'_>) {
+        if !self.stack.is_empty() {
+            return;
+        }
+        let mut bindings = Vec::new();
+        for stmt in &program.body {
+            match stmt {
+                Statement::VariableDeclaration(decl) => declaration_bindings(decl, &mut bindings),
+                Statement::ExportDeclaration(export) => {
+                    if let Declaration::VariableDeclaration(decl) = &export.declaration {
+                        declaration_bindings(decl, &mut bindings);
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.stack.push(Scope {
+            component: None,
+            bindings,
+        });
+    }
+}
+
+/// A `const name = …` is a `Const`; any other declared name is never
+/// editable.
+fn declaration_bindings(decl: &VariableDeclaration<'_>, bindings: &mut Vec<(String, Binding)>) {
+    for d in &decl.declarations {
+        let simple = d.id.get_binding_identifier();
+        match (decl.kind, simple, &d.init) {
+            (VariableDeclarationKind::Const, Some(id), Some(init)) => {
+                bindings.push((id.name.to_string(), Binding::Const(shape_of(init))));
+            }
+            _ => other_bindings(&d.id, bindings),
+        }
     }
 }
 
