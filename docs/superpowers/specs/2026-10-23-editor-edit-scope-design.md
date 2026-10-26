@@ -55,7 +55,13 @@ writes](#what-this-scene-writes)). The tab keeps its label; its tooltip is
 "Write the edit for this call only", and while "This scene" is in effect or
 hovered, the line under the control reads "Edits this `<PriceTag>` only ·
 this scene calls it 2 times" (the calls counted are the distinct chain
-entries at `S`'s place among the instances shown in this scene).
+entries at `S`'s place among the instances shown in this scene; an instance
+with no entry there is no call). A composition without chapters is one
+scene of the whole timeline, and keeps the one-call copy.
+
+While an option is hovered, the bands and the "Shared" row are read on the
+targets that option writes (the element as one instance only under "This
+scene"), as a click on it would show them.
 
 - Default: **This scene**. (Decided by the designer: an unintended spread to
   other scenes is the failure the user reported; a deliberate shared edit is
@@ -168,9 +174,12 @@ Lifting:
   selected instance alone in this scene, the write goes to `S` instead, so
   the element is resolved as that one instance (a second resolution with a
   render count of 1) and its rows, canvas drag and commit lift like any
-  literal. Under "Shared value" and for an element with no scope control,
-  the lock stays. While a drag runs, its preview override is keyed by `E`'s
-  position, so every copy draws the dragged value until the release.
+  literal; its commit resolves `E` again as one instance. A gate and a
+  commit read the targets of the scope they keep, not those shown now.
+  Under "Shared value", for an element with no scope control, and when `S`
+  draws `E` more than once, the lock stays. While a drag or a scrub of X or
+  Y runs, its preview override is keyed by `E`'s position, so every copy
+  draws the dragged value until the release; only `S` is written.
 
 After lifting, later edits of the same element in another scene resolve as
 case 1 at that scene's call site; the default keeps every other scene as it

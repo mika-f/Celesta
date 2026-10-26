@@ -286,10 +286,13 @@ amended to match.
   which `component.call_site` already names, and the impact filter is the
   same `Through(S)`. `ScopeOptions::called_here` (`C`'s name and the number
   of distinct calls at `S`'s chain place among the instances shown in this
-  scene) drives the copy: the line "Edits this `<PriceTag>` only · this scene
-  calls it 2 times" while "This scene" is in effect or hovered, the tooltip
-  "Write the edit for this call only", and the drag label "Edits change this
-  `<PriceTag>` only". "This scene" is locked as "`<PriceTag>` here draws this
+  scene; an instance with no entry there is no call, and a composition
+  without chapters counts none) drives the copy: the line "Edits this
+  `<PriceTag>` only · this scene calls it 2 times" while "This scene" is in
+  effect or hovered, the tooltip "Write the edit for this call only", and
+  the drag label "Edits change this `<PriceTag>` only"
+  (`scope_in_effect_here`; `scope_in_effect(scope) -> &'static str` is
+  unchanged). "This scene" is locked as "`<PriceTag>` here draws this
   element more than once" (`DrawsMoreThanOnce`) only when another call is in
   the scene and `S` does not draw the selected instance alone (two instances
   through `S`, or `max_per_frame > 1`). A scene with `S` alone drawing
@@ -300,10 +303,14 @@ amended to match.
   instance (render count 1) into `ElementTargets::one` when `E` is in a
   component and repeated. `targets_in_effect` picks it under "This scene"
   when `ScopeOptions::drawn_alone` (`S` draws the selected instance alone in
-  this scene); `shown_scope_context` and `element_targets` hand it to the
-  rows, the canvas drag and the gates, and `commit_element` picks it by the
-  scope the commit keeps (`targets_under`). `commit_files` re-resolves the
-  same way (it takes `fresh.one` when `expected` has none). `scope_state`
+  this scene). `ScopeContext` holds the targets as resolved (`resolved`)
+  and those of the scope in effect (`targets`, which the rows and the canvas
+  drag read); `ScopeContext::under(scope)` gives each reader the targets of
+  its own scope: the hover preview (`previewed`), a gesture's gate by the
+  scope it started with, a held commit's by the scope it keeps, and
+  `commit_element` by the commit's scope (`targets_under`). A commit of the
+  one-instance targets resolves again with a render count of 1
+  (`commit_report`), so `commit_files` needs no special case. `scope_state`
   computes the options from the targets as resolved, with "This scene"'s
   row lock read on the one-instance targets, so the options never depend on
   which targets are shown. Under "Shared value" and without a scope the
@@ -314,16 +321,16 @@ amended to match.
 - Scenes written as components and placed by hand
   (`<Sequence><PriceScene /></Sequence>`) lock "This scene" as "Passes through
   `<PriceScene>`": the scene's own component entry sits after `S`.
-- Moving one of several copies under "This scene": the drag's preview
-  override is keyed by `E`'s position, so every copy in the frame draws the
-  dragged value until the release; the written source moves the selected
-  copy only.
+- Moving one of several copies under "This scene": the preview override of
+  a drag, and of a scrub of the X or Y row, is keyed by `E`'s position, so
+  every copy in the frame draws the dragged value until the release; only
+  the selected call is written.
 - Resolving `E` as one instance costs a second resolution (every parse
   again) for a repeated element in a component, also on every commit's
   re-resolve.
-- A remembered choice switched while a drag runs: the release writes under
-  the drag's scope with the targets of that scope, but the drag's handles
-  were those of the targets shown at its start.
+- A remembered choice switched while a drag runs: the release is gated and
+  written on the targets of the drag's scope, but its handles were those of
+  the targets shown at its start.
 - A refused inline text edit ended by a selection change, a seek, play, or a
   project command loses its text. It needs a scan landing or a lock appearing
   during the edit. After a refused blur the person may have to click back into
