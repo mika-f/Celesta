@@ -25,8 +25,9 @@ scene's end drags on the **Chapters** row.
   end drags.
 - Select Intro's dark background, move the playhead 45 frames into Intro,
   and click **Set timing** on its band: the `<Rect>` is wrapped in
-  `<Sequence from={45} durationInFrames={45}>`, and `Sequence` is added to
-  the import.
+  `<Sequence from={45} durationInFrames={45}>`. The import stays as it is,
+  since `film.tsx` already imports `Sequence`; in a file that doesn't, the
+  same click adds it.
 - Select the **Scene timing** title: **Set timing** is disabled, since its
   `<Text>` is the root of `Title`. Choose **Select** on the `<Group>` row
   under **Called from** and click **Set timing** there: the `<Group>` is
