@@ -11,13 +11,13 @@ use crate::layer_select::owner_call_site;
 use crate::property_controls::ControlKind;
 use celesta_react_bridge::{
     ComponentPropertyField, ComponentPropertySchema, ElementKind, LayerSource, LayerSourceReport,
-    PrimitivePropertyField, PrimitivePropertyTable, ReceivedValue, SourcePos,
+    PrimitivePropertyField, PrimitivePropertyTable, ReceivedProps, ReceivedValue, SourcePos,
 };
 use celesta_source_edit::{
     DefaultTarget, EditTarget, EditValue, ElementRef, LiftLock, LiftProp, LiteralForm, LockReason,
-    ResolveContext, element_at, enclosing_component, has_attribute, parameter_default,
-    parameter_of, plan_lift, resolve_call_site_prop, resolve_inputs, resolve_through,
-    text_style_path, written_attributes,
+    ResolveContext, TimingKind, element_at, enclosing_component, has_attribute, later_series_items,
+    parameter_default, parameter_of, plan_lift, resolve_call_site_prop, resolve_inputs,
+    resolve_through, resolve_unchecked, text_style_path, timing_kind, written_attributes,
 };
 use std::cell::OnceCell;
 use std::collections::BTreeMap;
@@ -282,7 +282,7 @@ pub(crate) fn resolve_targets(
     report: &LayerSourceReport,
     table: Option<&PrimitivePropertyTable>,
 ) -> Result<ElementTargets, String> {
-    resolve_rows(read, report, table, |text, element| {
+    let rows = |text: &str, element: &ElementRef| {
         let per_axis = [TransformProp::ScaleX, TransformProp::ScaleY]
             .iter()
             .any(|prop| has_attribute(text, element, prop.name()));
@@ -310,6 +310,93 @@ pub(crate) fn resolve_targets(
             }
         }
         rows
+    };
+    resolve_rows(read, report, table, rows, RowRead::Received)
+}
+
+/// How [`resolve_rows`] reads the rows' values.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum RowRead {
+    /// Checked against the values the runtime received.
+    Received,
+    /// Not compared with a received value (see `resolve_unchecked`): the
+    /// runtime reports none for a timing wrapper's props.
+    Unchecked,
+}
+
+/// `report` as the report of the wrapper written at `source`: its chain
+/// from that wrapper's entry outward, no received props, one render (the
+/// rest as `report`'s). `None` when no entry is there.
+pub(crate) fn window_report(
+    report: &LayerSourceReport,
+    source: &SourcePos,
+) -> Option<LayerSourceReport> {
+    let at = report
+        .chain
+        .iter()
+        .position(|entry| SourcePos::from(entry) == *source)?;
+    Some(LayerSourceReport {
+        chain: report.chain[at..].to_vec(),
+        props: ReceivedProps::default(),
+        render_count: 1,
+        ..report.clone()
+    })
+}
+
+/// The timing window written at `source` around the selected element.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct WindowTargets {
+    /// Where the wrapper is written.
+    pub(crate) source: SourcePos,
+    pub(crate) kind: TimingKind,
+    /// The wrapper's timing props as rows: `from` and `durationInFrames` of
+    /// a `Sequence`, `durationInFrames` and `offset` of a `Series` item.
+    pub(crate) targets: ElementTargets,
+    /// The `Series` items after this one, which move with its end.
+    pub(crate) followers: Vec<SourcePos>,
+}
+
+/// The wrapper at `source` (an entry of `report`'s chain) with its timing
+/// props as rows (`from`, `durationInFrames`; or `durationInFrames`,
+/// `offset`), resolved as an element of its own from [`window_report`] and
+/// not checked against received values. `Err` for anything but a
+/// `Sequence` or a `Series` item.
+pub(crate) fn resolve_window(
+    read: impl Fn(&Path) -> Result<String, String>,
+    report: &LayerSourceReport,
+    source: &SourcePos,
+) -> Result<WindowTargets, String> {
+    let report =
+        window_report(report, source).ok_or_else(|| reason_text(&LockReason::ElementNotFound))?;
+    let mut found = None;
+    let rows = |text: &str, element: &ElementRef| {
+        let kind = timing_kind(text, element);
+        let (rows, followers) = match kind {
+            Some(TimingKind::Sequence) => (vec!["from", "durationInFrames"], Vec::new()),
+            Some(TimingKind::SeriesSequence) => (
+                vec!["durationInFrames", "offset"],
+                later_series_items(text, element),
+            ),
+            None => (Vec::new(), Vec::new()),
+        };
+        found = kind.map(|kind| (kind, followers));
+        rows.into_iter().map(str::to_owned).collect()
+    };
+    let targets = resolve_rows(read, &report, None, rows, RowRead::Unchecked)?;
+    let (kind, followers) = found
+        .ok_or_else(|| "Not a `<Sequence>` or `<Series.Sequence>` of @celesta/react".to_owned())?;
+    Ok(WindowTargets {
+        source: source.clone(),
+        kind,
+        targets,
+        followers: followers
+            .into_iter()
+            .map(|(line, column)| SourcePos {
+                file: source.file.clone(),
+                line,
+                column,
+            })
+            .collect(),
     })
 }
 
@@ -340,20 +427,29 @@ fn through<'s>(site: Option<&'s CallSite<'_>>) -> Option<(&'s str, &'s ElementRe
 /// Resolves the rows `rows` names (table keys) from the text and element of
 /// `report`'s innermost element, with the fields of `table`; see
 /// [`resolve_targets`]. A commit resolves the rows it started from again
-/// this way. An element in a component that the frame renders more than
-/// once is resolved as one instance too ([`ElementTargets::one`]).
+/// this way. `how` says whether the values are checked against the ones
+/// `report` received. An element in a component that the frame renders
+/// more than once is resolved as one instance too
+/// ([`ElementTargets::one`]).
 pub(super) fn resolve_rows(
     read: impl Fn(&Path) -> Result<String, String>,
     report: &LayerSourceReport,
     table: Option<&PrimitivePropertyTable>,
     rows: impl FnOnce(&str, &ElementRef) -> Vec<String>,
+    how: RowRead,
 ) -> Result<ElementTargets, String> {
     let mut rows = Some(rows);
-    resolve_with(&read, report, table, &mut |text, element| {
-        rows.take()
-            .map(|rows| rows(text, element))
-            .unwrap_or_default()
-    })
+    resolve_with(
+        &read,
+        report,
+        table,
+        &mut |text, element| {
+            rows.take()
+                .map(|rows| rows(text, element))
+                .unwrap_or_default()
+        },
+        how,
+    )
 }
 
 /// [`resolve_rows`], not generic, so it resolves the element as one
@@ -363,6 +459,7 @@ fn resolve_with(
     report: &LayerSourceReport,
     table: Option<&PrimitivePropertyTable>,
     rows: &mut dyn FnMut(&str, &ElementRef) -> Vec<String>,
+    how: RowRead,
 ) -> Result<ElementTargets, String> {
     let source = report
         .chain
@@ -423,12 +520,21 @@ fn resolve_with(
             inputs: Vec::new(),
         },
     };
-    let ctx = |path: &str| ResolveContext {
-        primitive: source.kind == ElementKind::Primitive,
-        component_props: false,
-        candidate_frames: candidate_frames(report),
-        received: report.props.get(path).map(edit_value),
-        render_count: report.render_count,
+    let ctx = |path: &str| match how {
+        RowRead::Received => ResolveContext {
+            primitive: source.kind == ElementKind::Primitive,
+            component_props: false,
+            candidate_frames: candidate_frames(report),
+            received: report.props.get(path).map(edit_value),
+            render_count: report.render_count,
+        },
+        RowRead::Unchecked => ResolveContext {
+            primitive: source.kind == ElementKind::Primitive,
+            component_props: true,
+            candidate_frames: candidate_frames(report),
+            received: None,
+            render_count: 1,
+        },
     };
     let inputs = |path: &str, ctx: &ResolveContext| {
         let site = loaded.get().and_then(|(_, site)| site.as_ref());
@@ -478,7 +584,10 @@ fn resolve_with(
             None if parameter_of(&text, &element, &path).is_some() => call_site(),
             None => None,
         };
-        let mut target = resolve_through(&text, &element, &path, &ctx, through(site));
+        let mut target = match how {
+            RowRead::Received => resolve_through(&text, &element, &path, &ctx, through(site)),
+            RowRead::Unchecked => resolve_unchecked(&text, &element, &path, through(site)),
+        };
         if let Some(field) = table.and_then(|table| field_of(table, &name)) {
             let call_site_text = site.map(|site| site.text.as_str());
             target = fit_kind(target, field, &text, call_site_text, &path);
@@ -569,7 +678,7 @@ fn resolve_with(
             render_count: 1,
             ..report.clone()
         };
-        resolve_with(read, &report, table, &mut |_, _| names.clone())
+        resolve_with(read, &report, table, &mut |_, _| names.clone(), how)
             .ok()
             .map(Box::new)
     } else {

@@ -10,10 +10,15 @@ mod resolve;
 
 pub(crate) use commit::commit_files;
 #[cfg(test)]
-pub(crate) use commit::{CommitError, apply_checked, commit_scoped};
+pub(crate) use commit::{CommitError, apply_checked};
+// The band drag, which is not drawn yet, commits a window.
+#[cfg_attr(not(test), expect(unused_imports))]
+pub(crate) use commit::{commit_scoped, window_files};
+#[cfg(test)]
+pub(crate) use resolve::window_report;
 pub(crate) use resolve::{
-    edit_value, editable, field_of, inner_target, required_of, resolve_targets, schema_field,
-    table_default, table_key, text_style_key, type_component_props,
+    WindowTargets, edit_value, editable, field_of, inner_target, required_of, resolve_targets,
+    resolve_window, schema_field, table_default, table_key, text_style_key, type_component_props,
 };
 
 use crate::element_rows::{removable, row_label};
@@ -25,6 +30,7 @@ use crate::scope::{
     current_calls, drain_gate, gesture_gate, gesture_start_refusal, held_gate, previewed_scope,
     read_scene_calls, scope_state, scoped_removable, targets_in_effect,
 };
+use crate::timing::{WindowRole, window_role};
 use crate::view::EditorView;
 use celesta_react_bridge::{
     ComponentPropertySchema, ElementOccurrences, LayerSourceReport, PrimitivePropertyField,
@@ -349,6 +355,10 @@ pub(crate) struct Resolved {
     /// The timeline frame the report was looked up at.
     pub(crate) timeline_frame: i64,
     pub(crate) outcome: Result<ElementTargets, String>,
+    /// The element's own timing window (a wrapper written around it, see
+    /// [`WindowRole::Own`]) with its timing props as rows; `None` for any
+    /// other window, or when it doesn't resolve.
+    pub(crate) window_targets: Option<WindowTargets>,
 }
 
 /// The values own writes put into rows; `None` removed the prop.
@@ -388,6 +398,11 @@ pub(crate) struct ElementEdit {
     /// The preview worker stopped: no lookup answers again, whatever
     /// reloads or is selected.
     preview_stopped: bool,
+    /// The scene calls of the component enclosing the element's own timing
+    /// window, when it is not the element's (see `sync_window_scene_calls`),
+    /// and the element, generation and calls they are read for.
+    window_calls: Option<SceneCalls>,
+    window_calls_wanted: Option<(SourcePos, u64, Vec<Option<SourcePos>>)>,
 }
 
 impl ElementEdit {
@@ -417,13 +432,26 @@ impl ElementEdit {
         Some(self.request)
     }
 
-    /// Keeps the outcome of resolution `request` when it is the newest one and
-    /// `selected` is still the layer it was for. True when kept.
+    /// [`Self::finish_with_window`] without an own timing window.
+    #[cfg(test)]
     pub(crate) fn finish(
         &mut self,
         request: u64,
         selected: Option<&str>,
         outcome: Result<ElementTargets, String>,
+    ) -> bool {
+        self.finish_with_window(request, selected, outcome, None)
+    }
+
+    /// Keeps the outcome of resolution `request`, and `window_targets`, the
+    /// element's own timing window, when it is the newest one and
+    /// `selected` is still the layer it was for. True when kept.
+    pub(crate) fn finish_with_window(
+        &mut self,
+        request: u64,
+        selected: Option<&str>,
+        outcome: Result<ElementTargets, String>,
+        window_targets: Option<WindowTargets>,
     ) -> bool {
         let Some((layer, report, timeline_frame)) = self.wanted.as_ref() else {
             return false;
@@ -442,6 +470,7 @@ impl ElementEdit {
             report: report.clone(),
             timeline_frame: *timeline_frame,
             outcome,
+            window_targets,
         });
         true
     }
@@ -598,13 +627,37 @@ impl ElementEdit {
         selected: Option<&str>,
         lookup: Option<(&LayerSourceReport, i64)>,
     ) -> Option<(&ElementTargets, &LayerSourceReport)> {
+        let resolved = self.committable(selected, lookup)?;
+        let targets = resolved.outcome.as_ref().ok()?;
+        Some((targets, &resolved.report))
+    }
+
+    /// The element's own timing window a commit for `selected` writes to,
+    /// with the element's report, under the same conditions as
+    /// [`Self::targets`] (the element's own targets may have failed).
+    pub(crate) fn window_targets(
+        &self,
+        selected: Option<&str>,
+        lookup: Option<(&LayerSourceReport, i64)>,
+    ) -> Option<(&WindowTargets, &LayerSourceReport)> {
+        let resolved = self.committable(selected, lookup)?;
+        let window = resolved.window_targets.as_ref()?;
+        Some((window, &resolved.report))
+    }
+
+    /// The newest resolution for `selected` when it is current and was
+    /// made for `lookup`.
+    fn committable(
+        &self,
+        selected: Option<&str>,
+        lookup: Option<(&LayerSourceReport, i64)>,
+    ) -> Option<&Resolved> {
         let (resolved, current) = self.resolved(selected)?;
         let (report, frame) = lookup?;
         if !current || *report != resolved.report || frame != resolved.timeline_frame {
             return None;
         }
-        let targets = resolved.outcome.as_ref().ok()?;
-        Some((targets, &resolved.report))
+        Some(resolved)
     }
 
     pub(crate) fn error(&self, selected: Option<&str>) -> Option<&str> {
@@ -687,37 +740,60 @@ impl EditorView {
             Some(react) => react.component_schemas.clone(),
             None => self.component_schemas.clone(),
         };
+        // The wrapper written around the element, when its timing is the
+        // element's own: resolved as an element of its own beside it.
+        let window = match window_role(
+            report,
+            self.react_chapters().unwrap_or_default(),
+            u64::try_from(self.clock.end_frame()).unwrap_or(0),
+            u64::try_from(frame).unwrap_or(0),
+        ) {
+            WindowRole::Own(window) => window.source.clone(),
+            WindowRole::Scene(_) | WindowRole::Remapped | WindowRole::None => None,
+        };
         let report = report.clone();
         let entry_dir = self
             .react_entry()
             .and_then(Path::parent)
             .map(Path::to_path_buf);
         cx.spawn(async move |view, cx| {
-            let outcome = cx
+            let (outcome, window) = cx
                 .background_executor()
                 .spawn(async move {
                     let read = |path: &Path| {
                         fs::read_to_string(path)
                             .map_err(|error| format!("Couldn't read {}: {error}", path.display()))
                     };
-                    let mut targets = resolve_targets(read, &report, table.as_ref())?;
-                    type_component_props(&mut targets, &schemas, read);
                     let real = |path: &Path| fs::canonicalize(path).unwrap_or(path.to_path_buf());
                     let entry_dir = entry_dir.map(|dir| real(&dir));
-                    lock_outside_project(&mut targets, |file| {
+                    let outside = |file: &Path| {
                         entry_dir
                             .as_ref()
                             .is_none_or(|dir| !inside_project(&real(file), dir))
-                    });
-                    Ok(targets)
+                    };
+                    let outcome =
+                        resolve_targets(read, &report, table.as_ref()).map(|mut targets| {
+                            type_component_props(&mut targets, &schemas, read);
+                            lock_outside_project(&mut targets, outside);
+                            targets
+                        });
+                    let window = window
+                        .and_then(|source| resolve_window(read, &report, &source).ok())
+                        .map(|mut window| {
+                            lock_outside_project(&mut window.targets, outside);
+                            window
+                        });
+                    (outcome, window)
                 })
                 .await;
             view.update(cx, |this, cx| {
                 let selected = this.selected_layer.clone();
-                if this
-                    .element_edit
-                    .finish(request, selected.as_deref(), outcome)
-                {
+                if this.element_edit.finish_with_window(
+                    request,
+                    selected.as_deref(),
+                    outcome,
+                    window,
+                ) {
                     // Commits made while the targets were read go now.
                     this.drain_held_rows(cx);
                     cx.notify();
@@ -759,6 +835,96 @@ impl EditorView {
         Some((targets, commit_report(resolved, targets, report)))
     }
 
+    /// The selected element's own timing window and the element's report,
+    /// when they can be committed to.
+    pub(crate) fn window_targets(&self) -> Option<(&WindowTargets, &LayerSourceReport)> {
+        let lookup = match &self.source_lookup {
+            Some(SourceLookup::Found(report)) => Some((report, self.source_lookup_frame)),
+            _ => None,
+        };
+        self.element_edit
+            .window_targets(self.selected_layer.as_deref(), lookup)
+    }
+
+    /// The call `S` of the component enclosing the selected element's own
+    /// timing window, and whether it is the element's `S` too (whose scene
+    /// calls then serve the window).
+    fn window_call<'w>(&self, window: &'w WindowTargets) -> Option<(&'w SourcePos, bool)> {
+        let call = &window.targets.component.as_ref()?.call_site;
+        let shared = self
+            .element_targets()
+            .and_then(|(targets, _)| targets.component.as_ref())
+            .is_some_and(|component| component.call_site == *call);
+        Some((call, shared))
+    }
+
+    /// The scene calls a commit of the selected element's own timing window
+    /// takes: the element's when the window's component is the element's,
+    /// else those [`Self::sync_window_scene_calls`] read; `None` until read,
+    /// or once the index or the chain moved on.
+    pub(crate) fn window_scene_calls(
+        &self,
+        window: &WindowTargets,
+        report: &LayerSourceReport,
+    ) -> Option<&SceneCalls> {
+        let (call, shared) = self.window_call(window)?;
+        if shared {
+            let (targets, _) = self.element_targets()?;
+            return self.current_scene_calls(targets, report);
+        }
+        current_calls(
+            self.element_edit.window_calls.as_ref(),
+            self.occurrence_generation,
+            report,
+            self.indexed_element(report)?,
+            call,
+        )
+    }
+
+    /// [`Self::sync_scene_calls`] for the call of the component enclosing
+    /// the selected element's own timing window, when it is not the
+    /// element's: read at that call's place in the selected instance's
+    /// chain, for the element's instances.
+    fn sync_window_scene_calls(&mut self, cx: &mut Context<Self>) {
+        let Some((window, report)) = self.window_targets() else {
+            return;
+        };
+        let Some((call, false)) = self.window_call(window) else {
+            return;
+        };
+        let Some(element) = self.indexed_element(report) else {
+            return;
+        };
+        if self.window_scene_calls(window, report).is_some() {
+            return;
+        }
+        let generation = self.occurrence_generation;
+        let at = calls_of(report, element, call);
+        let position = element.element.clone();
+        let wanted = (position.clone(), generation, at.clone());
+        if self.element_edit.window_calls_wanted.as_ref() == Some(&wanted) {
+            return;
+        }
+        self.element_edit.window_calls_wanted = Some(wanted.clone());
+        cx.spawn(async move |view, cx| {
+            let calls = cx
+                .background_executor()
+                .spawn(async move {
+                    let read = |path: &Path| fs::read_to_string(path).map_err(|e| e.to_string());
+                    read_scene_calls(read, position, generation, at)
+                })
+                .await;
+            view.update(cx, |this, cx| {
+                if this.element_edit.window_calls_wanted.as_ref() == Some(&wanted) {
+                    this.element_edit.window_calls = Some(calls);
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     /// The scene calls of the selected element read for the index in use
     /// and the element's call `S` (see [`current_calls`]); `None` until
     /// read, or once the index or the chain moved on.
@@ -791,8 +957,10 @@ impl EditorView {
     /// Starts reading the scene calls of the selected element (see
     /// [`read_scene_calls`]) when the index in use has it and the calls
     /// held are not for that index and chain. A sweep that lands starts it
-    /// again.
+    /// again. The scene calls of the element's own timing window are read
+    /// here too.
     pub(crate) fn sync_scene_calls(&mut self, cx: &mut Context<Self>) {
+        self.sync_window_scene_calls(cx);
         let Some((targets, report)) = self.element_targets() else {
             return;
         };

@@ -3,7 +3,9 @@
 //! were resolved from, and the rows resolved again against the written
 //! text.
 
-use super::resolve::{apply_component_schema, editable, resolve_rows};
+use super::resolve::{
+    RowRead, WindowTargets, apply_component_schema, editable, resolve_rows, resolve_window,
+};
 use super::{ElementTargets, PropKey, Target, lock_outside_project};
 use crate::edit_history::Texts;
 use crate::element_rows::removable;
@@ -78,8 +80,14 @@ pub(crate) fn commit_files(
                 })
                 .collect()
         };
-        let mut fresh = resolve_rows(read, report, expected.table.as_ref(), rows)
-            .map_err(|_| CommitError::SourceChanged)?;
+        let mut fresh = resolve_rows(
+            read,
+            report,
+            expected.table.as_ref(),
+            rows,
+            RowRead::Received,
+        )
+        .map_err(|_| CommitError::SourceChanged)?;
         // Typed by the schema the targets were typed with, as when resolved.
         if let Some(schema) = expected
             .component
@@ -91,6 +99,32 @@ pub(crate) fn commit_files(
         Ok(fresh)
     };
     commit_scoped(texts, expected, resolve_again, scope, calls, values)
+}
+
+/// [`commit_scoped`] for the timing window `window` around the element
+/// `report` describes: its rows resolved again with [`resolve_window`].
+// Called by the band drag, which is not drawn yet.
+#[cfg_attr(not(test), expect(dead_code))]
+pub(crate) fn window_files(
+    texts: &Texts,
+    window: &WindowTargets,
+    report: &LayerSourceReport,
+    scope: Option<Scope>,
+    calls: Option<&SceneCalls>,
+    values: &[(PropKey, Option<EditValue>)],
+) -> Result<Vec<(PathBuf, String)>, CommitError> {
+    let resolve_again = |texts: &Texts| {
+        let read = |path: &Path| {
+            texts
+                .get(path)
+                .cloned()
+                .ok_or_else(|| format!("{} was not read", path.display()))
+        };
+        resolve_window(read, report, &window.source)
+            .map(|fresh| fresh.targets)
+            .map_err(|_| CommitError::SourceChanged)
+    };
+    commit_scoped(texts, &window.targets, resolve_again, scope, calls, values)
 }
 
 /// The new text of every file `values` touch, in path order, for the

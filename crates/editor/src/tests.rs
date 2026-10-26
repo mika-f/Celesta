@@ -82,6 +82,7 @@ mod held_scene;
 mod inline_text_view;
 mod scope;
 mod scope_commit;
+mod timeline_timing;
 
 #[test]
 fn background_workers_coalesce_queued_requests() {
