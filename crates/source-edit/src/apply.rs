@@ -157,7 +157,7 @@ fn property_key(key: &str) -> String {
 }
 
 /// `value` as an expression; a string in double quotes.
-pub(crate) fn expression(value: &EditValue) -> String {
+pub fn expression(value: &EditValue) -> String {
     match value {
         EditValue::Number(n) => format_number(*n),
         EditValue::String(s) => quote_string(s, '"'),

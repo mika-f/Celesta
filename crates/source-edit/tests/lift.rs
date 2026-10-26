@@ -460,6 +460,54 @@ fn taken_names_include_every_binding_and_read_in_the_file() {
 }
 
 #[test]
+fn taken_names_include_members_of_extended_and_intersected_types() {
+    for (text, expected) in [
+        (
+            "interface Base { rectWidth?: number }\ninterface Props extends Base { label: string }\nfunction C({ label }: Props) {\n  return <Rect width={200} />;\n}\n",
+            "interface Base { rectWidth?: number }\ninterface Props extends Base { label: string; rectWidth2?: number }\nfunction C({ label, rectWidth2 = 200 }: Props) {\n  return <Rect width={rectWidth2} />;\n}\n",
+        ),
+        // Through a base's own base.
+        (
+            "interface Root { rectWidth?: number }\ninterface Base extends Root {}\ninterface Props extends Base { label: string }\nfunction C({ label }: Props) {\n  return <Rect width={200} />;\n}\n",
+            "interface Root { rectWidth?: number }\ninterface Base extends Root {}\ninterface Props extends Base { label: string; rectWidth2?: number }\nfunction C({ label, rectWidth2 = 200 }: Props) {\n  return <Rect width={rectWidth2} />;\n}\n",
+        ),
+        (
+            "interface Base { rectWidth?: number }\ntype Props = { label: string } & Base;\nfunction C({ label }: Props) {\n  return <Rect width={200} />;\n}\n",
+            "interface Base { rectWidth?: number }\ntype Props = { label: string; rectWidth2?: number } & Base;\nfunction C({ label, rectWidth2 = 200 }: Props) {\n  return <Rect width={rectWidth2} />;\n}\n",
+        ),
+        (
+            "type Base = { rectWidth?: number };\nfunction C({ label }: { label: string } & Base) {\n  return <Rect width={200} />;\n}\n",
+            "type Base = { rectWidth?: number };\nfunction C({ label, rectWidth2 = 200 }: { label: string; rectWidth2?: number } & Base) {\n  return <Rect width={rectWidth2} />;\n}\n",
+        ),
+        // Another type literal of the intersection.
+        (
+            "function C({ label }: { label: string } & { rectWidth?: number }) {\n  return <Rect width={200} />;\n}\n",
+            "function C({ label, rectWidth2 = 200 }: { label: string; rectWidth2?: number } & { rectWidth?: number }) {\n  return <Rect width={rectWidth2} />;\n}\n",
+        ),
+    ] {
+        let (out, params) = lifted(text, "<Rect", &[("width", Some(number(200.0)))]);
+        assert_eq!(params, ["rectWidth2"], "{text}");
+        assert_eq!(out, expected);
+    }
+}
+
+#[test]
+fn a_bare_attribute_and_an_absent_prop_at_the_same_offset_parse() {
+    // `muted` ends where the attributes end, where `width` is inserted too.
+    let text = "function C({ label }) {\n  return <Video muted />;\n}\n";
+    for props in [
+        [("width", None), ("muted", Some(EditValue::Bool(true)))],
+        [("muted", Some(EditValue::Bool(true))), ("width", None)],
+    ] {
+        let (out, _) = lifted(text, "<Video", &props);
+        assert!(
+            out.contains("<Video muted={videoMuted} width={videoWidth} />"),
+            "{out}"
+        );
+    }
+}
+
+#[test]
 fn a_move_lifts_x_and_y_together() {
     let text = "function C({ label }) {\n  return <Rect x={10} y={20} />;\n}\n";
     let (out, params) = lifted(

@@ -106,7 +106,7 @@ pub fn plan_lift(
         taken.extend(keys.iter().cloned());
     }
     if let Ok(Some(body)) = &body {
-        taken.extend(body.members.iter().filter_map(|m| m.key.clone()));
+        taken.extend(finder.keys(body));
     }
     let mut params = Vec::with_capacity(props.len());
     for prop in props {
@@ -136,6 +136,10 @@ pub fn plan_lift(
         });
     }
 
+    // A bare attribute's `={name}` goes right after its name, which may be
+    // where the attributes end: before any prop inserted there (`apply`
+    // keeps the order of edits at one offset).
+    let mut attached = Vec::new();
     let mut edits = Vec::new();
     let mut entries = Vec::with_capacity(props.len());
     let mut fields = Vec::with_capacity(props.len());
@@ -146,11 +150,16 @@ pub fn plan_lift(
         }
         let (default, value) = match prop.target {
             EditTarget::Literal { span, value, form } if within(*span, component.span) => {
-                edits.push(Edit::Splice {
+                let edit = Edit::Splice {
                     start: span.start,
                     end: span.end,
                     text: at_element(name, *form),
-                });
+                };
+                if *form == LiteralForm::BareTrue {
+                    attached.push(edit);
+                } else {
+                    edits.push(edit);
+                }
                 (Some(literal_default(text, *span, value, *form)), value)
             }
             EditTarget::Missing { insert_at, default } => {
@@ -176,6 +185,8 @@ pub fn plan_lift(
         });
         fields.push(format!("{name}?: {}", type_of(value)));
     }
+    attached.append(&mut edits);
+    let mut edits = attached;
     edits.push(pattern_edit(text, pattern, &entries));
     if let Some(body) = body {
         edits.push(field_edit(text, body, &fields));
@@ -373,6 +384,11 @@ enum PropsType {
 struct Body {
     span: Span,
     members: Vec<Member>,
+    /// The types it takes members from too: an interface's `extends`, the
+    /// other references of an intersection.
+    bases: Vec<String>,
+    /// The keys of the intersection's other type literals.
+    other_keys: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -484,6 +500,34 @@ impl<'t> Finder<'t> {
             None => Err(TypeLock::NotEditable),
         }
     }
+
+    /// The member keys of `body`, with those of the types it extends or
+    /// intersects that this file declares (theirs too, each once).
+    fn keys(&self, body: &Body) -> Vec<String> {
+        let mut keys: Vec<String> = body.members.iter().filter_map(|m| m.key.clone()).collect();
+        keys.extend(body.other_keys.iter().cloned());
+        let mut seen: Vec<&str> = Vec::new();
+        let mut bases: Vec<&str> = body.bases.iter().map(String::as_str).collect();
+        while let Some(name) = bases.pop() {
+            if seen.contains(&name) {
+                continue;
+            }
+            seen.push(name);
+            let declared = self.types.iter().filter(|(declared, _)| declared == name);
+            for (_, props_type) in declared {
+                match props_type {
+                    PropsType::Body(base) => {
+                        keys.extend(base.members.iter().filter_map(|m| m.key.clone()));
+                        keys.extend(base.other_keys.iter().cloned());
+                        bases.extend(base.bases.iter().map(String::as_str));
+                    }
+                    PropsType::Named(other) => bases.push(other),
+                    PropsType::NotEditable => {}
+                }
+            }
+        }
+        keys
+    }
 }
 
 fn pattern_of(params: &FormalParameters<'_>) -> Option<Pattern> {
@@ -516,15 +560,35 @@ fn props_type(ty: &TSType<'_>, follow: bool) -> PropsType {
         TSType::TSTypeLiteral(literal) => PropsType::Body(Body {
             span: span_of(literal.span),
             members: members(&literal.members),
+            bases: Vec::new(),
+            other_keys: Vec::new(),
         }),
-        TSType::TSIntersectionType(intersection) => intersection
-            .types
-            .iter()
-            .find_map(|ty| match props_type(ty, false) {
-                body @ PropsType::Body(_) => Some(body),
-                _ => None,
-            })
-            .unwrap_or(PropsType::NotEditable),
+        TSType::TSIntersectionType(intersection) => {
+            let mut body: Option<Body> = None;
+            let (mut bases, mut other_keys) = (Vec::new(), Vec::new());
+            for ty in &intersection.types {
+                // The first type literal takes the fields; the rest only
+                // name members.
+                match props_type(ty, true) {
+                    PropsType::Body(found) if body.is_none() => body = Some(found),
+                    PropsType::Body(other) => {
+                        other_keys.extend(other.members.into_iter().filter_map(|m| m.key));
+                        other_keys.extend(other.other_keys);
+                        bases.extend(other.bases);
+                    }
+                    PropsType::Named(name) => bases.push(name),
+                    PropsType::NotEditable => {}
+                }
+            }
+            match body {
+                Some(mut body) => {
+                    body.bases.extend(bases);
+                    body.other_keys.extend(other_keys);
+                    PropsType::Body(body)
+                }
+                None => PropsType::NotEditable,
+            }
+        }
         TSType::TSParenthesizedType(inner) => props_type(&inner.type_annotation, follow),
         TSType::TSTypeReference(reference) if follow => match &reference.type_name {
             TSTypeName::IdentifierReference(id) => PropsType::Named(id.name.to_string()),
@@ -621,11 +685,21 @@ impl<'a> Visit<'a> for Finder<'_> {
     }
 
     fn visit_ts_interface_declaration(&mut self, it: &TSInterfaceDeclaration<'a>) {
+        let bases = it
+            .extends
+            .iter()
+            .filter_map(|heritage| match &heritage.type_name {
+                TSTypeName::IdentifierReference(id) => Some(id.name.to_string()),
+                _ => None,
+            })
+            .collect();
         self.types.push((
             it.id.name.to_string(),
             PropsType::Body(Body {
                 span: span_of(it.body.span),
                 members: members(&it.body.body),
+                bases,
+                other_keys: Vec::new(),
             }),
         ));
         oxc_ast_visit::walk::walk_ts_interface_declaration(self, it);

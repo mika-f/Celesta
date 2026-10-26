@@ -14,7 +14,7 @@ mod resolve;
 mod scope;
 mod shape;
 
-pub use apply::{ApplyError, Edit, apply, format_number, write_value};
+pub use apply::{ApplyError, Edit, apply, expression, format_number, write_value};
 pub use attributes::{text_style_path, written_attributes};
 pub use inputs::resolve_inputs;
 pub use lift::{Lift, LiftLock, LiftProp, lift_name, plan_lift};
