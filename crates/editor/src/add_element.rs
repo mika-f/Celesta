@@ -229,14 +229,18 @@ pub(crate) fn added_timing(
         WindowRole::Own(window) => WindowRole::Scene(window),
         role => role,
     };
-    let (from, duration) = set_timing_span(&role, chapters, composition_end, playhead)
-        .unwrap_or_else(|| {
-            let start = match role {
-                WindowRole::Scene(window) => window.from.round() as i64,
-                _ => 0,
-            };
-            (playhead as i64 - start, 1)
-        });
+    let Some((from, duration)) = set_timing_span(&role, chapters, composition_end, playhead) else {
+        // Less than a frame left: one frame, wrapped even on the window's
+        // first frame, as unwrapped the child would run the whole window.
+        let start = match role {
+            WindowRole::Scene(window) => window.from.round() as i64,
+            _ => 0,
+        };
+        return Ok(Some(Timing {
+            from: playhead as i64 - start,
+            duration: 1,
+        }));
+    };
     let whole = match role {
         WindowRole::Scene(_) => true,
         _ => from + duration == composition_end as i64,
@@ -769,7 +773,7 @@ impl EditorView {
     /// Starts reading the groups of the selected layer's chain (see
     /// [`parent_facts`]) when its lookup has an answer they were not read
     /// for. Reads and parses the files on the background executor; once
-    /// read, the next frame asks for the parent's space.
+    /// read, a frame asks for the parent's space unless it is known.
     pub(crate) fn sync_add_facts(&mut self, cx: &mut Context<Self>) {
         if !self.picks_layers() {
             return;
@@ -813,7 +817,13 @@ impl EditorView {
             view.update(cx, |this, cx| {
                 if this.add.wanted.as_ref() == Some(&lookup) {
                     this.add.facts = Some(ParentFacts { lookup, groups });
-                    this.refresh_preview();
+                    // A parent whose space is not reported yet: the next
+                    // frame asks (later frames ask anyway).
+                    if let Some(parent) = this.add_space_of()
+                        && this.add_space(&parent).is_none()
+                    {
+                        this.refresh_preview();
+                    }
                     cx.notify();
                 }
             })
@@ -1761,6 +1771,16 @@ mod tests {
             added_timing(&windowed, 1, &chapters, 960, 360),
             Ok(Some(Timing {
                 from: 30,
+                duration: 1
+            }))
+        );
+        // A window cut to nothing at the composition's end, on its first
+        // frame: still one frame, not the whole window.
+        let cut = report(chain.clone(), vec![window(600.0, 660.0, Some(&around))]);
+        assert_eq!(
+            added_timing(&cut, 1, &[], 600, 600),
+            Ok(Some(Timing {
+                from: 0,
                 duration: 1
             }))
         );
