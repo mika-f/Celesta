@@ -14,9 +14,10 @@ use celesta_react_bridge::{
     PrimitivePropertyField, PrimitivePropertyTable, ReceivedValue, SourcePos,
 };
 use celesta_source_edit::{
-    EditTarget, EditValue, ElementRef, LiteralForm, LockReason, ResolveContext, element_at,
-    enclosing_component, has_attribute, parameter_of, resolve_call_site_prop, resolve_inputs,
-    resolve_through, text_style_path, written_attributes,
+    DefaultTarget, EditTarget, EditValue, ElementRef, LiftLock, LiftProp, LiteralForm, LockReason,
+    ResolveContext, element_at, enclosing_component, has_attribute, parameter_default,
+    parameter_of, plan_lift, resolve_call_site_prop, resolve_inputs, resolve_through,
+    text_style_path, written_attributes,
 };
 use std::cell::OnceCell;
 use std::collections::BTreeMap;
@@ -340,6 +341,7 @@ pub(super) fn resolve_rows(
     let text = read(&source.file)?;
     let element = element_at(&text, source.line, source.column)
         .ok_or_else(|| reason_text(&LockReason::ElementNotFound))?;
+    let enclosing = enclosing_component(&text, &element);
     // Read on first need: the file read (also when the call is not found
     // there), and the call. A call site that can't be read or found locks
     // only the values passed through (`CallSiteNotFound`); the element's own
@@ -348,7 +350,10 @@ pub(super) fn resolve_rows(
     let call_site = || {
         loaded
             .get_or_init(|| {
-                let Some((component, entry)) = caller(&text, &element, report) else {
+                let Some((component, entry)) = enclosing
+                    .as_deref()
+                    .and_then(|component| Some((component, owner_call_site(report, component)?)))
+                else {
                     return (None, None);
                 };
                 let Ok(call_site_text) = read(&entry.file) else {
@@ -513,6 +518,13 @@ pub(super) fn resolve_rows(
     {
         files.push(file.clone());
     }
+    let (defaults, lift_lock) = match &enclosing {
+        Some(_) => (
+            parameter_defaults(&text, &element, &targets),
+            lift_lock(&text, &element, &targets),
+        ),
+        None => (Vec::new(), None),
+    };
     Ok(ElementTargets {
         file: source.file.clone(),
         files,
@@ -520,19 +532,67 @@ pub(super) fn resolve_rows(
         targets,
         table: table.cloned(),
         component,
+        enclosing,
+        defaults,
+        lift_lock,
     })
 }
 
-/// The component that encloses `element` in `text`, and the chain entry
-/// calling it.
-fn caller<'r>(
+/// Where the default of each parameter `targets` (rows and inputs) pass
+/// through to is written in the component enclosing `element`, each
+/// parameter once.
+fn parameter_defaults(
     text: &str,
     element: &ElementRef,
-    report: &'r LayerSourceReport,
-) -> Option<(String, &'r LayerSource)> {
-    let component = enclosing_component(text, element)?;
-    let entry = owner_call_site(report, &component)?;
-    Some((component, entry))
+    targets: &[(PropKey, Target)],
+) -> Vec<(String, DefaultTarget)> {
+    let mut defaults: Vec<(String, DefaultTarget)> = Vec::new();
+    let read = targets
+        .iter()
+        .flat_map(|(_, row)| std::iter::once(row).chain(row.inputs.iter().map(|(_, input)| input)));
+    for target in read {
+        let EditTarget::PassThrough { param, .. } = &target.target else {
+            continue;
+        };
+        if defaults.iter().any(|(known, _)| known == param) {
+            continue;
+        }
+        if let Some(default) = parameter_default(text, element, param) {
+            defaults.push((param.clone(), default));
+        }
+    }
+    defaults
+}
+
+/// Why lifting every row a lift would take (a literal or an absent prop
+/// written on the element, outside `style`) into new props of the
+/// component enclosing `element` fails, if it does: a dry run of the lift.
+fn lift_lock(text: &str, element: &ElementRef, targets: &[(PropKey, Target)]) -> Option<LiftLock> {
+    let rows: Vec<(&str, &EditTarget, EditValue)> = targets
+        .iter()
+        .filter(|(_, row)| !row.path.starts_with("style."))
+        .filter_map(|(_, row)| {
+            // The value only types the props type's field, which a dry run
+            // does not write.
+            let value = match &row.target {
+                EditTarget::Literal { value, .. } => value.clone(),
+                EditTarget::Missing { default, .. } => {
+                    default.clone().unwrap_or(EditValue::Number(0.0))
+                }
+                _ => return None,
+            };
+            Some((row.path.as_str(), &row.target, value))
+        })
+        .collect();
+    let props: Vec<LiftProp> = rows
+        .iter()
+        .map(|(prop, target, value)| LiftProp {
+            prop,
+            target,
+            value,
+        })
+        .collect();
+    plan_lift(text, element, &props).err()
 }
 
 /// The last `.` segment of the tag name of `element` in `text`: `PriceTag`

@@ -1242,6 +1242,9 @@ mod tests {
                 .collect(),
             table: None,
             component: None,
+            enclosing: None,
+            defaults: Vec::new(),
+            lift_lock: None,
         }
     }
 

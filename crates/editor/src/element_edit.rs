@@ -24,7 +24,9 @@ use celesta_react_bridge::{
     ComponentPropertySchema, LayerSourceReport, PrimitivePropertyField, PrimitivePropertyTable,
     ReceivedProps, ReceivedValue, SourcePos,
 };
-use celesta_source_edit::{EditTarget, EditValue, ElementRef, LockReason, format_number};
+use celesta_source_edit::{
+    DefaultTarget, EditTarget, EditValue, ElementRef, LiftLock, LockReason, format_number,
+};
 use gpui_kit::Context;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -177,6 +179,18 @@ pub(crate) struct ElementTargets {
     /// The props written at the enclosing component's call, when that call
     /// is found and readable.
     pub(crate) component: Option<ComponentTargets>,
+    /// The component the element is written in (`C`), as a call names it;
+    /// `None` when it is in none (a scene function).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) enclosing: Option<String>,
+    /// Where the default of each parameter a row or an input reads is
+    /// written in `C`, in the order the rows read them.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) defaults: Vec<(String, DefaultTarget)>,
+    /// Why lifting the literals and absent props written on the element
+    /// into new props of `C` fails, tried for all of them at once.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) lift_lock: Option<LiftLock>,
 }
 
 impl ElementTargets {

@@ -50,6 +50,7 @@ mod property_panel_view;
 mod react_audio;
 mod refresh;
 mod render;
+mod scope;
 mod source;
 #[cfg(test)]
 mod tests;

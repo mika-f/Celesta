@@ -80,6 +80,7 @@ mod element_edit;
 mod element_rows;
 mod held_scene;
 mod inline_text_view;
+mod scope;
 
 #[test]
 fn background_workers_coalesce_queued_requests() {
@@ -1260,6 +1261,9 @@ fn single_row(text: &str, prop: &str, target: EditTarget) -> ElementTargets {
         )],
         table: None,
         component: None,
+        enclosing: None,
+        defaults: Vec::new(),
+        lift_lock: None,
     }
 }
 
@@ -2373,6 +2377,9 @@ fn impact_and_the_locked_summary_stay_transform_only() {
         ],
         table: Some(text_table()),
         component: None,
+        enclosing: None,
+        defaults: Vec::new(),
+        lift_lock: None,
     };
 
     assert_eq!(targets.written_at(), Some(&scene));

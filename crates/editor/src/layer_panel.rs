@@ -707,6 +707,9 @@ mod tests {
             ],
             table: None,
             component: None,
+            enclosing: None,
+            defaults: Vec::new(),
+            lift_lock: None,
         };
         assert_eq!(
             locked_summary(&targets),
