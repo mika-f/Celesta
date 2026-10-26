@@ -44,7 +44,7 @@ function PriceTag({ label }: PriceTagProps) {
 
 /** A mark every scene draws: under "Shared value", its fill changes in every scene. */
 function Mark() {
-  return <Rect x={WIDTH - 120} y={40} width={80} height={24} cornerRadius={6} fill={ACCENT} />;
+  return <Rect x={WIDTH - 120} y={40} width={80} height={24} cornerRadius={6} fill="#E4572E" />;
 }
 
 /** A title that fades in over the first 20 frames it reads. */
