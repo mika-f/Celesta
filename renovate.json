@@ -48,6 +48,19 @@
       "versioningTemplate": "semver-coerced"
     }
   ],
+  "ignorePaths": [
+    "**/node_modules/**",
+    "**/bower_components/**",
+    "**/vendor/**",
+    "**/__tests__/**",
+    "**/test/**",
+    "**/tests/**",
+    "**/__fixtures__/**",
+    "*/**/examples/**",
+    "examples/!(versus)/**",
+    "examples/versus/*",
+    "examples/versus/!(bench)/**"
+  ],
   "packageRules": [
     {
       "description": "Workspace packages, which are not published.",
