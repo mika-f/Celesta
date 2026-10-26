@@ -27,15 +27,25 @@ function Tag({ label }: { label: string }) {
   );
 }
 
-function Intro() {
+/** A title that fades in over the first 20 frames it reads. */
+function Title() {
   const frame = useCurrentFrame();
   return (
+    <Text x={80} y={120} opacity={interpolate(frame, [0, 20], [0, 1], { extrapolateRight: 'clamp' })} style={type(72)}>
+      Scene timing
+    </Text>
+  );
+}
+
+function Intro() {
+  return (
     <Group>
+      {/* No timing of its own: "Set timing" wraps it. */}
       <Rect width={WIDTH} height={HEIGHT} fill={INK} />
-      {/* No timing of its own: "Set timing" wraps it, and its fade then starts with the new Sequence. */}
-      <Text x={80} y={120} opacity={interpolate(frame, [0, 20], [0, 1], { extrapolateRight: 'clamp' })} style={type(72)}>
-        Scene timing
-      </Text>
+      {/* The <Text> is Title's root, so it can't be wrapped; the <Group> can, and Title's fade then starts with it. */}
+      <Group>
+        <Title />
+      </Group>
       {/* A window of its own: its band's edges and body drag. */}
       <Sequence from={30} durationInFrames={40}>
         <Text x={80} y={240} style={type(40, ACCENT)}>A Sequence of its own</Text>

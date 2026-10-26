@@ -23,13 +23,18 @@ scene's end drags on the **Chapters** row.
 - Select the circle in Main: its `<Sequence>`'s `from` is written as an
   expression, so the start edge and the middle are locked and say why; the
   end drags.
-- Select the **Scene timing** title in Intro, move the playhead into Intro,
-  and click **Set timing** on its band: the title is wrapped in a
-  `<Sequence>` from the playhead to the end of Intro, and its fade starts
-  there.
+- Select Intro's dark background, move the playhead 45 frames into Intro,
+  and click **Set timing** on its band: the `<Rect>` is wrapped in
+  `<Sequence from={45} durationInFrames={45}>`, and `Sequence` is added to
+  the import.
+- Select the **Scene timing** title: **Set timing** is disabled, since its
+  `<Text>` is the root of `Title`. Choose **Select** on the `<Group>` row
+  under **Called from** and click **Set timing** there: the `<Group>` is
+  wrapped, and the title's fade, which `Title` reads from its own frame, now
+  starts at the playhead.
 - Select the orange tag's `<Rect>`, which Intro and Main both draw: **Set
   timing** is disabled under **This scene** and wraps the `<Rect>` inside
-  `Tag` under **Shared value**.
+  `Tag` under **Shared value**, for both scenes.
 
 ## Reproduce
 
