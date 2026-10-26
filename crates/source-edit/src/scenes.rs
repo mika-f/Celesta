@@ -13,10 +13,10 @@ use oxc_ast::ast::{
 use oxc_ast_visit::Visit;
 use oxc_span::GetSpan;
 
+use crate::imports::Module;
 use crate::inputs::inputs_at;
 use crate::resolve::{EditTarget, LockReason, Span, property_insert_at, resolve_value_at};
 use crate::shape::{span_of, string_of};
-use crate::timing::Module;
 use crate::{parse_checked_as, source_type_of};
 
 /// A `defineScenes([...])` call.
