@@ -462,8 +462,10 @@ fn writes_any(written: &[String], params: &[&str]) -> bool {
 /// Which instances an edit of the element changes under `scope` (the
 /// hovered option, else the chosen one), for the timeline bands and the
 /// header: "This scene", those `S` makes; "Shared value", all but those
-/// whose call sets its own value (as `calls` know them); no scope, design
-/// 2's rule (those of [`ElementTargets::written_at`], else all).
+/// whose call sets its own value (as `calls` know them) when every row it
+/// writes passes through, else all (a value written on the element
+/// changes every instance); no scope, design 2's rule (those of
+/// [`ElementTargets::written_at`], else all).
 pub(crate) fn impact_filter(
     scope: Option<Scope>,
     targets: &ElementTargets,
@@ -475,6 +477,7 @@ pub(crate) fn impact_filter(
         .map(|component| &component.call_site);
     match (scope, call) {
         (Some(Scope::ThisScene), Some(call)) => ImpactFilter::Through(call.clone()),
+        (Some(Scope::Shared), _) if !all_pass_through(targets) => ImpactFilter::All,
         (Some(Scope::Shared), _) => {
             let params = read_params(targets);
             let own = calls
@@ -489,6 +492,19 @@ pub(crate) fn impact_filter(
             ImpactFilter::Through(site.clone())
         }),
     }
+}
+
+/// Whether every row and input "Shared value" writes for the element
+/// passes through to a parameter of `C` (Component-section rows are
+/// outside the scope).
+fn all_pass_through(targets: &ElementTargets) -> bool {
+    targets
+        .entries()
+        .into_iter()
+        .filter(|(key, target)| {
+            !matches!(key, PropKey::CallSite(_)) && in_scope(Scope::Shared, &target.target)
+        })
+        .all(|(_, target)| matches!(target.target, EditTarget::PassThrough { .. }))
 }
 
 /// The scope the impact shows: the `hovered` option while it is allowed

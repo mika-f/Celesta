@@ -1074,30 +1074,13 @@ fn impact_filter_follows_the_chosen_scope() {
     assert_eq!(impact.instance_count, 1);
     assert!(impact.other_scenes.is_empty());
 
-    // Shared value: every instance but those whose call sets its own.
+    // Shared value: a value written on the element (`x`) changes every
+    // instance, also those whose call sets its own for another parameter.
     let shared = impact_filter(Some(Scope::Shared), &targets, Some(&calls));
-    assert_eq!(shared, ImpactFilter::Except(vec![s()]));
+    assert_eq!(shared, ImpactFilter::All);
     let impact = impact_under(&shared);
-    assert_eq!(impact.instance_count, 2);
+    assert_eq!(impact.instance_count, 3);
     assert_eq!(impact.other_scenes, ["Intro", "Outro"]);
-    // Until the calls are read, no scene is known to set its own.
-    assert_eq!(
-        impact_filter(Some(Scope::Shared), &targets, None),
-        ImpactFilter::Except(Vec::new())
-    );
-    // A call that sets only props no row reads keeps the shared value.
-    let label_only = SceneCalls {
-        calls: vec![
-            Some((s(), vec!["label".to_owned()])),
-            Some((intro_call(), vec!["label".to_owned()])),
-            Some((outro_call(), vec!["label".to_owned()])),
-        ],
-        ..calls.clone()
-    };
-    assert_eq!(
-        impact_filter(Some(Scope::Shared), &targets, Some(&label_only)),
-        ImpactFilter::Except(Vec::new())
-    );
 
     // No scope: design 2's rule. `x` is written on the element, so an
     // edit reaches every instance...
@@ -1122,6 +1105,40 @@ fn impact_filter_follows_the_chosen_scope() {
     assert_eq!(
         impact_filter(None, &through, None),
         ImpactFilter::Through(s())
+    );
+
+    // Shared value with every row passing through: every instance but
+    // those whose call sets its own.
+    let sets_x = SceneCalls {
+        calls: vec![
+            Some((s(), vec!["rectX".to_owned()])),
+            Some((intro_call(), Vec::new())),
+            Some((outro_call(), Vec::new())),
+        ],
+        ..calls.clone()
+    };
+    let shared = impact_filter(Some(Scope::Shared), &through, Some(&sets_x));
+    assert_eq!(shared, ImpactFilter::Except(vec![s()]));
+    let impact = impact_under(&shared);
+    assert_eq!(impact.instance_count, 2);
+    assert_eq!(impact.other_scenes, ["Intro", "Outro"]);
+    // Until the calls are read, no scene is known to set its own.
+    assert_eq!(
+        impact_filter(Some(Scope::Shared), &through, None),
+        ImpactFilter::Except(Vec::new())
+    );
+    // A call that sets only props no row reads keeps the shared value.
+    let label_only = SceneCalls {
+        calls: vec![
+            Some((s(), vec!["label".to_owned()])),
+            Some((intro_call(), vec!["label".to_owned()])),
+            Some((outro_call(), vec!["label".to_owned()])),
+        ],
+        ..calls.clone()
+    };
+    assert_eq!(
+        impact_filter(Some(Scope::Shared), &through, Some(&label_only)),
+        ImpactFilter::Except(Vec::new())
     );
 }
 
@@ -1162,8 +1179,8 @@ fn hovering_previews_the_other_option() {
     let calls = price_sets_its_own();
     let hovered = previewed_scope(Some(Scope::Shared), &open, None);
     let impact = impact_under(&impact_filter(hovered, &targets, Some(&calls)));
-    assert_eq!(impact.instance_count, 2);
-    assert!(impact.own_bands.is_empty());
+    assert_eq!(impact.instance_count, 3);
+    assert_eq!(impact.other_scenes, ["Intro", "Outro"]);
     let chosen = previewed_scope(None, &open, None);
     let impact = impact_under(&impact_filter(chosen, &targets, Some(&calls)));
     assert_eq!(impact.instance_count, 1);
