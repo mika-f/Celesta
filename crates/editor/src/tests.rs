@@ -2435,14 +2435,18 @@ fn price_tag_schemas()
     std::collections::BTreeMap::from([(
         "PriceTag".to_owned(),
         std::collections::BTreeMap::from([
-            ("label".to_owned(), schema_number(None, None)),
-            ("tone".to_owned(), schema_number(Some(0.0), Some(10.0))),
+            ("label".to_owned(), schema_number(None, None).into()),
+            (
+                "tone".to_owned(),
+                schema_number(Some(0.0), Some(10.0)).into(),
+            ),
             (
                 "on".to_owned(),
                 celesta_react_bridge::ComponentPropertyField::Boolean {
                     label: None,
                     default_value: false,
-                },
+                }
+                .into(),
             ),
         ]),
     )])

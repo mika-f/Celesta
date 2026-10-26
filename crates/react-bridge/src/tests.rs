@@ -10,9 +10,10 @@ use crate::protocol::{
     PropertyInputsMessage, ReadyMessage, Request, Response, ready_property_order,
 };
 use crate::types::{
-    ComponentPropertyField, ElementKind, FrameSpan, LayerSource, LayerSourceReport,
-    PrimitivePropertyField, PrimitiveSize, PropOverride, ReactAudioClipDescriptor, ReactChapter,
-    ReceivedProps, ReceivedValue, SourcePos, TimingWindow, chapter_at,
+    ComponentPropertyField, ComponentSchemaField, ElementKind, FrameSpan, LayerSource,
+    LayerSourceReport, PrimitivePropertyField, PrimitiveSize, PropOverride,
+    ReactAudioClipDescriptor, ReactChapter, ReceivedProps, ReceivedValue, SourcePos, TimingWindow,
+    chapter_at,
 };
 use celesta_composition::{
     Animatable, AssetLocation, AudioDuck, LayerFilter, ShaderParam, ShaderParamType, ShaderSource,
@@ -63,7 +64,12 @@ fn deserializes_component_schemas_from_the_ready_message() {
         },
         "componentSchemas": {
             "BossIntroduction": {
-                "bossName": {"type": "string", "label": "Boss Name", "defaultValue": "Golem"},
+                "bossName": {
+                    "type": "string",
+                    "label": "Boss Name",
+                    "defaultValue": "Golem",
+                    "required": true
+                },
                 "level": {
                     "type": "number",
                     "defaultValue": 1,
@@ -88,20 +94,27 @@ fn deserializes_component_schemas_from_the_ready_message() {
     let schema = component_schemas.get("BossIntroduction").unwrap();
     assert_eq!(
         schema.get("bossName"),
-        Some(&ComponentPropertyField::String {
-            label: Some("Boss Name".to_owned()),
-            default_value: "Golem".to_owned(),
+        Some(&ComponentSchemaField {
+            field: ComponentPropertyField::String {
+                label: Some("Boss Name".to_owned()),
+                default_value: "Golem".to_owned(),
+            },
+            required: true,
         })
     );
+    // A field without `required` is optional.
     assert_eq!(
         schema.get("level"),
-        Some(&ComponentPropertyField::Number {
-            label: None,
-            default_value: 1.0,
-            min: Some(1.0),
-            max: Some(999.0),
-            step: None,
-            integer: Some(true),
+        Some(&ComponentSchemaField {
+            field: ComponentPropertyField::Number {
+                label: None,
+                default_value: 1.0,
+                min: Some(1.0),
+                max: Some(999.0),
+                step: None,
+                integer: Some(true),
+            },
+            required: false,
         })
     );
 }

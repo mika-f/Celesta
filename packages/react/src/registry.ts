@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 
 import type { JsonValue } from './generated/serde_json/JsonValue';
+import type { RequiredKeys } from './property-tables';
 
 // project.json can place a registered component instance on the timeline
 // (`TimelineContent::Component { component, props }`). celesta-evaluator
@@ -45,8 +46,26 @@ export type ComponentPropertyField =
   // directory, and the default against the entry's directory.
   | { type: 'path'; label?: string; defaultValue: string };
 
+/**
+ * A field as a component's schema declares it: `required` when the props
+ * type requires the prop, so the editor never offers to remove it from a
+ * call.
+ */
+export type ComponentSchemaField = ComponentPropertyField & { required?: boolean };
+
+/**
+ * The field of prop `K`: declared `required` exactly when `P` requires `K`.
+ * A schema not typed by its props (`Record<string, JsonValue>`) may declare
+ * either.
+ */
+type SchemaFieldOf<P, K extends keyof P> = string extends keyof P
+  ? ComponentSchemaField
+  : K extends RequiredKeys<P>
+    ? ComponentPropertyField & { required: true }
+    : ComponentPropertyField & { required?: false };
+
 export type ComponentPropertySchema<Props extends Record<string, JsonValue> = Record<string, JsonValue>> = {
-  [K in keyof Props]: ComponentPropertyField;
+  [K in keyof Props]: SchemaFieldOf<Props, K>;
 };
 
 interface RegistryEntry {

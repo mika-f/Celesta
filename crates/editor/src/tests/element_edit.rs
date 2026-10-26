@@ -1567,7 +1567,8 @@ fn component_props_use_the_registered_schema() {
             celesta_react_bridge::ComponentPropertyField::Color {
                 label: None,
                 default_value: "#000000".to_owned(),
-            },
+            }
+            .into(),
         )]),
     )]);
 

@@ -259,7 +259,9 @@ These differ from, or settle what the spec left open:
   call through a pass-through. Not removable: a prop declared `required`, an
   input (a value an expression reads, not a prop), a `Text`'s children,
   and an absent, locked, or keyframed prop. A Component-section prop is
-  removable, typed by a schema or not. The × is hidden on a row that can't
+  removable unless the component's `registerComponent()` schema declares
+  it `required`, and so is a pass-through removed at the call; without a
+  schema, any is (`docs/handoff/2026-10-26-required-component-props.md`). The × is hidden on a row that can't
   remove, during a scrub, and while its removal is being written; it is a
   hover shortcut for the empty-and-commit path, which the keyboard reaches.
 - **An emptied field of a row that can't remove its prop writes nothing**

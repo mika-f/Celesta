@@ -145,7 +145,7 @@ export type {
 } from './subtitles';
 
 export { getComponentSchema, registerComponent } from './registry';
-export type { ComponentDefinition, ComponentPropertyField, ComponentPropertySchema } from './registry';
+export type { ComponentDefinition, ComponentPropertyField, ComponentPropertySchema, ComponentSchemaField } from './registry';
 
 export { defineProjectProperties, getProjectProperty, listProjectProperties } from './properties';
 export type { ProjectPropertyField, ProjectPropertySchema } from './properties';

@@ -176,10 +176,14 @@ function NameCaption({ name, role }: LowerThirdProps) {
   return <LowerThird title={name} subtitle={role} />;
 }
 registerComponent<LowerThirdProps>('LowerThird', NameCaption, {
-  name: { type: 'string', defaultValue: 'Mira' },
-  role: { type: 'string', defaultValue: 'Host' },
+  name: { type: 'string', defaultValue: 'Mira', required: true },
+  role: { type: 'string', defaultValue: 'Host', required: true },
 });
 ```
+
+A schema field must say `required: true` exactly when the props type
+requires that prop (`tsc` fails otherwise); the editor then never removes
+it from a call. Optional props (`role?: string`) leave `required` out.
 
 Set the project's `settings.reactEntry` to the entry path so tools can find
 the component schemas. Exporting the JSON project on its own, or with a name

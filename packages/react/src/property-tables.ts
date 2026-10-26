@@ -22,7 +22,7 @@ export type PrimitivePropertyField = PrimitiveFieldType & { required?: boolean }
 type PropKey<P> = Extract<keyof P, string>;
 
 /** The keys of `P` that are not optional. */
-type RequiredKeys<P> = { [K in keyof P]-?: {} extends Pick<P, K> ? never : K }[keyof P];
+export type RequiredKeys<P> = { [K in keyof P]-?: {} extends Pick<P, K> ? never : K }[keyof P];
 
 /** The field of prop `K`: declared `required` exactly when `P` requires `K`. */
 type FieldOf<P, K extends keyof P> = K extends RequiredKeys<P>

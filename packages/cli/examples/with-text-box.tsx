@@ -24,7 +24,7 @@ export function Caption({ text }: CaptionProps) {
 }
 
 const captionSchema: ComponentPropertySchema<CaptionProps> = {
-  text: { type: 'string', label: 'Text', defaultValue: '字幕' },
+  text: { type: 'string', label: 'Text', defaultValue: '字幕', required: true },
 };
 
 registerComponent('Caption', Caption, captionSchema);

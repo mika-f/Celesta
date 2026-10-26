@@ -17,9 +17,12 @@ function BossIntroduction({ bossName, level }: BossIntroductionProps) {
   );
 }
 
+// Both props are required by `BossIntroductionProps`, so both fields say
+// `required: true` (the build fails otherwise); the editor never offers to
+// remove them from a call.
 const bossIntroductionSchema: ComponentPropertySchema<BossIntroductionProps> = {
-  bossName: { type: 'string', label: 'Boss Name', defaultValue: 'Golem' },
-  level: { type: 'number', label: 'Level', defaultValue: 1, min: 1, max: 999 },
+  bossName: { type: 'string', label: 'Boss Name', defaultValue: 'Golem', required: true },
+  level: { type: 'number', label: 'Level', defaultValue: 1, min: 1, max: 999, required: true },
 };
 
 registerComponent('BossIntroduction', BossIntroduction,bossIntroductionSchema);

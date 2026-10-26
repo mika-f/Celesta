@@ -622,8 +622,8 @@ impl EditorView {
             .child(inspector_section("Component", cx))
             .child(inspector_row("Registered as", component.name.clone(), cx));
         match self.component_schemas.get(&component.name) {
-            Some(schema) => schema.iter().fold(panel, |panel, (key, field)| {
-                let (label, value) = property_display(key, field, component.props.get(key));
+            Some(schema) => schema.iter().fold(panel, |panel, (key, entry)| {
+                let (label, value) = property_display(key, &entry.field, component.props.get(key));
                 panel.child(inspector_row(label, value, cx))
             }),
             None if self.component_schema_pending => {

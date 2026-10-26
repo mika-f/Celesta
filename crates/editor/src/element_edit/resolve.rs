@@ -109,7 +109,10 @@ pub(super) fn apply_component_schema(
         return;
     };
     for prop in &mut component.props {
-        let Some(field) = schema.get(&prop.name).map(schema_field) else {
+        let Some(field) = schema
+            .get(&prop.name)
+            .map(|entry| schema_field(&entry.field))
+        else {
             continue;
         };
         let target = std::mem::replace(
