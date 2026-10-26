@@ -70,6 +70,29 @@ pub fn layer_frame(scene: &Scene, regions: &[HitRegion], id: &str) -> Option<Lay
     })
 }
 
+/// The map from group `id`'s children space to scene pixels, in
+/// `LayerFrame::parent`'s layout: the group's parents' map composed with its
+/// own transform. It comes from the layer tree alone, so an empty group has
+/// one. `None` when the scene has no such layer, the layer is not a group, or
+/// the group itself or an ancestor turns in 3D or has a perspective.
+pub fn parent_space(scene: &Scene, id: &str) -> Option<[f64; 6]> {
+    let (layer, parent) = find(&scene.layers, Affine::IDENTITY, id)??;
+    let LayerContent::Group { .. } = &layer.content else {
+        return None;
+    };
+    if turns_in_3d(&layer.transform) {
+        return None;
+    }
+    let space = parent.multiply(Affine::from_transform(&layer.transform));
+    Some([space.a, space.b, space.c, space.d, space.tx, space.ty].map(f64::from))
+}
+
+/// Whether `transform`'s map is not an affine one: it turns in 3D or has a
+/// perspective.
+fn turns_in_3d(transform: &EvaluatedTransform) -> bool {
+    transform.rotation_x != 0.0 || transform.rotation_y != 0.0 || transform.perspective.is_some()
+}
+
 /// The layer `id` and the map from its parent's space to the scene. The outer
 /// `None` is "not in these layers"; the inner one, "found below a layer whose
 /// map is not affine". A group's own anchor plays no part, as in the renderer,
@@ -90,13 +113,7 @@ fn find<'a>(layers: &'a [Layer], parent: Affine, id: &str) -> Option<Option<(&'a
         );
         match found {
             None => {}
-            Some(_)
-                if transform.rotation_x != 0.0
-                    || transform.rotation_y != 0.0
-                    || transform.perspective.is_some() =>
-            {
-                return Some(None);
-            }
+            Some(_) if turns_in_3d(transform) => return Some(None),
             Some(found) => return Some(found),
         }
     }
@@ -406,6 +423,74 @@ mod tests {
         assert_eq!(frame.leaves, ["a", "b"]);
         let leaf = layer_frame(&scene, &regions, "c").expect("a frame");
         assert_eq!(leaf.leaves, ["c"]);
+    }
+
+    #[test]
+    fn an_empty_group_has_a_parent_space() {
+        let transform = EvaluatedTransform {
+            position: at(100.0, 50.0),
+            ..EvaluatedTransform::default()
+        };
+        let scene = scene(vec![group("g", transform, Vec::new())]);
+        let space = parent_space(&scene, "g").expect("a children space");
+        assert_close(space, [1.0, 0.0, 0.0, 1.0, 100.0, 50.0]);
+    }
+
+    #[test]
+    fn a_nested_rotated_scaled_group_composes_its_ancestors() {
+        let outer = EvaluatedTransform {
+            position: at(10.0, 20.0),
+            ..EvaluatedTransform::default()
+        };
+        let inner = EvaluatedTransform {
+            position: at(30.0, 40.0),
+            rotation: 30.0,
+            scale: at(2.0, 2.0),
+            ..EvaluatedTransform::default()
+        };
+        let scene = scene(vec![group(
+            "outer",
+            outer,
+            vec![group("inner", inner, vec![leaf("a")])],
+        )]);
+        let space = parent_space(&scene, "inner").expect("a children space");
+        // The renderer's entries, rounded to f32.
+        let (sin, cos) = 30.0_f64.to_radians().sin_cos();
+        let (sin, cos) = (f64::from((sin * 2.0) as f32), f64::from((cos * 2.0) as f32));
+        assert_close(space, [cos, sin, -sin, cos, 40.0, 60.0]);
+    }
+
+    #[test]
+    fn a_group_turned_in_3d_has_none() {
+        let turned = EvaluatedTransform {
+            rotation_x: 10.0,
+            ..EvaluatedTransform::default()
+        };
+        let perspective = EvaluatedTransform {
+            perspective: Some(500.0),
+            ..EvaluatedTransform::default()
+        };
+        // The group itself turns.
+        let scene_turned = scene(vec![group("g", turned, vec![leaf("a")])]);
+        assert_eq!(parent_space(&scene_turned, "g"), None);
+        // A flat group under an ancestor with a perspective.
+        let scene_in_perspective = scene(vec![group(
+            "outer",
+            perspective,
+            vec![group("g", EvaluatedTransform::default(), vec![leaf("a")])],
+        )]);
+        assert_eq!(parent_space(&scene_in_perspective, "g"), None);
+    }
+
+    #[test]
+    fn a_leaf_has_none() {
+        let scene = scene(vec![group(
+            "g",
+            EvaluatedTransform::default(),
+            vec![leaf("a")],
+        )]);
+        assert_eq!(parent_space(&scene, "a"), None);
+        assert_eq!(parent_space(&scene, "missing"), None);
     }
 
     #[test]
