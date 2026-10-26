@@ -19,7 +19,9 @@ mod scope;
 mod shape;
 mod timing;
 
-pub use add::{AddLock, Added, NewElement, NewKind, Timing, accepts_children, add_child, add_lock};
+pub use add::{
+    AddLock, Added, NewElement, NewKind, Timing, accepts_children, add_child, add_lock, add_locks,
+};
 pub use apply::{ApplyError, Edit, apply, expression, format_number, write_value};
 pub use attributes::{text_style_path, written_attributes};
 pub use imports::{

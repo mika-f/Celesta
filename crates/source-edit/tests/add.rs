@@ -1,6 +1,6 @@
 use celesta_source_edit::{
     AddLock, ElementRef, ImportLock, NewElement, NewKind, Timing, accepts_children, add_child,
-    add_lock, apply, element_at, parses,
+    add_lock, add_locks, apply, element_at, parses,
 };
 
 /// The element whose `<` is the first `needle` in `text` (ASCII only).
@@ -360,6 +360,87 @@ fn a_clashing_binding_locks() {
     );
     assert_eq!(add_child(text, &parent, &rect(), Some(&TIMING)), Err(lock));
     assert_eq!(add_lock(text, &parent, NewKind::Ellipse, false), None);
+}
+
+#[test]
+fn every_kind_s_lock_at_once() {
+    let kinds = [
+        NewKind::Rect,
+        NewKind::Ellipse,
+        NewKind::Circle,
+        NewKind::Text,
+        NewKind::Image,
+        NewKind::Video,
+    ];
+    let clash = |name: &str| {
+        Some(AddLock::Import(ImportLock::Clash {
+            name: name.to_string(),
+        }))
+    };
+    let locks = |each: [Option<AddLock>; 6]| Some(kinds.into_iter().zip(each).collect::<Vec<_>>());
+    let none = || [None, None, None, None, None, None];
+
+    for text in [
+        format!("{IMPORTS}const a = <Group></Group>;\n"),
+        "const a = <Group />;\n".to_string(),
+    ] {
+        let parent = element(&text, "<Group");
+        for wrapped in [false, true] {
+            assert_eq!(add_locks(&text, &parent, &kinds, wrapped), locks(none()));
+        }
+    }
+
+    // `Rect` clashes; so does `Sequence`, for a wrapped addition only, and
+    // a wrapped `Rect` names `Rect`, imported first.
+    let text = "import { Group } from '@celesta/react';\n\nconst Rect = () => null;\nfunction Sequence() {}\n\nconst a = (\n  <Group>\n  </Group>\n);\n";
+    let parent = element(text, "<Group");
+    assert_eq!(
+        add_locks(text, &parent, &kinds, false),
+        locks([clash("Rect"), None, None, None, None, None])
+    );
+    let sequence = || clash("Sequence");
+    assert_eq!(
+        add_locks(text, &parent, &kinds, true),
+        locks([
+            clash("Rect"),
+            sequence(),
+            sequence(),
+            sequence(),
+            sequence(),
+            sequence()
+        ])
+    );
+
+    // `Circle` clashes, from the other module.
+    let text = "import { Group } from '@celesta/react';\n\nconst Circle = 1;\n\nconst a = <Group></Group>;\n";
+    let parent = element(text, "<Group");
+    for wrapped in [false, true] {
+        assert_eq!(
+            add_locks(text, &parent, &kinds, wrapped),
+            locks([None, None, clash("Circle"), None, None, None])
+        );
+        for kind in kinds {
+            let each = add_locks(text, &parent, &kinds, wrapped)
+                .unwrap()
+                .into_iter()
+                .find(|(of, _)| *of == kind)
+                .and_then(|(_, lock)| lock);
+            assert_eq!(add_lock(text, &parent, kind, wrapped), each);
+        }
+    }
+    // No children region: every kind's lock is `NoChildrenRegion`.
+    let text = format!("{IMPORTS}const Box = ({{ children }}) => <Group>{{children}}</Group>;\n");
+    let parent = element(&text, "<Group");
+    assert_eq!(add_locks(&text, &parent, &kinds, false), None);
+    // Nor in a text that does not parse.
+    let text = format!("{IMPORTS}const a = <Group></Group>;\n");
+    let parent = element(&text, "<Group");
+    let broken = format!("{text}<");
+    assert_eq!(add_locks(&broken, &parent, &kinds, true), None);
+    assert_eq!(
+        add_lock(&broken, &parent, NewKind::Rect, true),
+        Some(AddLock::NoChildrenRegion)
+    );
 }
 
 #[test]

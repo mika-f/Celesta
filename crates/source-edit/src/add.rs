@@ -2,14 +2,14 @@
 
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
-    ArrowFunctionExpression, BindingIdentifier, Expression, Function, JSXChild, JSXElement,
+    ArrowFunctionExpression, BindingIdentifier, Expression, Function, JSXChild, JSXElement, Program,
 };
 use oxc_ast_visit::Visit;
 use oxc_span::GetSpan;
 use oxc_syntax::scope::ScopeFlags;
 
 use crate::apply::{Edit, write_value};
-use crate::imports::{ImportLock, ImportName, PACKAGE, ensure_imports};
+use crate::imports::{ImportLock, ImportName, PACKAGE, ensure_imports_in};
 use crate::insert::indent_unit;
 use crate::locate::ElementRef;
 use crate::resolve::{EditValue, LiteralForm, Span};
@@ -197,20 +197,44 @@ impl AddLock {
 pub fn accepts_children(text: &str, element: &ElementRef) -> bool {
     let alloc = Allocator::default();
     let (program, failed) = parse_checked(text, &alloc);
-    if failed {
-        return false;
-    }
+    !failed && has_region(&program, element)
+}
+
+/// [`accepts_children`] in a program that parsed without error.
+fn has_region(program: &Program<'_>, element: &ElementRef) -> bool {
     let mut find = FindParent::new(element.start);
-    find.visit_program(&program);
+    find.visit_program(program);
     find.found.is_some_and(|parent| !parent.prop_only)
 }
 
 /// What would refuse adding a `kind` (wrapped or not) under `parent`, checked when the menu opens.
 pub fn add_lock(text: &str, parent: &ElementRef, kind: NewKind, wrapped: bool) -> Option<AddLock> {
-    if !accepts_children(text, parent) {
-        return Some(AddLock::NoChildrenRegion);
+    match add_locks(text, parent, &[kind], wrapped) {
+        Some(mut locks) => locks.pop().and_then(|(_, lock)| lock),
+        None => Some(AddLock::NoChildrenRegion),
     }
-    tags(text, kind, wrapped).err().map(AddLock::Import)
+}
+
+/// [`add_lock`] of each of `kinds`, in order, the text parsed once; `None`
+/// when `parent` has no children region (see [`accepts_children`]), which
+/// locks every kind with [`AddLock::NoChildrenRegion`].
+pub fn add_locks(
+    text: &str,
+    parent: &ElementRef,
+    kinds: &[NewKind],
+    wrapped: bool,
+) -> Option<Vec<(NewKind, Option<AddLock>)>> {
+    let alloc = Allocator::default();
+    let (program, failed) = parse_checked(text, &alloc);
+    if failed || !has_region(&program, parent) {
+        return None;
+    }
+    let lock = |kind| {
+        tags(text, &program, kind, wrapped)
+            .err()
+            .map(AddLock::Import)
+    };
+    Some(kinds.iter().map(|&kind| (kind, lock(kind))).collect())
 }
 
 /// The edits and where the new element's `<` is in the edited text (1-based line and column, as the runtime reports positions).
@@ -227,8 +251,8 @@ pub struct Added {
 /// The new lines are indented one [`indent_unit`] deeper than the line of
 /// the parent's opening tag. The element goes after the last child that is
 /// not whitespace, else between the tags; a self-closing parent is opened.
-/// The import edits come first: one per module, as [`ensure_imports`]
-/// writes them.
+/// The import edits come first: one per module, as
+/// [`ensure_imports`](crate::ensure_imports) writes them.
 pub fn add_child(
     text: &str,
     parent: &ElementRef,
@@ -246,7 +270,7 @@ pub fn add_child(
         .found
         .filter(|found| !found.prop_only)
         .ok_or(AddLock::NoChildrenRegion)?;
-    let tags = tags(text, new.kind(), timing.is_some()).map_err(AddLock::Import)?;
+    let tags = tags(text, &program, new.kind(), timing.is_some()).map_err(AddLock::Import)?;
 
     let start = parent.start as usize;
     let line_start = text[..start].rfind('\n').map_or(0, |i| i + 1);
@@ -348,9 +372,15 @@ struct Tags {
     edits: Vec<Edit>,
 }
 
-/// [`Tags`] for a `kind`: one [`ensure_imports`] per module, so the names a
+/// [`Tags`] for a `kind` in `text`, parsed without error as `program`: one
+/// [`ensure_imports`](crate::ensure_imports) per module, so the names a
 /// module needs land in one edit.
-fn tags(text: &str, kind: NewKind, wrapped: bool) -> Result<Tags, ImportLock> {
+fn tags(
+    text: &str,
+    program: &Program<'_>,
+    kind: NewKind,
+    wrapped: bool,
+) -> Result<Tags, ImportLock> {
     let shapes = kind.module() == SHAPES;
     let react: Vec<&str> = [
         (!shapes).then_some(kind.tag()),
@@ -359,9 +389,9 @@ fn tags(text: &str, kind: NewKind, wrapped: bool) -> Result<Tags, ImportLock> {
     .into_iter()
     .flatten()
     .collect();
-    let (react_edit, react_names) = ensure_imports(text, PACKAGE, &react)?;
+    let (react_edit, react_names) = ensure_imports_in(text, program, PACKAGE, &react)?;
     let (shapes_edit, shapes_names) = if shapes {
-        ensure_imports(text, SHAPES, &[kind.tag()])?
+        ensure_imports_in(text, program, SHAPES, &[kind.tag()])?
     } else {
         (None, Vec::new())
     };

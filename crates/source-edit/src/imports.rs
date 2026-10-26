@@ -62,7 +62,18 @@ pub fn ensure_imports(
             name: first.to_string(),
         });
     }
-    let file = Module::of(&program);
+    ensure_imports_in(text, &program, module, names)
+}
+
+/// [`ensure_imports`] in `text` already parsed (without error) as
+/// `program`.
+pub(crate) fn ensure_imports_in(
+    text: &str,
+    program: &Program<'_>,
+    module: &str,
+    names: &[&str],
+) -> Result<(Option<Edit>, Vec<ImportName>), ImportLock> {
+    let file = Module::of(program);
     let mut written = Vec::with_capacity(names.len());
     let mut missing: Vec<&str> = Vec::new();
     for &name in names {
@@ -84,7 +95,7 @@ pub fn ensure_imports(
     }
     let edit = file
         .extend(text, module, &missing)
-        .unwrap_or_else(|| file.new_line(text, &program, module, &missing));
+        .unwrap_or_else(|| file.new_line(text, program, module, &missing));
     Ok((Some(edit), written))
 }
 
