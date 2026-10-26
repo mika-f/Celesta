@@ -179,7 +179,7 @@ fn attribute_value(value: &EditValue, quote: char) -> String {
 
 /// What follows an attribute's name: nothing for `true` (the attribute
 /// alone), otherwise `=` and the value.
-fn after_name(value: &EditValue) -> String {
+pub(crate) fn after_name(value: &EditValue) -> String {
     match value {
         EditValue::Bool(true) => String::new(),
         _ => format!("={}", attribute_value(value, '"')),

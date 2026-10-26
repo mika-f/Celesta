@@ -7,6 +7,7 @@ mod apply;
 mod attributes;
 mod imports;
 mod inputs;
+mod insert;
 mod lift;
 mod locate;
 mod pass_through;
@@ -19,7 +20,9 @@ mod timing;
 
 pub use apply::{ApplyError, Edit, apply, expression, format_number, write_value};
 pub use attributes::{text_style_path, written_attributes};
+pub use imports::{ImportLock, ImportName, ensure_import, ensure_imports};
 pub use inputs::resolve_inputs;
+pub use insert::{WrapLock, indent_unit, wrap_element};
 pub use lift::{Lift, LiftLock, LiftProp, lift_name, plan_lift, plan_lift_avoiding};
 pub use locate::{ElementRef, element_at};
 pub use pass_through::{
@@ -77,6 +80,11 @@ pub(crate) fn parse_checked_as<'a>(
     let ret = Parser::new(alloc, text, source_type).parse();
     let failed = ret.fatal_error || ret.diagnostics.has_errors();
     (ret.program, failed)
+}
+
+/// The line break `text` writes: `\r\n` when it has one, else `\n`.
+pub(crate) fn line_break(text: &str) -> &'static str {
+    if text.contains("\r\n") { "\r\n" } else { "\n" }
 }
 
 /// The source type `path`'s extension names, TSX when it names none.
