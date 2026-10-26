@@ -265,6 +265,42 @@ fn imports_from_react_and_shapes() {
 }
 
 #[test]
+fn a_shapes_alias_or_namespace_is_written() {
+    let body = "\nconst a = (\n  <Group>\n  </Group>\n);\n";
+    let ellipse = NewElement::Ellipse {
+        x: 0.0,
+        y: 0.0,
+        width: 10.0,
+        height: 10.0,
+    };
+
+    // `import * as S`: `<S.Ellipse />`, the imports untouched.
+    let imports = "import { Group } from '@celesta/react';\nimport * as S from '@celesta/shapes';\n";
+    let text = format!("{imports}{body}");
+    let added = add_child(&text, &element(&text, "<Group"), &ellipse, None).unwrap();
+    assert_eq!(added.edits.len(), 1);
+    let after = apply(&text, &added.edits).unwrap();
+    assert!(
+        after.starts_with(&format!(
+            "{imports}\nconst a = (\n  <Group>\n    <S.Ellipse x={{0}} "
+        )),
+        "{after}"
+    );
+
+    // `Ellipse as E`: `<E />`.
+    let imports =
+        "import { Group } from '@celesta/react';\nimport { Ellipse as E } from '@celesta/shapes';\n";
+    let text = format!("{imports}{body}");
+    let after = add(&text, "<Group", &ellipse, None);
+    assert!(
+        after.starts_with(&format!(
+            "{imports}\nconst a = (\n  <Group>\n    <E x={{0}} "
+        )),
+        "{after}"
+    );
+}
+
+#[test]
 fn rect_and_sequence_both_new_land_in_one_import() {
     let body = "\nconst a = (\n  <Group>\n  </Group>\n);\n";
     let text = format!("import {{ Group, Text }} from '@celesta/react';\n{body}");
