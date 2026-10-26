@@ -821,6 +821,7 @@ fn two_scenes(element: SourcePos) -> OccurrenceIndex {
         chain: vec![element.clone(), call],
         ranges,
         max_per_frame: 1,
+        wrappers: Vec::new(),
     };
     OccurrenceIndex {
         elements: vec![ElementOccurrences {
