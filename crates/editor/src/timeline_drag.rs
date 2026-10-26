@@ -1134,6 +1134,12 @@ mod tests {
             moved(BandGrip::Start, 15),
             [vec![(45, 90)], vec![(55, 75), (85, 90)], vec![(200, 260)]]
         );
+        // Pulled back, a range that ran to the window's end still does: the
+        // end edge stays where it is.
+        assert_eq!(
+            moved(BandGrip::Start, -15),
+            [vec![(15, 90)], vec![(25, 45), (55, 90)], vec![(200, 260)]]
+        );
         assert_eq!(
             moved(BandGrip::End, -15),
             [vec![(30, 75)], vec![(40, 60), (70, 75)], vec![(200, 260)]]
