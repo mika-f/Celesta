@@ -955,6 +955,7 @@ impl EditorView {
             view.update(cx, |this, cx| {
                 if this.element_edit.window_calls_wanted.as_ref() == Some(&wanted) {
                     this.element_edit.window_calls = Some(calls);
+                    this.scene_calls_version = this.scene_calls_version.wrapping_add(1);
                     cx.notify();
                 }
             })

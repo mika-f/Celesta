@@ -4,10 +4,16 @@
 
 use super::*;
 use crate::element_edit::{WindowTargets, resolve_window, window_files, window_report};
-use crate::scope::{Scope, ScopeLock, ScopeOptions, ScopeState};
+use crate::occurrences::OccurrenceState;
+use crate::scope::{
+    CommitGate, SceneCalls, Scope, ScopeLock, ScopeOptions, ScopeState, commit_scope, gesture_gate,
+    window_scope_state,
+};
 use crate::timeline_drag::{BandGrip, band_writes, grip_refusal, timing_values};
 use crate::timing::{SetTimingOffer, WindowRole, set_timing_files, set_timing_offer};
-use celesta_react_bridge::TimingWindow;
+use celesta_react_bridge::{
+    ElementOccurrences, InstanceOccurrences, OccurrenceIndex, ReactChapter, TimingWindow,
+};
 use celesta_source_edit::{ElementRef, ImportLock, TimingKind, WrapLock};
 
 /// `<Sequence from={30}>` in a scene function at 4:3, around a `<Rect>` at
@@ -394,6 +400,244 @@ fn a_drag_of_a_lifted_prop_the_call_leaves_out_starts_at_its_default() {
             "from={sequenceFrom}>",
             "from={sequenceFrom} durationInFrames={60}>"
         )
+    );
+}
+
+/// `Delayed` wraps its children in `<Sequence from={30}>` at 4:10.
+const DELAYED: &str = "import { Sequence } from \"@celesta/react\";\n\nexport function Delayed({ children }) {\n  return <Sequence from={30}>{children}</Sequence>;\n}\n";
+
+/// Intro calls `Delayed` at 2:3 around a `<Rect>` at 3:5 and a
+/// `<Circle>` at 4:5.
+const INTRO_DELAYED: &str =
+    "export const Intro = () => (\n  <Delayed>\n    <Rect />\n    <Circle />\n  </Delayed>\n);\n";
+
+/// Main calls `Delayed` at 2:3 around a `<Text>` at 3:5.
+const MAIN_DELAYED: &str =
+    "export const Main = () => (\n  <Delayed>\n    <Text>Hi</Text>\n  </Delayed>\n);\n";
+
+fn instance_of(
+    chain: Vec<SourcePos>,
+    ranges: Vec<(u64, u64)>,
+    wrappers: Vec<SourcePos>,
+) -> InstanceOccurrences {
+    InstanceOccurrences {
+        chain,
+        ranges,
+        max_per_frame: 1,
+        wrappers,
+    }
+}
+
+fn scene(id: &str, from: u64, duration_in_frames: u64) -> ReactChapter {
+    ReactChapter {
+        id: id.to_owned(),
+        name: id.to_owned(),
+        from,
+        duration_in_frames,
+    }
+}
+
+#[test]
+fn a_window_two_scenes_call_is_shared_by_its_own_instances() {
+    // `Delayed` is called in Intro and in Main, around other elements: the
+    // `<Rect>` selected in Intro has one instance, but writing the
+    // `<Sequence>` in `Delayed` would move Main's `<Text>` too.
+    let files = Files::new(
+        "delayed",
+        &[
+            ("delayed.tsx", DELAYED),
+            ("intro.tsx", INTRO_DELAYED),
+            ("main.tsx", MAIN_DELAYED),
+        ],
+    );
+    let report = report_of(vec![
+        files.entry("Rect", ElementKind::Primitive, "intro.tsx", (3, 5)),
+        files.entry("Sequence", ElementKind::Wrapper, "delayed.tsx", (4, 10)),
+        files.entry("Delayed", ElementKind::Component, "intro.tsx", (2, 3)),
+    ]);
+    let source = files.pos("delayed.tsx", 4, 10);
+    let window = files.window(&report, &source);
+    let intro_call = files.pos("intro.tsx", 2, 3);
+    assert_eq!(
+        window
+            .targets
+            .component
+            .as_ref()
+            .map(|component| &component.call_site),
+        Some(&intro_call)
+    );
+    let rect = files.pos("intro.tsx", 3, 5);
+    let circle = files.pos("intro.tsx", 4, 5);
+    let text = files.pos("main.tsx", 3, 5);
+    let main_call = files.pos("main.tsx", 2, 3);
+    let element = |at: &SourcePos, call: &SourcePos, ranges| ElementOccurrences {
+        element: at.clone(),
+        instances: vec![instance_of(
+            vec![at.clone(), call.clone()],
+            ranges,
+            vec![source.clone()],
+        )],
+    };
+    let occurrences = OccurrenceState::Ready(OccurrenceIndex {
+        elements: vec![
+            element(&rect, &intro_call, vec![(30, 90)]),
+            element(&circle, &intro_call, vec![(30, 90)]),
+            element(&text, &main_call, vec![(120, 210)]),
+        ],
+    });
+    let chapters = [scene("intro", 0, 90), scene("main", 90, 120)];
+    // The Rect's own instance's call of `Delayed`, as read.
+    let read = SceneCalls {
+        element: rect.clone(),
+        generation: 0,
+        calls: vec![Some((intro_call.clone(), Vec::new()))],
+    };
+
+    let (state, calls) = window_scope_state(
+        &report,
+        &window,
+        Some(&occurrences),
+        Some(&read),
+        &chapters,
+        45,
+    );
+
+    let ScopeState::Options(options) = &state else {
+        panic!("the window is shared: {state:?}");
+    };
+    assert_eq!(options.this_scene, Ok(()));
+    assert_eq!(options.shared_reaches, ["intro", "main"]);
+    // The Circle comes through the same call as the Rect; Main's call
+    // wasn't read.
+    let calls = calls.expect("the calls are mapped onto the window");
+    assert_eq!(
+        calls.calls,
+        [
+            Some((intro_call.clone(), Vec::new())),
+            Some((intro_call.clone(), Vec::new())),
+            None
+        ]
+    );
+    // No choice made: "This scene" applies, never a write as resolved
+    // into `Delayed`.
+    let keys = [prop("from")];
+    let scope = commit_scope(None, &state);
+    assert_eq!(scope, Some(Scope::ThisScene));
+    assert_eq!(
+        gesture_gate(scope, &state, &window.targets, &keys, Some(&calls)),
+        CommitGate::Go(Some(Scope::ThisScene))
+    );
+    files
+        .commit(&window, &report, scope, &[number("from", 45.0)])
+        .unwrap();
+    assert_eq!(
+        files.read("intro.tsx"),
+        INTRO_DELAYED.replace("<Delayed>", "<Delayed sequenceFrom={45}>")
+    );
+    assert!(files.read("delayed.tsx").contains("from={sequenceFrom}"));
+    assert_eq!(files.read("main.tsx"), MAIN_DELAYED);
+}
+
+/// Intro writes `<Sequence from={30}>` at 5:5 around its `<Tag>` call at
+/// 6:7.
+const INTRO_TAGGED: &str = "import { Sequence } from \"@celesta/react\";\n\nexport function Intro() {\n  return (\n    <Sequence from={30}>\n      <Tag />\n    </Sequence>\n  );\n}\n";
+
+/// The film calls Intro at 3:5 and Main at 4:5.
+const FILM: &str = "export const Film = () => (\n  <>\n    <Intro />\n    <Main />\n  </>\n);\n";
+
+#[test]
+fn a_window_written_once_is_not_shared_by_its_elements_instances() {
+    // `Tag`'s `<Rect>` is drawn in Intro and Main, but only Intro's goes
+    // through Intro's `<Sequence>`: the window is written as resolved.
+    let files = Files::new("tagged", &[("intro.tsx", INTRO_TAGGED), ("film.tsx", FILM)]);
+    let tag_rect = SourcePos {
+        file: PathBuf::from("/project/tag.tsx"),
+        line: 2,
+        column: 10,
+    };
+    let intro_tag = files.pos("intro.tsx", 6, 7);
+    let intro_call = files.pos("film.tsx", 3, 5);
+    let report = report_of(vec![
+        LayerSource {
+            column: 10,
+            ..entry_at("Rect", ElementKind::Primitive, "/project/tag.tsx", 2)
+        },
+        files.entry("Tag", ElementKind::Component, "intro.tsx", (6, 7)),
+        files.entry("Sequence", ElementKind::Wrapper, "intro.tsx", (5, 5)),
+        files.entry("Intro", ElementKind::Component, "film.tsx", (3, 5)),
+    ]);
+    let source = files.pos("intro.tsx", 5, 5);
+    let window = files.window(&report, &source);
+    let main_tag = SourcePos {
+        file: PathBuf::from("/project/main.tsx"),
+        line: 3,
+        column: 5,
+    };
+    let occurrences = OccurrenceState::Ready(OccurrenceIndex {
+        elements: vec![ElementOccurrences {
+            element: tag_rect.clone(),
+            instances: vec![
+                instance_of(
+                    vec![tag_rect.clone(), intro_tag, intro_call],
+                    vec![(30, 90)],
+                    vec![source.clone()],
+                ),
+                instance_of(
+                    vec![tag_rect.clone(), main_tag, files.pos("film.tsx", 4, 5)],
+                    vec![(90, 210)],
+                    Vec::new(),
+                ),
+            ],
+        }],
+    });
+    let chapters = [scene("intro", 0, 90), scene("main", 90, 120)];
+
+    let (state, _) = window_scope_state(&report, &window, Some(&occurrences), None, &chapters, 45);
+
+    assert_eq!(state, ScopeState::NotShared);
+    let scope = commit_scope(Some(Scope::ThisScene), &state);
+    assert_eq!(
+        gesture_gate(scope, &state, &window.targets, &[prop("from")], None),
+        CommitGate::Go(None)
+    );
+    files
+        .commit(&window, &report, scope, &[number("from", 45.0)])
+        .unwrap();
+    assert_eq!(
+        files.read("intro.tsx"),
+        INTRO_TAGGED.replace("from={30}", "from={45}")
+    );
+    assert_eq!(files.read("film.tsx"), FILM);
+}
+
+#[test]
+fn a_window_the_index_cannot_answer_for_is_unknown() {
+    let files = Files::new("window-unknown", &[("scene.tsx", SEQUENCE)]);
+    let report = sequence_report(&files);
+    let mut window = files.window(&report, &files.pos("scene.tsx", 4, 3));
+    // Written in a component, so the index decides.
+    window.targets.enclosing = Some("Intro".to_owned());
+    let state = |occurrences: Option<&OccurrenceState>| {
+        window_scope_state(&report, &window, occurrences, None, &[], 0).0
+    };
+    let note = |state: ScopeState| match state {
+        ScopeState::Unknown { note } => note,
+        other => panic!("not unknown: {other:?}"),
+    };
+    assert_eq!(note(state(None)), "The scenes are not scanned");
+    assert_eq!(
+        note(state(Some(&OccurrenceState::Scanning))),
+        "Scanning scenes…"
+    );
+    // No instance renders through the window.
+    let empty = OccurrenceIndex::default();
+    assert_eq!(
+        note(state(Some(&OccurrenceState::Ready(empty.clone())))),
+        "Not found in the scene scan"
+    );
+    assert_eq!(
+        note(state(Some(&OccurrenceState::Refreshing(empty)))),
+        "Scanning scenes…"
     );
 }
 

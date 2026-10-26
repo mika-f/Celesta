@@ -19,7 +19,7 @@ use crate::scene_entries::{
 };
 use crate::scope::{
     CommitGate, SceneCalls, Scope, ScopeState, commit_scope, gesture_gate, gesture_start_refusal,
-    impact_filter, scope_in_effect, scope_state,
+    impact_filter, scope_in_effect, window_scope_state,
 };
 use crate::timing::{
     SetTimingOffer, WindowRole, set_timing_files, set_timing_offer, set_timing_span, window_role,
@@ -581,6 +581,24 @@ fn grip_frame(grip: BandGrip, window: (f64, f64)) -> f64 {
     }
 }
 
+/// What the window's scope state is read from, besides what changes with
+/// these (see `ScopeKey`): the resolution, the window, the index and the
+/// scene calls read.
+#[derive(Debug, PartialEq)]
+struct WindowScopeKey {
+    resolution: u64,
+    source: SourcePos,
+    occurrence_generation: u64,
+    scene_calls_version: u64,
+}
+
+/// The selected element's own timing window's scope state and scene calls,
+/// kept while what they are read from stays.
+#[derive(Debug, Default)]
+pub(crate) struct WindowScopeCache(
+    std::cell::RefCell<Option<(WindowScopeKey, ScopeState, Option<SceneCalls>)>>,
+);
+
 /// What a write of the window takes: its targets, the element's report,
 /// the scope, the scene calls, and the values.
 type BandWrite = (
@@ -661,7 +679,7 @@ impl EditorView {
             Some((Ok(targets), report)) => {
                 // The scope the press would keep and the release check:
                 // a grip refused there is locked here.
-                let (state, calls, remembered) = self.window_scope_state(targets, report);
+                let (state, calls, remembered) = self.band_scope(targets, report);
                 grips.map(|grip| {
                     grip_refusal(
                         targets.kind,
@@ -669,7 +687,7 @@ impl EditorView {
                         &targets.targets,
                         &state,
                         remembered,
-                        calls,
+                        calls.as_ref(),
                     )
                 })
             }
@@ -693,27 +711,46 @@ impl EditorView {
         self.band_drag.as_ref().is_some_and(|drag| !drag.released)
     }
 
-    /// The scope state of writing `window` around the element `report`
-    /// describes, with the playhead where it is now; the scene calls that
-    /// count; and the choice made for the element.
-    fn window_scope_state(
+    /// The window's own scope state of writing `window` around the element
+    /// `report` describes (see [`window_scope_state`]); the scene calls that
+    /// count; and the choice made for the element. Kept while its inputs
+    /// stay: the grips read it every render, playback frames included.
+    fn band_scope(
         &self,
         window: &WindowTargets,
         report: &LayerSourceReport,
-    ) -> (ScopeState, Option<&SceneCalls>, Option<Scope>) {
-        let calls = self.window_scene_calls(window, report);
-        let state = scope_state(
-            report,
-            &window.targets,
-            self.occurrences.as_ref().map(|(_, state)| state),
-            calls,
-            self.react_chapters().unwrap_or_default(),
-            u64::try_from(self.clock.frame()).unwrap_or(0),
-        );
+    ) -> (ScopeState, Option<SceneCalls>, Option<Scope>) {
         let remembered = report
             .chain
             .first()
             .and_then(|element| self.scope_choices.get(&SourcePos::from(element)));
+        // The resolution names the report and its lookup frame too.
+        let key = WindowScopeKey {
+            resolution: self.element_edit.resolution(),
+            source: window.source.clone(),
+            occurrence_generation: self.occurrence_generation,
+            scene_calls_version: self.scene_calls_version,
+        };
+        let mut cache = self.window_scope_cache.0.borrow_mut();
+        if let Some((cached, state, calls)) = cache.as_ref()
+            && *cached == key
+        {
+            return (state.clone(), calls.clone(), remembered);
+        }
+        // The frame the window's targets were looked up at (the targets
+        // answer only that lookup), as the element's scope state reads the
+        // frame its targets were resolved at: the scene whose band holds
+        // the grips, also after a seek whose lookup hasn't answered yet.
+        let frame = u64::try_from(self.source_lookup_frame).unwrap_or(0);
+        let (state, calls) = window_scope_state(
+            report,
+            window,
+            self.occurrences.as_ref().map(|(_, state)| state),
+            self.window_scene_calls(window, report),
+            self.react_chapters().unwrap_or_default(),
+            frame,
+        );
+        *cache = Some((key, state.clone(), calls.clone()));
         (state, calls, remembered)
     }
 
@@ -747,9 +784,9 @@ impl EditorView {
         let parent = report.windows.get(1).map_or(0.0, |parent| parent.from);
         let series_start =
             (window.kind == TimingKind::SeriesSequence).then_some(grips.window.0 - parent);
-        let (state, calls, remembered) = self.window_scope_state(window, report);
+        let (state, calls, remembered) = self.band_scope(window, report);
         let scope = commit_scope(remembered, &state);
-        let filter = impact_filter(scope, &window.targets, calls);
+        let filter = impact_filter(scope, &window.targets, calls.as_ref());
         let preview = DragPreview {
             source: window.source.clone(),
             window: grips.window,
@@ -929,18 +966,12 @@ impl EditorView {
             &window.targets,
         );
         let keys: Vec<PropKey> = values.iter().map(|(key, _)| key.clone()).collect();
-        let (state, calls, _) = self.window_scope_state(window, report);
-        let scope = match gesture_gate(drag.scope, &state, &window.targets, &keys, calls) {
+        let (state, calls, _) = self.band_scope(window, report);
+        let scope = match gesture_gate(drag.scope, &state, &window.targets, &keys, calls.as_ref()) {
             CommitGate::Go(scope) => scope,
             CommitGate::Hold(note) | CommitGate::Refuse(note) => return Err(not_written(&note)),
         };
-        Ok((
-            window.clone(),
-            report.clone(),
-            scope,
-            calls.cloned(),
-            values,
-        ))
+        Ok((window.clone(), report.clone(), scope, calls, values))
     }
 
     /// The reload after a band drag's write draws its values: the released
@@ -960,6 +991,11 @@ impl EditorView {
         let report = self.band_report()?;
         let chapters = self.react_chapters().unwrap_or_default();
         let end = u64::try_from(self.clock.end_frame()).unwrap_or(0);
+        // The frame the element was looked up at, not the playhead: the
+        // report's windows, the targets and the scope state the Properties
+        // panel shows (`resolved_scope_state`) are all read at it, and the
+        // band grips read the window's scope at it too (`band_scope`). The
+        // playhead differs only until a seek's lookup answers.
         let frame = u64::try_from(self.source_lookup_frame).unwrap_or(0);
         let role = window_role(report, chapters, end, frame);
         if matches!(role, WindowRole::Own(_) | WindowRole::Remapped) {
@@ -1532,7 +1568,11 @@ mod tests {
             ("from", literal(30.0)),
             ("durationInFrames", defaulted("length", Some(40.0))),
         ]);
-        assert!(!adds_duration(TimingKind::Sequence, BandGrip::Body, &length));
+        assert!(!adds_duration(
+            TimingKind::Sequence,
+            BandGrip::Body,
+            &length
+        ));
         assert_eq!(
             timing_values(TimingKind::Sequence, &length, (30.0, 90.0)),
             values(30.0, 40.0)

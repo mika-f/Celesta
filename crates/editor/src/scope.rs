@@ -7,13 +7,13 @@
 //! value, locks, removal) and the commit read; [`commit_gate`] decides
 //! whether a commit goes, waits for the index, or is refused.
 
-use crate::element_edit::{ElementTargets, PropKey, editable, reason_text};
+use crate::element_edit::{ElementTargets, PropKey, WindowTargets, editable, reason_text};
 use crate::element_rows::removable;
 use crate::impact::ImpactFilter;
 use crate::occurrences::OccurrenceState;
 use celesta_react_bridge::{
-    ElementKind, ElementOccurrences, InstanceOccurrences, LayerSourceReport, ReactChapter,
-    SourcePos, outermost_chapter_at, scenes_of,
+    ElementKind, ElementOccurrences, InstanceOccurrences, LayerSourceReport, OccurrenceIndex,
+    ReactChapter, SourcePos, outermost_chapter_at, scenes_of,
 };
 use celesta_source_edit::{
     DefaultTarget, EditTarget, EditValue, LiftLock, LockReason, element_at, written_attributes,
@@ -148,17 +148,22 @@ pub(crate) fn calls_of(
     element: &ElementOccurrences,
     call: &SourcePos,
 ) -> Vec<Option<SourcePos>> {
-    // The index's chains leave the wrappers out.
-    let at = report
-        .chain
-        .iter()
-        .filter(|entry| entry.kind != ElementKind::Wrapper)
-        .position(|entry| SourcePos::from(entry) == *call);
+    let at = call_index(report, call);
     element
         .instances
         .iter()
         .map(|instance| at.and_then(|at| instance.chain.get(at)).cloned())
         .collect()
+}
+
+/// Where `call` is in the chain of `report` as the index writes chains:
+/// without the wrappers.
+fn call_index(report: &LayerSourceReport, call: &SourcePos) -> Option<usize> {
+    report
+        .chain
+        .iter()
+        .filter(|entry| entry.kind != ElementKind::Wrapper)
+        .position(|entry| SourcePos::from(entry) == *call)
 }
 
 /// The scene calls of `element` at the occurrence index's `generation`:
@@ -293,29 +298,178 @@ pub(crate) fn scope_state(
     let Some(component) = targets.enclosing.as_deref() else {
         return ScopeState::NotShared;
     };
+    let (index, refreshing) = match scanned(occurrences) {
+        Ok(scanned) => scanned,
+        Err(state) => return state,
+    };
+    let Some((element, _)) = index.instance_for(report) else {
+        return not_found(refreshing);
+    };
+    let shared = element.instances.len() > 1;
+    options_over(
+        report, targets, component, element, shared, calls, chapters, frame,
+    )
+}
+
+/// The index in use and whether it is refreshing, or the state while it
+/// can't answer.
+fn scanned(occurrences: Option<&OccurrenceState>) -> Result<(&OccurrenceIndex, bool), ScopeState> {
     let unknown = |note: &str| ScopeState::Unknown {
         note: note.to_owned(),
     };
-    let (index, refreshing) = match occurrences {
+    match occurrences {
         // No sweep runs (Select layers is off): none would answer.
-        None => return unknown(NOT_SCANNED),
-        Some(OccurrenceState::Scanning) => return unknown(SCANNING),
+        None => Err(unknown(NOT_SCANNED)),
+        Some(OccurrenceState::Scanning) => Err(unknown(SCANNING)),
         Some(OccurrenceState::Failed(message)) => {
-            return unknown(&format!("Couldn't scan scenes: {message}"));
+            Err(unknown(&format!("Couldn't scan scenes: {message}")))
         }
-        Some(OccurrenceState::Ready(index)) => (index, false),
-        Some(OccurrenceState::Refreshing(index)) => (index, true),
-    };
-    let Some((element, _)) = index.instance_for(report) else {
-        // A refreshing index misses an element a lift moved: the sweep
-        // under way finds it.
-        return unknown(if refreshing {
+        Some(OccurrenceState::Ready(index)) => Ok((index, false)),
+        Some(OccurrenceState::Refreshing(index)) => Ok((index, true)),
+    }
+}
+
+/// The state when the index has nothing for what is edited: a refreshing
+/// index misses an element a lift moved, which the sweep under way finds.
+fn not_found(refreshing: bool) -> ScopeState {
+    ScopeState::Unknown {
+        note: if refreshing {
             SCANNING
         } else {
             "Not found in the scene scan"
-        });
+        }
+        .to_owned(),
+    }
+}
+
+/// The scope state of writing the timing window `window` around the
+/// element `report` describes, with the playhead at `frame`, and the scene
+/// calls that count for it. The window's instances are those of any
+/// element the index renders through it; it is shared when one of them
+/// comes through another call of the component it is written in (its
+/// chain doesn't end as the selected one's does above the window), so
+/// one written once shares nothing with the element's other instances, and
+/// one in a component that several scenes call around other elements is
+/// shared. `calls`, read for the element's instances at the window's call
+/// (see [`calls_of`]), are carried to each window instance whose chain
+/// ends as an element instance's does from that call.
+pub(crate) fn window_scope_state(
+    report: &LayerSourceReport,
+    window: &WindowTargets,
+    occurrences: Option<&OccurrenceState>,
+    calls: Option<&SceneCalls>,
+    chapters: &[ReactChapter],
+    frame: u64,
+) -> (ScopeState, Option<SceneCalls>) {
+    let targets = &window.targets;
+    let Some(component) = targets.enclosing.as_deref() else {
+        return (ScopeState::NotShared, None);
     };
-    if element.instances.len() <= 1 {
+    let (index, refreshing) = match scanned(occurrences) {
+        Ok(scanned) => scanned,
+        Err(state) => return (state, None),
+    };
+    let instances: Vec<InstanceOccurrences> = index
+        .elements
+        .iter()
+        .flat_map(|element| &element.instances)
+        .filter(|instance| instance.wrappers.contains(&window.source))
+        .cloned()
+        .collect();
+    let above = report
+        .chain
+        .iter()
+        .position(|entry| SourcePos::from(entry) == window.source);
+    let (Some(above), false) = (above, instances.is_empty()) else {
+        return (not_found(refreshing), None);
+    };
+    // The selected instance's chain above the window (the index's chains
+    // leave the wrappers out).
+    let tail: Vec<SourcePos> = report.chain[above..]
+        .iter()
+        .filter(|entry| entry.kind != ElementKind::Wrapper)
+        .map(SourcePos::from)
+        .collect();
+    let shared = instances
+        .iter()
+        .any(|instance| !instance.chain.ends_with(&tail));
+    let element = ElementOccurrences {
+        element: window.source.clone(),
+        instances,
+    };
+    let calls = calls.and_then(|calls| window_calls(report, index, &element, targets, calls));
+    let state = options_over(
+        report,
+        targets,
+        component,
+        &element,
+        shared,
+        calls.as_ref(),
+        chapters,
+        frame,
+    );
+    (state, calls)
+}
+
+/// `calls`, read for the instances of the element `report` describes, for
+/// the instances of `window` (see [`window_scope_state`]); `None` when they
+/// are not for that element.
+fn window_calls(
+    report: &LayerSourceReport,
+    index: &OccurrenceIndex,
+    window: &ElementOccurrences,
+    targets: &ElementTargets,
+    calls: &SceneCalls,
+) -> Option<SceneCalls> {
+    let (element, _) = index.instance_for(report)?;
+    if calls.element != element.element || calls.calls.len() != element.instances.len() {
+        return None;
+    }
+    let at = targets
+        .component
+        .as_ref()
+        .and_then(|component| call_index(report, &component.call_site));
+    let mapped = window
+        .instances
+        .iter()
+        .map(|instance| {
+            let at = at?;
+            element
+                .instances
+                .iter()
+                .zip(&calls.calls)
+                .find(|(through, _)| {
+                    through.wrappers.contains(&window.element)
+                        && through
+                            .chain
+                            .get(at..)
+                            .is_some_and(|tail| !tail.is_empty() && instance.chain.ends_with(tail))
+                })
+                .and_then(|(_, call)| call.clone())
+        })
+        .collect();
+    Some(SceneCalls {
+        element: window.element.clone(),
+        generation: calls.generation,
+        calls: mapped,
+    })
+}
+
+/// The options of an edit reaching the instances of `element` (`shared`
+/// when they are more than the selected one), whose targets are `targets`,
+/// written in `component`: see [`scope_state`].
+#[allow(clippy::too_many_arguments)]
+fn options_over(
+    report: &LayerSourceReport,
+    targets: &ElementTargets,
+    component: &str,
+    element: &ElementOccurrences,
+    shared: bool,
+    calls: Option<&SceneCalls>,
+    chapters: &[ReactChapter],
+    frame: u64,
+) -> ScopeState {
+    if !shared {
         return ScopeState::NotShared;
     }
     let calls = calls.filter(|calls| {

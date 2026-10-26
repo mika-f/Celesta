@@ -21,7 +21,7 @@ use crate::scene_entries::SceneEdge;
 use crate::scope::{SceneCalls, Scope, ScopeChoices};
 use crate::source::{PropertyArgs, load_source};
 use crate::timeline::LaneGesture;
-use crate::timeline_drag::{BandDrag, BandNotice, SceneDrag};
+use crate::timeline_drag::{BandDrag, BandNotice, SceneDrag, WindowScopeCache};
 use crate::transform_drag::TransformDrag;
 use crate::transform_handles::{PivotMode, ResizeTool};
 use celesta_composition::{AudioClip, Rational};
@@ -139,8 +139,8 @@ pub(crate) struct EditorView {
     /// for.
     pub(crate) scene_calls: Option<SceneCalls>,
     pub(crate) scene_calls_wanted: Option<(SourcePos, u64, Vec<Option<SourcePos>>)>,
-    /// Counts up whenever `scene_calls` is set: the scope state cached
-    /// for the calls read is read again.
+    /// Counts up whenever `scene_calls` (or the timing window's calls) is
+    /// set: the scope state cached for the calls read is read again.
     pub(crate) scene_calls_version: u64,
     /// The scope chosen per element for the session.
     pub(crate) scope_choices: ScopeChoices,
@@ -149,6 +149,9 @@ pub(crate) struct EditorView {
     pub(crate) scope_hover: Option<Scope>,
     /// The selected element's scope state, kept while its inputs stay.
     pub(crate) scope_cache: ScopeCache,
+    /// The scope state of the selected element's own timing window, kept
+    /// while its inputs stay.
+    pub(crate) window_scope_cache: WindowScopeCache,
     /// After a kept reload: the selected element's position before it,
     /// whose scope choice moves to where the reloaded code's first lookup
     /// puts the element.
@@ -452,6 +455,7 @@ impl EditorView {
             scope_choices: ScopeChoices::default(),
             scope_hover: None,
             scope_cache: ScopeCache::default(),
+            window_scope_cache: WindowScopeCache::default(),
             scope_carry_from: None,
             scope_written: Vec::new(),
             occurrence_sweep_after: None,
