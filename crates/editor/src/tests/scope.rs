@@ -650,6 +650,93 @@ fn shared_is_disabled_when_every_row_is_set_by_every_scene() {
 }
 
 #[test]
+fn a_remembered_shared_value_this_scene_overrides_refuses_the_removal() {
+    // Price passes `rectWidth={260}`, the only row, over a default of 200.
+    let tag = "export function PriceTag({ rectWidth = 200 }: { rectWidth?: number }) {\n  return <Rect width={rectWidth} />;\n}\n";
+    let call = "export const Price = () => (\n  <PriceTag rectWidth={260} />\n);\n";
+    let texts = Texts::from([
+        (PathBuf::from(TAG_FILE), tag.to_owned()),
+        (PathBuf::from(SCENES_FILE), call.to_owned()),
+    ]);
+    let rect = LayerSource {
+        column: 10,
+        ..entry_at("Rect", ElementKind::Primitive, TAG_FILE, 2)
+    };
+    let mut report = report_of(vec![
+        rect,
+        entry_at("PriceTag", ElementKind::Component, SCENES_FILE, 2),
+    ]);
+    report
+        .props
+        .others
+        .insert("width".to_owned(), ReceivedValue::Number(260.0));
+    // `<Rect>` requires `width`.
+    let table = with_required(
+        property_table(vec![("Size", vec![("width", number_field(None))])]),
+        &["width"],
+    );
+    let targets = resolve_targets(read_from(&texts), &report, Some(&table)).unwrap();
+    let state = scope_state(
+        &report,
+        &targets,
+        Some(&three_scenes()),
+        None,
+        &chapters(),
+        FRAME,
+    );
+    let options = options_of(state.clone());
+    let lock = ScopeLock::SetsOwn {
+        param: "rectWidth".to_owned(),
+    };
+
+    // "Shared value" is disabled: every row is one this scene sets itself.
+    assert_eq!(options.shared, Err(lock.clone()));
+    // Remembered all the same, no scope is in effect: the rows show as
+    // resolved, and their remove button with them...
+    assert_eq!(
+        chosen_scope(Some(Scope::Shared), &options),
+        Err(lock.clone())
+    );
+    let width = prop("width");
+    assert!(removable(&targets, &width, targets.entry(&width).unwrap()));
+    // ...but a click on it is refused with the lock, as any commit.
+    assert_eq!(
+        commit_gate(&state, Some(Scope::Shared), &targets, &[width]),
+        CommitGate::Refuse(lock.text())
+    );
+}
+
+#[test]
+fn a_required_prop_passed_at_s_is_removable_when_its_parameter_has_a_default() {
+    // `<Rect>` requires `width` and `height`; `rectWidth = 200` applies once
+    // Price's value goes, `rectHeight` has no default.
+    let report = price_report();
+    let table = with_required(tag_table(), &["width", "height"]);
+    let targets = resolve_targets(read_from(&tag_texts(SCENES_FILE)), &report, Some(&table))
+        .expect("the element resolves");
+    let calls = price_sets_its_own();
+    let (width, height) = (prop("width"), prop("height"));
+    assert_eq!(
+        scoped_row(Scope::Shared, &targets, &width, Some(&calls)),
+        ScopedRow::Locked(ScopeLock::SetsOwn {
+            param: "rectWidth".to_owned()
+        })
+    );
+
+    for scope in [Scope::Shared, Scope::ThisScene] {
+        assert!(scoped_removable(scope, &targets, &width, Some(&calls)));
+        assert!(!scoped_removable(scope, &targets, &height, Some(&calls)));
+    }
+    // As resolved too.
+    assert!(removable(&targets, &width, targets.entry(&width).unwrap()));
+    assert!(!removable(
+        &targets,
+        &height,
+        targets.entry(&height).unwrap()
+    ));
+}
+
+#[test]
 fn scoped_row_follows_the_table() {
     let report = price_report();
     let mut targets = tag_targets(&report, &tag_texts(SCENES_FILE));

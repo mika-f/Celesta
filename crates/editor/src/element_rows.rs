@@ -21,7 +21,9 @@ use crate::view::EditorView;
 use celesta_react_bridge::{
     LayerSourceReport, PrimitivePropertyField, PropOverride, ReceivedProps, SourcePos, import_path,
 };
-use celesta_source_edit::{EditTarget, EditValue, LockReason, default_for, format_number};
+use celesta_source_edit::{
+    DefaultTarget, EditTarget, EditValue, LockReason, default_for, format_number,
+};
 use gpui_kit::{Context, MouseMoveEvent, PathPromptOptions, Subscription, Window};
 use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
@@ -328,19 +330,21 @@ pub(crate) fn row_field<'t>(
 /// Whether the row `key` can remove its prop, so the default applies again:
 /// its value is written (on the element, in its `style` object, or at the
 /// call a pass-through reads it from), and the props type does not require
-/// it. Never an input (a value an expression reads, not a prop), nor a
-/// `<Text>`'s children, an absent, locked, or animated prop. A component
-/// prop, or a pass-through removed at the call, is optional unless the
-/// component's `registerComponent()` schema declares it `required`; without
-/// a schema, the component's own default applies.
+/// it, or a pass-through's parameter has a literal default, which applies
+/// once the value at the call goes. Never an input (a value an expression
+/// reads, not a prop), nor a `<Text>`'s children, an absent, locked, or
+/// animated prop. A component prop, or a pass-through removed at the call,
+/// is optional unless the component's `registerComponent()` schema declares
+/// it `required`; without a schema, the component's own default applies.
 pub(crate) fn removable(targets: &ElementTargets, key: &PropKey, target: &Target) -> bool {
     let optional = match key {
         PropKey::Prop(name) => {
             name != "children"
-                && !targets
+                && (!targets
                     .table
                     .as_ref()
                     .is_some_and(|table| required_of(table, name))
+                    || has_literal_default(targets, &target.target))
                 && !matches!(&target.target, EditTarget::PassThrough { param, .. }
                     if component_requires(targets, param))
         }
@@ -359,6 +363,18 @@ fn component_requires(targets: &ElementTargets, name: &str) -> bool {
         .and_then(|component| component.schema.as_ref())
         .and_then(|schema| schema.get(name))
         .is_some_and(|field| field.required)
+}
+
+/// Whether `target` passes through to a parameter whose default is a
+/// literal (one without a default would leave the prop undefined).
+fn has_literal_default(targets: &ElementTargets, target: &EditTarget) -> bool {
+    let EditTarget::PassThrough { param, .. } = target else {
+        return false;
+    };
+    targets
+        .defaults
+        .iter()
+        .any(|(name, default)| name == param && matches!(default, DefaultTarget::Literal { .. }))
 }
 
 /// What committing typed text in a row does.
