@@ -862,8 +862,9 @@ impl EditorView {
 
     /// The "Set timing" offer for the selected element at its lookup frame
     /// (see [`set_timing_offer`]), under the scope the Properties panel
-    /// shows for it. Disabled while its targets can't be committed to, and
-    /// when its file is outside the project. `None` without a found source.
+    /// shows for it. Hidden while its targets are being read (again, after
+    /// a write too); disabled when they can't be read, and when its file is
+    /// outside the project. `None` without a found source.
     pub(crate) fn set_timing_action(&self) -> Option<SetTimingOffer> {
         let report = self.band_report()?;
         let chapters = self.react_chapters().unwrap_or_default();
@@ -876,6 +877,11 @@ impl EditorView {
         let selected = self.selected_layer.as_deref();
         let unavailable = || SetTimingOffer::Disabled(self.element_edit.unavailable(selected));
         let Some((targets, _)) = self.element_targets() else {
+            // A resolution or a reload on its way answers; a failed one
+            // says why.
+            if !self.element_edit.failed(selected) {
+                return Some(SetTimingOffer::Hidden);
+            }
             return Some(unavailable());
         };
         if targets.outside.contains(&targets.file) {
@@ -893,16 +899,19 @@ impl EditorView {
             &role,
             set_timing_span(&role, chapters, end, frame),
             resolved.wrap_lock.as_ref(),
+            resolved.import_lock.as_ref(),
             &context.state,
             self.remembered_scope(),
         ))
     }
 
     /// Wraps the selected element in a `<Sequence>` from the playhead (see
-    /// [`set_timing_files`]) as one history entry, then reloads. An offer
-    /// no longer enabled, or a write that fails, leaves the notice why
-    /// where the band drag leaves its own.
+    /// [`set_timing_files`]) as one history entry, then reloads. Playback
+    /// pauses first, as a band drag's press does. An offer no longer
+    /// enabled, or a write that fails, leaves the notice why where the band
+    /// drag leaves its own.
     pub(crate) fn set_timing(&mut self, cx: &mut Context<Self>) {
+        self.pause();
         let at = self.source_lookup_frame as f64;
         let (from, duration) = match self.set_timing_action() {
             Some(SetTimingOffer::Enabled { from, duration }) => (from, duration),

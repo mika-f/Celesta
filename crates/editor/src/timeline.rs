@@ -1366,11 +1366,12 @@ impl EditorView {
             .label("Set timing");
         let action = match offer {
             SetTimingOffer::Hidden => return None,
-            SetTimingOffer::Disabled(reason) => div()
-                .id("timeline-set-timing-locked")
+            // The button keeps its tooltip when disabled, and lays the
+            // cursor given here over its own.
+            SetTimingOffer::Disabled(reason) => button
+                .disabled(true)
                 .cursor(CursorStyle::OperationNotAllowed)
-                .tooltip(move |window, cx| Tooltip::new(reason.clone()).build(window, cx))
-                .child(button.disabled(true))
+                .tooltip(reason)
                 .into_any_element(),
             SetTimingOffer::Enabled { .. } => button
                 .tooltip(SET_TIMING_NOTE)

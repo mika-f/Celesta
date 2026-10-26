@@ -8,8 +8,8 @@ use crate::element_edit::{CommitError, apply_checked};
 use crate::scope::{Scope, ScopeLock, ScopeState, chosen_scope};
 use celesta_react_bridge::{LayerSourceReport, ReactChapter, TimingWindow, outermost_chapter_at};
 use celesta_source_edit::{
-    CELESTA_REACT, EditValue, ElementRef, ImportName, WrapLock, element_at, ensure_import,
-    wrap_element,
+    CELESTA_REACT, EditValue, ElementRef, ImportLock, ImportName, WrapLock, element_at,
+    ensure_import, wrap_element,
 };
 use std::path::PathBuf;
 
@@ -116,16 +116,18 @@ pub(crate) enum SetTimingOffer {
 
 /// The "Set timing" offer for an element whose nearest window has `role`:
 /// hidden for an own or remapped window; disabled by `wrap_lock` ("Wrap the
-/// element in a parent first"), by `span` when less than a frame is left
-/// after the playhead (see [`set_timing_span`]), or by the scope. The write
-/// changes the component every scene uses, so an element shared between
-/// scenes takes it only under "Shared value" (`scope` and the `remembered`
-/// choice, as the Properties panel shows them; see [`chosen_scope`]); an
-/// index that can't answer disables it with its note.
+/// element in a parent first"), by `import_lock` when `Sequence` can't be
+/// imported, by `span` when less than a frame is left after the playhead
+/// (see [`set_timing_span`]), or by the scope. The write changes the
+/// component every scene uses, so an element shared between scenes takes it
+/// only under "Shared value" (`scope` and the `remembered` choice, as the
+/// Properties panel shows them; see [`chosen_scope`]); an index that can't
+/// answer disables it with its note.
 pub(crate) fn set_timing_offer(
     role: &WindowRole,
     span: Option<(i64, i64)>,
     wrap_lock: Option<&WrapLock>,
+    import_lock: Option<&ImportLock>,
     scope: &ScopeState,
     remembered: Option<Scope>,
 ) -> SetTimingOffer {
@@ -134,6 +136,9 @@ pub(crate) fn set_timing_offer(
     }
     if let Some(WrapLock::NotAChild) = wrap_lock {
         return SetTimingOffer::Disabled(WRAP_FIRST.to_owned());
+    }
+    if let Some(lock) = import_lock {
+        return SetTimingOffer::Disabled(CommitError::Import(lock.clone()).to_string());
     }
     let Some((from, duration)) = span else {
         return SetTimingOffer::Disabled(NO_FRAME_LEFT.to_owned());

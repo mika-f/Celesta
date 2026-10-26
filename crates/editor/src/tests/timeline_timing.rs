@@ -7,7 +7,7 @@ use crate::element_edit::{WindowTargets, resolve_window, window_files, window_re
 use crate::scope::{Scope, ScopeOptions, ScopeState};
 use crate::timing::{SetTimingOffer, WindowRole, set_timing_files, set_timing_offer};
 use celesta_react_bridge::TimingWindow;
-use celesta_source_edit::{ElementRef, TimingKind, WrapLock};
+use celesta_source_edit::{ElementRef, ImportLock, TimingKind, WrapLock};
 
 /// `<Sequence from={30}>` in a scene function at 4:3, around a `<Rect>` at
 /// 5:5.
@@ -388,6 +388,7 @@ fn a_window_that_does_not_resolve_keeps_why() {
         Some("a"),
         Err("no rows".to_owned()),
         Some(elsewhere),
+        None,
         None
     ));
     let (window, _) = state
@@ -440,6 +441,20 @@ fn set_timing_files_uses_the_alias_and_keeps_tabs() {
 }
 
 #[test]
+fn set_timing_files_writes_through_a_namespace_import() {
+    let text = "import * as C from \"@celesta/react\";\n\nexport const Intro = () => (\n  <>\n    <C.Rect width={200} />\n  </>\n);\n";
+    let files = Files::new("set-timing-namespace", &[("scene.tsx", text)]);
+    let expected = element_at(text, 5, 5).unwrap();
+
+    set_timing(&files, "scene.tsx", (5, 5), &expected).unwrap();
+
+    assert_eq!(
+        files.read("scene.tsx"),
+        "import * as C from \"@celesta/react\";\n\nexport const Intro = () => (\n  <>\n    <C.Sequence from={45} durationInFrames={75}>\n      <C.Rect width={200} />\n    </C.Sequence>\n  </>\n);\n"
+    );
+}
+
+#[test]
 fn set_timing_files_refuses_a_changed_source() {
     let files = Files::new("set-timing-changed", &[("scene.tsx", UNTIMED)]);
     let expected = element_at(UNTIMED, 5, 5).unwrap();
@@ -467,7 +482,7 @@ fn set_timing_offer_follows_the_role() {
     let window = timing_window(300.0, 420.0);
     let span = Some((45, 75));
     let offer = |role: &WindowRole, span, lock: Option<&WrapLock>| {
-        set_timing_offer(role, span, lock, &ScopeState::NotShared, None)
+        set_timing_offer(role, span, lock, None, &ScopeState::NotShared, None)
     };
     let enabled = SetTimingOffer::Enabled {
         from: 45,
@@ -499,14 +514,32 @@ fn set_timing_offer_follows_the_role() {
         no_frame_left
     );
     assert_eq!(offer(&WindowRole::None, None, None), no_frame_left);
+
+    // `Sequence` bound otherwise in the file (a type-only import, a local
+    // declaration): the import can't be written.
+    let clash = ImportLock::Clash {
+        name: "Sequence".to_owned(),
+    };
+    assert_eq!(
+        set_timing_offer(
+            &WindowRole::Scene(&window),
+            span,
+            None,
+            Some(&clash),
+            &ScopeState::NotShared,
+            None
+        ),
+        SetTimingOffer::Disabled("`Sequence` here is not Celesta's".to_owned())
+    );
 }
 
 #[test]
 fn set_timing_offer_follows_the_scope() {
     let role = WindowRole::None;
     let span = Some((45, 75));
-    let offer =
-        |scope: &ScopeState, remembered| set_timing_offer(&role, span, None, scope, remembered);
+    let offer = |scope: &ScopeState, remembered| {
+        set_timing_offer(&role, span, None, None, scope, remembered)
+    };
     let enabled = SetTimingOffer::Enabled {
         from: 45,
         duration: 75,

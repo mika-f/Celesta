@@ -34,8 +34,8 @@ use celesta_react_bridge::{
     PrimitivePropertyTable, ReactChapter, ReceivedProps, ReceivedValue, SourcePos,
 };
 use celesta_source_edit::{
-    DefaultTarget, EditTarget, EditValue, ElementRef, LiftLock, LockReason, WrapLock,
-    format_number, wrap_element,
+    CELESTA_REACT, DefaultTarget, EditTarget, EditValue, ElementRef, ImportLock, LiftLock,
+    LockReason, WrapLock, ensure_import, format_number, wrap_element,
 };
 use gpui_kit::Context;
 use std::cell::RefCell;
@@ -364,6 +364,9 @@ pub(crate) struct Resolved {
     /// tried without writing when it has no window of its own and its
     /// targets resolved; `None` otherwise.
     pub(crate) wrap_lock: Option<WrapLock>,
+    /// Why `Sequence` can't be imported into the element's file, tried
+    /// beside [`Self::wrap_lock`].
+    pub(crate) import_lock: Option<ImportLock>,
 }
 
 /// Why a window inside a `<Loop>` or `<FreezeFrame>` doesn't drag.
@@ -449,13 +452,14 @@ impl ElementEdit {
         selected: Option<&str>,
         outcome: Result<ElementTargets, String>,
     ) -> bool {
-        self.finish_with_window(request, selected, outcome, None, None)
+        self.finish_with_window(request, selected, outcome, None, None, None)
     }
 
     /// Keeps the outcome of resolution `request`, `window_targets`, the
-    /// element's own timing window (see [`Resolved::window_targets`]), and
-    /// `wrap_lock` (see [`Resolved::wrap_lock`]), when it is the newest one
-    /// and `selected` is still the layer it was for. True when kept.
+    /// element's own timing window (see [`Resolved::window_targets`]),
+    /// `wrap_lock` and `import_lock` (see [`Resolved::wrap_lock`]), when it
+    /// is the newest one and `selected` is still the layer it was for. True
+    /// when kept.
     pub(crate) fn finish_with_window(
         &mut self,
         request: u64,
@@ -463,6 +467,7 @@ impl ElementEdit {
         outcome: Result<ElementTargets, String>,
         window_targets: Option<Result<WindowTargets, String>>,
         wrap_lock: Option<WrapLock>,
+        import_lock: Option<ImportLock>,
     ) -> bool {
         let Some((layer, report, timeline_frame)) = self.wanted.as_ref() else {
             return false;
@@ -483,6 +488,7 @@ impl ElementEdit {
             outcome,
             window_targets,
             wrap_lock,
+            import_lock,
         });
         true
     }
@@ -775,7 +781,7 @@ impl EditorView {
             .and_then(Path::parent)
             .map(Path::to_path_buf);
         cx.spawn(async move |view, cx| {
-            let (outcome, window, wrap_lock) = cx
+            let (outcome, window, wrap_lock, import_lock) = cx
                 .background_executor()
                 .spawn(async move {
                     let read = |path: &Path| {
@@ -800,13 +806,18 @@ impl EditorView {
                         lock_outside_project(&mut window.targets, outside);
                         Ok(window)
                     });
-                    let wrap_lock = match &outcome {
-                        Ok(targets) if try_wrap => read(&targets.file).ok().and_then(|text| {
-                            wrap_element(&text, &targets.element, "Sequence", &[]).err()
-                        }),
+                    let text = match &outcome {
+                        Ok(targets) if try_wrap => read(&targets.file).ok(),
                         _ => None,
                     };
-                    (outcome, window, wrap_lock)
+                    let (wrap_lock, import_lock) = match (&outcome, text) {
+                        (Ok(targets), Some(text)) => (
+                            wrap_element(&text, &targets.element, "Sequence", &[]).err(),
+                            ensure_import(&text, CELESTA_REACT, "Sequence").err(),
+                        ),
+                        _ => (None, None),
+                    };
+                    (outcome, window, wrap_lock, import_lock)
                 })
                 .await;
             view.update(cx, |this, cx| {
@@ -817,6 +828,7 @@ impl EditorView {
                     outcome,
                     window,
                     wrap_lock,
+                    import_lock,
                 ) {
                     // Commits made while the targets were read go now.
                     this.drain_held_rows(cx);
