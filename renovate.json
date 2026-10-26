@@ -139,6 +139,14 @@
       ],
       "groupName": "makit",
       "separateMajorMinor": false
+    },
+    {
+      "description": "fframes are released together from dmtrKovalenko/fframes",
+      "matchSourceUrls": [
+        "https://github.com/dmtrKovalenko/fframes"
+      ],
+      "groupName": "fframes",
+      "separateMajorMinor": false
     }
   ]
 }
