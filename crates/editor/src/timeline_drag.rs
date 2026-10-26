@@ -458,6 +458,24 @@ pub(crate) fn drag_label(
         .join(" · ")
 }
 
+/// A band drag's label: [`drag_label`], and the `durationInFrames` the drag
+/// writes without changing it when `adds_duration` (see
+/// [`adds_duration`]): `from 30 → 45 · durationInFrames 60`.
+pub(crate) fn band_label(
+    kind: TimingKind,
+    grip: BandGrip,
+    before: TimingValues,
+    after: TimingValues,
+    adds_duration: bool,
+) -> String {
+    let label = drag_label(kind, grip, before, after);
+    if adds_duration {
+        format!("{label} · {DURATION} {}", format_number(after.duration))
+    } else {
+        label
+    }
+}
+
 /// What the end of a drag that moved the pointer `moved_px` at most and
 /// the grip `delta` frames does: Escape cancels; a press that barely moved
 /// is a click and seeks; a drag back to where it started writes nothing.
@@ -486,6 +504,9 @@ pub(crate) struct BandDrag {
     kind: TimingKind,
     /// The window's values when the drag started.
     values: TimingValues,
+    /// The drag also writes the `durationInFrames` it shows (see
+    /// [`adds_duration`]).
+    adds_duration: bool,
     /// A `Series` item's start in its `Series`; `None` for a `Sequence`.
     series_start: Option<f64>,
     /// Window x of the press.
@@ -597,7 +618,13 @@ impl EditorView {
             let preview = &drag.preview;
             let after = moved_values(preview.grip, preview.delta, drag.values);
             let window = moved_window(preview.grip, preview.delta, preview.window);
-            let mut lines = vec![drag_label(drag.kind, preview.grip, drag.values, after)];
+            let mut lines = vec![band_label(
+                drag.kind,
+                preview.grip,
+                drag.values,
+                after,
+                drag.adds_duration,
+            )];
             lines.extend(drag.scope.map(|scope| scope_in_effect(scope).to_owned()));
             return Some(BandGrips {
                 window,
@@ -726,6 +753,7 @@ impl EditorView {
         let drag = BandDrag {
             kind: window.kind,
             values: timing_values(window.kind, &window.targets, grips.window),
+            adds_duration: adds_duration(window.kind, grip, &window.targets),
             series_start,
             start_x: x,
             moved_px: 0.0,
@@ -1790,6 +1818,16 @@ mod tests {
             BandGrip::Body,
             &closed
         ));
+
+        let (before, after) = (values(30.0, 60.0), values(45.0, 60.0));
+        assert_eq!(
+            band_label(TimingKind::Sequence, BandGrip::Body, before, after, true),
+            "from 30 → 45 · durationInFrames 60"
+        );
+        assert_eq!(
+            band_label(TimingKind::Sequence, BandGrip::Body, before, after, false),
+            "from 30 → 45"
+        );
     }
 
     #[test]
