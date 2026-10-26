@@ -323,6 +323,8 @@ impl EditorView {
                         .selected_layer
                         .clone()
                         .filter(|_| self.picks_layers() && !self.playing),
+                    space_of: None,
+                    added_under: None,
                     timeline_frame: self.clock.frame(),
                     // On every request, so coalescing never drops it.
                     text_override: self.text_override.clone(),

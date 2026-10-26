@@ -205,6 +205,8 @@ fn request(
         source_of: None,
         prop_overrides: Vec::new(),
         frame_of: None,
+        space_of: None,
+        added_under: None,
         timeline_frame: 0,
         text_override: Some(edit("title", "Hello", "Hello!")),
         reuse_scene,
