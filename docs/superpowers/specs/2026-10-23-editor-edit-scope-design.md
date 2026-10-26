@@ -51,8 +51,12 @@ tooltip is its reason.
   one click away.)
 - The choice is remembered per element (its `file:line:column`) for the
   session, so editing a background repeatedly does not ask again. Celesta's
-  own edits carry it: when a lift moves `E` (an interface field added above
-  it), the reload moves the choice to `E`'s new position.
+  own edits carry it for the element being edited: when a lift moves `E` (an
+  interface field added above it), the reload moves the choice to `E`'s new
+  position. The other choices made in the files that edit wrote are
+  forgotten, since a position may now name another element; a change from
+  outside the editor forgets every choice. A forgotten choice falls back to
+  the default.
 - The timeline bands (design 1) and the header's "Shared" row show only the
   instances the chosen option changes; while an option is hovered, they
   preview that option's instead.
@@ -65,7 +69,10 @@ tooltip is its reason.
   color, and commits are refused with it until the user picks an option.
 
 A canvas drag, a label scrub, and an inline text edit use the option in effect
-when they start. While a drag runs, the Properties header and a second line of
+when they start (the remembered choice, else the option shown), and start only
+when their end would be written under it: a prop it would refuse has no handle
+(no size handles when a size prop is refused), and a scrub or a double-click
+shows the refusal instead. While a drag runs, the Properties header and a second line of
 the drag label say "Edits change this scene" or "Edits change the shared
 value". If that option is locked by the time the gesture ends, the edit is
 refused with the lock's text, never written under the other option; a refused
@@ -89,41 +96,11 @@ the shared value") is the row's existing remove button while "This scene" is
 chosen and this scene's call site passes the prop (its tooltip reads "Use the
 shared value"; there is no second button): it deletes the attribute at `S`.
 
-### Per row
-
-One rule decides, per row, what an edit writes under each option; the row's
-shown value, its locks, its remove button and the commit all read it, so what
-the panel shows is what gets written:
-
-| Row's target | This scene | Shared value |
-| --- | --- | --- |
-| Literal or absent prop at `E` (attribute or children) | lift (or the lift's lock) | as resolved |
-| Keyframe; a path under `style.`; a literal input (a `const` an expression reads) | locked: "Can't be set per scene yet" | as resolved |
-| Pass-through, `S` passes it | at `S` | the default; drag, scrub and inline text lock |
-| Pass-through, `S` leaves it out | at `S` | the default |
-| Pass-through without a default, every call passes it | at `S` | locked: "Every scene sets `rectWidth` itself" |
-| Pass-through whose default is an expression / `props.rectWidth` | at `S` | locked: "`rectWidth`'s shared value is written as an expression" / "`PriceTag` doesn't take its props as `{ … }`" |
-| Component-section row | at `S`, as resolved | at `S`, as resolved |
-
-- Under "Shared value", a pass-through row shows and edits the default (no
-  "Set at" line). A parameter without a default that some call leaves out gets
-  one (`{ rectWidth }` → `{ rectWidth = 240 }`); its row shows the element's
-  default, dimmed.
-- When this scene's call passes the parameter itself, a "Shared value" edit
-  would not show in this scene: the row says "This scene sets its own
-  `rectWidth`", and drag, scrub and inline text lock it with that text. Typing
-  into the row still writes the default.
-- A literal const used once inside `C` lifts like a literal at `E`: the
-  `const` takes the new prop as its value.
-- Component-section rows are outside the scope: written and removed at `S`.
-
-### Removal per scope
-
-- "This scene": a row passed at `S` deletes the attribute there ("Use the
-  shared value"). A literal at `E` can't be removed (that would reach every
-  scene): no remove button, and an emptied field restores the value.
-- "Shared value": a literal at `E` is removed as today; a default is never
-  removed.
+A value written at `E` changes every instance, also those whose call sets its
+own value for another parameter: under "Shared value", the timeline bands and
+the "Shared" row leave out the scenes that set their own only when every row
+the edit writes passes through to a parameter, and show every instance
+otherwise.
 
 ## What "This scene" writes
 
@@ -151,7 +128,8 @@ Lifting:
 
 - The new prop's name is the element's tag in lower camel case plus the prop's
   name with a capital (`rectWidth`, `textFontSize`, `rectX`). If `C` already
-  has that name, a number is appended (`rectWidth2`).
+  has that name, or `S` already writes it (forwarded through `...rest`), a
+  number is appended (`rectWidth2`).
 - `C`'s first parameter must be an object pattern (or absent, which becomes
   `{ rectWidth = 200 }`). Anything else is locked.
 - The default is the current literal, written in the same form the literal had.
@@ -168,6 +146,42 @@ was.
 
 Lifting edits two places, often two files; it uses design 2's multi-file
 commits and history entries.
+
+## Per row
+
+One rule decides, per row, what an edit writes under each option; the row's
+shown value, its locks, its remove button and the commit all read it, so what
+the panel shows is what gets written:
+
+| Row's target | This scene | Shared value |
+| --- | --- | --- |
+| Literal or absent prop at `E` (attribute or children) | lift (or the lift's lock) | as resolved |
+| Keyframe; a path under `style.`; a literal input (a `const` an expression reads) | locked: "Can't be set per scene yet" | as resolved |
+| Pass-through, `S` passes it | at `S` | the default; drag, scrub and inline text lock |
+| Pass-through, `S` leaves it out | at `S` | the default |
+| Pass-through without a default, every call passes it | at `S` | locked: "Every scene sets `rectWidth` itself" |
+| Pass-through whose default is an expression / `props.rectWidth` | at `S` | locked: "`rectWidth`'s shared value is written as an expression" / "`PriceTag` doesn't take its props as `{ … }`" |
+| Component-section row | at `S`, as resolved | at `S`, as resolved |
+
+- Under "Shared value", a pass-through row shows and edits the default (no
+  "Set at" line). A parameter without a default that some call leaves out gets
+  one (`{ rectWidth }` → `{ rectWidth = 240 }`); its row shows the element's
+  default, dimmed.
+- When this scene's call passes the parameter itself, a "Shared value" edit
+  would not show in this scene: the row says "This scene sets its own
+  `rectWidth`", and drag, scrub and inline text lock it with that text. Typing
+  into the row still writes the default.
+- A literal const used once inside `C` lifts like a literal at `E`: the
+  `const` takes the new prop as its value.
+- Component-section rows are outside the scope: written and removed at `S`.
+
+## Removal per scope
+
+- "This scene": a row passed at `S` deletes the attribute there ("Use the
+  shared value"). A literal at `E` can't be removed (that would reach every
+  scene): no remove button, and an emptied field restores the value.
+- "Shared value": a literal at `E` is removed as today; a default is never
+  removed.
 
 ## Locks
 
@@ -225,13 +239,23 @@ missing `E`), or "The scenes are not scanned" (no sweep runs).
   refreshing case included), with "Scanning scenes…" on the row in place of
   "Saving…", and written when the sweep lands. A failed scan, a ready index
   missing `E`, and no sweep refuse with the note: no sweep would drain the
-  commit. A drag is refused with the note.
+  commit.
 - A held commit keeps the scope the control showed when it was made (the
-  remembered choice, else the option then in effect); one made with no option
-  shown is written under the option in effect when the sweep lands.
-- A drag, scrub or inline text edit that started with no option shown and ends
-  after the options are known is refused with "The scenes were scanned while
-  editing; edit again".
+  remembered choice, else the option then in effect). One made with no option
+  shown is written when the sweep lands only if the option then in effect is
+  "This scene"; when "This scene" is locked by then, it is refused with "The
+  scenes were scanned while editing; edit again", never written to the shared
+  value.
+- A selection change (or leaving the interactive mode) does not wait for the
+  commits held for the scan: it drops them, and the viewer says "Not saved:
+  the scenes were still being scanned". Commits held for a reload are still
+  waited for.
+- A drag, scrub or inline text edit is never held: one that would write such
+  a value does not start while the note shows (it says the note instead), and
+  one under way when a scan starts is refused with the note at its end. One
+  that started with no option shown (writing at `S`) and ends after the
+  options are known is refused with "The scenes were scanned while editing;
+  edit again".
 
 A spread to other scenes is never written unscoped.
 

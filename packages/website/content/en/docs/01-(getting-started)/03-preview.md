@@ -277,7 +277,7 @@ Edits change  [ This scene ]  [ Shared value ]
 - **This scene**, the default, writes the edit for the instances in the current scene only.
 - **Shared value** writes the value every scene uses unless it sets its own.
 
-The chosen option is the raised tab, as in the tool row above the viewer. Click the other one to choose it. Celesta remembers the choice for that element for the rest of the session, so editing a background again doesn't ask again; its own edits, such as one that adds a line above the element, keep it. While the pointer is over a tab, the timeline bands show the instances that option would change; otherwise the bands and the header's **Shared** row show the instances the chosen option changes.
+The chosen option is the raised tab, as in the tool row at the top of the viewer. Click the other one to choose it. Celesta remembers the choice for that element for the rest of the session, so editing a background again doesn't ask again. After one of Celesta's own edits, the element you are editing keeps its choice even when the edit moves it, such as one that adds a line above it; the other elements in the files that edit wrote may have moved too, so they go back to **This scene**. When your files change outside Celesta, every element goes back to **This scene**. While the pointer is over a tab, the timeline bands and the header's **Shared** row show the instances that option would change; otherwise they show the instances the chosen option changes.
 
 The line under the tabs names the scenes the shared value reaches and the scenes that set their own value, which a **Shared value** edit leaves as they are: **Shared value is used in Intro, Outro · Price sets its own**. A scene sets its own when its call of the component passes any of the props the element's rows read. Several such scenes read **Price, Sale set their own**, and more than three are counted, such as **5 scenes**. In a composition without chapters, the line reads **Shared value is used everywhere**; when every scene sets its own, it reads **Shared value is used in no scene**.
 
@@ -301,35 +301,35 @@ function PriceTag({ label, rectWidth = 200 }: Props) {
 <PriceTag label="Sale" rectWidth={260} />
 ```
 
-The new prop is named after the element's tag and the prop, such as `rectWidth`, `textFontSize`, or `rectX`; when your component's file already uses that name, a number is added, such as `rectWidth2`. The default is written the way the value was, such as `"200"` for `width="200"`. A component without a parameter gets one (`function PriceTag({ rectWidth = 200 })`), and a parameter with `...rest` gets the new prop before it. When the parameter's type is a type literal, or an `interface` or `type` declared in the same file (also through `FC<Props>`, `memo<Props>`, or `forwardRef<…, Props>`), it gains an optional field, such as `rectWidth?: number`. A prop the element leaves out is moved the same way, with its default when Celesta knows it, and a `const` used once inside the component takes the new prop as its value. Moving the layer writes `x` and `y` together. The edit writes two files, often, and is still one change; one undo restores both.
+The new prop is named after the element's tag and the prop, such as `rectWidth`, `textFontSize`, or `rectX`; when your component's file already uses that name, or the scene's call already writes it (passed on through `...rest`), a number is added, such as `rectWidth2`. The default is written the way the value was, such as `"200"` for `width="200"`. A component without a parameter gets one (`function PriceTag({ rectWidth = 200 })`), and a parameter with `...rest` gets the new prop before it. When the parameter's type is a type literal, or an `interface` or `type` declared in the same file (also through `FC<Props>`, `memo<Props>`, or `forwardRef<…, Props>`), it gains an optional field, such as `rectWidth?: number`. A prop the element leaves out is moved the same way, with its default when Celesta knows it, and a `const` used once inside the component takes the new prop as its value. Moving the layer writes `x` and `y` together. The edit writes two files, often, and is still one change; one undo restores both.
 
 After that, editing the same element in another scene writes that scene's call, such as `rectWidth={180}` on the Intro's `<PriceTag>`, and the component stays as it is.
 
 ### What Shared value writes
 
-A value written on the element is written there, as without the choice: every scene that doesn't set its own changes. For a prop of your component, the row shows and edits the parameter's default, such as `rectWidth = 200` in `{ label, rectWidth = 200 }`, without **Set at**; a parameter without a default gets one, such as `{ label, rectWidth = 240 }`, and its row shows the element's default, dimmed. The calls that pass the prop keep their value, and the line names their scenes.
+A value written on the element is written there, as without the choice: every scene changes, including one that sets its own value for another prop. For a prop of your component, the row shows and edits the parameter's default, such as `rectWidth = 200` in `{ label, rectWidth = 200 }`, without **Set at**; a parameter without a default gets one, such as `{ label, rectWidth = 240 }`, and its row shows the element's default, dimmed. The calls that pass the prop keep their value, and the line names their scenes. Only such a value spares the scenes that set their own: when every row of the element is a prop of your component, the timeline bands and the header's **Shared** row leave those scenes out; otherwise they show every instance.
 
 When the current scene's call passes the prop itself, the row says **This scene sets its own `rectWidth`**: typing into it changes the other scenes but not this one, so dragging the layer, scrubbing the label, and editing the text on the canvas are locked for that prop. Choose **This scene** to change it here.
 
 ### When an option can't be chosen
 
-An option that can't write the edit is dimmed; the line under the tabs and the tab's tooltip give the reason. When **This scene** is disabled, **Shared value** is chosen instead. **This scene** is disabled when:
+An option that can't write the edit is dimmed; the line under the tabs and the tab's tooltip give the reason. When **This scene** is disabled, **Shared value** is chosen instead. The reasons below are shown for the `<Rect>` of `PriceTag` and its `rectWidth`; Celesta names your component and prop. **This scene** is disabled when:
 
 | Reason | Meaning |
 | --- | --- |
-| Can't find where `<component>` is called | Celesta can't find the call that renders this scene's instance, or can't read its file |
-| Passes through `<component>` | Another of your components sits between the scene and the component the element is written in, such as `<Card>` around `<PriceTag>`. Scenes written as components and placed by hand, such as `<Sequence><PriceScene /></Sequence>`, count as one too |
+| Can't find where `<PriceTag>` is called | Celesta can't find the call that renders this scene's instance, or can't read its file |
+| Passes through `<Card>` | Another of your components, here `<Card>` around `<PriceTag>`, sits between the scene and the component the element is written in. Scenes written as components and placed by hand, such as `<Sequence><PriceScene /></Sequence>`, count as one too |
 | The scenes reuse the same call (`.map()` or `defineScenes`) | One call renders the component for several scenes, such as scenes made by `defineScenes` and drawn by one `<Scenes>` |
-| `<component>` is called here for other scenes too | The call that renders this scene's instance also renders instances in other scenes, such as a call inside `.map()` |
-| `<component>` is called more than once in this scene | This scene has instances from more than one call; **This scene** writes one call |
+| `<PriceTag>` is called here for other scenes too | The call that renders this scene's instance also renders instances in other scenes, such as a call inside `.map()` |
+| `<PriceTag>` is called more than once in this scene | This scene has instances from more than one call; **This scene** writes one call |
 
 The next reasons belong to a row. Under **This scene**, the row is locked with its reason, and the option is disabled only when no row can be written:
 
 | Reason | Meaning |
 | --- | --- |
-| `<component>` doesn't take its props as `{ … }` | The component's parameter is written as `(props)` or `(...args)` |
-| `<component>`'s props type is in another file | The parameter's type is imported |
-| Can't add `<prop>` to `<component>`'s props type | The type has no type literal to add the field to, such as `type Props = Base & Other` |
+| `PriceTag` doesn't take its props as `{ … }` | The component's parameter is written as `(props)` or `(...args)` |
+| `PriceTag`'s props type is in another file | The parameter's type is imported |
+| Can't add `rectWidth` to `PriceTag`'s props type | The type has no type literal to add the field to, such as `type Props = Base & Other` |
 | Can't be set per scene yet | The value is animated with keyframes, is in a `style={{ … }}` object, or is an input row's `const` |
 | This file is outside the project | The component's file or the call's file is outside the entry file's folder, or inside `node_modules` |
 
@@ -337,13 +337,13 @@ Under **Shared value**, a row is locked, and the option disabled when every row 
 
 | Reason | Meaning |
 | --- | --- |
-| Every scene sets `<prop>` itself | The parameter has no default, and every call passes the prop |
-| `<prop>`'s shared value is written as an expression | The default is computed, such as `{ rectWidth = W * 2 }` |
-| `<component>` doesn't take its props as `{ … }` | The component reads `props.rectWidth`, which has no default to write |
-| Can't find where `<prop>`'s shared value is written | Celesta can't find the parameter in the component |
+| Every scene sets `rectWidth` itself | The parameter has no default, and every call passes the prop |
+| `rectWidth`'s shared value is written as an expression | The default is computed, such as `{ rectWidth = W * 2 }` |
+| `PriceTag` doesn't take its props as `{ … }` | The component reads `props.rectWidth`, which has no default to write |
+| Can't find where `rectWidth`'s shared value is written | Celesta can't find the parameter in the component |
 | This file is outside the project | The component's file is outside the entry file's folder, or inside `node_modules` |
 
-If the option you chose becomes disabled, such as after you add a second call in this scene, Celesta doesn't switch to the other one: neither tab is raised, the line shows the reason in the warning color, and edits are refused with it until you choose an option.
+If the option you chose is disabled, such as when you chose **This scene** in Price and select the element in a scene whose call also renders other scenes, Celesta doesn't switch to the other one: neither tab is raised, the line shows the reason in the warning color, and edits are refused with it until you choose an option.
 
 ### Removing a value
 
@@ -351,7 +351,7 @@ Under **This scene**, a row whose value is passed at the current scene's call ha
 
 ### Dragging, scrubbing, and editing text
 
-While you drag a layer, the label beside it has a second line, **Edits change this scene** or **Edits change the shared value**, and the header says the same under the element's name. A drag, a scrub, and a text edited on the canvas write under the option in effect when they began. If that option is disabled by the time you release or commit, the edit is refused with the reason instead of being written under the other one. A refused text edit stays open, with the reason at the top-left of the preview, so you can choose an option and press Enter again; selecting another layer, moving the playhead, starting playback, or a **File** command ends it without writing.
+While you drag a layer, the label beside it has a second line, **Edits change this scene** or **Edits change the shared value**, and the header says the same under the element's name. A drag, a scrub, and a text edited on the canvas write under the option in effect when they began. One that this option would refuse doesn't begin: the canvas offers no handle for a prop it can't write, and no size handles when it can't write one of the layer's size props, and a scrub or a double-click shows the reason instead, as a locked row does. If that option is disabled by the time you release or commit, the edit is refused with the reason instead of being written under the other one. A refused text edit stays open, with the reason at the top-left of the preview, so you can choose an option and press Enter again; selecting another layer, moving the playhead, starting playback, or a **File** command ends it without writing.
 
 ### While the scenes are scanned
 
@@ -364,7 +364,9 @@ Until the scan described under "See what an edit changes" answers, **Edits chang
 | Not found in the scene scan | The scan did not see this element |
 | The scenes are not scanned | No scan runs for the composition |
 
-Meanwhile, a value set at the call, in a row with **Set at** or in the **Component** section, is written at the call, as without the choice, unless you chose **Shared value** for the element earlier. Any other value committed in a row waits, with **Scanning scenes…** under the row, and is written when the scan finishes, under the option then in effect; after a failed scan, or when the element is not found, it is refused with the line's text. A drag that would write such a value is refused the same way. A drag, a scrub, or a text edit that began while the scenes were being scanned, and ends after the scan found the element shared, is refused with **The scenes were scanned while editing; edit again**, since you didn't see the options when you began.
+Meanwhile, a value set at the call, in a row with **Set at** or in the **Component** section, is written at the call, as without the choice, unless you chose **Shared value** for the element earlier. Any other value committed in a row waits while the scan runs, with **Scanning scenes…** under the row, and is written when the scan finishes, under the option then in effect if that is **This scene**. You didn't see the options when you committed it, so when **This scene** is disabled by then, it is not written to the shared value but refused with **The scenes were scanned while editing; edit again**. Selecting another layer, or turning interactive mode off, doesn't wait for the scan: the waiting values are not written, and **Not saved: the scenes were still being scanned** shows at the top-left of the preview until your next click. When no scan is running (the scan failed, the element was not found, or the scenes are not scanned), such a value is refused with the line's text.
+
+A drag, a scrub, or a text edit never waits for the scan. One that would write such a value doesn't begin while the line shows anything but the tabs, and says why with the line's text; one already under way is refused with it when you release or commit. One that began while the scenes were being scanned, writing a value set at the call, and ends after the scan found the element shared, is refused with **The scenes were scanned while editing; edit again**, since you didn't see the options when you began.
 
 ## Undo
 
