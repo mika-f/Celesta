@@ -104,7 +104,7 @@ Anything else is locked: its field shows a lock icon and the reason, the header'
 | A layout component sets this value | The element received another value than the one written: a parent, such as a layout component, replaced it |
 | May be set by a spread ({...props}) | The element has `{...props}` and no value of its own, or the spread comes after the value |
 | May be set by `style` | A font or color row of a `<Text>` whose `style` is not written as an object, or has a spread that could set the value (see the next section) |
-| Rendered `<count>` times from this element | An element in `.map()`; editing it would move every copy |
+| Rendered `<count>` times from this element | An element in `.map()`, or in one of your components drawn more than once in the frame; editing it would move every copy. For a component, **This scene** can move the selected copy alone (see "Edit one scene or every scene") |
 | Can't tell which frame this animation reads | `frame` could hold more than one frame (each `<Sequence>` or `<FreezeFrame>` around the element gives another), and those frames give different keyframes with the same value |
 | This file is outside the project | The value is written in a file outside the entry file's folder, or inside `node_modules`: the element's file, or the call site's for a value set there |
 | Couldn't find this element in the source | The file no longer has the element where the preview found it, such as while a save is still reloading |
@@ -281,6 +281,8 @@ The chosen option is the raised tab, as in the tool row at the top of the viewer
 
 The line under the tabs names the scenes the shared value reaches and the scenes that set their own value, which a **Shared value** edit leaves as they are: **Shared value is used in Intro, Outro · Price sets its own**. A scene sets its own when its call of the component passes any of the props the element's rows read. Several such scenes read **Price, Sale set their own**, and more than three are counted, such as **5 scenes**. In a composition without chapters, the line reads **Shared value is used everywhere**; when every scene sets its own, it reads **Shared value is used in no scene**.
 
+When the current scene calls the component more than once, such as a Sale and a Second `<PriceTag>` in Price, **This scene** writes the call of the instance you selected only, and the other calls in the scene keep their values. While **This scene** is in effect, or the pointer is over it, the line reads **Edits this `<PriceTag>` only · this scene calls it 2 times**, and the timeline bands show the selected instance alone. The tab's tooltip reads **Write the edit for this call only**.
+
 ### What This scene writes
 
 A value your component receives as a prop, shown with **Set at** in its row, is written at the current scene's call, as without the choice. Any other value is moved into a new prop of the component: its current value becomes the prop's default, so the other scenes keep it, and the new value is passed at this scene's call. Choosing **This scene** in the Price scene and setting the width to 260:
@@ -305,6 +307,8 @@ The new prop is named after the element's tag and the prop, such as `rectWidth`,
 
 After that, editing the same element in another scene writes that scene's call, such as `rectWidth={180}` on the Intro's `<PriceTag>`, and the component stays as it is.
 
+When the scene calls the component more than once, the value is passed at the selected instance's call only; the scene's other calls leave the new prop out, so they keep the old value as its default. A value written on the element of a component the frame draws more than once, such as the `x` of both price tags, is locked with **Rendered 2 times from this element** under **Shared value**, since writing it there would move every copy. Under **This scene** it is moved into a new prop like any other value, so you can drag one of the tags on the canvas: `x` and `y` go to its call, and the other tag stays where it is. While you drag, the preview draws every copy at the new place; once you release, only the selected one moves.
+
 ### What Shared value writes
 
 A value written on the element is written there, as without the choice: every scene changes, including one that sets its own value for another prop. For a prop of your component that the current scene's call leaves out, the row shows and edits the parameter's default, such as `rectWidth = 200` in `{ label, rectWidth = 200 }`, without **Set at**; a parameter without a default gets one, such as `{ label, rectWidth = 240 }`, and its row shows the element's default, dimmed. The calls that pass the prop keep their value, and the line names their scenes. Only such a value spares the scenes that set their own: when every row of the element is a prop of your component, the timeline bands and the header's **Shared** row leave those scenes out; otherwise they show every instance.
@@ -321,7 +325,7 @@ An option that can't write the edit is dimmed; the line under the tabs and the t
 | Passes through `<Card>` | Another of your components, here `<Card>` around `<PriceTag>`, sits between the scene and the component the element is written in. Scenes written as components and placed by hand, such as `<Sequence><PriceScene /></Sequence>`, count as one too |
 | The scenes reuse the same call (`.map()` or `defineScenes`) | One call renders the component for several scenes, such as scenes made by `defineScenes` and drawn by one `<Scenes>` |
 | `<PriceTag>` is called here for other scenes too | The call that renders this scene's instance also renders instances in other scenes, such as a call inside `.map()` |
-| `<PriceTag>` is called more than once in this scene | This scene has instances from more than one call; **This scene** writes one call |
+| `<PriceTag>` here draws this element more than once | This scene calls the component more than once, and the selected instance's call draws the element more than once itself, such as a call inside `.map()`; writing that call would change every copy it draws |
 
 The next reasons belong to a row. Under **This scene**, the row is locked with its reason, and the option is disabled only when no row can be written:
 
@@ -352,7 +356,7 @@ Under **This scene**, a row whose value is passed at the current scene's call ha
 
 ### Dragging, scrubbing, and editing text
 
-While you drag a layer, the label beside it has a second line, **Edits change this scene** or **Edits change the shared value**, and the header says the same under the element's name. A drag, a scrub, and a text edited on the canvas write under the option in effect when they began. One that this option would refuse doesn't begin: the canvas offers no handle for a prop it can't write, and no size handles when it can't write one of the layer's size props, and a scrub or a double-click shows the reason instead, as a locked row does. If that option is disabled by the time you release or commit, the edit is refused with the reason instead of being written under the other one. A refused text edit stays open, with the reason at the top-left of the preview, so you can choose an option and press Enter again; selecting another layer, moving the playhead, starting playback, or a **File** command ends it without writing.
+While you drag a layer, the label beside it has a second line, **Edits change this scene** (**Edits change this `<PriceTag>` only** when the scene calls the component more than once) or **Edits change the shared value**, and the header says the same under the element's name. A drag, a scrub, and a text edited on the canvas write under the option in effect when they began. One that this option would refuse doesn't begin: the canvas offers no handle for a prop it can't write, and no size handles when it can't write one of the layer's size props, and a scrub or a double-click shows the reason instead, as a locked row does. If that option is disabled by the time you release or commit, the edit is refused with the reason instead of being written under the other one. A refused text edit stays open, with the reason at the top-left of the preview, so you can choose an option and press Enter again; selecting another layer, moving the playhead, starting playback, or a **File** command ends it without writing.
 
 ### While the scenes are scanned
 

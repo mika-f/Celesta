@@ -49,6 +49,14 @@ The tabs' tooltips are "Write the edit for the instances in this scene only"
 and "Write the value every scene uses unless it sets its own"; a locked tab's
 tooltip is its reason.
 
+When the current scene calls `C` more than once, "This scene" means this
+call: it writes at the selected instance's `S` only (see [What "This scene"
+writes](#what-this-scene-writes)). The tab keeps its label; its tooltip is
+"Write the edit for this call only", and while "This scene" is in effect or
+hovered, the line under the control reads "Edits this `<PriceTag>` only ·
+this scene calls it 2 times" (the calls counted are the distinct chain
+entries at `S`'s place among the instances shown in this scene).
+
 - Default: **This scene**. (Decided by the designer: an unintended spread to
   other scenes is the failure the user reported; a deliberate shared edit is
   one click away.)
@@ -76,8 +84,9 @@ when they start (the remembered choice, else the option shown), and start only
 when their end would be written under it: a prop it would refuse has no handle
 (no size handles when a size prop is refused), and a scrub or a double-click
 shows the refusal instead. While a drag runs, the Properties header and a
-second line of the drag label say "Edits change this scene" or "Edits change
-the shared value". If that option is locked by the time the gesture ends, the
+second line of the drag label say "Edits change this scene" ("Edits change
+this `<PriceTag>` only" when the scene calls `C` more than once) or "Edits
+change the shared value". If that option is locked by the time the gesture ends, the
 edit is refused with the lock's text, never written under the other option; a
 gesture released while another write runs waits its turn and is gated the
 same way when it goes; a refused
@@ -116,6 +125,14 @@ site rule. "This scene" needs `S` to be confined to the current scene: every
 occurrence of every instance whose chain contains `S` lies in this scene, by
 the occurrence index.
 
+When the current scene calls `C` more than once (an instance shown in this
+scene does not go through `S`), `S` is the selected instance's own call, and
+"This scene" writes it alone: the scene's other calls keep their values (a
+lifted value's default). That needs `S` to draw the selected instance alone in
+this scene, one copy at a time; otherwise it is locked (see
+[Locks](#locks)). The impact filter is the same call-site filter, so only the
+selected instance's band is filled.
+
 1. **Already a parameter.** If `E`'s prop resolves through pass-through
    (design 2), the edit writes at `S` only. Nothing new is created.
 2. **Otherwise, lift the value into a prop of `C`**, keeping today's value as
@@ -145,6 +162,15 @@ Lifting:
   literal or names an `interface`/`type` alias declared in the same file. An
   imported props type is locked. No annotation: nothing to add.
 - A move writes `x` and `y`: both are lifted in one edit.
+- A value written on `E` in a frame that renders `E` more than once is
+  locked by design 2 ("Rendered 2 times from this element"): writing it at
+  `E` would change every copy. Under "This scene", when `S` draws the
+  selected instance alone in this scene, the write goes to `S` instead, so
+  the element is resolved as that one instance (a second resolution with a
+  render count of 1) and its rows, canvas drag and commit lift like any
+  literal. Under "Shared value" and for an element with no scope control,
+  the lock stays. While a drag runs, its preview override is keyed by `E`'s
+  position, so every copy draws the dragged value until the release.
 
 After lifting, later edits of the same element in another scene resolve as
 case 1 at that scene's call site; the default keeps every other scene as it
@@ -211,7 +237,7 @@ the panel shows is what gets written:
 | `S` produces instances in other scenes too | "`<PriceTag>` is called here for other scenes too" |
 | The scenes share one chain: `C` is called once and repeated by `.map()` or `<Scenes>` | "The scenes reuse the same call (`.map()` or `defineScenes`)" |
 | More than one component between the scene and `E` | "Passes through `<Card>`" |
-| An instance in this scene is made by another call of `C` | "`<PriceTag>` is called more than once in this scene" |
+| This scene calls `C` more than once, and `S` draws `E` more than once in it (two instances through `S`, or copies in a `.map()`) | "`<PriceTag>` here draws this element more than once" |
 | `C`'s parameter is not an object pattern | "`PriceTag` doesn't take its props as `{ … }`" |
 | `C`'s props type is imported | "`PriceTag`'s props type is in another file" |
 | `C`'s props type can't take a field (an alias without a type-literal member, a mapped type, another declarator annotation) | "Can't add `rectWidth` to `PriceTag`'s props type" |
@@ -226,7 +252,9 @@ and placed by hand, such as `<Sequence><PriceScene /></Sequence>`, count too);
 an instance through `S` in another scene with a `Scenes` wrapper after `S`
 (the reused-call text; `S` inside `.map()` across scenes gets the other-scenes
 text); any other instance through `S` in another scene; an instance in this
-scene not through `S`. The rest are per row: the row is locked with its text,
+scene not through `S` while `S` does not draw the selected instance alone
+there. A scene that calls `C` once, through `S` drawing several copies, keeps
+"This scene": every copy is in this scene. The rest are per row: the row is locked with its text,
 and the option is disabled only when no row can be written under it (with the
 first row's reason).
 

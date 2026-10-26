@@ -280,14 +280,50 @@ amended to match.
   `PropsTypeNotEditable`.
 - `ScopeLock::Unknown` was dropped: the index notes live in
   `ScopeState::Unknown` as strings.
+- **Two calls in one scene: "This scene" writes this call.** A scene that
+  calls `C` more than once no longer locks "This scene" (the old
+  `CalledTwiceHere` is gone): it writes the selected instance's call `S`,
+  which `component.call_site` already names, and the impact filter is the
+  same `Through(S)`. `ScopeOptions::called_here` (`C`'s name and the number
+  of distinct calls at `S`'s chain place among the instances shown in this
+  scene) drives the copy: the line "Edits this `<PriceTag>` only · this scene
+  calls it 2 times" while "This scene" is in effect or hovered, the tooltip
+  "Write the edit for this call only", and the drag label "Edits change this
+  `<PriceTag>` only". "This scene" is locked as "`<PriceTag>` here draws this
+  element more than once" (`DrawsMoreThanOnce`) only when another call is in
+  the scene and `S` does not draw the selected instance alone (two instances
+  through `S`, or `max_per_frame > 1`). A scene with `S` alone drawing
+  several copies keeps "This scene" as before: every copy is in the scene.
+- **"Rendered N times" under "This scene".** Design 2's `Repeated` lock is a
+  resolve-time `LockReason` on every value written on `E` when the frame
+  renders `E` more than once. `resolve_rows` now also resolves `E` as one
+  instance (render count 1) into `ElementTargets::one` when `E` is in a
+  component and repeated. `targets_in_effect` picks it under "This scene"
+  when `ScopeOptions::drawn_alone` (`S` draws the selected instance alone in
+  this scene); `shown_scope_context` and `element_targets` hand it to the
+  rows, the canvas drag and the gates, and `commit_element` picks it by the
+  scope the commit keeps (`targets_under`). `commit_files` re-resolves the
+  same way (it takes `fresh.one` when `expected` has none). `scope_state`
+  computes the options from the targets as resolved, with "This scene"'s
+  row lock read on the one-instance targets, so the options never depend on
+  which targets are shown. Under "Shared value" and without a scope the
+  lock stays.
 
 ## Known gaps
 
 - Scenes written as components and placed by hand
   (`<Sequence><PriceScene /></Sequence>`) lock "This scene" as "Passes through
   `<PriceScene>`": the scene's own component entry sits after `S`.
-- Several calls of `C` in one scene lock "This scene" ("`<PriceTag>` is
-  called more than once in this scene") instead of writing each call.
+- Moving one of several copies under "This scene": the drag's preview
+  override is keyed by `E`'s position, so every copy in the frame draws the
+  dragged value until the release; the written source moves the selected
+  copy only.
+- Resolving `E` as one instance costs a second resolution (every parse
+  again) for a repeated element in a component, also on every commit's
+  re-resolve.
+- A remembered choice switched while a drag runs: the release writes under
+  the drag's scope with the targets of that scope, but the drag's handles
+  were those of the targets shown at its start.
 - A refused inline text edit ended by a selection change, a seek, play, or a
   project command loses its text. It needs a scan landing or a lock appearing
   during the edit. After a refused blur the person may have to click back into
@@ -357,7 +393,8 @@ amended to match.
   `ElementTargets` for a `Sequence` (`PropKey::Prop("from" |
   "durationInFrames" | "offset")`, `component` = the enclosing component's
   call, `enclosing` = that component) and pass their own `resolve_again`.
-  Hand-built targets must set `outside` (as `lock_outside_project` does).
+  Hand-built targets must set `outside` (as `lock_outside_project` does)
+  and `one: None`.
   `commit_scoped` is re-exported only under `cfg(test)` in
   `element_edit.rs`; lift that when design 4 calls it.
 - `SceneCalls`, `commit_gate` and `gesture_gate` decide the scope for any
@@ -395,21 +432,32 @@ the same scene for each of the first three checks, for the pull request.
   and go back to the chosen option's on leave. A locked tab is dimmed, its
   tooltip gives the reason, and a click does nothing.
 - Drag the layer: the drag label shows a second line, "Edits change this
-  scene" or "Edits change the shared value", and the header shows the same
-  under the title.
+  scene" or "Edits change the shared value" ("Edits change this
+  `<PriceTag>` only" in a scene calling it twice), and the header shows the
+  same under the title.
 - With [This scene] chosen in Price, move the playhead to a scene whose
   `<PriceTag>` call sits inside `.map()` (it renders other scenes too) and
   select the `<Rect>` there: neither tab is raised, the line is
   "`<PriceTag>` is called here for other scenes too" in the warning color, a
   commit is refused with it until you pick [Shared value], and a drag of the
   layer does not start (the canvas shows the reason).
-- Add a second `<PriceTag>` to `Price.tsx` in an external editor and select
-  the `<Rect>` again: the outside change forgot the choices, [This scene] is
-  disabled ("`<PriceTag>` is called more than once in this scene"), and
-  [Shared value] is raised. With the first call passing `rectWidth={260}`
-  over `rectWidth = 200`, the Width row shows 260, locked with "This scene
-  sets its own `rectWidth`", and [Shared value] stays raised; its remove
-  button removes `rectWidth={260}` from that call only.
+- Make the Price scene call `<PriceTag label="Sale" rectWidth={260} />` and
+  `<PriceTag label="Second" />` side by side, with `rectWidth = 200` in
+  `PriceTag`, and select the Sale tag's `<Rect>`: [This scene] is available
+  and raised, the line reads "Edits this `<PriceTag>` only · this scene
+  calls it 2 times", the tab's tooltip reads "Write the edit for this call
+  only", and only the Sale tag's band is filled. Set Width 260 → 280: only
+  `rectWidth={260}` at the Sale call changes. X, Y, Rotation and Scale are
+  editable: drag the Sale tag and release; the drag label's second line
+  reads "Edits change this `<PriceTag>` only", `x` and `y` lift into
+  `PriceTag` with their old values as defaults and are passed at the Sale
+  call alone, the Second tag stays (while dragging, both tags follow the
+  pointer), and one undo restores both files. Take before and after
+  screenshots of this scene for the pull request.
+- With the same selection, choose [Shared value]: the Width row shows 260,
+  locked with "This scene sets its own `rectWidth`", its remove button
+  removes `rectWidth={260}` from the Sale call only, and X, Y, Rotation and
+  Scale are locked with "Rendered 2 times from this element".
 - Choose [Shared value] for one element of `PriceTag`, then make a [This
   scene] edit of another element of it that lifts a value (the new field in
   `interface Props` moves both elements down a line): the edited element
