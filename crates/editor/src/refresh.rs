@@ -391,6 +391,12 @@ impl EditorView {
         // commits a text edit before it reloads).
         if !self.selection_keep.requested(sequence, same_composition) {
             self.clear_layer_selection(same_composition);
+            // Which files changed is not known: every scope choice's
+            // position may now name another element.
+            if same_composition {
+                self.scope_choices.clear();
+                self.scope_written.clear();
+            }
         }
         cx.spawn(async move |view, cx| {
             let reload = cx
@@ -511,7 +517,8 @@ impl EditorView {
                     .into();
                 }
                 self.react_reload_generation = self.react_reload_generation.wrapping_add(1);
-                let keep = self.selection_keep.applies(sequence) && self.selected_layer.is_some();
+                let own_write = self.selection_keep.applies(sequence);
+                let keep = own_write && self.selected_layer.is_some();
                 // A text committed on the canvas is drawn by the reloaded
                 // code once a reload requested after its write applies,
                 // whatever it does to the selection. Dropped before the
@@ -546,6 +553,14 @@ impl EditorView {
                 } else {
                     // A layer picked while the reload ran belongs to the old code.
                     self.clear_layer_selection(false);
+                }
+                // The written files' positions may name other elements now
+                // (a lift adds lines): only the selected element's choice,
+                // carried to where it moved, stays in them.
+                if own_write {
+                    let written = std::mem::take(&mut self.scope_written);
+                    self.scope_choices
+                        .forget_in(&written, self.scope_carry_from.as_ref());
                 }
                 self.problems.clear(Source::Preview);
                 self.refresh_preview();

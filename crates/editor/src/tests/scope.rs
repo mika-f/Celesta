@@ -1046,6 +1046,37 @@ fn a_choice_moves_with_the_element_after_a_kept_reload() {
     assert_eq!(choices.get(&before), None);
 }
 
+#[test]
+fn a_reload_forgets_the_choices_in_the_files_it_changed() {
+    let selected = pos(TAG_FILE, 2, 10);
+    // A sibling a lift's added lines may move onto another position.
+    let sibling = pos(TAG_FILE, 3, 10);
+    let unchanged = pos("/project/badge.tsx", 2, 10);
+    let mut choices = ScopeChoices::default();
+    choices.set(selected.clone(), Scope::Shared);
+    choices.set(sibling.clone(), Scope::Shared);
+    choices.set(unchanged.clone(), Scope::Shared);
+
+    // An own write of the component's and the scene's files: only the
+    // choice carried for the element being edited stays in them.
+    choices.forget_in(
+        &[PathBuf::from(TAG_FILE), PathBuf::from(SCENES_FILE)],
+        Some(&selected),
+    );
+    assert_eq!(choices.get(&selected), Some(Scope::Shared));
+    assert_eq!(choices.get(&sibling), None);
+    assert_eq!(choices.get(&unchanged), Some(Scope::Shared));
+
+    // Nothing carried (the selection went): none stays in them.
+    choices.forget_in(&[PathBuf::from(TAG_FILE)], None);
+    assert_eq!(choices.get(&selected), None);
+    assert_eq!(choices.get(&unchanged), Some(Scope::Shared));
+
+    // A change from outside the editor, in files unknown: every one goes.
+    choices.clear();
+    assert_eq!(choices.get(&unchanged), None);
+}
+
 /// The impact of an edit of the selected `<Rect>` (in Price) under
 /// `filter`, with `PriceTag` called once per scene.
 fn impact_under(filter: &ImpactFilter) -> crate::impact::Impact {

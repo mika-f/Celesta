@@ -148,6 +148,10 @@ pub(crate) struct EditorView {
     /// whose scope choice moves to where the reloaded code's first lookup
     /// puts the element.
     pub(crate) scope_carry_from: Option<SourcePos>,
+    /// The files the editor's own writes changed since the last reload
+    /// that read them: that reload forgets the scope choices made in them,
+    /// but the one carried for the selected element.
+    pub(crate) scope_written: Vec<PathBuf>,
     /// The preview frame a sweep held back after the editor's own write
     /// waits for before it starts.
     pub(crate) occurrence_sweep_after: Option<u64>,
@@ -431,6 +435,7 @@ impl EditorView {
             scope_hover: None,
             scope_cache: ScopeCache::default(),
             scope_carry_from: None,
+            scope_written: Vec::new(),
             occurrence_sweep_after: None,
             occurrence_watch: false,
             react_reloads: ReloadOrder::default(),

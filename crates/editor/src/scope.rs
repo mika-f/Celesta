@@ -19,7 +19,7 @@ use celesta_source_edit::{
     DefaultTarget, EditTarget, EditValue, LiftLock, LockReason, element_at, written_attributes,
 };
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 /// Where an edit of a shared element writes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -963,5 +963,18 @@ impl ScopeChoices {
         if let Some(scope) = self.chosen.remove(from) {
             self.chosen.insert(to.clone(), scope);
         }
+    }
+
+    /// Forgets the choices made for elements in `files`, which a write
+    /// changed: their positions may now name other elements. The one at
+    /// `keep`, carried for the element being edited, stays.
+    pub(crate) fn forget_in(&mut self, files: &[PathBuf], keep: Option<&SourcePos>) {
+        self.chosen
+            .retain(|element, _| Some(element) == keep || !files.contains(&element.file));
+    }
+
+    /// Forgets every choice: files changed outside the editor.
+    pub(crate) fn clear(&mut self) {
+        self.chosen.clear();
     }
 }
