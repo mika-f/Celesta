@@ -2564,9 +2564,7 @@ mod tests {
             name: "Rect".to_owned(),
         })
         .text();
-        let clashing = menu_items(None, |kind| {
-            (kind == NewKind::Rect).then(|| clash.clone())
-        });
+        let clashing = menu_items(None, |kind| (kind == NewKind::Rect).then(|| clash.clone()));
         assert_eq!(
             clashing[0],
             (

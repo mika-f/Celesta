@@ -275,7 +275,8 @@ fn a_shapes_alias_or_namespace_is_written() {
     };
 
     // `import * as S`: `<S.Ellipse />`, the imports untouched.
-    let imports = "import { Group } from '@celesta/react';\nimport * as S from '@celesta/shapes';\n";
+    let imports =
+        "import { Group } from '@celesta/react';\nimport * as S from '@celesta/shapes';\n";
     let text = format!("{imports}{body}");
     let added = add_child(&text, &element(&text, "<Group"), &ellipse, None).unwrap();
     assert_eq!(added.edits.len(), 1);
@@ -288,8 +289,7 @@ fn a_shapes_alias_or_namespace_is_written() {
     );
 
     // `Ellipse as E`: `<E />`.
-    let imports =
-        "import { Group } from '@celesta/react';\nimport { Ellipse as E } from '@celesta/shapes';\n";
+    let imports = "import { Group } from '@celesta/react';\nimport { Ellipse as E } from '@celesta/shapes';\n";
     let text = format!("{imports}{body}");
     let after = add(&text, "<Group", &ellipse, None);
     assert!(
