@@ -5,7 +5,7 @@
 use super::*;
 use crate::element_edit::{WindowTargets, resolve_window, window_files, window_report};
 use crate::scope::{Scope, ScopeLock, ScopeOptions, ScopeState};
-use crate::timeline_drag::{BandGrip, grip_refusal};
+use crate::timeline_drag::{BandGrip, band_writes, grip_refusal, timing_values};
 use crate::timing::{SetTimingOffer, WindowRole, set_timing_files, set_timing_offer};
 use celesta_react_bridge::TimingWindow;
 use celesta_source_edit::{ElementRef, ImportLock, TimingKind, WrapLock};
@@ -356,6 +356,45 @@ fn window_files_lifts_under_this_scene() {
     history.undo().unwrap();
     assert_eq!(files.read("price_tag.tsx"), TAG);
     assert_eq!(files.read("price.tsx"), PRICE);
+}
+
+#[test]
+fn a_drag_of_a_lifted_prop_the_call_leaves_out_starts_at_its_default() {
+    // After a "This scene" lift in Price, Intro's call doesn't pass
+    // `sequenceFrom`: its window starts at the default, 30.
+    let files = Files::new(
+        "default",
+        &[("price_tag.tsx", TAG_LIFTED), ("intro.tsx", INTRO)],
+    );
+    let report = report_of(vec![
+        files.entry("Text", ElementKind::Primitive, "price_tag.tsx", (11, 7)),
+        files.entry("Sequence", ElementKind::Wrapper, "price_tag.tsx", (10, 5)),
+        files.entry("PriceTag", ElementKind::Component, "intro.tsx", (2, 3)),
+    ]);
+    let window = files.window(&report, &files.pos("price_tag.tsx", 10, 5));
+    let now = timing_values(window.kind, &window.targets, (30.0, 90.0));
+    assert_eq!(now.start, 30.0);
+    let values = band_writes(window.kind, BandGrip::Body, 15, now, &window.targets);
+    // The window has no `durationInFrames`: the body adds it.
+    assert_eq!(
+        values,
+        [number("from", 45.0), number("durationInFrames", 60.0)]
+    );
+
+    let entry = files.commit(&window, &report, None, &values).unwrap();
+
+    assert_eq!(entry.len(), 2);
+    assert_eq!(
+        files.read("intro.tsx"),
+        "export const Intro = () => (\n  <PriceTag label=\"Hello\" sequenceFrom={45} />\n);\n"
+    );
+    assert_eq!(
+        files.read("price_tag.tsx"),
+        TAG_LIFTED.replace(
+            "from={sequenceFrom}>",
+            "from={sequenceFrom} durationInFrames={60}>"
+        )
+    );
 }
 
 #[test]

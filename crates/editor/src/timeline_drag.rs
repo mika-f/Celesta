@@ -143,11 +143,17 @@ pub(crate) fn grip_lock(
 }
 
 /// Whether a drag of `grip` also writes `durationInFrames` it doesn't
-/// change: the body of a `Sequence` without one (see [`band_writes`]).
+/// change: the body of a `Sequence` without one (see [`band_writes`]). A
+/// parameter's default the call leaves out is one.
 pub(crate) fn adds_duration(kind: TimingKind, grip: BandGrip, targets: &ElementTargets) -> bool {
     let missing = targets
         .target(&PropKey::Prop(DURATION.to_owned()))
-        .is_some_and(|target| matches!(inner_target(target), EditTarget::Missing { .. }));
+        .is_some_and(|target| {
+            matches!(
+                inner_target(target),
+                EditTarget::Missing { default: None, .. }
+            )
+        });
     kind == TimingKind::Sequence && grip == BandGrip::Body && missing
 }
 
@@ -183,11 +189,16 @@ pub(crate) fn grip_refusal(
     })
 }
 
-/// The number `targets` holds for `name`, when it holds one.
+/// The number `targets` holds for `name`, when it holds one: written, or
+/// the default of a parameter the component's call leaves out.
 fn number_of(targets: &ElementTargets, name: &str) -> Option<f64> {
     match inner_target(targets.target(&PropKey::Prop(name.to_owned()))?) {
         EditTarget::Literal {
             value: EditValue::Number(value),
+            ..
+        }
+        | EditTarget::Missing {
+            default: Some(EditValue::Number(value)),
             ..
         } => Some(*value),
         EditTarget::Keyframe { value, .. } => Some(*value),
@@ -196,8 +207,8 @@ fn number_of(targets: &ElementTargets, name: &str) -> Option<f64> {
 }
 
 /// The current values, a missing start 0 and a missing duration `window`'s
-/// length. A locked prop reads as a missing one: the grips that need it
-/// don't drag.
+/// length (a parameter's default when the call leaves it out). A locked
+/// prop reads as a missing one: the grips that need it don't drag.
 pub(crate) fn timing_values(
     kind: TimingKind,
     targets: &ElementTargets,
@@ -1476,6 +1487,65 @@ mod tests {
         assert_eq!(
             timing_values(TimingKind::Sequence, &locked, (30.0, 90.0)),
             values(0.0, 60.0)
+        );
+    }
+
+    /// A parameter `param` of the component around the window, which its
+    /// call leaves out: the parameter's `default`.
+    fn defaulted(param: &str, default: Option<f64>) -> EditTarget {
+        EditTarget::PassThrough {
+            call_site: ElementRef {
+                start: 0,
+                end_of_attributes: 0,
+                children: None,
+            },
+            param: param.to_owned(),
+            target: Box::new(EditTarget::Missing {
+                insert_at: 0,
+                default: default.map(EditValue::Number),
+            }),
+        }
+    }
+
+    #[test]
+    fn a_default_reads_as_the_value_it_gives() {
+        // `({ start = 30 }) => <Sequence from={start} durationInFrames={60}>`,
+        // called without `start`.
+        let lifted = targets(vec![
+            ("from", defaulted("start", Some(30.0))),
+            ("durationInFrames", literal(60.0)),
+        ]);
+        let now = timing_values(TimingKind::Sequence, &lifted, (30.0, 90.0));
+        assert_eq!(now, values(30.0, 60.0));
+        assert_eq!(
+            band_writes(TimingKind::Sequence, BandGrip::Body, 15, now, &lifted),
+            [number("from", 45.0)]
+        );
+        let after = moved_values(BandGrip::Body, 15, now);
+        assert_eq!(
+            band_label(TimingKind::Sequence, BandGrip::Body, now, after, false),
+            "from 30 → 45"
+        );
+
+        // A defaulted duration is read, not added as a new literal.
+        let length = targets(vec![
+            ("from", literal(30.0)),
+            ("durationInFrames", defaulted("length", Some(40.0))),
+        ]);
+        assert!(!adds_duration(TimingKind::Sequence, BandGrip::Body, &length));
+        assert_eq!(
+            timing_values(TimingKind::Sequence, &length, (30.0, 90.0)),
+            values(30.0, 40.0)
+        );
+        // Without a default, the window's length is added as before.
+        let open = targets(vec![
+            ("from", literal(30.0)),
+            ("durationInFrames", defaulted("length", None)),
+        ]);
+        assert!(adds_duration(TimingKind::Sequence, BandGrip::Body, &open));
+        assert_eq!(
+            timing_values(TimingKind::Sequence, &open, (30.0, 90.0)),
+            values(30.0, 60.0)
         );
     }
 
