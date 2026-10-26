@@ -7,9 +7,9 @@ use celesta_composition::{
     TextStyle, Time,
 };
 use celesta_react_bridge::{
-    ComponentPropertyField, ComponentResolutionRequest, PrepareDependency, ProjectFrame,
-    PropertyInputs, ReactBridge, ReactBridgeError, ReactChapter, SpawnOptions, chapter_at,
-    react_audio_clips,
+    ComponentPropertyField, ComponentResolutionRequest, ComponentSchemaField, PrepareDependency,
+    ProjectFrame, PropertyInputs, ReactBridge, ReactBridgeError, ReactChapter, SpawnOptions,
+    chapter_at, react_audio_clips,
 };
 
 fn no_tracks() -> BTreeMap<String, Vec<Layer>> {
@@ -1581,22 +1581,29 @@ fn reports_a_registered_components_property_schema_when_node_is_available() {
     let schema = schemas
         .get("BossIntroduction")
         .expect("BossIntroduction declares a schema");
+    // Both props are required by `BossIntroductionProps`.
     assert_eq!(
         schema.get("bossName"),
-        Some(&ComponentPropertyField::String {
-            label: Some("Boss Name".to_owned()),
-            default_value: "Golem".to_owned(),
+        Some(&ComponentSchemaField {
+            field: ComponentPropertyField::String {
+                label: Some("Boss Name".to_owned()),
+                default_value: "Golem".to_owned(),
+            },
+            required: true,
         })
     );
     assert_eq!(
         schema.get("level"),
-        Some(&ComponentPropertyField::Number {
-            label: Some("Level".to_owned()),
-            default_value: 1.0,
-            min: Some(1.0),
-            max: Some(999.0),
-            step: None,
-            integer: None,
+        Some(&ComponentSchemaField {
+            field: ComponentPropertyField::Number {
+                label: Some("Level".to_owned()),
+                default_value: 1.0,
+                min: Some(1.0),
+                max: Some(999.0),
+                step: None,
+                integer: None,
+            },
+            required: true,
         })
     );
 }

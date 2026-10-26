@@ -942,7 +942,8 @@ mod property_outcome {
             ComponentPropertyField::String {
                 label: Some("Caption".to_owned()),
                 default_value: String::new(),
-            },
+            }
+            .into(),
         )]);
         let mut loaded = metadata(&[]);
         loaded

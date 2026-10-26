@@ -453,10 +453,34 @@ impl ComponentPropertyField {
     }
 }
 
+/// One prop of a [`ComponentPropertySchema`]: how it is edited, and whether
+/// the component's props type requires it (`ComponentSchemaField` in
+/// `packages/react/src/registry.ts`).
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub struct ComponentSchemaField {
+    #[serde(flatten)]
+    pub field: ComponentPropertyField,
+    /// The props type requires the prop, so the editor never removes it from
+    /// a call. Sent inside the field (`{ "type": "number", "required": true }`),
+    /// as the schema declares it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub required: bool,
+}
+
+impl From<ComponentPropertyField> for ComponentSchemaField {
+    /// `field` for a prop the props type leaves optional.
+    fn from(field: ComponentPropertyField) -> Self {
+        Self {
+            field,
+            required: false,
+        }
+    }
+}
+
 /// One registered component's declared props, keyed by prop name — the
 /// Rust-side counterpart of `ComponentPropertySchema<Props>` in
 /// `packages/react/src/registry.ts`.
-pub type ComponentPropertySchema = BTreeMap<String, ComponentPropertyField>;
+pub type ComponentPropertySchema = BTreeMap<String, ComponentSchemaField>;
 
 /// How the editor edits one prop of a primitive, and the value it has when
 /// the element does not write it (`PrimitivePropertyField` in

@@ -384,7 +384,8 @@ fn component_rows_show_the_schema_label_else_the_name() {
             celesta_react_bridge::ComponentPropertyField::String {
                 label: Some("Caption".to_owned()),
                 default_value: String::new(),
-            },
+            }
+            .into(),
         )]),
     )]);
 
@@ -510,7 +511,8 @@ fn scrub_steps() {
                 max: Some(100.0),
                 step: Some(5.0),
                 integer: None,
-            },
+            }
+            .into(),
         )]),
     )]);
     let mut targets = resolve_targets(read_from(&texts), &props_tag_report(), None).unwrap();
@@ -840,6 +842,84 @@ fn a_value_set_at_the_call_is_removable_there() {
             scene,
             PROPS_TAG_SCENE.replace(" label=\"Sale\"", "")
         )])
+    );
+}
+
+#[test]
+fn a_prop_the_component_schema_requires_is_not_removable() {
+    // `PriceTag` registered with `x` and `label` required and `tone`
+    // optional; `on` is left out of the schema.
+    let texts = props_tag_files();
+    let report = props_tag_report();
+    let field = |required| celesta_react_bridge::ComponentSchemaField {
+        field: schema_number(None, None),
+        required,
+    };
+    let schemas = std::collections::BTreeMap::from([(
+        "PriceTag".to_owned(),
+        std::collections::BTreeMap::from([
+            ("x".to_owned(), field(true)),
+            ("label".to_owned(), field(true)),
+            ("tone".to_owned(), field(false)),
+        ]),
+    )]);
+    let mut targets = resolve_targets(read_from(&texts), &report, None).unwrap();
+    type_component_props(&mut targets, &schemas, read_from(&texts));
+    let can_remove = |key: &PropKey| removable(&targets, key, targets.entry(key).unwrap());
+
+    // `x` passes through to the `<Rect>`'s `x`, removed at the call.
+    assert!(!can_remove(&prop("x")));
+    let tone = PropKey::CallSite("tone".to_owned());
+    let on = PropKey::CallSite("on".to_owned());
+    assert!(can_remove(&tone));
+    assert!(can_remove(&on));
+    assert_eq!(
+        commit_files(&texts, &targets, &report, &[(prop("x"), None)]),
+        Err(CommitError::NotRemovable("X".to_owned()))
+    );
+    assert_eq!(
+        commit_files(&texts, &targets, &report, &[(tone, None)]),
+        Ok(vec![(
+            PathBuf::from("/project/scene.tsx"),
+            PROPS_TAG_SCENE.replace(" tone={2}", "")
+        )])
+    );
+}
+
+#[test]
+fn a_required_component_prop_keeps_its_value_when_emptied() {
+    // `<Badge count={3} />` with `count` required: emptying the field writes
+    // nothing, as for a primitive's required prop.
+    let texts = props_tag_files();
+    let report = props_tag_report();
+    let schemas = std::collections::BTreeMap::from([(
+        "PriceTag".to_owned(),
+        std::collections::BTreeMap::from([(
+            "tone".to_owned(),
+            celesta_react_bridge::ComponentSchemaField {
+                field: schema_number(None, None),
+                required: true,
+            },
+        )]),
+    )]);
+    let mut targets = resolve_targets(read_from(&texts), &report, None).unwrap();
+    type_component_props(&mut targets, &schemas, read_from(&texts));
+    let tone = PropKey::CallSite("tone".to_owned());
+    let tone_label = tone.label();
+    let removes = removable(&targets, &tone, targets.entry(&tone).unwrap());
+    assert!(!removes);
+    assert_eq!(
+        typed_text(
+            &ControlKind::Number,
+            row_field(&targets, &tone),
+            "",
+            removes
+        ),
+        TypedText::Restore
+    );
+    assert_eq!(
+        commit_files(&texts, &targets, &report, &[(tone, None)]),
+        Err(CommitError::NotRemovable(tone_label))
     );
 }
 
