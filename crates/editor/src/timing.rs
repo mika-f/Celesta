@@ -40,7 +40,9 @@ pub(crate) fn window_role<'a>(
     }
     let span = whole_frames(window, composition_end);
     let spans_a_chapter = chapters.iter().any(|chapter| {
-        chapter.from <= frame && frame < chapter.end() && (chapter.from, chapter.end()) == span
+        chapter.from <= frame
+            && frame < chapter.end()
+            && (chapter.from as i64, chapter.end() as i64) == span
     });
     if spans_a_chapter {
         WindowRole::Scene(window)
@@ -49,16 +51,18 @@ pub(crate) fn window_role<'a>(
     }
 }
 
-/// `window`'s span cut at `composition_end`, rounded to whole frames.
-fn whole_frames(window: &TimingWindow, composition_end: u64) -> (u64, u64) {
+/// `window`'s span cut at `composition_end`, rounded to whole frames. A
+/// `<Sequence>` may start before frame 0, so `from` can be negative.
+fn whole_frames(window: &TimingWindow, composition_end: u64) -> (i64, i64) {
     let to = window.to.min(composition_end as f64);
-    (window.from.round() as u64, to.round() as u64)
+    (window.from.round() as i64, to.round() as i64)
 }
 
 /// `from` and `durationInFrames` for "Set timing" at `playhead`: from the
 /// playhead to the end of the scene's window, or, without a window, on the
 /// composition's timeline to the end of the scene at the playhead (the
-/// composition's end outside one). `None` for `Own` and `Remapped`.
+/// composition's end outside one). `None` for `Own` and `Remapped`, and when
+/// less than a frame is left.
 #[allow(dead_code)]
 pub(crate) fn set_timing_span(
     role: &WindowRole,
@@ -66,19 +70,19 @@ pub(crate) fn set_timing_span(
     composition_end: u64,
     playhead: u64,
 ) -> Option<(i64, i64)> {
-    let playhead = playhead as i64;
-    match role {
+    let (from, duration) = match role {
         WindowRole::Scene(window) => {
             let (from, to) = whole_frames(window, composition_end);
-            Some((playhead - from as i64, to as i64 - playhead))
+            (playhead as i64 - from, to - playhead as i64)
         }
         WindowRole::None => {
-            let end = outermost_chapter_at(chapters, playhead as u64)
-                .map_or(composition_end, ReactChapter::end);
-            Some((playhead, end as i64 - playhead))
+            let end =
+                outermost_chapter_at(chapters, playhead).map_or(composition_end, ReactChapter::end);
+            (playhead as i64, end as i64 - playhead as i64)
         }
-        WindowRole::Own(_) | WindowRole::Remapped => None,
-    }
+        WindowRole::Own(_) | WindowRole::Remapped => return None,
+    };
+    (duration >= 1).then_some((from, duration))
 }
 
 #[cfg(test)]
@@ -191,19 +195,43 @@ mod tests {
 
     #[test]
     fn a_hand_placed_sequence_inside_a_chapter_is_own() {
-        let report = report(vec![window(330.0, 360.0, true, false)]);
-        let role = window_role(&report, &[chapter("intro", 300, 120)], 960, 345);
+        let inside = report(vec![window(330.0, 360.0, true, false)]);
+        let role = window_role(&inside, &[chapter("intro", 300, 120)], 960, 345);
         assert!(is_own(role));
-        assert_eq!(role, WindowRole::Own(&report.windows[0]));
+        assert_eq!(role, WindowRole::Own(&inside.windows[0]));
+
+        // A window starting before frame 0 never spans a chapter, which
+        // starts at 0 at the earliest.
+        let early = report(vec![window(-10.0, 60.0, true, false)]);
+        assert!(is_own(window_role(
+            &early,
+            &[chapter("intro", 0, 60)],
+            960,
+            30
+        )));
     }
 
     #[test]
     fn set_timing_span_runs_from_the_playhead_to_the_window_end() {
-        let window = window(300.0, 420.0, true, false);
+        let window_at = |from, to| window(from, to, true, false);
         let chapters = [chapter("intro", 300, 120)];
+        let scene = window_at(300.0, 420.0);
         assert_eq!(
-            set_timing_span(&WindowRole::Scene(&window), &chapters, 960, 345),
+            set_timing_span(&WindowRole::Scene(&scene), &chapters, 960, 345),
             Some((45, 75))
+        );
+
+        // A window starting before frame 0.
+        let early = window_at(-10.0, 60.0);
+        assert_eq!(
+            set_timing_span(&WindowRole::Scene(&early), &[], 960, 30),
+            Some((40, 30))
+        );
+
+        // At the window's end nothing is left to show.
+        assert_eq!(
+            set_timing_span(&WindowRole::Scene(&scene), &chapters, 960, 420),
+            None
         );
     }
 
@@ -218,6 +246,7 @@ mod tests {
             set_timing_span(&WindowRole::None, &[], 600, 345),
             Some((345, 255))
         );
+        assert_eq!(set_timing_span(&WindowRole::None, &[], 600, 600), None);
 
         let own = window(330.0, 360.0, true, false);
         assert_eq!(
