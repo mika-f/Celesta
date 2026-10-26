@@ -1901,6 +1901,8 @@ fn renders_a_video_frame_from_the_injected_decoder() {
                     playback_rate: 2.0,
                     r#loop: false,
                 },
+                width: None,
+                height: None,
             },
         }],
         shaders: Vec::new(),
@@ -1916,6 +1918,100 @@ fn renders_a_video_frame_from_the_injected_decoder() {
     timing.r#loop = true;
     let frame = renderer.render(&scene).unwrap();
     assert_eq!(frame.pixels(), &[5, 34, 56, 255]);
+}
+
+/// How far right and down the pixels `covered` picks reach in `frame`: the
+/// drawn size of a layer placed at the origin.
+fn drawn_size(frame: &RgbaFrame, covered: impl Fn(&[u8; 4]) -> bool) -> (u32, u32) {
+    frame
+        .pixels()
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .enumerate()
+        .filter(|(_, pixel)| covered(pixel))
+        .fold((0, 0), |(right, bottom), (index, _)| {
+            let (x, y) = (index as u32 % frame.width, index as u32 / frame.width);
+            (right.max(x + 1), bottom.max(y + 1))
+        })
+}
+
+#[test]
+fn sizes_a_video_frame_like_an_image() {
+    /// A 320 x 180 video frame, all red.
+    struct Decoder;
+
+    impl VideoFrameDecoder for Decoder {
+        fn decode_frame(&mut self, _: &Path, _: f64) -> Result<VideoFrame, MediaError> {
+            Ok(VideoFrame {
+                width: 320,
+                height: 180,
+                pixels: [255, 0, 0, 255].repeat(320 * 180).into(),
+            })
+        }
+    }
+
+    let scene = |width, height| Scene {
+        width: 320,
+        height: 180,
+        frame_rate: Rational::new(30, 1),
+        time: Time::ZERO,
+        fonts: Vec::new(),
+        layers: vec![Layer {
+            id: "video".to_owned(),
+            transform: EvaluatedTransform {
+                anchor: Point { x: 0.0, y: 0.0 },
+                ..EvaluatedTransform::default()
+            },
+            opacity: 1.0,
+            blend_mode: BlendMode::Normal,
+            effects: Default::default(),
+            content: LayerContent::Video {
+                asset: ResolvedAsset {
+                    id: "clip".to_owned(),
+                    location: AssetLocation::File {
+                        path: "clip.mp4".to_owned(),
+                    },
+                },
+                timing: MediaTiming {
+                    local_time: Time::ZERO,
+                    source_start: Time::ZERO,
+                    source_time_seconds: 0.0,
+                    playback_rate: 1.0,
+                    r#loop: false,
+                },
+                width,
+                height,
+            },
+        }],
+        shaders: Vec::new(),
+    };
+    let sizes = [
+        (Some(160.0), None, (160, 90)),
+        (Some(160.0), Some(160.0), (160, 160)),
+        (None, Some(90.0), (160, 90)),
+        (None, None, (320, 180)),
+    ];
+    let mut renderer = CpuRenderer::default().with_video_decoder(Decoder);
+    for (width, height, drawn) in sizes {
+        let frame = renderer.render(&scene(width, height)).unwrap();
+        assert_eq!(
+            drawn_size(&frame, |pixel| pixel[0] >= 128),
+            drawn,
+            "width {width:?}, height {height:?}"
+        );
+    }
+
+    // Without a decoder the 320 x 180 placeholder is sized the same way.
+    let mut renderer = CpuRenderer::default();
+    for (width, height, drawn) in sizes {
+        let frame = renderer.render(&scene(width, height)).unwrap();
+        assert_eq!(
+            drawn_size(&frame, |pixel| pixel[2] >= 128),
+            drawn,
+            "placeholder width {width:?}, height {height:?}"
+        );
+    }
 }
 
 // `examples/assets/lipsync-fixture.psd` mimics a real "tachie" PSD: a

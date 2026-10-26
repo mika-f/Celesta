@@ -802,6 +802,11 @@ function buildLayer(
     // to seek/decode — is `startFrom` plus local time scaled by
     // `playbackRate`, mirroring how celesta-evaluator derives it for a
     // project TimelineContent::Video at a constant playback rate.
+    for (const key of ['width', 'height']) {
+      if (props[key] !== undefined && (typeof props[key] !== 'number' || !Number.isFinite(props[key]) || props[key] <= 0)) {
+        throw new Error(`Video ${key} must be finite and positive`);
+      }
+    }
     const startFrom = numberOr(props.startFrom, 0);
     const playbackRate = numberOr(props.playbackRate, 1);
     const localTime = context.mediaTime;
@@ -815,6 +820,8 @@ function buildLayer(
         playbackRate,
         ...(props.loop === true ? { loop: true } : {}),
       },
+      ...(props.width === undefined ? {} : { width: props.width as number }),
+      ...(props.height === undefined ? {} : { height: props.height as number }),
     };
   } else {
     throw new Error(`unreachable: unknown host node type "${node.type}"`);

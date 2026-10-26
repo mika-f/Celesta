@@ -531,6 +531,8 @@ fn decodes_a_projective_video_once_per_frame() {
                 playback_rate: 1.0,
                 r#loop: false,
             },
+            width: None,
+            height: None,
         },
     };
     let frame = renderer
@@ -994,6 +996,8 @@ fn stand_ins_cover_what_their_content_draws() {
                 playback_rate: 1.0,
                 r#loop: false,
             },
+            width: None,
+            height: None,
         },
     };
     let dir = tempfile::tempdir().unwrap();

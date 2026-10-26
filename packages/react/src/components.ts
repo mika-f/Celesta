@@ -446,6 +446,10 @@ export function Instances(props: InstancesProps): ReturnType<typeof React.create
 }
 
 export interface VideoProps extends CommonProps {
+  /** Display width in pixels. Alone, preserves the source aspect ratio. */
+  width?: number;
+  /** Display height in pixels. Alone, preserves the source aspect ratio. */
+  height?: number;
   src: AssetInput;
   name?: string;
   /**
@@ -1148,6 +1152,7 @@ registerPrimitiveProperties('Rect', propertyTable<RectProps>({
   },
 }));
 registerPrimitiveProperties('Video', propertyTable<VideoProps>({
+  size: { width: 'width', height: 'height' },
   groups: {
     Transform: {
       x: num(0), y: num(0), rotation: num(0), scale: num(1, { step: 0.01 }),
@@ -1160,6 +1165,8 @@ registerPrimitiveProperties('Video', propertyTable<VideoProps>({
       playbackRate: num(1, { min: 0, step: 0.01 }),
       loop: bool(false),
     },
+    // A size must be positive (`Video width must be finite and positive`).
+    Size: { width: num(undefined, { min: 1 }), height: num(undefined, { min: 1 }) },
     Audio: { volume: num(1, { min: 0, step: 0.01 }), muted: bool(false) },
   },
 }));

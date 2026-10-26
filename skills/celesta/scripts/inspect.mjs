@@ -763,10 +763,10 @@ function printLayers(layers, depth, checkFile, warnings, sources) {
       case 'psd': {
         const src = content.asset.location.path ?? content.asset.location.url;
         let extra = '';
-        if (content.type === 'video') extra = ` (source ${fmt(content.timing.sourceTimeSeconds)} s${content.timing.loop ? ', looping' : ''})`;
-        if (content.type === 'image' && (content.width || content.height)) {
+        if ((content.type === 'image' || content.type === 'video') && (content.width || content.height)) {
           extra = ` size ${content.width ? fmt(content.width) : 'auto'}×${content.height ? fmt(content.height) : 'auto'}${content.fit ? ` ${content.fit}` : ''}`;
         }
+        if (content.type === 'video') extra += ` (source ${fmt(content.timing.sourceTimeSeconds)} s${content.timing.loop ? ', looping' : ''})`;
         if (content.type === 'psd') {
           extra = ` (${content.visibleLayers?.length ?? 0} visible layers${content.enabledLayers?.length ? `, shown ${content.enabledLayers.join(', ')}` : ''})`;
           if (!content.visibleLayers?.length) warnings.push(`PSD ${src} has no \`layers\`; it renders with its saved visibility`);

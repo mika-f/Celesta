@@ -237,6 +237,8 @@ impl<'project> Evaluator<'project> {
                     playback_rate: evaluate_optional(playback_rate, local_time, 1.0)?,
                     r#loop: false,
                 },
+                width: None,
+                height: None,
             },
             TimelineContent::Image {
                 asset,

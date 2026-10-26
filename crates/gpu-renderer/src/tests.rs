@@ -4085,11 +4085,93 @@ fn decodes_positions_and_fades_a_video_frame_on_the_gpu() {
                 playback_rate: 2.0,
                 r#loop: false,
             },
+            width: None,
+            height: None,
         },
     });
 
     let frame = renderer.render(&scene).unwrap();
     assert_eq!(frame.pixels(), &[0, 0, 0, 255, 6, 17, 28, 255]);
+}
+
+/// A 320 x 180 video frame, all red.
+struct RedFrameDecoder;
+
+impl VideoFrameDecoder for RedFrameDecoder {
+    fn decode_frame(&mut self, _: &Path, _: f64) -> Result<VideoFrame, MediaError> {
+        Ok(VideoFrame {
+            width: 320,
+            height: 180,
+            pixels: [255, 0, 0, 255].repeat(320 * 180).into(),
+        })
+    }
+}
+
+/// How far right and down the pixels `covered` picks reach in a frame
+/// `width` pixels wide: the drawn size of a layer placed at the origin.
+fn drawn_size(pixels: &[u8], width: u32, covered: impl Fn(&[u8; 4]) -> bool) -> (u32, u32) {
+    pixels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .enumerate()
+        .filter(|(_, pixel)| covered(pixel))
+        .fold((0, 0), |(right, bottom), (index, _)| {
+            let (x, y) = (index as u32 % width, index as u32 / width);
+            (right.max(x + 1), bottom.max(y + 1))
+        })
+}
+
+#[test]
+fn sizes_a_video_frame_like_an_image() {
+    let Some(renderer) = renderer(GpuRenderOptions {
+        background: Color::rgba(0, 0, 0, 255),
+        ..GpuRenderOptions::default()
+    }) else {
+        return;
+    };
+    let mut renderer = renderer.with_video_decoder(RedFrameDecoder);
+    for (width, height, drawn) in [
+        (Some(160.0), None, (160, 90)),
+        (Some(160.0), Some(160.0), (160, 160)),
+        (None, Some(90.0), (160, 90)),
+        (None, None, (320, 180)),
+    ] {
+        let mut scene = empty_scene(320, 180);
+        scene.layers.push(Layer {
+            id: "video".to_owned(),
+            transform: EvaluatedTransform {
+                anchor: Point { x: 0.0, y: 0.0 },
+                ..EvaluatedTransform::default()
+            },
+            opacity: 1.0,
+            blend_mode: BlendMode::Normal,
+            effects: Default::default(),
+            content: LayerContent::Video {
+                asset: ResolvedAsset {
+                    id: "clip".to_owned(),
+                    location: AssetLocation::File {
+                        path: "clip.mp4".to_owned(),
+                    },
+                },
+                timing: MediaTiming {
+                    local_time: Time::ZERO,
+                    source_start: Time::ZERO,
+                    source_time_seconds: 0.0,
+                    playback_rate: 1.0,
+                    r#loop: false,
+                },
+                width,
+                height,
+            },
+        });
+        let frame = renderer.render(&scene).unwrap();
+        assert_eq!(
+            drawn_size(frame.pixels(), 320, |pixel| pixel[0] >= 128),
+            drawn,
+            "width {width:?}, height {height:?}"
+        );
+    }
 }
 
 /// 8x4 pixels: red on the left half, blue on the right.
@@ -4188,6 +4270,8 @@ fn shrinks_images_and_video_frames_larger_than_the_texture_limit() {
             playback_rate: 1.0,
             r#loop: false,
         },
+        width: None,
+        height: None,
     };
     assert_split(&renderer.render(&scene).unwrap());
 }
@@ -4233,6 +4317,8 @@ fn rejects_a_malformed_video_frame_larger_than_the_texture_limit() {
                 playback_rate: 1.0,
                 r#loop: false,
             },
+            width: None,
+            height: None,
         },
     });
     assert!(matches!(

@@ -116,6 +116,42 @@ fn a_groups_clip_round_trips_and_defaults_its_corner_radius() {
 }
 
 #[test]
+fn a_video_size_round_trips() {
+    let video = LayerContent::Video {
+        asset: ResolvedAsset {
+            id: "clip".to_owned(),
+            location: AssetLocation::File {
+                path: "clip.mp4".to_owned(),
+            },
+        },
+        timing: MediaTiming {
+            local_time: Time::new(1, 2),
+            source_start: Time::ZERO,
+            source_time_seconds: 0.5,
+            playback_rate: 1.0,
+            r#loop: false,
+        },
+        width: Some(160.0),
+        height: None,
+    };
+    let mut json = serde_json::to_value(&video).unwrap();
+    assert_eq!(json["width"], serde_json::json!(160.0));
+    assert!(json.get("height").is_none(), "{json}");
+    assert_eq!(
+        serde_json::from_value::<LayerContent>(json.clone()).unwrap(),
+        video
+    );
+
+    json.as_object_mut().unwrap().remove("width");
+    let LayerContent::Video { width, height, .. } =
+        serde_json::from_value::<LayerContent>(json).unwrap()
+    else {
+        panic!("not a video");
+    };
+    assert_eq!((width, height), (None, None));
+}
+
+#[test]
 fn a_motion_blurred_group_round_trips_and_is_omitted_when_off() {
     let json = serde_json::json!({ "type": "group", "layers": [], "motionBlur": true });
     let content = serde_json::from_value::<LayerContent>(json.clone()).unwrap();
@@ -396,6 +432,8 @@ fn every_tagged_variant_round_trips() {
                 playback_rate: 1.0,
                 r#loop: false,
             },
+            width: Some(160.0),
+            height: Some(90.0),
         },
         LayerContent::MissingComponent {
             component: "Card".to_owned(),
