@@ -14,7 +14,8 @@ use crate::layer_select::{
     SourceLookup, display_path, launch_outcome_applies, parent_layer_id, source_position,
 };
 use crate::scope::{
-    Scope, ScopeOptions, ScopeState, chosen_scope, impact_filter, scope_in_effect, scope_line,
+    Scope, ScopeOptions, ScopeState, chosen_scope, impact_filter, previewed_scope, scope_line,
+    this_scene_tooltip,
 };
 use crate::timecode::format_timecode;
 use crate::view::EditorView;
@@ -465,12 +466,10 @@ impl EditorView {
                 .border_color(cx.theme().border)
                 .child(title)
                 // While a drag runs: the scope it writes with.
-                .children(self.transform_drag_scope().map(|scope| {
-                    div()
-                        .text_xs()
-                        .text_color(foreground)
-                        .child(scope_in_effect(scope))
-                }))
+                .children(
+                    self.transform_drag_in_effect()
+                        .map(|in_effect| div().text_xs().text_color(foreground).child(in_effect)),
+                )
                 .child(position)
                 .child(row("Appears in", appears_in))
                 .children(shared.map(|shared| row("Shared", shared)))
@@ -513,7 +512,7 @@ impl EditorView {
     /// (neither while the remembered choice is locked), a locked one
     /// disabled with its reason as tooltip; then [`scope_line`]. Clicking
     /// an option remembers it for the element; hovering one previews what
-    /// it changes in the timeline bands.
+    /// it changes in the timeline bands and the line.
     fn scope_control(&self, options: &ScopeOptions, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let (muted, warning) = (theme.muted_foreground, theme.warning);
@@ -552,7 +551,7 @@ impl EditorView {
             tab(
                 "scope-this-scene",
                 "This scene",
-                "Write the edit for the instances in this scene only",
+                this_scene_tooltip(options),
                 Scope::ThisScene,
             ),
             tab(
@@ -562,7 +561,9 @@ impl EditorView {
                 Scope::Shared,
             ),
         ];
-        let line = scope_line(options, chosen.or(remembered));
+        // A hovered option previews its line too.
+        let shown = previewed_scope(self.scope_hover, options, remembered).or(remembered);
+        let line = scope_line(options, shown);
         scope_box(cx)
             .child(labelled("Edits change", scope_tabs(tabs, cx), cx))
             .child(labelled(

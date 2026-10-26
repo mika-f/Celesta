@@ -385,6 +385,37 @@ fn a_move_lifts_x_and_y_in_one_entry() {
     assert_eq!(files.read(&files.price()), PRICE);
 }
 
+/// The Price scene calls `PriceTag` twice: the Sale tag at 2:3, then the
+/// Second tag.
+const TWO_CALLS: &str = "export const Price = () => [\n  <PriceTag label=\"Sale\" rectWidth={260} />,\n  <PriceTag label=\"Second\" />,\n];\n";
+
+#[test]
+fn this_scene_with_two_calls_writes_the_selected_call_only() {
+    let files = Files::new("two-calls", LIFTED, TWO_CALLS);
+    let report = LayerSourceReport {
+        render_count: 2,
+        ..files.report(LIFTED_RECT, &files.price(), &[("width", 260.0)])
+    };
+    let targets = files.targets(&report);
+
+    let entry = files
+        .commit(
+            &targets,
+            &report,
+            Some(Scope::ThisScene),
+            &[number("width", 280.0)],
+        )
+        .unwrap();
+
+    // The Second call keeps the shared value; the default stays.
+    assert_eq!(written(&entry), [files.price().as_path()]);
+    assert_eq!(
+        files.read(&files.price()),
+        TWO_CALLS.replace("{260}", "{280}")
+    );
+    assert_eq!(files.read(&files.tag()), LIFTED);
+}
+
 #[test]
 fn removal_under_this_scene_deletes_at_s() {
     // "Use the shared value": the attribute at S goes.

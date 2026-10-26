@@ -18,7 +18,7 @@ use celesta_react_bridge::{
 use celesta_source_edit::{
     DefaultTarget, EditTarget, EditValue, LiftLock, LockReason, element_at, written_attributes,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 /// Where an edit of a shared element writes.
@@ -41,8 +41,9 @@ pub(crate) enum ScopeLock {
     ReusedCall,
     /// `S` makes instances in other scenes too.
     OtherScenes { component: String },
-    /// An instance in this scene does not go through `S`.
-    CalledTwiceHere { component: String },
+    /// This scene calls `C` more than once, and `S` draws the element more
+    /// than once in it: a write at `S` would change every copy it draws.
+    DrawsMoreThanOnce { component: String },
     /// `C`'s first parameter is not an object pattern.
     NotObjectPattern { component: String },
     /// `C`'s props type is imported.
@@ -79,8 +80,8 @@ impl ScopeLock {
             Self::OtherScenes { component } => {
                 format!("`<{component}>` is called here for other scenes too")
             }
-            Self::CalledTwiceHere { component } => {
-                format!("`<{component}>` is called more than once in this scene")
+            Self::DrawsMoreThanOnce { component } => {
+                format!("`<{component}>` here draws this element more than once")
             }
             Self::NotObjectPattern { component } => {
                 format!("`{component}` doesn't take its props as `{{ … }}`")
@@ -227,6 +228,18 @@ pub(crate) struct ScopeOptions {
     /// The scenes whose calls set their own value for a parameter the
     /// element's rows read.
     pub(crate) sets_own: Vec<String>,
+    /// When the current scene calls `C` more than once: "This scene" then
+    /// writes the selected instance's call `S` only, the other calls
+    /// keeping their values.
+    pub(crate) called_here: Option<CalledHere>,
+}
+
+/// The current scene's calls of `C`, when it calls `C` more than once.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CalledHere {
+    pub(crate) component: String,
+    /// How many calls of `C` draw the element in the current scene.
+    pub(crate) times: usize,
 }
 
 impl ScopeOptions {
@@ -259,10 +272,11 @@ const NOT_SCANNED: &str = "The scenes are not scanned";
 /// is the outermost chapter at `frame`, as the impact line reads it.
 /// "This scene" is locked, in this order, when no call `S` is found, a
 /// component sits between the scene and `S`, the scenes reuse one chain
-/// through `S`, `S` makes instances in other scenes, an instance in this
-/// scene is not made by `S`, or no row can be written for this scene;
-/// "Shared value" when no row can be written for it. `calls`, when read
-/// for this element and index, names the scenes that set their own value.
+/// through `S`, `S` makes instances in other scenes, this scene calls `C`
+/// more than once and `S` draws the element more than once, or no row can
+/// be written for this scene; "Shared value" when no row can be written
+/// for it. `calls`, when read for this element and index, names the scenes
+/// that set their own value.
 pub(crate) fn scope_state(
     report: &LayerSourceReport,
     targets: &ElementTargets,
@@ -324,6 +338,11 @@ pub(crate) fn scope_state(
             .collect()
     };
 
+    let call = targets
+        .component
+        .as_ref()
+        .map(|component| &component.call_site);
+    let times = call.map_or(0, |call| calls_here(report, element, &scene, call));
     let this_scene = confined(report, targets, element, &scene, component)
         .and_then(|()| row_lock(Scope::ThisScene, targets, calls));
     ScopeState::Options(ScopeOptions {
@@ -331,7 +350,41 @@ pub(crate) fn scope_state(
         shared: row_lock(Scope::Shared, targets, calls),
         shared_reaches: scenes(false),
         sets_own: scenes(true),
+        called_here: (times > 1).then(|| CalledHere {
+            component: component.to_owned(),
+            times,
+        }),
     })
+}
+
+/// How many calls of `C` draw `element` in the current scene: the chain
+/// entries at the place of `call` (`S`), see [`calls_of`].
+fn calls_here(
+    report: &LayerSourceReport,
+    element: &ElementOccurrences,
+    scene: &Scene,
+    call: &SourcePos,
+) -> usize {
+    let calls: HashSet<Option<SourcePos>> = calls_of(report, element, call)
+        .into_iter()
+        .zip(&element.instances)
+        .filter(|(_, instance)| scene.shows(instance))
+        .map(|(call, _)| call)
+        .collect();
+    calls.len()
+}
+
+/// Whether `call` (`S`) draws one instance of `element` in `scene`, one
+/// copy at a time (not in a `.map()`).
+fn drawn_alone(element: &ElementOccurrences, scene: &Scene, call: &SourcePos) -> bool {
+    let mut here = element
+        .instances
+        .iter()
+        .filter(|instance| instance.chain.contains(call) && scene.shows(instance));
+    matches!(
+        (here.next(), here.next()),
+        (Some(instance), None) if instance.max_per_frame <= 1
+    )
 }
 
 /// The current scene, as [`crate::impact::impact_view`] reads it.
@@ -429,12 +482,14 @@ fn confined(
             component: component.to_owned(),
         });
     }
-    if element
+    // Another call in this scene keeps its value: `S` must draw the
+    // selected instance alone.
+    let another_here = element
         .instances
         .iter()
-        .any(|instance| !instance.chain.contains(call) && scene.shows(instance))
-    {
-        return Err(ScopeLock::CalledTwiceHere {
+        .any(|instance| !instance.chain.contains(call) && scene.shows(instance));
+    if another_here && !drawn_alone(element, scene, call) {
+        return Err(ScopeLock::DrawsMoreThanOnce {
             component: component.to_owned(),
         });
     }
@@ -521,11 +576,24 @@ pub(crate) fn previewed_scope(
         .or_else(|| chosen_scope(remembered, options).ok())
 }
 
-/// What an edit changes under `scope`, said while a drag runs.
-pub(crate) fn scope_in_effect(scope: Scope) -> &'static str {
-    match scope {
-        Scope::ThisScene => "Edits change this scene",
-        Scope::Shared => "Edits change the shared value",
+/// What an edit changes under `scope`, said while a drag runs: under
+/// "This scene" in a scene calling `C` more than once (`called_here`),
+/// the selected instance's call only.
+pub(crate) fn scope_in_effect(scope: Scope, called_here: Option<&CalledHere>) -> String {
+    match (scope, called_here) {
+        (Scope::ThisScene, Some(called)) => {
+            format!("Edits change this `<{}>` only", called.component)
+        }
+        (Scope::ThisScene, None) => "Edits change this scene".to_owned(),
+        (Scope::Shared, _) => "Edits change the shared value".to_owned(),
+    }
+}
+
+/// The "This scene" tab's tooltip while it is not locked.
+pub(crate) fn this_scene_tooltip(options: &ScopeOptions) -> &'static str {
+    match options.called_here {
+        Some(_) => "Write the edit for this call only",
+        None => "Write the edit for the instances in this scene only",
     }
 }
 
@@ -621,10 +689,20 @@ fn scenes_label(scenes: &[String]) -> String {
     }
 }
 
-/// The line under the scope control: the reason a locked option (the
+/// The line under the scope control: with "This scene" `chosen` (in effect,
+/// or previewed) in a scene calling `C` more than once, that it edits the
+/// selected instance's call only; else the reason a locked option (the
 /// `chosen` one first) is disabled; otherwise the scenes the shared value
 /// reaches and those that set their own.
 pub(crate) fn scope_line(options: &ScopeOptions, chosen: Option<Scope>) -> String {
+    if let (Some(Scope::ThisScene), Ok(()), Some(called)) =
+        (chosen, &options.this_scene, &options.called_here)
+    {
+        return format!(
+            "Edits this `<{}>` only · this scene calls it {} times",
+            called.component, called.times
+        );
+    }
     let locked = chosen
         .into_iter()
         .chain([Scope::ThisScene, Scope::Shared])

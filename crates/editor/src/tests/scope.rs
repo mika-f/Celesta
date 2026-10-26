@@ -8,11 +8,11 @@ use crate::element_rows::default_row_text;
 use crate::impact::{ImpactFilter, ImpactView, impact_line, impact_view};
 use crate::occurrences::OccurrenceState;
 use crate::scope::{
-    CHANGED_MEANWHILE, CommitGate, HeldOrigin, SCANNED_MEANWHILE, SceneCalls, Scope, ScopeChoices,
-    ScopeLock, ScopeOptions, ScopeState, ScopedRow, calls_of, chosen_scope, commit_gate,
-    commit_scope, drain_gate, gesture_gate, gesture_lock, gesture_start_refusal, held_gate,
-    impact_filter, previewed_scope, remove_tooltip, scope_in_effect, scope_line, scope_state,
-    scoped_removable, scoped_row,
+    CHANGED_MEANWHILE, CalledHere, CommitGate, HeldOrigin, SCANNED_MEANWHILE, SceneCalls, Scope,
+    ScopeChoices, ScopeLock, ScopeOptions, ScopeState, ScopedRow, calls_of, chosen_scope,
+    commit_gate, commit_scope, drain_gate, gesture_gate, gesture_lock, gesture_start_refusal,
+    held_gate, impact_filter, previewed_scope, remove_tooltip, scope_in_effect, scope_line,
+    scope_state, scoped_removable, scoped_row, this_scene_tooltip,
 };
 use celesta_react_bridge::{
     ElementOccurrences, InstanceOccurrences, OccurrenceIndex, ReactChapter,
@@ -198,6 +198,7 @@ fn options(this_scene: Result<(), ScopeLock>, shared: Result<(), ScopeLock>) -> 
         shared,
         shared_reaches: vec!["Intro".to_owned(), "Outro".to_owned()],
         sets_own: Vec::new(),
+        called_here: None,
     }
 }
 
@@ -442,13 +443,179 @@ fn s_reaching_another_scene_locks_with_its_component() {
     );
 }
 
+/// The Price scene calls `PriceTag` twice: the Sale tag at [`s`], which
+/// sets its own `rectWidth`, and the Second tag at [`second_call`].
+const TWO_CALLS: &str = "export const Price = () => [\n  <PriceTag label=\"Sale\" rectWidth={260} rectHeight={40} />,\n  <PriceTag label=\"Second\" rectHeight={40} />,\n];\n";
+
+fn second_call() -> SourcePos {
+    pos(SCENES_FILE, 3, 3)
+}
+
+/// The Sale tag's `<Rect>`, with the Second tag's in the same frame.
+fn sale_report() -> LayerSourceReport {
+    LayerSourceReport {
+        render_count: 2,
+        ..price_report()
+    }
+}
+
+fn sale_targets(report: &LayerSourceReport) -> ElementTargets {
+    let texts = Texts::from([
+        (PathBuf::from(TAG_FILE), TAG.to_owned()),
+        (PathBuf::from(SCENES_FILE), TWO_CALLS.to_owned()),
+    ]);
+    tag_targets(report, &texts)
+}
+
+/// `PriceTag` called by Price at [`s`] (drawing `copies` of the `<Rect>`
+/// at once) and at [`second_call`], and by Intro.
+fn two_calls_here(copies: u32) -> OccurrenceState {
+    index(vec![
+        InstanceOccurrences {
+            max_per_frame: copies,
+            ..instance(vec![e(), s()], vec![(30, 60)])
+        },
+        instance(vec![e(), second_call()], vec![(30, 60)]),
+        instance(vec![e(), intro_call()], vec![(0, 30)]),
+    ])
+}
+
 #[test]
-fn two_calls_in_this_scene_lock() {
+fn two_calls_in_this_scene_leave_this_scene_to_this_call() {
+    let report = sale_report();
+    let targets = sale_targets(&report);
+    let occurrences = two_calls_here(1);
+
+    let options = options_of(scope_state(
+        &report,
+        &targets,
+        Some(&occurrences),
+        None,
+        &chapters(),
+        FRAME,
+    ));
+
+    assert_eq!(options.this_scene, Ok(()));
+    assert_eq!(chosen_scope(None, &options), Ok(Scope::ThisScene));
+    assert_eq!(
+        options.called_here,
+        Some(CalledHere {
+            component: "PriceTag".to_owned(),
+            times: 2,
+        })
+    );
+    // The line, the tab's tooltip and a drag say it writes this call.
+    assert_eq!(
+        scope_line(&options, Some(Scope::ThisScene)),
+        "Edits this `<PriceTag>` only · this scene calls it 2 times"
+    );
+    assert_eq!(
+        this_scene_tooltip(&options),
+        "Write the edit for this call only"
+    );
+    assert_eq!(
+        scope_in_effect(Scope::ThisScene, options.called_here.as_ref()),
+        "Edits change this `<PriceTag>` only"
+    );
+    // "Shared value" says what it says for one call.
+    assert_eq!(
+        scope_line(&options, Some(Scope::Shared)),
+        "Shared value is used in Intro, Price"
+    );
+    assert_eq!(
+        scope_in_effect(Scope::Shared, options.called_here.as_ref()),
+        "Edits change the shared value"
+    );
+    // The Width row writes the Sale call's `rectWidth`.
+    let width = prop("width");
+    assert_eq!(
+        scoped_row(Scope::ThisScene, &targets, &width, None),
+        ScopedRow::AsResolved
+    );
+    assert_eq!(targets.entry(&width).unwrap().call_site, Some(s()));
+    // Only the Sale tag changes: its band is filled, the Second tag's is
+    // not shown.
+    let filter = impact_filter(Some(Scope::ThisScene), &targets, None);
+    assert_eq!(filter, ImpactFilter::Through(s()));
+    let ImpactView::Known(impact) =
+        impact_view(&report, Some(&occurrences), &chapters(), FRAME, &filter)
+    else {
+        panic!("expected a known impact");
+    };
+    assert_eq!(impact.instance_count, 1);
+    assert_eq!(impact.places_in_scene, 1);
+    assert_eq!(impact.own_bands, [((30, 60), 0)]);
+    assert!(impact.other_bands.is_empty());
+}
+
+#[test]
+fn one_call_in_this_scene_keeps_the_scene_copy() {
     let report = price_report();
     let targets = tag_targets(&report, &tag_texts(SCENES_FILE));
+    let options = options_of(scope_state(
+        &report,
+        &targets,
+        Some(&three_scenes()),
+        None,
+        &chapters(),
+        FRAME,
+    ));
+
+    assert_eq!(options.called_here, None);
+    assert_eq!(
+        this_scene_tooltip(&options),
+        "Write the edit for the instances in this scene only"
+    );
+    assert_eq!(
+        scope_in_effect(Scope::ThisScene, options.called_here.as_ref()),
+        "Edits change this scene"
+    );
+    assert_eq!(
+        scope_line(&options, Some(Scope::ThisScene)),
+        "Shared value is used in Intro, Price, Outro"
+    );
+}
+
+#[test]
+fn a_call_drawing_the_element_twice_locks_this_scene_beside_another_call() {
+    let report = LayerSourceReport {
+        render_count: 3,
+        ..price_report()
+    };
+    let targets = sale_targets(&report);
+
+    // `S` draws two Sale tags (in a `.map()`) beside the Second one: a
+    // write at `S` would change both copies.
+    let options = options_of(scope_state(
+        &report,
+        &targets,
+        Some(&two_calls_here(2)),
+        None,
+        &chapters(),
+        FRAME,
+    ));
+
+    let lock = price_tag(|component| ScopeLock::DrawsMoreThanOnce { component });
+    assert_eq!(options.this_scene, Err(lock.clone()));
+    assert_eq!(
+        lock.text(),
+        "`<PriceTag>` here draws this element more than once"
+    );
+    assert_eq!(chosen_scope(None, &options), Ok(Scope::Shared));
+}
+
+#[test]
+fn a_call_drawing_the_element_twice_alone_in_this_scene_writes_the_scene() {
+    let report = LayerSourceReport {
+        render_count: 2,
+        ..price_report()
+    };
+    let targets = tag_targets(&report, &tag_texts(SCENES_FILE));
     let occurrences = index(vec![
-        instance(vec![e(), s()], vec![(30, 60)]),
-        instance(vec![e(), pos(SCENES_FILE, 3, 3)], vec![(40, 50)]),
+        InstanceOccurrences {
+            max_per_frame: 2,
+            ..instance(vec![e(), s()], vec![(30, 60)])
+        },
         instance(vec![e(), intro_call()], vec![(0, 30)]),
     ]);
 
@@ -461,12 +628,9 @@ fn two_calls_in_this_scene_lock() {
         FRAME,
     ));
 
-    let lock = price_tag(|component| ScopeLock::CalledTwiceHere { component });
-    assert_eq!(options.this_scene, Err(lock.clone()));
-    assert_eq!(
-        lock.text(),
-        "`<PriceTag>` is called more than once in this scene"
-    );
+    // Every copy is in this scene: "This scene" writes them all at `S`.
+    assert_eq!(options.this_scene, Ok(()));
+    assert_eq!(options.called_here, None);
 }
 
 #[test]
@@ -687,15 +851,13 @@ fn a_row_this_scene_sets_itself_leaves_shared_value_open() {
     );
     let options = options_of(state.clone());
 
-    // "This scene" is locked; "Shared value" stays open and is in effect.
-    assert_eq!(
-        options.this_scene,
-        Err(price_tag(|component| ScopeLock::CalledTwiceHere {
-            component
-        }))
-    );
+    // "This scene" writes this call; "Shared value" stays open, chosen here.
+    assert_eq!(options.this_scene, Ok(()));
     assert_eq!(options.shared, Ok(()));
-    assert_eq!(chosen_scope(None, &options), Ok(Scope::Shared));
+    assert_eq!(
+        chosen_scope(Some(Scope::Shared), &options),
+        Ok(Scope::Shared)
+    );
     // The row is locked, shows Price's value, and its remove button uses
     // the shared value...
     let width = prop("width");
@@ -719,7 +881,12 @@ fn a_row_this_scene_sets_itself_leaves_shared_value_open() {
     // ...which the gate lets through, and which removes it from the call
     // only.
     assert_eq!(
-        commit_gate(&state, None, &targets, std::slice::from_ref(&width)),
+        commit_gate(
+            &state,
+            Some(Scope::Shared),
+            &targets,
+            std::slice::from_ref(&width)
+        ),
         CommitGate::Go(Some(Scope::Shared))
     );
     let written = commit_files(
@@ -1427,9 +1594,12 @@ fn hovering_previews_the_other_option() {
 
 #[test]
 fn scope_in_effect_names_the_scope() {
-    assert_eq!(scope_in_effect(Scope::ThisScene), "Edits change this scene");
     assert_eq!(
-        scope_in_effect(Scope::Shared),
+        scope_in_effect(Scope::ThisScene, None),
+        "Edits change this scene"
+    );
+    assert_eq!(
+        scope_in_effect(Scope::Shared, None),
         "Edits change the shared value"
     );
 }

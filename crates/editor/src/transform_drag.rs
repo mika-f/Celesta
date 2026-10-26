@@ -7,7 +7,7 @@ use crate::element_edit::{
     ElementTargets, PropKey, TransformProp, editable, field_of, inner_target, reason_text,
 };
 use crate::layer_select::{letterbox, to_scene};
-use crate::scope::{CommitGate, Scope, scope_in_effect};
+use crate::scope::{CalledHere, CommitGate, Scope, ScopeState, scope_in_effect};
 use crate::transform_handles::{
     Handle, Marker, PivotMode, Resize, ResizeTool, SizeField, SizeProps, anchor_handle,
     anchor_keys, drag_label, drag_values, marker, pressed_handle, preview_values, prop_values,
@@ -57,6 +57,10 @@ pub(crate) struct TransformDrag {
     /// `EditorView::kept_scope`): the drag is written under it or refused,
     /// and the label's second line says it.
     scope: Option<Scope>,
+    /// The scene's calls of the element's component when it calls it more
+    /// than once (see `ScopeOptions::called_here`): "This scene" then
+    /// writes the selected one, as the label says.
+    called_here: Option<CalledHere>,
     /// The props the runtime saw when the drag started.
     received: ReceivedProps,
     /// Where the runtime takes each editable prop's dragged value, kept from
@@ -94,6 +98,7 @@ impl TransformDrag {
             primitive: String::new(),
             note: None,
             scope: None,
+            called_here: None,
             received,
             sites,
             turned: 0.0,
@@ -122,9 +127,21 @@ impl TransformDrag {
         Self { note, ..self }
     }
 
-    /// The drag of an element whose edits write under `scope`.
-    pub(crate) fn with_scope(self, scope: Option<Scope>) -> Self {
-        Self { scope, ..self }
+    /// The drag of an element whose edits write under `scope`, in a scene
+    /// whose calls of its component are `called_here` (see `called_here`).
+    pub(crate) fn with_scope(self, scope: Option<Scope>, called_here: Option<CalledHere>) -> Self {
+        Self {
+            scope,
+            called_here,
+            ..self
+        }
+    }
+
+    /// What the drag's edit changes (see `scope_in_effect`); `None` without
+    /// a scope.
+    pub(crate) fn in_effect(&self) -> Option<String> {
+        self.scope
+            .map(|scope| scope_in_effect(scope, self.called_here.as_ref()))
     }
 
     /// The label beside the layer: the props the drag writes (`x 120 →
@@ -145,8 +162,8 @@ impl TransformDrag {
             (Some(note), true) => Some(note),
             (Some(note), false) => Some(format!("{note}  {written}")),
         }?;
-        Some(match self.scope {
-            Some(scope) => format!("{line}\n{}", scope_in_effect(scope)),
+        Some(match self.in_effect() {
+            Some(in_effect) => format!("{line}\n{in_effect}"),
             None => line,
         })
     }
@@ -1003,10 +1020,10 @@ impl EditorView {
         self.transform_drag.as_ref()?.label()
     }
 
-    /// The edit scope the running drag writes with, for the Properties
-    /// header.
-    pub(crate) fn transform_drag_scope(&self) -> Option<Scope> {
-        self.transform_drag.as_ref()?.scope
+    /// What the running drag's edit changes under the scope it writes with,
+    /// for the Properties header (see `TransformDrag::in_effect`).
+    pub(crate) fn transform_drag_in_effect(&self) -> Option<String> {
+        self.transform_drag.as_ref()?.in_effect()
     }
 
     /// Whether a drag is running with the button down (not one released and
@@ -1099,12 +1116,18 @@ impl EditorView {
         }
         let note = self.pivot_note();
         let scope = self.kept_scope();
+        let called_here = self
+            .shown_scope_context()
+            .and_then(|context| match context.state {
+                ScopeState::Options(options) => options.called_here,
+                ScopeState::NotShared | ScopeState::Unknown { .. } => None,
+            });
         self.transform_drag = Some(
             TransformDrag::new(frame, handle, start, editable, pivot, received, sites)
                 .with_resize(resize)
                 .with_primitive(&primitive)
                 .with_note(note)
-                .with_scope(scope),
+                .with_scope(scope, called_here),
         );
         true
     }
@@ -1850,7 +1873,7 @@ mod tests {
 
     #[test]
     fn the_drag_label_says_what_edits_change() {
-        let drag = |scope| {
+        let drag_in = |scope, called_here| {
             TransformDrag::new(
                 rect_frame(),
                 Handle::Rotate,
@@ -1860,8 +1883,9 @@ mod tests {
                 ReceivedProps::default(),
                 Vec::new(),
             )
-            .with_scope(scope)
+            .with_scope(scope, called_here)
         };
+        let drag = |scope| drag_in(scope, None);
         let mut shared = drag(Some(Scope::Shared));
         // Nothing written yet: no label.
         assert_eq!(shared.label(), None);
@@ -1875,6 +1899,25 @@ mod tests {
         assert_eq!(
             this_scene.label().as_deref(),
             Some("rotation 0 → 30\nEdits change this scene")
+        );
+        // A scene calling the component twice: this call only.
+        let twice = || {
+            Some(CalledHere {
+                component: "PriceTag".to_owned(),
+                times: 2,
+            })
+        };
+        let mut this_call = drag_in(Some(Scope::ThisScene), twice());
+        this_call.follow(vec![(TransformProp::Rotation.key(), 30.0)]);
+        assert_eq!(
+            this_call.label().as_deref(),
+            Some("rotation 0 → 30\nEdits change this `<PriceTag>` only")
+        );
+        let mut shared = drag_in(Some(Scope::Shared), twice());
+        shared.follow(vec![(TransformProp::Rotation.key(), 30.0)]);
+        assert_eq!(
+            shared.label().as_deref(),
+            Some("rotation 0 → 30\nEdits change the shared value")
         );
         // An element that is not shared: one line.
         let mut alone = drag(None);
