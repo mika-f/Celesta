@@ -639,21 +639,17 @@ fn shared_is_disabled_when_every_row_is_set_by_every_scene() {
     assert_eq!(chosen_scope(None, &options), Ok(Scope::ThisScene));
     assert_eq!(lock.text(), "Every scene sets `rectWidth` itself");
     assert_eq!(scope_line(&options, Some(Scope::ThisScene)), lock.text());
-    // Until the calls are read, that is not known: only that this scene
-    // sets its own.
-    assert_eq!(
-        state(None).shared,
-        Err(ScopeLock::SetsOwn {
-            param: "rectWidth".to_owned()
-        })
-    );
+    // Until the calls are read, that is not known; that this scene sets its
+    // own locks the row only, never the option.
+    assert_eq!(state(None).shared, Ok(()));
 }
 
 #[test]
-fn a_remembered_shared_value_this_scene_overrides_refuses_the_removal() {
-    // Price passes `rectWidth={260}`, the only row, over a default of 200.
+fn a_row_this_scene_sets_itself_leaves_shared_value_open() {
+    // Price calls `PriceTag` twice, the first passing `rectWidth={260}`
+    // over a default of 200; the width is the only row.
     let tag = "export function PriceTag({ rectWidth = 200 }: { rectWidth?: number }) {\n  return <Rect width={rectWidth} />;\n}\n";
-    let call = "export const Price = () => (\n  <PriceTag rectWidth={260} />\n);\n";
+    let call = "export const Price = () => (\n  <PriceTag rectWidth={260} />\n);\nexport const Second = () => <PriceTag />;\n";
     let texts = Texts::from([
         (PathBuf::from(TAG_FILE), tag.to_owned()),
         (PathBuf::from(SCENES_FILE), call.to_owned()),
@@ -676,33 +672,71 @@ fn a_remembered_shared_value_this_scene_overrides_refuses_the_removal() {
         &["width"],
     );
     let targets = resolve_targets(read_from(&texts), &report, Some(&table)).unwrap();
+    let occurrences = index(vec![
+        instance(vec![e(), s()], vec![(30, 60)]),
+        instance(vec![e(), pos(SCENES_FILE, 4, 30)], vec![(30, 60)]),
+        instance(vec![e(), intro_call()], vec![(0, 30)]),
+    ]);
     let state = scope_state(
         &report,
         &targets,
-        Some(&three_scenes()),
+        Some(&occurrences),
         None,
         &chapters(),
         FRAME,
     );
     let options = options_of(state.clone());
-    let lock = ScopeLock::SetsOwn {
-        param: "rectWidth".to_owned(),
-    };
 
-    // "Shared value" is disabled: every row is one this scene sets itself.
-    assert_eq!(options.shared, Err(lock.clone()));
-    // Remembered all the same, no scope is in effect: the rows show as
-    // resolved, and their remove button with them...
+    // "This scene" is locked; "Shared value" stays open and is in effect.
     assert_eq!(
-        chosen_scope(Some(Scope::Shared), &options),
-        Err(lock.clone())
+        options.this_scene,
+        Err(price_tag(|component| ScopeLock::CalledTwiceHere {
+            component
+        }))
     );
+    assert_eq!(options.shared, Ok(()));
+    assert_eq!(chosen_scope(None, &options), Ok(Scope::Shared));
+    // The row is locked, shows Price's value, and its remove button uses
+    // the shared value...
     let width = prop("width");
-    assert!(removable(&targets, &width, targets.entry(&width).unwrap()));
-    // ...but a click on it is refused with the lock, as any commit.
+    let row = scoped_row(Scope::Shared, &targets, &width, None);
     assert_eq!(
-        commit_gate(&state, Some(Scope::Shared), &targets, &[width]),
-        CommitGate::Refuse(lock.text())
+        row,
+        ScopedRow::Locked(ScopeLock::SetsOwn {
+            param: "rectWidth".to_owned()
+        })
+    );
+    let target = targets.entry(&width).unwrap();
+    assert_eq!(
+        row_text("width", target, row_field(&targets, &width), &report),
+        ("260".to_owned(), String::new())
+    );
+    assert!(scoped_removable(Scope::Shared, &targets, &width, None));
+    assert_eq!(
+        remove_tooltip(Some(Scope::Shared), &row),
+        "Use the shared value"
+    );
+    // ...which the gate lets through, and which removes it from the call
+    // only.
+    assert_eq!(
+        commit_gate(&state, None, &targets, std::slice::from_ref(&width)),
+        CommitGate::Go(Some(Scope::Shared))
+    );
+    let written = commit_files(
+        &texts,
+        &targets,
+        &report,
+        Some(Scope::Shared),
+        None,
+        &[(width, None)],
+    )
+    .expect("the removal is written");
+    assert_eq!(
+        written,
+        vec![(
+            PathBuf::from(SCENES_FILE),
+            call.replace(" rectWidth={260}", "")
+        )]
     );
 }
 

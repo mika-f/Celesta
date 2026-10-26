@@ -555,7 +555,9 @@ fn in_scope(scope: Scope, target: &EditTarget) -> bool {
 
 /// `scope`'s text-level lock: the first row's, when no editable row or
 /// input of the element can be written under it. Component-section rows
-/// are outside the scope.
+/// are outside the scope. A row this scene sets itself
+/// ([`ScopeLock::SetsOwn`]) locks the row only, never the option: its
+/// removal at `S` is how the shared value gets edited from this scene.
 fn row_lock(
     scope: Scope,
     targets: &ElementTargets,
@@ -567,6 +569,7 @@ fn row_lock(
             continue;
         }
         match scoped_row(scope, targets, &key, calls) {
+            ScopedRow::Locked(ScopeLock::SetsOwn { .. }) => return Ok(()),
             ScopedRow::Locked(lock) => {
                 first.get_or_insert(lock);
             }
