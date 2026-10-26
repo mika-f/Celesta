@@ -36,6 +36,12 @@ scene's end drags on the **Chapters** row.
 - Select the orange tag's `<Rect>`, which Intro and Main both draw: **Set
   timing** is disabled under **This scene** and wraps the `<Rect>` inside
   `Tag` under **Shared value**, for both scenes.
+- Select the light price tag's `<Rect>` in Main, which Intro draws too, and
+  set its width under **Edits change**: **This scene** gives `PriceTag` a
+  `rectWidth` prop that only Main's call passes, while **Shared value**
+  changes both scenes.
+- Select the small mark at the top right, which every scene draws, choose
+  **Shared value**, and change its fill: every scene changes.
 
 ## Reproduce
 
