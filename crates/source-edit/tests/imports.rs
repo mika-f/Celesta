@@ -64,7 +64,7 @@ fn adds_two_new_names_to_a_sorted_import() {
     assert!(matches!(edit, Some(Edit::Splice { .. })));
     assert_eq!(written, vec![named("Sequence"), named("Circle")]);
     assert_eq!(
-        apply(&text, edit.as_slice()).unwrap(),
+        ensure(&text, &["Sequence", "Circle"]).0,
         format!("import {{ Circle, Rect, Sequence, Text }} from '@celesta/react';\n{BODY}")
     );
 }
