@@ -42,7 +42,8 @@ Example: `examples/scene-timing` (a literal `defineScenes` list, a hand-placed
   file declares more than once is `None`); `later_series_items` lists the
   `<Series.Sequence>` siblings after an item (direct element children).
   `resolve_unchecked` reads a wrapper's prop without a received value.
-  `scene_lists(text, path)` returns each `defineScenes([...])` list of object
+  `scene_lists(text, path)` returns each `defineScenes([...])` list (a call
+  of `@celesta/react`'s, through the file's import) of object
   literals with string-literal ids (anything else skips the list) with each
   entry's duration resolved as a prop value (module-level `const`s resolve for
   a value-anchored entry; an exported one locks as `LockReason::Exported`, an
@@ -119,7 +120,11 @@ amended to match.
   length shown: the runtime keeps such a window's end at its parent's end.
   The label names it (`from 30 → 45 · durationInFrames 60`; `band_label`).
 - **Band drags use the window's own scope.** The state comes from
-  `scope_state` over the window's targets and `window_scene_calls`. A drag
+  `scope::window_scope_state` over the window's targets and
+  `window_scene_calls`, read at the lookup frame (the frame the targets
+  answer, as `resolved_scope_state` reads the element's) and cached per
+  render behind the resolution, the window, the occurrence generation and
+  `scene_calls_version` (bumped when the window's calls land too). A drag
   that would be refused does not start, as for every other gesture since
   design 3: `grip_refusal` locks a grip with design 2's lock of a prop it
   writes, else with `gesture_start_refusal` over those props (the body's
@@ -130,9 +135,26 @@ amended to match.
   changes meanwhile; the label's second line is `scope_in_effect`. The
   element-level `gesture_refusals`/`kept_scope`/`gesture_gate_for` read the
   element's rows, where the window's keys never appear.
-- **Nothing is held.** A gate that holds or refuses, and a window no longer
-  current at release, leave a notice "Not written: …" beside the grip; a
-  write that fails shows its error. The released drag stays drawn until the
+- **A window's sharing is its own.** The window's instances are every
+  index instance, of any element, whose `wrappers` hold its source; it is
+  shared when one of them comes through another call of the component it is
+  written in: its chain doesn't end with the selected chain above the
+  window (wrapper entries left out). So a `Delayed` that two scenes call
+  around different elements is shared although the selected element has
+  one instance, and a `<Sequence>` written once around a shared `Tag` is
+  not. "Spans more than one scene" was the alternative; it misses a wrapper
+  component called twice in one scene and one call reached by two paths.
+  The options are design 3's (`confined`, `row_lock`) over those instances;
+  the scene calls read for the element's instances are carried to each
+  window instance whose chain ends as one of them does from the call.
+- **A default is a value.** A window prop passed through to a parameter the
+  call leaves out reads as the parameter's default (`number_of`), so a drag
+  writes default + delta; a defaulted `durationInFrames` is not added by a
+  body drag (`adds_duration` fires for `Missing { default: None }` only).
+  "Set timing" and the scene-end drag read no defaults.
+- **Nothing is held.** A gate that holds or refuses, a window no longer
+  current at release, and a write that fails leave a notice "Not written: …"
+  beside the grip (the scene-end drag's too). The released drag stays drawn until the
   write's reload (dropped at once when the write changed nothing).
 - **Snap targets** leave out the window's own edges (and a playhead or chapter
   edge sitting on them) and the bands that move with the drag. A scene's end
@@ -182,7 +204,19 @@ amended to match.
 
 - A `defineScenes` list with a spread or a `.map()` (such as
   `examples/delta/v0.8.0/timeline.ts`) is skipped, so its chapters lock as
-  "Can't find scene `<id>` in the source".
+  "Can't find scene `<id>` in the source". A part (a chapter held inside
+  another) that no list has locks as "Not a `defineScenes` entry"; a
+  top-level chapter listed with `listChapters` can't be told from a scene
+  of a skipped list and keeps "Can't find scene".
+- A runtime that reports no `wrappers` leaves every window "Not found in the
+  scene scan", so no grip drags.
+- The scene calls reach a window instance of another element only through
+  an instance of the selected element with the same call; others count as
+  unread (not setting their own value), which can show a scene under
+  "Shared value is used in" that sets its own, and miss "Every scene sets".
+- A window written directly in a scene component has no call above it, so
+  it is never shared, also when that component is called explicitly
+  elsewhere too.
 - `Series` items written once and rendered by a `.map()` share one source
   position: their bands move as one, and a drag writes the one element every
   item comes from. `later_series_items` counts direct element children only,
@@ -210,13 +244,10 @@ amended to match.
   grips and label on the composition row); a second press while a released
   drag waits starts nothing and falls through to the click-seek. The notices
   clear on any press, not on a selection change.
-- The scene clamp should never force movement when the state already breaks
-  the floor (`lowest.min(0)`); the scene label's "before" shows the visible
-  length of a cut chapter, not the entry's value.
+- The scene label's "before" shows the visible length of a cut chapter, not
+  the entry's value.
 - `exported_names` counts a re-export with a source (`export { X } from
   './y'`) as a local export.
-- A band drag's write failure shows the raw error, while "Set timing"'s is
-  prefixed "Not written:".
 - The window job runs after the element's resolution in the same background
   task (a small delay before the grips unlock).
 - Import editing: whitespace-only lines inside a wrapped element gain the
@@ -305,6 +336,17 @@ pull request, and keep the TSX diff.
   press starts nothing. Once scanned, choose **Shared value** in Intro (whose
   call now passes `sequenceFrom`): the start edge and the middle are locked
   with "This scene sets its own `sequenceFrom`", and the end edge drags.
+- After that "This scene" lift in Intro, select the tag's `<Rect>` in Main
+  (whose call doesn't pass `sequenceFrom`) and drag the middle of its band
+  right by 15: the label starts from `sequenceFrom`'s default in `Tag`, not
+  0, and under **This scene** Main's `<Tag>` call gains `sequenceFrom` set
+  to that default plus 15.
+- Write a component `const Delayed = ({ children }) => <Sequence
+  from={30}>{children}</Sequence>`, call it in Intro around a `<Rect>` and
+  in Main around a `<Text>`, and select Intro's `<Rect>`: the Properties tab
+  shows no scope options, yet the band's drag label has "Edits change this
+  scene", and the drag adds `sequenceFrom` to `Delayed` and passes the value
+  at Intro's call; Main's text doesn't move.
 - Drag the middle of a `<Sequence>` without `durationInFrames`: the label
   reads `from 30 → 45 · durationInFrames 60`, and both props are written.
 - Click a grip without moving: the playhead jumps to the band's start; click

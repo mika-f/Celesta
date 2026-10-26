@@ -397,7 +397,7 @@ When the selected element sits in a `<Sequence>` or a `<Series.Sequence>` of its
 
 The label names what changes, such as `from 30 → 45`, or `from 30 → 45 · durationInFrames 60 → 45` for the start edge. Dragging the middle of a `<Sequence>` without `durationInFrames` names the length it adds too, such as `from 30 → 45 · durationInFrames 60`. A `<Sequence>` whose frames are exactly those of the scene it is in, or of a part of it, counts as the scene's: it has no grips, and the element is treated as one without timing of its own (see "Give an element its own timing" below).
 
-Each value is written by the rules of "Move layers on the canvas": a number is replaced, a prop you left out is added, a `const` used once is replaced where it is declared, and a prop of your component, such as `start` in `<Sequence from={start}>`, is written where the component is called. When the window is written inside one of your components that several scenes draw, the drag follows the option chosen above the property sections, as described under "Edit one scene or every scene": **This scene** moves the values the drag writes into new props of the component, such as `sequenceFrom` for the middle, and passes the new values at this scene's call; **Shared value** changes every scene that doesn't set its own. The label then has a second line, **Edits change this scene** or **Edits change the shared value**. As with a drag on the canvas, a grip that option would refuse doesn't drag and shows the reason, such as **Scanning scenes…** while the scenes are scanned, or **This scene sets its own `sequenceFrom`** under **Shared value** when this scene's call passes that prop. The drag writes under the option in effect when you pressed; if that option can't write it by the time you release, nothing is written.
+Each value is written by the rules of "Move layers on the canvas": a number is replaced, a prop you left out is added, a `const` used once is replaced where it is declared, and a prop of your component, such as `start` in `<Sequence from={start}>`, is written where the component is called. Whether the window is shared depends on the window, not on the selected element. It is shared when it is written inside one of your components and more than one call of that component draws it, such as a component that two scenes draw, or a `Delayed` component that wraps its children in a `<Sequence>` and that each scene calls around elements of its own. A window written once, such as a `<Sequence>` in one scene around a component other scenes draw too, is written where it is, whatever option the element shows. A shared window follows the option chosen above the property sections, as described under "Edit one scene or every scene", or **This scene** when the selected element shows no options, since only its window is shared: **This scene** moves the values the drag writes into new props of the component, such as `sequenceFrom` for the middle, and passes the new values at this scene's call; **Shared value** changes every scene that doesn't set its own. The label then has a second line, **Edits change this scene** or **Edits change the shared value**. As with a drag on the canvas, a grip that option would refuse doesn't drag and shows the reason, such as **Scanning scenes…** while the scenes are scanned, or **This scene sets its own `sequenceFrom`** under **Shared value** when this scene's call passes that prop. The drag writes under the option in effect when you pressed; if that option can't write it by the time you release, nothing is written.
 
 A grip that can't drag shows a not-allowed pointer, and hovering over it shows why. A grip is locked by the reason of a prop it writes, as listed under "Move layers on the canvas": `from={cut - 9}` locks the start edge and the middle with **Written as an expression: cut - 9**, and the end edge still drags. Every grip is locked by reasons such as these:
 
@@ -412,7 +412,7 @@ A grip that can't drag shows a not-allowed pointer, and hovering over it shows w
 | Not saved: the code failed to reload | The composition failed to reload after one of Celesta's writes |
 | Not saved: the preview stopped unexpectedly | The preview stopped; restart Celesta |
 
-When a drag is released and nothing is written, a note beside the grip says why, until your next click. It starts with **Not written:** when the option you dragged under can't write it any more, such as **Not written: The scenes were scanned while editing; edit again**, or when the source was reloaded during the drag; a write that fails gives its reason, such as **The source changed while editing**.
+When a drag is released and nothing is written, a note beside the grip says why, starting with **Not written:**, until your next click: the option you dragged under can't write it any more, such as **Not written: The scenes were scanned while editing; edit again**, the source was reloaded during the drag, or the write failed, such as **Not written: The source changed while editing**.
 
 ### Drag a scene's end
 
@@ -425,7 +425,7 @@ const SCENES = defineScenes([
 ]);
 ```
 
-After every reload, Celesta reads the `.ts` and `.tsx` files in the entry file's folder and below (skipping `node_modules`, `dist`, `.tmp`, and `.git`) for `defineScenes([...])` calls whose list is written out: an array of `{ … }` entries whose `id` is a string. A list with anything else in it, such as `...CHAPTERS.map(…)`, is skipped. The chapter's id must belong to one entry only, and that entry's `durationInFrames` must be a number, or a `const` of the same file that nothing else reads and the file doesn't export.
+After every reload, Celesta reads the `.ts` and `.tsx` files in the entry file's folder and below (skipping `node_modules`, `dist`, `.tmp`, and `.git`) for calls of `defineScenes([...])` imported from `@celesta/react` (also under another name, or as `C.defineScenes` with `import * as C`) whose list is written out: an array of `{ … }` entries whose `id` is a string. A list with anything else in it, such as `...CHAPTERS.map(…)`, is skipped. The chapter's id must belong to one entry only, and that entry's `durationInFrames` must be a number, or a `const` of the same file that nothing else reads and the file doesn't export.
 
 The composition's length follows the drag when the entry file writes it as the list's length, such as `<Composition durationInFrames={SCENES.durationInFrames}>`, where `SCENES` is the list's `const` in the same file, or is imported by name (also under another name) from a path without an extension, such as `import { SCENES } from './timeline'` for `timeline.ts`, `timeline.tsx`, or a `timeline` folder's `index.ts`. Then lengthening a scene lengthens the composition. Otherwise, such as with `durationInFrames={300}`, the composition keeps its length: the drag stops before a scene after the dragged one would start at or after the composition's end, and before the dragged end passes it, and **The composition is 300 frames long** shows beside the end.
 
@@ -440,13 +440,14 @@ An end that can't drag shows a not-allowed pointer, and hovering over it shows w
 | Reason | Meaning |
 | --- | --- |
 | Reading source… | Celesta is still reading the files for the current reload |
-| Can't find scene `<id>` in the source | No written-out list has an entry with this id, or more than one does, such as for a part listed inside a scene or a list with a spread |
+| Can't find scene `<id>` in the source | No written-out list has an entry with this id, or more than one does, such as for a scene of a list with a spread |
+| Not a `defineScenes` entry | The chapter is a part inside another chapter, such as one listed with `listChapters()`, and no list has an entry with its id |
 | Written as an expression: `<expression>` | The length is computed, such as `S.field - S.words`; the next lines of the tooltip list each name it reads, with its value, such as `BAR = 30`, or with why it can't be traced |
 | Exported, so other files may read it | The length is a `const` the file exports, so changing it could change other files |
 | `<name>` is used in `<count>` places | The `const` is read elsewhere too |
 | Scene `<id>` has no durationInFrames | The entry leaves out its length |
 
-If the entry changed or got locked by the time you release, nothing is written and the label says why, such as **Not written: The source changed while editing**, until your next click.
+If the entry changed or got locked by the time you release, or the write fails, nothing is written and the label says why, such as **Not written: The source changed while editing**, until your next click.
 
 ### Give an element its own timing
 
@@ -469,7 +470,7 @@ An element without a window of its own, such as a background drawn for its whole
 
 The button's tooltip says **Animations inside start at the new start**. Inside a `<Sequence>`, `useCurrentFrame()` counts from the `<Sequence>`'s start, so a component inside the new `<Sequence>` that reads the frame, such as a title fading in with `interpolate(frame, [0, 20], [0, 1])`, now plays its animation from the playhead instead of the scene's start. That is what `<Sequence>` does, and Celesta leaves it so. A value computed outside the new `<Sequence>`, such as an `opacity` the scene's component computes from its own `frame`, keeps its timing; the element is just drawn on fewer frames.
 
-For an element written inside one of your components that several scenes draw, **Set timing** writes the component, so every scene changes. It follows the option chosen above the property sections: it works under **Shared value**, and the `from` then counts from each scene's start. The button is disabled with the reason when it can't write:
+For an element written inside one of your components that several scenes draw, **Set timing** writes the component, so every scene changes. It follows the option chosen above the property sections: it works under **Shared value**, and the `from` then counts from each scene's start. The `durationInFrames` is what is left of the current scene after the playhead and is written for every scene, so in a longer scene the element ends before the scene does. The button is disabled with the reason when it can't write:
 
 | Reason | Meaning |
 | --- | --- |
