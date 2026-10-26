@@ -154,8 +154,8 @@ amended to match.
   "Set timing" and the scene-end drag read no defaults.
 - **Nothing is held.** A gate that holds or refuses, a window no longer
   current at release, and a write that fails leave a notice "Not written: …"
-  beside the grip (the scene-end drag's too). The released drag stays drawn until the
-  write's reload (dropped at once when the write changed nothing).
+  beside the grip (the scene-end drag's too). The released drag stays drawn
+  until the write's reload (dropped at once when the write changed nothing).
 - **Snap targets** leave out the window's own edges (and a playhead or chapter
   edge sitting on them) and the bands that move with the drag. A scene's end
   snaps to the playhead and the chapters that stay; its own end and the later
@@ -214,9 +214,16 @@ amended to match.
   an instance of the selected element with the same call; others count as
   unread (not setting their own value), which can show a scene under
   "Shared value is used in" that sets its own, and miss "Every scene sets".
-- A window written directly in a scene component has no call above it, so
-  it is never shared, also when that component is called explicitly
-  elsewhere too.
+- A window written directly in a scene component has no chain entry above
+  it: `<Scenes>` creates the scene with `React.createElement(Scene)`, which
+  records no source position. The window is treated as not shared, so when
+  that scene component is also called explicitly elsewhere (`<Intro />`
+  inside Main, say), a drag moves both renders and the label has no "Edits
+  change" line. "This scene" would be locked there anyway (no call), and the
+  write is the literal "Shared value" would write; only the label line is
+  lost. A fallback for an empty chain above the window was considered and
+  not taken: it would either lock every window in a scene component or show
+  options where nothing is shared.
 - `Series` items written once and rendered by a `.map()` share one source
   position: their bands move as one, and a drag writes the one element every
   item comes from. `later_series_items` counts direct element children only,
