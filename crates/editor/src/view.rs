@@ -137,6 +137,9 @@ pub(crate) struct EditorView {
     /// for.
     pub(crate) scene_calls: Option<SceneCalls>,
     pub(crate) scene_calls_wanted: Option<(SourcePos, u64, Vec<Option<SourcePos>>)>,
+    /// Counts up whenever `scene_calls` is set: the scope state cached
+    /// for the calls read is read again.
+    pub(crate) scene_calls_version: u64,
     /// The scope chosen per element for the session.
     pub(crate) scope_choices: ScopeChoices,
     /// The scope control's option under the pointer: the timeline bands
@@ -431,6 +434,7 @@ impl EditorView {
             occurrence_landed: false,
             scene_calls: None,
             scene_calls_wanted: None,
+            scene_calls_version: 0,
             scope_choices: ScopeChoices::default(),
             scope_hover: None,
             scope_cache: ScopeCache::default(),

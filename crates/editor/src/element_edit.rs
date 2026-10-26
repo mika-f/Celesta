@@ -803,6 +803,7 @@ impl EditorView {
             view.update(cx, |this, cx| {
                 if this.scene_calls_wanted.as_ref() == Some(&wanted) {
                     this.scene_calls = Some(calls);
+                    this.scene_calls_version = this.scene_calls_version.wrapping_add(1);
                     cx.notify();
                 }
             })
@@ -850,7 +851,7 @@ impl EditorView {
         let key = ScopeKey {
             resolution: self.element_edit.resolution(),
             occurrence_generation: self.occurrence_generation,
-            calls: calls.cloned(),
+            scene_calls_version: self.scene_calls_version,
         };
         let mut cache = self.scope_cache.0.borrow_mut();
         let state = match cache.as_ref() {
@@ -1097,12 +1098,13 @@ pub(crate) fn resolved_scope_state(
 
 /// What a [`ScopeState`] is read from, besides what changes with these
 /// (the report and its lookup frame with the resolution, the index with
-/// its generation, the chapters with a reload, which sweeps again).
+/// its generation, the chapters with a reload, which sweeps again, and
+/// the scene calls that count with those and the calls read).
 #[derive(Debug, PartialEq)]
 struct ScopeKey {
     resolution: u64,
     occurrence_generation: u64,
-    calls: Option<SceneCalls>,
+    scene_calls_version: u64,
 }
 
 /// The selected element's scope state, kept while what it is read from
