@@ -733,14 +733,16 @@ fn commit_gate_holds_until_the_index_answers() {
         10,
     ))));
     assert_eq!(gate(&moved, None, prop("x")), CommitGate::Hold(scanning));
-    // No sweep would answer these.
+    // No sweep would answer these: a value at S still goes as resolved,
+    // anything else is refused.
     let failed = state(&OccurrenceState::Failed("x".to_owned()));
     assert_eq!(
         gate(&failed, None, prop("x")),
         CommitGate::Refuse("Couldn't scan scenes: x".to_owned())
     );
+    assert_eq!(gate(&failed, None, prop("width")), CommitGate::Go(None));
     assert_eq!(
-        gate(&failed, None, prop("width")),
+        gate(&failed, Some(Scope::Shared), prop("width")),
         CommitGate::Refuse("Couldn't scan scenes: x".to_owned())
     );
     let missed = state(&OccurrenceState::Ready(two_scenes(pos(
@@ -752,6 +754,14 @@ fn commit_gate_holds_until_the_index_answers() {
         gate(&missed, None, prop("x")),
         CommitGate::Refuse("Not found in the scene scan".to_owned())
     );
+    assert_eq!(gate(&missed, None, prop("width")), CommitGate::Go(None));
+    // No scan runs (Select layers off): never held.
+    let unscanned = scope_state(&report, &targets, None, None, &chapters(), 40);
+    assert_eq!(
+        gate(&unscanned, None, prop("x")),
+        CommitGate::Refuse("The scenes are not scanned".to_owned())
+    );
+    assert_eq!(gate(&unscanned, None, prop("width")), CommitGate::Go(None));
 
     // Answered.
     assert_eq!(

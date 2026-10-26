@@ -250,6 +250,7 @@ pub(crate) enum ScopeState {
 }
 
 const SCANNING: &str = "Scanning scenes…";
+const NOT_SCANNED: &str = "The scenes are not scanned";
 
 /// The scope options of editing the element `report` describes, whose
 /// targets are `targets`, with the playhead at `frame`. The current scene
@@ -275,7 +276,9 @@ pub(crate) fn scope_state(
         note: note.to_owned(),
     };
     let (index, refreshing) = match occurrences {
-        None | Some(OccurrenceState::Scanning) => return unknown(SCANNING),
+        // No sweep runs (Select layers is off): none would answer.
+        None => return unknown(NOT_SCANNED),
+        Some(OccurrenceState::Scanning) => return unknown(SCANNING),
         Some(OccurrenceState::Failed(message)) => {
             return unknown(&format!("Couldn't scan scenes: {message}"));
         }
@@ -717,12 +720,13 @@ pub(crate) enum CommitGate {
 /// The gate for committing `keys` of `targets` in `state`, `remembered`
 /// being the choice made for the element. Not shared: as resolved. With
 /// options: the chosen scope ([`chosen_scope`]), refused with its lock when
-/// the remembered one (or both) is locked. While the index is scanning (or
-/// refreshing and no longer finds the element), values written at `S` as
-/// resolved go (a pass-through, unless "Shared value" is remembered, and a
-/// Component-section row); any other commit waits for the sweep. A failed
-/// scan, or an index that does not find the element, is refused: no sweep
-/// would answer. Component-section rows alone are outside the scope.
+/// the remembered one (or both) is locked. While the index can't answer,
+/// values written at `S` as resolved go (a pass-through, unless "Shared
+/// value" is remembered, and a Component-section row). Any other commit
+/// waits for the sweep while the index is scanning (or refreshing and no
+/// longer finds the element), and is refused when no sweep would answer:
+/// the scan failed, the index does not find the element, or no scan runs.
+/// Component-section rows alone are outside the scope.
 pub(crate) fn commit_gate(
     state: &ScopeState,
     remembered: Option<Scope>,
@@ -737,7 +741,7 @@ pub(crate) fn commit_gate(
             Ok(scope) => CommitGate::Go(Some(scope)),
             Err(lock) => CommitGate::Refuse(lock.text()),
         },
-        ScopeState::Unknown { note } if note == SCANNING => {
+        ScopeState::Unknown { note } => {
             let at_s = |key: &PropKey| {
                 outside_scope(key)
                     || remembered != Some(Scope::Shared)
@@ -747,11 +751,12 @@ pub(crate) fn commit_gate(
             };
             if keys.iter().all(at_s) {
                 CommitGate::Go(None)
-            } else {
+            } else if note == SCANNING {
                 CommitGate::Hold(note.clone())
+            } else {
+                CommitGate::Refuse(note.clone())
             }
         }
-        ScopeState::Unknown { note } => CommitGate::Refuse(note.clone()),
     }
 }
 

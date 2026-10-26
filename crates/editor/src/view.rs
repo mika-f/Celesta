@@ -129,6 +129,9 @@ pub(crate) struct EditorView {
     /// Counts the changes of `occurrences` (a sweep started, landed or
     /// failed): scene calls are read for one of them.
     pub(crate) occurrence_generation: u64,
+    /// A sweep landed (or failed) since the held row commits were last
+    /// drained for it.
+    pub(crate) occurrence_landed: bool,
     /// The selected element's scene calls (see `sync_scene_calls`), and the
     /// element, generation and call positions the last read was started
     /// for.
@@ -416,6 +419,7 @@ impl EditorView {
             occurrence_worker,
             occurrences: None,
             occurrence_generation: 0,
+            occurrence_landed: false,
             scene_calls: None,
             scene_calls_wanted: None,
             scope_choices: ScopeChoices::default(),

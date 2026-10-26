@@ -1245,22 +1245,22 @@ impl EditorView {
             }
             cx.notify();
         };
-        match gate {
-            // Refused as a write that failed at once is.
-            Some(CommitGate::Refuse(message)) => {
-                self.element_edit
-                    .set_error(refused_layer.as_deref(), Some(message.clone()));
-                done(self, Err(message), cx);
-            }
+        let refused = match gate {
             Some(CommitGate::Go(scope)) => {
                 self.commit_element(vec![(key.clone(), value)], scope, done, cx);
+                cx.notify();
+                return;
             }
-            // Held above; without a selection, `commit_element` says why
-            // nothing is written.
+            Some(CommitGate::Refuse(message)) => message,
+            // Held above when a layer is selected; never written unscoped.
             None | Some(CommitGate::Hold(_)) => {
-                self.commit_element(vec![(key.clone(), value)], None, done, cx);
+                self.element_edit.unavailable(refused_layer.as_deref())
             }
-        }
+        };
+        // Refused as a write that failed at once is.
+        self.element_edit
+            .set_error(refused_layer.as_deref(), Some(refused.clone()));
+        done(self, Err(refused), cx);
         cx.notify();
     }
 
@@ -1428,6 +1428,10 @@ impl EditorView {
         }
         if std::mem::take(&mut self.element_rows.submit_requested) {
             self.submit_edited_rows(cx);
+        }
+        // The index answered: commits held until it did go, or are refused.
+        if std::mem::take(&mut self.occurrence_landed) {
+            self.drain_held_rows(cx);
         }
         // Dropping them releases a selection change (and a leave of the
         // interactive mode) waiting for them.

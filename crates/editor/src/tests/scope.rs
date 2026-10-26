@@ -272,7 +272,8 @@ fn an_unanswered_index_is_unknown() {
         note: note.to_owned(),
     };
 
-    assert_eq!(state(None), unknown("Scanning scenes…"));
+    // No sweep runs.
+    assert_eq!(state(None), unknown("The scenes are not scanned"));
     assert_eq!(
         state(Some(&OccurrenceState::Scanning)),
         unknown("Scanning scenes…")
