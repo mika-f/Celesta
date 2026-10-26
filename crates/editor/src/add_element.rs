@@ -166,15 +166,25 @@ pub(crate) fn pick_parent(
 /// The Add menu's header: "Add to `<Group>` in `<PriceTag>`", "Add to
 /// `<Group>`" without a component, "… · This scene" when moved there.
 pub(crate) fn add_header(parent: &AddParent, component: Option<&str>) -> String {
-    let mut header = format!("Add to `<{}>`", parent.entry.name);
+    format!("Add to {}", parent_label(parent, component))
+}
+
+/// The parent as the header names it: "`<Group>` in `<PriceTag>`", and
+/// "… · This scene" when moved there.
+pub(crate) fn parent_label(parent: &AddParent, component: Option<&str>) -> String {
+    let mut label = format!("`<{}>`", parent.entry.name);
     if let Some(component) = component {
-        header.push_str(&format!(" in `<{component}>`"));
+        label.push_str(&format!(" in `<{component}>`"));
     }
     if parent.this_scene {
-        header.push_str(" · This scene");
+        label.push_str(" · This scene");
     }
-    header
+    label
 }
+
+/// Why an addition is refused at the release: the parent is not the one
+/// shown when its kind was chosen.
+const PARENT_CHANGED: &str = "The parent changed; choose the item again";
 
 /// `report` without the windows below the parent at `parent_index`: the
 /// windows are nearest first, so every one up to and including the last
@@ -554,20 +564,22 @@ pub(crate) fn add_step(
 }
 
 /// The texts after adding `new` under the parent written at `parent` in
-/// `file`, and the new element's position. Err: "The source changed while
-/// editing" when no qualifying parent is at `parent` any more, else the
-/// lock's text.
+/// `file` with the tag `tag` (as [`GroupFacts::tag`] read it, so an alias
+/// of `Group` counts), and the new element's position. Err: "The source
+/// changed while editing" when no element with that tag is at `parent` any
+/// more, else the lock's text.
 pub(crate) fn add_files(
     texts: &Texts,
     file: &Path,
     parent: &SourcePos,
+    tag: &str,
     new: &NewElement,
     timing: Option<&Timing>,
 ) -> Result<(Vec<(PathBuf, String)>, SourcePos), String> {
     let changed = || SOURCE_CHANGED.to_owned();
     let text = texts.get(file).ok_or_else(changed)?;
     let element = element_at(text, parent.line, parent.column)
-        .filter(|element| tag_name(text, element) == "Group")
+        .filter(|element| tag_name(text, element) == tag)
         .ok_or_else(changed)?;
     let added = add_child(text, &element, new, timing).map_err(|lock| lock.text())?;
     let written =
@@ -631,6 +643,8 @@ pub(crate) fn added_confirmed(position: &SourcePos, lookup: &LookupResult) -> bo
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct GroupFacts {
     pub(crate) at: SourcePos,
+    /// Its tag as written, its last `.` segment (`Group`, an alias).
+    pub(crate) tag: String,
     /// The component the group is written in.
     pub(crate) component: Option<String>,
     /// The wrapper of a child added at the lookup frame (see
@@ -678,6 +692,7 @@ pub(crate) fn parent_facts(
         let wrapped = matches!(timing, Ok(Some(_)));
         groups.push(GroupFacts {
             at: SourcePos::from(entry),
+            tag: tag_name(text, &element).to_owned(),
             component: enclosing_component(text, &element),
             timing,
             locks: KINDS
@@ -737,10 +752,21 @@ impl ParentFacts {
     }
 }
 
+/// The parent shown when a kind was chosen: the one the element goes into.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ChosenParent {
+    pub(crate) at: SourcePos,
+    pub(crate) layer_id: String,
+    /// Where it is, as the armed hint says it (see [`parent_label`]).
+    pub(crate) label: String,
+}
+
 /// What the view keeps for adding elements.
 #[derive(Debug, Default)]
 pub(crate) struct AddState {
     pub(crate) mode: AddMode,
+    /// The parent shown when the drawn kind was chosen.
+    pub(crate) chosen: Option<ChosenParent>,
     /// The newest groups read, and the lookup the newest read is for.
     facts: Option<ParentFacts>,
     wanted: Option<LookupKey>,
@@ -951,6 +977,20 @@ impl EditorView {
     pub(crate) fn choose_add_kind(&mut self, kind: NewKind, cx: &mut Context<Self>) {
         self.pause();
         self.add.notice = None;
+        // The element goes into the parent shown now, or into none.
+        let chosen = self.add_target().map(|(parent, facts)| ChosenParent {
+            at: SourcePos::from(&parent.entry),
+            label: parent_label(&parent, facts.component.as_deref()),
+            layer_id: parent.layer_id,
+        });
+        match chosen {
+            Ok(chosen) => self.add.chosen = Some(chosen),
+            Err(reason) => {
+                self.add.notice = Some(reason);
+                cx.notify();
+                return;
+            }
+        }
         self.step_add(AddEvent::Chosen(kind));
         if self.add.mode == AddMode::Picking(kind) {
             self.pick_add_file(kind, cx);
@@ -1125,8 +1165,8 @@ impl EditorView {
         let AddMode::Drawing { tool, start, now } = &self.add.mode else {
             return None;
         };
-        let (parent, _) = self.add_target().ok()?;
-        let space = self.add_space(&parent.layer_id)??;
+        // In the parent the hint names, where it is written.
+        let space = self.add_space(&self.add.chosen.as_ref()?.layer_id)??;
         let outline = drawn_outline(
             tool.kind,
             (*start, *now),
@@ -1145,7 +1185,12 @@ impl EditorView {
         (tool, start, end): (AddTool, Point, Point),
         cx: &mut Context<Self>,
     ) {
+        let chosen = self.add.chosen.take();
         let drawn = self.add_target().and_then(|(parent, facts)| {
+            // Only into the parent the hint named while this was drawn.
+            if !is_chosen(chosen.as_ref(), &parent) {
+                return Err(PARENT_CHANGED.to_owned());
+            }
             let timing = facts.timing.clone()?;
             let space = match self.add_space(&parent.layer_id) {
                 Some(Some(space)) => space,
@@ -1163,9 +1208,9 @@ impl EditorView {
                 slop,
             )
             .ok_or_else(|| SCALED_TO_ZERO.to_owned())?;
-            Ok((parent, timing, new))
+            Ok((parent, facts.tag.clone(), timing, new))
         });
-        let (parent, timing, new) = match drawn {
+        let (parent, tag, timing, new) = match drawn {
             Ok(drawn) => drawn,
             Err(reason) => {
                 self.add.notice = Some(reason);
@@ -1183,7 +1228,7 @@ impl EditorView {
         self.record_own_writes(
             vec![file.clone()],
             move |texts| {
-                let (files, position) = add_files(texts, &file, &at, &new, timing.as_ref())?;
+                let (files, position) = add_files(texts, &file, &at, &tag, &new, timing.as_ref())?;
                 *written.lock().unwrap_or_else(PoisonError::into_inner) = Some(position);
                 Ok(files)
             },
@@ -1264,15 +1309,85 @@ impl EditorView {
     /// generation `from`) when it reads the addition (`sequence`).
     pub(crate) fn add_reload_applied(&mut self, sequence: u64, from: u64) {
         self.end_add_mode();
-        // The layer ids of the code before.
-        self.add.confirm = None;
-        if let Some((pending, after)) = &mut self.add.pending
+        self.add.reload_applied(sequence, from);
+    }
+
+    /// Reload `sequence` failed (see [`AddState::reload_failed`]).
+    pub(crate) fn add_reload_failed(&mut self, sequence: u64) {
+        self.add.reload_failed(sequence);
+    }
+
+    /// The selection was cleared (see [`AddState::selection_changed`]).
+    pub(crate) fn add_selection_changed(&mut self, layer: Option<&str>) {
+        self.add.selection_changed(layer);
+    }
+
+    /// The added layer's check, taken while the selection changes.
+    pub(crate) fn add_take_confirm(&mut self) -> Option<(String, SourcePos)> {
+        self.add.confirm.take()
+    }
+
+    /// Puts the check back once the selection changed: it stays only when
+    /// the added layer is the one selected.
+    pub(crate) fn add_restore_confirm(&mut self, confirm: Option<(String, SourcePos)>) {
+        self.add.confirm = confirm;
+        self.add.selection_changed(self.selected_layer.as_deref());
+    }
+}
+
+impl AddState {
+    /// Reload `sequence` applied, its first frame being preview generation
+    /// `from`. The groups and their spaces are read again from the
+    /// reloaded code (a write to the parent may have moved or turned it):
+    /// the facts once the layer is looked up in it, which then asks for the
+    /// space. A selection waiting for a reload that reads its write waits
+    /// for `from` on.
+    fn reload_applied(&mut self, sequence: u64, from: u64) {
+        self.facts = None;
+        self.wanted = None;
+        self.space = None;
+        if let Some((pending, after)) = &mut self.pending
             && sequence >= *after
             && pending.from.is_none()
         {
             pending.from = Some(from);
         }
     }
+
+    /// Reload `sequence` failed: a selection waiting for a reload that
+    /// reads its write is dropped, as none drew the element (an undo may
+    /// take it out before the next reload, which would then answer with an
+    /// older sibling).
+    fn reload_failed(&mut self, sequence: u64) {
+        if self
+            .pending
+            .as_ref()
+            .is_some_and(|(_, after)| sequence >= *after)
+        {
+            self.pending = None;
+        }
+    }
+
+    /// The selection became `layer`: a check waiting for another layer's
+    /// first lookup goes, as that layer is not selected after all. A
+    /// reload does not drop it: a selection parked behind held commits is
+    /// made after their reload, and is checked then.
+    fn selection_changed(&mut self, layer: Option<&str>) {
+        if self
+            .confirm
+            .as_ref()
+            .is_some_and(|(added, _)| Some(added.as_str()) != layer)
+        {
+            self.confirm = None;
+        }
+    }
+}
+
+/// Whether `parent` is the one shown when the drawn kind was chosen.
+fn is_chosen(chosen: Option<&ChosenParent>, parent: &AddParent) -> bool {
+    chosen.is_some_and(|chosen| {
+        chosen.at == SourcePos::from(&parent.entry) && chosen.layer_id == parent.layer_id
+    })
 }
 
 #[cfg(test)]
@@ -1690,6 +1805,112 @@ mod tests {
             "Add to `<Group>` in `<PriceTag>`"
         );
         assert_eq!(add_header(&parent, None), "Add to `<Group>`");
+        // The armed hint names it the same way.
+        assert_eq!(
+            parent_label(&parent, Some("PriceTag")),
+            "`<Group>` in `<PriceTag>`"
+        );
+    }
+
+    #[test]
+    fn a_write_goes_only_into_the_chosen_parent() {
+        let parent = AddParent {
+            entry: primitive("Group", &pos("intro", 5), "g1"),
+            index: 1,
+            layer_id: "g1".to_owned(),
+            this_scene: false,
+        };
+        let chosen = ChosenParent {
+            at: pos("intro", 5),
+            layer_id: "g1".to_owned(),
+            label: "`<Group>`".to_owned(),
+        };
+        assert!(is_chosen(Some(&chosen), &parent));
+        assert!(!is_chosen(None, &parent));
+        // A scope change or a seek picked another group.
+        let other = AddParent {
+            entry: primitive("Group", &pos("intro", 3), "g0"),
+            layer_id: "g0".to_owned(),
+            ..parent.clone()
+        };
+        assert!(!is_chosen(Some(&chosen), &other));
+        // The same source drawn as another instance.
+        let instance = AddParent {
+            layer_id: "g2".to_owned(),
+            ..parent
+        };
+        assert!(!is_chosen(Some(&chosen), &instance));
+    }
+
+    /// A state waiting to select the element added by the write read by
+    /// reload 4, with the parent's facts and space read before it.
+    fn waiting_state() -> AddState {
+        let report = report(vec![primitive("Group", &pos("intro", 5), "g")], vec![]);
+        AddState {
+            facts: Some(ParentFacts {
+                lookup: ("g".to_owned(), report.clone(), 30),
+                groups: vec![],
+            }),
+            wanted: Some(("g".to_owned(), report, 30)),
+            space: Some(("g".to_owned(), Some(IDENTITY))),
+            pending: Some((
+                PendingSelect {
+                    position: pos("intro", 6),
+                    under: AddedUnder {
+                        parent: "g".to_owned(),
+                        wrapped: false,
+                    },
+                    from: None,
+                },
+                4,
+            )),
+            confirm: Some(("g.1".to_owned(), pos("intro", 6))),
+            ..AddState::default()
+        }
+    }
+
+    fn pending_from(state: &AddState) -> Option<Option<u64>> {
+        state.pending.as_ref().map(|(pending, _)| pending.from)
+    }
+
+    #[test]
+    fn a_reload_reads_the_parent_and_its_space_again() {
+        let mut state = waiting_state();
+        // An older reload: it does not read the write.
+        state.reload_applied(3, 20);
+        assert_eq!(pending_from(&state), Some(None));
+        // The parent may have moved or turned: nothing read before stays.
+        assert!(state.facts.is_none() && state.wanted.is_none() && state.space.is_none());
+
+        state.reload_applied(4, 21);
+        assert_eq!(pending_from(&state), Some(Some(21)));
+        // A later one does not move it.
+        state.reload_applied(5, 22);
+        assert_eq!(pending_from(&state), Some(Some(21)));
+        // The added layer's check outlives reloads.
+        assert!(state.confirm.is_some());
+    }
+
+    #[test]
+    fn a_failed_reload_drops_the_selection_waiting_for_it() {
+        let mut state = waiting_state();
+        state.reload_failed(3);
+        assert!(state.pending.is_some());
+        state.reload_failed(4);
+        assert!(state.pending.is_none());
+    }
+
+    #[test]
+    fn the_added_layer_s_check_goes_with_another_selection() {
+        let mut state = waiting_state();
+        state.selection_changed(Some("g.1"));
+        assert!(state.confirm.is_some());
+        state.selection_changed(Some("g.0"));
+        assert!(state.confirm.is_none());
+
+        let mut cleared = waiting_state();
+        cleared.selection_changed(None);
+        assert!(cleared.confirm.is_none());
     }
 
     #[test]

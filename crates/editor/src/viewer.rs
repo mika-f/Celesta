@@ -1044,16 +1044,29 @@ impl EditorView {
     fn add_menu_button(&self, cx: &mut Context<Self>) -> AnyElement {
         let menu = self.add_menu();
         let view = cx.entity().downgrade();
+        // The hint names the parent chosen with the kind, where it goes.
+        let to = self
+            .add
+            .chosen
+            .as_ref()
+            .map(|chosen| format!("to {} · ", chosen.label))
+            .unwrap_or_default();
         let (label, hint) = match &self.add.mode {
             AddMode::Off => ("Add".to_owned(), None),
-            AddMode::Picking(kind) => (format!("Adding {}", kind.tag()), Some("Choose a file…")),
+            AddMode::Picking(kind) => (
+                format!("Adding {}", kind.tag()),
+                Some(format!("{to}Choose a file…")),
+            ),
             AddMode::Armed(tool) | AddMode::Drawing { tool, .. } => {
-                let hint = match tool.kind {
+                let how = match tool.kind {
                     NewKind::Circle => "Drag from the center · Esc cancels",
                     NewKind::Text => "Click where the text starts · Esc cancels",
                     _ => "Drag a box, or click · Esc cancels",
                 };
-                (format!("Adding {}", tool.kind.tag()), Some(hint))
+                (
+                    format!("Adding {}", tool.kind.tag()),
+                    Some(format!("{to}{how}")),
+                )
             }
         };
         let button = Button::new("add-element")
@@ -1388,8 +1401,11 @@ impl EditorView {
         // selection it belongs to. (The viewer's notice stays: one set while
         // this change waited says why a held commit was dropped.)
         self.end_inline_text(EditEvent::SelectionChange, cx);
+        // An added layer's check stays when the layer selected is that one.
+        let confirm = self.add_take_confirm();
         self.clear_layer_selection(false);
         self.selected_layer = layer;
+        self.add_restore_confirm(confirm);
         if self.selected_layer.is_some() {
             self.source_lookup = Some(SourceLookup::Pending);
             self.refresh_preview();
@@ -1406,6 +1422,7 @@ impl EditorView {
     /// mode, whose parent came from the selection.
     pub(crate) fn clear_layer_selection(&mut self, outside_change: bool) {
         self.end_add_mode();
+        self.add_selection_changed(None);
         self.inline_pending = None;
         self.inline_note = None;
         self.inline_text_selection_cleared(outside_change);

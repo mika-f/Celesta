@@ -608,6 +608,7 @@ impl EditorView {
                 // waiting for one are not written, and new ones fail.
                 self.element_edit.reload_failed();
                 self.drop_held_rows(RELOAD_FAILED, cx);
+                self.add_reload_failed(sequence);
             }
         }
         cx.notify();

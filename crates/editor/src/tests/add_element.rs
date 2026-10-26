@@ -3,7 +3,9 @@
 //! `added_confirmed`).
 
 use super::*;
-use crate::add_element::{AddedFate, PendingSelect, add_files, added_confirmed, added_fate};
+use crate::add_element::{
+    AddedFate, PendingSelect, add_files, added_confirmed, added_fate, parent_facts,
+};
 use crate::preview::AddedUnder;
 use celesta_source_edit::{NewElement, Timing};
 
@@ -60,7 +62,7 @@ fn an_addition_writes_one_entry_and_undo_removes_it() {
     let parent = at(&file, 4, 3);
 
     let files = write_all_recorded(vec![file.clone()], |texts| {
-        add_files(texts, &file, &parent, &rect(), Some(&TIMING)).map(|(files, _)| files)
+        add_files(texts, &file, &parent, "Group", &rect(), Some(&TIMING)).map(|(files, _)| files)
     })
     .unwrap();
     assert_eq!(files.len(), 1);
@@ -83,17 +85,73 @@ fn add_files_refuses_a_moved_parent() {
     let parent = at(&file, 4, 3);
 
     let refused = write_all_recorded(vec![file.clone()], |texts| {
-        add_files(texts, &file, &parent, &rect(), Some(&TIMING)).map(|(files, _)| files)
+        add_files(texts, &file, &parent, "Group", &rect(), Some(&TIMING)).map(|(files, _)| files)
     });
     assert_eq!(refused, Err("The source changed while editing".to_owned()));
     assert_eq!(fs::read_to_string(&file).unwrap(), moved);
 
     // Nothing at all there.
     assert_eq!(
-        add_files(&texts(&file, SCENE), &file, &at(&file, 2, 1), &rect(), None),
+        add_files(
+            &texts(&file, SCENE),
+            &file,
+            &at(&file, 2, 1),
+            "Group",
+            &rect(),
+            None
+        ),
         Err("The source changed while editing".to_owned())
     );
     fs::remove_dir_all(&dir).ok();
+}
+
+/// [`SCENE`] with `Group` imported as `G`.
+const ALIASED: &str = "import { Group as G, Text } from '@celesta/react';\n\nexport const Intro = () => (\n  <G>\n    <Text>Hi</Text>\n  </G>\n);\n";
+
+#[test]
+fn an_aliased_group_is_added_to() {
+    let file = PathBuf::from("/project/intro.tsx");
+    let read = |_: &Path| Some(ALIASED.to_owned());
+    // The runtime reports the group by its own name.
+    let report = LayerSourceReport {
+        chain: vec![LayerSource {
+            name: "Group".to_owned(),
+            file: file.clone(),
+            line: 4,
+            column: 3,
+            kind: ElementKind::Primitive,
+            layer_id: Some("0".to_owned()),
+        }],
+        ..lookup_at(&at(&file, 4, 3))
+    };
+    let facts = parent_facts(read, |_| true, &report, &[], 600, 0);
+    let [group] = &facts[..] else {
+        panic!("one group: {facts:?}");
+    };
+    assert_eq!(group.tag, "G");
+
+    let (files, _) = add_files(
+        &texts(&file, ALIASED),
+        &file,
+        &at(&file, 4, 3),
+        &group.tag,
+        &rect(),
+        None,
+    )
+    .unwrap();
+    assert!(files[0].1.contains("\n    <Rect x={120}"));
+    // Another tag there now.
+    assert_eq!(
+        add_files(
+            &texts(&file, ALIASED),
+            &file,
+            &at(&file, 4, 3),
+            "Group",
+            &rect(),
+            None
+        ),
+        Err("The source changed while editing".to_owned())
+    );
 }
 
 #[test]
@@ -105,6 +163,7 @@ fn add_files_reports_the_position_after_the_import() {
         &texts(&file, bare),
         &file,
         &at(&file, 2, 3),
+        "Group",
         &NewElement::Text { x: 10.0, y: 20.0 },
         None,
     )
