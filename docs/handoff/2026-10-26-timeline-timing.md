@@ -147,6 +147,13 @@ amended to match.
   The options are design 3's (`confined`, `row_lock`) over those instances;
   the scene calls read for the element's instances are carried to each
   window instance whose chain ends as one of them does from the call.
+  A window's options leave `called_here` out and take `drawn_alone` as
+  true: its instances belong to every element it wraps, so they don't line
+  up with the selected chain for counting the scene's calls of the
+  component, and two elements in one call are not one call drawing it
+  twice. In a scene calling the component more than once, "This scene"
+  then writes the selected call only, and the drag label reads "Edits
+  change this scene".
 - **A default is a value.** A window prop passed through to a parameter the
   call leaves out reads as the parameter's default (`number_of`), so a drag
   writes default + delta; a defaulted `durationInFrames` is not added by a
