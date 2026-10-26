@@ -830,6 +830,7 @@ fn dropping_a_held_commit_drops_its_override() {
         value: Some(EditValue::String("Sale!".to_owned())),
         frame: 0,
         scope: None,
+        scanning: false,
     };
     let mut held = HeldCommits::default();
     held.push(held_commit("title", "children"));
@@ -888,6 +889,7 @@ fn selecting_another_layer_commits_before_the_gate() {
         value: committed("Sale", |edit| edit.insert("!")),
         frame: 0,
         scope: None,
+        scanning: false,
     });
     let mut gate = SelectionGate::default();
     // The gate sees it: "price" waits for the commit to be written.

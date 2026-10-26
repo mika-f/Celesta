@@ -199,6 +199,10 @@ const FRAME_MOVED: &str = "Not saved: the playhead moved off this keyframe";
 /// found again (not in the frame, or no source position).
 const SOURCE_LOST: &str = "Not saved: the layer's source was not found again";
 
+/// Why commits held for the scene scan were not written when another
+/// layer was selected (or the interactive mode left) before it landed.
+const SCAN_UNFINISHED: &str = "Not saved: the scenes were still being scanned";
+
 /// A `<Theme>` color name: a letter, then letters, digits, `_` or `-`.
 fn theme_color_name(text: &str) -> bool {
     let mut chars = text.chars();
@@ -722,6 +726,9 @@ pub(crate) struct HeldCommit {
     pub(crate) frame: i64,
     /// The scope choice the commit was made with; it is written with it.
     pub(crate) scope: Option<Scope>,
+    /// Held for the scene scan (see [`crate::scope::CommitGate::Hold`]),
+    /// not for a reload: a selection change does not wait for it.
+    pub(crate) scanning: bool,
 }
 
 impl HeldCommits {
@@ -745,6 +752,12 @@ impl HeldCommits {
             .find(|held| Some(held.layer.as_str()) == layer)
     }
 
+    fn first_mut(&mut self, layer: Option<&str>) -> Option<&mut HeldCommit> {
+        self.commits
+            .iter_mut()
+            .find(|held| Some(held.layer.as_str()) == layer)
+    }
+
     /// The oldest commit held for `layer`.
     pub(crate) fn pop(&mut self, layer: Option<&str>) -> Option<HeldCommit> {
         let index = self
@@ -758,6 +771,16 @@ impl HeldCommits {
         self.commits
             .iter()
             .any(|held| held.layer == layer && held.key == *key)
+    }
+
+    /// The commits held for `layer` until the scene scan lands, oldest
+    /// first, no longer held: a selection change drops them.
+    pub(crate) fn take_scanning(&mut self, layer: Option<&str>) -> Vec<HeldCommit> {
+        let (taken, kept): (VecDeque<_>, VecDeque<_>) = std::mem::take(&mut self.commits)
+            .into_iter()
+            .partition(|held| held.scanning && Some(held.layer.as_str()) == layer);
+        self.commits = kept;
+        taken.into()
     }
 
     /// Whether any commit is held for `layer`.
@@ -1240,6 +1263,7 @@ impl EditorView {
                 self.commit_gate_for(remembered, keys)
             }
         });
+        // `Some(note)`: held for the scene scan, with the note the row shows.
         let held = match &gate {
             None => Some(None),
             Some(CommitGate::Hold(note)) => Some(Some(note.clone())),
@@ -1260,6 +1284,7 @@ impl EditorView {
                 value,
                 frame,
                 scope: remembered,
+                scanning: note.is_some(),
             });
             if let Some(row) = self.element_rows.rows.get_mut(key) {
                 row.held_note = note;
@@ -1338,10 +1363,11 @@ impl EditorView {
     /// commit), and one that fails at once lets the next go. A commit to a
     /// keyframe made before the playhead moved is not written to another
     /// keyframe. One the occurrence index can't answer for yet keeps its
-    /// place (and those after it theirs) until the sweep lands; each goes
-    /// with the scope choice it was made with (one made with no scope shown
-    /// only for this scene). A selection change waiting for them goes once
-    /// none is left.
+    /// place (and those after it theirs) until the sweep lands, unless a
+    /// selection change waits: that does not wait for the scan, and the
+    /// commit is dropped. Each goes with the scope choice it was made with
+    /// (one made with no scope shown only for this scene). A selection
+    /// change waiting for them goes once none is left.
     pub(crate) fn drain_held_rows(&mut self, cx: &mut Context<Self>) {
         while !self.row_commit_waits() {
             let selected = self.selected_layer.clone();
@@ -1349,11 +1375,26 @@ impl EditorView {
                 .element_rows
                 .held
                 .first(selected.as_deref())
-                .is_some_and(|held| {
+                .and_then(|held| {
                     let keys = std::slice::from_ref(&held.key);
-                    matches!(self.commit_gate_for(held.scope, keys), CommitGate::Hold(_))
+                    match self.commit_gate_for(held.scope, keys) {
+                        CommitGate::Hold(note) => Some((held.key.clone(), note)),
+                        CommitGate::Go(_) | CommitGate::Refuse(_) => None,
+                    }
                 });
-            if scanning {
+            if let Some((key, note)) = scanning {
+                if self.element_rows.selection.waiting() {
+                    self.element_rows.held.pop(selected.as_deref());
+                    self.drop_scanning_row(&key);
+                    continue;
+                }
+                // Held for a reload, it now waits for the scan.
+                if let Some(held) = self.element_rows.held.first_mut(selected.as_deref()) {
+                    held.scanning = true;
+                }
+                if let Some(row) = self.element_rows.rows.get_mut(&key) {
+                    row.held_note = Some(note);
+                }
                 break;
             }
             let Some(held) = self.element_rows.held.pop(selected.as_deref()) else {
@@ -1388,6 +1429,14 @@ impl EditorView {
             let selected = self.selected_layer.clone();
             self.inline_commit_written(selected.as_deref(), &Err(message.to_owned()));
         }
+    }
+
+    /// A commit held for the scene scan that a selection change dropped:
+    /// its row is left as [`Self::drop_row_commit`] leaves it, and the
+    /// viewer's notice, which stays through the change, says why.
+    fn drop_scanning_row(&mut self, key: &PropKey) {
+        self.drop_row_commit(key, SCAN_UNFINISHED);
+        self.inline_notice = Some(SCAN_UNFINISHED.to_owned());
     }
 
     /// The held commits can't be written (the code failed to reload, or the
@@ -1425,7 +1474,8 @@ impl EditorView {
     /// list, or leaving the interactive mode asks: the rows' typed text is
     /// submitted first, as a blur would, and while commits are held for the
     /// selected layer the change waits for them (a newer request replaces
-    /// it).
+    /// it). Commits held for the scene scan are not waited for: they are
+    /// dropped, the viewer saying so.
     pub(crate) fn select_layer(&mut self, layer: Option<String>, cx: &mut Context<Self>) {
         // Picking a layer while a leave of the interactive mode waits stays
         // in the mode.
@@ -1440,6 +1490,11 @@ impl EditorView {
         }
         self.submit_edited_rows(cx);
         let current = self.selected_layer.clone();
+        if layer != current {
+            for held in self.element_rows.held.take_scanning(current.as_deref()) {
+                self.drop_scanning_row(&held.key);
+            }
+        }
         let held = self.element_rows.held.any(current.as_deref());
         if let Some(layer) = self
             .element_rows

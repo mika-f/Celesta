@@ -802,6 +802,7 @@ fn a_held_commit_keeps_the_scope_it_was_made_with() {
         value: Some(EditValue::Number(value)),
         frame: 0,
         scope,
+        scanning: false,
     };
     let mut commits = HeldCommits::default();
     commits.push(held(1.0, Some(Scope::ThisScene)));

@@ -1094,6 +1094,7 @@ fn held_commits_keep_the_latest_value_per_row_in_order() {
         value,
         frame,
         scope: None,
+        scanning: false,
     };
     let mut held = HeldCommits::default();
     held.push(held_at("a", prop("x"), number(1.0), 0));
@@ -1130,6 +1131,39 @@ fn held_commits_keep_the_latest_value_per_row_in_order() {
     );
     assert!(!held.any(Some("a")));
     assert!(held.is_empty());
+}
+
+#[test]
+fn a_selection_change_takes_the_commits_held_for_the_scan() {
+    let held_at = |layer: &str, key: &str, scanning| HeldCommit {
+        layer: layer.to_owned(),
+        key: prop(key),
+        value: Some(EditValue::Number(1.0)),
+        frame: 0,
+        scope: None,
+        scanning,
+    };
+    let mut held = HeldCommits::default();
+    held.push(held_at("a", "x", true));
+    held.push(held_at("a", "y", false));
+    held.push(held_at("a", "fill", true));
+    held.push(held_at("b", "x", true));
+
+    // The selected layer's commits waiting for the scan go, in order...
+    assert_eq!(
+        held.take_scanning(Some("a")),
+        vec![held_at("a", "x", true), held_at("a", "fill", true)]
+    );
+    // ...and one waiting for a reload stays, so the change waits for it.
+    assert!(held.any(Some("a")));
+    assert_eq!(held.pop(Some("a")), Some(held_at("a", "y", false)));
+    // Another layer's are left alone.
+    assert!(held.contains("b", &prop("x")));
+    assert!(held.take_scanning(None).is_empty());
+    // A row committed again replaces its commit, waiting for what the
+    // newer one waits for.
+    held.push(held_at("b", "x", false));
+    assert!(held.take_scanning(Some("b")).is_empty());
 }
 
 #[test]
