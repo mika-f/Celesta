@@ -18,8 +18,11 @@ use crate::{line_break, parse_checked};
 /// The package of `Ellipse` and `Circle`.
 const SHAPES: &str = "@celesta/shapes";
 
-/// The `fill` or `color` every added element starts with.
-const COLOR: &str = "#4F7CFF";
+/// The `fill` an added Rect, Ellipse or Circle starts with.
+const SHAPE_COLOR: &str = "#4F7CFF";
+
+/// The `color` an added Text starts with, so it reads on an added shape.
+const TEXT_COLOR: &str = "#FFFFFF";
 
 /// A kind of element that can be added.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -109,7 +112,7 @@ impl NewElement {
     /// The attributes written, in order.
     fn attributes(&self) -> Vec<(&'static str, EditValue)> {
         let number = EditValue::Number;
-        let color = || EditValue::String(COLOR.to_string());
+        let fill = || EditValue::String(SHAPE_COLOR.to_string());
         match self {
             Self::Rect {
                 x,
@@ -127,7 +130,7 @@ impl NewElement {
                 ("y", number(*y)),
                 ("width", number(*width)),
                 ("height", number(*height)),
-                ("fill", color()),
+                ("fill", fill()),
             ],
             Self::Circle { x, y, radius } => vec![
                 ("x", number(*x)),
@@ -135,13 +138,13 @@ impl NewElement {
                 ("anchorX", number(0.5)),
                 ("anchorY", number(0.5)),
                 ("radius", number(*radius)),
-                ("fill", color()),
+                ("fill", fill()),
             ],
             Self::Text { x, y } => vec![
                 ("x", number(*x)),
                 ("y", number(*y)),
                 ("fontSize", number(48.0)),
-                ("color", color()),
+                ("color", EditValue::String(TEXT_COLOR.to_string())),
             ],
             Self::Image { src, x, y, width } | Self::Video { src, x, y, width } => vec![
                 ("src", EditValue::String(src.clone())),

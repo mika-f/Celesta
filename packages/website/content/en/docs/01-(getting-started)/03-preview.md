@@ -530,7 +530,7 @@ The element is written with literal values only (numbers rounded to two decimals
 | --- | --- |
 | **Rect**, **Ellipse** | `x` and `y` (the box's top-left corner), `width`, `height`, `fill="#4F7CFF"` |
 | **Circle** | `x` and `y` at the center, `anchorX={0.5}`, `anchorY={0.5}`, `radius`, `fill="#4F7CFF"` |
-| **Text** | `x`, `y`, `fontSize={48}`, `color="#4F7CFF"`, and the text `Text` |
+| **Text** | `x`, `y`, `fontSize={48}`, `color="#FFFFFF"`, and the text `Text` |
 | **Image**, **Video** | `src`, `x`, `y`, `width` |
 
 The element starts at the playhead and runs to the end of the nearest timing window around the parent: a `<Sequence>` or `<Scenes>` scene around the group, or, for a group on the composition's own timeline, the scene at the playhead (the composition's end outside the scenes). It is wrapped in a `<Sequence>` whose `from` counts from the start of that window. A `<Sequence>` written around the selected element itself, inside the group, does not count, since it does not wrap the new element. Adding a `<Rect>` at frame 45 of a group's 120-frame `<Sequence>` writes:

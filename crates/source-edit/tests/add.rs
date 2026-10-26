@@ -160,7 +160,7 @@ fn writes_each_kind_s_literals() {
     );
     assert_eq!(
         written(NewElement::Text { x: 10.0, y: 20.0 }),
-        "<Text x={10} y={20} fontSize={48} color=\"#4F7CFF\">Text</Text>"
+        "<Text x={10} y={20} fontSize={48} color=\"#FFFFFF\">Text</Text>"
     );
     assert_eq!(
         written(NewElement::Image {

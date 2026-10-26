@@ -19,7 +19,7 @@
 - What is written: the parent's last child; wrapped in `<Sequence from durationInFrames>` from the parent's local frame at the playhead to the end of the nearest timing window around the parent (design 4's rule), no wrapper on that window's first frame; literals only:
   - Rect, Ellipse: `x`, `y`, `width`, `height`, `fill="#4F7CFF"`;
   - Circle: `x`, `y` at the center, `anchorX={0.5} anchorY={0.5}`, `radius`, `fill="#4F7CFF"`;
-  - Text: `x`, `y`, `fontSize={48}`, `color="#4F7CFF"`, children `Text`;
+  - Text: `x`, `y`, `fontSize={48}`, `color="#FFFFFF"`, children `Text`;
   - Image, Video: `src`, `x`, `y`, `width`.
 - A self-closing parent is opened; inserted lines are indented one level deeper than the parent's opening tag with the file's indent unit (`indent_unit`).
 - Imports: `Rect`, `Text`, `Image`, `Video`, `Group`, `Sequence` from `@celesta/react`; `Ellipse`, `Circle` from `@celesta/shapes`; one `ensure_imports` call per module, so the names a module needs land in one edit (sorted lists stay sorted, a clashing binding locks with "`Rect` here is not Celesta's", a namespace import writes `C.Rect`, else one new line after the last import).
@@ -114,7 +114,7 @@ pub fn add_child(text: &str, parent: &ElementRef, new: &NewElement, timing: Opti
   - `adds_into_an_empty_parent` — `<Group></Group>` → the child on its own line between the tags.
   - `opens_a_self_closing_parent` — `<Group />` → `<Group>`, the child, `</Group>`, in a file indented with tabs: the child indented with one tab more than `<Group`.
   - `indents_with_tabs_and_spaces` — two-space and tab files, each one unit deeper.
-  - `writes_each_kind_s_literals` — `<Rect x={120} y={80} width={320} height={180} fill="#4F7CFF" />`; Ellipse the same attributes; `<Circle x={…} y={…} anchorX={0.5} anchorY={0.5} radius={…} fill="#4F7CFF" />`; `<Text x={…} y={…} fontSize={48} color="#4F7CFF">Text</Text>`; `<Image src="assets/a.png" x={…} y={…} width={…} />`; Video likewise.
+  - `writes_each_kind_s_literals` — `<Rect x={120} y={80} width={320} height={180} fill="#4F7CFF" />`; Ellipse the same attributes; `<Circle x={…} y={…} anchorX={0.5} anchorY={0.5} radius={…} fill="#4F7CFF" />`; `<Text x={…} y={…} fontSize={48} color="#FFFFFF">Text</Text>`; `<Image src="assets/a.png" x={…} y={…} width={…} />`; Video likewise.
   - `wraps_in_a_sequence` — `Timing { from: 45, duration: 75 }` → the spec's block exactly: `<Sequence from={45} durationInFrames={75}>`, the Rect one level deeper, `</Sequence>`; `None` → no wrapper.
   - `imports_from_react_and_shapes` — an Ellipse in a file with only `@celesta/react` imported adds `import { Ellipse } from '@celesta/shapes';` after the last import.
   - `rect_and_sequence_both_new_land_in_one_import` — the Review Focus case: `{ Group, Text }` → `{ Group, Rect, Sequence, Text }` in one edit; a file importing only `react` → one line `import { Rect, Sequence } from '@celesta/react';` after it, in that import's quotes and semicolon.

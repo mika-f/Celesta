@@ -150,7 +150,8 @@ until the next press.
     literal; `<Theme>` has no color the editor could call the accent);
   - Circle: `x`, `y` at the center with `anchorX={0.5} anchorY={0.5}`,
     `radius`, `fill`;
-  - Text: `x`, `y`, `fontSize={48}`, `color` as above, children `Text`;
+  - Text: `x`, `y`, `fontSize={48}`, `color="#FFFFFF"` (so it reads on an
+    added shape), children `Text`;
   - Image, Video: `src`, `x`, `y`, `width`. `<Video>` takes `width` and
     `height` like `<Image>` (both given: both apply; one given: the frame's
     aspect; none: the frame's size), in the composition model, the GPU and

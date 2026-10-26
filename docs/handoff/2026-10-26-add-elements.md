@@ -156,6 +156,8 @@ of the Size handles and property sections); `<Video width height>` in
   `chain[0]` at the inserted position, else the selection is cleared. A
   failed reload drops the pending selection (an undo before the next reload
   would make that one answer with an older sibling).
+- **Text starts white** (`color="#FFFFFF"`), so it reads on an added shape;
+  shapes keep `fill="#4F7CFF"`.
 - **New import line in a file without imports:** `ensure_imports` writes
   `import { … } from "@celesta/react";` first (after a hashbang or
   directives); otherwise after the last import in its quotes and semicolon.
