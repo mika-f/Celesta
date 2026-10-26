@@ -7,9 +7,7 @@ use super::resolve::{apply_component_schema, editable, resolve_rows};
 use super::{ElementTargets, PropKey, Target, lock_outside_project};
 use crate::edit_history::Texts;
 use crate::element_rows::removable;
-use crate::scope::{
-    SceneCalls, Scope, ScopeLock, ScopedRow, lift_scope_lock, scoped_removable, scoped_row,
-};
+use crate::scope::{SceneCalls, Scope, ScopeLock, ScopedRow, lift_scope_lock, scoped_row};
 use celesta_react_bridge::LayerSourceReport;
 use celesta_source_edit::{
     ApplyError, DefaultTarget, Edit, EditTarget, EditValue, ElementRef, LiftProp, LockReason,
@@ -180,7 +178,7 @@ fn check(
         return Err(CommitError::Scope(lock.clone()));
     }
     let entry = targets.entry(key);
-    match (value, scope) {
+    match (value, &row) {
         (Some(_), _) => {
             let written = matches!(row, Some(ScopedRow::Lift | ScopedRow::Default { .. }))
                 || entry.is_some_and(|target| editable(&target.target));
@@ -188,10 +186,11 @@ fn check(
                 return Err(CommitError::NotEditable(key.label()));
             }
         }
-        (None, Some(scope)) if !scoped_removable(scope, targets, key, calls) => {
+        // `scoped_removable`, with the row already read.
+        (None, Some(row)) if !row.removes_as_resolved() => {
             return Err(CommitError::NotRemovable(key.label()));
         }
-        (None, None) if !entry.is_some_and(|target| removable(targets, key, target)) => {
+        (None, _) if !entry.is_some_and(|target| removable(targets, key, target)) => {
             return Err(CommitError::NotRemovable(key.label()));
         }
         (None, _) => {}
@@ -250,15 +249,16 @@ pub(crate) fn scoped_edits(
     for (key, value) in values {
         let not_removable = || CommitError::NotRemovable(key.label());
         match scoped_row(scope, fresh, key, calls) {
-            row if value.is_none() && row.removes_as_resolved() => {
-                let edit = resolved_edit(texts, fresh, key, None)?;
+            ScopedRow::AsResolved => {
+                let edit = resolved_edit(texts, fresh, key, value.as_ref())?;
                 edits
                     .entry(fresh.file_of(key).to_path_buf())
                     .or_default()
                     .push(edit);
             }
-            ScopedRow::AsResolved => {
-                let edit = resolved_edit(texts, fresh, key, value.as_ref())?;
+            // A value this scene sets itself: only its removal, at `S`.
+            row @ ScopedRow::Locked(_) if value.is_none() && row.removes_as_resolved() => {
+                let edit = resolved_edit(texts, fresh, key, None)?;
                 edits
                     .entry(fresh.file_of(key).to_path_buf())
                     .or_default()

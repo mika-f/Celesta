@@ -680,7 +680,8 @@ impl ScopedRow {
 /// in, whatever `S` passes; else, when `S` passes it (an expression too),
 /// it is locked as [`ScopeLock::SetsOwn`]: the edit would not show in this
 /// scene, which shows its own value, until that is removed at `S`
-/// ([`ScopedRow::removes_as_resolved`]); anything else writes as resolved. Any other target that is locked as resolved, a
+/// ([`ScopedRow::removes_as_resolved`]); anything else writes as
+/// resolved. Any other target that is locked as resolved, a
 /// Component-section row, and every row of an element in no component
 /// write as resolved under either. A lift or a default that would write a
 /// file outside the project (`C`'s, or `S`'s for a lift) is locked.
