@@ -143,6 +143,23 @@ fn not_found(id: &str) -> String {
     format!("Can't find scene `{id}` in the source")
 }
 
+/// Why the end of a part (a chapter inside another, such as one listed
+/// with `listChapters`) that no list has doesn't drag.
+const NOT_AN_ENTRY: &str = "Not a `defineScenes` entry";
+
+/// Whether `chapter` is a part: another chapter's span holds it (of two
+/// with the same span, the first is the scene).
+fn is_part(chapters: &[ReactChapter], at: usize) -> bool {
+    let chapter = &chapters[at];
+    chapters.iter().enumerate().any(|(index, other)| {
+        index != at
+            && other.duration_in_frames > 0
+            && other.from <= chapter.from
+            && chapter.end() <= other.end()
+            && (index < at || (other.from, other.end()) != (chapter.from, chapter.end()))
+    })
+}
+
 /// A locked duration's reason, and for an expression the inputs it reads,
 /// one a line (`BAR = 30`, or why the input is locked).
 fn lock_text(reason: &LockReason, inputs: &[(String, EditTarget)]) -> String {
@@ -168,7 +185,8 @@ pub(crate) fn scene_edges(
 ) -> HashMap<String, SceneEdge> {
     chapters
         .iter()
-        .map(|chapter| {
+        .enumerate()
+        .map(|(at, chapter)| {
             let found: Vec<(&PathBuf, &SceneList, usize)> = sources
                 .lists
                 .iter()
@@ -209,6 +227,7 @@ pub(crate) fn scene_edges(
                         _ => SceneEdge::Locked(format!("Can't write `{DURATION}`")),
                     }
                 }
+                [] if is_part(chapters, at) => SceneEdge::Locked(NOT_AN_ENTRY.to_owned()),
                 _ => SceneEdge::Locked(not_found(&chapter.id)),
             };
             (chapter.id.clone(), edge)
@@ -263,10 +282,13 @@ pub(crate) fn clamp_scene_delta(
                 .min_by_key(|chapter| chapter.from)
         })
         .map_or(0, |first| frames(first.from));
+    // A later chapter already before the floor holds the drag back, never
+    // pushes it forward.
     let lowest = later
         .iter()
         .map(|chapter| floor - frames(chapter.from))
-        .fold(-visible, i64::max);
+        .fold(-visible, i64::max)
+        .min(0);
     let mut delta = delta;
     let mut note = None;
     if !follows {
@@ -572,6 +594,36 @@ mod tests {
     }
 
     #[test]
+    fn a_part_no_list_has_is_not_an_entry() {
+        let found = sources(&[("/p/timeline.tsx", TIMELINE)], &film("", "{300}"));
+        let mut chapters = three();
+        // Listed with `listChapters` inside Main, and one as long as Outro.
+        chapters.push(chapter("main-hook", 100, 20));
+        chapters.push(chapter("outro-all", 210, 90));
+        // At the top level, a chapter no list has may be a scene of a list
+        // Celesta skipped.
+        chapters.push(chapter("credits", 300, 30));
+        let edges = scene_edges(&found, &chapters, only_timeline);
+        let locked = |text: &str| Some(SceneEdge::Locked(text.to_owned()));
+        assert_eq!(
+            edges.get("main-hook").cloned(),
+            locked("Not a `defineScenes` entry")
+        );
+        assert_eq!(
+            edges.get("outro-all").cloned(),
+            locked("Not a `defineScenes` entry")
+        );
+        assert_eq!(
+            edges.get("credits").cloned(),
+            locked("Can't find scene `credits` in the source")
+        );
+        assert!(matches!(
+            edges.get("outro"),
+            Some(SceneEdge::Editable { .. })
+        ));
+    }
+
+    #[test]
     fn an_expression_duration_locks_with_its_inputs() {
         let text = "const BAR = 30;\nexport const S = { words: 40 };\nexport const END = 30;\nexport const SCENES = defineScenes([\n  { id: 'intro', durationInFrames: BAR * 3 },\n  { id: 'main', durationInFrames: S.words - 1 },\n  { id: 'outro' },\n  { id: 'end', durationInFrames: END },\n]);\n";
         let found = sources(&[("/p/timeline.ts", text)], &film("", "{300}"));
@@ -712,6 +764,13 @@ mod tests {
             clamp_scene_delta(&placed, "a", "a", &ids(&["b"]), -30, 300, false),
             (-10, None)
         );
+        // `b` already starts before the list's first chapter: the floor
+        // holds the drag back but never pushes it forward.
+        let below = vec![chapter("a", 100, 30), chapter("b", 90, 30)];
+        let clamp = |delta| clamp_scene_delta(&below, "a", "a", &ids(&["b"]), delta, 300, true);
+        assert_eq!(clamp(0), (0, None));
+        assert_eq!(clamp(-5), (0, None));
+        assert_eq!(clamp(5), (5, None));
     }
 
     #[test]
