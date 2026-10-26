@@ -26,7 +26,10 @@ the shared value changes later.
 
 ## Choosing the scope
 
-Design 1's impact line becomes a control when the element is shared:
+Design 1's impact line becomes a control when the element is shared. The
+line, or the control in its place, sits at the top of the Properties panel,
+outside its scroll area, so it stays in view while the header and the rows
+scroll beneath it:
 
 ```text
 Edits change  [ This scene ]  [ Shared value ]
@@ -88,14 +91,15 @@ The value every scene uses unless it sets its own:
 - a literal at `E` (never lifted): that literal, as today;
 - a prop lifted by this design, or any parameter with a literal default in
   `C` (`{ rectWidth = 200 }`): that default. Call sites that pass the prop
-  keep their value; the line under the control names them;
+  keep their value; the line under the control names them. When this scene's
+  call is one of them, the row is locked (see [Per row](#per-row));
 - a parameter without a default, passed at every call site: "Shared value"
   is disabled ("Every scene sets `rectWidth` itself").
 
 So after one scene sets its own value, later "Shared value" edits still reach
 every other scene, and never remove a scene's own value. Removing it ("Use
-the shared value") is the row's existing remove button while "This scene" is
-chosen and this scene's call site passes the prop (its tooltip reads "Use the
+the shared value") is the row's existing remove button while this scene's
+call site passes the prop, under either option (its tooltip reads "Use the
 shared value"; there is no second button): it deletes the attribute at `S`.
 
 A value written at `E` changes every instance, also those whose call sets its
@@ -159,20 +163,26 @@ the panel shows is what gets written:
 | --- | --- | --- |
 | Literal or absent prop at `E` (attribute or children) | lift (or the lift's lock) | as resolved |
 | Keyframe; a path under `style.`; a literal input (a `const` an expression reads) | locked: "Can't be set per scene yet" | as resolved |
-| Pass-through, `S` passes it | at `S` | the default; drag, scrub and inline text lock |
+| Pass-through, `S` passes it (an expression too) | at `S` | locked: "This scene sets its own `rectWidth`"; removable at `S` |
 | Pass-through, `S` leaves it out | at `S` | the default |
 | Pass-through without a default, every call passes it | at `S` | locked: "Every scene sets `rectWidth` itself" |
 | Pass-through whose default is an expression / `props.rectWidth` | at `S` | locked: "`rectWidth`'s shared value is written as an expression" / "`PriceTag` doesn't take its props as `{ … }`" |
 | Component-section row | at `S`, as resolved | at `S`, as resolved |
 
-- Under "Shared value", a pass-through row shows and edits the default (no
-  "Set at" line). A parameter without a default that some call leaves out gets
-  one (`{ rectWidth }` → `{ rectWidth = 240 }`); its row shows the element's
-  default, dimmed.
+- Under "Shared value", a pass-through row that `S` leaves out shows and
+  edits the default (no "Set at" line). A parameter without a default that
+  some call leaves out gets one (`{ rectWidth }` → `{ rectWidth = 240 }`); its
+  row shows the element's default, dimmed.
 - When this scene's call passes the parameter itself, a "Shared value" edit
-  would not show in this scene: the row says "This scene sets its own
-  `rectWidth`", and drag, scrub and inline text lock it with that text. Typing
-  into the row still writes the default.
+  would not show in this scene (like a settings screen that marks a value
+  "modified here" and edits it where it is set). The row shows this scene's
+  value, the one the canvas draws, keeps its "Set at" line naming the call,
+  and is locked with "This scene sets its own `rectWidth`": its input takes no
+  commit, and drag, scrub and inline text lock with the same text. Its remove
+  button stays, with the tooltip "Use the shared value": it deletes the
+  attribute at `S`, after which the row shows and edits the default. A lock
+  of the default itself (no default and every call passes it, an expression,
+  no pattern, not found) comes first.
 - A literal const used once inside `C` lifts like a literal at `E`: the
   `const` takes the new prop as its value.
 - Component-section rows are outside the scope: written and removed at `S`.
@@ -182,8 +192,9 @@ the panel shows is what gets written:
 - "This scene": a row passed at `S` deletes the attribute there ("Use the
   shared value"). A literal at `E` can't be removed (that would reach every
   scene): no remove button, and an emptied field restores the value.
-- "Shared value": a literal at `E` is removed as today; a default is never
-  removed.
+- "Shared value": a literal at `E` is removed as today; a row this scene's
+  call passes deletes the attribute at `S` ("Use the shared value"); a
+  default is never removed.
 
 ## Locks
 
@@ -219,13 +230,15 @@ first row's reason).
 | Case | Reason text |
 | --- | --- |
 | A parameter without a default, passed at every call | "Every scene sets `rectWidth` itself" |
+| This scene's call passes the parameter | "This scene sets its own `rectWidth`" |
 | The default is an expression | "`rectWidth`'s shared value is written as an expression" |
 | `props.rectWidth`: no pattern to hold a default | "`PriceTag` doesn't take its props as `{ … }`" |
 | No pattern key in `C` holds the parameter | "Can't find where `rectWidth`'s shared value is written" |
 | `C`'s file is outside the project | "This file is outside the project" |
 
-A drag, a scrub or an inline text edit of a row this scene passes itself, under
-"Shared value", is locked with "This scene sets its own `rectWidth`".
+A row this scene passes itself, and a drag, a scrub or an inline text edit of
+it, under "Shared value", are locked with "This scene sets its own
+`rectWidth`".
 
 ## When the scenes are not scanned yet
 

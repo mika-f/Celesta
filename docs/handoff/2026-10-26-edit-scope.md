@@ -61,8 +61,8 @@ properties" point to it).
   against the current report); `scope_state` → `ScopeState { NotShared,
   Unknown { note }, Options(ScopeOptions) }`; `chosen_scope`, `commit_scope`,
   `previewed_scope`, `scope_line`; `scoped_row` → `ScopedRow { AsResolved,
-  Lift, Default { shown, own }, Locked(lock) }`, the one per-row rule;
-  `scoped_removable`; `gesture_lock`; `commit_gate`, `drain_gate` (a row
+  Lift, Default { shown }, Locked(lock) }`, the one per-row rule, with
+  `ScopedRow::removes_as_resolved`; `scoped_removable`; `gesture_lock`; `commit_gate`, `drain_gate` (a row
   commit's gate), `gesture_gate` and `held_gate` (a held commit's, by its
   `HeldOrigin`) → `CommitGate { Go(scope), Hold(note),
   Refuse(text) }`; `gesture_start_refusal`; `impact_filter`;
@@ -77,9 +77,10 @@ properties" point to it).
   commit's re-resolve does too.
 - Commits (`element_edit/commit.rs`): `commit_scoped(texts, expected,
   resolve_again, scope, calls, values)` checks each value against `expected`
-  (under a scope: a `Locked` row is refused with its lock, `Lift` and
-  `Default` are accepted even when the target at `S` is locked, removal goes
-  through `scoped_removable`), re-resolves, re-applies the outside-project
+  (under a scope: a `Locked` row is refused with its lock, except the removal
+  of a `SetsOwn` row, which goes at `S` as resolved; `Lift` and `Default` are
+  accepted even when the target at `S` is locked, removal goes through
+  `scoped_removable`), re-resolves, re-applies the outside-project
   lock, runs the same-place check, then writes as resolved (`scope: None`) or
   through `scoped_edits`: one `plan_lift` for every `Lift` row plus an
   `Edit::Insert` per new parameter at `S`'s end of attributes, a `Replace` of a
@@ -132,10 +133,13 @@ properties" point to it).
   `written_at` in `impact_view`; `selection_impact` filters by the hovered or
   chosen option. Rows read `scoped_row`: a `Locked` row shows the lock icon
   and text and doesn't scrub; a `Default` row shows the default
-  (`default_row_text`), has no "Set at" line, and with `own` says "This scene
-  sets its own `x`". The remove button's tooltip comes from `remove_tooltip`.
-  The drag label's second line and the selection header's line under the
-  title use `scope_in_effect`.
+  (`default_row_text`) and has no "Set at" line; a `SetsOwn` row shows as
+  resolved, with its "Set at" line. The remove button's tooltip comes from
+  `remove_tooltip`. The drag label's second line and the selection header's
+  line under the title use `scope_in_effect`. `properties_panel`
+  (`panels.rs`) draws `impact_line`'s box above the `properties-scroll` area,
+  so it stays at the top of the tab; the selection header scrolls with the
+  sections.
 
 ## Decisions
 
@@ -190,10 +194,19 @@ amended to match.
   it was read for.
 - **"Sets its own" is per element on the line, per row on the row.** The
   line names a scene whose call writes any parameter `E`'s rows read; under
-  "Shared value", the row whose parameter this scene passes shows and edits
-  the default, and drag, scrub and inline text lock it ("This scene sets its
-  own `rectWidth`"). The row stays editable by typing, also when `S` holds an
-  expression.
+  "Shared value", the row whose parameter this scene passes (an expression
+  too) is `Locked(SetsOwn)` in `scoped_row`: it shows this scene's value, the
+  one the canvas draws, keeps its "Set at" line, takes no commit, and drag,
+  scrub and inline text lock with the same text ("This scene sets its own
+  `rectWidth`"), like a settings screen that marks a value as set elsewhere
+  and edits it there. Writing the default from that row would change other
+  scenes while the scene being looked at stayed as it was. Its remove button
+  ("Use the shared value") deletes the attribute at `S`; the row then shows
+  and edits the default. A lock of the default itself (`EverySceneSets`, an
+  expression, no pattern, not found) takes precedence, since removing the
+  value at `S` would not make those editable. Through `row_lock`, "Shared
+  value" is disabled with this text when every row in its scope is one this
+  scene sets.
 - **"Shared value" on a parameter** writes the default's span; a parameter
   without a default that some call leaves out gets one; without a default and
   passed everywhere, the row locks ("Every scene sets `rectWidth` itself"); an
@@ -202,9 +215,18 @@ amended to match.
   parameter with no `defaults` entry locks with "Can't find where
   `rectWidth`'s shared value is written" (its own lock, not a scan note).
 - **Removal follows the scope**: the existing remove button is "Use the
-  shared value" on a row passed at `S` under "This scene"; a literal at `E`
-  has no button under "This scene"; a default has none under "Shared value".
-  Component-section rows are outside the scope.
+  shared value" on a row passed at `S`, under "This scene" and under "Shared
+  value" alike; a literal at `E` has no button under "This scene"; a default
+  has none under "Shared value". Component-section rows are outside the
+  scope.
+- **The scope control stays in view.** The box `impact_line` returns (the
+  control, its scanning note, or design 1's line) is a non-scrolling child
+  above the Properties panel's scroll area, so it can be seen and switched
+  while editing rows further down, in every state alike. Pinning it right
+  under the selection header would have taken the header out of the scroll
+  area too; the header keeps scrolling instead, so the box now sits above it,
+  at the top of the tab. A hover that changes the header's "Shared" row no
+  longer moves the tabs either way.
 - **Lock order** for "This scene": no call; a component entry after `S`;
   a reused chain (only with a `Scenes` wrapper after `S`); other scenes
   through `S`; another call in this scene; then row locks, which disable the
@@ -295,8 +317,10 @@ amended to match.
 - `TextOverride` is by layer id: a live inline edit under "Shared value"
   shows on the edited layer only until the commit's reload.
 - A `Default` row without a default shows an empty field with the element's
-  default dimmed; "This scene sets its own `x`" on an editable `Default` row
-  reads like a lock.
+  default dimmed.
+- A pass-through whose value at `S` is locked for another reason than an
+  expression (`OverriddenByParent`, say) counts as this scene's own value
+  under "Shared value" too: anything but an absent attribute at `S` does.
 - The scope tabs copy the tool row's toggle look (`mode_toggle` in
   `viewer.rs` is private, with fixed 58 px tabs and no disabled or preview
   state); one tabs widget shared by the scope control and the tool row is
@@ -346,11 +370,19 @@ the same scene for each of the first three checks, for the pull request.
   changes; Intro is unchanged; the diff is the spec's (`{ label, rectWidth =
   200 }`, `width={rectWidth}`, `rectWidth?: number;` in `Props`, `<PriceTag
   label="Sale" rectWidth={260} />`); one undo restores both files.
-- Then choose [Shared value] and set the width to 240: Intro changes, Price
-  keeps 260. The line reads "Shared value is used in Intro · Price sets its
-  own", the Width row shows 240 with "This scene sets its own `rectWidth`",
-  and scrubbing the Width label is locked with that text; the canvas offers
-  no size handles for the `<Rect>`.
+- Then choose [Shared value]. The line reads "Shared value is used in Intro ·
+  Price sets its own"; the Width row shows 260 (what the canvas draws) with
+  its "Set at" line naming Price's call, is locked with "This scene sets its
+  own `rectWidth`", and doesn't take typing; scrubbing the Width label is
+  locked with that text; the canvas offers no size handles for the `<Rect>`.
+  Hover the row: its remove button's tooltip reads "Use the shared value";
+  click it: `rectWidth={260}` goes from Price's call, Price draws 200, and the
+  row shows 200, unlocked. Set the width to 240: `rectWidth = 240` in the
+  pattern, and Intro and Price both change.
+- Scroll the Properties tab down to the last rows: "Edits change" and the
+  line under it stay at the top of the tab while the header and the rows
+  scroll beneath them; a layer that is not shared keeps its impact line there
+  too.
 - Select a background drawn by a component in every scene, choose [Shared
   value], and edit its fill: every scene changes. Select it again later: the
   choice is remembered.
