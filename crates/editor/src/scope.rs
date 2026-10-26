@@ -477,10 +477,17 @@ pub(crate) enum ScopedRow {
     Locked(ScopeLock),
 }
 
-/// What the row (or input) `key` of `targets` writes under `scope`; see
-/// the table in the edit scope plan. A target that is locked as resolved,
-/// a Component-section row, and every row of an element in no component
-/// write as resolved.
+/// What the row (or input) `key` of `targets` writes under `scope`.
+///
+/// "This scene": a value passed through to `S` writes there; a literal or
+/// an absent prop at the element is lifted (unless the lift is locked);
+/// a keyframe, a `style` property or a literal input can't be set per
+/// scene. "Shared value": a pass-through writes its parameter's default
+/// (see [`ScopedRow::Default`]), or is locked when every call passes it
+/// without one, or the default is an expression or has no pattern to go
+/// in; anything else writes as resolved. A target that is locked as
+/// resolved, a Component-section row, and every row of an element in no
+/// component write as resolved under either.
 pub(crate) fn scoped_row(
     scope: Scope,
     targets: &ElementTargets,

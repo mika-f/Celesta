@@ -902,6 +902,51 @@ fn removal_follows_the_scope() {
 }
 
 #[test]
+fn a_const_outside_the_component_leaves_the_other_rows_liftable() {
+    // `width` reads a module-level `const`, outside `PriceTag`: it is
+    // locked as resolved, and `x`, written on the element, still lifts.
+    let tag = "const w = 10;\nexport function PriceTag({ label }: { label: string }) {\n  return <Rect x={10} width={w} />;\n}\n";
+    let texts = Texts::from([
+        (PathBuf::from(TAG_FILE), tag.to_owned()),
+        (PathBuf::from(SCENES_FILE), CALL.to_owned()),
+    ]);
+    let rect = LayerSource {
+        column: 10,
+        ..entry_at("Rect", ElementKind::Primitive, TAG_FILE, 3)
+    };
+    let mut report = report_of(vec![
+        rect,
+        entry_at("PriceTag", ElementKind::Component, SCENES_FILE, 2),
+    ]);
+    report.props.x = Some(10.0);
+    report
+        .props
+        .others
+        .insert("width".to_owned(), ReceivedValue::Number(10.0));
+    let table = property_table(vec![
+        ("Transform", vec![("x", number_field(Some(0.0)))]),
+        ("Size", vec![("width", number_field(None))]),
+    ]);
+    let targets = resolve_targets(read_from(&texts), &report, Some(&table)).unwrap();
+
+    assert_eq!(targets.lift_lock, None);
+    assert_eq!(
+        scoped_row(Scope::ThisScene, &targets, &prop("x"), None),
+        ScopedRow::Lift
+    );
+    assert!(matches!(
+        targets.target(&prop("width")),
+        Some(EditTarget::Locked(LockReason::UnresolvedIdentifier { .. }))
+    ));
+    for scope in [Scope::ThisScene, Scope::Shared] {
+        assert_eq!(
+            scoped_row(scope, &targets, &prop("width"), None),
+            ScopedRow::AsResolved
+        );
+    }
+}
+
+#[test]
 fn a_choice_moves_with_the_element_after_a_kept_reload() {
     let before = pos(TAG_FILE, 2, 10);
     let after = pos(TAG_FILE, 3, 10);
