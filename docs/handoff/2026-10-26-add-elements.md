@@ -161,6 +161,16 @@ of the Size handles and property sections); `<Video width height>` in
 - **New import line in a file without imports:** `ensure_imports` writes
   `import { … } from "@celesta/react";` first (after a hashbang or
   directives); otherwise after the last import in its quotes and semicolon.
+- **Ellipse and Circle are always offered.** `@celesta/shapes` is bundled
+  with the runtime like `@celesta/react` (`packages/cli` depends on every
+  `@celesta/*` package, and a project's `.celesta/` types cover it), so a
+  file that doesn't import it yet can still use it: adding one writes the
+  element and its `@celesta/shapes` import (a new line, the name added to an
+  existing import, an alias or `import * as S` honoured) in the same edit and
+  undo entry, as `add_child` already did. `menu_items` no longer disables a
+  kind whose primitive table the runtime has not registered; that lock and
+  its text ("… comes from `@celesta/shapes`, which this composition doesn't
+  import") are gone. A name clash still disables the item.
 
 ## Known gaps
 
@@ -291,9 +301,14 @@ own (before and after each addition):
 - Refusals: a group inside a `<Loop>` ("Can't add inside a loop or freeze
   frame"), a group with `rotationX` ("Can't draw into a group turned in
   3D"), a selected group whose **Scale** row is then set to 0 (a zero-sized
-  group can't be clicked; "Can't draw into a group scaled to zero"),
-  a composition without `@celesta/shapes` (Ellipse and Circle disabled), a
+  group can't be clicked; "Can't draw into a group scaled to zero"), a
   file with its own `const Rect` ("`Rect` here is not Celesta's").
+- A file that imports only `@celesta/react`: Ellipse and Circle are listed
+  and enabled, with no reason line under the items. Add an Ellipse: the TSX
+  gains `import { Ellipse } from '@celesta/shapes';` (in the last import's
+  quotes and semicolon) under the imports, the reloaded frame draws it, its
+  rows are editable, and one Cmd+Z removes the element and the import line.
+  Then add a Circle: it joins the same import (`{ Circle, Ellipse }`).
 - Choose an item while playing: playback pauses. Escape, a selection change,
   turning Select layers off, starting playback, and a reload each end the add
   mode without writing; an edit saved outside Celesta does too, through its

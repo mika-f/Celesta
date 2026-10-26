@@ -68,9 +68,10 @@ or freeze frame" (the nearest window around the parent is remapped), "Can't
 draw into a group turned in 3D" (the parent or an ancestor has
 `rotationX`/`rotationY` or a perspective, so it has no flat children space),
 and "Can't draw into a group scaled to zero" (its children space has no
-inverse). Per item: "`Ellipse` comes from `@celesta/shapes`, which this
-composition doesn't import" (and "`Circle` …") when the composition registered
-no property table for it, and the import clash below.
+inverse). Per item: the import clash below. Ellipse and Circle are enabled
+whether or not the file imports `@celesta/shapes` yet: the runtime bundles it
+(as it does `@celesta/react`, and a new project's `.celesta/` types cover it),
+and adding one writes its import.
 
 ## Adding
 
@@ -175,6 +176,10 @@ until the next press.
   "@celesta/react";` first (after a hashbang or directives).
 - A file importing the module as a namespace (`import * as C`) gets
   `C.Rect` in the JSX instead.
+- The same rules hold for `@celesta/shapes`: a file without it gets
+  `import { Ellipse } from '@celesta/shapes';` (in the last import's style),
+  an existing `import { Circle } from '@celesta/shapes'` is extended, and
+  `import * as S from '@celesta/shapes'` writes `<S.Ellipse … />`.
 
 One addition is one history entry; undo removes it. After the write, the
 reload selects the new element. Its layer id can't be predicted, but it is the

@@ -485,7 +485,7 @@ Celesta は再読み込みのたびに、エントリファイルのフォルダ
 
 ## キャンバスに要素を追加する
 
-インタラクティブモードでは、ツールの行の先頭にある **Add** メニューから、**Rect**、**Ellipse**、**Circle**、**Text**、**Image**、**Video** をソースに追加できます。項目を選び、キャンバスの上に描きます。新しい要素は親になる `<Group>` の最後の子として書き込まれるので、そのグループのほかの子より手前に描かれます。
+インタラクティブモードでは、ツールの行の先頭にある **Add** メニューから、**Rect**、**Ellipse**、**Circle**、**Text**、**Image**、**Video** をソースに追加できます。項目を選び、キャンバスの上に描きます。**Ellipse** と **Circle** は、ファイルがまだ `@celesta/shapes` を import していなくても常に選べます。このパッケージは Celesta に含まれていて、追加するとその import も書き込まれます。新しい要素は親になる `<Group>` の最後の子として書き込まれるので、そのグループのほかの子より手前に描かれます。
 
 ### 追加する先
 
@@ -543,7 +543,7 @@ Celesta は再読み込みのたびに、エントリファイルのフォルダ
 
 `<Sequence>` がなくても同じ範囲に表示されるとき、つまりグループを囲む `<Sequence>` やシーンの最初のフレームで追加したときと、フレーム 0 からコンポジションの終わりまで表示されるときは、`<Sequence>` を書き込みません。範囲の残りが 1 フレームに満たないときは、範囲の最初のフレームであっても、1 フレームの `<Sequence>` で囲みます。
 
-追加する行は、グループの開始タグより 1 段深く、ファイルで使われているタブかスペースでインデントします。`Rect`、`Text`、`Image`、`Video`、`Sequence` は `@celesta/react` から、`Ellipse` と `Circle` は `@celesta/shapes` から import します。ファイルがまだ import していない名前は、そのパッケージからの `import { … }` に書き足します（並べ替えてあるリストは並びを保ちます）。そうした import がなければ、最後の import の後ろに、その import と同じ引用符とセミコロンの書き方で新しい import の行を加えます。import が 1 つもないファイルでは、先頭に `import { Rect } from "@celesta/react";` を加えます。別名で import している名前はその別名で書き、`import * as C from "@celesta/react"` のときは `<C.Rect>` と書きます。
+追加する行は、グループの開始タグより 1 段深く、ファイルで使われているタブかスペースでインデントします。`Rect`、`Text`、`Image`、`Video`、`Sequence` は `@celesta/react` から、`Ellipse` と `Circle` は `@celesta/shapes` から import します。ファイルがまだ import していない名前は、そのパッケージからの `import { … }` に書き足します（並べ替えてあるリストは並びを保ちます）。そうした import がなければ、最後の import の後ろに、その import と同じ引用符とセミコロンの書き方で新しい import の行を加えます。import が 1 つもないファイルでは、先頭に `import { Rect } from "@celesta/react";` を加えます。たとえば `@celesta/react` だけを import しているファイルに最初の **Ellipse** を追加すると、その import の下に、同じ書き方で `import { Ellipse } from "@celesta/shapes";` を書き込みます。別名で import している名前はその別名で書き、`import * as C from "@celesta/react"`（または `import * as S from "@celesta/shapes"`）のときは `<C.Rect>`（または `<S.Ellipse>`）と書きます。
 
 1 回の追加は 1 回の変更で、1 回元に戻すと、要素とその import がまとめて取り除かれます。再読み込みのあと、プレビューが新しい要素を描いたところでその要素が選択されます。再読み込み後のフレームに要素が描かれなければ、元の選択がそのまま残ります。選択したレイヤーが別の場所に書かれた要素だったときは、選択を解除します。
 
@@ -561,7 +561,6 @@ Celesta は再読み込みのたびに、エントリファイルのフォルダ
 | Can't add inside a loop or freeze frame | グループを囲むいちばん近い範囲が `<Loop>` か `<FreezeFrame>` |
 | Can't draw into a group turned in 3D | グループかその外側のグループに `rotationX`、`rotationY`、`perspective` がある |
 | Can't draw into a group scaled to zero | グループかその外側のグループの拡大率が 0 で、その中では描いたものに大きさがない |
-| `Ellipse` comes from `@celesta/shapes`, which this composition doesn't import | **Ellipse** と **Circle** だけ。先にコンポジションで `@celesta/shapes` を import する |
 | `Rect` here is not Celesta's | ファイルが別の `Rect` を宣言しているか import していて、その項目だけが使えない。別の `Sequence` があるとき（**`Sequence` here is not Celesta's**）は、要素を `<Sequence>` で囲む必要があれば、すべての項目が使えない |
 
 ## 元に戻す

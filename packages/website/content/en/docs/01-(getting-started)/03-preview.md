@@ -485,7 +485,7 @@ While Celesta reads the element's source, such as right after you select it or m
 
 ## Add elements on the canvas
 
-In interactive mode, the **Add** menu at the start of the tool row adds a **Rect**, **Ellipse**, **Circle**, **Text**, **Image**, or **Video** to your source: choose one, then draw it on the canvas. The new element is written into a `<Group>`, its parent, as that group's last child, so it is drawn in front of the group's other children.
+In interactive mode, the **Add** menu at the start of the tool row adds a **Rect**, **Ellipse**, **Circle**, **Text**, **Image**, or **Video** to your source: choose one, then draw it on the canvas. **Ellipse** and **Circle** are always offered, even when your file doesn't import `@celesta/shapes` yet: the package comes with Celesta, and adding one adds its import. The new element is written into a `<Group>`, its parent, as that group's last child, so it is drawn in front of the group's other children.
 
 ### Where the element goes
 
@@ -543,7 +543,7 @@ The element starts at the playhead and runs to the end of the nearest timing win
 
 No `<Sequence>` is written when the element would run that span without one: on the first frame of a `<Sequence>` or scene around the group, or from frame 0 to the composition's end. With less than a frame of the window left, the element gets a one-frame `<Sequence>`, also on the window's first frame.
 
-The inserted lines are indented one level deeper than the group's opening tag, with your file's tabs or spaces. `Rect`, `Text`, `Image`, `Video`, and `Sequence` come from `@celesta/react`, and `Ellipse` and `Circle` from `@celesta/shapes`. A name the file doesn't import yet is added to its `import { … }` from that package (a sorted list stays sorted); without one, a new import line goes after the last import, in its quotes and semicolon style, or, in a file without imports, `import { Rect } from "@celesta/react";` at the top. A name imported under another name is written with that name, and under `import * as C from "@celesta/react"`, the element is written as `<C.Rect>`.
+The inserted lines are indented one level deeper than the group's opening tag, with your file's tabs or spaces. `Rect`, `Text`, `Image`, `Video`, and `Sequence` come from `@celesta/react`, and `Ellipse` and `Circle` from `@celesta/shapes`. A name the file doesn't import yet is added to its `import { … }` from that package (a sorted list stays sorted); without one, a new import line goes after the last import, in its quotes and semicolon style, or, in a file without imports, `import { Rect } from "@celesta/react";` at the top. Adding the first **Ellipse** to a file that imports only `@celesta/react`, for instance, writes `import { Ellipse } from "@celesta/shapes";` under that import, in its style. A name imported under another name is written with that name, and under `import * as C from "@celesta/react"` (or `import * as S from "@celesta/shapes"`), the element is written as `<C.Rect>` (or `<S.Ellipse>`).
 
 The addition is one change, and one undo removes the element and its import. After the reload, the new element is selected once the preview draws it; if the reloaded frame doesn't draw it, the previous selection stays, and if the layer selected turns out to be written elsewhere, the selection is cleared.
 
@@ -561,7 +561,6 @@ The line under the parent's name says why every item is disabled, and an item's 
 | Can't add inside a loop or freeze frame | The nearest window around the group is a `<Loop>` or `<FreezeFrame>` |
 | Can't draw into a group turned in 3D | The group or one around it has `rotationX`, `rotationY`, or a `perspective` |
 | Can't draw into a group scaled to zero | The group or one around it is scaled to 0, so nothing drawn has a size inside it |
-| `Ellipse` comes from `@celesta/shapes`, which this composition doesn't import | **Ellipse** and **Circle** only: import `@celesta/shapes` in your composition first |
 | `Rect` here is not Celesta's | The file declares or imports another `Rect`, which disables that item only. With another `Sequence` (**`Sequence` here is not Celesta's**), every item is disabled when the element needs a `<Sequence>` |
 
 ## Undo
