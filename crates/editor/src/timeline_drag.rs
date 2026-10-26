@@ -7,10 +7,11 @@
 use crate::element_edit::{
     ElementTargets, PropKey, WindowTargets, editable, inner_target, reason_text, window_files,
 };
-use crate::impact::{ImpactView, moved_impact_view};
+use crate::impact::{ImpactFilter, ImpactView, moved_impact_view};
 use crate::layer_select::SourceLookup;
 use crate::scope::{
-    CommitGate, SceneCalls, Scope, ScopeState, chosen_scope, commit_gate, gesture_lock, scope_state,
+    CommitGate, SceneCalls, Scope, ScopeState, commit_scope, gesture_gate, impact_filter,
+    scope_in_effect, scope_state,
 };
 use crate::timing::{WindowRole, window_role};
 use crate::view::EditorView;
@@ -202,6 +203,29 @@ pub(crate) fn band_edit(
         .collect()
 }
 
+/// What a drag of `grip` by `delta` writes into the window `targets`
+/// describes: [`band_edit`], and for a body drag of a `Sequence` without
+/// `durationInFrames`, that prop at the length the window shows. The
+/// runtime keeps such a window's end at its parent's end, so moving its
+/// start alone would change its length against the preview.
+pub(crate) fn band_writes(
+    kind: TimingKind,
+    grip: BandGrip,
+    delta: i64,
+    values: TimingValues,
+    targets: &ElementTargets,
+) -> Vec<(PropKey, Option<EditValue>)> {
+    let mut writes = band_edit(kind, grip, delta, values);
+    let duration = PropKey::Prop(DURATION.to_owned());
+    let missing = targets
+        .target(&duration)
+        .is_some_and(|target| matches!(inner_target(target), EditTarget::Missing { .. }));
+    if kind == TimingKind::Sequence && grip == BandGrip::Body && missing {
+        writes.push((duration, Some(EditValue::Number(values.duration))));
+    }
+    writes
+}
+
 /// `values` after `grip` moved `delta` frames.
 pub(crate) fn moved_values(grip: BandGrip, delta: i64, values: TimingValues) -> TimingValues {
     let delta = delta as f64;
@@ -245,25 +269,52 @@ pub(crate) fn drag_frames(start_x: f32, x: f32, pixels_per_frame: f64) -> f64 {
     f64::from(x - start_x) / pixels_per_frame.max(f64::MIN_POSITIVE)
 }
 
-/// Playhead, chapter edges and the other bands' edges; the dragged band's
-/// own edges left out.
+/// Playhead, chapter edges and the edges of the bands that stay still
+/// (`still`, see [`still_ranges`]); the dragged `window`'s own edges left
+/// out, which moving onto would change nothing.
 pub(crate) fn snap_targets(
     playhead: f64,
     chapters: &[ReactChapter],
-    bands: &[(f64, f64)],
-    dragged: usize,
+    still: &[(f64, f64)],
+    window: (f64, f64),
 ) -> Vec<f64> {
     let chapter_edges = chapters
         .iter()
         .flat_map(|chapter| [chapter.from as f64, chapter.end() as f64]);
-    let band_edges = bands
-        .iter()
-        .enumerate()
-        .filter(|&(index, _)| index != dragged)
-        .flat_map(|(_, &(from, to))| [from, to]);
+    let band_edges = still.iter().flat_map(|&(from, to)| [from, to]);
     std::iter::once(playhead)
         .chain(chapter_edges)
         .chain(band_edges)
+        .filter(|&target| target != window.0 && target != window.1)
+        .collect()
+}
+
+/// Whether `instance` moves with `preview`: it renders through the dragged
+/// window, or, for the end edge and the body, through a later item of the
+/// same `Series`.
+fn moves(instance: &InstanceOccurrences, preview: &DragPreview) -> bool {
+    instance.wrappers.contains(&preview.source)
+        || preview.grip != BandGrip::Start
+            && preview
+                .followers
+                .iter()
+                .any(|follower| instance.wrappers.contains(follower))
+}
+
+/// The ranges (frames) of the instances of `element` that `filter` draws
+/// and a drag of `preview.grip` leaves where they are: what its edges snap
+/// to beside the playhead and the chapters.
+pub(crate) fn still_ranges(
+    element: &ElementOccurrences,
+    preview: &DragPreview,
+    filter: &ImpactFilter,
+) -> Vec<(f64, f64)> {
+    element
+        .instances
+        .iter()
+        .filter(|instance| filter.changes(instance) && !moves(instance, preview))
+        .flat_map(|instance| &instance.ranges)
+        .map(|&(from, to)| (from as f64, to as f64))
         .collect()
 }
 
@@ -300,14 +351,13 @@ pub(crate) fn preview_occurrences(
     let delta = preview.delta;
     let old_end = preview.window.1.round() as i64;
     let new_end = moved_window(preview.grip, delta, preview.window).1.round() as i64;
-    let through = |wrappers: &[SourcePos], at: &SourcePos| wrappers.contains(at);
     let instances = element
         .instances
         .iter()
         .map(|instance| {
             let moved = |(from, to): (u64, u64)| -> Option<(u64, u64)> {
                 let (from, to) = (from as i64, to as i64);
-                let (from, to) = if through(&instance.wrappers, &preview.source) {
+                let (from, to) = if instance.wrappers.contains(&preview.source) {
                     let ended = to == old_end;
                     match preview.grip {
                         BandGrip::Body => (from + delta, to + delta),
@@ -316,12 +366,7 @@ pub(crate) fn preview_occurrences(
                         BandGrip::End if ended => (from, new_end),
                         BandGrip::End => (from, to.min(new_end)),
                     }
-                } else if preview
-                    .followers
-                    .iter()
-                    .any(|follower| through(&instance.wrappers, follower))
-                    && preview.grip != BandGrip::Start
-                {
+                } else if moves(instance, preview) {
                     (from + delta, to + delta)
                 } else {
                     (from, to)
@@ -378,13 +423,10 @@ pub(crate) fn drag_end(moved_px: f32, delta: i64, escaped: bool) -> DragEnd {
     }
 }
 
-/// The drag label's second line: the scope the write goes under.
-// Design 3's scope control names a scope this way too.
-fn scope_text(scope: Scope) -> &'static str {
-    match scope {
-        Scope::ThisScene => "Edits change this scene",
-        Scope::Shared => "Edits change the shared value",
-    }
+/// The notice of a released drag that nothing was written for: the scope
+/// gate held or refused it, or the window was not current.
+pub(crate) fn not_written(note: &str) -> String {
+    format!("Not written: {note}")
 }
 
 /// A drag of the selected element's own timing window on the timeline.
@@ -402,12 +444,20 @@ pub(crate) struct BandDrag {
     moved_px: f32,
     /// What the moved edges snap to, read at the press.
     snap_targets: Vec<f64>,
-    /// The frame a click seeks to: the band's first, as a click on a band
-    /// does.
-    seek: u64,
-    /// The scope the write goes under, read at the press.
+    /// The frame a click seeks to: the first of the drawn band holding the
+    /// pressed frame, as a click on that band does; `None` when no band
+    /// holds it.
+    seek: Option<u64>,
+    /// The edit scope the window's scope options showed at the press (see
+    /// [`commit_scope`]): the drag is written under it or refused, and the
+    /// label's second line says it.
     scope: Option<Scope>,
-    /// The button came up: the values are being written.
+    /// The instances the bands show while the drag runs: those an edit
+    /// under `scope` changes (see [`impact_filter`]).
+    filter: ImpactFilter,
+    /// The button came up: the values are being written and, after a
+    /// successful write, drawn until its reload, so the bands do not flash
+    /// back.
     released: bool,
 }
 
@@ -450,12 +500,13 @@ fn grip_frame(grip: BandGrip, window: (f64, f64)) -> f64 {
 }
 
 /// What a write of the window takes: its targets, the element's report,
-/// the scope, and the scene calls.
+/// the scope, the scene calls, and the values.
 type BandWrite = (
     WindowTargets,
     LayerSourceReport,
     Option<Scope>,
     Option<SceneCalls>,
+    Vec<(PropKey, Option<EditValue>)>,
 );
 
 impl EditorView {
@@ -469,8 +520,8 @@ impl EditorView {
     }
 
     /// The impact the timeline draws: the selection's, and while a band
-    /// drag runs, every instance of the element with those the drag moves
-    /// moved.
+    /// drag runs, the instances its scope changes with those the drag
+    /// moves moved.
     pub(crate) fn timeline_impact(&self) -> Option<ImpactView> {
         let Some(drag) = &self.band_drag else {
             return self.selection_impact();
@@ -480,7 +531,7 @@ impl EditorView {
             self.occurrences.as_ref().map(|(_, state)| state),
             self.react_chapters().unwrap_or_default(),
             u64::try_from(self.clock.frame()).unwrap_or(0),
-            None,
+            &drag.filter,
             Some(&drag.preview),
         ))
     }
@@ -497,7 +548,7 @@ impl EditorView {
             let after = moved_values(preview.grip, preview.delta, drag.values);
             let window = moved_window(preview.grip, preview.delta, preview.window);
             let mut lines = vec![drag_label(drag.kind, preview.grip, drag.values, after)];
-            lines.extend(drag.scope.map(|scope| scope_text(scope).to_owned()));
+            lines.extend(drag.scope.map(|scope| scope_in_effect(scope).to_owned()));
             return Some(BandGrips {
                 window,
                 locks: Default::default(),
@@ -584,30 +635,33 @@ impl EditorView {
         if grips.lock(grip).is_some() {
             return false;
         }
-        let lookup = self.source_lookup_frame as f64;
-        let (Some(dragged), Some((Ok(window), report))) =
-            (draggable_band(filled_bands, lookup), self.window_targets())
-        else {
+        let Some((Ok(window), report)) = self.window_targets() else {
             return false;
         };
+        // The frame under the press, for a click: the band holding it
+        // seeks as a click on it does.
+        let pressed = grips.window.0 + f64::from(x - left) / self.pixels_per_frame();
+        let seek = draggable_band(bands, pressed).map(|band| bands[band].0 as u64);
         // The item's start in its `Series`: from the window around it, or
         // the composition's start at the root.
         let parent = report.windows.get(1).map_or(0.0, |parent| parent.from);
         let series_start =
             (window.kind == TimingKind::SeriesSequence).then_some(grips.window.0 - parent);
-        let (state, _, remembered) = self.window_scope_state(window, report);
-        let scope = match &state {
-            ScopeState::Options(options) => chosen_scope(remembered, options).ok(),
-            ScopeState::NotShared | ScopeState::Unknown { .. } => None,
+        let (state, calls, remembered) = self.window_scope_state(window, report);
+        let scope = commit_scope(remembered, &state);
+        let filter = impact_filter(scope, &window.targets, calls);
+        let preview = DragPreview {
+            source: window.source.clone(),
+            window: grips.window,
+            grip,
+            delta: 0,
+            followers: window.followers.clone(),
         };
+        let still = self
+            .indexed_element(report)
+            .map(|element| still_ranges(element, &preview, &filter))
+            .unwrap_or_default();
         let drag = BandDrag {
-            preview: DragPreview {
-                source: window.source.clone(),
-                window: grips.window,
-                grip,
-                delta: 0,
-                followers: window.followers.clone(),
-            },
             kind: window.kind,
             values: timing_values(window.kind, &window.targets, grips.window),
             series_start,
@@ -616,11 +670,13 @@ impl EditorView {
             snap_targets: snap_targets(
                 self.clock.frame() as f64,
                 self.react_chapters().unwrap_or_default(),
-                bands,
-                dragged,
+                &still,
+                grips.window,
             ),
-            seek: bands[dragged].0 as u64,
+            seek,
             scope,
+            filter,
+            preview,
             released: false,
         };
         self.pause();
@@ -665,9 +721,10 @@ impl EditorView {
         }
     }
 
-    /// The button came up: a click seeks to the band's first frame, a drag
-    /// writes its values as one history entry, and a drag back to where it
-    /// started writes nothing. True when a drag was running.
+    /// The button came up: a click seeks to the first frame of the band it
+    /// pressed, a drag writes its values as one history entry, and a drag
+    /// back to where it started writes nothing. True when a drag was
+    /// running.
     pub(crate) fn end_band_drag(&mut self, cx: &mut Context<Self>) -> bool {
         let Some(drag) = self.band_drag.as_ref().filter(|drag| !drag.released) else {
             return false;
@@ -676,7 +733,9 @@ impl EditorView {
             DragEnd::Seek => {
                 let seek = drag.seek;
                 self.band_drag = None;
-                self.seek_to_frame(seek, cx);
+                if let Some(frame) = seek {
+                    self.seek_to_frame(frame, cx);
+                }
             }
             DragEnd::Cancel => self.band_drag = None,
             DragEnd::Commit => self.commit_band_drag(cx),
@@ -696,11 +755,11 @@ impl EditorView {
         true
     }
 
-    /// Writes the drag's values into the window's props under the scope in
-    /// effect, never held: a gate that would hold or refuse the commit, a
-    /// prop the scope can't write, or a failed write leaves the notice why
-    /// beside the grip and writes nothing. The drag stays, released, until
-    /// the write is done.
+    /// Writes the drag's values into the window's props under the scope it
+    /// started with, never held and never under another: a gate that holds
+    /// or refuses it, or a failed write, leaves the notice why beside the
+    /// grip. The released drag stays drawn while the write runs and, after
+    /// a successful one, until its reload (see `drop_released_band_drag`).
     fn commit_band_drag(&mut self, cx: &mut Context<Self>) {
         let Some(drag) = self.band_drag.as_mut() else {
             return;
@@ -711,9 +770,7 @@ impl EditorView {
             preview.grip,
             moved_window(preview.grip, preview.delta, preview.window),
         );
-        let values = band_edit(drag.kind, preview.grip, preview.delta, drag.values);
-        let source = preview.source.clone();
-        let (window, report, scope, calls) = match self.band_write(&source, &values) {
+        let (window, report, scope, calls, values) = match self.band_write() {
             Ok(write) => write,
             Err(text) => {
                 self.band_notice = Some(BandNotice { at, text });
@@ -728,47 +785,69 @@ impl EditorView {
                     .map_err(|error| error.to_string())
             },
             move |this, result, cx| {
-                if let Err(text) = result {
-                    this.band_notice = Some(BandNotice { at, text });
+                // A window still current after a success means nothing was
+                // written (the text came out the same): no reload comes to
+                // drop the drag.
+                if let Err(text) = &result {
+                    this.band_notice = Some(BandNotice {
+                        at,
+                        text: text.clone(),
+                    });
                 }
-                this.band_drag = None;
+                if result.is_err() || this.window_targets().is_some() {
+                    this.band_drag = None;
+                }
                 cx.notify();
             },
             cx,
         );
     }
 
-    /// What writing `values` into the window written at `source` takes, or
-    /// why it can't be written now: the window is not current (a reload
-    /// while dragging), the scope gate holds or refuses, or the scope in
-    /// effect can't write one of the props.
-    fn band_write(
-        &self,
-        source: &SourcePos,
-        values: &[(PropKey, Option<EditValue>)],
-    ) -> Result<BandWrite, String> {
+    /// What writing the released drag takes, or why it can't be written
+    /// now: the window is not current (a reload while dragging), or
+    /// [`gesture_gate`] holds or refuses it under the scope it started with
+    /// (a prop that scope can't write, the scenes scanned meanwhile).
+    fn band_write(&self) -> Result<BandWrite, String> {
+        let drag = self.band_drag.as_ref().ok_or_else(String::new)?;
+        let preview = &drag.preview;
         let (window, report) = match self.window_targets() {
-            Some((Ok(window), report)) if window.source == *source => (window, report),
-            Some((Err(reason), _)) => return Err(reason.to_owned()),
+            Some((Ok(window), report)) if window.source == preview.source => (window, report),
+            Some((Err(reason), _)) => return Err(not_written(reason)),
             Some((Ok(_), _)) | None => {
-                return Err(self
+                let reason = self
                     .element_edit
-                    .unavailable(self.selected_layer.as_deref()));
+                    .unavailable(self.selected_layer.as_deref());
+                return Err(not_written(&reason));
             }
         };
+        let values = band_writes(
+            drag.kind,
+            preview.grip,
+            preview.delta,
+            drag.values,
+            &window.targets,
+        );
         let keys: Vec<PropKey> = values.iter().map(|(key, _)| key.clone()).collect();
-        let (state, calls, remembered) = self.window_scope_state(window, report);
-        let scope = match commit_gate(&state, remembered, &window.targets, &keys) {
+        let (state, calls, _) = self.window_scope_state(window, report);
+        let scope = match gesture_gate(drag.scope, &state, &window.targets, &keys, calls) {
             CommitGate::Go(scope) => scope,
-            CommitGate::Hold(note) | CommitGate::Refuse(note) => return Err(note),
+            CommitGate::Hold(note) | CommitGate::Refuse(note) => return Err(not_written(&note)),
         };
-        if let Some(lock) = keys
-            .iter()
-            .find_map(|key| gesture_lock(scope, &window.targets, key, calls))
-        {
-            return Err(lock.text());
+        Ok((
+            window.clone(),
+            report.clone(),
+            scope,
+            calls.cloned(),
+            values,
+        ))
+    }
+
+    /// The reload after a band drag's write draws its values: the released
+    /// drag goes (a pressed one goes on).
+    pub(crate) fn drop_released_band_drag(&mut self) {
+        if !self.band_drag_active() {
+            self.band_drag = None;
         }
-        Ok((window.clone(), report.clone(), scope, calls.cloned()))
     }
 }
 
@@ -991,6 +1070,47 @@ mod tests {
     }
 
     #[test]
+    fn a_body_drag_keeps_a_missing_duration() {
+        // `<Sequence from={30}>` showing 30–90: its end is its parent's.
+        let open = targets(vec![
+            ("from", literal(30.0)),
+            ("durationInFrames", missing()),
+        ]);
+        let now = timing_values(TimingKind::Sequence, &open, (30.0, 90.0));
+        assert_eq!(
+            band_writes(TimingKind::Sequence, BandGrip::Body, 15, now, &open),
+            [number("from", 45.0), number("durationInFrames", 60.0)]
+        );
+        // The edges write the duration anyway, or don't need it.
+        assert_eq!(
+            band_writes(TimingKind::Sequence, BandGrip::End, 15, now, &open),
+            [number("durationInFrames", 75.0)]
+        );
+        assert_eq!(
+            band_writes(TimingKind::Sequence, BandGrip::Start, 15, now, &open),
+            [number("from", 45.0), number("durationInFrames", 45.0)]
+        );
+
+        // A written duration is left as it is.
+        let closed = targets(vec![
+            ("from", literal(30.0)),
+            ("durationInFrames", literal(60.0)),
+        ]);
+        assert_eq!(
+            band_writes(TimingKind::Sequence, BandGrip::Body, 15, now, &closed),
+            [number("from", 45.0)]
+        );
+    }
+
+    #[test]
+    fn a_notice_at_the_release_says_nothing_was_written() {
+        assert_eq!(
+            not_written("Scanning scenes…"),
+            "Not written: Scanning scenes…"
+        );
+    }
+
+    #[test]
     fn band_delta_keeps_duration_and_series_start() {
         let now = values(30.0, 60.0);
         assert_eq!(clamp_band_delta(BandGrip::Start, 70, now, None), 59);
@@ -1046,13 +1166,56 @@ mod tests {
         );
 
         let chapters = [chapter("intro", 0, 120), chapter("outro", 120, 60)];
-        let bands = [(30.0, 90.0), (130.0, 150.0)];
-        let targets = snap_targets(45.0, &chapters, &bands, 0);
+        let still = [(130.0, 150.0)];
+        let targets = snap_targets(45.0, &chapters, &still, (30.0, 90.0));
         for edge in [45.0, 0.0, 120.0, 180.0, 130.0, 150.0] {
             assert!(targets.contains(&edge), "{edge} in {targets:?}");
         }
         assert!(!targets.contains(&30.0));
         assert!(!targets.contains(&90.0));
+    }
+
+    #[test]
+    fn snap_targets_leave_out_the_window_and_what_moves() {
+        // The playhead and a chapter edge on the window's own edges.
+        let targets = snap_targets(30.0, &[chapter("intro", 0, 90)], &[], (30.0, 90.0));
+        assert_eq!(targets, [0.0]);
+
+        // Three items of a `Series`, the middle one dragged; a fourth
+        // instance elsewhere.
+        let items = element(vec![
+            instance(10, vec![(0, 60)], vec![pos(4)]),
+            instance(20, vec![(60, 120)], vec![pos(8)]),
+            instance(30, vec![(120, 180)], vec![pos(12)]),
+            instance(40, vec![(300, 330)], vec![]),
+        ]);
+        let dragged = |grip| DragPreview {
+            source: pos(8),
+            window: (60.0, 120.0),
+            grip,
+            delta: 0,
+            followers: vec![pos(12)],
+        };
+        let all = ImpactFilter::All;
+        assert_eq!(
+            still_ranges(&items, &dragged(BandGrip::End), &all),
+            [(0.0, 60.0), (300.0, 330.0)]
+        );
+        assert_eq!(
+            still_ranges(&items, &dragged(BandGrip::Body), &all),
+            [(0.0, 60.0), (300.0, 330.0)]
+        );
+        // The start edge leaves the later items where they are.
+        assert_eq!(
+            still_ranges(&items, &dragged(BandGrip::Start), &all),
+            [(0.0, 60.0), (120.0, 180.0), (300.0, 330.0)]
+        );
+        // Instances the bands don't show are no targets.
+        let through = ImpactFilter::Through(pos(40));
+        assert_eq!(
+            still_ranges(&items, &dragged(BandGrip::End), &through),
+            [(300.0, 330.0)]
+        );
     }
 
     #[test]

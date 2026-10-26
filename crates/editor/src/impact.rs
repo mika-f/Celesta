@@ -60,7 +60,7 @@ pub(crate) enum ImpactFilter {
 }
 
 impl ImpactFilter {
-    fn changes(&self, instance: &InstanceOccurrences) -> bool {
+    pub(crate) fn changes(&self, instance: &InstanceOccurrences) -> bool {
         match self {
             Self::All => true,
             Self::Through(site) => instance.chain.contains(site),
@@ -82,7 +82,7 @@ pub(crate) fn impact_view(
     frame: u64,
     filter: &ImpactFilter,
 ) -> ImpactView {
-    moved_impact_view(report, occurrences, chapters, frame, written_at, None)
+    moved_impact_view(report, occurrences, chapters, frame, filter, None)
 }
 
 /// [`impact_view`] with the element's instances where `preview`, a running
@@ -92,7 +92,7 @@ pub(crate) fn moved_impact_view(
     occurrences: Option<&OccurrenceState>,
     chapters: &[ReactChapter],
     frame: u64,
-    written_at: Option<&SourcePos>,
+    filter: &ImpactFilter,
     preview: Option<&DragPreview>,
 ) -> ImpactView {
     let span_only = |note: String| ImpactView::SpanOnly {
@@ -834,7 +834,7 @@ mod tests {
             Some(&occurrences),
             &chapters,
             40,
-            None,
+            &ImpactFilter::All,
             Some(&preview),
         ));
         assert_eq!(impact.own_ranges, vec![(30, 105)]);

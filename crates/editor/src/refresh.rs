@@ -562,6 +562,8 @@ impl EditorView {
                     self.scope_choices
                         .forget_in(&written, self.scope_carry_from.as_ref());
                 }
+                // A released band drag's values are the reloaded code's now.
+                self.drop_released_band_drag();
                 self.problems.clear(Source::Preview);
                 self.refresh_preview();
                 if keep {
@@ -581,6 +583,7 @@ impl EditorView {
                 if !self.transform_drag_active() {
                     self.cancel_transform_drag();
                 }
+                self.drop_released_band_drag();
                 if !self.row_scrub_active() {
                     self.cancel_row_scrub();
                 }
