@@ -10,9 +10,9 @@ use crate::occurrences::OccurrenceState;
 use crate::scope::{
     CHANGED_MEANWHILE, CommitGate, HeldOrigin, SCANNED_MEANWHILE, SceneCalls, Scope, ScopeChoices,
     ScopeLock, ScopeOptions, ScopeState, ScopedRow, calls_of, chosen_scope, commit_gate,
-    commit_scope, drain_gate, gesture_gate, gesture_start_refusal, held_gate, impact_filter,
-    previewed_scope, remove_tooltip, scope_in_effect, scope_line, scope_state, scoped_removable,
-    scoped_row,
+    commit_scope, drain_gate, gesture_gate, gesture_lock, gesture_start_refusal, held_gate,
+    impact_filter, previewed_scope, remove_tooltip, scope_in_effect, scope_line, scope_state,
+    scoped_removable, scoped_row,
 };
 use celesta_react_bridge::{
     ElementOccurrences, InstanceOccurrences, OccurrenceIndex, ReactChapter,
@@ -639,8 +639,14 @@ fn shared_is_disabled_when_every_row_is_set_by_every_scene() {
     assert_eq!(chosen_scope(None, &options), Ok(Scope::ThisScene));
     assert_eq!(lock.text(), "Every scene sets `rectWidth` itself");
     assert_eq!(scope_line(&options, Some(Scope::ThisScene)), lock.text());
-    // Until the calls are read, that is not known.
-    assert_eq!(state(None).shared, Ok(()));
+    // Until the calls are read, that is not known: only that this scene
+    // sets its own.
+    assert_eq!(
+        state(None).shared,
+        Err(ScopeLock::SetsOwn {
+            param: "rectWidth".to_owned()
+        })
+    );
 }
 
 #[test]
@@ -685,17 +691,16 @@ fn scoped_row_follows_the_table() {
         both(&targets, prop("y")),
         (ScopedRow::Lift, ScopedRow::AsResolved)
     );
-    // Passed at S: the shared value is the default, and this scene keeps
-    // its own.
+    // Passed at S: this scene sets its own value, so the row is locked
+    // under "Shared value" (its value at S is removed to edit the default).
+    let sets_own = |param: &str| {
+        ScopedRow::Locked(ScopeLock::SetsOwn {
+            param: param.to_owned(),
+        })
+    };
     assert_eq!(
         both(&targets, prop("width")),
-        (
-            ScopedRow::AsResolved,
-            ScopedRow::Default {
-                shown: Some(EditValue::Number(200.0)),
-                own: true
-            }
-        )
+        (ScopedRow::AsResolved, sets_own("rectWidth"))
     );
     // Left out at S.
     assert_eq!(
@@ -703,21 +708,14 @@ fn scoped_row_follows_the_table() {
         (
             ScopedRow::AsResolved,
             ScopedRow::Default {
-                shown: Some(EditValue::Number(8.0)),
-                own: false
+                shown: Some(EditValue::Number(8.0))
             }
         )
     );
-    // No default; Intro and Outro leave it out, so it gets one.
+    // No default; Intro and Outro leave it out, but S passes it.
     assert_eq!(
         both(&targets, prop("height")),
-        (
-            ScopedRow::AsResolved,
-            ScopedRow::Default {
-                shown: None,
-                own: true
-            }
-        )
+        (ScopedRow::AsResolved, sets_own("rectHeight"))
     );
     let every = SceneCalls {
         calls: calls
@@ -822,13 +820,7 @@ fn scoped_row_follows_the_table() {
     assert_eq!(both(&targets, input("w")), unsupported);
     assert_eq!(
         both(&targets, input("rectWidth")),
-        (
-            ScopedRow::AsResolved,
-            ScopedRow::Default {
-                shown: Some(EditValue::Number(200.0)),
-                own: true
-            }
-        )
+        (ScopedRow::AsResolved, sets_own("rectWidth"))
     );
     assert_eq!(
         ScopeLock::PerSceneUnsupported.text(),
@@ -901,8 +893,8 @@ fn scoped_row_follows_the_table() {
         ScopedRow::Locked(ScopeLock::PerSceneUnsupported)
     );
 
-    // Drag, scrub and inline text say why a row this scene sets its own
-    // value for can't show a shared edit.
+    // The row, drag, scrub and inline text say why a row this scene sets
+    // its own value for can't take a shared edit.
     assert_eq!(
         ScopeLock::SetsOwn {
             param: "rectWidth".to_owned()
@@ -913,7 +905,7 @@ fn scoped_row_follows_the_table() {
 }
 
 #[test]
-fn shared_value_writes_the_default_whatever_s_passes() {
+fn shared_value_locks_a_row_s_passes_whatever_it_passes() {
     // S passes `rectWidth` and `rectOpacity` as expressions.
     let call = "export const Price = () => (\n  <PriceTag label=\"Sale\" rectWidth={size * 2} rectHeight={40} rectOpacity={size / 2} />\n);\n";
     let texts = Texts::from([
@@ -934,16 +926,17 @@ fn shared_value_writes_the_default_whatever_s_passes() {
             scoped_row(Scope::Shared, targets, &key, None),
         )
     };
+    // An expression at S is this scene's own value too.
     assert_eq!(
         both(&targets, prop("width")),
         (
             ScopedRow::AsResolved,
-            ScopedRow::Default {
-                shown: Some(EditValue::Number(200.0)),
-                own: true
-            }
+            ScopedRow::Locked(ScopeLock::SetsOwn {
+                param: "rectWidth".to_owned()
+            })
         )
     );
+    // A default the shared value can't write keeps its own lock.
     let expression = ScopeLock::DefaultIsExpression {
         param: "rectOpacity".to_owned(),
     };
@@ -976,10 +969,102 @@ fn removal_follows_the_scope() {
     // literal at the element would reach every scene.
     assert!(removable_under(Scope::ThisScene, "width"));
     assert!(!removable_under(Scope::ThisScene, "x"));
-    // Shared value: the literal at the element goes as today; a default
-    // is never removed.
+    // Shared value: the literal at the element goes as today; the value
+    // this scene passes at S goes too; a default is never removed.
     assert!(removable_under(Scope::Shared, "x"));
-    assert!(!removable_under(Scope::Shared, "width"));
+    assert!(removable_under(Scope::Shared, "width"));
+    assert!(!removable_under(Scope::Shared, "cornerRadius"));
+}
+
+#[test]
+fn a_row_this_scene_sets_itself_is_locked_under_shared_value() {
+    // Price passes `rectWidth={260}`; the shared value is 200.
+    let report = price_report();
+    let targets = tag_targets(&report, &tag_texts(SCENES_FILE));
+    let calls = price_sets_its_own();
+    let key = prop("width");
+    let sets_own = ScopeLock::SetsOwn {
+        param: "rectWidth".to_owned(),
+    };
+
+    let row = scoped_row(Scope::Shared, &targets, &key, Some(&calls));
+    assert_eq!(row, ScopedRow::Locked(sets_own.clone()));
+    // It shows this scene's value, what the canvas draws, and where it is
+    // set.
+    assert_eq!(
+        default_row_text(&row, &key, row_field(&targets, &key)),
+        None
+    );
+    let target = targets.entry(&key).unwrap();
+    assert_eq!(
+        row_text("width", target, row_field(&targets, &key), &report),
+        ("260".to_owned(), String::new())
+    );
+    assert_eq!(target.call_site, Some(s()));
+    // Gestures say the same.
+    assert_eq!(
+        gesture_lock(Some(Scope::Shared), &targets, &key, Some(&calls)),
+        Some(sets_own.clone())
+    );
+    // The way out: removing its value at S.
+    assert!(scoped_removable(
+        Scope::Shared,
+        &targets,
+        &key,
+        Some(&calls)
+    ));
+    assert_eq!(
+        remove_tooltip(Some(Scope::Shared), &row),
+        "Use the shared value"
+    );
+    // "This scene" is unchanged.
+    assert_eq!(
+        scoped_row(Scope::ThisScene, &targets, &key, Some(&calls)),
+        ScopedRow::AsResolved
+    );
+
+    // Removed at S: the row shows the shared value and edits it.
+    let call = CALL.replace(" rectWidth={260}", "");
+    let texts = Texts::from([
+        (PathBuf::from(TAG_FILE), TAG.to_owned()),
+        (PathBuf::from(SCENES_FILE), call),
+    ]);
+    let mut report = price_report();
+    report
+        .props
+        .others
+        .insert("width".to_owned(), ReceivedValue::Number(200.0));
+    let targets = tag_targets(&report, &texts);
+    let calls = SceneCalls {
+        calls: vec![
+            Some((s(), vec!["label".to_owned(), "rectHeight".to_owned()])),
+            Some((intro_call(), vec!["label".to_owned()])),
+            Some((outro_call(), vec!["label".to_owned()])),
+        ],
+        ..price_sets_its_own()
+    };
+    let row = scoped_row(Scope::Shared, &targets, &key, Some(&calls));
+    assert_eq!(
+        row,
+        ScopedRow::Default {
+            shown: Some(EditValue::Number(200.0))
+        }
+    );
+    assert_eq!(
+        default_row_text(&row, &key, row_field(&targets, &key)),
+        Some(("200".to_owned(), String::new()))
+    );
+    assert_eq!(
+        gesture_lock(Some(Scope::Shared), &targets, &key, Some(&calls)),
+        None
+    );
+    assert!(!scoped_removable(
+        Scope::Shared,
+        &targets,
+        &key,
+        Some(&calls)
+    ));
+    assert_eq!(remove_tooltip(Some(Scope::Shared), &row), "Remove");
 }
 
 #[test]
@@ -1259,16 +1344,36 @@ fn the_remove_button_says_use_the_shared_value_at_s() {
 
 #[test]
 fn a_default_row_shows_the_default() {
-    let report = price_report();
-    let targets = tag_targets(&report, &tag_texts(SCENES_FILE));
-    let calls = price_sets_its_own();
+    // Price passes neither `rectWidth` nor `rectHeight` (a row it passes
+    // is locked and shows as resolved, see
+    // `a_row_this_scene_sets_itself_is_locked_under_shared_value`).
+    let call = CALL.replace(" rectWidth={260} rectHeight={40}", "");
+    let texts = Texts::from([
+        (PathBuf::from(TAG_FILE), TAG.to_owned()),
+        (PathBuf::from(SCENES_FILE), call),
+    ]);
+    let mut report = price_report();
+    report
+        .props
+        .others
+        .insert("width".to_owned(), ReceivedValue::Number(200.0));
+    report.props.others.remove("height");
+    let targets = tag_targets(&report, &texts);
+    let calls = SceneCalls {
+        calls: vec![
+            Some((s(), vec!["label".to_owned()])),
+            Some((intro_call(), vec!["label".to_owned()])),
+            Some((outro_call(), vec!["label".to_owned()])),
+        ],
+        ..price_sets_its_own()
+    };
     let shown = |scope: Scope, key: &str| {
         let key = prop(key);
         let row = scoped_row(scope, &targets, &key, Some(&calls));
         default_row_text(&row, &key, row_field(&targets, &key))
     };
 
-    // Price passes 260; the shared value is the default, 200.
+    // The shared value is the default, 200.
     assert_eq!(
         shown(Scope::Shared, "width"),
         Some(("200".to_owned(), String::new()))

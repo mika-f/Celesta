@@ -220,8 +220,9 @@ impl EditorView {
             .map(|((scope, calls), targets)| scoped_row(scope, targets, key, calls));
         let scope_locked = matches!(scoped, Some(ScopedRow::Locked(_)));
         let default = matches!(scoped, Some(ScopedRow::Default { .. }));
-        // Why the scope can't write the row, or why a drag or scrub of it
-        // would not show in this scene.
+        // Why the scope can't write the row, nor drag or scrub it: a row
+        // this scene sets itself under "Shared value" too, which shows this
+        // scene's value and where it is set.
         let scope_note = in_scope
             .zip(targets)
             .and_then(|((scope, calls), targets)| gesture_lock(Some(scope), targets, key, calls));

@@ -249,9 +249,10 @@ fn a_second_scene_after_a_lift_resolves_as_pass_through() {
 }
 
 #[test]
-fn shared_value_on_a_lifted_prop_writes_the_default_and_keeps_call_site_attributes() {
-    let files = Files::new("shared-default", LIFTED, PRICE_OWN);
-    let report = files.report(LIFTED_RECT, &files.price(), &[("width", 260.0)]);
+fn shared_value_on_a_lifted_prop_writes_the_default() {
+    // Price leaves `rectWidth` out: it uses the shared value.
+    let files = Files::new("shared-default", LIFTED, PRICE);
+    let report = files.report(LIFTED_RECT, &files.price(), &[("width", 200.0)]);
     let targets = files.targets(&report);
 
     let entry = files
@@ -268,14 +269,14 @@ fn shared_value_on_a_lifted_prop_writes_the_default_and_keeps_call_site_attribut
         files.read(&files.tag()),
         LIFTED.replace("rectWidth = 200", "rectWidth = 240")
     );
-    assert_eq!(files.read(&files.price()), PRICE_OWN);
+    assert_eq!(files.read(&files.price()), PRICE);
 }
 
 #[test]
 fn shared_value_adds_a_default_when_there_is_none() {
     let tag = LIFTED.replace("rectWidth = 200", "rectWidth");
-    let files = Files::new("shared-absent", &tag, PRICE_OWN);
-    let report = files.report(LIFTED_RECT, &files.price(), &[("width", 260.0)]);
+    let files = Files::new("shared-absent", &tag, PRICE);
+    let report = files.report(LIFTED_RECT, &files.price(), &[]);
     let targets = files.targets(&report);
 
     files
@@ -291,32 +292,66 @@ fn shared_value_adds_a_default_when_there_is_none() {
         files.read(&files.tag()),
         LIFTED.replace("rectWidth = 200", "rectWidth = 240")
     );
-    assert_eq!(files.read(&files.price()), PRICE_OWN);
+    assert_eq!(files.read(&files.price()), PRICE);
 }
 
 #[test]
-fn shared_value_writes_the_default_when_s_passes_an_expression() {
-    // The value at S can't be written, but the shared value can.
+fn shared_value_refuses_a_row_this_scene_sets_itself() {
+    // Price passes `rectWidth={260}`: a shared edit would not show here.
+    let refusal = "This scene sets its own `rectWidth`".to_owned();
+    let files = Files::new("shared-own", LIFTED, PRICE_OWN);
+    let report = files.report(LIFTED_RECT, &files.price(), &[("width", 260.0)]);
+    let targets = files.targets(&report);
+
+    let refused = files.commit(
+        &targets,
+        &report,
+        Some(Scope::Shared),
+        &[number("width", 240.0)],
+    );
+
+    assert_eq!(refused, Err(refusal.clone()));
+    assert_eq!(files.read(&files.tag()), LIFTED);
+    assert_eq!(files.read(&files.price()), PRICE_OWN);
+
+    // An expression at S is its own value too, though it can't be written.
     let price = PRICE_OWN.replace("{260}", "{size * 2}");
-    let files = Files::new("shared-expression", LIFTED, &price);
+    let files = Files::new("shared-own-expression", LIFTED, &price);
     let report = files.report(LIFTED_RECT, &files.price(), &[("width", 260.0)]);
     let targets = files.targets(&report);
     assert!(!editable(targets.target(&prop("width")).unwrap()));
-
-    files
-        .commit(
+    assert_eq!(
+        files.commit(
             &targets,
             &report,
             Some(Scope::Shared),
             &[number("width", 240.0)],
+        ),
+        Err(refusal)
+    );
+    assert_eq!(files.read(&files.tag()), LIFTED);
+    assert_eq!(files.read(&files.price()), price);
+}
+
+#[test]
+fn removal_under_shared_value_deletes_this_scene_s_own_at_s() {
+    // "Use the shared value" on a row this scene sets itself.
+    let files = Files::new("shared-removal", LIFTED, PRICE_OWN);
+    let report = files.report(LIFTED_RECT, &files.price(), &[("width", 260.0)]);
+    let targets = files.targets(&report);
+
+    let entry = files
+        .commit(
+            &targets,
+            &report,
+            Some(Scope::Shared),
+            &[(prop("width"), None)],
         )
         .unwrap();
 
-    assert_eq!(
-        files.read(&files.tag()),
-        LIFTED.replace("rectWidth = 200", "rectWidth = 240")
-    );
-    assert_eq!(files.read(&files.price()), price);
+    assert_eq!(written(&entry), [files.price().as_path()]);
+    assert_eq!(files.read(&files.price()), PRICE);
+    assert_eq!(files.read(&files.tag()), LIFTED);
 }
 
 #[test]
@@ -491,9 +526,10 @@ fn a_locked_lift_is_refused_with_its_text() {
 
 #[test]
 fn scoped_writes_outside_the_project_are_refused() {
+    // Price leaves `rectWidth` out, so "Shared value" writes its default.
     let texts = Texts::from([
         (PathBuf::from("/project/price_tag.tsx"), LIFTED.to_owned()),
-        (PathBuf::from("/project/price.tsx"), PRICE_OWN.to_owned()),
+        (PathBuf::from("/project/price.tsx"), PRICE.to_owned()),
     ]);
     let rect = LayerSource {
         column: 10,
@@ -509,7 +545,7 @@ fn scoped_writes_outside_the_project_are_refused() {
     report
         .props
         .others
-        .insert("width".to_owned(), ReceivedValue::Number(260.0));
+        .insert("width".to_owned(), ReceivedValue::Number(200.0));
     let resolve = |outside: &str| {
         let mut targets = resolve_targets(read_from(&texts), &report, Some(&tag_table())).unwrap();
         lock_outside_project(&mut targets, |file| file == Path::new(outside));

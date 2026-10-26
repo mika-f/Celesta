@@ -163,7 +163,9 @@ pub(crate) fn commit_scoped(
 
 /// Whether `value` (`None` removes the prop) may be committed to `key` of
 /// `targets`, as resolved or under `scope`: a lifted or a default's value
-/// is written (even when the value at `S` can't be), never removed.
+/// is written (even when the value at `S` can't be), never removed; a
+/// locked row refuses a value with its lock, and a removal too unless it
+/// removes as resolved (the value this scene sets itself, at `S`).
 fn check(
     targets: &ElementTargets,
     key: &PropKey,
@@ -172,8 +174,10 @@ fn check(
     calls: Option<&SceneCalls>,
 ) -> Result<(), CommitError> {
     let row = scope.map(|scope| scoped_row(scope, targets, key, calls));
-    if let Some(ScopedRow::Locked(lock)) = row {
-        return Err(CommitError::Scope(lock));
+    if let Some(locked @ ScopedRow::Locked(lock)) = &row
+        && (value.is_some() || !locked.removes_as_resolved())
+    {
+        return Err(CommitError::Scope(lock.clone()));
     }
     let entry = targets.entry(key);
     match (value, scope) {
@@ -232,7 +236,8 @@ fn resolved_edit(
 /// one [`plan_lift`] of them all in `C`'s file and an attribute per new
 /// parameter at `S`; the parameter's default for a "Shared value" of a
 /// pass-through (written after the bound name when it has none). A locked
-/// row refuses the commit with its lock.
+/// row refuses the commit with its lock, except the removal of a value this
+/// scene sets itself, which goes at `S` as resolved.
 pub(crate) fn scoped_edits(
     texts: &Texts,
     fresh: &ElementTargets,
@@ -245,6 +250,13 @@ pub(crate) fn scoped_edits(
     for (key, value) in values {
         let not_removable = || CommitError::NotRemovable(key.label());
         match scoped_row(scope, fresh, key, calls) {
+            row if value.is_none() && row.removes_as_resolved() => {
+                let edit = resolved_edit(texts, fresh, key, None)?;
+                edits
+                    .entry(fresh.file_of(key).to_path_buf())
+                    .or_default()
+                    .push(edit);
+            }
             ScopedRow::AsResolved => {
                 let edit = resolved_edit(texts, fresh, key, value.as_ref())?;
                 edits

@@ -54,7 +54,8 @@ pub(crate) enum ScopeLock {
     /// `param` has no default and every call passes it.
     EverySceneSets { param: String },
     /// This scene's call passes `param`, so a shared edit would not show
-    /// here (drag, scrub and inline text).
+    /// here: under "Shared value" the row, a drag, a scrub and an inline
+    /// text edit of it are locked until that value is removed at `S`.
     SetsOwn { param: String },
     /// `param`'s default is written as an expression.
     DefaultIsExpression { param: String },
@@ -530,11 +531,15 @@ pub(crate) fn scope_in_effect(scope: Scope) -> &'static str {
 
 /// The remove button's tooltip on a row that writes `row` under `scope`
 /// (`None` for a row outside the scope, a Component-section one too): under
-/// "This scene" the button deletes the value passed at `S`, so the shared
-/// value applies again.
+/// "This scene", and under "Shared value" on a row this scene sets itself,
+/// the button deletes the value passed at `S`, so the shared value applies
+/// again.
 pub(crate) fn remove_tooltip(scope: Option<Scope>, row: &ScopedRow) -> &'static str {
     match (scope, row) {
-        (Some(Scope::ThisScene), ScopedRow::AsResolved) => "Use the shared value",
+        (Some(Scope::ThisScene), ScopedRow::AsResolved)
+        | (Some(Scope::Shared), ScopedRow::Locked(ScopeLock::SetsOwn { .. })) => {
+            "Use the shared value"
+        }
         _ => "Remove",
     }
 }
@@ -644,14 +649,24 @@ pub(crate) enum ScopedRow {
     /// Lift the value at the element into a new prop of `C` and pass it at
     /// `S`.
     Lift,
-    /// The default of the parameter the row passes through to: `shown` is
-    /// its value (`None` when none is written yet); `own` when `S` passes
-    /// the parameter, so the edit does not show in this scene.
+    /// The default of the parameter the row passes through to, which `S`
+    /// leaves out: `shown` is its value (`None` when none is written yet).
     Default {
         shown: Option<EditValue>,
-        own: bool,
     },
     Locked(ScopeLock),
+}
+
+impl ScopedRow {
+    /// Whether removing the row's value removes it where it resolved: a
+    /// row written as resolved, and, under "Shared value", one this scene
+    /// sets itself (its value at `S` goes, so the shared value applies).
+    pub(crate) fn removes_as_resolved(&self) -> bool {
+        matches!(
+            self,
+            Self::AsResolved | Self::Locked(ScopeLock::SetsOwn { .. })
+        )
+    }
 }
 
 /// What the row (or input) `key` of `targets` writes under `scope`.
@@ -662,8 +677,10 @@ pub(crate) enum ScopedRow {
 /// scene. "Shared value": a pass-through writes its parameter's default
 /// (see [`ScopedRow::Default`]), or is locked when every call passes it
 /// without one, or the default is an expression or has no pattern to go
-/// in, whatever `S` passes (an expression too); anything else writes as
-/// resolved. Any other target that is locked as resolved, a
+/// in, whatever `S` passes; else, when `S` passes it (an expression too),
+/// it is locked as [`ScopeLock::SetsOwn`]: the edit would not show in this
+/// scene, which shows its own value, until that is removed at `S`
+/// ([`ScopedRow::removes_as_resolved`]); anything else writes as resolved. Any other target that is locked as resolved, a
 /// Component-section row, and every row of an element in no component
 /// write as resolved under either. A lift or a default that would write a
 /// file outside the project (`C`'s, or `S`'s for a lift) is locked.
@@ -743,22 +760,28 @@ fn shared_default(
     calls: Option<&SceneCalls>,
 ) -> ScopedRow {
     let own = !matches!(at_call, EditTarget::Missing { .. });
+    let sets_own = || {
+        ScopedRow::Locked(ScopeLock::SetsOwn {
+            param: param.to_owned(),
+        })
+    };
     let default = targets
         .defaults
         .iter()
         .find(|(name, _)| name == param)
         .map(|(_, default)| default);
     match default {
+        Some(DefaultTarget::Literal { .. }) if own => sets_own(),
         Some(DefaultTarget::Literal { value, .. }) => ScopedRow::Default {
             shown: Some(value.clone()),
-            own,
         },
         Some(DefaultTarget::Absent { .. }) if own && every_call_passes(calls, param) => {
             ScopedRow::Locked(ScopeLock::EverySceneSets {
                 param: param.to_owned(),
             })
         }
-        Some(DefaultTarget::Absent { .. }) => ScopedRow::Default { shown: None, own },
+        Some(DefaultTarget::Absent { .. }) if own => sets_own(),
+        Some(DefaultTarget::Absent { .. }) => ScopedRow::Default { shown: None },
         Some(DefaultTarget::Expression) => ScopedRow::Locked(ScopeLock::DefaultIsExpression {
             param: param.to_owned(),
         }),
@@ -783,9 +806,8 @@ fn every_call_passes(calls: Option<&SceneCalls>, param: &str) -> bool {
 }
 
 /// Why a drag, a scrub or an inline text edit of `key` can't write under
-/// `scope` (`None`: as resolved): the row's lock, or, under "Shared value",
-/// this scene passing the parameter itself, so the edit would not show in
-/// it. A Properties row writes the shared value then.
+/// `scope` (`None`: as resolved): the row's lock, as [`scoped_row`] gives
+/// it, so a gesture is refused exactly when the row is.
 pub(crate) fn gesture_lock(
     scope: Option<Scope>,
     targets: &ElementTargets,
@@ -794,13 +816,7 @@ pub(crate) fn gesture_lock(
 ) -> Option<ScopeLock> {
     match scoped_row(scope?, targets, key, calls) {
         ScopedRow::Locked(lock) => Some(lock),
-        ScopedRow::Default { own: true, .. } => match &targets.entry(key)?.target {
-            EditTarget::PassThrough { param, .. } => Some(ScopeLock::SetsOwn {
-                param: param.clone(),
-            }),
-            _ => None,
-        },
-        ScopedRow::AsResolved | ScopedRow::Lift | ScopedRow::Default { own: false, .. } => None,
+        ScopedRow::AsResolved | ScopedRow::Lift | ScopedRow::Default { .. } => None,
     }
 }
 
@@ -968,14 +984,15 @@ pub(crate) fn gesture_start_refusal(
     }
 }
 
-/// `removable` under `scope`: only an `AsResolved` row.
+/// `removable` under `scope`: only a row whose removal is as resolved
+/// ([`ScopedRow::removes_as_resolved`]).
 pub(crate) fn scoped_removable(
     scope: Scope,
     targets: &ElementTargets,
     key: &PropKey,
     calls: Option<&SceneCalls>,
 ) -> bool {
-    scoped_row(scope, targets, key, calls) == ScopedRow::AsResolved
+    scoped_row(scope, targets, key, calls).removes_as_resolved()
         && targets
             .entry(key)
             .is_some_and(|target| removable(targets, key, target))
