@@ -4,8 +4,8 @@
 //! value** every scene uses unless it sets its own. The choice and its
 //! memory per element, the options the occurrence index and the scene
 //! calls allow, and [`scoped_row`], the one per-row rule the rows (shown
-//! value, locks, removal) and the commit read.
-#![cfg_attr(not(test), allow(dead_code))]
+//! value, locks, removal) and the commit read; [`commit_gate`] decides
+//! whether a commit goes, waits for the index, or is refused.
 
 use crate::element_edit::{ElementTargets, PropKey, editable, reason_text};
 use crate::element_rows::removable;
@@ -14,8 +14,11 @@ use celesta_react_bridge::{
     ElementKind, ElementOccurrences, InstanceOccurrences, LayerSourceReport, ReactChapter,
     SourcePos, outermost_chapter_at, scenes_of,
 };
-use celesta_source_edit::{DefaultTarget, EditTarget, EditValue, LiftLock, LockReason};
+use celesta_source_edit::{
+    DefaultTarget, EditTarget, EditValue, LiftLock, LockReason, element_at, written_attributes,
+};
 use std::collections::HashMap;
+use std::path::Path;
 
 /// Where an edit of a shared element writes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -54,10 +57,10 @@ pub(crate) enum ScopeLock {
     SetsOwn { param: String },
     /// `param`'s default is written as an expression.
     DefaultIsExpression { param: String },
-    /// The occurrence index can't answer yet, or failed.
-    Unknown { note: String },
     /// No pattern key in `C` holds `param`'s default.
     DefaultNotFound { param: String },
+    /// The write goes to a file outside the project: `C`'s, or `S`'s.
+    OutsideProject,
 }
 
 impl ScopeLock {
@@ -92,16 +95,16 @@ impl ScopeLock {
             Self::DefaultIsExpression { param } => {
                 format!("`{param}`'s shared value is written as an expression")
             }
-            Self::Unknown { note } => note.clone(),
             Self::DefaultNotFound { param } => {
                 format!("Can't find where `{param}`'s shared value is written")
             }
+            Self::OutsideProject => reason_text(&LockReason::OutsideProject),
         }
     }
 }
 
 /// The lock a failed lift puts on "This scene", for `E` in `component`.
-fn lift_scope_lock(lock: &LiftLock, component: &str) -> ScopeLock {
+pub(crate) fn lift_scope_lock(lock: &LiftLock, component: &str) -> ScopeLock {
     match lock {
         LiftLock::NoComponent => ScopeLock::NoCall {
             component: component.to_owned(),
@@ -153,6 +156,62 @@ pub(crate) fn calls_of(
         .iter()
         .map(|instance| at.and_then(|at| instance.chain.get(at)).cloned())
         .collect()
+}
+
+/// The scene calls of `element` at the occurrence index's `generation`:
+/// each of `calls` (see [`calls_of`]) with the attributes written there,
+/// reading the files with `read`. A call whose file can't be read, or
+/// whose element is not found there, is `None`.
+pub(crate) fn read_scene_calls(
+    read: impl Fn(&Path) -> Result<String, String>,
+    element: SourcePos,
+    generation: u64,
+    calls: Vec<Option<SourcePos>>,
+) -> SceneCalls {
+    let mut texts: HashMap<&Path, Option<String>> = HashMap::new();
+    let calls = calls
+        .iter()
+        .map(|call| {
+            let call = call.as_ref()?;
+            let text = texts
+                .entry(call.file.as_path())
+                .or_insert_with(|| read(&call.file).ok())
+                .as_deref()?;
+            let at = element_at(text, call.line, call.column)?;
+            Some((call.clone(), written_attributes(text, &at)))
+        })
+        .collect();
+    SceneCalls {
+        element,
+        generation,
+        calls,
+    }
+}
+
+/// `calls` when they still describe the scenes: read at the occurrence
+/// index's `generation`, for `element`, and at each instance's entry at
+/// `call`'s place in the chain of `report` (see [`calls_of`]).
+pub(crate) fn current_calls<'c>(
+    calls: Option<&'c SceneCalls>,
+    generation: u64,
+    report: &LayerSourceReport,
+    element: &ElementOccurrences,
+    call: &SourcePos,
+) -> Option<&'c SceneCalls> {
+    let calls =
+        calls.filter(|calls| calls.generation == generation && calls.element == element.element)?;
+    let at = calls_of(report, element, call);
+    let same = at.len() == calls.calls.len()
+        && at
+            .iter()
+            .zip(&calls.calls)
+            .all(|(at, read)| match (at, read) {
+                (Some(at), Some((read, _))) => at == read,
+                // An entry whose call could not be read.
+                (Some(_), None) | (None, None) => true,
+                (None, Some(_)) => false,
+            });
+    same.then_some(calls)
 }
 
 /// What the scope control offers for a shared element.
@@ -440,8 +499,11 @@ pub(crate) fn chosen_scope(
 }
 
 /// More scenes than this are counted instead of named.
+// Read by the scope control's line, which is not drawn yet.
+#[cfg_attr(not(test), expect(dead_code))]
 const NAMED_SCENES: usize = 3;
 
+#[cfg_attr(not(test), expect(dead_code))]
 fn scenes_label(scenes: &[String]) -> String {
     if scenes.len() > NAMED_SCENES {
         format!("{} scenes", scenes.len())
@@ -453,6 +515,7 @@ fn scenes_label(scenes: &[String]) -> String {
 /// The line under the scope control: the reason a locked option (the
 /// `chosen` one first) is disabled; otherwise the scenes the shared value
 /// reaches and those that set their own.
+#[cfg_attr(not(test), expect(dead_code))]
 pub(crate) fn scope_line(options: &ScopeOptions, chosen: Option<Scope>) -> String {
     let locked = chosen
         .into_iter()
@@ -502,8 +565,34 @@ pub(crate) enum ScopedRow {
 /// in, whatever `S` passes (an expression too); anything else writes as
 /// resolved. Any other target that is locked as resolved, a
 /// Component-section row, and every row of an element in no component
-/// write as resolved under either.
+/// write as resolved under either. A lift or a default that would write a
+/// file outside the project (`C`'s, or `S`'s for a lift) is locked.
 pub(crate) fn scoped_row(
+    scope: Scope,
+    targets: &ElementTargets,
+    key: &PropKey,
+    calls: Option<&SceneCalls>,
+) -> ScopedRow {
+    let row = unchecked_row(scope, targets, key, calls);
+    let outside = |file: &Path| targets.outside.iter().any(|outside| outside == file);
+    let call_site = targets
+        .component
+        .as_ref()
+        .map(|component| component.call_site.file.as_path());
+    let writes_outside = match &row {
+        ScopedRow::Lift => outside(&targets.file) || call_site.is_some_and(outside),
+        ScopedRow::Default { .. } => outside(&targets.file),
+        ScopedRow::AsResolved | ScopedRow::Locked(_) => false,
+    };
+    if writes_outside {
+        ScopedRow::Locked(ScopeLock::OutsideProject)
+    } else {
+        row
+    }
+}
+
+/// [`scoped_row`] before the files it writes are checked.
+fn unchecked_row(
     scope: Scope,
     targets: &ElementTargets,
     key: &PropKey,
@@ -593,6 +682,79 @@ fn every_call_passes(calls: Option<&SceneCalls>, param: &str) -> bool {
     })
 }
 
+/// Why a drag, a scrub or an inline text edit of `key` can't write under
+/// `scope` (`None`: as resolved): the row's lock, or, under "Shared value",
+/// this scene passing the parameter itself, so the edit would not show in
+/// it. A Properties row writes the shared value then.
+pub(crate) fn gesture_lock(
+    scope: Option<Scope>,
+    targets: &ElementTargets,
+    key: &PropKey,
+    calls: Option<&SceneCalls>,
+) -> Option<ScopeLock> {
+    match scoped_row(scope?, targets, key, calls) {
+        ScopedRow::Locked(lock) => Some(lock),
+        ScopedRow::Default { own: true, .. } => match &targets.entry(key)?.target {
+            EditTarget::PassThrough { param, .. } => Some(ScopeLock::SetsOwn {
+                param: param.clone(),
+            }),
+            _ => None,
+        },
+        ScopedRow::AsResolved | ScopedRow::Lift | ScopedRow::Default { own: false, .. } => None,
+    }
+}
+
+/// Whether a commit goes now, and under which scope (`None`: as resolved),
+/// waits for the occurrence index (with the note the row shows), or is
+/// refused (with why).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum CommitGate {
+    Go(Option<Scope>),
+    Hold(String),
+    Refuse(String),
+}
+
+/// The gate for committing `keys` of `targets` in `state`, `remembered`
+/// being the choice made for the element. Not shared: as resolved. With
+/// options: the chosen scope ([`chosen_scope`]), refused with its lock when
+/// the remembered one (or both) is locked. While the index is scanning (or
+/// refreshing and no longer finds the element), values written at `S` as
+/// resolved go (a pass-through, unless "Shared value" is remembered, and a
+/// Component-section row); any other commit waits for the sweep. A failed
+/// scan, or an index that does not find the element, is refused: no sweep
+/// would answer. Component-section rows alone are outside the scope.
+pub(crate) fn commit_gate(
+    state: &ScopeState,
+    remembered: Option<Scope>,
+    targets: &ElementTargets,
+    keys: &[PropKey],
+) -> CommitGate {
+    let outside_scope = |key: &PropKey| matches!(key, PropKey::CallSite(_));
+    match state {
+        ScopeState::NotShared => CommitGate::Go(None),
+        _ if keys.iter().all(outside_scope) => CommitGate::Go(None),
+        ScopeState::Options(options) => match chosen_scope(remembered, options) {
+            Ok(scope) => CommitGate::Go(Some(scope)),
+            Err(lock) => CommitGate::Refuse(lock.text()),
+        },
+        ScopeState::Unknown { note } if note == SCANNING => {
+            let at_s = |key: &PropKey| {
+                outside_scope(key)
+                    || remembered != Some(Scope::Shared)
+                        && targets.target(key).is_some_and(|target| {
+                            matches!(target, EditTarget::PassThrough { .. }) && editable(target)
+                        })
+            };
+            if keys.iter().all(at_s) {
+                CommitGate::Go(None)
+            } else {
+                CommitGate::Hold(note.clone())
+            }
+        }
+        ScopeState::Unknown { note } => CommitGate::Refuse(note.clone()),
+    }
+}
+
 /// `removable` under `scope`: only an `AsResolved` row.
 pub(crate) fn scoped_removable(
     scope: Scope,
@@ -617,6 +779,8 @@ impl ScopeChoices {
         self.chosen.get(element).copied()
     }
 
+    // Choosing in the scope control, which is not drawn yet, sets it.
+    #[cfg_attr(not(test), expect(dead_code))]
     pub(crate) fn set(&mut self, element: SourcePos, scope: Scope) {
         self.chosen.insert(element, scope);
     }

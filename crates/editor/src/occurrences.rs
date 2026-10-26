@@ -220,6 +220,7 @@ impl EditorView {
     pub(crate) fn refresh_occurrences(&mut self, keep: bool) {
         // Called with `refresh_preview`: both carry the current mode.
         self.interactive_refresh_due = false;
+        self.occurrence_generation += 1;
         if self.react_preview.is_none() || !self.picks_layers() {
             self.occurrences = None;
             self.occurrence_sweep_after = None;
@@ -268,12 +269,16 @@ impl EditorView {
                 }
             }
         }
+        if changed {
+            self.occurrence_generation += 1;
+        }
         changed
     }
 
     /// While a sweep runs, looks for its result every [`RESULT_POLL`] and
     /// redraws only when it lands, instead of redrawing every frame for the
-    /// whole sweep. One watch runs at a time; it ends with the sweep.
+    /// whole sweep. One watch runs at a time; it ends with the sweep. Row
+    /// commits waiting for the index to answer go once it lands.
     pub(crate) fn watch_occurrence_sweep(&mut self, cx: &mut Context<Self>) {
         if self.occurrence_watch || !sweeping(self.occurrences.as_ref()) {
             return;
@@ -284,6 +289,7 @@ impl EditorView {
                 cx.background_executor().timer(RESULT_POLL).await;
                 let watching = view.update(cx, |this, cx| {
                     if this.poll_occurrence_results() {
+                        this.drain_held_rows(cx);
                         cx.notify();
                     }
                     this.occurrence_watch = sweeping(this.occurrences.as_ref());
@@ -313,6 +319,7 @@ impl EditorView {
             duration_in_frames: u64::try_from(self.clock.end_frame()).unwrap_or(0),
         }) {
             self.occurrences = Some((generation, OccurrenceState::Failed(error)));
+            self.occurrence_generation += 1;
         }
     }
 }

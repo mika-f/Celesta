@@ -830,14 +830,14 @@ fn a_value_set_at_the_call_is_removable_there() {
     // applies), and so does a component prop.
     let scene = PathBuf::from("/project/scene.tsx");
     assert_eq!(
-        commit_files(&texts, &targets, &report, &[(x, None)]),
+        commit_files(&texts, &targets, &report, None, None, &[(x, None)]),
         Ok(vec![(
             scene.clone(),
             PROPS_TAG_SCENE.replace(" x={40}", "")
         )])
     );
     assert_eq!(
-        commit_files(&texts, &targets, &report, &[(label, None)]),
+        commit_files(&texts, &targets, &report, None, None, &[(label, None)]),
         Ok(vec![(
             scene,
             PROPS_TAG_SCENE.replace(" label=\"Sale\"", "")
@@ -1093,6 +1093,7 @@ fn held_commits_keep_the_latest_value_per_row_in_order() {
         key,
         value,
         frame,
+        scope: None,
     };
     let mut held = HeldCommits::default();
     held.push(held_at("a", prop("x"), number(1.0), 0));

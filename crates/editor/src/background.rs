@@ -56,6 +56,7 @@ impl EditorView {
                                 self.source_lookup = Some(source_lookup(source));
                                 self.source_lookup_frame = result.timeline_frame;
                                 self.source_lookup_stale = false;
+                                self.carry_scope_choice();
                             }
                         }
                     }

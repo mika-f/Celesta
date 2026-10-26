@@ -6,8 +6,7 @@ use crate::element_edit::{
     reason_text, table_key,
 };
 use crate::element_rows::{
-    component_row_label, element_control_handler, removable, row_field, row_label, scrubs,
-    set_at_text,
+    component_row_label, element_control_handler, row_field, row_label, scrubs, set_at_text,
 };
 use crate::icons::CelestaIcon;
 use crate::layer_panel::LABEL_WIDTH;
@@ -222,7 +221,7 @@ impl EditorView {
             && resolved
                 .outcome
                 .as_ref()
-                .is_ok_and(|targets| removable(targets, key, target));
+                .is_ok_and(|targets| self.row_removable(targets, key, target));
         let (call_site, target) = (target.call_site.as_ref(), &target.target);
         // A pass-through row shows the state of the value at the call site.
         let shown = inner_target(target);
@@ -293,7 +292,13 @@ impl EditorView {
             .saving(self.selected_layer.as_deref(), key);
         let message = match row.and_then(|row| row.invalid.clone()) {
             Some(message) => Some(div().text_xs().text_color(cx.theme().danger).child(message)),
-            None => saving.then(|| div().text_xs().text_color(muted).child("Saving…")),
+            None => saving.then(|| {
+                // Waiting for the scenes to be scanned says so.
+                let note = row
+                    .and_then(|row| row.held_note.clone())
+                    .unwrap_or_else(|| "Saving…".to_owned());
+                div().text_xs().text_color(muted).child(note)
+            }),
         };
         let remove = can_remove.then(|| {
             let key = key.clone();

@@ -710,6 +710,7 @@ mod tests {
             enclosing: None,
             defaults: Vec::new(),
             lift_lock: None,
+            outside: Vec::new(),
         };
         assert_eq!(
             locked_summary(&targets),

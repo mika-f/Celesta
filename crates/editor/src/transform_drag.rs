@@ -7,6 +7,7 @@ use crate::element_edit::{
     ElementTargets, PropKey, TransformProp, editable, field_of, inner_target, reason_text,
 };
 use crate::layer_select::{letterbox, to_scene};
+use crate::scope::CommitGate;
 use crate::transform_handles::{
     Handle, Marker, PivotMode, Resize, ResizeTool, SizeField, SizeProps, anchor_handle,
     anchor_keys, drag_label, drag_values, marker, pressed_handle, preview_values, prop_values,
@@ -865,6 +866,18 @@ impl EditorView {
         let resize = resize_used(self.resize_tool, targets, &frame);
         let pivot = pivot_used(self.pivot_mode, targets, &frame);
         let mut props = drag_props_in(targets, &frame, pivot);
+        // A prop the scope in effect can't write (or would not show in this
+        // scene) is not dragged.
+        let locks = self.gesture_scope_locks(&props);
+        let mut locks = locks.into_iter();
+        let mut scope_lock = None;
+        props.retain(|_| match locks.next().flatten() {
+            Some(lock) => {
+                scope_lock.get_or_insert(lock);
+                false
+            }
+            None => true,
+        });
         props.extend(resize.iter().flat_map(Resize::keys));
         if props.is_empty() {
             let reason = TransformProp::ALL
@@ -874,6 +887,7 @@ impl EditorView {
                     EditTarget::Locked(reason) => Some(reason_text(reason)),
                     _ => None,
                 })
+                .or_else(|| scope_lock.map(|lock| lock.text()))
                 .unwrap_or_default();
             return DragState::Locked(frame, reason);
         }
@@ -1108,16 +1122,30 @@ impl EditorView {
             return true;
         }
         drag.released = true;
+        let refuse = |this: &mut Self, message: String| {
+            this.element_edit
+                .set_error(this.selected_layer.as_deref(), Some(message));
+            this.cancel_transform_drag();
+            true
+        };
         if self.element_targets().is_none() {
             // The targets went stale mid-drag (a reload); nothing to write to.
             let message = self
                 .element_edit
                 .unavailable(self.selected_layer.as_deref());
-            self.element_edit
-                .set_error(self.selected_layer.as_deref(), Some(message));
-            self.cancel_transform_drag();
-            return true;
+            return refuse(self, message);
         }
+        // Written under the scope in effect, never held: while the scenes
+        // are scanned, a drag that the scan decides is refused with that
+        // note, as is one the scope can't write.
+        let keys: Vec<PropKey> = values.iter().map(|(key, _)| key.clone()).collect();
+        if let Some(lock) = self.gesture_scope_locks(&keys).into_iter().flatten().next() {
+            return refuse(self, lock.text());
+        }
+        let scope = match self.commit_gate_for(self.remembered_scope(), &keys) {
+            CommitGate::Go(scope) => scope,
+            CommitGate::Hold(note) | CommitGate::Refuse(note) => return refuse(self, note),
+        };
         // A success reloads the code, which draws the written values; the
         // released drag stays until that reload so a redraw before it still
         // shows the dragged position. A failure (the source changed while
@@ -1129,6 +1157,7 @@ impl EditorView {
             .collect();
         self.commit_element(
             values,
+            scope,
             |this, result, cx| {
                 // Targets still current after a success mean nothing was
                 // written (the text came out the same), so no reload comes
@@ -1245,6 +1274,7 @@ mod tests {
             enclosing: None,
             defaults: Vec::new(),
             lift_lock: None,
+            outside: Vec::new(),
         }
     }
 
@@ -2162,7 +2192,8 @@ mod tests {
             .map(|(key, value)| (key, Some(EditValue::Number(value))))
             .collect();
         let files = write_all_recorded(targets.files.clone(), |texts| {
-            commit_files(texts, &targets, report, &values).map_err(|error| error.to_string())
+            commit_files(texts, &targets, report, None, None, &values)
+                .map_err(|error| error.to_string())
         })
         .expect("written");
         HistoryEntry { files }
@@ -2399,7 +2430,8 @@ mod tests {
             .map(|(key, value)| (key, Some(EditValue::Number(value))))
             .collect();
         let files = write_all_recorded(targets.files.clone(), |texts| {
-            commit_files(texts, &targets, &report, &values).map_err(|error| error.to_string())
+            commit_files(texts, &targets, &report, None, None, &values)
+                .map_err(|error| error.to_string())
         })
         .expect("both files are written");
         assert_eq!(files.len(), 2);

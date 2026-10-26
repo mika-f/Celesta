@@ -17,6 +17,7 @@ use crate::problems::{Problems, Source};
 use crate::property_panel::PropertyPanelState;
 use crate::react_audio::ReactAudioWorker;
 use crate::refresh::{ReloadOrder, SelectionKeep};
+use crate::scope::{SceneCalls, ScopeChoices};
 use crate::source::{PropertyArgs, load_source};
 use crate::timeline::LaneGesture;
 use crate::transform_drag::TransformDrag;
@@ -29,7 +30,7 @@ use celesta_gpu_renderer::{
 };
 use celesta_media::FfmpegBackend;
 use celesta_react_bridge::{
-    ComponentPropertyField, ComponentPropertySchema, PrimitivePropertyTable,
+    ComponentPropertyField, ComponentPropertySchema, PrimitivePropertyTable, SourcePos,
 };
 use chrono::{DateTime, Local};
 #[cfg(not(target_os = "macos"))]
@@ -125,6 +126,20 @@ pub(crate) struct EditorView {
     /// `react_reload_generation` it was swept for. `None` outside React
     /// preview and while Select layers is off.
     pub(crate) occurrences: Option<(u64, OccurrenceState)>,
+    /// Counts the changes of `occurrences` (a sweep started, landed or
+    /// failed): scene calls are read for one of them.
+    pub(crate) occurrence_generation: u64,
+    /// The selected element's scene calls (see `sync_scene_calls`), and the
+    /// element, generation and call positions the last read was started
+    /// for.
+    pub(crate) scene_calls: Option<SceneCalls>,
+    pub(crate) scene_calls_wanted: Option<(SourcePos, u64, Vec<Option<SourcePos>>)>,
+    /// The scope chosen per element for the session.
+    pub(crate) scope_choices: ScopeChoices,
+    /// After a kept reload: the selected element's position before it,
+    /// whose scope choice moves to where the reloaded code's first lookup
+    /// puts the element.
+    pub(crate) scope_carry_from: Option<SourcePos>,
     /// The preview frame a sweep held back after the editor's own write
     /// waits for before it starts.
     pub(crate) occurrence_sweep_after: Option<u64>,
@@ -400,6 +415,11 @@ impl EditorView {
             react_reload_generation: 0,
             occurrence_worker,
             occurrences: None,
+            occurrence_generation: 0,
+            scene_calls: None,
+            scene_calls_wanted: None,
+            scope_choices: ScopeChoices::default(),
+            scope_carry_from: None,
             occurrence_sweep_after: None,
             occurrence_watch: false,
             react_reloads: ReloadOrder::default(),

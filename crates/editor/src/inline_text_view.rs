@@ -484,6 +484,13 @@ impl EditorView {
         // reload (or its end), the targets are those it is being written to.
         let kept = self.kept_override != KeptOverride::Dropped;
         let targets = self.element_targets().filter(|_| !kept);
+        // A text the scope in effect can't write, or would not show in
+        // this scene, says why.
+        if targets.is_some()
+            && let Some(lock) = self.gesture_scope_lock(&children_key())
+        {
+            return Some(InlineEntry::Refuse(lock.text()));
+        }
         let (lookup_pending, unavailable) = match lookup {
             SourceLookup::Pending => (true, None),
             SourceLookup::Found(_) if kept => (true, None),

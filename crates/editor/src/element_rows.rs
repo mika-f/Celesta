@@ -15,6 +15,7 @@ use crate::property_controls::{
     parse_number_input, take_picked_color,
 };
 use crate::property_panel::field_label;
+use crate::scope::{CommitGate, Scope};
 use crate::transform_drag::override_sites;
 use crate::view::EditorView;
 use celesta_react_bridge::{
@@ -656,6 +657,9 @@ pub(crate) struct ElementRow {
     /// A value this row committed whose write has not finished (`None`
     /// removes the prop).
     pending: Option<Option<EditValue>>,
+    /// Why the row's held commit waits, when the occurrence index has yet
+    /// to answer ("Scanning scenes…"); shown instead of "Saving…".
+    pub(crate) held_note: Option<String>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -693,6 +697,8 @@ pub(crate) struct HeldCommit {
     pub(crate) value: Option<EditValue>,
     /// The timeline frame the row's targets were looked up at.
     pub(crate) frame: i64,
+    /// The scope choice the commit was made with; it is written with it.
+    pub(crate) scope: Option<Scope>,
 }
 
 impl HeldCommits {
@@ -707,6 +713,13 @@ impl HeldCommits {
             Some(held) => *held = commit,
             None => self.commits.push_back(commit),
         }
+    }
+
+    /// The oldest commit held for `layer`, left held.
+    pub(crate) fn first(&self, layer: Option<&str>) -> Option<&HeldCommit> {
+        self.commits
+            .iter()
+            .find(|held| Some(held.layer.as_str()) == layer)
     }
 
     /// The oldest commit held for `layer`.
@@ -985,6 +998,7 @@ impl EditorView {
                     invalid: None,
                     picked: false,
                     pending: None,
+                    held_note: None,
                     _subscriptions: built.subscriptions,
                 };
                 rows.insert(key.clone(), row);
@@ -998,6 +1012,7 @@ impl EditorView {
             if !same_layer {
                 row.invalid = None;
                 row.pending = None;
+                row.held_note = None;
             }
             // A value being scrubbed, then the one being written.
             let scrubbed = scrub.and_then(|scrub| scrub.shown(&key));
@@ -1092,7 +1107,7 @@ impl EditorView {
             .map_or((None, false), |targets| {
                 let can_remove = targets
                     .entry(key)
-                    .is_some_and(|target| removable(targets, key, target));
+                    .is_some_and(|target| self.row_removable(targets, key, target));
                 (row_field(targets, key).cloned(), can_remove)
             });
         let Some(row) = self.element_rows.rows.get_mut(key) else {
@@ -1132,25 +1147,48 @@ impl EditorView {
     }
 
     /// Writes `value` into the row `key` as one history entry (`None`
-    /// removes the prop); the row shows it until the write finishes, and the
-    /// written value until the reload resolves (the source's value again
-    /// when the write failed). A text edited on the canvas commits here too.
+    /// removes the prop), under the scope chosen for the element; the row
+    /// shows it until the write finishes, and the written value until the
+    /// reload resolves (the source's value again when the write failed). A
+    /// text edited on the canvas commits here too.
     pub(crate) fn commit_element_row(
         &mut self,
         key: &PropKey,
         value: Option<EditValue>,
         cx: &mut Context<Self>,
     ) {
+        let remembered = self.remembered_scope();
+        self.commit_row_with(key, value, remembered, cx);
+    }
+
+    /// [`Self::commit_element_row`] with the scope choice `remembered`
+    /// (the one a held commit was made with).
+    fn commit_row_with(
+        &mut self,
+        key: &PropKey,
+        value: Option<EditValue>,
+        remembered: Option<Scope>,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(row) = self.element_rows.rows.get_mut(key) {
             row.edited = false;
             row.invalid = None;
             row.pending = Some(value.clone());
+            row.held_note = None;
         }
         // While the targets are being read again (after an own write, say)
         // or another write runs, the commit waits its turn; it fails at once
-        // only when the source can't be read.
+        // only when the source can't be read. While the occurrence index
+        // can't say where the edit reaches, it waits for the sweep.
+        let gate = (!self.row_commit_waits())
+            .then(|| self.commit_gate_for(remembered, std::slice::from_ref(key)));
+        let held = match &gate {
+            None => Some(None),
+            Some(CommitGate::Hold(note)) => Some(Some(note.clone())),
+            Some(CommitGate::Go(_) | CommitGate::Refuse(_)) => None,
+        };
         if let Some(layer) = self.selected_layer.clone()
-            && self.row_commit_waits()
+            && let Some(note) = held
         {
             // The frame of the targets the row showed when it was
             // committed: a seek's lookup may have answered since.
@@ -1163,49 +1201,66 @@ impl EditorView {
                 key: key.clone(),
                 value,
                 frame,
+                scope: remembered,
             });
+            if let Some(row) = self.element_rows.rows.get_mut(key) {
+                row.held_note = note;
+            }
             cx.notify();
             return;
         }
         let written = key.clone();
         let layer = self.selected_layer.clone();
-        self.commit_element(
-            vec![(key.clone(), value)],
-            move |this, result, cx| {
-                // A newer commit of the row waiting its turn keeps showing.
-                let held = layer
-                    .as_deref()
-                    .is_some_and(|layer| this.element_rows.held.contains(layer, &written));
-                if let Some(row) = this.element_rows.rows.get_mut(&written)
-                    && !held
-                    && commit_owns_row(row.layer.as_deref(), layer.as_deref())
-                {
-                    row.pending = None;
-                    if result.is_err() {
-                        row.edited = false;
-                        row.shown = None;
-                    }
+        let refused_layer = layer.clone();
+        let done = move |this: &mut Self, result: Result<(), String>, cx: &mut Context<Self>| {
+            // A newer commit of the row waiting its turn keeps showing.
+            let held = layer
+                .as_deref()
+                .is_some_and(|layer| this.element_rows.held.contains(layer, &written));
+            if let Some(row) = this.element_rows.rows.get_mut(&written)
+                && !held
+                && commit_owns_row(row.layer.as_deref(), layer.as_deref())
+            {
+                row.pending = None;
+                if result.is_err() {
+                    row.edited = false;
+                    row.shown = None;
                 }
-                // A released scrub's override stays until the reload draws
-                // the written value; none comes after a failure, nor after
-                // a write that left the text as it was (the targets are
-                // still current).
-                let scrubbed = this
-                    .element_rows
-                    .scrub
-                    .as_ref()
-                    .is_some_and(|scrub| scrub.released && scrub.key == written);
-                if scrubbed && (result.is_err() || this.element_targets().is_some()) {
-                    this.cancel_row_scrub();
-                }
-                // A text committed on the canvas: likewise.
-                if written == PropKey::Prop("children".to_owned()) {
-                    this.inline_commit_written(layer.as_deref(), &result);
-                }
-                cx.notify();
-            },
-            cx,
-        );
+            }
+            // A released scrub's override stays until the reload draws
+            // the written value; none comes after a failure, nor after
+            // a write that left the text as it was (the targets are
+            // still current).
+            let scrubbed = this
+                .element_rows
+                .scrub
+                .as_ref()
+                .is_some_and(|scrub| scrub.released && scrub.key == written);
+            if scrubbed && (result.is_err() || this.element_targets().is_some()) {
+                this.cancel_row_scrub();
+            }
+            // A text committed on the canvas: likewise.
+            if written == PropKey::Prop("children".to_owned()) {
+                this.inline_commit_written(layer.as_deref(), &result);
+            }
+            cx.notify();
+        };
+        match gate {
+            // Refused as a write that failed at once is.
+            Some(CommitGate::Refuse(message)) => {
+                self.element_edit
+                    .set_error(refused_layer.as_deref(), Some(message.clone()));
+                done(self, Err(message), cx);
+            }
+            Some(CommitGate::Go(scope)) => {
+                self.commit_element(vec![(key.clone(), value)], scope, done, cx);
+            }
+            // Held above; without a selection, `commit_element` says why
+            // nothing is written.
+            None | Some(CommitGate::Hold(_)) => {
+                self.commit_element(vec![(key.clone(), value)], None, done, cx);
+            }
+        }
         cx.notify();
     }
 
@@ -1224,10 +1279,24 @@ impl EditorView {
     /// write that starts makes the next wait again (one history entry per
     /// commit), and one that fails at once lets the next go. A commit to a
     /// keyframe made before the playhead moved is not written to another
-    /// keyframe. A selection change waiting for them goes once none is left.
+    /// keyframe. One the occurrence index can't answer for yet keeps its
+    /// place (and those after it theirs) until the sweep lands; each goes
+    /// with the scope choice it was made with. A selection change waiting
+    /// for them goes once none is left.
     pub(crate) fn drain_held_rows(&mut self, cx: &mut Context<Self>) {
         while !self.row_commit_waits() {
             let selected = self.selected_layer.clone();
+            let scanning = self
+                .element_rows
+                .held
+                .first(selected.as_deref())
+                .is_some_and(|held| {
+                    let keys = std::slice::from_ref(&held.key);
+                    matches!(self.commit_gate_for(held.scope, keys), CommitGate::Hold(_))
+                });
+            if scanning {
+                break;
+            }
             let Some(held) = self.element_rows.held.pop(selected.as_deref()) else {
                 break;
             };
@@ -1241,7 +1310,7 @@ impl EditorView {
                 self.drop_row_commit(&held.key, FRAME_MOVED);
                 continue;
             }
-            self.commit_element_row(&held.key, held.value, cx);
+            self.commit_row_with(&held.key, held.value, held.scope, cx);
         }
         self.release_selection(cx);
     }
@@ -1416,6 +1485,11 @@ impl EditorView {
         else {
             return;
         };
+        // A scrub the scope would not show in this scene says why instead.
+        if let Some(lock) = self.gesture_scope_lock(key) {
+            self.set_row_message(key, lock.text(), cx);
+            return;
+        }
         if self.transform_drag_active() {
             self.cancel_transform_drag();
         }

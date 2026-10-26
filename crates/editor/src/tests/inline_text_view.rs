@@ -550,7 +550,7 @@ fn an_edit_writes_one_jsx_text_literal() {
     let (targets, report) = text_targets(text, "Sale");
     let texts = Texts::from([(targets.file.clone(), text.to_owned())]);
     let write = |value| {
-        let files = commit_files(&texts, &targets, &report, &children(value)).unwrap();
+        let files = commit_files(&texts, &targets, &report, None, None, &children(value)).unwrap();
         assert_eq!(files.len(), 1, "one file, one entry");
         files.into_iter().next().unwrap().1
     };
@@ -583,7 +583,7 @@ fn a_const_edit_writes_the_const() {
     let (targets, report) = text_at(text, (3, 10), "Sale");
     let texts = Texts::from([(targets.file.clone(), text.to_owned())]);
     let value = committed("Sale", |edit| edit.insert("!"));
-    let files = commit_files(&texts, &targets, &report, &children(value)).unwrap();
+    let files = commit_files(&texts, &targets, &report, None, None, &children(value)).unwrap();
     assert_eq!(
         files,
         [(targets.file.clone(), text.replace("\"Sale\"", "\"Sale!\""))]
@@ -640,7 +640,8 @@ fn write_children(
     value: Option<EditValue>,
 ) -> HistoryEntry {
     let files = write_all_recorded(targets.files.clone(), |texts| {
-        commit_files(texts, targets, report, &children(value)).map_err(|error| error.to_string())
+        commit_files(texts, targets, report, None, None, &children(value))
+            .map_err(|error| error.to_string())
     })
     .unwrap();
     HistoryEntry { files }
@@ -779,6 +780,7 @@ fn dropping_a_held_commit_drops_its_override() {
         key: prop(key),
         value: Some(EditValue::String("Sale!".to_owned())),
         frame: 0,
+        scope: None,
     };
     let mut held = HeldCommits::default();
     held.push(held_commit("title", "children"));
@@ -836,6 +838,7 @@ fn selecting_another_layer_commits_before_the_gate() {
         key: prop("children"),
         value: committed("Sale", |edit| edit.insert("!")),
         frame: 0,
+        scope: None,
     });
     let mut gate = SelectionGate::default();
     // The gate sees it: "price" waits for the commit to be written.

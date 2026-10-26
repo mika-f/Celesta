@@ -535,6 +535,7 @@ pub(super) fn resolve_rows(
         enclosing,
         defaults,
         lift_lock,
+        outside: Vec::new(),
     })
 }
 

@@ -15,7 +15,7 @@ fn commit_in(
     values: &[(PropKey, Option<EditValue>)],
 ) -> Result<String, CommitError> {
     let texts = Texts::from([(expected.file.clone(), text.to_owned())]);
-    let files = commit_files(&texts, expected, report, values)?;
+    let files = commit_files(&texts, expected, report, None, None, values)?;
     Ok(files
         .into_iter()
         .next()
@@ -801,6 +801,8 @@ fn a_drag_writes_two_files() {
         &texts,
         &targets,
         &report,
+        None,
+        None,
         &[
             num(TransformProp::X, 60.0),
             num(TransformProp::Rotation, 45.0),
@@ -848,7 +850,15 @@ fn a_value_missing_at_the_call_site_is_inserted_there() {
     };
     assert!(matches!(**target, EditTarget::Missing { .. }));
 
-    let written = commit_files(&texts, &targets, &report, &[num(TransformProp::X, 60.0)]).unwrap();
+    let written = commit_files(
+        &texts,
+        &targets,
+        &report,
+        None,
+        None,
+        &[num(TransformProp::X, 60.0)],
+    )
+    .unwrap();
 
     assert_eq!(
         written,
@@ -876,6 +886,8 @@ fn a_component_called_in_its_own_file_is_written_once() {
         &texts,
         &targets,
         &report,
+        None,
+        None,
         &[
             num(TransformProp::X, 60.0),
             num(TransformProp::Rotation, 45.0),
@@ -912,6 +924,8 @@ fn a_changed_call_site_aborts() {
                 &texts,
                 &targets,
                 &report,
+                None,
+                None,
                 &[
                     num(TransformProp::X, 60.0),
                     num(TransformProp::Rotation, 45.0)
@@ -935,7 +949,14 @@ fn a_call_site_outside_the_project_locks_only_its_targets() {
         Some(&EditTarget::Locked(LockReason::OutsideProject))
     );
     assert_eq!(
-        commit_files(&texts, &targets, &report, &[num(TransformProp::X, 60.0)]),
+        commit_files(
+            &texts,
+            &targets,
+            &report,
+            None,
+            None,
+            &[num(TransformProp::X, 60.0)]
+        ),
         Err(CommitError::NotEditable("X".to_owned()))
     );
     // The element's own file is still written.
@@ -944,6 +965,8 @@ fn a_call_site_outside_the_project_locks_only_its_targets() {
             &texts,
             &targets,
             &report,
+            None,
+            None,
             &[num(TransformProp::Rotation, 45.0)]
         ),
         Ok(vec![(
@@ -988,6 +1011,8 @@ fn a_value_passed_on_again_still_commits_the_element_s_own_props() {
             &read,
             &targets,
             &report,
+            None,
+            None,
             &[num(TransformProp::Rotation, 45.0)]
         ),
         Ok(vec![(
@@ -1048,7 +1073,14 @@ fn an_anonymous_call_site_must_call_the_enclosing_component() {
         }))
     );
     assert_eq!(
-        commit_files(&texts, &targets, &report, &[num(TransformProp::X, 60.0)]),
+        commit_files(
+            &texts,
+            &targets,
+            &report,
+            None,
+            None,
+            &[num(TransformProp::X, 60.0)]
+        ),
         Err(CommitError::NotEditable("X".to_owned()))
     );
 
@@ -1087,6 +1119,8 @@ fn an_unreadable_call_site_locks_only_the_props_passed_through() {
             &texts,
             &targets,
             &report,
+            None,
+            None,
             &[num(TransformProp::Rotation, 45.0)]
         ),
         Ok(vec![(
@@ -1410,6 +1444,8 @@ fn committing_an_input_writes_its_target() {
         &texts,
         &targets,
         &report,
+        None,
+        None,
         &[(padding, Some(EditValue::Number(24.0)))],
     );
 
@@ -1478,6 +1514,8 @@ fn a_font_row_beside_a_style_object_inserts_the_shorthand() {
             texts,
             &targets,
             &report,
+            None,
+            None,
             &[(prop("fontSize"), Some(EditValue::Number(48.0)))],
         )
         .map_err(|error| error.to_string())
@@ -1591,6 +1629,8 @@ fn a_schema_locked_prop_does_not_block_other_commits() {
         &texts,
         &targets,
         &report,
+        None,
+        None,
         &[(
             PropKey::CallSite("tone".to_owned()),
             Some(EditValue::Number(5.0)),
@@ -1620,7 +1660,14 @@ fn a_moved_call_site_attribute_refuses_the_commit() {
     );
 
     assert_eq!(
-        commit_files(&moved, &targets, &report, &[num(TransformProp::Y, 5.0)]),
+        commit_files(
+            &moved,
+            &targets,
+            &report,
+            None,
+            None,
+            &[num(TransformProp::Y, 5.0)]
+        ),
         Err(CommitError::SourceChanged)
     );
 }
@@ -1654,6 +1701,8 @@ fn component_prop_commit_writes_the_call_site() {
         &texts,
         &targets,
         &report,
+        None,
+        None,
         &[(
             PropKey::CallSite("label".to_owned()),
             Some(EditValue::String("Sold".to_owned())),
@@ -1696,8 +1745,15 @@ fn removing_a_prop_is_one_undoable_write() {
     let targets = resolve_targets(read, &report, Some(&table)).unwrap();
 
     let files = write_all_recorded(targets.files.clone(), |texts| {
-        commit_files(texts, &targets, &report, &[(prop("cornerRadius"), None)])
-            .map_err(|error| error.to_string())
+        commit_files(
+            texts,
+            &targets,
+            &report,
+            None,
+            None,
+            &[(prop("cornerRadius"), None)],
+        )
+        .map_err(|error| error.to_string())
     })
     .unwrap();
     assert_eq!(

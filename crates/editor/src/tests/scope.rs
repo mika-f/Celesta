@@ -292,11 +292,6 @@ fn an_unanswered_index_is_unknown() {
         )],
     });
     assert_eq!(state(Some(&moved)), unknown("Scanning scenes…"));
-    // A commit refused or held for it says the same.
-    let lock = ScopeLock::Unknown {
-        note: "Scanning scenes…".to_owned(),
-    };
-    assert_eq!(lock.text(), "Scanning scenes…");
 }
 
 #[test]

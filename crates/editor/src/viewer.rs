@@ -1315,6 +1315,7 @@ impl EditorView {
         self.selected_layer = None;
         self.source_lookup = None;
         self.source_lookup_stale = false;
+        self.scope_carry_from = None;
         self.launch_error = None;
         self.element_edit.reset();
         self.layer_frame = None;

@@ -2,7 +2,7 @@ use crate::component_schema::ComponentSchemaRequest;
 use crate::element_edit::RELOAD_FAILED;
 use crate::helpers::format_time;
 use crate::inline_text_view::{KeptOverride, kept_override_on_reload};
-use crate::layer_select::{lookup_allowed, source_lookup_target};
+use crate::layer_select::{SourceLookup, lookup_allowed, source_lookup_target};
 use crate::media_probe::{MediaProbeRequest, ProbeAsset};
 use crate::preview::{
     KeptSchema, PreviewRequest, ReactPreview, ReactPreviewContext, ReactPreviewMode,
@@ -19,7 +19,7 @@ use celesta_gpu_renderer::RenderQuality;
 use celesta_project::AssetKind;
 use celesta_react_bridge::{
     PrepareDependency, PropertyInputs, PropertyIssue, ReactBridge, ReactBridgeError,
-    ReactCompositionMetadata, SpawnOptions, runtime_paths as react_runtime_paths,
+    ReactCompositionMetadata, SourcePos, SpawnOptions, runtime_paths as react_runtime_paths,
 };
 use gpui_kit::Context;
 use std::collections::HashMap;
@@ -521,6 +521,14 @@ impl EditorView {
                     self.drop_kept_override();
                 }
                 if keep {
+                    // A lift above the element moves it: its scope choice
+                    // follows it to where the reloaded code's lookup says.
+                    self.scope_carry_from = match &self.source_lookup {
+                        Some(SourceLookup::Found(report)) => {
+                            report.chain.first().map(SourcePos::from)
+                        }
+                        _ => None,
+                    };
                     // Looked up again in the reloaded code, which decides
                     // whether the layer still exists. Until it answers, the
                     // old answer stays shown, read-only.
