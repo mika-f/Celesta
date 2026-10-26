@@ -80,6 +80,18 @@ pub fn plan_lift(
     element: &ElementRef,
     props: &[LiftProp<'_>],
 ) -> Result<Lift, LiftLock> {
+    plan_lift_avoiding(text, element, props, &[])
+}
+
+/// [`plan_lift`], the names also avoiding `also_taken`: the attributes the
+/// call that will pass the new props already writes, which a `...rest`
+/// may forward to the element.
+pub fn plan_lift_avoiding(
+    text: &str,
+    element: &ElementRef,
+    props: &[LiftProp<'_>],
+    also_taken: &[String],
+) -> Result<Lift, LiftLock> {
     let alloc = Allocator::default();
     let (program, failed) = parse_checked(text, &alloc);
     if failed {
@@ -102,6 +114,7 @@ pub fn plan_lift(
         .transpose();
 
     let mut taken: Vec<String> = finder.scopes.names().map(str::to_string).collect();
+    taken.extend(also_taken.iter().cloned());
     if let Pattern::Object { keys, .. } = pattern {
         taken.extend(keys.iter().cloned());
     }

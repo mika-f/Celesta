@@ -1,7 +1,7 @@
 use celesta_source_edit::{
     DefaultTarget, EditTarget, EditValue, ElementRef, Lift, LiftLock, LiftProp, LiteralForm,
     ResolveContext, Span, apply, element_at, lift_name, parameter_default, parses, plan_lift,
-    resolve,
+    plan_lift_avoiding, resolve,
 };
 
 /// The primitive's context: it rendered once and received `received`.
@@ -457,6 +457,31 @@ fn taken_names_include_every_binding_and_read_in_the_file() {
         assert_eq!(params, ["rectWidth2"], "{text}");
         assert_eq!(out, expected);
     }
+}
+
+#[test]
+fn taken_names_include_the_attributes_the_call_writes() {
+    // The call `<C rectWidth={5} />` forwards `rectWidth` through
+    // `...rest`: a new `rectWidth` passed there would be written twice.
+    let text = "function C({ label, ...rest }) {\n  return <Rect {...rest} width={200} />;\n}\n";
+    let at = element(text, "<Rect");
+    let target = resolve(text, &at, "width", &ctx(Some(number(200.0))));
+    let props = [LiftProp {
+        prop: "width",
+        target: &target,
+        value: &number(260.0),
+    }];
+    let lift = plan_lift_avoiding(text, &at, &props, &["rectWidth".to_string()]).unwrap();
+    assert_eq!(lift.params, ["rectWidth2"]);
+    assert_eq!(
+        apply(text, &lift.edits).unwrap(),
+        "function C({ label, rectWidth2 = 200, ...rest }) {\n  return <Rect {...rest} width={rectWidth2} />;\n}\n"
+    );
+    // Nothing else taken: as `plan_lift` names it.
+    assert_eq!(
+        plan_lift_avoiding(text, &at, &props, &[]).unwrap(),
+        plan_lift(text, &at, &props).unwrap()
+    );
 }
 
 #[test]
