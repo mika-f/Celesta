@@ -108,6 +108,25 @@ fn instances(count: usize) -> String {
     }
 }
 
+/// The header's "Shared" row, and whether it warns: the other scenes an edit
+/// changes, else, while the scope control shows (`keeps_place`), "this scene
+/// only", so that hovering the other option previews it without the row
+/// coming and going and moving the tabs out from under the pointer.
+fn shared_row(impact: &ImpactView, keeps_place: bool) -> Option<(String, bool)> {
+    match impact {
+        ImpactView::Known(impact) if !impact.other_scenes.is_empty() => Some((
+            format!(
+                "also in {} ({})",
+                other_scenes_label(&impact.other_scenes),
+                instances(impact.instance_count)
+            ),
+            true,
+        )),
+        _ if keeps_place => Some(("this scene only".to_owned(), false)),
+        _ => None,
+    }
+}
+
 /// Height of a scope tab's pill inside its list, and the gap between the
 /// list's edge and the pill: the canvas tool row's (see `mode_toggle` in
 /// `viewer.rs`).
@@ -390,8 +409,12 @@ impl EditorView {
                 text(ranges_label(&impact.own_ranges, timecode), foreground)
             }
         };
-        let shared = match impact {
-            ImpactView::Known(impact) if !impact.other_scenes.is_empty() => {
+        let keeps_place = self
+            .shown_scope_context()
+            .is_some_and(|context| matches!(context.state, ScopeState::Options(_)));
+        let shared = match (shared_row(impact, keeps_place), impact) {
+            (Some((label, false)), _) => Some(text(label, muted)),
+            (Some((label, true)), ImpactView::Known(impact)) => {
                 // A label that only counts the scenes names them first.
                 let lines: Vec<String> = counted_scenes(&impact.other_scenes)
                     .into_iter()
@@ -408,11 +431,7 @@ impl EditorView {
                     div()
                         .id("selection-shared")
                         .text_color(warning)
-                        .child(format!(
-                            "also in {} ({})",
-                            other_scenes_label(&impact.other_scenes),
-                            instances(impact.instance_count)
-                        ))
+                        .child(label)
                         .tooltip(move |window, cx| {
                             let lines = lines.clone();
                             Tooltip::element(move |_, _| {
@@ -809,6 +828,7 @@ impl EditorView {
 mod tests {
     use super::*;
     use crate::element_edit::Target;
+    use crate::impact::Impact;
     use celesta_react_bridge::{ElementKind, ReceivedProps, SourcePos};
     use celesta_source_edit::{EditTarget, EditValue, ElementRef, LiteralForm, LockReason, Span};
 
@@ -833,6 +853,37 @@ mod tests {
             windows: vec![],
             span: None,
         }
+    }
+
+    #[test]
+    fn the_shared_row_keeps_its_place_while_the_scope_control_shows() {
+        let impact = |other_scenes: Vec<&str>| {
+            ImpactView::Known(Impact {
+                appears_in: vec![],
+                appears_in_ids: vec![],
+                own_ranges: vec![],
+                other_scenes: other_scenes.into_iter().map(str::to_owned).collect(),
+                instance_count: 2,
+                places_in_scene: 1,
+                call_sites: vec![],
+                own_bands: vec![],
+                other_bands: vec![],
+            })
+        };
+        // Another scene changes: the warning, with or without the control.
+        let reaching = (String::from("also in Intro (2 instances)"), true);
+        assert_eq!(
+            shared_row(&impact(vec!["Intro"]), true),
+            Some(reaching.clone())
+        );
+        assert_eq!(shared_row(&impact(vec!["Intro"]), false), Some(reaching));
+        // None does: hovering the other option must not move the tabs, so
+        // the row stays while the control shows.
+        assert_eq!(
+            shared_row(&impact(vec![]), true),
+            Some((String::from("this scene only"), false))
+        );
+        assert_eq!(shared_row(&impact(vec![]), false), None);
     }
 
     #[test]
