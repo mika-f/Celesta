@@ -20,7 +20,9 @@ mod timing;
 
 pub use apply::{ApplyError, Edit, apply, expression, format_number, write_value};
 pub use attributes::{text_style_path, written_attributes};
-pub use imports::{ImportLock, ImportName, ensure_import, ensure_imports};
+pub use imports::{
+    ImportLock, ImportName, PACKAGE as CELESTA_REACT, ensure_import, ensure_imports,
+};
 pub use inputs::resolve_inputs;
 pub use insert::{WrapLock, indent_unit, wrap_element};
 pub use lift::{Lift, LiftLock, LiftProp, lift_name, plan_lift, plan_lift_avoiding};

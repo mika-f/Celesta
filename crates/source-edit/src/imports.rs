@@ -15,7 +15,7 @@ use crate::resolve::Span;
 use crate::{line_break, parse_checked};
 
 /// The package whose components the editor knows.
-pub(crate) const PACKAGE: &str = "@celesta/react";
+pub const PACKAGE: &str = "@celesta/react";
 
 /// How to write a name imported from a module.
 #[derive(Clone, Debug, PartialEq, Eq)]
