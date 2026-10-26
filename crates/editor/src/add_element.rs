@@ -25,6 +25,7 @@ use celesta_source_edit::{
     enclosing_component,
 };
 use gpui_kit::{Context, MouseMoveEvent, PathPromptOptions, Pixels};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::f64::consts::TAU;
 use std::fs;
@@ -759,6 +760,18 @@ impl ParentFacts {
     }
 }
 
+/// What a parent is picked from (see [`pick_parent`]) besides the report
+/// and the groups, which the facts read name: the panel, the canvas and
+/// each frame request read the parent, during playback too.
+#[derive(Debug, PartialEq)]
+struct TargetKey {
+    facts_read: u64,
+    scope: ParentScope,
+    /// The scene scan's, for [`is_shared`].
+    occurrence_generation: u64,
+    chapters: Vec<ReactChapter>,
+}
+
 /// The parent shown when a kind was chosen: the one the element goes into.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ChosenParent {
@@ -777,6 +790,10 @@ pub(crate) struct AddState {
     /// The newest groups read, and the lookup the newest read is for.
     facts: Option<ParentFacts>,
     wanted: Option<LookupKey>,
+    /// Counts the groups read, naming the facts in [`TargetKey`].
+    facts_read: u64,
+    /// The parent last picked, and what it was picked from.
+    target: RefCell<Option<(TargetKey, Result<AddParent, String>)>>,
     /// A group's children space as the preview last reported it, by its
     /// layer id: `None` inside when it turns in 3D.
     space: Option<(String, Option<[f64; 6]>)>,
@@ -817,11 +834,12 @@ impl EditorView {
         let Some((layer, report, frame)) = self.add_lookup() else {
             return;
         };
-        let lookup = (layer.to_owned(), report.clone(), frame);
-        if self.add.wanted.as_ref() == Some(&lookup) {
+        let wanted = |(at, of, on): &LookupKey| at == layer && of == report && *on == frame;
+        if self.add.wanted.as_ref().is_some_and(wanted) {
             return;
         }
         let report = report.clone();
+        let lookup = (layer.to_owned(), report.clone(), frame);
         self.add.wanted = Some(lookup.clone());
         let chapters = self.react_chapters().unwrap_or_default().to_vec();
         let end = u64::try_from(self.clock.end_frame()).unwrap_or(0);
@@ -875,13 +893,14 @@ impl EditorView {
             _ => None,
         };
         let facts = match (report, &self.add.facts) {
-            (None, _) => None,
+            // Nothing selected, or no answer: no chain to pick from.
+            (None, _) => return Err(NO_PARENT.to_owned()),
             (Some(report), Some(facts))
                 if Some(facts.lookup.0.as_str()) == selected
                     && facts.lookup.1 == *report
                     && facts.lookup.2 == self.source_lookup_frame =>
             {
-                Some(facts)
+                facts
             }
             (Some(_), _) => return Err(READING.to_owned()),
         };
@@ -893,14 +912,20 @@ impl EditorView {
         };
         let occurrences = self.occurrences.as_ref().map(|(_, state)| state);
         let chapters = self.react_chapters().unwrap_or_default();
-        let group = |entry: &LayerSource| facts.and_then(|facts| facts.group(entry));
-        let parent = pick_parent(
-            report,
-            &scope,
-            |entry| group(entry).is_some(),
-            |entry| is_shared(occurrences, chapters, &SourcePos::from(entry)),
-        )?;
-        let facts = group(&parent.entry).ok_or_else(|| READING.to_owned())?;
+        // The facts answer the report: they name it with the groups.
+        let parent = self
+            .add
+            .target(&scope, self.occurrence_generation, chapters, || {
+                pick_parent(
+                    Some(&facts.lookup.1),
+                    &scope,
+                    |entry| facts.group(entry).is_some(),
+                    |entry| is_shared(occurrences, chapters, &SourcePos::from(entry)),
+                )
+            })?;
+        let facts = facts
+            .group(&parent.entry)
+            .ok_or_else(|| READING.to_owned())?;
         Ok((parent, facts))
     }
 
@@ -1360,7 +1385,38 @@ impl AddState {
     /// as the parent may be another group now.
     fn set_facts(&mut self, facts: ParentFacts) {
         self.facts = Some(facts);
+        self.facts_read = self.facts_read.wrapping_add(1);
         self.asked = None;
+    }
+
+    /// The parent `pick` picks from the facts held, under `scope` with the
+    /// scene scan of `occurrence_generation` and `chapters`; the last pick
+    /// while none of them changed.
+    fn target(
+        &self,
+        scope: &ParentScope,
+        occurrence_generation: u64,
+        chapters: &[ReactChapter],
+        pick: impl FnOnce() -> Result<AddParent, String>,
+    ) -> Result<AddParent, String> {
+        let mut cache = self.target.borrow_mut();
+        if let Some((key, picked)) = cache.as_ref()
+            && key.facts_read == self.facts_read
+            && key.scope == *scope
+            && key.occurrence_generation == occurrence_generation
+            && key.chapters == chapters
+        {
+            return picked.clone();
+        }
+        let picked = pick();
+        let key = TargetKey {
+            facts_read: self.facts_read,
+            scope: scope.clone(),
+            occurrence_generation,
+            chapters: chapters.to_vec(),
+        };
+        *cache = Some((key, picked.clone()));
+        picked
     }
 
     /// Reload `sequence` applied, its first frame being preview generation
@@ -2544,6 +2600,47 @@ mod tests {
             groups: vec![],
         });
         assert!(landed.asked.is_none());
+    }
+
+    #[test]
+    fn the_parent_is_picked_again_only_when_what_it_reads_changes() {
+        let mut state = waiting_state();
+        let picks = std::cell::Cell::new(0);
+        let picked = || {
+            picks.set(picks.get() + 1);
+            Err::<AddParent, _>(NO_PARENT.to_owned())
+        };
+        let shared = ParentScope::Chosen(Scope::Shared);
+        let scene = ParentScope::Chosen(Scope::ThisScene);
+        let chapters = [chapter("intro", 0, 60)];
+        let other_chapters = [chapter("intro", 0, 90)];
+
+        assert_eq!(
+            state.target(&shared, 1, &chapters, picked),
+            Err(NO_PARENT.to_owned())
+        );
+        assert_eq!(picks.get(), 1);
+        // The same inputs: the pick is reused, also on the next render.
+        assert_eq!(
+            state.target(&shared, 1, &chapters, picked),
+            Err(NO_PARENT.to_owned())
+        );
+        assert_eq!(picks.get(), 1);
+        // The scope, the scene scan and the chapters each pick again.
+        state.target(&scene, 1, &chapters, picked).ok();
+        assert_eq!(picks.get(), 2);
+        state.target(&scene, 2, &chapters, picked).ok();
+        assert_eq!(picks.get(), 3);
+        state.target(&scene, 2, &other_chapters, picked).ok();
+        assert_eq!(picks.get(), 4);
+        // So do groups read again, for the same lookup too.
+        let lookup = state.facts.as_ref().unwrap().lookup.clone();
+        state.set_facts(ParentFacts {
+            lookup,
+            groups: vec![],
+        });
+        state.target(&scene, 2, &other_chapters, picked).ok();
+        assert_eq!(picks.get(), 5);
     }
 
     #[test]
