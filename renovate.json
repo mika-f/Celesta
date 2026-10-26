@@ -103,6 +103,14 @@
       ],
       "groupName": "wgpu",
       "separateMajorMinor": false
+    },
+    {
+      "description": "makit and makit-runtime are released together from mika-f/makit, and the website pins both to the same version.",
+      "matchSourceUrls": [
+        "https://github.com/mika-f/makit"
+      ],
+      "groupName": "makit",
+      "separateMajorMinor": false
     }
   ]
 }
