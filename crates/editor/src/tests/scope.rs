@@ -1256,6 +1256,15 @@ fn a_commit_keeps_the_scope_shown_when_it_was_made() {
     );
     // No control shown: nothing to keep.
     assert_eq!(commit_scope(None, &ScopeState::NotShared), None);
+    // Not shared, a choice remembered from before counts for nothing.
+    assert_eq!(
+        commit_scope(Some(Scope::Shared), &ScopeState::NotShared),
+        None
+    );
+    assert_eq!(
+        commit_scope(Some(Scope::ThisScene), &ScopeState::NotShared),
+        None
+    );
     let scanning = ScopeState::Unknown {
         note: "Scanning scenes…".to_owned(),
     };

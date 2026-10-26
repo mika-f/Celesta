@@ -576,12 +576,14 @@ pub(crate) fn chosen_scope(
 /// until its release): the `remembered` choice, else the option `shown` had
 /// in effect, so a commit goes as the control showed it, or is refused
 /// with the lock when that option is locked by then ([`commit_gate`]).
-/// `None` when no control showed an option.
+/// `None` when no control showed an option, and for an element that is
+/// not shared, whatever was chosen for it before: it writes as resolved.
 pub(crate) fn commit_scope(remembered: Option<Scope>, shown: &ScopeState) -> Option<Scope> {
-    remembered.or_else(|| match shown {
-        ScopeState::Options(options) => chosen_scope(None, options).ok(),
-        ScopeState::NotShared | ScopeState::Unknown { .. } => None,
-    })
+    match shown {
+        ScopeState::NotShared => None,
+        ScopeState::Options(options) => remembered.or_else(|| chosen_scope(None, options).ok()),
+        ScopeState::Unknown { .. } => remembered,
+    }
 }
 
 /// More scenes than this are counted instead of named.
