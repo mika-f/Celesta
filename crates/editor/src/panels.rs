@@ -797,10 +797,11 @@ impl EditorView {
         )
     }
 
-    /// The Properties tab in React-preview mode: what the selected layer is
-    /// and which scenes an edit of it changes, what can be edited (its
-    /// Transform rows, then the props file's properties), then where it was
-    /// written.
+    /// The Properties tab in React-preview mode: which scenes an edit of the
+    /// selected layer changes (the scope control, or the impact line), kept
+    /// in view at the top while the rest scrolls beneath it: what the layer
+    /// is, what can be edited (its Transform rows, then the props file's
+    /// properties), then where it was written.
     pub(crate) fn properties_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let muted = cx.theme().muted_foreground;
         let impact = self.selection_impact();
@@ -826,6 +827,14 @@ impl EditorView {
             .w_full()
             .flex_col()
             .bg(cx.theme().sidebar)
+            // Outside the scroll area, so the choice of what an edit changes
+            // stays in view while editing rows further down. The header
+            // scrolls with the rows.
+            .children(
+                impact
+                    .as_ref()
+                    .map(|impact| div().flex_none().child(self.impact_line(impact, cx))),
+            )
             .child(
                 div()
                     .id("properties-scroll")
@@ -840,7 +849,6 @@ impl EditorView {
                             .as_ref()
                             .and_then(|impact| self.selection_header(impact, cx)),
                     )
-                    .children(impact.as_ref().map(|impact| self.impact_line(impact, cx)))
                     .children(self.layer_edit_section(cx))
                     .children(self.property_section(cx))
                     .child(layer),
