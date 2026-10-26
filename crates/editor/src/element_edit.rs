@@ -748,15 +748,15 @@ impl EditorView {
     }
 
     /// The targets a commit under `scope` writes to (see
-    /// [`targets_in_effect`]): those of the scope it was made with, also
-    /// when the control shows another by the time it goes.
-    fn targets_under(&self, scope: Option<Scope>) -> Option<(&ElementTargets, &LayerSourceReport)> {
-        let (targets, report) = self.resolved_targets()?;
-        let targets = match self.shown_scope_context().map(|context| context.state) {
-            Some(ScopeState::Options(options)) => targets_in_effect(targets, scope, &options),
-            _ => targets,
-        };
-        Some((targets, report))
+    /// [`ScopeContext::under`]): those of the scope it was made with, also
+    /// when the control shows another by the time it goes; with the report
+    /// it resolves them again for ([`commit_report`]).
+    fn targets_under(&self, scope: Option<Scope>) -> Option<(&ElementTargets, LayerSourceReport)> {
+        let (resolved, report) = self.resolved_targets()?;
+        let targets = self
+            .shown_scope_context()
+            .map_or(resolved, |context| context.under(scope));
+        Some((targets, commit_report(resolved, targets, report)))
     }
 
     /// The scene calls of the selected element read for the index in use
@@ -893,18 +893,15 @@ impl EditorView {
             }
         };
         drop(cache);
-        let targets = match &state {
-            ScopeState::Options(options) => {
-                targets_in_effect(targets, self.effective_scope(&state), options)
-            }
-            ScopeState::NotShared | ScopeState::Unknown { .. } => targets,
-        };
-        Some(ScopeContext {
+        let mut context = ScopeContext {
             targets,
+            resolved: targets,
             state,
             calls,
             current,
-        })
+        };
+        context.targets = context.under(self.effective_scope(&context.state));
+        Some(context)
     }
 
     /// The targets the rows show and edits read (see
@@ -931,7 +928,9 @@ impl EditorView {
         keys: &[PropKey],
     ) -> CommitGate {
         match self.scope_context() {
-            Some(context) => drain_gate(remembered, &context.state, context.targets, keys),
+            Some(context) => {
+                drain_gate(remembered, &context.state, context.under(remembered), keys)
+            }
             None => CommitGate::Go(None),
         }
     }
@@ -950,7 +949,7 @@ impl EditorView {
                 held,
                 origin,
                 &context.state,
-                context.targets,
+                context.under(held),
                 keys,
                 context.calls,
             ),
@@ -987,13 +986,8 @@ impl EditorView {
         &self,
     ) -> Option<(Option<Scope>, &ElementTargets, Option<&SceneCalls>)> {
         let context = self.shown_scope_context()?;
-        let scope = match &context.state {
-            ScopeState::Options(options) => {
-                previewed_scope(self.scope_hover, options, self.remembered_scope())
-            }
-            ScopeState::NotShared | ScopeState::Unknown { .. } => None,
-        };
-        Some((scope, context.targets, context.calls))
+        let (scope, targets) = context.previewed(self.scope_hover, self.remembered_scope());
+        Some((scope, targets, context.calls))
     }
 
     /// Clears the hovered option when the control is not drawn: it reports
@@ -1024,16 +1018,9 @@ impl EditorView {
             return vec![None; keys.len()];
         };
         let remembered = self.remembered_scope();
+        let kept = context.under(commit_scope(remembered, &context.state));
         keys.iter()
-            .map(|key| {
-                gesture_start_refusal(
-                    remembered,
-                    &context.state,
-                    context.targets,
-                    key,
-                    context.calls,
-                )
-            })
+            .map(|key| gesture_start_refusal(remembered, &context.state, kept, key, context.calls))
             .collect()
     }
 
@@ -1046,7 +1033,7 @@ impl EditorView {
             Some(context) => gesture_gate(
                 started,
                 &context.state,
-                context.targets,
+                context.under(started),
                 keys,
                 context.calls,
             ),
@@ -1096,8 +1083,8 @@ impl EditorView {
                 .set_error(layer.as_deref(), Some(message.clone()));
             return done(self, Err(message), cx);
         };
-        let calls = self.current_scene_calls(targets, report).cloned();
-        let (targets, report) = (targets.clone(), report.clone());
+        let calls = self.current_scene_calls(targets, &report).cloned();
+        let targets = targets.clone();
         let written = values.clone();
         self.element_edit.set_error(layer.as_deref(), None);
         self.record_own_writes(
@@ -1126,15 +1113,63 @@ impl EditorView {
 /// looked up in (see [`resolved_scope_state`]), the scene calls that
 /// count, and whether no write changed the file since they were resolved.
 pub(crate) struct ScopeContext<'v> {
-    /// As resolved, or the element as one instance where that is in effect
-    /// (see [`targets_in_effect`]).
+    /// The targets of the scope in effect: [`Self::under`] it.
     pub(crate) targets: &'v ElementTargets,
+    /// The targets as resolved, which the state was read from.
+    pub(crate) resolved: &'v ElementTargets,
     pub(crate) state: ScopeState,
     pub(crate) calls: Option<&'v SceneCalls>,
     /// Not stale (see [`ElementEdit::resolved`]); a commit also needs the
     /// targets to answer the current lookup (see
     /// [`EditorView::element_targets`]).
     pub(crate) current: bool,
+}
+
+impl<'v> ScopeContext<'v> {
+    /// The targets an edit under `scope` reads and writes (see
+    /// [`targets_in_effect`]): a gesture's, or a held commit's, by the
+    /// scope it keeps, whichever option the control shows now.
+    pub(crate) fn under(&self, scope: Option<Scope>) -> &'v ElementTargets {
+        match &self.state {
+            ScopeState::Options(options) => targets_in_effect(self.resolved, scope, options),
+            ScopeState::NotShared | ScopeState::Unknown { .. } => self.resolved,
+        }
+    }
+
+    /// The scope the impact shows, `hovered` (a preview) else the one in
+    /// effect with the choice `remembered` (see [`previewed_scope`]), and
+    /// the targets it writes.
+    pub(crate) fn previewed(
+        &self,
+        hovered: Option<Scope>,
+        remembered: Option<Scope>,
+    ) -> (Option<Scope>, &'v ElementTargets) {
+        let scope = match &self.state {
+            ScopeState::Options(options) => previewed_scope(hovered, options, remembered),
+            ScopeState::NotShared | ScopeState::Unknown { .. } => None,
+        };
+        (scope, self.under(scope))
+    }
+}
+
+/// The report a commit of `targets` resolves the element again for:
+/// `report`, which `resolved` was resolved for, with a render count of 1
+/// when `targets` is `resolved`'s element as one instance
+/// ([`ElementTargets::one`]), so the commit finds the targets it was made
+/// on.
+pub(crate) fn commit_report(
+    resolved: &ElementTargets,
+    targets: &ElementTargets,
+    report: &LayerSourceReport,
+) -> LayerSourceReport {
+    let as_one = resolved
+        .one
+        .as_deref()
+        .is_some_and(|one| std::ptr::eq(one, targets));
+    LayerSourceReport {
+        render_count: if as_one { 1 } else { report.render_count },
+        ..report.clone()
+    }
 }
 
 /// The scope state of the targets `resolved` holds, at the timeline frame

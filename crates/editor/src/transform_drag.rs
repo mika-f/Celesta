@@ -7,7 +7,7 @@ use crate::element_edit::{
     ElementTargets, PropKey, TransformProp, editable, field_of, inner_target, reason_text,
 };
 use crate::layer_select::{letterbox, to_scene};
-use crate::scope::{CalledHere, CommitGate, Scope, ScopeState, scope_in_effect};
+use crate::scope::{CalledHere, CommitGate, Scope, ScopeState, scope_in_effect_here};
 use crate::transform_handles::{
     Handle, Marker, PivotMode, Resize, ResizeTool, SizeField, SizeProps, anchor_handle,
     anchor_keys, drag_label, drag_values, marker, pressed_handle, preview_values, prop_values,
@@ -137,11 +137,11 @@ impl TransformDrag {
         }
     }
 
-    /// What the drag's edit changes (see `scope_in_effect`); `None` without
-    /// a scope.
+    /// What the drag's edit changes (see `scope_in_effect_here`); `None`
+    /// without a scope.
     pub(crate) fn in_effect(&self) -> Option<String> {
         self.scope
-            .map(|scope| scope_in_effect(scope, self.called_here.as_ref()))
+            .map(|scope| scope_in_effect_here(scope, self.called_here.as_ref()))
     }
 
     /// The label beside the layer: the props the drag writes (`x 120 →

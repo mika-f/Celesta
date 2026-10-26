@@ -3,7 +3,7 @@
 //! writes under them.
 
 use super::*;
-use crate::element_edit::{Resolved, resolved_scope_state};
+use crate::element_edit::{Resolved, ScopeContext, commit_report, resolved_scope_state};
 use crate::element_rows::default_row_text;
 use crate::impact::{ImpactFilter, ImpactView, impact_line, impact_view};
 use crate::occurrences::OccurrenceState;
@@ -11,8 +11,9 @@ use crate::scope::{
     CHANGED_MEANWHILE, CalledHere, CommitGate, HeldOrigin, SCANNED_MEANWHILE, SceneCalls, Scope,
     ScopeChoices, ScopeLock, ScopeOptions, ScopeState, ScopedRow, calls_of, chosen_scope,
     commit_gate, commit_scope, drain_gate, gesture_gate, gesture_lock, gesture_start_refusal,
-    held_gate, impact_filter, previewed_scope, remove_tooltip, scope_in_effect, scope_line,
-    scope_state, scoped_removable, scoped_row, targets_in_effect, this_scene_tooltip,
+    held_gate, impact_filter, previewed_scope, remove_tooltip, scope_in_effect,
+    scope_in_effect_here, scope_line, scope_state, scoped_removable, scoped_row, targets_in_effect,
+    this_scene_tooltip,
 };
 use celesta_react_bridge::{
     ElementOccurrences, InstanceOccurrences, OccurrenceIndex, ReactChapter,
@@ -516,7 +517,7 @@ fn two_calls_in_this_scene_leave_this_scene_to_this_call() {
         "Write the edit for this call only"
     );
     assert_eq!(
-        scope_in_effect(Scope::ThisScene, options.called_here.as_ref()),
+        scope_in_effect_here(Scope::ThisScene, options.called_here.as_ref()),
         "Edits change this `<PriceTag>` only"
     );
     // "Shared value" says what it says for one call.
@@ -525,7 +526,7 @@ fn two_calls_in_this_scene_leave_this_scene_to_this_call() {
         "Shared value is used in Intro, Price"
     );
     assert_eq!(
-        scope_in_effect(Scope::Shared, options.called_here.as_ref()),
+        scope_in_effect_here(Scope::Shared, options.called_here.as_ref()),
         "Edits change the shared value"
     );
     // The Width row writes the Sale call's `rectWidth`.
@@ -569,7 +570,7 @@ fn one_call_in_this_scene_keeps_the_scene_copy() {
         "Write the edit for the instances in this scene only"
     );
     assert_eq!(
-        scope_in_effect(Scope::ThisScene, options.called_here.as_ref()),
+        scope_in_effect_here(Scope::ThisScene, options.called_here.as_ref()),
         "Edits change this scene"
     );
     assert_eq!(
@@ -620,11 +621,161 @@ fn this_scene_writes_the_element_as_this_call_s_one_instance() {
     for scope in [Some(Scope::Shared), None] {
         let kept = targets_in_effect(&targets, scope, &options);
         assert_eq!(kept.target(&x), Some(&repeated));
-        assert_eq!(
-            reason_text(&LockReason::Repeated { count: 2 }),
-            "Rendered 2 times from this element"
-        );
     }
+}
+
+/// The scene calls of [`two_calls_here`]: the Sale call sets `rectWidth`
+/// and `rectHeight`, the Second and Intro calls only `label`.
+fn sale_calls() -> SceneCalls {
+    let attributes = |names: &[&str]| names.iter().map(|name| (*name).to_owned()).collect();
+    SceneCalls {
+        element: e(),
+        generation: 1,
+        calls: vec![
+            Some((s(), attributes(&["label", "rectWidth", "rectHeight"]))),
+            Some((second_call(), attributes(&["label"]))),
+            Some((intro_call(), attributes(&["label"]))),
+        ],
+    }
+}
+
+#[test]
+fn a_hovered_option_previews_and_gates_with_its_own_targets() {
+    let report = sale_report();
+    let targets = sale_targets(&report);
+    let calls = sale_calls();
+    let state = scope_state(
+        &report,
+        &targets,
+        Some(&two_calls_here(1)),
+        Some(&calls),
+        &chapters(),
+        FRAME,
+    );
+    let options = options_of(state.clone());
+    // "This scene" is in effect: the rows show the Sale tag as one
+    // instance.
+    let one = targets_in_effect(&targets, Some(Scope::ThisScene), &options);
+    assert!(std::ptr::eq(one, targets.one.as_deref().unwrap()));
+    let context = ScopeContext {
+        targets: one,
+        resolved: &targets,
+        state,
+        calls: Some(&calls),
+        current: true,
+    };
+
+    // Hovering "Shared value" previews it on the targets it writes: the
+    // value on the element stays `Repeated`, so only the Sale call, which
+    // sets its own, is spared.
+    let (scope, previewed) = context.previewed(Some(Scope::Shared), None);
+    assert_eq!(scope, Some(Scope::Shared));
+    assert!(std::ptr::eq(previewed, &targets));
+    assert_eq!(
+        impact_filter(scope, previewed, Some(&calls)),
+        ImpactFilter::Except(vec![s()])
+    );
+    // On the one instance, whose `x` is a literal on the element, it would
+    // read as changing every instance.
+    assert_eq!(impact_filter(scope, one, Some(&calls)), ImpactFilter::All);
+    // Without a hover, the option in effect and its targets.
+    let (scope, previewed) = context.previewed(None, None);
+    assert_eq!(scope, Some(Scope::ThisScene));
+    assert!(std::ptr::eq(previewed, one));
+    // A gesture or a held commit is gated on the targets of the scope it
+    // keeps, whichever the control shows now.
+    assert!(std::ptr::eq(context.under(Some(Scope::Shared)), &targets));
+    assert!(std::ptr::eq(context.under(Some(Scope::ThisScene)), one));
+    assert!(std::ptr::eq(context.under(None), &targets));
+}
+
+#[test]
+fn a_lone_call_drawing_two_copies_keeps_the_repeated_lock_under_this_scene() {
+    let mut report = LayerSourceReport {
+        render_count: 2,
+        ..price_report()
+    };
+    report.props.x = Some(10.0);
+    let texts = tag_texts(SCENES_FILE);
+    let targets = tag_targets(&report, &texts);
+    let occurrences = index(vec![
+        InstanceOccurrences {
+            max_per_frame: 2,
+            ..instance(vec![e(), s()], vec![(30, 60)])
+        },
+        instance(vec![e(), intro_call()], vec![(0, 30)]),
+    ]);
+    let options = options_of(scope_state(
+        &report,
+        &targets,
+        Some(&occurrences),
+        None,
+        &chapters(),
+        FRAME,
+    ));
+    assert_eq!(options.this_scene, Ok(()));
+
+    // `S` draws both copies: "This scene" writes as resolved, and `x`
+    // written on the element is refused.
+    let written = targets_in_effect(&targets, Some(Scope::ThisScene), &options);
+    assert!(std::ptr::eq(written, &targets));
+    assert_eq!(
+        commit_files(
+            &texts,
+            written,
+            &commit_report(&targets, written, &report),
+            Some(Scope::ThisScene),
+            None,
+            &[(prop("x"), Some(EditValue::Number(60.0)))],
+        ),
+        Err(CommitError::NotEditable("X".to_owned()))
+    );
+}
+
+#[test]
+fn without_chapters_the_calls_are_not_counted() {
+    let report = sale_report();
+    let targets = sale_targets(&report);
+    let options = options_of(scope_state(
+        &report,
+        &targets,
+        Some(&two_calls_here(1)),
+        None,
+        &[],
+        FRAME,
+    ));
+
+    // The whole timeline is one scene, not a scene that calls it twice.
+    assert_eq!(options.this_scene, Ok(()));
+    assert_eq!(options.called_here, None);
+    assert_eq!(
+        this_scene_tooltip(&options),
+        "Write the edit for the instances in this scene only"
+    );
+}
+
+#[test]
+fn an_instance_with_no_call_at_s_s_place_is_not_a_call() {
+    let report = sale_report();
+    let targets = sale_targets(&report);
+    // The other instance in Price has a shorter chain: no entry at `S`'s
+    // place.
+    let occurrences = index(vec![
+        instance(vec![e(), s()], vec![(30, 60)]),
+        instance(vec![e()], vec![(30, 60)]),
+        instance(vec![e(), intro_call()], vec![(0, 30)]),
+    ]);
+
+    let options = options_of(scope_state(
+        &report,
+        &targets,
+        Some(&occurrences),
+        None,
+        &chapters(),
+        FRAME,
+    ));
+
+    assert_eq!(options.called_here, None);
 }
 
 #[test]
@@ -1653,14 +1804,14 @@ fn hovering_previews_the_other_option() {
 
 #[test]
 fn scope_in_effect_names_the_scope() {
+    assert_eq!(scope_in_effect(Scope::ThisScene), "Edits change this scene");
     assert_eq!(
-        scope_in_effect(Scope::ThisScene, None),
-        "Edits change this scene"
-    );
-    assert_eq!(
-        scope_in_effect(Scope::Shared, None),
+        scope_in_effect(Scope::Shared),
         "Edits change the shared value"
     );
+    for scope in [Scope::ThisScene, Scope::Shared] {
+        assert_eq!(scope_in_effect_here(scope, None), scope_in_effect(scope));
+    }
 }
 
 #[test]

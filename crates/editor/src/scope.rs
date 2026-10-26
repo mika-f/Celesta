@@ -230,7 +230,7 @@ pub(crate) struct ScopeOptions {
     pub(crate) sets_own: Vec<String>,
     /// When the current scene calls `C` more than once: "This scene" then
     /// writes the selected instance's call `S` only, the other calls
-    /// keeping their values.
+    /// keeping their values. `None` without chapters.
     pub(crate) called_here: Option<CalledHere>,
     /// Whether `S` draws the selected instance alone in the current scene:
     /// "This scene" then edits the element as that one instance, though
@@ -348,12 +348,13 @@ pub(crate) fn scope_state(
         .as_ref()
         .map(|component| &component.call_site);
     let (times, drawn_alone) = call.map_or((0, false), |call| here(report, element, &scene, call));
-    let this_targets = match &targets.one {
-        Some(one) if drawn_alone => one,
-        _ => targets,
-    };
-    let this_scene = confined(report, targets, element, &scene, component)
-        .and_then(|()| row_lock(Scope::ThisScene, this_targets, calls));
+    let this_scene = confined(report, targets, element, &scene, component).and_then(|()| {
+        row_lock(
+            Scope::ThisScene,
+            this_scene_targets(targets, drawn_alone),
+            calls,
+        )
+    });
     ScopeState::Options(ScopeOptions {
         this_scene,
         shared: row_lock(Scope::Shared, targets, calls),
@@ -369,18 +370,20 @@ pub(crate) fn scope_state(
 
 /// How the current scene draws `element` through `call` (`S`): how many
 /// calls of `C` draw it there (the chain entries at `S`'s place, see
-/// [`calls_of`]), and whether `S` draws it alone ([`drawn_alone`]).
+/// [`calls_of`]; an instance with none there is no call; 0 without
+/// chapters, where the timeline is no scene of its own), and whether `S`
+/// draws it alone ([`drawn_alone`]).
 fn here(
     report: &LayerSourceReport,
     element: &ElementOccurrences,
     scene: &Scene,
     call: &SourcePos,
 ) -> (usize, bool) {
-    let calls: HashSet<Option<SourcePos>> = calls_of(report, element, call)
+    let calls: HashSet<SourcePos> = calls_of(report, element, call)
         .into_iter()
         .zip(&element.instances)
-        .filter(|(_, instance)| scene.shows(instance))
-        .map(|(call, _)| call)
+        .filter(|(_, instance)| scene.current.is_some() && scene.shows(instance))
+        .filter_map(|(call, _)| call)
         .collect();
     (calls.len(), drawn_alone(element, scene, call))
 }
@@ -599,22 +602,39 @@ pub(crate) fn targets_in_effect<'t>(
     scope: Option<Scope>,
     options: &ScopeOptions,
 ) -> &'t ElementTargets {
-    match (&targets.one, scope) {
-        (Some(one), Some(Scope::ThisScene)) if options.drawn_alone => one,
+    match scope {
+        Some(Scope::ThisScene) => this_scene_targets(targets, options.drawn_alone),
+        Some(Scope::Shared) | None => targets,
+    }
+}
+
+/// The targets "This scene" writes: the element as one instance when `S`
+/// draws the selected instance alone (`drawn_alone`) and the frame renders
+/// it more than once, else `targets`.
+fn this_scene_targets(targets: &ElementTargets, drawn_alone: bool) -> &ElementTargets {
+    match &targets.one {
+        Some(one) if drawn_alone => one,
         _ => targets,
     }
 }
 
-/// What an edit changes under `scope`, said while a drag runs: under
-/// "This scene" in a scene calling `C` more than once (`called_here`),
-/// the selected instance's call only.
-pub(crate) fn scope_in_effect(scope: Scope, called_here: Option<&CalledHere>) -> String {
+/// What an edit changes under `scope`, said while a drag runs.
+pub(crate) fn scope_in_effect(scope: Scope) -> &'static str {
+    match scope {
+        Scope::ThisScene => "Edits change this scene",
+        Scope::Shared => "Edits change the shared value",
+    }
+}
+
+/// [`scope_in_effect`] in a scene whose calls of `C` are `called_here`:
+/// under "This scene" in a scene calling `C` more than once, the selected
+/// instance's call only.
+pub(crate) fn scope_in_effect_here(scope: Scope, called_here: Option<&CalledHere>) -> String {
     match (scope, called_here) {
         (Scope::ThisScene, Some(called)) => {
             format!("Edits change this `<{}>` only", called.component)
         }
-        (Scope::ThisScene, None) => "Edits change this scene".to_owned(),
-        (Scope::Shared, _) => "Edits change the shared value".to_owned(),
+        _ => scope_in_effect(scope).to_owned(),
     }
 }
 

@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::edit_history::FileEdit;
-use crate::element_edit::{ComponentTargets, commit_scoped, editable};
+use crate::element_edit::{ComponentTargets, commit_report, commit_scoped, editable};
 use crate::occurrences::OccurrenceState;
 use crate::scope::{
     CommitGate, SceneCalls, Scope, ScopeLock, ScopeState, commit_gate, current_calls, gesture_lock,
@@ -439,10 +439,13 @@ fn a_move_of_one_of_two_copies_lifts_to_its_call_only() {
             Err("X can't be edited here".to_owned())
         );
     }
-    // As the Sale call's one instance, it lifts to that call.
+    // As the Sale call's one instance, resolved again as one, it lifts to
+    // that call.
     let this_call = targets.one.as_deref().expect("resolved as one instance");
+    let as_one = commit_report(&targets, this_call, &report);
+    assert_eq!(as_one.render_count, 1);
     let entry = files
-        .commit(this_call, &report, Some(Scope::ThisScene), &move_to)
+        .commit(this_call, &as_one, Some(Scope::ThisScene), &move_to)
         .unwrap();
 
     assert_eq!(
