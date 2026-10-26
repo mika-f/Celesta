@@ -12,7 +12,7 @@ use crate::scope::{
     ScopeChoices, ScopeLock, ScopeOptions, ScopeState, ScopedRow, calls_of, chosen_scope,
     commit_gate, commit_scope, drain_gate, gesture_gate, gesture_lock, gesture_start_refusal,
     held_gate, impact_filter, previewed_scope, remove_tooltip, scope_in_effect, scope_line,
-    scope_state, scoped_removable, scoped_row, this_scene_tooltip,
+    scope_state, scoped_removable, scoped_row, targets_in_effect, this_scene_tooltip,
 };
 use celesta_react_bridge::{
     ElementOccurrences, InstanceOccurrences, OccurrenceIndex, ReactChapter,
@@ -199,6 +199,7 @@ fn options(this_scene: Result<(), ScopeLock>, shared: Result<(), ScopeLock>) -> 
         shared_reaches: vec!["Intro".to_owned(), "Outro".to_owned()],
         sets_own: Vec::new(),
         called_here: None,
+        drawn_alone: true,
     }
 }
 
@@ -504,6 +505,7 @@ fn two_calls_in_this_scene_leave_this_scene_to_this_call() {
             times: 2,
         })
     );
+    assert!(options.drawn_alone);
     // The line, the tab's tooltip and a drag say it writes this call.
     assert_eq!(
         scope_line(&options, Some(Scope::ThisScene)),
@@ -577,6 +579,55 @@ fn one_call_in_this_scene_keeps_the_scene_copy() {
 }
 
 #[test]
+fn this_scene_writes_the_element_as_this_call_s_one_instance() {
+    let report = sale_report();
+    let targets = sale_targets(&report);
+    let occurrences = two_calls_here(1);
+    let state = scope_state(
+        &report,
+        &targets,
+        Some(&occurrences),
+        None,
+        &chapters(),
+        FRAME,
+    );
+    let options = options_of(state.clone());
+    let x = prop("x");
+
+    // Written on the element, `x` would move both tags.
+    let repeated = EditTarget::Locked(LockReason::Repeated { count: 2 });
+    assert_eq!(targets.target(&x), Some(&repeated));
+    // "This scene" lifts it to the Sale call: no lock, a drag starts.
+    let this_call = targets_in_effect(&targets, Some(Scope::ThisScene), &options);
+    assert!(matches!(
+        this_call.target(&x),
+        Some(EditTarget::Literal { .. })
+    ));
+    assert_eq!(
+        scoped_row(Scope::ThisScene, this_call, &x, None),
+        ScopedRow::Lift
+    );
+    assert_eq!(
+        gesture_start_refusal(None, &state, this_call, &x, None),
+        None
+    );
+    // The rows passed through read the same in both.
+    assert_eq!(
+        this_call.entry(&prop("width")),
+        targets.entry(&prop("width"))
+    );
+    // "Shared value", and no scope, keep the lock.
+    for scope in [Some(Scope::Shared), None] {
+        let kept = targets_in_effect(&targets, scope, &options);
+        assert_eq!(kept.target(&x), Some(&repeated));
+        assert_eq!(
+            reason_text(&LockReason::Repeated { count: 2 }),
+            "Rendered 2 times from this element"
+        );
+    }
+}
+
+#[test]
 fn a_call_drawing_the_element_twice_locks_this_scene_beside_another_call() {
     let report = LayerSourceReport {
         render_count: 3,
@@ -602,6 +653,7 @@ fn a_call_drawing_the_element_twice_locks_this_scene_beside_another_call() {
         "`<PriceTag>` here draws this element more than once"
     );
     assert_eq!(chosen_scope(None, &options), Ok(Scope::Shared));
+    assert!(!options.drawn_alone);
 }
 
 #[test]
@@ -628,9 +680,16 @@ fn a_call_drawing_the_element_twice_alone_in_this_scene_writes_the_scene() {
         FRAME,
     ));
 
-    // Every copy is in this scene: "This scene" writes them all at `S`.
+    // Every copy is in this scene: "This scene" writes them all at `S`,
+    // and a value written on the element stays locked.
     assert_eq!(options.this_scene, Ok(()));
     assert_eq!(options.called_here, None);
+    assert!(!options.drawn_alone);
+    let kept = targets_in_effect(&targets, Some(Scope::ThisScene), &options);
+    assert_eq!(
+        kept.target(&prop("x")),
+        Some(&EditTarget::Locked(LockReason::Repeated { count: 2 }))
+    );
 }
 
 #[test]

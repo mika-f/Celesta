@@ -448,12 +448,7 @@ impl EditorView {
             }
             _ => None,
         };
-        let locked = self
-            .element_edit
-            .resolved(self.selected_layer.as_deref())
-            .and_then(|(resolved, _)| resolved.outcome.as_ref().ok())
-            .map(locked_summary)
-            .unwrap_or_default();
+        let locked = self.shown_targets().map(locked_summary).unwrap_or_default();
 
         Some(
             div()
@@ -1002,6 +997,7 @@ mod tests {
             defaults: Vec::new(),
             lift_lock: None,
             outside: Vec::new(),
+            one: None,
         };
         assert_eq!(
             locked_summary(&targets),

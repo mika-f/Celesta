@@ -101,11 +101,12 @@ impl EditorView {
         let Some((resolved, current)) = resolved else {
             return note("Reading source…".into(), muted).into_any_element();
         };
-        let targets = match &resolved.outcome {
-            Ok(targets) => targets,
-            Err(error) => {
+        let targets = match (&resolved.outcome, self.shown_targets()) {
+            (Ok(_), Some(targets)) => targets,
+            (Err(error), _) => {
                 return note(error.clone().into(), cx.theme().danger).into_any_element();
             }
+            (Ok(_), None) => return note("Reading source…".into(), muted).into_any_element(),
         };
         let entry_dir = self.entry_dir();
         // The scope the rows show and write under, read once.
@@ -212,7 +213,7 @@ impl EditorView {
     ) -> AnyElement {
         let muted = cx.theme().muted_foreground;
         let row = self.element_rows.get(key);
-        let targets = resolved.outcome.as_ref().ok();
+        let targets = self.shown_targets();
         // A Component-section row is outside the scope.
         let in_scope = scope.filter(|_| !matches!(key, PropKey::CallSite(_)));
         let scoped = in_scope

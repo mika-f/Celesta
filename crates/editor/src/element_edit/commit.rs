@@ -50,8 +50,9 @@ impl fmt::Display for CommitError {
 }
 
 /// The selected element's commit: [`commit_scoped`], resolving the rows
-/// `expected` has again for `report`, typed by the schema they were typed
-/// with.
+/// `expected` has again for `report` (as one instance when `expected` is
+/// the element as one instance, see [`ElementTargets::one`]), typed by the
+/// schema they were typed with.
 pub(crate) fn commit_files(
     texts: &Texts,
     expected: &ElementTargets,
@@ -79,6 +80,13 @@ pub(crate) fn commit_files(
         };
         let mut fresh = resolve_rows(read, report, expected.table.as_ref(), rows)
             .map_err(|_| CommitError::SourceChanged)?;
+        // `expected` is the element as one instance when it has none of
+        // its own and `report` renders the element more than once.
+        if expected.one.is_none()
+            && let Some(one) = fresh.one.take()
+        {
+            fresh = *one;
+        }
         // Typed by the schema the targets were typed with, as when resolved.
         if let Some(schema) = expected
             .component

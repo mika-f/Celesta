@@ -23,7 +23,7 @@ use crate::property_controls::ControlKind;
 use crate::scope::{
     CommitGate, HeldOrigin, SceneCalls, Scope, ScopeState, calls_of, chosen_scope, commit_scope,
     current_calls, drain_gate, gesture_gate, gesture_start_refusal, held_gate, previewed_scope,
-    read_scene_calls, scope_state, scoped_removable,
+    read_scene_calls, scope_state, scoped_removable, targets_in_effect,
 };
 use crate::view::EditorView;
 use celesta_react_bridge::{
@@ -199,6 +199,12 @@ pub(crate) struct ElementTargets {
     /// [`lock_outside_project`]): nothing is written to them, a default or
     /// a lift neither.
     pub(crate) outside: Vec<PathBuf>,
+    /// For an element in a component that the frame renders more than once
+    /// (its values written on the element locked as `Repeated`), the
+    /// element resolved as one instance: what "This scene" edits when its
+    /// call draws the selected instance alone in the scene (see
+    /// [`crate::scope::targets_in_effect`]). `None` otherwise, and in it.
+    pub(crate) one: Option<Box<ElementTargets>>,
 }
 
 impl ElementTargets {
@@ -723,15 +729,34 @@ impl EditorView {
     }
 
     /// The selected layer's targets and the report they were resolved for,
-    /// when they can be committed to.
+    /// when they can be committed to: those the rows show (see
+    /// [`Self::shown_targets`]).
     // The canvas drag reads these too.
     pub(crate) fn element_targets(&self) -> Option<(&ElementTargets, &LayerSourceReport)> {
+        let (_, report) = self.resolved_targets()?;
+        Some((self.shown_targets()?, report))
+    }
+
+    /// [`Self::element_targets`] as resolved, whatever the scope.
+    fn resolved_targets(&self) -> Option<(&ElementTargets, &LayerSourceReport)> {
         let lookup = match &self.source_lookup {
             Some(SourceLookup::Found(report)) => Some((report, self.source_lookup_frame)),
             _ => None,
         };
         self.element_edit
             .targets(self.selected_layer.as_deref(), lookup)
+    }
+
+    /// The targets a commit under `scope` writes to (see
+    /// [`targets_in_effect`]): those of the scope it was made with, also
+    /// when the control shows another by the time it goes.
+    fn targets_under(&self, scope: Option<Scope>) -> Option<(&ElementTargets, &LayerSourceReport)> {
+        let (targets, report) = self.resolved_targets()?;
+        let targets = match self.shown_scope_context().map(|context| context.state) {
+            Some(ScopeState::Options(options)) => targets_in_effect(targets, scope, &options),
+            _ => targets,
+        };
+        Some((targets, report))
     }
 
     /// The scene calls of the selected element read for the index in use
@@ -867,12 +892,25 @@ impl EditorView {
                 state
             }
         };
+        drop(cache);
+        let targets = match &state {
+            ScopeState::Options(options) => {
+                targets_in_effect(targets, self.effective_scope(&state), options)
+            }
+            ScopeState::NotShared | ScopeState::Unknown { .. } => targets,
+        };
         Some(ScopeContext {
             targets,
             state,
             calls,
             current,
         })
+    }
+
+    /// The targets the rows show and edits read (see
+    /// [`ScopeContext::targets`]); `None` until they are resolved.
+    pub(crate) fn shown_targets(&self) -> Option<&ElementTargets> {
+        self.shown_scope_context().map(|context| context.targets)
     }
 
     /// The scope context of the targets a commit writes to; `None` without
@@ -1052,7 +1090,7 @@ impl EditorView {
         cx: &mut Context<Self>,
     ) {
         let layer = self.selected_layer.clone();
-        let Some((targets, report)) = self.element_targets() else {
+        let Some((targets, report)) = self.targets_under(scope) else {
             let message = self.element_edit.unavailable(layer.as_deref());
             self.element_edit
                 .set_error(layer.as_deref(), Some(message.clone()));
@@ -1088,6 +1126,8 @@ impl EditorView {
 /// looked up in (see [`resolved_scope_state`]), the scene calls that
 /// count, and whether no write changed the file since they were resolved.
 pub(crate) struct ScopeContext<'v> {
+    /// As resolved, or the element as one instance where that is in effect
+    /// (see [`targets_in_effect`]).
     pub(crate) targets: &'v ElementTargets,
     pub(crate) state: ScopeState,
     pub(crate) calls: Option<&'v SceneCalls>,
@@ -1175,8 +1215,16 @@ fn normalize(path: &Path) -> PathBuf {
 
 /// Locks every target, row, input, or component prop, in a file `outside`
 /// says is outside the project (the element's, or a call site's), and
-/// keeps those of the files read in [`ElementTargets::outside`].
+/// keeps those of the files read in [`ElementTargets::outside`]; in the
+/// element as one instance ([`ElementTargets::one`]) too.
 pub(crate) fn lock_outside_project(targets: &mut ElementTargets, outside: impl Fn(&Path) -> bool) {
+    lock_outside(targets, &outside);
+}
+
+fn lock_outside(targets: &mut ElementTargets, outside: &dyn Fn(&Path) -> bool) {
+    if let Some(one) = &mut targets.one {
+        lock_outside(one, outside);
+    }
     targets.outside = targets
         .files
         .iter()

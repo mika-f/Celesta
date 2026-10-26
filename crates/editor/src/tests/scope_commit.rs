@@ -417,6 +417,52 @@ fn this_scene_with_two_calls_writes_the_selected_call_only() {
 }
 
 #[test]
+fn a_move_of_one_of_two_copies_lifts_to_its_call_only() {
+    let tag = "interface Props {\n  label: string;\n}\n\nexport function PriceTag({ label }: Props) {\n  return <Rect x={10} y={20} width={200} />;\n}\n";
+    let price = "export const Price = () => [\n  <PriceTag label=\"Sale\" />,\n  <PriceTag label=\"Second\" />,\n];\n";
+    let files = Files::new("move-one", tag, price);
+    let mut report = LayerSourceReport {
+        render_count: 2,
+        ..files.report(TAG_RECT, &files.price(), &[("width", 200.0)])
+    };
+    report.props.x = Some(10.0);
+    report.props.y = Some(20.0);
+    let targets = files.targets(&report);
+    let repeated = EditTarget::Locked(LockReason::Repeated { count: 2 });
+    let move_to = [number("x", 60.0), number("y", 80.0)];
+
+    // Written on the element, the move would move both tags.
+    assert_eq!(targets.target(&prop("x")), Some(&repeated));
+    for scope in [None, Some(Scope::Shared)] {
+        assert_eq!(
+            files.commit(&targets, &report, scope, &move_to),
+            Err("X can't be edited here".to_owned())
+        );
+    }
+    // As the Sale call's one instance, it lifts to that call.
+    let this_call = targets.one.as_deref().expect("resolved as one instance");
+    let entry = files
+        .commit(this_call, &report, Some(Scope::ThisScene), &move_to)
+        .unwrap();
+
+    assert_eq!(
+        files.read(&files.tag()),
+        "interface Props {\n  label: string;\n  rectX?: number;\n  rectY?: number;\n}\n\nexport function PriceTag({ label, rectX = 10, rectY = 20 }: Props) {\n  return <Rect x={rectX} y={rectY} width={200} />;\n}\n"
+    );
+    assert_eq!(
+        files.read(&files.price()),
+        "export const Price = () => [\n  <PriceTag label=\"Sale\" rectX={60} rectY={80} />,\n  <PriceTag label=\"Second\" />,\n];\n"
+    );
+    // One entry, both files; undo restores both.
+    assert_eq!(entry.len(), 2);
+    let mut history = EditHistory::default();
+    history.push(HistoryEntry { files: entry });
+    history.undo().unwrap();
+    assert_eq!(files.read(&files.tag()), tag);
+    assert_eq!(files.read(&files.price()), price);
+}
+
+#[test]
 fn removal_under_this_scene_deletes_at_s() {
     // "Use the shared value": the attribute at S goes.
     let files = Files::new("removal", LIFTED, PRICE_OWN);
@@ -673,6 +719,7 @@ fn commit_scoped_takes_any_element_s_targets() {
         defaults: Vec::new(),
         lift_lock: None,
         outside: Vec::new(),
+        one: None,
     };
     let values = [number("from", 45.0)];
 

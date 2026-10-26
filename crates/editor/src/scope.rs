@@ -232,6 +232,10 @@ pub(crate) struct ScopeOptions {
     /// writes the selected instance's call `S` only, the other calls
     /// keeping their values.
     pub(crate) called_here: Option<CalledHere>,
+    /// Whether `S` draws the selected instance alone in the current scene:
+    /// "This scene" then edits the element as that one instance, though
+    /// the frame renders it more than once (see [`targets_in_effect`]).
+    pub(crate) drawn_alone: bool,
 }
 
 /// The current scene's calls of `C`, when it calls `C` more than once.
@@ -274,9 +278,10 @@ const NOT_SCANNED: &str = "The scenes are not scanned";
 /// component sits between the scene and `S`, the scenes reuse one chain
 /// through `S`, `S` makes instances in other scenes, this scene calls `C`
 /// more than once and `S` draws the element more than once, or no row can
-/// be written for this scene; "Shared value" when no row can be written
-/// for it. `calls`, when read for this element and index, names the scenes
-/// that set their own value.
+/// be written for this scene (as the one instance `S` draws, when it draws
+/// it alone); "Shared value" when no row can be written for it. `calls`,
+/// when read for this element and index, names the scenes that set their
+/// own value.
 pub(crate) fn scope_state(
     report: &LayerSourceReport,
     targets: &ElementTargets,
@@ -342,9 +347,13 @@ pub(crate) fn scope_state(
         .component
         .as_ref()
         .map(|component| &component.call_site);
-    let times = call.map_or(0, |call| calls_here(report, element, &scene, call));
+    let (times, drawn_alone) = call.map_or((0, false), |call| here(report, element, &scene, call));
+    let this_targets = match &targets.one {
+        Some(one) if drawn_alone => one,
+        _ => targets,
+    };
     let this_scene = confined(report, targets, element, &scene, component)
-        .and_then(|()| row_lock(Scope::ThisScene, targets, calls));
+        .and_then(|()| row_lock(Scope::ThisScene, this_targets, calls));
     ScopeState::Options(ScopeOptions {
         this_scene,
         shared: row_lock(Scope::Shared, targets, calls),
@@ -354,24 +363,26 @@ pub(crate) fn scope_state(
             component: component.to_owned(),
             times,
         }),
+        drawn_alone,
     })
 }
 
-/// How many calls of `C` draw `element` in the current scene: the chain
-/// entries at the place of `call` (`S`), see [`calls_of`].
-fn calls_here(
+/// How the current scene draws `element` through `call` (`S`): how many
+/// calls of `C` draw it there (the chain entries at `S`'s place, see
+/// [`calls_of`]), and whether `S` draws it alone ([`drawn_alone`]).
+fn here(
     report: &LayerSourceReport,
     element: &ElementOccurrences,
     scene: &Scene,
     call: &SourcePos,
-) -> usize {
+) -> (usize, bool) {
     let calls: HashSet<Option<SourcePos>> = calls_of(report, element, call)
         .into_iter()
         .zip(&element.instances)
         .filter(|(_, instance)| scene.shows(instance))
         .map(|(call, _)| call)
         .collect();
-    calls.len()
+    (calls.len(), drawn_alone(element, scene, call))
 }
 
 /// Whether `call` (`S`) draws one instance of `element` in `scene`, one
@@ -574,6 +585,24 @@ pub(crate) fn previewed_scope(
     hovered
         .filter(|scope| options.option(*scope).is_ok())
         .or_else(|| chosen_scope(remembered, options).ok())
+}
+
+/// The targets an edit of the element reads under `scope`: under "This
+/// scene", when `S` draws the selected instance alone in this scene
+/// (`options.drawn_alone`), the element as that one instance
+/// ([`ElementTargets::one`]), whose values written on the element lift to
+/// `S` though the frame renders the element more than once; else
+/// `targets`, where design 2's `Repeated` lock holds those values, since
+/// writing them on the element would change every copy.
+pub(crate) fn targets_in_effect<'t>(
+    targets: &'t ElementTargets,
+    scope: Option<Scope>,
+    options: &ScopeOptions,
+) -> &'t ElementTargets {
+    match (&targets.one, scope) {
+        (Some(one), Some(Scope::ThisScene)) if options.drawn_alone => one,
+        _ => targets,
+    }
 }
 
 /// What an edit changes under `scope`, said while a drag runs: under

@@ -1266,6 +1266,7 @@ fn single_row(text: &str, prop: &str, target: EditTarget) -> ElementTargets {
         defaults: Vec::new(),
         lift_lock: None,
         outside: Vec::new(),
+        one: None,
     }
 }
 
@@ -2383,6 +2384,7 @@ fn impact_and_the_locked_summary_stay_transform_only() {
         defaults: Vec::new(),
         lift_lock: None,
         outside: Vec::new(),
+        one: None,
     };
 
     assert_eq!(targets.written_at(), Some(&scene));

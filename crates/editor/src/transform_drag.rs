@@ -1350,6 +1350,7 @@ mod tests {
             defaults: Vec::new(),
             lift_lock: None,
             outside: Vec::new(),
+            one: None,
         }
     }
 

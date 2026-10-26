@@ -97,11 +97,24 @@ pub(crate) fn type_component_props(
 /// Types each component prop `schema` declares by its field, and locks a
 /// literal of another kind (`label="Sale"` for a number) as the expression
 /// it is in the source, as table rows are. The others keep their literal's
-/// kind. Without the call site's text, nothing is typed.
+/// kind. Without the call site's text, nothing is typed. The element as
+/// one instance ([`ElementTargets::one`]) is typed too.
 pub(super) fn apply_component_schema(
     targets: &mut ElementTargets,
     schema: ComponentPropertySchema,
     read: impl Fn(&Path) -> Result<String, String>,
+) {
+    if let Some(one) = &mut targets.one {
+        type_props(one, schema.clone(), &read);
+    }
+    type_props(targets, schema, &read);
+}
+
+/// [`apply_component_schema`] on `targets` alone.
+fn type_props(
+    targets: &mut ElementTargets,
+    schema: ComponentPropertySchema,
+    read: &dyn Fn(&Path) -> Result<String, String>,
 ) {
     let Some(component) = &mut targets.component else {
         return;
@@ -327,12 +340,29 @@ fn through<'s>(site: Option<&'s CallSite<'_>>) -> Option<(&'s str, &'s ElementRe
 /// Resolves the rows `rows` names (table keys) from the text and element of
 /// `report`'s innermost element, with the fields of `table`; see
 /// [`resolve_targets`]. A commit resolves the rows it started from again
-/// this way.
+/// this way. An element in a component that the frame renders more than
+/// once is resolved as one instance too ([`ElementTargets::one`]).
 pub(super) fn resolve_rows(
     read: impl Fn(&Path) -> Result<String, String>,
     report: &LayerSourceReport,
     table: Option<&PrimitivePropertyTable>,
     rows: impl FnOnce(&str, &ElementRef) -> Vec<String>,
+) -> Result<ElementTargets, String> {
+    let mut rows = Some(rows);
+    resolve_with(&read, report, table, &mut |text, element| {
+        rows.take()
+            .map(|rows| rows(text, element))
+            .unwrap_or_default()
+    })
+}
+
+/// [`resolve_rows`], not generic, so it resolves the element as one
+/// instance by calling itself.
+fn resolve_with(
+    read: &dyn Fn(&Path) -> Result<String, String>,
+    report: &LayerSourceReport,
+    table: Option<&PrimitivePropertyTable>,
+    rows: &mut dyn FnMut(&str, &ElementRef) -> Vec<String>,
 ) -> Result<ElementTargets, String> {
     let source = report
         .chain
@@ -525,6 +555,26 @@ pub(super) fn resolve_rows(
         ),
         None => (Vec::new(), None),
     };
+    // The values written on the element are `Repeated` in every copy the
+    // frame renders; as one instance, its call can take them.
+    let one = if report.render_count > 1 && enclosing.is_some() {
+        let names: Vec<String> = targets
+            .iter()
+            .filter_map(|(key, _)| match key {
+                PropKey::Prop(name) => Some(name.clone()),
+                PropKey::Input { .. } | PropKey::CallSite(_) => None,
+            })
+            .collect();
+        let report = LayerSourceReport {
+            render_count: 1,
+            ..report.clone()
+        };
+        resolve_with(read, &report, table, &mut |_, _| names.clone())
+            .ok()
+            .map(Box::new)
+    } else {
+        None
+    };
     Ok(ElementTargets {
         file: source.file.clone(),
         files,
@@ -536,6 +586,7 @@ pub(super) fn resolve_rows(
         defaults,
         lift_lock,
         outside: Vec::new(),
+        one,
     })
 }
 

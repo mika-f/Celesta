@@ -1045,7 +1045,7 @@ impl EditorView {
         let Some((resolved, _)) = self.element_edit.resolved(self.selected_layer.as_deref()) else {
             return;
         };
-        let Ok(targets) = &resolved.outcome else {
+        let Some(targets) = self.shown_targets() else {
             return;
         };
         let layer = resolved.layer.clone();
@@ -1162,9 +1162,7 @@ impl EditorView {
             ControlEvent::ChoosePath => self.choose_element_path(key, cx),
             ControlEvent::ClearPath => {
                 let cleared = self
-                    .element_edit
-                    .resolved(self.selected_layer.as_deref())
-                    .and_then(|(resolved, _)| resolved.outcome.as_ref().ok())
+                    .shown_targets()
                     .and_then(|targets| targets.entry(key))
                     .and_then(|target| cleared_path(&target.target));
                 if let Some(value) = cleared {
@@ -1193,16 +1191,12 @@ impl EditorView {
     /// parse shows the row's message, and on blur, like an emptied row that
     /// can't remove its prop, the source's value again.
     fn submit_element_row(&mut self, key: &PropKey, blur: bool, cx: &mut Context<Self>) {
-        let (field, can_remove) = self
-            .element_edit
-            .resolved(self.selected_layer.as_deref())
-            .and_then(|(resolved, _)| resolved.outcome.as_ref().ok())
-            .map_or((None, false), |targets| {
-                let can_remove = targets
-                    .entry(key)
-                    .is_some_and(|target| self.row_removable(targets, key, target));
-                (row_field(targets, key).cloned(), can_remove)
-            });
+        let (field, can_remove) = self.shown_targets().map_or((None, false), |targets| {
+            let can_remove = targets
+                .entry(key)
+                .is_some_and(|target| self.row_removable(targets, key, target));
+            (row_field(targets, key).cloned(), can_remove)
+        });
         let Some(row) = self.element_rows.rows.get_mut(key) else {
             return;
         };
