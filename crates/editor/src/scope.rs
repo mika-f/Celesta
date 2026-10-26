@@ -300,7 +300,7 @@ pub(crate) fn scope_state(
     };
     let (index, refreshing) = match scanned(occurrences) {
         Ok(scanned) => scanned,
-        Err(state) => return state,
+        Err(note) => return ScopeState::Unknown { note },
     };
     let Some((element, _)) = index.instance_for(report) else {
         return not_found(refreshing);
@@ -311,19 +311,14 @@ pub(crate) fn scope_state(
     )
 }
 
-/// The index in use and whether it is refreshing, or the state while it
-/// can't answer.
-fn scanned(occurrences: Option<&OccurrenceState>) -> Result<(&OccurrenceIndex, bool), ScopeState> {
-    let unknown = |note: &str| ScopeState::Unknown {
-        note: note.to_owned(),
-    };
+/// The index in use and whether it is refreshing, or the `Unknown` note
+/// while it can't answer.
+fn scanned(occurrences: Option<&OccurrenceState>) -> Result<(&OccurrenceIndex, bool), String> {
     match occurrences {
         // No sweep runs (Select layers is off): none would answer.
-        None => Err(unknown(NOT_SCANNED)),
-        Some(OccurrenceState::Scanning) => Err(unknown(SCANNING)),
-        Some(OccurrenceState::Failed(message)) => {
-            Err(unknown(&format!("Couldn't scan scenes: {message}")))
-        }
+        None => Err(NOT_SCANNED.to_owned()),
+        Some(OccurrenceState::Scanning) => Err(SCANNING.to_owned()),
+        Some(OccurrenceState::Failed(message)) => Err(format!("Couldn't scan scenes: {message}")),
         Some(OccurrenceState::Ready(index)) => Ok((index, false)),
         Some(OccurrenceState::Refreshing(index)) => Ok((index, true)),
     }
@@ -367,7 +362,7 @@ pub(crate) fn window_scope_state(
     };
     let (index, refreshing) = match scanned(occurrences) {
         Ok(scanned) => scanned,
-        Err(state) => return (state, None),
+        Err(note) => return (ScopeState::Unknown { note }, None),
     };
     let instances: Vec<InstanceOccurrences> = index
         .elements
