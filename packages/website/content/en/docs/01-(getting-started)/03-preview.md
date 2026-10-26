@@ -72,7 +72,7 @@ At the top of the panel, above the header, one line says what committing a chang
 
 The line is shown for an element that is not shared: one with a single instance, or one written directly in a scene rather than inside one of your components. An element written inside one of your components with more than one instance, such as the `<Rect>` of `const PriceTag = ({ label }) => <Rect width={200} … />` used in Intro and Price, is shared. It shows **Edits change** with the options **This scene** and **Shared value** instead, and the **Shared** row and the timeline bands count the instances the option in effect changes.
 
-On the timeline, the **Composition** row marks where the element is drawn: a filled band for the selected layer in the current scene, and an outlined band for each other place an edit of it also changes. Hover over a band to see its scene (or its timecodes in a composition without chapters), its frames, and where that instance is rendered from; click a band to jump to its first frame. Bands of one instance less than a pixel apart at the current zoom are drawn as one, whose tooltip says how many ranges it covers. In the **Chapters** row, the chapters the selected layer appears in are underlined. Until the scan finishes, a single filled band shows the frames the layer's sequences let it be drawn in.
+On the timeline, the **Composition** row marks where the element is drawn: a filled band for the selected layer in the current scene, and an outlined band for each other place an edit of it also changes. Hover over a band to see its scene (or its timecodes in a composition without chapters), its frames, and where that instance is rendered from; click a band to jump to its first frame. Bands of one instance less than a pixel apart at the current zoom are drawn as one, whose tooltip says how many ranges it covers. In the **Chapters** row, the chapters the selected layer appears in are underlined. Until the scan finishes, a single filled band shows the frames the layer's sequences let it be drawn in. The filled band at the playhead also changes the element's timing, with grips or a **Set timing** button, and a chapter's end changes its scene's length, as described under "Change timing on the timeline" below.
 
 ## Move layers on the canvas
 
@@ -373,6 +373,112 @@ Meanwhile, a value set at the call, in a row with **Set at** or in the **Compone
 
 A drag, a scrub, or a text edit never waits for the scan. One that would write such a value doesn't begin while the line shows anything but the tabs, and says why with the line's text; one already under way is refused with it when you release or commit. One that began while the scenes were being scanned, writing a value set at the call, and ends after the scan found the element shared, is refused with **The scenes were scanned while editing; edit again**, since you didn't see the options when you began.
 
+## Change timing on the timeline
+
+In interactive mode, the timeline changes when the selected element is drawn and how long a scene lasts, and Celesta writes the result into your source. Nothing is written while you drag: the bands or the chapters, and a label beside the edge you hold, follow the pointer, and the preview keeps showing the frame at the playhead. The value is written once, when you release the mouse. A press that moves less than 3 pixels is a click and jumps as a click on the band or chapter does. Press Escape before releasing to put everything back without writing; starting playback also ends a drag without writing. Values are whole frames, and a drag can go past the edges of the timeline's view.
+
+While you drag, the edge you hold snaps to the playhead, to chapter edges, and to the edges of other bands that stay where they are, when it comes within 6 pixels of one; hold Shift to turn snapping off. An edge never snaps to where it started.
+
+### Drag an element's band
+
+When the selected element sits in a `<Sequence>` or a `<Series.Sequence>` of its own, the filled band at the playhead takes grips at that window's edges: the nearest one around the element counts, imported from `@celesta/react` under any name, such as `Seq` or `C.Sequence`. The pointer turns into a resize arrow over an edge; drag an edge to move it, or the middle to move the whole window:
+
+| Grip | `<Sequence>` writes | `<Series.Sequence>` writes |
+| --- | --- | --- |
+| Start edge | `from` and `durationInFrames`, so the end stays | `offset` and `durationInFrames` |
+| End edge | `durationInFrames` | `durationInFrames` |
+| Middle | `from` | `offset` |
+
+- The values are frames of the timeline the window is placed on, such as its scene's: `from={30}` dragged 15 frames to the right becomes `from={45}`.
+- A prop you left out starts from what the band shows, `from` and `offset` from 0 and `durationInFrames` from the window's length, and the drag adds it. Dragging the middle of a `<Sequence>` without `durationInFrames` adds it too, at the length shown, since without it the window would keep ending where its parent ends.
+- A window keeps at least one frame, and a `<Series.Sequence>` doesn't start before its `<Series>`.
+- Dragging the end or the middle of a `<Series.Sequence>` moves the items after it in the same `<Series>`, as `<Series>` places them. Dragging its start edge leaves them where they are.
+- Every band of the element drawn through the window moves with the drag, including those of items after it in a `<Series>`.
+
+The label names what changes, such as `from 30 → 45`, or `from 30 → 45 · durationInFrames 60 → 45` for the start edge. A `<Sequence>` whose frames are exactly those of the scene it is in, or of a part of it, counts as the scene's: it has no grips, and the element is treated as one without timing of its own (see "Give an element its own timing" below).
+
+Each value is written by the rules of "Move layers on the canvas": a number is replaced, a prop you left out is added, a `const` used once is replaced where it is declared, and a prop of your component, such as `start` in `<Sequence from={start}>`, is written where the component is called. When the window is written inside one of your components that several scenes draw, the drag follows the option chosen above the property sections, as described under "Edit one scene or every scene": **This scene** moves `from` and `durationInFrames` into new props of the component, such as `sequenceFrom`, and passes the new values at this scene's call; **Shared value** changes every scene that doesn't set its own. The label then has a second line, **Edits change this scene** or **Edits change the shared value**. As with a drag on the canvas, the option is the one in effect when you pressed, and if it can't write the drag by the time you release, nothing is written.
+
+A grip that can't drag shows a not-allowed pointer, and hovering over it shows why. A grip is locked by the reason of a prop it writes, as listed under "Move layers on the canvas": `from={cut - 9}` locks the start edge and the middle with **Written as an expression: cut - 9**, and the end edge still drags. Every grip is locked by these:
+
+| Reason | Meaning |
+| --- | --- |
+| Timing inside a loop or freeze frame can't be dragged | The window nearest the element is inside a `<Loop>` or a `<FreezeFrame>` |
+| Not a `<Sequence>` or `<Series.Sequence>` of @celesta/react | The window comes from another wrapper, or from a `Sequence` your file doesn't import from `@celesta/react` |
+| Couldn't find this element in the source | The file no longer has the window where the preview found it, such as while a save is still reloading |
+| The source is still being read | Celesta is reading the element's source, such as right after you select it |
+| This file is outside the project | The window is written in a file outside the entry file's folder, or inside `node_modules` |
+
+When a drag is released and nothing is written, a note beside the grip says why, until your next click. It starts with **Not written:** when the option you dragged under can't be used any more or the source was reloaded during the drag, such as **Not written: Scanning scenes…**; a write that fails gives its reason, such as **The source changed while editing**.
+
+### Drag a scene's end
+
+On the **Chapters** row, the end of a chapter drags when the chapter comes from a `defineScenes` entry Celesta can write. Dragging it changes the entry's `durationInFrames`, and the scenes after it in the same list move, as `defineScenes` places them. Over an end that drags, the pointer turns into a resize arrow and the end is highlighted. The label shows the change, such as `durationInFrames 90 → 100`.
+
+```ts
+const SCENES = defineScenes([
+  { id: 'intro', durationInFrames: 90, Scene: Intro },
+  { id: 'main', durationInFrames: 120, Scene: Main },
+]);
+```
+
+After every reload, Celesta reads the `.ts` and `.tsx` files in the entry file's folder and below (skipping `node_modules`, `dist`, `.tmp`, and `.git`) for `defineScenes([...])` calls whose list is written out: an array of `{ … }` entries whose `id` is a string. A list with anything else in it, such as `...CHAPTERS.map(…)`, is skipped. The chapter's id must belong to one entry only, and that entry's `durationInFrames` must be a number, or a `const` of the same file that nothing else reads and the file doesn't export.
+
+The composition's length follows the drag when the entry file writes it as the list's length, such as `<Composition durationInFrames={SCENES.durationInFrames}>`, where `SCENES` is the list's `const` in the same file, or is imported by name (also under another name) from a path without an extension, such as `import { SCENES } from './timeline'` for `timeline.ts`, `timeline.tsx`, or a `timeline` folder's `index.ts`. Then lengthening a scene lengthens the composition. Otherwise, such as with `durationInFrames={300}`, the composition keeps its length: the drag stops before a scene after the dragged one would start at or after the composition's end, and before the dragged end passes it, and **The composition is 300 frames long** shows beside the end.
+
+- A scene can shrink to 0 frames, which keeps it in the list but never plays it, and no scene after it starts before the list's first scene.
+- A chapter cut short by the composition's end is written as the length you see plus the drag; dragging it back to exactly its entry's length writes nothing.
+- Only the scenes after the dragged one in its list move. Chapters from other lists, and chapters you list yourself, such as with `listChapters()`, stay where they are.
+- The end snaps to the playhead and to the edges of the chapters that don't move.
+- A scene list is not a prop of a component, so **Edits change** doesn't apply.
+
+An end that can't drag shows a not-allowed pointer, and hovering over it shows why:
+
+| Reason | Meaning |
+| --- | --- |
+| Reading source… | Celesta is still reading the files for the current reload |
+| Can't find scene `<id>` in the source | No written-out list has an entry with this id, or more than one does, such as for a part listed inside a scene or a list with a spread |
+| Written as an expression: `<expression>` | The length is computed, such as `S.field - S.words`; the next lines of the tooltip list each name it reads, with its value, such as `BAR = 30`, or with why it can't be traced |
+| Exported, so other files may read it | The length is a `const` the file exports, so changing it could change other files |
+| `<name>` is used in `<count>` places | The `const` is read elsewhere too |
+| Scene `<id>` has no durationInFrames | The entry leaves out its length |
+
+If the entry changed or got locked by the time you release, nothing is written and the label says why, such as **Not written: The source changed while editing**, until your next click.
+
+### Give an element its own timing
+
+An element without a window of its own, such as a background drawn for its whole scene, has no grips. Instead, a **Set timing** button sits at the start of its filled band at the playhead. Clicking it pauses playback and wraps the element in a `<Sequence>` that starts at the playhead and runs to the end of the scene:
+
+```tsx
+// before: the playhead is 45 frames into a 120-frame scene
+<Rect width={1280} height={720} fill="#14161C" />
+
+// after
+<Sequence from={45} durationInFrames={75}>
+  <Rect width={1280} height={720} fill="#14161C" />
+</Sequence>
+```
+
+- `from` counts from the start of the scene the element is drawn in. An element placed on the composition's own timeline, outside any `<Scenes>` or `<Sequence>`, gets the playhead's frame as `from` and runs to the end of the scene at the playhead, or to the composition's end outside every chapter.
+- The `<Sequence>` is indented like the element and the element one level deeper, with the tabs or spaces your file uses; nothing else is reformatted. An element that shares its line with other code, such as `<Group><Rect /></Group>`, is wrapped on that line.
+- `Sequence` is added to the file's import from `@celesta/react`, in order when its names are sorted, or on a new import line after the last import. A file that imports it under another name gets that name, such as `<Seq>` or `<C.Sequence>`.
+- It is one change: one undo removes the `<Sequence>` and the import together.
+
+The button's tooltip says **Animations inside start at the new start**. Inside a `<Sequence>`, `useCurrentFrame()` counts from the `<Sequence>`'s start, so a component inside the new `<Sequence>` that reads the frame, such as a title fading in with `interpolate(frame, [0, 20], [0, 1])`, now plays its animation from the playhead instead of the scene's start. That is what `<Sequence>` does, and Celesta leaves it so. A value computed outside the new `<Sequence>`, such as an `opacity` the scene's component computes from its own `frame`, keeps its timing; the element is just drawn on fewer frames.
+
+For an element written inside one of your components that several scenes draw, **Set timing** writes the component, so every scene changes. It follows the option chosen above the property sections: it works under **Shared value**, and the `from` then counts from each scene's start. The button is disabled with the reason when it can't write:
+
+| Reason | Meaning |
+| --- | --- |
+| Wrap the element in a parent first | The element is not a child of another element: it is the root of what a component returns, a prop's value, or written inside `{…}`, such as `{show && <Rect />}` or `.map()` |
+| `Sequence` here is not Celesta's | The file uses the name `Sequence` for something else: its own declaration, a type-only import, or an import from another module |
+| No frame left after the playhead | The playhead is at the end of the scene |
+| Can't be set per scene yet | The element is shared and **This scene** is chosen; choose **Shared value** to give every scene the timing |
+| Scanning scenes… | The scan hasn't told yet whether the element is shared; when it can't tell, one of the other texts under "While the scenes are scanned" shows instead |
+| This file is outside the project | The element's file is outside the entry file's folder, or inside `node_modules` |
+
+While Celesta reads the element's source, such as right after you select it or move the playhead, the button is hidden. If the write fails, such as when the file changed meanwhile, a note beside the band says why, starting with **Not written:**, until your next click.
+
 ## Undo
 
-Undo (`⌘ Z`, `Ctrl Z`) and redo (`⌘ Shift Z`, `Ctrl Shift Z`) step through the changes Celesta wrote, whether from the canvas, the property rows, or the props file's **Properties** section, in one history that holds up to 100 changes and is cleared when you open another file. Each committed row, switch, menu choice, picked color, chosen file, scrub, removed prop, and text edited on the canvas is one change. A change that wrote two files, such as a component's call site and the component, is undone and redone as one step. If a file the change wrote was edited elsewhere since, Celesta refuses to undo it rather than overwrite your edit, and neither file changes.
+Undo (`⌘ Z`, `Ctrl Z`) and redo (`⌘ Shift Z`, `Ctrl Shift Z`) step through the changes Celesta wrote, whether from the canvas, the property rows, or the props file's **Properties** section, in one history that holds up to 100 changes and is cleared when you open another file. Each committed row, switch, menu choice, picked color, chosen file, scrub, removed prop, text edited on the canvas, dragged band or scene end, and **Set timing** is one change. A change that wrote two files, such as a component's call site and the component, is undone and redone as one step. If a file the change wrote was edited elsewhere since, Celesta refuses to undo it rather than overwrite your edit, and neither file changes.
