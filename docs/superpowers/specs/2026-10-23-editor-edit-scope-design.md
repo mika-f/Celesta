@@ -230,7 +230,9 @@ scene not through `S`. The rest are per row: the row is locked with its text,
 and the option is disabled only when no row can be written under it (with the
 first row's reason).
 
-"Shared value" has only row locks, and is disabled when every row is locked:
+"Shared value" has only row locks, and is disabled when every row is locked
+by one of these, except "This scene sets its own", which locks the row only
+and never the option:
 
 | Case | Reason text |
 | --- | --- |

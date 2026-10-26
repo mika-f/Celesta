@@ -333,7 +333,7 @@ function PriceTag({ label, rectWidth = 200 }: Props) {
 | Can't be set per scene yet | 値がキーフレームでアニメーションする、`style={{ … }}` のオブジェクトの中にある、または入力の行の `const` である |
 | This file is outside the project | コンポーネントのファイルか呼び出しのファイルが、エントリファイルのフォルダの外か `node_modules` の中にある |
 
-**Shared value** では、次の場合に行がロックされ、すべての行がロックされると選択肢を選べなくなります。
+**Shared value** では、次の場合に行がロックされ、すべての行がロックされると選択肢を選べなくなります。ただし **This scene sets its own** は行をロックするだけで、選択肢を選べなくすることはありません。
 
 | 理由 | 意味 |
 | --- | --- |

@@ -204,9 +204,10 @@ amended to match.
   ("Use the shared value") deletes the attribute at `S`; the row then shows
   and edits the default. A lock of the default itself (`EverySceneSets`, an
   expression, no pattern, not found) takes precedence, since removing the
-  value at `S` would not make those editable. Through `row_lock`, "Shared
-  value" is disabled with this text when every row in its scope is one this
-  scene sets.
+  value at `S` would not make those editable. The lock is the row's only:
+  `row_lock` never disables "Shared value" for it, so with "This scene"
+  locked (two calls in the scene, say) "Shared value" is still in effect and
+  the row's removal is the way to edit the shared value from this scene.
 - **"Shared value" on a parameter** writes the default's span; a parameter
   without a default that some call leaves out gets one; without a default and
   passed everywhere, the row locks ("Every scene sets `rectWidth` itself"); an
@@ -222,10 +223,7 @@ amended to match.
   `width`) is removable when its parameter has a literal default, which then
   applies (`removable`, so every option and none agree); with an absent
   default the prop stays required, and a row this scene sets itself under
-  "Shared value" then has no way out but a scene that leaves it out. A
-  remembered "Shared value" disabled because this scene sets every row
-  itself shows the rows unscoped, and `commit_gate` refuses their removal
-  with the lock's text.
+  "Shared value" then has no way out but a scene that leaves it out.
 - **The scope control stays in view.** The box `impact_line` returns (the
   control, its scanning note, or design 1's line) is a non-scrolling child
   above the Properties panel's scroll area, so it can be seen and switched
@@ -408,7 +406,10 @@ the same scene for each of the first three checks, for the pull request.
 - Add a second `<PriceTag>` to `Price.tsx` in an external editor and select
   the `<Rect>` again: the outside change forgot the choices, [This scene] is
   disabled ("`<PriceTag>` is called more than once in this scene"), and
-  [Shared value] is raised.
+  [Shared value] is raised. With the first call passing `rectWidth={260}`
+  over `rectWidth = 200`, the Width row shows 260, locked with "This scene
+  sets its own `rectWidth`", and [Shared value] stays raised; its remove
+  button removes `rectWidth={260}` from that call only.
 - Choose [Shared value] for one element of `PriceTag`, then make a [This
   scene] edit of another element of it that lifts a value (the new field in
   `interface Props` moves both elements down a line): the edited element

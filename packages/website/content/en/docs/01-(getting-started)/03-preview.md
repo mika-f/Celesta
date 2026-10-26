@@ -333,7 +333,7 @@ The next reasons belong to a row. Under **This scene**, the row is locked with i
 | Can't be set per scene yet | The value is animated with keyframes, is in a `style={{ … }}` object, or is an input row's `const` |
 | This file is outside the project | The component's file or the call's file is outside the entry file's folder, or inside `node_modules` |
 
-Under **Shared value**, a row is locked, and the option disabled when every row is:
+Under **Shared value**, a row is locked, and the option disabled when every row is, except by **This scene sets its own**, which locks the row but never the option:
 
 | Reason | Meaning |
 | --- | --- |
