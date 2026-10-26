@@ -470,6 +470,13 @@ pub(crate) fn menu_items(
         .collect()
 }
 
+/// Whether a frame is to ask for the children space of `parent` (the group
+/// an addition goes into, by its layer id): its space is not `reported`,
+/// and no frame was asked for it since the facts were read (`asked`).
+pub(crate) fn space_request_due(parent: Option<&str>, reported: bool, asked: Option<&str>) -> bool {
+    parent.is_some_and(|parent| !reported && asked != Some(parent))
+}
+
 /// The element the add mode draws.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct AddTool {
@@ -773,6 +780,9 @@ pub(crate) struct AddState {
     /// A group's children space as the preview last reported it, by its
     /// layer id: `None` inside when it turns in 3D.
     space: Option<(String, Option<[f64; 6]>)>,
+    /// The group whose space a frame was asked for (see
+    /// [`space_request_due`]), until the facts are read again.
+    asked: Option<String>,
     /// The selection of the element just added, and the reload that reads
     /// it: one requested at or after that number.
     pending: Option<(PendingSelect, u64)>,
@@ -799,7 +809,7 @@ impl EditorView {
     /// Starts reading the groups of the selected layer's chain (see
     /// [`parent_facts`]) when its lookup has an answer they were not read
     /// for. Reads and parses the files on the background executor; once
-    /// read, a frame asks for the parent's space unless it is known.
+    /// read, the parent's space is asked for (see [`Self::ask_add_space`]).
     pub(crate) fn sync_add_facts(&mut self, cx: &mut Context<Self>) {
         if !self.picks_layers() {
             return;
@@ -842,14 +852,7 @@ impl EditorView {
                 .await;
             view.update(cx, |this, cx| {
                 if this.add.wanted.as_ref() == Some(&lookup) {
-                    this.add.facts = Some(ParentFacts { lookup, groups });
-                    // A parent whose space is not reported yet: the next
-                    // frame asks (later frames ask anyway).
-                    if let Some(parent) = this.add_space_of()
-                        && this.add_space(&parent).is_none()
-                    {
-                        this.refresh_preview();
-                    }
+                    this.add.set_facts(ParentFacts { lookup, groups });
                     cx.notify();
                 }
             })
@@ -926,7 +929,9 @@ impl EditorView {
                     Some(Some(space)) if invert_affine(space).is_none() => {
                         Some(SCALED_TO_ZERO.to_owned())
                     }
-                    _ => None,
+                    Some(Some(_)) => None,
+                    // A drawing needs it, and the release would refuse.
+                    None => Some(READING.to_owned()),
                 }
             }),
         };
@@ -954,6 +959,21 @@ impl EditorView {
             return None;
         }
         self.add_target().ok().map(|(parent, _)| parent.layer_id)
+    }
+
+    /// Draws a frame asking for the parent's children space when it is
+    /// due (see [`space_request_due`]): the parent became known or changed
+    /// (the facts landed, the scope was switched, the targets or the scene
+    /// scan answered, playback paused) and no frame asked for it since.
+    pub(crate) fn ask_add_space(&mut self) {
+        let parent = self.add_space_of();
+        let reported = parent
+            .as_deref()
+            .is_some_and(|parent| self.add_space(parent).is_some());
+        if space_request_due(parent.as_deref(), reported, self.add.asked.as_deref()) {
+            self.add.asked = parent;
+            self.refresh_preview();
+        }
     }
 
     /// The parent whose added layer a frame asks for: on every frame while
@@ -1336,6 +1356,13 @@ impl EditorView {
 }
 
 impl AddState {
+    /// The groups read for a lookup: the parent's space is asked for again,
+    /// as the parent may be another group now.
+    fn set_facts(&mut self, facts: ParentFacts) {
+        self.facts = Some(facts);
+        self.asked = None;
+    }
+
     /// Reload `sequence` applied, its first frame being preview generation
     /// `from`. The groups and their spaces are read again from the
     /// reloaded code (a write to the parent may have moved or turned it):
@@ -1346,6 +1373,7 @@ impl AddState {
         self.facts = None;
         self.wanted = None;
         self.space = None;
+        self.asked = None;
         if let Some((pending, after)) = &mut self.pending
             && sequence >= *after
             && pending.from.is_none()
@@ -2480,6 +2508,42 @@ mod tests {
             )
         );
         assert!(clashing[1..].iter().all(|(_, why)| why.is_none()));
+    }
+
+    #[test]
+    fn a_parent_s_space_is_asked_for_once_until_reported() {
+        // A parent whose space is not reported, not asked for yet.
+        assert!(space_request_due(Some("g"), false, None));
+        // Reported: nothing to ask.
+        assert!(!space_request_due(Some("g"), true, None));
+        assert!(!space_request_due(Some("g"), true, Some("g")));
+        // Asked for and not answered yet: not again.
+        assert!(!space_request_due(Some("g"), false, Some("g")));
+        // Another parent (a scope switched, targets resolved): due again.
+        assert!(space_request_due(Some("h"), false, Some("g")));
+        // No parent.
+        assert!(!space_request_due(None, false, None));
+        assert!(!space_request_due(None, false, Some("g")));
+    }
+
+    #[test]
+    fn a_reload_or_new_facts_ask_for_the_space_again() {
+        let mut state = AddState {
+            asked: Some("g".to_owned()),
+            ..waiting_state()
+        };
+        state.reload_applied(3, 20);
+        assert!(state.asked.is_none());
+
+        let mut landed = AddState {
+            asked: Some("g".to_owned()),
+            ..waiting_state()
+        };
+        landed.set_facts(ParentFacts {
+            lookup: ("g".to_owned(), report(vec![], vec![]), 31),
+            groups: vec![],
+        });
+        assert!(landed.asked.is_none());
     }
 
     #[test]
