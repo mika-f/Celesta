@@ -92,16 +92,11 @@ fn a_list_with_a_spread_is_skipped() {
 
 #[test]
 fn a_const_duration_resolves_to_the_const() {
-    let text = "const INTRO = 90;\nexport const OUTRO = 60;\nexport const SCENES = defineScenes([\n  { id: 'intro', durationInFrames: INTRO },\n  { id: 'outro', durationInFrames: OUTRO },\n]);\n";
+    let text = "const INTRO = 90;\nexport const SCENES = defineScenes([\n  { id: 'intro', durationInFrames: INTRO },\n]);\n";
     let list = &lists(text)[0];
     assert_eq!(
         number_at(text, &list.entries[0].duration),
         ("90".into(), 90.0)
-    );
-    // An exported const too.
-    assert_eq!(
-        number_at(text, &list.entries[1].duration),
-        ("60".into(), 60.0)
     );
 
     // A const read twice is shared.
@@ -120,6 +115,66 @@ fn a_const_duration_resolves_to_the_const() {
         lists(text)[0].entries[0].duration,
         EditTarget::Locked(LockReason::UnresolvedIdentifier { name: "LEN".into() })
     );
+}
+
+#[test]
+fn an_exported_const_duration_is_locked() {
+    // Other files may read it: writing it would move them too.
+    let text = "export const OUTRO = 60;\nexport const SCENES = defineScenes([\n  { id: 'outro', durationInFrames: OUTRO },\n]);\n";
+    assert_eq!(
+        lists(text)[0].entries[0].duration,
+        EditTarget::Locked(LockReason::Exported {
+            name: "OUTRO".into(),
+        })
+    );
+
+    // Exported by a list of names, under its own name or another.
+    for export in ["export { OUTRO };", "export { OUTRO as END };"] {
+        let text = format!(
+            "const OUTRO = 60;\n{export}\nexport const SCENES = defineScenes([\n  {{ id: 'outro', durationInFrames: OUTRO }},\n]);\n"
+        );
+        assert_eq!(
+            lists(&text)[0].entries[0].duration,
+            EditTarget::Locked(LockReason::Exported {
+                name: "OUTRO".into(),
+            }),
+            "{export}"
+        );
+    }
+
+    // Read twice too, it is exported first.
+    let text = "export const LEN = 60;\nexport const SCENES = defineScenes([\n  { id: 'a', durationInFrames: LEN },\n  { id: 'b', durationInFrames: LEN },\n]);\n";
+    assert_eq!(
+        lists(text)[0].entries[0].duration,
+        EditTarget::Locked(LockReason::Exported { name: "LEN".into() })
+    );
+    // Other locks stay.
+    let text = "export const LEN = spring(1);\nexport const SCENES = defineScenes([\n  { id: 'a', durationInFrames: LEN },\n]);\n";
+    assert_eq!(
+        lists(text)[0].entries[0].duration,
+        EditTarget::Locked(LockReason::UnsupportedCall {
+            callee: "spring".into(),
+        })
+    );
+
+    // Another export of the file leaves the const editable.
+    let text = "const OUTRO = 60;\nexport const END = 1;\nexport const SCENES = defineScenes([\n  { id: 'outro', durationInFrames: OUTRO },\n]);\n";
+    assert_eq!(
+        number_at(text, &lists(text)[0].entries[0].duration),
+        ("60".into(), 60.0)
+    );
+}
+
+#[test]
+fn an_entry_without_a_duration_is_locked() {
+    let text = "export const SCENES = defineScenes([\n  { id: 'intro' },\n  { id: 'outro', durationInFrames: 60 },\n]);\n";
+    let list = &lists(text)[0];
+    assert_eq!(ids(list), ["intro", "outro"]);
+    assert_eq!(
+        list.entries[0].duration,
+        EditTarget::Locked(LockReason::NoSceneDuration { id: "intro".into() })
+    );
+    assert!(list.entries[0].inputs.is_empty());
 }
 
 #[test]

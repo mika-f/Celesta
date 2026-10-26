@@ -301,6 +301,18 @@ fn transform_reason_texts_match_spec() {
             "This file is outside the project",
         ),
         (LockReason::StyleMaySet, "May be set by `style`"),
+        (
+            LockReason::Exported {
+                name: "INTRO".to_string(),
+            },
+            "Exported, so other files may read it",
+        ),
+        (
+            LockReason::NoSceneDuration {
+                id: "intro".to_string(),
+            },
+            "Scene `intro` has no durationInFrames",
+        ),
     ];
     for (reason, text) in cases {
         assert_eq!(reason_text(&reason), text);

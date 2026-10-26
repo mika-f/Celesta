@@ -6,16 +6,17 @@ use std::path::Path;
 
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
-    CallExpression, Declaration, Expression, JSXAttributeItem, JSXAttributeName, JSXAttributeValue,
-    JSXOpeningElement, ObjectExpression, ObjectPropertyKind, Program, PropertyKind, Statement,
-    VariableDeclaration, VariableDeclarationKind,
+    CallExpression, Declaration, ExportDefaultDeclarationKind, Expression, JSXAttributeItem,
+    JSXAttributeName, JSXAttributeValue, JSXOpeningElement, ModuleExportName, ObjectExpression,
+    ObjectPropertyKind, Program, PropertyKind, Statement, VariableDeclaration,
+    VariableDeclarationKind,
 };
 use oxc_ast_visit::Visit;
 use oxc_span::GetSpan;
 
 use crate::imports::Module;
 use crate::inputs::inputs_at;
-use crate::resolve::{EditTarget, LockReason, Span, property_insert_at, resolve_value_at};
+use crate::resolve::{EditTarget, LockReason, Span, resolve_value_at};
 use crate::shape::{span_of, string_of};
 use crate::{parse_checked_as, source_type_of};
 
@@ -33,8 +34,8 @@ pub struct SceneList {
 pub struct SceneItem {
     pub id: String,
     /// The entry's `durationInFrames`, by the rules of a prop value (a
-    /// `const` of the file read too); `Missing` after the last property
-    /// when it is not written.
+    /// `const` of the file read too); `Exported` for a `const` the file
+    /// exports, `NoSceneDuration` when it is not written.
     pub duration: EditTarget,
     /// When `duration` is an expression, the identifiers it reads.
     pub inputs: Vec<(String, EditTarget)>,
@@ -51,14 +52,12 @@ pub fn scene_lists(text: &str, path: &Path) -> Vec<SceneList> {
         return Vec::new();
     }
     let mut calls = Calls {
-        text,
         lists: Vec::new(),
         bindings: Vec::new(),
     };
     calls.visit_program(&program);
-    let Calls {
-        lists, bindings, ..
-    } = calls;
+    let Calls { lists, bindings } = calls;
+    let exported = exported_names(&program);
     lists
         .into_iter()
         .map(|(start, entries)| SceneList {
@@ -68,7 +67,7 @@ pub fn scene_lists(text: &str, path: &Path) -> Vec<SceneList> {
                 .map(|(_, name)| name.clone()),
             entries: entries
                 .into_iter()
-                .map(|(id, duration)| item(&program, text, id, duration))
+                .map(|(id, duration)| item(&program, text, &exported, id, duration))
                 .collect(),
         })
         .collect()
@@ -130,18 +129,38 @@ pub fn composition_length(text: &str, path: &Path) -> Option<CompositionLength> 
 
 /// An entry's `durationInFrames` as written.
 enum Duration {
-    /// The value expression.
-    Value(Span),
+    /// The value expression, and the name it reads when it is a bare
+    /// identifier.
+    Value(Span, Option<String>),
     /// A method or accessor: its source.
     Other(Span),
-    /// Not written: properties go at `insert_at`.
-    Absent { insert_at: u32 },
+    /// Not written (`defineScenes` throws on it).
+    Absent,
 }
 
-fn item(program: &Program<'_>, text: &str, id: String, duration: Duration) -> SceneItem {
+/// An entry of a list: its duration resolved as a prop value, except that
+/// a `const` the file exports is locked (writing it would change the files
+/// importing it too), and a missing one is locked.
+fn item(
+    program: &Program<'_>,
+    text: &str,
+    exported: &[String],
+    id: String,
+    duration: Duration,
+) -> SceneItem {
     let (duration, inputs) = match duration {
-        Duration::Value(span) => {
-            let duration = resolve_value_at(program, text, span);
+        Duration::Value(span, name) => {
+            // An `export { X }` reads `X` too: exported, it is not shared
+            // within the file only.
+            let exported = name.filter(|name| exported.contains(name));
+            let duration = match (resolve_value_at(program, text, span), exported) {
+                (
+                    EditTarget::Locked(LockReason::SharedBinding { .. })
+                    | EditTarget::Literal { .. },
+                    Some(name),
+                ) => EditTarget::Locked(LockReason::Exported { name }),
+                (duration, _) => duration,
+            };
             let inputs = match duration {
                 EditTarget::Locked(LockReason::Expression { .. }) => inputs_at(program, text, span),
                 _ => Vec::new(),
@@ -154,11 +173,8 @@ fn item(program: &Program<'_>, text: &str, id: String, duration: Duration) -> Sc
             }),
             Vec::new(),
         ),
-        Duration::Absent { insert_at } => (
-            EditTarget::Missing {
-                insert_at,
-                default: None,
-            },
+        Duration::Absent => (
+            EditTarget::Locked(LockReason::NoSceneDuration { id: id.clone() }),
             Vec::new(),
         ),
     };
@@ -171,13 +187,12 @@ fn item(program: &Program<'_>, text: &str, id: String, duration: Duration) -> Sc
 
 /// The `defineScenes` calls, by the offset of the call, and the `const`s
 /// that hold a call, by the same offset.
-struct Calls<'t> {
-    text: &'t str,
+struct Calls {
     lists: Vec<(u32, Vec<(String, Duration)>)>,
     bindings: Vec<(u32, String)>,
 }
 
-impl<'a> Visit<'a> for Calls<'_> {
+impl<'a> Visit<'a> for Calls {
     fn visit_variable_declaration(&mut self, it: &VariableDeclaration<'a>) {
         if it.kind == VariableDeclarationKind::Const {
             for d in &it.declarations {
@@ -194,7 +209,7 @@ impl<'a> Visit<'a> for Calls<'_> {
 
     fn visit_call_expression(&mut self, it: &CallExpression<'a>) {
         if matches!(it.callee.without_parentheses(), Expression::Identifier(id) if id.name == "defineScenes")
-            && let Some(entries) = list_of(it, self.text)
+            && let Some(entries) = list_of(it)
         {
             self.lists.push((it.span.start, entries));
         }
@@ -205,7 +220,7 @@ impl<'a> Visit<'a> for Calls<'_> {
 /// The entries of a `defineScenes([...])` call, or `None` when its
 /// argument is anything but an array literal of object literals with
 /// string-literal ids.
-fn list_of(call: &CallExpression<'_>, text: &str) -> Option<Vec<(String, Duration)>> {
+fn list_of(call: &CallExpression<'_>) -> Option<Vec<(String, Duration)>> {
     let Expression::ArrayExpression(array) = call
         .arguments
         .first()?
@@ -219,7 +234,7 @@ fn list_of(call: &CallExpression<'_>, text: &str) -> Option<Vec<(String, Duratio
         .iter()
         .map(
             |element| match element.as_expression()?.without_parentheses() {
-                Expression::ObjectExpression(object) => entry_of(object, text),
+                Expression::ObjectExpression(object) => entry_of(object),
                 _ => None,
             },
         )
@@ -229,7 +244,7 @@ fn list_of(call: &CallExpression<'_>, text: &str) -> Option<Vec<(String, Duratio
 /// An entry's id and `durationInFrames` (a later key wins, as at runtime),
 /// or `None` when a spread or a computed key may set either, or the id is
 /// not a string literal.
-fn entry_of(object: &ObjectExpression<'_>, text: &str) -> Option<(String, Duration)> {
+fn entry_of(object: &ObjectExpression<'_>) -> Option<(String, Duration)> {
     let mut id = None;
     let mut duration = None;
     for property in &object.properties {
@@ -252,7 +267,11 @@ fn entry_of(object: &ObjectExpression<'_>, text: &str) -> Option<(String, Durati
             }
             Some("durationInFrames") => {
                 duration = Some(if plain {
-                    Duration::Value(span_of(p.value.span()))
+                    let name = match p.value.without_parentheses() {
+                        Expression::Identifier(name) => Some(name.name.to_string()),
+                        _ => None,
+                    };
+                    Duration::Value(span_of(p.value.span()), name)
                 } else {
                     Duration::Other(span_of(p.span))
                 });
@@ -260,14 +279,7 @@ fn entry_of(object: &ObjectExpression<'_>, text: &str) -> Option<(String, Durati
             _ => {}
         }
     }
-    let duration = duration.unwrap_or_else(|| Duration::Absent {
-        insert_at: property_insert_at(
-            text,
-            span_of(object.span),
-            object.properties.last().map(|p| p.span().end),
-        ),
-    });
-    Some((id?, duration))
+    Some((id?, duration.unwrap_or(Duration::Absent)))
 }
 
 /// Finds the first `<Composition>` and the `X` of its
@@ -324,6 +336,41 @@ fn list_duration(opening: &JSXOpeningElement<'_>) -> Option<String> {
         }
         _ => None,
     }
+}
+
+/// The local names the file exports: `export const X`, `export { X }`
+/// (`as` another name too) and `export default X`.
+fn exported_names(program: &Program<'_>) -> Vec<String> {
+    let mut names = Vec::new();
+    for stmt in &program.body {
+        match stmt {
+            Statement::ExportDeclaration(export) => {
+                if let Declaration::VariableDeclaration(decl) = &export.declaration {
+                    names.extend(
+                        decl.declarations
+                            .iter()
+                            .filter_map(|d| d.id.get_binding_identifier())
+                            .map(|id| id.name.to_string()),
+                    );
+                }
+            }
+            Statement::ExportNamedDeclaration(export) => {
+                names.extend(export.specifiers.iter().filter_map(
+                    |specifier| match &specifier.local {
+                        ModuleExportName::IdentifierReference(id) => Some(id.name.to_string()),
+                        _ => None,
+                    },
+                ));
+            }
+            Statement::ExportDefaultDeclaration(export) => {
+                if let ExportDefaultDeclarationKind::Identifier(id) = &export.declaration {
+                    names.push(id.name.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    names
 }
 
 /// The names the file's top-level `const`s (exported ones too) declare.

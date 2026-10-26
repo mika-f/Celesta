@@ -154,6 +154,14 @@ pub enum LockReason {
     CallSiteNotFound {
         component: String,
     },
+    /// The value is a `const` the file exports: other files may read it.
+    Exported {
+        name: String,
+    },
+    /// A `defineScenes` entry without `durationInFrames`.
+    NoSceneDuration {
+        id: String,
+    },
 }
 
 /// What the runtime reported about the element in the current frame.

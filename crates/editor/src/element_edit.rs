@@ -341,6 +341,8 @@ pub(crate) fn reason_text(reason: &LockReason) -> String {
         LockReason::CallSiteNotFound { component } => {
             format!("Can't find where `<{component}>` is called")
         }
+        LockReason::Exported { .. } => "Exported, so other files may read it".to_owned(),
+        LockReason::NoSceneDuration { id } => format!("Scene `{id}` has no durationInFrames"),
     }
 }
 
