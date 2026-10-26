@@ -84,6 +84,7 @@ fn instance(chain: Vec<SourcePos>, ranges: Vec<(u64, u64)>) -> InstanceOccurrenc
         chain,
         ranges,
         max_per_frame: 1,
+        wrappers: Vec::new(),
     }
 }
 
