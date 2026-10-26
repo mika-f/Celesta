@@ -116,7 +116,7 @@ A layer inside a `<Group>` or `<Stack>` moves with its parent. A child of a `<St
 
 ### Turn about the center or the pivot
 
-While **Select layers** is on and a layer is selected, a row of tools sits at the top of the viewer, above the frame (which makes room for it), with two labelled toggles; in each, the choice you made is the raised tab. The first, **Rotate about** [**Center** | **Pivot**], sets what the rotation handle and the **Scale** handles turn about; a cross on the selected layer marks that point:
+While **Select layers** is on, a row of tools sits at the top of the viewer, above the frame (which makes room for it). It starts with the **Add** menu, described under "Add elements on the canvas" below. While a layer is selected, two labelled toggles follow it; in each, the choice you made is the raised tab. The first, **Rotate about** [**Center** | **Pivot**], sets what the rotation handle and the **Scale** handles turn about; a cross on the selected layer marks that point:
 
 - **Pivot**, the default, turns the layer about its pivot, the point the renderer turns it about: its anchor (`anchorX` and `anchorY` of its box, the top-left corner unless you set them), moved by `originX` and `originY` when you set those. Only `rotation` or the scale is written. The cross sits on the pivot, and Alt-dragging it moves the anchor (see "Move the anchor" below).
 - **Center** keeps the middle of the layer's box where it is. To do that, Celesta also writes `x` and `y`: a rotation writes `rotation`, `x`, and `y` together, as one change, which writes two files when `x` and `y` are passed through from a component call. The cross sits on the middle of the box. It only marks that point: its tooltip says **Rotates about the center; switch to Pivot to move the anchor** (or, when the anchor couldn't move in **Pivot** either, **Rotates about the center; the anchor can't move:** and the reason, as listed under "Move the anchor"; for an element without anchor props, such as a `<Path>`, just **Rotates about the center**). Holding Alt over it and pressing does nothing.
@@ -482,6 +482,87 @@ For an element written inside one of your components that several scenes draw, *
 | This file is outside the project | The element's file is outside the entry file's folder, or inside `node_modules` |
 
 While Celesta reads the element's source, such as right after you select it or move the playhead, the button is hidden. If the write fails, such as when the file changed meanwhile, a note beside the band says why, starting with **Not written:**, until your next click.
+
+## Add elements on the canvas
+
+In interactive mode, the **Add** menu at the start of the tool row adds a **Rect**, **Ellipse**, **Circle**, **Text**, **Image**, or **Video** to your source: choose one, then draw it on the canvas. The new element is written into a `<Group>`, its parent, as that group's last child, so it is drawn in front of the group's other children.
+
+### Where the element goes
+
+The menu's first line names the parent, such as **Add to `<Group>` in `<PriceTag>`**, where `PriceTag` is the component the group is written in (just **Add to `<Group>`** outside your components). The parent is the selected layer when it is a `<Group>`, otherwise the nearest `<Group>` around it, as listed under **Source chain**. To add into another group, select it, for example with its row's **Select** button. A group can be the parent when it is Celesta's `<Group>` (imported under any name), is written in a file inside the project, and has children written between its tags. A group whose only child is `{children}` or another prop, such as `{props.children}`, shows what its caller passes, so the nearest group around it is taken instead; a `{items.map(…)}` child is fine, and the new element goes after it. An empty `<Group />` draws nothing to click, so it can't be the parent yet.
+
+When the group is shared, that is, written in a component drawn from more than one place in your code or in more than one scene, the **Edits change** control of the selected element decides. With **Shared value**, the element is added into that group, so every place that draws the component gets it. With **This scene**, and when the selected element offers no such control, Celesta passes over shared groups and adds into the nearest group around them that is written in the scene's own code; the first line then ends with **· This scene**.
+
+### Draw it
+
+Choosing an item pauses playback. The button then names it, such as **Adding Rect**, and a line beside it names the parent and says what to do, such as **to `<Group>` in `<PriceTag>` · Drag a box, or click · Esc cancels**. The pointer is a crosshair over the canvas, and while you drag, an outline in the accent color shows what will be written.
+
+| Item | Draw | A click without dragging makes |
+| --- | --- | --- |
+| **Rect**, **Ellipse** | Drag a box | A 200 × 200 box, its top-left corner at the click |
+| **Circle** | Drag from the center outward | A radius of 100 around the click |
+| **Text** | Click where the text starts | — |
+| **Image**, **Video** | Choose a file, then drag a box: the drag sets the width, and the height follows the file's proportions | A width of 400, its top-left corner at the click |
+
+A press that moves less than 4 pixels on the screen is a click. Sizes are in the parent's units, so the element appears where you drew it: in a group scaled by 2, a box dragged 200 pixels wide is written as `width={100}`, and in a rotated group the element is turned with the group. No side is smaller than 1. When Celesta can't read a file's proportions, such as an SVG's, the outline follows your drag, but only the width is written, so the picture keeps its own proportions.
+
+**Image** and **Video** open a file dialog first. Its path is written relative to the entry file's folder, and a file from outside that folder is copied into its `assets` folder first, as **Choose…** in a **Source** row does. Closing the dialog without a file ends the addition.
+
+Start the drag inside the frame; it may end outside it. Escape cancels without writing. One drag or click adds one element; choose the item again to add another. The addition also ends when the selection changes, when you turn **Select layers** off or start playback, and when the composition reloads.
+
+The element goes into the parent the line names when you choose the item. If the parent changes before you release, nothing is written. Why nothing was written shows at the top-left of the preview until your next click:
+
+| Notice | Meaning |
+| --- | --- |
+| The parent changed; choose the item again | The parent is no longer the one named when you chose the item |
+| The source changed while editing | The group is no longer where it was written, such as after an edit outside Celesta |
+| The source is still being read | The parent's position or its space on the canvas is still being read |
+| Couldn't show the file dialog: `<error>` | The file dialog failed to open |
+| Couldn't use the chosen file: `<error>` | The chosen file couldn't be copied into the `assets` folder |
+
+The reasons in the next table can show here too, when they arise while you draw.
+
+### What is written
+
+The element is written with literal values only (numbers rounded to two decimals), so each of them can be edited afterwards like any other value:
+
+| Item | Written |
+| --- | --- |
+| **Rect**, **Ellipse** | `x` and `y` (the box's top-left corner), `width`, `height`, `fill="#4F7CFF"` |
+| **Circle** | `x` and `y` at the center, `anchorX={0.5}`, `anchorY={0.5}`, `radius`, `fill="#4F7CFF"` |
+| **Text** | `x`, `y`, `fontSize={48}`, `color="#4F7CFF"`, and the text `Text` |
+| **Image**, **Video** | `src`, `x`, `y`, `width` |
+
+The element starts at the playhead and runs to the end of the nearest timing window around the parent: the `<Sequence>` or scene the group is in, or, on the composition's own timeline, the chapter at the playhead (the composition's end outside chapters). It is wrapped in a `<Sequence>` whose `from` counts from the start of that window. A `<Sequence>` written around the selected element itself, inside the group, does not count, since it does not wrap the new element. Adding a `<Rect>` at frame 45 of a group's 120-frame `<Sequence>` writes:
+
+```tsx
+<Sequence from={45} durationInFrames={75}>
+  <Rect x={120} y={80} width={320} height={180} fill="#4F7CFF" />
+</Sequence>
+```
+
+No `<Sequence>` is written when the element would run that span without one: on the first frame of a `<Sequence>` or scene around the group, or from frame 0 to the composition's end. With less than a frame of the window left, the element gets a one-frame `<Sequence>`, also on the window's first frame.
+
+The inserted lines are indented one level deeper than the group's opening tag, with your file's tabs or spaces. `Rect`, `Text`, `Image`, `Video`, and `Sequence` come from `@celesta/react`, and `Ellipse` and `Circle` from `@celesta/shapes`. A name the file doesn't import yet is added to its `import { … }` from that package (a sorted list stays sorted); without one, a new import line goes after the last import, in its quotes and semicolon style, or, in a file without imports, `import { Rect } from "@celesta/react";` at the top. A name imported under another name is written with that name, and under `import * as C from "@celesta/react"`, the element is written as `<C.Rect>`.
+
+The addition is one change, and one undo removes the element and its import. After the reload, the new element is selected once the preview draws it; if the reloaded frame doesn't draw it, the previous selection stays, and if the layer selected turns out to be written elsewhere, the selection is cleared.
+
+### When the items are disabled
+
+The line under the parent's name says why every item is disabled, and an item's own reason is listed under the items:
+
+| Reason | Meaning |
+| --- | --- |
+| Select a group, or a layer inside one, to add into | Nothing is selected, or no group around the selected layer can be the parent |
+| No group in this scene's own code to add into | Under **This scene**, every group that could be the parent is shared |
+| The source is still being read | The selected layer's source is still being looked up or read, such as right after a reload |
+| Scanning scenes…, Couldn't scan scenes: `<error>`, Not found in the scene scan, The scenes are not scanned | Celesta can't tell yet whether the group is shared; see "See what an edit changes" |
+| Why a scope is locked | The **Edits change** choice you made earlier is locked for this element; its tooltip in the **Properties** tab gives the same reason |
+| Can't add inside a loop or freeze frame | The nearest window around the group is a `<Loop>` or `<FreezeFrame>` |
+| Can't draw into a group turned in 3D | The group or one around it has `rotationX`, `rotationY`, or a `perspective` |
+| Can't draw into a group scaled to zero | The group or one around it is scaled to 0, so nothing drawn has a size inside it |
+| `Ellipse` comes from `@celesta/shapes`, which this composition doesn't import | **Ellipse** and **Circle** only: import `@celesta/shapes` in your composition first |
+| `Rect` here is not Celesta's | That item only: the file declares or imports another `Rect` (or another `Sequence`, when the element needs one) |
 
 ## Undo
 
