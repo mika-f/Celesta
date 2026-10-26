@@ -347,6 +347,7 @@ mod tests {
                     chain: vec![element],
                     ranges: vec![(from, to)],
                     max_per_frame: 1,
+                    wrappers: vec![],
                 }],
             }],
         }

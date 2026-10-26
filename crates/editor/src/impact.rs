@@ -282,6 +282,7 @@ mod tests {
             chain,
             ranges,
             max_per_frame: 1,
+            wrappers: vec![],
         }
     }
 
@@ -580,6 +581,7 @@ mod tests {
             chain: vec![pos(3)],
             ranges: vec![(0, 30)],
             max_per_frame: 3,
+            wrappers: vec![],
         }]);
         let view = impact_view(
             &report(&[pos(3)], Some((0.0, 30.0))),

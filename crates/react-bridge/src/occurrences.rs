@@ -30,12 +30,18 @@ pub struct InstanceOccurrences {
     pub ranges: Vec<(u64, u64)>,
     /// Most copies of this instance in any one frame, as a `.map()` makes.
     pub max_per_frame: u32,
+    /// Where the wrappers it renders through (`<Sequence>`, a
+    /// `<Series.Sequence>`, ...) were written, innermost first, over every
+    /// frame. Empty from runtimes that do not report them.
+    #[serde(default)]
+    pub wrappers: Vec<SourcePos>,
 }
 
 impl OccurrenceIndex {
     /// Takes in the index of a later chunk of frames: elements and instances
     /// it adds are appended, a range starting where one of ours ends extends
-    /// it, and each instance keeps the larger `max_per_frame`.
+    /// it, each instance keeps the larger `max_per_frame`, and wrappers it
+    /// has not listed yet are appended.
     pub fn merge(&mut self, chunk: OccurrenceIndex) {
         for element in chunk.elements {
             let Some(ours) = self
@@ -56,6 +62,11 @@ impl OccurrenceIndex {
                     continue;
                 };
                 mine.max_per_frame = mine.max_per_frame.max(instance.max_per_frame);
+                for wrapper in instance.wrappers {
+                    if !mine.wrappers.contains(&wrapper) {
+                        mine.wrappers.push(wrapper);
+                    }
+                }
                 for (from, to) in instance.ranges {
                     match mine.ranges.iter_mut().find(|range| range.1 == from) {
                         Some(range) => range.1 = to,
@@ -161,6 +172,7 @@ mod tests {
                     chain,
                     ranges,
                     max_per_frame,
+                    wrappers: vec![],
                 }],
             }],
         }
