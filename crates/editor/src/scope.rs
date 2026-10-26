@@ -862,6 +862,45 @@ pub(crate) fn commit_gate(
 /// then that would write the shared value.
 pub(crate) const SCANNED_MEANWHILE: &str = "The scenes were scanned while editing; edit again";
 
+/// [`SCANNED_MEANWHILE`] for a commit held for a reload rather than for
+/// the scan: the scenes' options changed while it waited.
+pub(crate) const CHANGED_MEANWHILE: &str = "The scenes changed while editing; edit again";
+
+/// Where a held commit came from, and what it waited for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct HeldOrigin {
+    /// A scrub's or an inline text edit's release, not a Properties row.
+    pub(crate) gesture: bool,
+    /// Held for the scene scan, not for a reload.
+    pub(crate) scanning: bool,
+}
+
+/// The gate for a commit held with the scope `held` (see [`commit_scope`])
+/// once it drains: a gesture's through [`gesture_gate`], as at its release,
+/// so it is refused with the locks the gesture would meet; a row commit's
+/// through [`drain_gate`]. One held with no option shown and refused for
+/// that says the scan only when it waited for one.
+pub(crate) fn held_gate(
+    held: Option<Scope>,
+    origin: HeldOrigin,
+    state: &ScopeState,
+    targets: &ElementTargets,
+    keys: &[PropKey],
+    calls: Option<&SceneCalls>,
+) -> CommitGate {
+    let gate = if origin.gesture {
+        gesture_gate(held, state, targets, keys, calls)
+    } else {
+        drain_gate(held, state, targets, keys)
+    };
+    match gate {
+        CommitGate::Refuse(refusal) if !origin.scanning && refusal == SCANNED_MEANWHILE => {
+            CommitGate::Refuse(CHANGED_MEANWHILE.to_owned())
+        }
+        gate => gate,
+    }
+}
+
 /// The gate for a row commit held with the scope `held` it was made with
 /// (see [`commit_scope`]): [`commit_gate`], but one made with no scope
 /// shown (the scenes being scanned) is written only for this scene; when

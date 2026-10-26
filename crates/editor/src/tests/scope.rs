@@ -8,10 +8,11 @@ use crate::element_rows::default_row_text;
 use crate::impact::{ImpactFilter, ImpactView, impact_line, impact_view};
 use crate::occurrences::OccurrenceState;
 use crate::scope::{
-    CommitGate, SCANNED_MEANWHILE, SceneCalls, Scope, ScopeChoices, ScopeLock, ScopeOptions,
-    ScopeState, ScopedRow, calls_of, chosen_scope, commit_gate, commit_scope, drain_gate,
-    gesture_gate, gesture_start_refusal, impact_filter, previewed_scope, remove_tooltip,
-    scope_in_effect, scope_line, scope_state, scoped_removable, scoped_row,
+    CHANGED_MEANWHILE, CommitGate, HeldOrigin, SCANNED_MEANWHILE, SceneCalls, Scope, ScopeChoices,
+    ScopeLock, ScopeOptions, ScopeState, ScopedRow, calls_of, chosen_scope, commit_gate,
+    commit_scope, drain_gate, gesture_gate, gesture_start_refusal, held_gate, impact_filter,
+    previewed_scope, remove_tooltip, scope_in_effect, scope_line, scope_state, scoped_removable,
+    scoped_row,
 };
 use celesta_react_bridge::{
     ElementOccurrences, InstanceOccurrences, OccurrenceIndex, ReactChapter,
@@ -1465,6 +1466,75 @@ fn a_held_row_commit_with_no_scope_shown_drains_only_into_this_scene() {
         CommitGate::Go(Some(Scope::Shared))
     );
     assert_eq!(gate(None, &ScopeState::NotShared), CommitGate::Go(None));
+}
+
+#[test]
+fn a_held_gesture_drains_through_the_gesture_gate() {
+    let report = price_report();
+    let targets = tag_targets(&report, &tag_texts(SCENES_FILE));
+    let calls = price_sets_its_own();
+    let open = ScopeState::Options(options(Ok(()), Ok(())));
+    let reused = ScopeState::Options(options(Err(ScopeLock::ReusedCall), Ok(())));
+    let scanning = ScopeState::Unknown {
+        note: "Scanning scenes…".to_owned(),
+    };
+    let gate = |scope, origin, state: &ScopeState, key: &str| {
+        held_gate(scope, origin, state, &targets, &[prop(key)], Some(&calls))
+    };
+    let gesture = HeldOrigin {
+        gesture: true,
+        scanning: false,
+    };
+    let row = HeldOrigin {
+        gesture: false,
+        scanning: false,
+    };
+
+    // A scrub under Shared value held for a reload, after which this scene
+    // sets its own `rectWidth`: refused as at a release, never written to
+    // the default this scene would not show.
+    assert_eq!(
+        gate(Some(Scope::Shared), gesture, &open, "width"),
+        CommitGate::Refuse(
+            ScopeLock::SetsOwn {
+                param: "rectWidth".to_owned()
+            }
+            .text()
+        )
+    );
+    // A held row commit writes the default, as before.
+    assert_eq!(
+        gate(Some(Scope::Shared), row, &open, "width"),
+        CommitGate::Go(Some(Scope::Shared))
+    );
+    // A gesture is never held for the scan.
+    assert_eq!(
+        gate(None, gesture, &scanning, "x"),
+        CommitGate::Refuse("Scanning scenes…".to_owned())
+    );
+    assert_eq!(
+        gate(None, row, &scanning, "x"),
+        CommitGate::Hold("Scanning scenes…".to_owned())
+    );
+
+    // Held with no option shown and refused by the time it drains: the
+    // text names the scan only when it waited for one.
+    assert_eq!(
+        gate(None, row, &reused, "x"),
+        CommitGate::Refuse(CHANGED_MEANWHILE.to_owned())
+    );
+    let scanned = HeldOrigin {
+        gesture: false,
+        scanning: true,
+    };
+    assert_eq!(
+        gate(None, scanned, &reused, "x"),
+        CommitGate::Refuse(SCANNED_MEANWHILE.to_owned())
+    );
+    assert_eq!(
+        gate(None, gesture, &open, "x"),
+        CommitGate::Refuse(CHANGED_MEANWHILE.to_owned())
+    );
 }
 
 #[test]

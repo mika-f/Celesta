@@ -15,7 +15,7 @@ use crate::property_controls::{
     parse_number_input, take_picked_color,
 };
 use crate::property_panel::field_label;
-use crate::scope::{CommitGate, Scope, ScopedRow, scoped_row};
+use crate::scope::{CommitGate, HeldOrigin, Scope, ScopedRow, scoped_row};
 use crate::transform_drag::override_sites;
 use crate::view::EditorView;
 use celesta_react_bridge::{
@@ -729,6 +729,29 @@ pub(crate) struct HeldCommit {
     /// Held for the scene scan (see [`crate::scope::CommitGate::Hold`]),
     /// not for a reload: a selection change does not wait for it.
     pub(crate) scanning: bool,
+    /// A scrub's or an inline text edit's release (held for a reload): it
+    /// drains through the gesture's gate (see [`crate::scope::held_gate`]).
+    pub(crate) gesture: bool,
+}
+
+impl HeldCommit {
+    pub(crate) fn origin(&self) -> HeldOrigin {
+        HeldOrigin {
+            gesture: self.gesture,
+            scanning: self.scanning,
+        }
+    }
+}
+
+/// Where a row commit comes from: what gates it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CommitOrigin {
+    /// A Properties row: [`crate::scope::drain_gate`].
+    Row,
+    /// A scrub's or an inline text edit's release: the gesture's gate.
+    Gesture,
+    /// A held commit draining: [`crate::scope::held_gate`].
+    Held(HeldOrigin),
 }
 
 impl HeldCommits {
@@ -1214,7 +1237,7 @@ impl EditorView {
         cx: &mut Context<Self>,
     ) {
         let scope = self.kept_scope();
-        self.commit_row_with(key, value, scope, false, cx);
+        self.commit_row_with(key, value, scope, CommitOrigin::Row, cx);
     }
 
     /// [`Self::commit_element_row`] at the end of a scrub or an inline
@@ -1228,21 +1251,22 @@ impl EditorView {
         started: Option<Scope>,
         cx: &mut Context<Self>,
     ) {
-        self.commit_row_with(key, value, started, true, cx);
+        self.commit_row_with(key, value, started, CommitOrigin::Gesture, cx);
     }
 
     /// [`Self::commit_element_row`] with the scope `remembered` it keeps
     /// (the one a held commit was made with): written under it, or refused
     /// with its lock, never under another one; one made with no scope shown
     /// is written only for this scene (see [`crate::scope::drain_gate`]). A
-    /// `gesture` passes the gesture's gate when it goes at once, which never
-    /// holds it for the scan; held for a reload, it drains as a row commit.
+    /// gesture passes the gesture's gate, which never holds it for the scan;
+    /// held for a reload, it drains through that gate too (`origin` says
+    /// so, see [`crate::scope::held_gate`]).
     fn commit_row_with(
         &mut self,
         key: &PropKey,
         value: Option<EditValue>,
         remembered: Option<Scope>,
-        gesture: bool,
+        origin: CommitOrigin,
         cx: &mut Context<Self>,
     ) {
         if let Some(row) = self.element_rows.rows.get_mut(key) {
@@ -1256,13 +1280,15 @@ impl EditorView {
         // only when the source can't be read. While the occurrence index
         // can't say where the edit reaches, it waits for the sweep.
         let keys = std::slice::from_ref(key);
-        let gate = (!self.row_commit_waits()).then(|| {
-            if gesture {
-                self.gesture_gate_for(remembered, keys)
-            } else {
-                self.commit_gate_for(remembered, keys)
-            }
+        let gate = (!self.row_commit_waits()).then(|| match origin {
+            CommitOrigin::Row => self.commit_gate_for(remembered, keys),
+            CommitOrigin::Gesture => self.gesture_gate_for(remembered, keys),
+            CommitOrigin::Held(held) => self.held_gate_for(remembered, held, keys),
         });
+        let gesture = matches!(
+            origin,
+            CommitOrigin::Gesture | CommitOrigin::Held(HeldOrigin { gesture: true, .. })
+        );
         // `Some(note)`: held for the scene scan, with the note the row shows.
         let held = match &gate {
             None => Some(None),
@@ -1285,6 +1311,7 @@ impl EditorView {
                 frame,
                 scope: remembered,
                 scanning: note.is_some(),
+                gesture,
             });
             if let Some(row) = self.element_rows.rows.get_mut(key) {
                 row.held_note = note;
@@ -1366,8 +1393,9 @@ impl EditorView {
     /// place (and those after it theirs) until the sweep lands, unless a
     /// selection change waits: that does not wait for the scan, and the
     /// commit is dropped. Each goes with the scope choice it was made with
-    /// (one made with no scope shown only for this scene). A selection
-    /// change waiting for them goes once none is left.
+    /// (one made with no scope shown only for this scene), a scrub's or an
+    /// inline text edit's through the gesture's gate. A selection change
+    /// waiting for them goes once none is left.
     pub(crate) fn drain_held_rows(&mut self, cx: &mut Context<Self>) {
         while !self.row_commit_waits() {
             let selected = self.selected_layer.clone();
@@ -1377,7 +1405,7 @@ impl EditorView {
                 .first(selected.as_deref())
                 .and_then(|held| {
                     let keys = std::slice::from_ref(&held.key);
-                    match self.commit_gate_for(held.scope, keys) {
+                    match self.held_gate_for(held.scope, held.origin(), keys) {
                         CommitGate::Hold(note) => Some((held.key.clone(), note)),
                         CommitGate::Go(_) | CommitGate::Refuse(_) => None,
                     }
@@ -1410,7 +1438,8 @@ impl EditorView {
                 self.drop_row_commit(&held.key, FRAME_MOVED);
                 continue;
             }
-            self.commit_row_with(&held.key, held.value, held.scope, false, cx);
+            let origin = CommitOrigin::Held(held.origin());
+            self.commit_row_with(&held.key, held.value, held.scope, origin, cx);
         }
         self.release_selection(cx);
     }

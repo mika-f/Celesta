@@ -831,6 +831,7 @@ fn a_held_commit_keeps_the_scope_it_was_made_with() {
         frame: 0,
         scope,
         scanning: false,
+        gesture: false,
     };
     let mut commits = HeldCommits::default();
     commits.push(held(1.0, Some(Scope::ThisScene)));

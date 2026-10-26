@@ -831,6 +831,7 @@ fn dropping_a_held_commit_drops_its_override() {
         frame: 0,
         scope: None,
         scanning: false,
+        gesture: false,
     };
     let mut held = HeldCommits::default();
     held.push(held_commit("title", "children"));
@@ -890,6 +891,7 @@ fn selecting_another_layer_commits_before_the_gate() {
         frame: 0,
         scope: None,
         scanning: false,
+        gesture: true,
     });
     let mut gate = SelectionGate::default();
     // The gate sees it: "price" waits for the commit to be written.

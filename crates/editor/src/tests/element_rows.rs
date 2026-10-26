@@ -1095,6 +1095,7 @@ fn held_commits_keep_the_latest_value_per_row_in_order() {
         frame,
         scope: None,
         scanning: false,
+        gesture: false,
     };
     let mut held = HeldCommits::default();
     held.push(held_at("a", prop("x"), number(1.0), 0));
@@ -1142,6 +1143,7 @@ fn a_selection_change_takes_the_commits_held_for_the_scan() {
         frame: 0,
         scope: None,
         scanning,
+        gesture: false,
     };
     let mut held = HeldCommits::default();
     held.push(held_at("a", "x", true));

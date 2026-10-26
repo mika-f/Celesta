@@ -21,9 +21,9 @@ use crate::layer_select::SourceLookup;
 use crate::occurrences::OccurrenceState;
 use crate::property_controls::ControlKind;
 use crate::scope::{
-    CommitGate, SceneCalls, Scope, ScopeState, calls_of, chosen_scope, commit_scope, current_calls,
-    drain_gate, gesture_gate, gesture_start_refusal, previewed_scope, read_scene_calls,
-    scope_state, scoped_removable,
+    CommitGate, HeldOrigin, SceneCalls, Scope, ScopeState, calls_of, chosen_scope, commit_scope,
+    current_calls, drain_gate, gesture_gate, gesture_start_refusal, held_gate, previewed_scope,
+    read_scene_calls, scope_state, scoped_removable,
 };
 use crate::view::EditorView;
 use celesta_react_bridge::{
@@ -894,6 +894,28 @@ impl EditorView {
     ) -> CommitGate {
         match self.scope_context() {
             Some(context) => drain_gate(remembered, &context.state, context.targets, keys),
+            None => CommitGate::Go(None),
+        }
+    }
+
+    /// The gate for a held commit of `keys` with the scope `held` it keeps,
+    /// as it drains (see [`held_gate`]); without targets, it goes (and fails
+    /// as [`Self::commit_element`] says).
+    pub(crate) fn held_gate_for(
+        &self,
+        held: Option<Scope>,
+        origin: HeldOrigin,
+        keys: &[PropKey],
+    ) -> CommitGate {
+        match self.scope_context() {
+            Some(context) => held_gate(
+                held,
+                origin,
+                &context.state,
+                context.targets,
+                keys,
+                context.calls,
+            ),
             None => CommitGate::Go(None),
         }
     }
