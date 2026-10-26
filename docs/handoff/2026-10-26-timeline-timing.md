@@ -218,9 +218,6 @@ amended to match.
   the file locks.
 - Default imports of a scene list read as `ListDuration { name: "default" }`
   (undocumented); a list binding is keyed by its init call's start.
-- One commit in this branch's history ("feat(editor): drag an element's
-  timing on the timeline") does not build on its own; the next one restores
-  the build.
 - Not checked on screen: grip tooltip and cursor stacking, the label's
   clipping at the top of the timeline, the chapter end zone against the
   block's click-to-seek, the end highlight, and whether bands flash their old
@@ -279,8 +276,10 @@ pull request, and keep the TSX diff.
   `defineScenes` throw, so its lock can't be seen on a loaded composition.)
 - Select Intro's background and put the playhead 45 frames into Intro;
   click **Set timing**: the `<Rect>` is wrapped in `<Sequence from={45}
-  durationInFrames={45}>`, indented one level, `Sequence` added to the import,
-  and one undo removes both.
+  durationInFrames={45}>`, indented one level, the import unchanged (the
+  file already imports `Sequence`), and one undo removes the wrapper. In a
+  scene file that doesn't import `Sequence` yet, the same click also adds it
+  to the `@celesta/react` import, and one undo removes both.
 - Select the "Scene timing" title: **Set timing** is disabled ("Wrap the
   element in a parent first"). Select the `<Group>` around `<Title />` from
   **Called from** and click **Set timing**: the title's fade now starts at
@@ -288,7 +287,8 @@ pull request, and keep the TSX diff.
 - Select the tag's `<Rect>` (Intro and Main): under **This scene**, **Set
   timing** is disabled ("Can't be set per scene yet"); under **Shared
   value**, it wraps the `<Rect>` inside `Tag`, and both scenes change. Then,
-  in Intro under **This scene**, drag the middle of that new band: the
+  in Intro, click **This scene** again (the choice of **Shared value** is
+  remembered for the element) and drag the middle of that new band: the
   label's second line reads "Edits change this scene", `Tag` gains a
   `sequenceFrom` prop defaulting to the old `from`, and Intro's `<Tag>` call
   passes the new value; Main is unchanged, and one undo restores both files.
