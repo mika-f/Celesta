@@ -9,9 +9,9 @@ use crate::impact::{ImpactFilter, ImpactView, impact_line, impact_view};
 use crate::occurrences::OccurrenceState;
 use crate::scope::{
     CommitGate, SCANNED_MEANWHILE, SceneCalls, Scope, ScopeChoices, ScopeLock, ScopeOptions,
-    ScopeState, ScopedRow, calls_of, chosen_scope, commit_gate, commit_scope, gesture_gate,
-    impact_filter, previewed_scope, remove_tooltip, scope_in_effect, scope_line, scope_state,
-    scoped_removable, scoped_row,
+    ScopeState, ScopedRow, calls_of, chosen_scope, commit_gate, commit_scope, drain_gate,
+    gesture_gate, impact_filter, previewed_scope, remove_tooltip, scope_in_effect, scope_line,
+    scope_state, scoped_removable, scoped_row,
 };
 use celesta_react_bridge::{
     ElementOccurrences, InstanceOccurrences, OccurrenceIndex, ReactChapter,
@@ -1317,14 +1317,49 @@ fn a_gesture_writes_under_the_scope_it_started_with() {
         gate(None, &open, "x"),
         CommitGate::Refuse(SCANNED_MEANWHILE.to_owned())
     );
+    // Never held: a gesture released while the scenes are scanned is
+    // refused with the scan's note, as a drag is.
     assert_eq!(
         gate(None, &scanning, "x"),
-        CommitGate::Hold("Scanning scenes…".to_owned())
+        CommitGate::Refuse("Scanning scenes…".to_owned())
     );
     assert_eq!(
         gate(None, &ScopeState::NotShared, "x"),
         CommitGate::Go(None)
     );
+}
+
+#[test]
+fn a_held_row_commit_with_no_scope_shown_drains_only_into_this_scene() {
+    let report = price_report();
+    let targets = tag_targets(&report, &tag_texts(SCENES_FILE));
+    let open = ScopeState::Options(options(Ok(()), Ok(())));
+    let reused = ScopeState::Options(options(Err(ScopeLock::ReusedCall), Ok(())));
+    let scanning = ScopeState::Unknown {
+        note: "Scanning scenes…".to_owned(),
+    };
+    let gate = |held, state: &ScopeState| drain_gate(held, state, &targets, &[prop("x")]);
+
+    // Held with no scope shown (the scenes being scanned): written once
+    // the sweep lands when the default is This scene...
+    assert_eq!(gate(None, &open), CommitGate::Go(Some(Scope::ThisScene)));
+    // ...but never into the shared value the locked This scene falls
+    // back to.
+    assert_eq!(
+        gate(None, &reused),
+        CommitGate::Refuse(SCANNED_MEANWHILE.to_owned())
+    );
+    // Still scanning: it keeps waiting.
+    assert_eq!(
+        gate(None, &scanning),
+        CommitGate::Hold("Scanning scenes…".to_owned())
+    );
+    // Made with a scope shown: under that scope, as any row commit.
+    assert_eq!(
+        gate(Some(Scope::Shared), &reused),
+        CommitGate::Go(Some(Scope::Shared))
+    );
+    assert_eq!(gate(None, &ScopeState::NotShared), CommitGate::Go(None));
 }
 
 #[test]

@@ -1210,9 +1210,10 @@ impl EditorView {
 
     /// [`Self::commit_element_row`] with the scope `remembered` it keeps
     /// (the one a held commit was made with): written under it, or refused
-    /// with its lock, never under another one. A `gesture` passes the
-    /// gesture's gate when it goes at once; held, it drains as a row
-    /// commit.
+    /// with its lock, never under another one; one made with no scope shown
+    /// is written only for this scene (see [`crate::scope::drain_gate`]). A
+    /// `gesture` passes the gesture's gate when it goes at once, which never
+    /// holds it for the scan; held for a reload, it drains as a row commit.
     fn commit_row_with(
         &mut self,
         key: &PropKey,
@@ -1338,8 +1339,9 @@ impl EditorView {
     /// keyframe made before the playhead moved is not written to another
     /// keyframe. One the occurrence index can't answer for yet keeps its
     /// place (and those after it theirs) until the sweep lands; each goes
-    /// with the scope choice it was made with. A selection change waiting
-    /// for them goes once none is left.
+    /// with the scope choice it was made with (one made with no scope shown
+    /// only for this scene). A selection change waiting for them goes once
+    /// none is left.
     pub(crate) fn drain_held_rows(&mut self, cx: &mut Context<Self>) {
         while !self.row_commit_waits() {
             let selected = self.selected_layer.clone();

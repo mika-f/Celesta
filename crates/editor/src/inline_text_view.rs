@@ -249,7 +249,8 @@ pub(crate) fn press_inside(in_box: Option<bool>, hits_layer: bool) -> bool {
 
 /// Why a commit that `event` ends an edit with is refused, when the edit
 /// stays open instead of losing its text: the gesture's `gate` (`None`
-/// while the commit would wait its turn) refuses a text that `writes`,
+/// while the commit would wait its turn) refuses a text that `writes`
+/// (a gesture is never held for the scan: a hold is one more refusal),
 /// and the person ended the edit (Enter, a blur, a press outside the
 /// text), so it can be committed again under the scope the control shows
 /// now. When the selection, the playhead or the project moves on, the
@@ -264,7 +265,11 @@ pub(crate) fn inline_commit_refusal(
         EditEvent::Enter | EditEvent::Blur | EditEvent::CanvasPress { inside: false }
     );
     match gate {
-        Some(CommitGate::Refuse(refusal)) if writes && ended_by_the_person => Some(refusal.clone()),
+        Some(CommitGate::Refuse(refusal) | CommitGate::Hold(refusal))
+            if writes && ended_by_the_person =>
+        {
+            Some(refusal.clone())
+        }
         _ => None,
     }
 }

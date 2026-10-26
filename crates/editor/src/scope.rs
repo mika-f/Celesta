@@ -840,8 +840,28 @@ pub(crate) fn commit_gate(
 }
 
 /// Why a gesture that started while the scenes were being scanned (no
-/// scope shown) is not written once they are.
+/// scope shown) is not written once they are; nor a held row commit made
+/// then that would write the shared value.
 pub(crate) const SCANNED_MEANWHILE: &str = "The scenes were scanned while editing; edit again";
+
+/// The gate for a row commit held with the scope `held` it was made with
+/// (see [`commit_scope`]): [`commit_gate`], but one made with no scope
+/// shown (the scenes being scanned) is written only for this scene; when
+/// "This scene" is locked by the time it goes, it is refused rather than
+/// written to the shared value nobody chose.
+pub(crate) fn drain_gate(
+    held: Option<Scope>,
+    state: &ScopeState,
+    targets: &ElementTargets,
+    keys: &[PropKey],
+) -> CommitGate {
+    match commit_gate(state, held, targets, keys) {
+        CommitGate::Go(Some(Scope::Shared)) if held.is_none() => {
+            CommitGate::Refuse(SCANNED_MEANWHILE.to_owned())
+        }
+        gate => gate,
+    }
+}
 
 /// The gate for a drag, a scrub or an inline text edit of `keys` that
 /// started under `started`, the scope the control showed then (see
@@ -849,7 +869,8 @@ pub(crate) const SCANNED_MEANWHILE: &str = "The scenes were scanned while editin
 /// or whose edit this scene would not show ([`gesture_lock`]); else
 /// [`commit_gate`] with `started`, so it goes under that scope or is
 /// refused with its lock, never under another. One that started with no
-/// scope shown is refused once the options are known.
+/// scope shown is refused once the options are known. A gesture is never
+/// held: while the scenes are scanned it is refused with the scan's note.
 pub(crate) fn gesture_gate(
     started: Option<Scope>,
     state: &ScopeState,
@@ -867,6 +888,7 @@ pub(crate) fn gesture_gate(
         CommitGate::Go(Some(_)) if started.is_none() => {
             CommitGate::Refuse(SCANNED_MEANWHILE.to_owned())
         }
+        CommitGate::Hold(note) => CommitGate::Refuse(note),
         gate => gate,
     }
 }

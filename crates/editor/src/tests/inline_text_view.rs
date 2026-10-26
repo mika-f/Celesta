@@ -311,17 +311,18 @@ fn a_refused_commit_keeps_the_edit_the_person_ended() {
             Some("The scenes were scanned while editing; edit again".to_owned())
         );
     }
-    // Written, held, or nothing to write: the edit ends as before.
-    assert_eq!(
-        kept(EditEvent::Enter, true, Some(&CommitGate::Go(None))),
-        None
-    );
+    // A gesture is never held for the scan: that is one more refusal.
     assert_eq!(
         kept(
             EditEvent::Enter,
             true,
             Some(&CommitGate::Hold("Scanning scenes…".to_owned()))
         ),
+        Some("Scanning scenes…".to_owned())
+    );
+    // Written, or nothing to write: the edit ends as before.
+    assert_eq!(
+        kept(EditEvent::Enter, true, Some(&CommitGate::Go(None))),
         None
     );
     // Waiting its turn: held, and gated when it goes.

@@ -21,8 +21,8 @@ use crate::layer_select::SourceLookup;
 use crate::occurrences::OccurrenceState;
 use crate::property_controls::ControlKind;
 use crate::scope::{
-    CommitGate, SceneCalls, Scope, ScopeLock, ScopeState, calls_of, chosen_scope, commit_gate,
-    commit_scope, current_calls, gesture_gate, gesture_lock, previewed_scope, read_scene_calls,
+    CommitGate, SceneCalls, Scope, ScopeLock, ScopeState, calls_of, chosen_scope, commit_scope,
+    current_calls, drain_gate, gesture_gate, gesture_lock, previewed_scope, read_scene_calls,
     scope_state, scoped_removable,
 };
 use crate::view::EditorView;
@@ -882,15 +882,17 @@ impl EditorView {
     }
 
     /// The gate for committing `keys` of the selected element with the
-    /// choice `remembered` (see [`commit_gate`]); without targets, it goes
-    /// (and fails as [`Self::commit_element`] says).
+    /// scope `remembered` the commit keeps (see [`drain_gate`]: one made
+    /// with no scope shown is written only for this scene), held or not;
+    /// without targets, it goes (and fails as [`Self::commit_element`]
+    /// says).
     pub(crate) fn commit_gate_for(
         &self,
         remembered: Option<Scope>,
         keys: &[PropKey],
     ) -> CommitGate {
         match self.scope_context() {
-            Some(context) => commit_gate(&context.state, remembered, context.targets, keys),
+            Some(context) => drain_gate(remembered, &context.state, context.targets, keys),
             None => CommitGate::Go(None),
         }
     }
