@@ -485,6 +485,9 @@ mod tests {
         }
     }
 
+    /// `defineScenes` counts only as `@celesta/react`'s.
+    const IMPORT: &str = "import { defineScenes } from '@celesta/react';\n";
+
     const TIMELINE: &str = "import { defineScenes } from '@celesta/react';\n\nexport const SCENES = defineScenes([\n  { id: 'intro', durationInFrames: 90 },\n  { id: 'main', durationInFrames: 120 },\n  { id: 'outro', durationInFrames: 90 },\n]);\n";
 
     fn sources(lists: &[(&str, &str)], film: &str) -> SceneSources {
@@ -566,10 +569,11 @@ mod tests {
 
     #[test]
     fn zero_or_two_entries_lock_with_the_reason() {
-        let other =
-            "export const MORE = defineScenes([\n  { id: 'main', durationInFrames: 30 },\n]);\n";
+        let other = format!(
+            "{IMPORT}export const MORE = defineScenes([\n  {{ id: 'main', durationInFrames: 30 }},\n]);\n"
+        );
         let found = sources(
-            &[("/p/timeline.tsx", TIMELINE), ("/p/more.ts", other)],
+            &[("/p/timeline.tsx", TIMELINE), ("/p/more.ts", &other)],
             &film("", "{300}"),
         );
         let mut chapters = three();
@@ -625,8 +629,10 @@ mod tests {
 
     #[test]
     fn an_expression_duration_locks_with_its_inputs() {
-        let text = "const BAR = 30;\nexport const S = { words: 40 };\nexport const END = 30;\nexport const SCENES = defineScenes([\n  { id: 'intro', durationInFrames: BAR * 3 },\n  { id: 'main', durationInFrames: S.words - 1 },\n  { id: 'outro' },\n  { id: 'end', durationInFrames: END },\n]);\n";
-        let found = sources(&[("/p/timeline.ts", text)], &film("", "{300}"));
+        let text = format!(
+            "{IMPORT}const BAR = 30;\nexport const S = {{ words: 40 }};\nexport const END = 30;\nexport const SCENES = defineScenes([\n  {{ id: 'intro', durationInFrames: BAR * 3 }},\n  {{ id: 'main', durationInFrames: S.words - 1 }},\n  {{ id: 'outro' }},\n  {{ id: 'end', durationInFrames: END }},\n]);\n"
+        );
+        let found = sources(&[("/p/timeline.ts", &text)], &film("", "{300}"));
         let chapters = vec![
             chapter("intro", 0, 90),
             chapter("main", 90, 39),
@@ -804,8 +810,10 @@ mod tests {
         assert_eq!(written_length(&uncut, "intro", 15, 250), 115.0);
 
         // Dragged back to the entry's own length, it writes nothing.
-        let text = "export const SCENES = defineScenes([\n  { id: 'intro', durationInFrames: 100 },\n  { id: 'outro', durationInFrames: 200 },\n]);\n";
-        let found = sources(&[("/p/timeline.tsx", text)], &film("", "{250}"));
+        let text = format!(
+            "{IMPORT}export const SCENES = defineScenes([\n  {{ id: 'intro', durationInFrames: 100 }},\n  {{ id: 'outro', durationInFrames: 200 }},\n]);\n"
+        );
+        let found = sources(&[("/p/timeline.tsx", &text)], &film("", "{250}"));
         let edges = scene_edges(&found, &chapters, only_timeline);
         let outro = &edges["outro"];
         assert!(writes_nothing(
@@ -891,7 +899,9 @@ mod tests {
         );
 
         // A const of the file.
-        let text = "const INTRO = 90;\nexport const SCENES = defineScenes([\n  { id: 'intro', durationInFrames: INTRO },\n]);\n";
+        let text = &format!(
+            "{IMPORT}const INTRO = 90;\nexport const SCENES = defineScenes([\n  {{ id: 'intro', durationInFrames: INTRO }},\n]);\n"
+        );
         let path = "/p/timeline.tsx";
         let edge = edge_in(text, path, "intro");
         let texts = Texts::from([(PathBuf::from(path), text.to_owned())]);
@@ -947,7 +957,9 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("celesta-scene-search-{}", std::process::id()));
         fs::remove_dir_all(&dir).ok();
         let list = |id: &str| {
-            format!("export const S = defineScenes([{{ id: '{id}', durationInFrames: 30 }}]);\n")
+            format!(
+                "{IMPORT}export const S = defineScenes([{{ id: '{id}', durationInFrames: 30 }}]);\n"
+            )
         };
         for (file, text) in [
             ("timeline.ts", list("root")),

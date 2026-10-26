@@ -28,6 +28,38 @@ fn lists(text: &str) -> Vec<SceneList> {
     scene_lists(text, Path::new("timeline.ts"))
 }
 
+/// `body` after an import of `defineScenes` from `@celesta/react`.
+fn imported(body: &str) -> String {
+    format!("import {{ defineScenes }} from '@celesta/react';\n{body}")
+}
+
+#[test]
+fn only_the_celesta_define_scenes_makes_a_list() {
+    let list = "([{ id: 'a', durationInFrames: 1 }]);\n";
+    for text in [
+        format!(
+            "import {{ defineScenes as scenes }} from '@celesta/react';\nexport const S = scenes{list}"
+        ),
+        format!("import * as C from '@celesta/react';\nexport const S = C.defineScenes{list}"),
+    ] {
+        assert_eq!(lists(&text).len(), 1, "{text}");
+    }
+    for text in [
+        // Not imported, or from elsewhere.
+        format!("export const S = defineScenes{list}"),
+        format!("import {{ defineScenes }} from './scenes';\nexport const S = defineScenes{list}"),
+        // A function of the file's own.
+        format!("const defineScenes = (s) => s;\nexport const S = defineScenes{list}"),
+        // Shadowed where it is called.
+        format!(
+            "import {{ defineScenes }} from '@celesta/react';\nfunction f(defineScenes) {{\n  return defineScenes{list}}}\n"
+        ),
+        format!("import * as C from './celesta';\nexport const S = C.defineScenes{list}"),
+    ] {
+        assert!(lists(&text).is_empty(), "{text}");
+    }
+}
+
 #[test]
 fn finds_scene_lists_with_ids_in_order() {
     // `.ts`, not TSX: `<T>(x: T) => x` and `<number>v` parse only as TS.
@@ -55,7 +87,9 @@ fn finds_scene_lists_with_ids_in_order() {
     assert_eq!(ids(&found[0]), ["open"]);
 
     // Several lists, in source order.
-    let text = "const A = defineScenes([{ id: 'a', durationInFrames: 1 }]);\nlet B = defineScenes([{ id: 'b', durationInFrames: 2 }]);\n";
+    let text = &imported(
+        "const A = defineScenes([{ id: 'a', durationInFrames: 1 }]);\nlet B = defineScenes([{ id: 'b', durationInFrames: 2 }]);\n",
+    );
     let found = lists(text);
     assert_eq!(found.len(), 2);
     assert_eq!(found[0].binding.as_deref(), Some("A"));
@@ -67,7 +101,9 @@ fn finds_scene_lists_with_ids_in_order() {
 
 #[test]
 fn a_list_with_a_spread_is_skipped() {
-    let text = "export const SCENES = defineScenes([\n  { id: 'open', durationInFrames: 30 },\n  ...CHAPTERS.map((c) => ({ id: c.key, durationInFrames: c.len })),\n]);\n";
+    let text = &imported(
+        "export const SCENES = defineScenes([\n  { id: 'open', durationInFrames: 30 },\n  ...CHAPTERS.map((c) => ({ id: c.key, durationInFrames: c.len })),\n]);\n",
+    );
     assert!(lists(text).is_empty());
 
     // Anything but object literals with string-literal ids.
@@ -81,18 +117,20 @@ fn a_list_with_a_spread_is_skipped() {
         "[{ ...BASE, id: 'a', durationInFrames: 1 }]",
         "[{ id: 'a', durationInFrames: 1 }, , { id: 'b', durationInFrames: 1 }]",
     ] {
-        let text = format!("export const SCENES = defineScenes({list});\n");
+        let text = imported(&format!("export const SCENES = defineScenes({list});\n"));
         assert!(lists(&text).is_empty(), "{list}");
     }
 
     // A call of something else.
-    let text = "export const SCENES = makeScenes([{ id: 'a', durationInFrames: 1 }]);\n";
+    let text = &imported("export const SCENES = makeScenes([{ id: 'a', durationInFrames: 1 }]);\n");
     assert!(lists(text).is_empty());
 }
 
 #[test]
 fn a_const_duration_resolves_to_the_const() {
-    let text = "const INTRO = 90;\nexport const SCENES = defineScenes([\n  { id: 'intro', durationInFrames: INTRO },\n]);\n";
+    let text = &imported(
+        "const INTRO = 90;\nexport const SCENES = defineScenes([\n  { id: 'intro', durationInFrames: INTRO },\n]);\n",
+    );
     let list = &lists(text)[0];
     assert_eq!(
         number_at(text, &list.entries[0].duration),
@@ -100,7 +138,9 @@ fn a_const_duration_resolves_to_the_const() {
     );
 
     // A const read twice is shared.
-    let text = "const LEN = 90;\nexport const SCENES = defineScenes([\n  { id: 'a', durationInFrames: LEN },\n  { id: 'b', durationInFrames: LEN },\n]);\n";
+    let text = &imported(
+        "const LEN = 90;\nexport const SCENES = defineScenes([\n  { id: 'a', durationInFrames: LEN },\n  { id: 'b', durationInFrames: LEN },\n]);\n",
+    );
     assert_eq!(
         lists(text)[0].entries[0].duration,
         EditTarget::Locked(LockReason::SharedBinding {
@@ -110,7 +150,9 @@ fn a_const_duration_resolves_to_the_const() {
     );
 
     // An imported name does not resolve.
-    let text = "import { LEN } from './constants';\nexport const SCENES = defineScenes([{ id: 'a', durationInFrames: LEN }]);\n";
+    let text = &imported(
+        "import { LEN } from './constants';\nexport const SCENES = defineScenes([{ id: 'a', durationInFrames: LEN }]);\n",
+    );
     assert_eq!(
         lists(text)[0].entries[0].duration,
         EditTarget::Locked(LockReason::UnresolvedIdentifier { name: "LEN".into() })
@@ -120,7 +162,9 @@ fn a_const_duration_resolves_to_the_const() {
 #[test]
 fn an_exported_const_duration_is_locked() {
     // Other files may read it: writing it would move them too.
-    let text = "export const OUTRO = 60;\nexport const SCENES = defineScenes([\n  { id: 'outro', durationInFrames: OUTRO },\n]);\n";
+    let text = &imported(
+        "export const OUTRO = 60;\nexport const SCENES = defineScenes([\n  { id: 'outro', durationInFrames: OUTRO },\n]);\n",
+    );
     assert_eq!(
         lists(text)[0].entries[0].duration,
         EditTarget::Locked(LockReason::Exported {
@@ -130,9 +174,9 @@ fn an_exported_const_duration_is_locked() {
 
     // Exported by a list of names, under its own name or another.
     for export in ["export { OUTRO };", "export { OUTRO as END };"] {
-        let text = format!(
+        let text = imported(&format!(
             "const OUTRO = 60;\n{export}\nexport const SCENES = defineScenes([\n  {{ id: 'outro', durationInFrames: OUTRO }},\n]);\n"
-        );
+        ));
         assert_eq!(
             lists(&text)[0].entries[0].duration,
             EditTarget::Locked(LockReason::Exported {
@@ -143,13 +187,17 @@ fn an_exported_const_duration_is_locked() {
     }
 
     // Read twice too, it is exported first.
-    let text = "export const LEN = 60;\nexport const SCENES = defineScenes([\n  { id: 'a', durationInFrames: LEN },\n  { id: 'b', durationInFrames: LEN },\n]);\n";
+    let text = &imported(
+        "export const LEN = 60;\nexport const SCENES = defineScenes([\n  { id: 'a', durationInFrames: LEN },\n  { id: 'b', durationInFrames: LEN },\n]);\n",
+    );
     assert_eq!(
         lists(text)[0].entries[0].duration,
         EditTarget::Locked(LockReason::Exported { name: "LEN".into() })
     );
     // Other locks stay.
-    let text = "export const LEN = spring(1);\nexport const SCENES = defineScenes([\n  { id: 'a', durationInFrames: LEN },\n]);\n";
+    let text = &imported(
+        "export const LEN = spring(1);\nexport const SCENES = defineScenes([\n  { id: 'a', durationInFrames: LEN },\n]);\n",
+    );
     assert_eq!(
         lists(text)[0].entries[0].duration,
         EditTarget::Locked(LockReason::UnsupportedCall {
@@ -158,7 +206,9 @@ fn an_exported_const_duration_is_locked() {
     );
 
     // Another export of the file leaves the const editable.
-    let text = "const OUTRO = 60;\nexport const END = 1;\nexport const SCENES = defineScenes([\n  { id: 'outro', durationInFrames: OUTRO },\n]);\n";
+    let text = &imported(
+        "const OUTRO = 60;\nexport const END = 1;\nexport const SCENES = defineScenes([\n  { id: 'outro', durationInFrames: OUTRO },\n]);\n",
+    );
     assert_eq!(
         number_at(text, &lists(text)[0].entries[0].duration),
         ("60".into(), 60.0)
@@ -167,7 +217,9 @@ fn an_exported_const_duration_is_locked() {
 
 #[test]
 fn an_entry_without_a_duration_is_locked() {
-    let text = "export const SCENES = defineScenes([\n  { id: 'intro' },\n  { id: 'outro', durationInFrames: 60 },\n]);\n";
+    let text = &imported(
+        "export const SCENES = defineScenes([\n  { id: 'intro' },\n  { id: 'outro', durationInFrames: 60 },\n]);\n",
+    );
     let list = &lists(text)[0];
     assert_eq!(ids(list), ["intro", "outro"]);
     assert_eq!(
@@ -179,7 +231,9 @@ fn an_entry_without_a_duration_is_locked() {
 
 #[test]
 fn an_expression_duration_is_locked_with_its_inputs() {
-    let text = "const BAR = 30;\nexport const SCENES = defineScenes([\n  { id: 'intro', durationInFrames: BAR * 3 },\n  { id: 'outro', durationInFrames: 60 },\n]);\n";
+    let text = &imported(
+        "const BAR = 30;\nexport const SCENES = defineScenes([\n  { id: 'intro', durationInFrames: BAR * 3 },\n  { id: 'outro', durationInFrames: 60 },\n]);\n",
+    );
     let entry = &lists(text)[0].entries[0];
     assert_eq!(
         entry.duration,
@@ -193,7 +247,9 @@ fn an_expression_duration_is_locked_with_its_inputs() {
     assert!(lists(text)[0].entries[1].inputs.is_empty());
 
     // `S.words - S.intro`: the object is the input, and is not a number.
-    let text = "export const S = { intro: 0, words: 40 } as const;\nexport const SCENES = defineScenes([\n  { id: 'intro', durationInFrames: S.words - S.intro },\n]);\n";
+    let text = &imported(
+        "export const S = { intro: 0, words: 40 } as const;\nexport const SCENES = defineScenes([\n  { id: 'intro', durationInFrames: S.words - S.intro },\n]);\n",
+    );
     let entry = &lists(text)[0].entries[0];
     assert_eq!(
         entry.duration,

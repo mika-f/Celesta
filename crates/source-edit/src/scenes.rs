@@ -14,7 +14,7 @@ use oxc_ast::ast::{
 use oxc_ast_visit::Visit;
 use oxc_span::GetSpan;
 
-use crate::imports::Module;
+use crate::imports::{Module, PACKAGE};
 use crate::inputs::inputs_at;
 use crate::resolve::{EditTarget, LockReason, Span, resolve_value_at};
 use crate::shape::{span_of, string_of};
@@ -41,8 +41,9 @@ pub struct SceneItem {
     pub inputs: Vec<(String, EditTarget)>,
 }
 
-/// Every `defineScenes([...])` call in `text` (parsed as `path`'s type)
-/// whose argument is an array literal of object literals with
+/// Every call of `@celesta/react`'s `defineScenes([...])` in `text` (parsed
+/// as `path`'s type; a function of another module or of the file's own is
+/// not it) whose argument is an array literal of object literals with
 /// string-literal ids, in source order. A list holding anything else (a
 /// spread, a hole, an entry with a spread or a computed key) is skipped.
 pub fn scene_lists(text: &str, path: &Path) -> Vec<SceneList> {
@@ -51,12 +52,16 @@ pub fn scene_lists(text: &str, path: &Path) -> Vec<SceneList> {
     if failed {
         return Vec::new();
     }
+    let module = Module::of(&program);
     let mut calls = Calls {
+        module: &module,
         lists: Vec::new(),
         bindings: Vec::new(),
     };
     calls.visit_program(&program);
-    let Calls { lists, bindings } = calls;
+    let Calls {
+        lists, bindings, ..
+    } = calls;
     let exported = exported_names(&program);
     lists
         .into_iter()
@@ -185,14 +190,42 @@ fn item(
     }
 }
 
-/// The `defineScenes` calls, by the offset of the call, and the `const`s
-/// that hold a call, by the same offset.
-struct Calls {
+/// The `defineScenes` calls (of `@celesta/react`'s, through the file's
+/// import), by the offset of the call, and the `const`s that hold a call,
+/// by the same offset.
+struct Calls<'m> {
+    module: &'m Module,
     lists: Vec<(u32, Vec<(String, Duration)>)>,
     bindings: Vec<(u32, String)>,
 }
 
-impl<'a> Visit<'a> for Calls {
+impl Calls<'_> {
+    /// Whether `callee` is `@celesta/react`'s `defineScenes`: imported by
+    /// name (under any name), or through `import * as C`.
+    fn define_scenes(&self, callee: &Expression<'_>) -> bool {
+        let import = match callee.without_parentheses() {
+            Expression::Identifier(id) => self
+                .module
+                .import(&id.name)
+                .filter(|import| import.imported.as_deref() == Some("defineScenes")),
+            Expression::StaticMemberExpression(member)
+                if member.property.name == "defineScenes" =>
+            {
+                match member.object.without_parentheses() {
+                    Expression::Identifier(id) => self
+                        .module
+                        .import(&id.name)
+                        .filter(|import| import.imported.is_none()),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+        import.is_some_and(|import| import.source == PACKAGE)
+    }
+}
+
+impl<'a> Visit<'a> for Calls<'_> {
     fn visit_variable_declaration(&mut self, it: &VariableDeclaration<'a>) {
         if it.kind == VariableDeclarationKind::Const {
             for d in &it.declarations {
@@ -208,7 +241,7 @@ impl<'a> Visit<'a> for Calls {
     }
 
     fn visit_call_expression(&mut self, it: &CallExpression<'a>) {
-        if matches!(it.callee.without_parentheses(), Expression::Identifier(id) if id.name == "defineScenes")
+        if self.define_scenes(&it.callee)
             && let Some(entries) = list_of(it)
         {
             self.lists.push((it.span.start, entries));
