@@ -4,8 +4,10 @@
 
 use super::*;
 use crate::element_edit::{WindowTargets, resolve_window, window_files, window_report};
-use crate::scope::Scope;
-use celesta_source_edit::TimingKind;
+use crate::scope::{Scope, ScopeOptions, ScopeState};
+use crate::timing::{SetTimingOffer, WindowRole, set_timing_files, set_timing_offer};
+use celesta_react_bridge::TimingWindow;
+use celesta_source_edit::{ElementRef, TimingKind, WrapLock};
 
 /// `<Sequence from={30}>` in a scene function at 4:3, around a `<Rect>` at
 /// 5:5.
@@ -34,6 +36,16 @@ const PRICE: &str = "export const Price = () => (\n  <PriceTag label=\"Sale\" />
 
 /// The Intro scene's call of `PriceTag` at 2:3.
 const INTRO: &str = "export const Intro = () => (\n  <PriceTag label=\"Hello\" />\n);\n";
+
+/// A `<Rect>` at 5:5 without timing of its own.
+const UNTIMED: &str = "import { Rect } from \"@celesta/react\";\n\nexport const Intro = () => (\n  <>\n    <Rect width={200} />\n  </>\n);\n";
+
+/// [`UNTIMED`] after "Set timing" at frame 45 of a 120-frame scene.
+const TIMED: &str = "import { Rect, Sequence } from \"@celesta/react\";\n\nexport const Intro = () => (\n  <>\n    <Sequence from={45} durationInFrames={75}>\n      <Rect width={200} />\n    </Sequence>\n  </>\n);\n";
+
+/// Indented with tabs, `Sequence` imported as `Seq`: a `<Rect>` over
+/// three lines at 5:3.
+const TABS: &str = "import { Rect, Sequence as Seq } from \"@celesta/react\";\n\nexport const Intro = () => (\n\t<>\n\t\t<Rect\n\t\t\twidth={200}\n\t\t/>\n\t</>\n);\n";
 
 /// Source files in a directory of their own, removed when dropped.
 struct Files {
@@ -375,10 +387,154 @@ fn a_window_that_does_not_resolve_keeps_why() {
         request,
         Some("a"),
         Err("no rows".to_owned()),
-        Some(elsewhere)
+        Some(elsewhere),
+        None
     ));
     let (window, _) = state
         .window_targets(Some("a"), Some((&report, 0)))
         .expect("the window's outcome is kept beside the element's");
     assert_eq!(window.err(), Some(why));
+}
+
+/// Gives the `<Rect>` at `at` in `file` the timing `from={45}
+/// durationInFrames={75}` as the editor does: one write of the element's
+/// file, found again where `expected` was.
+fn set_timing(
+    files: &Files,
+    file: &str,
+    at: (u32, u32),
+    expected: &ElementRef,
+) -> Result<Vec<crate::edit_history::FileEdit>, String> {
+    let report = report_of(vec![files.entry("Rect", ElementKind::Primitive, file, at)]);
+    write_all_recorded(vec![files.path(file)], |texts| {
+        set_timing_files(texts, &report, expected, 45, 75).map_err(|error| error.to_string())
+    })
+}
+
+#[test]
+fn set_timing_files_wraps_and_imports_in_one_entry() {
+    let files = Files::new("set-timing", &[("scene.tsx", UNTIMED)]);
+    let expected = element_at(UNTIMED, 5, 5).unwrap();
+
+    let entry = set_timing(&files, "scene.tsx", (5, 5), &expected).unwrap();
+
+    assert_eq!(files.read("scene.tsx"), TIMED);
+    assert_eq!(entry.len(), 1);
+    let mut history = EditHistory::default();
+    history.push(HistoryEntry { files: entry });
+    history.undo().unwrap();
+    assert_eq!(files.read("scene.tsx"), UNTIMED);
+}
+
+#[test]
+fn set_timing_files_uses_the_alias_and_keeps_tabs() {
+    let files = Files::new("set-timing-tabs", &[("scene.tsx", TABS)]);
+    let expected = element_at(TABS, 5, 3).unwrap();
+
+    set_timing(&files, "scene.tsx", (5, 3), &expected).unwrap();
+
+    assert_eq!(
+        files.read("scene.tsx"),
+        "import { Rect, Sequence as Seq } from \"@celesta/react\";\n\nexport const Intro = () => (\n\t<>\n\t\t<Seq from={45} durationInFrames={75}>\n\t\t\t<Rect\n\t\t\t\twidth={200}\n\t\t\t/>\n\t\t</Seq>\n\t</>\n);\n"
+    );
+}
+
+#[test]
+fn set_timing_files_refuses_a_changed_source() {
+    let files = Files::new("set-timing-changed", &[("scene.tsx", UNTIMED)]);
+    let expected = element_at(UNTIMED, 5, 5).unwrap();
+    let moved = UNTIMED.replace("\n\nexport const", "\n\n// The intro.\nexport const");
+    fs::write(files.path("scene.tsx"), &moved).unwrap();
+
+    let result = set_timing(&files, "scene.tsx", (5, 5), &expected);
+
+    assert_eq!(result.err(), Some(CommitError::SourceChanged.to_string()));
+    assert_eq!(files.read("scene.tsx"), moved);
+}
+
+fn timing_window(from: f64, to: f64) -> TimingWindow {
+    TimingWindow {
+        kind: "Sequence".to_owned(),
+        from,
+        to,
+        source: None,
+        remapped: false,
+    }
+}
+
+#[test]
+fn set_timing_offer_follows_the_role() {
+    let window = timing_window(300.0, 420.0);
+    let span = Some((45, 75));
+    let offer = |role: &WindowRole, span, lock: Option<&WrapLock>| {
+        set_timing_offer(role, span, lock, &ScopeState::NotShared, None)
+    };
+    let enabled = SetTimingOffer::Enabled {
+        from: 45,
+        duration: 75,
+    };
+
+    assert_eq!(
+        offer(&WindowRole::Own(&window), span, None),
+        SetTimingOffer::Hidden
+    );
+    assert_eq!(
+        offer(&WindowRole::Remapped, span, None),
+        SetTimingOffer::Hidden
+    );
+    assert_eq!(offer(&WindowRole::Scene(&window), span, None), enabled);
+    assert_eq!(offer(&WindowRole::None, span, None), enabled);
+
+    assert_eq!(
+        offer(
+            &WindowRole::Scene(&window),
+            span,
+            Some(&WrapLock::NotAChild)
+        ),
+        SetTimingOffer::Disabled("Wrap the element in a parent first".to_owned())
+    );
+    let no_frame_left = SetTimingOffer::Disabled("No frame left after the playhead".to_owned());
+    assert_eq!(
+        offer(&WindowRole::Scene(&window), None, None),
+        no_frame_left
+    );
+    assert_eq!(offer(&WindowRole::None, None, None), no_frame_left);
+}
+
+#[test]
+fn set_timing_offer_follows_the_scope() {
+    let role = WindowRole::None;
+    let span = Some((45, 75));
+    let offer =
+        |scope: &ScopeState, remembered| set_timing_offer(&role, span, None, scope, remembered);
+    let enabled = SetTimingOffer::Enabled {
+        from: 45,
+        duration: 75,
+    };
+    let options = ScopeState::Options(ScopeOptions {
+        this_scene: Ok(()),
+        shared: Ok(()),
+        shared_reaches: vec!["Intro".to_owned(), "Price".to_owned()],
+        sets_own: Vec::new(),
+    });
+
+    // A choice remembered for the element counts only where it is shared.
+    assert_eq!(offer(&ScopeState::NotShared, None), enabled);
+    assert_eq!(
+        offer(&ScopeState::NotShared, Some(Scope::ThisScene)),
+        enabled
+    );
+    assert_eq!(offer(&options, Some(Scope::Shared)), enabled);
+    let per_scene = SetTimingOffer::Disabled("Can't be set per scene yet".to_owned());
+    assert_eq!(offer(&options, Some(Scope::ThisScene)), per_scene);
+    // "This scene" is the option in effect without a choice.
+    assert_eq!(offer(&options, None), per_scene);
+
+    let scanning = ScopeState::Unknown {
+        note: "Scanning scenes…".to_owned(),
+    };
+    assert_eq!(
+        offer(&scanning, None),
+        SetTimingOffer::Disabled("Scanning scenes…".to_owned())
+    );
 }

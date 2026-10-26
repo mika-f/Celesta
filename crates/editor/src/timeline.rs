@@ -27,7 +27,8 @@ use crate::impact::ImpactView;
 use crate::layer_select::display_path;
 use crate::scene_entries::SceneEdge;
 use crate::timecode::{format_timecode, nominal_fps, ruler_scale};
-use crate::timeline_drag::{BandGrip, BandGrips, edge_width};
+use crate::timeline_drag::{BandGrip, BandGrips, draggable_band, edge_width};
+use crate::timing::{SET_TIMING_NOTE, SetTimingOffer};
 use crate::view::EditorView;
 use crate::waveform::{level_at_time, waveform_segment};
 use celesta_editor_theme as theme;
@@ -1168,6 +1169,11 @@ impl EditorView {
                 let notice = self.band_notice.as_ref()?;
                 Some((notice.at, vec![notice.text.clone()], true))
             });
+        // Without a window of its own, the band offers one instead of grips.
+        let set_timing = match &grips {
+            Some(_) => None,
+            None => self.set_timing_overlay(&ranges[..filled], view, cx),
+        };
         let grips = grips.map(|grips| self.band_grip_overlay(&grips, ranges, filled, view, cx));
         div()
             .relative()
@@ -1235,7 +1241,8 @@ impl EditorView {
                             .child(entry),
                     )
                     .children(bands)
-                    .children(grips),
+                    .children(grips)
+                    .children(set_timing),
             )
             // Outside the lane, so its edges don't cut the label.
             .when_some(label, |row, (at, lines, notice)| {
@@ -1338,6 +1345,55 @@ impl EditorView {
                 }),
             )
             .into_any_element()
+    }
+
+    /// "Set timing" at the start of the band holding the lookup frame, for
+    /// an element without a window of its own: `filled` are this instance's
+    /// bands in the current scene (frames). Disabled with why, as the
+    /// action's offer says; `None` when it is hidden or no band holds the
+    /// frame.
+    fn set_timing_overlay(
+        &self,
+        filled: &[(f64, f64)],
+        view: LaneView,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui_kit::AnyElement> {
+        let offer = self.set_timing_action()?;
+        let band = draggable_band(filled, self.source_lookup_frame as f64)?;
+        let start = filled[band].0 / view.end_frame;
+        let button = Button::new("timeline-set-timing")
+            .xsmall()
+            .label("Set timing");
+        let action = match offer {
+            SetTimingOffer::Hidden => return None,
+            SetTimingOffer::Disabled(reason) => div()
+                .id("timeline-set-timing-locked")
+                .cursor(CursorStyle::OperationNotAllowed)
+                .tooltip(move |window, cx| Tooltip::new(reason.clone()).build(window, cx))
+                .child(button.disabled(true))
+                .into_any_element(),
+            SetTimingOffer::Enabled { .. } => button
+                .tooltip(SET_TIMING_NOTE)
+                .on_click(cx.listener(|this, _, _, cx| {
+                    // The band below doesn't take the click as a seek.
+                    cx.stop_propagation();
+                    this.set_timing(cx);
+                    cx.notify();
+                }))
+                .into_any_element(),
+        };
+        Some(
+            div()
+                .absolute()
+                .top(px(3.0))
+                .bottom(px(3.0))
+                .left(relative(view.x(start).max(0.0)))
+                .flex()
+                .items_center()
+                .pl_1()
+                .child(action)
+                .into_any_element(),
+        )
     }
 
     /// One selection band at `left`/`width` lane fractions; its tooltip names

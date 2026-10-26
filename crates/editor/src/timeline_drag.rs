@@ -3,7 +3,9 @@
 //! moves the bands and a label with the pointer, writes nothing until the
 //! button comes up, and then writes the window's props as one history
 //! entry. Every rule sits in a pure helper here. A chapter's end drags the
-//! same way on the chapter row (its rules in `scene_entries`).
+//! same way on the chapter row (its rules in `scene_entries`). An element
+//! without a window of its own is offered "Set timing" there instead (its
+//! rules in `timing`).
 
 use crate::element_edit::{
     CommitError, ElementTargets, PropKey, WindowTargets, editable, inner_target, reason_text,
@@ -19,12 +21,14 @@ use crate::scope::{
     CommitGate, SceneCalls, Scope, ScopeState, commit_scope, gesture_gate, impact_filter,
     scope_in_effect, scope_state,
 };
-use crate::timing::{WindowRole, window_role};
+use crate::timing::{
+    SetTimingOffer, WindowRole, set_timing_files, set_timing_offer, set_timing_span, window_role,
+};
 use crate::view::EditorView;
 use celesta_react_bridge::{
     ElementOccurrences, InstanceOccurrences, LayerSourceReport, ReactChapter, SourcePos,
 };
-use celesta_source_edit::{EditTarget, EditValue, TimingKind, format_number};
+use celesta_source_edit::{EditTarget, EditValue, LockReason, TimingKind, format_number};
 use gpui_kit::{Context, MouseMoveEvent};
 
 /// What part of the window a drag holds.
@@ -854,6 +858,85 @@ impl EditorView {
         if !self.band_drag_active() {
             self.band_drag = None;
         }
+    }
+
+    /// The "Set timing" offer for the selected element at its lookup frame
+    /// (see [`set_timing_offer`]), under the scope the Properties panel
+    /// shows for it. Disabled while its targets can't be committed to, and
+    /// when its file is outside the project. `None` without a found source.
+    pub(crate) fn set_timing_action(&self) -> Option<SetTimingOffer> {
+        let report = self.band_report()?;
+        let chapters = self.react_chapters().unwrap_or_default();
+        let end = u64::try_from(self.clock.end_frame()).unwrap_or(0);
+        let frame = u64::try_from(self.source_lookup_frame).unwrap_or(0);
+        let role = window_role(report, chapters, end, frame);
+        if matches!(role, WindowRole::Own(_) | WindowRole::Remapped) {
+            return Some(SetTimingOffer::Hidden);
+        }
+        let selected = self.selected_layer.as_deref();
+        let unavailable = || SetTimingOffer::Disabled(self.element_edit.unavailable(selected));
+        let Some((targets, _)) = self.element_targets() else {
+            return Some(unavailable());
+        };
+        if targets.outside.contains(&targets.file) {
+            return Some(SetTimingOffer::Disabled(reason_text(
+                &LockReason::OutsideProject,
+            )));
+        }
+        let (Some((resolved, _)), Some(context)) = (
+            self.element_edit.resolved(selected),
+            self.shown_scope_context(),
+        ) else {
+            return Some(unavailable());
+        };
+        Some(set_timing_offer(
+            &role,
+            set_timing_span(&role, chapters, end, frame),
+            resolved.wrap_lock.as_ref(),
+            &context.state,
+            self.remembered_scope(),
+        ))
+    }
+
+    /// Wraps the selected element in a `<Sequence>` from the playhead (see
+    /// [`set_timing_files`]) as one history entry, then reloads. An offer
+    /// no longer enabled, or a write that fails, leaves the notice why
+    /// where the band drag leaves its own.
+    pub(crate) fn set_timing(&mut self, cx: &mut Context<Self>) {
+        let at = self.source_lookup_frame as f64;
+        let (from, duration) = match self.set_timing_action() {
+            Some(SetTimingOffer::Enabled { from, duration }) => (from, duration),
+            Some(SetTimingOffer::Disabled(reason)) => {
+                self.band_notice = Some(BandNotice {
+                    at,
+                    text: not_written(&reason),
+                });
+                return;
+            }
+            Some(SetTimingOffer::Hidden) | None => return,
+        };
+        let Some((targets, report)) = self.element_targets() else {
+            return;
+        };
+        let (file, expected, report) = (targets.file.clone(), targets.element, report.clone());
+        self.band_notice = None;
+        self.record_own_writes(
+            vec![file],
+            move |texts| {
+                set_timing_files(texts, &report, &expected, from, duration)
+                    .map_err(|error| error.to_string())
+            },
+            move |this, result, cx| {
+                if let Err(text) = result {
+                    this.band_notice = Some(BandNotice {
+                        at,
+                        text: not_written(&text),
+                    });
+                }
+                cx.notify();
+            },
+            cx,
+        );
     }
 }
 

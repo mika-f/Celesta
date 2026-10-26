@@ -34,7 +34,8 @@ use celesta_react_bridge::{
     PrimitivePropertyTable, ReactChapter, ReceivedProps, ReceivedValue, SourcePos,
 };
 use celesta_source_edit::{
-    DefaultTarget, EditTarget, EditValue, ElementRef, LiftLock, LockReason, format_number,
+    DefaultTarget, EditTarget, EditValue, ElementRef, LiftLock, LockReason, WrapLock,
+    format_number, wrap_element,
 };
 use gpui_kit::Context;
 use std::cell::RefCell;
@@ -359,6 +360,10 @@ pub(crate) struct Resolved {
     /// be dragged (it doesn't resolve, or it is inside a loop or a freeze
     /// frame); `None` for a scene's window, or none.
     pub(crate) window_targets: Option<Result<WindowTargets, String>>,
+    /// Why the element can't be wrapped in a `<Sequence>` ("Set timing"),
+    /// tried without writing when it has no window of its own and its
+    /// targets resolved; `None` otherwise.
+    pub(crate) wrap_lock: Option<WrapLock>,
 }
 
 /// Why a window inside a `<Loop>` or `<FreezeFrame>` doesn't drag.
@@ -435,7 +440,8 @@ impl ElementEdit {
         Some(self.request)
     }
 
-    /// [`Self::finish_with_window`] without an own timing window.
+    /// [`Self::finish_with_window`] without an own timing window, and
+    /// wrapped freely.
     #[cfg(test)]
     pub(crate) fn finish(
         &mut self,
@@ -443,19 +449,20 @@ impl ElementEdit {
         selected: Option<&str>,
         outcome: Result<ElementTargets, String>,
     ) -> bool {
-        self.finish_with_window(request, selected, outcome, None)
+        self.finish_with_window(request, selected, outcome, None, None)
     }
 
-    /// Keeps the outcome of resolution `request`, and `window_targets`, the
-    /// element's own timing window (see [`Resolved::window_targets`]), when
-    /// it is the newest one and `selected` is still the layer it was for.
-    /// True when kept.
+    /// Keeps the outcome of resolution `request`, `window_targets`, the
+    /// element's own timing window (see [`Resolved::window_targets`]), and
+    /// `wrap_lock` (see [`Resolved::wrap_lock`]), when it is the newest one
+    /// and `selected` is still the layer it was for. True when kept.
     pub(crate) fn finish_with_window(
         &mut self,
         request: u64,
         selected: Option<&str>,
         outcome: Result<ElementTargets, String>,
         window_targets: Option<Result<WindowTargets, String>>,
+        wrap_lock: Option<WrapLock>,
     ) -> bool {
         let Some((layer, report, timeline_frame)) = self.wanted.as_ref() else {
             return false;
@@ -475,6 +482,7 @@ impl ElementEdit {
             timeline_frame: *timeline_frame,
             outcome,
             window_targets,
+            wrap_lock,
         });
         true
     }
@@ -747,13 +755,16 @@ impl EditorView {
         };
         // The wrapper written around the element, when its timing is the
         // element's own: resolved as an element of its own beside it. A
-        // loop's or a freeze frame's window is locked unread.
-        let window = match window_role(
+        // loop's or a freeze frame's window is locked unread. Without one,
+        // "Set timing" is offered: the wrap is tried without writing.
+        let role = window_role(
             report,
             self.react_chapters().unwrap_or_default(),
             u64::try_from(self.clock.end_frame()).unwrap_or(0),
             u64::try_from(frame).unwrap_or(0),
-        ) {
+        );
+        let try_wrap = matches!(role, WindowRole::Scene(_) | WindowRole::None);
+        let window = match role {
             WindowRole::Own(window) => window.source.clone().map(Ok),
             WindowRole::Remapped => Some(Err(REMAPPED_WINDOW.to_owned())),
             WindowRole::Scene(_) | WindowRole::None => None,
@@ -764,7 +775,7 @@ impl EditorView {
             .and_then(Path::parent)
             .map(Path::to_path_buf);
         cx.spawn(async move |view, cx| {
-            let (outcome, window) = cx
+            let (outcome, window, wrap_lock) = cx
                 .background_executor()
                 .spawn(async move {
                     let read = |path: &Path| {
@@ -789,7 +800,13 @@ impl EditorView {
                         lock_outside_project(&mut window.targets, outside);
                         Ok(window)
                     });
-                    (outcome, window)
+                    let wrap_lock = match &outcome {
+                        Ok(targets) if try_wrap => read(&targets.file).ok().and_then(|text| {
+                            wrap_element(&text, &targets.element, "Sequence", &[]).err()
+                        }),
+                        _ => None,
+                    };
+                    (outcome, window, wrap_lock)
                 })
                 .await;
             view.update(cx, |this, cx| {
@@ -799,6 +816,7 @@ impl EditorView {
                     selected.as_deref(),
                     outcome,
                     window,
+                    wrap_lock,
                 ) {
                     // Commits made while the targets were read go now.
                     this.drain_held_rows(cx);

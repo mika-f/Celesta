@@ -1,8 +1,17 @@
 //! Whose timing the window nearest an element is: the element's own (a
 //! `<Sequence>` written around it), its scene's, or a loop's or freeze
-//! frame's; and the window "Set timing" writes when it has none of its own.
+//! frame's; and "Set timing", which writes a window around an element that
+//! has none of its own.
 
+use crate::edit_history::Texts;
+use crate::element_edit::{CommitError, apply_checked};
+use crate::scope::{Scope, ScopeLock, ScopeState, chosen_scope};
 use celesta_react_bridge::{LayerSourceReport, ReactChapter, TimingWindow, outermost_chapter_at};
+use celesta_source_edit::{
+    CELESTA_REACT, EditValue, ElementRef, ImportName, WrapLock, element_at, ensure_import,
+    wrap_element,
+};
+use std::path::PathBuf;
 
 /// What `report.windows[0]`, the window nearest the element, is.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -61,7 +70,6 @@ fn whole_frames(window: &TimingWindow, composition_end: u64) -> (i64, i64) {
 /// composition's timeline to the end of the scene at the playhead (the
 /// composition's end outside one). `None` for `Own` and `Remapped`, and when
 /// less than a frame is left.
-#[allow(dead_code)]
 pub(crate) fn set_timing_span(
     role: &WindowRole,
     chapters: &[ReactChapter],
@@ -81,6 +89,103 @@ pub(crate) fn set_timing_span(
         WindowRole::Own(_) | WindowRole::Remapped => return None,
     };
     (duration >= 1).then_some((from, duration))
+}
+
+/// Why an element that isn't a JSX child can't be given timing.
+pub(crate) const WRAP_FIRST: &str = "Wrap the element in a parent first";
+
+/// What "Set timing" changes besides the element's frames: inside a
+/// `<Sequence>`, `useCurrentFrame()` restarts at its `from`.
+pub(crate) const SET_TIMING_NOTE: &str = "Animations inside start at the new start";
+
+/// Why "Set timing" at the playhead has nothing to cover.
+const NO_FRAME_LEFT: &str = "No frame left after the playhead";
+
+/// What the timeline offers for giving the selected element timing of its
+/// own.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum SetTimingOffer {
+    /// The element has a window of its own (or a loop's or freeze frame's):
+    /// its grips are drawn instead.
+    Hidden,
+    /// Shown, with why it can't be used.
+    Disabled(String),
+    /// Wraps the element in `<Sequence from={from} durationInFrames={duration}>`.
+    Enabled { from: i64, duration: i64 },
+}
+
+/// The "Set timing" offer for an element whose nearest window has `role`:
+/// hidden for an own or remapped window; disabled by `wrap_lock` ("Wrap the
+/// element in a parent first"), by `span` when less than a frame is left
+/// after the playhead (see [`set_timing_span`]), or by the scope. The write
+/// changes the component every scene uses, so an element shared between
+/// scenes takes it only under "Shared value" (`scope` and the `remembered`
+/// choice, as the Properties panel shows them; see [`chosen_scope`]); an
+/// index that can't answer disables it with its note.
+pub(crate) fn set_timing_offer(
+    role: &WindowRole,
+    span: Option<(i64, i64)>,
+    wrap_lock: Option<&WrapLock>,
+    scope: &ScopeState,
+    remembered: Option<Scope>,
+) -> SetTimingOffer {
+    if matches!(role, WindowRole::Own(_) | WindowRole::Remapped) {
+        return SetTimingOffer::Hidden;
+    }
+    if let Some(WrapLock::NotAChild) = wrap_lock {
+        return SetTimingOffer::Disabled(WRAP_FIRST.to_owned());
+    }
+    let Some((from, duration)) = span else {
+        return SetTimingOffer::Disabled(NO_FRAME_LEFT.to_owned());
+    };
+    let lock = match scope {
+        ScopeState::NotShared => None,
+        ScopeState::Unknown { note } => Some(note.clone()),
+        ScopeState::Options(options) => match chosen_scope(remembered, options) {
+            Ok(Scope::Shared) => None,
+            Ok(Scope::ThisScene) => Some(ScopeLock::PerSceneUnsupported.text()),
+            Err(lock) => Some(lock.text()),
+        },
+    };
+    match lock {
+        Some(reason) => SetTimingOffer::Disabled(reason),
+        None => SetTimingOffer::Enabled { from, duration },
+    }
+}
+
+/// The element `report` describes, found again in `texts` where `expected`
+/// was, wrapped in `<Sequence from={from} durationInFrames={duration}>` with
+/// `Sequence` imported from `@celesta/react` (written as the file imports
+/// it: an alias, or `C.Sequence` under `import * as C`), as one checked
+/// text of the element's file.
+pub(crate) fn set_timing_files(
+    texts: &Texts,
+    report: &LayerSourceReport,
+    expected: &ElementRef,
+    from: i64,
+    duration: i64,
+) -> Result<Vec<(PathBuf, String)>, CommitError> {
+    let source = report.chain.first().ok_or(CommitError::SourceChanged)?;
+    let text = texts.get(&source.file).ok_or(CommitError::SourceChanged)?;
+    if element_at(text, source.line, source.column).as_ref() != Some(expected) {
+        return Err(CommitError::SourceChanged);
+    }
+    let (import, name) =
+        ensure_import(text, CELESTA_REACT, "Sequence").map_err(CommitError::Import)?;
+    let tag = match name {
+        ImportName::Named(tag) | ImportName::Namespace(tag) => tag,
+    };
+    let attrs = [
+        ("from", EditValue::Number(from as f64)),
+        ("durationInFrames", EditValue::Number(duration as f64)),
+    ];
+    // The element was a child where `expected` was found: anything else is
+    // a changed source.
+    let wrap =
+        wrap_element(text, expected, &tag, &attrs).map_err(|_| CommitError::SourceChanged)?;
+    let edits: Vec<_> = import.into_iter().chain(wrap).collect();
+    let written = apply_checked(&source.file, text, &edits)?;
+    Ok(vec![(source.file.clone(), written)])
 }
 
 #[cfg(test)]

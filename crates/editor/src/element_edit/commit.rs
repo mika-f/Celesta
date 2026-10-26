@@ -12,8 +12,8 @@ use crate::element_rows::removable;
 use crate::scope::{SceneCalls, Scope, ScopeLock, ScopedRow, lift_scope_lock, scoped_row};
 use celesta_react_bridge::LayerSourceReport;
 use celesta_source_edit::{
-    ApplyError, DefaultTarget, Edit, EditTarget, EditValue, ElementRef, LiftProp, LockReason,
-    apply, expression, parses_file, plan_lift_avoiding, removal, written_attributes,
+    ApplyError, DefaultTarget, Edit, EditTarget, EditValue, ElementRef, ImportLock, LiftProp,
+    LockReason, apply, expression, parses_file, plan_lift_avoiding, removal, written_attributes,
 };
 use std::collections::BTreeMap;
 use std::fmt;
@@ -35,6 +35,8 @@ pub(crate) enum CommitError {
     Unparseable,
     /// The row can't be written under the chosen scope.
     Scope(ScopeLock),
+    /// A name to import from `@celesta/react` is bound otherwise.
+    Import(ImportLock),
 }
 
 impl fmt::Display for CommitError {
@@ -47,6 +49,7 @@ impl fmt::Display for CommitError {
             Self::Apply(error) => write!(f, "Couldn't edit the source: {error}"),
             Self::Unparseable => f.write_str("Couldn't edit the source: the result does not parse"),
             Self::Scope(lock) => f.write_str(&lock.text()),
+            Self::Import(ImportLock::Clash { name }) => write!(f, "`{name}` here is not Celesta's"),
         }
     }
 }
