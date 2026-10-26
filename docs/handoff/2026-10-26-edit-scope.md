@@ -63,7 +63,8 @@ properties" point to it).
   `previewed_scope`, `scope_line`; `scoped_row` → `ScopedRow { AsResolved,
   Lift, Default { shown, own }, Locked(lock) }`, the one per-row rule;
   `scoped_removable`; `gesture_lock`; `commit_gate`, `drain_gate` (a row
-  commit's gate) and `gesture_gate` → `CommitGate { Go(scope), Hold(note),
+  commit's gate), `gesture_gate` and `held_gate` (a held commit's, by its
+  `HeldOrigin`) → `CommitGate { Go(scope), Hold(note),
   Refuse(text) }`; `gesture_start_refusal`; `impact_filter`;
   `scope_in_effect`; `remove_tooltip`; `ScopeChoices { get, set, carry,
   forget_in, clear }`.
@@ -94,7 +95,8 @@ properties" point to it).
   `scope_context` (current targets only, for the gates); `kept_scope`,
   `commit_gate_for` (through `drain_gate`), `gesture_gate_for`,
   `gesture_refusals`, `row_removable`. `commit_element` takes the scope.
-  `HeldCommit.scope`, `HeldCommit.scanning` and `ElementRow.held_note`
+  `HeldCommit.scope`, `HeldCommit.scanning`, `HeldCommit.gesture` and
+  `ElementRow.held_note`
   ("Scanning scenes…" in place of "Saving…"); `commit_row_with` gates each
   commit (Go writes, Hold holds, Refuse fails as a write failure);
   `drain_held_rows` stops while the oldest held commit's gate says Hold,
@@ -164,7 +166,12 @@ amended to match.
   released while the scenes are scanned is refused with the scan's note
   (`gesture_gate` turns a hold into a refusal); an inline edit stays open
   with it. Only commits held for a reload (another write running, the
-  targets being read again) still wait as before.
+  targets being read again) still wait as before; a scrub's or an inline
+  edit's (`HeldCommit.gesture`) then drains through `gesture_gate` under the
+  scope it captured (`held_gate`), so it meets the same locks as at release.
+- **A reload-held commit says what changed.** One held for a reload with no
+  option shown and refused at the drain says "The scenes changed while
+  editing; edit again" (`CHANGED_MEANWHILE`), not the scan's text.
 - **A selection change doesn't wait for the scan.** Selecting another layer,
   or leaving the interactive mode, drops the commits held for the scan with
   "Not saved: the scenes were still being scanned" in the viewer's notice,
@@ -259,11 +266,8 @@ amended to match.
   during the edit. After a refused blur the person may have to click back into
   the text, and the scope is captured again at the blur, before a clicked tab
   applies.
-- A gesture commit held for a reload (a scrub or an inline edit released
-  while another write runs) drains as a row commit (`commit_gate_for`): it
-  skips `gesture_gate`'s "sets its own" lock, and a held inline edit refused
-  at the drain loses its text. Carrying the gesture origin on `HeldCommit`
-  would fix it.
+- A held inline text commit refused at the drain can't reopen the edit: the
+  text reverts, and the refusal shows at the top-left of the preview.
 - Until the background job reads the scene calls, the line leaves out the
   scenes that set their own, and "Every scene sets `rectWidth` itself" can't
   fire yet.

@@ -72,10 +72,12 @@ A canvas drag, a label scrub, and an inline text edit use the option in effect
 when they start (the remembered choice, else the option shown), and start only
 when their end would be written under it: a prop it would refuse has no handle
 (no size handles when a size prop is refused), and a scrub or a double-click
-shows the refusal instead. While a drag runs, the Properties header and a second line of
-the drag label say "Edits change this scene" or "Edits change the shared
-value". If that option is locked by the time the gesture ends, the edit is
-refused with the lock's text, never written under the other option; a refused
+shows the refusal instead. While a drag runs, the Properties header and a
+second line of the drag label say "Edits change this scene" or "Edits change
+the shared value". If that option is locked by the time the gesture ends, the
+edit is refused with the lock's text, never written under the other option; a
+gesture released while another write runs waits its turn and is gated the
+same way when it goes; a refused
 inline text edit stays open with the reason, so the user can pick an option
 and commit again.
 
