@@ -50,6 +50,14 @@
       "enabled": false
     },
     {
+      "description": "pnpm refuses packages younger than its minimumReleaseAge (1 day by default), so a younger update fails pnpm install in CI. Waiting longer also leaves room for the dependencies it pulls in, released alongside it, and for npm's 72-hour unpublish window. Crates wait as long, for the same reason. Runtimes (Node.js, Rust) are not held back.",
+      "matchDatasources": [
+        "npm",
+        "crate"
+      ],
+      "minimumReleaseAge": "3 days"
+    },
+    {
       "description": "Only 8.1.x: ffmpeg-sys-next, Homebrew's ffmpeg@8, and the Windows package from ffmpeg-windows.yml follow FFmpeg's minor release, so a newer one is a change of its own.",
       "matchDepNames": [
         "FFmpeg"
