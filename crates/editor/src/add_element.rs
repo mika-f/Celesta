@@ -1270,6 +1270,7 @@ impl EditorView {
         };
         let inserted = Arc::new(Mutex::new(None));
         let written = Arc::clone(&inserted);
+        let selected = self.selected_layer.clone();
         self.record_own_writes(
             vec![file.clone()],
             move |texts| {
@@ -1283,7 +1284,8 @@ impl EditorView {
                     .unwrap_or_else(PoisonError::into_inner)
                     .take();
                 match (result, position) {
-                    (Ok(()), Some(position)) => {
+                    // Not over a selection made while the file was written.
+                    (Ok(()), Some(position)) if this.selected_layer == selected => {
                         let pending = PendingSelect {
                             position,
                             under,
@@ -1292,7 +1294,7 @@ impl EditorView {
                         // The reload this write requests next reads it.
                         this.add.pending = Some((pending, this.react_reloads.next()));
                     }
-                    (Ok(()), None) => {}
+                    (Ok(()), _) => {}
                     (Err(message), _) => this.add.notice = Some(message),
                 }
                 cx.notify();
@@ -1328,11 +1330,17 @@ impl EditorView {
     }
 
     /// Selects the added layer the preview found, now that a context is at
-    /// hand.
+    /// hand; not over a selection asked for meanwhile that waits for held
+    /// commits.
     pub(crate) fn settle_added_selection(&mut self, cx: &mut Context<Self>) {
-        if let Some(layer) = self.add.select_due.take() {
-            self.select_layer(Some(layer), cx);
+        let Some(layer) = self.add.select_due.take() else {
+            return;
+        };
+        if self.element_rows.selection.waiting() {
+            self.add.confirm = None;
+            return;
         }
+        self.select_layer(Some(layer), cx);
     }
 
     /// Whether a lookup of the selected `layer` may show: not when it is
@@ -1372,11 +1380,12 @@ impl EditorView {
         self.add.confirm.take()
     }
 
-    /// Puts the check back once the selection changed: it stays only when
-    /// the added layer is the one selected.
+    /// Puts the check back once a selection was made: it stays only when
+    /// the added layer is the one selected (see
+    /// [`AddState::selection_made`]).
     pub(crate) fn add_restore_confirm(&mut self, confirm: Option<(String, SourcePos)>) {
         self.add.confirm = confirm;
-        self.add.selection_changed(self.selected_layer.as_deref());
+        self.add.selection_made(self.selected_layer.as_deref());
     }
 }
 
@@ -1464,6 +1473,15 @@ impl AddState {
         {
             self.confirm = None;
         }
+    }
+
+    /// A selection of `layer` was made (a click, the layer list, Select
+    /// layers turned off): as [`Self::selection_changed`], and a selection
+    /// waiting for the reload goes, so the added layer is not selected
+    /// over it.
+    fn selection_made(&mut self, layer: Option<&str>) {
+        self.pending = None;
+        self.selection_changed(layer);
     }
 }
 
@@ -1995,6 +2013,26 @@ mod tests {
         let mut cleared = waiting_state();
         cleared.selection_changed(None);
         assert!(cleared.confirm.is_none());
+    }
+
+    #[test]
+    fn a_selection_made_drops_the_one_waiting_for_the_reload() {
+        // A selection cleared on the way (a lookup, a reload) keeps it.
+        let mut cleared = waiting_state();
+        cleared.selection_changed(None);
+        assert!(cleared.pending.is_some());
+
+        // One made, a layer clicked or none: the added layer is not
+        // selected over it.
+        for layer in [Some("g.0"), None] {
+            let mut state = waiting_state();
+            state.selection_made(layer);
+            assert!(state.pending.is_none() && state.confirm.is_none());
+        }
+        // Selecting the added layer keeps its check.
+        let mut added = waiting_state();
+        added.selection_made(Some("g.1"));
+        assert!(added.confirm.is_some());
     }
 
     #[test]
