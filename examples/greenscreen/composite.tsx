@@ -18,7 +18,7 @@ export default function Composite() {
         src="./assets/footage.mp4"
         x={120}
         y={180}
-        scale={1.5}
+        width={960}
         chromaKey={{ color: KEY, tolerance: 0.2, softness: 0.1, spill }}
       />
       <Image src="./assets/still.jpg" x={980} y={420} width={256} chromaKey={KEY} />
