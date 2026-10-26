@@ -1,0 +1,21 @@
+{
+  "name": "@celesta/example-zunda",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@celesta/character": "workspace:*",
+    "@celesta/code": "workspace:*",
+    "@celesta/components": "workspace:*",
+    "@celesta/layout": "workspace:*",
+    "@celesta/math": "workspace:*",
+    "@celesta/react": "workspace:*",
+    "@celesta/shapes": "workspace:*",
+    "@celesta/text": "workspace:*",
+    "@celesta/voicevox": "workspace:*",
+    "react": "^19.3.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "ag-psd": "^31.0.2"
+  }
+}
