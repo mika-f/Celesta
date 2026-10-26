@@ -54,6 +54,7 @@ mod scope;
 mod source;
 #[cfg(test)]
 mod tests;
+mod timing;
 mod transform_drag;
 mod transform_handles;
 mod view;
