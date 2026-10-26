@@ -2,20 +2,34 @@
 //! nearest around it, moved into the scene's own code under "This scene"),
 //! the `<Sequence>` it is wrapped in, the values a gesture on the canvas
 //! writes and the outline drawn meanwhile, the Add menu's items, and the
-//! add mode's steps.
-#![cfg_attr(not(test), allow(dead_code))]
+//! add mode's steps; then the write, the selection of the added layer after
+//! the reload, and the view's side of all of it.
 
 use crate::canvas_geometry::apply;
+use crate::edit_history::Texts;
+use crate::element_edit::{inside_project, tag_name};
+use crate::layer_select::{LookupResult, SourceLookup, letterbox, scene_point, to_scene};
 use crate::occurrences::OccurrenceState;
+use crate::preview::AddedUnder;
 use crate::scope::{Scope, ScopeState, chosen_scope, not_indexed_note, occurrence_index};
 use crate::timing::{WindowRole, set_timing_span, window_role};
+use crate::view::EditorView;
 use celesta_composition::Point;
 use celesta_gpu_renderer::invert_affine;
+use celesta_media::FfmpegBackend;
 use celesta_react_bridge::{
-    ElementKind, LayerSource, LayerSourceReport, ReactChapter, SourcePos, scenes_of,
+    ElementKind, LayerSource, LayerSourceReport, ReactChapter, SourcePos, import_path, scenes_of,
 };
-use celesta_source_edit::{NewElement, NewKind, Timing};
+use celesta_source_edit::{
+    NewElement, NewKind, Timing, accepts_children, add_child, add_lock, element_at,
+    enclosing_component,
+};
+use gpui_kit::{Context, MouseMoveEvent, PathPromptOptions, Pixels};
+use std::collections::HashMap;
 use std::f64::consts::TAU;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, PoisonError};
 
 /// The Add menu's kinds, in menu order.
 const KINDS: [NewKind; 6] = [
@@ -30,6 +44,13 @@ const KINDS: [NewKind; 6] = [
 const NO_PARENT: &str = "Select a group, or a layer inside one, to add into";
 const NO_PARENT_IN_SCENE: &str = "No group in this scene's own code to add into";
 const REMAPPED: &str = "Can't add inside a loop or freeze frame";
+const TURNED_3D: &str = "Can't draw into a group turned in 3D";
+const SCALED_TO_ZERO: &str = "Can't draw into a group scaled to zero";
+const READING: &str = "The source is still being read";
+const SOURCE_CHANGED: &str = "The source changed while editing";
+
+/// A press that moves less than this, in viewer pixels, is a click.
+const CLICK_SLOP: f32 = 4.0;
 
 /// A click's box side (Rect, Ellipse), in the parent's units.
 const CLICK_SIDE: f64 = 200.0;
@@ -100,16 +121,6 @@ pub(crate) fn is_shared(
         return Err(not_indexed_note(refreshing));
     };
     Ok(outer.iter().any(|part| part != first) || scenes_of(&ranges, chapters).len() > 1)
-}
-
-/// Whether the element at `entry` is written in the scene's own code:
-/// [`is_shared`] is `Ok(false)`.
-pub(crate) fn in_scene_code(
-    occurrences: Option<&OccurrenceState>,
-    chapters: &[ReactChapter],
-    entry: &SourcePos,
-) -> bool {
-    is_shared(occurrences, chapters, entry) == Ok(false)
 }
 
 /// The parent of an element added with `report`'s layer selected (none
@@ -455,8 +466,9 @@ pub(crate) struct AddTool {
     pub(crate) aspect: Option<f64>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) enum AddMode {
+    #[default]
     Off,
     /// The file dialog is open.
     Picking(NewKind),
@@ -535,6 +547,722 @@ pub(crate) fn add_step(
         (mode, _) => mode,
     };
     (next, None)
+}
+
+/// The texts after adding `new` under the parent written at `parent` in
+/// `file`, and the new element's position. Err: "The source changed while
+/// editing" when no qualifying parent is at `parent` any more, else the
+/// lock's text.
+pub(crate) fn add_files(
+    texts: &Texts,
+    file: &Path,
+    parent: &SourcePos,
+    new: &NewElement,
+    timing: Option<&Timing>,
+) -> Result<(Vec<(PathBuf, String)>, SourcePos), String> {
+    let changed = || SOURCE_CHANGED.to_owned();
+    let text = texts.get(file).ok_or_else(changed)?;
+    let element = element_at(text, parent.line, parent.column)
+        .filter(|element| tag_name(text, element) == "Group")
+        .ok_or_else(changed)?;
+    let added = add_child(text, &element, new, timing).map_err(|lock| lock.text())?;
+    let written =
+        celesta_source_edit::apply(text, &added.edits).map_err(|error| error.to_string())?;
+    let position = SourcePos {
+        file: file.to_path_buf(),
+        line: added.line,
+        column: added.column,
+    };
+    Ok((vec![(file.to_path_buf(), written)], position))
+}
+
+/// The selection of an element just added, waiting for the reload.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct PendingSelect {
+    /// Where the element was inserted.
+    pub(crate) position: SourcePos,
+    pub(crate) under: AddedUnder,
+    /// The first preview generation drawn with the reloaded code.
+    pub(crate) from: Option<u64>,
+}
+
+/// What an answer for the pending selection does with it.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum AddedFate {
+    /// Not an answer from the reloaded code (or none): keep waiting.
+    Wait,
+    /// Select this layer.
+    Select(String),
+    /// The parent has no added layer: the kept selection stays.
+    Drop,
+}
+
+/// What an answer from preview `generation` does with the pending
+/// selection: `added` is the parent asked about and the layer found under
+/// it, `None` when the frame did not ask.
+pub(crate) fn added_fate(
+    pending: &PendingSelect,
+    generation: u64,
+    added: Option<&(String, Option<String>)>,
+) -> AddedFate {
+    match (pending.from, added) {
+        (Some(from), Some((parent, layer)))
+            if generation >= from && *parent == pending.under.parent =>
+        {
+            layer.clone().map_or(AddedFate::Drop, AddedFate::Select)
+        }
+        _ => AddedFate::Wait,
+    }
+}
+
+/// Whether the selected added layer's lookup shows the inserted element
+/// (`chain[0]` at `position`).
+pub(crate) fn added_confirmed(position: &SourcePos, lookup: &LookupResult) -> bool {
+    matches!(lookup, Ok(Some(report))
+        if report.chain.first().is_some_and(|element| SourcePos::from(element) == *position))
+}
+
+/// What an addition into one group of the selected layer's chain would
+/// be, read from its source.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct GroupFacts {
+    pub(crate) at: SourcePos,
+    /// The component the group is written in.
+    pub(crate) component: Option<String>,
+    /// The wrapper of a child added at the lookup frame (see
+    /// [`added_timing`]).
+    pub(crate) timing: Result<Option<Timing>, String>,
+    /// `add_lock`'s text for each kind, in menu order.
+    pub(crate) locks: Vec<(NewKind, Option<String>)>,
+}
+
+/// The groups of `report`'s chain an element can be added to: primitive
+/// `Group`s with a layer id whose JSX, in a file `read` reads and `inside`
+/// puts in the project, has a children region; with the facts of an
+/// addition at `playhead` (the lookup's frame).
+pub(crate) fn parent_facts(
+    read: impl Fn(&Path) -> Option<String>,
+    inside: impl Fn(&Path) -> bool,
+    report: &LayerSourceReport,
+    chapters: &[ReactChapter],
+    composition_end: u64,
+    playhead: u64,
+) -> Vec<GroupFacts> {
+    let mut texts: HashMap<&Path, Option<String>> = HashMap::new();
+    let mut groups = Vec::new();
+    for (index, entry) in report.chain.iter().enumerate() {
+        let candidate = entry.kind == ElementKind::Primitive
+            && entry.name == "Group"
+            && entry.layer_id.is_some()
+            && inside(&entry.file);
+        if !candidate {
+            continue;
+        }
+        let Some(text) = texts
+            .entry(entry.file.as_path())
+            .or_insert_with(|| read(&entry.file))
+            .as_deref()
+        else {
+            continue;
+        };
+        let Some(element) = element_at(text, entry.line, entry.column)
+            .filter(|element| accepts_children(text, element))
+        else {
+            continue;
+        };
+        let timing = added_timing(report, index, chapters, composition_end, playhead);
+        let wrapped = matches!(timing, Ok(Some(_)));
+        groups.push(GroupFacts {
+            at: SourcePos::from(entry),
+            component: enclosing_component(text, &element),
+            timing,
+            locks: KINDS
+                .into_iter()
+                .map(|kind| {
+                    let lock = add_lock(text, &element, kind, wrapped).map(|lock| lock.text());
+                    (kind, lock)
+                })
+                .collect(),
+        });
+    }
+    groups
+}
+
+/// The width over the height of the image or video at `path`; `None` when
+/// it can't be read (an SVG, say).
+fn media_aspect(kind: NewKind, path: &Path) -> Option<f64> {
+    let (width, height) = if kind == NewKind::Video {
+        let mut backend = FfmpegBackend::new();
+        let video = backend.probe(path).ok()?.video.as_ref()?;
+        (video.width, video.height)
+    } else {
+        image::ImageReader::open(path)
+            .ok()?
+            .with_guessed_format()
+            .ok()?
+            .into_dimensions()
+            .ok()?
+    };
+    (width > 0 && height > 0).then(|| f64::from(width) / f64::from(height))
+}
+
+/// The Add menu as the view shows it.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct AddMenu {
+    /// Where the element goes (see [`add_header`]).
+    pub(crate) header: Option<String>,
+    /// Why every item is disabled.
+    pub(crate) reason: Option<String>,
+    pub(crate) items: Vec<(NewKind, Option<String>)>,
+}
+
+/// The selected layer, its lookup and the lookup's frame.
+type LookupKey = (String, LayerSourceReport, i64);
+
+/// The groups read for a lookup of the selected layer.
+#[derive(Debug)]
+struct ParentFacts {
+    lookup: LookupKey,
+    groups: Vec<GroupFacts>,
+}
+
+impl ParentFacts {
+    fn group(&self, entry: &LayerSource) -> Option<&GroupFacts> {
+        let at = SourcePos::from(entry);
+        self.groups.iter().find(|group| group.at == at)
+    }
+}
+
+/// What the view keeps for adding elements.
+#[derive(Debug, Default)]
+pub(crate) struct AddState {
+    pub(crate) mode: AddMode,
+    /// The newest groups read, and the lookup the newest read is for.
+    facts: Option<ParentFacts>,
+    wanted: Option<LookupKey>,
+    /// A group's children space as the preview last reported it, by its
+    /// layer id: `None` inside when it turns in 3D.
+    space: Option<(String, Option<[f64; 6]>)>,
+    /// The selection of the element just added, and the reload that reads
+    /// it: one requested at or after that number.
+    pending: Option<(PendingSelect, u64)>,
+    /// The added layer the preview found, selected on the next render.
+    select_due: Option<String>,
+    /// The added layer selected, and where its first lookup must put it.
+    confirm: Option<(String, SourcePos)>,
+    /// Why the last addition was not written, for the viewer's notice.
+    pub(crate) notice: Option<String>,
+}
+
+impl EditorView {
+    /// The selected layer's lookup, while it describes the code on screen.
+    fn add_lookup(&self) -> Option<(&str, &LayerSourceReport, i64)> {
+        let layer = self.selected_layer.as_deref()?;
+        match &self.source_lookup {
+            Some(SourceLookup::Found(report)) if !self.source_lookup_stale => {
+                Some((layer, report, self.source_lookup_frame))
+            }
+            _ => None,
+        }
+    }
+
+    /// Starts reading the groups of the selected layer's chain (see
+    /// [`parent_facts`]) when its lookup has an answer they were not read
+    /// for. Reads and parses the files on the background executor; once
+    /// read, the next frame asks for the parent's space.
+    pub(crate) fn sync_add_facts(&mut self, cx: &mut Context<Self>) {
+        if !self.picks_layers() {
+            return;
+        }
+        let Some((layer, report, frame)) = self.add_lookup() else {
+            return;
+        };
+        let lookup = (layer.to_owned(), report.clone(), frame);
+        if self.add.wanted.as_ref() == Some(&lookup) {
+            return;
+        }
+        let report = report.clone();
+        self.add.wanted = Some(lookup.clone());
+        let chapters = self.react_chapters().unwrap_or_default().to_vec();
+        let end = u64::try_from(self.clock.end_frame()).unwrap_or(0);
+        let playhead = u64::try_from(frame).unwrap_or(0);
+        let entry_dir = self
+            .react_entry()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf);
+        cx.spawn(async move |view, cx| {
+            let groups = cx
+                .background_executor()
+                .spawn(async move {
+                    let real = |path: &Path| fs::canonicalize(path).unwrap_or(path.to_path_buf());
+                    let entry_dir = entry_dir.map(|dir| real(&dir));
+                    parent_facts(
+                        |path| fs::read_to_string(path).ok(),
+                        |file| {
+                            entry_dir
+                                .as_ref()
+                                .is_some_and(|dir| inside_project(&real(file), dir))
+                        },
+                        &report,
+                        &chapters,
+                        end,
+                        playhead,
+                    )
+                })
+                .await;
+            view.update(cx, |this, cx| {
+                if this.add.wanted.as_ref() == Some(&lookup) {
+                    this.add.facts = Some(ParentFacts { lookup, groups });
+                    this.refresh_preview();
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// The parent an addition goes into now and its facts; Err is why
+    /// nothing can be added.
+    fn add_target(&self) -> Result<(AddParent, &GroupFacts), String> {
+        let selected = self.selected_layer.as_deref();
+        let report = match &self.source_lookup {
+            _ if selected.is_none() => None,
+            Some(SourceLookup::Pending) => return Err(READING.to_owned()),
+            Some(SourceLookup::Found(_)) if self.source_lookup_stale => {
+                return Err(READING.to_owned());
+            }
+            Some(SourceLookup::Found(report)) => Some(report),
+            _ => None,
+        };
+        let facts = match (report, &self.add.facts) {
+            (None, _) => None,
+            (Some(report), Some(facts))
+                if Some(facts.lookup.0.as_str()) == selected
+                    && facts.lookup.1 == *report
+                    && facts.lookup.2 == self.source_lookup_frame =>
+            {
+                Some(facts)
+            }
+            (Some(_), _) => return Err(READING.to_owned()),
+        };
+        let scope = match self.scope_context() {
+            Some(context) => parent_scope(&context.state, self.remembered_scope()),
+            // No scope control is offered: "This scene", as without one.
+            None if self.element_edit.failed(selected) => ParentScope::NoControl,
+            None => ParentScope::Unknown(READING.to_owned()),
+        };
+        let occurrences = self.occurrences.as_ref().map(|(_, state)| state);
+        let chapters = self.react_chapters().unwrap_or_default();
+        let group = |entry: &LayerSource| facts.and_then(|facts| facts.group(entry));
+        let parent = pick_parent(
+            report,
+            &scope,
+            |entry| group(entry).is_some(),
+            |entry| is_shared(occurrences, chapters, &SourcePos::from(entry)),
+        )?;
+        let facts = group(&parent.entry).ok_or_else(|| READING.to_owned())?;
+        Ok((parent, facts))
+    }
+
+    /// The children space last reported for the group `layer_id`: `None`
+    /// before the preview answered, `Some(None)` when it turns in 3D.
+    fn add_space(&self, layer_id: &str) -> Option<Option<[f64; 6]>> {
+        self.add
+            .space
+            .as_ref()
+            .filter(|(id, _)| id == layer_id)
+            .map(|(_, space)| *space)
+    }
+
+    /// The Add menu: the parent in its header, why its items are disabled.
+    pub(crate) fn add_menu(&self) -> AddMenu {
+        let target = self.add_target();
+        let header = target
+            .as_ref()
+            .ok()
+            .map(|(parent, facts)| add_header(parent, facts.component.as_deref()));
+        let reason = match &target {
+            Err(reason) => Some(reason.clone()),
+            Ok((parent, facts)) => facts.timing.as_ref().err().cloned().or_else(|| {
+                match self.add_space(&parent.layer_id) {
+                    Some(None) => Some(TURNED_3D.to_owned()),
+                    Some(Some(space)) if invert_affine(space).is_none() => {
+                        Some(SCALED_TO_ZERO.to_owned())
+                    }
+                    _ => None,
+                }
+            }),
+        };
+        let locks = target.map(|(_, facts)| facts.locks.as_slice());
+        let items = menu_items(
+            reason.as_deref(),
+            |tag| self.primitive_table(tag).is_some(),
+            |kind| {
+                let locks = locks.as_ref().ok()?;
+                let (_, lock) = locks.iter().find(|(of, _)| *of == kind)?;
+                lock.clone()
+            },
+        );
+        AddMenu {
+            header,
+            reason,
+            items,
+        }
+    }
+
+    /// The group whose children space a frame asks for: the parent an
+    /// addition goes into, while layers are picked and nothing plays.
+    pub(crate) fn add_space_of(&self) -> Option<String> {
+        if !self.picks_layers() || self.playing {
+            return None;
+        }
+        self.add_target().ok().map(|(parent, _)| parent.layer_id)
+    }
+
+    /// The parent whose added layer a frame asks for: on every frame while
+    /// a selection is pending, until it is answered.
+    pub(crate) fn add_added_under(&self) -> Option<AddedUnder> {
+        if !self.picks_layers() || self.playing {
+            return None;
+        }
+        let (pending, _) = self.add.pending.as_ref()?;
+        Some(pending.under.clone())
+    }
+
+    fn step_add(&mut self, event: AddEvent) -> Option<(AddTool, Point, Point)> {
+        let (mode, gesture) = add_step(std::mem::take(&mut self.add.mode), event);
+        self.add.mode = mode;
+        gesture
+    }
+
+    /// A kind chosen in the Add menu: playback stops, and an Image or a
+    /// Video asks for its file first.
+    pub(crate) fn choose_add_kind(&mut self, kind: NewKind, cx: &mut Context<Self>) {
+        self.pause();
+        self.add.notice = None;
+        self.step_add(AddEvent::Chosen(kind));
+        if self.add.mode == AddMode::Picking(kind) {
+            self.pick_add_file(kind, cx);
+        }
+        cx.notify();
+    }
+
+    /// Asks for the file of an Image or a Video, imports it into the
+    /// project as `Choose…` does, then measures its aspect.
+    fn pick_add_file(&mut self, kind: NewKind, cx: &mut Context<Self>) {
+        let entry_dir = self.entry_dir();
+        let selection = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some("Choose".into()),
+        });
+        let picking = move |this: &EditorView| this.add.mode == AddMode::Picking(kind);
+        // Nothing to draw: the mode ends, saying why when something failed.
+        let cancel = move |this: &mut EditorView, notice: Option<String>| {
+            if picking(this) {
+                this.add.notice = notice;
+                this.step_add(AddEvent::Picked(None));
+            }
+        };
+        cx.spawn(async move |view, cx| {
+            let chosen = match selection.await {
+                Ok(Ok(Some(paths))) => paths.into_iter().next(),
+                Ok(Ok(None)) | Err(_) => None,
+                Ok(Err(error)) => {
+                    let notice = format!("Couldn't show the file dialog: {error}");
+                    view.update(cx, |this, cx| {
+                        cancel(this, Some(notice));
+                        cx.notify();
+                    })
+                    .ok();
+                    return;
+                }
+            };
+            let Some(chosen) = chosen else {
+                view.update(cx, |this, cx| {
+                    cancel(this, None);
+                    cx.notify();
+                })
+                .ok();
+                return;
+            };
+            let dir = entry_dir.clone();
+            let imported = cx
+                .background_executor()
+                .spawn(async move { import_path(&dir, &dir, &chosen) })
+                .await;
+            let picked = view
+                .update(cx, |this, cx| {
+                    cx.notify();
+                    match imported {
+                        Ok(src) if picking(this) => {
+                            this.step_add(AddEvent::Picked(Some(src.clone())));
+                            Some(src)
+                        }
+                        Ok(_) => None,
+                        Err(error) => {
+                            cancel(this, Some(format!("Couldn't use the chosen file: {error}")));
+                            None
+                        }
+                    }
+                })
+                .ok()
+                .flatten();
+            let Some(src) = picked else {
+                return;
+            };
+            let path = entry_dir.join(&src);
+            let aspect = cx
+                .background_executor()
+                .spawn(async move { media_aspect(kind, &path) })
+                .await;
+            view.update(cx, |this, cx| {
+                this.step_add(AddEvent::Measured { src, aspect });
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// The click distance in scene pixels: [`CLICK_SLOP`] viewer pixels.
+    fn add_slop(&self) -> f64 {
+        let scale = self
+            .viewer_bounds
+            .get()
+            .and_then(|bounds| letterbox(bounds, self.frame_size()))
+            .map_or(1.0, |(_, _, scale)| scale);
+        f64::from(CLICK_SLOP / scale)
+    }
+
+    fn scene_position(&self, position: gpui_kit::Point<Pixels>) -> Option<Point> {
+        to_scene(self.viewer_bounds.get()?, self.frame_size(), position)
+    }
+
+    /// A press on the canvas while an element is to be drawn: the drawing
+    /// starts there when it is inside the frame. True when the add mode
+    /// took the press.
+    pub(crate) fn press_add(&mut self, position: gpui_kit::Point<Pixels>) -> bool {
+        if !matches!(self.add.mode, AddMode::Armed(_)) {
+            return false;
+        }
+        let bounds = self.viewer_bounds.get();
+        if let Some(start) =
+            bounds.and_then(|bounds| scene_point(bounds, self.frame_size(), position))
+        {
+            self.add.notice = None;
+            self.step_add(AddEvent::Press(start));
+        }
+        true
+    }
+
+    /// Follows the pointer while an element is drawn; a move without the
+    /// button ends the drawing there.
+    pub(crate) fn continue_add(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) {
+        if !matches!(self.add.mode, AddMode::Drawing { .. }) {
+            return;
+        }
+        if !event.dragging() {
+            self.end_add(event.position, cx);
+            return;
+        }
+        if let Some(now) = self.scene_position(event.position) {
+            self.step_add(AddEvent::Move(now));
+            cx.notify();
+        }
+    }
+
+    /// Release: writes the drawn element. True when one was being drawn.
+    pub(crate) fn end_add(
+        &mut self,
+        position: gpui_kit::Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !matches!(self.add.mode, AddMode::Drawing { .. }) {
+            return false;
+        }
+        let event = match self.scene_position(position) {
+            Some(end) => AddEvent::Release(end),
+            None => AddEvent::Escape,
+        };
+        if let Some(gesture) = self.step_add(event) {
+            self.write_addition(gesture, cx);
+        }
+        cx.notify();
+        true
+    }
+
+    /// Escape: ends the add mode. True when it was on.
+    pub(crate) fn escape_add(&mut self) -> bool {
+        if self.add.mode == AddMode::Off {
+            return false;
+        }
+        self.step_add(AddEvent::Escape);
+        true
+    }
+
+    /// Ends the add mode: the selection changed, Select layers went off,
+    /// playback started, or the code reloaded.
+    pub(crate) fn end_add_mode(&mut self) {
+        self.step_add(AddEvent::Ended);
+    }
+
+    /// The outline of the element being drawn, in scene pixels, while the
+    /// parent's space is known.
+    pub(crate) fn add_outline(&self) -> Option<(NewKind, Vec<Point>)> {
+        let AddMode::Drawing { tool, start, now } = &self.add.mode else {
+            return None;
+        };
+        let (parent, _) = self.add_target().ok()?;
+        let space = self.add_space(&parent.layer_id)??;
+        let outline = drawn_outline(
+            tool.kind,
+            (*start, *now),
+            space,
+            tool.aspect,
+            self.add_slop(),
+        );
+        Some((tool.kind, outline))
+    }
+
+    /// Writes the drawn element into the parent as one history entry; once
+    /// written, the reload selects it (see [`PendingSelect`]). Why nothing
+    /// was written shows over the canvas.
+    fn write_addition(
+        &mut self,
+        (tool, start, end): (AddTool, Point, Point),
+        cx: &mut Context<Self>,
+    ) {
+        let drawn = self.add_target().and_then(|(parent, facts)| {
+            let timing = facts.timing.clone()?;
+            let space = match self.add_space(&parent.layer_id) {
+                Some(Some(space)) => space,
+                Some(None) => return Err(TURNED_3D.to_owned()),
+                None => return Err(READING.to_owned()),
+            };
+            let slop = self.add_slop();
+            let points = (start, end);
+            let new = drawn_geometry(
+                tool.kind,
+                tool.src.as_deref(),
+                points,
+                space,
+                tool.aspect,
+                slop,
+            )
+            .ok_or_else(|| SCALED_TO_ZERO.to_owned())?;
+            Ok((parent, timing, new))
+        });
+        let (parent, timing, new) = match drawn {
+            Ok(drawn) => drawn,
+            Err(reason) => {
+                self.add.notice = Some(reason);
+                return;
+            }
+        };
+        let file = parent.entry.file.clone();
+        let at = SourcePos::from(&parent.entry);
+        let under = AddedUnder {
+            parent: parent.layer_id,
+            wrapped: timing.is_some(),
+        };
+        let inserted = Arc::new(Mutex::new(None));
+        let written = Arc::clone(&inserted);
+        self.record_own_writes(
+            vec![file.clone()],
+            move |texts| {
+                let (files, position) = add_files(texts, &file, &at, &new, timing.as_ref())?;
+                *written.lock().unwrap_or_else(PoisonError::into_inner) = Some(position);
+                Ok(files)
+            },
+            move |this, result, cx| {
+                let position = inserted
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .take();
+                match (result, position) {
+                    (Ok(()), Some(position)) => {
+                        let pending = PendingSelect {
+                            position,
+                            under,
+                            from: None,
+                        };
+                        // The reload this write requests next reads it.
+                        this.add.pending = Some((pending, this.react_reloads.next()));
+                    }
+                    (Ok(()), None) => {}
+                    (Err(message), _) => this.add.notice = Some(message),
+                }
+                cx.notify();
+            },
+            cx,
+        );
+    }
+
+    /// The preview's answers for an addition from preview `generation`: the
+    /// parent's space, and the layer the pending selection waits for.
+    pub(crate) fn take_add_answers(
+        &mut self,
+        generation: u64,
+        space: Option<(String, Option<[f64; 6]>)>,
+        added: Option<(String, Option<String>)>,
+    ) {
+        if space.is_some() {
+            self.add.space = space;
+        }
+        let Some((pending, _)) = &self.add.pending else {
+            return;
+        };
+        match added_fate(pending, generation, added.as_ref()) {
+            AddedFate::Wait => {}
+            AddedFate::Drop => self.add.pending = None,
+            AddedFate::Select(layer) => {
+                if let Some((pending, _)) = self.add.pending.take() {
+                    self.add.confirm = Some((layer.clone(), pending.position));
+                }
+                self.add.select_due = Some(layer);
+            }
+        }
+    }
+
+    /// Selects the added layer the preview found, now that a context is at
+    /// hand.
+    pub(crate) fn settle_added_selection(&mut self, cx: &mut Context<Self>) {
+        if let Some(layer) = self.add.select_due.take() {
+            self.select_layer(Some(layer), cx);
+        }
+    }
+
+    /// Whether a lookup of the selected `layer` may show: not when it is
+    /// the added layer's first and puts the element elsewhere than where it
+    /// was inserted.
+    pub(crate) fn added_lookup_holds(&mut self, layer: &str, lookup: &LookupResult) -> bool {
+        match self
+            .add
+            .confirm
+            .take_if(|(added, _)| added.as_str() == layer)
+        {
+            Some((_, position)) => added_confirmed(&position, lookup),
+            None => true,
+        }
+    }
+
+    /// A reload of the React entry applied: the add mode ends, and the
+    /// pending selection waits for this reload's first frame (preview
+    /// generation `from`) when it reads the addition (`sequence`).
+    pub(crate) fn add_reload_applied(&mut self, sequence: u64, from: u64) {
+        self.end_add_mode();
+        // The layer ids of the code before.
+        self.add.confirm = None;
+        if let Some((pending, after)) = &mut self.add.pending
+            && sequence >= *after
+            && pending.from.is_none()
+        {
+            pending.from = Some(from);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -770,7 +1498,6 @@ mod tests {
             vec![(0, 30)],
         )]);
         assert_eq!(is_shared(Some(&once), &chapters, &group), Ok(false));
-        assert!(in_scene_code(Some(&once), &chapters, &group));
 
         // Two calls of `PriceTag`, in one scene.
         let twice = index(vec![
@@ -789,7 +1516,6 @@ mod tests {
             ),
         ]);
         assert_eq!(is_shared(Some(&twice), &chapters, &group), Ok(true));
-        assert!(!in_scene_code(Some(&twice), &chapters, &group));
         // The scene's own group is above both calls.
         assert_eq!(is_shared(Some(&twice), &chapters, &scene), Ok(false));
 
@@ -814,7 +1540,6 @@ mod tests {
             is_shared(Some(&failed), &chapters, &group),
             Err("Couldn't scan scenes: x".to_owned())
         );
-        assert!(!in_scene_code(Some(&failed), &chapters, &group));
     }
 
     #[test]

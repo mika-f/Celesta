@@ -1,3 +1,4 @@
+use crate::add_element::AddState;
 use crate::audio::{AudioMixWorker, MasterVolumeDrag};
 use crate::component_schema::ComponentSchemaWorker;
 use crate::edit_history::EditHistory;
@@ -377,6 +378,9 @@ pub(crate) struct EditorView {
     /// An edit ended with the focus on it: the root takes it back on the
     /// next render.
     pub(crate) inline_refocus: bool,
+    /// The Add menu's mode, what it read about the parent, and the
+    /// selection of an element just added.
+    pub(crate) add: AddState,
 }
 
 impl EditorView {
@@ -564,6 +568,7 @@ impl EditorView {
             inline_notice: None,
             inline_end_due: None,
             inline_refocus: false,
+            add: AddState::default(),
         };
         editor.refresh_preview();
         editor.refresh_audio_preview();

@@ -762,7 +762,7 @@ fn lift_lock(text: &str, element: &ElementRef, targets: &[(PropKey, Target)]) ->
 
 /// The last `.` segment of the tag name of `element` in `text`: `PriceTag`
 /// for `<PriceTag …>` and `<ui.PriceTag …>`.
-fn tag_name<'t>(text: &'t str, element: &ElementRef) -> &'t str {
+pub(crate) fn tag_name<'t>(text: &'t str, element: &ElementRef) -> &'t str {
     let name = text
         .get(element.start as usize + 1..)
         .unwrap_or_default()

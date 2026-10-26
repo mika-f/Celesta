@@ -15,7 +15,8 @@ pub(crate) use commit::{CommitError, apply_checked, commit_files, window_files};
 pub(crate) use resolve::window_report;
 pub(crate) use resolve::{
     WindowTargets, edit_value, editable, field_of, inner_target, required_of, resolve_targets,
-    resolve_window, schema_field, table_default, table_key, text_style_key, type_component_props,
+    resolve_window, schema_field, table_default, table_key, tag_name, text_style_key,
+    type_component_props,
 };
 
 use crate::element_rows::{removable, row_label};
@@ -1122,7 +1123,7 @@ impl EditorView {
 
     /// The scope context of the targets a commit writes to; `None` without
     /// targets to commit to.
-    fn scope_context(&self) -> Option<ScopeContext<'_>> {
+    pub(crate) fn scope_context(&self) -> Option<ScopeContext<'_>> {
         self.element_targets()?;
         self.shown_scope_context().filter(|context| context.current)
     }

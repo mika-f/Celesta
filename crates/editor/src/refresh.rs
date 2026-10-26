@@ -323,8 +323,8 @@ impl EditorView {
                         .selected_layer
                         .clone()
                         .filter(|_| self.picks_layers() && !self.playing),
-                    space_of: None,
-                    added_under: None,
+                    space_of: self.add_space_of(),
+                    added_under: self.add_added_under(),
                     timeline_frame: self.clock.frame(),
                     // On every request, so coalescing never drops it.
                     text_override: self.text_override.clone(),
@@ -575,6 +575,9 @@ impl EditorView {
                 if keep {
                     self.selection_keep.confirm_from(self.preview_generation);
                 }
+                // An element just added is selected from the reloaded code's
+                // first frame on, which asked for it.
+                self.add_reload_applied(sequence, self.preview_generation);
                 self.refresh_audio_preview();
                 self.refresh_occurrences(keep);
             }

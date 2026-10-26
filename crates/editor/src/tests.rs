@@ -76,6 +76,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, mpsc};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+mod add_element;
 mod element_edit;
 mod element_rows;
 mod held_scene;

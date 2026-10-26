@@ -80,7 +80,6 @@ pub(crate) struct PreviewRequest {
 
 /// Where an element was just written: as the last child of the group layer
 /// `parent`, inside a `<Sequence>` of its own when `wrapped`.
-#[allow(dead_code)]
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct AddedUnder {
     pub(crate) parent: String,
@@ -314,12 +313,10 @@ pub(crate) struct PreviewResult {
     /// no such group or it turns in 3D. The map may collapse the plane (a
     /// group scaled to zero), so it may have no inverse. `None` when nothing
     /// was asked.
-    #[allow(dead_code)]
     pub(crate) parent_space: Option<(String, Option<[f64; 6]>)>,
     /// The request's `added_under` parent and the layer `added_layer` found
     /// under it: `None` inside when there is none. `None` when nothing was
     /// asked.
-    #[allow(dead_code)]
     pub(crate) added: Option<(String, Option<String>)>,
     /// The layout of the request's `text_override` layer as drawn in this
     /// frame; `None` without an override, or when the frame failed or has
