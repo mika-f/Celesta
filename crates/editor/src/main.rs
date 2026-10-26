@@ -17,6 +17,7 @@ use gpui_kit::{App, Bounds, KeyBinding, Menu, MenuItem, WindowBounds, WindowOpti
 use std::error::Error;
 
 mod actions;
+mod add_element;
 mod audio;
 mod audio_control;
 mod background;
