@@ -21,8 +21,7 @@ use celesta_react_bridge::{
     ElementKind, LayerSource, LayerSourceReport, ReactChapter, SourcePos, import_path, scenes_of,
 };
 use celesta_source_edit::{
-    NewElement, NewKind, Timing, accepts_children, add_child, add_lock, element_at,
-    enclosing_component,
+    NewElement, NewKind, Timing, add_child, add_locks, element_at, enclosing_component,
 };
 use gpui_kit::{Context, MouseMoveEvent, PathPromptOptions, Pixels};
 use std::cell::RefCell;
@@ -691,24 +690,23 @@ pub(crate) fn parent_facts(
         else {
             continue;
         };
-        let Some(element) = element_at(text, entry.line, entry.column)
-            .filter(|element| accepts_children(text, element))
-        else {
+        let Some(element) = element_at(text, entry.line, entry.column) else {
             continue;
         };
         let timing = added_timing(report, index, chapters, composition_end, playhead);
         let wrapped = matches!(timing, Ok(Some(_)));
+        // `None` without a children region.
+        let Some(locks) = add_locks(text, &element, &KINDS, wrapped) else {
+            continue;
+        };
         groups.push(GroupFacts {
             at: SourcePos::from(entry),
             tag: tag_name(text, &element).to_owned(),
             component: enclosing_component(text, &element),
             timing,
-            locks: KINDS
+            locks: locks
                 .into_iter()
-                .map(|kind| {
-                    let lock = add_lock(text, &element, kind, wrapped).map(|lock| lock.text());
-                    (kind, lock)
-                })
+                .map(|(kind, lock)| (kind, lock.map(|lock| lock.text())))
                 .collect(),
         });
     }
