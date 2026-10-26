@@ -8,8 +8,8 @@ use oxc_ast_visit::Visit;
 use crate::locate::ElementRef;
 use crate::parse_checked;
 use crate::resolve::{
-    Absent, EditTarget, EditValue, Gather, LockReason, PropPath, Read, ResolveContext, TOLERANCE,
-    resolve, resolve_written,
+    Absent, EditTarget, EditValue, Gather, LiteralForm, LockReason, PropPath, Read, ResolveContext,
+    Span, TOLERANCE, resolve, resolve_written,
 };
 use crate::scope::{ParamDefault, ParamInfo};
 use crate::shape::{Children, StyleProperty};
@@ -52,10 +52,49 @@ pub fn parameter_of(text: &str, element: &ElementRef, prop: &str) -> Option<Para
     parameter_in(text, element, prop).map(|found| Parameter {
         component: found.component,
         param: found.param,
-        default: match found.default {
-            ParamDefault::Literal(value) => Some(value),
-            ParamDefault::None | ParamDefault::Other => None,
+        default: found.default.value().cloned(),
+    })
+}
+
+/// Where a parameter's default is written (see [`parameter_default`]).
+#[derive(Debug, Clone, PartialEq)]
+pub enum DefaultTarget {
+    /// A literal written as `form`; replace `span`.
+    Literal {
+        span: Span,
+        value: EditValue,
+        form: LiteralForm,
+    },
+    /// No default is written; ` = …` goes at `insert_at`, right after the
+    /// bound name.
+    Absent { insert_at: u32 },
+    /// The default is an expression.
+    Expression,
+    /// The parameter is read as `props.<key>`: no pattern holds a default.
+    NoPattern,
+}
+
+/// Where the default of parameter `param` of the component enclosing
+/// `element` is written. `None` when the text does not parse, the element
+/// is in no component, or the component's pattern has no key `param`.
+pub fn parameter_default(text: &str, element: &ElementRef, param: &str) -> Option<DefaultTarget> {
+    let alloc = Allocator::default();
+    let (program, failed) = parse_checked(text, &alloc);
+    if failed {
+        return None;
+    }
+    let mut gather = Gather::new(element.start, PropPath::Children);
+    gather.visit_program(&program);
+    if !gather.found {
+        return None;
+    }
+    Some(match gather.scopes.parameter_default(param)? {
+        ParamDefault::None { binding_end } => DefaultTarget::Absent {
+            insert_at: binding_end,
         },
+        ParamDefault::Literal { value, span, form } => DefaultTarget::Literal { span, value, form },
+        ParamDefault::Other => DefaultTarget::Expression,
+        ParamDefault::NoPattern => DefaultTarget::NoPattern,
     })
 }
 
@@ -179,11 +218,17 @@ fn missing_parameter(
     checked: bool,
 ) -> EditTarget {
     let same = match (default, received) {
-        (ParamDefault::Other, _) | (ParamDefault::None, None) => true,
-        (ParamDefault::Literal(EditValue::Number(a)), Some(EditValue::Number(b))) => {
-            (a - b).abs() <= TOLERANCE
+        (ParamDefault::Other, _) | (ParamDefault::None { .. } | ParamDefault::NoPattern, None) => {
+            true
         }
-        (ParamDefault::Literal(value), Some(received)) => value == received,
+        (
+            ParamDefault::Literal {
+                value: EditValue::Number(a),
+                ..
+            },
+            Some(EditValue::Number(b)),
+        ) => (a - b).abs() <= TOLERANCE,
+        (ParamDefault::Literal { value, .. }, Some(received)) => value == received,
         _ => false,
     };
     if checked && !same {
@@ -191,10 +236,7 @@ fn missing_parameter(
     }
     EditTarget::Missing {
         insert_at: absent.empty_children.unwrap_or(element.end_of_attributes),
-        default: match default {
-            ParamDefault::Literal(value) => Some(value.clone()),
-            ParamDefault::None | ParamDefault::Other => None,
-        },
+        default: default.value().cloned(),
     }
 }
 
@@ -205,22 +247,24 @@ pub(crate) fn component_function(init: &Expression<'_>) -> Option<u32> {
     match init.without_parentheses() {
         Expression::ArrowFunctionExpression(f) => Some(f.span.start),
         Expression::FunctionExpression(f) => Some(f.span.start),
-        Expression::CallExpression(call) if is_wrapper(&call.callee) => {
+        Expression::CallExpression(call) if wrapper(&call.callee).is_some() => {
             component_function(call.arguments.first()?.as_expression()?)
         }
         _ => None,
     }
 }
 
-fn is_wrapper(callee: &Expression<'_>) -> bool {
+/// `memo` or `forwardRef` when `callee` calls one (also as `React.memo` /
+/// `React.forwardRef`).
+pub(crate) fn wrapper<'c>(callee: &'c Expression<'_>) -> Option<&'c str> {
     let name = match callee.without_parentheses() {
         Expression::Identifier(id) => id.name.as_str(),
         Expression::StaticMemberExpression(m) if matches!(&m.object, Expression::Identifier(object) if object.name == "React") => {
             m.property.name.as_str()
         }
-        _ => return false,
+        _ => return None,
     };
-    matches!(name, "memo" | "forwardRef")
+    matches!(name, "memo" | "forwardRef").then_some(name)
 }
 
 /// Whether a call site can name a component `name`: JSX reads a tag that

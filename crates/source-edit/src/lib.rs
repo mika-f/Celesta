@@ -6,6 +6,7 @@
 mod apply;
 mod attributes;
 mod inputs;
+mod lift;
 mod locate;
 mod pass_through;
 mod remove;
@@ -16,8 +17,11 @@ mod shape;
 pub use apply::{ApplyError, Edit, apply, format_number, write_value};
 pub use attributes::{text_style_path, written_attributes};
 pub use inputs::resolve_inputs;
+pub use lift::{Lift, LiftLock, LiftProp, lift_name, plan_lift};
 pub use locate::{ElementRef, element_at};
-pub use pass_through::{Parameter, enclosing_component, parameter_of, resolve_through};
+pub use pass_through::{
+    DefaultTarget, Parameter, enclosing_component, parameter_default, parameter_of, resolve_through,
+};
 pub use remove::removal;
 pub use resolve::{
     EditTarget, EditValue, LiteralForm, LockReason, ResolveContext, Span, default_for,

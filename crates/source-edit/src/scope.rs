@@ -10,17 +10,35 @@ use oxc_ast::ast::{
 };
 
 use crate::pass_through::{component_function, is_component_name};
-use crate::resolve::{EditValue, Span};
+use crate::resolve::{EditValue, LiteralForm, Span};
 use crate::shape::{Shape, shape_of};
 
 /// A parameter's default value.
 #[derive(Debug, Clone)]
 pub(crate) enum ParamDefault {
     /// None is written: an absent prop leaves the parameter `undefined`.
-    None,
-    Literal(EditValue),
+    /// ` = …` would go at `binding_end`, right after the bound name.
+    None { binding_end: u32 },
+    /// A literal written as `form` at `span`.
+    Literal {
+        value: EditValue,
+        span: Span,
+        form: LiteralForm,
+    },
     /// An expression, whose value is not known here.
     Other,
+    /// Read as `props.<key>`: no pattern holds a default.
+    NoPattern,
+}
+
+impl ParamDefault {
+    /// The literal default's value, if any.
+    pub(crate) fn value(&self) -> Option<&EditValue> {
+        match self {
+            Self::Literal { value, .. } => Some(value),
+            Self::None { .. } | Self::Other | Self::NoPattern => None,
+        }
+    }
 }
 
 /// A prop value that is a parameter of a component enclosing the element.
@@ -125,11 +143,38 @@ impl Scopes {
             (Binding::Props { component }, Some(property)) => Some(ParamInfo {
                 component: component.clone(),
                 param: property.clone(),
-                default: ParamDefault::None,
+                default: ParamDefault::NoPattern,
             }),
             _ => None,
         }?;
         (Some(found.component.as_str()) == self.component()).then_some(found)
+    }
+
+    /// The default of the call site's prop `param` in the first parameter
+    /// of [`Self::component`]: `NoPattern` when that parameter is `props`,
+    /// `None` when the pattern has no such key.
+    pub(crate) fn parameter_default(&self, param: &str) -> Option<ParamDefault> {
+        let scope = self.stack.iter().rev().find(|s| s.component.is_some())?;
+        scope
+            .bindings
+            .iter()
+            .find_map(|(_, binding)| match binding {
+                Binding::Parameter {
+                    param: key,
+                    default,
+                    ..
+                } if key == param => Some(default.clone()),
+                Binding::Props { .. } => Some(ParamDefault::NoPattern),
+                _ => None,
+            })
+    }
+
+    /// Every name the file declares or reads.
+    pub(crate) fn names(&self) -> impl Iterator<Item = &str> {
+        self.declarations
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .chain(self.refs.keys().map(String::as_str))
     }
 
     /// Innermost binding of `name` among the enclosing functions.
@@ -312,14 +357,19 @@ fn parameter_bindings(
                     property.key.static_name()
                 };
                 let (id, default) = match &property.value {
-                    BindingPattern::BindingIdentifier(id) => (Some(id), ParamDefault::None),
+                    BindingPattern::BindingIdentifier(id) => (
+                        Some(id),
+                        ParamDefault::None {
+                            binding_end: id.span.end,
+                        },
+                    ),
                     BindingPattern::AssignmentPattern(assign) => match &assign.left {
                         BindingPattern::BindingIdentifier(id) => {
                             (Some(id), default_of(&assign.right))
                         }
-                        _ => (None, ParamDefault::None),
+                        _ => (None, ParamDefault::Other),
                     },
-                    _ => (None, ParamDefault::None),
+                    _ => (None, ParamDefault::Other),
                 };
                 match (key, id) {
                     (Some(key), Some(id)) => bindings.push((
@@ -348,10 +398,11 @@ fn other_bindings(pattern: &BindingPattern<'_>, bindings: &mut Vec<(String, Bind
 }
 
 fn default_of(expr: &Expression<'_>) -> ParamDefault {
-    match shape_of(expr) {
-        Shape::Number(_, value) => ParamDefault::Literal(EditValue::Number(value)),
-        Shape::String(_, value, _) => ParamDefault::Literal(EditValue::String(value)),
-        Shape::Bool(_, value, _) => ParamDefault::Literal(EditValue::Bool(value)),
-        _ => ParamDefault::Other,
-    }
+    let (value, span, form) = match shape_of(expr) {
+        Shape::Number(span, value) => (EditValue::Number(value), span, LiteralForm::Number),
+        Shape::String(span, value, form) => (EditValue::String(value), span, form),
+        Shape::Bool(span, value, form) => (EditValue::Bool(value), span, form),
+        _ => return ParamDefault::Other,
+    };
+    ParamDefault::Literal { value, span, form }
 }
