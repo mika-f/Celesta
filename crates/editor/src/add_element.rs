@@ -7,7 +7,7 @@
 
 use crate::canvas_geometry::apply;
 use crate::occurrences::OccurrenceState;
-use crate::scope::{Scope, ScopeState, chosen_scope};
+use crate::scope::{Scope, ScopeState, chosen_scope, not_indexed_note, occurrence_index};
 use crate::timing::{WindowRole, set_timing_span, window_role};
 use celesta_composition::Point;
 use celesta_gpu_renderer::invert_affine;
@@ -30,8 +30,6 @@ const KINDS: [NewKind; 6] = [
 const NO_PARENT: &str = "Select a group, or a layer inside one, to add into";
 const NO_PARENT_IN_SCENE: &str = "No group in this scene's own code to add into";
 const REMAPPED: &str = "Can't add inside a loop or freeze frame";
-/// Design 3's note while the occurrence index is not ready.
-const SCANNING: &str = "Scanning scenes…";
 
 /// A click's box side (Rect, Ellipse), in the parent's units.
 const CLICK_SIDE: f64 = 200.0;
@@ -81,22 +79,14 @@ pub(crate) fn parent_scope(state: &ScopeState, remembered: Option<Scope>) -> Par
 /// Whether the element at `entry` is shared: the index's instance chains
 /// through it (of every element) have more than one outer part (the chain
 /// after it), or their ranges show in more than one scene. Err is design
-/// 3's note when the index can't answer: while it scans, when it failed,
-/// and when no chain goes through `entry` (a sweep under way after a write
-/// finds it).
+/// 3's note when the index can't answer (see [`occurrence_index`]), and
+/// when no chain goes through `entry` (see [`not_indexed_note`]).
 pub(crate) fn is_shared(
     occurrences: Option<&OccurrenceState>,
     chapters: &[ReactChapter],
     entry: &SourcePos,
 ) -> Result<bool, String> {
-    let (index, refreshing) = match occurrences {
-        None | Some(OccurrenceState::Scanning) => return Err(SCANNING.to_owned()),
-        Some(OccurrenceState::Failed(message)) => {
-            return Err(format!("Couldn't scan scenes: {message}"));
-        }
-        Some(OccurrenceState::Ready(index)) => (index, false),
-        Some(OccurrenceState::Refreshing(index)) => (index, true),
-    };
+    let (index, refreshing) = occurrence_index(occurrences)?;
     let mut outer: Vec<&[SourcePos]> = Vec::new();
     let mut ranges = Vec::new();
     for instance in index.elements.iter().flat_map(|element| &element.instances) {
@@ -107,12 +97,7 @@ pub(crate) fn is_shared(
         ranges.extend_from_slice(&instance.ranges);
     }
     let Some(first) = outer.first() else {
-        let note = if refreshing {
-            SCANNING
-        } else {
-            "Not found in the scene scan"
-        };
-        return Err(note.to_owned());
+        return Err(not_indexed_note(refreshing));
     };
     Ok(outer.iter().any(|part| part != first) || scenes_of(&ranges, chapters).len() > 1)
 }
@@ -180,9 +165,12 @@ pub(crate) fn add_header(parent: &AddParent, component: Option<&str>) -> String 
     header
 }
 
-/// `report` with the windows of chain entries below `parent_index` (the
-/// selected element's own `<Sequence>`) dropped: they do not wrap a child
-/// added to the parent. A window without a source (a scene's) stays.
+/// `report` without the windows below the parent at `parent_index`: the
+/// windows are nearest first, so every one up to and including the last
+/// whose source is a chain entry below the parent (the selected element's
+/// own `<Sequence>`) is dropped; they do not wrap a child added to the
+/// parent. A source-less window among them goes too, and one between two
+/// remaining windows stays.
 pub(crate) fn report_at_parent(
     report: &LayerSourceReport,
     parent_index: usize,
@@ -193,18 +181,18 @@ pub(crate) fn report_at_parent(
         .take(parent_index)
         .map(SourcePos::from)
         .collect();
+    let inside = report
+        .windows
+        .iter()
+        .rposition(|window| {
+            window
+                .source
+                .as_ref()
+                .is_some_and(|source| below.contains(source))
+        })
+        .map_or(0, |last| last + 1);
     LayerSourceReport {
-        windows: report
-            .windows
-            .iter()
-            .filter(|window| {
-                window
-                    .source
-                    .as_ref()
-                    .is_none_or(|source| !below.contains(source))
-            })
-            .cloned()
-            .collect(),
+        windows: report.windows[inside..].to_vec(),
         ..report.clone()
     }
 }
@@ -215,8 +203,8 @@ pub(crate) fn report_at_parent(
 /// parent's own window is as much the window around it as a scene's, so an
 /// `Own` window counts as a `Scene` one. `None` when no wrapper is written:
 /// on that window's first frame, or without a window from frame 0 to the
-/// composition's end; also when less than a frame is left. Err for a
-/// remapped nearest window.
+/// composition's end. With less than a frame left the child runs one
+/// frame. Err for a remapped nearest window.
 pub(crate) fn added_timing(
     report: &LayerSourceReport,
     parent_index: usize,
@@ -230,9 +218,14 @@ pub(crate) fn added_timing(
         WindowRole::Own(window) => WindowRole::Scene(window),
         role => role,
     };
-    let Some((from, duration)) = set_timing_span(&role, chapters, composition_end, playhead) else {
-        return Ok(None);
-    };
+    let (from, duration) = set_timing_span(&role, chapters, composition_end, playhead)
+        .unwrap_or_else(|| {
+            let start = match role {
+                WindowRole::Scene(window) => window.from.round() as i64,
+                _ => 0,
+            };
+            (playhead as i64 - start, 1)
+        });
     let whole = match role {
         WindowRole::Scene(_) => true,
         _ => from + duration == composition_end as i64,
@@ -481,8 +474,11 @@ pub(crate) enum AddEvent {
     Chosen(NewKind),
     /// The file dialog closed, with the file's `src` or cancelled.
     Picked(Option<String>),
-    /// The chosen file's aspect, or that it has none known.
-    Measured(Option<f64>),
+    /// The aspect of the file `src`, or that it has none known.
+    Measured {
+        src: String,
+        aspect: Option<f64>,
+    },
     Press(Point),
     Move(Point),
     Release(Point),
@@ -493,7 +489,8 @@ pub(crate) enum AddEvent {
 
 /// The next mode, and the gesture to write on a release. Choosing a kind
 /// starts over (Image and Video pick a file first); Escape and `Ended` end
-/// the mode from anywhere; an event a mode does not take leaves it as is.
+/// the mode from anywhere; a measured aspect lands on the tool of that
+/// file only; an event a mode does not take leaves it as is.
 pub(crate) fn add_step(
     mode: AddMode,
     event: AddEvent,
@@ -505,20 +502,25 @@ pub(crate) fn add_step(
             aspect: None,
         })
     };
+    let measures = |tool: &AddTool, src: &str| tool.src.as_deref() == Some(src);
     let next = match (mode, event) {
         (_, AddEvent::Escape | AddEvent::Ended) => AddMode::Off,
         (_, AddEvent::Chosen(kind @ (NewKind::Image | NewKind::Video))) => AddMode::Picking(kind),
         (_, AddEvent::Chosen(kind)) => armed(kind, None),
         (AddMode::Picking(_), AddEvent::Picked(None)) => AddMode::Off,
         (AddMode::Picking(kind), AddEvent::Picked(Some(src))) => armed(kind, Some(src)),
-        (AddMode::Armed(tool), AddEvent::Measured(aspect)) => {
+        (AddMode::Armed(tool), AddEvent::Measured { src, aspect }) if measures(&tool, &src) => {
             AddMode::Armed(AddTool { aspect, ..tool })
         }
-        (AddMode::Drawing { tool, start, now }, AddEvent::Measured(aspect)) => AddMode::Drawing {
-            tool: AddTool { aspect, ..tool },
-            start,
-            now,
-        },
+        (AddMode::Drawing { tool, start, now }, AddEvent::Measured { src, aspect })
+            if measures(&tool, &src) =>
+        {
+            AddMode::Drawing {
+                tool: AddTool { aspect, ..tool },
+                start,
+                now,
+            }
+        }
         (AddMode::Armed(tool), AddEvent::Press(start)) => AddMode::Drawing {
             tool,
             start,
@@ -798,11 +800,14 @@ mod tests {
         )]);
         assert_eq!(is_shared(Some(&spanning), &chapters, &group), Ok(true));
 
-        let scanning = Err("Scanning scenes…".to_owned());
-        assert_eq!(is_shared(None, &chapters, &group), scanning);
+        // Design 3's notes, as the scope control shows them.
+        assert_eq!(
+            is_shared(None, &chapters, &group),
+            Err("The scenes are not scanned".to_owned())
+        );
         assert_eq!(
             is_shared(Some(&OccurrenceState::Scanning), &chapters, &group),
-            scanning
+            Err("Scanning scenes…".to_owned())
         );
         let failed = OccurrenceState::Failed("x".to_owned());
         assert_eq!(
@@ -985,6 +990,64 @@ mod tests {
         );
         // The group's window starts here.
         assert_eq!(added_timing(&report, 2, &chapters, 960, 300), Ok(None));
+    }
+
+    #[test]
+    fn windows_up_to_the_last_one_below_the_parent_are_dropped() {
+        let own = pos("intro", 9);
+        let inner = pos("intro", 8);
+        let groups = pos("intro", 5);
+        let report = report(
+            vec![
+                primitive("Rect", &pos("intro", 10), "r"),
+                sequence(&own),
+                sequence(&inner),
+                primitive("Group", &pos("intro", 6), "g"),
+                sequence(&groups),
+            ],
+            vec![
+                window(330.0, 390.0, Some(&own)),
+                // Without a source, between two windows below the parent.
+                window(320.0, 400.0, None),
+                window(310.0, 410.0, Some(&inner)),
+                window(300.0, 420.0, Some(&groups)),
+            ],
+        );
+        assert_eq!(
+            report_at_parent(&report, 3).windows,
+            vec![window(300.0, 420.0, Some(&groups))]
+        );
+        // Under the selected group itself, every window stays.
+        assert_eq!(report_at_parent(&report, 0), report);
+    }
+
+    #[test]
+    fn less_than_a_frame_left_runs_one_frame() {
+        let around = pos("intro", 5);
+        let chain = vec![
+            primitive("Rect", &pos("intro", 7), "r"),
+            primitive("Group", &pos("intro", 6), "g"),
+            sequence(&around),
+        ];
+        let windowed = report(chain.clone(), vec![window(330.0, 360.0, Some(&around))]);
+        let chapters = [chapter("Intro", 300, 120)];
+        // At the window's end.
+        assert_eq!(
+            added_timing(&windowed, 1, &chapters, 960, 360),
+            Ok(Some(Timing {
+                from: 30,
+                duration: 1
+            }))
+        );
+        // Without a window, at the composition's end.
+        let bare = report(chain, vec![]);
+        assert_eq!(
+            added_timing(&bare, 1, &[], 600, 600),
+            Ok(Some(Timing {
+                from: 600,
+                duration: 1
+            }))
+        );
     }
 
     #[test]
@@ -1482,12 +1545,26 @@ mod tests {
             ),
             (armed.clone(), None)
         );
+        let measured = |src: &str, aspect| AddEvent::Measured {
+            src: src.to_owned(),
+            aspect,
+        };
         assert_eq!(
-            step(armed.clone(), AddEvent::Measured(Some(1.5))),
+            step(armed.clone(), measured("a.mp4", Some(1.5))),
             (
                 AddMode::Armed(tool(NewKind::Video, Some("a.mp4"), Some(1.5))),
                 None
             )
+        );
+        // A probe of a file chosen before lands on no other tool.
+        assert_eq!(
+            step(armed.clone(), measured("b.mp4", Some(1.5))),
+            (armed.clone(), None)
+        );
+        let rect = AddMode::Armed(tool(NewKind::Rect, None, None));
+        assert_eq!(
+            step(rect.clone(), measured("a.mp4", Some(1.5))),
+            (rect, None)
         );
 
         let (press, now, end) = (at(1.0, 2.0), at(5.0, 6.0), at(9.0, 9.0));
@@ -1505,8 +1582,12 @@ mod tests {
             (drawing(now, None), None)
         );
         assert_eq!(
-            step(drawing(now, None), AddEvent::Measured(Some(2.0))),
+            step(drawing(now, None), measured("a.mp4", Some(2.0))),
             (drawing(now, Some(2.0)), None)
+        );
+        assert_eq!(
+            step(drawing(now, None), measured("b.mp4", Some(2.0))),
+            (drawing(now, None), None)
         );
         assert_eq!(
             step(drawing(now, Some(2.0)), AddEvent::Release(end)),

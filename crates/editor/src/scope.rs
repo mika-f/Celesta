@@ -276,6 +276,32 @@ pub(crate) enum ScopeState {
 const SCANNING: &str = "Scanning scenes…";
 const NOT_SCANNED: &str = "The scenes are not scanned";
 
+/// The index the occurrence state holds and whether a sweep is refreshing
+/// it, or why it can't answer: no sweep runs (Select layers is off), one is
+/// scanning, or it failed.
+pub(crate) fn occurrence_index(
+    occurrences: Option<&OccurrenceState>,
+) -> Result<(&OccurrenceIndex, bool), String> {
+    match occurrences {
+        None => Err(NOT_SCANNED.to_owned()),
+        Some(OccurrenceState::Scanning) => Err(SCANNING.to_owned()),
+        Some(OccurrenceState::Failed(message)) => Err(format!("Couldn't scan scenes: {message}")),
+        Some(OccurrenceState::Ready(index)) => Ok((index, false)),
+        Some(OccurrenceState::Refreshing(index)) => Ok((index, true)),
+    }
+}
+
+/// Why the index has no entry for an element: a refreshing index misses
+/// one a write moved, which the sweep under way finds.
+pub(crate) fn not_indexed_note(refreshing: bool) -> String {
+    if refreshing {
+        SCANNING
+    } else {
+        "Not found in the scene scan"
+    }
+    .to_owned()
+}
+
 /// The scope options of editing the element `report` describes, whose
 /// targets are `targets`, with the playhead at `frame`. The current scene
 /// is the outermost chapter at `frame`, as the impact line reads it.
@@ -298,8 +324,8 @@ pub(crate) fn scope_state(
     let Some(component) = targets.enclosing.as_deref() else {
         return ScopeState::NotShared;
     };
-    let (index, refreshing) = match scanned(occurrences) {
-        Ok(scanned) => scanned,
+    let (index, refreshing) = match occurrence_index(occurrences) {
+        Ok(found) => found,
         Err(note) => return ScopeState::Unknown { note },
     };
     let Some((element, _)) = index.instance_for(report) else {
@@ -311,29 +337,10 @@ pub(crate) fn scope_state(
     )
 }
 
-/// The index in use and whether it is refreshing, or the `Unknown` note
-/// while it can't answer.
-fn scanned(occurrences: Option<&OccurrenceState>) -> Result<(&OccurrenceIndex, bool), String> {
-    match occurrences {
-        // No sweep runs (Select layers is off): none would answer.
-        None => Err(NOT_SCANNED.to_owned()),
-        Some(OccurrenceState::Scanning) => Err(SCANNING.to_owned()),
-        Some(OccurrenceState::Failed(message)) => Err(format!("Couldn't scan scenes: {message}")),
-        Some(OccurrenceState::Ready(index)) => Ok((index, false)),
-        Some(OccurrenceState::Refreshing(index)) => Ok((index, true)),
-    }
-}
-
-/// The state when the index has nothing for what is edited: a refreshing
-/// index misses an element a lift moved, which the sweep under way finds.
+/// The state when the index has nothing for what is edited.
 fn not_found(refreshing: bool) -> ScopeState {
     ScopeState::Unknown {
-        note: if refreshing {
-            SCANNING
-        } else {
-            "Not found in the scene scan"
-        }
-        .to_owned(),
+        note: not_indexed_note(refreshing),
     }
 }
 
@@ -360,8 +367,8 @@ pub(crate) fn window_scope_state(
     let Some(component) = targets.enclosing.as_deref() else {
         return (ScopeState::NotShared, None);
     };
-    let (index, refreshing) = match scanned(occurrences) {
-        Ok(scanned) => scanned,
+    let (index, refreshing) = match occurrence_index(occurrences) {
+        Ok(found) => found,
         Err(note) => return (ScopeState::Unknown { note }, None),
     };
     let instances: Vec<InstanceOccurrences> = index
