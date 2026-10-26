@@ -21,8 +21,8 @@ use crate::layer_select::SourceLookup;
 use crate::occurrences::OccurrenceState;
 use crate::property_controls::ControlKind;
 use crate::scope::{
-    CommitGate, SceneCalls, Scope, ScopeLock, ScopeState, calls_of, chosen_scope, commit_scope,
-    current_calls, drain_gate, gesture_gate, gesture_lock, previewed_scope, read_scene_calls,
+    CommitGate, SceneCalls, Scope, ScopeState, calls_of, chosen_scope, commit_scope, current_calls,
+    drain_gate, gesture_gate, gesture_start_refusal, previewed_scope, read_scene_calls,
     scope_state, scoped_removable,
 };
 use crate::view::EditorView;
@@ -947,23 +947,32 @@ impl EditorView {
         }
     }
 
-    /// Why a drag, a scrub or an inline text edit can't write `key` of the
-    /// selected element under the scope in effect (see [`gesture_lock`]).
-    pub(crate) fn gesture_scope_lock(&self, key: &PropKey) -> Option<ScopeLock> {
-        self.gesture_scope_locks(std::slice::from_ref(key))
+    /// Why a drag, a scrub or an inline text edit of `key` of the selected
+    /// element does not start: it would be refused at release under the
+    /// scope it keeps (see [`gesture_start_refusal`]).
+    pub(crate) fn gesture_refusal(&self, key: &PropKey) -> Option<String> {
+        self.gesture_refusals(std::slice::from_ref(key))
             .pop()
             .flatten()
     }
 
-    /// [`Self::gesture_scope_lock`] of each of `keys`, in order, the scope
+    /// [`Self::gesture_refusal`] of each of `keys`, in order, the scope
     /// state read once.
-    pub(crate) fn gesture_scope_locks(&self, keys: &[PropKey]) -> Vec<Option<ScopeLock>> {
+    pub(crate) fn gesture_refusals(&self, keys: &[PropKey]) -> Vec<Option<String>> {
         let Some(context) = self.scope_context() else {
             return vec![None; keys.len()];
         };
-        let scope = self.effective_scope(&context.state);
+        let remembered = self.remembered_scope();
         keys.iter()
-            .map(|key| gesture_lock(scope, context.targets, key, context.calls))
+            .map(|key| {
+                gesture_start_refusal(
+                    remembered,
+                    &context.state,
+                    context.targets,
+                    key,
+                    context.calls,
+                )
+            })
             .collect()
     }
 

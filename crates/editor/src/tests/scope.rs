@@ -10,8 +10,8 @@ use crate::occurrences::OccurrenceState;
 use crate::scope::{
     CommitGate, SCANNED_MEANWHILE, SceneCalls, Scope, ScopeChoices, ScopeLock, ScopeOptions,
     ScopeState, ScopedRow, calls_of, chosen_scope, commit_gate, commit_scope, drain_gate,
-    gesture_gate, impact_filter, previewed_scope, remove_tooltip, scope_in_effect, scope_line,
-    scope_state, scoped_removable, scoped_row,
+    gesture_gate, gesture_start_refusal, impact_filter, previewed_scope, remove_tooltip,
+    scope_in_effect, scope_line, scope_state, scoped_removable, scoped_row,
 };
 use celesta_react_bridge::{
     ElementOccurrences, InstanceOccurrences, OccurrenceIndex, ReactChapter,
@@ -1352,6 +1352,54 @@ fn a_gesture_writes_under_the_scope_it_started_with() {
     assert_eq!(
         gate(None, &ScopeState::NotShared, "x"),
         CommitGate::Go(None)
+    );
+}
+
+#[test]
+fn a_gesture_that_would_be_refused_does_not_start() {
+    let report = price_report();
+    let targets = tag_targets(&report, &tag_texts(SCENES_FILE));
+    let calls = price_sets_its_own();
+    let open = ScopeState::Options(options(Ok(()), Ok(())));
+    let reused = ScopeState::Options(options(Err(ScopeLock::ReusedCall), Ok(())));
+    let scanning = ScopeState::Unknown {
+        note: "Scanning scenes…".to_owned(),
+    };
+    let start = |remembered, state: &ScopeState, key: &str| {
+        gesture_start_refusal(remembered, state, &targets, &prop(key), Some(&calls))
+    };
+
+    // The scope it would keep: with nothing remembered, the one shown.
+    assert_eq!(start(None, &open, "x"), None);
+    assert_eq!(start(None, &reused, "x"), None);
+    // A remembered choice now locked: refused at release, so it does not
+    // start, rather than starting under the other option.
+    assert_eq!(
+        start(Some(Scope::ThisScene), &reused, "x"),
+        Some(ScopeLock::ReusedCall.text())
+    );
+    // A row the kept scope would not show in this scene.
+    assert_eq!(
+        start(Some(Scope::Shared), &open, "width"),
+        Some(
+            ScopeLock::SetsOwn {
+                param: "rectWidth".to_owned()
+            }
+            .text()
+        )
+    );
+    // While the scenes are scanned: a value written on the element waits
+    // for the scan, so the gesture does not start, with the scan's note;
+    // one passed at the call goes there.
+    assert_eq!(
+        start(None, &scanning, "x"),
+        Some("Scanning scenes…".to_owned())
+    );
+    assert_eq!(start(None, &scanning, "width"), None);
+    // Not shared: as resolved, whatever was remembered.
+    assert_eq!(
+        start(Some(Scope::Shared), &ScopeState::NotShared, "x"),
+        None
     );
 }
 

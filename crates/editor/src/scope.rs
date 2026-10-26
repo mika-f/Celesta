@@ -911,6 +911,24 @@ pub(crate) fn gesture_gate(
     }
 }
 
+/// Why a drag, a scrub or an inline text edit of `key` does not start:
+/// the refusal [`gesture_gate`] would give it at release under the scope
+/// it would keep ([`commit_scope`] of `remembered` and the shown `state`),
+/// which includes waiting for the scene scan.
+pub(crate) fn gesture_start_refusal(
+    remembered: Option<Scope>,
+    state: &ScopeState,
+    targets: &ElementTargets,
+    key: &PropKey,
+    calls: Option<&SceneCalls>,
+) -> Option<String> {
+    let kept = commit_scope(remembered, state);
+    match gesture_gate(kept, state, targets, std::slice::from_ref(key), calls) {
+        CommitGate::Refuse(refusal) | CommitGate::Hold(refusal) => Some(refusal),
+        CommitGate::Go(_) => None,
+    }
+}
+
 /// `removable` under `scope`: only an `AsResolved` row.
 pub(crate) fn scoped_removable(
     scope: Scope,

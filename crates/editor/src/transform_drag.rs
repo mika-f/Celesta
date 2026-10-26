@@ -881,14 +881,15 @@ impl EditorView {
         let resize = resize_used(self.resize_tool, targets, &frame);
         let pivot = pivot_used(self.pivot_mode, targets, &frame);
         let mut props = drag_props_in(targets, &frame, pivot);
-        // A prop the scope in effect can't write (or would not show in this
-        // scene) is not dragged.
-        let locks = self.gesture_scope_locks(&props);
-        let mut locks = locks.into_iter();
+        // A prop the release would refuse (the scope the drag keeps can't
+        // write it, or would not show it in this scene, or the scenes are
+        // being scanned) is not dragged.
+        let refusals = self.gesture_refusals(&props);
+        let mut refusals = refusals.into_iter();
         let mut scope_lock = None;
-        props.retain(|_| match locks.next().flatten() {
-            Some(lock) => {
-                scope_lock.get_or_insert(lock);
+        props.retain(|_| match refusals.next().flatten() {
+            Some(refusal) => {
+                scope_lock.get_or_insert(refusal);
                 false
             }
             None => true,
@@ -902,7 +903,7 @@ impl EditorView {
                     EditTarget::Locked(reason) => Some(reason_text(reason)),
                     _ => None,
                 })
-                .or_else(|| scope_lock.map(|lock| lock.text()))
+                .or(scope_lock)
                 .unwrap_or_default();
             return DragState::Locked(frame, reason);
         }

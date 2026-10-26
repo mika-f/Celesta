@@ -1604,9 +1604,11 @@ impl EditorView {
             return;
         };
         scrub.scope = self.kept_scope();
-        // A scrub the scope would not show in this scene says why instead.
-        if let Some(lock) = self.gesture_scope_lock(key) {
-            self.set_row_message(key, lock.text(), cx);
+        // A scrub that would be refused at release (the scope it keeps can't
+        // write the row, or would not show it in this scene, or the scenes
+        // are being scanned) says why instead.
+        if let Some(refusal) = self.gesture_refusal(key) {
+            self.set_row_message(key, refusal, cx);
             return;
         }
         if self.transform_drag_active() {
