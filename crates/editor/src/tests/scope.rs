@@ -2155,6 +2155,7 @@ fn the_shown_options_are_read_at_the_frame_the_targets_were_looked_up_at() {
         report: report.clone(),
         timeline_frame: 40,
         outcome: Ok(targets.clone()),
+        window_targets: None,
     };
 
     let shown = options_of(
