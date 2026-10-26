@@ -18,8 +18,8 @@ use crate::scene_entries::{
     writes_nothing, written_length,
 };
 use crate::scope::{
-    CommitGate, SceneCalls, Scope, ScopeState, commit_scope, gesture_gate, impact_filter,
-    scope_in_effect, scope_state,
+    CommitGate, SceneCalls, Scope, ScopeState, commit_scope, gesture_gate, gesture_start_refusal,
+    impact_filter, scope_in_effect, scope_state,
 };
 use crate::timing::{
     SetTimingOffer, WindowRole, set_timing_files, set_timing_offer, set_timing_span, window_role,
@@ -142,6 +142,47 @@ pub(crate) fn grip_lock(
     })
 }
 
+/// Whether a drag of `grip` also writes `durationInFrames` it doesn't
+/// change: the body of a `Sequence` without one (see [`band_writes`]).
+pub(crate) fn adds_duration(kind: TimingKind, grip: BandGrip, targets: &ElementTargets) -> bool {
+    let missing = targets
+        .target(&PropKey::Prop(DURATION.to_owned()))
+        .is_some_and(|target| matches!(inner_target(target), EditTarget::Missing { .. }));
+    kind == TimingKind::Sequence && grip == BandGrip::Body && missing
+}
+
+/// The props a drag of `grip` writes into the window `targets` describes.
+fn grip_keys(kind: TimingKind, grip: BandGrip, targets: &ElementTargets) -> Vec<PropKey> {
+    let mut names = grip_props(kind, grip);
+    if adds_duration(kind, grip, targets) {
+        names.push(DURATION);
+    }
+    names
+        .into_iter()
+        .map(|name| PropKey::Prop(name.to_owned()))
+        .collect()
+}
+
+/// Why `grip` doesn't drag: the lock of a prop it writes ([`grip_lock`]),
+/// else the refusal its release would get under the scope it would keep
+/// (`remembered` and the window's scope `state`; see
+/// [`gesture_start_refusal`]), so a drag that would be refused never
+/// starts.
+pub(crate) fn grip_refusal(
+    kind: TimingKind,
+    grip: BandGrip,
+    targets: &ElementTargets,
+    state: &ScopeState,
+    remembered: Option<Scope>,
+    calls: Option<&SceneCalls>,
+) -> Option<String> {
+    grip_lock(kind, grip, targets).or_else(|| {
+        grip_keys(kind, grip, targets)
+            .iter()
+            .find_map(|key| gesture_start_refusal(remembered, state, targets, key, calls))
+    })
+}
+
 /// The number `targets` holds for `name`, when it holds one.
 fn number_of(targets: &ElementTargets, name: &str) -> Option<f64> {
     match inner_target(targets.target(&PropKey::Prop(name.to_owned()))?) {
@@ -226,12 +267,11 @@ pub(crate) fn band_writes(
     targets: &ElementTargets,
 ) -> Vec<(PropKey, Option<EditValue>)> {
     let mut writes = band_edit(kind, grip, delta, values);
-    let duration = PropKey::Prop(DURATION.to_owned());
-    let missing = targets
-        .target(&duration)
-        .is_some_and(|target| matches!(inner_target(target), EditTarget::Missing { .. }));
-    if kind == TimingKind::Sequence && grip == BandGrip::Body && missing {
-        writes.push((duration, Some(EditValue::Number(values.duration))));
+    if adds_duration(kind, grip, targets) {
+        writes.push((
+            PropKey::Prop(DURATION.to_owned()),
+            Some(EditValue::Number(values.duration)),
+        ));
     }
     writes
 }
@@ -580,8 +620,20 @@ impl EditorView {
         draggable_band(filled, frame as f64)?;
         let grips = [BandGrip::Start, BandGrip::End, BandGrip::Body];
         let locks = match self.window_targets() {
-            Some((Ok(targets), _)) => {
-                grips.map(|grip| grip_lock(targets.kind, grip, &targets.targets))
+            Some((Ok(targets), report)) => {
+                // The scope the press would keep and the release check:
+                // a grip refused there is locked here.
+                let (state, calls, remembered) = self.window_scope_state(targets, report);
+                grips.map(|grip| {
+                    grip_refusal(
+                        targets.kind,
+                        grip,
+                        &targets.targets,
+                        &state,
+                        remembered,
+                        calls,
+                    )
+                })
             }
             Some((Err(reason), _)) => grips.map(|_| Some(reason.to_owned())),
             None => {
@@ -1716,6 +1768,28 @@ mod tests {
             moved(BandGrip::Start, 15),
             [vec![(0, 60)], vec![(75, 120)], vec![(120, 180)]]
         );
+    }
+
+    #[test]
+    fn a_body_drag_label_names_the_duration_it_adds() {
+        // `<Sequence from={30}>` showing 30–90: a body drag adds the
+        // duration it shows, and the label says so.
+        let open = targets(vec![
+            ("from", literal(30.0)),
+            ("durationInFrames", missing()),
+        ]);
+        assert!(adds_duration(TimingKind::Sequence, BandGrip::Body, &open));
+        assert!(!adds_duration(TimingKind::Sequence, BandGrip::End, &open));
+        assert!(!adds_duration(TimingKind::Sequence, BandGrip::Start, &open));
+        let closed = targets(vec![
+            ("from", literal(30.0)),
+            ("durationInFrames", literal(60.0)),
+        ]);
+        assert!(!adds_duration(
+            TimingKind::Sequence,
+            BandGrip::Body,
+            &closed
+        ));
     }
 
     #[test]

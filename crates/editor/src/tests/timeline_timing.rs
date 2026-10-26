@@ -4,7 +4,8 @@
 
 use super::*;
 use crate::element_edit::{WindowTargets, resolve_window, window_files, window_report};
-use crate::scope::{Scope, ScopeOptions, ScopeState};
+use crate::scope::{Scope, ScopeLock, ScopeOptions, ScopeState};
+use crate::timeline_drag::{BandGrip, grip_refusal};
 use crate::timing::{SetTimingOffer, WindowRole, set_timing_files, set_timing_offer};
 use celesta_react_bridge::TimingWindow;
 use celesta_source_edit::{ElementRef, ImportLock, TimingKind, WrapLock};
@@ -531,6 +532,62 @@ fn set_timing_offer_follows_the_role() {
         ),
         SetTimingOffer::Disabled("`Sequence` here is not Celesta's".to_owned())
     );
+}
+
+#[test]
+fn a_grip_the_kept_scope_would_refuse_is_locked_before_the_press() {
+    // While the scenes are scanned, a window's literal props wait for the
+    // scan: no grip starts, with the scan's note.
+    let files = Files::new("refusal-scanning", &[("scene.tsx", SEQUENCE)]);
+    let report = sequence_report(&files);
+    let window = files.window(&report, &files.pos("scene.tsx", 4, 3));
+    let scanning = ScopeState::Unknown {
+        note: "Scanning scenes…".to_owned(),
+    };
+    for grip in [BandGrip::Start, BandGrip::End, BandGrip::Body] {
+        let refusal = |state: &ScopeState| {
+            grip_refusal(window.kind, grip, &window.targets, state, None, None)
+        };
+        assert_eq!(refusal(&scanning), Some("Scanning scenes…".to_owned()));
+        assert_eq!(refusal(&ScopeState::NotShared), None);
+    }
+
+    // Under "Shared value", this scene's call passes `sequenceFrom` itself:
+    // a drag of `from` would not show here, so the grips writing it are
+    // locked; the end edge writes `durationInFrames` only.
+    let price =
+        "export const Price = () => (\n  <PriceTag label=\"Sale\" sequenceFrom={45} />\n);\n";
+    let files = Files::new(
+        "refusal-sets-own",
+        &[("price_tag.tsx", TAG_LIFTED), ("price.tsx", price)],
+    );
+    let report = report_of(vec![
+        files.entry("Text", ElementKind::Primitive, "price_tag.tsx", (11, 7)),
+        files.entry("Sequence", ElementKind::Wrapper, "price_tag.tsx", (10, 5)),
+        files.entry("PriceTag", ElementKind::Component, "price.tsx", (2, 3)),
+    ]);
+    let window = files.window(&report, &files.pos("price_tag.tsx", 10, 5));
+    let open = ScopeState::Options(ScopeOptions {
+        this_scene: Ok(()),
+        shared: Ok(()),
+        shared_reaches: vec!["Intro".to_owned()],
+        sets_own: vec!["Price".to_owned()],
+    });
+    let refusal = |grip, remembered| {
+        grip_refusal(window.kind, grip, &window.targets, &open, remembered, None)
+    };
+    let sets_own = ScopeLock::SetsOwn {
+        param: "sequenceFrom".to_owned(),
+    }
+    .text();
+    assert_eq!(
+        refusal(BandGrip::Start, Some(Scope::Shared)),
+        Some(sets_own.clone())
+    );
+    assert_eq!(refusal(BandGrip::Body, Some(Scope::Shared)), Some(sets_own));
+    assert_eq!(refusal(BandGrip::End, Some(Scope::Shared)), None);
+    // Under "This scene" the call's value is written there.
+    assert_eq!(refusal(BandGrip::Body, Some(Scope::ThisScene)), None);
 }
 
 #[test]
