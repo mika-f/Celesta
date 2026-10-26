@@ -72,10 +72,11 @@ Example: `examples/scene-timing` (a literal `defineScenes` list, a hand-placed
   when it isn't the element's. `apply_checked` takes the path it writes;
   `CommitError::Import`.
 - The band drag (`crates/editor/src/timeline_drag.rs`, new): pure helpers
-  (`draggable_band`, `grip_at`, `grip_lock`, `timing_values`,
-  `clamp_band_delta`, `band_edit`, `band_writes`, `drag_frames`,
-  `snap_targets`, `still_ranges`, `snapped_delta`, `preview_occurrences`,
-  `drag_label`, `drag_end`, `not_written`) and the view's `BandDrag`,
+  (`draggable_band`, `grip_at`, `grip_lock`, `grip_refusal`,
+  `adds_duration`, `timing_values`, `clamp_band_delta`, `band_edit`,
+  `band_writes`, `drag_frames`, `snap_targets`, `still_ranges`,
+  `snapped_delta`, `preview_occurrences`, `drag_label`, `band_label`,
+  `drag_end`, `not_written`) and the view's `BandDrag`,
   `BandGrips`, `BandNotice`, `band_grips`, `begin/continue/end/escape_band_drag`,
   `commit_band_drag`, `band_write`, `drop_released_band_drag`,
   `set_timing_action`, `set_timing`. `impact.rs`: `moved_impact_view` draws
@@ -116,12 +117,19 @@ amended to match.
   dragged left.
 - **A body drag on a `Sequence` without `durationInFrames` writes it** at the
   length shown: the runtime keeps such a window's end at its parent's end.
+  The label names it (`from 30 → 45 · durationInFrames 60`; `band_label`).
 - **Band drags use the window's own scope.** The state comes from
-  `scope_state` over the window's targets and `window_scene_calls`, captured
-  with `commit_scope` at the press and gated by `gesture_gate` at release
-  (the scanned-meanwhile refusal included); the label's second line is
-  `scope_in_effect`. The element-level `kept_scope`/`gesture_gate_for` read
-  the element's rows, where the window's keys never appear.
+  `scope_state` over the window's targets and `window_scene_calls`. A drag
+  that would be refused does not start, as for every other gesture since
+  design 3: `grip_refusal` locks a grip with design 2's lock of a prop it
+  writes, else with `gesture_start_refusal` over those props (the body's
+  added `durationInFrames` included) under the remembered choice and that
+  state, so the grip shows the not-allowed pointer and the reason. The
+  scope is captured with `commit_scope` at the press and gated by
+  `gesture_gate` at release (the scanned-meanwhile refusal included) for what
+  changes meanwhile; the label's second line is `scope_in_effect`. The
+  element-level `gesture_refusals`/`kept_scope`/`gesture_gate_for` read the
+  element's rows, where the window's keys never appear.
 - **Nothing is held.** A gate that holds or refuses, and a window no longer
   current at release, leave a notice "Not written: …" beside the grip; a
   write that fails shows its error. The released drag stays drawn until the
@@ -292,5 +300,12 @@ pull request, and keep the TSX diff.
   label's second line reads "Edits change this scene", `Tag` gains a
   `sequenceFrom` prop defaulting to the old `from`, and Intro's `<Tag>` call
   passes the new value; Main is unchanged, and one undo restores both files.
+- Right after that write, while "Edits change" reads "Scanning scenes…", the
+  tag's grips show the not-allowed pointer with "Scanning scenes…" and a
+  press starts nothing. Once scanned, choose **Shared value** in Intro (whose
+  call now passes `sequenceFrom`): the start edge and the middle are locked
+  with "This scene sets its own `sequenceFrom`", and the end edge drags.
+- Drag the middle of a `<Sequence>` without `durationInFrames`: the label
+  reads `from 30 → 45 · durationInFrames 60`, and both props are written.
 - Click a grip without moving: the playhead jumps to the band's start; click
   a chapter's end: it jumps to the chapter's start.

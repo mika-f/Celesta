@@ -82,14 +82,21 @@ the project").
   and the tooltip gives the reason (design 2's texts). The start edge needs
   both its props, the end edge `durationInFrames`, the body `from`/`offset`.
 - Design 3's scope applies when the window is written inside a shared
-  component: "This scene" lifts `from`/`durationInFrames`/`offset` like any
-  number (`sequenceFrom`). The scope is the window's own (its targets and the
-  calls of the component enclosing the wrapper), captured at the press and
-  checked again at release by design 3's gesture gate; the label's second
-  line says it ("Edits change this scene").
+  component: "This scene" lifts the props the grip writes like any number
+  (`sequenceFrom` for a body drag). The scope is the window's own (its
+  targets and the calls of the component enclosing the wrapper). A grip the
+  scope it would keep would refuse at release (design 3's
+  `gesture_start_refusal` over the props it writes: "Scanning scenes…", "This
+  scene sets its own `sequenceFrom`", a locked remembered choice) is locked
+  with that reason, so the press starts nothing; the scope is captured at the
+  press and checked again at release by design 3's gesture gate, for what
+  changes meanwhile; the label's second line says it ("Edits change this
+  scene").
 
-During the drag nothing is written: the band and a label (`from 30 → 45`)
-follow the pointer, and the preview shows the playhead frame. Mouse-up writes
+During the drag nothing is written: the band and a label (`from 30 → 45`;
+a body drag that adds `durationInFrames` names it, `from 30 → 45 ·
+durationInFrames 60`) follow the pointer, and the preview shows the playhead
+frame. Mouse-up writes
 one history entry. A press that moves less than 3 px is a click and seeks to
 the start of the drawn band holding the pressed frame; Escape and starting
 playback cancel. A release that writes nothing leaves a notice beside the
