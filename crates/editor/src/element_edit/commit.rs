@@ -13,7 +13,7 @@ use crate::scope::{
 use celesta_react_bridge::LayerSourceReport;
 use celesta_source_edit::{
     ApplyError, DefaultTarget, Edit, EditTarget, EditValue, ElementRef, LiftProp, LockReason,
-    apply, expression, parses, plan_lift, removal,
+    apply, expression, parses, plan_lift_avoiding, removal, written_attributes,
 };
 use std::collections::BTreeMap;
 use std::fmt;
@@ -300,7 +300,7 @@ fn default_edit(targets: &ElementTargets, key: &PropKey, value: &EditValue) -> O
 
 /// Adds to `edits` lifting every `(target, value)` of `lifted` (rows of
 /// `targets`) into new props of `C` together, and passing each new prop's
-/// value at `S`.
+/// value at `S`; the new names avoid the attributes `S` writes already.
 fn lift_edits(
     texts: &Texts,
     targets: &ElementTargets,
@@ -322,7 +322,11 @@ fn lift_edits(
             value,
         })
         .collect();
-    let lift = plan_lift(text, &targets.element, &props)
+    let at_s = texts
+        .get(&component.call_site.file)
+        .ok_or(CommitError::SourceChanged)?;
+    let written = written_attributes(at_s, &component.call);
+    let lift = plan_lift_avoiding(text, &targets.element, &props, &written)
         .map_err(|lock| CommitError::Scope(lift_scope_lock(&lock, enclosing)))?;
     edits
         .entry(targets.file.clone())

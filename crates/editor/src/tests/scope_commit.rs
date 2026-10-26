@@ -193,6 +193,34 @@ fn this_scene_lifts_a_literal_and_passes_it() {
 }
 
 #[test]
+fn a_lift_avoids_the_names_the_call_writes() {
+    // Price passes `rectWidth` on to the `<Rect>` through `...rest`.
+    let tag = "interface Props {\n  label: string;\n}\n\nexport function PriceTag({ label, ...rest }: Props) {\n  return <Rect {...rest} width={200} />;\n}\n";
+    let price = "export const Price = () => (\n  <PriceTag label=\"Sale\" rectWidth={5} />\n);\n";
+    let files = Files::new("lift-clash", tag, price);
+    let report = files.report(TAG_RECT, &files.price(), &[("width", 200.0)]);
+    let targets = files.targets(&report);
+
+    files
+        .commit(
+            &targets,
+            &report,
+            Some(Scope::ThisScene),
+            &[number("width", 260.0)],
+        )
+        .unwrap();
+
+    assert_eq!(
+        files.read(&files.tag()),
+        "interface Props {\n  label: string;\n  rectWidth2?: number;\n}\n\nexport function PriceTag({ label, rectWidth2 = 200, ...rest }: Props) {\n  return <Rect {...rest} width={rectWidth2} />;\n}\n"
+    );
+    assert_eq!(
+        files.read(&files.price()),
+        "export const Price = () => (\n  <PriceTag label=\"Sale\" rectWidth={5} rectWidth2={260} />\n);\n"
+    );
+}
+
+#[test]
 fn a_second_scene_after_a_lift_resolves_as_pass_through() {
     let files = Files::new("second-scene", LIFTED, PRICE_OWN);
     let report = files.report(LIFTED_RECT, &files.intro(), &[("width", 200.0)]);
