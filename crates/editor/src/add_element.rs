@@ -477,6 +477,21 @@ pub(crate) fn space_request_due(parent: Option<&str>, reported: bool, asked: Opt
     parent.is_some_and(|parent| !reported && asked != Some(parent))
 }
 
+/// Why the Add menu's items are disabled by the parent's children `space`
+/// as last reported (`None`: not yet, `Some(None)`: turned in 3D). An
+/// unreported space disables them only while paused, when it is being
+/// asked for; while `playing` they stay enabled, as choosing one pauses,
+/// which asks for it (until it arrives nothing is outlined, and a release
+/// refuses).
+pub(crate) fn space_reason(space: Option<Option<[f64; 6]>>, playing: bool) -> Option<&'static str> {
+    match space {
+        Some(None) => Some(TURNED_3D),
+        Some(Some(space)) if invert_affine(space).is_none() => Some(SCALED_TO_ZERO),
+        Some(Some(_)) => None,
+        None => (!playing).then_some(READING),
+    }
+}
+
 /// The element the add mode draws.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct AddTool {
@@ -947,15 +962,7 @@ impl EditorView {
         let reason = match &target {
             Err(reason) => Some(reason.clone()),
             Ok((parent, facts)) => facts.timing.as_ref().err().cloned().or_else(|| {
-                match self.add_space(&parent.layer_id) {
-                    Some(None) => Some(TURNED_3D.to_owned()),
-                    Some(Some(space)) if invert_affine(space).is_none() => {
-                        Some(SCALED_TO_ZERO.to_owned())
-                    }
-                    Some(Some(_)) => None,
-                    // A drawing needs it, and the release would refuse.
-                    None => Some(READING.to_owned()),
-                }
+                space_reason(self.add_space(&parent.layer_id), self.playing).map(str::to_owned)
             }),
         };
         let locks = target.map(|(_, facts)| facts.locks.as_slice());
@@ -2616,6 +2623,22 @@ mod tests {
         // No parent.
         assert!(!space_request_due(None, false, None));
         assert!(!space_request_due(None, false, Some("g")));
+    }
+
+    #[test]
+    fn an_unreported_space_disables_the_items_only_while_paused() {
+        // Paused: the space is asked for now, and a drawing needs it.
+        assert_eq!(space_reason(None, false), Some(READING));
+        // Playing: choosing an item pauses, which asks for it.
+        assert_eq!(space_reason(None, true), None);
+        for playing in [false, true] {
+            assert_eq!(space_reason(Some(Some(IDENTITY)), playing), None);
+            assert_eq!(space_reason(Some(None), playing), Some(TURNED_3D));
+            assert_eq!(
+                space_reason(Some(Some([0.0; 6])), playing),
+                Some(SCALED_TO_ZERO)
+            );
+        }
     }
 
     #[test]

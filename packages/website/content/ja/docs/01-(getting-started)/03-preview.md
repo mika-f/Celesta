@@ -555,7 +555,7 @@ Celesta は再読み込みのたびに、エントリファイルのフォルダ
 | --- | --- |
 | Select a group, or a layer inside one, to add into | 何も選択していないか、選択したレイヤーを囲むグループに親になれるものがない |
 | No group in this scene's own code to add into | **This scene** で、親になれるグループがすべて共有されている。選択した要素がコンポジションのルートに一度だけ書かれ、複数のシーンにまたがる `<Group>`（`<Scenes>` を囲むものなど）の中にある場合も該当する。このような要素には **Edits change** の切り替えがなく、Celesta は確認なしにすべてのシーンへ追加しない |
-| The source is still being read | 再読み込みの直後などで、選択したレイヤーのソースか、キャンバス上でのグループの座標系をまだ探しているか読んでいる。座標系は再生を止めているあいだに読む |
+| The source is still being read | 再読み込みの直後などで、選択したレイヤーのソースか、キャンバス上でのグループの座標系をまだ探しているか読んでいる。再生中はグループの座標系を読まず、それで項目が選べなくなることもない。項目を選ぶと再生が止まって座標系を読み、読み終えるまでは輪郭が描かれず、離すとこの理由で断られる |
 | Scanning scenes…、Couldn't scan scenes: `<error>`、Not found in the scene scan、The scenes are not scanned | グループが共有されているかどうかがまだわからない。「編集で何が変わるかを確かめる」を参照 |
 | 「選択肢を選べないとき」に挙げた理由 | 選択した要素で使われる **Edits change** の選択肢を選べない。以前に選んだ選択肢を選べないときと、何も選んでおらず両方とも選べないときがある。タブのツールチップにも同じ理由が表示される |
 | Can't add inside a loop or freeze frame | グループを囲むいちばん近い範囲が `<Loop>` か `<FreezeFrame>` |

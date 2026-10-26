@@ -91,7 +91,7 @@ of the Size handles and property sections); `<Video width height>` in
   known later (a scope switch, the targets or the scan answering, a pause)
   gets its space without waiting for another frame; `add_menu` builds the
   header, the reason line, and the items, "The source is still being read"
-  while the space is unreported. `shows_tool_row(react_preview,
+  while the space is unreported and nothing plays (`space_reason`). `shows_tool_row(react_preview,
   interactive)` no longer takes the selection: the row shows the Add button (gpui-kit `dropdown_menu`,
   `IconName::Plus`) alone, and the Rotate about and Handles toggles after it
   with a selection. `choose_add_kind` pauses, stores the `ChosenParent`, and
@@ -174,10 +174,12 @@ of the Size handles and property sections); `<Video width height>` in
   offers no scope control, so adding with it selected is refused with "No
   group in this scene's own code to add into" rather than writing into every
   scene unasked.
-- The parent's space is asked for only while nothing plays, so a parent first
-  known during playback reads "The source is still being read" until the
-  playback pauses. A parent the preview never reports a space for keeps that
-  reason until the groups are read again or the code reloads.
+- The parent's space is asked for only while nothing plays. During playback
+  an unreported space leaves the items enabled (`space_reason`): choosing one
+  pauses, which asks for it, and until it arrives the armed mode outlines
+  nothing and a release refuses with "The source is still being read". While
+  paused, a parent the preview never reports a space for keeps that reason
+  until the groups are read again or the code reloads.
 - The Rust renderers do not reject an invalid `Video` size (zero, negative,
   NaN); only the React runtime does. `display_size` could return a `Result`
   as the image path does. `render.ts` repeats the image's size check instead
