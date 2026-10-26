@@ -90,12 +90,13 @@ impl EditorView {
             .when_some(self.focus_handle.as_ref(), |view, focus_handle| {
                 view.track_focus(focus_handle)
             })
-            // Escape cancels a canvas drag, a band drag or a row's scrub
-            // before any other key handling.
+            // Escape cancels a canvas drag, a band or scene drag or a row's
+            // scrub before any other key handling.
             .capture_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                 if event.keystroke.key == "escape"
                     && (this.escape_transform_drag()
                         || this.escape_band_drag()
+                        || this.escape_scene_drag()
                         || this.escape_row_scrub())
                 {
                     cx.stop_propagation();
@@ -105,13 +106,14 @@ impl EditorView {
             // Any press ends a note on why a double-click did not edit a
             // text or why an edit was cancelled, and drops a double-click
             // waiting for its layer's source (the canvas sets them again);
-            // likewise a note on why a band drag wrote nothing.
+            // likewise a note on why a band or scene drag wrote nothing.
             .capture_any_mouse_down(cx.listener(|this, _, _, cx| {
                 let note = this.inline_note.take().is_some();
                 let notice = this.inline_notice.take().is_some();
                 let band = this.band_notice.take().is_some();
+                let scene = this.scene_notice.take().is_some();
                 this.inline_pending = None;
-                if note || notice || band {
+                if note || notice || band || scene {
                     cx.notify();
                 }
             }))
@@ -127,20 +129,23 @@ impl EditorView {
             .child(self.title_bar(cx))
             .child(self.workspace(cx))
             .child(self.status_bar(cx))
-            // A scrub or a band drag keeps its cursor wherever the pointer
-            // goes.
-            .when(self.row_scrub_active() || self.band_drag_active(), |root| {
-                root.child(
-                    canvas(
-                        |_, _, _| {},
-                        |_, _, window, _| {
-                            window.set_window_cursor_style(CursorStyle::ResizeLeftRight);
-                        },
+            // A scrub or a band or scene drag keeps its cursor wherever the
+            // pointer goes.
+            .when(
+                self.row_scrub_active() || self.band_drag_active() || self.scene_drag_active(),
+                |root| {
+                    root.child(
+                        canvas(
+                            |_, _, _| {},
+                            |_, _, window, _| {
+                                window.set_window_cursor_style(CursorStyle::ResizeLeftRight);
+                            },
+                        )
+                        .absolute()
+                        .size_0(),
                     )
-                    .absolute()
-                    .size_0(),
-                )
-            })
+                },
+            )
     }
 
     /// The resizable shell: the asset list, the viewer, and the inspector,

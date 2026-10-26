@@ -13,7 +13,7 @@ use crate::scope::{SceneCalls, Scope, ScopeLock, ScopedRow, lift_scope_lock, sco
 use celesta_react_bridge::LayerSourceReport;
 use celesta_source_edit::{
     ApplyError, DefaultTarget, Edit, EditTarget, EditValue, ElementRef, LiftProp, LockReason,
-    apply, expression, parses, plan_lift_avoiding, removal, written_attributes,
+    apply, expression, parses_file, plan_lift_avoiding, removal, written_attributes,
 };
 use std::collections::BTreeMap;
 use std::fmt;
@@ -186,7 +186,7 @@ pub(crate) fn commit_scoped(
         .map(|(file, edits)| {
             // Resolving read every file a target is in.
             let text = texts.get(&file).ok_or(CommitError::SourceChanged)?;
-            let written = apply_checked(text, &edits)?;
+            let written = apply_checked(&file, text, &edits)?;
             Ok((file, written))
         })
         .collect()
@@ -388,11 +388,16 @@ fn lift_edits(
     Ok(())
 }
 
-/// `text` with `edits` applied, refused when the result does not parse: a
-/// commit never writes a source it broke, whatever the edit.
-pub(crate) fn apply_checked(text: &str, edits: &[Edit]) -> Result<String, CommitError> {
+/// `text` (of the file `path`) with `edits` applied, refused when the
+/// result does not parse as `path`'s type: a commit never writes a source
+/// it broke, whatever the edit.
+pub(crate) fn apply_checked(
+    path: &Path,
+    text: &str,
+    edits: &[Edit],
+) -> Result<String, CommitError> {
     let written = apply(text, edits).map_err(CommitError::Apply)?;
-    if parses(&written) {
+    if parses_file(&written, path) {
         Ok(written)
     } else {
         Err(CommitError::Unparseable)

@@ -1788,7 +1788,11 @@ fn an_edit_whose_result_does_not_parse_is_refused() {
         start: at,
         end: at + 1,
     }];
-    assert_eq!(apply_checked(text, &broken), Err(CommitError::Unparseable));
+    let path = Path::new("/project/scene.tsx");
+    assert_eq!(
+        apply_checked(path, text, &broken),
+        Err(CommitError::Unparseable)
+    );
     assert_eq!(
         CommitError::Unparseable.to_string(),
         "Couldn't edit the source: the result does not parse"
@@ -1798,8 +1802,26 @@ fn an_edit_whose_result_does_not_parse_is_refused() {
         end: at + 5,
     }];
     assert_eq!(
-        apply_checked(text, &whole),
+        apply_checked(path, text, &whole),
         Ok("export const A = () => <Rect y={2} />;".to_owned())
+    );
+
+    // Checked as the file's type: `<number>v` is a `.ts` cast, not TSX.
+    let text = "const v: unknown = 1;\nconst n = <number>v;\n";
+    let at = text.find('1').unwrap() as u32;
+    let edit = [Edit::Replace {
+        start: at,
+        end: at + 1,
+        value: EditValue::Number(2.0),
+        form: LiteralForm::Number,
+    }];
+    assert_eq!(
+        apply_checked(Path::new("/project/timeline.ts"), text, &edit),
+        Ok(text.replace('1', "2"))
+    );
+    assert_eq!(
+        apply_checked(Path::new("/project/timeline.tsx"), text, &edit),
+        Err(CommitError::Unparseable)
     );
 }
 

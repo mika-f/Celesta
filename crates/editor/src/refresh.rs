@@ -517,6 +517,8 @@ impl EditorView {
                     .into();
                 }
                 self.react_reload_generation = self.react_reload_generation.wrapping_add(1);
+                // The scene lists are the reloaded code's too.
+                self.refresh_scene_sources(cx);
                 let own_write = self.selection_keep.applies(sequence);
                 let keep = own_write && self.selected_layer.is_some();
                 // A text committed on the canvas is drawn by the reloaded
@@ -562,8 +564,10 @@ impl EditorView {
                     self.scope_choices
                         .forget_in(&written, self.scope_carry_from.as_ref());
                 }
-                // A released band drag's values are the reloaded code's now.
+                // A released band or scene drag's values are the reloaded
+                // code's now.
                 self.drop_released_band_drag();
+                self.drop_released_scene_drag();
                 self.problems.clear(Source::Preview);
                 self.refresh_preview();
                 if keep {
@@ -584,6 +588,7 @@ impl EditorView {
                     self.cancel_transform_drag();
                 }
                 self.drop_released_band_drag();
+                self.drop_released_scene_drag();
                 if !self.row_scrub_active() {
                     self.cancel_row_scrub();
                 }

@@ -25,6 +25,7 @@ use crate::actions::{ZoomTimelineIn, ZoomTimelineOut, ZoomTimelineToFit};
 use crate::icons::CelestaIcon;
 use crate::impact::ImpactView;
 use crate::layer_select::display_path;
+use crate::scene_entries::SceneEdge;
 use crate::timecode::{format_timecode, nominal_fps, ruler_scale};
 use crate::timeline_drag::{BandGrip, BandGrips, edge_width};
 use crate::view::EditorView;
@@ -601,8 +602,10 @@ impl EditorView {
         let impact = self.timeline_impact();
         let mut rows: Vec<gpui_kit::AnyElement> = Vec::new();
         if let Some(chapters) = self.react_chapters() {
+            // A scene drag moves the chapters it moves.
+            let chapters = self.drawn_chapters(chapters);
             rows.push(
-                self.chapter_row(chapters, impact.as_ref(), view, cx)
+                self.chapter_row(&chapters, impact.as_ref(), view, cx)
                     .into_any_element(),
             );
         }
@@ -1436,12 +1439,82 @@ impl EditorView {
         cx.notify();
     }
 
+    /// The end of `chapter` (a block at `start`/`duration` lane fractions on
+    /// lane `lane`): a press on an end that drags starts a scene drag; a
+    /// locked one shows why.
+    fn chapter_end_grip(
+        &self,
+        chapter: &ReactChapter,
+        lane: usize,
+        (start, duration): (f64, f64),
+        view: LaneView,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::AnyElement {
+        let edge = edge_width((view.width(duration) * self.lane_width()).max(2.0));
+        let dragged = self
+            .scene_drag
+            .as_ref()
+            .is_some_and(|drag| drag.id == chapter.id);
+        let id = chapter.id.clone();
+        let zone = div()
+            .id(SharedString::from(format!(
+                "timeline-chapter-end-{}",
+                chapter.id
+            )))
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .right_0()
+            .w(px(edge));
+        let zone = match self.scene_edge(&chapter.id) {
+            SceneEdge::Locked(reason) => {
+                zone.cursor(CursorStyle::OperationNotAllowed)
+                    .tooltip(move |window, cx| {
+                        let lines: Vec<String> = reason.lines().map(str::to_owned).collect();
+                        Tooltip::element(move |_, _| {
+                            div()
+                                .flex()
+                                .flex_col()
+                                .children(lines.iter().map(|line| div().child(line.clone())))
+                        })
+                        .build(window, cx)
+                    })
+            }
+            SceneEdge::Editable { .. } => zone
+                .cursor(CursorStyle::ResizeLeftRight)
+                .when(dragged, |zone| zone.bg(theme::accent()))
+                .hover(|zone| zone.bg(theme::accent()))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                        // The chapter below doesn't take the press as a
+                        // click: the drag seeks when it ends as one.
+                        if this.begin_scene_drag(&id, f32::from(event.position.x)) {
+                            cx.stop_propagation();
+                            cx.notify();
+                        }
+                    }),
+                ),
+        };
+        // Over the chapter's block, so the zone sits inside its end.
+        div()
+            .absolute()
+            .left(relative(view.x(start)))
+            .top(px(3.0 + lane as f32 * CHAPTER_LANE_HEIGHT))
+            .h(px(CHAPTER_LANE_HEIGHT - 2.0))
+            .w(relative(view.width(duration)))
+            .min_w(px(2.0))
+            .child(zone)
+            .into_any_element()
+    }
+
     /// The row above the tracks that shows `<Composition chapters>`: one
     /// block per chapter, the current one highlighted; a click seeks to its
     /// start. A chapter of length 0 is a thin mark. Overlapping chapters (a
     /// scene and the parts listed inside it) stack on lanes of their own, so
     /// none hides another. The chapters the selection appears in are
-    /// underlined.
+    /// underlined. A chapter's end drags when its `defineScenes` entry can
+    /// be written (see `chapter_end_grip`).
     fn chapter_row(
         &self,
         chapters: &[ReactChapter],
@@ -1457,6 +1530,18 @@ impl EditorView {
         };
         let lanes = chapter_lanes(chapters);
         let lane_count = lanes.iter().max().map_or(1, |lane| lane + 1);
+        let grips = chapters
+            .iter()
+            .zip(&lanes)
+            .map(|(chapter, &lane)| {
+                let span = (
+                    chapter.from as f64 / view.end_frame,
+                    chapter.duration_in_frames as f64 / view.end_frame,
+                );
+                self.chapter_end_grip(chapter, lane, span, view, cx)
+            })
+            .collect::<Vec<_>>();
+        let label = self.scene_label();
         let blocks = chapters
             .iter()
             .zip(lanes)
@@ -1508,6 +1593,7 @@ impl EditorView {
             })
             .collect::<Vec<_>>();
         div()
+            .relative()
             .flex()
             .flex_none()
             .h(px(6.0 + lane_count as f32 * CHAPTER_LANE_HEIGHT))
@@ -1551,8 +1637,37 @@ impl EditorView {
                     .on_scroll_wheel(cx.listener(Self::lane_wheel))
                     .on_pinch(cx.listener(Self::lane_pinch))
                     .on_mouse_down(MouseButton::Middle, cx.listener(Self::begin_timeline_pan))
-                    .children(blocks),
+                    .children(blocks)
+                    .children(grips),
             )
+            // Beside the dragged end, outside the lane so its edges don't
+            // cut the label; on one line, inside the row.
+            .when_some(label, |row, (at, text, notice)| {
+                let x =
+                    (view.x(at / view.end_frame) * self.lane_width()).clamp(0.0, self.lane_width());
+                row.child(
+                    div()
+                        .absolute()
+                        .left(px(TRACK_HEADER_WIDTH + x + 4.0))
+                        .top(px(3.0))
+                        .px_2()
+                        .border_1()
+                        .border_color(cx.theme().border)
+                        .bg(cx.theme().popover)
+                        .text_xs()
+                        .whitespace_nowrap()
+                        .map(|label| {
+                            if notice {
+                                label.text_color(cx.theme().muted_foreground)
+                            } else {
+                                label
+                                    .font_family(cx.theme().mono_font_family.clone())
+                                    .text_color(cx.theme().foreground)
+                            }
+                        })
+                        .child(text),
+                )
+            })
     }
 
     /// Zoom controls under the track headers and an overview bar under the

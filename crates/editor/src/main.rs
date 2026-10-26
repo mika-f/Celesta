@@ -50,6 +50,7 @@ mod property_panel_view;
 mod react_audio;
 mod refresh;
 mod render;
+mod scene_entries;
 mod scope;
 mod source;
 #[cfg(test)]
@@ -214,6 +215,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                     }
                     if editor.is_react_preview() {
                         editor.watch_react_entry(cx);
+                        editor.refresh_scene_sources(cx);
                     }
                     editor
                 });

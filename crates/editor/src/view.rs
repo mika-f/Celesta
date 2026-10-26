@@ -17,10 +17,11 @@ use crate::problems::{Problems, Source};
 use crate::property_panel::PropertyPanelState;
 use crate::react_audio::ReactAudioWorker;
 use crate::refresh::{ReloadOrder, SelectionKeep};
+use crate::scene_entries::SceneEdge;
 use crate::scope::{SceneCalls, Scope, ScopeChoices};
 use crate::source::{PropertyArgs, load_source};
 use crate::timeline::LaneGesture;
-use crate::timeline_drag::{BandDrag, BandNotice};
+use crate::timeline_drag::{BandDrag, BandNotice, SceneDrag};
 use crate::transform_drag::TransformDrag;
 use crate::transform_handles::{PivotMode, ResizeTool};
 use celesta_composition::{AudioClip, Rational};
@@ -327,6 +328,13 @@ pub(crate) struct EditorView {
     pub(crate) band_drag: Option<BandDrag>,
     /// Why the last band drag wrote nothing; gone with the next press.
     pub(crate) band_notice: Option<BandNotice>,
+    /// Each chapter's end on the chapter row, by chapter id, as the scene
+    /// search found them for the reload generation it ran for.
+    pub(crate) scene_edges: Option<(u64, HashMap<String, SceneEdge>)>,
+    /// The drag of a chapter's end, if one is running or being written.
+    pub(crate) scene_drag: Option<SceneDrag>,
+    /// Why the last scene drag wrote nothing; gone with the next press.
+    pub(crate) scene_notice: Option<BandNotice>,
     /// What canvas rotation and scale turn about, as the viewer's toggle
     /// chose it for the session (the pivot unless Center is chosen); a layer
     /// that can't keep its center uses its pivot whatever this says.
@@ -536,6 +544,9 @@ impl EditorView {
             transform_drag: None,
             band_drag: None,
             band_notice: None,
+            scene_edges: None,
+            scene_drag: None,
+            scene_notice: None,
             pivot_mode: PivotMode::default(),
             resize_tool: ResizeTool::default(),
             text_override: None,

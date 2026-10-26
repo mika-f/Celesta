@@ -110,6 +110,9 @@ impl EditorView {
         if self.band_drag_active() {
             self.band_drag = None;
         }
+        if self.scene_drag_active() {
+            self.scene_drag = None;
+        }
         self.playing = true;
         self.playback_started_at = Some(Instant::now());
         self.playback_started_frame = self.clock.frame();
@@ -350,6 +353,7 @@ impl EditorView {
         self.continue_master_volume_drag(event, window, cx);
         self.continue_transform_drag(event, cx);
         self.continue_band_drag(event, cx);
+        self.continue_scene_drag(event, cx);
         self.continue_row_scrub(event, cx);
         self.continue_inline_selection(event, window, cx);
     }
@@ -360,6 +364,7 @@ impl EditorView {
         let ended = self.master_volume_drag.take().is_some() | ended;
         let ended = self.end_transform_drag(cx) | ended;
         let ended = self.end_band_drag(cx) | ended;
+        let ended = self.end_scene_drag(cx) | ended;
         let ended = self.end_row_scrub(cx) | ended;
         if ended {
             cx.notify();

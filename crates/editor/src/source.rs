@@ -220,11 +220,24 @@ pub(crate) fn watched_mtime(entry: &Path, property_args: &PropertyArgs) -> Optio
     sources.max(props_file).max(folder)
 }
 
-/// Newest mtime among the JS/TS/JSON/CSS/WGSL source files under `dir` (recursively,
-/// skipping `node_modules`, `dist`, and `.tmp`). Used to notice when a React
-/// composition's code — the entry or any module it bundles — changed on disk.
+/// Newest mtime among the JS/TS/JSON/CSS/WGSL source files under `dir` (see
+/// [`source_files`]). Used to notice when a React composition's code — the
+/// entry or any module it bundles — changed on disk.
 pub(crate) fn newest_source_mtime(dir: &Path) -> Option<SystemTime> {
-    fn walk(dir: &Path, newest: &mut Option<SystemTime>, depth: u32) {
+    source_files(dir)
+        .iter()
+        .filter_map(|path| {
+            std::fs::symlink_metadata(path)
+                .and_then(|meta| meta.modified())
+                .ok()
+        })
+        .max()
+}
+
+/// The JS/TS/JSON/CSS/WGSL/subtitle source files under `dir`, recursively
+/// to depth 8, skipping `node_modules`, `dist`, `.tmp` and `.git`.
+pub(crate) fn source_files(dir: &Path) -> Vec<PathBuf> {
+    fn walk(dir: &Path, files: &mut Vec<PathBuf>, depth: u32) {
         if depth > 8 {
             return;
         }
@@ -241,7 +254,7 @@ pub(crate) fn newest_source_mtime(dir: &Path) -> Option<SystemTime> {
                     path.file_name().and_then(OsStr::to_str),
                     Some("node_modules" | "dist" | ".tmp" | ".git")
                 ) {
-                    walk(&path, newest, depth + 1);
+                    walk(&path, files, depth + 1);
                 }
             } else if matches!(
                 path.extension().and_then(OsStr::to_str),
@@ -258,15 +271,14 @@ pub(crate) fn newest_source_mtime(dir: &Path) -> Option<SystemTime> {
                         | "srt"
                         | "vtt"
                 )
-            ) && let Ok(modified) = entry.metadata().and_then(|meta| meta.modified())
-            {
-                *newest = Some(newest.map_or(modified, |current| current.max(modified)));
+            ) {
+                files.push(path);
             }
         }
     }
-    let mut newest = None;
-    walk(dir, &mut newest, 0);
-    newest
+    let mut files = Vec::new();
+    walk(dir, &mut files, 0);
+    files
 }
 
 #[cfg(test)]

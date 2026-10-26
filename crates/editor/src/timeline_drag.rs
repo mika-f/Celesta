@@ -2,13 +2,19 @@
 //! band holding the lookup frame takes grips at the window's edges; a drag
 //! moves the bands and a label with the pointer, writes nothing until the
 //! button comes up, and then writes the window's props as one history
-//! entry. Every rule sits in a pure helper here.
+//! entry. Every rule sits in a pure helper here. A chapter's end drags the
+//! same way on the chapter row (its rules in `scene_entries`).
 
 use crate::element_edit::{
-    ElementTargets, PropKey, WindowTargets, editable, inner_target, reason_text, window_files,
+    CommitError, ElementTargets, PropKey, WindowTargets, editable, inner_target, reason_text,
+    window_files,
 };
 use crate::impact::{ImpactFilter, ImpactView, moved_impact_view};
 use crate::layer_select::SourceLookup;
+use crate::scene_entries::{
+    SceneEdge, clamp_scene_delta, preview_chapters, scene_files, scene_snap_targets,
+    writes_nothing, written_length,
+};
 use crate::scope::{
     CommitGate, SceneCalls, Scope, ScopeState, commit_scope, gesture_gate, impact_filter,
     scope_in_effect, scope_state,
@@ -847,6 +853,268 @@ impl EditorView {
     pub(crate) fn drop_released_band_drag(&mut self) {
         if !self.band_drag_active() {
             self.band_drag = None;
+        }
+    }
+}
+
+/// A drag of a chapter's end on the chapter row: the `defineScenes` entry's
+/// `durationInFrames`. Nothing is written until the button comes up.
+#[derive(Debug)]
+pub(crate) struct SceneDrag {
+    pub(crate) id: String,
+    /// The edge as found at the press (editable): the write needs it
+    /// unchanged.
+    edge: SceneEdge,
+    /// The id of its list's first entry, and those after it.
+    first: String,
+    later: Vec<String>,
+    /// The composition's length is the list's.
+    follows: bool,
+    /// The chapters and the composition's end at the press.
+    chapters: Vec<ReactChapter>,
+    composition_end: u64,
+    /// The chapter's first frame, which a click seeks to, and its end and
+    /// length as drawn at the press.
+    from: u64,
+    end: f64,
+    length: f64,
+    /// Window x of the press.
+    start_x: f32,
+    /// The farthest the pointer went from `start_x`, in pixels.
+    moved_px: f32,
+    /// What the end snaps to, read at the press.
+    snap_targets: Vec<f64>,
+    /// Whole frames, within the bounds.
+    pub(crate) delta: i64,
+    /// Why the bounds stopped the end, while they do.
+    note: Option<String>,
+    /// The button came up: drawn while the write runs and, after a
+    /// successful one, until its reload.
+    released: bool,
+}
+
+impl EditorView {
+    /// Whether a scene drag runs with the button down.
+    pub(crate) fn scene_drag_active(&self) -> bool {
+        self.scene_drag.as_ref().is_some_and(|drag| !drag.released)
+    }
+
+    /// `chapters` as the chapter row draws them: moved by a running (or
+    /// released) scene drag.
+    pub(crate) fn drawn_chapters(&self, chapters: &[ReactChapter]) -> Vec<ReactChapter> {
+        match &self.scene_drag {
+            Some(drag) => preview_chapters(chapters, &drag.id, &drag.later, drag.delta),
+            None => chapters.to_vec(),
+        }
+    }
+
+    /// The chapter row's label: a running drag's (`durationInFrames 90 →
+    /// 100`, and why the bounds stop it), or why the last one wrote
+    /// nothing; the frame it sits at, and whether it is a notice.
+    pub(crate) fn scene_label(&self) -> Option<(f64, String, bool)> {
+        if let Some(drag) = self.scene_drag.as_ref() {
+            let before = TimingValues {
+                start: 0.0,
+                duration: drag.length,
+            };
+            let after = moved_values(BandGrip::End, drag.delta, before);
+            let mut lines = vec![drag_label(
+                TimingKind::Sequence,
+                BandGrip::End,
+                before,
+                after,
+            )];
+            lines.extend(drag.note.clone());
+            return Some((drag.end + drag.delta as f64, lines.join(" · "), false));
+        }
+        let notice = self.scene_notice.as_ref()?;
+        Some((notice.at, notice.text.clone(), true))
+    }
+
+    /// Starts a drag of chapter `id`'s end, pressed at window x `x`, when
+    /// it drags. True when one started.
+    pub(crate) fn begin_scene_drag(&mut self, id: &str, x: f32) -> bool {
+        if self.scene_drag.is_some() {
+            return false;
+        }
+        let edge = self.scene_edge(id);
+        let SceneEdge::Editable {
+            first,
+            later,
+            follows,
+            ..
+        } = &edge
+        else {
+            return false;
+        };
+        let Some(chapters) = self.react_chapters() else {
+            return false;
+        };
+        let Some(chapter) = chapters.iter().find(|chapter| chapter.id == id) else {
+            return false;
+        };
+        let composition_end = u64::try_from(self.clock.end_frame()).unwrap_or(0);
+        let length = written_length(chapters, id, 0, composition_end);
+        let drag = SceneDrag {
+            id: id.to_owned(),
+            first: first.clone(),
+            later: later.clone(),
+            follows: *follows,
+            snap_targets: scene_snap_targets(self.clock.frame() as f64, chapters, id, later),
+            chapters: chapters.to_vec(),
+            composition_end,
+            from: chapter.from,
+            end: chapter.from as f64 + length,
+            length,
+            start_x: x,
+            moved_px: 0.0,
+            delta: 0,
+            note: None,
+            released: false,
+            edge,
+        };
+        self.pause();
+        self.scene_notice = None;
+        self.scene_drag = Some(drag);
+        true
+    }
+
+    /// Follows the pointer: moves the end by whole frames, snapped unless
+    /// Shift is held, within the bounds. Writes nothing.
+    pub(crate) fn continue_scene_drag(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) {
+        if !self.scene_drag_active() {
+            return;
+        }
+        // The button came up where the view did not see it: end there.
+        if !event.dragging() {
+            if self.end_scene_drag(cx) {
+                cx.notify();
+            }
+            return;
+        }
+        let pixels_per_frame = self.pixels_per_frame();
+        let x = f32::from(event.position.x);
+        let Some(drag) = self.scene_drag.as_mut() else {
+            return;
+        };
+        drag.moved_px = drag.moved_px.max((x - drag.start_x).abs());
+        let raw = drag_frames(drag.start_x, x, pixels_per_frame);
+        let delta = snapped_delta(
+            &[drag.end],
+            raw,
+            &drag.snap_targets,
+            pixels_per_frame,
+            event.modifiers.shift,
+        );
+        let (delta, note) = clamp_scene_delta(
+            &drag.chapters,
+            &drag.id,
+            &drag.first,
+            &drag.later,
+            delta,
+            drag.composition_end,
+            drag.follows,
+        );
+        if delta != drag.delta || note != drag.note {
+            drag.delta = delta;
+            drag.note = note;
+            cx.notify();
+        }
+    }
+
+    /// The button came up: a click seeks to the chapter's start, as a
+    /// click on it does; a drag writes the entry's length as one history
+    /// entry; a drag back to where it started writes nothing. True when a
+    /// drag was running.
+    pub(crate) fn end_scene_drag(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(drag) = self.scene_drag.as_ref().filter(|drag| !drag.released) else {
+            return false;
+        };
+        match drag_end(drag.moved_px, drag.delta, false) {
+            DragEnd::Seek => {
+                let from = drag.from;
+                self.scene_drag = None;
+                self.seek_to_frame(from, cx);
+            }
+            DragEnd::Cancel => self.scene_drag = None,
+            DragEnd::Commit => self.commit_scene_drag(cx),
+        }
+        true
+    }
+
+    /// Escape during a scene drag: drops it, writing nothing. True when a
+    /// pressed drag was cancelled.
+    pub(crate) fn escape_scene_drag(&mut self) -> bool {
+        let Some(drag) = self.scene_drag.as_ref().filter(|drag| !drag.released) else {
+            return false;
+        };
+        if drag_end(drag.moved_px, drag.delta, true) == DragEnd::Cancel {
+            self.scene_drag = None;
+        }
+        true
+    }
+
+    /// Writes the entry's new length: a source no longer as it was at the
+    /// press, or a failed write, leaves the notice why beside the end. The
+    /// released drag stays drawn while the write runs and, after a
+    /// successful one, until its reload (see `drop_released_scene_drag`).
+    fn commit_scene_drag(&mut self, cx: &mut Context<Self>) {
+        let Some(drag) = self.scene_drag.as_mut() else {
+            return;
+        };
+        drag.released = true;
+        let at = drag.end + drag.delta as f64;
+        let id = drag.id.clone();
+        let written = written_length(&drag.chapters, &id, drag.delta, drag.composition_end);
+        let edge = match self.scene_write() {
+            Ok(edge) => edge,
+            Err(text) => {
+                self.scene_notice = Some(BandNotice { at, text });
+                self.scene_drag = None;
+                return;
+            }
+        };
+        let SceneEdge::Editable { file, .. } = &edge else {
+            self.scene_drag = None;
+            return;
+        };
+        // The entry already holds it: no reload would come to drop the
+        // drag.
+        if writes_nothing(&edge, written) {
+            self.scene_drag = None;
+            return;
+        }
+        self.record_own_writes(
+            vec![file.clone()],
+            move |texts| scene_files(texts, &id, &edge, written).map_err(|error| error.to_string()),
+            move |this, result, cx| {
+                if let Err(text) = result {
+                    this.scene_notice = Some(BandNotice { at, text });
+                    this.scene_drag = None;
+                }
+                cx.notify();
+            },
+            cx,
+        );
+    }
+
+    /// The edge the released drag writes, or why it can't be written now:
+    /// the search for the current reload found it locked, or not as it was
+    /// at the press.
+    fn scene_write(&self) -> Result<SceneEdge, String> {
+        let drag = self.scene_drag.as_ref().ok_or_else(String::new)?;
+        match self.scene_edge(&drag.id) {
+            SceneEdge::Locked(reason) => Err(not_written(&reason)),
+            edge if edge == drag.edge => Ok(edge),
+            SceneEdge::Editable { .. } => Err(not_written(&CommitError::SourceChanged.to_string())),
+        }
+    }
+
+    /// The reload after a scene drag's write draws its length: the released
+    /// drag goes (a pressed one goes on).
+    pub(crate) fn drop_released_scene_drag(&mut self) {
+        if !self.scene_drag_active() {
+            self.scene_drag = None;
         }
     }
 }

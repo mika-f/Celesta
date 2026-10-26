@@ -9,8 +9,8 @@ mod commit;
 mod resolve;
 
 #[cfg(test)]
-pub(crate) use commit::{CommitError, apply_checked, commit_scoped};
-pub(crate) use commit::{commit_files, window_files};
+pub(crate) use commit::commit_scoped;
+pub(crate) use commit::{CommitError, apply_checked, commit_files, window_files};
 #[cfg(test)]
 pub(crate) use resolve::window_report;
 pub(crate) use resolve::{
