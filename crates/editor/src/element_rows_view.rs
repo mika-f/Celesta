@@ -225,10 +225,11 @@ impl EditorView {
         let scope_note = in_scope
             .zip(targets)
             .and_then(|((scope, calls), targets)| gesture_lock(Some(scope), targets, key, calls));
-        // Dragging the label scrubs an editable number (not while playing).
+        // Dragging the label scrubs an editable number (not while playing),
+        // unless the scope refuses the scrub.
         let scrubbable = current
             && !self.playing
-            && !scope_locked
+            && scope_note.is_none()
             && targets.is_some_and(|targets| scrubs(targets, key, target));
         // A written optional value offers its removal on hover, except while
         // a scrub runs or the removal is already being written.

@@ -1174,22 +1174,25 @@ impl EditorView {
     }
 
     /// Writes `value` into the row `key` as one history entry (`None`
-    /// removes the prop), under the scope chosen for the element; the row
-    /// shows it until the write finishes, and the written value until the
-    /// reload resolves (the source's value again when the write failed). A
-    /// text edited on the canvas commits here too.
+    /// removes the prop), under the scope the control shows for the
+    /// element (kept while the commit is held: see
+    /// [`crate::scope::commit_scope`]); the
+    /// row shows it until the write finishes, and the written value until
+    /// the reload resolves (the source's value again when the write
+    /// failed). A text edited on the canvas commits here too.
     pub(crate) fn commit_element_row(
         &mut self,
         key: &PropKey,
         value: Option<EditValue>,
         cx: &mut Context<Self>,
     ) {
-        let remembered = self.remembered_scope();
-        self.commit_row_with(key, value, remembered, cx);
+        let scope = self.row_commit_scope();
+        self.commit_row_with(key, value, scope, cx);
     }
 
-    /// [`Self::commit_element_row`] with the scope choice `remembered`
-    /// (the one a held commit was made with).
+    /// [`Self::commit_element_row`] with the scope `remembered` it keeps
+    /// (the one a held commit was made with): written under it, or refused
+    /// with its lock, never under another one.
     fn commit_row_with(
         &mut self,
         key: &PropKey,

@@ -3,13 +3,14 @@
 //! writes under them.
 
 use super::*;
+use crate::element_edit::{Resolved, resolved_scope_state};
 use crate::element_rows::default_row_text;
 use crate::impact::{ImpactFilter, ImpactView, impact_line, impact_view};
 use crate::occurrences::OccurrenceState;
 use crate::scope::{
-    SceneCalls, Scope, ScopeChoices, ScopeLock, ScopeOptions, ScopeState, ScopedRow, calls_of,
-    chosen_scope, impact_filter, previewed_scope, remove_tooltip, scope_in_effect, scope_line,
-    scope_state, scoped_removable, scoped_row,
+    CommitGate, SceneCalls, Scope, ScopeChoices, ScopeLock, ScopeOptions, ScopeState, ScopedRow,
+    calls_of, chosen_scope, commit_gate, commit_scope, impact_filter, previewed_scope,
+    remove_tooltip, scope_in_effect, scope_line, scope_state, scoped_removable, scoped_row,
 };
 use celesta_react_bridge::{
     ElementOccurrences, InstanceOccurrences, OccurrenceIndex, ReactChapter,
@@ -1235,6 +1236,77 @@ fn a_default_row_shows_the_default() {
     // Any other row shows as resolved.
     assert_eq!(shown(Scope::ThisScene, "width"), None);
     assert_eq!(shown(Scope::Shared, "x"), None);
+}
+
+#[test]
+fn a_commit_keeps_the_scope_shown_when_it_was_made() {
+    let report = price_report();
+    let targets = tag_targets(&report, &tag_texts(SCENES_FILE));
+    let reused = ScopeState::Options(options(Err(ScopeLock::ReusedCall), Ok(())));
+    let open = ScopeState::Options(options(Ok(()), Ok(())));
+
+    // Nothing remembered: the option the control showed in effect.
+    assert_eq!(commit_scope(None, &reused), Some(Scope::Shared));
+    assert_eq!(commit_scope(None, &open), Some(Scope::ThisScene));
+    // A remembered choice goes as it is, locked or not.
+    assert_eq!(
+        commit_scope(Some(Scope::ThisScene), &reused),
+        Some(Scope::ThisScene)
+    );
+    // No control shown: nothing to keep.
+    assert_eq!(commit_scope(None, &ScopeState::NotShared), None);
+    let scanning = ScopeState::Unknown {
+        note: "Scanning scenes…".to_owned(),
+    };
+    assert_eq!(commit_scope(None, &scanning), None);
+
+    // Shared value was shown; by the time the commit goes, "This scene"
+    // is open again: it still writes the shared value.
+    let kept = commit_scope(None, &reused);
+    assert_eq!(
+        commit_gate(&open, kept, &targets, &[prop("x")]),
+        CommitGate::Go(Some(Scope::Shared))
+    );
+    // "This scene" was shown and is locked now: refused, never widened.
+    let kept = commit_scope(None, &open);
+    assert_eq!(
+        commit_gate(&reused, kept, &targets, &[prop("x")]),
+        CommitGate::Refuse(ScopeLock::ReusedCall.text())
+    );
+}
+
+#[test]
+fn the_shown_options_are_read_at_the_frame_the_targets_were_looked_up_at() {
+    let report = price_report();
+    let targets = tag_targets(&report, &tag_texts(SCENES_FILE));
+    let occurrences = three_scenes();
+    // Looked up at 40, in Price; the playhead has since moved to Intro.
+    let resolved = Resolved {
+        layer: "rect".to_owned(),
+        report: report.clone(),
+        timeline_frame: 40,
+        outcome: Ok(targets.clone()),
+    };
+
+    let shown = options_of(
+        resolved_scope_state(&resolved, Some(&occurrences), None, &chapters())
+            .expect("the targets resolved"),
+    );
+
+    assert_eq!(shown.this_scene, Ok(()));
+    // Read at the playhead instead, Price's call would be "elsewhere".
+    let at_playhead = options_of(scope_state(
+        &report,
+        &targets,
+        Some(&occurrences),
+        None,
+        &chapters(),
+        10,
+    ));
+    assert_eq!(
+        at_playhead.this_scene,
+        Err(price_tag(|component| ScopeLock::OtherScenes { component }))
+    );
 }
 
 #[test]

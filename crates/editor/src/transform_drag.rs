@@ -1144,6 +1144,8 @@ impl EditorView {
             return true;
         }
         drag.released = true;
+        // The scope its label said, kept from the start.
+        let drag_scope = drag.scope;
         let refuse = |this: &mut Self, message: String| {
             this.element_edit
                 .set_error(this.selected_layer.as_deref(), Some(message));
@@ -1157,14 +1159,17 @@ impl EditorView {
                 .unavailable(self.selected_layer.as_deref());
             return refuse(self, message);
         }
-        // Written under the scope in effect, never held: while the scenes
-        // are scanned, a drag that the scan decides is refused with that
-        // note, as is one the scope can't write.
+        // Written under the scope the drag started with, never held: while
+        // the scenes are scanned, a drag that the scan decides is refused
+        // with that note, as is one that scope can't write (now locked, a
+        // sweep that landed mid-drag say), never written under another.
         let keys: Vec<PropKey> = values.iter().map(|(key, _)| key.clone()).collect();
-        if let Some(lock) = self.gesture_scope_locks(&keys).into_iter().flatten().next() {
+        let locks = self.gesture_scope_locks_under(drag_scope, &keys);
+        if let Some(lock) = locks.into_iter().flatten().next() {
             return refuse(self, lock.text());
         }
-        let scope = match self.commit_gate_for(self.remembered_scope(), &keys) {
+        let kept = drag_scope.or(self.remembered_scope());
+        let scope = match self.commit_gate_for(kept, &keys) {
             CommitGate::Go(scope) => scope,
             CommitGate::Hold(note) | CommitGate::Refuse(note) => return refuse(self, note),
         };

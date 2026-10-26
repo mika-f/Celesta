@@ -22,12 +22,13 @@ use crate::occurrences::OccurrenceState;
 use crate::property_controls::ControlKind;
 use crate::scope::{
     CommitGate, SceneCalls, Scope, ScopeLock, ScopeState, calls_of, chosen_scope, commit_gate,
-    current_calls, gesture_lock, previewed_scope, read_scene_calls, scope_state, scoped_removable,
+    commit_scope, current_calls, gesture_lock, previewed_scope, read_scene_calls, scope_state,
+    scoped_removable,
 };
 use crate::view::EditorView;
 use celesta_react_bridge::{
     ComponentPropertySchema, ElementOccurrences, LayerSourceReport, PrimitivePropertyField,
-    PrimitivePropertyTable, ReceivedProps, ReceivedValue, SourcePos,
+    PrimitivePropertyTable, ReactChapter, ReceivedProps, ReceivedValue, SourcePos,
 };
 use celesta_source_edit::{
     DefaultTarget, EditTarget, EditValue, ElementRef, LiftLock, LockReason, format_number,
@@ -844,26 +845,23 @@ impl EditorView {
     pub(crate) fn shown_scope_context(&self) -> Option<ScopeContext<'_>> {
         let (resolved, current) = self.element_edit.resolved(self.selected_layer.as_deref())?;
         let targets = resolved.outcome.as_ref().ok()?;
-        let report = &resolved.report;
-        let calls = self.current_scene_calls(targets, report);
+        let calls = self.current_scene_calls(targets, &resolved.report);
+        // The resolution names the report and its lookup frame too.
         let key = ScopeKey {
             resolution: self.element_edit.resolution(),
             occurrence_generation: self.occurrence_generation,
-            frame: u64::try_from(self.clock.frame()).unwrap_or(0),
             calls: calls.cloned(),
         };
         let mut cache = self.scope_cache.0.borrow_mut();
         let state = match cache.as_ref() {
             Some((cached, state)) if *cached == key => state.clone(),
             _ => {
-                let state = scope_state(
-                    report,
-                    targets,
+                let state = resolved_scope_state(
+                    resolved,
                     self.occurrences.as_ref().map(|(_, state)| state),
                     calls,
                     self.react_chapters().unwrap_or_default(),
-                    key.frame,
-                );
+                )?;
                 *cache = Some((key, state.clone()));
                 state
             }
@@ -964,13 +962,35 @@ impl EditorView {
     /// [`Self::gesture_scope_lock`] of each of `keys`, in order, the scope
     /// state read once.
     pub(crate) fn gesture_scope_locks(&self, keys: &[PropKey]) -> Vec<Option<ScopeLock>> {
+        let scope = self
+            .scope_context()
+            .and_then(|context| self.effective_scope(&context.state));
+        self.gesture_scope_locks_under(scope, keys)
+    }
+
+    /// [`Self::gesture_scope_locks`] under `scope` (a drag's, kept from its
+    /// start) instead of the scope in effect now.
+    pub(crate) fn gesture_scope_locks_under(
+        &self,
+        scope: Option<Scope>,
+        keys: &[PropKey],
+    ) -> Vec<Option<ScopeLock>> {
         let Some(context) = self.scope_context() else {
             return vec![None; keys.len()];
         };
-        let scope = self.effective_scope(&context.state);
         keys.iter()
             .map(|key| gesture_lock(scope, context.targets, key, context.calls))
             .collect()
+    }
+
+    /// The scope a row commit made now keeps until it is written (see
+    /// [`commit_scope`]): the remembered choice, else the option the
+    /// control shows in effect.
+    pub(crate) fn row_commit_scope(&self) -> Option<Scope> {
+        let shown = self
+            .shown_scope_context()
+            .map_or(ScopeState::NotShared, |context| context.state);
+        commit_scope(self.remembered_scope(), &shown)
     }
 
     /// Whether the row `key` (`target` in `targets`) offers its removal:
@@ -1030,24 +1050,47 @@ impl EditorView {
     }
 }
 
-/// The selected element's targets, its scope state with the playhead where
-/// it is now (as the impact line reads it), the scene calls that count,
-/// and whether a commit may write to the targets.
+/// The selected element's targets, its scope state in the scene they were
+/// looked up in (see [`resolved_scope_state`]), the scene calls that
+/// count, and whether no write changed the file since they were resolved.
 pub(crate) struct ScopeContext<'v> {
     pub(crate) targets: &'v ElementTargets,
     pub(crate) state: ScopeState,
     pub(crate) calls: Option<&'v SceneCalls>,
+    /// Not stale (see [`ElementEdit::resolved`]); a commit also needs the
+    /// targets to answer the current lookup (see
+    /// [`EditorView::element_targets`]).
     pub(crate) current: bool,
 }
 
+/// The scope state of the targets `resolved` holds, at the timeline frame
+/// they were looked up at: the scene the rows show, also after a seek
+/// whose lookup is still being resolved (the playhead is then in another
+/// scene than the targets). `None` when they did not resolve.
+pub(crate) fn resolved_scope_state(
+    resolved: &Resolved,
+    occurrences: Option<&OccurrenceState>,
+    calls: Option<&SceneCalls>,
+    chapters: &[ReactChapter],
+) -> Option<ScopeState> {
+    let targets = resolved.outcome.as_ref().ok()?;
+    Some(scope_state(
+        &resolved.report,
+        targets,
+        occurrences,
+        calls,
+        chapters,
+        u64::try_from(resolved.timeline_frame).unwrap_or(0),
+    ))
+}
+
 /// What a [`ScopeState`] is read from, besides what changes with these
-/// (the report with the targets, the index with its generation, the
-/// chapters with a reload, which sweeps again).
+/// (the report and its lookup frame with the resolution, the index with
+/// its generation, the chapters with a reload, which sweeps again).
 #[derive(Debug, PartialEq)]
 struct ScopeKey {
     resolution: u64,
     occurrence_generation: u64,
-    frame: u64,
     calls: Option<SceneCalls>,
 }
 
