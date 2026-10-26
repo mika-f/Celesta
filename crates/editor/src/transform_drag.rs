@@ -22,6 +22,7 @@ use celesta_react_bridge::{
 };
 use celesta_source_edit::{EditTarget, EditValue};
 use gpui_kit::{Context, MouseMoveEvent};
+use std::collections::HashMap;
 
 /// Side of a square handle, in viewer pixels.
 pub(crate) const HANDLE_SIZE: f32 = 7.0;
@@ -675,6 +676,29 @@ pub(crate) fn drag_props(targets: &ElementTargets, frame: &LayerFrame) -> Vec<Pr
 /// [`drag_props`] for a drag in the mode `pivot` (the one used, see
 /// `pivot_used`): in Center mode the cross marks the box's middle and moves
 /// no anchor, so the anchors are left out.
+/// `props` and the Size tool's `resize` without what the release would
+/// refuse (`refusal` of a key, see `EditorView::gesture_refusals`): a
+/// refused prop is not dragged, and the size handles are not offered when
+/// any size prop is refused. The first refusal, for a drag left with
+/// nothing to change.
+pub(crate) fn without_refused(
+    props: Vec<PropKey>,
+    resize: Option<Resize>,
+    refusal: impl Fn(&PropKey) -> Option<String>,
+) -> (Vec<PropKey>, Option<Resize>, Option<String>) {
+    let mut first = None;
+    let mut refused = |key: &PropKey| match refusal(key) {
+        Some(reason) => {
+            first.get_or_insert(reason);
+            true
+        }
+        None => false,
+    };
+    let props = props.into_iter().filter(|key| !refused(key)).collect();
+    let resize = resize.filter(|resize| !resize.keys().iter().any(&mut refused));
+    (props, resize, first)
+}
+
 pub(crate) fn drag_props_in(
     targets: &ElementTargets,
     frame: &LayerFrame,
@@ -880,20 +904,23 @@ impl EditorView {
         };
         let resize = resize_used(self.resize_tool, targets, &frame);
         let pivot = pivot_used(self.pivot_mode, targets, &frame);
-        let mut props = drag_props_in(targets, &frame, pivot);
+        let props = drag_props_in(targets, &frame, pivot);
         // A prop the release would refuse (the scope the drag keeps can't
         // write it, or would not show it in this scene, or the scenes are
-        // being scanned) is not dragged.
-        let refusals = self.gesture_refusals(&props);
-        let mut refusals = refusals.into_iter();
-        let mut scope_lock = None;
-        props.retain(|_| match refusals.next().flatten() {
-            Some(refusal) => {
-                scope_lock.get_or_insert(refusal);
-                false
-            }
-            None => true,
-        });
+        // being scanned) is not dragged, nor resized.
+        let keys: Vec<PropKey> = props
+            .iter()
+            .cloned()
+            .chain(resize.iter().flat_map(Resize::keys))
+            .collect();
+        let refusals: HashMap<PropKey, String> = keys
+            .iter()
+            .cloned()
+            .zip(self.gesture_refusals(&keys))
+            .filter_map(|(key, refusal)| Some((key, refusal?)))
+            .collect();
+        let (mut props, resize, scope_lock) =
+            without_refused(props, resize, |key| refusals.get(key).cloned());
         props.extend(resize.iter().flat_map(Resize::keys));
         if props.is_empty() {
             let reason = TransformProp::ALL
@@ -2510,5 +2537,44 @@ mod tests {
         assert_eq!(fs::read_to_string(&component).unwrap(), COMPONENT);
         assert_eq!(fs::read_to_string(&scene).unwrap(), SCENE);
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_drag_offers_no_size_handles_for_a_refused_size_prop() {
+        let resize = Resize {
+            props: SizeProps::Box {
+                width: size_field("width", None),
+                height: size_field("height", None),
+            },
+            compensable: true,
+            animated: false,
+        };
+        let moves = vec![TransformProp::X.key(), TransformProp::Y.key()];
+        let width = resize.keys()[0].clone();
+        let sets_own = "This scene sets its own `rectWidth`".to_owned();
+        let refused = |key: &PropKey| (*key == width).then(|| sets_own.clone());
+
+        // A size prop the release would refuse: no size handles, the moves
+        // stay, and the refusal is the reason when nothing else is left.
+        assert_eq!(
+            without_refused(moves.clone(), Some(resize.clone()), refused),
+            (moves.clone(), None, Some(sets_own.clone()))
+        );
+        // A moved prop refused: dropped, the size handles stay.
+        let x = TransformProp::X.key();
+        let refused_x = |key: &PropKey| (*key == x).then(|| sets_own.clone());
+        assert_eq!(
+            without_refused(moves.clone(), Some(resize.clone()), refused_x),
+            (
+                vec![TransformProp::Y.key()],
+                Some(resize.clone()),
+                Some(sets_own.clone())
+            )
+        );
+        // Nothing refused: as offered.
+        assert_eq!(
+            without_refused(moves.clone(), Some(resize.clone()), |_| None),
+            (moves, Some(resize), None)
+        );
     }
 }
