@@ -442,29 +442,18 @@ pub(crate) fn drawn_outline(
 }
 
 /// Each Add menu item and why it is disabled, in menu order: `reason` (no
-/// parent, the scope, the timing, a group turned in 3D) for all; then a
-/// kind whose `primitive_properties` table is missing (`has_table` of its
-/// tag), as its module is not imported; then `lock_of` (`add_lock`'s text).
+/// parent, the scope, the timing, a group turned in 3D) for all, else
+/// `lock_of` (`add_lock`'s text). A kind whose module the file doesn't
+/// import yet is enabled: adding it imports it, `@celesta/shapes` being
+/// bundled with the runtime like `@celesta/react`.
 pub(crate) fn menu_items(
     reason: Option<&str>,
-    has_table: impl Fn(&str) -> bool,
     lock_of: impl Fn(NewKind) -> Option<String>,
 ) -> Vec<(NewKind, Option<String>)> {
     KINDS
         .into_iter()
         .map(|kind| {
-            let why = reason
-                .map(str::to_owned)
-                .or_else(|| {
-                    (!has_table(kind.tag())).then(|| {
-                        format!(
-                            "`{}` comes from `{}`, which this composition doesn't import",
-                            kind.tag(),
-                            kind.module()
-                        )
-                    })
-                })
-                .or_else(|| lock_of(kind));
+            let why = reason.map(str::to_owned).or_else(|| lock_of(kind));
             (kind, why)
         })
         .collect()
@@ -966,15 +955,11 @@ impl EditorView {
             }),
         };
         let locks = target.map(|(_, facts)| facts.locks.as_slice());
-        let items = menu_items(
-            reason.as_deref(),
-            |tag| self.primitive_table(tag).is_some(),
-            |kind| {
-                let locks = locks.as_ref().ok()?;
-                let (_, lock) = locks.iter().find(|(of, _)| *of == kind)?;
-                lock.clone()
-            },
-        );
+        let items = menu_items(reason.as_deref(), |kind| {
+            let locks = locks.as_ref().ok()?;
+            let (_, lock) = locks.iter().find(|(of, _)| *of == kind)?;
+            lock.clone()
+        });
         AddMenu {
             header,
             reason,
@@ -2553,7 +2538,6 @@ mod tests {
 
     #[test]
     fn menu_items_say_why() {
-        let all = |_: &str| true;
         let no_lock = |_: NewKind| None;
         let kinds = [
             NewKind::Rect,
@@ -2564,39 +2548,23 @@ mod tests {
             NewKind::Video,
         ];
 
-        let open = menu_items(None, all, no_lock);
+        // Ellipse and Circle are enabled whether or not the file imports
+        // `@celesta/shapes` yet: adding one imports it.
+        let open = menu_items(None, no_lock);
         assert_eq!(open, kinds.map(|kind| (kind, None)).to_vec());
 
         let reason = "Can't draw into a group turned in 3D";
-        let disabled = menu_items(Some(reason), all, |_| Some("clash".to_owned()));
+        let disabled = menu_items(Some(reason), |_| Some("clash".to_owned()));
         assert_eq!(
             disabled,
             kinds.map(|kind| (kind, Some(reason.to_owned()))).to_vec()
-        );
-
-        let without_shapes = menu_items(None, |tag| tag != "Ellipse" && tag != "Circle", no_lock);
-        let shapes = |tag: &str| {
-            Some(format!(
-                "`{tag}` comes from `@celesta/shapes`, which this composition doesn't import"
-            ))
-        };
-        assert_eq!(
-            without_shapes,
-            vec![
-                (NewKind::Rect, None),
-                (NewKind::Ellipse, shapes("Ellipse")),
-                (NewKind::Circle, shapes("Circle")),
-                (NewKind::Text, None),
-                (NewKind::Image, None),
-                (NewKind::Video, None),
-            ]
         );
 
         let clash = AddLock::Import(ImportLock::Clash {
             name: "Rect".to_owned(),
         })
         .text();
-        let clashing = menu_items(None, all, |kind| {
+        let clashing = menu_items(None, |kind| {
             (kind == NewKind::Rect).then(|| clash.clone())
         });
         assert_eq!(
