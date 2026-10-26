@@ -258,7 +258,8 @@ In the editor, with **Select layers** on, on a scene of your own:
   scenes show it.
 - Refusals: a group inside a `<Loop>` ("Can't add inside a loop or freeze
   frame"), a group with `rotationX` ("Can't draw into a group turned in
-  3D"), a group with `scale={0}` ("Can't draw into a group scaled to zero"),
+  3D"), a selected group whose **Scale** row is then set to 0 (a zero-sized
+  group can't be clicked; "Can't draw into a group scaled to zero"),
   a composition without `@celesta/shapes` (Ellipse and Circle disabled), a
   file with its own `const Rect` ("`Rect` here is not Celesta's").
 - Choose an item while playing: playback pauses. Escape, a selection change,
