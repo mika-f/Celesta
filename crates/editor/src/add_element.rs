@@ -1851,6 +1851,8 @@ mod tests {
             shared,
             shared_reaches: vec![],
             sets_own: vec![],
+            called_here: None,
+            drawn_alone: false,
         };
         let open = ScopeState::Options(options(Ok(())));
         assert_eq!(
