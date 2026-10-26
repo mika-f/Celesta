@@ -491,7 +491,7 @@ In interactive mode, the **Add** menu at the start of the tool row adds a **Rect
 
 The menu's first line names the parent, such as **Add to `<Group>` in `<PriceTag>`**, where `PriceTag` is the component the group is written in (just **Add to `<Group>`** outside your components). The parent is the selected layer when it is a `<Group>`, otherwise the nearest `<Group>` around it, as listed under **Source chain**. To add into another group, select it, for example with its row's **Select** button. A group can be the parent when it is Celesta's `<Group>` (imported under any name), is written in a file inside the project, and has children written between its tags. A group whose only child is `{children}` or another prop, such as `{props.children}`, shows what its caller passes, so the nearest group around it is taken instead; a `{items.map(…)}` child is fine, and the new element goes after it. An empty `<Group />` draws nothing to click, so it can't be the parent yet.
 
-When the group is shared, that is, written in a component drawn from more than one place in your code or in more than one scene, the **Edits change** control of the selected element decides. With **Shared value**, the element is added into that group, so every place that draws the component gets it. With **This scene**, and when the selected element offers no such control, Celesta passes over shared groups and adds into the nearest group around them that is written in the scene's own code; the first line then ends with **· This scene**.
+When the group is shared, that is, written in a component drawn from more than one place in your code or in more than one scene, the **Edits change** control of the selected element (see "Edit one scene or every scene" above) decides. With **Shared value**, the element is added into that group, so every place that draws the component gets it. With **This scene**, and when the selected element offers no such control, Celesta passes over shared groups and adds into the nearest group around them that is written in the scene's own code; the first line then ends with **· This scene**.
 
 ### Draw it
 
@@ -533,7 +533,7 @@ The element is written with literal values only (numbers rounded to two decimals
 | **Text** | `x`, `y`, `fontSize={48}`, `color="#4F7CFF"`, and the text `Text` |
 | **Image**, **Video** | `src`, `x`, `y`, `width` |
 
-The element starts at the playhead and runs to the end of the nearest timing window around the parent: the `<Sequence>` or scene the group is in, or, on the composition's own timeline, the chapter at the playhead (the composition's end outside chapters). It is wrapped in a `<Sequence>` whose `from` counts from the start of that window. A `<Sequence>` written around the selected element itself, inside the group, does not count, since it does not wrap the new element. Adding a `<Rect>` at frame 45 of a group's 120-frame `<Sequence>` writes:
+The element starts at the playhead and runs to the end of the nearest timing window around the parent: a `<Sequence>` or `<Scenes>` scene around the group, or, for a group on the composition's own timeline, the scene at the playhead (the composition's end outside the scenes). It is wrapped in a `<Sequence>` whose `from` counts from the start of that window. A `<Sequence>` written around the selected element itself, inside the group, does not count, since it does not wrap the new element. Adding a `<Rect>` at frame 45 of a group's 120-frame `<Sequence>` writes:
 
 ```tsx
 <Sequence from={45} durationInFrames={75}>
@@ -557,12 +557,12 @@ The line under the parent's name says why every item is disabled, and an item's 
 | No group in this scene's own code to add into | Under **This scene**, every group that could be the parent is shared |
 | The source is still being read | The selected layer's source is still being looked up or read, such as right after a reload |
 | Scanning scenes…, Couldn't scan scenes: `<error>`, Not found in the scene scan, The scenes are not scanned | Celesta can't tell yet whether the group is shared; see "See what an edit changes" |
-| Why a scope is locked | The **Edits change** choice you made earlier is locked for this element; its tooltip in the **Properties** tab gives the same reason |
+| A reason from "When an option can't be chosen" | The **Edits change** option in effect for the selected element is disabled: the one you chose earlier, or both options when you chose none. The tab's tooltip gives the same reason |
 | Can't add inside a loop or freeze frame | The nearest window around the group is a `<Loop>` or `<FreezeFrame>` |
 | Can't draw into a group turned in 3D | The group or one around it has `rotationX`, `rotationY`, or a `perspective` |
 | Can't draw into a group scaled to zero | The group or one around it is scaled to 0, so nothing drawn has a size inside it |
 | `Ellipse` comes from `@celesta/shapes`, which this composition doesn't import | **Ellipse** and **Circle** only: import `@celesta/shapes` in your composition first |
-| `Rect` here is not Celesta's | That item only: the file declares or imports another `Rect` (or another `Sequence`, when the element needs one) |
+| `Rect` here is not Celesta's | The file declares or imports another `Rect`, which disables that item only. With another `Sequence` (**`Sequence` here is not Celesta's**), every item is disabled when the element needs a `<Sequence>` |
 
 ## Undo
 

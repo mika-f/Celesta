@@ -191,7 +191,8 @@ of the Size handles and property sections); `<Video width height>` in
 - `added_layer`'s doc should say a wrapper outside its window yields the
   previous sibling (the confirm check then clears it); `parent_space`'s
   result doc is narrower than the function. An empty parent and an empty
-  wrapped group are untested in the worker.
+  wrapped group are untested in the worker, and a comment in its test
+  fixture mislabels the mask's position.
 - With a failed lookup, the menu says "Select a group, or a layer inside
   one, to add into", which is misleading. The add notice is last in the
   viewer's notice chain, so another notice hides it.
@@ -216,19 +217,28 @@ of the Size handles and property sections); `<Video width height>` in
 
 ## Verify by hand
 
-Take before/after screenshots of the same frame for the pull request: before
-on `main`, after on this branch.
+Two kinds of screenshots go with the pull request: for `<Video>` size, the
+same frame rendered on `main` and on this branch; for adding elements, the
+same frame before and after each addition, both on this branch.
 
-`<Video>` size: render frame 45 of `examples/greenscreen/composite.tsx` with
+`<Video>` size, parity: `examples/greenscreen/composite.tsx` sizes its
+footage (640 × 360) with `scale={1.5}` and `scale={0.35}` on `main`, and with
+`width={960}` and `width={224}` on this branch. Render frame 45 on both with
 the native exporter (`cargo run --release -p celesta-exporter -- --react
 examples/greenscreen/composite.tsx --frame 45 --overwrite out.png`) and in the
-web runtime, on `main` and on this branch. On `main` the example's `width`
-props are ignored and the footage draws at 640 × 360; on this branch the hero
-is 960 × 540 and the corner 224 × 126, as the old `scale` gave. In the editor,
-select a `<Video>`: its **Properties** show a Size section, and the Size
-handles resize it.
+web runtime, and compare: the hero is 960 × 540 and the corner 224 × 126 on
+both, and the frames should match pixel for pixel.
 
-In the editor, with **Select layers** on, on a scene of your own:
+`<Video>` size, the change: a small scene with `<Video src="…" width={480} />`
+of a 640 × 360 file. On `main`, `VideoProps` has no `width`, so a type check
+reports the prop, and the runtime drops it (its video content carries only
+the asset and the timing): the footage draws at 640 × 360. On this branch it
+draws 480 × 270, the aspect kept. Render the same frame on both, natively and
+in the web runtime. In the editor on this branch, select the `<Video>`: its
+**Properties** show a Size section, and the Size handles resize it.
+
+Adding elements, in the editor with **Select layers** on, on a scene of your
+own (before and after each addition):
 
 - With nothing selected, the tool row shows the **Add** button alone, and its
   menu says "Select a group, or a layer inside one, to add into" with every

@@ -5,7 +5,7 @@
 ```tsx file=examples/media.tsx title="media.tsx"
 ```
 
-- An `Image` or `Video` is drawn at its own pixel size unless you give it `width` or `height`. One of them alone keeps the picture's proportions; with both, a `Video` is stretched to that box, and an `Image` is too unless `fit="contain"` or `"cover"` fits it into the box. Position it with `x`/`y` and anchors; `scale` and a `Fit` resize it as they do any layer. Images can be PNG, JPEG, WebP, GIF, or PNM.
+- An `Image` or `Video` is drawn at its own pixel size unless you give it `width` or `height`. One of them alone keeps the picture's proportions; with both, a `Video` is stretched to that box, and an `Image` is too unless `fit="contain"` fits it inside the box or `"cover"` fills the box, cropping what spills over. Position it with `x`/`y` and anchors; `scale` and a `Fit` resize it as they do any layer. Images can be PNG, JPEG, WebP, GIF, or PNM.
 - An animated GIF, APNG, or WebP plays on the enclosing sequence's clock, each frame for its own delay, and loops. `startFrom` and `playbackRate` work as on `Video`; `loop={false}` holds the last frame. `preloadMedia()` reports its length as `animation.durationSeconds`.
 - `Video` and `Audio` accept `startFrom` (seconds into the file), `playbackRate`, `volume`, and `muted`. A `Video` plays its own soundtrack, so do not add an `Audio` with the same file to hear it; set `muted` to keep only the picture.
 - `loop` on a `Video` or `Audio` starts the file over from its beginning when playback reaches its end, picture and sound together, instead of holding the last frame in silence.

@@ -910,7 +910,8 @@ sound would play twice. Compositions written for earlier versions, where a
 
 To show a 1280×720 clip full-screen in a 1920×1080 composition, give it
 `width={1920}`. To contain or cover footage of another aspect ratio, wrap it
-in `<Fit sourceWidth={…} sourceHeight={…} mode="cover">` (see
+in `<Fit sourceWidth={…} sourceHeight={…}>`, which contains it by default, or
+add `mode="cover"` to fill the area and crop (see
 [Layout helpers](#layout-helpers)). To fit it into a framed box with rounded
 corners and a caption, use [`MediaFrame`](#mediaframe-images-and-videos-in-a-frame).
 

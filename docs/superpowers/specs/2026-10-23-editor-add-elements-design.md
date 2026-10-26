@@ -9,8 +9,8 @@ insertion, imports).
 The user picks a parent, adds a rectangle, ellipse, circle, text, image, or
 video to it by drawing it on the canvas, and gets an element written into the
 TSX with literal values only, timed from the playhead to the end of the
-timing window around the parent. It is then selected and editable like any other element (designs 1, 2,
-and 4).
+timing window around the parent. It is then selected and editable like any
+other element (designs 1, 2, and 4).
 
 ## Non-goals
 
