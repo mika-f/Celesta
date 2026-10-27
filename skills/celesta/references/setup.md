@@ -119,7 +119,7 @@ The files the `blank` starter creates, without overwriting anything that exists:
 
 | File | Contents |
 | --- | --- |
-| `film.tsx` | A 5-second 1920×1080, 30 fps composition with a centered title. Replace its body. |
+| `film.tsx` | A 5-second 1920×1080, 30 fps composition with a centered title inside a `<Group>`. The editor's Add menu inserts new layers into that group. Replace its body. |
 | `package.json` | Private, with scripts `preview` (`celesta-editor film.tsx`), `export` (`celesta-exporter --react --overwrite film.tsx output.mp4`), `typecheck` (`tsc --project tsconfig.json`), and a `typescript` dev dependency. |
 | `tsconfig.json` | Extends `./.celesta/tsconfig.json`. |
 | `.gitignore` | `node_modules/` and `output.mp4`. |
