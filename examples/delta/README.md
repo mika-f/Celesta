@@ -4,21 +4,102 @@ Celesta のリリースごとに「前のバージョンから何が変わった
 インク黒とオレンジ、Bebas Neue の見出し、Space Grotesk の本文、JetBrains Mono のコードで、
 各機能をリリースノートの 1 ページのように見せます。見出し、何ができるか、それを使う差分、マージされた PR、そしてその場で動くデモです。
 
-- `film-0.8.0.tsx` — v0.7.0 → v0.8.0 の 96 秒「PROOF」（エントリ）。Celesta の File → Open… で開きます。
+- `film-0.9.0.tsx` — v0.8.0 → main の 91 秒「ON AIR」（エントリ）。Celesta の File → Open… で開きます。
+- `shorts-0.9.0.tsx` — 同じ 91 秒を 1080×1920 に組み直したショート版（エントリ）。
+- `film-0.8.0.tsx` — v0.7.0 → v0.8.0 の 96 秒「PROOF」（エントリ）。
 - `shorts-0.8.0.tsx` — 同じ 96 秒を 1080×1920 の窓で見たショート版（エントリ）。
 - `film-0.7.0.tsx`・`shorts-0.7.0.tsx` — v0.6.0 → v0.7.0 の 91 秒と、そのショート版。
 - `film-0.6.0.tsx` — v0.5.0 → v0.6.0 の 62 秒。
 - `components/` — シリーズ共通の見た目。配色・書体（`theme.ts`）、章のページ（`ChapterShell.tsx`）、右上の進行表示（`Hud.tsx`）、差分パネル（`DiffPanel.tsx`）、WGSL シェーダー（`shaders.ts`）、背景のドット（`Backdrop.tsx`）、Δ マーク（`Delta.tsx`）。0.7.0 は BGM のメーター付きの `Hud.tsx` を `v0.7.0/` に持ちます。
-- `v0.8.0/`・`v0.7.0/`・`v0.6.0/` — 各リリースの中身。冒頭（`Open.tsx`）、章の一覧（`chapters.tsx`）とデモ（`demos/`）、アウトロ（`Outro.tsx`）、リリースノートの PR 一覧（`prs.ts`）、テンポと章の位置（`timeline.ts`）。
+- `v0.9.0/`・`v0.8.0/`・`v0.7.0/`・`v0.6.0/` — 各リリースの中身。冒頭（`Open.tsx`）、章の一覧（`chapters.tsx`）とデモ（`demos/`）、アウトロ（`Outro.tsx`）、リリースノートの PR 一覧（`prs.ts`）、テンポと章の位置（`timeline.ts`）。
   0.7.0 以降は 2 つのエントリが同じカット（`reel.tsx`）を、それぞれのキャンバスに組んで再生します。
   0.8.0 は章をページとして切り替える代わりに、1 枚の紙（`sheet.ts`・`tiles.tsx`）をカメラが読む構成で、冒頭は `open.tsx` です。
+  0.9.0 は放送の構成で、マルチビューアー（`multiview.tsx`）と、機能ごとの番組（`program.tsx`、縦長は `ShortProgram.tsx`）、音のミックス（`mix.ts`・`voices.ts`）を持ちます。
 - `make-score-<version>.py` — BGM を生成する Python スクリプト。標準ライブラリのみ。
-- `poster-0.8.0.jpg`・`poster-0.7.0.jpg`・`poster.jpg` — 0.8.0 と 0.7.0 は `poster` コンポジションの書き出し（0.8.0 は JPEG で直接）、0.6.0 は映像のアウトロから抽出した静止画。
+- `poster-0.9.0.jpg`・`poster-0.8.0.jpg`・`poster-0.7.0.jpg`・`poster.jpg` — 0.9.0 から 0.7.0 は `poster` コンポジションの書き出し（0.9.0 と 0.8.0 は JPEG で直接）、0.6.0 は映像のアウトロから抽出した静止画。
 
 次のリリースは `film-<version>.tsx` と `v<version>/` を足し、`components/` を使い回します。
 `components/` は v0.6.0 の API だけで書かれており、0.6.0 の映像はそのまま v0.6.0 で動きます。
 
-![poster](poster-0.8.0.jpg)
+![poster](poster-0.9.0.jpg)
+
+## 構成（v0.9.0）
+
+まだリリースされていない main までの差分を、次のリリース 0.9.0 として扱っています（PR 一覧は v0.8.0 のタグ以降に main へマージされたもの）。
+
+放送の構成です。冒頭は副調整室のマルチビューアーで、上にプレビュー（PVW）とプログラム（PGM）、下に 12 の機能が 12 の入力ソースとして並び、
+それぞれのデモが流れています。カメラが PGM のモニターに飛び込むと、そこからは機能ごとの番組です。
+左に見出しと差分とランダウン、右にプログラムモニター（デモ）、その下に 1 語ずつ光るキャプション、左下に機能名のローワーサード。
+番組の切り替えは小節の頭でオレンジの帯が画面を横切るスティンガーで、最後はマルチビューアーに引いて OFF AIR になります。
+
+1920×1080、30 fps、100 BPM のニュース番組風のテーマ（1 拍 = 18 フレーム、1 小節 = 72 フレーム）。冒頭 4 小節、12 の機能が 2 小節ずつ、
+MORE が 2 拍ずつ 12 枚、締め 4 小節で 91.2 秒です。デモの中の BEAT / BAR は 8 分音符（9 フレーム）と 2 拍（36 フレーム）です。
+
+| 時間 | 内容 |
+| --- | --- |
+| 0–2.4 秒 | マルチビューアーのモニターが 16 分音符ごとに 1 台ずつ点く。ソースは 12 の機能のデモ |
+| 2.4–4.8 秒 | PGM がカウントダウン（3・2・1 でビープ）、PVW には次に出すタイトル |
+| 4.8–7.2 秒 | TAKE。タイトルが PGM に乗り、タリーが赤くなり、下のティッカーに v0.8.0 以降の 51 本の PR が流れる。PVW には最初の機能 |
+| 7.2–9.6 秒 | もう一度 TAKE して、カメラが PGM に飛び込む。小節の頭で PGM が画面いっぱいになり、そのまま最初の番組になる |
+| 9.6–28.8 秒 | 画面に出すもの: Δ01 LOWER THIRD・Δ02 CALLOUT・Δ03 CAPTIONS・Δ04 DIALOGUE。各 4.8 秒 |
+| 28.8–43.2 秒 | ミックス: Δ05 FADES・Δ06 DUCKING・Δ07 LOUDNESS |
+| 43.2–67.2 秒 | エディタが TSX を書く: Δ08 PROPERTIES・Δ09 CANVAS・Δ10 EDIT SCOPE・Δ11 TIMELINE・Δ12 ADD |
+| 67.2–81.6 秒 | MORE — EMPHASIS / LIGATURES / THEME / VIDEO SIZE / CHAPTERS / SCENE CLOCK / FAILED FRAMES / WEB AUDIO / EASING / ZUNDA / TOOLING / FIXES を 2 拍ずつ |
+| 81.6–91.2 秒 | エンドカードを 1 小節出してから、マルチビューアーに引く。最後の小節で OFF AIR になり、ソースが止まる（最後のフレームがポスター） |
+
+BGM は C マイナー（Cm – A♭ – E♭ – B♭）。4 つ打ちのキック、2・4 拍のクラップ、16 分のハイハット、8 分のベース、16 分のシンセのパルス、
+ブラスのスタブとティンパニで、番組が切り替わるたびに風切り音とスタブが鳴ります。LOUDNESS は
+キックを 1 拍目だけにして弦を足し、エディタの番組（PROPERTIES から ADD）ではグロッケンでメロディを乗せます。BGM 自体には声のための隙間を作っておらず、
+声が鳴る 3 か所（CAPTIONS・DIALOGUE・DUCKING）で下がるのは、映像の側の `duck` によるものです。
+声は `matchVoiceLevels()` で -15 dBFS に揃え、12 dB 下がった BGM の上に出るようにしています。
+
+## 新機能で作っている部分（v0.9.0）
+
+- 各番組の機能名は `LowerThird`、モニターの下で 1 語ずつ光る文は `CaptionTrack` の `highlight` です（`v0.9.0/program.tsx`）。
+- BGM は `<Audio fadeIn={2.4} fadeOut={3.6}>` で出入りし、`duck={{ under: 'voice', to: { db: -12 } }}` で 3 本の声の下に 12 dB 下がります（`v0.9.0/mix.ts`）。
+  CAPTIONS と DUCKING の声は `duckGroup="voice"` の `<Audio>`、DIALOGUE の声は `<DialogueSeries>` の台詞で、既定で `"voice"` に入ります。
+- DIALOGUE の台詞は `spokenText` で口を動かし、字幕を `subtitlePages` の 2 ページで出し、「同じ名前」を `emphasis` で強調します（`v0.9.0/voices.ts`）。
+- FADES と DUCKING の曲線は、プレビューと書き出しが使うのと同じ `duckEnvelope()` で求めたものです。
+- 番組の左のランダウンと MORE の SCENE CLOCK は、章の `Sequence` の中から `useScene(SCENE_LIST, { clock: 'root' })` で、映像全体の時計で章を読みます。
+- コンポジションに `chapters={SCENE_LIST}` を渡しているので、エディタのプレビューに章の一覧が出て、章の頭へシークできます。
+- MORE の VIDEO SIZE は `examples/greenscreen` の映像を `<Video width={360}>` と `<Video height={140}>` で実際に並べています。
+- 図形の色（`Rect`・`Path`・`Star`・`Heart`・`Circle`）は `<Theme>` の色名で書いています（`fill="panel"`・`stroke="line"`・`fill="tally"` など）。
+- 書き出しは `--loudness streaming` で、ミックス全体を -14 LUFS に合わせています。LOUDNESS 章の値は、この映像の書き出しが報告した値です（`v0.9.0/loudness.ts`）。
+
+## ショート版（v0.9.0）
+
+`shorts-0.9.0.tsx` は本編と同じ 91 秒・同じ BGM・同じ切り替え・同じミックス（声とダッキング）を 1080×1920 で再生する縦長版です（Shorts、TikTok、Reels 向け）。
+0.7.0 と同じく、場面ごとに縦長のキャンバスへ組み直しています（`v0.9.0/layout.ts` の `useLayout()`。本編は横長のまま）。
+
+- **マルチビューアー**: PVW と PGM を 9:16 のモニターにして横に並べ、その下に 12 のソースを 3 列 × 4 段に並べます。
+  PGM が縦長なので、PGM に飛び込むと縦長の画面にそのままつながり、最後は同じように引いて OFF AIR になります。
+- **番組**: `ShortProgram.tsx` が、上から機能名のローワーサード、見出し、プログラムモニター（デモを 0.96 倍、画面の幅いっぱい）、
+  1 語ずつ光るキャプション、差分の順に積みます。ローワーサードは `placement="top-left"` と `safeArea="vertical-social"` で、セーフエリアの左上に置いています。
+  本編の左にあるランダウンは省いています（`useScene()` は MORE の SCENE CLOCK で見せています）。
+- **MORE とエンドカード**: 同じカードと同じ内容を、セーフエリアの中で縦に積み直しています。
+- **セーフエリア**: 読ませる文字は `'vertical-social'`（上 192・右 200・下 384・左 72 px）の内側にあります。
+  プログラムモニターの絵は右端がセーフエリアを越えますが、絵なのでそのままにしています。
+- **セーフエリアの外側**: プラットフォームの UI に隠れる縁は `ShortFrame.tsx` が埋めます。上に ON AIR のランプ、
+  下端には BGM のバンドを実際のミックスどおり（フェードとダッキング込み）に伸び縮みさせ、右下には番組番号を大きく画面からはみ出させ、右端には番組名を縦に流します。
+- **補助線**: `<DebugOverlay safeArea="vertical-social" />` を入れてあり、アプリのプレビューと `--debug-guides` 付きの PNG にだけ描かれます（MP4 には描かれません）。
+- 音は本編と同じなので、`--loudness streaming` の値も本編と同じです。
+
+## 本物と演出（v0.9.0）
+
+- **実際の機能**: 上に挙げたもののほか、LOWER THIRD の 4 つの帯、CALLOUT の 3 つの注記（動く Δ を追う線、`route="elbow"`、`lineProgress`）、
+  CAPTIONS の文節ごとのハイライトと `phrases()`、DIALOGUE の台詞（口パク・字幕ページ・強調）、
+  MORE の EMPHASIS（`emphasisContent()`・`graphemes()`・`resolveTimedRanges()`・`timedRangeAt()`）、LIGATURES（`fontFeatures` の `calt`・`liga`・`tnum`）、
+  THEME の 3 つのテーマ、VIDEO SIZE、CHAPTERS（この映像の章）、SCENE CLOCK、EASING の曲線（`Easings.easeInOut`）は実際の描画と計算です。
+  EMPHASIS・LIGATURES・THEME のカードは、番組用のデモを縮小して速めに回したものです。
+- **音**: 3 本の声は `examples/assets/voice-folder/shizuku` のもので、実際に鳴り、BGM は実際にその下に下がります。
+  声の波形は `loadAudioSpectrum()` で求めた RMS です。CAPTIONS の語のタイミングは、キューの長さを文字数で割り振ったもので、音声認識ではありません。
+- **説明のための描画**: PROPERTIES・CANVAS・EDIT SCOPE・TIMELINE・ADD のエディタ画面（Properties タブ、Edits change の切り替え、タイムラインの帯とつまみ、
+  Add メニュー、ポインター、ハンドル、インラインの文字編集）は、ユーザーガイドの記述に合わせて似せて描いたものです。
+  キャンバスのカードと値札は実際の `Panel`、ADD で足す楕円と文字は実際の `Ellipse` と `Text` を、表示している値で描いています。LOUDNESS の端末と Export… の選択肢、
+  MORE の FAILED FRAMES のコンタクトシート、WEB AUDIO の曲線、ZUNDA のファイル一覧も描いたものです。
+  THEME の赤いエラー文は、ドキュメントにある文面の形をなぞったものです。
+- **数値**: LOUDNESS の値は、この映像を `--loudness streaming` で書き出したときの JSON の `loudness` です。
+  映像だけを変えても音は変わらないので、BGM・フェード・ダッキング・声のどれかを変えたら測り直してください。
 
 ## 構成（v0.8.0）
 
@@ -196,7 +277,21 @@ SPECTRUM からはリードを足して 2 回目のドロップにしていま�
 
 WAV と MP4 はリポジトリ全体の設定で Git の管理対象外です。クローン後は最初にスコアを生成してください。
 0.7.0 以降は `prepare()` で BGM を解析するため、WAV がないと読み込みで失敗します。
-0.8.0 のスクリプトは BGM（`score-0.8.0.wav`）と PITCH 章のリフ（`pitch-0.8.0.wav`）の 2 つを書きます。
+
+0.9.0 は `--loudness streaming` で書き出します。書き出しの JSON の `loudness` を `v0.9.0/loudness.ts` に写すと、LOUDNESS 章の値になります
+（音を変えたときだけ。今の値は `integratedLufs` -14.05、`truePeakDbtp` -1.0、`gainDb` 2.36）。
+
+```sh
+python3 examples/delta/make-score-0.9.0.py
+node skills/celesta/scripts/inspect.mjs examples/delta/film-0.9.0.tsx --frames 0,1368,2735
+Celesta-export --json --react --loudness streaming examples/delta/film-0.9.0.tsx examples/delta/delta-0.9.0.mp4 --subtitles 'examples/delta/delta-0.9.0.{lang}.srt' --subtitles 'examples/delta/delta-0.9.0.{lang}.vtt'
+Celesta-export --json --react --composition poster examples/delta/film-0.9.0.tsx --frame 0 --quality 85 examples/delta/poster-0.9.0.jpg
+Celesta-export --json --react --loudness streaming examples/delta/shorts-0.9.0.tsx examples/delta/delta-0.9.0-shorts.mp4
+```
+
+日本語の字幕ファイルには、章ごとの説明に重ねて、3 本の声が話す文も入ります（DIALOGUE はページごと）。
+
+0.8.0 の再生成です。0.8.0 のスクリプトは BGM（`score-0.8.0.wav`）と PITCH 章のリフ（`pitch-0.8.0.wav`）の 2 つを書きます。
 
 ```sh
 python3 examples/delta/make-score-0.8.0.py
