@@ -874,11 +874,11 @@ fn a_prop_the_component_schema_requires_is_not_removable() {
     assert!(can_remove(&tone));
     assert!(can_remove(&on));
     assert_eq!(
-        commit_files(&texts, &targets, &report, &[(prop("x"), None)]),
+        commit_files(&texts, &targets, &report, None, None, &[(prop("x"), None)]),
         Err(CommitError::NotRemovable("X".to_owned()))
     );
     assert_eq!(
-        commit_files(&texts, &targets, &report, &[(tone, None)]),
+        commit_files(&texts, &targets, &report, None, None, &[(tone, None)]),
         Ok(vec![(
             PathBuf::from("/project/scene.tsx"),
             PROPS_TAG_SCENE.replace(" tone={2}", "")
@@ -918,7 +918,7 @@ fn a_required_component_prop_keeps_its_value_when_emptied() {
         TypedText::Restore
     );
     assert_eq!(
-        commit_files(&texts, &targets, &report, &[(tone, None)]),
+        commit_files(&texts, &targets, &report, None, None, &[(tone, None)]),
         Err(CommitError::NotRemovable(tone_label))
     );
 }
