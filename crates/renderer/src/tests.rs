@@ -18,6 +18,33 @@ use celesta_composition::{
 use celesta_media::{MediaError, VideoFrame, VideoFrameDecoder};
 
 #[test]
+fn hex_colors_parse_rgb_and_rgba_in_either_case() {
+    for (input, expected) in [
+        ("#1aB2c3", Color::rgba(26, 178, 195, 255)),
+        ("#1Ab2C380", Color::rgba(26, 178, 195, 128)),
+        ("#00000000", Color::TRANSPARENT),
+    ] {
+        assert_eq!(Color::from_hex(input).unwrap(), expected, "{input}");
+    }
+}
+
+#[test]
+fn hex_colors_reject_invalid_ascii_input() {
+    for input in ["", "#", "#123", "#1234567", "#GG0011", "123456", "#12345 "] {
+        let error = Color::from_hex(input).unwrap_err();
+        assert!(matches!(error, RenderError::InvalidColor(value) if value == input));
+    }
+}
+
+#[test]
+fn hex_colors_reject_non_ascii_input_without_panicking() {
+    for input in ["#aéaaa", "#abcéa", "#abcdeéa", "#aaa💙a", "#é1234"] {
+        let error = Color::from_hex(input).unwrap_err();
+        assert!(matches!(error, RenderError::InvalidColor(value) if value == input));
+    }
+}
+
+#[test]
 fn measure_reports_line_metrics_and_per_glyph_advances() {
     let style = TextStyle {
         font_size: Some(40.0),
@@ -3008,6 +3035,19 @@ fn three_rects(corner_radius: impl Fn(f64, f64) -> f64) -> Vec<Layer> {
         },
     })
     .collect()
+}
+
+#[test]
+fn instances_reject_invalid_shared_color_without_panicking() {
+    let mut content = three_particles(InstanceShape::Circle);
+    let LayerContent::Instances { color, colors, .. } = &mut content else {
+        unreachable!()
+    };
+    *color = Some("#aéaaa".to_owned());
+    *colors = None;
+    let scene = clip_scene(vec![instance_layer("particles", content)]);
+    let error = CpuRenderer::default().render(&scene).unwrap_err();
+    assert!(matches!(error, RenderError::InvalidColor(value) if value == "#aéaaa"));
 }
 
 #[test]

@@ -339,6 +339,23 @@ fn text_boxes_fit_their_captions_with_the_renderer_shaping_when_node_is_availabl
 }
 
 #[test]
+fn invalid_instance_fill_returns_a_render_error_when_node_is_available() {
+    let Some((node, cli_script, _)) = live_react_runtime() else {
+        return;
+    };
+    let entry =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/invalid-instance-fill.tsx");
+    let mut bridge = ReactBridge::spawn(&node, &cli_script, &entry).unwrap();
+    let scene = bridge.scene_at(Time::ZERO).unwrap();
+    let error = celesta_renderer::CpuRenderer::default()
+        .render(&scene)
+        .unwrap_err();
+    assert!(
+        matches!(error, celesta_renderer::RenderError::InvalidColor(value) if value == "#aéaaa")
+    );
+}
+
+#[test]
 fn instances_reach_rust_as_columns_when_node_is_available() {
     let Some((node, cli_script, package_root)) = live_react_runtime() else {
         return;

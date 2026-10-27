@@ -537,7 +537,7 @@ function Snow() {
 | `width`, `height` | A number for every particle, or one per particle. Required for rects and circles. An image given neither draws at its natural size, and given one keeps its aspect ratio, as `<Image>` does. |
 | `rotation` | Degrees per particle, about its centre. |
 | `color` | `Uint8Array` (or array) of straight RGBA 0-255, four per particle. Fills a rect or circle; multiplies an image's texels (white leaves the image as it is). |
-| `fill` | One hex colour for every particle when `color` is absent. Defaults to white. |
+| `fill` | One `#RRGGBB` or `#RRGGBBAA` colour for every particle when `color` is absent. Defaults to white. Non-ASCII color strings produce an invalid-color error during native preview or export. |
 | `shape` | `'rect'` (default) or `'circle'`; ignored with `src`. `cornerRadius` rounds rects. |
 | `src` | An image every particle draws, as for `<Image src>`. |
 

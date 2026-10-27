@@ -28,7 +28,7 @@ impl Color {
         let hex = value
             .strip_prefix('#')
             .ok_or_else(|| RenderError::InvalidColor(value.to_owned()))?;
-        if !matches!(hex.len(), 6 | 8) {
+        if !matches!(hex.len(), 6 | 8) || !hex.is_ascii() {
             return Err(RenderError::InvalidColor(value.to_owned()));
         }
         let byte = |offset| {

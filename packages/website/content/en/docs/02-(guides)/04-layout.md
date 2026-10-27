@@ -57,6 +57,8 @@ The CPU reference renderer does not draw skew, `rotationX`, or `rotationY` and r
 
 `Rect` draws a rectangle with an optional `cornerRadius`, `fill`, and inner `stroke` with `strokeWidth`. Colors are hex strings, with an optional alpha channel: `#RRGGBB` or `#RRGGBBAA`. A square with a corner radius of half its size makes a circle.
 
+Use `#RRGGBB` or `#RRGGBBAA` for the shared `fill` on `<Instances>` too. A non-ASCII color string is reported as an invalid color during native preview or export.
+
 ## Blur, shadows, and glow
 
 Visual layers and groups accept blur, shadow, and glow, which can change every frame. Blur radii (up to 64 pixels) and shadow offsets use output pixels. Group effects apply to the combined children.
