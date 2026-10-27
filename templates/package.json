@@ -1,6 +1,6 @@
 {
   "name": "@celesta/templates",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "private": true,
   "description": "The ready-made projects Celesta offers when creating a new project.",
   "license": "MIT OR Apache-2.0",

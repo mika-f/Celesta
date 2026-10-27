@@ -1,6 +1,6 @@
 {
   "name": "@celesta/code",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "private": true,
   "description": "Optional syntax-highlighted code components for Celesta compositions.",
   "license": "MIT OR Apache-2.0",

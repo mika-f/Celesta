@@ -1,6 +1,6 @@
 {
   "name": "@celesta/text",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "private": true,
   "description": "Text animation (TextReveal, typewriter, count-up), box-fitted text, emphasis by grapheme range, Japanese phrase splitting (BudouX), render-time text measurement, and half-open timed ranges for Celesta compositions.",
   "license": "(MIT OR Apache-2.0) AND Apache-2.0",

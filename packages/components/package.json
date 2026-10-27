@@ -1,6 +1,6 @@
 {
   "name": "@celesta/components",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "private": true,
   "description": "High-level components for Celesta compositions: FrameChrome (corner brackets, title, timecode, chapter, and progress bar around the picture), PatternBackground (dots, grids, stripes, and custom repeating patterns), Panel (a sized box with background, border, padding, shadow, and clip), Badge (a label or chip sized from its measured text), Counter and StatCard (counting numbers, on their own or on a card), BarChart and Ranking (horizontal bars that grow while their values count up), MediaFrame (an image or a video fitted into a framed box with a caption), CaptionTrack (timed captions from data on a band, optionally lit word by word and paged), Motion (an element's entrance, hold, and exit in one wrapper), TitleCard (a title screen with a kicker, chapter number, title, and subtitle), TypewriterText (text typed out with a measured caret), and Callout (a measured note box with a line and arrowhead to a target point).",
   "license": "MIT OR Apache-2.0",

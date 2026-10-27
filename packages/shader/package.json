@@ -1,6 +1,6 @@
 {
   "name": "@celesta/shader",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "private": true,
   "description": "Custom WGSL shader filters for Celesta compositions.",
   "license": "MIT OR Apache-2.0",
