@@ -46,7 +46,7 @@ For a [source build](/en/docs/build-from-source/), build the React runtime first
 
 ## What initialization creates
 
-- `film.tsx`: a five-second, 1920 × 1080 composition at 30 fps.
+- `film.tsx`: a five-second, 1920 × 1080 composition at 30 fps. The background and title sit in a `<Group>`, which is the parent the editor's Add menu inserts new layers into.
 - `package.json`: a private project with preview, export, and typecheck scripts, and TypeScript `^7.0.2` as a development dependency.
 - `tsconfig.json` and `.celesta/`: configuration and declarations matching Celesta’s bundled runtime.
 - `.gitignore`: ignores `node_modules/` and `output.mp4`. The generated `.celesta/` directory ignores itself.

@@ -55,6 +55,11 @@ test('staging leaves out OS and editor files', () => {
   }
 });
 
+test('blank wraps its layers in a Group', () => {
+  const source = readFileSync(join(templatesDir, 'blank/film.tsx'), 'utf8');
+  assert.match(source, /<Group>[\s\S]*<Rect[\s\S]*<Text[\s\S]*<\/Group>/);
+});
+
 test('blank evaluates without inputs', async () => {
   const result = await evaluate(join(templatesDir, 'blank/film.tsx'), []);
   assert.deepEqual(pick(result.config, ['width', 'height', 'fps', 'durationInFrames']),

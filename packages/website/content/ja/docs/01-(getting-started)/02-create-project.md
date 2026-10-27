@@ -46,7 +46,7 @@ PowerShell を使い、`C:\path\to\Celesta` をアプリのインストール先
 
 ## 初期化で生成されるもの
 
-- `film.tsx`：1920 × 1080、30 fps、5 秒のコンポジション。
+- `film.tsx`：1920 × 1080、30 fps、5 秒のコンポジション。背景とタイトルは `<Group>` の中にあり、エディタの Add メニューはそこへ新しいレイヤーを書き込みます。
 - `package.json`：プレビュー・書き出し・型検査のスクリプトと、開発依存として TypeScript `^7.0.2` を持つ非公開プロジェクト。
 - `tsconfig.json` と `.celesta/`：Celesta の同梱ランタイムに対応する設定と型宣言。
 - `.gitignore`：`node_modules/` と `output.mp4` を除外します。生成される `.celesta/` ディレクトリは自身を除外します。
