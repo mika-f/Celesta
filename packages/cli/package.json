@@ -1,6 +1,6 @@
 {
   "name": "@celesta/cli",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "private": true,
   "description": "The Node.js runtime the Celesta editor and exporter run React compositions in, with every Celesta package it serves to entries.",
   "license": "MIT OR Apache-2.0",

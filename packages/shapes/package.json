@@ -1,6 +1,6 @@
 {
   "name": "@celesta/shapes",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "private": true,
   "description": "Lines, polylines, paths, circles, ellipses, arrows, triangles, polygons, stars, pies, and hearts for Celesta compositions.",
   "license": "MIT OR Apache-2.0",
