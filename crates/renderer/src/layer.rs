@@ -3,6 +3,7 @@ use crate::clip::{ClipNode, ClipRegion, ParentState, clip_coverage};
 use crate::composite::{blend, blend_with_mode, mask_value};
 use crate::effects::{blur_pixels, premultiply_pixels, render_effect_shadow, unpremultiply_color};
 use crate::error::RenderError;
+use crate::image_source::display_size;
 use crate::images::{DecodedImage, render_image, render_image_pixels, render_placeholder};
 use crate::rect::{rasterize_rect_transformed, resolve_rect_paint};
 use crate::renderer::CpuRenderer;
@@ -145,18 +146,32 @@ impl CpuRenderer {
                     self.render_layer(frame, child, child_state.clone())?;
                 }
             }
-            LayerContent::Video { asset, timing } => {
+            LayerContent::Video {
+                asset,
+                timing,
+                width,
+                height,
+            } => {
                 if self.video_decoder.is_some() {
                     let image = self.decode_video_frame(&layer.id, asset, timing)?;
+                    let (natural_width, natural_height) =
+                        (f64::from(image.width), f64::from(image.height));
+                    let (display_width, display_height) =
+                        display_size(natural_width, natural_height, *width, *height);
+                    let mut state = state.clone();
+                    state.scale.x *= display_width / natural_width;
+                    state.scale.y *= display_height / natural_height;
                     render_image(frame, &image, layer.transform.anchor, &state);
                 } else {
+                    let (display_width, display_height) =
+                        display_size(320.0, 180.0, *width, *height);
                     render_placeholder(
                         frame,
                         layer.transform.anchor,
                         &state,
                         Color::rgba(54, 98, 176, 255),
-                        320.0,
-                        180.0,
+                        display_width,
+                        display_height,
                     );
                 }
             }

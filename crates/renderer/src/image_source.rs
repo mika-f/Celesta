@@ -100,12 +100,7 @@ impl Source {
         density: f64,
     ) -> Result<ImageLayout, image::ImageError> {
         let (sw, sh) = self.size();
-        let (w, h) = match (width, height) {
-            (Some(w), Some(h)) => (w, h),
-            (Some(w), None) => (w, w * sh / sw),
-            (None, Some(h)) => (h * sw / sh, h),
-            (None, None) => (sw, sh),
-        };
+        let (w, h) = display_size(sw, sh, width, height);
         if !w.is_finite() || !h.is_finite() || w <= 0.0 || h <= 0.0 {
             return Err(invalid("image dimensions must be finite and positive"));
         }
@@ -524,6 +519,24 @@ impl ImageSources {
         });
         keep_recent(renders, OLDER_RENDER_PIXELS);
         Ok(image)
+    }
+}
+
+/// The size an `Image` or a `Video` frame of `natural_width` x
+/// `natural_height` displays at: `width` and `height` when both are set, the
+/// natural aspect ratio from the one that is, and the natural size when
+/// neither is.
+pub fn display_size(
+    natural_width: f64,
+    natural_height: f64,
+    width: Option<f64>,
+    height: Option<f64>,
+) -> (f64, f64) {
+    match (width, height) {
+        (Some(w), Some(h)) => (w, h),
+        (Some(w), None) => (w, w * natural_height / natural_width),
+        (None, Some(h)) => (h * natural_width / natural_height, h),
+        (None, None) => (natural_width, natural_height),
     }
 }
 

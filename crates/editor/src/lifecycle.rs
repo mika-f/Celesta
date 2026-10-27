@@ -665,6 +665,7 @@ impl EditorView {
         *self = next;
         if self.is_react_preview() {
             self.watch_react_entry(cx);
+            self.refresh_scene_sources(cx);
         }
         // The constructor's sweep ran before Select layers carried over.
         self.refresh_occurrences(false);

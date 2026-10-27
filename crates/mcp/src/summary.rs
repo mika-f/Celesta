@@ -377,18 +377,7 @@ fn print_layers(
                 let asset = &content["asset"];
                 let src = location_src(asset).unwrap_or("");
                 let mut extra = String::new();
-                if kind == "video" {
-                    extra = format!(
-                        " (source {} s{})",
-                        fmt(num(&content["timing"]["sourceTimeSeconds"])),
-                        if truthy(content["timing"].get("loop")) {
-                            ", looping"
-                        } else {
-                            ""
-                        }
-                    );
-                }
-                if kind == "image"
+                if (kind == "image" || kind == "video")
                     && (truthy(content.get("width")) || truthy(content.get("height")))
                 {
                     let side = |name| {
@@ -404,6 +393,18 @@ fn print_layers(
                         .map(|fit| format!(" {}", js(fit)))
                         .unwrap_or_default();
                     extra = format!(" size {}×{}{fit}", side("width"), side("height"));
+                }
+                if kind == "video" {
+                    let _ = write!(
+                        extra,
+                        " (source {} s{})",
+                        fmt(num(&content["timing"]["sourceTimeSeconds"])),
+                        if truthy(content["timing"].get("loop")) {
+                            ", looping"
+                        } else {
+                            ""
+                        }
+                    );
                 }
                 if kind == "psd" {
                     let visible = content
@@ -844,6 +845,31 @@ mod tests {
              pixelate(8 px) → wave(6 px, wavelength 80 px, phase 90°, 0°) → zoomBlur(0.25, centre (0.5, 0.25)) → \
              chromaticAberration(4 px, 30°) → halftone(10 px, 45°) → noise(0.2, seed 42, color) → \
              scanlines(0.5, spacing 4 px, thickness 0.5, offset 1.5 px)\n"
+        );
+    }
+
+    #[test]
+    fn describes_the_size_of_images_and_videos() {
+        let asset = |url: &str| json!({ "id": url, "location": { "type": "url", "url": url } });
+        let timing = json!({ "sourceTimeSeconds": 1.5, "loop": true });
+        let sized_video = layer(
+            "v",
+            json!({ "type": "video", "asset": asset("https://media.test/a.mp4"), "timing": timing, "width": 224 }),
+        );
+        let video = layer(
+            "w",
+            json!({ "type": "video", "asset": asset("https://media.test/b.mp4"), "timing": timing }),
+        );
+        let image = layer(
+            "i",
+            json!({ "type": "image", "asset": asset("https://media.test/c.png"), "height": 90, "fit": "cover" }),
+        );
+        let (output, _, _) = describe(vec![sized_video, video, image], vec![]);
+        assert_eq!(
+            output,
+            "video https://media.test/a.mp4 at (10, 20) size 224×auto (source 1.5 s, looping)\n\
+             video https://media.test/b.mp4 at (10, 20) (source 1.5 s, looping)\n\
+             image https://media.test/c.png at (10, 20) size auto×90 cover\n"
         );
     }
 

@@ -17,6 +17,7 @@ use gpui_kit::{App, Bounds, KeyBinding, Menu, MenuItem, WindowBounds, WindowOpti
 use std::error::Error;
 
 mod actions;
+mod add_element;
 mod audio;
 mod audio_control;
 mod background;
@@ -50,9 +51,12 @@ mod property_panel_view;
 mod react_audio;
 mod refresh;
 mod render;
+mod scene_entries;
+mod scope;
 mod source;
 #[cfg(test)]
 mod tests;
+mod timing;
 mod transform_drag;
 mod transform_handles;
 mod view;
@@ -76,6 +80,7 @@ mod icons;
 mod meter;
 mod timecode;
 mod timeline;
+mod timeline_drag;
 mod viewer;
 
 const EDITOR_DEMO_PROJECT: &str = include_str!("../../../examples/editor-demo.celesta.json");
@@ -211,6 +216,7 @@ fn run() -> Result<(), Box<dyn Error>> {
                     }
                     if editor.is_react_preview() {
                         editor.watch_react_entry(cx);
+                        editor.refresh_scene_sources(cx);
                     }
                     editor
                 });

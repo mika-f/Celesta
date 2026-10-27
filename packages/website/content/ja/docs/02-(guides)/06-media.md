@@ -5,7 +5,7 @@
 ```tsx file=examples/media.tsx title="media.tsx"
 ```
 
-- `Image` と `Video` は自身のピクセルサイズで描画されます。`x` / `y` とアンカーで配置し、`scale` または `Fit` で拡縮します。画像は PNG、JPEG、WebP、GIF、PNM に対応します。
+- `Image` と `Video` は、`width` か `height` を指定しなければ自身のピクセルサイズで描画されます。片方だけ指定すると絵の縦横比を保ち、両方指定すると `Video` はその矩形に合わせて伸縮します。`Image` も同じですが、`fit="contain"` なら矩形に収まるように拡縮し、`"cover"` なら矩形を覆うように拡縮して、はみ出す部分を切り取ります。`x` / `y` とアンカーで配置します。`scale` や `Fit` でも、ほかのレイヤーと同じように拡縮できます。画像は PNG、JPEG、WebP、GIF、PNM に対応します。
 - アニメーション GIF・APNG・アニメーション WebP は、親シーケンスの時計に合わせて各フレームをその表示時間どおりに描き、ループします。`startFrom` と `playbackRate` は `Video` と同じように使えます。`loop={false}` で最後のフレームのまま止まります。`preloadMedia()` は尺を `animation.durationSeconds` で返します。
 - `Video` と `Audio` は `startFrom`（ファイル内の開始秒）、`playbackRate`、`volume`、`muted` を取ります。`Video` は動画の音声も鳴らすので、音を聞くために同じファイルの `Audio` を並べる必要はありません。映像だけにするときは `muted` を指定します。
 - `Video` と `Audio` に `loop` を指定すると、再生がファイルの終わりに達したところで先頭から繰り返します。`Video` は映像と音声がそろって戻ります。指定しなければ、最後のフレームのまま止まり、音は鳴りやみます。
@@ -16,7 +16,7 @@ frameKeyframes(keys, { fps, origin? }) は、フレーム番号から音量・�
 
 ## 枠に入れて表示する
 
-`@celesta/components` の `MediaFrame` は、画像や動画を指定した `width` × `height` の枠に収めます。枠は `Panel` が描き（背景、メディアの上に描く枠線、角丸、影、`padding` による余白）、下に任意の `caption` を付けられます。メディアの種類は `kind`（`"image"` または `"video"`）で明示し、ファイル名からは推測しません。`fit="contain"`（既定）は全体を中央に表示し、`"cover"` は枠を埋めてはみ出す部分を切り取ります。`Video` は自身のサイズで描画されるため、動画には `sourceWidth` と `sourceHeight` も必要です。`prepare()` で `preloadMedia()` を 1 回呼んで取得してください。`startFrom`、`playbackRate`、`volume`、`muted`、`loop` はそのまま `Video` に渡るので、`Sequence` と同時に始まり、音声も単独の `Video` と同じに鳴ります。現在の装飾は plain だけです。
+`@celesta/components` の `MediaFrame` は、画像や動画を指定した `width` × `height` の枠に収めます。枠は `Panel` が描き（背景、メディアの上に描く枠線、角丸、影、`padding` による余白）、下に任意の `caption` を付けられます。メディアの種類は `kind`（`"image"` または `"video"`）で明示し、ファイル名からは推測しません。`fit="contain"`（既定）は全体を中央に表示し、`"cover"` は枠を埋めてはみ出す部分を切り取ります。`Video` には `fit` がないので、`MediaFrame` は動画を拡縮して収めます。そのため、動画には大きさを表す `sourceWidth` と `sourceHeight` も必要です。`prepare()` で `preloadMedia()` を 1 回呼んで取得してください。`startFrom`、`playbackRate`、`volume`、`muted`、`loop` はそのまま `Video` に渡るので、`Sequence` と同時に始まり、音声も単独の `Video` と同じに鳴ります。現在の装飾は plain だけです。
 
 ```tsx title="角丸の枠に入れた動画"
 let clip: MediaInfo;

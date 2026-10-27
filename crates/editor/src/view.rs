@@ -1,7 +1,8 @@
+use crate::add_element::AddState;
 use crate::audio::{AudioMixWorker, MasterVolumeDrag};
 use crate::component_schema::ComponentSchemaWorker;
 use crate::edit_history::EditHistory;
-use crate::element_edit::ElementEdit;
+use crate::element_edit::{ElementEdit, ScopeCache};
 use crate::element_rows::ElementRows;
 use crate::export_worker::ExportWorker;
 use crate::helpers::ExportLoudness;
@@ -17,8 +18,11 @@ use crate::problems::{Problems, Source};
 use crate::property_panel::PropertyPanelState;
 use crate::react_audio::ReactAudioWorker;
 use crate::refresh::{ReloadOrder, SelectionKeep};
+use crate::scene_entries::SceneEdge;
+use crate::scope::{SceneCalls, Scope, ScopeChoices};
 use crate::source::{PropertyArgs, load_source};
 use crate::timeline::LaneGesture;
+use crate::timeline_drag::{BandDrag, BandNotice, SceneDrag, WindowScopeCache};
 use crate::transform_drag::TransformDrag;
 use crate::transform_handles::{PivotMode, ResizeTool};
 use celesta_composition::{AudioClip, Rational};
@@ -29,7 +33,7 @@ use celesta_gpu_renderer::{
 };
 use celesta_media::FfmpegBackend;
 use celesta_react_bridge::{
-    ComponentPropertyField, ComponentPropertySchema, PrimitivePropertyTable,
+    ComponentPropertyField, ComponentPropertySchema, PrimitivePropertyTable, SourcePos,
 };
 use chrono::{DateTime, Local};
 #[cfg(not(target_os = "macos"))]
@@ -125,6 +129,38 @@ pub(crate) struct EditorView {
     /// `react_reload_generation` it was swept for. `None` outside React
     /// preview and while Select layers is off.
     pub(crate) occurrences: Option<(u64, OccurrenceState)>,
+    /// Counts the changes of `occurrences` (a sweep started, landed or
+    /// failed): scene calls are read for one of them.
+    pub(crate) occurrence_generation: u64,
+    /// A sweep landed (or failed) since the held row commits were last
+    /// drained for it.
+    pub(crate) occurrence_landed: bool,
+    /// The selected element's scene calls (see `sync_scene_calls`), and the
+    /// element, generation and call positions the last read was started
+    /// for.
+    pub(crate) scene_calls: Option<SceneCalls>,
+    pub(crate) scene_calls_wanted: Option<(SourcePos, u64, Vec<Option<SourcePos>>)>,
+    /// Counts up whenever `scene_calls` (or the timing window's calls) is
+    /// set: the scope state cached for the calls read is read again.
+    pub(crate) scene_calls_version: u64,
+    /// The scope chosen per element for the session.
+    pub(crate) scope_choices: ScopeChoices,
+    /// The scope control's option under the pointer: the timeline bands
+    /// preview what it would change.
+    pub(crate) scope_hover: Option<Scope>,
+    /// The selected element's scope state, kept while its inputs stay.
+    pub(crate) scope_cache: ScopeCache,
+    /// The scope state of the selected element's own timing window, kept
+    /// while its inputs stay.
+    pub(crate) window_scope_cache: WindowScopeCache,
+    /// After a kept reload: the selected element's position before it,
+    /// whose scope choice moves to where the reloaded code's first lookup
+    /// puts the element.
+    pub(crate) scope_carry_from: Option<SourcePos>,
+    /// The files the editor's own writes changed since the last reload
+    /// that read them: that reload forgets the scope choices made in them,
+    /// but the one carried for the selected element.
+    pub(crate) scope_written: Vec<PathBuf>,
     /// The preview frame a sweep held back after the editor's own write
     /// waits for before it starts.
     pub(crate) occurrence_sweep_after: Option<u64>,
@@ -291,6 +327,18 @@ pub(crate) struct EditorView {
     /// The canvas drag of the selected layer's transform, if one is running
     /// or being written.
     pub(crate) transform_drag: Option<TransformDrag>,
+    /// The timeline drag of the selected element's own timing window, if
+    /// one is running or being written.
+    pub(crate) band_drag: Option<BandDrag>,
+    /// Why the last band drag wrote nothing; gone with the next press.
+    pub(crate) band_notice: Option<BandNotice>,
+    /// Each chapter's end on the chapter row, by chapter id, as the scene
+    /// search found them for the reload generation it ran for.
+    pub(crate) scene_edges: Option<(u64, HashMap<String, SceneEdge>)>,
+    /// The drag of a chapter's end, if one is running or being written.
+    pub(crate) scene_drag: Option<SceneDrag>,
+    /// Why the last scene drag wrote nothing; gone with the next press.
+    pub(crate) scene_notice: Option<BandNotice>,
     /// What canvas rotation and scale turn about, as the viewer's toggle
     /// chose it for the session (the pivot unless Center is chosen); a layer
     /// that can't keep its center uses its pivot whatever this says.
@@ -330,6 +378,9 @@ pub(crate) struct EditorView {
     /// An edit ended with the focus on it: the root takes it back on the
     /// next render.
     pub(crate) inline_refocus: bool,
+    /// The Add menu's mode, what it read about the parent, and the
+    /// selection of an element just added.
+    pub(crate) add: AddState,
 }
 
 impl EditorView {
@@ -400,6 +451,17 @@ impl EditorView {
             react_reload_generation: 0,
             occurrence_worker,
             occurrences: None,
+            occurrence_generation: 0,
+            occurrence_landed: false,
+            scene_calls: None,
+            scene_calls_wanted: None,
+            scene_calls_version: 0,
+            scope_choices: ScopeChoices::default(),
+            scope_hover: None,
+            scope_cache: ScopeCache::default(),
+            window_scope_cache: WindowScopeCache::default(),
+            scope_carry_from: None,
+            scope_written: Vec::new(),
             occurrence_sweep_after: None,
             occurrence_watch: false,
             react_reloads: ReloadOrder::default(),
@@ -488,6 +550,11 @@ impl EditorView {
             element_rows: ElementRows::default(),
             layer_frame: None,
             transform_drag: None,
+            band_drag: None,
+            band_notice: None,
+            scene_edges: None,
+            scene_drag: None,
+            scene_notice: None,
             pivot_mode: PivotMode::default(),
             resize_tool: ResizeTool::default(),
             text_override: None,
@@ -501,6 +568,7 @@ impl EditorView {
             inline_notice: None,
             inline_end_due: None,
             inline_refocus: false,
+            add: AddState::default(),
         };
         editor.refresh_preview();
         editor.refresh_audio_preview();

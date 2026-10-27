@@ -8,24 +8,38 @@
 mod commit;
 mod resolve;
 
-pub(crate) use commit::commit_files;
 #[cfg(test)]
-pub(crate) use commit::{CommitError, apply_checked};
+pub(crate) use commit::commit_scoped;
+pub(crate) use commit::{CommitError, apply_checked, commit_files, window_files};
+#[cfg(test)]
+pub(crate) use resolve::window_report;
 pub(crate) use resolve::{
-    edit_value, editable, field_of, inner_target, required_of, resolve_targets, schema_field,
-    table_default, table_key, text_style_key, type_component_props,
+    WindowTargets, edit_value, editable, field_of, inner_target, required_of, resolve_targets,
+    resolve_window, schema_field, table_default, table_key, tag_name, text_style_key,
+    type_component_props,
 };
 
-use crate::element_rows::row_label;
+use crate::element_rows::{removable, row_label};
 use crate::layer_select::SourceLookup;
+use crate::occurrences::OccurrenceState;
 use crate::property_controls::ControlKind;
+use crate::scope::{
+    CommitGate, HeldOrigin, SceneCalls, Scope, ScopeState, calls_of, chosen_scope, commit_scope,
+    current_calls, drain_gate, gesture_gate, gesture_start_refusal, held_gate, previewed_scope,
+    read_scene_calls, scope_state, scoped_removable, targets_in_effect,
+};
+use crate::timing::{WindowRole, window_role};
 use crate::view::EditorView;
 use celesta_react_bridge::{
-    ComponentPropertySchema, LayerSourceReport, PrimitivePropertyField, PrimitivePropertyTable,
-    ReceivedProps, ReceivedValue, SourcePos,
+    ComponentPropertySchema, ElementOccurrences, LayerSourceReport, PrimitivePropertyField,
+    PrimitivePropertyTable, ReactChapter, ReceivedProps, ReceivedValue, SourcePos,
 };
-use celesta_source_edit::{EditTarget, EditValue, ElementRef, LockReason, format_number};
+use celesta_source_edit::{
+    CELESTA_REACT, DefaultTarget, EditTarget, EditValue, ElementRef, ImportLock, LiftLock,
+    LockReason, WrapLock, ensure_import, format_number, wrap_element,
+};
 use gpui_kit::Context;
+use std::cell::RefCell;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -177,6 +191,25 @@ pub(crate) struct ElementTargets {
     /// The props written at the enclosing component's call, when that call
     /// is found and readable.
     pub(crate) component: Option<ComponentTargets>,
+    /// The component the element is written in (`C`), as a call names it;
+    /// `None` when it is in none (a scene function).
+    pub(crate) enclosing: Option<String>,
+    /// Where the default of each parameter a row or an input reads is
+    /// written in `C`, in the order the rows read them.
+    pub(crate) defaults: Vec<(String, DefaultTarget)>,
+    /// Why lifting the literals and absent props written on the element
+    /// into new props of `C` fails, tried for all of them at once.
+    pub(crate) lift_lock: Option<LiftLock>,
+    /// The files of `files` outside the project (see
+    /// [`lock_outside_project`]): nothing is written to them, a default or
+    /// a lift neither.
+    pub(crate) outside: Vec<PathBuf>,
+    /// For an element in a component that the frame renders more than once
+    /// (its values written on the element locked as `Repeated`), the
+    /// element resolved as one instance: what "This scene" edits when its
+    /// call draws the selected instance alone in the scene (see
+    /// [`crate::scope::targets_in_effect`]). `None` otherwise, and in it.
+    pub(crate) one: Option<Box<ElementTargets>>,
 }
 
 impl ElementTargets {
@@ -310,6 +343,8 @@ pub(crate) fn reason_text(reason: &LockReason) -> String {
         LockReason::CallSiteNotFound { component } => {
             format!("Can't find where `<{component}>` is called")
         }
+        LockReason::Exported { .. } => "Exported, so other files may read it".to_owned(),
+        LockReason::NoSceneDuration { id } => format!("Scene `{id}` has no durationInFrames"),
     }
 }
 
@@ -321,7 +356,22 @@ pub(crate) struct Resolved {
     /// The timeline frame the report was looked up at.
     pub(crate) timeline_frame: i64,
     pub(crate) outcome: Result<ElementTargets, String>,
+    /// The element's own timing window (a wrapper written around it, see
+    /// [`WindowRole::Own`]) with its timing props as rows, or why it can't
+    /// be dragged (it doesn't resolve, or it is inside a loop or a freeze
+    /// frame); `None` for a scene's window, or none.
+    pub(crate) window_targets: Option<Result<WindowTargets, String>>,
+    /// Why the element can't be wrapped in a `<Sequence>` ("Set timing"),
+    /// tried without writing when it has no window of its own and its
+    /// targets resolved; `None` otherwise.
+    pub(crate) wrap_lock: Option<WrapLock>,
+    /// Why `Sequence` can't be imported into the element's file, tried
+    /// beside [`Self::wrap_lock`].
+    pub(crate) import_lock: Option<ImportLock>,
 }
+
+/// Why a window inside a `<Loop>` or `<FreezeFrame>` doesn't drag.
+pub(crate) const REMAPPED_WINDOW: &str = "Timing inside a loop or freeze frame can't be dragged";
 
 /// The values own writes put into rows; `None` removed the prop.
 type WrittenValues = Vec<(PropKey, Option<EditValue>)>;
@@ -332,6 +382,8 @@ type WrittenValues = Vec<(PropKey, Option<EditValue>)>;
 #[derive(Debug, Default)]
 pub(crate) struct ElementEdit {
     request: u64,
+    /// Counts the resolutions kept: names the targets `resolved` holds.
+    resolution: u64,
     /// The layer, report and lookup frame the newest resolution was started for.
     wanted: Option<(String, LayerSourceReport, i64)>,
     /// A resolution is running.
@@ -358,6 +410,11 @@ pub(crate) struct ElementEdit {
     /// The preview worker stopped: no lookup answers again, whatever
     /// reloads or is selected.
     preview_stopped: bool,
+    /// The scene calls of the component enclosing the element's own timing
+    /// window, when it is not the element's (see `sync_window_scene_calls`),
+    /// and the element, generation and calls they are read for.
+    window_calls: Option<SceneCalls>,
+    window_calls_wanted: Option<(SourcePos, u64, Vec<Option<SourcePos>>)>,
 }
 
 impl ElementEdit {
@@ -387,13 +444,31 @@ impl ElementEdit {
         Some(self.request)
     }
 
-    /// Keeps the outcome of resolution `request` when it is the newest one and
-    /// `selected` is still the layer it was for. True when kept.
+    /// [`Self::finish_with_window`] without an own timing window, and
+    /// wrapped freely.
+    #[cfg(test)]
     pub(crate) fn finish(
         &mut self,
         request: u64,
         selected: Option<&str>,
         outcome: Result<ElementTargets, String>,
+    ) -> bool {
+        self.finish_with_window(request, selected, outcome, None, None, None)
+    }
+
+    /// Keeps the outcome of resolution `request`, `window_targets`, the
+    /// element's own timing window (see [`Resolved::window_targets`]),
+    /// `wrap_lock` and `import_lock` (see [`Resolved::wrap_lock`]), when it
+    /// is the newest one and `selected` is still the layer it was for. True
+    /// when kept.
+    pub(crate) fn finish_with_window(
+        &mut self,
+        request: u64,
+        selected: Option<&str>,
+        outcome: Result<ElementTargets, String>,
+        window_targets: Option<Result<WindowTargets, String>>,
+        wrap_lock: Option<WrapLock>,
+        import_lock: Option<ImportLock>,
     ) -> bool {
         let Some((layer, report, timeline_frame)) = self.wanted.as_ref() else {
             return false;
@@ -406,11 +481,15 @@ impl ElementEdit {
             self.stale = false;
             self.written = None;
         }
+        self.resolution += 1;
         self.resolved = Some(Resolved {
             layer: layer.clone(),
             report: report.clone(),
             timeline_frame: *timeline_frame,
             outcome,
+            window_targets,
+            wrap_lock,
+            import_lock,
         });
         true
     }
@@ -445,6 +524,7 @@ impl ElementEdit {
     pub(crate) fn reset(&mut self) {
         *self = Self {
             request: self.request + 1,
+            resolution: self.resolution,
             preview_stopped: self.preview_stopped,
             ..Self::default()
         };
@@ -542,6 +622,11 @@ impl ElementEdit {
         }
     }
 
+    /// Which resolution `resolved` holds: a new one counts up.
+    pub(crate) fn resolution(&self) -> u64 {
+        self.resolution
+    }
+
     /// The newest resolution for `selected`, and whether it may be committed
     /// against (no write changed the file since).
     pub(crate) fn resolved(&self, selected: Option<&str>) -> Option<(&Resolved, bool)> {
@@ -561,13 +646,38 @@ impl ElementEdit {
         selected: Option<&str>,
         lookup: Option<(&LayerSourceReport, i64)>,
     ) -> Option<(&ElementTargets, &LayerSourceReport)> {
+        let resolved = self.committable(selected, lookup)?;
+        let targets = resolved.outcome.as_ref().ok()?;
+        Some((targets, &resolved.report))
+    }
+
+    /// The element's own timing window a commit for `selected` writes to,
+    /// or why it can't be dragged, with the element's report, under the
+    /// same conditions as [`Self::targets`] (the element's own targets may
+    /// have failed).
+    pub(crate) fn window_targets(
+        &self,
+        selected: Option<&str>,
+        lookup: Option<(&LayerSourceReport, i64)>,
+    ) -> Option<(Result<&WindowTargets, &str>, &LayerSourceReport)> {
+        let resolved = self.committable(selected, lookup)?;
+        let window = resolved.window_targets.as_ref()?;
+        Some((window.as_ref().map_err(String::as_str), &resolved.report))
+    }
+
+    /// The newest resolution for `selected` when it is current and was
+    /// made for `lookup`.
+    fn committable(
+        &self,
+        selected: Option<&str>,
+        lookup: Option<(&LayerSourceReport, i64)>,
+    ) -> Option<&Resolved> {
         let (resolved, current) = self.resolved(selected)?;
         let (report, frame) = lookup?;
         if !current || *report != resolved.report || frame != resolved.timeline_frame {
             return None;
         }
-        let targets = resolved.outcome.as_ref().ok()?;
-        Some((targets, &resolved.report))
+        Some(resolved)
     }
 
     pub(crate) fn error(&self, selected: Option<&str>) -> Option<&str> {
@@ -650,37 +760,77 @@ impl EditorView {
             Some(react) => react.component_schemas.clone(),
             None => self.component_schemas.clone(),
         };
+        // The wrapper written around the element, when its timing is the
+        // element's own: resolved as an element of its own beside it. A
+        // loop's or a freeze frame's window is locked unread. Without one,
+        // "Set timing" is offered: the wrap is tried without writing.
+        let role = window_role(
+            report,
+            self.react_chapters().unwrap_or_default(),
+            u64::try_from(self.clock.end_frame()).unwrap_or(0),
+            u64::try_from(frame).unwrap_or(0),
+        );
+        let try_wrap = matches!(role, WindowRole::Scene(_) | WindowRole::None);
+        let window = match role {
+            WindowRole::Own(window) => window.source.clone().map(Ok),
+            WindowRole::Remapped => Some(Err(REMAPPED_WINDOW.to_owned())),
+            WindowRole::Scene(_) | WindowRole::None => None,
+        };
         let report = report.clone();
         let entry_dir = self
             .react_entry()
             .and_then(Path::parent)
             .map(Path::to_path_buf);
         cx.spawn(async move |view, cx| {
-            let outcome = cx
+            let (outcome, window, wrap_lock, import_lock) = cx
                 .background_executor()
                 .spawn(async move {
                     let read = |path: &Path| {
                         fs::read_to_string(path)
                             .map_err(|error| format!("Couldn't read {}: {error}", path.display()))
                     };
-                    let mut targets = resolve_targets(read, &report, table.as_ref())?;
-                    type_component_props(&mut targets, &schemas, read);
                     let real = |path: &Path| fs::canonicalize(path).unwrap_or(path.to_path_buf());
                     let entry_dir = entry_dir.map(|dir| real(&dir));
-                    lock_outside_project(&mut targets, |file| {
+                    let outside = |file: &Path| {
                         entry_dir
                             .as_ref()
                             .is_none_or(|dir| !inside_project(&real(file), dir))
+                    };
+                    let outcome =
+                        resolve_targets(read, &report, table.as_ref()).map(|mut targets| {
+                            type_component_props(&mut targets, &schemas, read);
+                            lock_outside_project(&mut targets, outside);
+                            targets
+                        });
+                    let window = window.map(|source| {
+                        let mut window = resolve_window(read, &report, &source?)?;
+                        lock_outside_project(&mut window.targets, outside);
+                        Ok(window)
                     });
-                    Ok(targets)
+                    let text = match &outcome {
+                        Ok(targets) if try_wrap => read(&targets.file).ok(),
+                        _ => None,
+                    };
+                    let (wrap_lock, import_lock) = match (&outcome, text) {
+                        (Ok(targets), Some(text)) => (
+                            wrap_element(&text, &targets.element, "Sequence", &[]).err(),
+                            ensure_import(&text, CELESTA_REACT, "Sequence").err(),
+                        ),
+                        _ => (None, None),
+                    };
+                    (outcome, window, wrap_lock, import_lock)
                 })
                 .await;
             view.update(cx, |this, cx| {
                 let selected = this.selected_layer.clone();
-                if this
-                    .element_edit
-                    .finish(request, selected.as_deref(), outcome)
-                {
+                if this.element_edit.finish_with_window(
+                    request,
+                    selected.as_deref(),
+                    outcome,
+                    window,
+                    wrap_lock,
+                    import_lock,
+                ) {
                     // Commits made while the targets were read go now.
                     this.drain_held_rows(cx);
                     cx.notify();
@@ -692,9 +842,16 @@ impl EditorView {
     }
 
     /// The selected layer's targets and the report they were resolved for,
-    /// when they can be committed to.
+    /// when they can be committed to: those the rows show (see
+    /// [`Self::shown_targets`]).
     // The canvas drag reads these too.
     pub(crate) fn element_targets(&self) -> Option<(&ElementTargets, &LayerSourceReport)> {
+        let (_, report) = self.resolved_targets()?;
+        Some((self.shown_targets()?, report))
+    }
+
+    /// [`Self::element_targets`] as resolved, whatever the scope.
+    fn resolved_targets(&self) -> Option<(&ElementTargets, &LayerSourceReport)> {
         let lookup = match &self.source_lookup {
             Some(SourceLookup::Found(report)) => Some((report, self.source_lookup_frame)),
             _ => None,
@@ -703,30 +860,449 @@ impl EditorView {
             .targets(self.selected_layer.as_deref(), lookup)
     }
 
+    /// The targets a commit under `scope` writes to (see
+    /// [`ScopeContext::under`]): those of the scope it was made with, also
+    /// when the control shows another by the time it goes; with the report
+    /// it resolves them again for ([`commit_report`]).
+    fn targets_under(&self, scope: Option<Scope>) -> Option<(&ElementTargets, LayerSourceReport)> {
+        let (resolved, report) = self.resolved_targets()?;
+        let targets = self
+            .shown_scope_context()
+            .map_or(resolved, |context| context.under(scope));
+        Some((targets, commit_report(resolved, targets, report)))
+    }
+
+    /// The selected element's own timing window (or why it can't be
+    /// dragged) and the element's report, when they can be committed to.
+    pub(crate) fn window_targets(
+        &self,
+    ) -> Option<(Result<&WindowTargets, &str>, &LayerSourceReport)> {
+        let lookup = match &self.source_lookup {
+            Some(SourceLookup::Found(report)) => Some((report, self.source_lookup_frame)),
+            _ => None,
+        };
+        self.element_edit
+            .window_targets(self.selected_layer.as_deref(), lookup)
+    }
+
+    /// The call `S` of the component enclosing the selected element's own
+    /// timing window, and whether it is the element's `S` too (whose scene
+    /// calls then serve the window).
+    fn window_call<'w>(&self, window: &'w WindowTargets) -> Option<(&'w SourcePos, bool)> {
+        let call = &window.targets.component.as_ref()?.call_site;
+        let shared = self
+            .element_targets()
+            .and_then(|(targets, _)| targets.component.as_ref())
+            .is_some_and(|component| component.call_site == *call);
+        Some((call, shared))
+    }
+
+    /// The scene calls a commit of the selected element's own timing window
+    /// takes: the element's when the window's component is the element's,
+    /// else those [`Self::sync_window_scene_calls`] read; `None` until read,
+    /// or once the index or the chain moved on.
+    pub(crate) fn window_scene_calls(
+        &self,
+        window: &WindowTargets,
+        report: &LayerSourceReport,
+    ) -> Option<&SceneCalls> {
+        let (call, shared) = self.window_call(window)?;
+        if shared {
+            let (targets, _) = self.element_targets()?;
+            return self.current_scene_calls(targets, report);
+        }
+        current_calls(
+            self.element_edit.window_calls.as_ref(),
+            self.occurrence_generation,
+            report,
+            self.indexed_element(report)?,
+            call,
+        )
+    }
+
+    /// [`Self::sync_scene_calls`] for the call of the component enclosing
+    /// the selected element's own timing window, when it is not the
+    /// element's: read at that call's place in the selected instance's
+    /// chain, for the element's instances.
+    fn sync_window_scene_calls(&mut self, cx: &mut Context<Self>) {
+        let Some((Ok(window), report)) = self.window_targets() else {
+            return;
+        };
+        let Some((call, false)) = self.window_call(window) else {
+            return;
+        };
+        let Some(element) = self.indexed_element(report) else {
+            return;
+        };
+        if self.window_scene_calls(window, report).is_some() {
+            return;
+        }
+        let generation = self.occurrence_generation;
+        let at = calls_of(report, element, call);
+        let position = element.element.clone();
+        let wanted = (position.clone(), generation, at.clone());
+        if self.element_edit.window_calls_wanted.as_ref() == Some(&wanted) {
+            return;
+        }
+        self.element_edit.window_calls_wanted = Some(wanted.clone());
+        cx.spawn(async move |view, cx| {
+            let calls = cx
+                .background_executor()
+                .spawn(async move {
+                    let read = |path: &Path| fs::read_to_string(path).map_err(|e| e.to_string());
+                    read_scene_calls(read, position, generation, at)
+                })
+                .await;
+            view.update(cx, |this, cx| {
+                if this.element_edit.window_calls_wanted.as_ref() == Some(&wanted) {
+                    this.element_edit.window_calls = Some(calls);
+                    this.scene_calls_version = this.scene_calls_version.wrapping_add(1);
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// The scene calls of the selected element read for the index in use
+    /// and the element's call `S` (see [`current_calls`]); `None` until
+    /// read, or once the index or the chain moved on.
+    fn current_scene_calls(
+        &self,
+        targets: &ElementTargets,
+        report: &LayerSourceReport,
+    ) -> Option<&SceneCalls> {
+        let element = self.indexed_element(report)?;
+        let call = &targets.component.as_ref()?.call_site;
+        current_calls(
+            self.scene_calls.as_ref(),
+            self.occurrence_generation,
+            report,
+            element,
+            call,
+        )
+    }
+
+    /// The occurrences of the element `report` describes, in the index in
+    /// use (a refreshing one too).
+    pub(crate) fn indexed_element(
+        &self,
+        report: &LayerSourceReport,
+    ) -> Option<&ElementOccurrences> {
+        let index = match self.occurrences.as_ref()? {
+            (_, OccurrenceState::Ready(index) | OccurrenceState::Refreshing(index)) => index,
+            (_, OccurrenceState::Scanning | OccurrenceState::Failed(_)) => return None,
+        };
+        index.instance_for(report).map(|(element, _)| element)
+    }
+
+    /// Starts reading the scene calls of the selected element (see
+    /// [`read_scene_calls`]) when the index in use has it and the calls
+    /// held are not for that index and chain. A sweep that lands starts it
+    /// again. The scene calls of the element's own timing window are read
+    /// here too.
+    pub(crate) fn sync_scene_calls(&mut self, cx: &mut Context<Self>) {
+        self.sync_window_scene_calls(cx);
+        let Some((targets, report)) = self.element_targets() else {
+            return;
+        };
+        let Some(call) = targets
+            .component
+            .as_ref()
+            .map(|component| component.call_site.clone())
+        else {
+            return;
+        };
+        let Some(element) = self.indexed_element(report) else {
+            return;
+        };
+        if self.current_scene_calls(targets, report).is_some() {
+            return;
+        }
+        let generation = self.occurrence_generation;
+        let at = calls_of(report, element, &call);
+        let position = element.element.clone();
+        let wanted = (position.clone(), generation, at.clone());
+        if self.scene_calls_wanted.as_ref() == Some(&wanted) {
+            return;
+        }
+        self.scene_calls_wanted = Some(wanted.clone());
+        cx.spawn(async move |view, cx| {
+            let calls = cx
+                .background_executor()
+                .spawn(async move {
+                    let read = |path: &Path| fs::read_to_string(path).map_err(|e| e.to_string());
+                    read_scene_calls(read, position, generation, at)
+                })
+                .await;
+            view.update(cx, |this, cx| {
+                if this.scene_calls_wanted.as_ref() == Some(&wanted) {
+                    this.scene_calls = Some(calls);
+                    this.scene_calls_version = this.scene_calls_version.wrapping_add(1);
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// The first lookup answer after a kept reload: the scope choice made
+    /// for the element before it moves to where the answer puts it.
+    pub(crate) fn carry_scope_choice(&mut self) {
+        let Some(from) = self.scope_carry_from.take() else {
+            return;
+        };
+        if let Some(SourceLookup::Found(report)) = &self.source_lookup
+            && let Some(element) = report.chain.first()
+        {
+            self.scope_choices.carry(&from, &SourcePos::from(element));
+        }
+    }
+
+    /// The selected element's position, which its scope choice is kept
+    /// under: the current lookup answer's, also while the targets are read
+    /// again (an edit made then waits with the choice).
+    pub(crate) fn selected_element(&self) -> Option<SourcePos> {
+        self.selected_layer.as_ref()?;
+        match &self.source_lookup {
+            Some(SourceLookup::Found(report)) => report.chain.first().map(SourcePos::from),
+            _ => None,
+        }
+    }
+
+    /// The scope choice remembered for the selected element.
+    pub(crate) fn remembered_scope(&self) -> Option<Scope> {
+        self.scope_choices.get(&self.selected_element()?)
+    }
+
+    /// The scope context of the targets the rows show (see
+    /// [`ScopeContext`]), current or not; `None` until they are resolved.
+    pub(crate) fn shown_scope_context(&self) -> Option<ScopeContext<'_>> {
+        let (resolved, current) = self.element_edit.resolved(self.selected_layer.as_deref())?;
+        let targets = resolved.outcome.as_ref().ok()?;
+        let calls = self.current_scene_calls(targets, &resolved.report);
+        // The resolution names the report and its lookup frame too.
+        let key = ScopeKey {
+            resolution: self.element_edit.resolution(),
+            occurrence_generation: self.occurrence_generation,
+            scene_calls_version: self.scene_calls_version,
+        };
+        let mut cache = self.scope_cache.0.borrow_mut();
+        let state = match cache.as_ref() {
+            Some((cached, state)) if *cached == key => state.clone(),
+            _ => {
+                let state = resolved_scope_state(
+                    resolved,
+                    self.occurrences.as_ref().map(|(_, state)| state),
+                    calls,
+                    self.react_chapters().unwrap_or_default(),
+                )?;
+                *cache = Some((key, state.clone()));
+                state
+            }
+        };
+        drop(cache);
+        let mut context = ScopeContext {
+            targets,
+            resolved: targets,
+            state,
+            calls,
+            current,
+        };
+        context.targets = context.under(self.effective_scope(&context.state));
+        Some(context)
+    }
+
+    /// The targets the rows show and edits read (see
+    /// [`ScopeContext::targets`]); `None` until they are resolved.
+    pub(crate) fn shown_targets(&self) -> Option<&ElementTargets> {
+        self.shown_scope_context().map(|context| context.targets)
+    }
+
+    /// The scope context of the targets a commit writes to; `None` without
+    /// targets to commit to.
+    pub(crate) fn scope_context(&self) -> Option<ScopeContext<'_>> {
+        self.element_targets()?;
+        self.shown_scope_context().filter(|context| context.current)
+    }
+
+    /// The gate for committing `keys` of the selected element with the
+    /// scope `remembered` the commit keeps (see [`drain_gate`]: one made
+    /// with no scope shown is written only for this scene), held or not;
+    /// without targets, it goes (and fails as [`Self::commit_element`]
+    /// says).
+    pub(crate) fn commit_gate_for(
+        &self,
+        remembered: Option<Scope>,
+        keys: &[PropKey],
+    ) -> CommitGate {
+        match self.scope_context() {
+            Some(context) => {
+                drain_gate(remembered, &context.state, context.under(remembered), keys)
+            }
+            None => CommitGate::Go(None),
+        }
+    }
+
+    /// The gate for a held commit of `keys` with the scope `held` it keeps,
+    /// as it drains (see [`held_gate`]); without targets, it goes (and fails
+    /// as [`Self::commit_element`] says).
+    pub(crate) fn held_gate_for(
+        &self,
+        held: Option<Scope>,
+        origin: HeldOrigin,
+        keys: &[PropKey],
+    ) -> CommitGate {
+        match self.scope_context() {
+            Some(context) => held_gate(
+                held,
+                origin,
+                &context.state,
+                context.under(held),
+                keys,
+                context.calls,
+            ),
+            None => CommitGate::Go(None),
+        }
+    }
+
+    /// The scope an edit of the selected element uses now, when its options
+    /// are known and allow one.
+    pub(crate) fn effective_scope(&self, state: &ScopeState) -> Option<Scope> {
+        match state {
+            ScopeState::Options(options) => chosen_scope(self.remembered_scope(), options).ok(),
+            ScopeState::NotShared | ScopeState::Unknown { .. } => None,
+        }
+    }
+
+    /// The scope the rows of `targets` show and remove under, and the scene
+    /// calls that count: the scope in effect, when `targets` are the ones
+    /// the rows show and the element offers a scope.
+    pub(crate) fn rows_scope(
+        &self,
+        targets: &ElementTargets,
+    ) -> Option<(Scope, Option<&SceneCalls>)> {
+        let context = self
+            .shown_scope_context()
+            .filter(|context| std::ptr::eq(context.targets, targets))?;
+        Some((self.effective_scope(&context.state)?, context.calls))
+    }
+
+    /// The scope the impact shows: the hovered option of the control (a
+    /// preview), else the one in effect (see [`previewed_scope`]), with the
+    /// scene calls that count and the targets it was read for.
+    pub(crate) fn impact_scope(
+        &self,
+    ) -> Option<(Option<Scope>, &ElementTargets, Option<&SceneCalls>)> {
+        let context = self.shown_scope_context()?;
+        let (scope, targets) = context.previewed(self.scope_hover, self.remembered_scope());
+        Some((scope, targets, context.calls))
+    }
+
+    /// Clears the hovered option when the control is not drawn: it reports
+    /// no leave once gone, and the bands would keep its preview.
+    pub(crate) fn settle_scope_hover(&mut self) {
+        if self.scope_hover.is_some()
+            && !self
+                .shown_scope_context()
+                .is_some_and(|context| matches!(context.state, ScopeState::Options(_)))
+        {
+            self.scope_hover = None;
+        }
+    }
+
+    /// Why a drag, a scrub or an inline text edit of `key` of the selected
+    /// element does not start: it would be refused at release under the
+    /// scope it keeps (see [`gesture_start_refusal`]).
+    pub(crate) fn gesture_refusal(&self, key: &PropKey) -> Option<String> {
+        self.gesture_refusals(std::slice::from_ref(key))
+            .pop()
+            .flatten()
+    }
+
+    /// [`Self::gesture_refusal`] of each of `keys`, in order, the scope
+    /// state read once.
+    pub(crate) fn gesture_refusals(&self, keys: &[PropKey]) -> Vec<Option<String>> {
+        let Some(context) = self.scope_context() else {
+            return vec![None; keys.len()];
+        };
+        let remembered = self.remembered_scope();
+        let kept = context.under(commit_scope(remembered, &context.state));
+        keys.iter()
+            .map(|key| gesture_start_refusal(remembered, &context.state, kept, key, context.calls))
+            .collect()
+    }
+
+    /// The gate for writing `keys` of the selected element at the end of a
+    /// drag, a scrub or an inline text edit that started under `started`
+    /// (see [`gesture_gate`]); without targets, it goes (and fails as
+    /// [`Self::commit_element`] says).
+    pub(crate) fn gesture_gate_for(&self, started: Option<Scope>, keys: &[PropKey]) -> CommitGate {
+        match self.scope_context() {
+            Some(context) => gesture_gate(
+                started,
+                &context.state,
+                context.under(started),
+                keys,
+                context.calls,
+            ),
+            None => CommitGate::Go(None),
+        }
+    }
+
+    /// The scope an edit made now keeps until it is written (see
+    /// [`commit_scope`]): the remembered choice, else the option the
+    /// control shows in effect. A held row commit, a drag, a scrub and an
+    /// inline text edit (from their start) keep it.
+    pub(crate) fn kept_scope(&self) -> Option<Scope> {
+        let shown = self
+            .shown_scope_context()
+            .map_or(ScopeState::NotShared, |context| context.state);
+        commit_scope(self.remembered_scope(), &shown)
+    }
+
+    /// Whether the row `key` (`target` in `targets`) offers its removal:
+    /// under the scope the rows show, the removal [`scoped_removable`]
+    /// allows (see [`Self::rows_scope`]).
+    pub(crate) fn row_removable(
+        &self,
+        targets: &ElementTargets,
+        key: &PropKey,
+        target: &Target,
+    ) -> bool {
+        row_removable_under(self.rows_scope(targets), targets, key, target)
+    }
+
     /// Writes `values` for the selected layer into its source as one undo
-    /// entry (`None` removes the prop), the call site's file too when a
-    /// value passes through, then reloads keeping the selection. `done` gets
-    /// the outcome (also shown in the Layer section when it failed).
+    /// entry (`None` removes the prop), as resolved (`scope: None`) or
+    /// under `scope`: the call site's file too when a value passes through
+    /// or is lifted. Then reloads keeping the selection. `done` gets the
+    /// outcome (also shown in the Layer section when it failed).
     pub(crate) fn commit_element(
         &mut self,
         values: Vec<(PropKey, Option<EditValue>)>,
+        scope: Option<Scope>,
         done: impl FnOnce(&mut Self, Result<(), String>, &mut Context<Self>) + 'static,
         cx: &mut Context<Self>,
     ) {
         let layer = self.selected_layer.clone();
-        let Some((targets, report)) = self.element_targets() else {
+        let Some((targets, report)) = self.targets_under(scope) else {
             let message = self.element_edit.unavailable(layer.as_deref());
             self.element_edit
                 .set_error(layer.as_deref(), Some(message.clone()));
             return done(self, Err(message), cx);
         };
-        let (targets, report) = (targets.clone(), report.clone());
+        let calls = self.current_scene_calls(targets, &report).cloned();
+        let targets = targets.clone();
         let written = values.clone();
         self.element_edit.set_error(layer.as_deref(), None);
         self.record_own_writes(
             targets.files.clone(),
             move |texts| {
-                commit_files(texts, &targets, &report, &values).map_err(|error| error.to_string())
+                commit_files(texts, &targets, &report, scope, calls.as_ref(), &values)
+                    .map_err(|error| error.to_string())
             },
             move |this, result, cx| {
                 // A success invalidated the targets (`apply_own_write_sample`);
@@ -741,6 +1317,120 @@ impl EditorView {
             },
             cx,
         );
+    }
+}
+
+/// The selected element's targets, its scope state in the scene they were
+/// looked up in (see [`resolved_scope_state`]), the scene calls that
+/// count, and whether no write changed the file since they were resolved.
+pub(crate) struct ScopeContext<'v> {
+    /// The targets of the scope in effect: [`Self::under`] it.
+    pub(crate) targets: &'v ElementTargets,
+    /// The targets as resolved, which the state was read from.
+    pub(crate) resolved: &'v ElementTargets,
+    pub(crate) state: ScopeState,
+    pub(crate) calls: Option<&'v SceneCalls>,
+    /// Not stale (see [`ElementEdit::resolved`]); a commit also needs the
+    /// targets to answer the current lookup (see
+    /// [`EditorView::element_targets`]).
+    pub(crate) current: bool,
+}
+
+impl<'v> ScopeContext<'v> {
+    /// The targets an edit under `scope` reads and writes (see
+    /// [`targets_in_effect`]): a gesture's, or a held commit's, by the
+    /// scope it keeps, whichever option the control shows now.
+    pub(crate) fn under(&self, scope: Option<Scope>) -> &'v ElementTargets {
+        match &self.state {
+            ScopeState::Options(options) => targets_in_effect(self.resolved, scope, options),
+            ScopeState::NotShared | ScopeState::Unknown { .. } => self.resolved,
+        }
+    }
+
+    /// The scope the impact shows, `hovered` (a preview) else the one in
+    /// effect with the choice `remembered` (see [`previewed_scope`]), and
+    /// the targets it writes.
+    pub(crate) fn previewed(
+        &self,
+        hovered: Option<Scope>,
+        remembered: Option<Scope>,
+    ) -> (Option<Scope>, &'v ElementTargets) {
+        let scope = match &self.state {
+            ScopeState::Options(options) => previewed_scope(hovered, options, remembered),
+            ScopeState::NotShared | ScopeState::Unknown { .. } => None,
+        };
+        (scope, self.under(scope))
+    }
+}
+
+/// The report a commit of `targets` resolves the element again for:
+/// `report`, which `resolved` was resolved for, with a render count of 1
+/// when `targets` is `resolved`'s element as one instance
+/// ([`ElementTargets::one`]), so the commit finds the targets it was made
+/// on.
+pub(crate) fn commit_report(
+    resolved: &ElementTargets,
+    targets: &ElementTargets,
+    report: &LayerSourceReport,
+) -> LayerSourceReport {
+    let as_one = resolved
+        .one
+        .as_deref()
+        .is_some_and(|one| std::ptr::eq(one, targets));
+    LayerSourceReport {
+        render_count: if as_one { 1 } else { report.render_count },
+        ..report.clone()
+    }
+}
+
+/// The scope state of the targets `resolved` holds, at the timeline frame
+/// they were looked up at: the scene the rows show, also after a seek
+/// whose lookup is still being resolved (the playhead is then in another
+/// scene than the targets). `None` when they did not resolve.
+pub(crate) fn resolved_scope_state(
+    resolved: &Resolved,
+    occurrences: Option<&OccurrenceState>,
+    calls: Option<&SceneCalls>,
+    chapters: &[ReactChapter],
+) -> Option<ScopeState> {
+    let targets = resolved.outcome.as_ref().ok()?;
+    Some(scope_state(
+        &resolved.report,
+        targets,
+        occurrences,
+        calls,
+        chapters,
+        u64::try_from(resolved.timeline_frame).unwrap_or(0),
+    ))
+}
+
+/// What a [`ScopeState`] is read from, besides what changes with these
+/// (the report and its lookup frame with the resolution, the index with
+/// its generation, the chapters with a reload, which sweeps again, and
+/// the scene calls that count with those and the calls read).
+#[derive(Debug, PartialEq)]
+struct ScopeKey {
+    resolution: u64,
+    occurrence_generation: u64,
+    scene_calls_version: u64,
+}
+
+/// The selected element's scope state, kept while what it is read from
+/// stays: the panel, the rows, the timeline and the canvas read it many
+/// times a render.
+#[derive(Debug, Default)]
+pub(crate) struct ScopeCache(RefCell<Option<(ScopeKey, ScopeState)>>);
+
+/// [`removable`] under the scope the rows show (`None`: as resolved).
+pub(crate) fn row_removable_under(
+    scope: Option<(Scope, Option<&SceneCalls>)>,
+    targets: &ElementTargets,
+    key: &PropKey,
+    target: &Target,
+) -> bool {
+    match scope {
+        Some((scope, calls)) => scoped_removable(scope, targets, key, calls),
+        None => removable(targets, key, target),
     }
 }
 
@@ -770,8 +1460,23 @@ fn normalize(path: &Path) -> PathBuf {
 }
 
 /// Locks every target, row, input, or component prop, in a file `outside`
-/// says is outside the project (the element's, or a call site's).
+/// says is outside the project (the element's, or a call site's), and
+/// keeps those of the files read in [`ElementTargets::outside`]; in the
+/// element as one instance ([`ElementTargets::one`]) too.
 pub(crate) fn lock_outside_project(targets: &mut ElementTargets, outside: impl Fn(&Path) -> bool) {
+    lock_outside(targets, &outside);
+}
+
+fn lock_outside(targets: &mut ElementTargets, outside: &dyn Fn(&Path) -> bool) {
+    if let Some(one) = &mut targets.one {
+        lock_outside(one, outside);
+    }
+    targets.outside = targets
+        .files
+        .iter()
+        .filter(|file| outside(file))
+        .cloned()
+        .collect();
     let lock = |target: &mut Target| {
         if outside(&target.file) {
             target.target = EditTarget::Locked(LockReason::OutsideProject);

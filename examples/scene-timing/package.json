@@ -1,0 +1,12 @@
+{
+  "name": "@celesta/example-scene-timing",
+  "private": true,
+  "scripts": {
+    "preview": "celesta-editor film.tsx",
+    "export": "celesta-exporter --json --react --overwrite film.tsx scene-timing.mp4",
+    "typecheck": "tsc --project tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}

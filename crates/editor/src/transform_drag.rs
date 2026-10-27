@@ -7,6 +7,7 @@ use crate::element_edit::{
     ElementTargets, PropKey, TransformProp, editable, field_of, inner_target, reason_text,
 };
 use crate::layer_select::{letterbox, to_scene};
+use crate::scope::{CalledHere, CommitGate, Scope, ScopeState, scope_in_effect_here};
 use crate::transform_handles::{
     Handle, Marker, PivotMode, Resize, ResizeTool, SizeField, SizeProps, anchor_handle,
     anchor_keys, drag_label, drag_values, marker, pressed_handle, preview_values, prop_values,
@@ -21,6 +22,7 @@ use celesta_react_bridge::{
 };
 use celesta_source_edit::{EditTarget, EditValue};
 use gpui_kit::{Context, MouseMoveEvent};
+use std::collections::HashMap;
 
 /// Side of a square handle, in viewer pixels.
 pub(crate) const HANDLE_SIZE: f32 = 7.0;
@@ -51,6 +53,14 @@ pub(crate) struct TransformDrag {
     /// Why a rotation or scale turns about the pivot though Center is
     /// chosen (see `EditorView::pivot_note`), shown in the label.
     note: Option<&'static str>,
+    /// The edit scope the control showed when the drag started (see
+    /// `EditorView::kept_scope`): the drag is written under it or refused,
+    /// and the label's second line says it.
+    scope: Option<Scope>,
+    /// The scene's calls of the element's component when it calls it more
+    /// than once (see `ScopeOptions::called_here`): "This scene" then
+    /// writes the selected one, as the label says.
+    called_here: Option<CalledHere>,
     /// The props the runtime saw when the drag started.
     received: ReceivedProps,
     /// Where the runtime takes each editable prop's dragged value, kept from
@@ -87,6 +97,8 @@ impl TransformDrag {
             resize: None,
             primitive: String::new(),
             note: None,
+            scope: None,
+            called_here: None,
             received,
             sites,
             turned: 0.0,
@@ -115,9 +127,27 @@ impl TransformDrag {
         Self { note, ..self }
     }
 
+    /// The drag of an element whose edits write under `scope`, in a scene
+    /// whose calls of its component are `called_here` (see `called_here`).
+    pub(crate) fn with_scope(self, scope: Option<Scope>, called_here: Option<CalledHere>) -> Self {
+        Self {
+            scope,
+            called_here,
+            ..self
+        }
+    }
+
+    /// What the drag's edit changes (see `scope_in_effect_here`); `None`
+    /// without a scope.
+    pub(crate) fn in_effect(&self) -> Option<String> {
+        self.scope
+            .map(|scope| scope_in_effect_here(scope, self.called_here.as_ref()))
+    }
+
     /// The label beside the layer: the props the drag writes (`x 120 →
     /// 184`), after the note why it turns about the pivot (see
-    /// `with_note`); `None` while it has neither.
+    /// `with_note`), and under them what the edit changes (see
+    /// `with_scope`); `None` while it has neither props nor note.
     pub(crate) fn label(&self) -> Option<String> {
         let written = drag_label(
             &self.frame,
@@ -126,12 +156,16 @@ impl TransformDrag {
             self.resize.as_ref(),
         );
         let note = self.note.map(pivot_note_text);
-        match (note, written.is_empty()) {
+        let line = match (note, written.is_empty()) {
             (None, true) => None,
             (None, false) => Some(written),
             (Some(note), true) => Some(note),
             (Some(note), false) => Some(format!("{note}  {written}")),
-        }
+        }?;
+        Some(match self.in_effect() {
+            Some(in_effect) => format!("{line}\n{in_effect}"),
+            None => line,
+        })
     }
 
     /// `frame` (drawn with the drag's overrides) with the box its element's
@@ -659,6 +693,29 @@ pub(crate) fn drag_props(targets: &ElementTargets, frame: &LayerFrame) -> Vec<Pr
 /// [`drag_props`] for a drag in the mode `pivot` (the one used, see
 /// `pivot_used`): in Center mode the cross marks the box's middle and moves
 /// no anchor, so the anchors are left out.
+/// `props` and the Size tool's `resize` without what the release would
+/// refuse (`refusal` of a key, see `EditorView::gesture_refusals`): a
+/// refused prop is not dragged, and the size handles are not offered when
+/// any size prop is refused. The first refusal, for a drag left with
+/// nothing to change.
+pub(crate) fn without_refused(
+    props: Vec<PropKey>,
+    resize: Option<Resize>,
+    refusal: impl Fn(&PropKey) -> Option<String>,
+) -> (Vec<PropKey>, Option<Resize>, Option<String>) {
+    let mut first = None;
+    let mut refused = |key: &PropKey| match refusal(key) {
+        Some(reason) => {
+            first.get_or_insert(reason);
+            true
+        }
+        None => false,
+    };
+    let props = props.into_iter().filter(|key| !refused(key)).collect();
+    let resize = resize.filter(|resize| !resize.keys().iter().any(&mut refused));
+    (props, resize, first)
+}
+
 pub(crate) fn drag_props_in(
     targets: &ElementTargets,
     frame: &LayerFrame,
@@ -864,7 +921,23 @@ impl EditorView {
         };
         let resize = resize_used(self.resize_tool, targets, &frame);
         let pivot = pivot_used(self.pivot_mode, targets, &frame);
-        let mut props = drag_props_in(targets, &frame, pivot);
+        let props = drag_props_in(targets, &frame, pivot);
+        // A prop the release would refuse (the scope the drag keeps can't
+        // write it, or would not show it in this scene, or the scenes are
+        // being scanned) is not dragged, nor resized.
+        let keys: Vec<PropKey> = props
+            .iter()
+            .cloned()
+            .chain(resize.iter().flat_map(Resize::keys))
+            .collect();
+        let refusals: HashMap<PropKey, String> = keys
+            .iter()
+            .cloned()
+            .zip(self.gesture_refusals(&keys))
+            .filter_map(|(key, refusal)| Some((key, refusal?)))
+            .collect();
+        let (mut props, resize, scope_lock) =
+            without_refused(props, resize, |key| refusals.get(key).cloned());
         props.extend(resize.iter().flat_map(Resize::keys));
         if props.is_empty() {
             let reason = TransformProp::ALL
@@ -874,6 +947,7 @@ impl EditorView {
                     EditTarget::Locked(reason) => Some(reason_text(reason)),
                     _ => None,
                 })
+                .or(scope_lock)
                 .unwrap_or_default();
             return DragState::Locked(frame, reason);
         }
@@ -944,6 +1018,12 @@ impl EditorView {
     /// The running drag's label (see `TransformDrag::label`).
     pub(crate) fn transform_drag_label(&self) -> Option<String> {
         self.transform_drag.as_ref()?.label()
+    }
+
+    /// What the running drag's edit changes under the scope it writes with,
+    /// for the Properties header (see `TransformDrag::in_effect`).
+    pub(crate) fn transform_drag_in_effect(&self) -> Option<String> {
+        self.transform_drag.as_ref()?.in_effect()
     }
 
     /// Whether a drag is running with the button down (not one released and
@@ -1035,11 +1115,19 @@ impl EditorView {
             self.cancel_row_scrub();
         }
         let note = self.pivot_note();
+        let scope = self.kept_scope();
+        let called_here = self
+            .shown_scope_context()
+            .and_then(|context| match context.state {
+                ScopeState::Options(options) => options.called_here,
+                ScopeState::NotShared | ScopeState::Unknown { .. } => None,
+            });
         self.transform_drag = Some(
             TransformDrag::new(frame, handle, start, editable, pivot, received, sites)
                 .with_resize(resize)
                 .with_primitive(&primitive)
-                .with_note(note),
+                .with_note(note)
+                .with_scope(scope, called_here),
         );
         true
     }
@@ -1108,16 +1196,31 @@ impl EditorView {
             return true;
         }
         drag.released = true;
+        let drag_scope = drag.scope;
+        let refuse = |this: &mut Self, message: String| {
+            this.element_edit
+                .set_error(this.selected_layer.as_deref(), Some(message));
+            this.cancel_transform_drag();
+            true
+        };
         if self.element_targets().is_none() {
             // The targets went stale mid-drag (a reload); nothing to write to.
             let message = self
                 .element_edit
                 .unavailable(self.selected_layer.as_deref());
-            self.element_edit
-                .set_error(self.selected_layer.as_deref(), Some(message));
-            self.cancel_transform_drag();
-            return true;
+            return refuse(self, message);
         }
+        // Written under the scope the drag started with (its label said
+        // it), never held and never under another (see `gesture_gate`):
+        // refused with the note while the scenes are scanned, with the lock
+        // when that scope can't write a prop by now (a sweep that landed
+        // mid-drag, say), and when the drag started with no scope shown
+        // but the scan has since found one.
+        let keys: Vec<PropKey> = values.iter().map(|(key, _)| key.clone()).collect();
+        let scope = match self.gesture_gate_for(drag_scope, &keys) {
+            CommitGate::Go(scope) => scope,
+            CommitGate::Hold(note) | CommitGate::Refuse(note) => return refuse(self, note),
+        };
         // A success reloads the code, which draws the written values; the
         // released drag stays until that reload so a redraw before it still
         // shows the dragged position. A failure (the source changed while
@@ -1129,6 +1232,7 @@ impl EditorView {
             .collect();
         self.commit_element(
             values,
+            scope,
             |this, result, cx| {
                 // Targets still current after a success mean nothing was
                 // written (the text came out the same), so no reload comes
@@ -1242,6 +1346,11 @@ mod tests {
                 .collect(),
             table: None,
             component: None,
+            enclosing: None,
+            defaults: Vec::new(),
+            lift_lock: None,
+            outside: Vec::new(),
+            one: None,
         }
     }
 
@@ -1764,6 +1873,60 @@ mod tests {
     }
 
     #[test]
+    fn the_drag_label_says_what_edits_change() {
+        let drag_in = |scope, called_here| {
+            TransformDrag::new(
+                rect_frame(),
+                Handle::Rotate,
+                at(200.0, 20.0),
+                vec![TransformProp::Rotation.key()],
+                PivotMode::Pivot,
+                ReceivedProps::default(),
+                Vec::new(),
+            )
+            .with_scope(scope, called_here)
+        };
+        let drag = |scope| drag_in(scope, None);
+        let mut shared = drag(Some(Scope::Shared));
+        // Nothing written yet: no label.
+        assert_eq!(shared.label(), None);
+        shared.follow(vec![(TransformProp::Rotation.key(), 30.0)]);
+        assert_eq!(
+            shared.label().as_deref(),
+            Some("rotation 0 → 30\nEdits change the shared value")
+        );
+        let mut this_scene = drag(Some(Scope::ThisScene));
+        this_scene.follow(vec![(TransformProp::Rotation.key(), 30.0)]);
+        assert_eq!(
+            this_scene.label().as_deref(),
+            Some("rotation 0 → 30\nEdits change this scene")
+        );
+        // A scene calling the component twice: this call only.
+        let twice = || {
+            Some(CalledHere {
+                component: "PriceTag".to_owned(),
+                times: 2,
+            })
+        };
+        let mut this_call = drag_in(Some(Scope::ThisScene), twice());
+        this_call.follow(vec![(TransformProp::Rotation.key(), 30.0)]);
+        assert_eq!(
+            this_call.label().as_deref(),
+            Some("rotation 0 → 30\nEdits change this `<PriceTag>` only")
+        );
+        let mut shared = drag_in(Some(Scope::Shared), twice());
+        shared.follow(vec![(TransformProp::Rotation.key(), 30.0)]);
+        assert_eq!(
+            shared.label().as_deref(),
+            Some("rotation 0 → 30\nEdits change the shared value")
+        );
+        // An element that is not shared: one line.
+        let mut alone = drag(None);
+        alone.follow(vec![(TransformProp::Rotation.key(), 30.0)]);
+        assert_eq!(alone.label().as_deref(), Some("rotation 0 → 30"));
+    }
+
+    #[test]
     fn a_drag_about_the_pivot_says_why_center_is_not_in_effect() {
         let frame = rect_frame();
         let editable = vec![TransformProp::Rotation.key()];
@@ -2159,7 +2322,8 @@ mod tests {
             .map(|(key, value)| (key, Some(EditValue::Number(value))))
             .collect();
         let files = write_all_recorded(targets.files.clone(), |texts| {
-            commit_files(texts, &targets, report, &values).map_err(|error| error.to_string())
+            commit_files(texts, &targets, report, None, None, &values)
+                .map_err(|error| error.to_string())
         })
         .expect("written");
         HistoryEntry { files }
@@ -2396,7 +2560,8 @@ mod tests {
             .map(|(key, value)| (key, Some(EditValue::Number(value))))
             .collect();
         let files = write_all_recorded(targets.files.clone(), |texts| {
-            commit_files(texts, &targets, &report, &values).map_err(|error| error.to_string())
+            commit_files(texts, &targets, &report, None, None, &values)
+                .map_err(|error| error.to_string())
         })
         .expect("both files are written");
         assert_eq!(files.len(), 2);
@@ -2416,5 +2581,44 @@ mod tests {
         assert_eq!(fs::read_to_string(&component).unwrap(), COMPONENT);
         assert_eq!(fs::read_to_string(&scene).unwrap(), SCENE);
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_drag_offers_no_size_handles_for_a_refused_size_prop() {
+        let resize = Resize {
+            props: SizeProps::Box {
+                width: size_field("width", None),
+                height: size_field("height", None),
+            },
+            compensable: true,
+            animated: false,
+        };
+        let moves = vec![TransformProp::X.key(), TransformProp::Y.key()];
+        let width = resize.keys()[0].clone();
+        let sets_own = "This scene sets its own `rectWidth`".to_owned();
+        let refused = |key: &PropKey| (*key == width).then(|| sets_own.clone());
+
+        // A size prop the release would refuse: no size handles, the moves
+        // stay, and the refusal is the reason when nothing else is left.
+        assert_eq!(
+            without_refused(moves.clone(), Some(resize.clone()), refused),
+            (moves.clone(), None, Some(sets_own.clone()))
+        );
+        // A moved prop refused: dropped, the size handles stay.
+        let x = TransformProp::X.key();
+        let refused_x = |key: &PropKey| (*key == x).then(|| sets_own.clone());
+        assert_eq!(
+            without_refused(moves.clone(), Some(resize.clone()), refused_x),
+            (
+                vec![TransformProp::Y.key()],
+                Some(resize.clone()),
+                Some(sets_own.clone())
+            )
+        );
+        // Nothing refused: as offered.
+        assert_eq!(
+            without_refused(moves.clone(), Some(resize.clone()), |_| None),
+            (moves, Some(resize), None)
+        );
     }
 }

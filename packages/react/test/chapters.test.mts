@@ -28,6 +28,30 @@ test('listChapters reads defineScenes lists, plans, and plain spans', () => {
   ]);
 });
 
+// The editor finds a chapter's `defineScenes` entry in the source by its id.
+test('chapter ids line up with defineScenes entries', () => {
+  const entries = [
+    { id: 'intro', durationInFrames: 30 },
+    { id: 'main', name: 'Main', durationInFrames: 40, offset: -10 },
+    { id: 'outro', durationInFrames: 20 },
+  ];
+  const scenes = defineScenes(entries);
+  const mounted = mountWith(scenes, scenes.durationInFrames);
+  try {
+    const chapters = mounted.config.chapters ?? [];
+    assert.deepEqual(
+      chapters.map(({ id }) => id),
+      entries.map(({ id }) => id),
+    );
+    for (const [i, chapter] of chapters.entries()) {
+      assert.equal(chapter.from, scenes.scenes[i].from, chapter.id);
+      assert.equal(chapter.durationInFrames, entries[i].durationInFrames, chapter.id);
+    }
+  } finally {
+    mounted.dispose();
+  }
+});
+
 test('listChapters rejects bad ids and frames', () => {
   assert.throws(() => listChapters([{ id: '', from: 0, durationInFrames: 1 }]), /non-empty string id/);
   assert.throws(

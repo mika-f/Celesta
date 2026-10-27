@@ -5,7 +5,7 @@ import { createElement as h } from 'react';
 import type { ReactNode } from 'react';
 import { test } from 'vitest';
 
-import { Composition, MotionBlur, Rect, Scenes, Sequence, Trail, defineScenes, useCurrentFrame } from '../src/index.js';
+import { Composition, MotionBlur, Rect, Scenes, Sequence, Series, Trail, defineScenes, useCurrentFrame } from '../src/index.js';
 import type { Layer } from '../src/index.js';
 import { jsxDEV } from '../src/jsx-dev-runtime.js';
 import type { SourcePosition } from '../src/jsx-dev-runtime.js';
@@ -45,9 +45,52 @@ test('one component used in two scenes is one element with two instances', () =>
   assert.equal(elements.length, 1);
   assert.deepEqual(elements[0].element, pos('scene.tsx', 3, 7));
   assert.deepEqual(elements[0].instances, [
-    { chain: [pos('scene.tsx', 3, 7), pos('entry.tsx', 3, 9)], ranges: [[0, 30]], maxPerFrame: 1 },
-    { chain: [pos('scene.tsx', 3, 7), pos('entry.tsx', 5, 9)], ranges: [[30, 60]], maxPerFrame: 1 },
+    {
+      chain: [pos('scene.tsx', 3, 7), pos('entry.tsx', 3, 9)],
+      wrappers: [pos('entry.tsx', 2, 5), pos('entry.tsx', 1, 1)],
+      ranges: [[0, 30]],
+      maxPerFrame: 1,
+    },
+    {
+      chain: [pos('scene.tsx', 3, 7), pos('entry.tsx', 5, 9)],
+      wrappers: [pos('entry.tsx', 4, 5), pos('entry.tsx', 1, 1)],
+      ranges: [[30, 60]],
+      maxPerFrame: 1,
+    },
   ]);
+});
+
+test('occurrence instances list the wrappers they render through', () => {
+  const composition = mount(() =>
+    comp(
+      jsxDEV(Sequence, { from: 10, durationInFrames: 20, children: rectAt(3) }, undefined, false, at('entry.tsx', 2, 5)),
+      jsxDEV(
+        Series,
+        {
+          children: [
+            jsxDEV(Series.Sequence, { durationInFrames: 30, children: rectAt(6) }, 'a', false, at('entry.tsx', 5, 7)),
+            jsxDEV(Series.Sequence, { durationInFrames: 30, children: rectAt(9) }, 'b', false, at('entry.tsx', 8, 7)),
+          ],
+        },
+        undefined,
+        true,
+        at('entry.tsx', 4, 5),
+      ),
+    ),
+  );
+  const { elements } = composition.collectOccurrences(0, 100, resolve);
+  const instanceAt = (line: number) => {
+    const element = elements.find(({ element }) => element.line === line);
+    assert.ok(element, JSON.stringify(elements));
+    assert.equal(element.instances.length, 1);
+    return element.instances[0];
+  };
+  // Innermost first; the chain still leaves the wrappers out.
+  assert.deepEqual(instanceAt(3).wrappers, [pos('entry.tsx', 2, 5), pos('entry.tsx', 1, 1)]);
+  assert.deepEqual(instanceAt(3).chain, [pos('scene.tsx', 3, 7)]);
+  assert.deepEqual(instanceAt(9).wrappers, [pos('entry.tsx', 8, 7), pos('entry.tsx', 4, 5), pos('entry.tsx', 1, 1)]);
+  assert.deepEqual(instanceAt(9).chain, [pos('scene.tsx', 9, 7)]);
+  assert.deepEqual(instanceAt(9).ranges, [[30, 60]]);
 });
 
 test('one Scene component in two defineScenes entries is one instance with ranges in both', () => {

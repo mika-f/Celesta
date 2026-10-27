@@ -5,7 +5,7 @@
 ```tsx file=examples/media.tsx title="media.tsx"
 ```
 
-- An `Image` or `Video` is drawn at its own pixel size. Position it with `x`/`y` and anchors, and resize it with `scale` or a `Fit`. Images can be PNG, JPEG, WebP, GIF, or PNM.
+- An `Image` or `Video` is drawn at its own pixel size unless you give it `width` or `height`. One of them alone keeps the picture's proportions; with both, a `Video` is stretched to that box, and an `Image` is too unless `fit="contain"` fits it inside the box or `"cover"` fills the box, cropping what spills over. Position it with `x`/`y` and anchors; `scale` and a `Fit` resize it as they do any layer. Images can be PNG, JPEG, WebP, GIF, or PNM.
 - An animated GIF, APNG, or WebP plays on the enclosing sequence's clock, each frame for its own delay, and loops. `startFrom` and `playbackRate` work as on `Video`; `loop={false}` holds the last frame. `preloadMedia()` reports its length as `animation.durationSeconds`.
 - `Video` and `Audio` accept `startFrom` (seconds into the file), `playbackRate`, `volume`, and `muted`. A `Video` plays its own soundtrack, so do not add an `Audio` with the same file to hear it; set `muted` to keep only the picture.
 - `loop` on a `Video` or `Audio` starts the file over from its beginning when playback reaches its end, picture and sound together, instead of holding the last frame in silence.
@@ -16,7 +16,7 @@ frameKeyframes(keys, { fps, origin? }) builds volume, playbackRate, or pitch key
 
 ## Show media in a frame
 
-`MediaFrame` from `@celesta/components` fits an image or a video into a frame of a given `width` and `height`, drawn by `Panel` (background, border over the media, rounded corners, shadow, and a `padding` mat), with an optional `caption` under it. `kind` (`"image"` or `"video"`) says which the media is; it is never guessed from the file name. `fit="contain"` (the default) shows all of it, centred; `"cover"` fills the frame, cropped. A `Video` draws at its own size, so a video also needs `sourceWidth` and `sourceHeight`: read them once with `preloadMedia()` in `prepare()`. `startFrom`, `playbackRate`, `volume`, `muted`, and `loop` reach the `Video` unchanged, so it starts with its `Sequence` and sounds as a bare `Video` would. Only the plain frame exists for now.
+`MediaFrame` from `@celesta/components` fits an image or a video into a frame of a given `width` and `height`, drawn by `Panel` (background, border over the media, rounded corners, shadow, and a `padding` mat), with an optional `caption` under it. `kind` (`"image"` or `"video"`) says which the media is; it is never guessed from the file name. `fit="contain"` (the default) shows all of it, centred; `"cover"` fills the frame, cropped. A `Video` has no `fit`, so `MediaFrame` scales a video to fit itself and needs its size as `sourceWidth` and `sourceHeight`: read them once with `preloadMedia()` in `prepare()`. `startFrom`, `playbackRate`, `volume`, `muted`, and `loop` reach the `Video` unchanged, so it starts with its `Sequence` and sounds as a bare `Video` would. Only the plain frame exists for now.
 
 ```tsx title="A clip in a rounded frame"
 let clip: MediaInfo;

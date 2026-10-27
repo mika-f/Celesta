@@ -13,6 +13,7 @@ use crate::inline_text::{
 };
 use crate::layer_select::{SourceLookup, letterbox, scene_point, to_scene};
 use crate::preview::TextOverride;
+use crate::scope::{CommitGate, Scope};
 use crate::view::EditorView;
 use celesta_composition::Point;
 use celesta_editor_theme as theme;
@@ -60,6 +61,9 @@ pub(crate) struct InlineTextSession {
     /// The layout or the map changed since the IME was told where the text
     /// is.
     pub(crate) moved: bool,
+    /// The edit scope the control showed when the edit started: the text
+    /// is written under it or refused (see `EditorView::commit_gesture_row`).
+    pub(crate) scope: Option<Scope>,
 }
 
 impl InlineTextSession {
@@ -72,6 +76,7 @@ impl InlineTextSession {
             map: None,
             selecting: false,
             moved: false,
+            scope: None,
         }
     }
 }
@@ -240,6 +245,33 @@ pub(crate) fn edit_end(event: EditEvent) -> EditEnd {
 /// press neither commits nor moves the caret.
 pub(crate) fn press_inside(in_box: Option<bool>, hits_layer: bool) -> bool {
     in_box.unwrap_or(hits_layer)
+}
+
+/// Why a commit that `event` ends an edit with is refused, when the edit
+/// stays open instead of losing its text: the gesture's `gate` (`None`
+/// while the commit would wait its turn) refuses a text that `writes`
+/// (a gesture is never held for the scan: a hold is one more refusal),
+/// and the person ended the edit (Enter, a blur, a press outside the
+/// text), so it can be committed again under the scope the control shows
+/// now. When the selection, the playhead or the project moves on, the
+/// edit ends whatever the gate says.
+pub(crate) fn inline_commit_refusal(
+    event: EditEvent,
+    writes: bool,
+    gate: Option<&CommitGate>,
+) -> Option<String> {
+    let ended_by_the_person = matches!(
+        event,
+        EditEvent::Enter | EditEvent::Blur | EditEvent::CanvasPress { inside: false }
+    );
+    match gate {
+        Some(CommitGate::Refuse(refusal) | CommitGate::Hold(refusal))
+            if writes && ended_by_the_person =>
+        {
+            Some(refusal.clone())
+        }
+        _ => None,
+    }
 }
 
 /// What a committed edit of `original` writes: `edited` as the `text`
@@ -484,6 +516,14 @@ impl EditorView {
         // reload (or its end), the targets are those it is being written to.
         let kept = self.kept_override != KeptOverride::Dropped;
         let targets = self.element_targets().filter(|_| !kept);
+        // A text edit that would be refused when committed (the scope it
+        // keeps can't write it, or would not show it in this scene, or the
+        // scenes are being scanned) says why.
+        if targets.is_some()
+            && let Some(refusal) = self.gesture_refusal(&children_key())
+        {
+            return Some(InlineEntry::Refuse(refusal));
+        }
         let (lookup_pending, unavailable) = match lookup {
             SourceLookup::Pending => (true, None),
             SourceLookup::Found(_) if kept => (true, None),
@@ -546,7 +586,10 @@ impl EditorView {
     ) {
         self.submit_edited_rows(cx);
         self.pause();
-        let session = InlineTextSession::new(layer, original);
+        let session = InlineTextSession {
+            scope: self.kept_scope(),
+            ..InlineTextSession::new(layer, original)
+        };
         self.text_override = Some(live_override(&session));
         self.inline_text = Some(session);
         self.inline_pending = None;
@@ -604,7 +647,7 @@ impl EditorView {
             self.text_override = Some(committed);
             // Before the commit, which may finish at once (a failure).
             self.kept_override = KeptOverride::Writing;
-            self.commit_element_row(&children_key(), Some(value), cx);
+            self.commit_gesture_row(&children_key(), Some(value), session.scope, cx);
         } else if self
             .text_override
             .as_ref()
@@ -711,6 +754,7 @@ impl EditorView {
         }
         match edit_end(event) {
             EditEnd::Keep => return false,
+            EditEnd::Commit { .. } if self.keep_refused_inline_text(event, cx) => return false,
             EditEnd::Commit { refocus_root } => {
                 self.inline_refocus |= refocus_root;
                 self.commit_inline_text(cx);
@@ -723,6 +767,31 @@ impl EditorView {
                 self.cancel_inline_text(reason, cx);
             }
         }
+        true
+    }
+
+    /// A commit `event` asks for that the scope refuses (see
+    /// [`inline_commit_refusal`]): the edit stays open with its text and
+    /// caret, the viewer's notice says why, and the edit now keeps the
+    /// scope the control shows, so committing again goes under it. True
+    /// when the edit stays.
+    fn keep_refused_inline_text(&mut self, event: EditEvent, cx: &mut Context<Self>) -> bool {
+        let Some(session) = &self.inline_text else {
+            return false;
+        };
+        let writes = self.selected_layer.as_deref() == Some(session.layer.as_str())
+            && inline_commit_value(&session.original, &session.edit.display_text()).is_some();
+        let gate = (!self.row_commit_waits())
+            .then(|| self.gesture_gate_for(session.scope, &[children_key()]));
+        let Some(refusal) = inline_commit_refusal(event, writes, gate.as_ref()) else {
+            return false;
+        };
+        let scope = self.kept_scope();
+        if let Some(session) = &mut self.inline_text {
+            session.scope = scope;
+        }
+        self.inline_notice = Some(refusal);
+        cx.notify();
         true
     }
 

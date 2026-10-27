@@ -7,7 +7,7 @@ use celesta_composition::{
     Layer, LayerContent, Scene, ShaderSource, TextColorRun, TextFontRun, Time,
 };
 use celesta_gpu_renderer::{
-    GpuRenderer, HitRegion, LayerFrame, RenderQuality, TextLayout, layer_frame,
+    GpuRenderer, HitRegion, LayerFrame, RenderQuality, TextLayout, layer_frame, parent_space,
 };
 use celesta_react_bridge::{
     ComponentPropertyField, ComponentPropertySchema, ComponentResolutionRequest,
@@ -63,6 +63,12 @@ pub(crate) struct PreviewRequest {
     /// The layer whose frame to measure from this frame's draw
     /// (`WholeScene` only); `None` measures nothing, as during playback.
     pub(crate) frame_of: Option<String>,
+    /// The group whose children space to report from this frame's scene
+    /// (`WholeScene` only); `None` asks for none.
+    pub(crate) space_of: Option<String>,
+    /// The parent an element was just added under, whose added layer to find
+    /// in this frame's scene (`WholeScene` only); `None` asks for none.
+    pub(crate) added_under: Option<AddedUnder>,
     /// The timeline frame `scene` is for, echoed in the result.
     pub(crate) timeline_frame: i64,
     /// The text edited on the canvas, drawn in place of its layer's text;
@@ -70,6 +76,32 @@ pub(crate) struct PreviewRequest {
     pub(crate) text_override: Option<TextOverride>,
     /// Render the scene the runtime last evaluated instead of evaluating again.
     pub(crate) reuse_scene: bool,
+}
+
+/// Where an element was just written: as the last child of the group layer
+/// `parent`, inside a `<Sequence>` of its own when `wrapped`.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct AddedUnder {
+    pub(crate) parent: String,
+    pub(crate) wrapped: bool,
+}
+
+/// The added layer: `under.parent`'s last child, or that child's first child
+/// when `wrapped`. `None` when the scene has no such group, it has no
+/// children, or a wrapped addition's last child is not a group with one.
+pub(crate) fn added_layer(scene: &Scene, under: &AddedUnder) -> Option<String> {
+    let LayerContent::Group { layers, .. } = &find_layer(&scene.layers, &under.parent)?.content
+    else {
+        return None;
+    };
+    let last = layers.last()?;
+    if !under.wrapped {
+        return Some(last.id.clone());
+    }
+    let LayerContent::Group { layers, .. } = &last.content else {
+        return None;
+    };
+    layers.first().map(|layer| layer.id.clone())
 }
 
 /// A text layer's text as edited on the canvas, drawn without asking the
@@ -180,6 +212,24 @@ fn find_layer_mut<'a>(layers: &'a mut [Layer], id: &str) -> Option<&'a mut Layer
     None
 }
 
+/// Layer `id`, found as `find_layer_mut` finds it.
+fn find_layer<'a>(layers: &'a [Layer], id: &str) -> Option<&'a Layer> {
+    for layer in layers {
+        if layer.id == id {
+            return Some(layer);
+        }
+        if let LayerContent::Group { layers, mask, .. } = &layer.content {
+            if let Some(found) = find_layer(layers, id) {
+                return Some(found);
+            }
+            if let Some(found) = mask.as_ref().and_then(|mask| find_layer(&mask.layers, id)) {
+                return Some(found);
+            }
+        }
+    }
+    None
+}
+
 /// Runs over `original` moved onto `edited` by their common prefix and
 /// suffix, in code points: an index in the prefix stays, one in the suffix
 /// moves by the length change, and a run's end inside the changed span is
@@ -258,6 +308,16 @@ pub(crate) struct PreviewResult {
     /// when the layer is absent or has no affine frame (see `layer_frame`).
     /// `None` when nothing was measured.
     pub(crate) layer_frame: Option<(String, Option<LayerFrame>)>,
+    /// The request's `space_of` and the map from that group's children space
+    /// to scene pixels (see `parent_space`): `None` inside when the frame has
+    /// no such group or it turns in 3D. The map may collapse the plane (a
+    /// group scaled to zero), so it may have no inverse. `None` when nothing
+    /// was asked.
+    pub(crate) parent_space: Option<(String, Option<[f64; 6]>)>,
+    /// The request's `added_under` parent and the layer `added_layer` found
+    /// under it: `None` inside when there is none. `None` when nothing was
+    /// asked.
+    pub(crate) added: Option<(String, Option<String>)>,
     /// The layout of the request's `text_override` layer as drawn in this
     /// frame; `None` without an override, or when the frame failed or has
     /// no such text layer.
@@ -505,6 +565,20 @@ impl PreviewWorker {
                             .and_then(|scene| layer_frame(scene, &hit_regions, &id));
                         (id, measured)
                     });
+                    let children_space = request.space_of.filter(|_| whole_scene).map(|id| {
+                        let space = drawn
+                            .as_ref()
+                            .ok()
+                            .and_then(|scene| parent_space(scene, &id));
+                        (id, space)
+                    });
+                    let added = request.added_under.filter(|_| whole_scene).map(|under| {
+                        let layer = drawn
+                            .as_ref()
+                            .ok()
+                            .and_then(|scene| added_layer(scene, &under));
+                        (under.parent, layer)
+                    });
                     if result_tx
                         .send(PreviewResult {
                             generation: request.generation,
@@ -513,6 +587,8 @@ impl PreviewWorker {
                             hit_regions,
                             layer_source,
                             layer_frame,
+                            parent_space: children_space,
+                            added,
                             text_layout,
                             timeline_frame: request.timeline_frame,
                         })
@@ -860,5 +936,115 @@ pub(crate) fn splice_resolved_components(
             }
             _ => index += 1,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use celesta_composition::{EvaluatedTransform, GroupMask, MaskMode, Rational};
+
+    fn leaf(id: &str) -> Layer {
+        Layer {
+            id: id.to_owned(),
+            transform: EvaluatedTransform::default(),
+            opacity: 1.0,
+            blend_mode: Default::default(),
+            effects: Default::default(),
+            content: LayerContent::MissingComponent {
+                component: id.to_owned(),
+                props: Default::default(),
+            },
+        }
+    }
+
+    fn group(id: &str, layers: Vec<Layer>, mask: Option<Vec<Layer>>) -> Layer {
+        Layer {
+            content: LayerContent::Group {
+                layers,
+                clip: None,
+                mask: mask.map(|layers| GroupMask {
+                    layers,
+                    mode: MaskMode::Alpha,
+                    invert: false,
+                }),
+                motion_blur: false,
+            },
+            ..leaf(id)
+        }
+    }
+
+    fn scene_of(layers: Vec<Layer>) -> Scene {
+        Scene {
+            width: 16,
+            height: 16,
+            frame_rate: Rational::new(30, 1),
+            time: Time::new(0, 30),
+            fonts: Vec::new(),
+            shaders: Vec::new(),
+            layers,
+        }
+    }
+
+    /// Two instances of a `.map()` under the root group, the second with the
+    /// explicit id `card`; each takes a mask (the group's child 0) and three
+    /// children, the last of `card`'s being `last`.
+    fn two_instances(last: Layer) -> Scene {
+        scene_of(vec![group(
+            "0",
+            vec![
+                group(
+                    "0.0",
+                    vec![leaf("0.0.1"), leaf("0.0.2"), leaf("0.0.3")],
+                    Some(vec![leaf("0.0.0.0")]),
+                ),
+                group(
+                    "card",
+                    vec![leaf("0.1.1"), leaf("0.1.2"), last],
+                    Some(vec![leaf("0.1.0.0")]),
+                ),
+            ],
+            None,
+        )])
+    }
+
+    fn under(parent: &str, wrapped: bool) -> AddedUnder {
+        AddedUnder {
+            parent: parent.to_owned(),
+            wrapped,
+        }
+    }
+
+    #[test]
+    fn the_added_layer_is_the_named_parent_s_last_child() {
+        let scene = two_instances(leaf("0.1.3"));
+        assert_eq!(
+            added_layer(&scene, &under("card", false)),
+            Some("0.1.3".to_owned())
+        );
+        assert_eq!(
+            added_layer(&scene, &under("0.0", false)),
+            Some("0.0.3".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_wrapped_addition_is_the_sequence_s_child() {
+        let scene = two_instances(group("0.1.3", vec![leaf("0.1.3.0")], None));
+        assert_eq!(
+            added_layer(&scene, &under("card", true)),
+            Some("0.1.3.0".to_owned())
+        );
+        // A last child that is not a group holds nothing it wrapped.
+        let unwrapped = two_instances(leaf("0.1.3"));
+        assert_eq!(added_layer(&unwrapped, &under("card", true)), None);
+    }
+
+    #[test]
+    fn a_missing_parent_adds_nothing() {
+        let scene = two_instances(leaf("0.1.3"));
+        assert_eq!(added_layer(&scene, &under("gone", false)), None);
+        // A leaf has no children to add after.
+        assert_eq!(added_layer(&scene, &under("0.1.2", false)), None);
     }
 }

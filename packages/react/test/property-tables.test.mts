@@ -34,6 +34,18 @@ test('size names the props that hold the box', () => {
   assert.equal(tables.Group?.size, undefined);
 });
 
+test('the Video table sizes by width and height', () => {
+  const tables = listPrimitiveProperties();
+  assert.deepEqual(tables.Video?.size, { width: 'width', height: 'height' });
+  assert.deepEqual(tables.Video?.groups.map((group) => group.name), ['Transform', 'Source', 'Size', 'Audio']);
+  const field = (key: string) => tables.Video?.groups.find((entry) => entry.name === 'Size')?.fields
+    .find((row) => row.key === key)?.field;
+  // A size must be positive (`Video width must be finite and positive`); no `fit`.
+  assert.deepEqual(keysOf('Video', 'Size'), ['width', 'height']);
+  assert.deepEqual(field('width'), { type: 'number', min: 1 });
+  assert.deepEqual(field('height'), { type: 'number', min: 1 });
+});
+
 test('fields carry their defaults and bounds', () => {
   const field = (table: string, group: string, key: string) =>
     listPrimitiveProperties()[table]?.groups.find((entry) => entry.name === group)?.fields

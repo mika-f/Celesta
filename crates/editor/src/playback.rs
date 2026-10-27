@@ -79,12 +79,13 @@ impl EditorView {
     /// opening) — waits for it, so the soundtrack starts with the picture
     /// instead of joining part-way through.
     pub(crate) fn start_playback(&mut self) {
-        // Playing leaves the rows, as a seek does, and a text edited on the
-        // canvas.
+        // Playing leaves the rows, as a seek does, a text edited on the
+        // canvas, and the add mode.
         self.element_rows.submit_requested = true;
         if self.inline_text.is_some() {
             self.inline_end_due = Some(EditEvent::Play);
         }
+        self.end_add_mode();
         if self.playing || self.clock.end_frame() <= 0 {
             return;
         }
@@ -107,6 +108,12 @@ impl EditorView {
         // unwritten.
         self.transform_drag = None;
         self.element_rows.scrub = None;
+        if self.band_drag_active() {
+            self.band_drag = None;
+        }
+        if self.scene_drag_active() {
+            self.scene_drag = None;
+        }
         self.playing = true;
         self.playback_started_at = Some(Instant::now());
         self.playback_started_frame = self.clock.frame();
@@ -346,16 +353,27 @@ impl EditorView {
         }
         self.continue_master_volume_drag(event, window, cx);
         self.continue_transform_drag(event, cx);
+        self.continue_band_drag(event, cx);
+        self.continue_scene_drag(event, cx);
         self.continue_row_scrub(event, cx);
         self.continue_inline_selection(event, window, cx);
+        self.continue_add(event, cx);
     }
 
-    pub(crate) fn drag_end(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn drag_end(
+        &mut self,
+        event: &MouseUpEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.end_inline_selection();
         let ended = self.end_scrub() | self.end_overview_drag();
         let ended = self.master_volume_drag.take().is_some() | ended;
         let ended = self.end_transform_drag(cx) | ended;
+        let ended = self.end_band_drag(cx) | ended;
+        let ended = self.end_scene_drag(cx) | ended;
         let ended = self.end_row_scrub(cx) | ended;
+        let ended = self.end_add(event.position, cx) | ended;
         if ended {
             cx.notify();
         }

@@ -20,7 +20,7 @@ use celesta_composition::{
     BackfaceVisibility, BlendMode, Clip, ImageAnimation, ImageFit, InstanceShape, Layer,
     LayerContent, Matrix3, Point, ResolvedAsset, Scene, faces_away, multiply3, multiply3_flat,
 };
-use celesta_renderer::image_source::{fit_within, resize_rgba};
+use celesta_renderer::image_source::{display_size, fit_within, resize_rgba};
 use celesta_renderer::psd_source::PsdSize;
 use celesta_renderer::{
     Color as CpuColor, FlattenedPath, flatten_path, rasterize_path, resolve_rect_paint,
@@ -787,7 +787,12 @@ impl GpuRenderer {
                     blend_mode,
                 )));
             }
-            LayerContent::Video { asset, timing } => {
+            LayerContent::Video {
+                asset,
+                timing,
+                width: display_width,
+                height: display_height,
+            } => {
                 let path = self.local_asset_path(asset)?;
                 let decoder = self
                     .video_decoder
@@ -820,9 +825,15 @@ impl GpuRenderer {
                 };
                 let (width, height) =
                     fit_within(frame.width, frame.height, self.max_texture_dimension);
+                let (display_width, display_height) = display_size(
+                    f64::from(frame.width),
+                    f64::from(frame.height),
+                    *display_width,
+                    *display_height,
+                );
                 let mut state = state;
-                let x = (f64::from(frame.width) / f64::from(width)) as f32;
-                let y = (f64::from(frame.height) / f64::from(height)) as f32;
+                let x = (display_width / f64::from(width)) as f32;
+                let y = (display_height / f64::from(height)) as f32;
                 state.transform.a *= x;
                 state.transform.b *= x;
                 state.transform.c *= y;

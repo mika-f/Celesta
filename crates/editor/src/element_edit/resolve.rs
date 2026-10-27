@@ -11,12 +11,13 @@ use crate::layer_select::owner_call_site;
 use crate::property_controls::ControlKind;
 use celesta_react_bridge::{
     ComponentPropertyField, ComponentPropertySchema, ElementKind, LayerSource, LayerSourceReport,
-    PrimitivePropertyField, PrimitivePropertyTable, ReceivedValue, SourcePos,
+    PrimitivePropertyField, PrimitivePropertyTable, ReceivedProps, ReceivedValue, SourcePos,
 };
 use celesta_source_edit::{
-    EditTarget, EditValue, ElementRef, LiteralForm, LockReason, ResolveContext, element_at,
-    enclosing_component, has_attribute, parameter_of, resolve_call_site_prop, resolve_inputs,
-    resolve_through, text_style_path, written_attributes,
+    DefaultTarget, EditTarget, EditValue, ElementRef, LiftLock, LiftProp, LiteralForm, LockReason,
+    ResolveContext, TimingKind, element_at, enclosing_component, has_attribute, later_series_items,
+    parameter_default, parameter_of, plan_lift, resolve_call_site_prop, resolve_inputs,
+    resolve_through, resolve_unchecked, text_style_path, timing_kind, written_attributes,
 };
 use std::cell::OnceCell;
 use std::collections::BTreeMap;
@@ -96,11 +97,24 @@ pub(crate) fn type_component_props(
 /// Types each component prop `schema` declares by its field, and locks a
 /// literal of another kind (`label="Sale"` for a number) as the expression
 /// it is in the source, as table rows are. The others keep their literal's
-/// kind. Without the call site's text, nothing is typed.
+/// kind. Without the call site's text, nothing is typed. The element as
+/// one instance ([`ElementTargets::one`]) is typed too.
 pub(super) fn apply_component_schema(
     targets: &mut ElementTargets,
     schema: ComponentPropertySchema,
     read: impl Fn(&Path) -> Result<String, String>,
+) {
+    if let Some(one) = &mut targets.one {
+        type_props(one, schema.clone(), &read);
+    }
+    type_props(targets, schema, &read);
+}
+
+/// [`apply_component_schema`] on `targets` alone.
+fn type_props(
+    targets: &mut ElementTargets,
+    schema: ComponentPropertySchema,
+    read: &dyn Fn(&Path) -> Result<String, String>,
 ) {
     let Some(component) = &mut targets.component else {
         return;
@@ -268,7 +282,7 @@ pub(crate) fn resolve_targets(
     report: &LayerSourceReport,
     table: Option<&PrimitivePropertyTable>,
 ) -> Result<ElementTargets, String> {
-    resolve_rows(read, report, table, |text, element| {
+    let rows = |text: &str, element: &ElementRef| {
         let per_axis = [TransformProp::ScaleX, TransformProp::ScaleY]
             .iter()
             .any(|prop| has_attribute(text, element, prop.name()));
@@ -296,6 +310,93 @@ pub(crate) fn resolve_targets(
             }
         }
         rows
+    };
+    resolve_rows(read, report, table, rows, RowRead::Received)
+}
+
+/// How [`resolve_rows`] reads the rows' values.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum RowRead {
+    /// Checked against the values the runtime received.
+    Received,
+    /// Not compared with a received value (see `resolve_unchecked`): the
+    /// runtime reports none for a timing wrapper's props.
+    Unchecked,
+}
+
+/// `report` as the report of the wrapper written at `source`: its chain
+/// from that wrapper's entry outward, no received props, one render (the
+/// rest as `report`'s). `None` when no entry is there.
+pub(crate) fn window_report(
+    report: &LayerSourceReport,
+    source: &SourcePos,
+) -> Option<LayerSourceReport> {
+    let at = report
+        .chain
+        .iter()
+        .position(|entry| SourcePos::from(entry) == *source)?;
+    Some(LayerSourceReport {
+        chain: report.chain[at..].to_vec(),
+        props: ReceivedProps::default(),
+        render_count: 1,
+        ..report.clone()
+    })
+}
+
+/// The timing window written at `source` around the selected element.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct WindowTargets {
+    /// Where the wrapper is written.
+    pub(crate) source: SourcePos,
+    pub(crate) kind: TimingKind,
+    /// The wrapper's timing props as rows: `from` and `durationInFrames` of
+    /// a `Sequence`, `durationInFrames` and `offset` of a `Series` item.
+    pub(crate) targets: ElementTargets,
+    /// The `Series` items after this one, which move with its end.
+    pub(crate) followers: Vec<SourcePos>,
+}
+
+/// The wrapper at `source` (an entry of `report`'s chain) with its timing
+/// props as rows (`from`, `durationInFrames`; or `durationInFrames`,
+/// `offset`), resolved as an element of its own from [`window_report`] and
+/// not checked against received values. `Err` for anything but a
+/// `Sequence` or a `Series` item.
+pub(crate) fn resolve_window(
+    read: impl Fn(&Path) -> Result<String, String>,
+    report: &LayerSourceReport,
+    source: &SourcePos,
+) -> Result<WindowTargets, String> {
+    let report =
+        window_report(report, source).ok_or_else(|| reason_text(&LockReason::ElementNotFound))?;
+    let mut found = None;
+    let rows = |text: &str, element: &ElementRef| {
+        let kind = timing_kind(text, element);
+        let (rows, followers) = match kind {
+            Some(TimingKind::Sequence) => (vec!["from", "durationInFrames"], Vec::new()),
+            Some(TimingKind::SeriesSequence) => (
+                vec!["durationInFrames", "offset"],
+                later_series_items(text, element),
+            ),
+            None => (Vec::new(), Vec::new()),
+        };
+        found = kind.map(|kind| (kind, followers));
+        rows.into_iter().map(str::to_owned).collect()
+    };
+    let targets = resolve_rows(read, &report, None, rows, RowRead::Unchecked)?;
+    let (kind, followers) = found
+        .ok_or_else(|| "Not a `<Sequence>` or `<Series.Sequence>` of @celesta/react".to_owned())?;
+    Ok(WindowTargets {
+        source: source.clone(),
+        kind,
+        targets,
+        followers: followers
+            .into_iter()
+            .map(|(line, column)| SourcePos {
+                file: source.file.clone(),
+                line,
+                column,
+            })
+            .collect(),
     })
 }
 
@@ -326,12 +427,39 @@ fn through<'s>(site: Option<&'s CallSite<'_>>) -> Option<(&'s str, &'s ElementRe
 /// Resolves the rows `rows` names (table keys) from the text and element of
 /// `report`'s innermost element, with the fields of `table`; see
 /// [`resolve_targets`]. A commit resolves the rows it started from again
-/// this way.
+/// this way. `how` says whether the values are checked against the ones
+/// `report` received. An element in a component that the frame renders
+/// more than once is resolved as one instance too
+/// ([`ElementTargets::one`]).
 pub(super) fn resolve_rows(
     read: impl Fn(&Path) -> Result<String, String>,
     report: &LayerSourceReport,
     table: Option<&PrimitivePropertyTable>,
     rows: impl FnOnce(&str, &ElementRef) -> Vec<String>,
+    how: RowRead,
+) -> Result<ElementTargets, String> {
+    let mut rows = Some(rows);
+    resolve_with(
+        &read,
+        report,
+        table,
+        &mut |text, element| {
+            rows.take()
+                .map(|rows| rows(text, element))
+                .unwrap_or_default()
+        },
+        how,
+    )
+}
+
+/// [`resolve_rows`], not generic, so it resolves the element as one
+/// instance by calling itself.
+fn resolve_with(
+    read: &dyn Fn(&Path) -> Result<String, String>,
+    report: &LayerSourceReport,
+    table: Option<&PrimitivePropertyTable>,
+    rows: &mut dyn FnMut(&str, &ElementRef) -> Vec<String>,
+    how: RowRead,
 ) -> Result<ElementTargets, String> {
     let source = report
         .chain
@@ -340,6 +468,7 @@ pub(super) fn resolve_rows(
     let text = read(&source.file)?;
     let element = element_at(&text, source.line, source.column)
         .ok_or_else(|| reason_text(&LockReason::ElementNotFound))?;
+    let enclosing = enclosing_component(&text, &element);
     // Read on first need: the file read (also when the call is not found
     // there), and the call. A call site that can't be read or found locks
     // only the values passed through (`CallSiteNotFound`); the element's own
@@ -348,7 +477,10 @@ pub(super) fn resolve_rows(
     let call_site = || {
         loaded
             .get_or_init(|| {
-                let Some((component, entry)) = caller(&text, &element, report) else {
+                let Some((component, entry)) = enclosing
+                    .as_deref()
+                    .and_then(|component| Some((component, owner_call_site(report, component)?)))
+                else {
                     return (None, None);
                 };
                 let Ok(call_site_text) = read(&entry.file) else {
@@ -388,12 +520,21 @@ pub(super) fn resolve_rows(
             inputs: Vec::new(),
         },
     };
-    let ctx = |path: &str| ResolveContext {
-        primitive: source.kind == ElementKind::Primitive,
-        component_props: false,
-        candidate_frames: candidate_frames(report),
-        received: report.props.get(path).map(edit_value),
-        render_count: report.render_count,
+    let ctx = |path: &str| match how {
+        RowRead::Received => ResolveContext {
+            primitive: source.kind == ElementKind::Primitive,
+            component_props: false,
+            candidate_frames: candidate_frames(report),
+            received: report.props.get(path).map(edit_value),
+            render_count: report.render_count,
+        },
+        RowRead::Unchecked => ResolveContext {
+            primitive: source.kind == ElementKind::Primitive,
+            component_props: true,
+            candidate_frames: candidate_frames(report),
+            received: None,
+            render_count: 1,
+        },
     };
     let inputs = |path: &str, ctx: &ResolveContext| {
         let site = loaded.get().and_then(|(_, site)| site.as_ref());
@@ -443,7 +584,10 @@ pub(super) fn resolve_rows(
             None if parameter_of(&text, &element, &path).is_some() => call_site(),
             None => None,
         };
-        let mut target = resolve_through(&text, &element, &path, &ctx, through(site));
+        let mut target = match how {
+            RowRead::Received => resolve_through(&text, &element, &path, &ctx, through(site)),
+            RowRead::Unchecked => resolve_unchecked(&text, &element, &path, through(site)),
+        };
         if let Some(field) = table.and_then(|table| field_of(table, &name)) {
             let call_site_text = site.map(|site| site.text.as_str());
             target = fit_kind(target, field, &text, call_site_text, &path);
@@ -513,6 +657,33 @@ pub(super) fn resolve_rows(
     {
         files.push(file.clone());
     }
+    let (defaults, lift_lock) = match &enclosing {
+        Some(_) => (
+            parameter_defaults(&text, &element, &targets),
+            lift_lock(&text, &element, &targets),
+        ),
+        None => (Vec::new(), None),
+    };
+    // The values written on the element are `Repeated` in every copy the
+    // frame renders; as one instance, its call can take them.
+    let one = if report.render_count > 1 && enclosing.is_some() {
+        let names: Vec<String> = targets
+            .iter()
+            .filter_map(|(key, _)| match key {
+                PropKey::Prop(name) => Some(name.clone()),
+                PropKey::Input { .. } | PropKey::CallSite(_) => None,
+            })
+            .collect();
+        let report = LayerSourceReport {
+            render_count: 1,
+            ..report.clone()
+        };
+        resolve_with(read, &report, table, &mut |_, _| names.clone(), how)
+            .ok()
+            .map(Box::new)
+    } else {
+        None
+    };
     Ok(ElementTargets {
         file: source.file.clone(),
         files,
@@ -520,24 +691,78 @@ pub(super) fn resolve_rows(
         targets,
         table: table.cloned(),
         component,
+        enclosing,
+        defaults,
+        lift_lock,
+        outside: Vec::new(),
+        one,
     })
 }
 
-/// The component that encloses `element` in `text`, and the chain entry
-/// calling it.
-fn caller<'r>(
+/// Where the default of each parameter `targets` (rows and inputs) pass
+/// through to is written in the component enclosing `element`, each
+/// parameter once.
+fn parameter_defaults(
     text: &str,
     element: &ElementRef,
-    report: &'r LayerSourceReport,
-) -> Option<(String, &'r LayerSource)> {
-    let component = enclosing_component(text, element)?;
-    let entry = owner_call_site(report, &component)?;
-    Some((component, entry))
+    targets: &[(PropKey, Target)],
+) -> Vec<(String, DefaultTarget)> {
+    let mut defaults: Vec<(String, DefaultTarget)> = Vec::new();
+    let read = targets
+        .iter()
+        .flat_map(|(_, row)| std::iter::once(row).chain(row.inputs.iter().map(|(_, input)| input)));
+    for target in read {
+        let EditTarget::PassThrough { param, .. } = &target.target else {
+            continue;
+        };
+        if defaults.iter().any(|(known, _)| known == param) {
+            continue;
+        }
+        if let Some(default) = parameter_default(text, element, param) {
+            defaults.push((param.clone(), default));
+        }
+    }
+    defaults
+}
+
+/// Why lifting every row a lift would take (a literal or an absent prop
+/// written on the element, outside `style`) into new props of the
+/// component enclosing `element` fails, if it does: a dry run of the lift.
+/// `None` without such rows.
+fn lift_lock(text: &str, element: &ElementRef, targets: &[(PropKey, Target)]) -> Option<LiftLock> {
+    let rows: Vec<(&str, &EditTarget, EditValue)> = targets
+        .iter()
+        .filter(|(_, row)| !row.path.starts_with("style."))
+        .filter_map(|(_, row)| {
+            // The value only types the props type's field, which a dry run
+            // does not write.
+            let value = match &row.target {
+                EditTarget::Literal { value, .. } => value.clone(),
+                EditTarget::Missing { default, .. } => {
+                    default.clone().unwrap_or(EditValue::Number(0.0))
+                }
+                _ => return None,
+            };
+            Some((row.path.as_str(), &row.target, value))
+        })
+        .collect();
+    if rows.is_empty() {
+        return None;
+    }
+    let props: Vec<LiftProp> = rows
+        .iter()
+        .map(|(prop, target, value)| LiftProp {
+            prop,
+            target,
+            value,
+        })
+        .collect();
+    plan_lift(text, element, &props).err()
 }
 
 /// The last `.` segment of the tag name of `element` in `text`: `PriceTag`
 /// for `<PriceTag …>` and `<ui.PriceTag …>`.
-fn tag_name<'t>(text: &'t str, element: &ElementRef) -> &'t str {
+pub(crate) fn tag_name<'t>(text: &'t str, element: &ElementRef) -> &'t str {
     let name = text
         .get(element.start as usize + 1..)
         .unwrap_or_default()

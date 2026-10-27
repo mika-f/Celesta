@@ -456,10 +456,13 @@ impl EditorView {
                 let (outcome, reload) = match result {
                     Ok((files, watched)) => {
                         let changes = !files.is_empty();
+                        let paths: Vec<PathBuf> =
+                            files.iter().map(|file| file.path.clone()).collect();
                         let entry = changes.then_some(HistoryEntry { files });
                         let reload = this.edit_history.finish_write(epoch, entry) && changes;
                         if reload {
                             this.apply_own_write_sample(watched);
+                            this.scope_written.extend(paths);
                         }
                         (Ok(()), reload)
                     }
@@ -520,9 +523,16 @@ impl EditorView {
                 })
                 .await;
             view.update(cx, |this, cx| {
+                let paths: Vec<PathBuf> = pending
+                    .entry
+                    .files
+                    .iter()
+                    .map(|file| file.path.clone())
+                    .collect();
                 match this.edit_history.settle(pending, result) {
                     Some(Ok(_)) => {
                         this.apply_own_write_sample(watched);
+                        this.scope_written.extend(paths);
                         this.request_react_reload(cx);
                     }
                     Some(Err(error)) => {

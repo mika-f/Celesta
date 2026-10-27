@@ -2,7 +2,7 @@ use crate::component_schema::ComponentSchemaRequest;
 use crate::element_edit::RELOAD_FAILED;
 use crate::helpers::format_time;
 use crate::inline_text_view::{KeptOverride, kept_override_on_reload};
-use crate::layer_select::{lookup_allowed, source_lookup_target};
+use crate::layer_select::{SourceLookup, lookup_allowed, source_lookup_target};
 use crate::media_probe::{MediaProbeRequest, ProbeAsset};
 use crate::preview::{
     KeptSchema, PreviewRequest, ReactPreview, ReactPreviewContext, ReactPreviewMode,
@@ -19,7 +19,7 @@ use celesta_gpu_renderer::RenderQuality;
 use celesta_project::AssetKind;
 use celesta_react_bridge::{
     PrepareDependency, PropertyInputs, PropertyIssue, ReactBridge, ReactBridgeError,
-    ReactCompositionMetadata, SpawnOptions, runtime_paths as react_runtime_paths,
+    ReactCompositionMetadata, SourcePos, SpawnOptions, runtime_paths as react_runtime_paths,
 };
 use gpui_kit::Context;
 use std::collections::HashMap;
@@ -323,6 +323,8 @@ impl EditorView {
                         .selected_layer
                         .clone()
                         .filter(|_| self.picks_layers() && !self.playing),
+                    space_of: self.add_space_of(),
+                    added_under: self.add_added_under(),
                     timeline_frame: self.clock.frame(),
                     // On every request, so coalescing never drops it.
                     text_override: self.text_override.clone(),
@@ -391,6 +393,12 @@ impl EditorView {
         // commits a text edit before it reloads).
         if !self.selection_keep.requested(sequence, same_composition) {
             self.clear_layer_selection(same_composition);
+            // Which files changed is not known: every scope choice's
+            // position may now name another element.
+            if same_composition {
+                self.scope_choices.clear();
+                self.scope_written.clear();
+            }
         }
         cx.spawn(async move |view, cx| {
             let reload = cx
@@ -511,7 +519,10 @@ impl EditorView {
                     .into();
                 }
                 self.react_reload_generation = self.react_reload_generation.wrapping_add(1);
-                let keep = self.selection_keep.applies(sequence) && self.selected_layer.is_some();
+                // The scene lists are the reloaded code's too.
+                self.refresh_scene_sources(cx);
+                let own_write = self.selection_keep.applies(sequence);
+                let keep = own_write && self.selected_layer.is_some();
                 // A text committed on the canvas is drawn by the reloaded
                 // code once a reload requested after its write applies,
                 // whatever it does to the selection. Dropped before the
@@ -521,6 +532,14 @@ impl EditorView {
                     self.drop_kept_override();
                 }
                 if keep {
+                    // A lift above the element moves it: its scope choice
+                    // follows it to where the reloaded code's lookup says.
+                    self.scope_carry_from = match &self.source_lookup {
+                        Some(SourceLookup::Found(report)) => {
+                            report.chain.first().map(SourcePos::from)
+                        }
+                        _ => None,
+                    };
                     // Looked up again in the reloaded code, which decides
                     // whether the layer still exists. Until it answers, the
                     // old answer stays shown, read-only.
@@ -539,11 +558,26 @@ impl EditorView {
                     // A layer picked while the reload ran belongs to the old code.
                     self.clear_layer_selection(false);
                 }
+                // The written files' positions may name other elements now
+                // (a lift adds lines): only the selected element's choice,
+                // carried to where it moved, stays in them.
+                if own_write {
+                    let written = std::mem::take(&mut self.scope_written);
+                    self.scope_choices
+                        .forget_in(&written, self.scope_carry_from.as_ref());
+                }
+                // A released band or scene drag's values are the reloaded
+                // code's now.
+                self.drop_released_band_drag();
+                self.drop_released_scene_drag();
                 self.problems.clear(Source::Preview);
                 self.refresh_preview();
                 if keep {
                     self.selection_keep.confirm_from(self.preview_generation);
                 }
+                // An element just added is selected from the reloaded code's
+                // first frame on, which asked for it.
+                self.add_reload_applied(sequence, self.preview_generation);
                 self.refresh_audio_preview();
                 self.refresh_occurrences(keep);
             }
@@ -558,6 +592,8 @@ impl EditorView {
                 if !self.transform_drag_active() {
                     self.cancel_transform_drag();
                 }
+                self.drop_released_band_drag();
+                self.drop_released_scene_drag();
                 if !self.row_scrub_active() {
                     self.cancel_row_scrub();
                 }
@@ -572,6 +608,7 @@ impl EditorView {
                 // waiting for one are not written, and new ones fail.
                 self.element_edit.reload_failed();
                 self.drop_held_rows(RELOAD_FAILED, cx);
+                self.add_reload_failed(sequence);
             }
         }
         cx.notify();

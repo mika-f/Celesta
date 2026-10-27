@@ -76,10 +76,14 @@ use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, mpsc};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+mod add_element;
 mod element_edit;
 mod element_rows;
 mod held_scene;
 mod inline_text_view;
+mod scope;
+mod scope_commit;
+mod timeline_timing;
 
 #[test]
 fn background_workers_coalesce_queued_requests() {
@@ -1260,6 +1264,11 @@ fn single_row(text: &str, prop: &str, target: EditTarget) -> ElementTargets {
         )],
         table: None,
         component: None,
+        enclosing: None,
+        defaults: Vec::new(),
+        lift_lock: None,
+        outside: Vec::new(),
+        one: None,
     }
 }
 
@@ -2373,6 +2382,11 @@ fn impact_and_the_locked_summary_stay_transform_only() {
         ],
         table: Some(text_table()),
         component: None,
+        enclosing: None,
+        defaults: Vec::new(),
+        lift_lock: None,
+        outside: Vec::new(),
+        one: None,
     };
 
     assert_eq!(targets.written_at(), Some(&scene));

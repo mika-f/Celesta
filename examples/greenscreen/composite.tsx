@@ -18,13 +18,13 @@ export default function Composite() {
         src="./assets/footage.mp4"
         x={120}
         y={180}
-        scale={1.5}
+        width={960}
         chromaKey={{ color: KEY, tolerance: 0.2, softness: 0.1, spill }}
       />
       <Image src="./assets/still.jpg" x={980} y={420} width={256} chromaKey={KEY} />
       {/* The raw footage, for comparison. */}
       <Group x={32} y={32}>
-        <Video src="./assets/footage.mp4" scale={0.35} />
+        <Video src="./assets/footage.mp4" width={224} />
         <Text y={134} style={{ ...LABEL, fontSize: 18 }}>raw footage</Text>
       </Group>
       <Text x={1248} y={40} anchorX={1} style={LABEL}>{`chromaKey spill ${spill.toFixed(2)}`}</Text>

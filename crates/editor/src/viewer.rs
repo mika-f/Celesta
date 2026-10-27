@@ -1,7 +1,7 @@
-//! The viewer: the canvas tools' row above it while a layer is selected in
-//! interactive mode, the rendered frame and its overlays, and the transport
-//! bar under it, plus the audio monitor (master meter and preview volume)
-//! that sits beside the timeline.
+//! The viewer: the canvas tools' row above it in interactive mode (the Add
+//! menu, and the selected layer's tools), the rendered frame and its
+//! overlays, and the transport bar under it, plus the audio monitor (master
+//! meter and preview volume) that sits beside the timeline.
 
 use celesta_composition::Point;
 use celesta_editor_theme as theme;
@@ -22,6 +22,7 @@ use crate::actions::{
     ClearExportRange, GoToEnd, GoToStart, NextFrame, PreviousFrame, SetExportIn, SetExportOut,
     ToggleInteractive, ToggleLoop, TogglePlayback, ToggleSafeAreas,
 };
+use crate::add_element::AddMode;
 use crate::element_rows::{InteractiveToggle, interactive_toggle};
 use crate::icons::CelestaIcon;
 use crate::inline_text_view::{EditEvent, InlineEntry, paint_inline_text};
@@ -41,6 +42,8 @@ use crate::transform_handles::{
 };
 use crate::view::EditorView;
 use celesta_gpu_renderer::LayerFrame;
+use celesta_source_edit::NewKind;
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 
 const KEY_CONTEXT: Option<&str> = Some("CelestaEditor");
 
@@ -65,10 +68,11 @@ const TRANSPORT_FULL_WIDTH: f32 = 820.0;
 const TRANSPORT_MARKS_WIDTH: f32 = 600.0;
 
 /// Whether the canvas-tool row shows above the viewer: in a React preview's
-/// interactive mode (Select layers on) with a layer selected, which the
-/// tools act on.
-fn shows_tool_row(react_preview: bool, interactive: bool, selected: bool) -> bool {
-    react_preview && interactive && selected
+/// interactive mode (Select layers on), selected layer or not, so the
+/// canvas keeps its size when one is selected. Without a selection it holds
+/// the Add menu alone.
+fn shows_tool_row(react_preview: bool, interactive: bool) -> bool {
+    react_preview && interactive
 }
 
 /// Height of the canvas-tool row docked above the viewer.
@@ -218,12 +222,11 @@ impl EditorView {
         // handles' note.
         let pivot_note = self.pivot_note();
         // The canvas tools' row docks above the canvas while Select layers
-        // is on and a layer is selected: they act on the selection.
-        let shows_tools = shows_tool_row(
-            self.is_react_preview(),
-            self.interactive,
-            self.selected_layer.is_some(),
-        );
+        // is on: the Add menu, and the tools acting on a selection.
+        let shows_tools = shows_tool_row(self.is_react_preview(), self.interactive);
+        // The element being drawn, and whether a press draws one.
+        let add_outline = self.add_outline();
+        let adding = matches!(self.add.mode, AddMode::Armed(_) | AddMode::Drawing { .. });
         // Every region of the selected layer in the shown frame; none when
         // the frame does not draw it. The Size tool's handles sit on the box
         // they resize, which is then the outline drawn (a stroked text's
@@ -318,7 +321,8 @@ impl EditorView {
                 .error(self.selected_layer.as_deref())
                 .map(str::to_owned)
         })
-        .or_else(|| self.inline_notice.clone());
+        .or_else(|| self.inline_notice.clone())
+        .or_else(|| self.add.notice.clone());
         // Placed by the viewer's last painted bounds, relative to them.
         let last_bounds = self.viewer_bounds.get();
         // Why a double-click did not edit the text, beside it.
@@ -445,6 +449,9 @@ impl EditorView {
                         if let Some(cross) = cross {
                             paint_cross(&cross, window);
                         }
+                        if let Some((kind, outline)) = &add_outline {
+                            paint_add_outline(bounds, frame_size, *kind, outline, window);
+                        }
                     },
                 )
                 .absolute()
@@ -452,6 +459,8 @@ impl EditorView {
                 .left_0()
                 .size_full(),
             )
+            // A press draws the element chosen in the Add menu.
+            .when(adding, |area| area.cursor(CursorStyle::Crosshair))
             .when(self.picks_layers(), |area| {
                 area.on_mouse_down(MouseButton::Left, cx.listener(Self::select_layer_at))
                     // Alt over the pivot cross changes its cursor.
@@ -940,12 +949,13 @@ impl EditorView {
     }
 
     /// The canvas tools, one row docked above the viewer (part of its
-    /// layout, so the canvas shrinks while it shows; see `shows_tool_row`):
-    /// "Rotate about" [Center | Pivot] (what rotation and scale turn about)
-    /// and "Handles" [Size | Scale] (what the corner and edge handles do).
-    /// The chosen tab is the selected pill; when it is not in effect on the
-    /// selected layer, a warning after its tabs gives the reason
-    /// (`pivot_note`, see `EditorView::pivot_note`, and `resize_note`).
+    /// layout; see `shows_tool_row`): the Add menu and what a press on the
+    /// canvas then draws; with a layer selected, "Rotate about" [Center |
+    /// Pivot] (what rotation and scale turn about) and "Handles" [Size |
+    /// Scale] (what the corner and edge handles do). The chosen tab is the
+    /// selected pill; when it is not in effect on the selected layer, a
+    /// warning after its tabs gives the reason (`pivot_note`, see
+    /// `EditorView::pivot_note`, and `resize_note`).
     fn tool_row(
         &self,
         pivot_note: Option<&'static str>,
@@ -997,6 +1007,7 @@ impl EditorView {
                 ResizeTool::Scale,
             ),
         ];
+        let add = self.add_menu_button(cx);
         let rotate = mode_toggle(
             "pivot-mode-note",
             pivot_tabs,
@@ -1020,8 +1031,100 @@ impl EditorView {
             .bg(cx.theme().secondary)
             .border_b_1()
             .border_color(cx.theme().border)
-            .child(tool_group("Rotate about", rotate, cx))
-            .child(tool_group("Handles", handles, cx))
+            .child(add)
+            .when(self.selected_layer.is_some(), |row| {
+                row.child(tool_group("Rotate about", rotate, cx))
+                    .child(tool_group("Handles", handles, cx))
+            })
+    }
+
+    /// The Add menu: its header names the parent, a line says why its
+    /// items are disabled. While an element is to be drawn, the button
+    /// names it and a muted line beside it says how.
+    fn add_menu_button(&self, cx: &mut Context<Self>) -> AnyElement {
+        let menu = self.add_menu();
+        let view = cx.entity().downgrade();
+        // The hint names the parent chosen with the kind, where it goes.
+        let to = self
+            .add
+            .chosen
+            .as_ref()
+            .map(|chosen| format!("to {} · ", chosen.label))
+            .unwrap_or_default();
+        let (label, hint) = match &self.add.mode {
+            AddMode::Off => ("Add".to_owned(), None),
+            AddMode::Picking(kind) => (
+                format!("Adding {}", kind.tag()),
+                Some(format!("{to}Choose a file…")),
+            ),
+            AddMode::Armed(tool) | AddMode::Drawing { tool, .. } => {
+                let how = match tool.kind {
+                    NewKind::Circle => "Drag from the center · Esc cancels",
+                    NewKind::Text => "Click where the text starts · Esc cancels",
+                    _ => "Drag a box, or click · Esc cancels",
+                };
+                (
+                    format!("Adding {}", tool.kind.tag()),
+                    Some(format!("{to}{how}")),
+                )
+            }
+        };
+        let button = Button::new("add-element")
+            .small()
+            .ghost()
+            .icon(IconName::Plus)
+            .label(label)
+            .dropdown_caret(true)
+            .dropdown_menu(move |mut popup, _, _| {
+                if let Some(header) = &menu.header {
+                    popup = popup.label(header.clone());
+                }
+                if let Some(reason) = &menu.reason {
+                    popup = popup.label(reason.clone());
+                }
+                popup = popup.separator();
+                for (kind, why) in &menu.items {
+                    let (kind, view) = (*kind, view.clone());
+                    popup = popup.item(
+                        PopupMenuItem::new(kind.tag())
+                            .icon(kind_icon(kind))
+                            .disabled(why.is_some())
+                            .on_click(move |_, _, cx| {
+                                let _ = view.update(cx, |this, cx| this.choose_add_kind(kind, cx));
+                            }),
+                    );
+                }
+                // An item's own reason, each once, under the items.
+                let mut reasons: Vec<&String> = Vec::new();
+                for why in menu.items.iter().filter_map(|(_, why)| why.as_ref()) {
+                    if Some(why) != menu.reason.as_ref() && !reasons.contains(&why) {
+                        reasons.push(why);
+                    }
+                }
+                if !reasons.is_empty() {
+                    popup = popup.separator();
+                }
+                for why in reasons {
+                    popup = popup.label(why.clone());
+                }
+                popup
+            });
+        div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap_2()
+            .child(button)
+            .when_some(hint, |group, hint| {
+                group.child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .whitespace_nowrap()
+                        .child(hint),
+                )
+            })
+            .into_any_element()
     }
 
     fn set_pivot_mode(&mut self, mode: PivotMode, cx: &mut Context<Self>) {
@@ -1219,6 +1322,7 @@ impl EditorView {
     /// reload handler that clears the selection asks for both right after,
     /// and `settle_interactive_mode` does otherwise.
     fn leave_interactive(&mut self) {
+        self.end_add_mode();
         self.element_rows.leaving_interactive = false;
         self.interactive = false;
         self.hit_regions.clear();
@@ -1254,6 +1358,11 @@ impl EditorView {
             if self.press_inline_text(event, window, cx) {
                 return;
             }
+        }
+        // With an element chosen in the Add menu, the press draws it.
+        if self.press_add(event.position) {
+            cx.notify();
+            return;
         }
         let settings = &self.document.project().settings;
         let frame_size = (settings.width as f32, settings.height as f32);
@@ -1292,8 +1401,11 @@ impl EditorView {
         // selection it belongs to. (The viewer's notice stays: one set while
         // this change waited says why a held commit was dropped.)
         self.end_inline_text(EditEvent::SelectionChange, cx);
+        // An added layer's check stays when the layer selected is that one.
+        let confirm = self.add_take_confirm();
         self.clear_layer_selection(false);
         self.selected_layer = layer;
+        self.add_restore_confirm(confirm);
         if self.selected_layer.is_some() {
             self.source_lookup = Some(SourceLookup::Pending);
             self.refresh_preview();
@@ -1306,8 +1418,11 @@ impl EditorView {
     /// Forgets the selected layer and its source, the commits held for it,
     /// and a selection change waiting for them. A text edited on the canvas
     /// is cancelled, saying so when `outside_change` (the file changed
-    /// outside the editor); a double-click's note goes.
+    /// outside the editor); a double-click's note goes, and so does the add
+    /// mode, whose parent came from the selection.
     pub(crate) fn clear_layer_selection(&mut self, outside_change: bool) {
+        self.end_add_mode();
+        self.add_selection_changed(None);
         self.inline_pending = None;
         self.inline_note = None;
         self.inline_text_selection_cleared(outside_change);
@@ -1315,6 +1430,7 @@ impl EditorView {
         self.selected_layer = None;
         self.source_lookup = None;
         self.source_lookup_stale = false;
+        self.scope_carry_from = None;
         self.launch_error = None;
         self.element_edit.reset();
         self.layer_frame = None;
@@ -1401,6 +1517,55 @@ fn paint_layer_outline(
         path.line_to(corner);
     }
     path.close();
+    if let Ok(path) = path.build() {
+        window.paint_path(path, theme::accent());
+    }
+}
+
+/// The Add menu's icon for `kind` (Lucide's).
+fn kind_icon(kind: NewKind) -> CelestaIcon {
+    match kind {
+        NewKind::Rect => CelestaIcon::Square,
+        NewKind::Ellipse | NewKind::Circle => CelestaIcon::Circle,
+        NewKind::Text => CelestaIcon::Type,
+        NewKind::Image => CelestaIcon::Image,
+        NewKind::Video => CelestaIcon::Film,
+    }
+}
+
+/// Height of the caret marking where a drawn Text starts, in viewer pixels.
+const ADD_CARET_HEIGHT: f32 = 16.0;
+
+/// The outline of the element being drawn (scene pixels) on the
+/// letterboxed frame, in the accent color: a closed shape, or a caret down
+/// from the point a Text starts at.
+fn paint_add_outline(
+    bounds: Bounds<Pixels>,
+    frame_size: (f32, f32),
+    kind: NewKind,
+    outline: &[Point],
+    window: &mut Window,
+) {
+    let Some((left, top, scale)) = letterbox(bounds, frame_size) else {
+        return;
+    };
+    let on_viewer = |p: &Point| point(px(left + p.x as f32 * scale), px(top + p.y as f32 * scale));
+    let mut path = PathBuilder::stroke(px(1.0));
+    match (kind, outline) {
+        (NewKind::Text, [at]) => {
+            let at = on_viewer(at);
+            path.move_to(at);
+            path.line_to(point(at.x, at.y + px(ADD_CARET_HEIGHT)));
+        }
+        (_, [first, rest @ ..]) if !rest.is_empty() => {
+            path.move_to(on_viewer(first));
+            for corner in rest {
+                path.line_to(on_viewer(corner));
+            }
+            path.close();
+        }
+        _ => return,
+    }
     if let Ok(path) = path.build() {
         window.paint_path(path, theme::accent());
     }
@@ -1614,12 +1779,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_tool_row_shows_only_with_a_selection_in_interactive_mode() {
-        // (React preview, Select layers on, a layer selected)
-        assert!(shows_tool_row(true, true, true));
-        assert!(!shows_tool_row(true, true, false));
-        assert!(!shows_tool_row(true, false, true));
-        assert!(!shows_tool_row(false, true, true));
+    fn the_tool_row_shows_with_select_layers_on() {
+        // (React preview, Select layers on), with a selection or not.
+        assert!(shows_tool_row(true, true));
+        assert!(!shows_tool_row(true, false));
+        assert!(!shows_tool_row(false, true));
     }
 
     #[test]

@@ -7,12 +7,13 @@ use crate::element_edit::{editable, inner_target};
 use crate::inline_text::{TextEdit, TextMap};
 use crate::inline_text_view::{
     EditEnd, EditEvent, InlineEntry, InlineTextSession, KeptOverride, cancel_session,
-    committed_override, edit_end, held_commit_override, inline_commit_value, inline_entry,
-    is_text_layer, kept_override_after_write, kept_override_on_reload, live_override, press_inside,
-    pressed_index,
+    committed_override, edit_end, held_commit_override, inline_commit_refusal, inline_commit_value,
+    inline_entry, is_text_layer, kept_override_after_write, kept_override_on_reload, live_override,
+    press_inside, pressed_index,
 };
 use crate::preview::TextOverride;
 use crate::refresh::ReloadOrder;
+use crate::scope::CommitGate;
 use crate::transform_drag::{DragState, editing_drag_state};
 use celesta_composition::TextAlign;
 use celesta_gpu_renderer::{GlyphMetrics, TextLayout, TextMetrics};
@@ -292,6 +293,54 @@ fn inline_entry_refuses_an_edge_on_text() {
 }
 
 #[test]
+fn a_refused_commit_keeps_the_edit_the_person_ended() {
+    let refused =
+        CommitGate::Refuse("The scenes were scanned while editing; edit again".to_owned());
+    let kept =
+        |event, writes, gate: Option<&CommitGate>| inline_commit_refusal(event, writes, gate);
+
+    // Enter, a blur or a press outside the text: the edit stays, its text
+    // and caret with it, and the refusal shows.
+    for event in [
+        EditEvent::Enter,
+        EditEvent::Blur,
+        EditEvent::CanvasPress { inside: false },
+    ] {
+        assert_eq!(
+            kept(event, true, Some(&refused)),
+            Some("The scenes were scanned while editing; edit again".to_owned())
+        );
+    }
+    // A gesture is never held for the scan: that is one more refusal.
+    assert_eq!(
+        kept(
+            EditEvent::Enter,
+            true,
+            Some(&CommitGate::Hold("Scanning scenes…".to_owned()))
+        ),
+        Some("Scanning scenes…".to_owned())
+    );
+    // Written, or nothing to write: the edit ends as before.
+    assert_eq!(
+        kept(EditEvent::Enter, true, Some(&CommitGate::Go(None))),
+        None
+    );
+    // Waiting its turn: held, and gated when it goes.
+    assert_eq!(kept(EditEvent::Enter, true, None), None);
+    assert_eq!(kept(EditEvent::Enter, false, Some(&refused)), None);
+    // The selection, the playhead or the project moving on ends the edit.
+    for event in [
+        EditEvent::SelectionChange,
+        EditEvent::ToggleInteractive,
+        EditEvent::Seek,
+        EditEvent::Play,
+        EditEvent::ProjectCommand,
+    ] {
+        assert_eq!(kept(event, true, Some(&refused)), None);
+    }
+}
+
+#[test]
 fn edit_end_decides_every_event() {
     let changed = Some("The source changed while editing");
     assert_eq!(
@@ -550,7 +599,7 @@ fn an_edit_writes_one_jsx_text_literal() {
     let (targets, report) = text_targets(text, "Sale");
     let texts = Texts::from([(targets.file.clone(), text.to_owned())]);
     let write = |value| {
-        let files = commit_files(&texts, &targets, &report, &children(value)).unwrap();
+        let files = commit_files(&texts, &targets, &report, None, None, &children(value)).unwrap();
         assert_eq!(files.len(), 1, "one file, one entry");
         files.into_iter().next().unwrap().1
     };
@@ -583,7 +632,7 @@ fn a_const_edit_writes_the_const() {
     let (targets, report) = text_at(text, (3, 10), "Sale");
     let texts = Texts::from([(targets.file.clone(), text.to_owned())]);
     let value = committed("Sale", |edit| edit.insert("!"));
-    let files = commit_files(&texts, &targets, &report, &children(value)).unwrap();
+    let files = commit_files(&texts, &targets, &report, None, None, &children(value)).unwrap();
     assert_eq!(
         files,
         [(targets.file.clone(), text.replace("\"Sale\"", "\"Sale!\""))]
@@ -640,7 +689,8 @@ fn write_children(
     value: Option<EditValue>,
 ) -> HistoryEntry {
     let files = write_all_recorded(targets.files.clone(), |texts| {
-        commit_files(texts, targets, report, &children(value)).map_err(|error| error.to_string())
+        commit_files(texts, targets, report, None, None, &children(value))
+            .map_err(|error| error.to_string())
     })
     .unwrap();
     HistoryEntry { files }
@@ -779,6 +829,9 @@ fn dropping_a_held_commit_drops_its_override() {
         key: prop(key),
         value: Some(EditValue::String("Sale!".to_owned())),
         frame: 0,
+        scope: None,
+        scanning: false,
+        gesture: false,
     };
     let mut held = HeldCommits::default();
     held.push(held_commit("title", "children"));
@@ -836,6 +889,9 @@ fn selecting_another_layer_commits_before_the_gate() {
         key: prop("children"),
         value: committed("Sale", |edit| edit.insert("!")),
         frame: 0,
+        scope: None,
+        scanning: false,
+        gesture: true,
     });
     let mut gate = SelectionGate::default();
     // The gate sees it: "price" waits for the commit to be written.

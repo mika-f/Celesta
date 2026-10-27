@@ -220,9 +220,12 @@ impl EditorView {
     pub(crate) fn refresh_occurrences(&mut self, keep: bool) {
         // Called with `refresh_preview`: both carry the current mode.
         self.interactive_refresh_due = false;
+        self.occurrence_generation += 1;
         if self.react_preview.is_none() || !self.picks_layers() {
             self.occurrences = None;
             self.occurrence_sweep_after = None;
+            // No sweep will answer commits held for one.
+            self.occurrence_landed = true;
             return;
         }
         let state = rescan_state(self.occurrences.take().map(|(_, state)| state), keep);
@@ -267,6 +270,12 @@ impl EditorView {
                     break;
                 }
             }
+        }
+        if changed {
+            self.occurrence_generation += 1;
+            // Row commits waiting for the index go (or are refused) on the
+            // next render (`settle_row_requests`), whichever poll saw it.
+            self.occurrence_landed = true;
         }
         changed
     }
@@ -313,6 +322,8 @@ impl EditorView {
             duration_in_frames: u64::try_from(self.clock.end_frame()).unwrap_or(0),
         }) {
             self.occurrences = Some((generation, OccurrenceState::Failed(error)));
+            self.occurrence_generation += 1;
+            self.occurrence_landed = true;
         }
     }
 }
@@ -336,6 +347,7 @@ mod tests {
                     chain: vec![element],
                     ranges: vec![(from, to)],
                     max_per_frame: 1,
+                    wrappers: vec![],
                 }],
             }],
         }

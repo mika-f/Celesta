@@ -319,6 +319,12 @@ export interface OccurrenceIndex {
     instances: Array<{
       /** The positions of the source chain other than `'wrapper'` entries, innermost first. */
       chain: SourcePos[];
+      /**
+       * The positions of the `'wrapper'` entries (`<Sequence>`, a
+       * `<Series.Sequence>`, ...), innermost first, over every frame: a
+       * position first seen in a later frame is appended.
+       */
+      wrappers: SourcePos[];
       /** `[from, to)` composition frames, joined where adjacent. */
       ranges: Array<[number, number]>;
       /**
@@ -796,6 +802,11 @@ function buildLayer(
     // to seek/decode — is `startFrom` plus local time scaled by
     // `playbackRate`, mirroring how celesta-evaluator derives it for a
     // project TimelineContent::Video at a constant playback rate.
+    for (const key of ['width', 'height']) {
+      if (props[key] !== undefined && (typeof props[key] !== 'number' || !Number.isFinite(props[key]) || props[key] <= 0)) {
+        throw new Error(`Video ${key} must be finite and positive`);
+      }
+    }
     const startFrom = numberOr(props.startFrom, 0);
     const playbackRate = numberOr(props.playbackRate, 1);
     const localTime = context.mediaTime;
@@ -809,6 +820,8 @@ function buildLayer(
         playbackRate,
         ...(props.loop === true ? { loop: true } : {}),
       },
+      ...(props.width === undefined ? {} : { width: props.width as number }),
+      ...(props.height === undefined ? {} : { height: props.height as number }),
     };
   } else {
     throw new Error(`unreachable: unknown host node type "${node.type}"`);
@@ -1870,7 +1883,7 @@ export function mount(defaultExport: EntryComponent, compositionId?: string): Mo
         const time = { value: frame * config.frameRate.denominator, timescale: config.frameRate.numerator };
         const { layerNodes } = walkLayerNodes(time, options?.preview === true);
         const places = new Map<Instance, Set<string>>();
-        for (const { element, chain, place } of occurrenceKeys(layerNodes, resolveFile)) {
+        for (const { element, chain, wrappers, place } of occurrenceKeys(layerNodes, resolveFile)) {
           const elementKey = keyOf(element);
           let entry = elements.get(elementKey);
           if (!entry) {
@@ -1880,8 +1893,12 @@ export function mount(defaultExport: EntryComponent, compositionId?: string): Mo
           const instanceKey = chain.map(keyOf).join('\n');
           let instance = entry.instances.get(instanceKey);
           if (!instance) {
-            instance = { chain, ranges: [], maxPerFrame: 0 };
+            instance = { chain, wrappers: [], ranges: [], maxPerFrame: 0 };
             entry.instances.set(instanceKey, instance);
+          }
+          for (const wrapper of wrappers) {
+            const key = keyOf(wrapper);
+            if (!instance.wrappers.some((known) => keyOf(known) === key)) instance.wrappers.push(wrapper);
           }
           let seen = places.get(instance);
           if (!seen) {

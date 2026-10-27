@@ -728,7 +728,7 @@ fn computes_video_timing_from_the_composition_clock_when_node_is_available() {
     // sourceTimeSeconds should be startFrom + 0.5 * playbackRate = 2.0.
     let scene = bridge.scene_at(Time::new(15, 30)).unwrap();
     assert_eq!(scene.layers.len(), 1);
-    let LayerContent::Video { asset, timing } = &scene.layers[0].content else {
+    let LayerContent::Video { asset, timing, .. } = &scene.layers[0].content else {
         panic!("expected a video layer");
     };
     assert_eq!(asset.id, "./clip.mp4");

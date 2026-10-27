@@ -935,8 +935,8 @@ export class SceneCanvas {
       }
       const width = 'videoWidth' in image ? image.videoWidth : 'naturalWidth' in image ? image.naturalWidth : image.width;
       const height = 'videoHeight' in image ? image.videoHeight : 'naturalHeight' in image ? image.naturalHeight : image.height;
-      const w = content.type === 'image' ? content.width ?? (content.height === undefined ? width : content.height * width / height) : width;
-      const h = content.type === 'image' ? content.height ?? w * height / width : height;
+      const w = content.width ?? (content.height === undefined ? width : content.height * width / height);
+      const h = content.height ?? w * height / width;
       ctx.setTransform(matrix.translate(-t.anchor.x * w, -t.anchor.y * h));
       if (content.type === 'image' && content.fit) {
         const scale = content.fit === 'contain' ? Math.min(w / width, h / height) : Math.max(w / width, h / height);
@@ -1156,8 +1156,8 @@ export class SceneCanvas {
       const image = content.type === 'image' ? await this.image(content.asset) : await this.video(content.asset);
       const width = image instanceof HTMLVideoElement ? image.videoWidth : image.naturalWidth;
       const height = image instanceof HTMLVideoElement ? image.videoHeight : image.naturalHeight;
-      const w = content.type === 'image' ? content.width ?? (content.height === undefined ? width : content.height * width / height) : width;
-      const h = content.type === 'image' ? content.height ?? w * height / width : height;
+      const w = content.width ?? (content.height === undefined ? width : content.height * width / height);
+      const h = content.height ?? w * height / width;
       const x = -t.anchor.x * w, y = -t.anchor.y * h;
       return place(x, y, x + w, y + h, Number.isInteger(w) && Number.isInteger(h));
     }

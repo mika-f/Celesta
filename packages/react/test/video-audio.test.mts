@@ -93,6 +93,30 @@ test('loop reaches the picture and the sound of <Video>, and the sound of <Audio
     .scene.layers[0], 'video').timing).not.toHaveProperty('loop');
 });
 
+test('passes a video\'s width and height to its layer', () => {
+  const composition = mount(root(30,
+    h(Video, { src: './clip.mp4', width: 160 }),
+    h(Video, { src: './clip.mp4', width: 160, height: 160 }),
+    h(Video, { src: './clip.mp4', height: 90 }),
+    h(Video, { src: './clip.mp4' })));
+  const contents = at(composition, 0).scene.layers.map((layer) => contentOf(layer, 'video'));
+  expect(contents.map(({ width, height }) => [width, height])).toEqual([
+    [160, undefined], [160, 160], [undefined, 90], [undefined, undefined],
+  ]);
+  // An unset side stays out of the layer, as on an <Image>.
+  expect(contents[0]).not.toHaveProperty('height');
+  expect(contents[2]).not.toHaveProperty('width');
+});
+
+test('rejects a video width that is not finite and positive', () => {
+  for (const width of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+    const composition = mount(root(30, h(Video, { src: './clip.mp4', width })));
+    expect(() => at(composition, 0), `width ${width}`).toThrow('Video width must be finite and positive');
+  }
+  const composition = mount(root(30, h(Video, { src: './clip.mp4', height: 0 })));
+  expect(() => at(composition, 0)).toThrow('Video height must be finite and positive');
+});
+
 test('<Audio> pitch and preservePitch reach its clip, shifted like volume', () => {
   const curve = frameKeyframes([{ frame: 0, value: 0 }, { frame: 30, value: 12 }], { fps: 30 });
   const composition = mount(root(60,

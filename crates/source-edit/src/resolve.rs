@@ -2,10 +2,12 @@ use std::cell::Cell;
 
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
-    ArrowFunctionExpression, BindingIdentifier, Function, IdentifierReference, JSXAttributeItem,
-    JSXAttributeName, JSXAttributeValue, JSXElement, JSXOpeningElement, VariableDeclarator,
+    ArrowFunctionExpression, BindingIdentifier, Expression, Function, IdentifierReference,
+    JSXAttributeItem, JSXAttributeName, JSXAttributeValue, JSXElement, JSXOpeningElement, Program,
+    VariableDeclarator,
 };
 use oxc_ast_visit::Visit;
+use oxc_span::GetSpan;
 use oxc_syntax::scope::ScopeFlags;
 
 use crate::apply::Edit;
@@ -151,6 +153,14 @@ pub enum LockReason {
     /// No chain entry calls the enclosing component.
     CallSiteNotFound {
         component: String,
+    },
+    /// The value is a `const` the file exports: other files may read it.
+    Exported {
+        name: String,
+    },
+    /// A `defineScenes` entry without `durationInFrames`.
+    NoSceneDuration {
+        id: String,
     },
 }
 
@@ -434,6 +444,29 @@ pub(crate) fn read_written(
     Ok(check(target))
 }
 
+/// The value written at `value`, an expression's span in `program` (parsed
+/// from `text`), by the rules of a prop value: a literal, a `const`, an
+/// expression locked with its source. It is read unchecked, as nothing
+/// reports the value received. At module level the file's top-level
+/// `const`s are read too (see [`Gather::at_value`]).
+pub(crate) fn resolve_value_at(program: &Program<'_>, text: &str, value: Span) -> EditTarget {
+    let gather = Gather::at_value(program, value);
+    read_written(&gather, text, "", &value_context(), false)
+        .unwrap_or(EditTarget::Locked(LockReason::ElementNotFound))
+}
+
+/// What a value read by [`resolve_value_at`] is resolved with: written
+/// once, no value received, no frame known.
+pub(crate) fn value_context() -> ResolveContext {
+    ResolveContext {
+        primitive: true,
+        component_props: true,
+        candidate_frames: Vec::new(),
+        received: None,
+        render_count: 1,
+    }
+}
+
 /// Whether `prop` is written as an attribute on `element` (a spread does not
 /// count). False when the text does not parse or the element is not found.
 pub fn has_attribute(text: &str, element: &ElementRef, prop: &str) -> bool {
@@ -460,7 +493,7 @@ pub(crate) enum Read<'g> {
 /// Where a property is added to an object literal: right after its `{`
 /// when it is empty, otherwise after the last property, or after the
 /// trailing comma that follows it.
-fn property_insert_at(text: &str, object: Span, last: Option<u32>) -> u32 {
+pub(crate) fn property_insert_at(text: &str, object: Span, last: Option<u32>) -> u32 {
     let Some(last) = last else {
         return object.start + 1;
     };
@@ -785,6 +818,9 @@ fn check_received(
 
 pub(crate) struct Gather<'t> {
     element_start: u32,
+    /// Anchored at the expression with this span instead of an element's
+    /// attribute: the expression is read as the attribute's value.
+    value: Option<Span>,
     path: PropPath<'t>,
     /// The span of the expression the rules last locked the prop on, so
     /// its inputs are read from exactly what was locked.
@@ -811,6 +847,7 @@ impl<'t> Gather<'t> {
     pub(crate) fn new(element_start: u32, path: PropPath<'t>) -> Self {
         Self {
             element_start,
+            value: None,
             path,
             locked: Cell::new(None),
             found: false,
@@ -821,6 +858,20 @@ impl<'t> Gather<'t> {
             children: None,
             scopes: Scopes::new(element_start),
         }
+    }
+
+    /// Visits `program` anchored at the expression at `value`, found when
+    /// one has exactly that span. Outside any function, the anchor reads
+    /// the file's top-level `const`s (exported ones too), as a function's
+    /// are read inside it: a `defineScenes` list sits at module level.
+    pub(crate) fn at_value(program: &Program<'_>, value: Span) -> Gather<'static> {
+        let mut gather = Gather {
+            value: Some(value),
+            ..Gather::new(value.start, PropPath::Attribute(""))
+        };
+        gather.visit_program(program);
+        gather.scopes.enter_module(program);
+        gather
     }
 
     /// What the rules read for the prop: JSX children before a `children`
@@ -881,15 +932,26 @@ impl<'a> Visit<'a> for Gather<'_> {
         self.scopes.reference(it);
     }
 
+    fn visit_expression(&mut self, it: &Expression<'a>) {
+        if self.value == Some(span_of(it.span())) && !self.found {
+            self.found = true;
+            self.attr = Some(shape_of(it));
+        }
+        oxc_ast_visit::walk::walk_expression(self, it);
+    }
+
     fn visit_jsx_element(&mut self, it: &JSXElement<'a>) {
-        if it.opening_element.span.start == self.element_start && self.children.is_none() {
+        if it.opening_element.span.start == self.element_start
+            && self.value.is_none()
+            && self.children.is_none()
+        {
             self.children = Some(children_of(it));
         }
         oxc_ast_visit::walk::walk_jsx_element(self, it);
     }
 
     fn visit_jsx_opening_element(&mut self, it: &JSXOpeningElement<'a>) {
-        if it.span.start == self.element_start && !self.found {
+        if it.span.start == self.element_start && self.value.is_none() && !self.found {
             self.found = true;
             for item in &it.attributes {
                 match item {

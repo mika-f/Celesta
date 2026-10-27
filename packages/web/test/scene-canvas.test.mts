@@ -440,6 +440,46 @@ test('text wrapped at maxWidth is anchored by its line boxes, as text broken wit
   renderer.dispose();
 });
 
+// The same sizes as the native renderers' `sizes_a_video_frame_like_an_image`.
+test('sizes a video like an image', async () => {
+  const originals = { document: globalThis.document, DOMMatrix: globalThis.DOMMatrix };
+  onTestFinished(() => { Object.assign(globalThis, originals); });
+  globalThis.DOMMatrix = standIn(class { translate() { return this; } rotate() { return this; } scale() { return this; } });
+  const drawn: [number, number][] = [];
+  const canvas = () => {
+    const element = { width: 320, height: 180, getContext() { return context; } };
+    const context = {
+      canvas: element, globalAlpha: 1, filter: 'none', globalCompositeOperation: 'source-over',
+      save() {}, restore() {}, setTransform() {}, fillRect() {}, beginPath() {}, rect() {}, clip() {},
+      drawImage(_source: unknown, _x: number, _y: number, width: number, height: number) { drawn.push([width, height]); },
+    };
+    return element;
+  };
+  // A 320 x 180 video, loaded once its source is set, at the time asked for.
+  const video = () => ({
+    videoWidth: 320, videoHeight: 180, currentTime: 0, duration: 1, onloadeddata: () => {},
+    set src(_url: string) { queueMicrotask(() => this.onloadeddata()); },
+    pause() {}, removeAttribute() {}, load() {},
+  });
+  globalThis.document = standIn({ fonts: new Set(), createElement: (tag: string) => tag === 'video' ? video() : canvas() });
+  const renderer = new SceneCanvas(new Map(), 'https://media.test/');
+  const transform: Transform = { position: { x: 0, y: 0 }, scale: { x: 1, y: 1 }, anchor: { x: 0, y: 0 }, rotation: 0 };
+  const size = async (width?: number, height?: number) => {
+    drawn.length = 0;
+    const content: LayerContent = {
+      type: 'video', asset: { id: 'clip.mp4', location: { type: 'file', path: 'clip.mp4' } },
+      timing: { sourceTimeSeconds: 0 }, ...(width === undefined ? {} : { width }), ...(height === undefined ? {} : { height }),
+    };
+    await renderer.draw(standIn(canvas()), still({ width: 320, height: 180, fonts: [], layers: [{ id: 'video', opacity: 1, transform, content }] }));
+    return drawn[0];
+  };
+  assert.deepEqual(await size(160), [160, 90]);
+  assert.deepEqual(await size(160, 160), [160, 160]);
+  assert.deepEqual(await size(undefined, 90), [160, 90]);
+  assert.deepEqual(await size(), [320, 180]);
+  renderer.dispose();
+});
+
 // A 2D affine matrix, as DOMMatrix behaves for the calls the renderer makes.
 class AffineMatrix {
   a: number; b: number; c: number; d: number; e: number; f: number;

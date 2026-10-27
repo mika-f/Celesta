@@ -450,6 +450,12 @@ pub enum LayerContent {
     Video {
         asset: ResolvedAsset,
         timing: MediaTiming,
+        /// Display size, as on `Image`: both set, both apply; one set, the
+        /// other follows the frame's aspect; neither, the frame's own size.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        width: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        height: Option<f64>,
     },
     Image {
         asset: ResolvedAsset,
@@ -702,6 +708,10 @@ enum LayerContentDef {
     Video {
         asset: ResolvedAsset,
         timing: MediaTiming,
+        #[serde(default)]
+        width: Option<f64>,
+        #[serde(default)]
+        height: Option<f64>,
     },
     Image {
         asset: ResolvedAsset,

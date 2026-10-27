@@ -52,13 +52,23 @@ impl EditorView {
                         {
                             LookupFate::Stale => {}
                             LookupFate::Gone => self.clear_layer_selection(false),
+                            // An added layer selected by its place under the
+                            // parent shows some other element: not the one
+                            // added after all.
+                            LookupFate::Show if !self.added_lookup_holds(&id, &source) => {
+                                self.clear_layer_selection(false);
+                            }
                             LookupFate::Show => {
                                 self.source_lookup = Some(source_lookup(source));
                                 self.source_lookup_frame = result.timeline_frame;
                                 self.source_lookup_stale = false;
+                                self.carry_scope_choice();
                             }
                         }
                     }
+                    // After the lookup, so an added layer found here replaces
+                    // the selection the lookup was for.
+                    self.take_add_answers(result.generation, result.parent_space, result.added);
                 }
                 Err(mpsc::TryRecvError::Empty) => break,
                 Err(mpsc::TryRecvError::Disconnected) => {

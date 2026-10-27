@@ -875,10 +875,50 @@ fn collected_occurrences_response_parses() {
                     chain: vec![pos("/a/title.tsx", 3, 10), pos("/a/main.tsx", 8, 4)],
                     ranges: vec![(0, 30), (60, 90)],
                     max_per_frame: 2,
+                    wrappers: vec![],
                 }],
             }],
         }
     );
+}
+
+#[test]
+fn instance_wrappers_default_and_merge() {
+    let chunk = |ranges: &str, wrappers: &str| -> OccurrenceIndex {
+        serde_json::from_str(&format!(
+            r#"{{"elements":[{{
+                "element":{{"file":"/a/title.tsx","line":3,"column":10}},
+                "instances":[{{
+                    "chain":[{{"file":"/a/title.tsx","line":3,"column":10}}],
+                    "ranges":{ranges},
+                    "maxPerFrame":1{wrappers}}}]}}]}}"#
+        ))
+        .unwrap()
+    };
+    let wrapper = |line| SourcePos {
+        file: "/a/main.tsx".into(),
+        line,
+        column: 4,
+    };
+    let instance = |index: &OccurrenceIndex| index.elements[0].instances[0].clone();
+
+    assert!(instance(&chunk("[[0,30]]", "")).wrappers.is_empty());
+
+    let at = |lines: &[u32]| {
+        let entries: Vec<String> = lines
+            .iter()
+            .map(|line| format!(r#"{{"file":"/a/main.tsx","line":{line},"column":4}}"#))
+            .collect();
+        format!(r#","wrappers":[{}]"#, entries.join(","))
+    };
+    let mut merged = chunk("[[0,30]]", &at(&[8, 1]));
+    merged.merge(chunk("[[30,60]]", &at(&[12, 1])));
+    merged.merge(chunk("[[60,90]]", ""));
+    assert_eq!(
+        instance(&merged).wrappers,
+        vec![wrapper(8), wrapper(1), wrapper(12)]
+    );
+    assert_eq!(instance(&merged).ranges, vec![(0, 90)]);
 }
 
 fn audio_descriptor(src: &str, start: f64) -> ReactAudioClipDescriptor {
