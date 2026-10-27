@@ -4,6 +4,7 @@
 
 use crate::view::EditorView;
 use crate::widgets::format_component_number;
+use celesta_composition::Color;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::color_picker::{ColorPicker, ColorPickerEvent, ColorPickerState};
 use gpui_kit::component::input::{Escape, Input, InputEvent, InputState, Textarea, TextareaState};
@@ -32,10 +33,7 @@ pub(crate) fn parse_number_input(text: &str) -> Result<f64, String> {
 /// (without surrounding spaces).
 pub(crate) fn parse_color_input(text: &str) -> Result<String, String> {
     let text = text.trim();
-    let valid = text.strip_prefix('#').is_some_and(|digits| {
-        matches!(digits.len(), 6 | 8) && digits.chars().all(|digit| digit.is_ascii_hexdigit())
-    });
-    if valid {
+    if Color::from_hex(text).is_some() {
         Ok(text.to_owned())
     } else {
         Err("Enter a color as #RRGGBB or #RRGGBBAA".to_owned())
@@ -61,8 +59,9 @@ pub(crate) fn color_hex(color: Hsla) -> String {
 
 /// A `#RRGGBB`/`#RRGGBBAA` string as a color, for the swatch.
 pub(crate) fn parse_color(value: &Value) -> Option<Hsla> {
-    let text = parse_color_input(value.as_str()?).ok()?;
-    Rgba::try_from(text.as_str()).ok().map(Hsla::from)
+    let color = Color::from_hex(value.as_str()?.trim())?;
+    let [r, g, b, a] = color.channels().map(|channel| f32::from(channel) / 255.0);
+    Some(Hsla::from(Rgba { r, g, b, a }))
 }
 
 /// The range hint a number field shows: `0–1`, `≥ 0`, or `≤ 10`.
@@ -516,7 +515,7 @@ mod tests {
     fn color_input_accepts_six_or_eight_hex_digits() {
         assert_eq!(parse_color_input("#AABBCC"), Ok("#AABBCC".to_owned()));
         assert_eq!(parse_color_input("#aabbccdd"), Ok("#aabbccdd".to_owned()));
-        for text in ["#fff", "red", "AABBCC"] {
+        for text in ["#fff", "red", "AABBCC", "#aéaaa"] {
             assert!(parse_color_input(text).is_err(), "{text:?} was accepted");
         }
     }

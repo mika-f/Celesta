@@ -3067,6 +3067,23 @@ fn instances_reject_rotated_particles() {
     );
 }
 
+#[test]
+fn instances_report_a_fill_that_splits_a_character_instead_of_panicking() {
+    let mut content = three_particles(InstanceShape::Circle);
+    if let LayerContent::Instances { color, colors, .. } = &mut content {
+        // Six bytes after `#`, the second inside `é`.
+        *color = Some("#aéaaa".to_owned());
+        *colors = None;
+    }
+    let error = CpuRenderer::default()
+        .render(&clip_scene(vec![instance_layer("dots", content)]))
+        .unwrap_err();
+    assert!(
+        matches!(&error, RenderError::InvalidColor(color) if color == "#aéaaa"),
+        "{error}"
+    );
+}
+
 /// The 2x2 checker (red, green, blue, white) drawn as one particle.
 fn checker_particle(color: [u8; 4]) -> Scene {
     Scene {

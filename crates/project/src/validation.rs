@@ -3,19 +3,14 @@ use std::error::Error;
 use std::fmt;
 
 use celesta_composition::{
-    Animatable, DuckError, DuckLevel, GradientStop, LetterSpacing, Paint, TextStroke, TextStyle,
-    Time, Transform, check_duck_group, duck_duration,
+    Animatable, Color, DuckError, DuckLevel, GradientStop, LetterSpacing, Paint, TextStroke,
+    TextStyle, Time, Transform, check_duck_group, duck_duration,
 };
 
 use crate::{
     AssetKind, Character, Project, ProjectDuck, SourceRange, TimelineContent, TimelineEffects,
     TimelineItem,
 };
-
-fn valid_effect_color(color: &str) -> bool {
-    let hex = color.strip_prefix('#').unwrap_or("");
-    matches!(hex.len(), 6 | 8) && hex.bytes().all(|byte| byte.is_ascii_hexdigit())
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ValidationError {
@@ -226,7 +221,7 @@ impl Validator<'_> {
                 self.animatable(
                     &format!("{path}.effects.shadow.color"),
                     &shadow.color,
-                    |color| valid_effect_color(color),
+                    |color| Color::from_hex(color).is_some(),
                     "must be a #RRGGBB or #RRGGBBAA color",
                 );
                 self.animatable(
@@ -252,7 +247,7 @@ impl Validator<'_> {
                 self.animatable(
                     &format!("{path}.effects.glow.color"),
                     &glow.color,
-                    |color| valid_effect_color(color),
+                    |color| Color::from_hex(color).is_some(),
                     "must be a #RRGGBB or #RRGGBBAA color",
                 );
                 self.animatable(
@@ -604,7 +599,7 @@ impl Validator<'_> {
             self.animatable(
                 &format!("{path}.tint.color"),
                 &tint.color,
-                |color| valid_effect_color(color),
+                |color| Color::from_hex(color).is_some(),
                 "must be a #RRGGBB or #RRGGBBAA color",
             );
             if let Some(amount) = &tint.amount {
@@ -758,10 +753,7 @@ impl Validator<'_> {
     }
 
     fn color(&mut self, path: &str, color: &str) {
-        let hex = color.strip_prefix('#');
-        if !hex.is_some_and(|hex| {
-            matches!(hex.len(), 6 | 8) && hex.bytes().all(|byte| byte.is_ascii_hexdigit())
-        }) {
+        if Color::from_hex(color).is_none() {
             self.error(path, "must use #RRGGBB or #RRGGBBAA");
         }
     }

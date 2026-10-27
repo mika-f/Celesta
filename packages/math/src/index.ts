@@ -50,3 +50,5 @@ export {
   rotatePoint,
 } from './vector';
 export type { Vec2 } from './vector';
+
+export { isHexColor, parseHexColor } from './color';

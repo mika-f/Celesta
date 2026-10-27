@@ -4,6 +4,7 @@
 
 import * as React from 'react';
 import type { ReactNode } from 'react';
+import { isHexColor } from '@celesta/math';
 
 import { checkFontFeatures } from './font-features';
 import type { FontFamily, FontFeatures, Paint, TextColorRun, TextFontRun, TextStyle } from './scene';
@@ -68,7 +69,6 @@ function sameFeatures(a: FontFeatures | null | undefined, b: FontFeatures | null
 }
 
 /** The color formats the renderer reads; checked here so a bad one fails at the span, not at export. */
-const HEX_COLOR = /^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/;
 
 /** A span's `style` with its shorthand props filling what the style leaves unset. */
 function spanStyle(props: SpanProps): SpanStyle | undefined {
@@ -93,7 +93,7 @@ function resolveSpan(style: SpanStyle | undefined, inherited: Inherited): Inheri
     const fill = style.fill;
     const color = typeof fill === 'string' ? fill : fill && fill.type === 'solid' ? fill.color : undefined;
     if (color === undefined) throw new Error('<Span> fill must be a color or a solid paint');
-    if (typeof color !== 'string' || !HEX_COLOR.test(color)) {
+    if (!isHexColor(color)) {
       throw new Error(`<Span> fill must be a #RRGGBB or #RRGGBBAA color, got ${JSON.stringify(color)}`);
     }
     next.color = color;

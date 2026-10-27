@@ -115,3 +115,22 @@ const marker = cubicBezierPoint(p0, p1, p2, p3, t);
 ```
 
 `quadraticBezierPoint` と `cubicBezierPoint` は `Path` の `quadTo` / `cubicTo` と同じ制御点を使うので、マーカーが描いた曲線上に留まります。`Path` は[テキスト効果・カメラ・線](/ja/docs/text-camera-lines/)をご覧ください。
+
+## 色
+
+色の props は `#RRGGBB` か `#RRGGBBAA`（大文字・小文字どちらも可）を受け付けます。次の 2 つのヘルパーはこの形式をレンダラーと同じ規則で読むので、データやプロパティ入力から来た色を使う前に確かめたり、チャンネルに分けたりできます。
+
+**色**
+
+| API | 用途 |
+| --- | --- |
+| `isHexColor(value)` | `value` が `#RRGGBB` か `#RRGGBBAA` の文字列かどうか。 |
+| `parseHexColor(color)` | 色を `[r, g, b, a]`（それぞれ 0–255。`#RRGGBB` のアルファは 255）で返します。どちらの形式でもなければ `undefined` です。 |
+
+```tsx title="フォールバック付きのデータの色を、アルファ半分で"
+import { isHexColor, parseHexColor } from '@celesta/math';
+
+const fill = isHexColor(row.color) ? row.color : '#a68bbf';
+const [r, g, b, a] = parseHexColor(fill)!;
+const overlay = `#${[r, g, b, Math.round(a / 2)].map((c) => c.toString(16).padStart(2, '0')).join('')}`;
+```

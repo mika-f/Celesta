@@ -5,7 +5,7 @@ use crate::texture::CanvasTexture;
 use celesta_composition::{
     LayerFilter, LayerShader, Scene, ShaderParam, ShaderParamType, ShaderSource,
 };
-use celesta_renderer::Color as CpuColor;
+use celesta_renderer::parse_color;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -328,7 +328,7 @@ impl ShaderProcessor {
         }
         let color = match color {
             Some(color) => {
-                let color = CpuColor::from_hex(color)
+                let color = parse_color(color)
                     .map_err(|message| error(format!("layer `{layer}`: {message}")))?;
                 [color.red, color.green, color.blue, color.alpha]
                     .map(|value| f32::from(value) / 255.0)
@@ -489,7 +489,7 @@ impl ShaderProcessor {
         }
         let mut values = values.map(|value| value as f32);
         if let Some(color) = color {
-            let color = CpuColor::from_hex(color)
+            let color = parse_color(color)
                 .map_err(|message| error(format!("layer `{layer}`: {message}")))?;
             values[4..7].copy_from_slice(
                 &[color.red, color.green, color.blue].map(|value| f32::from(value) / 255.0),

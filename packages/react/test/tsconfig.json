@@ -1,6 +1,6 @@
 {
-  // Type-checks the tests together with the src/ they import. This package
-  // references no other project, so `tsc -b test` builds nothing; the
+  // Type-checks the tests together with the src/ they import. `tsc -b test`
+  // builds `@celesta/math` first, when its dist/ is missing or stale; this
   // package itself needs no build.
   "extends": "../tsconfig.json",
   "compilerOptions": {
@@ -15,5 +15,6 @@
     "tsBuildInfoFile": "../node_modules/.cache/test.tsbuildinfo",
     "types": ["node"]
   },
-  "include": ["./**/*.mts"]
+  "include": ["./**/*.mts"],
+  "references": [{ "path": "../../math" }]
 }

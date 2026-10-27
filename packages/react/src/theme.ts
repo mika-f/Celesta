@@ -5,6 +5,7 @@
 
 import * as React from 'react';
 import type { ReactNode } from 'react';
+import { isHexColor } from '@celesta/math';
 
 import { checkFontFeatures } from './font-features';
 import type { FontFamily, Paint, TextStyle } from './scene';
@@ -33,7 +34,6 @@ const EMPTY_THEME: ResolvedTheme = { fonts: {}, colors: {} };
 /** @internal */
 export const ThemeContext = React.createContext<ResolvedTheme>(EMPTY_THEME);
 
-const HEX_COLOR = /^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/;
 
 function checkEntries(theme: ThemeValues): void {
   for (const [name, family] of Object.entries(theme.fonts ?? {})) {
@@ -43,7 +43,7 @@ function checkEntries(theme: ThemeValues): void {
     }
   }
   for (const [name, color] of Object.entries(theme.colors ?? {})) {
-    if (typeof color !== 'string' || !HEX_COLOR.test(color)) {
+    if (!isHexColor(color)) {
       throw new Error(`<Theme> color "${name}" must be a #RRGGBB or #RRGGBBAA color, got ${JSON.stringify(color)}`);
     }
   }
@@ -102,7 +102,7 @@ export function themeColor(color: string, theme: ResolvedTheme): string {
 function hexOrThemeColor(color: unknown, theme: ResolvedTheme, what: string): string {
   if (typeof color !== 'string') throw new Error(`${what} must be a string`);
   const resolved = themeColor(color, theme);
-  if (!HEX_COLOR.test(resolved)) {
+  if (!isHexColor(resolved)) {
     const names = Object.keys(theme.colors);
     throw new Error(
       `${what} ${JSON.stringify(color)} is neither a #RRGGBB or #RRGGBBAA color nor a <Theme> color name`

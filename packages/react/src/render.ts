@@ -7,6 +7,7 @@
 // they would across re-renders in any other React host.
 
 import * as React from 'react';
+import { isHexColor } from '@celesta/math';
 
 import type { AudioDuck } from './components';
 import { isRemoteUrl } from './entry-dir';
@@ -974,7 +975,7 @@ function extractEffects(props: Record<string, unknown>, context: WalkContext): L
     return value;
   };
   const color = (value: unknown, name: string): string => {
-    if (typeof value !== 'string' || !/^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/.test(value)) {
+    if (!isHexColor(value)) {
       throw new Error(`${name} must be a #RRGGBB or #RRGGBBAA color`);
     }
     return value;

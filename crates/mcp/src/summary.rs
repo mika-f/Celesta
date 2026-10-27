@@ -5,6 +5,7 @@ use std::collections::BTreeSet;
 use std::fmt::Write;
 use std::path::{Path, PathBuf};
 
+use celesta_composition::Color;
 use serde::Serialize;
 use serde_json::{Map, Value};
 
@@ -595,13 +596,6 @@ pub fn diff_scenes(end: &Value, start: &Value) -> Vec<Difference> {
     out
 }
 
-fn hex_color(text: &str) -> bool {
-    let digits = text.strip_prefix('#').unwrap_or("");
-    text.starts_with('#')
-        && (digits.len() == 6 || digits.len() == 8)
-        && digits.bytes().all(|b| b.is_ascii_hexdigit())
-}
-
 fn diff(end: Option<&Value>, start: Option<&Value>, at: &str, out: &mut Vec<Difference>) {
     let push = |out: &mut Vec<Difference>, end: Option<Value>, start: Option<Value>| {
         out.push(Difference {
@@ -618,13 +612,13 @@ fn diff(end: Option<&Value>, start: Option<&Value>, at: &str, out: &mut Vec<Diff
             }
         }
         (Some(Value::String(e)), Some(Value::String(s)))
-            if hex_color(e) && hex_color(s) && e.len() == s.len() =>
+            if Color::from_hex(e).is_some() && Color::from_hex(s).is_some() =>
         {
-            let channel =
-                |text: &str, i: usize| i64::from_str_radix(&text[i..i + 2], 16).unwrap_or(0);
-            if (1..e.len())
-                .step_by(2)
-                .any(|i| (channel(e, i) - channel(s, i)).abs() > 1)
+            let channels = |text: &str| Color::from_hex(text).map_or([0; 4], Color::channels);
+            if channels(e)
+                .into_iter()
+                .zip(channels(s))
+                .any(|(e, s)| e.abs_diff(s) > 1)
             {
                 push(out, end.cloned(), start.cloned());
             }

@@ -9,7 +9,7 @@ use crate::linebreak::{
 use crate::paint::{ResolvedPaint, resolve_paint};
 use crate::rect::dilate_mask;
 use crate::text::{AnchorBox, GlyphMetrics, RasterizedText, TextMetrics, TextWindow};
-use crate::types::{Color, RgbaFrame};
+use crate::types::{Color, RgbaFrame, parse_color};
 use celesta_composition::{FontFeatures, LineBreak, TextAlign, TextFontRun, TextStyle};
 use cosmic_text::Command;
 use cosmic_text::{
@@ -790,7 +790,7 @@ impl TextRasterizer {
                     text_length: count,
                 });
             }
-            colors.push(Color::from_hex(&run.color)?);
+            colors.push(parse_color(&run.color)?);
             previous_end = run.end;
         }
         let mut ink_rows: Option<(usize, usize)> = None;

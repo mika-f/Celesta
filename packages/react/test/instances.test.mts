@@ -94,6 +94,8 @@ test('invalid props fail the frame and name the prop', () => {
     ['count={1} x={[1]} y={[1]} width={1} height={1} shape="star"', 'shape'],
     ['count={1} x={[1]} y={[1]} height={1}', 'width'],
     ['count={1} x={1} y={[1]} width={1} height={1}', 'x'],
+    ['count={1} x={[1]} y={[1]} width={1} height={1} fill="red"', 'fill'],
+    ['count={1} x={[1]} y={[1]} width={1} height={1} fill="#aéaaa"', 'fill'],
   ]) {
     const frame = layer(props);
     assert.match(frame.error ?? '', new RegExp(`<Instances> ${name}`), props);

@@ -1,6 +1,6 @@
 use crate::time::{Rational, Time};
 use crate::{
-    Animatable, AssetLocation, AudioClip, AudioDuck, BackfaceVisibility, Clip, DuckError,
+    Animatable, AssetLocation, AudioClip, AudioDuck, BackfaceVisibility, Clip, Color, DuckError,
     DuckGroups, DuckLevel, EvaluatedTransform, F32Column, GroupMask, IDENTITY3, ImageFit,
     InstanceShape, Layer, LayerContent, LetterSpacing, LineCap, LineDash, LineJoin, MaskMode,
     Matrix3, MediaTiming, Paint, PathCommand, Point, ResolvedAsset, Stroke, TextStyle, U8Column,
@@ -961,6 +961,63 @@ fn stylize_filters_and_chroma_keys_round_trip() {
     ] {
         assert!(identity.is_identity(), "{identity:?}");
     }
+}
+
+#[test]
+fn a_tint_is_identity_only_when_its_color_is_transparent() {
+    let tint = |color: &str| crate::LayerFilter::Tint {
+        color: color.to_owned(),
+        amount: 1.0,
+    };
+    assert!(tint("#FF000000").is_identity());
+    assert!(tint("#ff000000").is_identity());
+    assert!(!tint("#FF0000").is_identity());
+    assert!(!tint("#FF000001").is_identity());
+    // Invalid colors reach the renderer, which reports them.
+    assert!(!tint("#xyzxyz00").is_identity());
+    assert!(!tint("red").is_identity());
+}
+
+#[test]
+fn colors_parse_six_or_eight_hex_digits() {
+    assert_eq!(
+        Color::from_hex("#1a2B3c"),
+        Some(Color::rgba(0x1A, 0x2B, 0x3C, 255))
+    );
+    assert_eq!(
+        Color::from_hex("#1A2B3C80"),
+        Some(Color::rgba(0x1A, 0x2B, 0x3C, 0x80))
+    );
+    for invalid in [
+        "",
+        "#",
+        "1A2B3C",
+        "#1A2B3",
+        "#1A2B3C8",
+        "#1A2B3C800",
+        "#xyzxyz",
+        "#+1A2B3",
+        " #1A2B3C",
+        // Six or eight bytes that split a UTF-8 character must not panic.
+        "#aéaaa",
+        "#aaaaéaa",
+        "#ééé",
+    ] {
+        assert_eq!(Color::from_hex(invalid), None, "{invalid:?}");
+    }
+}
+
+#[test]
+fn colors_format_as_eight_upper_case_digits_and_interpolate_per_channel() {
+    assert_eq!(Color::rgba(0x1A, 0x2B, 0x3C, 255).to_string(), "#1A2B3CFF");
+    let from = Color::rgba(0, 100, 255, 0);
+    let to = Color::rgba(255, 200, 0, 255);
+    assert_eq!(from.lerp(to, 0.0), from);
+    assert_eq!(from.lerp(to, 1.0), to);
+    assert_eq!(from.lerp(to, 0.5), Color::rgba(128, 150, 128, 128));
+    // An overshooting easing saturates rather than wrapping.
+    assert_eq!(from.lerp(to, 1.5), Color::rgba(255, 250, 0, 255));
+    assert_eq!(from.lerp(to, -0.5), Color::rgba(0, 50, 255, 0));
 }
 
 #[test]

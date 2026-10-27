@@ -4,6 +4,7 @@
 // The walker serializes them into `effects.filters` and lists the custom
 // shaders' sources in the scene's `shaders`.
 
+import { isHexColor, parseHexColor } from '@celesta/math';
 import type { LayerFilter } from './generated/LayerFilter';
 import type { ShaderSource } from './generated/ShaderSource';
 import type { ShaderParamType } from './generated/ShaderParamType';
@@ -130,7 +131,6 @@ export const COLOR_FILTERS: readonly ColorFilterName[] = [
   'brightness', 'contrast', 'saturation', 'hue', 'grayscale', 'invert', 'tint', 'vignette',
 ];
 
-const HEX_COLOR = /^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/;
 
 /**
  * The built-in color filter `name` with `value`, checked; throws naming
@@ -166,7 +166,7 @@ export function colorFilter(name: ColorFilterName, value: unknown): ShaderEffect
       return new ShaderEffect({ type: name, amount: number(value, name, 0, 1) });
     case 'tint': {
       const tint = object(value, 'tint');
-      if (typeof tint.color !== 'string' || !HEX_COLOR.test(tint.color)) {
+      if (!isHexColor(tint.color)) {
         throw new Error('tint.color must be a #RRGGBB or #RRGGBBAA color');
       }
       const amount = tint.amount === undefined ? 1 : number(tint.amount, 'tint.amount', 0, 1);
@@ -305,8 +305,6 @@ export const FILTER_PROPS: readonly BuiltinFilterName[] = [
   'halftone', 'noise', 'scanlines',
 ];
 
-const KEY_COLOR = /^#[0-9a-fA-F]{6}$/;
-
 /**
  * The built-in filter `name` with `value`, checked; throws naming the
  * filter. Spatial values are output pixels and angles degrees.
@@ -406,7 +404,7 @@ export function builtinFilter(name: BuiltinFilterName, value: unknown): ShaderEf
     }
     case 'chromaKey': {
       const key = fields('color');
-      if (typeof key.color !== 'string' || !KEY_COLOR.test(key.color)) {
+      if (!isHexColor(key.color) || key.color.length !== 7) {
         throw new Error(`${label('color')} must be a #RRGGBB color`);
       }
       return new ShaderEffect({
@@ -432,7 +430,7 @@ export function isIdentityFilter(filter: BuiltinFilter): boolean {
     case 'hue':
       return filter.degrees % 360 === 0;
     case 'tint':
-      return filter.amount === 0 || /^#[0-9a-fA-F]{6}00$/.test(filter.color);
+      return filter.amount === 0 || parseHexColor(filter.color)?.[3] === 0;
     case 'pixelate':
       return filter.size <= 1;
     case 'halftone':

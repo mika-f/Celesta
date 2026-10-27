@@ -6,6 +6,7 @@
 import * as React from 'react';
 import type { ReactNode } from 'react';
 
+import { isHexColor } from '@celesta/math';
 import { Span } from '@celesta/react';
 import type { ResolvedTheme } from '@celesta/react';
 
@@ -48,7 +49,6 @@ export interface EmphasisOptions {
   what?: string;
 }
 
-const HEX_COLOR = /^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/;
 const STYLE_KEYS = new Set(['color', 'fontWeight']);
 
 let segmenter: Intl.Segmenter | undefined;
@@ -78,7 +78,7 @@ function checkStyle(style: unknown, where: string, theme: ResolvedTheme | undefi
     const resolved = typeof color === 'string' && theme && Object.prototype.hasOwnProperty.call(theme.colors, color)
       ? theme.colors[color]!
       : color;
-    if (typeof resolved !== 'string' || !HEX_COLOR.test(resolved)) {
+    if (!isHexColor(resolved)) {
       throw new Error(
         `${where} color ${JSON.stringify(color)} is neither a #RRGGBB or #RRGGBBAA color nor a <Theme> color name`,
       );

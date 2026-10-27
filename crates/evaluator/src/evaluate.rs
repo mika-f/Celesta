@@ -1,7 +1,7 @@
 use crate::error::EvaluationError;
 use celesta_composition::{
-    Animatable, AnimationError, EvaluatedTransform, Keyframe, KeyframeAnimation, LayerEffects,
-    LayerFilter, LayerGlow, LayerShadow, Point, Time, Transform, evaluate_f64, integrate_f64,
+    Animatable, AnimationError, Color, EvaluatedTransform, LayerEffects, LayerFilter, LayerGlow,
+    LayerShadow, Point, Time, Transform, evaluate_f64, integrate_f64, keyframe_segment,
 };
 use celesta_project::{TimelineEffects, TimelineItem};
 
@@ -110,6 +110,8 @@ fn evaluate_color_filters(
     Ok(filters)
 }
 
+/// An effect color at `time`: a static one as written, an animated one
+/// interpolated per channel between the two keyframes around `time`.
 pub(crate) fn evaluate_effect_color(
     value: &Animatable<String>,
     time: Time,
@@ -117,53 +119,14 @@ pub(crate) fn evaluate_effect_color(
     match value {
         Animatable::Static(color) => Ok(color.clone()),
         Animatable::Keyframes(animation) => {
-            let colors: Vec<[u8; 4]> = animation
-                .keyframes
-                .iter()
-                .map(|keyframe| parse_effect_color(&keyframe.value))
-                .collect::<Result<_, _>>()?;
-            let mut channels = [0_u8; 4];
-            for (index, channel) in channels.iter_mut().enumerate() {
-                let values = Animatable::Keyframes(KeyframeAnimation {
-                    kind: animation.kind,
-                    keyframes: animation
-                        .keyframes
-                        .iter()
-                        .zip(&colors)
-                        .map(|(keyframe, color)| Keyframe {
-                            time: keyframe.time,
-                            value: f64::from(color[index]),
-                            easing: keyframe.easing,
-                        })
-                        .collect(),
-                });
-                *channel = evaluate_f64(&values, time)?.round().clamp(0.0, 255.0) as u8;
-            }
-            Ok(format!(
-                "#{:02X}{:02X}{:02X}{:02X}",
-                channels[0], channels[1], channels[2], channels[3]
-            ))
+            let (from, to, eased) = keyframe_segment(animation, time)?;
+            let parse = |color: &str| {
+                Color::from_hex(color)
+                    .ok_or_else(|| EvaluationError::InvalidEffectColor(color.to_owned()))
+            };
+            Ok(parse(from)?.lerp(parse(to)?, eased).to_string())
         }
     }
-}
-
-pub(crate) fn parse_effect_color(color: &str) -> Result<[u8; 4], EvaluationError> {
-    let hex = color
-        .strip_prefix('#')
-        .ok_or_else(|| EvaluationError::InvalidEffectColor(color.to_owned()))?;
-    let byte = |offset| {
-        u8::from_str_radix(&hex[offset..offset + 2], 16)
-            .map_err(|_| EvaluationError::InvalidEffectColor(color.to_owned()))
-    };
-    if !matches!(hex.len(), 6 | 8) || !hex.bytes().all(|digit| digit.is_ascii_hexdigit()) {
-        return Err(EvaluationError::InvalidEffectColor(color.to_owned()));
-    }
-    Ok([
-        byte(0)?,
-        byte(2)?,
-        byte(4)?,
-        if hex.len() == 8 { byte(6)? } else { 255 },
-    ])
 }
 
 pub(crate) fn integrate_optional(

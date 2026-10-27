@@ -49,7 +49,7 @@ pub use shaping::validate_font_runs;
 pub use text::{
     FontFallback, GlyphMetrics, MissingGlyphs, RasterizedText, TextMetrics, TextWindow,
 };
-pub use types::{Color, RenderOptions, RgbaFrame};
+pub use types::{Color, RenderOptions, RgbaFrame, parse_color};
 
 pub mod image_source;
 mod path;

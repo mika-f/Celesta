@@ -115,3 +115,22 @@ const marker = cubicBezierPoint(p0, p1, p2, p3, t);
 ```
 
 Both `quadraticBezierPoint` and `cubicBezierPoint` use the same control points as a `Path`’s `quadTo` and `cubicTo` commands, so the marker stays on the drawn curve. See [Text effects, camera & lines](/en/docs/text-camera-lines/) for `Path`.
+
+## Colors
+
+Color props take `#RRGGBB` or `#RRGGBBAA`, in either case. These two helpers read that format exactly as the renderer does, so you can check or take apart a color that comes from data or a property input before you use it.
+
+**Colors**
+
+| API | Use it for |
+| --- | --- |
+| `isHexColor(value)` | Whether `value` is a `#RRGGBB` or `#RRGGBBAA` string. |
+| `parseHexColor(color)` | The color as `[r, g, b, a]`, each 0–255 (`#RRGGBB` has an alpha of 255), or `undefined` when it is not one. |
+
+```tsx title="A data color with a fallback, at half its alpha"
+import { isHexColor, parseHexColor } from '@celesta/math';
+
+const fill = isHexColor(row.color) ? row.color : '#a68bbf';
+const [r, g, b, a] = parseHexColor(fill)!;
+const overlay = `#${[r, g, b, Math.round(a / 2)].map((c) => c.toString(16).padStart(2, '0')).join('')}`;
+```

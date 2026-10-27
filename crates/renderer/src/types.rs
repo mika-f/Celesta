@@ -3,45 +3,11 @@ use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Color {
-    pub red: u8,
-    pub green: u8,
-    pub blue: u8,
-    pub alpha: u8,
-}
+pub use celesta_composition::Color;
 
-impl Color {
-    pub const TRANSPARENT: Self = Self::rgba(0, 0, 0, 0);
-    pub const WHITE: Self = Self::rgba(255, 255, 255, 255);
-
-    pub const fn rgba(red: u8, green: u8, blue: u8, alpha: u8) -> Self {
-        Self {
-            red,
-            green,
-            blue,
-            alpha,
-        }
-    }
-
-    pub fn from_hex(value: &str) -> Result<Self, RenderError> {
-        let hex = value
-            .strip_prefix('#')
-            .ok_or_else(|| RenderError::InvalidColor(value.to_owned()))?;
-        if !matches!(hex.len(), 6 | 8) {
-            return Err(RenderError::InvalidColor(value.to_owned()));
-        }
-        let byte = |offset| {
-            u8::from_str_radix(&hex[offset..offset + 2], 16)
-                .map_err(|_| RenderError::InvalidColor(value.to_owned()))
-        };
-        Ok(Self::rgba(
-            byte(0)?,
-            byte(2)?,
-            byte(4)?,
-            if hex.len() == 8 { byte(6)? } else { 255 },
-        ))
-    }
+/// `#RRGGBB` or `#RRGGBBAA`, through [`Color::from_hex`].
+pub fn parse_color(value: &str) -> Result<Color, RenderError> {
+    Color::from_hex(value).ok_or_else(|| RenderError::InvalidColor(value.to_owned()))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

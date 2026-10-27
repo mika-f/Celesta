@@ -20,6 +20,7 @@ each property its own seed (`` `star-${i}-x` ``).
 - [Numbers](#numbers)
 - [Waves](#waves)
 - [Angles and points](#angles-and-points)
+- [Colors](#colors)
 
 ## Random
 
@@ -116,3 +117,12 @@ Points are `{ x, y }` (`Vec2`): `distance(a, b)`, `angleBetween(from, to)`,
 `polarToCartesian(angle, radius, center?)`, `cartesianToPolar(p, center?)`,
 `quadraticBezierPoint(p0, p1, p2, t)`, and `cubicBezierPoint(p0, p1, p2, p3,
 t)` (the curves a `Path`'s `quadTo`/`cubicTo` draw).
+
+## Colors
+
+`isHexColor(value)`: whether `value` is a `#RRGGBB` or `#RRGGBBAA` string
+(either case), the only color format props accept. `parseHexColor(color)`:
+`[r, g, b, a]`, each 0–255 (`#RRGGBB` is opaque), or `undefined` for anything
+else. Use them to check colors from data or `--props` before passing them
+on; to blend colors over frames, use `interpolateColor`
+([animation.md](animation.md#interpolatecolor)).

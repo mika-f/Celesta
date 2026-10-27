@@ -7,7 +7,8 @@ use crate::blend::BlendMode;
 use crate::instances::{F32Column, InstanceShape, U8Column};
 use crate::tagged::TypeTagged;
 use crate::{
-    Animatable, BackfaceVisibility, Paint, Rational, Stroke, TextStyle, Time, TimeError, TimeRange,
+    Animatable, BackfaceVisibility, Color, Paint, Rational, Stroke, TextStyle, Time, TimeError,
+    TimeRange,
 };
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -223,9 +224,10 @@ impl LayerFilter {
             | Self::Saturation { amount } => *amount == 1.0,
             Self::Hue { degrees } => degrees % 360.0 == 0.0,
             Self::Grayscale { amount } | Self::Invert { amount } => *amount == 0.0,
-            // `#RRGGBB00` lays a transparent color.
+            // A transparent color lays nothing; an invalid one is left for
+            // the renderer to report.
             Self::Tint { color, amount } => {
-                *amount == 0.0 || (color.len() == 9 && color.ends_with("00"))
+                *amount == 0.0 || Color::from_hex(color).is_some_and(|color| color.alpha == 0)
             }
             Self::Vignette { amount, .. } => *amount == 0.0,
         }

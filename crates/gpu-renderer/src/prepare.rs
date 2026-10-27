@@ -23,7 +23,7 @@ use celesta_composition::{
 use celesta_renderer::image_source::{display_size, fit_within, resize_rgba};
 use celesta_renderer::psd_source::PsdSize;
 use celesta_renderer::{
-    Color as CpuColor, FlattenedPath, flatten_path, rasterize_path, resolve_rect_paint,
+    Color as CpuColor, FlattenedPath, flatten_path, parse_color, rasterize_path, resolve_rect_paint,
 };
 use rayon::prelude::*;
 
@@ -1059,7 +1059,7 @@ impl GpuRenderer {
                 colors,
             } => {
                 let color = match color {
-                    Some(color) => CpuColor::from_hex(color).map_err(GpuRenderError::Text)?,
+                    Some(color) => parse_color(color).map_err(GpuRenderError::Text)?,
                     None => CpuColor::rgba(255, 255, 255, 255),
                 };
                 let mut columns = InstanceColumns {
