@@ -6,8 +6,6 @@
 //! run; the cache never revalidates, so changing a remote file needs a new
 //! URL (or a cleared cache). Entries are keyed by the exact URL string.
 
-use std::error::Error;
-use std::fmt;
 use std::fs::{self, File};
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -137,54 +135,31 @@ impl RemoteAssetCache {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum RemoteAssetError {
-    UnsupportedScheme {
-        url: String,
-    },
+    #[error("`{url}` is not an http or https URL")]
+    UnsupportedScheme { url: String },
+    #[error("{}", request_message(.url, .source))]
     Request {
         url: String,
         source: Box<ureq::Error>,
     },
-    Io {
-        url: String,
-        source: io::Error,
-    },
+    #[error("could not cache `{url}`: {source}")]
+    Io { url: String, source: io::Error },
 }
 
-impl fmt::Display for RemoteAssetError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::UnsupportedScheme { url } => {
-                write!(formatter, "`{url}` is not an http or https URL")
-            }
-            Self::Request { url, source } => {
-                if (url.starts_with("https://fonts.googleapis.com/css?")
-                    || url.starts_with("https://fonts.googleapis.com/css2?"))
-                    && matches!(source.as_ref(), ureq::Error::StatusCode(400))
-                {
-                    return write!(
-                        formatter,
-                        "Google Fonts could not find the family or requested weights in `{url}`; check the family name and available weights at https://fonts.google.com"
-                    );
-                }
-                write!(formatter, "could not download `{url}`: {source}")
-            }
-            Self::Io { url, source } => {
-                write!(formatter, "could not cache `{url}`: {source}")
-            }
-        }
+/// Why downloading `url` failed, with a hint for a Google Fonts stylesheet
+/// that names a family or weight it does not have.
+fn request_message(url: &str, error: &ureq::Error) -> String {
+    if (url.starts_with("https://fonts.googleapis.com/css?")
+        || url.starts_with("https://fonts.googleapis.com/css2?"))
+        && matches!(error, ureq::Error::StatusCode(400))
+    {
+        return format!(
+            "Google Fonts could not find the family or requested weights in `{url}`; check the family name and available weights at https://fonts.google.com"
+        );
     }
-}
-
-impl Error for RemoteAssetError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::UnsupportedScheme { .. } => None,
-            Self::Request { source, .. } => Some(source.as_ref()),
-            Self::Io { source, .. } => Some(source),
-        }
-    }
+    format!("could not download `{url}`: {error}")
 }
 
 fn shared_agent() -> &'static Agent {

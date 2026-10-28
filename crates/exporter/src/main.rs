@@ -2,7 +2,6 @@ use std::num::{NonZeroU32, NonZeroU64};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use clap::builder::{PossibleValuesParser, TypedValueParser};
 use clap::error::ErrorKind;
 use clap::parser::ValueSource;
 use clap::{CommandFactory, FromArgMatches, Parser, ValueEnum};
@@ -213,7 +212,7 @@ struct Cli {
     #[arg(
         long,
         default_value_t = EncoderPreset::default(),
-        value_parser = names(&EncoderPreset::ALL, EncoderPreset::as_str)
+        value_enum
     )]
     preset: EncoderPreset,
     /// Constant rate factor, 0-51; lower is higher quality.
@@ -228,7 +227,7 @@ struct Cli {
         long,
         value_name = "WHERE",
         default_value_t = ColorConversion::default(),
-        value_parser = names(&ColorConversion::ALL, ColorConversion::as_str)
+        value_enum
     )]
     color_conversion: ColorConversion,
     /// Bits per sample of the MP4: 10 encodes yuv420p10le (H.264 High 10),
@@ -237,7 +236,7 @@ struct Cli {
         long,
         value_name = "BITS",
         default_value_t = BitDepth::default(),
-        value_parser = names(&BitDepth::ALL, BitDepth::as_str)
+        value_enum
     )]
     bit_depth: BitDepth,
     /// The MP4 plays in a loop: encode its sound to run from its end into
@@ -264,12 +263,7 @@ struct Cli {
     true_peak: Option<f64>,
     /// What --loudness does where its gain would take a true peak over
     /// --true-peak: limit the peak, or lower the gain [default: limit].
-    #[arg(
-        long,
-        value_name = "HOW",
-        requires = "loudness",
-        value_parser = names(&PeakHandling::ALL, PeakHandling::as_str)
-    )]
+    #[arg(long, value_name = "HOW", requires = "loudness", value_enum)]
     peak_handling: Option<PeakHandling>,
     /// How carefully scaled and rotated layers are drawn; draft skips
     /// re-rasterizing scaled text and is meant for quick timing checks.
@@ -277,14 +271,14 @@ struct Cli {
         long,
         value_name = "QUALITY",
         default_value_t = RenderQuality::default(),
-        value_parser = names(&RenderQuality::ALL, RenderQuality::as_str)
+        value_enum
     )]
     render_quality: RenderQuality,
     /// Graphics API to render with; auto takes the first one with a GPU.
     #[arg(
         long,
         default_value_t = GpuDriver::default(),
-        value_parser = names(&GpuDriver::ALL, GpuDriver::as_str)
+        value_enum
     )]
     driver: GpuDriver,
     /// Disable the terminal progress dashboard (automatic outside a terminal).
@@ -358,19 +352,6 @@ impl OutputFormat {
             Self::Mp4 | Self::Mov | Self::Webm => None,
         }
     }
-}
-
-/// A parser accepting exactly `name` of each of `all`, listed in `--help`.
-fn names<T: Copy + Send + Sync + 'static>(
-    all: &'static [T],
-    name: fn(T) -> &'static str,
-) -> impl TypedValueParser<Value = T> {
-    PossibleValuesParser::new(all.iter().map(|&value| name(value))).map(move |text| {
-        all.iter()
-            .copied()
-            .find(|&value| name(value) == text)
-            .expect("PossibleValuesParser only accepts listed names")
-    })
 }
 
 /// `--loudness`: a number of LUFS in [`LoudnessTarget::INTEGRATED_RANGE`],
@@ -846,6 +827,23 @@ fn export_range(start: Option<Time>, end: Option<Time>) -> Result<Option<ExportR
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `--help` lists, and clap accepts, the names the library parses.
+    #[test]
+    fn option_values_take_the_library_names() {
+        fn names_match<T: ValueEnum + Copy + Into<&'static str>>() {
+            for value in T::value_variants() {
+                let name = value.to_possible_value().unwrap();
+                assert_eq!(name.get_name(), (*value).into());
+            }
+        }
+        names_match::<EncoderPreset>();
+        names_match::<ColorConversion>();
+        names_match::<BitDepth>();
+        names_match::<PeakHandling>();
+        names_match::<RenderQuality>();
+        names_match::<GpuDriver>();
+    }
 
     fn choice(args: &[&str]) -> Result<OutputChoice, String> {
         let matches = Cli::command()

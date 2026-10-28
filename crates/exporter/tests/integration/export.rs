@@ -14,6 +14,7 @@ use celesta_project::{
 };
 use ez_ffmpeg::stream_info::{StreamInfo, find_audio_stream_info, find_video_stream_info};
 use ez_ffmpeg::{FfmpegContext, Input, Output};
+use strum::VariantArray;
 
 /// Reports a test skipped for want of a GPU adapter, or fails it when
 /// `CELESTA_REQUIRE_GPU=1` says the machine has one.
@@ -402,7 +403,7 @@ fn converting_colors_on_the_gpu_matches_the_encoder_conversion() {
         result.map(|()| output)
     };
     let mut pixel_formats: Vec<i32> = Vec::new();
-    for bit_depth in BitDepth::ALL {
+    for &bit_depth in BitDepth::VARIANTS {
         let on_gpu = match export(
             ColorConversion::Gpu,
             bit_depth,

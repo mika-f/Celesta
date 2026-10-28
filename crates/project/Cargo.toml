@@ -11,6 +11,8 @@ celesta-composition = { path = "../composition" }
 serde.workspace = true
 serde_json.workspace = true
 ts-rs = { workspace = true, optional = true }
+strum.workspace = true
+thiserror.workspace = true
 
 [features]
 codegen = ["dep:ts-rs", "celesta-composition/codegen"]

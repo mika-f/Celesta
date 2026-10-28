@@ -2,7 +2,6 @@ use crate::audio::take_latest;
 use crate::problems::error_chain;
 use celesta_react_bridge::{ComponentPropertyField, ComponentPropertySchema, ReactBridge};
 use std::collections::BTreeMap;
-use std::error::Error;
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
@@ -35,7 +34,7 @@ pub(crate) struct ComponentSchemaWorker {
 }
 
 impl ComponentSchemaWorker {
-    pub(crate) fn spawn() -> Result<Self, Box<dyn Error>> {
+    pub(crate) fn spawn() -> anyhow::Result<Self> {
         let (request_tx, request_rx) = mpsc::channel::<ComponentSchemaRequest>();
         let (result_tx, result_rx) = mpsc::channel::<ComponentSchemaResult>();
         thread::Builder::new()

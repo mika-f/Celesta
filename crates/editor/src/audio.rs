@@ -3,6 +3,7 @@ use crate::meter::MasterLevels;
 use crate::preview::AudioPreview;
 use crate::problems::error_chain;
 use crate::waveform::{clip_level_envelope, map_clip_waveform, waveform_peaks};
+use anyhow::Context as _;
 use celesta_composition::{AudioClip, AudioGraph, Time};
 use celesta_media::{
     AudioBuffer, AudioDecoder, FfmpegBackend, MediaError, mix_audio_graph_with_ducks_cancellable,
@@ -12,7 +13,6 @@ use gpui_kit::Pixels;
 use rodio::buffer::SamplesBuffer;
 use rodio::{DeviceSinkBuilder, Player};
 use std::collections::HashMap;
-use std::error::Error;
 use std::num::{NonZeroU16, NonZeroU32};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -132,7 +132,7 @@ pub(crate) struct AudioMixWorker {
 }
 
 impl AudioMixWorker {
-    pub(crate) fn spawn() -> Result<Self, Box<dyn Error>> {
+    pub(crate) fn spawn() -> anyhow::Result<Self> {
         let (request_tx, request_rx) = mpsc::channel::<AudioMixRequest>();
         let (result_tx, result_rx) = mpsc::channel::<AudioMixResult>();
         let current_generation = Arc::new(AtomicU64::new(0));
@@ -229,10 +229,10 @@ pub(crate) fn take_latest<T>(mut latest: T, receiver: &mpsc::Receiver<T>) -> T {
 }
 
 impl AudioPreview {
-    pub(crate) fn from_buffer(buffer: AudioBuffer, volume: f64) -> Result<Self, Box<dyn Error>> {
-        let channels = NonZeroU16::new(buffer.channels).ok_or("audio has zero channels")?;
+    pub(crate) fn from_buffer(buffer: AudioBuffer, volume: f64) -> anyhow::Result<Self> {
+        let channels = NonZeroU16::new(buffer.channels).context("audio has zero channels")?;
         let sample_rate =
-            NonZeroU32::new(buffer.sample_rate).ok_or("audio has a zero sample rate")?;
+            NonZeroU32::new(buffer.sample_rate).context("audio has a zero sample rate")?;
         let source = SamplesBuffer::new(channels, sample_rate, buffer.samples);
         let device_sink = DeviceSinkBuilder::open_default_sink()?;
         let player = Player::connect_new(device_sink.mixer());
@@ -253,7 +253,7 @@ impl AudioPreview {
         self.player.set_volume(self.volume);
     }
 
-    pub(crate) fn seek(&mut self, time: Time, playing: bool) -> Result<(), Box<dyn Error>> {
+    pub(crate) fn seek(&mut self, time: Time, playing: bool) -> anyhow::Result<()> {
         self.player.stop();
         self.player = Player::connect_new(self._device_sink.mixer());
         self.player.set_volume(self.volume);

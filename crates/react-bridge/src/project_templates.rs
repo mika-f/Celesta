@@ -11,9 +11,7 @@ use crate::project_types::{
     ProjectTypesSetup, STAMP, project_types_template, set_up_project_types_in,
 };
 use serde::Deserialize;
-use std::error::Error;
 use std::ffi::OsStr;
-use std::fmt;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -218,75 +216,37 @@ fn write_new(path: &Path, contents: &str) -> io::Result<()> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum TemplateError {
     /// The runtime has no `templates/` folder.
-    Missing {
-        dir: PathBuf,
-        source: io::Error,
-    },
+    #[error("Template files are missing from the Celesta runtime ({dir}): {source}")]
+    Missing { dir: PathBuf, source: io::Error },
+    #[error("Unknown template `{name}`; available: {}", .available.join(", "))]
     Unknown {
         name: String,
         available: Vec<String>,
     },
     /// Files the template would create that already exist, relative to
     /// `root` (made absolute) and sorted.
-    Conflicts {
-        root: PathBuf,
-        paths: Vec<PathBuf>,
-    },
-    Io(io::Error),
+    #[error("{root} already has files from this template: {}", template_paths(.paths))]
+    Conflicts { root: PathBuf, paths: Vec<PathBuf> },
+    #[error("{0}")]
+    Io(#[from] io::Error),
 }
 
-impl fmt::Display for TemplateError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Missing { dir, source } => write!(
-                formatter,
-                "Template files are missing from the Celesta runtime ({}): {source}",
-                dir.display()
-            ),
-            Self::Unknown { name, available } => write!(
-                formatter,
-                "Unknown template `{name}`; available: {}",
-                available.join(", ")
-            ),
-            Self::Conflicts { root, paths } => {
-                // Template paths read the same on every platform: `assets/a.png`.
-                let paths: Vec<_> = paths
-                    .iter()
-                    .map(|path| {
-                        path.components()
-                            .map(|part| part.as_os_str().to_string_lossy())
-                            .collect::<Vec<_>>()
-                            .join("/")
-                    })
-                    .collect();
-                write!(
-                    formatter,
-                    "{} already has files from this template: {}",
-                    root.display(),
-                    paths.join(", ")
-                )
-            }
-            Self::Io(error) => error.fmt(formatter),
-        }
-    }
-}
-
-impl Error for TemplateError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Missing { source, .. } | Self::Io(source) => Some(source),
-            Self::Unknown { .. } | Self::Conflicts { .. } => None,
-        }
-    }
-}
-
-impl From<io::Error> for TemplateError {
-    fn from(error: io::Error) -> Self {
-        Self::Io(error)
-    }
+/// `paths` joined by commas, each read the same on every platform:
+/// `assets/a.png`.
+fn template_paths(paths: &[PathBuf]) -> String {
+    let paths: Vec<_> = paths
+        .iter()
+        .map(|path| {
+            path.components()
+                .map(|part| part.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/")
+        })
+        .collect();
+    paths.join(", ")
 }
 
 #[cfg(test)]

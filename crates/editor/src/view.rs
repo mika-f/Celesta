@@ -42,7 +42,6 @@ use gpui_kit::component::resizable::ResizableState;
 use gpui_kit::{Bounds, Entity, FocusHandle, Pixels, ScrollHandle, SharedString};
 use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::Instant;
@@ -388,8 +387,9 @@ impl EditorView {
         path: Option<&Path>,
         property_args: PropertyArgs,
         driver: GpuDriver,
-    ) -> Result<Self, Box<dyn Error>> {
-        let (document, react_preview) = load_source(path, property_args)?;
+    ) -> anyhow::Result<Self> {
+        let (document, react_preview) =
+            load_source(path, property_args).map_err(anyhow::Error::msg)?;
         Self::from_document(path.map(Path::to_path_buf), document, react_preview, driver)
     }
 
@@ -398,7 +398,7 @@ impl EditorView {
         document: EditorDocument,
         react_preview: Option<ReactPreview>,
         driver: GpuDriver,
-    ) -> Result<Self, Box<dyn Error>> {
+    ) -> anyhow::Result<Self> {
         let settings = &document.project().settings;
         let frame_rate_value = settings.frame_rate;
         let clock = TimelineClock::new(document.duration(), frame_rate_value)?;

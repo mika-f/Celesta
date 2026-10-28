@@ -13,6 +13,7 @@
 
 use std::env;
 use std::time::Instant;
+use strum::VariantArray;
 
 use celesta_composition::{
     BlendMode, EvaluatedTransform, Layer, LayerContent, Paint, Point, Rational, Scene, TextStyle,
@@ -39,7 +40,7 @@ fn main() {
         renderer.adapter_info().name,
         renderer.adapter_info().backend
     );
-    for quality in RenderQuality::ALL {
+    for &quality in RenderQuality::VARIANTS {
         renderer.set_render_quality(quality);
         // Warm up fonts and pipelines outside the timed loop.
         renderer.render(&scene(0, layers)).expect("frame renders");

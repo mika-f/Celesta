@@ -2,7 +2,6 @@
 //! `VISUAL` or `EDITOR`, or in the OS default application when neither is set.
 
 use celesta_react_bridge::LayerSource;
-use std::fmt;
 use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -26,27 +25,17 @@ pub(crate) struct Invocation {
 
 /// Why a source position could not be opened. `Display` is the text the
 /// panel shows.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum LaunchError {
     /// `VISUAL`/`EDITOR` names a terminal editor, carrying its name.
+    #[error("VISUAL/EDITOR is a terminal editor ({0}); set VISUAL to a graphical editor")]
     TerminalEditor(String),
     /// `VISUAL`/`EDITOR` is not a valid command line, carrying its value.
+    #[error("VISUAL/EDITOR could not be parsed: {0}")]
     Unparsable(String),
     /// The process failed to start, carrying the system's message.
+    #[error("Could not open the editor: {0}")]
     Spawn(String),
-}
-
-impl fmt::Display for LaunchError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::TerminalEditor(name) => write!(
-                f,
-                "VISUAL/EDITOR is a terminal editor ({name}); set VISUAL to a graphical editor"
-            ),
-            Self::Unparsable(value) => write!(f, "VISUAL/EDITOR could not be parsed: {value}"),
-            Self::Spawn(message) => write!(f, "Could not open the editor: {message}"),
-        }
-    }
 }
 
 /// `VISUAL`, then `EDITOR`, read through `env`. Empty values count as unset.

@@ -1,5 +1,3 @@
-use std::fmt;
-
 use crate::resolve::{EditValue, LiteralForm};
 
 /// A single span edit on the original text.
@@ -35,24 +33,15 @@ pub enum Edit {
     Splice { start: u32, end: u32, text: String },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum ApplyError {
     /// Two edits touch the same bytes.
+    #[error("edits overlap")]
     Overlap,
     /// An edit lies outside the text or off a character boundary.
+    #[error("edit is outside the source text")]
     OutOfRange,
 }
-
-impl fmt::Display for ApplyError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Overlap => f.write_str("edits overlap"),
-            Self::OutOfRange => f.write_str("edit is outside the source text"),
-        }
-    }
-}
-
-impl std::error::Error for ApplyError {}
 
 impl Edit {
     fn span(&self) -> (u32, u32) {

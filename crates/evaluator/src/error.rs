@@ -1,61 +1,27 @@
 use celesta_composition::{AnimationError, DuckError, Time, TimeError};
 use celesta_project::ValidationErrors;
-use std::error::Error;
-use std::fmt;
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum EvaluationError {
+    #[error("invalid project: {0}")]
     InvalidProject(ValidationErrors),
+    #[error("invalid evaluation time {0:?}")]
     InvalidTime(Time),
-    Time(TimeError),
-    Animation(AnimationError),
+    #[error("time evaluation failed: {0}")]
+    Time(#[from] TimeError),
+    #[error("animation evaluation failed: {0}")]
+    Animation(#[from] AnimationError),
+    #[error("invalid effect color `{0}`")]
     InvalidEffectColor(String),
+    #[error("missing asset `{0}`")]
     MissingAsset(String),
+    #[error("missing character `{0}`")]
     MissingCharacter(String),
+    #[error("character `{character}` has no expression `{expression}`")]
     MissingExpression {
         character: String,
         expression: String,
     },
-    InvalidDuck {
-        item: String,
-        error: DuckError,
-    },
-}
-
-impl fmt::Display for EvaluationError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::InvalidProject(errors) => write!(formatter, "invalid project: {errors}"),
-            Self::InvalidTime(time) => write!(formatter, "invalid evaluation time {time:?}"),
-            Self::Time(error) => write!(formatter, "time evaluation failed: {error}"),
-            Self::Animation(error) => write!(formatter, "animation evaluation failed: {error}"),
-            Self::InvalidEffectColor(color) => write!(formatter, "invalid effect color `{color}`"),
-            Self::MissingAsset(id) => write!(formatter, "missing asset `{id}`"),
-            Self::MissingCharacter(id) => write!(formatter, "missing character `{id}`"),
-            Self::MissingExpression {
-                character,
-                expression,
-            } => write!(
-                formatter,
-                "character `{character}` has no expression `{expression}`"
-            ),
-            Self::InvalidDuck { item, error } => {
-                write!(formatter, "item `{item}` has an invalid duck: {error}")
-            }
-        }
-    }
-}
-
-impl Error for EvaluationError {}
-
-impl From<TimeError> for EvaluationError {
-    fn from(error: TimeError) -> Self {
-        Self::Time(error)
-    }
-}
-
-impl From<AnimationError> for EvaluationError {
-    fn from(error: AnimationError) -> Self {
-        Self::Animation(error)
-    }
+    #[error("item `{item}` has an invalid duck: {error}")]
+    InvalidDuck { item: String, error: DuckError },
 }

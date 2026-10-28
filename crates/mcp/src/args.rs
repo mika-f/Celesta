@@ -10,6 +10,7 @@ use celesta_exporter::{
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Map, Value};
+use strum::VariantArray;
 
 use crate::frames::OutputDirs;
 
@@ -476,7 +477,11 @@ impl ExportVideoArgs {
             Some(name) => name.parse::<EncoderPreset>().map_err(|_| {
                 format!(
                     "unknown preset {name:?}; use one of {}",
-                    EncoderPreset::ALL.map(EncoderPreset::as_str).join(", ")
+                    EncoderPreset::VARIANTS
+                        .iter()
+                        .map(|preset| preset.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 )
             })?,
             None => defaults.preset,
@@ -537,12 +542,9 @@ impl ExportVideoArgs {
             None => target.true_peak_dbtp,
         };
         let peak_handling = match &self.peak_handling {
-            Some(name) => PeakHandling::ALL
-                .into_iter()
-                .find(|handling| handling.as_str() == name)
-                .ok_or_else(|| {
-                    format!("peakHandling must be \"limit\" or \"lower\", not {name:?}")
-                })?,
+            Some(name) => name.parse::<PeakHandling>().map_err(|_| {
+                format!("peakHandling must be \"limit\" or \"lower\", not {name:?}")
+            })?,
             None => target.peak_handling,
         };
         Ok(Some(LoudnessTarget {

@@ -3,9 +3,6 @@
 //! `@celesta/media-utils`' `duckEnvelope` ports [`AudioDuck::resolve`] and
 //! [`duck_curve`]; `tests/fixtures/duck-curves.json` pins the two.
 
-use std::error::Error;
-use std::fmt;
-
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -53,27 +50,21 @@ pub struct AudioDuck {
 }
 
 /// Which authored ducking value breaks its rule.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum DuckError {
+    #[error("must be a non-empty name")]
     Group,
+    #[error("must be a non-empty name")]
     Under,
+    #[error("must be a multiplier from 0 to 1, or {{ db }} at or below 0")]
     To,
+    #[error("must be finite and not negative")]
     Attack,
+    #[error("must be finite and not negative")]
     Release,
+    #[error("must be finite and not negative")]
     HoldGap,
 }
-
-impl fmt::Display for DuckError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Group | Self::Under => "must be a non-empty name",
-            Self::To => "must be a multiplier from 0 to 1, or { db } at or below 0",
-            Self::Attack | Self::Release | Self::HoldGap => "must be finite and not negative",
-        })
-    }
-}
-
-impl Error for DuckError {}
 
 impl DuckError {
     /// The authored field the error is about: `duckGroup`, or a field of

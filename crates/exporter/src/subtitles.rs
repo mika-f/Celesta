@@ -12,6 +12,7 @@ use std::ffi::OsStr;
 use std::fmt::Write as _;
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
+use strum::VariantArray;
 
 /// The placeholder a subtitle path names its language with.
 pub const LANG_PLACEHOLDER: &str = "{lang}";
@@ -20,28 +21,25 @@ pub const LANG_PLACEHOLDER: &str = "{lang}";
 const UNDETERMINED: &str = "und";
 
 /// The format of a subtitle file, chosen by its extension.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, strum::IntoStaticStr, strum::VariantArray)]
+#[strum(serialize_all = "lowercase")]
 pub enum SubtitleFormat {
     Srt,
     Vtt,
 }
 
 impl SubtitleFormat {
-    pub const ALL: [Self; 2] = [Self::Srt, Self::Vtt];
-
     /// The file extension.
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Srt => "srt",
-            Self::Vtt => "vtt",
-        }
+    pub fn as_str(self) -> &'static str {
+        self.into()
     }
 
     /// The format whose extension `path` has, ignoring case.
     pub fn from_extension(path: &Path) -> Option<Self> {
         let extension = path.extension().and_then(OsStr::to_str)?;
-        Self::ALL
-            .into_iter()
+        Self::VARIANTS
+            .iter()
+            .copied()
             .find(|format| format.as_str().eq_ignore_ascii_case(extension))
     }
 }

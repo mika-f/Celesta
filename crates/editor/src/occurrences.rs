@@ -4,7 +4,6 @@ use crate::view::EditorView;
 use celesta_react_bridge::runtime_paths as react_runtime_paths;
 use celesta_react_bridge::{OccurrenceIndex, PropertyInputs, ReactBridge, SpawnOptions};
 use gpui_kit::Context;
-use std::error::Error;
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
@@ -74,7 +73,7 @@ pub(crate) struct OccurrenceWorker {
 }
 
 impl OccurrenceWorker {
-    pub(crate) fn spawn() -> Result<Self, Box<dyn Error>> {
+    pub(crate) fn spawn() -> anyhow::Result<Self> {
         let (request_tx, request_rx) = mpsc::channel::<OccurrenceRequest>();
         let (result_tx, result_rx) = mpsc::channel::<OccurrenceResult>();
         thread::Builder::new()

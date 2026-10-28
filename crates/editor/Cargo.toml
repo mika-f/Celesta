@@ -19,15 +19,17 @@ celesta-editor-core = { path = "../editor-core" }
 celesta-editor-theme = { path = "../editor-theme" }
 celesta-evaluator = { path = "../evaluator" }
 celesta-exporter = { path = "../exporter" }
-celesta-gpu-renderer = { path = "../gpu-renderer" }
+celesta-gpu-renderer = { path = "../gpu-renderer", features = ["clap"] }
 celesta-media = { path = "../media" }
 celesta-remote = { path = "../remote" }
 celesta-project = { path = "../project" }
 celesta-react-bridge = { path = "../react-bridge" }
 celesta-source-edit = { path = "../source-edit" }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
-clap = { version = "4.6.7", features = ["derive"] }
+clap.workspace = true
 rodio = { version = "0.23.0", default-features = false, features = ["playback"] }
 serde_json.workspace = true
 shlex = "1"
 unicode-segmentation = "1.13.3"
+anyhow.workspace = true
+thiserror.workspace = true

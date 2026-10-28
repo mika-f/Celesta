@@ -1,6 +1,3 @@
-use std::error::Error;
-use std::fmt;
-
 use crate::{Animatable, Easing, KeyframeAnimation, Time, TimeError};
 
 /// Evaluates a numeric property at item-local `time`.
@@ -362,34 +359,12 @@ fn integrate_numerically(progress: f64, f: impl Fn(f64) -> f64) -> f64 {
     sum * h / 3.0
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum AnimationError {
+    #[error("animation has no keyframes")]
     EmptyKeyframes,
-    Time(TimeError),
-}
-
-impl fmt::Display for AnimationError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::EmptyKeyframes => formatter.write_str("animation has no keyframes"),
-            Self::Time(error) => write!(formatter, "could not evaluate animation time: {error}"),
-        }
-    }
-}
-
-impl Error for AnimationError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::EmptyKeyframes => None,
-            Self::Time(error) => Some(error),
-        }
-    }
-}
-
-impl From<TimeError> for AnimationError {
-    fn from(error: TimeError) -> Self {
-        Self::Time(error)
-    }
+    #[error("could not evaluate animation time: {0}")]
+    Time(#[from] TimeError),
 }
 
 #[cfg(test)]

@@ -1,11 +1,9 @@
 use crate::range::ExportRange;
 use crate::{GpuDriver, RenderQuality};
 use celesta_media::LoudnessTarget;
-use std::error::Error;
 use std::ffi::OsStr;
-use std::fmt;
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
+use strum::VariantArray;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ExportOptions {
@@ -50,7 +48,23 @@ pub struct ExportOptions {
 /// `.mov` (ProRes 4444) and `.webm` (VP9) keep the composition's alpha
 /// channel; `.mp4` (H.264) has none, so transparent pixels are flattened
 /// onto the default opaque background.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    strum::Display,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::VariantArray,
+)]
+#[strum(
+    serialize_all = "lowercase",
+    parse_err_ty = UnknownVideoFormat,
+    parse_err_fn = UnknownVideoFormat::new
+)]
 pub enum VideoFormat {
     #[default]
     Mp4,
@@ -59,22 +73,17 @@ pub enum VideoFormat {
 }
 
 impl VideoFormat {
-    pub const ALL: [Self; 3] = [Self::Mp4, Self::Mov, Self::Webm];
-
     /// The output file extension, which is also the name `--output-format` takes.
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Mp4 => "mp4",
-            Self::Mov => "mov",
-            Self::Webm => "webm",
-        }
+    pub fn as_str(self) -> &'static str {
+        self.into()
     }
 
     /// The format whose extension `path` has, ignoring case.
     pub fn from_extension(path: &Path) -> Option<Self> {
         let extension = path.extension().and_then(OsStr::to_str)?;
-        Self::ALL
-            .into_iter()
+        Self::VARIANTS
+            .iter()
+            .copied()
             .find(|format| format.as_str().eq_ignore_ascii_case(extension))
     }
 
@@ -94,41 +103,18 @@ impl VideoFormat {
     }
 }
 
-impl fmt::Display for VideoFormat {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.as_str())
-    }
-}
-
-impl FromStr for VideoFormat {
-    type Err = UnknownVideoFormat;
-
-    fn from_str(name: &str) -> Result<Self, Self::Err> {
-        Self::ALL
-            .into_iter()
-            .find(|format| format.as_str() == name)
-            .ok_or_else(|| UnknownVideoFormat(name.to_owned()))
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error(
+    "unknown video format '{0}' (expected one of {expected})",
+    expected = names(VideoFormat::VARIANTS)
+)]
 pub struct UnknownVideoFormat(pub String);
 
-impl fmt::Display for UnknownVideoFormat {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "unknown video format '{}' (expected one of",
-            self.0
-        )?;
-        for format in VideoFormat::ALL {
-            write!(formatter, " {format}")?;
-        }
-        formatter.write_str(")")
+impl UnknownVideoFormat {
+    fn new(name: &str) -> Self {
+        Self(name.to_owned())
     }
 }
-
-impl Error for UnknownVideoFormat {}
 
 /// Settings for the exported H.264 video stream.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -167,22 +153,37 @@ impl Default for VideoEncoding {
 /// even after compression. Fewer players decode High 10 in hardware (many
 /// phones, browsers and editing tools play only 8-bit H.264), so 8 bits stay
 /// the default.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    strum::Display,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::VariantArray,
+    clap::ValueEnum,
+)]
+#[strum(
+    parse_err_ty = UnknownBitDepth,
+    parse_err_fn = UnknownBitDepth::new
+)]
 pub enum BitDepth {
     #[default]
+    #[strum(serialize = "8")]
+    #[value(name = "8")]
     Eight,
+    #[strum(serialize = "10")]
+    #[value(name = "10")]
     Ten,
 }
 
 impl BitDepth {
-    pub const ALL: [Self; 2] = [Self::Eight, Self::Ten];
-
     /// The name `--bit-depth` takes.
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Eight => "8",
-            Self::Ten => "10",
-        }
+    pub fn as_str(self) -> &'static str {
+        self.into()
     }
 
     /// The pixel format libx264 encodes.
@@ -194,40 +195,35 @@ impl BitDepth {
     }
 }
 
-impl fmt::Display for BitDepth {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.as_str())
-    }
-}
-
-impl FromStr for BitDepth {
-    type Err = UnknownBitDepth;
-
-    fn from_str(name: &str) -> Result<Self, Self::Err> {
-        Self::ALL
-            .into_iter()
-            .find(|depth| depth.as_str() == name)
-            .ok_or_else(|| UnknownBitDepth(name.to_owned()))
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("unknown bit depth '{0}' (expected 8 or 10)")]
 pub struct UnknownBitDepth(pub String);
 
-impl fmt::Display for UnknownBitDepth {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "unknown bit depth '{}' (expected 8 or 10)",
-            self.0
-        )
+impl UnknownBitDepth {
+    fn new(name: &str) -> Self {
+        Self(name.to_owned())
     }
 }
 
-impl Error for UnknownBitDepth {}
-
 /// libx264's `-preset` values, fastest first.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    strum::Display,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::VariantArray,
+    clap::ValueEnum,
+)]
+#[strum(
+    serialize_all = "lowercase",
+    parse_err_ty = UnknownEncoderPreset,
+    parse_err_fn = UnknownEncoderPreset::new
+)]
 pub enum EncoderPreset {
     Ultrafast,
     Superfast,
@@ -242,69 +238,24 @@ pub enum EncoderPreset {
 }
 
 impl EncoderPreset {
-    pub const ALL: [Self; 9] = [
-        Self::Ultrafast,
-        Self::Superfast,
-        Self::Veryfast,
-        Self::Faster,
-        Self::Fast,
-        Self::Medium,
-        Self::Slow,
-        Self::Slower,
-        Self::Veryslow,
-    ];
-
     /// The name libx264 (and `ffmpeg -preset`) uses.
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Ultrafast => "ultrafast",
-            Self::Superfast => "superfast",
-            Self::Veryfast => "veryfast",
-            Self::Faster => "faster",
-            Self::Fast => "fast",
-            Self::Medium => "medium",
-            Self::Slow => "slow",
-            Self::Slower => "slower",
-            Self::Veryslow => "veryslow",
-        }
+    pub fn as_str(self) -> &'static str {
+        self.into()
     }
 }
 
-impl fmt::Display for EncoderPreset {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.as_str())
-    }
-}
-
-impl FromStr for EncoderPreset {
-    type Err = UnknownEncoderPreset;
-
-    fn from_str(name: &str) -> Result<Self, Self::Err> {
-        Self::ALL
-            .into_iter()
-            .find(|preset| preset.as_str() == name)
-            .ok_or_else(|| UnknownEncoderPreset(name.to_owned()))
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error(
+    "unknown encoder preset '{0}' (expected one of {expected})",
+    expected = names(EncoderPreset::VARIANTS)
+)]
 pub struct UnknownEncoderPreset(pub String);
 
-impl fmt::Display for UnknownEncoderPreset {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "unknown encoder preset '{}' (expected one of",
-            self.0
-        )?;
-        for preset in EncoderPreset::ALL {
-            write!(formatter, " {preset}")?;
-        }
-        formatter.write_str(")")
+impl UnknownEncoderPreset {
+    fn new(name: &str) -> Self {
+        Self(name.to_owned())
     }
 }
-
-impl Error for UnknownEncoderPreset {}
 
 /// Where rendered RGBA frames are converted to yuv420p (or yuv420p10le) for
 /// the encoder.
@@ -317,7 +268,24 @@ impl Error for UnknownEncoderPreset {}
 /// dither; for 8-bit output the encoder converts the dithered 8-bit RGBA
 /// frame, so a dark gradient bands somewhat more there, and for 10-bit
 /// output a 16-bit RGBA one (8 bytes per pixel read back).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    strum::Display,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::VariantArray,
+    clap::ValueEnum,
+)]
+#[strum(
+    serialize_all = "lowercase",
+    parse_err_ty = UnknownColorConversion,
+    parse_err_fn = UnknownColorConversion::new
+)]
 pub enum ColorConversion {
     /// On the GPU when it is a hardware GPU that supports it, otherwise in
     /// the encoder: a software renderer (lavapipe, WARP) runs the
@@ -331,45 +299,23 @@ pub enum ColorConversion {
 }
 
 impl ColorConversion {
-    pub const ALL: [Self; 3] = [Self::Auto, Self::Gpu, Self::Encoder];
-
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Auto => "auto",
-            Self::Gpu => "gpu",
-            Self::Encoder => "encoder",
-        }
+    pub fn as_str(self) -> &'static str {
+        self.into()
     }
 }
 
-impl fmt::Display for ColorConversion {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.as_str())
-    }
-}
-
-impl FromStr for ColorConversion {
-    type Err = UnknownColorConversion;
-
-    fn from_str(name: &str) -> Result<Self, Self::Err> {
-        Self::ALL
-            .into_iter()
-            .find(|conversion| conversion.as_str() == name)
-            .ok_or_else(|| UnknownColorConversion(name.to_owned()))
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("unknown color conversion '{0}' (expected auto, gpu, or encoder)")]
 pub struct UnknownColorConversion(pub String);
 
-impl fmt::Display for UnknownColorConversion {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "unknown color conversion '{}' (expected auto, gpu, or encoder)",
-            self.0
-        )
+impl UnknownColorConversion {
+    fn new(name: &str) -> Self {
+        Self(name.to_owned())
     }
 }
 
-impl Error for UnknownColorConversion {}
+/// `values`' names, separated by spaces.
+fn names(values: &[impl Copy + Into<&'static str>]) -> String {
+    let names: Vec<&str> = values.iter().map(|&value| value.into()).collect();
+    names.join(" ")
+}

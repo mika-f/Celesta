@@ -11,7 +11,6 @@ use crate::view::EditorView;
 use celesta_react_bridge::write_temp;
 use gpui_kit::{Context, Window};
 use std::collections::BTreeMap;
-use std::fmt;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -58,28 +57,17 @@ impl From<FileEdit> for HistoryEntry {
 /// The texts of a set of files, keyed by path (a missing file reads `""`).
 pub(crate) type Texts = BTreeMap<PathBuf, String>;
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub(crate) enum HistoryError {
     /// A file no longer holds what the entry expects, so no file was touched.
     // `path` names the first such file for callers that report per file.
     #[allow(dead_code)]
+    #[error("The file changed outside Celesta")]
     ChangedOutside { path: PathBuf },
     /// The file could not be read or written.
+    #[error("Couldn’t write {path}: {source}")]
     Io { path: PathBuf, source: io::Error },
 }
-
-impl fmt::Display for HistoryError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::ChangedOutside { .. } => formatter.write_str("The file changed outside Celesta"),
-            Self::Io { path, source } => {
-                write!(formatter, "Couldn’t write {}: {source}", path.display())
-            }
-        }
-    }
-}
-
-impl std::error::Error for HistoryError {}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Step {

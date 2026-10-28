@@ -5,7 +5,6 @@ use celesta_exporter::{
 };
 use celesta_project::Project;
 use celesta_react_bridge::PropertyInputs;
-use std::error::Error;
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
@@ -54,7 +53,7 @@ pub(crate) struct ExportWorker {
 }
 
 impl ExportWorker {
-    pub(crate) fn spawn() -> Result<Self, Box<dyn Error>> {
+    pub(crate) fn spawn() -> anyhow::Result<Self> {
         let (request_tx, request_rx) = mpsc::channel::<ExportRequest>();
         let (event_tx, event_rx) = mpsc::channel::<ExportEvent>();
         thread::Builder::new()
