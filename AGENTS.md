@@ -6,6 +6,13 @@ When updating a pull request branch with changes from its base branch, rebase th
 * When user-facing behavior or a composition API changes, update the user guide in both `packages/website/content/en/` and `packages/website/content/ja/`, and the Celesta Agent Skill in `skills/celesta/` where it covers that API.
 * Use Vitest for JavaScript and TypeScript tests and write test code in TypeScript. Rust code keeps its tests in Rust (`cargo test`).
 
+Never amend commits. Record further changes as a new commit.
+
+If an amend is the only way to finish the task, ask the user before running `git commit --amend`. Do not amend on your own judgment. Ask only in these situations:
+
+* The latest commit is unpushed and contains a secret. Ask before amending it to remove the secret. If that commit is already pushed, do not amend it.
+* An interactive rebase has stopped to edit a commit (`git status` reports that you are currently editing a commit during a rebase). Ask before amending that commit, then run `git rebase --continue`. A rebase, cherry-pick, revert, or merge stopped for conflicts is not this case; continue that operation instead of amending.
+
 <!-- BEGIN:turborepo-agent-rules -->
 
 # This is NOT the Turborepo you know
