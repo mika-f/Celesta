@@ -5,7 +5,7 @@ use crate::options::{
     VideoFormat,
 };
 use crate::project::absolutize_layers;
-use crate::project::{build_audio_graph, merge_react_audio_clips, visual_only_project};
+use crate::project::{build_audio_graph, merge_react_audio_clips};
 use crate::range::{ExportRange, resolve_window, shifted_audio_graph};
 use crate::render::{
     LOOP_LEAD_IN_FRAMES, ensure_encoders, frame_count, loop_lead_in, open_video_writer,
@@ -318,7 +318,7 @@ fn rounds_partial_project_frames_up_exactly() {
 }
 
 #[test]
-fn visual_only_project_keeps_dialogue_and_component_but_drops_audio() {
+fn companion_project_visuals_keep_dialogue_but_skip_audio() {
     const WITH_DIALOGUE: &str = r#"{
         "version": 0,
         "settings": {
@@ -364,17 +364,10 @@ fn visual_only_project_keeps_dialogue_and_component_but_drops_audio() {
     }"#;
     let project = Project::from_json(WITH_DIALOGUE).unwrap();
 
-    let filtered = visual_only_project(&project);
-    let item_ids: Vec<&str> = filtered.tracks[0]
-        .items
-        .iter()
-        .map(|item| item.id.as_str())
-        .collect();
-    assert_eq!(item_ids, vec!["line-1"]);
-
-    let evaluator = Evaluator::new(&filtered).unwrap();
+    let evaluator = Evaluator::new(&project).unwrap();
     let scene = evaluator.scene_at(Time::ZERO).unwrap();
     assert_eq!(scene.layers.len(), 1);
+    assert_eq!(scene.layers[0].id, "line-1");
     let LayerContent::Group { layers, .. } = &scene.layers[0].content else {
         panic!("dialogue should evaluate to a group of portrait + subtitle layers");
     };

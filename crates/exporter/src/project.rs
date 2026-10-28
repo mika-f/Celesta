@@ -5,47 +5,15 @@ use celesta_composition::{
     TimeRange,
 };
 use celesta_evaluator::Evaluator;
-use celesta_project::{Project, TimelineContent};
+use celesta_project::Project;
 use celesta_react_bridge::{ReactAudioClipDescriptor, react_ducking};
 use std::path::Path;
-
-/// Drops `audio` timeline items before evaluating a companion project's
-/// *visual* content for a React export. `Evaluator::visual_layer` already
-/// evaluates an `audio` item to no layer (`TimelineContent::Audio { .. } =>
-/// return Ok(None)`), so this filter is a cheap, explicit skip rather than a
-/// behavior change; an `audio` item has nothing to contribute to
-/// `<ProjectTimeline />`/`<ProjectTrack />` either way. This filtering is
-/// specific to the visual path: the companion project's *audio* mixdown
-/// (`build_audio_graph` below) deliberately uses the project unfiltered, via
-/// `Evaluator::audio_graph()`, so its audio timeline items do play. Every
-/// other visual kind reaches
-/// `<ProjectTimeline />`/`<ProjectTrack />`: `component` items evaluate to
-/// `LayerContent::MissingComponent`, which `@celesta/react` resolves against
-/// its own `registerComponent()` registry (falling back to leaving
-/// `missingComponent` layers as-is, which `GpuRenderer` then errors on);
-/// `dialogue` items evaluate to a `LayerContent::Group` of the character's
-/// portrait image and subtitle text (`Evaluator::dialogue`) — there is no
-/// dedicated `LayerContent::Dialogue`, so it needs no special handling here
-/// or on the TypeScript side, the same generic `Group`/`Image`/`Text`
-/// rendering every other layer already gets.
-pub(crate) fn visual_only_project(project: &Project) -> Project {
-    let mut filtered = project.clone();
-    for track in &mut filtered.tracks {
-        track
-            .items
-            .retain(|item| !matches!(item.content, TimelineContent::Audio { .. }));
-    }
-    filtered
-}
 
 /// Builds the complete `AudioGraph` a React export mixes down: every
 /// `<Audio>` clip the entry's frames reported (`react_audio`, accumulated by
 /// `render_react_video` — one raw entry per clip per frame) plus, when a
-/// companion project is given, that project's own complete, *unfiltered*
-/// `Evaluator::audio_graph()` (unlike the visual path's
-/// `visual_only_project()`, which drops `TimelineContent::Audio` items
-/// because they contribute nothing visually — the audio mixdown needs them
-/// to actually play). The companion project supplies the graph's
+/// companion project is given, that project's own complete
+/// `Evaluator::audio_graph()`. The companion project supplies the graph's
 /// `sample_rate`/`master_volume` when present, since it already carries
 /// authoritative values for those; otherwise `DEFAULT_REACT_AUDIO_SAMPLE_RATE`
 /// is used.

@@ -3,7 +3,7 @@ use crate::error::{ExportError, FrameFailure};
 use crate::exporter::Exporter;
 use crate::options::{BitDepth, ColorConversion, VideoFormat};
 use crate::output;
-use crate::project::{absolutize_fonts, absolutize_layers, visual_only_project};
+use crate::project::{absolutize_fonts, absolutize_layers};
 use crate::range::{ExportRange, resolve_window};
 use crate::react::{CompanionProject, ReactRuntimeOptions};
 use crate::render::{
@@ -787,10 +787,8 @@ impl Exporter {
             request.quality,
             self.options.overwrite,
         )?;
-        let filtered_project = project.map(|(project, _)| visual_only_project(project));
-        let project_evaluator = filtered_project
-            .as_ref()
-            .map(Evaluator::new)
+        let project_evaluator = project
+            .map(|(project, _)| Evaluator::new(project))
             .transpose()
             .map_err(ExportError::Evaluation)?;
         let project_asset_root = project.map(|(_, asset_root)| asset_root);
@@ -831,24 +829,22 @@ impl Exporter {
                     Time::frames(frame as i64, metadata.frame_rate).map_err(ExportError::Time)?;
                 let project_frame = project_evaluator
                     .as_ref()
-                    .zip(filtered_project.as_ref())
-                    .map(
-                        |(evaluator, filtered_project)| -> Result<_, EvaluationError> {
-                            let mut scene = evaluator.scene_at(time)?;
-                            let mut tracks = BTreeMap::new();
-                            for track in &filtered_project.tracks {
-                                let mut layers = evaluator.layers_for_track(&track.id, time)?;
-                                if let Some(asset_root) = project_asset_root {
-                                    absolutize_layers(&mut layers, asset_root);
-                                }
-                                tracks.insert(track.id.clone(), layers);
-                            }
+                    .zip(project)
+                    .map(|(evaluator, (project, _))| -> Result<_, EvaluationError> {
+                        let mut scene = evaluator.scene_at(time)?;
+                        let mut tracks = BTreeMap::new();
+                        for track in &project.tracks {
+                            let mut layers = evaluator.layers_for_track(&track.id, time)?;
                             if let Some(asset_root) = project_asset_root {
-                                absolutize_layers(&mut scene.layers, asset_root);
+                                absolutize_layers(&mut layers, asset_root);
                             }
-                            Ok((scene.layers, tracks))
-                        },
-                    )
+                            tracks.insert(track.id.clone(), layers);
+                        }
+                        if let Some(asset_root) = project_asset_root {
+                            absolutize_layers(&mut scene.layers, asset_root);
+                        }
+                        Ok((scene.layers, tracks))
+                    })
                     .transpose()
                     .map_err(ExportError::Evaluation)?;
                 let evaluation = bridge
