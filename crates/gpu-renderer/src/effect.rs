@@ -4,7 +4,7 @@ use crate::error::GpuRenderError;
 use crate::shader::ShaderChain;
 use crate::texture::{CanvasTexture, canvas_texture};
 use celesta_composition::LayerEffects;
-use celesta_renderer::Color as CpuColor;
+use celesta_renderer::parse_color;
 
 pub(crate) struct EffectProcessor {
     pub(crate) params_layout: wgpu::BindGroupLayout,
@@ -540,8 +540,8 @@ impl EffectSpec {
 
     /// Everything but the filters, which `ShaderProcessor::use_filters` adds.
     pub(crate) fn parse(effects: &LayerEffects) -> Result<Self, GpuRenderError> {
-        let parse_color = |color: &str| -> Result<[f32; 4], GpuRenderError> {
-            let color = CpuColor::from_hex(color).map_err(GpuRenderError::Effects)?;
+        let channels = |color: &str| -> Result<[f32; 4], GpuRenderError> {
+            let color = parse_color(color).map_err(GpuRenderError::Effects)?;
             Ok([color.red, color.green, color.blue, color.alpha]
                 .map(|value| f32::from(value) / 255.0))
         };
@@ -552,7 +552,7 @@ impl EffectSpec {
                 .as_ref()
                 .map(|shadow| -> Result<_, GpuRenderError> {
                     Ok(EffectShadow {
-                        color: parse_color(&shadow.color)?,
+                        color: channels(&shadow.color)?,
                         blur: shadow.blur.clamp(0.0, f64::from(MAX_BLUR)) as f32,
                         offset: [shadow.offset_x as f32, shadow.offset_y as f32],
                     })
@@ -563,7 +563,7 @@ impl EffectSpec {
                 .as_ref()
                 .map(|glow| -> Result<_, GpuRenderError> {
                     Ok(EffectShadow {
-                        color: parse_color(&glow.color)?,
+                        color: channels(&glow.color)?,
                         blur: glow.blur.clamp(0.0, f64::from(MAX_BLUR)) as f32,
                         offset: [0.0, 0.0],
                     })

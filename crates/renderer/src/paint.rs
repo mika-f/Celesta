@@ -1,7 +1,7 @@
 use crate::clip::{ClipNode, clip_coverage};
 use crate::composite::blend_with_mode;
 use crate::error::RenderError;
-use crate::types::{Color, RgbaFrame};
+use crate::types::{Color, RgbaFrame, parse_color};
 use celesta_composition::{BlendMode, Paint};
 use std::sync::Arc;
 
@@ -43,7 +43,7 @@ impl GradientStop {
 impl ResolvedPaint {
     pub fn from_paint(paint: &Paint) -> Result<Self, RenderError> {
         Ok(match paint {
-            Paint::Solid { color } => Self::Solid(Color::from_hex(color)?),
+            Paint::Solid { color } => Self::Solid(parse_color(color)?),
             Paint::Linear { start, end, stops } => Self::Linear {
                 start: (start.x, start.y),
                 end: (end.x, end.y),
@@ -124,7 +124,7 @@ pub(crate) fn resolve_stops(
     let mut resolved = stops
         .iter()
         .map(|stop| {
-            let color = Color::from_hex(&stop.color)?;
+            let color = parse_color(&stop.color)?;
             let alpha = f64::from(color.alpha) / 255.0;
             Ok(GradientStop {
                 offset: stop.offset,

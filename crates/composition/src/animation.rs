@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::{Animatable, Easing, Time, TimeError};
+use crate::{Animatable, Easing, KeyframeAnimation, Time, TimeError};
 
 /// Evaluates a numeric property at item-local `time`.
 ///
@@ -14,13 +14,29 @@ pub fn evaluate_f64(value: &Animatable<f64>, time: Time) -> Result<f64, Animatio
         };
         return Ok(*value);
     };
+    let (from, to, eased) = keyframe_segment(animation, time)?;
+    Ok(if eased == 0.0 {
+        *from
+    } else {
+        from + (to - from) * eased
+    })
+}
 
+/// The values `animation` interpolates between at `time` and the eased
+/// progress from one to the other, as [`evaluate_f64`] reads them for any
+/// value type. Where a keyframe holds (before the first, after the last, or
+/// at the end of a zero-length segment) both values are that keyframe's and
+/// the progress is 0.
+pub fn keyframe_segment<T>(
+    animation: &KeyframeAnimation<T>,
+    time: Time,
+) -> Result<(&T, &T, f64), AnimationError> {
     let first = animation
         .keyframes
         .first()
         .ok_or(AnimationError::EmptyKeyframes)?;
     if time.cmp_exact(first.time)?.is_le() {
-        return Ok(first.value);
+        return Ok((&first.value, &first.value, 0.0));
     }
 
     for pair in animation.keyframes.windows(2) {
@@ -29,19 +45,16 @@ pub fn evaluate_f64(value: &Animatable<f64>, time: Time) -> Result<f64, Animatio
             let elapsed = time.checked_sub(from.time)?.as_seconds()?;
             let duration = to.time.checked_sub(from.time)?.as_seconds()?;
             if duration <= 0.0 {
-                return Ok(to.value);
+                return Ok((&to.value, &to.value, 0.0));
             }
             let progress = (elapsed / duration).clamp(0.0, 1.0);
             let eased = apply_easing(progress, to.easing.unwrap_or(Easing::Linear));
-            return Ok(from.value + (to.value - from.value) * eased);
+            return Ok((&from.value, &to.value, eased));
         }
     }
 
-    Ok(animation
-        .keyframes
-        .last()
-        .expect("first keyframe exists")
-        .value)
+    let last = animation.keyframes.last().expect("first keyframe exists");
+    Ok((&last.value, &last.value, 0.0))
 }
 
 /// [`evaluate_f64`] for times that never decrease, such as a mixer's sample

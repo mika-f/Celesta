@@ -22,6 +22,9 @@
     "test": "tsc -b test && vitest run",
     "clean": "rm -rf dist"
   },
+  "dependencies": {
+    "@celesta/math": "workspace:*"
+  },
   "peerDependencies": {
     "@celesta/react": "0.0.0",
     "react": "^19.3.0"

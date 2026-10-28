@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+import { isHexColor } from '@celesta/math';
 import type { JsonValue, ProjectPropertyField, ProjectPropertySchema } from '@celesta/react';
 
 // Validates the project property values a render receives from outside its
@@ -39,7 +40,6 @@ export interface ResolvedProperties {
   issues: PropertyIssue[];
 }
 
-const HEX_COLOR = /^#[0-9a-fA-F]{6}(?:[0-9a-fA-F]{2})?$/;
 const REMOTE_URL = /^https?:\/\//i;
 
 /**
@@ -129,7 +129,7 @@ function checkValue(field: ProjectPropertyField, value: JsonValue, baseDir: stri
     case 'boolean':
       return typeof value === 'boolean' ? { value } : expected('true or false', value);
     case 'color':
-      return typeof value === 'string' && HEX_COLOR.test(value) ? { value } : expected('a #RRGGBB or #RRGGBBAA color', value);
+      return isHexColor(value) ? { value } : expected('a #RRGGBB or #RRGGBBAA color', value);
     case 'select':
       return typeof value === 'string' && field.options.includes(value)
         ? { value }

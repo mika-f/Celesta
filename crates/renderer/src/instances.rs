@@ -6,7 +6,7 @@ use crate::layer::render_output_pixels;
 use crate::paint::ResolvedPaint;
 use crate::rect::{RectPaint, rasterize_rect_transformed};
 use crate::renderer::CpuRenderer;
-use crate::types::{Color, RgbaFrame};
+use crate::types::{Color, RgbaFrame, parse_color};
 use celesta_composition::{InstanceShape, Layer, LayerContent, Point, instance_size};
 
 const CENTRE: Point = Point { x: 0.5, y: 0.5 };
@@ -37,7 +37,7 @@ impl CpuRenderer {
             unreachable!("render_instances draws Instances layers");
         };
         let shared_color = match color {
-            Some(color) => Color::from_hex(color)?,
+            Some(color) => parse_color(color)?,
             None => Color::rgba(255, 255, 255, 255),
         };
         // Particle `i`'s own or the shared size, before an image fills in

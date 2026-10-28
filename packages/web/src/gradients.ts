@@ -1,3 +1,4 @@
+import { parseHexColor } from '@celesta/math';
 import type { Paint } from './types';
 
 type Gradient = Exclude<Paint, { type: 'solid' }>;
@@ -12,9 +13,9 @@ const STOP = 5;
 
 /** `Color::from_hex`: `#RRGGBB` or `#RRGGBBAA`. */
 function hexBytes(color: string): number[] {
-  const match = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})?$/i.exec(color);
-  if (!match) throw new Error(`Invalid color: ${color}`);
-  return [match[1], match[2], match[3], match[4] ?? 'ff'].map(hex => parseInt(hex!, 16));
+  const channels = parseHexColor(color);
+  if (!channels) throw new Error(`Invalid color: ${color}`);
+  return channels;
 }
 
 /**

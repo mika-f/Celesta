@@ -2,6 +2,8 @@
 // as base64 of their raw bytes, so a frame of 100,000 particles neither
 // formats nor parses a number per particle.
 
+import { isHexColor } from '@celesta/math';
+
 import type { LayerContent, ResolvedAsset } from './scene';
 
 type InstancesContent = Extract<LayerContent, { type: 'instances' }>;
@@ -92,7 +94,7 @@ export function instancesContent(
     if (width === undefined) fail('width is required for a rect or circle');
     if (height === undefined) fail('height is required for a rect or circle');
   }
-  if (props.fill !== undefined && typeof props.fill !== 'string') fail('fill must be a color string');
+  if (props.fill !== undefined && !isHexColor(props.fill)) fail('fill must be a #RRGGBB or #RRGGBBAA color');
   let colors: string | undefined;
   if (props.color !== undefined) {
     const { color } = props;

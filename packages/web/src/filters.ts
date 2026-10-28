@@ -1,3 +1,4 @@
+import { parseHexColor } from '@celesta/math';
 import type { BuiltinFilter, ColorFilter } from './types';
 
 // The built-in filters as the GPU renderer runs them: `color_filter.wgsl`
@@ -20,9 +21,9 @@ const turn = (degrees: number) => ((degrees % 360) + 360) % 360;
 const fract = (value: number) => value - Math.floor(value);
 
 function hexColor(color: string): [number, number, number, number] {
-  const match = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})?$/i.exec(color);
-  if (!match) throw new Error(`Invalid color: ${color}`);
-  return [match[1], match[2], match[3], match[4] ?? 'ff'].map(hex => parseInt(hex!, 16) / 255) as [number, number, number, number];
+  const channels = parseHexColor(color);
+  if (!channels) throw new Error(`Invalid color: ${color}`);
+  return channels.map(channel => channel / 255) as [number, number, number, number];
 }
 
 /** A color filter's change to one straight color, in place: `rgb` 0–1, `u`/`v` the pixel's place in the content box. */

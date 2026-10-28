@@ -31,6 +31,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@celesta/math": "workspace:*",
     "react-reconciler": "^0.34.0"
   },
   "peerDependencies": {

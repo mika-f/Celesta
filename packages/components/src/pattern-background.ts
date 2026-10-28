@@ -5,7 +5,7 @@
 
 import * as React from 'react';
 
-import { random } from '@celesta/math';
+import { parseHexColor, random } from '@celesta/math';
 import type { Seed } from '@celesta/math';
 import { Group, Instances, Rect, useCurrentFrame, useTheme, useVideoConfig } from '@celesta/react';
 import type { BlendMode } from '@celesta/react';
@@ -142,7 +142,8 @@ function requireFinite(name: string, value: number): number {
 }
 
 function rgb(color: string): [number, number, number] {
-  return [parseInt(color.slice(1, 3), 16), parseInt(color.slice(3, 5), 16), parseInt(color.slice(5, 7), 16)];
+  const [r, g, b] = parseHexColor(color)!;
+  return [r, g, b];
 }
 
 /** Whole numbers from `first` to `last`, both included. */

@@ -1,5 +1,6 @@
 /// <reference path="../wgsl.d.ts" preserve="true" />
 
+import { parseHexColor } from '@celesta/math';
 import type { ColorFilterValues, EffectFilterValues, LayerTint, LayerWave, ShaderEffect } from '@celesta/react';
 import { builtinFilter, colorFilter, shaderEffect, shaderSource } from '@celesta/react/internal';
 
@@ -95,7 +96,6 @@ const RESERVED = new Set([
   'typedef', 'typeid', 'typename', 'typeof', 'union', 'unless', 'unorm', 'unsafe', 'unsized',
   'use', 'using', 'varying', 'virtual', 'volatile', 'wgsl', 'where', 'with', 'writeonly', 'yield',
 ]);
-const COLOR = /^#([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})?$/;
 const COMPONENTS: Record<Exclude<ShaderParamType, 'color'>, number> = { f32: 1, vec2: 2, vec3: 3, vec4: 4 };
 
 function isType(value: unknown): value is ShaderParamType {
@@ -109,9 +109,9 @@ function finite(value: unknown): value is number {
 /** `value`'s numbers as a parameter of `type`; throws naming `label`. */
 function pack(type: ShaderParamType, value: unknown, label: string): number[] {
   if (type === 'color') {
-    const match = typeof value === 'string' ? COLOR.exec(value) : null;
-    if (!match) throw new Error(`${label} must be a #RRGGBB or #RRGGBBAA color`);
-    return [match[1], match[2], match[3], match[4] ?? 'ff'].map((hex) => parseInt(hex!, 16) / 255);
+    const channels = typeof value === 'string' ? parseHexColor(value) : undefined;
+    if (!channels) throw new Error(`${label} must be a #RRGGBB or #RRGGBBAA color`);
+    return channels.map((channel) => channel / 255);
   }
   if (type === 'f32') {
     if (!finite(value)) throw new Error(`${label} must be a finite number`);

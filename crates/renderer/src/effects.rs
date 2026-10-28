@@ -1,6 +1,6 @@
 use crate::composite::blend;
 use crate::error::RenderError;
-use crate::types::{Color, RgbaFrame};
+use crate::types::{Color, RgbaFrame, parse_color};
 
 use std::ops::RangeInclusive;
 
@@ -121,7 +121,7 @@ pub(crate) fn render_effect_shadow(
     offset_x: f64,
     offset_y: f64,
 ) -> Result<(), RenderError> {
-    let tint = Color::from_hex(color)?;
+    let tint = parse_color(color)?;
     let blurred = blur_pixels(source, radius);
     for y in 0..source.height as i32 {
         for x in 0..source.width as i32 {

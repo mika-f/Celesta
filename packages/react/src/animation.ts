@@ -3,6 +3,8 @@
 // over whatever frame/time value the caller passes in, so they work the same
 // whether called from a component body or anywhere else.
 
+import { parseHexColor } from '@celesta/math';
+
 export type Extrapolate = 'extend' | 'clamp' | 'identity';
 
 export interface InterpolateOptions {
@@ -89,8 +91,6 @@ export interface InterpolateColorOptions {
   extrapolateRight?: ColorExtrapolate;
 }
 
-const HEX_COLOR = /^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/;
-
 /**
  * Maps `input` from `inputRange` onto `colors` (`#RRGGBB` or `#RRGGBBAA`)
  * the way `interpolate()` maps it onto numbers, returning `#RRGGBBAA` with
@@ -133,12 +133,13 @@ export function interpolateColor(
     }
   }
   const rgba = Array.from(colors, (color, index) => {
-    if (typeof color !== 'string' || !HEX_COLOR.test(color)) {
+    const channels = typeof color === 'string' ? parseHexColor(color) : undefined;
+    if (!channels) {
       throw new Error(
         `interpolateColor() requires #RRGGBB or #RRGGBBAA colors, got ${String(JSON.stringify(color))} at index ${index}`,
       );
     }
-    return parseHexColor(color);
+    return channels;
   });
   const { easing = (t: number) => t, extrapolateLeft = 'clamp', extrapolateRight = 'clamp' } = options;
   for (const [name, value] of [['extrapolateLeft', extrapolateLeft], ['extrapolateRight', extrapolateRight]]) {
@@ -171,12 +172,6 @@ export function interpolateColor(
   }
   const unpremultiply = (channel: number) => Math.min(255, Math.max(0, (channel * 255) / alpha));
   return formatHexColor([unpremultiply(mixed[0]), unpremultiply(mixed[1]), unpremultiply(mixed[2]), alpha]);
-}
-
-/** `[r, g, b, a]`, each 0–255; `#RRGGBB` is opaque. */
-function parseHexColor(color: string): [number, number, number, number] {
-  const channel = (offset: number) => parseInt(color.slice(offset, offset + 2), 16);
-  return [channel(1), channel(3), channel(5), color.length === 9 ? channel(7) : 255];
 }
 
 function premultiply([r, g, b, a]: readonly number[]): number[] {

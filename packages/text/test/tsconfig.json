@@ -12,5 +12,5 @@
     "types": ["node"]
   },
   "include": ["./**/*.mts"],
-  "references": [{ "path": "../../react" }]
+  "references": [{ "path": "../../math" }, { "path": "../../react" }]
 }
