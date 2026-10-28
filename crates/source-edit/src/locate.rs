@@ -1,3 +1,4 @@
+use line_index::{LineIndex, TextSize, WideEncoding, WideLineCol};
 use oxc_allocator::Allocator;
 use oxc_ast::ast::JSXElement;
 use oxc_ast_visit::Visit;
@@ -36,24 +37,20 @@ pub fn element_at(text: &str, line: u32, column: u32) -> Option<ElementRef> {
 /// Converts a 1-based line / UTF-16 column to a byte offset. Only `\n` ends a
 /// line; a preceding `\r` stays part of it.
 fn to_offset(text: &str, line: u32, column: u32) -> Option<u32> {
-    let mut line_start = 0usize;
-    for _ in 1..line {
-        line_start += text[line_start..].find('\n')? + 1;
+    let index = LineIndex::new(text);
+    let wide = WideLineCol {
+        line: line.checked_sub(1)?,
+        col: column.checked_sub(1)?,
+    };
+    let line_col = index.to_utf8(WideEncoding::Utf16, wide)?;
+    // The range includes the `\n`; a column at its end is the next line.
+    let range = index.line(line_col.line)?;
+    if line_col.col > u32::from(range.len()) {
+        return None;
     }
-    let mut units = 0u32;
-    let target = column.checked_sub(1)?;
-    for (i, c) in text[line_start..].char_indices() {
-        if units == target {
-            return u32::try_from(line_start + i).ok();
-        }
-        if c == '\n' {
-            return None;
-        }
-        units += c.len_utf16() as u32;
-    }
-    (units == target)
-        .then(|| u32::try_from(text.len()).ok())
-        .flatten()
+    let offset = range.start() + TextSize::from(line_col.col);
+    // Off the line, or inside a character.
+    (index.try_line_col(offset)? == line_col).then(|| offset.into())
 }
 
 struct Finder {

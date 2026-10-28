@@ -85,26 +85,16 @@ fn line_text(line: &[u8]) -> String {
     String::from_utf8_lossy(line).into_owned()
 }
 
-/// `line` without ANSI CSI sequences (colors, with `FORCE_COLOR`), cut to
+/// `line` without ANSI escape sequences (colors, with `FORCE_COLOR`), cut to
 /// at most [`MAX_BYTES`] at a character boundary.
 fn clean(line: &str) -> String {
-    let mut cleaned = String::with_capacity(line.len().min(MAX_BYTES));
-    let mut chars = line.chars().peekable();
-    while let Some(char) = chars.next() {
-        if char == '\x1b' && chars.peek() == Some(&'[') {
-            chars.next();
-            // Parameter and intermediate bytes, then one final byte.
-            for char in chars.by_ref() {
-                if ('@'..='~').contains(&char) {
-                    break;
-                }
-            }
-            continue;
-        }
-        if cleaned.len() + char.len_utf8() > MAX_BYTES {
-            break;
-        }
-        cleaned.push(char);
+    let mut cleaned = strip_ansi_escapes::strip_str(line);
+    if cleaned.len() > MAX_BYTES {
+        let end = (0..=MAX_BYTES)
+            .rev()
+            .find(|&end| cleaned.is_char_boundary(end))
+            .unwrap_or(0);
+        cleaned.truncate(end);
     }
     cleaned
 }
@@ -268,6 +258,13 @@ mod tests {
         tail.write(b"\x1b[31mError\x1b[39m: \x1b[1;4mboom\x1b[0m\n");
         tail.write(b"\x1b[90m    at render\x1b[39m");
         assert_eq!(tail.text(), "Error: boom\n    at render");
+    }
+
+    #[test]
+    fn strips_hyperlinks_from_kept_lines() {
+        let mut tail = StderrTail::default();
+        tail.write(b"see \x1b]8;;https://example.com\x1b\\docs\x1b]8;;\x1b\\\n");
+        assert_eq!(tail.text(), "see docs");
     }
 
     #[test]
