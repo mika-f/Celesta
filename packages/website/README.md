@@ -203,16 +203,13 @@ and Windows (x64) `-setup.exe` assets and runs `pnpm run deploy`. It needs the
 
 `pnpm build` runs, in order: the `@celesta/web` build, `wrangler types`, `tsc` for the site
 (`tsconfig.json`) and for the Worker (`tsconfig.worker.json`, kept apart because workerd's
-runtime types redefine DOM globals), the island build, `makit build` (after deleting `.makit/`,
-whose cached Next.js output can ship stale styles), and `scripts/postbuild.mjs`.
+runtime types redefine DOM globals), the island build, `makit build --clean`, and
+`scripts/postbuild.mjs`.
 
-The post-build step works around two Makit 0.9 gaps:
-
-1. It sets `lang` on `dist/<locale>/**/*.html` and rebuilds `dist/pagefind/`.
-2. Makit writes each chapter's Markdown endpoint (`/en/docs/export.md`) and `llms-full.txt`
-   from the source files without the configured remark plugins. The step applies
-   `remark-include` and `remark-download-links` to them, editing only the fences and link URLs
-   those plugins change.
+The post-build step works around a Makit 0.9 gap: Makit writes each chapter's Markdown endpoint
+(`/en/docs/export.md`) and `llms-full.txt` from the source files without the configured remark
+plugins. The step applies `remark-include` and `remark-download-links` to them, editing only the
+fences and link URLs those plugins change.
 
 ## Makit
 
@@ -223,17 +220,14 @@ resolve this package's own copy, so the two must match. Bump them together, then
 `aria-label`s (`theme/noir.css`, `theme/docs.css`: search dialog, page actions, copy button,
 code blocks, tabs and toggles) and the gaps below.
 
-Makit 0.9 gaps this package works around or lives with, besides the two post-build fixes above:
+Makit 0.9 gaps this package works around or lives with, besides the post-build fix above:
 
-- **"Edit on GitHub"** URLs are built relative to the site root (`…/edit/main/content/…`), and
-  `github` has no directory option. `theme/DocsPage.tsx` inserts `packages/website/` with
-  `withPackagePath` (`site/edit-url.ts`).
-- **Search after a language switch.** Makit's search dialog keeps Pagefind on the language it
-  first loaded, and its locale memory (`localStorage["makit-locale"]`) is only written on a full
-  page load, so the `EN / JA` links (`theme/LocaleLinks.tsx`) are plain `<a>` elements that
-  reload the page instead of navigating on the client.
-- **Search excerpts** show escaped entities from code literally (`&lt;Camera …&gt;`); the dialog
-  renders Pagefind's plain excerpt without decoding it.
+- **Locale memory** (`localStorage["makit-locale"]`) is only written on a full page load, so the
+  `EN / JA` links (`theme/LocaleLinks.tsx`) are plain `<a>` elements that reload the page instead
+  of navigating on the client.
+- **The 404 page has no locale.** Makit exports one `404.html` and renders its root layout with
+  `site.lang`, so `theme/RootLayout.tsx` sets `<html lang>` and `data-nr-locale` from the URL in
+  an inline script there, and the page renders every locale's copy for CSS to pick from.
 - **Built-in labels stay English** on Japanese pages: the search dialog ("Search documentation…",
   "No results for …") and the page actions ("Edit on GitHub", "Copy as Markdown", …).
   `MakitMessages` has no keys for them.
@@ -241,8 +235,6 @@ Makit 0.9 gaps this package works around or lives with, besides the two post-bui
   copy button, and theme toggle use Tailwind `rounded-*` classes, which `theme/noir.css` and
   `theme/docs.css` override to square corners; each search result ends in a `→` glyph, which
   `theme/docs.css` hides and replaces with a masked lucide arrow.
-- **Canonical and `hreflang` links are relative**, because the generated root layout sets no
-  `metadataBase`; `sitemap.xml` and `llms.txt` carry absolute URLs.
 - **No icon or theme-color option.** `theme/RootLayout.tsx` adds `<link rel="icon">` and
   `<meta name="theme-color">` itself.
 - **Code highlighting** accepts only bundled Shiki theme names, and remark/rehype plugins run

@@ -2,7 +2,7 @@
 
 import { RouteLink } from '@natsuneko-laboratory/makit-runtime';
 import { ArrowUpRight, Download, Menu, X } from 'lucide-react';
-import { usePathname } from 'next/navigation';
+import { usePathname } from '@natsuneko-laboratory/makit-runtime/navigation';
 import { useId } from 'react';
 import { useDisclosure } from './useDisclosure.ts';
 

@@ -5,6 +5,3 @@ packages:
 allowBuilds:
   esbuild: false
   workerd: true
-minimumReleaseAgeExclude:
-  - "@natsuneko-laboratory/makit-runtime@0.9.0"
-  - "@natsuneko-laboratory/makit@0.9.0"

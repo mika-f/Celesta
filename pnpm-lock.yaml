@@ -1354,9 +1354,6 @@ importers:
       next:
         specifier: 16.4.3
         version: 16.4.3(@types/node@24.19.2)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
-      pagefind:
-        specifier: 1.5.2
-        version: 1.5.2
       remark-directive:
         specifier: ^4.0.0
         version: 4.0.0(supports-color@10.2.2)

@@ -7,8 +7,7 @@ export interface LocaleLink {
 
 /**
  * `EN / JA` — the language switch for every shell (Makit's `LocaleSwitcher` is not exported).
- * Plain `<a>`, not `RouteLink`: a full load re-initializes Makit's search in the new language
- * (its `SearchDialog` keeps Pagefind on the first one) and lets `LocaleMemory` remember the choice.
+ * Plain `<a>`, not `RouteLink`: a full load lets `LocaleMemory` remember the choice.
  */
 export function LocaleLinks({ links, label }: { links: readonly LocaleLink[]; label: string }) {
   if (links.length < 2) return null;

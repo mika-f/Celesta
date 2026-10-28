@@ -1,27 +1,21 @@
-// Fixes up Makit's output in dist/ after `makit build` (run by `pnpm build`). Two Makit 0.9 gaps:
-//
-// 1. Every page has <html lang="en">: the shared root layout only knows `site.lang`. Pagefind
-//    splits its index by that attribute, so each locale's pages get their own `lang`, then
-//    the search index is rebuilt with the options Makit uses.
-// 2. The Markdown endpoints (`<page>.md`) and llms-full.txt are copied from the sources without
-//    the remark plugins in makit.config.ts, so example fences are empty and download links
-//    keep their `celesta:download/…` placeholders. The same plugins fill them here.
+// Fixes up Makit's output in dist/ after `makit build` (run by `pnpm build`). The Markdown
+// endpoints (`<page>.md`) and llms-full.txt are copied from the sources without the remark
+// plugins in makit.config.ts, so example fences are empty and download links keep their
+// `celesta:download/…` placeholders. The same plugins fill them here.
 //
 // Markdown is edited in place at the positions remark reports instead of being re-serialized
 // whole: a round trip through remark-stringify rewrites untouched prose (list markers, escapes
 // such as `\[!NOTE]`, tables without GFM), and llms-full.txt concatenates many pages.
 
-import { readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { readdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import * as pagefind from 'pagefind';
 import remarkParse from 'remark-parse';
 import remarkStringify from 'remark-stringify';
 import { unified } from 'unified';
 import { visit } from 'unist-util-visit';
 import { remarkDownloadLinks } from '../plugins/remark-download-links.ts';
 import { remarkInclude } from '../plugins/remark-include.ts';
-import { locales } from '../site/locales.ts';
 
 const packageRoot = fileURLToPath(new URL('..', import.meta.url));
 
@@ -31,30 +25,6 @@ async function* files(dir, extension) {
     if (entry.isDirectory()) yield* files(path, extension);
     else if (entry.name.endsWith(extension)) yield path;
   }
-}
-
-/** Sets `lang` on the document's <html> tag, adding the attribute when it is missing. */
-export function setDocumentLanguage(html, lang) {
-  return html.replace(/<html\b[^>]*>/i, tag => /\slang="[^"]*"/i.test(tag)
-    ? tag.replace(/\slang="[^"]*"/i, ` lang="${lang}"`)
-    : tag.replace(/^<html/i, `<html lang="${lang}"`));
-}
-
-/** Gives every page under `dist/<locale>/` that locale's `lang`. Returns the number of files changed. */
-export async function setLanguages(dist, localeCodes = Object.keys(locales)) {
-  let changed = 0;
-  for (const locale of localeCodes) {
-    const dir = join(dist, locale);
-    for await (const path of files(dir, '.html')) {
-      const html = await readFile(path, 'utf8');
-      const next = setDocumentLanguage(html, locale);
-      if (next !== html) {
-        await writeFile(path, next);
-        changed++;
-      }
-    }
-  }
-  return changed;
 }
 
 const parser = unified().use(remarkParse);
@@ -124,29 +94,7 @@ export async function fillMarkdownOutputs(dist, root = packageRoot) {
   return changed;
 }
 
-/** Rebuilds `dist/pagefind/` the way Makit does, so the index picks up the corrected `lang`s. */
-export async function writeSearchIndex(dist) {
-  let index;
-  try {
-    const created = await pagefind.createIndex({ includeCharacters: '._-/@' });
-    if (!created.index) throw new Error(`Pagefind could not create its index:\n${created.errors.join('\n')}`);
-    index = created.index;
-    const added = await index.addDirectory({ path: dist });
-    if (added.errors.length > 0) throw new Error(`Pagefind could not index ${dist}:\n${added.errors.join('\n')}`);
-    const output = join(dist, 'pagefind');
-    await rm(output, { recursive: true, force: true });
-    const written = await index.writeFiles({ outputPath: output });
-    if (written.errors.length > 0) throw new Error(`Pagefind could not write ${output}:\n${written.errors.join('\n')}`);
-    return added.page_count;
-  } finally {
-    if (index) await index.deleteIndex();
-    await pagefind.close();
-  }
-}
-
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   const dist = join(packageRoot, 'dist');
-  console.log(`postbuild: set lang on ${await setLanguages(dist)} page(s)`);
   console.log(`postbuild: filled ${await fillMarkdownOutputs(dist)} Markdown file(s)`);
-  console.log(`postbuild: indexed ${await writeSearchIndex(dist)} page(s) with Pagefind`);
 }

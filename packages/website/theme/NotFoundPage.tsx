@@ -3,7 +3,7 @@ import type { NotFoundPageProps } from '@natsuneko-laboratory/makit-runtime';
 import { ArrowRight } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { copy, type Locale } from '../site/copy/index.ts';
-import { DocumentTitle } from './DocumentLocale.tsx';
+import { DocumentTitle } from './DocumentTitle.tsx';
 import { LocaleProvider } from './LocaleContext.tsx';
 import { LocaleLinks } from './LocaleLinks.tsx';
 import { locales } from './locale.ts';
@@ -24,7 +24,7 @@ export async function NotFoundPage({ components: C }: NotFoundPageProps) {
     ({ locale, label: i18n.locales.find((candidate) => candidate.urlLocale === locale)?.label ?? locale, href: homes[locale], current: locale === current }));
 
   const titles = Object.fromEntries(locales.map((locale) => [locale, copy(locale).notFound.title]));
-  // `<title>` is hoisted and the first one wins; the script fixes it before paint, `DocumentTitle` after hydration.
+  // The first `<title>` wins; the script fixes it before paint, `DocumentTitle` after hydration.
   const titleScript = `document.title=${JSON.stringify(titles).replace(/</g, '\\u003c')}[document.documentElement.getAttribute('data-nr-locale')]||document.title`;
 
   return <div className="nr-page">

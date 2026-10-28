@@ -35,5 +35,5 @@ export default defineConfig({
     shiki: { themes: { light: 'github-light-high-contrast', dark: 'github-dark-high-contrast' } },
   },
   llms: { enabled: true },
-  github: { repository: 'mika-f/Celesta' },
+  github: { repository: 'mika-f/Celesta', directory: 'packages/website' },
 });
