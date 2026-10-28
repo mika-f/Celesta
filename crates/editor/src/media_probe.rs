@@ -1,14 +1,11 @@
-use crate::audio::take_latest;
 use crate::problems::error_chain;
 use crate::waveform::media_asset_info;
+use crate::worker::LatestWorker;
 use celesta_composition::Time;
 use celesta_media::{DynamicRange, FfmpegBackend};
 use std::path::PathBuf;
-use std::sync::mpsc;
-use std::thread;
 
 pub(crate) struct MediaProbeRequest {
-    pub(crate) generation: u64,
     pub(crate) assets: Vec<ProbeAsset>,
 }
 
@@ -17,10 +14,8 @@ pub(crate) struct ProbeAsset {
     pub(crate) path: PathBuf,
 }
 
-pub(crate) struct MediaProbeResult {
-    pub(crate) generation: u64,
-    pub(crate) assets: Vec<(String, Result<MediaAssetInfo, String>)>,
-}
+/// Each asset's id and what probing it found.
+pub(crate) type MediaProbeResult = Vec<(String, Result<MediaAssetInfo, String>)>;
 
 #[derive(Clone)]
 pub(crate) struct MediaAssetInfo {
@@ -30,52 +25,21 @@ pub(crate) struct MediaAssetInfo {
     pub(crate) has_audio: bool,
 }
 
-pub(crate) struct MediaProbeWorker {
-    pub(crate) requests: mpsc::Sender<MediaProbeRequest>,
-    pub(crate) results: mpsc::Receiver<MediaProbeResult>,
-}
+pub(crate) type MediaProbeWorker = LatestWorker<MediaProbeRequest, MediaProbeResult>;
 
-impl MediaProbeWorker {
-    pub(crate) fn spawn() -> anyhow::Result<Self> {
-        let (request_tx, request_rx) = mpsc::channel::<MediaProbeRequest>();
-        let (result_tx, result_rx) = mpsc::channel::<MediaProbeResult>();
-        thread::Builder::new()
-            .name("celesta-media-probe".to_owned())
-            .spawn(move || {
-                let mut backend = FfmpegBackend::new();
-                while let Ok(first) = request_rx.recv() {
-                    let request = take_latest(first, &request_rx);
-                    let assets = request
-                        .assets
-                        .into_iter()
-                        .map(|asset| {
-                            let result = backend
-                                .probe(&asset.path)
-                                .map(media_asset_info)
-                                .map_err(|error| error_chain(&error));
-                            (asset.id, result)
-                        })
-                        .collect();
-                    if result_tx
-                        .send(MediaProbeResult {
-                            generation: request.generation,
-                            assets,
-                        })
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-            })?;
-        Ok(Self {
-            requests: request_tx,
-            results: result_rx,
-        })
-    }
-
-    pub(crate) fn request(&self, request: MediaProbeRequest) -> Result<(), String> {
-        self.requests
-            .send(request)
-            .map_err(|_| "media probe worker stopped unexpectedly".to_owned())
-    }
+pub(crate) fn spawn_media_probe() -> anyhow::Result<MediaProbeWorker> {
+    let mut backend = FfmpegBackend::new();
+    LatestWorker::spawn("media probe", move |request: MediaProbeRequest, _| {
+        request
+            .assets
+            .into_iter()
+            .map(|asset| {
+                let result = backend
+                    .probe(&asset.path)
+                    .map(media_asset_info)
+                    .map_err(|error| error_chain(&error));
+                (asset.id, result)
+            })
+            .collect()
+    })
 }

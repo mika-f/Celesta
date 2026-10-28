@@ -1,22 +1,22 @@
 use crate::add_element::AddState;
-use crate::audio::{AudioMixWorker, MasterVolumeDrag};
-use crate::component_schema::ComponentSchemaWorker;
+use crate::audio::{AudioMixWorker, MasterVolumeDrag, spawn_audio_mix};
+use crate::component_schema::{ComponentSchemaWorker, spawn_component_schema};
 use crate::edit_history::EditHistory;
 use crate::element_edit::{ElementEdit, ScopeCache};
 use crate::element_rows::ElementRows;
-use crate::export_worker::ExportWorker;
+use crate::export_worker::{ExportWorker, spawn_export};
 use crate::helpers::ExportLoudness;
 use crate::inline_text_view::{EditEvent, InlineTextSession, KeptOverride};
 use crate::layer_select::SourceLookup;
-use crate::media_probe::{MediaAssetInfo, MediaProbeWorker};
+use crate::media_probe::{MediaAssetInfo, MediaProbeWorker, spawn_media_probe};
 use crate::meter::MasterLevels;
-use crate::occurrences::{OccurrenceState, OccurrenceWorker};
+use crate::occurrences::{OccurrenceState, OccurrenceWorker, spawn_occurrences};
 use crate::preview::{
-    AudioPreview, PreviewPresentation, PreviewWorker, ReactPreview, TextOverride,
+    AudioPreview, PreviewPresentation, PreviewWorker, ReactPreview, TextOverride, spawn_preview,
 };
 use crate::problems::{Problems, Source};
 use crate::property_panel::PropertyPanelState;
-use crate::react_audio::ReactAudioWorker;
+use crate::react_audio::{ReactAudioWorker, spawn_react_audio};
 use crate::refresh::{ReloadOrder, SelectionKeep};
 use crate::scene_entries::SceneEdge;
 use crate::scope::{SceneCalls, Scope, ScopeChoices};
@@ -178,22 +178,15 @@ pub(crate) struct EditorView {
     /// stays open.
     pub(crate) edit_history: EditHistory,
     pub(crate) preview_worker: PreviewWorker,
-    pub(crate) preview_generation: u64,
-    /// Generation of the newest preview frame actually shown. Results are
-    /// accepted while their generation only moves forward, so a slow render
-    /// (a React entry's Node round-trip easily outruns one frame interval)
-    /// keeps the preview tracking the playhead a render behind instead of
-    /// freezing until every queued frame drains — which looked like a long
-    /// delay before playback caught up.
+    /// Generation of the newest preview frame shown. Every newer result is
+    /// shown, so a render slower than the frame interval still tracks the
+    /// playhead, a render behind.
     pub(crate) preview_shown_generation: u64,
-    pub(crate) preview_pending: bool,
     pub(crate) media_probe_worker: MediaProbeWorker,
-    pub(crate) media_generation: u64,
-    pub(crate) media_pending: bool,
     pub(crate) media_cache: HashMap<String, Result<MediaAssetInfo, String>>,
+    /// Mixes the audio graph, which `react_audio_worker` sweeps first for a
+    /// React entry; the two start a generation together.
     pub(crate) audio_mix_worker: AudioMixWorker,
-    pub(crate) audio_generation: u64,
-    pub(crate) audio_pending: bool,
     pub(crate) audio_preview: Option<AudioPreview>,
     /// Peak envelope of the mixed preview audio for the master meter.
     pub(crate) master_levels: Option<MasterLevels>,
@@ -229,8 +222,6 @@ pub(crate) struct EditorView {
     pub(crate) selected_asset_id: Option<String>,
     pub(crate) selected_track_id: Option<String>,
     pub(crate) component_schema_worker: ComponentSchemaWorker,
-    pub(crate) component_schema_generation: u64,
-    pub(crate) component_schema_pending: bool,
     pub(crate) component_schemas: BTreeMap<String, ComponentPropertySchema>,
     pub(crate) project_property_schema: Option<BTreeMap<String, ComponentPropertyField>>,
     pub(crate) project_name: SharedString,
@@ -426,13 +417,13 @@ impl EditorView {
         .with_video_decoder(FfmpegBackend::new().with_sequential_video(frame_rate_value));
         let adapter = renderer.adapter_info();
         let gpu_name = format!("{} ({})", adapter.name, adapter.backend).into();
-        let preview_worker = PreviewWorker::spawn(renderer)?;
-        let media_probe_worker = MediaProbeWorker::spawn()?;
-        let audio_mix_worker = AudioMixWorker::spawn()?;
-        let export_worker = ExportWorker::spawn()?;
-        let component_schema_worker = ComponentSchemaWorker::spawn()?;
-        let react_audio_worker = ReactAudioWorker::spawn()?;
-        let occurrence_worker = OccurrenceWorker::spawn()?;
+        let preview_worker = spawn_preview(renderer)?;
+        let media_probe_worker = spawn_media_probe()?;
+        let audio_mix_worker = spawn_audio_mix()?;
+        let export_worker = spawn_export()?;
+        let component_schema_worker = spawn_component_schema()?;
+        let react_audio_worker = spawn_react_audio()?;
+        let occurrence_worker = spawn_occurrences()?;
         let mut editor = Self {
             source_path,
             session: 0,
@@ -469,16 +460,10 @@ impl EditorView {
             property_panel: PropertyPanelState::default(),
             edit_history: EditHistory::default(),
             preview_worker,
-            preview_generation: 0,
             preview_shown_generation: 0,
-            preview_pending: false,
             media_probe_worker,
-            media_generation: 0,
-            media_pending: false,
             media_cache: HashMap::new(),
             audio_mix_worker,
-            audio_generation: 0,
-            audio_pending: false,
             audio_preview: None,
             master_levels: None,
             clip_waveforms: HashMap::new(),
@@ -500,8 +485,6 @@ impl EditorView {
             selected_asset_id: None,
             selected_track_id: None,
             component_schema_worker,
-            component_schema_generation: 0,
-            component_schema_pending: false,
             component_schemas: BTreeMap::new(),
             project_property_schema: None,
             project_name,
@@ -578,6 +561,11 @@ impl EditorView {
             editor.refresh_component_schemas();
         }
         Ok(editor)
+    }
+
+    /// The preview audio is being swept or mixed.
+    pub(crate) const fn audio_pending(&self) -> bool {
+        self.react_audio_worker.pending() || self.audio_mix_worker.pending()
     }
 
     /// The property table of the primitive `name` (`Rect`, `Star`, ...) as

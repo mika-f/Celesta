@@ -1,8 +1,8 @@
-use crate::audio::take_latest;
 use crate::helpers::prepare_preview_frame;
 use crate::layer_select::LookupResult;
 use crate::problems::error_chain;
 use crate::source::PropertyArgs;
+use crate::worker::LatestWorker;
 use celesta_composition::{
     Layer, LayerContent, Scene, ShaderSource, TextColorRun, TextFontRun, Time,
 };
@@ -20,8 +20,7 @@ use rodio::buffer::SamplesBuffer;
 use std::collections::BTreeMap;
 use std::ops::Range;
 use std::path::PathBuf;
-use std::sync::{Arc, mpsc};
-use std::thread;
+use std::sync::Arc;
 use std::time::SystemTime;
 
 pub(crate) struct AudioPreview {
@@ -34,7 +33,6 @@ pub(crate) struct AudioPreview {
 }
 
 pub(crate) struct PreviewRequest {
-    pub(crate) generation: u64,
     pub(crate) scene: Scene,
     pub(crate) asset_root: PathBuf,
     /// The project's `react_entry` and the runtime that serves it, when one
@@ -290,7 +288,6 @@ pub(crate) fn shift_runs<R: Clone>(
 }
 
 pub(crate) struct PreviewResult {
-    pub(crate) generation: u64,
     pub(crate) frame: Result<PreviewPresentation, String>,
     /// Recoverable diagnostics for this frame: unresolved `registerComponent`
     /// names (hidden from the preview) and React runtime failures.
@@ -447,10 +444,7 @@ pub(crate) enum PreviewPresentation {
     Surface(celesta_gpu_renderer::NativePreviewFrame),
 }
 
-pub(crate) struct PreviewWorker {
-    pub(crate) requests: mpsc::Sender<PreviewRequest>,
-    pub(crate) results: mpsc::Receiver<PreviewResult>,
-}
+pub(crate) type PreviewWorker = LatestWorker<PreviewRequest, PreviewResult>;
 
 /// The preview worker's long-lived connection to a React entry, respawned
 /// whenever the project's `react_entry` (or runtime paths) change. A failed
@@ -462,152 +456,124 @@ pub(crate) struct ReactPreviewBridge {
     pub(crate) failure: Option<String>,
 }
 
-impl PreviewWorker {
-    pub(crate) fn spawn(mut renderer: GpuRenderer) -> anyhow::Result<Self> {
-        let (request_tx, request_rx) = mpsc::channel::<PreviewRequest>();
-        let (result_tx, result_rx) = mpsc::channel::<PreviewResult>();
-        thread::Builder::new()
-            .name("celesta-preview".to_owned())
-            .spawn(move || {
-                let mut react_bridge: Option<ReactPreviewBridge> = None;
-                let mut react_reload = 0u64;
-                // The scene the runtime last evaluated, and what for: a
-                // keystroke's request draws it again with its text
-                // replaced, without evaluating.
-                let mut held: Option<(HeldKey, Scene)> = None;
-                while let Ok(first) = request_rx.recv() {
-                    let request = take_latest(first, &request_rx);
-                    renderer.set_asset_root(&request.asset_root);
-                    renderer.set_render_quality(request.render_quality);
-                    if request.react_reload != react_reload {
-                        react_reload = request.react_reload;
-                        react_bridge = None;
-                    }
-                    let whole_scene = request.react_mode == ReactPreviewMode::WholeScene;
-                    renderer.set_record_hit_regions(records_hit_regions(
-                        request.react_mode,
+pub(crate) fn spawn_preview(mut renderer: GpuRenderer) -> anyhow::Result<PreviewWorker> {
+    let mut react_bridge: Option<ReactPreviewBridge> = None;
+    let mut react_reload = 0u64;
+    // The scene the runtime last evaluated, and what for: a keystroke's
+    // request draws it again with its text replaced, without evaluating.
+    let mut held: Option<(HeldKey, Scene)> = None;
+    LatestWorker::spawn("preview", move |request: PreviewRequest, _| {
+        renderer.set_asset_root(&request.asset_root);
+        renderer.set_render_quality(request.render_quality);
+        if request.react_reload != react_reload {
+            react_reload = request.react_reload;
+            react_bridge = None;
+        }
+        let whole_scene = request.react_mode == ReactPreviewMode::WholeScene;
+        renderer.set_record_hit_regions(records_hit_regions(
+            request.react_mode,
+            request.react.as_ref(),
+        ));
+        let time = request.scene.time;
+        let source = scene_source(&request, held.as_ref().map(|(key, _)| key));
+        let key = HeldKey::of(&request);
+        let mut warnings = Vec::new();
+        let evaluated = match source {
+            SceneSource::Held => Ok(&held.as_ref().expect("scene_source found it held").1),
+            SceneSource::Evaluate => {
+                // A failed evaluation is not held, so no
+                // keystroke draws a scene the runtime refused.
+                held = None;
+                let mut scene = request.scene;
+                // In `.tsx` preview mode the React entry is the
+                // whole frame, so its failure is the frame's
+                // error; the last good frame stays on screen.
+                let evaluated = match request.react_mode {
+                    ReactPreviewMode::WholeScene => render_whole_react_scene(
+                        &mut scene,
+                        &mut react_bridge,
                         request.react.as_ref(),
-                    ));
-                    let time = request.scene.time;
-                    let source = scene_source(&request, held.as_ref().map(|(key, _)| key));
-                    let key = HeldKey::of(&request);
-                    let mut warnings = Vec::new();
-                    let evaluated = match source {
-                        SceneSource::Held => {
-                            Ok(&held.as_ref().expect("scene_source found it held").1)
-                        }
-                        SceneSource::Evaluate => {
-                            // A failed evaluation is not held, so no
-                            // keystroke draws a scene the runtime refused.
-                            held = None;
-                            let mut scene = request.scene;
-                            // In `.tsx` preview mode the React entry is the
-                            // whole frame, so its failure is the frame's
-                            // error; the last good frame stays on screen.
-                            let evaluated = match request.react_mode {
-                                ReactPreviewMode::WholeScene => render_whole_react_scene(
-                                    &mut scene,
-                                    &mut react_bridge,
-                                    request.react.as_ref(),
-                                    &request.prop_overrides,
-                                ),
-                                ReactPreviewMode::ResolveComponents => {
-                                    warnings = resolve_preview_components(
-                                        &mut scene,
-                                        &mut react_bridge,
-                                        request.react.as_ref(),
-                                    );
-                                    Ok(())
-                                }
-                            };
-                            match evaluated {
-                                Ok(()) => Ok(&held.insert((key, scene)).1),
-                                Err(error) => Err(error),
-                            }
-                        }
-                    };
-                    // The edited text is drawn on a copy: the held scene
-                    // stays as the runtime evaluated it.
-                    let edited = match (&evaluated, &request.text_override) {
-                        (Ok(scene), Some(edit)) => {
-                            let mut scene = (*scene).clone();
-                            replace_text(&mut scene, edit).then_some(scene)
-                        }
-                        _ => None,
-                    };
-                    let drawn = evaluated.map(|scene| edited.as_ref().unwrap_or(scene));
-                    let frame = drawn.clone().and_then(|scene| {
-                        let frame = renderer
-                            .render_preview(scene)
-                            .map_err(|error| error_chain(&error))
-                            .map(prepare_preview_frame);
-                        warnings.extend(renderer.font_fallbacks().iter().map(ToString::to_string));
-                        warnings.extend(renderer.missing_glyphs().iter().map(ToString::to_string));
-                        frame
-                    });
-                    // Measured after the render, which loaded its fonts.
-                    let text_layout = request
-                        .text_override
-                        .as_ref()
-                        .zip(drawn.as_ref().ok().filter(|_| frame.is_ok()))
-                        .and_then(|(edit, scene)| renderer.text_layout(scene, &edit.layer));
-                    let layer_source = request.source_of.filter(|_| whole_scene).map(|id| {
-                        let time = drawn.as_ref().map_or(time, |scene| scene.time);
-                        let source = look_up_layer_source(&mut react_bridge, time, &id);
-                        (id, source)
-                    });
-                    let hit_regions = renderer.take_hit_regions();
-                    let layer_frame = request.frame_of.filter(|_| whole_scene).map(|id| {
-                        let measured = drawn
-                            .as_ref()
-                            .ok()
-                            .and_then(|scene| layer_frame(scene, &hit_regions, &id));
-                        (id, measured)
-                    });
-                    let children_space = request.space_of.filter(|_| whole_scene).map(|id| {
-                        let space = drawn
-                            .as_ref()
-                            .ok()
-                            .and_then(|scene| parent_space(scene, &id));
-                        (id, space)
-                    });
-                    let added = request.added_under.filter(|_| whole_scene).map(|under| {
-                        let layer = drawn
-                            .as_ref()
-                            .ok()
-                            .and_then(|scene| added_layer(scene, &under));
-                        (under.parent, layer)
-                    });
-                    if result_tx
-                        .send(PreviewResult {
-                            generation: request.generation,
-                            frame,
-                            warnings,
-                            hit_regions,
-                            layer_source,
-                            layer_frame,
-                            parent_space: children_space,
-                            added,
-                            text_layout,
-                            timeline_frame: request.timeline_frame,
-                        })
-                        .is_err()
-                    {
-                        break;
+                        &request.prop_overrides,
+                    ),
+                    ReactPreviewMode::ResolveComponents => {
+                        warnings = resolve_preview_components(
+                            &mut scene,
+                            &mut react_bridge,
+                            request.react.as_ref(),
+                        );
+                        Ok(())
                     }
+                };
+                match evaluated {
+                    Ok(()) => Ok(&held.insert((key, scene)).1),
+                    Err(error) => Err(error),
                 }
-            })?;
-        Ok(Self {
-            requests: request_tx,
-            results: result_rx,
-        })
-    }
-
-    pub(crate) fn request(&self, request: PreviewRequest) -> Result<(), String> {
-        self.requests
-            .send(request)
-            .map_err(|_| "preview worker stopped unexpectedly".to_owned())
-    }
+            }
+        };
+        // The edited text is drawn on a copy: the held scene
+        // stays as the runtime evaluated it.
+        let edited = match (&evaluated, &request.text_override) {
+            (Ok(scene), Some(edit)) => {
+                let mut scene = (*scene).clone();
+                replace_text(&mut scene, edit).then_some(scene)
+            }
+            _ => None,
+        };
+        let drawn = evaluated.map(|scene| edited.as_ref().unwrap_or(scene));
+        let frame = drawn.clone().and_then(|scene| {
+            let frame = renderer
+                .render_preview(scene)
+                .map_err(|error| error_chain(&error))
+                .map(prepare_preview_frame);
+            warnings.extend(renderer.font_fallbacks().iter().map(ToString::to_string));
+            warnings.extend(renderer.missing_glyphs().iter().map(ToString::to_string));
+            frame
+        });
+        // Measured after the render, which loaded its fonts.
+        let text_layout = request
+            .text_override
+            .as_ref()
+            .zip(drawn.as_ref().ok().filter(|_| frame.is_ok()))
+            .and_then(|(edit, scene)| renderer.text_layout(scene, &edit.layer));
+        let layer_source = request.source_of.filter(|_| whole_scene).map(|id| {
+            let time = drawn.as_ref().map_or(time, |scene| scene.time);
+            let source = look_up_layer_source(&mut react_bridge, time, &id);
+            (id, source)
+        });
+        let hit_regions = renderer.take_hit_regions();
+        let layer_frame = request.frame_of.filter(|_| whole_scene).map(|id| {
+            let measured = drawn
+                .as_ref()
+                .ok()
+                .and_then(|scene| layer_frame(scene, &hit_regions, &id));
+            (id, measured)
+        });
+        let children_space = request.space_of.filter(|_| whole_scene).map(|id| {
+            let space = drawn
+                .as_ref()
+                .ok()
+                .and_then(|scene| parent_space(scene, &id));
+            (id, space)
+        });
+        let added = request.added_under.filter(|_| whole_scene).map(|under| {
+            let layer = drawn
+                .as_ref()
+                .ok()
+                .and_then(|scene| added_layer(scene, &under));
+            (under.parent, layer)
+        });
+        PreviewResult {
+            frame,
+            warnings,
+            hit_regions,
+            layer_source,
+            layer_frame,
+            parent_space: children_space,
+            added,
+            text_layout,
+            timeline_frame: request.timeline_frame,
+        }
+    })
 }
 
 /// The JSX chain that produced layer `id` at `time`, from the bridge the

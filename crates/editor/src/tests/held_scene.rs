@@ -192,7 +192,6 @@ fn request(
     reuse_scene: bool,
 ) -> PreviewRequest {
     PreviewRequest {
-        generation: 1,
         scene: Scene {
             time,
             ..scene_of(Vec::new())

@@ -1,12 +1,10 @@
-use crate::audio::take_latest;
 use crate::problems::error_chain;
 use crate::view::EditorView;
+use crate::worker::{Worker, take_latest};
 use celesta_react_bridge::runtime_paths as react_runtime_paths;
 use celesta_react_bridge::{OccurrenceIndex, PropertyInputs, ReactBridge, SpawnOptions};
 use gpui_kit::Context;
 use std::path::PathBuf;
-use std::sync::mpsc;
-use std::thread;
 use std::time::Duration;
 
 /// Frames asked of the bridge per `collectOccurrences` request; a reload
@@ -66,86 +64,68 @@ pub(crate) fn rescan_state(previous: Option<OccurrenceState>, keep: bool) -> Occ
 /// Spawns a transient `@celesta/cli` process with source locations and
 /// sweeps the whole composition for where each element renders. Runs on its
 /// own thread because `ReactBridge::spawn` and the sweep both block; a newer
-/// request abandons the running sweep between chunks.
-pub(crate) struct OccurrenceWorker {
-    pub(crate) requests: mpsc::Sender<OccurrenceRequest>,
-    pub(crate) results: mpsc::Receiver<OccurrenceResult>,
-}
+/// request abandons the running sweep between chunks. Results carry the
+/// request's reload generation, which `land` matches.
+pub(crate) type OccurrenceWorker = Worker<OccurrenceRequest, OccurrenceResult>;
 
-impl OccurrenceWorker {
-    pub(crate) fn spawn() -> anyhow::Result<Self> {
-        let (request_tx, request_rx) = mpsc::channel::<OccurrenceRequest>();
-        let (result_tx, result_rx) = mpsc::channel::<OccurrenceResult>();
-        thread::Builder::new()
-            .name("celesta-occurrences".to_owned())
-            .spawn(move || {
-                // A request that arrived during a sweep, which it abandoned.
-                let mut pending: Option<OccurrenceRequest> = None;
-                loop {
-                    let first = match pending.take() {
-                        Some(request) => request,
-                        None => match request_rx.recv() {
-                            Ok(request) => request,
-                            Err(_) => break,
+pub(crate) fn spawn_occurrences() -> anyhow::Result<OccurrenceWorker> {
+    Worker::spawn("occurrence", |requests, results| {
+        // A request that arrived during a sweep, which it abandoned.
+        let mut pending: Option<OccurrenceRequest> = None;
+        loop {
+            let first = match pending.take() {
+                Some(request) => request,
+                None => match requests.recv() {
+                    Ok(request) => request,
+                    Err(_) => break,
+                },
+            };
+            let request = take_latest(first, &requests);
+            let index = match ReactBridge::spawn_with_options(
+                &request.node,
+                &request.cli_script,
+                &request.entry,
+                &request.properties,
+                SpawnOptions {
+                    composition_id: Some(request.composition_id),
+                    source_locations: true,
+                },
+            ) {
+                Ok(mut bridge) => {
+                    bridge.set_preview(true);
+                    let swept = sweep(
+                        request.duration_in_frames,
+                        |from, frames| {
+                            bridge
+                                .collect_occurrences(from, frames)
+                                .map_err(|error| error_chain(&error))
                         },
-                    };
-                    let request = take_latest(first, &request_rx);
-                    let index = match ReactBridge::spawn_with_options(
-                        &request.node,
-                        &request.cli_script,
-                        &request.entry,
-                        &request.properties,
-                        SpawnOptions {
-                            composition_id: Some(request.composition_id),
-                            source_locations: true,
-                        },
-                    ) {
-                        Ok(mut bridge) => {
-                            bridge.set_preview(true);
-                            let swept = sweep(
-                                request.duration_in_frames,
-                                |from, frames| {
-                                    bridge
-                                        .collect_occurrences(from, frames)
-                                        .map_err(|error| error_chain(&error))
-                                },
-                                || match request_rx.try_recv() {
-                                    Ok(next) => {
-                                        pending = Some(next);
-                                        true
-                                    }
-                                    Err(_) => false,
-                                },
-                            );
-                            match swept {
-                                Some(index) => index,
-                                None => continue,
+                        || match requests.try_recv() {
+                            Ok(next) => {
+                                pending = Some(next);
+                                true
                             }
-                        }
-                        Err(error) => Err(error_chain(&error)),
-                    };
-                    if result_tx
-                        .send(OccurrenceResult {
-                            generation: request.generation,
-                            index,
-                        })
-                        .is_err()
-                    {
-                        break;
+                            Err(_) => false,
+                        },
+                    );
+                    match swept {
+                        Some(index) => index,
+                        None => continue,
                     }
                 }
-            })?;
-        Ok(Self {
-            requests: request_tx,
-            results: result_rx,
-        })
-    }
-
-    pub(crate) fn request(&self, request: OccurrenceRequest) -> Result<(), String> {
-        self.requests
-            .send(request)
-            .map_err(|_| "occurrence worker stopped unexpectedly".to_owned())
-    }
+                Err(error) => Err(error_chain(&error)),
+            };
+            if results
+                .send(OccurrenceResult {
+                    generation: request.generation,
+                    index,
+                })
+                .is_err()
+            {
+                break;
+            }
+        }
+    })
 }
 
 /// Asks `chunk` for `[from, from + frames)` in [`CHUNK_FRAMES`] pieces over
@@ -230,7 +210,7 @@ impl EditorView {
         let state = rescan_state(self.occurrences.take().map(|(_, state)| state), keep);
         self.occurrences = Some((self.react_reload_generation, state));
         if keep {
-            self.occurrence_sweep_after = Some(self.preview_generation);
+            self.occurrence_sweep_after = Some(self.preview_worker.generation());
         } else {
             self.occurrence_sweep_after = None;
             self.request_occurrence_sweep();
@@ -248,27 +228,19 @@ impl EditorView {
 
     /// Takes in the sweep results the worker sent; whether the state changed.
     pub(crate) fn poll_occurrence_results(&mut self) -> bool {
+        let polled = self.occurrence_worker.poll();
         let mut changed = false;
-        loop {
-            match self.occurrence_worker.results.try_recv() {
-                Ok(result) => {
-                    changed |= land(&mut self.occurrences, self.react_reload_generation, result);
-                }
-                Err(mpsc::TryRecvError::Empty) => break,
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    if let Some((_, state)) = self
-                        .occurrences
-                        .as_mut()
-                        .filter(|(_, state)| state.is_sweeping())
-                    {
-                        *state = OccurrenceState::Failed(
-                            "occurrence worker stopped unexpectedly".to_owned(),
-                        );
-                        changed = true;
-                    }
-                    break;
-                }
-            }
+        for result in polled.results {
+            changed |= land(&mut self.occurrences, self.react_reload_generation, result);
+        }
+        if let Some(error) = polled.stopped
+            && let Some((_, state)) = self
+                .occurrences
+                .as_mut()
+                .filter(|(_, state)| state.is_sweeping())
+        {
+            *state = OccurrenceState::Failed(error);
+            changed = true;
         }
         if changed {
             self.occurrence_generation += 1;

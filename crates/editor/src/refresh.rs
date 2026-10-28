@@ -243,8 +243,7 @@ impl EditorView {
     }
 
     pub(crate) fn refresh_preview(&mut self) {
-        self.preview_generation = self.preview_generation.wrapping_add(1);
-        let generation = self.preview_generation;
+        self.preview_worker.supersede();
         // Component clips resolve against the project's React entry when one
         // is set; without it the preview still renders everything else and
         // surfaces a warning instead of failing outright.
@@ -304,9 +303,7 @@ impl EditorView {
             // The warnings stay until the result replaces them, so their
             // counts don't flicker while frames are in flight.
             Ok(scene) => {
-                self.preview_pending = true;
                 if let Err(error) = self.preview_worker.request(PreviewRequest {
-                    generation,
                     scene,
                     asset_root: self.document.asset_root().to_owned(),
                     react,
@@ -330,13 +327,13 @@ impl EditorView {
                     text_override: self.text_override.clone(),
                     reuse_scene,
                 }) {
-                    self.preview_pending = false;
                     self.problems.set_preview_warnings(Vec::new());
                     self.problems.fail(Source::Preview, error);
+                    // No lookup answers again (see `poll_preview_results`).
+                    self.element_edit.preview_stopped();
                 }
             }
             Err(error) => {
-                self.preview_pending = false;
                 self.problems.set_preview_warnings(Vec::new());
                 self.problems.fail(Source::Preview, error_chain(&error));
             }
@@ -573,11 +570,12 @@ impl EditorView {
                 self.problems.clear(Source::Preview);
                 self.refresh_preview();
                 if keep {
-                    self.selection_keep.confirm_from(self.preview_generation);
+                    self.selection_keep
+                        .confirm_from(self.preview_worker.generation());
                 }
                 // An element just added is selected from the reloaded code's
                 // first frame on, which asked for it.
-                self.add_reload_applied(sequence, self.preview_generation);
+                self.add_reload_applied(sequence, self.preview_worker.generation());
                 self.refresh_audio_preview();
                 self.refresh_occurrences(keep);
             }
@@ -679,8 +677,7 @@ impl EditorView {
     }
 
     pub(crate) fn refresh_media_cache(&mut self) {
-        self.media_generation = self.media_generation.wrapping_add(1);
-        let generation = self.media_generation;
+        self.media_probe_worker.supersede();
         let assets = self
             .assets
             .iter()
@@ -695,15 +692,12 @@ impl EditorView {
         self.media_cache
             .retain(|id, _| assets.iter().any(|asset| asset.id == *id));
         if assets.is_empty() {
-            self.media_pending = false;
             return;
         }
-        self.media_pending = true;
         if let Err(error) = self
             .media_probe_worker
-            .request(MediaProbeRequest { generation, assets })
+            .request(MediaProbeRequest { assets })
         {
-            self.media_pending = false;
             self.problems.fail(Source::Media, error);
         }
     }
@@ -714,27 +708,22 @@ impl EditorView {
     /// every clip selection, since spawning Node is comparatively slow;
     /// File > Reload picks up entry edits.
     pub(crate) fn refresh_component_schemas(&mut self) {
-        self.component_schema_generation = self.component_schema_generation.wrapping_add(1);
-        let generation = self.component_schema_generation;
+        self.component_schema_worker.supersede();
         let Some(entry) = self.document.react_entry_absolute_path() else {
-            self.component_schema_pending = false;
             self.problems.clear(Source::Schemas);
             self.component_schemas.clear();
             self.project_property_schema = None;
             return;
         };
-        self.component_schema_pending = true;
         let (node, cli_script) = react_runtime_paths();
         if let Err(error) = self
             .component_schema_worker
             .request(ComponentSchemaRequest {
-                generation,
                 node,
                 cli_script,
                 entry,
             })
         {
-            self.component_schema_pending = false;
             self.problems.fail(Source::Schemas, error);
         }
     }

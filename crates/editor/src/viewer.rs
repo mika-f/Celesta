@@ -1181,7 +1181,9 @@ impl EditorView {
                     .min_h_0()
                     .px_3()
                     .py_2()
-                    .when(!has_audio && !self.audio_pending, |body| body.opacity(0.5))
+                    .when(!has_audio && !self.audio_pending(), |body| {
+                        body.opacity(0.5)
+                    })
                     .child(audio_meter(reading, cx)),
             )
             .child(
