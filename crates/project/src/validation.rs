@@ -93,20 +93,14 @@ impl Validator<'_> {
             self.time("settings.duration", duration, false);
         }
 
-        let characters: Vec<_> = self
-            .project
-            .characters
-            .iter()
-            .map(|(id, character)| (id.clone(), character.clone()))
-            .collect();
-        for (id, character) in characters {
-            self.character(&id, &character);
+        let project = self.project;
+        for (id, character) in &project.characters {
+            self.character(id, character);
         }
 
         let mut track_ids = HashSet::new();
         let mut item_ids = HashSet::new();
-        let tracks = self.project.tracks.clone();
-        for (track_index, track) in tracks.iter().enumerate() {
+        for (track_index, track) in project.tracks.iter().enumerate() {
             let path = format!("tracks[{track_index}]");
             if track.id.is_empty() {
                 self.error(format!("{path}.id"), "must not be empty");
@@ -814,5 +808,65 @@ mod tests {
             "tracks[0].items[0].content.asset"
         );
         assert!(errors.as_slice()[0].message.contains("missing"));
+    }
+
+    #[test]
+    fn reports_character_and_track_errors_in_document_order() {
+        let input = r#"{
+          "version": 0,
+          "settings": {
+            "width": 0,
+            "height": 1080,
+            "frameRate": { "numerator": 60, "denominator": 1 },
+            "sampleRate": 48000
+          },
+          "assets": {},
+          "characters": {
+            "zeta": { "name": "Zeta", "subtitle": { "maxWidth": 0 } },
+            "alpha": { "name": "Alpha", "subtitle": { "maxWidth": -1 } }
+          },
+          "tracks": [
+            {
+              "id": "overlay",
+              "name": "Overlay",
+              "kind": "overlay",
+              "items": [{
+                "id": "",
+                "range": {
+                  "start": { "value": 0, "timescale": 1 },
+                  "duration": { "value": 1, "timescale": 1 }
+                },
+                "content": { "type": "text", "text": "Celesta", "style": { "fontSize": 64 } }
+              }]
+            },
+            { "id": "overlay", "name": "Overlay", "kind": "overlay", "items": [] }
+          ],
+          "properties": {}
+        }"#;
+
+        let LoadError::Validation(errors) = Project::from_json(input).unwrap_err() else {
+            panic!("expected validation error");
+        };
+        let errors: Vec<_> = errors
+            .as_slice()
+            .iter()
+            .map(|error| (error.path.as_str(), error.message.as_str()))
+            .collect();
+        assert_eq!(
+            errors,
+            [
+                ("settings.width", "must be greater than zero"),
+                (
+                    "characters.alpha.subtitle.maxWidth",
+                    "must be finite and positive"
+                ),
+                (
+                    "characters.zeta.subtitle.maxWidth",
+                    "must be finite and positive"
+                ),
+                ("tracks[0].items[0].id", "must not be empty"),
+                ("tracks[1].id", "must be unique"),
+            ]
+        );
     }
 }
