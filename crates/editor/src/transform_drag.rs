@@ -1139,11 +1139,7 @@ impl EditorView {
         event: &MouseMoveEvent,
         cx: &mut Context<Self>,
     ) {
-        // The button came up where the view did not see it: end there.
-        if !event.dragging() {
-            if self.end_transform_drag(cx) {
-                cx.notify();
-            }
+        if self.release_unseen(event, cx, Self::end_transform_drag) {
             return;
         }
         let Some(bounds) = self.viewer_bounds.get() else {

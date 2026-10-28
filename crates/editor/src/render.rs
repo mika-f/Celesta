@@ -1,4 +1,5 @@
 use crate::helpers::export_progress_label;
+use crate::timeline_drag::{BandDrag, SceneDrag};
 use crate::view::EditorView;
 use gpui_kit::component::resizable::{h_resizable, resizable_panel, v_resizable};
 use gpui_kit::component::spinner::Spinner;
@@ -98,8 +99,8 @@ impl EditorView {
             .capture_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                 if event.keystroke.key == "escape"
                     && (this.escape_transform_drag()
-                        || this.escape_band_drag()
-                        || this.escape_scene_drag()
+                        || this.escape_timeline_drag::<BandDrag>()
+                        || this.escape_timeline_drag::<SceneDrag>()
                         || this.escape_row_scrub()
                         || this.escape_add())
                 {
@@ -138,7 +139,9 @@ impl EditorView {
             // A scrub or a band or scene drag keeps its cursor wherever the
             // pointer goes.
             .when(
-                self.row_scrub_active() || self.band_drag_active() || self.scene_drag_active(),
+                self.row_scrub_active()
+                    || self.timeline_drag_active::<BandDrag>()
+                    || self.timeline_drag_active::<SceneDrag>(),
                 |root| {
                     root.child(
                         canvas(

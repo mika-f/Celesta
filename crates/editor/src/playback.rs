@@ -6,6 +6,7 @@ use crate::actions::{
 use crate::helpers::loop_range_for;
 use crate::inline_text_view::EditEvent;
 use crate::problems::{Source, error_chain};
+use crate::timeline_drag::{BandDrag, SceneDrag};
 use crate::view::EditorView;
 use crate::{timecode, timeline};
 use celesta_composition::Time;
@@ -108,12 +109,8 @@ impl EditorView {
         // unwritten.
         self.transform_drag = None;
         self.element_rows.scrub = None;
-        if self.band_drag_active() {
-            self.band_drag = None;
-        }
-        if self.scene_drag_active() {
-            self.scene_drag = None;
-        }
+        self.escape_timeline_drag::<BandDrag>();
+        self.escape_timeline_drag::<SceneDrag>();
         self.playing = true;
         self.playback_started_at = Some(Instant::now());
         self.playback_started_frame = self.clock.frame();
@@ -353,8 +350,8 @@ impl EditorView {
         }
         self.continue_master_volume_drag(event, window, cx);
         self.continue_transform_drag(event, cx);
-        self.continue_band_drag(event, cx);
-        self.continue_scene_drag(event, cx);
+        self.continue_timeline_drag::<BandDrag>(event, cx);
+        self.continue_timeline_drag::<SceneDrag>(event, cx);
         self.continue_row_scrub(event, cx);
         self.continue_inline_selection(event, window, cx);
         self.continue_add(event, cx);
@@ -370,8 +367,8 @@ impl EditorView {
         let ended = self.end_scrub() | self.end_overview_drag();
         let ended = self.master_volume_drag.take().is_some() | ended;
         let ended = self.end_transform_drag(cx) | ended;
-        let ended = self.end_band_drag(cx) | ended;
-        let ended = self.end_scene_drag(cx) | ended;
+        let ended = self.end_timeline_drag::<BandDrag>(cx) | ended;
+        let ended = self.end_timeline_drag::<SceneDrag>(cx) | ended;
         let ended = self.end_row_scrub(cx) | ended;
         let ended = self.end_add(event.position, cx) | ended;
         if ended {
