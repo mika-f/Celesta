@@ -25,6 +25,7 @@ use std::fs;
 use std::path::Path;
 
 use celesta_composition::{Animatable, Keyframe, KeyframeAnimation, KeyframeAnimationType};
+use strum::VariantArray;
 
 fn static_clip(src: &str, start: f64, duration: f64, volume: f64) -> ReactAudioClipDescriptor {
     ReactAudioClipDescriptor {
@@ -194,12 +195,12 @@ fn parses_timecodes_of_every_length() {
 
 #[test]
 fn encoder_presets_and_color_conversions_round_trip_through_their_names() {
-    for preset in EncoderPreset::ALL {
+    for &preset in EncoderPreset::VARIANTS {
         assert_eq!(preset.as_str().parse::<EncoderPreset>(), Ok(preset));
     }
     assert_eq!(VideoEncoding::default().preset, EncoderPreset::Medium);
     assert_eq!(VideoEncoding::default().crf, 18);
-    for conversion in ColorConversion::ALL {
+    for &conversion in ColorConversion::VARIANTS {
         assert_eq!(
             conversion.as_str().parse::<ColorConversion>(),
             Ok(conversion)
@@ -213,7 +214,16 @@ fn encoder_presets_and_color_conversions_round_trip_through_their_names() {
         "Medium".parse::<EncoderPreset>(),
         Err(UnknownEncoderPreset("Medium".to_owned()))
     );
-    for depth in BitDepth::ALL {
+    assert_eq!(
+        UnknownEncoderPreset("Medium".to_owned()).to_string(),
+        "unknown encoder preset 'Medium' (expected one of ultrafast superfast veryfast \
+         faster fast medium slow slower veryslow)"
+    );
+    assert_eq!(
+        "cpu".parse::<ColorConversion>().unwrap_err().to_string(),
+        "unknown color conversion 'cpu' (expected auto, gpu, or encoder)"
+    );
+    for &depth in BitDepth::VARIANTS {
         assert_eq!(depth.as_str().parse::<BitDepth>(), Ok(depth));
     }
     assert_eq!(VideoEncoding::default().bit_depth, BitDepth::Eight);
@@ -221,6 +231,10 @@ fn encoder_presets_and_color_conversions_round_trip_through_their_names() {
     assert_eq!(
         "12".parse::<BitDepth>(),
         Err(UnknownBitDepth("12".to_owned()))
+    );
+    assert_eq!(
+        UnknownBitDepth("12".to_owned()).to_string(),
+        "unknown bit depth '12' (expected 8 or 10)"
     );
 }
 
@@ -537,7 +551,7 @@ fn video_formats_follow_the_extension() {
 
 #[test]
 fn video_format_names_round_trip() {
-    for format in VideoFormat::ALL {
+    for &format in VideoFormat::VARIANTS {
         assert_eq!(format.as_str().parse::<VideoFormat>(), Ok(format));
         assert_eq!(format.to_string(), format.as_str());
     }
@@ -549,7 +563,7 @@ fn video_format_names_round_trip() {
 
 #[test]
 fn linked_ffmpeg_has_every_format_encoder() {
-    for format in VideoFormat::ALL {
+    for &format in VideoFormat::VARIANTS {
         ensure_encoders(format).unwrap_or_else(|error| panic!("{format}: {error}"));
     }
 }

@@ -15,7 +15,14 @@ ez-ffmpeg.workspace = true
 ffmpeg-sys-next = "8.1.0"
 rayon = "1.12.0"
 signalsmith-stretch.workspace = true
+clap = { workspace = true, optional = true }
+strum.workspace = true
+thiserror.workspace = true
 
 # macOS packages bundle Homebrew dylibs; retain static linking elsewhere.
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 ez-ffmpeg = { workspace = true, features = ["static"] }
+
+[features]
+# Lets the options a command line takes derive `clap::ValueEnum`.
+clap = ["dep:clap"]

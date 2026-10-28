@@ -12,6 +12,7 @@ celesta-evaluator = { path = "../evaluator" }
 celesta-project = { path = "../project" }
 dunce = "1.0.5"
 serde_json.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
 celesta-gpu-renderer = { path = "../gpu-renderer" }

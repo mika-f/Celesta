@@ -10,7 +10,6 @@ use serde::de::{MapAccess, Visitor};
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
-use std::error::Error;
 use std::fmt;
 use std::fs;
 use std::io::{self, Write};
@@ -57,38 +56,22 @@ impl Serialize for OrderedObject {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum PropsEditError {
     /// The file could not be read or written.
+    #[error("Couldn’t write {file}: {source}")]
     Io { file: PathBuf, source: io::Error },
     /// The file is not a JSON object, so it was left untouched.
+    #[error("Fix {} before editing: {message}", file_name(.file))]
     Invalid { file: PathBuf, message: String },
 }
 
-impl fmt::Display for PropsEditError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Io { file, source } => {
-                write!(formatter, "Couldn’t write {}: {source}", file.display())
-            }
-            Self::Invalid { file, message } => {
-                let name = file.file_name().map_or_else(
-                    || file.display().to_string(),
-                    |name| name.to_string_lossy().into_owned(),
-                );
-                write!(formatter, "Fix {name} before editing: {message}")
-            }
-        }
-    }
-}
-
-impl Error for PropsEditError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Io { source, .. } => Some(source),
-            Self::Invalid { .. } => None,
-        }
-    }
+/// `file`'s name, or the whole path when it has none.
+fn file_name(file: &Path) -> String {
+    file.file_name().map_or_else(
+        || file.display().to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    )
 }
 
 /// Sets `key` to `value`, or removes it for `None`. A missing file counts as

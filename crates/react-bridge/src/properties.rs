@@ -2,7 +2,6 @@ use crate::types::ComponentPropertyField;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
-use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::{fmt, fs, io};
 
@@ -263,54 +262,23 @@ fn object(
 }
 
 /// `--props` or `--props-file` could not be read as a JSON object.
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum PropertyInputError {
+    #[error("could not read {origin}: {source}")]
     Read {
         /// The file as named in messages, e.g. `--props-file a.json`.
         origin: String,
         source: io::Error,
     },
+    #[error("{origin} is not valid JSON: {source}")]
     Parse {
         origin: String,
         source: serde_json::Error,
     },
+    #[error("{0} must be a JSON object of property values")]
     NotAnObject(String),
-    CurrentDir(io::Error),
-}
-
-impl fmt::Display for PropertyInputError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Read { origin, source } => {
-                write!(formatter, "could not read {origin}: {source}")
-            }
-            Self::Parse { origin, source } => {
-                write!(formatter, "{origin} is not valid JSON: {source}")
-            }
-            Self::NotAnObject(origin) => {
-                write!(
-                    formatter,
-                    "{origin} must be a JSON object of property values"
-                )
-            }
-            Self::CurrentDir(source) => {
-                write!(
-                    formatter,
-                    "could not resolve --props paths from the current directory: {source}"
-                )
-            }
-        }
-    }
-}
-
-impl Error for PropertyInputError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            Self::Read { source, .. } | Self::CurrentDir(source) => Some(source),
-            Self::Parse { source, .. } => Some(source),
-            Self::NotAnObject(_) => None,
-        }
-    }
+    #[error("could not resolve --props paths from the current directory: {0}")]
+    CurrentDir(#[source] io::Error),
 }
 
 /// One value the entry rejected while checking [`PropertyInputs`].

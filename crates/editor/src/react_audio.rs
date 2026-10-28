@@ -6,7 +6,6 @@ use celesta_media::FfmpegBackend;
 use celesta_project::TrackKind;
 use celesta_react_bridge::{PropertyInputs, ReactBridge, SpawnOptions};
 use std::collections::HashMap;
-use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::thread;
@@ -47,7 +46,7 @@ pub(crate) struct ReactAudioWorker {
 }
 
 impl ReactAudioWorker {
-    pub(crate) fn spawn() -> Result<Self, Box<dyn Error>> {
+    pub(crate) fn spawn() -> anyhow::Result<Self> {
         let (request_tx, request_rx) = mpsc::channel::<ReactAudioRequest>();
         let (result_tx, result_rx) = mpsc::channel::<ReactAudioResult>();
         thread::Builder::new()

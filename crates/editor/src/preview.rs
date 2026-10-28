@@ -18,7 +18,6 @@ use gpui_kit::RenderImage;
 use rodio::Player;
 use rodio::buffer::SamplesBuffer;
 use std::collections::BTreeMap;
-use std::error::Error;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::{Arc, mpsc};
@@ -464,7 +463,7 @@ pub(crate) struct ReactPreviewBridge {
 }
 
 impl PreviewWorker {
-    pub(crate) fn spawn(mut renderer: GpuRenderer) -> Result<Self, Box<dyn Error>> {
+    pub(crate) fn spawn(mut renderer: GpuRenderer) -> anyhow::Result<Self> {
         let (request_tx, request_rx) = mpsc::channel::<PreviewRequest>();
         let (result_tx, result_rx) = mpsc::channel::<PreviewResult>();
         thread::Builder::new()

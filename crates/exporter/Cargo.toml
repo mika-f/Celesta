@@ -12,16 +12,18 @@ png = "0.18.1"
 celesta-composition = { path = "../composition" }
 celesta-evaluator = { path = "../evaluator" }
 ez-ffmpeg.workspace = true
-celesta-gpu-renderer = { path = "../gpu-renderer" }
-celesta-media = { path = "../media" }
+celesta-gpu-renderer = { path = "../gpu-renderer", features = ["clap"] }
+celesta-media = { path = "../media", features = ["clap"] }
 celesta-project = { path = "../project" }
 celesta-react-bridge = { path = "../react-bridge" }
 tempfile = "3.23.0"
 serde.workspace = true
 serde_json.workspace = true
-clap = { version = "4.6.7", features = ["derive"] }
+clap.workspace = true
 webp = { version = "0.3.1", default-features = false }
 image = { version = "0.25.8", default-features = false, features = ["jpeg"] }
+strum.workspace = true
+thiserror.workspace = true
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 ez-ffmpeg = { workspace = true, features = ["static"] }

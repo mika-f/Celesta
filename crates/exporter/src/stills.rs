@@ -20,6 +20,7 @@ use std::ffi::OsStr;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::{fs, io};
+use strum::VariantArray;
 
 use crate::contact_sheet::Sheet;
 
@@ -96,7 +97,18 @@ impl StillExport {
 pub const MAX_STILL_FILES: usize = 1_000;
 
 /// The image format a still export writes, chosen by the output's extension.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    strum::Display,
+    strum::IntoStaticStr,
+    strum::VariantArray,
+)]
+#[strum(serialize_all = "lowercase")]
 pub enum StillFormat {
     /// Lossless 8-bit RGBA.
     #[default]
@@ -108,21 +120,15 @@ pub enum StillFormat {
 }
 
 impl StillFormat {
-    pub const ALL: [Self; 3] = [Self::Png, Self::Jpeg, Self::Webp];
-
     /// The name `--output-format` takes.
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Png => "png",
-            Self::Jpeg => "jpeg",
-            Self::Webp => "webp",
-        }
+    pub fn as_str(self) -> &'static str {
+        self.into()
     }
 
     /// The format whose extension `path` has, ignoring case.
     pub fn from_extension(path: &Path) -> Option<Self> {
         let extension = path.extension().and_then(OsStr::to_str)?;
-        Self::ALL.into_iter().find(|format| {
+        Self::VARIANTS.iter().copied().find(|format| {
             format.as_str().eq_ignore_ascii_case(extension)
                 || (*format == Self::Jpeg && extension.eq_ignore_ascii_case("jpg"))
         })
@@ -131,12 +137,6 @@ impl StillFormat {
     /// Whether the format takes a quality.
     pub const fn is_lossy(self) -> bool {
         !matches!(self, Self::Png)
-    }
-}
-
-impl std::fmt::Display for StillFormat {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(self.as_str())
     }
 }
 

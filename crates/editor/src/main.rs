@@ -14,7 +14,6 @@ use gpui_kit::component::resizable::ResizableState;
 use gpui_kit::component::{Root, TitleBar};
 use gpui_kit::prelude::*;
 use gpui_kit::{App, Bounds, KeyBinding, Menu, MenuItem, WindowBounds, WindowOptions, px, size};
-use std::error::Error;
 
 mod actions;
 mod add_element;
@@ -92,7 +91,7 @@ fn main() {
     }
 }
 
-fn run() -> Result<(), Box<dyn Error>> {
+fn run() -> anyhow::Result<()> {
     let args = cli::Args::parse();
     if args.list_templates {
         let (_, cli_script) = react_runtime_paths();

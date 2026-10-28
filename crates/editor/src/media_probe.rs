@@ -3,7 +3,6 @@ use crate::problems::error_chain;
 use crate::waveform::media_asset_info;
 use celesta_composition::Time;
 use celesta_media::{DynamicRange, FfmpegBackend};
-use std::error::Error;
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::thread;
@@ -37,7 +36,7 @@ pub(crate) struct MediaProbeWorker {
 }
 
 impl MediaProbeWorker {
-    pub(crate) fn spawn() -> Result<Self, Box<dyn Error>> {
+    pub(crate) fn spawn() -> anyhow::Result<Self> {
         let (request_tx, request_rx) = mpsc::channel::<MediaProbeRequest>();
         let (result_tx, result_rx) = mpsc::channel::<MediaProbeResult>();
         thread::Builder::new()

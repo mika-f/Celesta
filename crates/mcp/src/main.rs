@@ -25,7 +25,7 @@ async fn main() {
     std::process::exit(code)
 }
 
-async fn run() -> Result<(), Box<dyn std::error::Error>> {
+async fn run() -> anyhow::Result<()> {
     let service = server::CelestaServer::new()?
         .serve(rmcp::transport::stdio())
         .await?;

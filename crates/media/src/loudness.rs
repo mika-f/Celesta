@@ -54,7 +54,20 @@ impl LoudnessTarget {
 
 /// What a loudness target gives up when its gain would take a true peak over
 /// the ceiling.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    strum::Display,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::VariantArray,
+)]
+#[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
+#[strum(serialize_all = "lowercase")]
 pub enum PeakHandling {
     /// A true-peak limiter holds the peaks at the ceiling, so the target
     /// is reached. The limiter only touches the moments that would go over.
@@ -66,13 +79,8 @@ pub enum PeakHandling {
 }
 
 impl PeakHandling {
-    pub const ALL: [Self; 2] = [Self::Limit, Self::Lower];
-
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Limit => "limit",
-            Self::Lower => "lower",
-        }
+    pub fn as_str(self) -> &'static str {
+        self.into()
     }
 }
 

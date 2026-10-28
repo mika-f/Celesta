@@ -24,6 +24,7 @@ use std::cell::Cell;
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
+use strum::VariantArray;
 
 use celesta_composition::{
     AssetLocation, BlendMode, Clip, EvaluatedTransform, GroupMask, ImageAnimation, ImageFit, Layer,
@@ -144,10 +145,14 @@ fn renderer(mut options: GpuRenderOptions) -> Option<TestRenderer> {
 
 #[test]
 fn parses_every_driver_name() {
-    for driver in GpuDriver::ALL {
+    for &driver in GpuDriver::VARIANTS {
         assert_eq!(driver.as_str().parse(), Ok(driver));
+        assert_eq!(driver.to_string(), driver.as_str());
     }
-    assert!("d3d12".parse::<GpuDriver>().is_err());
+    assert_eq!(
+        "d3d12".parse::<GpuDriver>().unwrap_err().to_string(),
+        "unknown driver 'd3d12' (expected auto, vulkan, dx12, metal, gl)"
+    );
     assert!(GpuDriver::Auto.is_built_in());
 }
 
@@ -5569,10 +5574,13 @@ fn mipmaps_average_color_by_coverage() {
 
 #[test]
 fn render_qualities_round_trip_through_their_names() {
-    for quality in RenderQuality::ALL {
+    for &quality in RenderQuality::VARIANTS {
         assert_eq!(quality.as_str().parse::<RenderQuality>(), Ok(quality));
     }
-    assert!("best".parse::<RenderQuality>().is_err());
+    assert_eq!(
+        "best".parse::<RenderQuality>().unwrap_err().to_string(),
+        "unknown render quality 'best' (expected draft or final)"
+    );
 }
 
 #[test]

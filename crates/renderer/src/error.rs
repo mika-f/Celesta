@@ -1,161 +1,75 @@
 use celesta_media::MediaError;
 use celesta_remote::RemoteAssetError;
-use std::error::Error;
-use std::{fmt, io};
+use std::io;
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum RenderError {
-    SurfaceTooLarge {
-        width: u32,
-        height: u32,
-    },
+    #[error("surface {width}x{height} is too large")]
+    SurfaceTooLarge { width: u32, height: u32 },
+    #[error("invalid color `{0}`")]
     InvalidColor(String),
+    #[error(
+        "text color run {index} ({start}..{end}) is invalid for {text_length} code points; runs must be ordered, non-overlapping ranges within the text"
+    )]
     InvalidTextColorRun {
         index: usize,
         start: usize,
         end: usize,
         text_length: usize,
     },
+    #[error(
+        "text font run {index} ({start}..{end}) is invalid for {text_length} code points; runs must be ordered, non-overlapping ranges within the text"
+    )]
     InvalidTextFontRun {
         index: usize,
         start: usize,
         end: usize,
         text_length: usize,
     },
-    UnsupportedRotation {
-        layer: String,
-        degrees: f64,
-    },
+    #[error("CPU reference renderer does not support {degrees} degree rotation on layer `{layer}`")]
+    UnsupportedRotation { layer: String, degrees: f64 },
+    #[error("CPU reference renderer does not support `{property}` on layer `{layer}`")]
     UnsupportedTransform {
         layer: String,
         property: &'static str,
     },
-    UnsupportedNonUniformTextScale {
-        x: f64,
-        y: f64,
-    },
-    UnsupportedShader {
-        layer: String,
-    },
+    #[error("CPU reference renderer does not support non-uniform text scale ({x}, {y})")]
+    UnsupportedNonUniformTextScale { x: f64, y: f64 },
+    #[error(
+        "CPU reference renderer does not support filters (custom shaders and color filters) on layer `{layer}`"
+    )]
+    UnsupportedShader { layer: String },
     /// A `LayerContent::StaticRef` reached the renderer; the React bridge
     /// expands every one before it hands a scene on.
-    UnresolvedStatic {
-        layer: String,
-    },
+    #[error("layer `{layer}` refers to a static subtree that was never expanded")]
+    UnresolvedStatic { layer: String },
+    #[error("could not load remote asset `{asset}`: {source}")]
     RemoteAsset {
         asset: String,
         source: RemoteAssetError,
     },
-    AssetIo {
-        asset: String,
-        source: io::Error,
-    },
+    #[error("could not read asset `{asset}`: {source}")]
+    AssetIo { asset: String, source: io::Error },
+    #[error("could not decode image asset `{asset}`: {source}")]
     ImageDecode {
         asset: String,
         source: image::ImageError,
     },
+    #[error("could not decode PSD asset `{asset}`: {source}")]
     PsdDecode {
         asset: String,
         source: psd::PsdError,
     },
-    InvalidFont {
-        asset: String,
-        reason: &'static str,
-    },
-    MissingPsdLayer {
-        asset: String,
-        layer: String,
-    },
-    Media(MediaError),
-    Time(celesta_composition::TimeError),
-    Io(io::Error),
-    Png(png::EncodingError),
-}
-
-impl fmt::Display for RenderError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::SurfaceTooLarge { width, height } => {
-                write!(formatter, "surface {width}x{height} is too large")
-            }
-            Self::InvalidTextColorRun {
-                index,
-                start,
-                end,
-                text_length,
-            } => write!(
-                formatter,
-                "text color run {index} ({start}..{end}) is invalid for {text_length} code points; runs must be ordered, non-overlapping ranges within the text"
-            ),
-            Self::InvalidTextFontRun {
-                index,
-                start,
-                end,
-                text_length,
-            } => write!(
-                formatter,
-                "text font run {index} ({start}..{end}) is invalid for {text_length} code points; runs must be ordered, non-overlapping ranges within the text"
-            ),
-            Self::InvalidColor(color) => write!(formatter, "invalid color `{color}`"),
-            Self::UnsupportedRotation { layer, degrees } => write!(
-                formatter,
-                "CPU reference renderer does not support {degrees} degree rotation on layer `{layer}`"
-            ),
-            Self::UnsupportedTransform { layer, property } => write!(
-                formatter,
-                "CPU reference renderer does not support `{property}` on layer `{layer}`"
-            ),
-            Self::UnsupportedNonUniformTextScale { x, y } => write!(
-                formatter,
-                "CPU reference renderer does not support non-uniform text scale ({x}, {y})"
-            ),
-            Self::UnsupportedShader { layer } => write!(
-                formatter,
-                "CPU reference renderer does not support filters (custom shaders and color filters) on layer `{layer}`"
-            ),
-            Self::UnresolvedStatic { layer } => write!(
-                formatter,
-                "layer `{layer}` refers to a static subtree that was never expanded"
-            ),
-            Self::RemoteAsset { asset, source } => {
-                write!(formatter, "could not load remote asset `{asset}`: {source}")
-            }
-            Self::AssetIo { asset, source } => {
-                write!(formatter, "could not read asset `{asset}`: {source}")
-            }
-            Self::ImageDecode { asset, source } => {
-                write!(
-                    formatter,
-                    "could not decode image asset `{asset}`: {source}"
-                )
-            }
-            Self::PsdDecode { asset, source } => {
-                write!(formatter, "could not decode PSD asset `{asset}`: {source}")
-            }
-            Self::MissingPsdLayer { asset, layer } => {
-                write!(formatter, "PSD asset `{asset}` has no layer `{layer}`")
-            }
-            Self::InvalidFont { asset, reason } => {
-                write!(formatter, "could not load font `{asset}`: {reason}")
-            }
-            Self::Media(error) => write!(formatter, "could not decode video frame: {error}"),
-            Self::Time(error) => write!(formatter, "could not calculate video time: {error}"),
-            Self::Io(error) => write!(formatter, "image I/O failed: {error}"),
-            Self::Png(error) => write!(formatter, "PNG encoding failed: {error}"),
-        }
-    }
-}
-
-impl Error for RenderError {}
-
-impl From<MediaError> for RenderError {
-    fn from(error: MediaError) -> Self {
-        Self::Media(error)
-    }
-}
-
-impl From<celesta_composition::TimeError> for RenderError {
-    fn from(error: celesta_composition::TimeError) -> Self {
-        Self::Time(error)
-    }
+    #[error("could not load font `{asset}`: {reason}")]
+    InvalidFont { asset: String, reason: &'static str },
+    #[error("PSD asset `{asset}` has no layer `{layer}`")]
+    MissingPsdLayer { asset: String, layer: String },
+    #[error("could not decode video frame: {0}")]
+    Media(#[from] MediaError),
+    #[error("could not calculate video time: {0}")]
+    Time(#[from] celesta_composition::TimeError),
+    #[error("image I/O failed: {0}")]
+    Io(#[source] io::Error),
+    #[error("PNG encoding failed: {0}")]
+    Png(#[source] png::EncodingError),
 }

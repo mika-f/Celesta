@@ -16,42 +16,34 @@ use celesta_source_edit::{
     LockReason, apply, expression, parses_file, plan_lift_avoiding, removal, written_attributes,
 };
 use std::collections::BTreeMap;
-use std::fmt;
 use std::path::{Path, PathBuf};
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, thiserror::Error)]
 pub(crate) enum CommitError {
     /// The file no longer has the targets the edit started from.
+    #[error("The source changed while editing")]
     SourceChanged,
     /// The row (by its label) is locked or not a target of this element.
+    #[error("{0} can't be edited here")]
     NotEditable(String),
     /// The row (by its label) has no written value it can do without: the
     /// prop is required, absent, locked, or animated.
+    #[error("{0} can't be removed here")]
     NotRemovable(String),
     /// The value is NaN or infinite.
+    #[error("Enter a number")]
     NotANumber,
+    #[error("Couldn't edit the source: {0}")]
     Apply(ApplyError),
     /// The edited text has syntax errors; nothing is written.
+    #[error("Couldn't edit the source: the result does not parse")]
     Unparseable,
     /// The row can't be written under the chosen scope.
+    #[error("{}", .0.text())]
     Scope(ScopeLock),
     /// A name to import from `@celesta/react` is bound otherwise.
+    #[error("`{}` here is not Celesta's", match .0 { ImportLock::Clash { name } => name })]
     Import(ImportLock),
-}
-
-impl fmt::Display for CommitError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::SourceChanged => f.write_str("The source changed while editing"),
-            Self::NotEditable(label) => write!(f, "{label} can't be edited here"),
-            Self::NotRemovable(label) => write!(f, "{label} can't be removed here"),
-            Self::NotANumber => f.write_str("Enter a number"),
-            Self::Apply(error) => write!(f, "Couldn't edit the source: {error}"),
-            Self::Unparseable => f.write_str("Couldn't edit the source: the result does not parse"),
-            Self::Scope(lock) => f.write_str(&lock.text()),
-            Self::Import(ImportLock::Clash { name }) => write!(f, "`{name}` here is not Celesta's"),
-        }
-    }
 }
 
 /// The selected element's commit: [`commit_scoped`], resolving the rows

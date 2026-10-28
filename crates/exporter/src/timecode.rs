@@ -1,6 +1,4 @@
 use celesta_composition::Time;
-use std::error::Error;
-use std::fmt;
 
 /// Parses a `HH:MM:SS(.mmm)` / `MM:SS(.mmm)` / `SS(.mmm)` timecode into an
 /// exact [`Time`] (millisecond timescale). Every component must be a
@@ -66,24 +64,12 @@ pub(crate) fn parse_component(
     text.parse::<i64>().map_err(|_| malformed())
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum TimecodeError {
+    #[error("timecode is empty")]
     Empty,
+    #[error("'{0}' is not a HH:MM:SS(.mmm), MM:SS(.mmm) or SS(.mmm) timecode")]
     Malformed(String),
+    #[error("timecode '{0}' is out of range")]
     Overflow(String),
 }
-
-impl fmt::Display for TimecodeError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Empty => formatter.write_str("timecode is empty"),
-            Self::Malformed(input) => write!(
-                formatter,
-                "'{input}' is not a HH:MM:SS(.mmm), MM:SS(.mmm) or SS(.mmm) timecode"
-            ),
-            Self::Overflow(input) => write!(formatter, "timecode '{input}' is out of range"),
-        }
-    }
-}
-
-impl Error for TimecodeError {}

@@ -1,7 +1,5 @@
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
-use std::error::Error;
-use std::fmt;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "codegen", derive(ts_rs::TS))]
@@ -131,24 +129,15 @@ pub(crate) fn gcd_u64(mut left: u64, mut right: u64) -> u64 {
     left
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum TimeError {
+    #[error("time timescale must not be zero")]
     ZeroTimescale,
+    #[error("frame rate must be positive")]
     InvalidFrameRate,
+    #[error("time calculation overflowed")]
     Overflow,
 }
-
-impl fmt::Display for TimeError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::ZeroTimescale => formatter.write_str("time timescale must not be zero"),
-            Self::InvalidFrameRate => formatter.write_str("frame rate must be positive"),
-            Self::Overflow => formatter.write_str("time calculation overflowed"),
-        }
-    }
-}
-
-impl Error for TimeError {}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "codegen", derive(ts_rs::TS))]

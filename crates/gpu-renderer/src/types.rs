@@ -1,6 +1,5 @@
 use crate::error::GpuRenderError;
-use std::error::Error;
-use std::fmt;
+use strum::VariantArray;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Color {
@@ -48,7 +47,24 @@ impl Default for GpuRenderOptions {
 }
 
 /// The graphics API `GpuRenderer::new` renders through.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    strum::Display,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::VariantArray,
+)]
+#[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
+#[strum(
+    serialize_all = "lowercase",
+    parse_err_ty = UnknownGpuDriver,
+    parse_err_fn = UnknownGpuDriver::new
+)]
 pub enum GpuDriver {
     /// The first API with a GPU, in wgpu's order: Vulkan, Metal, DX12, then
     /// OpenGL.
@@ -64,16 +80,8 @@ pub enum GpuDriver {
 }
 
 impl GpuDriver {
-    pub const ALL: [Self; 5] = [Self::Auto, Self::Vulkan, Self::Dx12, Self::Metal, Self::Gl];
-
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Auto => "auto",
-            Self::Vulkan => "vulkan",
-            Self::Dx12 => "dx12",
-            Self::Metal => "metal",
-            Self::Gl => "gl",
-        }
+    pub fn as_str(self) -> &'static str {
+        self.into()
     }
 
     pub(crate) fn backends(self) -> wgpu::Backends {
@@ -93,42 +101,15 @@ impl GpuDriver {
     }
 }
 
-impl fmt::Display for GpuDriver {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.as_str())
-    }
-}
-
-impl std::str::FromStr for GpuDriver {
-    type Err = UnknownGpuDriver;
-
-    fn from_str(name: &str) -> Result<Self, Self::Err> {
-        Self::ALL
-            .into_iter()
-            .find(|driver| driver.as_str() == name)
-            .ok_or_else(|| UnknownGpuDriver(name.to_owned()))
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("unknown driver '{0}' (expected {expected})", expected = names(GpuDriver::VARIANTS))]
 pub struct UnknownGpuDriver(pub(crate) String);
 
-impl fmt::Display for UnknownGpuDriver {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let names: Vec<_> = GpuDriver::ALL
-            .iter()
-            .map(|driver| driver.as_str())
-            .collect();
-        write!(
-            formatter,
-            "unknown driver '{}' (expected {})",
-            self.0,
-            names.join(", ")
-        )
+impl UnknownGpuDriver {
+    fn new(name: &str) -> Self {
+        Self(name.to_owned())
     }
 }
-
-impl Error for UnknownGpuDriver {}
 
 /// The pixel layout `GpuRenderer::submit`/`drain` read frames back in.
 ///
@@ -180,7 +161,24 @@ impl ReadbackFormat {
 /// pixels and copied texel for texel. Transformed layers are always filtered
 /// (bilinear, trilinear from mipmaps for cached images). The modes differ only
 /// in the work that is too slow to repeat for every frame of playback.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    strum::Display,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::VariantArray,
+)]
+#[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
+#[strum(
+    serialize_all = "lowercase",
+    parse_err_ty = UnknownRenderQuality,
+    parse_err_fn = UnknownRenderQuality::new
+)]
 pub enum RenderQuality {
     /// For interactive playback: text is rasterized once at scale 1 and
     /// filtered when it is scaled, and video frames get no mipmaps.
@@ -193,47 +191,26 @@ pub enum RenderQuality {
 }
 
 impl RenderQuality {
-    pub const ALL: [Self; 2] = [Self::Draft, Self::Final];
-
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Draft => "draft",
-            Self::Final => "final",
-        }
+    pub fn as_str(self) -> &'static str {
+        self.into()
     }
 }
 
-impl fmt::Display for RenderQuality {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.as_str())
-    }
-}
-
-impl std::str::FromStr for RenderQuality {
-    type Err = UnknownRenderQuality;
-
-    fn from_str(name: &str) -> Result<Self, Self::Err> {
-        Self::ALL
-            .into_iter()
-            .find(|quality| quality.as_str() == name)
-            .ok_or_else(|| UnknownRenderQuality(name.to_owned()))
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("unknown render quality '{0}' (expected draft or final)")]
 pub struct UnknownRenderQuality(pub(crate) String);
 
-impl fmt::Display for UnknownRenderQuality {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "unknown render quality '{}' (expected draft or final)",
-            self.0
-        )
+impl UnknownRenderQuality {
+    fn new(name: &str) -> Self {
+        Self(name.to_owned())
     }
 }
 
-impl Error for UnknownRenderQuality {}
+/// `names`, separated by commas.
+fn names(values: &[impl Copy + Into<&'static str>]) -> String {
+    let names: Vec<&str> = values.iter().map(|&value| value.into()).collect();
+    names.join(", ")
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GpuFrame {
