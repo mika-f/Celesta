@@ -219,8 +219,8 @@ impl<'project> Evaluator<'project> {
         project_time: Time,
     ) -> Result<Option<Layer>, EvaluationError> {
         let local_time = project_time.checked_sub(item.range.start)?;
-        let transform = evaluate_transform(item.transform.as_ref(), local_time)?;
-        let opacity = evaluate_optional(&item.opacity, local_time, 1.0)?;
+        // Content comes first so an `audio` item, which has no layer, skips
+        // evaluating its transform, opacity and effects.
         let content = match &item.content {
             TimelineContent::Video {
                 asset,
@@ -278,8 +278,8 @@ impl<'project> Evaluator<'project> {
 
         Ok(Some(Layer {
             id: item.id.clone(),
-            transform,
-            opacity,
+            transform: evaluate_transform(item.transform.as_ref(), local_time)?,
+            opacity: evaluate_optional(&item.opacity, local_time, 1.0)?,
             blend_mode: item.blend_mode.unwrap_or_default(),
             effects: evaluate_effects(item, local_time)?,
             content,

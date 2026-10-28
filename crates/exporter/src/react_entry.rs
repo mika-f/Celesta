@@ -67,8 +67,8 @@ impl Exporter {
     /// project once per frame and gives the entry's `<ProjectTimeline />`
     /// the resulting layers. `companion.project_asset_root` resolves the
     /// project's own relative asset paths and may differ from the entry's
-    /// directory; every timeline content kind but `audio` is evaluated (see
-    /// `visual_only_project`).
+    /// directory. Its `audio` items evaluate to no layer and play only in
+    /// the mixdown.
     pub fn export_react_entry_with_project(
         &self,
         entry: impl AsRef<Path>,
