@@ -11,6 +11,7 @@ import { Group, Instances, Rect, useCurrentFrame, useTheme, useVideoConfig } fro
 import type { BlendMode } from '@celesta/react';
 
 import { alphaOf, hexColor } from './color';
+import { validators } from './validate';
 
 /** The patterns `<PatternBackground>` draws by name. */
 export type PatternName = 'dots' | 'grid' | 'stripes';
@@ -127,19 +128,7 @@ interface Batch {
 
 const emptyBatch = (): Batch => ({ x: [], y: [], width: [], height: [], rotation: [], color: [] });
 
-function fail(message: string): never {
-  throw new Error(`<PatternBackground> ${message}`);
-}
-
-function requirePositive(name: string, value: number): number {
-  if (!Number.isFinite(value) || value <= 0) fail(`${name} must be a finite number above 0, not ${value}`);
-  return value;
-}
-
-function requireFinite(name: string, value: number): number {
-  if (!Number.isFinite(value)) fail(`${name} must be a finite number, not ${value}`);
-  return value;
-}
+const { fail, finite, positive } = validators('PatternBackground');
 
 function rgb(color: string): [number, number, number] {
   const [r, g, b] = parseHexColor(color)!;
@@ -177,10 +166,10 @@ export function PatternBackground(props: PatternBackgroundProps): ReturnType<typ
   } = props;
 
   const [across, down] = typeof spacing === 'number' ? [spacing, spacing] : spacing;
-  requirePositive('spacing', across);
-  requirePositive('spacing', down);
+  positive('spacing', across);
+  positive('spacing', down);
   for (const [name, value] of Object.entries({ x, y, width, height, offsetX, offsetY, speedX, speedY })) {
-    requireFinite(name, value);
+    finite(name, value);
   }
   if (width < 0 || height < 0) fail(`width and height must not be negative, not ${width}×${height}`);
 
@@ -225,7 +214,7 @@ export function PatternBackground(props: PatternBackgroundProps): ReturnType<typ
   const rows = (phase: number) => range(Math.floor(-phase / down) - 1, Math.floor((height - phase) / down) + 1);
 
   if (pattern === 'dots') {
-    const size = requirePositive('size', props.size ?? 4);
+    const size = positive('size', props.size ?? 4);
     const cols = columns(shiftX);
     const rws = rows(shiftY);
     checkCount(cols.length * rws.length);
@@ -237,7 +226,7 @@ export function PatternBackground(props: PatternBackgroundProps): ReturnType<typ
       }
     }
   } else if (pattern === 'grid') {
-    const size = requirePositive('size', props.size ?? 1);
+    const size = positive('size', props.size ?? 1);
     const cols = columns(shiftX);
     const rws = rows(shiftY);
     checkCount(cols.length + rws.length);
@@ -250,8 +239,8 @@ export function PatternBackground(props: PatternBackgroundProps): ReturnType<typ
       push('rect', width / 2, shiftY + row * down, width + size * 2, size * scale, 0, solid(alpha));
     }
   } else if (pattern === 'stripes') {
-    const size = requirePositive('size', props.size ?? across / 2);
-    requireFinite('angle', angle);
+    const size = positive('size', props.size ?? across / 2);
+    finite('angle', angle);
     const theta = (angle * Math.PI) / 180;
     // Stripe k is the band centred on the line of points p with p·n = k·spacing + shift·n.
     const nx = -Math.sin(theta);
@@ -291,8 +280,8 @@ export function PatternBackground(props: PatternBackgroundProps): ReturnType<typ
         marks.forEach((mark, index) => {
           const [alpha, scale] = jitter(`${column},${row},${index}`);
           const markInk = markColor(mark.color);
-          const w = requireFinite('mark width', mark.width);
-          const h = requireFinite('mark height', mark.height ?? w);
+          const w = finite('mark width', mark.width);
+          const h = finite('mark height', mark.height ?? w);
           push(mark.shape ?? 'rect',
             cell.x + (mark.x ?? across / 2), cell.y + (mark.y ?? down / 2),
             Math.max(0, w * scale), Math.max(0, h * scale), mark.rotation ?? 0,

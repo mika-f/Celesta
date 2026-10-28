@@ -11,6 +11,7 @@ import type { TextShorthand, TextStyle } from '@celesta/react';
 
 import { Panel } from './panel';
 import type { PanelProps } from './panel';
+import { validators } from './validate';
 
 export interface BadgeProps extends Omit<PanelProps, 'width' | 'height' | 'cornerRadius' | 'children'>, TextShorthand {
   /** The label: text, which may hold `<Span>`. */
@@ -47,26 +48,7 @@ export interface BadgeProps extends Omit<PanelProps, 'width' | 'height' | 'corne
 
 const DEFAULT_PADDING: Required<Insets> = { top: 8, right: 16, bottom: 8, left: 16 };
 
-function fail(message: string): never {
-  throw new Error(`<Badge> ${message}`);
-}
-
-function nonNegative(name: string, value: number): number {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
-    fail(`${name} must be a finite number of 0 or more, not ${value}`);
-  }
-  return value;
-}
-
-function insets(padding: number | Insets): Required<Insets> {
-  const edges = typeof padding === 'number' ? { top: padding, right: padding, bottom: padding, left: padding } : padding;
-  return {
-    top: nonNegative('padding top', edges.top ?? 0),
-    right: nonNegative('padding right', edges.right ?? 0),
-    bottom: nonNegative('padding bottom', edges.bottom ?? 0),
-    left: nonNegative('padding left', edges.left ?? 0),
-  };
-}
+const { fail, nonNegative, insets } = validators('Badge');
 
 /**
  * A label drawn on a `<Panel>` sized from its measured text, so the

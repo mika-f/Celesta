@@ -13,6 +13,7 @@ import type { LineCap, PolylinePoint } from '@celesta/shapes';
 import { hexColor } from './color';
 import { Panel } from './panel';
 import type { PanelProps } from './panel';
+import { validators } from './validate';
 
 /** The box edge the line leaves from: the one facing the target (`'auto'`), or a named one. */
 export type CalloutSide = 'auto' | 'top' | 'right' | 'bottom' | 'left';
@@ -81,29 +82,7 @@ export interface CalloutProps
 const DEFAULT_TITLE_STYLE: TextStyle = { fontSize: 28, fontWeight: 700 };
 const DEFAULT_TEXT_STYLE: TextStyle = { fontSize: 22 };
 
-function fail(message: string): never {
-  throw new Error(`<Callout> ${message}`);
-}
-
-function finite(name: string, value: number): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) fail(`${name} must be a finite number, not ${value}`);
-  return value;
-}
-
-function nonNegative(name: string, value: number): number {
-  if (finite(name, value) < 0) fail(`${name} must be a finite number of 0 or more, not ${value}`);
-  return value;
-}
-
-function insets(padding: number | Insets): Required<Insets> {
-  const edges = typeof padding === 'number' ? { top: padding, right: padding, bottom: padding, left: padding } : padding;
-  return {
-    top: nonNegative('padding top', edges.top ?? 0),
-    right: nonNegative('padding right', edges.right ?? 0),
-    bottom: nonNegative('padding bottom', edges.bottom ?? 0),
-    left: nonNegative('padding left', edges.left ?? 0),
-  };
-}
+const { fail, finite, nonNegative, insets } = validators('Callout');
 
 interface Box { left: number; top: number; right: number; bottom: number }
 

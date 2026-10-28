@@ -1,6 +1,7 @@
 import { createElement } from 'react';
 import type { ReactNode } from 'react';
 
+import { clamp01 } from '@celesta/math';
 import { Group, useCurrentFrame, useVideoConfig } from '@celesta/react';
 import type { CommonProps } from '@celesta/react';
 
@@ -25,10 +26,6 @@ export interface TransitionProps extends CommonProps, TransitionEffect {
   direction?: TransitionDirection;
   easing?: (progress: number) => number;
   children?: ReactNode;
-}
-
-function clamp01(value: number): number {
-  return Math.min(1, Math.max(0, value));
 }
 
 /**

@@ -16,7 +16,8 @@ import { hexColor } from './color';
 import { Motion } from './motion';
 import type { MotionEffect } from './motion';
 import { Panel } from './panel';
-import { defaultStagger, nonNegative, positive, solid, staggeredPiece } from './text-block';
+import { defaultStagger, solid, staggeredPiece } from './text-block';
+import { validators } from './validate';
 
 /** Where `<LowerThird>` sits in its area. */
 export type LowerThirdPlacement = 'bottom-left' | 'bottom-center' | 'bottom-right' | 'top-left' | 'top-right';
@@ -106,6 +107,8 @@ interface Line {
 
 const PLACEMENTS: readonly LowerThirdPlacement[] = ['bottom-left', 'bottom-center', 'bottom-right', 'top-left', 'top-right'];
 
+const { nonNegative, positive } = validators('LowerThird');
+
 /**
  * A name and an optional role on a band in a corner of the current layout
  * area (the canvas, a `<SafeArea>`, or a `<Fit>`), inside `safeArea` and
@@ -143,11 +146,11 @@ export function LowerThird(props: LowerThirdProps): ReturnType<typeof React.crea
   const minSubtitleSize = Math.min(props.minSubtitleSize ?? Math.round(subtitleSize * 0.8), subtitleSize);
   for (const [name, value] of [['titleSize', titleSize], ['minTitleSize', minTitleSize], ['subtitleSize', subtitleSize],
     ['minSubtitleSize', minSubtitleSize], ['titleLineHeight', titleLineHeight], ['subtitleLineHeight', subtitleLineHeight]] as const) {
-    positive('LowerThird', name, value);
+    positive(name, value);
   }
-  nonNegative('LowerThird', 'gap', gap);
-  nonNegative('LowerThird', 'accentWidth', accentWidth);
-  const stagger = nonNegative('LowerThird', 'stagger', props.stagger ?? defaultStagger(textEnter, canvas.fps));
+  nonNegative('gap', gap);
+  nonNegative('accentWidth', accentWidth);
+  const stagger = nonNegative('stagger', props.stagger ?? defaultStagger(textEnter, canvas.fps));
   if (!PLACEMENTS.includes(placement)) {
     throw new Error(`<LowerThird> unknown placement ${JSON.stringify(placement)}; expected ${PLACEMENTS.join(', ')}`);
   }
@@ -236,6 +239,6 @@ export function LowerThird(props: LowerThirdProps): ReturnType<typeof React.crea
 }
 
 function maxWidth(value: number | undefined, room: number, bounds: { width: number; height: number }): number {
-  if (value !== undefined) return positive('LowerThird', 'maxWidth', value);
+  if (value !== undefined) return positive('maxWidth', value);
   return bounds.width > bounds.height ? room * 0.6 : room;
 }

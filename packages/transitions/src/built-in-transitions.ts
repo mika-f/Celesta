@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { random } from '@celesta/math';
+import { clamp01, random } from '@celesta/math';
 import { Mask, Rect } from '@celesta/react';
 import type { Paint, PathCommand } from '@celesta/react';
 import { Path } from '@celesta/shapes';
@@ -12,10 +12,6 @@ import type { TransitionDefinition, TransitionSceneStyle, TransitionSeriesEdge }
 export interface TransitionCenter {
   x: number;
   y: number;
-}
-
-function clamp01(value: number): number {
-  return Math.min(1, Math.max(0, value));
 }
 
 function number(value: unknown, label: string, min = -Infinity, max = Infinity): number {

@@ -25,6 +25,7 @@ import { Motion } from './motion';
 import type { MotionEffect } from './motion';
 import { Panel } from './panel';
 import type { PanelProps } from './panel';
+import { validators } from './validate';
 
 /** One caption: the `SubtitleCue` shape `parseSubtitles()` returns, plus emphasis. */
 export interface CaptionCue {
@@ -204,14 +205,7 @@ export interface CaptionTrackProps {
   lang?: string;
 }
 
-function fail(message: string): never {
-  throw new Error(`<CaptionTrack> ${message}`);
-}
-
-function positive(name: string, value: number): number {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) fail(`${name} must be a finite number greater than 0, not ${value}`);
-  return value;
-}
+const { fail, positive } = validators('CaptionTrack');
 
 function cueLabel(cues: readonly CaptionCue[], index: number): string {
   const id = cues[index]?.id;

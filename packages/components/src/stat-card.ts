@@ -11,6 +11,7 @@ import { countProgress, finiteValue, formatNumber } from './count';
 import type { CountTiming, NumberFormat } from './count';
 import { Panel } from './panel';
 import type { PanelProps } from './panel';
+import { validators } from './validate';
 
 export interface StatCardProps extends Omit<PanelProps, 'width' | 'height' | 'children'>, NumberFormat, CountTiming {
   /** The number the card counts to. */
@@ -51,22 +52,7 @@ const DEFAULT_VALUE_STYLE: TextStyle = { fontSize: 72, fontWeight: 700 };
 const DEFAULT_LABEL_STYLE: TextStyle = { fontSize: 24 };
 const DEFAULT_NOTE_STYLE: TextStyle = { fontSize: 20 };
 
-function nonNegative(name: string, value: number): number {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
-    throw new Error(`<StatCard> ${name} must be a finite number of 0 or more, not ${value}`);
-  }
-  return value;
-}
-
-function insets(padding: number | Insets): Required<Insets> {
-  const edges = typeof padding === 'number' ? { top: padding, right: padding, bottom: padding, left: padding } : padding;
-  return {
-    top: nonNegative('padding top', edges.top ?? 0),
-    right: nonNegative('padding right', edges.right ?? 0),
-    bottom: nonNegative('padding bottom', edges.bottom ?? 0),
-    left: nonNegative('padding left', edges.left ?? 0),
-  };
-}
+const { nonNegative, insets } = validators('StatCard');
 
 /**
  * A `<Panel>` holding a label, a number that counts from `from` to `value`
