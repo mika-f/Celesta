@@ -1704,11 +1704,7 @@ impl EditorView {
         if !self.row_scrub_active() {
             return;
         }
-        // The button came up where the view did not see it: end there.
-        if !event.dragging() {
-            if self.end_row_scrub(cx) {
-                cx.notify();
-            }
+        if self.release_unseen(event, cx, Self::end_row_scrub) {
             return;
         }
         let Some(scrub) = self.element_rows.scrub.as_mut() else {

@@ -23,6 +23,7 @@ mod background;
 mod canvas_geometry;
 mod cli;
 mod component_schema;
+mod drag_session;
 mod edit_history;
 mod editor_launch;
 mod element_edit;

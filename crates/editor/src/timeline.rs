@@ -1511,7 +1511,7 @@ impl EditorView {
         let dragged = self
             .scene_drag
             .as_ref()
-            .is_some_and(|drag| drag.id == chapter.id);
+            .is_some_and(|drag| drag.gesture.id == chapter.id);
         let id = chapter.id.clone();
         let zone = div()
             .id(SharedString::from(format!(

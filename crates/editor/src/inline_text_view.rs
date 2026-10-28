@@ -943,19 +943,22 @@ impl EditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let frame_size = self.frame_size();
-        let bounds = self.viewer_bounds.get();
-        let Some(session) = self
+        if !self
             .inline_text
-            .as_mut()
-            .filter(|session| session.selecting)
-        else {
-            return;
-        };
-        if !event.dragging() {
-            session.selecting = false;
+            .as_ref()
+            .is_some_and(|session| session.selecting)
+            || self.release_unseen(event, cx, |this, _| {
+                this.end_inline_selection();
+                false
+            })
+        {
             return;
         }
+        let frame_size = self.frame_size();
+        let bounds = self.viewer_bounds.get();
+        let Some(session) = self.inline_text.as_mut() else {
+            return;
+        };
         let (Some(bounds), Some(layout), Some(map)) = (bounds, &session.layout, &session.map)
         else {
             return;

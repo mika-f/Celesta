@@ -1149,8 +1149,7 @@ impl EditorView {
         if !matches!(self.add.mode, AddMode::Drawing { .. }) {
             return;
         }
-        if !event.dragging() {
-            self.end_add(event.position, cx);
+        if self.release_unseen(event, cx, |this, cx| this.end_add(event.position, cx)) {
             return;
         }
         if let Some(now) = self.scene_position(event.position) {

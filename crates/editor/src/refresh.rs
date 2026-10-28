@@ -12,6 +12,7 @@ use crate::source::{
     DependencyDebounce, REACT_PREVIEW_SAMPLE_RATE, sample_dependencies, watched_mtime,
 };
 use crate::timecode::format_timecode;
+use crate::timeline_drag::{BandDrag, SceneDrag};
 use crate::view::EditorView;
 use celesta_composition::Time;
 use celesta_editor_core::{EditorDocument, TimelineClock};
@@ -565,8 +566,8 @@ impl EditorView {
                 }
                 // A released band or scene drag's values are the reloaded
                 // code's now.
-                self.drop_released_band_drag();
-                self.drop_released_scene_drag();
+                self.drop_released_timeline_drag::<BandDrag>();
+                self.drop_released_timeline_drag::<SceneDrag>();
                 self.problems.clear(Source::Preview);
                 self.refresh_preview();
                 if keep {
@@ -590,8 +591,8 @@ impl EditorView {
                 if !self.transform_drag_active() {
                     self.cancel_transform_drag();
                 }
-                self.drop_released_band_drag();
-                self.drop_released_scene_drag();
+                self.drop_released_timeline_drag::<BandDrag>();
+                self.drop_released_timeline_drag::<SceneDrag>();
                 if !self.row_scrub_active() {
                     self.cancel_row_scrub();
                 }

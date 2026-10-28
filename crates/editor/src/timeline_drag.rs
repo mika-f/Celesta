@@ -7,6 +7,7 @@
 //! without a window of its own is offered "Set timing" there instead (its
 //! rules in `timing`).
 
+use crate::drag_session::{DragGesture, DragSession, DragWrite, TimelineDrag};
 use crate::element_edit::{
     CommitError, ElementTargets, PropKey, WindowTargets, editable, inner_target, reason_text,
     window_files,
@@ -29,7 +30,7 @@ use celesta_react_bridge::{
     ElementOccurrences, InstanceOccurrences, LayerSourceReport, ReactChapter, SourcePos,
 };
 use celesta_source_edit::{EditTarget, EditValue, LockReason, TimingKind, format_number};
-use gpui_kit::{Context, MouseMoveEvent};
+use gpui_kit::Context;
 
 /// What part of the window a drag holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -521,12 +522,6 @@ pub(crate) struct BandDrag {
     adds_duration: bool,
     /// A `Series` item's start in its `Series`; `None` for a `Sequence`.
     series_start: Option<f64>,
-    /// Window x of the press.
-    start_x: f32,
-    /// The farthest the pointer went from `start_x`, in pixels.
-    moved_px: f32,
-    /// What the moved edges snap to, read at the press.
-    snap_targets: Vec<f64>,
     /// The frame a click seeks to: the first of the drawn band holding the
     /// pressed frame, as a click on that band does; `None` when no band
     /// holds it.
@@ -538,10 +533,69 @@ pub(crate) struct BandDrag {
     /// The instances the bands show while the drag runs: those an edit
     /// under `scope` changes (see [`impact_filter`]).
     filter: ImpactFilter,
-    /// The button came up: the values are being written and, after a
-    /// successful write, drawn until its reload, so the bands do not flash
-    /// back.
-    released: bool,
+}
+
+impl DragGesture for BandDrag {
+    fn edges(&self) -> Vec<f64> {
+        grip_edges(self.preview.grip, self.preview.window)
+    }
+
+    fn delta(&self) -> i64 {
+        self.preview.delta
+    }
+
+    fn follow(&mut self, delta: i64) -> bool {
+        let delta = clamp_band_delta(self.preview.grip, delta, self.values, self.series_start);
+        let moved = delta != self.preview.delta;
+        self.preview.delta = delta;
+        moved
+    }
+
+    /// The first frame of the band the press was on.
+    fn seek(&self) -> Option<u64> {
+        self.seek
+    }
+
+    /// The moved grip.
+    fn at(&self) -> f64 {
+        let preview = &self.preview;
+        grip_frame(
+            preview.grip,
+            moved_window(preview.grip, preview.delta, preview.window),
+        )
+    }
+}
+
+impl TimelineDrag for BandDrag {
+    fn slot(view: &EditorView) -> &Option<DragSession<Self>> {
+        &view.band_drag
+    }
+
+    fn slot_mut(view: &mut EditorView) -> &mut Option<DragSession<Self>> {
+        &mut view.band_drag
+    }
+
+    fn notice_mut(view: &mut EditorView) -> &mut Option<BandNotice> {
+        &mut view.band_notice
+    }
+
+    /// The window's props under the scope the drag started with, never
+    /// held and never under another (see `band_write`).
+    fn write(view: &EditorView) -> Result<Option<DragWrite>, String> {
+        let (window, report, scope, calls, values) = view.band_write()?;
+        Ok(Some((
+            window.targets.files.clone(),
+            Box::new(move |texts| {
+                window_files(texts, &window, &report, scope, calls.as_ref(), &values)
+                    .map_err(|error| error.to_string())
+            }),
+        )))
+    }
+
+    /// The window is still current after a success.
+    fn written_nothing(view: &EditorView) -> bool {
+        view.window_targets().is_some()
+    }
 }
 
 /// Why the last band drag wrote nothing, beside the frame `at`.
@@ -632,8 +686,8 @@ impl EditorView {
             self.occurrences.as_ref().map(|(_, state)| state),
             self.react_chapters().unwrap_or_default(),
             u64::try_from(self.clock.frame()).unwrap_or(0),
-            &drag.filter,
-            Some(&drag.preview),
+            &drag.gesture.filter,
+            Some(&drag.gesture.preview),
         ))
     }
 
@@ -644,7 +698,7 @@ impl EditorView {
     /// doesn't resolve, has every grip locked with why. `None` for a
     /// scene's window, or none.
     pub(crate) fn band_grips(&self, filled: &[(f64, f64)]) -> Option<BandGrips> {
-        if let Some(drag) = &self.band_drag {
+        if let Some(DragSession { gesture: drag, .. }) = &self.band_drag {
             let preview = &drag.preview;
             let after = moved_values(preview.grip, preview.delta, drag.values);
             let window = moved_window(preview.grip, preview.delta, preview.window);
@@ -705,11 +759,6 @@ impl EditorView {
             locks,
             label: None,
         })
-    }
-
-    /// Whether a band drag runs with the button down.
-    pub(crate) fn band_drag_active(&self) -> bool {
-        self.band_drag.as_ref().is_some_and(|drag| !drag.released)
     }
 
     /// The window's own scope state of writing `window` around the element
@@ -799,145 +848,26 @@ impl EditorView {
             .indexed_element(report)
             .map(|element| still_ranges(element, &preview, &filter))
             .unwrap_or_default();
+        let snap_targets = snap_targets(
+            self.clock.frame() as f64,
+            self.react_chapters().unwrap_or_default(),
+            &still,
+            grips.window,
+        );
         let drag = BandDrag {
             kind: window.kind,
             values: timing_values(window.kind, &window.targets, grips.window),
             adds_duration: adds_duration(window.kind, grip, &window.targets),
             series_start,
-            start_x: x,
-            moved_px: 0.0,
-            snap_targets: snap_targets(
-                self.clock.frame() as f64,
-                self.react_chapters().unwrap_or_default(),
-                &still,
-                grips.window,
-            ),
             seek,
             scope,
             filter,
             preview,
-            released: false,
         };
         self.pause();
         self.band_notice = None;
-        self.band_drag = Some(drag);
+        self.band_drag = Some(DragSession::new(drag, x, snap_targets));
         true
-    }
-
-    /// Follows the pointer: moves the grip by whole frames, snapped unless
-    /// Shift is held, past the lane's edges too. Writes nothing.
-    pub(crate) fn continue_band_drag(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) {
-        if !self.band_drag_active() {
-            return;
-        }
-        // The button came up where the view did not see it: end there.
-        if !event.dragging() {
-            if self.end_band_drag(cx) {
-                cx.notify();
-            }
-            return;
-        }
-        let pixels_per_frame = self.pixels_per_frame();
-        let x = f32::from(event.position.x);
-        let Some(drag) = self.band_drag.as_mut() else {
-            return;
-        };
-        drag.moved_px = drag.moved_px.max((x - drag.start_x).abs());
-        let grip = drag.preview.grip;
-        let raw = drag_frames(drag.start_x, x, pixels_per_frame);
-        let edges = grip_edges(grip, drag.preview.window);
-        let delta = snapped_delta(
-            &edges,
-            raw,
-            &drag.snap_targets,
-            pixels_per_frame,
-            event.modifiers.shift,
-        );
-        let delta = clamp_band_delta(grip, delta, drag.values, drag.series_start);
-        if delta != drag.preview.delta {
-            drag.preview.delta = delta;
-            cx.notify();
-        }
-    }
-
-    /// The button came up: a click seeks to the first frame of the band it
-    /// pressed, a drag writes its values as one history entry, and a drag
-    /// back to where it started writes nothing. True when a drag was
-    /// running.
-    pub(crate) fn end_band_drag(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(drag) = self.band_drag.as_ref().filter(|drag| !drag.released) else {
-            return false;
-        };
-        match drag_end(drag.moved_px, drag.preview.delta, false) {
-            DragEnd::Seek => {
-                let seek = drag.seek;
-                self.band_drag = None;
-                if let Some(frame) = seek {
-                    self.seek_to_frame(frame, cx);
-                }
-            }
-            DragEnd::Cancel => self.band_drag = None,
-            DragEnd::Commit => self.commit_band_drag(cx),
-        }
-        true
-    }
-
-    /// Escape during a band drag: drops it, writing nothing. True when a
-    /// pressed drag was cancelled.
-    pub(crate) fn escape_band_drag(&mut self) -> bool {
-        if !self.band_drag_active() {
-            return false;
-        }
-        self.band_drag = None;
-        true
-    }
-
-    /// Writes the drag's values into the window's props under the scope it
-    /// started with, never held and never under another: a gate that holds
-    /// or refuses it, or a failed write, leaves the notice why beside the
-    /// grip. The released drag stays drawn while the write runs and, after
-    /// a successful one, until its reload (see `drop_released_band_drag`).
-    fn commit_band_drag(&mut self, cx: &mut Context<Self>) {
-        let Some(drag) = self.band_drag.as_mut() else {
-            return;
-        };
-        drag.released = true;
-        let preview = &drag.preview;
-        let at = grip_frame(
-            preview.grip,
-            moved_window(preview.grip, preview.delta, preview.window),
-        );
-        let (window, report, scope, calls, values) = match self.band_write() {
-            Ok(write) => write,
-            Err(text) => {
-                self.band_notice = Some(BandNotice { at, text });
-                self.band_drag = None;
-                return;
-            }
-        };
-        self.record_own_writes(
-            window.targets.files.clone(),
-            move |texts| {
-                window_files(texts, &window, &report, scope, calls.as_ref(), &values)
-                    .map_err(|error| error.to_string())
-            },
-            move |this, result, cx| {
-                // A window still current after a success means nothing was
-                // written (the text came out the same): no reload comes to
-                // drop the drag.
-                if let Err(text) = &result {
-                    this.band_notice = Some(BandNotice {
-                        at,
-                        text: not_written(text),
-                    });
-                }
-                if result.is_err() || this.window_targets().is_some() {
-                    this.band_drag = None;
-                }
-                cx.notify();
-            },
-            cx,
-        );
     }
 
     /// What writing the released drag takes, or why it can't be written
@@ -945,7 +875,7 @@ impl EditorView {
     /// [`gesture_gate`] holds or refuses it under the scope it started with
     /// (a prop that scope can't write, the scenes scanned meanwhile).
     fn band_write(&self) -> Result<BandWrite, String> {
-        let drag = self.band_drag.as_ref().ok_or_else(String::new)?;
+        let drag = &self.band_drag.as_ref().ok_or_else(String::new)?.gesture;
         let preview = &drag.preview;
         let (window, report) = match self.window_targets() {
             Some((Ok(window), report)) if window.source == preview.source => (window, report),
@@ -971,14 +901,6 @@ impl EditorView {
             CommitGate::Hold(note) | CommitGate::Refuse(note) => return Err(not_written(&note)),
         };
         Ok((window.clone(), report.clone(), scope, calls, values))
-    }
-
-    /// The reload after a band drag's write draws its values: the released
-    /// drag goes (a pressed one goes on).
-    pub(crate) fn drop_released_band_drag(&mut self) {
-        if !self.band_drag_active() {
-            self.band_drag = None;
-        }
     }
 
     /// The "Set timing" offer for the selected element at its lookup frame
@@ -1096,32 +1018,99 @@ pub(crate) struct SceneDrag {
     from: u64,
     end: f64,
     length: f64,
-    /// Window x of the press.
-    start_x: f32,
-    /// The farthest the pointer went from `start_x`, in pixels.
-    moved_px: f32,
-    /// What the end snaps to, read at the press.
-    snap_targets: Vec<f64>,
     /// Whole frames, within the bounds.
     pub(crate) delta: i64,
     /// Why the bounds stopped the end, while they do.
     note: Option<String>,
-    /// The button came up: drawn while the write runs and, after a
-    /// successful one, until its reload.
-    released: bool,
+}
+
+impl DragGesture for SceneDrag {
+    fn edges(&self) -> Vec<f64> {
+        vec![self.end]
+    }
+
+    fn delta(&self) -> i64 {
+        self.delta
+    }
+
+    /// Within the bounds, and why they stop the end while they do.
+    fn follow(&mut self, delta: i64) -> bool {
+        let (delta, note) = clamp_scene_delta(
+            &self.chapters,
+            &self.id,
+            &self.first,
+            &self.later,
+            delta,
+            self.composition_end,
+            self.follows,
+        );
+        let moved = delta != self.delta || note != self.note;
+        self.delta = delta;
+        self.note = note;
+        moved
+    }
+
+    /// The chapter's start, as a click on it seeks.
+    fn seek(&self) -> Option<u64> {
+        Some(self.from)
+    }
+
+    /// The moved end.
+    fn at(&self) -> f64 {
+        self.end + self.delta as f64
+    }
+}
+
+impl TimelineDrag for SceneDrag {
+    fn slot(view: &EditorView) -> &Option<DragSession<Self>> {
+        &view.scene_drag
+    }
+
+    fn slot_mut(view: &mut EditorView) -> &mut Option<DragSession<Self>> {
+        &mut view.scene_drag
+    }
+
+    fn notice_mut(view: &mut EditorView) -> &mut Option<BandNotice> {
+        &mut view.scene_notice
+    }
+
+    /// The entry's new length, when the edge is as it was at the press (see
+    /// `scene_write`); nothing when the entry already holds it.
+    fn write(view: &EditorView) -> Result<Option<DragWrite>, String> {
+        let edge = view.scene_write()?;
+        let Some(DragSession { gesture: drag, .. }) = &view.scene_drag else {
+            return Ok(None);
+        };
+        let SceneEdge::Editable { file, .. } = &edge else {
+            return Ok(None);
+        };
+        let id = drag.id.clone();
+        let written = written_length(&drag.chapters, &id, drag.delta, drag.composition_end);
+        if writes_nothing(&edge, written) {
+            return Ok(None);
+        }
+        Ok(Some((
+            vec![file.clone()],
+            Box::new(move |texts| {
+                scene_files(texts, &id, &edge, written).map_err(|error| error.to_string())
+            }),
+        )))
+    }
+
+    /// `write` already left out a length the entry holds.
+    fn written_nothing(_: &EditorView) -> bool {
+        false
+    }
 }
 
 impl EditorView {
-    /// Whether a scene drag runs with the button down.
-    pub(crate) fn scene_drag_active(&self) -> bool {
-        self.scene_drag.as_ref().is_some_and(|drag| !drag.released)
-    }
-
     /// `chapters` as the chapter row draws them: moved by a running (or
     /// released) scene drag.
     pub(crate) fn drawn_chapters(&self, chapters: &[ReactChapter]) -> Vec<ReactChapter> {
         match &self.scene_drag {
-            Some(drag) => preview_chapters(chapters, &drag.id, &drag.later, drag.delta),
+            Some(DragSession { gesture: drag, .. }) => {
+                preview_chapters(chapters, &drag.id, &drag.later, drag.delta)
+            }
             None => chapters.to_vec(),
         }
     }
@@ -1130,7 +1119,7 @@ impl EditorView {
     /// 100`, and why the bounds stop it), or why the last one wrote
     /// nothing; the frame it sits at, and whether it is a notice.
     pub(crate) fn scene_label(&self) -> Option<(f64, String, bool)> {
-        if let Some(drag) = self.scene_drag.as_ref() {
+        if let Some(DragSession { gesture: drag, .. }) = &self.scene_drag {
             let before = TimingValues {
                 start: 0.0,
                 duration: drag.length,
@@ -1173,167 +1162,36 @@ impl EditorView {
         };
         let composition_end = u64::try_from(self.clock.end_frame()).unwrap_or(0);
         let length = written_length(chapters, id, 0, composition_end);
+        let snap_targets = scene_snap_targets(self.clock.frame() as f64, chapters, id, later);
         let drag = SceneDrag {
             id: id.to_owned(),
             first: first.clone(),
             later: later.clone(),
             follows: *follows,
-            snap_targets: scene_snap_targets(self.clock.frame() as f64, chapters, id, later),
             chapters: chapters.to_vec(),
             composition_end,
             from: chapter.from,
             end: chapter.from as f64 + length,
             length,
-            start_x: x,
-            moved_px: 0.0,
             delta: 0,
             note: None,
-            released: false,
             edge,
         };
         self.pause();
         self.scene_notice = None;
-        self.scene_drag = Some(drag);
+        self.scene_drag = Some(DragSession::new(drag, x, snap_targets));
         true
-    }
-
-    /// Follows the pointer: moves the end by whole frames, snapped unless
-    /// Shift is held, within the bounds. Writes nothing.
-    pub(crate) fn continue_scene_drag(&mut self, event: &MouseMoveEvent, cx: &mut Context<Self>) {
-        if !self.scene_drag_active() {
-            return;
-        }
-        // The button came up where the view did not see it: end there.
-        if !event.dragging() {
-            if self.end_scene_drag(cx) {
-                cx.notify();
-            }
-            return;
-        }
-        let pixels_per_frame = self.pixels_per_frame();
-        let x = f32::from(event.position.x);
-        let Some(drag) = self.scene_drag.as_mut() else {
-            return;
-        };
-        drag.moved_px = drag.moved_px.max((x - drag.start_x).abs());
-        let raw = drag_frames(drag.start_x, x, pixels_per_frame);
-        let delta = snapped_delta(
-            &[drag.end],
-            raw,
-            &drag.snap_targets,
-            pixels_per_frame,
-            event.modifiers.shift,
-        );
-        let (delta, note) = clamp_scene_delta(
-            &drag.chapters,
-            &drag.id,
-            &drag.first,
-            &drag.later,
-            delta,
-            drag.composition_end,
-            drag.follows,
-        );
-        if delta != drag.delta || note != drag.note {
-            drag.delta = delta;
-            drag.note = note;
-            cx.notify();
-        }
-    }
-
-    /// The button came up: a click seeks to the chapter's start, as a
-    /// click on it does; a drag writes the entry's length as one history
-    /// entry; a drag back to where it started writes nothing. True when a
-    /// drag was running.
-    pub(crate) fn end_scene_drag(&mut self, cx: &mut Context<Self>) -> bool {
-        let Some(drag) = self.scene_drag.as_ref().filter(|drag| !drag.released) else {
-            return false;
-        };
-        match drag_end(drag.moved_px, drag.delta, false) {
-            DragEnd::Seek => {
-                let from = drag.from;
-                self.scene_drag = None;
-                self.seek_to_frame(from, cx);
-            }
-            DragEnd::Cancel => self.scene_drag = None,
-            DragEnd::Commit => self.commit_scene_drag(cx),
-        }
-        true
-    }
-
-    /// Escape during a scene drag: drops it, writing nothing. True when a
-    /// pressed drag was cancelled.
-    pub(crate) fn escape_scene_drag(&mut self) -> bool {
-        if !self.scene_drag_active() {
-            return false;
-        }
-        self.scene_drag = None;
-        true
-    }
-
-    /// Writes the entry's new length: a source no longer as it was at the
-    /// press, or a failed write, leaves the notice why beside the end. The
-    /// released drag stays drawn while the write runs and, after a
-    /// successful one, until its reload (see `drop_released_scene_drag`).
-    fn commit_scene_drag(&mut self, cx: &mut Context<Self>) {
-        let Some(drag) = self.scene_drag.as_mut() else {
-            return;
-        };
-        drag.released = true;
-        let at = drag.end + drag.delta as f64;
-        let id = drag.id.clone();
-        let written = written_length(&drag.chapters, &id, drag.delta, drag.composition_end);
-        let edge = match self.scene_write() {
-            Ok(edge) => edge,
-            Err(text) => {
-                self.scene_notice = Some(BandNotice { at, text });
-                self.scene_drag = None;
-                return;
-            }
-        };
-        let SceneEdge::Editable { file, .. } = &edge else {
-            self.scene_drag = None;
-            return;
-        };
-        // The entry already holds it: no reload would come to drop the
-        // drag.
-        if writes_nothing(&edge, written) {
-            self.scene_drag = None;
-            return;
-        }
-        self.record_own_writes(
-            vec![file.clone()],
-            move |texts| scene_files(texts, &id, &edge, written).map_err(|error| error.to_string()),
-            move |this, result, cx| {
-                if let Err(text) = result {
-                    this.scene_notice = Some(BandNotice {
-                        at,
-                        text: not_written(&text),
-                    });
-                    this.scene_drag = None;
-                }
-                cx.notify();
-            },
-            cx,
-        );
     }
 
     /// The edge the released drag writes, or why it can't be written now:
     /// the search for the current reload found it locked, or not as it was
     /// at the press.
     fn scene_write(&self) -> Result<SceneEdge, String> {
-        let drag = self.scene_drag.as_ref().ok_or_else(String::new)?;
+        let drag = &self.scene_drag.as_ref().ok_or_else(String::new)?.gesture;
         match self.scene_edge(&drag.id) {
             SceneEdge::Locked(reason) => Err(not_written(&reason)),
             edge if edge == drag.edge => Ok(edge),
             SceneEdge::Editable { .. } => Err(not_written(&CommitError::SourceChanged.to_string())),
-        }
-    }
-
-    /// The reload after a scene drag's write draws its length: the released
-    /// drag goes (a pressed one goes on).
-    pub(crate) fn drop_released_scene_drag(&mut self) {
-        if !self.scene_drag_active() {
-            self.scene_drag = None;
         }
     }
 }

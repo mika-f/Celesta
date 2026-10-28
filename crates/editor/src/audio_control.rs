@@ -137,7 +137,11 @@ impl EditorView {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if !event.dragging() {
+        if self.master_volume_drag.is_none()
+            || self.release_unseen(event, cx, |this, _| {
+                this.master_volume_drag.take().is_some()
+            })
+        {
             return;
         }
         let Some(drag) = &self.master_volume_drag else {

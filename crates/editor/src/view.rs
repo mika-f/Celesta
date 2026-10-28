@@ -1,6 +1,7 @@
 use crate::add_element::AddState;
 use crate::audio::{AudioMixWorker, MasterVolumeDrag, spawn_audio_mix};
 use crate::component_schema::{ComponentSchemaWorker, spawn_component_schema};
+use crate::drag_session::DragSession;
 use crate::edit_history::EditHistory;
 use crate::element_edit::{ElementEdit, ScopeCache};
 use crate::element_rows::ElementRows;
@@ -319,14 +320,14 @@ pub(crate) struct EditorView {
     pub(crate) transform_drag: Option<TransformDrag>,
     /// The timeline drag of the selected element's own timing window, if
     /// one is running or being written.
-    pub(crate) band_drag: Option<BandDrag>,
+    pub(crate) band_drag: Option<DragSession<BandDrag>>,
     /// Why the last band drag wrote nothing; gone with the next press.
     pub(crate) band_notice: Option<BandNotice>,
     /// Each chapter's end on the chapter row, by chapter id, as the scene
     /// search found them for the reload generation it ran for.
     pub(crate) scene_edges: Option<(u64, HashMap<String, SceneEdge>)>,
     /// The drag of a chapter's end, if one is running or being written.
-    pub(crate) scene_drag: Option<SceneDrag>,
+    pub(crate) scene_drag: Option<DragSession<SceneDrag>>,
     /// Why the last scene drag wrote nothing; gone with the next press.
     pub(crate) scene_notice: Option<BandNotice>,
     /// What canvas rotation and scale turn about, as the viewer's toggle
