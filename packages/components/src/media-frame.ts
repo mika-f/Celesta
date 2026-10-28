@@ -10,6 +10,7 @@ import type { AnimatedNumber, AssetInput, TextStyle } from '@celesta/react';
 
 import { Panel } from './panel';
 import type { PanelProps } from './panel';
+import { validators } from './validate';
 
 /** How the media fills the frame: `'contain'` shows all of it, letterboxed; `'cover'` fills the frame, cropped. */
 export type MediaFit = 'contain' | 'cover';
@@ -63,26 +64,7 @@ export type MediaFrameProps = MediaFrameImageProps | MediaFrameVideoProps;
 
 const DEFAULT_CAPTION_STYLE: TextStyle = { fontSize: 20 };
 
-function fail(message: string): never {
-  throw new Error(`<MediaFrame> ${message}`);
-}
-
-function nonNegative(name: string, value: number): number {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
-    fail(`${name} must be a finite number of 0 or more, not ${value}`);
-  }
-  return value;
-}
-
-function insets(padding: number | Insets): Required<Insets> {
-  const edges = typeof padding === 'number' ? { top: padding, right: padding, bottom: padding, left: padding } : padding;
-  return {
-    top: nonNegative('padding top', edges.top ?? 0),
-    right: nonNegative('padding right', edges.right ?? 0),
-    bottom: nonNegative('padding bottom', edges.bottom ?? 0),
-    left: nonNegative('padding left', edges.left ?? 0),
-  };
-}
+const { fail, nonNegative, insets } = validators('MediaFrame');
 
 /** `props` without the keys whose value is undefined, so passed-through props match what was given. */
 function defined<T extends object>(props: T): Partial<T> {

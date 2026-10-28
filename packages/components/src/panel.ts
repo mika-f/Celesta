@@ -9,6 +9,7 @@ import { Group, Rect, useTheme } from '@celesta/react';
 import type { GroupProps, LayerShadow, Paint } from '@celesta/react';
 
 import { hexColor } from './color';
+import { validators } from './validate';
 
 export interface PanelProps extends Omit<GroupProps, 'clip' | 'shadow'> {
   /** Width of the panel, padding included. */
@@ -41,32 +42,7 @@ export interface PanelProps extends Omit<GroupProps, 'clip' | 'shadow'> {
   anchorY?: number;
 }
 
-function fail(message: string): never {
-  throw new Error(`<Panel> ${message}`);
-}
-
-function nonNegative(name: string, value: number): number {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
-    fail(`${name} must be a finite number of 0 or more, not ${value}`);
-  }
-  return value;
-}
-
-function finite(name: string, value: number): number {
-  if (typeof value !== 'number' || !Number.isFinite(value)) fail(`${name} must be a finite number, not ${value}`);
-  return value;
-}
-
-/** `padding` as pixels on every edge. */
-function paddingInsets(padding: number | Insets): Required<Insets> {
-  const edges = typeof padding === 'number' ? { top: padding, right: padding, bottom: padding, left: padding } : padding;
-  return {
-    top: nonNegative('padding top', edges.top ?? 0),
-    right: nonNegative('padding right', edges.right ?? 0),
-    bottom: nonNegative('padding bottom', edges.bottom ?? 0),
-    left: nonNegative('padding left', edges.left ?? 0),
-  };
-}
+const { fail, finite, nonNegative, insets } = validators('Panel');
 
 /**
  * A `width`×`height` box that draws, bottom to top, its `shadow`, its `fill`,
@@ -98,7 +74,7 @@ export function Panel(props: PanelProps): ReturnType<typeof React.createElement>
   nonNegative('height', height);
   nonNegative('cornerRadius', cornerRadius);
   nonNegative('strokeWidth', strokeWidth);
-  const { top, right, bottom, left } = paddingInsets(padding);
+  const { top, right, bottom, left } = insets(padding);
   if (shadow !== undefined && fill === undefined) {
     fail('shadow is cast by the background, so it needs a fill');
   }

@@ -176,7 +176,7 @@ test('grid lines cross without darkening: opacity and color alpha fade the group
 test('a pattern needing too many marks, or bad sizes, throws', () => {
   assert.throws(() => render(h(PatternBackground, { pattern: 'dots', spacing: 1 }))(), /more than 100000 marks/);
   assert.doesNotThrow(() => render(h(PatternBackground, { pattern: 'dots', spacing: 1, maxMarks: 3_000_000 }), { width: 100, height: 100 })());
-  assert.throws(() => render(h(PatternBackground, { spacing: 0 }))(), /spacing must be a finite number above 0/);
+  assert.throws(() => render(h(PatternBackground, { spacing: 0 }))(), /spacing must be a finite number greater than 0/);
   assert.throws(() => render(h(PatternBackground, { pattern: 'grid', size: -1 }))(), /size must be/);
   // Not a pattern, cast to check the error.
   assert.throws(() => render(h(PatternBackground, { pattern: 'hex' as PatternName }))(), /pattern must be/);

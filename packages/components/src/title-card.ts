@@ -15,7 +15,8 @@ import type { FitTextStyle } from '@celesta/text';
 
 import { hexColor } from './color';
 import type { MotionEffect } from './motion';
-import { defaultStagger, nonNegative, positive, solid, staggeredPiece } from './text-block';
+import { defaultStagger, solid, staggeredPiece } from './text-block';
+import { validators } from './validate';
 
 export interface TitleCardProps {
   /** The headline. `\n` breaks a line; long titles wrap and shrink to fit. */
@@ -101,6 +102,8 @@ interface Piece {
   node: (offset: number) => ReactNode;
 }
 
+const { nonNegative, positive } = validators('TitleCard');
+
 /**
  * A title screen inside the current layout area (the canvas, a
  * `<SafeArea>`, or a `<Fit>`): a chapter number, kicker, title, and
@@ -133,10 +136,10 @@ export function TitleCard(props: TitleCardProps): ReturnType<typeof React.create
   const stagger = props.stagger ?? defaultStagger(enter, canvas.fps);
   for (const [name, value] of [['titleSize', titleSize], ['minTitleSize', minTitleSize], ['subtitleSize', subtitleSize],
     ['kickerSize', kickerSize], ['chapterSize', chapterSize]] as const) {
-    positive('TitleCard', name, value);
+    positive(name, value);
   }
-  nonNegative('TitleCard', 'gap', gap);
-  nonNegative('TitleCard', 'stagger', stagger);
+  nonNegative('gap', gap);
+  nonNegative('stagger', stagger);
 
   const ink = hexColor(color, theme, 'TitleCard', 'color');
   const soft = hexColor(subtitleColor, theme, 'TitleCard', 'subtitleColor');

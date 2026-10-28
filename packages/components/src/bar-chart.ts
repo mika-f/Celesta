@@ -10,6 +10,7 @@ import type { GroupProps, TextStyle } from '@celesta/react';
 import { hexColor } from './color';
 import { countProgress, formatNumber } from './count';
 import type { CountTiming, NumberFormat } from './count';
+import { validators } from './validate';
 
 export interface BarChartItem {
   /** Identifies the row: unique in the chart, and the row's React key, so a row keeps its identity when the order changes. */
@@ -99,22 +100,9 @@ const DEFAULT_VALUE_STYLE: TextStyle = { fontSize: 28, fontWeight: 700 };
 /** Space between a label and its note. */
 const NOTE_GAP = 6;
 
-function check(component: string) {
-  const fail = (message: string): never => {
-    throw new Error(`<${component}> ${message}`);
-  };
-  const nonNegative = (name: string, value: number): number => {
-    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
-      fail(`${name} must be a finite number of 0 or more, not ${value}`);
-    }
-    return value;
-  };
-  return { fail, nonNegative };
-}
-
 /** `data` checked and put in `order`. */
 function orderedRows(data: readonly BarChartItem[], order: BarChartOrder, component: string): BarChartItem[] {
-  const { fail } = check(component);
+  const { fail } = validators(component);
   if (!Array.isArray(data)) fail('data must be an array');
   const ids = new Set<string>();
   for (const item of data) {
@@ -149,7 +137,7 @@ function Chart(props: BarChartProps & { ranks?: Omit<RankingProps, keyof BarChar
   } = props;
   const theme = useTheme();
   const frame = useCurrentFrame();
-  const { fail, nonNegative } = check(component);
+  const { fail, nonNegative } = validators(component);
   const rows = orderedRows(data, ranks?.order ?? order, component);
   for (const [name, value] of Object.entries({ width, rowGap, barHeight, cornerRadius, labelGap, valueGap, stagger, fadeInFrames })) {
     nonNegative(name, value);

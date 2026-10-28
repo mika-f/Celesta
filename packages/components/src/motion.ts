@@ -6,6 +6,7 @@
 import * as React from 'react';
 import type { ReactNode } from 'react';
 
+import { clamp01 } from '@celesta/math';
 import { Easings, Group, Sequence, useCurrentFrame, useVideoConfig } from '@celesta/react';
 import type { GroupProps } from '@celesta/react';
 import { applyTransition } from '@celesta/transitions';
@@ -122,10 +123,6 @@ function fitRamps(enter: number, exit: number, frames: number): [number, number]
   if (enter + exit <= room) return [enter, exit];
   const fitted = Math.round((enter * room) / (enter + exit));
   return [fitted, room - fitted];
-}
-
-function clamp01(value: number): number {
-  return Math.min(1, Math.max(0, value));
 }
 
 function MotionGroup({ enter, exit, children, ...groupProps }: Omit<MotionProps, 'from' | 'durationInFrames'>) {

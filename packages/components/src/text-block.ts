@@ -1,7 +1,6 @@
 // What the text components that bring their pieces in one after another
-// (TitleCard, LowerThird) share: their size checks, their solid fills, and
-// how each piece is wrapped in a <Motion> starting `stagger` frames after
-// the one before.
+// (TitleCard, LowerThird) share: their solid fills, and how each piece is
+// wrapped in a <Motion> starting `stagger` frames after the one before.
 
 import * as React from 'react';
 import type { ReactNode } from 'react';
@@ -23,22 +22,6 @@ export interface StaggerTiming {
 /** A solid text fill in `color`. */
 export function solid(color: string): TextStyle['fill'] {
   return { type: 'solid', color };
-}
-
-/** `value`, checked to be a finite number greater than 0. */
-export function positive(component: string, name: string, value: number): number {
-  if (!Number.isFinite(value) || value <= 0) {
-    throw new Error(`<${component}> ${name} must be a finite number greater than 0`);
-  }
-  return value;
-}
-
-/** `value`, checked to be a finite number of 0 or more. */
-export function nonNegative(component: string, name: string, value: number): number {
-  if (!Number.isFinite(value) || value < 0) {
-    throw new Error(`<${component}> ${name} must be a finite non-negative number`);
-  }
-  return value;
 }
 
 /** The default stagger: a fifth of a second, or 0 when the pieces cut in. */
