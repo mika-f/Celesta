@@ -3,6 +3,7 @@ use crate::meter::MasterLevels;
 use crate::preview::AudioPreview;
 use crate::problems::error_chain;
 use crate::waveform::{clip_level_envelope, map_clip_waveform, waveform_peaks};
+use crate::worker::LatestWorker;
 use anyhow::Context as _;
 use celesta_composition::{AudioClip, AudioGraph, Time};
 use celesta_media::{
@@ -15,22 +16,15 @@ use rodio::{DeviceSinkBuilder, Player};
 use std::collections::HashMap;
 use std::num::{NonZeroU16, NonZeroU32};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, mpsc};
-use std::thread;
 use std::time::Duration;
 
 pub(crate) struct AudioMixRequest {
-    pub(crate) generation: u64,
     pub(crate) graph: AudioGraph,
     pub(crate) asset_root: PathBuf,
     pub(crate) duration: Time,
 }
 
-pub(crate) struct AudioMixResult {
-    pub(crate) generation: u64,
-    pub(crate) output: Result<AudioMixOutput, String>,
-}
+pub(crate) type AudioMixResult = Result<AudioMixOutput, String>;
 
 pub(crate) struct AudioMixOutput {
     pub(crate) clip_waveforms: HashMap<String, Vec<f32>>,
@@ -125,107 +119,54 @@ impl AudioDecoder for CachedAudioDecoder {
     }
 }
 
-pub(crate) struct AudioMixWorker {
-    pub(crate) requests: mpsc::Sender<AudioMixRequest>,
-    pub(crate) results: mpsc::Receiver<AudioMixResult>,
-    pub(crate) current_generation: Arc<AtomicU64>,
-}
+pub(crate) type AudioMixWorker = LatestWorker<AudioMixRequest, AudioMixResult>;
 
-impl AudioMixWorker {
-    pub(crate) fn spawn() -> anyhow::Result<Self> {
-        let (request_tx, request_rx) = mpsc::channel::<AudioMixRequest>();
-        let (result_tx, result_rx) = mpsc::channel::<AudioMixResult>();
-        let current_generation = Arc::new(AtomicU64::new(0));
-        let worker_generation = Arc::clone(&current_generation);
-        thread::Builder::new()
-            .name("celesta-audio-mix".to_owned())
-            .spawn(move || {
-                let mut decoder = CachedAudioDecoder::new();
-                while let Ok(first) = request_rx.recv() {
-                    let request = take_latest(first, &request_rx);
-                    let output = mix_audio_graph_with_ducks_cancellable(
-                        &request.graph,
-                        &request.asset_root,
-                        request.duration,
-                        &mut decoder,
-                        || worker_generation.load(Ordering::Acquire) != request.generation,
-                    )
-                    .map(|(buffer, ducks)| {
-                        let mut clip_waveforms = HashMap::new();
-                        let mut clip_levels = HashMap::new();
-                        for (index, clip) in request.graph.clips.iter().enumerate() {
-                            let Some((clip_id, waveform)) = (|| {
-                                // The mix above already downloaded any URL.
-                                let path =
-                                    resolve_asset_path(&request.asset_root, &clip.asset.location)
-                                        .ok()?;
-                                let waveform = decoder.clip_waveform(
-                                    &path,
-                                    request.graph.sample_rate,
-                                    2,
-                                    clip,
-                                )?;
-                                let clip_id = clip
-                                    .id
-                                    .strip_suffix(":voice")
-                                    .unwrap_or(&clip.id)
-                                    .to_owned();
-                                Some((clip_id, waveform))
-                            })() else {
-                                continue;
-                            };
-                            if !clip.muted {
-                                let duck = ducks[index].as_ref();
-                                clip_levels.insert(
-                                    clip_id.clone(),
-                                    clip_level_envelope(&waveform, clip, duck),
-                                );
-                            }
-                            clip_waveforms.insert(clip_id, waveform);
-                        }
-                        AudioMixOutput {
-                            clip_waveforms,
-                            clip_levels,
-                            master_levels: MasterLevels::from_buffer(&buffer),
-                            buffer,
-                        }
-                    })
-                    .map_err(|error| error_chain(&error));
-                    if result_tx
-                        .send(AudioMixResult {
-                            generation: request.generation,
-                            output,
-                        })
-                        .is_err()
-                    {
-                        break;
-                    }
+/// Mixes the graph and maps each clip's waveform and level onto it. A newer
+/// request stops a running mix.
+pub(crate) fn spawn_audio_mix() -> anyhow::Result<AudioMixWorker> {
+    let mut decoder = CachedAudioDecoder::new();
+    LatestWorker::spawn("audio mix", move |request: AudioMixRequest, job| {
+        mix_audio_graph_with_ducks_cancellable(
+            &request.graph,
+            &request.asset_root,
+            request.duration,
+            &mut decoder,
+            || job.superseded(),
+        )
+        .map(|(buffer, ducks)| {
+            let mut clip_waveforms = HashMap::new();
+            let mut clip_levels = HashMap::new();
+            for (index, clip) in request.graph.clips.iter().enumerate() {
+                let Some((clip_id, waveform)) = (|| {
+                    // The mix above already downloaded any URL.
+                    let path =
+                        resolve_asset_path(&request.asset_root, &clip.asset.location).ok()?;
+                    let waveform =
+                        decoder.clip_waveform(&path, request.graph.sample_rate, 2, clip)?;
+                    let clip_id = clip
+                        .id
+                        .strip_suffix(":voice")
+                        .unwrap_or(&clip.id)
+                        .to_owned();
+                    Some((clip_id, waveform))
+                })() else {
+                    continue;
+                };
+                if !clip.muted {
+                    let duck = ducks[index].as_ref();
+                    clip_levels.insert(clip_id.clone(), clip_level_envelope(&waveform, clip, duck));
                 }
-            })?;
-        Ok(Self {
-            requests: request_tx,
-            results: result_rx,
-            current_generation,
+                clip_waveforms.insert(clip_id, waveform);
+            }
+            AudioMixOutput {
+                clip_waveforms,
+                clip_levels,
+                master_levels: MasterLevels::from_buffer(&buffer),
+                buffer,
+            }
         })
-    }
-
-    pub(crate) fn request(&self, request: AudioMixRequest) -> Result<(), String> {
-        self.cancel_before(request.generation);
-        self.requests
-            .send(request)
-            .map_err(|_| "audio mix worker stopped unexpectedly".to_owned())
-    }
-
-    pub(crate) fn cancel_before(&self, generation: u64) {
-        self.current_generation.store(generation, Ordering::Release);
-    }
-}
-
-pub(crate) fn take_latest<T>(mut latest: T, receiver: &mpsc::Receiver<T>) -> T {
-    while let Ok(next) = receiver.try_recv() {
-        latest = next;
-    }
-    latest
+        .map_err(|error| error_chain(&error))
+    })
 }
 
 impl AudioPreview {

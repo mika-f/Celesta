@@ -1,5 +1,5 @@
 use crate::EDITOR_DEMO_PROJECT;
-use crate::audio::{AudioCacheKey, CachedAudioDecoder, take_latest};
+use crate::audio::{AudioCacheKey, CachedAudioDecoder};
 use crate::audio_cache::DiskAudioCache;
 use crate::edit_history::{EditHistory, HistoryEntry, Texts, write_all_recorded};
 use crate::editor_launch::{
@@ -18,7 +18,7 @@ use crate::element_rows::{
     scrub_takes_focus, scrub_value, set_at_text, typed_text, written_text,
 };
 use crate::export_worker::{
-    ExportEvent, ExportRequest, ExportSource, ExportWorker, export_options,
+    ExportEvent, ExportRequest, ExportSource, export_options, spawn_export,
 };
 use crate::helpers::{
     ExportLoudness, export_loudness_label, export_output, export_progress_label, export_range_for,
@@ -73,7 +73,7 @@ use celesta_react_bridge::{
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{LazyLock, mpsc};
+use std::sync::LazyLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 mod add_element;
@@ -86,17 +86,8 @@ mod scope_commit;
 mod timeline_timing;
 
 #[test]
-fn background_workers_coalesce_queued_requests() {
-    let (sender, receiver) = mpsc::channel();
-    sender.send(2).unwrap();
-    sender.send(3).unwrap();
-
-    assert_eq!(take_latest(1, &receiver), 3);
-}
-
-#[test]
 fn export_worker_reports_cancellation_without_creating_output() {
-    let worker = ExportWorker::spawn().unwrap();
+    let worker = spawn_export().unwrap();
     let cancellation = ExportCancellation::default();
     cancellation.cancel();
     let output = std::env::temp_dir().join(format!(
@@ -119,7 +110,7 @@ fn export_worker_reports_cancellation_without_creating_output() {
         })
         .unwrap();
 
-    match worker.events.recv_timeout(Duration::from_secs(2)).unwrap() {
+    match worker.recv_timeout(Duration::from_secs(2)).unwrap() {
         ExportEvent::Finished {
             result, cancelled, ..
         } => {

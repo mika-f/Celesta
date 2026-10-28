@@ -626,7 +626,7 @@ impl EditorView {
                 let (label, value) = property_display(key, &entry.field, component.props.get(key));
                 panel.child(inspector_row(label, value, cx))
             }),
-            None if self.component_schema_pending => {
+            None if self.component_schema_worker.pending() => {
                 panel.child(inspector_note("Loading property schema…", cx))
             }
             None => component.props.iter().fold(panel, |panel, (key, value)| {

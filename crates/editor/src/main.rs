@@ -61,6 +61,7 @@ mod transform_handles;
 mod view;
 mod waveform;
 mod widgets;
+mod worker;
 
 use actions::{
     ClearExportRange, CloseWindow, CreateNewProject, ExportProject, GoToEnd, GoToIn, GoToOut,

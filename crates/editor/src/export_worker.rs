@@ -1,4 +1,5 @@
 use crate::problems::error_chain;
+use crate::worker::Worker;
 use celesta_exporter::{
     AudioLoudness, ExportCancellation, ExportError, ExportOptions, ExportProgress, ExportRange,
     ExportedFile, Exporter, GpuDriver, LoudnessTarget, ReactRuntimeOptions, VideoFormat,
@@ -6,8 +7,6 @@ use celesta_exporter::{
 use celesta_project::Project;
 use celesta_react_bridge::PropertyInputs;
 use std::path::PathBuf;
-use std::sync::mpsc;
-use std::thread;
 
 pub(crate) struct ExportRequest {
     pub(crate) source: ExportSource,
@@ -47,80 +46,62 @@ pub(crate) enum ExportEvent {
     },
 }
 
-pub(crate) struct ExportWorker {
-    pub(crate) requests: mpsc::Sender<ExportRequest>,
-    pub(crate) events: mpsc::Receiver<ExportEvent>,
-}
+/// Runs exports in the order they were asked for, sending each one's
+/// progress and then how it finished.
+pub(crate) type ExportWorker = Worker<ExportRequest, ExportEvent>;
 
-impl ExportWorker {
-    pub(crate) fn spawn() -> anyhow::Result<Self> {
-        let (request_tx, request_rx) = mpsc::channel::<ExportRequest>();
-        let (event_tx, event_rx) = mpsc::channel::<ExportEvent>();
-        thread::Builder::new()
-            .name("celesta-export".to_owned())
-            .spawn(move || {
-                while let Ok(request) = request_rx.recv() {
-                    let exporter = Exporter::new(export_options(&request));
-                    let mut loudness = None;
-                    let progress = |progress| {
-                        if let ExportProgress::Wrote(ExportedFile::Video {
-                            loudness: measured,
-                            ..
-                        }) = &progress
-                        {
-                            loudness = *measured;
-                        }
-                        let _ = event_tx.send(ExportEvent::Progress(progress));
-                    };
-                    let result = match &request.source {
-                        ExportSource::Project(project) => exporter.export_project_cancellable(
-                            project,
-                            &request.asset_root,
-                            &request.output,
-                            &request.cancellation,
-                            progress,
-                        ),
-                        ExportSource::ReactEntry {
-                            entry,
-                            node,
-                            cli_script,
-                            properties,
-                            composition_id,
-                        } => exporter.export_react_entry_cancellable(
-                            entry,
-                            &ReactRuntimeOptions::new(node.clone(), cli_script.clone())
-                                .with_properties(properties.clone())
-                                .with_composition(Some(composition_id.clone())),
-                            &request.output,
-                            &request.cancellation,
-                            progress,
-                        ),
-                    };
-                    let cancelled = matches!(result, Err(ExportError::Cancelled));
-                    if event_tx
-                        .send(ExportEvent::Finished {
-                            output: request.output,
-                            result: result.map_err(|error| error_chain(&error)),
-                            cancelled,
-                            loudness,
-                        })
-                        .is_err()
-                    {
-                        break;
-                    }
+pub(crate) fn spawn_export() -> anyhow::Result<ExportWorker> {
+    Worker::spawn("export", |requests, events| {
+        while let Ok(request) = requests.recv() {
+            let exporter = Exporter::new(export_options(&request));
+            let mut loudness = None;
+            let progress = |progress| {
+                if let ExportProgress::Wrote(ExportedFile::Video {
+                    loudness: measured, ..
+                }) = &progress
+                {
+                    loudness = *measured;
                 }
-            })?;
-        Ok(Self {
-            requests: request_tx,
-            events: event_rx,
-        })
-    }
-
-    pub(crate) fn request(&self, request: ExportRequest) -> Result<(), String> {
-        self.requests
-            .send(request)
-            .map_err(|_| "export worker stopped unexpectedly".to_owned())
-    }
+                let _ = events.send(ExportEvent::Progress(progress));
+            };
+            let result = match &request.source {
+                ExportSource::Project(project) => exporter.export_project_cancellable(
+                    project,
+                    &request.asset_root,
+                    &request.output,
+                    &request.cancellation,
+                    progress,
+                ),
+                ExportSource::ReactEntry {
+                    entry,
+                    node,
+                    cli_script,
+                    properties,
+                    composition_id,
+                } => exporter.export_react_entry_cancellable(
+                    entry,
+                    &ReactRuntimeOptions::new(node.clone(), cli_script.clone())
+                        .with_properties(properties.clone())
+                        .with_composition(Some(composition_id.clone())),
+                    &request.output,
+                    &request.cancellation,
+                    progress,
+                ),
+            };
+            let cancelled = matches!(result, Err(ExportError::Cancelled));
+            if events
+                .send(ExportEvent::Finished {
+                    output: request.output,
+                    result: result.map_err(|error| error_chain(&error)),
+                    cancelled,
+                    loudness,
+                })
+                .is_err()
+            {
+                break;
+            }
+        }
+    })
 }
 
 /// The exporter settings for one request: the editor always overwrites the

@@ -25,10 +25,10 @@ impl Render for EditorView {
         self.sync_property_panel(window, cx);
         self.announce_problems(window, cx);
         self.sync_preview_error_scroll();
-        if self.preview_pending
-            || self.media_pending
-            || self.audio_pending
-            || self.component_schema_pending
+        if self.preview_worker.pending()
+            || self.media_probe_worker.pending()
+            || self.audio_pending()
+            || self.component_schema_worker.pending()
             // A sweep held back for the reloaded frame starts from the poll
             // that takes that frame in; a running one is watched instead.
             || self.occurrence_sweep_after.is_some()
@@ -235,10 +235,10 @@ impl EditorView {
     pub(crate) fn loading_label(&self) -> Option<String> {
         let tasks: Vec<&str> = [
             (self.opening, "Opening file"),
-            (self.audio_pending, "Preparing audio"),
-            (self.media_pending, "Loading assets"),
+            (self.audio_pending(), "Preparing audio"),
+            (self.media_probe_worker.pending(), "Loading assets"),
             (
-                self.component_schema_pending,
+                self.component_schema_worker.pending(),
                 "Loading component properties",
             ),
         ]

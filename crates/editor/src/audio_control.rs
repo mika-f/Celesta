@@ -10,10 +10,8 @@ use std::collections::HashMap;
 
 impl EditorView {
     pub(crate) fn refresh_audio_preview(&mut self) {
-        self.audio_generation = self.audio_generation.wrapping_add(1);
-        let generation = self.audio_generation;
-        self.audio_mix_worker.cancel_before(generation);
-        self.audio_pending = false;
+        self.react_audio_worker.supersede();
+        self.audio_mix_worker.supersede();
         self.audio_preview = None;
         self.master_levels = None;
         self.clip_levels.clear();
@@ -24,9 +22,7 @@ impl EditorView {
             // graph into the shared mix pipeline (see `poll_background_work`).
             let (node, cli_script) = react_runtime_paths();
             self.clip_waveforms.clear();
-            self.audio_pending = true;
             if let Err(error) = self.react_audio_worker.request(ReactAudioRequest {
-                generation,
                 node,
                 cli_script,
                 entry: react.entry.clone(),
@@ -35,7 +31,6 @@ impl EditorView {
                 sample_rate: self.document.project().settings.sample_rate,
                 master_volume: self.document.master_volume(),
             }) {
-                self.audio_pending = false;
                 self.problems.fail(Source::Audio, error);
             }
             return;
@@ -48,14 +43,11 @@ impl EditorView {
                 self.problems.clear(Source::Audio);
             }
             Ok(graph) => {
-                self.audio_pending = true;
                 if let Err(error) = self.audio_mix_worker.request(AudioMixRequest {
-                    generation,
                     graph,
                     asset_root: self.document.asset_root().to_owned(),
                     duration: self.document.duration(),
                 }) {
-                    self.audio_pending = false;
                     self.problems.fail(Source::Audio, error);
                 }
             }

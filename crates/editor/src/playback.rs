@@ -89,7 +89,7 @@ impl EditorView {
         if self.playing || self.clock.end_frame() <= 0 {
             return;
         }
-        if self.audio_pending {
+        if self.audio_pending() {
             self.play_when_audio_ready = true;
             return;
         }
@@ -127,7 +127,7 @@ impl EditorView {
     }
 
     pub(crate) fn update_playback(&mut self, window: &mut Window) {
-        if self.play_when_audio_ready && !self.audio_pending {
+        if self.play_when_audio_ready && !self.audio_pending() {
             self.start_playback();
         }
         if !self.playing {

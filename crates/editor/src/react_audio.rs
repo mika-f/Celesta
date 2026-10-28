@@ -1,5 +1,5 @@
-use crate::audio::take_latest;
 use crate::problems::error_chain;
+use crate::worker::LatestWorker;
 use celesta_composition::{AssetLocation, AudioClip, AudioGraph};
 use celesta_editor_core::{ClipKind, ClipSummary, TrackSummary};
 use celesta_media::FfmpegBackend;
@@ -7,11 +7,8 @@ use celesta_project::TrackKind;
 use celesta_react_bridge::{PropertyInputs, ReactBridge, SpawnOptions};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
-use std::thread;
 
 pub(crate) struct ReactAudioRequest {
-    pub(crate) generation: u64,
     pub(crate) node: PathBuf,
     pub(crate) cli_script: PathBuf,
     pub(crate) entry: PathBuf,
@@ -21,10 +18,7 @@ pub(crate) struct ReactAudioRequest {
     pub(crate) master_volume: f64,
 }
 
-pub(crate) struct ReactAudioResult {
-    pub(crate) generation: u64,
-    pub(crate) media: Result<ReactMediaClips, String>,
-}
+pub(crate) type ReactAudioResult = Result<ReactMediaClips, String>;
 
 /// A standalone entry's audio graph, and which of its clips a `<Video>`
 /// plays.
@@ -40,82 +34,51 @@ pub(crate) struct ReactMediaClips {
 /// the assembled [`AudioGraph`] — the standalone-preview counterpart of the audio graph
 /// `celesta-exporter` accumulates while rendering. Runs on its own thread
 /// because `ReactBridge::spawn` and the per-frame sweep both block.
-pub(crate) struct ReactAudioWorker {
-    pub(crate) requests: mpsc::Sender<ReactAudioRequest>,
-    pub(crate) results: mpsc::Receiver<ReactAudioResult>,
-}
+pub(crate) type ReactAudioWorker = LatestWorker<ReactAudioRequest, ReactAudioResult>;
 
-impl ReactAudioWorker {
-    pub(crate) fn spawn() -> anyhow::Result<Self> {
-        let (request_tx, request_rx) = mpsc::channel::<ReactAudioRequest>();
-        let (result_tx, result_rx) = mpsc::channel::<ReactAudioResult>();
-        thread::Builder::new()
-            .name("celesta-react-audio".to_owned())
-            .spawn(move || {
-                while let Ok(first) = request_rx.recv() {
-                    let request = take_latest(first, &request_rx);
-                    let entry_dir = request
-                        .entry
-                        .parent()
-                        .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
-                    let media = ReactBridge::spawn_with_options(
-                        &request.node,
-                        &request.cli_script,
-                        &request.entry,
-                        &request.properties,
-                        SpawnOptions {
-                            composition_id: Some(request.composition_id),
-                            ..SpawnOptions::default()
-                        },
-                    )
-                    .map_err(|error| error_chain(&error))
-                    .and_then(|mut bridge| {
-                        bridge
-                            .collect_media(request.sample_rate, request.master_volume, &entry_dir)
-                            .map_err(|error| error_chain(&error))
-                    })
-                    .map(|media| {
-                        let mut backend = FfmpegBackend::new();
-                        let videos = media
-                            .video_clip_ids
-                            .into_iter()
-                            .map(|id| {
-                                let has_audio = media
-                                    .audio
-                                    .clips
-                                    .iter()
-                                    .find(|clip| clip.id == id)
-                                    .is_none_or(|clip| has_audio(&mut backend, &entry_dir, clip));
-                                (id, has_audio)
-                            })
-                            .collect();
-                        ReactMediaClips {
-                            graph: media.audio,
-                            videos,
-                        }
-                    });
-                    if result_tx
-                        .send(ReactAudioResult {
-                            generation: request.generation,
-                            media,
-                        })
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-            })?;
-        Ok(Self {
-            requests: request_tx,
-            results: result_rx,
+pub(crate) fn spawn_react_audio() -> anyhow::Result<ReactAudioWorker> {
+    LatestWorker::spawn("react audio", |request: ReactAudioRequest, _| {
+        let entry_dir = request
+            .entry
+            .parent()
+            .map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+        ReactBridge::spawn_with_options(
+            &request.node,
+            &request.cli_script,
+            &request.entry,
+            &request.properties,
+            SpawnOptions {
+                composition_id: Some(request.composition_id),
+                ..SpawnOptions::default()
+            },
+        )
+        .map_err(|error| error_chain(&error))
+        .and_then(|mut bridge| {
+            bridge
+                .collect_media(request.sample_rate, request.master_volume, &entry_dir)
+                .map_err(|error| error_chain(&error))
         })
-    }
-
-    pub(crate) fn request(&self, request: ReactAudioRequest) -> Result<(), String> {
-        self.requests
-            .send(request)
-            .map_err(|_| "react audio worker stopped unexpectedly".to_owned())
-    }
+        .map(|media| {
+            let mut backend = FfmpegBackend::new();
+            let videos = media
+                .video_clip_ids
+                .into_iter()
+                .map(|id| {
+                    let has_audio = media
+                        .audio
+                        .clips
+                        .iter()
+                        .find(|clip| clip.id == id)
+                        .is_none_or(|clip| has_audio(&mut backend, &entry_dir, clip));
+                    (id, has_audio)
+                })
+                .collect();
+            ReactMediaClips {
+                graph: media.audio,
+                videos,
+            }
+        })
+    })
 }
 
 /// Whether `clip`'s local file has an audio stream. A URL is not downloaded
