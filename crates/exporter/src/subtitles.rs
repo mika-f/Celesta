@@ -4,13 +4,14 @@
 //! file per language.
 
 use crate::error::ExportError;
+use crate::output;
 use celesta_composition::{Time, TimeError};
 use celesta_project::{Project, TimelineContent};
 use celesta_react_bridge::ReactSubtitleDescriptor;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::ffi::OsStr;
 use std::fmt::Write as _;
-use std::io::{self, Write as _};
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use strum::VariantArray;
 
@@ -298,34 +299,18 @@ pub(crate) fn write(
     if !overwrite && path.exists() {
         return Err(ExportError::OutputExists(path.to_owned()));
     }
-    let parent = match path.parent() {
-        Some(parent) if !parent.as_os_str().is_empty() => parent,
-        _ => Path::new("."),
-    };
-    let io_error = |operation| move |source| ExportError::Io { operation, source };
-    std::fs::create_dir_all(parent).map_err(io_error("create subtitle directory"))?;
-    let mut file = tempfile::Builder::new()
-        .prefix(".celesta-export-")
-        .suffix(&format!(".{}", format.as_str()))
-        .tempfile_in(parent)
-        .map_err(io_error("create temporary subtitles"))?;
-    file.write_all(self::format(cues, format).as_bytes())
-        .map_err(io_error("write subtitles"))?;
-    if overwrite {
-        file.persist(path)
-    } else {
-        file.persist_noclobber(path)
-    }
-    .map_err(|error| {
-        if error.error.kind() == io::ErrorKind::AlreadyExists {
-            ExportError::OutputExists(path.to_owned())
-        } else {
-            ExportError::Io {
-                operation: "publish subtitles",
-                source: error.error,
-            }
-        }
-    })?;
+    let mut file = output::stage(
+        path,
+        &format!(".{}", format.as_str()),
+        "create temporary subtitles",
+    )?;
+    file.as_file_mut()
+        .write_all(self::format(cues, format).as_bytes())
+        .map_err(|source| ExportError::Io {
+            operation: "write subtitles",
+            source,
+        })?;
+    output::publish(file, path, overwrite, "publish subtitles")?;
     Ok(format)
 }
 

@@ -6,6 +6,7 @@
 //! key and writes the whole file back through a temporary file in the same
 //! folder. A file that is not a JSON object is never written.
 
+use celesta_remote::StagedFile;
 use serde::de::{MapAccess, Visitor};
 use serde::ser::SerializeMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -139,12 +140,11 @@ pub fn set_property_text(
 /// Writes `text` to a temporary file beside `file` and renames it over `file`,
 /// so a reader never sees a half-written props file.
 pub fn replace_file(file: &Path, text: &str) -> io::Result<()> {
-    let temporary = write_temp(file, text)?;
-    let result = fs::rename(&temporary, file);
-    if result.is_err() {
-        let _ = fs::remove_file(&temporary);
-    }
-    result
+    let mut temporary = StagedFile::beside(file, ".tmp")?;
+    let handle = temporary.as_file_mut();
+    handle.write_all(text.as_bytes())?;
+    handle.sync_all()?;
+    temporary.publish(file, true)
 }
 
 /// Writes `text` to a temporary file beside `file`, named

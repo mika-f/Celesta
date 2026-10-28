@@ -2,6 +2,7 @@ use crate::control::{CompositionInfo, ExportCancellation, ExportProgress, Export
 use crate::error::ExportError;
 use crate::exporter::Exporter;
 use crate::loudness::finish_mix;
+use crate::output;
 use crate::project::build_audio_graph;
 use crate::range::{resolve_window, shifted_audio_graph};
 use crate::react::{CompanionProject, ReactRuntimeOptions, ReactVideoRequest};
@@ -11,8 +12,8 @@ use celesta_composition::Time;
 use celesta_media::{AudioMixError, FfmpegBackend, mix_audio_graph_unclipped_cancellable};
 use celesta_project::Project;
 use celesta_react_bridge::ReactCompositionMetadata;
+use std::fs;
 use std::path::{Path, PathBuf};
-use std::{fs, io};
 
 impl Exporter {
     /// Exports a React composition entry to a video in
@@ -178,14 +179,8 @@ impl Exporter {
         // renders, no companion project audio) keeps the silent-export
         // behavior: the staged video is published directly, no mix/mux
         // stage.
-        let final_file = tempfile::Builder::new()
-            .prefix(".celesta-export-")
-            .suffix(&format!(".{}", self.options.video_format.as_str()))
-            .tempfile_in(parent)
-            .map_err(|source| ExportError::Io {
-                operation: "create temporary output",
-                source,
-            })?;
+        let suffix = format!(".{}", self.options.video_format.as_str());
+        let final_file = output::stage(output_path, &suffix, "create temporary output")?;
         let mut react_audio = Vec::new();
         let mut react_subtitles = Vec::new();
         let project_refs = project
@@ -251,34 +246,18 @@ impl Exporter {
             }
             ensure_not_cancelled(cancellation)?;
             progress(ExportProgress::Muxing);
-            let muxed_file = tempfile::Builder::new()
-                .prefix(".celesta-export-")
-                .suffix(&format!(".{}", self.options.video_format.as_str()))
-                .tempfile_in(parent)
-                .map_err(|source| ExportError::Io {
-                    operation: "create temporary output",
-                    source,
-                })?;
+            let muxed_file = output::stage(output_path, &suffix, "create temporary output")?;
             self.mux_audio(final_file.path(), muxed_file.path(), &audio, cancellation)?;
             muxed_file
         };
 
         ensure_not_cancelled(cancellation)?;
-        if self.options.overwrite {
-            output_file.persist(output_path)
-        } else {
-            output_file.persist_noclobber(output_path)
-        }
-        .map_err(|error| {
-            if error.error.kind() == io::ErrorKind::AlreadyExists {
-                ExportError::OutputExists(output_path.to_owned())
-            } else {
-                ExportError::Io {
-                    operation: "publish exported video",
-                    source: error.error,
-                }
-            }
-        })?;
+        output::publish(
+            output_file,
+            output_path,
+            self.options.overwrite,
+            "publish exported video",
+        )?;
         progress(ExportProgress::Wrote(ExportedFile::Video {
             path: output_path.to_owned(),
             first_frame: start_frame,
