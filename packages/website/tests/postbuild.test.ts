@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, test } from 'vitest';
-import { fillMarkdown, fillMarkdownOutputs, setDocumentLanguage, setLanguages } from '../scripts/postbuild.mjs';
+import { fillMarkdown, fillMarkdownOutputs } from '../scripts/postbuild.mjs';
 
 const names = ['CELESTA_DOWNLOAD_URL', 'CELESTA_DOWNLOAD_URL_MACOS', 'CELESTA_DOWNLOAD_URL_WINDOWS'];
 const saved = Object.fromEntries(names.map(name => [name, process.env[name]]));
@@ -126,18 +126,4 @@ test('fills fences and links inside tabs and toggles, keeping the directive synt
 test('an unreadable include fails the build', async () => {
   const { root } = fixture({});
   await assert.rejects(fillMarkdown('```tsx file=examples/missing.tsx\n```\n', root), /cannot read "examples\/missing\.tsx"/);
-});
-
-test('sets lang on the <html> tag only', () => {
-  assert.equal(setDocumentLanguage('<!DOCTYPE html><html lang="en" class="x"><body lang="en">', 'ja'), '<!DOCTYPE html><html lang="ja" class="x"><body lang="en">');
-  assert.equal(setDocumentLanguage('<html><head>', 'ja'), '<html lang="ja"><head>');
-});
-
-test('the lang rewrite touches dist/ja/ and nothing else', async () => {
-  const html = '<!DOCTYPE html><html lang="en"><head></head></html>';
-  const { dist, read } = fixture({ 'index.html': html, '404.html': html, 'docs/export/index.html': html, 'en/index.html': html, 'ja/index.html': html, 'ja/docs/export/index.html': html, 'ja/docs.md': 'lang="en"\n' });
-  assert.equal(await setLanguages(dist, ['en', 'ja']), 2);
-  for (const path of ['ja/index.html', 'ja/docs/export/index.html']) assert.match(read(path), /<html lang="ja">/, path);
-  for (const path of ['index.html', '404.html', 'docs/export/index.html', 'en/index.html']) assert.equal(read(path), html, path);
-  assert.equal(read('ja/docs.md'), 'lang="en"\n');
 });

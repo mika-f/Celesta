@@ -1,4 +1,4 @@
-import { usePathname } from 'next/navigation';
+import { usePathname } from '@natsuneko-laboratory/makit-runtime/navigation';
 import { useEffect, useRef, useState, type MouseEvent } from 'react';
 
 /**
