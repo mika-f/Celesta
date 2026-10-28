@@ -6,24 +6,24 @@
 //! run; the cache never revalidates, so changing a remote file needs a new
 //! URL (or a cleared cache). Entries are keyed by the exact URL string.
 
-use std::fs::{self, File};
+use std::fs;
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use celesta_composition::AssetLocation;
 use ureq::Agent;
 use ureq::tls::{RootCerts, TlsConfig};
 
+mod staged;
 mod stylesheet;
 
+pub use staged::StagedFile;
 pub use stylesheet::{StylesheetFontFace, is_font_stylesheet, stylesheet_font_faces};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_FILE_NAME_LEN: usize = 96;
-static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Resolves an asset location to a readable local file: a relative `File`
 /// path is joined onto `asset_root`, and a `Url` is downloaded into the
@@ -112,25 +112,18 @@ impl RemoteAssetCache {
             })?;
         // Download beside the entry and rename it into place, so a failed or
         // concurrent download never leaves a truncated file at `path`.
-        let temp = directory.join(format!(
-            ".download-{}-{}",
-            std::process::id(),
-            TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
-        ));
         let result = (|| {
-            let mut writer = BufWriter::new(File::create(&temp)?);
+            let mut temp = StagedFile::beside(path, ".tmp")?;
+            let mut writer = BufWriter::new(temp.as_file_mut());
             io::copy(&mut response.into_body().into_reader(), &mut writer)?;
             writer.flush()?;
             drop(writer);
-            match fs::rename(&temp, path) {
+            match temp.publish(path, true) {
                 // Another download of the same URL finished first.
                 Err(_) if path.is_file() => Ok(()),
                 result => result,
             }
         })();
-        if result.is_err() {
-            let _ = fs::remove_file(&temp);
-        }
         result.map_err(io_error)
     }
 }
@@ -241,7 +234,7 @@ mod tests {
     use std::io::{BufRead, BufReader};
     use std::net::TcpListener;
     use std::sync::Arc;
-    use std::sync::atomic::AtomicUsize;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::thread;
 
     /// Serves `status` + `body` to every request and counts the requests.

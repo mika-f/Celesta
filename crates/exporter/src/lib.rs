@@ -6,6 +6,7 @@ mod exporter;
 mod job;
 mod loudness;
 mod options;
+mod output;
 mod project;
 mod range;
 mod react;

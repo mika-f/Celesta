@@ -16,6 +16,7 @@ celesta-gpu-renderer = { path = "../gpu-renderer", features = ["clap"] }
 celesta-media = { path = "../media", features = ["clap"] }
 celesta-project = { path = "../project" }
 celesta-react-bridge = { path = "../react-bridge" }
+celesta-remote = { path = "../remote" }
 tempfile = "3.23.0"
 serde.workspace = true
 serde_json.workspace = true

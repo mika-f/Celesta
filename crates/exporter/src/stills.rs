@@ -2,6 +2,7 @@ use crate::control::{CompositionInfo, ExportCancellation, ExportProgress, Export
 use crate::error::{ExportError, FrameFailure};
 use crate::exporter::Exporter;
 use crate::options::{BitDepth, ColorConversion, VideoFormat};
+use crate::output;
 use crate::project::{absolutize_fonts, absolutize_layers, visual_only_project};
 use crate::range::{ExportRange, resolve_window};
 use crate::react::{CompanionProject, ReactRuntimeOptions};
@@ -480,36 +481,9 @@ impl Encoder {
         path: &Path,
         overwrite: bool,
     ) -> Result<(), ExportError> {
-        let parent = path
-            .parent()
-            .filter(|p| !p.as_os_str().is_empty())
-            .unwrap_or_else(|| Path::new("."));
-        fs::create_dir_all(parent).map_err(|source| ExportError::Io {
-            operation: "create output directory",
-            source,
-        })?;
-        let mut file =
-            tempfile::NamedTempFile::new_in(parent).map_err(|source| ExportError::Io {
-                operation: "create temporary image",
-                source,
-            })?;
+        let mut file = output::stage(path, ".tmp", "create temporary image")?;
         self.encode(file.as_file_mut(), width, height, pixels)?;
-        if overwrite {
-            file.persist(path)
-        } else {
-            file.persist_noclobber(path)
-        }
-        .map_err(|e| {
-            if e.error.kind() == io::ErrorKind::AlreadyExists {
-                ExportError::OutputExists(path.to_owned())
-            } else {
-                ExportError::Io {
-                    operation: "publish image",
-                    source: e.error,
-                }
-            }
-        })?;
-        Ok(())
+        output::publish(file, path, overwrite, "publish image")
     }
 
     fn encode(

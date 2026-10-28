@@ -2,6 +2,7 @@ use crate::control::{CompositionInfo, ExportCancellation, ExportProgress, Export
 use crate::error::ExportError;
 use crate::loudness::finish_mix;
 use crate::options::ExportOptions;
+use crate::output;
 use crate::range::{ExportWindow, resolve_window, shifted_audio_graph};
 use crate::render::{
     ensure_encoders, ensure_not_cancelled, frame_count, validate_dimensions, validate_output,
@@ -13,7 +14,7 @@ use celesta_media::{AudioMixError, FfmpegBackend, mix_audio_graph_unclipped_canc
 use celesta_project::Project;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::{fs, io, thread};
+use std::{fs, thread};
 
 pub struct Exporter {
     pub(crate) options: ExportOptions,
@@ -116,14 +117,11 @@ impl Exporter {
         let video_path = temporary
             .path()
             .join(format!("video.{}", self.options.video_format.as_str()));
-        let final_file = tempfile::Builder::new()
-            .prefix(".celesta-export-")
-            .suffix(&format!(".{}", self.options.video_format.as_str()))
-            .tempfile_in(parent)
-            .map_err(|source| ExportError::Io {
-                operation: "create temporary output",
-                source,
-            })?;
+        let final_file = output::stage(
+            output_path,
+            &format!(".{}", self.options.video_format.as_str()),
+            "create temporary output",
+        )?;
 
         let evaluator = Evaluator::new(project).map_err(ExportError::Evaluation)?;
         let graph = evaluator.audio_graph().map_err(ExportError::Evaluation)?;
@@ -186,21 +184,12 @@ impl Exporter {
         progress(ExportProgress::Muxing);
         self.mux_audio(&video_path, final_file.path(), &audio, cancellation)?;
         ensure_not_cancelled(cancellation)?;
-        if self.options.overwrite {
-            final_file.persist(output_path)
-        } else {
-            final_file.persist_noclobber(output_path)
-        }
-        .map_err(|error| {
-            if error.error.kind() == io::ErrorKind::AlreadyExists {
-                ExportError::OutputExists(output_path.to_owned())
-            } else {
-                ExportError::Io {
-                    operation: "publish exported video",
-                    source: error.error,
-                }
-            }
-        })?;
+        output::publish(
+            final_file,
+            output_path,
+            self.options.overwrite,
+            "publish exported video",
+        )?;
         progress(ExportProgress::Wrote(ExportedFile::Video {
             path: output_path.to_owned(),
             first_frame: u64::try_from(window.start_frame)

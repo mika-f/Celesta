@@ -3,19 +3,18 @@ use std::fs::{self, File, FileTimes, OpenOptions};
 use std::hash::{Hash, Hasher};
 use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 
 use celesta_media::AudioBuffer;
+use celesta_remote::StagedFile;
 
 const MAGIC: &[u8; 8] = b"CELESPCM";
 const VERSION: u32 = 2;
 const HEADER_LEN: u64 = 32;
 const DEFAULT_MAX_BYTES: u64 = 1024 * 1024 * 1024;
-static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) struct CachedAudio {
     pub(crate) buffer: AudioBuffer,
@@ -75,31 +74,16 @@ impl DiskAudioCache {
         waveform: &[f32],
     ) -> io::Result<()> {
         let path = self.entry_path(source, buffer.sample_rate, buffer.channels)?;
-        fs::create_dir_all(&self.root)?;
-        let sequence = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let temporary = self.root.join(format!(
-            ".{}.{}.{}.tmp",
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("audio"),
-            std::process::id(),
-            sequence
-        ));
-        let result = (|| {
-            let file = OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&temporary)?;
-            let mut writer = BufWriter::new(file);
-            encode(&mut writer, buffer, waveform)?;
-            let file = writer.into_inner()?;
-            file.sync_all()?;
-            fs::rename(&temporary, path)
-        })();
-        if result.is_err() {
-            let _ = fs::remove_file(temporary);
-        }
-        result?;
+        // `.tmp`, not `.pcm`, so `prune` never counts or removes a file
+        // another store is still writing.
+        let mut temporary = StagedFile::beside(&path, ".tmp")?;
+        let mut writer = BufWriter::new(temporary.as_file_mut());
+        encode(&mut writer, buffer, waveform)?;
+        writer
+            .into_inner()
+            .map_err(|error| error.into_error())?
+            .sync_all()?;
+        temporary.publish(&path, true)?;
         let _ = self.prune();
         Ok(())
     }
@@ -305,6 +289,9 @@ fn invalid_cache(message: &'static str) -> io::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     fn fixture_root(label: &str) -> PathBuf {
         std::env::temp_dir().join(format!(

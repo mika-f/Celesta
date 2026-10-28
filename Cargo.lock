@@ -1074,6 +1074,7 @@ dependencies = [
  "celesta-media",
  "celesta-project",
  "celesta-react-bridge",
+ "celesta-remote",
  "clap",
  "ez-ffmpeg",
  "image",
@@ -1172,6 +1173,7 @@ dependencies = [
  "celesta-renderer",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.21",
 ]
 

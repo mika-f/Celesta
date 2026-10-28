@@ -4,9 +4,7 @@
 use celesta_media::{AudioDecoder, FfmpegBackend};
 use celesta_remote::{RemoteAssetCache, is_remote_url};
 use serde::{Deserialize, Serialize};
-use std::collections::hash_map::RandomState;
-use std::fs::{self, OpenOptions};
-use std::hash::{BuildHasher, Hasher};
+use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
 
@@ -131,30 +129,13 @@ pub(crate) fn downmix(samples: &[f32], channels: usize) -> Vec<f32> {
 /// user cannot have placed a link there for it to write through; only the
 /// owner can read it.
 fn write_temporary_file(bytes: &[u8]) -> io::Result<PathBuf> {
-    for _ in 0..16 {
-        let mut hasher = RandomState::new().build_hasher();
-        hasher.write_u32(std::process::id());
-        let path = std::env::temp_dir().join(format!("celesta-pcm-{:016x}.f32le", hasher.finish()));
-        let mut options = OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-        match options.open(&path) {
-            Ok(mut file) => {
-                if let Err(error) = file.write_all(bytes) {
-                    let _ = fs::remove_file(&path);
-                    return Err(error);
-                }
-                return Ok(path);
-            }
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-            Err(error) => return Err(error),
-        }
-    }
-    Err(io::Error::new(
-        io::ErrorKind::AlreadyExists,
-        "no free temporary file name",
-    ))
+    let mut file = tempfile::Builder::new()
+        .prefix("celesta-pcm-")
+        .suffix(".f32le")
+        .tempfile()?;
+    file.write_all(bytes)?;
+    let (_, path) = file.keep().map_err(|error| error.error)?;
+    Ok(path)
 }
 
 #[cfg(test)]
