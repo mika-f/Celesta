@@ -7,12 +7,14 @@
 //! URL (or a cleared cache). Entries are keyed by the exact URL string.
 
 use std::fs;
+use std::hash::Hasher;
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::Duration;
 
 use celesta_composition::AssetLocation;
+use fnv::FnvHasher;
 use ureq::Agent;
 use ureq::tls::{RootCerts, TlsConfig};
 
@@ -204,10 +206,12 @@ fn file_name(rest: &str) -> String {
     name[name.len().saturating_sub(MAX_FILE_NAME_LEN)..].to_owned()
 }
 
+/// 64-bit FNV-1a over the raw bytes. `Hasher::write` is used directly rather
+/// than `Hash`, which would mix in a length prefix and change every cache key.
 fn fnv1a(bytes: &[u8]) -> u64 {
-    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
-        (hash ^ u64::from(*byte)).wrapping_mul(0x0100_0000_01b3)
-    })
+    let mut hasher = FnvHasher::default();
+    hasher.write(bytes);
+    hasher.finish()
 }
 
 fn default_cache_root() -> PathBuf {
@@ -236,6 +240,13 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::thread;
+
+    #[test]
+    fn cache_keys_are_64_bit_fnv1a() {
+        assert_eq!(fnv1a(b""), 0xcbf2_9ce4_8422_2325);
+        assert_eq!(fnv1a(b"a"), 0xaf63_dc4c_8601_ec8c);
+        assert_eq!(fnv1a(b"foobar"), 0x8594_4171_f739_67e8);
+    }
 
     /// Serves `status` + `body` to every request and counts the requests.
     fn serve(status: &'static str, body: &'static [u8]) -> (String, Arc<AtomicUsize>) {

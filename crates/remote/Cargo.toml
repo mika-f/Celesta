@@ -8,6 +8,7 @@ rust-version.workspace = true
 
 [dependencies]
 celesta-composition = { path = "../composition" }
+fnv = "1.0.7"
 tempfile = "3.23.0"
 thiserror.workspace = true
 ureq = { version = "3.4.2", default-features = false, features = ["rustls", "platform-verifier"] }
