@@ -266,6 +266,14 @@ mod tests {
             join("https://example.com/css/s.css", "..\\fonts\\a.ttf"),
             url("https://example.com/fonts/a.ttf")
         );
+        assert_eq!(
+            join("https://example.com/css/s.css", "//例え.jp/a.ttf"),
+            url("https://xn--r8jz45g.jp/a.ttf")
+        );
+        assert_eq!(
+            join("https://example.com/css/s.css", "ftp://example.com/a.ttf"),
+            url("ftp://example.com/a.ttf")
+        );
     }
 
     #[test]
