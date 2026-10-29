@@ -45,6 +45,29 @@ fn element_at_after_non_ascii() {
 }
 
 #[test]
+fn element_at_after_a_surrogate_pair() {
+    let text = "const t = \"😀\"; const e = <Rect x={1} />;";
+    // 😀 is two UTF-16 code units (four UTF-8 bytes): 26 units precede `<Rect`.
+    let r = element_at(text, 1, 27).unwrap();
+    assert_eq!(r.start, at(text, "<Rect"));
+}
+
+#[test]
+fn element_at_column_does_not_run_into_the_next_line() {
+    let text = "const a = 1;\n<Rect />;";
+    assert_eq!(
+        element_at(text, 2, 1).map(|r| r.start),
+        Some(at(text, "<Rect"))
+    );
+    // Column 14 is past the end of line 1, where `<Rect` would be counted
+    // from line 1's start.
+    assert_eq!(element_at(text, 1, 14), None);
+    assert_eq!(element_at(text, 1, u32::MAX), None);
+    assert_eq!(element_at(text, 0, 1), None);
+    assert_eq!(element_at(text, 2, 0), None);
+}
+
+#[test]
 fn element_at_none_off_element() {
     let text = "const A = () => <Group>\n</Group>;\n";
     assert_eq!(element_at(text, 1, 1), None);

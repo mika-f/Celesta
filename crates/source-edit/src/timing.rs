@@ -1,6 +1,7 @@
 //! Timing wrappers (`Sequence`, `Series.Sequence`) told apart through the
 //! file's `@celesta/react` import, and the `Series` items after one.
 
+use line_index::{LineIndex, WideEncoding};
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{JSXChild, JSXElement, JSXElementName};
 use oxc_ast_visit::Visit;
@@ -53,21 +54,22 @@ pub fn later_series_items(text: &str, element: &ElementRef) -> Vec<(u32, u32)> {
         found: None,
     };
     find.visit_program(&program);
+    let index = LineIndex::new(text);
     find.found
         .unwrap_or_default()
         .into_iter()
-        .map(|offset| position_of(text, offset))
+        .map(|offset| position_of(&index, offset))
         .collect()
 }
 
 /// The 1-based line and UTF-16 column of byte `offset`, as esbuild's
 /// `jsxDEV` reports an element (only `\n` ends a line).
-fn position_of(text: &str, offset: u32) -> (u32, u32) {
-    let before = &text[..offset as usize];
-    let line_start = before.rfind('\n').map_or(0, |i| i + 1);
-    let line = before.matches('\n').count() as u32 + 1;
-    let column = before[line_start..].encode_utf16().count() as u32 + 1;
-    (line, column)
+fn position_of(index: &LineIndex, offset: u32) -> (u32, u32) {
+    let line_col = index.line_col(offset.into());
+    let wide = index
+        .to_wide(WideEncoding::Utf16, line_col)
+        .expect("a column within its line");
+    (wide.line + 1, wide.col + 1)
 }
 
 impl Module {

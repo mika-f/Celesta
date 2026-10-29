@@ -7,6 +7,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+line-index = "0.1.2"
 oxc_allocator = "0.154"
 oxc_ast = "0.154"
 oxc_ast_visit = "0.154"
