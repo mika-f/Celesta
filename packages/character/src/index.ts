@@ -64,10 +64,11 @@ export {
   loadLipSync,
   lipSyncFromKeyframes,
   lipSyncTimeline,
+  readWavHeader,
   useLipSync,
   vowelShapes,
 } from './lipsync';
-export type { LipSyncOptions, LipSyncTrack, MouthKeyframe, WavAudio, WavChannels } from './lipsync';
+export type { LipSyncOptions, LipSyncTrack, MouthKeyframe, WavAudio, WavChannels, WavHeader } from './lipsync';
 
 export {
   VOICE_LEVEL_ANALYSIS_VERSION,

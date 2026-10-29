@@ -89,24 +89,74 @@ export interface WavChannels {
   bitsPerSample: number;
 }
 
+/** What a WAV file's fmt and data chunks say, without its samples. */
+export interface WavHeader {
+  sampleRate: number;
+  channelCount: number;
+  /** `1` for integer PCM, `3` for IEEE float (after resolving WAVE_FORMAT_EXTENSIBLE). */
+  audioFormat: number;
+  bitsPerSample: number;
+  /** Whole frames (one sample per channel) in the data chunk. */
+  frameCount: number;
+}
+
+/**
+ * Reads an uncompressed PCM or IEEE-float WAV's header without decoding its
+ * samples: `frameCount / sampleRate` is its duration in seconds. Throws for
+ * exactly the files `decodeWav` and `decodeWavChannels` throw for.
+ */
+export function readWavHeader(bytes: Uint8Array): WavHeader {
+  const header = parseWavHeader(new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength));
+  return {
+    sampleRate: header.sampleRate,
+    channelCount: header.channelCount,
+    audioFormat: header.audioFormat,
+    bitsPerSample: header.bitsPerSample,
+    frameCount: header.frameCount,
+  };
+}
+
 /**
  * Parses an uncompressed PCM or IEEE-float WAV without down-mixing. Throws
  * for anything else (compressed formats, unusual sample sizes), so callers
  * that measure levels never read encoded bytes as samples.
  */
 export function decodeWavChannels(bytes: Uint8Array): WavChannels {
-  const decoded = readWav(bytes);
-  if (decoded.audioFormat !== 1 && decoded.audioFormat !== 3) {
-    throw new Error(`unsupported WAV format ${decoded.audioFormat}; only uncompressed PCM (1) and IEEE float (3) are supported`);
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const { sampleRate, channelCount, audioFormat, bitsPerSample: bits, frameCount, dataOffset } = parseWavHeader(view);
+  const bytesPerSample = bits >> 3;
+  const channels = Array.from({ length: channelCount }, () => new Float64Array(frameCount));
+  let cursor = dataOffset;
+  const readOne = (): number => {
+    let value: number;
+    if (audioFormat === 3) {
+      value = bits === 64 ? view.getFloat64(cursor, true) : view.getFloat32(cursor, true);
+    } else if (bits === 8) {
+      value = (view.getUint8(cursor) - 128) / 128;
+    } else if (bits === 16) {
+      value = view.getInt16(cursor, true) / 0x8000;
+    } else if (bits === 24) {
+      const b0 = view.getUint8(cursor);
+      const b1 = view.getUint8(cursor + 1);
+      const b2 = view.getUint8(cursor + 2);
+      let int24 = b0 | (b1 << 8) | (b2 << 16);
+      if (int24 & 0x800000) int24 -= 0x1000000;
+      value = int24 / 0x800000;
+    } else {
+      value = view.getInt32(cursor, true) / 0x80000000;
+    }
+    cursor += bytesPerSample;
+    return value;
+  };
+  for (let frame = 0; frame < frameCount; frame += 1) {
+    for (let channel = 0; channel < channelCount; channel += 1) {
+      channels[channel][frame] = readOne();
+    }
   }
-  if (decoded.audioFormat === 3 && decoded.bitsPerSample !== 32 && decoded.bitsPerSample !== 64) {
-    throw new Error(`unsupported IEEE float WAV sample size: ${decoded.bitsPerSample}-bit`);
-  }
-  return decoded;
+  return { sampleRate, channels, audioFormat, bitsPerSample: bits };
 }
 
-function readWav(bytes: Uint8Array): WavChannels {
-  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+function parseWavHeader(view: DataView): WavHeader & { dataOffset: number } {
   if (view.byteLength < 12) {
     throw new Error('not a RIFF/WAVE file');
   }
@@ -145,43 +195,25 @@ function readWav(bytes: Uint8Array): WavChannels {
   if (channelCount < 1 || bytesPerSample < 1) {
     throw new Error(`WAV fmt chunk declares ${channelCount} channels of ${bits}-bit samples`);
   }
-  const frameCount = Math.floor(data.size / (bytesPerSample * channelCount));
-  const channels = Array.from({ length: channelCount }, () => new Float64Array(frameCount));
-  let cursor = data.offset;
-  const readOne = (): number => {
-    let value: number;
-    if (audioFormat === 3) {
-      value = bits === 64 ? view.getFloat64(cursor, true) : view.getFloat32(cursor, true);
-    } else if (bits === 8) {
-      value = (view.getUint8(cursor) - 128) / 128;
-    } else if (bits === 16) {
-      value = view.getInt16(cursor, true) / 0x8000;
-    } else if (bits === 24) {
-      const b0 = view.getUint8(cursor);
-      const b1 = view.getUint8(cursor + 1);
-      const b2 = view.getUint8(cursor + 2);
-      let int24 = b0 | (b1 << 8) | (b2 << 16);
-      if (int24 & 0x800000) int24 -= 0x1000000;
-      value = int24 / 0x800000;
-    } else if (bits === 32) {
-      value = view.getInt32(cursor, true) / 0x80000000;
-    } else {
-      throw new Error(`unsupported WAV sample size: ${bits}-bit (format ${audioFormat})`);
-    }
-    cursor += bytesPerSample;
-    return value;
-  };
-  for (let frame = 0; frame < frameCount; frame += 1) {
-    for (let channel = 0; channel < channelCount; channel += 1) {
-      channels[channel][frame] = readOne();
-    }
+  if (audioFormat !== 1 && audioFormat !== 3) {
+    throw new Error(`unsupported WAV format ${audioFormat}; only uncompressed PCM (1) and IEEE float (3) are supported`);
   }
-  return { sampleRate, channels, audioFormat, bitsPerSample: bits };
+  if (audioFormat === 3 && bits !== 32 && bits !== 64) {
+    throw new Error(`unsupported IEEE float WAV sample size: ${bits}-bit`);
+  }
+  if (audioFormat === 1 && bits !== 8 && bits !== 16 && bits !== 24 && bits !== 32) {
+    throw new Error(`unsupported WAV sample size: ${bits}-bit (format ${audioFormat})`);
+  }
+  const frameCount = Math.floor(data.size / (bytesPerSample * channelCount));
+  return { sampleRate, channelCount, audioFormat, bitsPerSample: bits, frameCount, dataOffset: data.offset };
 }
 
-/** Parses an uncompressed PCM or IEEE-float WAV into mono float samples. */
+/**
+ * Parses an uncompressed PCM or IEEE-float WAV into mono float samples.
+ * Throws for anything else, like `decodeWavChannels`.
+ */
 export function decodeWav(bytes: Uint8Array): WavAudio {
-  const { sampleRate, channels } = readWav(bytes);
+  const { sampleRate, channels } = decodeWavChannels(bytes);
   const frameCount = channels[0].length;
   const samples = new Float32Array(frameCount);
   for (let frame = 0; frame < frameCount; frame += 1) {
