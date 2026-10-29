@@ -62,10 +62,15 @@ script decoded all of its narration on each `prepareNarration` call.
 
 ```bash
 pnpm run build:runtime
-pnpm --filter @celesta/character run test
-pnpm --filter @celesta/voicevox run test
-pnpm --filter @celesta/aivis-speech run test
+pnpm --dir packages/character test
+pnpm --dir packages/voicevox test
+pnpm --dir packages/aivis-speech test
+pnpm --dir packages/web exec vitest run test/engine-worker.test.mts
+git diff --check origin/main...HEAD
 ```
+
+`@celesta/aivis-speech` and the web engine-worker test also call `decodeWav`,
+so they were run as well.
 
 `readWavHeader` is a helper export like `decodeWavChannels`, which the user
 guide and the Agent Skill do not list, so neither is changed.
