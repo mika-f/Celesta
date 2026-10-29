@@ -84,6 +84,21 @@ mod timeline;
 mod timeline_drag;
 mod viewer;
 
+/// A keystroke with the platform's primary modifier: ⌘ on macOS, Ctrl
+/// elsewhere. `KeyBinding::new` no longer resolves `secondary-` itself.
+#[cfg(target_os = "macos")]
+macro_rules! secondary {
+    ($keys:literal) => {
+        concat!("cmd-", $keys)
+    };
+}
+#[cfg(not(target_os = "macos"))]
+macro_rules! secondary {
+    ($keys:literal) => {
+        concat!("ctrl-", $keys)
+    };
+}
+
 const EDITOR_DEMO_PROJECT: &str = include_str!("../../../examples/editor-demo.celesta.json");
 
 fn main() {
@@ -136,12 +151,12 @@ fn run() -> anyhow::Result<()> {
         // outside a text field, such as a property input.
         const EDITOR_KEYS: Option<&str> = Some("CelestaEditor && !Input");
         cx.bind_keys([
-            KeyBinding::new("secondary-n", CreateNewProject, Some("CelestaEditor")),
-            KeyBinding::new("secondary-o", OpenProject, Some("CelestaEditor")),
-            KeyBinding::new("secondary-r", ReloadProject, Some("CelestaEditor")),
-            KeyBinding::new("secondary-w", CloseWindow, Some("CelestaEditor")),
-            KeyBinding::new("secondary-q", Quit, None),
-            KeyBinding::new("secondary-shift-e", ExportProject, Some("CelestaEditor")),
+            KeyBinding::new(secondary!("n"), CreateNewProject, Some("CelestaEditor")),
+            KeyBinding::new(secondary!("o"), OpenProject, Some("CelestaEditor")),
+            KeyBinding::new(secondary!("r"), ReloadProject, Some("CelestaEditor")),
+            KeyBinding::new(secondary!("w"), CloseWindow, Some("CelestaEditor")),
+            KeyBinding::new(secondary!("q"), Quit, None),
+            KeyBinding::new(secondary!("shift-e"), ExportProject, Some("CelestaEditor")),
             KeyBinding::new("i", SetExportIn, EDITOR_KEYS),
             KeyBinding::new("o", SetExportOut, EDITOR_KEYS),
             KeyBinding::new("shift-x", ClearExportRange, EDITOR_KEYS),
@@ -158,15 +173,15 @@ fn run() -> anyhow::Result<()> {
             KeyBinding::new("end", GoToEnd, EDITOR_KEYS),
             KeyBinding::new("up", PreviousEditPoint, EDITOR_KEYS),
             KeyBinding::new("down", NextEditPoint, EDITOR_KEYS),
-            KeyBinding::new("secondary-/", ToggleLoop, Some("CelestaEditor")),
+            KeyBinding::new(secondary!("/"), ToggleLoop, Some("CelestaEditor")),
             KeyBinding::new("'", ToggleSafeAreas, EDITOR_KEYS),
-            KeyBinding::new("secondary-shift-m", ShowProblems, Some("CelestaEditor")),
+            KeyBinding::new(secondary!("shift-m"), ShowProblems, Some("CelestaEditor")),
             KeyBinding::new("v", ToggleInteractive, EDITOR_KEYS),
             KeyBinding::new("=", ZoomTimelineIn, EDITOR_KEYS),
             KeyBinding::new("-", ZoomTimelineOut, EDITOR_KEYS),
             KeyBinding::new("shift-z", ZoomTimelineToFit, EDITOR_KEYS),
-            KeyBinding::new("secondary-z", Undo, EDITOR_KEYS),
-            KeyBinding::new("secondary-shift-z", Redo, EDITOR_KEYS),
+            KeyBinding::new(secondary!("z"), Undo, EDITOR_KEYS),
+            KeyBinding::new(secondary!("shift-z"), Redo, EDITOR_KEYS),
         ]);
         // A text edited on the canvas is written first.
         cx.on_action(|_: &Quit, cx| lifecycle::quit_after_inline_commits(cx));

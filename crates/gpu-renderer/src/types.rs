@@ -232,8 +232,17 @@ pub struct NativePreviewFrame(pub(crate) core_video::pixel_buffer::CVPixelBuffer
 
 #[cfg(target_os = "macos")]
 impl NativePreviewFrame {
-    pub fn pixel_buffer(&self) -> core_video::pixel_buffer::CVPixelBuffer {
-        self.0.clone()
+    /// The frame as the `objc2` CoreVideo handle GPUI's `surface` element takes.
+    pub fn pixel_buffer(
+        &self,
+    ) -> objc2_core_foundation::CFRetained<objc2_core_video::CVPixelBuffer> {
+        use core_foundation::base::TCFType;
+        let raw = std::ptr::NonNull::new(self.0.as_concrete_TypeRef())
+            .expect("a CVPixelBuffer handle is never null")
+            .cast();
+        // SAFETY: both crates name the same CoreFoundation object; the new
+        // handle takes its own retain, so it outlives this frame safely.
+        unsafe { objc2_core_foundation::CFRetained::retain(raw) }
     }
 }
 
