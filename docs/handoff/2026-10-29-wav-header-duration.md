@@ -6,6 +6,86 @@ measures (issue #599). It used `decodeWav`, which converts every sample to
 sample rate. It ran after every synthesis and on every cache hit, so a cached
 script decoded all of its narration on each `prepareNarration` call.
 
+## Investigation
+
+### Who decodes WAVs, and what they need
+
+| Caller | Needs |
+| --- | --- |
+| `voicevox` `wavDuration` (after synthesis, and in `readEntry` on a cache hit) | length only |
+| `character` `loadLipSync`, `voice-folder.ts`, `spoken-text.ts` (`decodeWav` → `lipSyncFromAudio`) | samples (envelope) |
+| `character` `voice-level.ts` (`decodeWavChannels`) | samples per channel (levels) |
+| `aivis-speech` `timingFromAivisSpeech` (`decodeWav` when given bytes) | samples (`voicing()` reads RMS between moras) |
+| `examples/feature-tour/voice.ts`, `examples/zunda/src/scenes/voice.tsx`, `packages/cli/examples/with-audio-spectrum.tsx`, `packages/web/test/engine-worker.test.mts` | samples (envelope / spectrum) |
+
+`wavDuration` is the only caller that throws the samples away. The other
+callers still decode, so they are unchanged here.
+
+### What the removed work costs
+
+- `prepareNarration` runs from an entry's `prepare()`. That runs once per
+  entry load: on each export, and on each preview reload, which happens
+  after the entry or a tracked dependency is saved and after an editor
+  property edit rewrites the source. Every line of the script goes through
+  `readEntry` on each of those runs, so every run measured every cached WAV.
+- VOICEVOX synthesizes 24 kHz mono 16-bit PCM by default
+  (`VOICEVOX_FRAME_RATE` in `packages/voicevox/src/timing.ts`): 48 kB per
+  second of speech. For each second of speech, the old path allocated
+  a 192 kB `Float64Array` channel and a 96 kB `Float32Array` mix, and ran two
+  per-sample loops over 24,000 samples. A 10-minute script is a 28.8 MB set
+  of WAVs, 14.4 million samples, and about 173 MB of short-lived arrays per
+  run. `readWavHeader` reads only the chunk headers, so its cost does not
+  depend on the audio length.
+- A cache hit still reads the WAV and hashes it with SHA-256 to check the
+  entry (`readEntry`), so the file I/O stays. Only the decode is removed.
+- The decode was not benchmarked for this note. To measure it, build the
+  runtime (`pnpm run build:runtime`), then run the following from
+  `packages/character`. `SECONDS_OF_AUDIO` sets the synthetic WAV's length
+  (default 600):
+
+  ```bash
+  SECONDS_OF_AUDIO=600 node --input-type=module -e '
+  import { decodeWav, readWavHeader } from "@celesta/character";
+  const seconds = Number(process.env.SECONDS_OF_AUDIO ?? 600);
+  const rate = 24000, frames = seconds * rate, wav = Buffer.alloc(44 + frames * 2);
+  wav.write("RIFF", 0); wav.writeUInt32LE(36 + frames * 2, 4); wav.write("WAVEfmt ", 8);
+  wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(rate, 24); wav.writeUInt32LE(rate * 2, 28); wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34);
+  wav.write("data", 36); wav.writeUInt32LE(frames * 2, 40);
+  for (const [name, fn] of [["decodeWav", () => decodeWav(wav).samples.length], ["readWavHeader", () => readWavHeader(wav).frameCount]]) {
+    fn(); const start = performance.now(); for (let i = 0; i < 5; i += 1) fn();
+    console.log(name, ((performance.now() - start) / 5).toFixed(3), "ms per call");
+  }'
+  ```
+
+### Can a header-only reader reject the same files?
+
+Every check the old `readWav` made before its sample loop looks only at the
+header: RIFF/WAVE magic, the chunk walk (with odd sizes padded to a word),
+the fmt and data chunks being present, a fmt chunk shorter than 16 bytes,
+a data chunk larger than the remaining file, WAVE_FORMAT_EXTENSIBLE's
+sub-format, and zero channels or sub-byte samples. A data chunk of size 0 is
+valid there (zero frames). `wavDuration` turns it into `it has no samples`.
+
+The only check in the sample loop was `unsupported WAV sample size` for
+PCM-like formats. It fired only when the file had at least one frame. The
+format checks (`unsupported WAV format`, `unsupported IEEE float WAV sample
+size`) were in `decodeWavChannels` only, so `decodeWav` never ran them.
+Moving all three into the header parser lets the header-only path reject
+every file the decoders reject. It also makes `decodeWav` reject the
+non-PCM/float files that it used to decode wrongly (see "Behavior
+differences").
+
+### Docs
+
+`@celesta/character`'s guide pages and `skills/celesta/` do not list the WAV
+helpers. `decodeWav` appears only as the type of `lipSyncFromAivisSpeech`'s
+argument (`04-aivis-speech.md` in en/ja, `skills/celesta/references/dialogue.md`).
+`decodeWavChannels` is not mentioned anywhere. Both already say only
+uncompressed PCM/float WAV is read
+(`02-(guides)/07-dialogue.md`, `dialogue.md`). Adding `readWavHeader` and
+making `decodeWav` enforce what they describe needs no doc change.
+
 ## What changed
 
 - `packages/character/src/lipsync.ts`: the header part of the old `readWav`
