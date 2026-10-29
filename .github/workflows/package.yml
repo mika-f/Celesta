@@ -100,7 +100,7 @@ jobs:
 
       # Node.js and pnpm as mise.lock pins them. A tag's run restores main's
       # cache; one it saved would be visible to that tag alone.
-      - uses: jdx/mise-action@v5.2.3
+      - uses: jdx/mise-action@v5.2.4
         with:
           version: 2026.10.19
           cache_save: false
