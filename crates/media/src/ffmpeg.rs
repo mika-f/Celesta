@@ -2,7 +2,7 @@ use crate::decoder::{AudioDecoder, VideoFrameDecoder};
 use crate::error::MediaError;
 use crate::mix::{clamp_to_source_end, video_seconds};
 use crate::probe::{ensure_exists, probe_path};
-use crate::sequential::{FrameRun, path_to_url, timestamps_match};
+use crate::sequential::{FrameRun, ffmpeg_path, timestamps_match};
 use crate::types::{AudioBuffer, MediaProbe, VideoFrame};
 use celesta_composition::Rational;
 use ez_ffmpeg::Input;
@@ -240,7 +240,7 @@ impl AudioDecoder for FfmpegBackend {
         } else {
             Channels::Stereo
         };
-        let mut samples = SampleExtractor::new(Input::from(path_to_url(path)))
+        let mut samples = SampleExtractor::new(Input::from(ffmpeg_path(path)))
             .sample_rate(sample_rate)
             .channels(layout)
             .collect_samples()

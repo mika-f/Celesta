@@ -1,6 +1,6 @@
 use crate::color::VideoColor;
 use crate::error::MediaError;
-use crate::sequential::path_to_url;
+use crate::sequential::ffmpeg_path;
 use crate::types::{AudioStream, MediaProbe, VideoStream};
 use celesta_composition::{Rational, Time};
 use ez_ffmpeg::stream_info::{StreamInfo, find_all_stream_infos};
@@ -18,7 +18,7 @@ pub(crate) fn ensure_exists(path: &Path) -> Result<(), MediaError> {
 
 pub(crate) fn probe_path(path: &Path) -> Result<MediaProbe, MediaError> {
     ensure_exists(path)?;
-    let url = path_to_url(path);
+    let url = ffmpeg_path(path);
     let streams = find_all_stream_infos(url.as_str()).map_err(MediaError::Ffmpeg)?;
     let duration = container_info::get_duration_us(url.as_str())
         .ok()

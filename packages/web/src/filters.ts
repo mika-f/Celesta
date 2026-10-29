@@ -1,4 +1,4 @@
-import { parseHexColor } from '@celesta/math';
+import { clamp, clamp01, parseHexColor } from '@celesta/math';
 import type { BuiltinFilter, ColorFilter } from './types';
 
 // The built-in filters as the GPU renderer runs them: `color_filter.wgsl`
@@ -14,8 +14,6 @@ const LR = 0.2126, LG = 0.7152, LB = 0.0722;
 const MAX_PADDING = 512;
 const ZOOM_SAMPLES = 32;
 
-const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
-const clamp = (value: number, low: number, high: number) => Math.min(high, Math.max(low, value));
 // Rust's `rem_euclid`, as the renderer reduces angles before uploading them.
 const turn = (degrees: number) => ((degrees % 360) + 360) % 360;
 const fract = (value: number) => value - Math.floor(value);

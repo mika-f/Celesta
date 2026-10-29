@@ -4,7 +4,8 @@ use crate::error::{AudioMixError, MediaError};
 use crate::stretch::{mix_stretched_clip, needs_stretch};
 use crate::types::{AudioBuffer, VideoStream};
 use celesta_composition::{
-    Animatable, AudioGraph, KeyframeCursor, Time, TimeError, evaluate_f64, integrate_f64,
+    Animatable, AudioClip, AudioFade, AudioGraph, KeyframeCursor, Time, TimeError, evaluate_f64,
+    integrate_f64,
 };
 use celesta_remote::resolve_asset_path;
 use std::collections::HashMap;
@@ -141,7 +142,6 @@ fn mix_unclipped(
             .map(|duration| duration.as_seconds())
             .transpose()?
             .map(|duration| source_start_seconds + duration);
-        let fade = clip.fade()?;
         let start = sample_ceil(clip.range.start, graph.sample_rate)?.clamp(0, frame_count as i64);
         let end = sample_ceil(clip.range.end()?, graph.sample_rate)?.clamp(0, frame_count as i64);
         if needs_stretch(clip) {
@@ -156,7 +156,7 @@ fn mix_unclipped(
             )?;
             continue;
         }
-        let mut ducking = DuckGain::new(duck);
+        let mut gain = ClipGain::new(clip, duck)?;
         for output_frame in start..end {
             if output_frame & 2_047 == 0 && is_cancelled() {
                 return Err(AudioMixError::Cancelled);
@@ -187,9 +187,7 @@ fn mix_unclipped(
                 (source_frame + 1).min(source.frame_count() - 1)
             };
             let fraction = (source_position - source_frame as f64) as f32;
-            let volume = (evaluate_f64(&clip.volume, local_time)?.clamp(0.0, 16.0)
-                * fade.gain(local_time.as_seconds()?)
-                * ducking.at(project_time)?) as f32;
+            let volume = gain.at(local_time, project_time)?;
             for channel in 0..usize::from(CHANNELS) {
                 let from = source.samples[source_frame * usize::from(CHANNELS) + channel];
                 let to = source.samples[next_frame * usize::from(CHANNELS) + channel];
@@ -209,21 +207,41 @@ fn mix_unclipped(
     Ok((buffer, ducks))
 }
 
-/// A clip's ducking gain along the timeline, read at increasing times: 1
-/// without a curve. A curve has keys for every run of speech, so it is
-/// followed with a cursor instead of searched from its start each sample.
-pub(crate) struct DuckGain<'a>(Option<KeyframeCursor<'a>>);
+/// A clip's gain along the timeline, read at increasing times: its volume
+/// (clamped to 0–16) times its fade and its ducking curve's gain (1 without
+/// one). A ducking curve has keys for every run of speech, so it is followed
+/// with a cursor instead of searched from its start each sample.
+pub(crate) struct ClipGain<'a> {
+    volume: &'a Animatable<f64>,
+    fade: AudioFade,
+    ducking: Option<KeyframeCursor<'a>>,
+}
 
-impl<'a> DuckGain<'a> {
-    pub(crate) fn new(duck: Option<&'a Animatable<f64>>) -> Self {
-        Self(duck.map(KeyframeCursor::new))
+impl<'a> ClipGain<'a> {
+    pub(crate) fn new(
+        clip: &'a AudioClip,
+        duck: Option<&'a Animatable<f64>>,
+    ) -> Result<Self, AudioMixError> {
+        Ok(Self {
+            volume: &clip.volume,
+            fade: clip.fade()?,
+            ducking: duck.map(KeyframeCursor::new),
+        })
     }
 
-    pub(crate) fn at(&mut self, time: Time) -> Result<f64, AudioMixError> {
-        match &mut self.0 {
-            Some(cursor) => Ok(cursor.evaluate(time)?),
-            None => Ok(1.0),
-        }
+    /// The gain at clip-local `local_time`, `project_time` on the timeline.
+    pub(crate) fn at(
+        &mut self,
+        local_time: Time,
+        project_time: Time,
+    ) -> Result<f32, AudioMixError> {
+        let ducking = match &mut self.ducking {
+            Some(cursor) => cursor.evaluate(project_time)?,
+            None => 1.0,
+        };
+        Ok((evaluate_f64(self.volume, local_time)?.clamp(0.0, 16.0)
+            * self.fade.gain(local_time.as_seconds()?)
+            * ducking) as f32)
     }
 }
 

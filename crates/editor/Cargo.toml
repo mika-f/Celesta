@@ -27,6 +27,7 @@ celesta-react-bridge = { path = "../react-bridge" }
 celesta-source-edit = { path = "../source-edit" }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 clap.workspace = true
+fnv = "1.0.7"
 rodio = { version = "0.23.0", default-features = false, features = ["playback"] }
 serde_json.workspace = true
 shlex = "1"

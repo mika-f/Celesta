@@ -4,7 +4,7 @@ use crate::ffmpeg::FfmpegBackend;
 use crate::loudness::{
     LoudnessTarget, PeakHandling, TARGET_TOLERANCE_LU, measure_loudness, normalize_loudness,
 };
-use crate::sequential::path_to_url;
+use crate::sequential::ffmpeg_path;
 use crate::types::AudioBuffer;
 use ez_ffmpeg::{FfmpegContext, Input, Output};
 use std::f64::consts::TAU;
@@ -104,9 +104,9 @@ fn filter_path(path: &Path) -> String {
 fn ffmpeg_ebur128(path: &Path, directory: &Path) -> (f64, f64) {
     let metadata = directory.join("ebur128.txt");
     FfmpegContext::builder()
-        .input(Input::from(path_to_url(path)))
+        .input(Input::from(ffmpeg_path(path)))
         .output(
-            Output::from(path_to_url(&directory.join("null.wav")))
+            Output::from(ffmpeg_path(&directory.join("null.wav")))
                 .set_format("null")
                 .set_audio_filter(format!(
                     "ebur128=peak=true:metadata=1,ametadata=mode=print:file={}",
@@ -144,7 +144,7 @@ fn measures_as_ffmpeg_ebur128_does() {
             )
             .set_format("lavfi"),
         )
-        .output(Output::from(path_to_url(&source)).set_audio_codec("pcm_f32le"))
+        .output(Output::from(ffmpeg_path(&source)).set_audio_codec("pcm_f32le"))
         .build()
         .unwrap()
         .start()
