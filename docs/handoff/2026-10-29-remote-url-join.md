@@ -6,54 +6,115 @@ An `@font-face` stylesheet loaded from a URL names its font files with
 `url(...)` references, which `crates/remote/src/stylesheet.rs` resolves against
 the stylesheet's own URL. That resolution used a hand-written `join_url` and
 `remove_dot_segments`. It now calls `url::Url::parse(base)?.join(reference)`,
-and both helpers are gone. `url` 2.5.8 was already in `Cargo.lock` as a
-transitive dependency; `celesta-remote` now depends on it directly.
+and both helpers are gone. `celesta-remote` depends on `url` 2.5.8 directly.
 
 Unchanged paths:
 
-- An absolute `http(s)` reference still bypasses the join and keeps its exact
-  string.
+- An absolute `http(s)` reference skips the join and keeps its exact string.
+  Google Fonts stylesheets name absolute `fonts.gstatic.com` URLs, so they never
+  reach the join and see no change.
 - `data:` references are still skipped.
 - A stylesheet loaded from a local file still resolves references against its
   folder with `Path::join`.
 
-The old helper dropped the base query for a fragment-only reference: base
-`https://example.com/a/s.css?v=1` plus `#x` gave `https://example.com/a/s.css#x`.
-RFC 3986 keeps the query, and `Url::join` now gives
-`https://example.com/a/s.css?v=1#x`.
+## Where the resolved URL goes
 
-## Differences in the resolved URL string
+`stylesheet_font_faces` has one production caller:
+`TextRasterizer::load_font_asset` in `crates/renderer/src/fonts.rs`. It runs when a
+`<Font src>` asset turns out to be a CSS stylesheet with `@font-face` rules. For
+each face, the resolved `AssetLocation::Url` goes to
+`local_asset_path` → `resolve_asset_path` → `RemoteAssetCache::fetch`. There the
+URL string:
 
-The resolved string is the remote cache key (`fnv1a` of the exact URL) and the
-download target. All the existing join cases give the same string as before:
-dot segments, a reference with its own query and fragment, an absolute path, a
-network-path reference, a base without a path, and `..` past the root. The
-Google Fonts style case is also unchanged.
+- is the download target (`ureq`, which parses it as an `http::Uri`);
+- names the cache directory (`fnv1a` of the exact string);
+- names the cached file (`file_name`, from the last path segment);
+- appears in every `RemoteAssetError` message.
 
-`Url` normalizes the joined URL, which changes the string in these cases:
+Nothing else stores it. A changed string means a new cache entry, so an
+already-cached face is downloaded once more.
 
-- The scheme and host are lowercased: `HTTPS://Example.COM/` becomes
-  `https://example.com/`.
-- The default port is dropped: `https://example.com:443/` becomes
-  `https://example.com/`.
-- Spaces and non-ASCII characters in the path are percent-encoded, so
-  `My Font.ttf` becomes `My%20Font.ttf`. Before, the raw string went to the
-  HTTP client, which cannot send it.
-- An internationalized host becomes punycode.
-- A backslash in an `http(s)` path is a path separator, as in browsers.
-- A reference such as `ftp://host/a.ttf` (an absolute URL with a scheme the
-  crate does not download) now resolves to itself and fails with
-  `UnsupportedScheme`. Before, it was glued onto the stylesheet's folder as a
-  path.
+## Old and new output compared
 
-The first two cases address the same file under a new cache key, so a cached
-font is downloaded once more. The others fix URLs that could not be fetched
-before.
+Main's `join_url` was copied unchanged into a scratch program and run next to
+`Url::join` (`url` 2.5.8). Each output was also parsed as an `http::Uri` 1.5.0,
+which `ureq` does before sending. "Sendable" means that parse succeeded.
+
+Base `B` is `https://cdn.example.com/kit/css/fonts.css?v=2`, and base `Q` is
+`https://example.com/a/s.css?v=1`.
+
+Same output:
+
+| Base | Reference | Output |
+| --- | --- | --- |
+| `B` | `../fonts/a.woff2?v=3#iefix` | `https://cdn.example.com/kit/fonts/a.woff2?v=3#iefix` |
+| `B` | `./b.woff` | `https://cdn.example.com/kit/css/b.woff` |
+| `B` | `/root.ttf` | `https://cdn.example.com/root.ttf` |
+| `B` | `//other.example.com/c.ttf` | `https://other.example.com/c.ttf` |
+| `https://example.com` | `d.ttf` | `https://example.com/d.ttf` |
+| `https://example.com/a/b/` | `../../../e.ttf` | `https://example.com/e.ttf` |
+| `Q` | `?q` | `https://example.com/a/s.css?q` |
+| `https://example.com?x` | `a.ttf` | `https://example.com/a.ttf` |
+| `https://example.com:8080/css/s.css` | `a.ttf` | `https://example.com:8080/css/a.ttf` |
+| `B` | `My%20Font.ttf` | `https://cdn.example.com/kit/css/My%20Font.ttf` |
+| `https://example.com/%E3%83%95/s.css` | `a.ttf` | `https://example.com/%E3%83%95/a.ttf` |
+| `B` | `..`, `../` | `https://cdn.example.com/kit/` |
+| `B` | `.` | `https://cdn.example.com/kit/css/` |
+| `B` | `a/./b/../c.ttf` | `https://cdn.example.com/kit/css/a/c.ttf` |
+| `https://user:pw@example.com/css/s.css` | `a.ttf` | `https://user:pw@example.com/css/a.ttf` |
+
+Different output, with the decision for each:
+
+| Base | Reference | Old | New | Decision |
+| --- | --- | --- | --- | --- |
+| `Q` | `#x` | `…/s.css#x` | `…/s.css?v=1#x` | Take new: RFC 3986 keeps the base query. |
+| `Q#f` | `#x` | `…/s.css#x` | `…/s.css?v=1#x` | Take new, same reason. |
+| `Q` | empty | `…/s.css` | `…/s.css?v=1` | Take new. Unreachable: `first_url` drops an empty `url()`. |
+| `HTTPS://Example.COM/css/s.css` | `a.ttf` | `HTTPS://Example.COM/css/a.ttf` | `https://example.com/css/a.ttf` | Take new. Same file, new cache key. |
+| `https://example.com:443/css/s.css` | `a.ttf` | keeps `:443` | drops `:443` | Take new. Same file, new cache key. |
+| `B` | `//EXAMPLE.org/a.ttf` | `https://EXAMPLE.org/a.ttf` | `https://example.org/a.ttf` | Take new. Same file, new cache key. |
+| `B` | `フォント.woff2` | raw UTF-8 path | percent-encoded path | Take new. The old string was sendable, as raw UTF-8 bytes; the new one is the standard form. New cache key. |
+| `https://example.com/フ/s.css` | `a.ttf` | raw UTF-8 path | percent-encoded path | Take new, same reason. |
+| `B` | `My Font.ttf` | raw space, not sendable | `My%20Font.ttf` | Take new: fixes a URL that failed. |
+| `B` | `a.ttf?x=1 2` | raw space, not sendable | `?x=1%202` | Take new: fixes a URL that failed. |
+| `B` | `a<TAB>b.ttf` | raw tab, not sendable | `ab.ttf` (tab removed, as browsers do) | Take new: fixes a URL that failed. |
+| `B` | `//例え.jp/a.ttf` | raw host, not sendable | `https://xn--r8jz45g.jp/a.ttf` | Take new: fixes a URL that failed. |
+| `B` | `%2e%2e/a.ttf` | `…/css/%2e%2e/a.ttf` | `…/kit/a.ttf` | Take new: browsers treat `%2e%2e` as `..`. |
+| `B` | `..\fonts\a.ttf` | `…/css/..\fonts\a.ttf` | `…/kit/fonts/a.ttf` | Take new: browsers treat `\` as `/` in `http(s)`. |
+| `B` | `https:a.ttf` | `…/css/https:a.ttf` | `…/css/a.ttf` | Take new: a same-scheme reference is relative in browsers. |
+| `B` | `ftp://example.com/a.ttf` | glued onto `…/css/` as a path | `ftp://example.com/a.ttf` | Take new: the fetch now fails with `UnsupportedScheme` instead of requesting a wrong URL. |
+| `B` | `c:/x.ttf` | glued onto `…/css/` as a path | `c:/x.ttf` | Take new, same reason. |
+
+The fragment-only case was reproduced before the switch: the new
+`fragment_only_references_keep_the_base_query` test failed against the old
+helper with `https://example.com/a/s.css#x`.
+
+## Dependency cost
+
+`url` 2.5.8 was already in `Cargo.lock`, pulled only by `gpui-pre` and
+`gpui-pre-http-client`. That means only the editor built it. Adding it to
+`celesta-remote` changes `Cargo.lock` by one line, `"url"` in
+`celesta-remote`'s dependency list, and downloads nothing new.
+
+Every crate that depends on `celesta-remote` now builds `url` too: the exporter,
+renderer, GPU renderer, media, and React bridge crates. For `celesta-exporter`,
+`cargo tree -e normal,build` lists 26 crates it did not build before. They are
+`url`, `form_urlencoded`, `idna`, `idna_adapter`, the ICU4X normalizer and
+properties crates with their data crates, and their support crates
+(`zerovec`, `yoke`, `zerofrom`, `zerotrie`, `tinystr`, `litemap`, `writeable`,
+`potential_utf`, `utf8_iter`, `stable_deref_trait`, `displaydoc`,
+`synstructure`, and three derive crates).
+
+The alternative keeps the 50 hand-written lines and fixes the fragment-only case
+there. It would also leave the other differences above as they are. This change
+takes `url`, because it fixes the unsendable and wrong URLs in the table, and
+the editor already ships the same crates.
 
 ## Checks
 
-- `cargo test -p celesta-remote`: 18 passed. The new tests are
-  `fragment_only_references_keep_the_base_query` and
+- `cargo test -p celesta-remote`: 19 passed. The tests added here are
+  `fragment_only_references_keep_the_base_query`,
+  `resolves_edge_case_references_like_browsers`, and
   `joined_urls_are_normalized`.
 - `cargo clippy -p celesta-remote --all-targets -- -D warnings` passed.
 - `cargo fmt --all -- --check` passed.
