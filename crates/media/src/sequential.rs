@@ -33,7 +33,7 @@ impl FrameRun {
             )
             .map(Self::Converted),
             None => {
-                let mut extractor = FrameExtractor::new(Input::from(path_to_url(path)))
+                let mut extractor = FrameExtractor::new(Input::from(ffmpeg_path(path)))
                     .start_time_us(seconds_to_us(source_time_seconds))
                     .pixel(PixelLayout::Rgba32);
                 if let Some(max) = max_frames {
@@ -151,7 +151,7 @@ pub(crate) fn reached(frame_seconds: f64, target_seconds: f64) -> bool {
     frame_seconds > target_seconds || timestamps_match(frame_seconds, target_seconds)
 }
 
-pub(crate) fn path_to_url(path: &Path) -> String {
+pub(crate) fn ffmpeg_path(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 

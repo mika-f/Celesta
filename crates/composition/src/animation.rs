@@ -1,4 +1,4 @@
-use crate::{Animatable, Easing, KeyframeAnimation, Time, TimeError};
+use crate::{Animatable, Easing, Keyframe, KeyframeAnimation, Time, TimeError};
 
 /// Evaluates a numeric property at item-local `time`.
 ///
@@ -12,11 +12,17 @@ pub fn evaluate_f64(value: &Animatable<f64>, time: Time) -> Result<f64, Animatio
         return Ok(*value);
     };
     let (from, to, eased) = keyframe_segment(animation, time)?;
-    Ok(if eased == 0.0 {
-        *from
+    Ok(lerp(*from, *to, eased))
+}
+
+/// The value `eased` of the way from `from` to `to`, exactly `from` where
+/// the progress is 0.
+fn lerp(from: f64, to: f64, eased: f64) -> f64 {
+    if eased == 0.0 {
+        from
     } else {
         from + (to - from) * eased
-    })
+    }
 }
 
 /// The values `animation` interpolates between at `time` and the eased
@@ -39,19 +45,28 @@ pub fn keyframe_segment<T>(
     for pair in animation.keyframes.windows(2) {
         let [from, to] = pair else { unreachable!() };
         if time.cmp_exact(to.time)?.is_le() {
-            let elapsed = time.checked_sub(from.time)?.as_seconds()?;
-            let duration = to.time.checked_sub(from.time)?.as_seconds()?;
-            if duration <= 0.0 {
-                return Ok((&to.value, &to.value, 0.0));
-            }
-            let progress = (elapsed / duration).clamp(0.0, 1.0);
-            let eased = apply_easing(progress, to.easing.unwrap_or(Easing::Linear));
-            return Ok((&from.value, &to.value, eased));
+            return segment(from, to, time);
         }
     }
 
     let last = animation.keyframes.last().expect("first keyframe exists");
     Ok((&last.value, &last.value, 0.0))
+}
+
+/// [`keyframe_segment`] for `time` in the segment from `from` to `to`.
+fn segment<'k, T>(
+    from: &'k Keyframe<T>,
+    to: &'k Keyframe<T>,
+    time: Time,
+) -> Result<(&'k T, &'k T, f64), AnimationError> {
+    let elapsed = time.checked_sub(from.time)?.as_seconds()?;
+    let duration = to.time.checked_sub(from.time)?.as_seconds()?;
+    if duration <= 0.0 {
+        return Ok((&to.value, &to.value, 0.0));
+    }
+    let progress = (elapsed / duration).clamp(0.0, 1.0);
+    let eased = apply_easing(progress, to.easing.unwrap_or(Easing::Linear));
+    Ok((&from.value, &to.value, eased))
 }
 
 /// [`evaluate_f64`] for times that never decrease, such as a mixer's sample
@@ -86,15 +101,8 @@ impl<'a> KeyframeCursor<'a> {
         let Some(to) = keys.get(self.next) else {
             return Ok(keys[keys.len() - 1].value);
         };
-        let from = &keys[self.next - 1];
-        let elapsed = time.checked_sub(from.time)?.as_seconds()?;
-        let duration = to.time.checked_sub(from.time)?.as_seconds()?;
-        if duration <= 0.0 {
-            return Ok(to.value);
-        }
-        let progress = (elapsed / duration).clamp(0.0, 1.0);
-        let eased = apply_easing(progress, to.easing.unwrap_or(Easing::Linear));
-        Ok(from.value + (to.value - from.value) * eased)
+        let (from, to, eased) = segment(&keys[self.next - 1], to, time)?;
+        Ok(lerp(*from, *to, eased))
     }
 }
 

@@ -330,7 +330,7 @@ impl Exporter {
         // video it cut the audio a frame short, and it lets the muxer finish
         // while the audio encoder still sends, which ez-ffmpeg can report as
         // "Muxer already finished".
-        let muxed = Output::from(path_to_url(output))
+        let muxed = Output::from(ffmpeg_path(output))
             .add_stream_map_with_copy("0:v:0")
             .add_stream_map("1:a:0");
         // The lead-in's timestamps go before 0, which the MP4 muxer turns
@@ -342,9 +342,9 @@ impl Exporter {
             muxed.set_audio_filter(format!("asetpts=PTS-{frames}/SR/TB"))
         };
         let context = FfmpegContext::builder()
-            .input(Input::from(path_to_url(video)))
+            .input(Input::from(ffmpeg_path(video)))
             .input(
-                Input::from(path_to_url(&pcm_path))
+                Input::from(ffmpeg_path(&pcm_path))
                     .set_format("f32le")
                     .set_format_opt("sample_rate", audio.sample_rate.to_string())
                     .set_format_opt("ch_layout", format!("{}c", audio.channels)),
@@ -434,7 +434,7 @@ pub(crate) fn ensure_encoders(format: VideoFormat) -> Result<(), ExportError> {
     }
 }
 
-pub(crate) fn path_to_url(path: &Path) -> String {
+pub(crate) fn ffmpeg_path(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
@@ -514,7 +514,7 @@ pub(crate) fn open_video_writer(
     let fps_num = i32::try_from(frame_rate.numerator).map_err(|_| ExportError::TimelineTooLong)?;
     let fps_den =
         i32::try_from(frame_rate.denominator).map_err(|_| ExportError::TimelineTooLong)?;
-    let output = Output::from(path_to_url(output));
+    let output = Output::from(ffmpeg_path(output));
     let output = match format {
         VideoFormat::Mp4 => output
             .set_video_codec("libx264")

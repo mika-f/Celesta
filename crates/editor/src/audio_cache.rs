@@ -1,6 +1,5 @@
-use std::collections::hash_map::DefaultHasher;
 use std::fs::{self, File, FileTimes, OpenOptions};
-use std::hash::{Hash, Hasher};
+use std::hash::Hasher;
 use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -10,6 +9,7 @@ use std::os::unix::fs::MetadataExt;
 
 use celesta_media::AudioBuffer;
 use celesta_remote::StagedFile;
+use fnv::FnvHasher;
 
 const MAGIC: &[u8; 8] = b"CELESPCM";
 const VERSION: u32 = 2;
@@ -95,19 +95,17 @@ impl DiskAudioCache {
             .modified()?
             .duration_since(UNIX_EPOCH)
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "mtime predates Unix epoch"))?;
-        let mut hasher = DefaultHasher::new();
-        canonical.hash(&mut hasher);
-        metadata.len().hash(&mut hasher);
+        let mut identity = vec![metadata.len()];
         #[cfg(unix)]
-        {
-            metadata.dev().hash(&mut hasher);
-            metadata.ino().hash(&mut hasher);
-        }
-        modified.as_secs().hash(&mut hasher);
-        modified.subsec_nanos().hash(&mut hasher);
-        sample_rate.hash(&mut hasher);
-        channels.hash(&mut hasher);
-        Ok(self.root.join(format!("{:016x}.pcm", hasher.finish())))
+        identity.extend([metadata.dev(), metadata.ino()]);
+        identity.extend([
+            modified.as_secs(),
+            modified.subsec_nanos().into(),
+            sample_rate.into(),
+            channels.into(),
+        ]);
+        let key = entry_key(&canonical, &identity);
+        Ok(self.root.join(format!("{key:016x}.pcm")))
     }
 
     fn prune(&self) -> io::Result<()> {
@@ -154,6 +152,19 @@ impl DiskAudioCache {
         }
         Ok(())
     }
+}
+
+/// 64-bit FNV-1a over `canonical`'s bytes and then each of `identity` as
+/// little-endian bytes. Unlike `DefaultHasher` and `Hash`, neither the
+/// algorithm nor the bytes fed to it change between Rust releases, so cache
+/// entries outlive a toolchain update.
+fn entry_key(canonical: &Path, identity: &[u64]) -> u64 {
+    let mut hasher = FnvHasher::default();
+    hasher.write(canonical.as_os_str().as_encoded_bytes());
+    for field in identity {
+        hasher.write(&field.to_le_bytes());
+    }
+    hasher.finish()
 }
 
 fn default_cache_root() -> PathBuf {
@@ -299,6 +310,19 @@ mod tests {
             std::process::id(),
             TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
         ))
+    }
+
+    #[test]
+    fn entry_keys_are_64_bit_fnv1a_over_path_and_identity_bytes() {
+        assert_eq!(entry_key(Path::new(""), &[]), 0xcbf2_9ce4_8422_2325);
+        assert_eq!(entry_key(Path::new("a"), &[]), 0xaf63_dc4c_8601_ec8c);
+        assert_eq!(
+            entry_key(
+                Path::new("/media/tone.wav"),
+                &[1_024, 1_700_000_000, 5, 48_000, 2]
+            ),
+            0xc782_e9e1_7093_09be
+        );
     }
 
     #[test]

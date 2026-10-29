@@ -4,7 +4,7 @@
 //! the conversion of the next frame overlaps the rendering of this one.
 
 use crate::color::{ColorConversion, DEFAULT_PEAK_LUMINANCE, ToneMapper};
-use crate::sequential::{path_to_url, seconds_to_us};
+use crate::sequential::{ffmpeg_path, seconds_to_us};
 use ez_ffmpeg::core::context::output::VSyncMethod;
 use ez_ffmpeg::core::scheduler::ffmpeg_scheduler::{FfmpegScheduler, Running};
 use ez_ffmpeg::filter::frame_filter::{FrameFilter, FrameFilterError, RequestFrameMode};
@@ -77,7 +77,7 @@ impl ConvertedFrames {
              out_range=full,format=rgb48le[converted]"
         );
         let context = FfmpegContext::builder()
-            .input(Input::from(path_to_url(path)).set_start_time_us(seconds_to_us(start_seconds)))
+            .input(Input::from(ffmpeg_path(path)).set_start_time_us(seconds_to_us(start_seconds)))
             .filter_desc(filter)
             .output(output)
             .build()?;
