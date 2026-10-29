@@ -110,7 +110,7 @@ runs:
     - name: Restore FFmpeg build cache
       id: ffmpeg-cache
       if: runner.os == 'Linux'
-      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      uses: actions/cache/restore@v6.1.0
       with:
         path: ${{ env.FFMPEG_PREFIX }}
         key: ffmpeg-${{ env.FFMPEG_VERSION }}-${{ env.FFMPEG_IMAGE_OS }}-${{ hashFiles('scripts/build-ffmpeg-linux.sh') }}
@@ -123,7 +123,7 @@ runs:
     # Save right away so a later build or test failure does not discard FFmpeg.
     - name: Save FFmpeg build cache
       if: runner.os == 'Linux' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
-      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      uses: actions/cache/save@v6.1.0
       with:
         path: ${{ env.FFMPEG_PREFIX }}
         key: ffmpeg-${{ env.FFMPEG_VERSION }}-${{ env.FFMPEG_IMAGE_OS }}-${{ hashFiles('scripts/build-ffmpeg-linux.sh') }}

@@ -46,7 +46,7 @@ jobs:
     # The first Windows run builds FFmpeg and its encoders with vcpkg before the cache exists.
     timeout-minutes: 150
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
 
       # GPUI's keyboard, font, and audio libraries, and Mesa's software Vulkan
       # driver (lavapipe) so the GPU renderer tests run without a GPU.
@@ -63,7 +63,7 @@ jobs:
       # It starts after the Linux packages, as both use apt.
       - id: ffmpeg
         if: runner.os != 'Windows'
-        uses: ./.github/actions/setup-ffmpeg
+        uses: $/.github/actions/setup-ffmpeg
         background: true
 
       # Windows only downloads the pre-built package (about 10 seconds), and
@@ -71,13 +71,13 @@ jobs:
       # rewrites event.json as each step starts, and two steps starting at
       # once collide on the file lock (actions/runner#4641).
       - if: runner.os == 'Windows'
-        uses: ./.github/actions/setup-ffmpeg
+        uses: $/.github/actions/setup-ffmpeg
 
       # rust-cache hashes every installed toolchain; exclude the runner's moving stable.
       - name: Isolate Rust toolchain
         run: echo "RUSTUP_HOME=$RUNNER_TEMP/celesta-rustup" >> "$GITHUB_ENV"
 
-      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+      - uses: dtolnay/rust-toolchain@v1
         with:
           # Update deliberately so compiler releases do not unexpectedly invalidate caches.
           toolchain: 1.99.1
@@ -87,7 +87,7 @@ jobs:
       # No pnpm store cache: an install without one takes under 20 seconds,
       # less than restoring and saving the store, and a pull request that
       # changes the lockfile would save its own store on every OS.
-      - uses: jdx/mise-action@82a612c5ab8bcda7cc5db6b7e81a8e7584c3dc6e # v5.2.3
+      - uses: jdx/mise-action@v5.2.3
         with:
           version: 2026.10.19
           cache_save: ${{ github.ref == 'refs/heads/main' }}
@@ -101,13 +101,13 @@ jobs:
 
       # Pull requests restore main's cache; saving their own copies only
       # crowds main's entries out of the repository's cache quota.
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: Swatinem/rust-cache@v2.9.3
         with:
           env-vars: FFMPEG_VERSION FFMPEG_FEATURES
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # After rust-cache, which restores ~/.cargo/bin, where it installs.
-      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+      - uses: taiki-e/install-action@v2.87.31
         with:
           tool: nextest@0.9.146
 
@@ -172,7 +172,7 @@ jobs:
 
       - name: Upload Cargo build timings
         if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: cargo-timings-${{ runner.os }}-${{ runner.arch }}
           path: target/cargo-timings/*.html

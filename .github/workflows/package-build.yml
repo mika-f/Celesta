@@ -35,34 +35,34 @@ jobs:
     # The first run builds FFmpeg and its encoders with vcpkg before the cache exists.
     timeout-minutes: 180
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
 
-      - uses: ./.github/actions/setup-ffmpeg
+      - uses: $/.github/actions/setup-ffmpeg
 
       # rust-cache hashes every installed toolchain; exclude the runner's moving stable.
       - name: Isolate Rust toolchain
         shell: bash
         run: echo "RUSTUP_HOME=$RUNNER_TEMP/celesta-rustup" >> "$GITHUB_ENV"
 
-      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+      - uses: dtolnay/rust-toolchain@v1
         with:
           # The compiler CI tests with; a moving stable would also invalidate the cache.
           toolchain: 1.99.1
 
       # Only main's cache is visible to the next release tag.
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: Swatinem/rust-cache@v2.9.3
         with:
           env-vars: FFMPEG_VERSION FFMPEG_FEATURES
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # Node.js and pnpm as mise.lock pins them.
-      - uses: jdx/mise-action@82a612c5ab8bcda7cc5db6b7e81a8e7584c3dc6e # v5.2.3
+      - uses: jdx/mise-action@v5.2.3
         with:
           version: 2026.10.19
           cache_save: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Cache bundled Node.js runtime
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        uses: actions/cache@v6.1.0
         with:
           path: target/package-downloads
           key: windows-node-runtime-v26.12.1
@@ -84,7 +84,7 @@ jobs:
         run: pwsh -File scripts/package-windows.ps1 -Version $env:VERSION -IsccPath $env:ISCC_PATH
 
       - if: inputs.release
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: celesta-windows-x64
           path: |
@@ -103,9 +103,9 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@v7.0.1
 
-      - uses: ./.github/actions/setup-ffmpeg
+      - uses: $/.github/actions/setup-ffmpeg
 
       - name: Install dylibbundler
         run: brew install dylibbundler
@@ -113,16 +113,16 @@ jobs:
       - name: Isolate Rust toolchain
         run: echo "RUSTUP_HOME=$RUNNER_TEMP/celesta-rustup" >> "$GITHUB_ENV"
 
-      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
+      - uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: 1.99.1
 
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: Swatinem/rust-cache@v2.9.3
         with:
           env-vars: FFMPEG_VERSION FFMPEG_FEATURES
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - uses: jdx/mise-action@82a612c5ab8bcda7cc5db6b7e81a8e7584c3dc6e # v5.2.3
+      - uses: jdx/mise-action@v5.2.3
         with:
           version: 2026.10.19
           cache_save: ${{ github.ref == 'refs/heads/main' }}
@@ -178,7 +178,7 @@ jobs:
         run: security delete-keychain "$SIGNING_KEYCHAIN" || true
 
       - if: inputs.release
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        uses: actions/upload-artifact@v7.0.2
         with:
           name: celesta-macos-${{ matrix.arch }}
           path: target/packages/Celesta-*-macos-${{ matrix.arch }}.dmg
