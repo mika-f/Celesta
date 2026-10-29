@@ -359,5 +359,11 @@ than carrying historical test counts or machine-specific results here.
 
 - Preserve unrelated or pre-existing worktree changes.
 - Keep detailed task notes in `docs/handoff/`.
+- Fix clippy findings (box, split, restructure). When the fix would cost
+  something, put `#[expect(clippy::…, reason = "…")]` on the item with a
+  reason that names that cost. Use `expect`, not `allow`, so an expectation
+  that no longer applies fails under `-D warnings`.
+- Do not pass CI with `-A` on the command line or a `clippy.toml` threshold;
+  see `.agents/skills/rust-best-practices`.
 - Do not commit unless the user explicitly asks.
 - If a commit is requested, stage only accepted files.
