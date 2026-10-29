@@ -891,7 +891,7 @@ impl EditorView {
             Some(SourceLookup::Found(_)) if self.source_lookup_stale => {
                 return Err(READING.to_owned());
             }
-            Some(SourceLookup::Found(report)) => Some(report),
+            Some(SourceLookup::Found(report)) => Some(&**report),
             _ => None,
         };
         let facts = match (report, &self.add.facts) {

@@ -155,10 +155,13 @@ fn inline_entry_skips_a_layer_without_a_text_box_while_its_lookup_is_pending() {
         "export const Scene = () => (\n  <Text>Sale</Text>\n);\n",
         "Sale",
     );
-    assert!(is_text_layer(&SourceLookup::Found(text.clone()), false));
+    assert!(is_text_layer(
+        &SourceLookup::Found(Box::new(text.clone())),
+        false
+    ));
     let mut rect = text;
     rect.chain[0].name = "Rect".to_owned();
-    assert!(!is_text_layer(&SourceLookup::Found(rect), true));
+    assert!(!is_text_layer(&SourceLookup::Found(Box::new(rect)), true));
     // Without a report, the frame's box says it is a text.
     for lookup in [
         SourceLookup::NotInFrame,
