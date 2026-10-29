@@ -253,6 +253,31 @@ mod tests {
     }
 
     #[test]
+    fn resolves_edge_case_references_like_browsers() {
+        let base = "https://cdn.example.com/kit/css/fonts.css?v=2";
+        assert_eq!(
+            join(base, "?q"),
+            url("https://cdn.example.com/kit/css/fonts.css?q")
+        );
+        assert_eq!(
+            join(base, "%2e%2e/a.ttf"),
+            url("https://cdn.example.com/kit/a.ttf")
+        );
+        assert_eq!(
+            join(base, "https:a.ttf"),
+            url("https://cdn.example.com/kit/css/a.ttf")
+        );
+        assert_eq!(
+            join(base, "a\tb.ttf"),
+            url("https://cdn.example.com/kit/css/ab.ttf")
+        );
+        assert_eq!(
+            join(base, "//EXAMPLE.org/a.ttf"),
+            url("https://example.org/a.ttf")
+        );
+    }
+
+    #[test]
     fn joined_urls_are_normalized() {
         assert_eq!(
             join("HTTPS://Example.COM:443/css/s.css", "My Font.ttf"),
