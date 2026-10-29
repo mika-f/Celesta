@@ -3916,7 +3916,7 @@ fn keeps_native_preview_backings_alive_across_dialogue_frame_churn() {
             });
             match renderer.render_preview(&scene).unwrap() {
                 PreviewFrame::Native(frame) => {
-                    let buffer = frame.pixel_buffer();
+                    let buffer = frame.0.clone();
                     assert_eq!((buffer.get_width(), buffer.get_height()), (1280, 720));
                     assert_eq!(
                         buffer.get_pixel_format(),

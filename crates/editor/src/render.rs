@@ -4,7 +4,7 @@ use crate::view::EditorView;
 use gpui_kit::component::resizable::{h_resizable, resizable_panel, v_resizable};
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::status_bar::StatusBar;
-use gpui_kit::component::{ActiveTheme as _, Root, Sizable as _};
+use gpui_kit::component::{ActiveTheme as _, Sizable as _};
 use gpui_kit::prelude::*;
 use gpui_kit::{Context, CursorStyle, KeyDownEvent, MouseButton, Window, canvas, div, px};
 
@@ -38,19 +38,10 @@ impl Render for EditorView {
             window.request_animation_frame();
         }
         window.set_window_title(&format!("{} — Celesta", self.project_name));
-        // gpui-kit 0.6's `Root` does not mount its overlay layers, so the
-        // view does. They sit outside the `CelestaEditor` key context so
-        // editor shortcuts (Space, arrows, ⌘N…) don't fire from inside an
-        // overlay or behind a dialog. The dialog layer comes last, so a modal
-        // sits above notifications.
-        let notification_layer = Root::render_notification_layer(window, cx);
-        let dialog_layer = Root::render_dialog_layer(window, cx);
-        div()
-            .relative()
-            .size_full()
-            .child(self.editor_shell(cx))
-            .children(notification_layer)
-            .children(dialog_layer)
+        // `Root` mounts the dialog and notification layers beside this view,
+        // outside the `CelestaEditor` key context, so editor shortcuts (Space,
+        // arrows, ⌘N…) don't fire from inside an overlay or behind a dialog.
+        self.editor_shell(cx)
     }
 }
 

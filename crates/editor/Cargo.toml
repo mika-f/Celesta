@@ -12,7 +12,7 @@ rust-version.workspace = true
 # `gpui-pre`, so the Common-Controls v6 app manifest (without which gpui's
 # `TaskDialogIndirect` import fails to bind against comctl32 v5.82 and the editor exits at
 # startup with STATUS_ENTRYPOINT_NOT_FOUND, 0xc0000139) stays embedded without re-listing.
-gpui-kit = "0.6"
+gpui-kit = "0.8"
 image = { version = "0.25.8", default-features = false }
 celesta-composition = { path = "../composition" }
 celesta-editor-core = { path = "../editor-core" }

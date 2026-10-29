@@ -16,7 +16,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::{
     Bounds, Context, CursorStyle, Hsla, IntoElement, Modifiers, MouseButton, MouseDownEvent,
-    ParentElement as _, PathBuilder, PinchEvent, Pixels, Point, ScrollDelta, ScrollWheelEvent,
+    ParentElement as _, PathBuilder, PinchEvent, Pixels, Point, ScrollDelta, ScrollEvent,
     SharedString, TouchPhase, Window, canvas, div, fill, point, prelude::*, px, relative, rgb,
     size,
 };
@@ -409,7 +409,7 @@ impl EditorView {
     }
 
     /// Wheel over the ruler: vertical zooms about the pointer, horizontal pans.
-    fn ruler_wheel(&mut self, event: &ScrollWheelEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn ruler_wheel(&mut self, event: &ScrollEvent, _: &mut Window, cx: &mut Context<Self>) {
         let delta = wheel_pixels(event.delta);
         if delta.y != 0.0 {
             let anchor = self.timeline_fraction_at(event.position.x);
@@ -457,7 +457,7 @@ impl EditorView {
     /// Wheel over the clip lanes: a horizontal swipe (or Shift with the
     /// wheel) scrubs the playhead, Option pans, Ctrl/Cmd zooms, and plain
     /// vertical scrolling falls through to scroll the tracks.
-    fn lane_wheel(&mut self, event: &ScrollWheelEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn lane_wheel(&mut self, event: &ScrollEvent, _: &mut Window, cx: &mut Context<Self>) {
         if event.touch_phase == TouchPhase::Started {
             self.timeline_scrub_remainder = 0.0;
         }
@@ -650,7 +650,7 @@ impl EditorView {
                             .id("timeline-empty-lane")
                             .flex_1()
                             .mr(px(LANE_GUTTER))
-                            .on_scroll_wheel(cx.listener(Self::lane_wheel))
+                            .on_scroll(cx.listener(Self::lane_wheel))
                             .on_pinch(cx.listener(Self::lane_pinch))
                             .on_mouse_down(
                                 MouseButton::Middle,
@@ -797,7 +797,7 @@ impl EditorView {
             .mr(px(LANE_GUTTER))
             .overflow_hidden()
             .cursor(CursorStyle::ResizeLeftRight)
-            .on_scroll_wheel(cx.listener(Self::ruler_wheel))
+            .on_scroll(cx.listener(Self::ruler_wheel))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::begin_scrub))
             .on_mouse_down(MouseButton::Middle, cx.listener(Self::begin_timeline_pan))
             .when_some(range, |ruler, (start, end)| {
@@ -1048,7 +1048,7 @@ impl EditorView {
                     .h_full()
                     .mr(px(LANE_GUTTER))
                     .overflow_hidden()
-                    .on_scroll_wheel(cx.listener(Self::lane_wheel))
+                    .on_scroll(cx.listener(Self::lane_wheel))
                     .on_pinch(cx.listener(Self::lane_pinch))
                     .on_mouse_down(MouseButton::Middle, cx.listener(Self::begin_timeline_pan))
                     .children(clips),
@@ -1223,7 +1223,7 @@ impl EditorView {
                     .h_full()
                     .mr(px(LANE_GUTTER))
                     .overflow_hidden()
-                    .on_scroll_wheel(cx.listener(Self::lane_wheel))
+                    .on_scroll(cx.listener(Self::lane_wheel))
                     .on_pinch(cx.listener(Self::lane_pinch))
                     .on_mouse_down(MouseButton::Middle, cx.listener(Self::begin_timeline_pan))
                     .child(
@@ -1691,7 +1691,7 @@ impl EditorView {
                     .h_full()
                     .mr(px(LANE_GUTTER))
                     .overflow_hidden()
-                    .on_scroll_wheel(cx.listener(Self::lane_wheel))
+                    .on_scroll(cx.listener(Self::lane_wheel))
                     .on_pinch(cx.listener(Self::lane_pinch))
                     .on_mouse_down(MouseButton::Middle, cx.listener(Self::begin_timeline_pan))
                     .children(blocks)

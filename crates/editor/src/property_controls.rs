@@ -472,7 +472,7 @@ mod tests {
 
     #[test]
     fn a_field_keeps_the_plain_arrows_it_passes_on() {
-        let keeps = |key: &str| field_keeps_key(&Keystroke::parse(key).unwrap());
+        let keeps = |key: &'static str| field_keeps_key(&Keystroke::parse(key).unwrap());
         assert!(keeps("left"));
         assert!(keeps("right"));
         // The input handles these itself, or they are the editor's own.
