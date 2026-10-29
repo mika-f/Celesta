@@ -20,7 +20,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import * as path from 'node:path';
 
-import { decodeWav } from '@celesta/character';
+import { readWavHeader } from '@celesta/character';
 import type { DialogueLine } from '@celesta/character';
 
 import { lipSyncFromVoicevox } from './lipsync.js';
@@ -558,11 +558,11 @@ function versionOf(baseUrl: string, context: RunContext): Promise<string | null>
 }
 
 function wavDuration(bytes: Uint8Array): number {
-  const { sampleRate, samples } = decodeWav(bytes);
-  if (!(sampleRate > 0) || samples.length === 0) {
+  const { sampleRate, frameCount } = readWavHeader(bytes);
+  if (!(sampleRate > 0) || frameCount === 0) {
     throw new Error('it has no samples');
   }
-  return samples.length / sampleRate;
+  return frameCount / sampleRate;
 }
 
 async function writeAtomically(target: string, data: Uint8Array | string): Promise<void> {

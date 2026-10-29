@@ -54,7 +54,7 @@ interface EngineRequest {
 /** Changes the mock's answer to one request. */
 interface Answer {
   status?: number;
-  body?: string;
+  body?: string | Buffer;
   delay?: number;
 }
 
@@ -414,6 +414,12 @@ test('an unavailable engine and malformed answers are reported by stage', async 
   await assert.rejects(
     prepareNarration(script.slice(0, 1), { speakers: speakersFor(badWav), cacheDir }),
     /failed at synthesis: the engine returned audio that is not a readable WAV/,
+  );
+  const emptyWav = await mockEngine((request) => (request.path === '/synthesis' ? { body: silentWav(0) } : undefined));
+  onTestFinished(emptyWav.close);
+  await assert.rejects(
+    prepareNarration(script.slice(0, 1), { speakers: speakersFor(emptyWav), cacheDir }),
+    /failed at synthesis: the engine returned audio that is not a readable WAV \(it has no samples\)/,
   );
   assert.ok(!existsSync(cacheDir) || readdirSync(cacheDir).length === 0);
 });
