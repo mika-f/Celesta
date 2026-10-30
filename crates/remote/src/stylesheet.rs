@@ -1,5 +1,6 @@
 //! Minimal `@font-face` stylesheet reading, enough for web font services such
-//! as Google Fonts: each rule's first `src: url(...)` names one font file.
+//! as Google Fonts: each rule's `src` names one font file, picked as a browser
+//! would (CSS Fonts 4, "Font reference: the src descriptor").
 
 use std::path::Path;
 
@@ -24,8 +25,9 @@ pub struct StylesheetFontFace {
 
 /// The font faces an `@font-face` stylesheet loaded from `stylesheet`
 /// declares, in rule order. A rule contributes the first `url(...)` in its
-/// `src`, resolved against the stylesheet's own location; `local(...)` and
-/// `data:` sources are skipped.
+/// last valid `src` whose `format()` and `tech()` hints Celesta supports,
+/// resolved against the stylesheet's own location; `local(...)` and `data:`
+/// sources are skipped.
 ///
 /// Fails on the first remote reference that is not a valid URL, as a
 /// download of it would.
@@ -46,7 +48,7 @@ pub fn stylesheet_font_faces(
     Ok(faces)
 }
 
-/// `(font-family, first src url)` for each `@font-face` rule with a url.
+/// `(font-family, chosen src url)` for each `@font-face` rule with a url.
 fn font_face_rules(css: &str) -> Vec<(Option<String>, String)> {
     let css = strip_comments(css);
     let lower = css.to_ascii_lowercase();
@@ -65,8 +67,13 @@ fn font_face_rules(css: &str) -> Vec<(Option<String>, String)> {
         for (name, value) in declarations(&css[open..close]) {
             if name.eq_ignore_ascii_case("font-family") {
                 family = Some(unquote(value).to_owned()).filter(|family| !family.is_empty());
-            } else if name.eq_ignore_ascii_case("src") && source.is_none() {
-                source = first_url(value);
+            } else if name.eq_ignore_ascii_case("src") {
+                // A `src` with no supported entry is invalid, so an earlier
+                // one stays in effect; otherwise the later one wins.
+                let sources = supported_sources(value);
+                if !sources.is_empty() {
+                    source = sources.into_iter().flatten().next();
+                }
             }
         }
         rules.extend(source.map(|source| (family, source)));
@@ -95,28 +102,12 @@ fn strip_comments(css: &str) -> String {
     output
 }
 
-/// Splits a declaration block on `;` outside quotes and parentheses.
+/// Splits a declaration block into `(name, value)` declarations.
 fn declarations(block: &str) -> Vec<(&str, &str)> {
-    let mut declarations = Vec::new();
-    let mut depth = 0_u32;
-    let mut quote = None;
-    let mut start = 0;
-    for (index, character) in block.char_indices() {
-        match (quote, character) {
-            (Some(open), _) if character == open => quote = None,
-            (Some(_), _) => {}
-            (None, '"' | '\'') => quote = Some(character),
-            (None, '(') => depth += 1,
-            (None, ')') => depth = depth.saturating_sub(1),
-            (None, ';') if depth == 0 => {
-                declarations.extend(declaration(&block[start..index]));
-                start = index + 1;
-            }
-            _ => {}
-        }
-    }
-    declarations.extend(declaration(&block[start..]));
-    declarations
+    split_outside_nesting(block, ';')
+        .into_iter()
+        .filter_map(declaration)
+        .collect()
 }
 
 fn declaration(text: &str) -> Option<(&str, &str)> {
@@ -124,12 +115,118 @@ fn declaration(text: &str) -> Option<(&str, &str)> {
     Some((name.trim(), value.trim()))
 }
 
-fn first_url(value: &str) -> Option<String> {
-    let lower = value.to_ascii_lowercase();
-    let start = lower.find("url(")? + "url(".len();
-    let end = start + value[start..].find(')')?;
-    let url = unquote(&value[start..end]);
-    (!url.is_empty()).then(|| url.to_owned())
+/// Splits `text` on `separator` outside quotes and parentheses.
+fn split_outside_nesting(text: &str, separator: char) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0_u32;
+    let mut quote = None;
+    let mut start = 0;
+    for (index, character) in text.char_indices() {
+        match (quote, character) {
+            (Some(open), _) if character == open => quote = None,
+            (Some(_), _) => {}
+            (None, '"' | '\'') => quote = Some(character),
+            (None, '(') => depth += 1,
+            (None, ')') => depth = depth.saturating_sub(1),
+            (None, _) if character == separator && depth == 0 => {
+                parts.push(&text[start..index]);
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&text[start..]);
+    parts
+}
+
+/// `format()` values the renderer reads: TrueType, OpenType, WOFF, and WOFF2,
+/// plus the legacy `"*-variations"` strings, which also mean
+/// `tech(variations)`. EOT and SVG fonts are skipped, and so are collections,
+/// whose `#PostScriptName` fragment the renderer does not honour.
+const SUPPORTED_FORMATS: &[&str] = &[
+    "woff2",
+    "woff",
+    "truetype",
+    "opentype",
+    "woff2-variations",
+    "woff-variations",
+    "truetype-variations",
+    "opentype-variations",
+];
+
+/// `tech()` values the renderer handles: OpenType and AAT shaping, `wght`
+/// variations, and COLRv0 or bitmap color glyphs. COLRv1, OpenType-SVG,
+/// Graphite, palettes, and incremental loading are not.
+const SUPPORTED_TECHS: &[&str] = &[
+    "features-opentype",
+    "features-aat",
+    "variations",
+    "color-colrv0",
+    "color-sbix",
+    "color-cbdt",
+];
+
+/// The entries of a `src` value Celesta supports, in order: `Some(url)` for a
+/// `url()` and `None` for a `local()`. Entries that fail to parse or carry an
+/// unsupported `format()` or `tech()` are dropped.
+fn supported_sources(value: &str) -> Vec<Option<String>> {
+    split_outside_nesting(value, ',')
+        .into_iter()
+        .filter_map(|entry| font_source(entry.trim()))
+        .collect()
+}
+
+fn font_source(entry: &str) -> Option<Option<String>> {
+    if let Some((_, rest)) = function_argument(entry, "local") {
+        return rest.trim().is_empty().then_some(None);
+    }
+    let (url, mut rest) = function_argument(entry, "url")?;
+    if url.is_empty() {
+        return None;
+    }
+    if let Some((format, after)) = function_argument(rest.trim_start(), "format") {
+        if !SUPPORTED_FORMATS
+            .iter()
+            .any(|supported| format.eq_ignore_ascii_case(supported))
+        {
+            return None;
+        }
+        rest = after;
+    }
+    if let Some((techs, after)) = function_argument(rest.trim_start(), "tech") {
+        if !techs.split(',').all(|tech| {
+            SUPPORTED_TECHS
+                .iter()
+                .any(|supported| tech.trim().eq_ignore_ascii_case(supported))
+        }) {
+            return None;
+        }
+        rest = after;
+    }
+    rest.trim().is_empty().then(|| Some(url.to_owned()))
+}
+
+/// For `text` starting with `name(...)`, the unquoted argument and the text
+/// after the closing parenthesis.
+fn function_argument<'a>(text: &'a str, name: &str) -> Option<(&'a str, &'a str)> {
+    let open = name.len();
+    if !text.get(..open)?.eq_ignore_ascii_case(name) || !text[open..].starts_with('(') {
+        return None;
+    }
+    let mut quote = None;
+    for (index, character) in text[open + 1..].char_indices() {
+        match (quote, character) {
+            (Some(open), _) if character == open => quote = None,
+            (Some(_), _) => {}
+            (None, '"' | '\'') => quote = Some(character),
+            (None, ')') => {
+                let close = open + 1 + index;
+                return Some((unquote(&text[open + 1..close]), &text[close + 1..]));
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Where `reference` points, or `None` for a source that is skipped.
@@ -213,6 +310,58 @@ mod tests {
         );
         assert!(is_font_stylesheet(css.as_bytes()));
         assert!(!is_font_stylesheet(b"wOF2\0\0"));
+    }
+
+    #[test]
+    fn the_last_valid_src_wins() {
+        // Font Squirrel's "bulletproof" syntax: an EOT-only `src` for old IE,
+        // then the list every other browser reads.
+        let css = "@font-face { font-family: Brand;\
+              src: url('brand.eot');\
+              src: url('brand.eot?#iefix') format('embedded-opentype'),\
+                   url('brand.woff2') format('woff2'),\
+                   url('brand.woff') format('woff'),\
+                   url('brand.svg#Brand') format('svg') }\
+            @font-face { src: url(kept.woff2) format(woff2);\
+              src: url(skipped.svg#X) format(svg) }\
+            @font-face { src: url(remote.woff2);\
+              src: local(Installed), url(after-local.woff2) }\
+            @font-face { src: url(only-local.woff2); src: local('Installed') }";
+        assert_eq!(
+            locations(css, &url("https://example.com/css/fonts.css")),
+            vec![
+                url("https://example.com/css/brand.woff2"),
+                url("https://example.com/css/kept.woff2"),
+                url("https://example.com/css/after-local.woff2"),
+            ]
+        );
+    }
+
+    #[test]
+    fn picks_the_first_source_with_a_supported_format_and_tech() {
+        let css = "@font-face { src:\
+                url(a.eot) format(\"embedded-opentype\"),\
+                url(b.otc#Regular) format(collection),\
+                url(c.woff2) format(woff2) tech(color-COLRv1),\
+                url(d.woff2) format(woff2) tech(incremental),\
+                url(e.woff2) format(woff2) tech(variations, palettes),\
+                url(f.woff2) format(zebra),\
+                url(g.woff2) bogus,\
+                url(\"h (1).woff2\") FORMAT(\"woff2-variations\") tech(color-COLRv0) }\
+            @font-face { src: url(i.ttf) format(truetype) tech(features-aat, color-sbix) }\
+            @font-face { src: url(j.otf) format(opentype) tech(features-opentype, color-CBDT) }\
+            @font-face { src: url(k.woff) format('woff'), url(l.ttf) }\
+            @font-face { src: url(m.ttf) format(truetype) tech(features-graphite), url(n) }";
+        assert_eq!(
+            locations(css, &url("https://example.com/fonts.css")),
+            vec![
+                url("https://example.com/h%20(1).woff2"),
+                url("https://example.com/i.ttf"),
+                url("https://example.com/j.otf"),
+                url("https://example.com/k.woff"),
+                url("https://example.com/n"),
+            ]
+        );
     }
 
     #[test]
