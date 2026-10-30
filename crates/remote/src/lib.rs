@@ -4,7 +4,8 @@
 //!
 //! A URL is downloaded once and then served from the cache on every later
 //! run; the cache never revalidates, so changing a remote file needs a new
-//! URL (or a cleared cache). Entries are keyed by the exact URL string.
+//! URL (or a cleared cache). Entries are keyed by the URL as a browser would
+//! request it (see `normalized`).
 
 use std::fs;
 use std::hash::Hasher;
@@ -18,6 +19,7 @@ use data_url::DataUrl;
 use fnv::FnvHasher;
 use ureq::Agent;
 use ureq::tls::{RootCerts, TlsConfig};
+use url::Url;
 
 mod staged;
 mod stylesheet;
@@ -72,13 +74,14 @@ impl RemoteAssetCache {
 
     /// The cached file for `url`, without touching the network.
     pub fn cached(&self, url: &str) -> Option<PathBuf> {
-        let path = self.entry_path(url).ok()?;
+        let path = self.entry_path(&normalized(url).ok()?).ok()?;
         path.is_file().then_some(path)
     }
 
     /// Returns the cached file for `url`, downloading it first if needed. A
     /// `data:` URL (from a font stylesheet) is decoded instead.
     pub fn fetch(&self, url: &str) -> Result<PathBuf, RemoteAssetError> {
+        let url = &normalized(url)?;
         let path = self.entry_path(url)?;
         if path.is_file() {
             return Ok(path);
@@ -153,6 +156,22 @@ impl RemoteAssetCache {
             source,
         })
     }
+}
+
+/// `url` as a browser's fetch would request it: an `http(s)` URL is parsed
+/// and serialized, which lowercases the scheme and host, drops a default
+/// port, and percent-encodes what a request line cannot carry, so the same
+/// URL written two ways also shares one cache entry. Other URLs are kept.
+fn normalized(url: &str) -> Result<String, RemoteAssetError> {
+    if !is_remote_url(url) {
+        return Ok(url.to_owned());
+    }
+    Url::parse(url)
+        .map(String::from)
+        .map_err(|source| RemoteAssetError::InvalidUrl {
+            url: url.to_owned(),
+            source,
+        })
 }
 
 pub(crate) fn is_data_url(url: &str) -> bool {
@@ -343,6 +362,35 @@ mod tests {
         assert_eq!(cache.fetch(&url).unwrap(), path);
         assert_eq!(cache.cached(&url), Some(path));
         assert_eq!(hits.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn normalizes_urls_as_a_browser_fetch_does() {
+        let (base, hits) = serve("200 OK", b"remote bytes");
+        let directory = tempfile::tempdir().unwrap();
+        let cache = cache(directory.path());
+        // A raw space would not make a valid request line.
+        let path = cache.fetch(&format!("{base}/fonts/My Font.ttf")).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"remote bytes");
+        // The same URL written another way is the same entry.
+        let other = base.replacen("http://", "HTTP://", 1);
+        assert_eq!(
+            cache.cached(&format!("{other}/fonts/My%20Font.ttf")),
+            Some(path.clone())
+        );
+        assert_eq!(
+            cache
+                .fetch(&format!("{other}/fonts/My%20Font.ttf"))
+                .unwrap(),
+            path
+        );
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+
+        let error = cache.fetch("https://exa mple.com/a.ttf").unwrap_err();
+        assert!(
+            matches!(&error, RemoteAssetError::InvalidUrl { url, .. } if url == "https://exa mple.com/a.ttf"),
+            "{error}"
+        );
     }
 
     #[test]
