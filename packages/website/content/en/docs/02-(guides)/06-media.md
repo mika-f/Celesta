@@ -1,6 +1,6 @@
 `Image`, `Video`, and `Audio` read files through `src`. Relative paths start from the composition file, so keep media beside it in your project folder.
 
-`src` can also be an `http://` or `https://` URL. Native preview, export, and `preloadMedia()` download it into a local cache on first use. Later runs reuse the cached file without revalidation; use a new URL or clear the cache when its content changes.
+`src` can also be an `http://` or `https://` URL. Native preview, export, and `preloadMedia()` download it into a local cache on first use. Later runs reuse the cached file without revalidation; use a new URL or clear the cache when its content changes. As in a browser, spaces and non-ASCII characters in the URL are percent-encoded before the download.
 
 ```tsx file=examples/media.tsx title="media.tsx"
 ```
