@@ -4,6 +4,7 @@
 use std::path::Path;
 
 use celesta_composition::AssetLocation;
+use url::Url;
 
 use crate::is_remote_url;
 
@@ -133,15 +134,14 @@ fn resolve_reference(stylesheet: &AssetLocation, reference: &str) -> Option<Asse
     {
         return None;
     }
-    // A quoted `url("My Font.ttf")` may hold raw spaces, which an HTTP
-    // request line cannot carry.
-    let encoded = || reference.replace(' ', "%20");
     if is_remote_url(reference) {
-        return Some(AssetLocation::Url { url: encoded() });
+        let url = Url::parse(reference).ok()?;
+        return Some(AssetLocation::Url { url: url.into() });
     }
     match stylesheet {
         AssetLocation::Url { url } => {
-            join_url(url, &encoded()).map(|url| AssetLocation::Url { url })
+            let url = Url::parse(url).ok()?.join(reference).ok()?;
+            Some(AssetLocation::Url { url: url.into() })
         }
         AssetLocation::File { path } => {
             if reference.starts_with("//") {
@@ -157,67 +157,6 @@ fn resolve_reference(stylesheet: &AssetLocation, reference: &str) -> Option<Asse
             })
         }
     }
-}
-
-/// Resolves a relative URL reference against an absolute `http(s)` base.
-fn join_url(base: &str, reference: &str) -> Option<String> {
-    let (scheme, rest) = base.split_once("://")?;
-    if let Some(network_path) = reference.strip_prefix("//") {
-        return Some(format!("{scheme}://{network_path}"));
-    }
-    let authority_end = rest.find(['/', '?', '#']).unwrap_or(rest.len());
-    let authority = &rest[..authority_end];
-    let base_path = rest[authority_end..]
-        .split(['?', '#'])
-        .next()
-        .unwrap_or_default();
-    let base_query = rest[authority_end + base_path.len()..]
-        .split('#')
-        .next()
-        .unwrap_or_default();
-    let (reference_path, suffix) = reference
-        .find(['?', '#'])
-        .map_or((reference, ""), |index| reference.split_at(index));
-    // RFC 3986 5.2.2: a reference without a path or query keeps the base query.
-    let query = if reference_path.is_empty() && !suffix.starts_with('?') {
-        base_query
-    } else {
-        ""
-    };
-    let path = if reference_path.starts_with('/') {
-        reference_path.to_owned()
-    } else if reference_path.is_empty() {
-        base_path.to_owned()
-    } else {
-        let directory = base_path
-            .rfind('/')
-            .map_or("/", |index| &base_path[..=index]);
-        format!("{directory}{reference_path}")
-    };
-    Some(format!(
-        "{scheme}://{authority}{}{query}{suffix}",
-        remove_dot_segments(&path)
-    ))
-}
-
-fn remove_dot_segments(path: &str) -> String {
-    let mut segments: Vec<&str> = Vec::new();
-    let mut parts = path.split('/').skip(1).peekable();
-    while let Some(segment) = parts.next() {
-        let last = parts.peek().is_none();
-        match segment {
-            "." | ".." => {
-                if segment == ".." {
-                    segments.pop();
-                }
-                if last {
-                    segments.push("");
-                }
-            }
-            _ => segments.push(segment),
-        }
-    }
-    format!("/{}", segments.join("/"))
 }
 
 #[cfg(test)]
@@ -271,61 +210,107 @@ mod tests {
         );
     }
 
+    fn join(base: &str, reference: &str) -> AssetLocation {
+        resolve_reference(&url(base), reference).unwrap()
+    }
+
     #[test]
     fn resolves_references_against_the_stylesheet_url() {
         let base = "https://cdn.example.com/kit/css/fonts.css?v=2";
         assert_eq!(
-            join_url(base, "../fonts/a.woff2?v=3#iefix").unwrap(),
-            "https://cdn.example.com/kit/fonts/a.woff2?v=3#iefix"
+            join(base, "../fonts/a.woff2?v=3#iefix"),
+            url("https://cdn.example.com/kit/fonts/a.woff2?v=3#iefix")
         );
         assert_eq!(
-            join_url(base, "./b.woff").unwrap(),
-            "https://cdn.example.com/kit/css/b.woff"
+            join(base, "./b.woff"),
+            url("https://cdn.example.com/kit/css/b.woff")
         );
         assert_eq!(
-            join_url(base, "/root.ttf").unwrap(),
-            "https://cdn.example.com/root.ttf"
+            join(base, "/root.ttf"),
+            url("https://cdn.example.com/root.ttf")
         );
         assert_eq!(
-            join_url(base, "//other.example.com/c.ttf").unwrap(),
-            "https://other.example.com/c.ttf"
+            join(base, "//other.example.com/c.ttf"),
+            url("https://other.example.com/c.ttf")
         );
         assert_eq!(
-            join_url("https://example.com", "d.ttf").unwrap(),
-            "https://example.com/d.ttf"
+            join("https://example.com", "d.ttf"),
+            url("https://example.com/d.ttf")
         );
         assert_eq!(
-            join_url("https://example.com/a/b/", "../../../e.ttf").unwrap(),
-            "https://example.com/e.ttf"
+            join("https://example.com/a/b/", "../../../e.ttf"),
+            url("https://example.com/e.ttf")
         );
     }
 
     #[test]
     fn fragment_only_references_keep_the_base_query() {
         assert_eq!(
-            join_url("https://example.com/a/s.css?v=1", "#x").unwrap(),
-            "https://example.com/a/s.css?v=1#x"
-        );
-        assert_eq!(
-            join_url("https://example.com/a/s.css?v=1#f", "#x").unwrap(),
-            "https://example.com/a/s.css?v=1#x"
-        );
-        assert_eq!(
-            join_url("https://example.com/a/s.css?v=1", "?q").unwrap(),
-            "https://example.com/a/s.css?q"
+            join("https://example.com/a/s.css?v=1", "#x"),
+            url("https://example.com/a/s.css?v=1#x")
         );
     }
 
     #[test]
-    fn encodes_spaces_in_remote_references() {
-        let css = "@font-face { src: url('My Font.woff2') }\
-            @font-face { src: url(\"https://example.com/Other Font.ttf?a b\") }";
+    fn resolves_edge_case_references_like_browsers() {
+        let base = "https://cdn.example.com/kit/css/fonts.css?v=2";
+        assert_eq!(
+            join(base, "?q"),
+            url("https://cdn.example.com/kit/css/fonts.css?q")
+        );
+        assert_eq!(
+            join(base, "%2e%2e/a.ttf"),
+            url("https://cdn.example.com/kit/a.ttf")
+        );
+        assert_eq!(
+            join(base, "https:a.ttf"),
+            url("https://cdn.example.com/kit/css/a.ttf")
+        );
+        assert_eq!(
+            join(base, "a\tb.ttf"),
+            url("https://cdn.example.com/kit/css/ab.ttf")
+        );
+        assert_eq!(
+            join(base, "//EXAMPLE.org/a.ttf"),
+            url("https://example.org/a.ttf")
+        );
+    }
+
+    #[test]
+    fn absolute_references_are_normalized_too() {
+        let css = "@font-face { src: url(\"HTTPS://Example.COM/Other Font.ttf?a b\") }";
+        let expected = vec![url("https://example.com/Other%20Font.ttf?a%20b")];
         assert_eq!(
             locations(css, &url("https://example.com/css/fonts.css")),
-            vec![
-                url("https://example.com/css/My%20Font.woff2"),
-                url("https://example.com/Other%20Font.ttf?a%20b"),
-            ]
+            expected
+        );
+        let local = AssetLocation::File {
+            path: "fonts/brand.css".to_owned(),
+        };
+        assert_eq!(locations(css, &local), expected);
+    }
+
+    #[test]
+    fn joined_urls_are_normalized() {
+        assert_eq!(
+            join("HTTPS://Example.COM:443/css/s.css", "My Font.ttf"),
+            url("https://example.com/css/My%20Font.ttf")
+        );
+        assert_eq!(
+            join("https://example.com/css/s.css", "フォント.woff2"),
+            url("https://example.com/css/%E3%83%95%E3%82%A9%E3%83%B3%E3%83%88.woff2")
+        );
+        assert_eq!(
+            join("https://example.com/css/s.css", "..\\fonts\\a.ttf"),
+            url("https://example.com/fonts/a.ttf")
+        );
+        assert_eq!(
+            join("https://example.com/css/s.css", "//例え.jp/a.ttf"),
+            url("https://xn--r8jz45g.jp/a.ttf")
+        );
+        assert_eq!(
+            join("https://example.com/css/s.css", "ftp://example.com/a.ttf"),
+            url("ftp://example.com/a.ttf")
         );
     }
 
