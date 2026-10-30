@@ -288,7 +288,12 @@ fn entry_of(object: &ObjectExpression<'_>) -> Option<(String, Duration)> {
             return None;
         }
         let plain = p.kind == PropertyKind::Init && !p.method;
-        match p.key.static_name().as_deref() {
+        match p
+            .key
+            .static_name()
+            .and_then(|name| name.into_cow_str())
+            .as_deref()
+        {
             Some("id") => {
                 let Expression::StringLiteral(s) = p.value.without_parentheses() else {
                     return None;

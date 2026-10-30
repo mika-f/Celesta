@@ -313,6 +313,21 @@ fn a_literal_of_another_kind_than_received_is_an_expression() {
 }
 
 #[test]
+fn a_lone_surrogate_is_an_expression() {
+    // A Rust string cannot hold the value, so it cannot be written back.
+    for literal in ["\"\\uD800\"", "`\\uD800`"] {
+        let text = text_label(&format!("label={{{literal}}}"));
+        assert_eq!(
+            run(&text, "Text", "label", Some(string("\u{FFFD}"))),
+            EditTarget::Locked(LockReason::Expression {
+                source: literal.into()
+            }),
+            "{literal}"
+        );
+    }
+}
+
+#[test]
 fn attribute_string_with_an_entity_is_an_expression() {
     // oxc does not decode `&amp;`, so the value read is not the one received.
     let text = text_label("label=\"a &amp; b\"");
