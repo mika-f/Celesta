@@ -385,7 +385,10 @@ fn parameter_bindings(
                 let key = if property.computed {
                     None
                 } else {
-                    property.key.static_name()
+                    property
+                        .key
+                        .static_name()
+                        .and_then(|name| name.into_cow_str())
                 };
                 let (id, default) = match &property.value {
                     BindingPattern::BindingIdentifier(id) => (

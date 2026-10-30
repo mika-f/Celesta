@@ -109,9 +109,11 @@ impl StyleObject {
             .iter()
             .map(|property| {
                 let name = match property {
-                    ObjectPropertyKind::ObjectProperty(p) if !p.computed => {
-                        p.key.static_name().map(|name| name.to_string())
-                    }
+                    ObjectPropertyKind::ObjectProperty(p) if !p.computed => p
+                        .key
+                        .static_name()
+                        .and_then(|name| name.into_cow_str())
+                        .map(String::from),
                     _ => None,
                 };
                 (span_of(property.span()), name)

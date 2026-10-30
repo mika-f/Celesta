@@ -244,7 +244,7 @@ pub(crate) fn shape_of(expr: &Expression<'_>) -> Shape {
             None => other(expr),
         },
         Expression::TemplateLiteral(t) => match (t.expressions.is_empty(), t.quasis.first()) {
-            (true, Some(quasi)) if !quasi.lone_surrogates => match &quasi.value.cooked {
+            (true, Some(quasi)) => match quasi.value.cooked.and_then(|cooked| cooked.as_str()) {
                 Some(cooked) => {
                     Shape::String(span_of(t.span), cooked.to_string(), LiteralForm::Template)
                 }
@@ -351,11 +351,9 @@ fn known_easing(options: &Expression<'_>) -> bool {
 /// A string literal's value and opening quote, or `None` when the value is
 /// not exactly the written text (lone surrogates).
 pub(crate) fn string_of(s: &StringLiteral<'_>) -> Option<(String, char)> {
-    if s.lone_surrogates {
-        return None;
-    }
+    let value = s.value.as_str()?;
     let quote = s.raw.as_ref()?.chars().next()?;
-    Some((s.value.to_string(), quote))
+    Some((value.to_string(), quote))
 }
 
 pub(crate) fn span_of(span: oxc_span::Span) -> Span {

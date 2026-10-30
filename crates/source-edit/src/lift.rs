@@ -555,7 +555,7 @@ fn pattern_of(params: &FormalParameters<'_>) -> Option<Pattern> {
                     .properties
                     .iter()
                     .filter(|p| !p.computed)
-                    .filter_map(|p| p.key.static_name().map(|key| key.to_string()))
+                    .filter_map(|p| p.key.static_name()?.into_cow_str().map(String::from))
                     .collect(),
                 last_end: object.properties.last().map(|p| p.span.end),
                 rest_start: object.rest.as_ref().map(|rest| rest.span.start),
@@ -621,7 +621,8 @@ fn members(signatures: &[TSSignature<'_>]) -> Vec<Member> {
                 TSSignature::TSMethodSignature(m) if !m.computed => m.key.static_name(),
                 _ => None,
             }
-            .map(|key| key.to_string()),
+            .and_then(|key| key.into_cow_str())
+            .map(String::from),
         })
         .collect()
 }

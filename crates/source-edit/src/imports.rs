@@ -174,10 +174,12 @@ impl Module {
                         (&s.local, None, false, false)
                     }
                 };
+                // A lone surrogate is written escaped (`\ud800`), so such a source or
+                // name never equals `PACKAGE` or an export name.
                 let span = specifier.span();
                 imports.push(Import {
                     local: local.name.to_string(),
-                    source: import.source.value.to_string(),
+                    source: import.source.value.display().to_string(),
                     imported,
                     type_only: type_only || member_type,
                     member,
@@ -194,7 +196,7 @@ impl Module {
                     end: import.span.end,
                 },
                 source_start: import.source.span.start,
-                source: import.source.value.to_string(),
+                source: import.source.value.display().to_string(),
                 type_only,
             });
         }
@@ -415,7 +417,7 @@ fn export_name(name: &ModuleExportName<'_>) -> String {
     match name {
         ModuleExportName::IdentifierName(id) => id.name.to_string(),
         ModuleExportName::IdentifierReference(id) => id.name.to_string(),
-        ModuleExportName::StringLiteral(s) => s.value.to_string(),
+        ModuleExportName::StringLiteral(s) => s.value.display().to_string(),
     }
 }
 
