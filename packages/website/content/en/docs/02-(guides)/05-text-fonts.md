@@ -46,7 +46,7 @@ To use a font file that is not installed, declare it with `<Font>`. A relative `
 </Composition>
 ```
 
-`src` can also be a web font stylesheet, such as a Google Fonts CSS link. Celesta loads every font file its `@font-face` rules list, and `fontFamily` can use the stylesheet’s family name. Include every weight you use in the link: a weight the stylesheet does not provide is drawn with the nearest weight it does.
+`src` can also be a web font stylesheet, such as a Google Fonts CSS link. Celesta loads one font file for each `@font-face` rule, and `fontFamily` can use the stylesheet’s family name. Like a browser, it reads the rule’s last `src` that lists a usable file and takes the first `url()` there that is a TrueType, OpenType, WOFF, or WOFF2 font. EOT, SVG fonts, font collections, and files marked with a `tech()` Celesta cannot draw (such as COLRv1 color glyphs) are skipped. Include every weight you use in the link: a weight the stylesheet does not provide is drawn with the nearest weight it does.
 
 ```tsx title="Load a Google Fonts family"
 <Assets>
