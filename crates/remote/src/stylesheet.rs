@@ -7,7 +7,7 @@ use std::path::Path;
 use celesta_composition::AssetLocation;
 use url::Url;
 
-use crate::{RemoteAssetError, is_remote_url};
+use crate::{RemoteAssetError, is_data_url, is_remote_url};
 
 /// Whether `data` looks like a CSS stylesheet declaring `@font-face` rules.
 pub fn is_font_stylesheet(data: &[u8]) -> bool {
@@ -26,8 +26,8 @@ pub struct StylesheetFontFace {
 /// The font faces an `@font-face` stylesheet loaded from `stylesheet`
 /// declares, in rule order. A rule contributes the first `url(...)` in its
 /// last valid `src` whose `format()` and `tech()` hints Celesta supports,
-/// resolved against the stylesheet's own location; `local(...)` and `data:`
-/// sources are skipped.
+/// resolved against the stylesheet's own location; `local(...)` sources are
+/// skipped.
 ///
 /// Fails on the first remote reference that is not a valid URL, as a
 /// download of it would.
@@ -139,11 +139,15 @@ fn split_outside_nesting(text: &str, separator: char) -> Vec<&str> {
     parts
 }
 
-/// `format()` values the renderer reads: TrueType, OpenType, WOFF, and WOFF2,
-/// plus the legacy `"*-variations"` strings, which also mean
-/// `tech(variations)`. EOT and SVG fonts are skipped, and so are collections,
-/// whose `#PostScriptName` fragment the renderer does not honour.
-const SUPPORTED_FORMATS: &[&str] = &[
+/// `format()` keywords the renderer reads: TrueType, OpenType, WOFF, and
+/// WOFF2. EOT and SVG fonts are skipped, and so are collections, whose
+/// `#PostScriptName` fragment the renderer does not honour.
+const SUPPORTED_FORMATS: &[&str] = &["woff2", "woff", "truetype", "opentype"];
+
+/// `format()` strings the renderer reads: the keywords, plus the legacy
+/// `*-variations` forms, which also mean `tech(variations)` and exist only as
+/// strings.
+const SUPPORTED_FORMAT_STRINGS: &[&str] = &[
     "woff2",
     "woff",
     "truetype",
@@ -181,13 +185,20 @@ fn font_source(entry: &str) -> Option<Option<String>> {
         return rest.trim().is_empty().then_some(None);
     }
     let (url, mut rest) = function_argument(entry, "url")?;
+    let url = unquote(url);
     if url.is_empty() {
         return None;
     }
     if let Some((format, after)) = function_argument(rest.trim_start(), "format") {
-        if !SUPPORTED_FORMATS
+        let format = format.trim();
+        let supported = if format.starts_with(['"', '\'']) {
+            SUPPORTED_FORMAT_STRINGS
+        } else {
+            SUPPORTED_FORMATS
+        };
+        if !supported
             .iter()
-            .any(|supported| format.eq_ignore_ascii_case(supported))
+            .any(|supported| unquote(format).eq_ignore_ascii_case(supported))
         {
             return None;
         }
@@ -206,7 +217,7 @@ fn font_source(entry: &str) -> Option<Option<String>> {
     rest.trim().is_empty().then(|| Some(url.to_owned()))
 }
 
-/// For `text` starting with `name(...)`, the unquoted argument and the text
+/// For `text` starting with `name(...)`, the argument as written and the text
 /// after the closing parenthesis.
 fn function_argument<'a>(text: &'a str, name: &str) -> Option<(&'a str, &'a str)> {
     let open = name.len();
@@ -221,7 +232,7 @@ fn function_argument<'a>(text: &'a str, name: &str) -> Option<(&'a str, &'a str)
             (None, '"' | '\'') => quote = Some(character),
             (None, ')') => {
                 let close = open + 1 + index;
-                return Some((unquote(&text[open + 1..close]), &text[close + 1..]));
+                return Some((&text[open + 1..close], &text[close + 1..]));
             }
             _ => {}
         }
@@ -234,18 +245,13 @@ fn resolve_reference(
     stylesheet: &AssetLocation,
     reference: &str,
 ) -> Result<Option<AssetLocation>, RemoteAssetError> {
-    if reference
-        .as_bytes()
-        .get(..5)
-        .is_some_and(|scheme| scheme.eq_ignore_ascii_case(b"data:"))
-    {
-        return Ok(None);
-    }
     let invalid = |url: &str| {
         let url = url.to_owned();
         move |source| RemoteAssetError::InvalidUrl { url, source }
     };
-    if is_remote_url(reference) {
+    // A data: URL holds the font itself, which `RemoteAssetCache::fetch`
+    // decodes, as a browser's fetch would.
+    if is_remote_url(reference) || is_data_url(reference) {
         let url = Url::parse(reference).map_err(invalid(reference))?;
         return Ok(Some(AssetLocation::Url { url: url.into() }));
     }
@@ -312,62 +318,22 @@ mod tests {
         assert!(!is_font_stylesheet(b"wOF2\0\0"));
     }
 
+    /// The fixture `packages/web/test/fixtures/font-face-src/` shares with
+    /// @celesta/web's `fonts.test.mts`, so both renderers pick the same files.
     #[test]
-    fn the_last_valid_src_wins() {
-        // Font Squirrel's "bulletproof" syntax: an EOT-only `src` for old IE,
-        // then the list every other browser reads.
-        let css = "@font-face { font-family: Brand;\
-              src: url('brand.eot');\
-              src: url('brand.eot?#iefix') format('embedded-opentype'),\
-                   url('brand.woff2') format('woff2'),\
-                   url('brand.woff') format('woff'),\
-                   url('brand.svg#Brand') format('svg') }\
-            @font-face { src: url(kept.woff2) format(woff2);\
-              src: url(skipped.svg#X) format(svg) }\
-            @font-face { src: url(remote.woff2);\
-              src: local(Installed), url(after-local.woff2) }\
-            @font-face { src: url(only-local.woff2); src: local('Installed') }";
+    fn picks_the_same_sources_as_the_web_renderer() {
+        let css = include_str!("../../../packages/web/test/fixtures/font-face-src/stylesheet.css");
+        let expected =
+            include_str!("../../../packages/web/test/fixtures/font-face-src/expected.txt");
         assert_eq!(
-            locations(css, &url("https://example.com/css/fonts.css")),
-            vec![
-                url("https://example.com/css/brand.woff2"),
-                url("https://example.com/css/kept.woff2"),
-                url("https://example.com/css/after-local.woff2"),
-            ]
+            locations(css, &url("https://fonts.test/css/faces.css")),
+            expected.lines().map(url).collect::<Vec<_>>()
         );
     }
 
     #[test]
-    fn picks_the_first_source_with_a_supported_format_and_tech() {
-        let css = "@font-face { src:\
-                url(a.eot) format(\"embedded-opentype\"),\
-                url(b.otc#Regular) format(collection),\
-                url(c.woff2) format(woff2) tech(color-COLRv1),\
-                url(d.woff2) format(woff2) tech(incremental),\
-                url(e.woff2) format(woff2) tech(variations, palettes),\
-                url(f.woff2) format(zebra),\
-                url(g.woff2) bogus,\
-                url(\"h (1).woff2\") FORMAT(\"woff2-variations\") tech(color-COLRv0) }\
-            @font-face { src: url(i.ttf) format(truetype) tech(features-aat, color-sbix) }\
-            @font-face { src: url(j.otf) format(opentype) tech(features-opentype, color-CBDT) }\
-            @font-face { src: url(k.woff) format('woff'), url(l.ttf) }\
-            @font-face { src: url(m.ttf) format(truetype) tech(features-graphite), url(n) }";
-        assert_eq!(
-            locations(css, &url("https://example.com/fonts.css")),
-            vec![
-                url("https://example.com/h%20(1).woff2"),
-                url("https://example.com/i.ttf"),
-                url("https://example.com/j.otf"),
-                url("https://example.com/k.woff"),
-                url("https://example.com/n"),
-            ]
-        );
-    }
-
-    #[test]
-    fn skips_comments_data_urls_and_duplicates() {
+    fn skips_comments_and_duplicates() {
         let css = "/* @font-face { src: url(commented.ttf) } */\
-            @font-face { src: url(data:font/woff2;base64,AAAA) }\
             @font-face { src: url(a.ttf) }\
             @font-face { src: url('a.ttf') }\
             @font-face { font-family: NoSource }";

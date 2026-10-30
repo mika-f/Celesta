@@ -1,0 +1,14 @@
+https://fonts.test/css/webfont.woff2
+https://fonts.test/css/hint.woff2
+https://fonts.test/css/legacy.woff2
+https://fonts.test/css/brace.woff2
+https://fonts.test/css/kept.woff2
+https://fonts.test/css/after-local.woff2
+https://fonts.test/css/h%20(1).woff2
+https://fonts.test/css/i.ttf
+https://fonts.test/css/j.otf
+https://fonts.test/css/k.woff
+https://fonts.test/css/n
+https://fonts.test/css/s.woff2
+https://fonts.test/css/q.woff2
+data:font/woff2;base64,d09GMg==

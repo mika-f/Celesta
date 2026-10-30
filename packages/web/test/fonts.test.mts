@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { onTestFinished, test, vi } from 'vitest';
 import { loadFonts, loadedFamilies, requireLoadedFonts, resetFonts } from '../src/fonts';
 import type { Asset } from '../src/types';
@@ -125,34 +126,11 @@ test('a stylesheet face loads the file the native renderer picks from its last v
     constructor(readonly family: string, readonly source: string | ArrayBuffer) {}
     async load() { return this; }
   });
-  // The same rules as `the_last_valid_src_wins` and
-  // `picks_the_first_source_with_a_supported_format_and_tech` in
-  // crates/remote/src/stylesheet.rs.
-  const css = `
-    @font-face { font-family: Brand;
-      src: url('brand.eot');
-      src: url('brand.eot?#iefix') format('embedded-opentype'),
-           url('brand.woff2') format('woff2'),
-           url('brand.woff') format('woff'),
-           url('brand.svg#Brand') format('svg') }
-    @font-face { font-family: A; src: url(kept.woff2) format(woff2);
-      src: url(skipped.svg#X) format(svg) }
-    @font-face { font-family: B; src: url(remote.woff2);
-      src: local(Installed), url(after-local.woff2) }
-    @font-face { font-family: C; src:
-      url(a.eot) format("embedded-opentype"),
-      url(b.otc#Regular) format(collection),
-      url(c.woff2) format(woff2) tech(color-COLRv1),
-      url(d.woff2) format(woff2) tech(incremental),
-      url(e.woff2) format(woff2) tech(variations, palettes),
-      url(f.woff2) format(zebra),
-      url(g.woff2) bogus,
-      url("h (1).woff2") FORMAT("woff2-variations") tech(color-COLRv0) }
-    @font-face { font-family: D; src: url(i.ttf) format(truetype) tech(features-aat, color-sbix) }
-    @font-face { font-family: E; src: url(j.otf) format(opentype) tech(features-opentype, color-CBDT) }
-    @font-face { font-family: F; src: url(k.woff) format('woff'), url(l.ttf) }
-    @font-face { font-family: G; src: url(m.ttf) format(truetype) tech(features-graphite), url(n) }
-    @font-face { font-family: H; src: url(only-local.woff2); src: local('Installed') }`;
+  // Shared with `picks_the_same_sources_as_the_web_renderer` in
+  // crates/remote/src/stylesheet.rs, so both renderers pick the same files.
+  const fixtures = new URL('./fixtures/font-face-src/', import.meta.url);
+  const css = readFileSync(new URL('stylesheet.css', fixtures), 'utf8');
+  const expected = readFileSync(new URL('expected.txt', fixtures), 'utf8').trimEnd().split('\n');
   globalThis.fetch = fetchStub(async url => {
     fetched.push(url);
     return url.endsWith('.css')
@@ -161,18 +139,9 @@ test('a stylesheet face loads the file the native renderer picks from its last v
   });
   const font: Asset = { id: 'faces', location: { type: 'url', url: 'https://fonts.test/css/faces.css' } };
   await loadFonts([font], urlOf);
-  assert.deepEqual(fetched.slice(1).sort(), [
-    'https://fonts.test/css/after-local.woff2',
-    'https://fonts.test/css/brand.woff2',
-    'https://fonts.test/css/h%20(1).woff2',
-    'https://fonts.test/css/i.ttf',
-    'https://fonts.test/css/j.otf',
-    'https://fonts.test/css/k.woff',
-    'https://fonts.test/css/kept.woff2',
-    'https://fonts.test/css/n',
-  ]);
+  assert.deepEqual(fetched.slice(1), expected);
   // A last src of only local() faces goes to FontFace as written.
-  assert.deepEqual([...faces].filter(face => face.family === 'H').map(face => face.source), ["local('Installed')"]);
+  assert.deepEqual([...faces].filter(face => face.family === 'OnlyLocal').map(face => face.source), ["local('Installed')"]);
 });
 
 test('loadedFamilies lists the families of each font in list order', async () => {

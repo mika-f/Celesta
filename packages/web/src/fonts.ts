@@ -12,15 +12,24 @@ const faceSources = new WeakMap<FontFace, { bytes: ArrayBuffer; descriptors: Fon
 const featureFaces = new Map<string, FontFace[]>();
 
 /**
- * `format()` and `tech()` values the native renderer reads, so both renderers
- * load the same file from a font stylesheet. Keep in step with
- * `SUPPORTED_FORMATS` and `SUPPORTED_TECHS` in crates/remote/src/stylesheet.rs.
+ * `format()` keywords and strings, and `tech()` values, the native renderer
+ * reads, so both renderers load the same file from a font stylesheet. Keep in
+ * step with `SUPPORTED_FORMATS`, `SUPPORTED_FORMAT_STRINGS`, and
+ * `SUPPORTED_TECHS` in crates/remote/src/stylesheet.rs; the shared fixture in
+ * test/fixtures/font-face-src/ checks both.
  */
-const supportedFormats = new Set([
-  'woff2', 'woff', 'truetype', 'opentype',
-  'woff2-variations', 'woff-variations', 'truetype-variations', 'opentype-variations',
-]);
+const supportedFormats = new Set(['woff2', 'woff', 'truetype', 'opentype']);
+const supportedFormatStrings = new Set([...supportedFormats, 'woff2-variations', 'woff-variations', 'truetype-variations', 'opentype-variations']);
 const supportedTechs = new Set(['features-opentype', 'features-aat', 'variations', 'color-colrv0', 'color-sbix', 'color-cbdt']);
+
+/** `css` without its comments. */
+function stripComments(css: string): string {
+  return css.replace(/\/\*[\s\S]*?(?:\*\/|$)/g, '');
+}
+
+function unquote(value: string): string {
+  return value.trim().replace(/^['"]|['"]$/g, '').trim();
+}
 
 /** Splits `text` on `separator` outside quotes and parentheses. */
 function splitOutsideNesting(text: string, separator: string): string[] {
@@ -38,7 +47,7 @@ function splitOutsideNesting(text: string, separator: string): string[] {
   return parts;
 }
 
-/** For `text` starting with `name(...)`, the unquoted argument and the text after it. */
+/** For `text` starting with `name(...)`, the argument as written and the text after it. */
 function functionArgument(text: string, name: string): [string, string] | undefined {
   if (text.slice(0, name.length + 1).toLowerCase() !== `${name}(`) return undefined;
   let quote: string | undefined;
@@ -46,7 +55,7 @@ function functionArgument(text: string, name: string): [string, string] | undefi
     const char = text[index];
     if (quote) { if (char === quote) quote = undefined; }
     else if (char === '"' || char === "'") quote = char;
-    else if (char === ')') return [text.slice(name.length + 1, index).trim().replace(/^['"]|['"]$/g, '').trim(), text.slice(index + 1)];
+    else if (char === ')') return [text.slice(name.length + 1, index), text.slice(index + 1)];
   }
   return undefined;
 }
@@ -62,11 +71,14 @@ function supportedSources(value: string): (string | null)[] {
     const local = functionArgument(entry, 'local');
     if (local) return local[1].trim() ? [] : [null];
     const url = functionArgument(entry, 'url');
-    if (!url?.[0]) return [];
+    const location = url && unquote(url[0]);
+    if (!url || !location) return [];
     let rest = url[1];
     const format = functionArgument(rest.trimStart(), 'format');
     if (format) {
-      if (!supportedFormats.has(format[0].toLowerCase())) return [];
+      // The `*-variations` forms exist only as strings.
+      const supported = /^\s*['"]/.test(format[0]) ? supportedFormatStrings : supportedFormats;
+      if (!supported.has(unquote(format[0]).toLowerCase())) return [];
       rest = format[1];
     }
     const tech = functionArgument(rest.trimStart(), 'tech');
@@ -74,7 +86,7 @@ function supportedSources(value: string): (string | null)[] {
       if (!tech[0].split(',').every(value => supportedTechs.has(value.trim().toLowerCase()))) return [];
       rest = tech[1];
     }
-    return rest.trim() ? [] : [url[0]];
+    return rest.trim() ? [] : [location];
   });
 }
 
@@ -229,7 +241,9 @@ export function loadFonts(assets: Asset[], resolve: (asset: Asset) => string): P
           }
           if (!response.ok) throw new Error(`Could not load font: ${url} (${response.status}).`);
           if (response.headers.get('content-type')?.includes('text/css') || /fonts\.googleapis\.com|\.css(?:\?|$)/.test(url)) {
-            const css = await response.text();
+            // As the native renderer reads it: comments may hold `}`, `;`,
+            // or quotes that would cut the blocks and declarations short.
+            const css = stripComments(await response.text());
             const blocks = Array.from(css.matchAll(/@font-face\s*\{([^}]+)\}/g));
             if (!blocks.length) throw new Error(`No font faces in CSS: ${url}`);
             await Promise.all(blocks.map(async ([, block]) => {

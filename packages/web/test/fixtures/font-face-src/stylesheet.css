@@ -1,0 +1,49 @@
+/*
+ * Which file each @font-face rule loads, for both renderers: the native
+ * `stylesheet_font_faces` (crates/remote/src/stylesheet.rs) and the web
+ * `loadFonts` (packages/web/src/fonts.ts) read this file, resolved against
+ * https://fonts.test/css/faces.css, and expect the files in expected.txt.
+ */
+
+/* CSS-Tricks' "bulletproof" syntax, comments included. */
+@font-face {
+  font-family: 'MyWebFont';
+  src: url('webfont.eot'); /* IE9 Compat Modes */
+  src: url('webfont.eot?#iefix') format('embedded-opentype'), /* IE6-IE8 */
+       url('webfont.woff2') format('woff2'), /* Super Modern Browsers */
+       url('webfont.woff') format('woff'), /* Pretty Modern Browsers */
+       url('webfont.ttf')  format('truetype'), /* Safari, Android, iOS */
+       url('webfont.svg#svgFontName') format('svg'); /* Legacy iOS */
+}
+
+/* Comments inside a declaration, before one, and holding `}` or a quote. */
+@font-face { font-family: Hint; src: url(hint.woff2) /* x */ format(woff2) /* y */ }
+@font-face { font-family: Legacy; /* old */ src: url(legacy.woff2) }
+@font-face { font-family: Brace /* Brand's } */; src: /* modern */ url(brace.woff2) }
+
+/* The last valid `src` wins; one with no supported entry is invalid. */
+@font-face { font-family: Kept; src: url(kept.woff2) format(woff2); src: url(skipped.svg#X) format(svg) }
+@font-face { font-family: AfterLocal; src: url(remote.woff2); src: local(Installed), url(after-local.woff2) }
+@font-face { font-family: OnlyLocal; src: url(only-local.woff2); src: local('Installed') }
+
+/* The first entry with a supported format() and tech(). */
+@font-face { font-family: Formats; src:
+  url(a.eot) format("embedded-opentype"),
+  url(b.otc#Regular) format(collection),
+  url(c.woff2) format(woff2) tech(color-COLRv1),
+  url(d.woff2) format(woff2) tech(incremental),
+  url(e.woff2) format(woff2) tech(variations, palettes),
+  url(f.woff2) format(zebra),
+  url(g.woff2) bogus,
+  url("h (1).woff2") FORMAT("woff2-variations") tech(color-COLRv0) }
+@font-face { font-family: Aat; src: url(i.ttf) format(truetype) tech(features-aat, color-sbix) }
+@font-face { font-family: OpenType; src: url(j.otf) format(opentype) tech(features-opentype, color-CBDT) }
+@font-face { font-family: Woff; src: url(k.woff) format('woff'), url(l.ttf) }
+@font-face { font-family: NoHint; src: url(m.ttf) format(truetype) tech(features-graphite), url(n) }
+
+/* `*-variations` is only a string; unquoted, it is not a format. */
+@font-face { font-family: Unquoted; src: url(v.woff2) format(woff2-variations), url(s.woff2) format(woff2) }
+@font-face { font-family: Quoted; src: url(q.woff2) format('WOFF2-VARIATIONS') }
+
+/* A data: URL is a file like any other. */
+@font-face { font-family: Inline; src: url(data:font/woff2;base64,d09GMg==) format(woff2), url(after-data.woff2) }
