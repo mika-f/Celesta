@@ -65,10 +65,12 @@ renderer uses the same lists, so both load the same file.
   `font-palette`, so `palettes` is unsupported.
 - **Loading:** files are downloaded whole, so `incremental` is unsupported.
 
-Supported formats: `woff2`, `woff`, `truetype`, `opentype`, and the four
-`*-variations` strings. Supported techs: `features-opentype`,
-`features-aat`, `variations`, `color-COLRv0`, `color-sbix`, `color-CBDT`.
-Keywords and strings both match, ignoring ASCII case.
+Supported formats are `woff2`, `woff`, `truetype`, and `opentype`, written as
+keywords or as strings. The four `*-variations` forms are accepted only as
+strings, because CSS Fonts 4 defines them only as strings; Chrome 152 drops an
+unquoted `format(woff2-variations)` entry. Supported techs are
+`features-opentype`, `features-aat`, `variations`, `color-COLRv0`,
+`color-sbix`, and `color-CBDT`. Matching ignores ASCII case.
 
 ## Implementation
 
@@ -83,6 +85,23 @@ Keywords and strings both match, ignoring ASCII case.
   `src` declaration in the block. When the winning `src` has only `local()`
   entries, its text still goes to `FontFace`, as before. The format and tech
   lists sit next to a note naming their Rust counterparts.
+- Comments: web now strips CSS comments before reading the stylesheet, as
+  native always did (`strip_comments`). Before this, a declaration that
+  started after a comment was invisible to web. CSS-Tricks' bulletproof
+  snippet, which puts `/* IE9 Compat Modes */` after the first `src`,
+  therefore still loaded the EOT on web while native loaded the WOFF2.
+- `data:` sources: web fetches them, and `fetch` decodes `data:` URLs.
+  Native used to skip a chosen `data:` source, which dropped the face. Now
+  `resolve_reference` keeps it as an `AssetLocation::Url`, and
+  `RemoteAssetCache::fetch` decodes it into the cache with the `data-url`
+  crate. That crate implements the WHATWG data: URL processor and was
+  already built through `resvg`/`usvg`. An invalid `data:` URL fails with
+  `RemoteAssetError::InvalidData`; its message shortens the URL to 64
+  characters.
+- Shared fixture: `packages/web/test/fixtures/font-face-src/stylesheet.css`
+  and `expected.txt` list the rules and the file each one loads. The Rust
+  test `picks_the_same_sources_as_the_web_renderer` (via `include_str!`) and
+  the web test both read them, so one list of cases covers both parsers.
 
 The user guide's "Text and fonts" page (`en` and `ja`) and the Agent Skill's
 `react-core.md` now say which file a stylesheet rule loads.
@@ -93,24 +112,26 @@ The user guide's "Text and fonts" page (`en` and `ja`) and the Agent Skill's
   when a file fails to download or decode. Celesta loads only the chosen
   entry. An entry without `format()` that turns out to be unreadable still
   fails, as before.
-- **`data:` URLs.** Native skips a chosen `data:` source, and web loads it.
-  That difference predates this change.
+- **CSS escapes.** Neither parser handles escapes such as `url(font\).woff2)`.
+  Before this change both requested a wrong URL. Now both drop the entry.
+  Font URLs with escapes are rare.
 - **Per-face failures.** Native fails the whole stylesheet when one face does
   not load. Web warns and keeps the other faces, unless the stylesheet is
   from Google Fonts. That difference predates this change.
 
 ## Checks
 
-- `cargo test -p celesta-remote`: 22 passed. The new tests
-  `the_last_valid_src_wins` and
-  `picks_the_first_source_with_a_supported_format_and_tech` failed before
-  the change.
-- `cargo clippy -p celesta-remote --all-targets -- -D warnings` and
-  `cargo fmt --all -- --check` passed.
-- `pnpm run build:runtime`, which generates `packages/react/src/generated/`,
-  then `pnpm --dir packages/web test`: typecheck passed, and 150 tests
-  passed. The new test,
-  `a stylesheet face loads the file the native renderer picks from its last
-  valid src`, uses the same rules as the two Rust tests. It failed before the
-  change: web fetched `brand.eot`, `c.woff2` (COLRv1), `m.ttf` (Graphite),
-  and `remote.woff2`.
+- `cargo test -p celesta-remote`: 23 passed. The fixture test and
+  `decodes_data_urls_into_the_cache` are new.
+  - Before the source-selection change, native picked the first `src`.
+  - Before the review fixes, it still picked the unquoted
+    `*-variations` entry and dropped the `data:` face.
+- `cargo clippy -p celesta-remote -p celesta-renderer --all-targets -- -D warnings`
+  and `cargo fmt --all -- --check` passed.
+- `pnpm --dir packages/web test`: typecheck passed and 150 tests passed. Run
+  `pnpm run build:runtime` first, because it generates
+  `packages/react/src/generated/`.
+  - The new fixture test, `a stylesheet face loads the file the native
+    renderer picks from its last valid src`, failed before the review fixes:
+    web fetched `webfont.eot`, skipped the three comment rules, and took the
+    unquoted `v.woff2`.
