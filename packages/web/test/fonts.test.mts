@@ -119,9 +119,10 @@ test('a stylesheet face loads the file the native renderer picks from its last v
   const fetched: string[] = [];
   const originals = { fetch: globalThis.fetch, FontFace: globalThis.FontFace, fonts: scope.fonts };
   onTestFinished(() => { resetFonts(); Object.assign(globalThis, originals); });
-  scope.fonts = new Set();
+  const faces = new Set<{ family: string; source: string | ArrayBuffer }>();
+  scope.fonts = faces;
   globalThis.FontFace = standIn<typeof FontFace>(class {
-    constructor(readonly family: string) {}
+    constructor(readonly family: string, readonly source: string | ArrayBuffer) {}
     async load() { return this; }
   });
   // The same rules as `the_last_valid_src_wins` and
@@ -150,7 +151,8 @@ test('a stylesheet face loads the file the native renderer picks from its last v
     @font-face { font-family: D; src: url(i.ttf) format(truetype) tech(features-aat, color-sbix) }
     @font-face { font-family: E; src: url(j.otf) format(opentype) tech(features-opentype, color-CBDT) }
     @font-face { font-family: F; src: url(k.woff) format('woff'), url(l.ttf) }
-    @font-face { font-family: G; src: url(m.ttf) format(truetype) tech(features-graphite), url(n) }`;
+    @font-face { font-family: G; src: url(m.ttf) format(truetype) tech(features-graphite), url(n) }
+    @font-face { font-family: H; src: url(only-local.woff2); src: local('Installed') }`;
   globalThis.fetch = fetchStub(async url => {
     fetched.push(url);
     return url.endsWith('.css')
@@ -169,6 +171,8 @@ test('a stylesheet face loads the file the native renderer picks from its last v
     'https://fonts.test/css/kept.woff2',
     'https://fonts.test/css/n',
   ]);
+  // A last src of only local() faces goes to FontFace as written.
+  assert.deepEqual([...faces].filter(face => face.family === 'H').map(face => face.source), ["local('Installed')"]);
 });
 
 test('loadedFamilies lists the families of each font in list order', async () => {
