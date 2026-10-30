@@ -134,6 +134,11 @@ impl RemoteAssetCache {
 pub enum RemoteAssetError {
     #[error("`{url}` is not an http or https URL")]
     UnsupportedScheme { url: String },
+    #[error("`{url}` is not a valid URL: {source}")]
+    InvalidUrl {
+        url: String,
+        source: url::ParseError,
+    },
     #[error("{}", request_message(.url, .source))]
     Request {
         url: String,
@@ -344,7 +349,8 @@ mod tests {
         let location = AssetLocation::Url { url: url.clone() };
         let online = cache(directory.path());
         let stylesheet = online.fetch(&url).unwrap();
-        let faces = stylesheet_font_faces(&fs::read_to_string(&stylesheet).unwrap(), &location);
+        let faces =
+            stylesheet_font_faces(&fs::read_to_string(&stylesheet).unwrap(), &location).unwrap();
         assert_eq!(faces.len(), 2);
         let paths: Vec<_> = faces
             .iter()

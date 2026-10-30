@@ -6,7 +6,7 @@ use std::path::Path;
 use celesta_composition::AssetLocation;
 use url::Url;
 
-use crate::is_remote_url;
+use crate::{RemoteAssetError, is_remote_url};
 
 /// Whether `data` looks like a CSS stylesheet declaring `@font-face` rules.
 pub fn is_font_stylesheet(data: &[u8]) -> bool {
@@ -26,10 +26,16 @@ pub struct StylesheetFontFace {
 /// declares, in rule order. A rule contributes the first `url(...)` in its
 /// `src`, resolved against the stylesheet's own location; `local(...)` and
 /// `data:` sources are skipped.
-pub fn stylesheet_font_faces(css: &str, stylesheet: &AssetLocation) -> Vec<StylesheetFontFace> {
+///
+/// Fails on the first remote reference that is not a valid URL, as a
+/// download of it would.
+pub fn stylesheet_font_faces(
+    css: &str,
+    stylesheet: &AssetLocation,
+) -> Result<Vec<StylesheetFontFace>, RemoteAssetError> {
     let mut faces = Vec::new();
     for (family, reference) in font_face_rules(css) {
-        let Some(location) = resolve_reference(stylesheet, &reference) else {
+        let Some(location) = resolve_reference(stylesheet, &reference)? else {
             continue;
         };
         let face = StylesheetFontFace { family, location };
@@ -37,7 +43,7 @@ pub fn stylesheet_font_faces(css: &str, stylesheet: &AssetLocation) -> Vec<Style
             faces.push(face);
         }
     }
-    faces
+    Ok(faces)
 }
 
 /// `(font-family, first src url)` for each `@font-face` rule with a url.
@@ -126,35 +132,46 @@ fn first_url(value: &str) -> Option<String> {
     (!url.is_empty()).then(|| url.to_owned())
 }
 
-fn resolve_reference(stylesheet: &AssetLocation, reference: &str) -> Option<AssetLocation> {
+/// Where `reference` points, or `None` for a source that is skipped.
+fn resolve_reference(
+    stylesheet: &AssetLocation,
+    reference: &str,
+) -> Result<Option<AssetLocation>, RemoteAssetError> {
     if reference
         .as_bytes()
         .get(..5)
         .is_some_and(|scheme| scheme.eq_ignore_ascii_case(b"data:"))
     {
-        return None;
+        return Ok(None);
     }
+    let invalid = |url: &str| {
+        let url = url.to_owned();
+        move |source| RemoteAssetError::InvalidUrl { url, source }
+    };
     if is_remote_url(reference) {
-        let url = Url::parse(reference).ok()?;
-        return Some(AssetLocation::Url { url: url.into() });
+        let url = Url::parse(reference).map_err(invalid(reference))?;
+        return Ok(Some(AssetLocation::Url { url: url.into() }));
     }
     match stylesheet {
         AssetLocation::Url { url } => {
-            let url = Url::parse(url).ok()?.join(reference).ok()?;
-            Some(AssetLocation::Url { url: url.into() })
+            let url = Url::parse(url)
+                .map_err(invalid(url))?
+                .join(reference)
+                .map_err(invalid(reference))?;
+            Ok(Some(AssetLocation::Url { url: url.into() }))
         }
         AssetLocation::File { path } => {
             if reference.starts_with("//") {
-                return None;
+                return Ok(None);
             }
             let reference = reference.split(['?', '#']).next().unwrap_or_default();
             let joined = Path::new(path)
                 .parent()
                 .unwrap_or_else(|| Path::new(""))
                 .join(reference);
-            Some(AssetLocation::File {
+            Ok(Some(AssetLocation::File {
                 path: joined.to_string_lossy().into_owned(),
-            })
+            }))
         }
     }
 }
@@ -171,6 +188,7 @@ mod tests {
 
     fn locations(css: &str, stylesheet: &AssetLocation) -> Vec<AssetLocation> {
         stylesheet_font_faces(css, stylesheet)
+            .unwrap()
             .into_iter()
             .map(|face| face.location)
             .collect()
@@ -181,7 +199,7 @@ mod tests {
         let css = "/* latin */\n@font-face {\n  font-family: 'M PLUS Rounded 1c';\n  font-style: normal;\n  font-weight: 700;\n  src: url(https://fonts.gstatic.com/s/a/v22/bold.ttf) format('truetype');\n}\n@FONT-FACE{font-weight:400;src:local('X'),url(\"regular.woff2\") format(\"woff2\"),url(regular.woff) format('woff')}\n";
         let stylesheet = url("https://fonts.example.com/css2?family=A");
         assert_eq!(
-            stylesheet_font_faces(css, &stylesheet),
+            stylesheet_font_faces(css, &stylesheet).unwrap(),
             vec![
                 StylesheetFontFace {
                     family: Some("M PLUS Rounded 1c".to_owned()),
@@ -211,7 +229,23 @@ mod tests {
     }
 
     fn join(base: &str, reference: &str) -> AssetLocation {
-        resolve_reference(&url(base), reference).unwrap()
+        resolve_reference(&url(base), reference).unwrap().unwrap()
+    }
+
+    #[test]
+    fn references_that_are_not_urls_are_errors() {
+        let base = url("https://example.com/css/fonts.css");
+        for reference in ["https://exa mple.com/a.ttf", "//exa mple.com/a.ttf"] {
+            let css = format!(
+                "@font-face {{ src: url(a.woff2) }} @font-face {{ src: url('{reference}') }}"
+            );
+            let error = stylesheet_font_faces(&css, &base).unwrap_err();
+            assert!(
+                matches!(&error, RemoteAssetError::InvalidUrl { url, .. } if url == reference),
+                "{error:?}"
+            );
+            assert!(error.to_string().contains(reference), "{error}");
+        }
     }
 
     #[test]
