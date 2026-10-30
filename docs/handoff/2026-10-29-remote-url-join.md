@@ -8,11 +8,14 @@ the stylesheet's own URL. That resolution used a hand-written `join_url` and
 `remove_dot_segments`. It now calls `url::Url::parse(base)?.join(reference)`,
 and both helpers are gone. `celesta-remote` depends on `url` 2.5.8 directly.
 
+An absolute `http(s)` reference used to keep its exact string. It is now parsed
+with `url::Url::parse`, so it gets the same encoding and normalization as a
+joined one. This applies to stylesheets loaded from a URL and from a local
+file. Google Fonts stylesheets name lowercase ASCII `fonts.gstatic.com` URLs,
+so their strings do not change.
+
 Unchanged paths:
 
-- An absolute `http(s)` reference skips the join and keeps its exact string.
-  Google Fonts stylesheets name absolute `fonts.gstatic.com` URLs, so they never
-  reach the join and see no change.
 - `data:` references are still skipped.
 - A stylesheet loaded from a local file still resolves references against its
   folder with `Path::join`.
@@ -105,16 +108,27 @@ properties crates with their data crates, and their support crates
 `potential_utf`, `utf8_iter`, `stable_deref_trait`, `displaydoc`,
 `synstructure`, and three derive crates).
 
-The alternative keeps the 50 hand-written lines and fixes the fragment-only case
-there. It would also leave the other differences above as they are. This change
-takes `url`, because it fixes the unsendable and wrong URLs in the table, and
-the editor already ships the same crates.
+## Alternative considered
+
+Keeping the hand-written resolver was tried: fix the fragment-only case there,
+and replace raw spaces with `%20`. Replacing one character is not enough.
+`http::Uri` 1.5.0 also rejects every ASCII control character, `<`, `>`, a
+backtick, and DEL in a path. A complete fix would need a defined
+percent-encode set, which is what `url` already implements. Such a fix would
+still differ from browsers on `%2e%2e`, backslashes, tabs, and IDN hosts.
+This change takes `url` for that reason. The editor already ships the same
+crates.
+
+Pinning `idna_adapter` to `~1.0` would drop the ICU4X crates, but
+`Cargo.lock` is shared by the workspace, so it would also turn off IDN support
+in the editor's `gpui` dependency.
 
 ## Checks
 
-- `cargo test -p celesta-remote`: 19 passed. The tests added here are
+- `cargo test -p celesta-remote`: 20 passed. The tests added here are
   `fragment_only_references_keep_the_base_query`,
-  `resolves_edge_case_references_like_browsers`, and
+  `resolves_edge_case_references_like_browsers`,
+  `absolute_references_are_normalized_too`, and
   `joined_urls_are_normalized`.
 - `cargo clippy -p celesta-remote --all-targets -- -D warnings` passed.
 - `cargo fmt --all -- --check` passed.
