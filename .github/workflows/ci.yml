@@ -107,7 +107,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # After rust-cache, which restores ~/.cargo/bin, where it installs.
-      - uses: taiki-e/install-action@v2.87.31
+      - uses: taiki-e/install-action@v2.88.0
         with:
           tool: nextest@0.9.146
 
