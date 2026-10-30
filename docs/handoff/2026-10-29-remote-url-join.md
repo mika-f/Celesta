@@ -14,6 +14,20 @@ joined one. This applies to stylesheets loaded from a URL and from a local
 file. Google Fonts stylesheets name lowercase ASCII `fonts.gstatic.com` URLs,
 so their strings do not change.
 
+A reference that `Url::parse` or `Url::join` rejects is an error.
+`stylesheet_font_faces` returns `RemoteAssetError::InvalidUrl`, which names the
+reference, and the renderer reports it for the font asset as it would a failed
+download. Before this change such a reference was dropped silently. A
+stylesheet then lost that face without a message. If it was the only face, the
+renderer reported the misleading "the stylesheet has no @font-face url()".
+
+Every reference that fails here would also have failed to load before:
+- `http::Uri`, which ureq uses, rejected most of them, for example a host with
+  a space, `<`, or `|`.
+- The rest named hosts that cannot resolve, such as `300.1.1.1` or `[zz]`.
+
+What changes is that the error now says which URL is wrong.
+
 Unchanged paths:
 
 - `data:` references are still skipped.
@@ -125,10 +139,11 @@ in the editor's `gpui` dependency.
 
 ## Checks
 
-- `cargo test -p celesta-remote`: 20 passed. The tests added here are
+- `cargo test -p celesta-remote`: 21 passed. The tests added here are
   `fragment_only_references_keep_the_base_query`,
   `resolves_edge_case_references_like_browsers`,
-  `absolute_references_are_normalized_too`, and
-  `joined_urls_are_normalized`.
+  `absolute_references_are_normalized_too`,
+  `joined_urls_are_normalized`, and
+  `references_that_are_not_urls_are_errors`.
 - `cargo clippy -p celesta-remote --all-targets -- -D warnings` passed.
 - `cargo fmt --all -- --check` passed.
