@@ -148,6 +148,15 @@
       ],
       "groupName": "fframes",
       "separateMajorMinor": false
+    },
+    {
+      "description": "remotion and @remotion/* are released together from remotion-dev/remotion, and Remotion expects every package at the same version.",
+      "matchPackageNames": [
+        "remotion",
+        "@remotion/**"
+      ],
+      "groupName": "Remotion",
+      "separateMajorMinor": false
     }
   ]
 }
