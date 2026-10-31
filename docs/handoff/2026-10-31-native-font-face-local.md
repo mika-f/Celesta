@@ -9,7 +9,10 @@ When the winning `src` of a stylesheet rule listed only `local()` fonts, the
 web renderer passed it to `FontFace`, and the browser drew the installed
 font. The native renderer had no `local()` lookup and skipped the rule. So
 the desktop app and the exporter drew a different font from the browser
-preview, and the guide and the Agent Skill documented the difference.
+preview, and the guide and the Agent Skill documented the difference. A
+stylesheet whose rules were all `local()`-only failed natively with
+`InvalidFont` ("no @font-face rule in the stylesheet names a file Celesta
+can load"), so its export stopped while the preview drew it.
 
 ## What CSS specifies
 
@@ -131,3 +134,21 @@ New tests:
 The tests add fonts as installed with the test-only
 `TextRasterizer::install_font`, so they do not depend on the CI computer's
 fonts.
+
+## Screenshots
+
+The PR's before and after images are frame 0 of one React scene, exported
+on macOS with `celesta-exporter --react film.tsx --frame 0`. The scene's
+`<Font src="./local.css">` has three rules:
+
+```css
+@font-face { font-family: Display; src: local("Futura Bold"), local(Futura-Bold) }
+@font-face { font-family: Gothic; src: local(Missing-Font), local(HiraginoSans-W8) }
+@font-face { font-family: Headline; src: local(Futura-Bold), url(BebasNeue-Regular.ttf) }
+```
+
+Before, the exporter warns that `Display` and `Gothic` are not loaded and
+draws them with the fallback font. After, they draw Futura Bold and Hiragino
+Sans W8. `Headline` draws the downloaded Bebas Neue in both images, even
+though Futura Bold is installed. The `url()` rule is there so that the old
+build loads the stylesheet at all.
