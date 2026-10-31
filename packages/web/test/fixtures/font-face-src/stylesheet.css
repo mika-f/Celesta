@@ -1,8 +1,11 @@
 /*
- * Which file each @font-face rule loads, for both renderers: the native
- * `stylesheet_font_faces` (crates/remote/src/stylesheet.rs) and the web
- * `loadFonts` (packages/web/src/fonts.ts) read this file, resolved against
- * https://fonts.test/css/faces.css, and expect the files in expected.txt.
+ * Which file each @font-face rule loads, and under which CSS family, for
+ * both renderers: the native `stylesheet_font_faces`
+ * (crates/remote/src/stylesheet.rs) and the web `loadFonts`
+ * (packages/web/src/fonts.ts) read this file, resolved against
+ * https://fonts.test/css/faces.css, and expect the `family<TAB>url` lines in
+ * expected.txt. Each supported format() and tech() value is the reason some
+ * rule loads its file, so dropping one from either side's list fails a test.
  */
 
 /* CSS-Tricks' "bulletproof" syntax, comments included. */
@@ -21,7 +24,14 @@
 @font-face { font-family: Legacy; /* old */ src: url(legacy.woff2) }
 @font-face { font-family: Brace /* Brand's } */; src: /* modern */ url(brace.woff2) }
 
-/* The last valid `src` wins; one with no supported entry is invalid. */
+/* At-rules, descriptors, and functions ignore case; the last descriptor wins. */
+@FONT-FACE { FONT-FAMILY: Upper; SRC: URL(upper.woff2) FORMAT(WOFF2) }
+@font-face { font-family: First; font-family: Second; src: url(second.woff2) }
+
+/*
+ * The last valid `src` wins; one with no supported entry is invalid. A winning
+ * `src` of only local() faces loads no file, so neither renderer uses the rule.
+ */
 @font-face { font-family: Kept; src: url(kept.woff2) format(woff2); src: url(skipped.svg#X) format(svg) }
 @font-face { font-family: AfterLocal; src: url(remote.woff2); src: local(Installed), url(after-local.woff2) }
 @font-face { font-family: OnlyLocal; src: url(only-local.woff2); src: local('Installed') }
@@ -40,6 +50,14 @@
 @font-face { font-family: OpenType; src: url(j.otf) format(opentype) tech(features-opentype, color-CBDT) }
 @font-face { font-family: Woff; src: url(k.woff) format('woff'), url(l.ttf) }
 @font-face { font-family: NoHint; src: url(m.ttf) format(truetype) tech(features-graphite), url(n) }
+
+/* Every other keyword and string the renderers read. */
+@font-face { font-family: WoffKeyword; src: url(woff-keyword.woff) format(woff) }
+@font-face { font-family: TrueTypeString; src: url(truetype-string.ttf) format("truetype") }
+@font-face { font-family: OpenTypeString; src: url(opentype-string.otf) format("opentype") }
+@font-face { font-family: WoffVariations; src: url(woff-variations.woff) format("woff-variations") tech(variations) }
+@font-face { font-family: TrueTypeVariations; src: url(truetype-variations.ttf) format("truetype-variations") }
+@font-face { font-family: OpenTypeVariations; src: url(opentype-variations.otf) format("opentype-variations") }
 
 /* `*-variations` is only a string; unquoted, it is not a format. */
 @font-face { font-family: Unquoted; src: url(v.woff2) format(woff2-variations), url(s.woff2) format(woff2) }

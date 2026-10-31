@@ -187,6 +187,24 @@ fn loads_stylesheet_faces_under_their_css_family() {
 }
 
 #[test]
+fn stylesheets_with_no_loadable_source_say_so() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(
+        directory.path().join("legacy.css"),
+        "@font-face { font-family: Legacy; src: url(a.eot) format('embedded-opentype'), url(a.svg#A) format('svg') }\
+         @font-face { font-family: Installed; src: local(Installed) }",
+    )
+    .unwrap();
+    let error = TextRasterizer::new()
+        .load_fonts(&[file_font("legacy.css")], directory.path())
+        .unwrap_err();
+    assert!(
+        matches!(&error, RenderError::InvalidFont { reason, .. } if reason.contains("TrueType, OpenType, WOFF, or WOFF2")),
+        "{error}"
+    );
+}
+
+#[test]
 fn stylesheet_urls_that_do_not_parse_are_reported_for_the_font() {
     let directory = tempfile::tempdir().unwrap();
     fs::write(

@@ -120,28 +120,34 @@ test('a stylesheet face loads the file the native renderer picks from its last v
   const fetched: string[] = [];
   const originals = { fetch: globalThis.fetch, FontFace: globalThis.FontFace, fonts: scope.fonts };
   onTestFinished(() => { resetFonts(); Object.assign(globalThis, originals); });
-  const faces = new Set<{ family: string; source: string | ArrayBuffer }>();
+  const faces = new Set<{ family: string; source: string | ArrayBuffer }>(), warnings: unknown[][] = [];
+  vi.spyOn(console, 'warn').mockImplementation((...args) => { warnings.push(args); });
   scope.fonts = faces;
   globalThis.FontFace = standIn<typeof FontFace>(class {
     constructor(readonly family: string, readonly source: string | ArrayBuffer) {}
     async load() { return this; }
   });
   // Shared with `picks_the_same_sources_as_the_web_renderer` in
-  // crates/remote/src/stylesheet.rs, so both renderers pick the same files.
+  // crates/remote/src/stylesheet.rs, so both renderers pick the same files
+  // under the same families.
   const fixtures = new URL('./fixtures/font-face-src/', import.meta.url);
   const css = readFileSync(new URL('stylesheet.css', fixtures), 'utf8');
   const expected = readFileSync(new URL('expected.txt', fixtures), 'utf8').trimEnd().split('\n');
+  // Each file's bytes are its URL, so a face tells which file it came from.
   globalThis.fetch = fetchStub(async url => {
     fetched.push(url);
     return url.endsWith('.css')
       ? new Response(css, { headers: { 'content-type': 'text/css' } })
-      : new Response(unicodeFont());
+      : new Response(url);
   });
   const font: Asset = { id: 'faces', location: { type: 'url', url: 'https://fonts.test/css/faces.css' } };
   await loadFonts([font], urlOf);
-  assert.deepEqual(fetched.slice(1), expected);
-  // A last src of only local() faces goes to FontFace as written.
-  assert.deepEqual([...faces].filter(face => face.family === 'OnlyLocal').map(face => face.source), ["local('Installed')"]);
+  assert.deepEqual(fetched.slice(1), expected.map(line => line.split('\t')[1]));
+  const loaded = [...faces].map(face => `${face.family}\t${typeof face.source === 'string' ? face.source : new TextDecoder().decode(face.source)}`);
+  assert.deepEqual(loaded.sort(), [...expected].sort());
+  // The rule whose last `src` names only local() faces loads nothing, as natively.
+  assert.equal(warnings.length, 1);
+  assert.match(String(warnings[0][1]), /OnlyLocal.*no file Celesta can load/);
 });
 
 test('loadedFamilies lists the families of each font in list order', async () => {

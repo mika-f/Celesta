@@ -258,7 +258,10 @@ impl TextRasterizer {
         if faces.is_empty() {
             return Err(RenderError::InvalidFont {
                 asset: font.id.clone(),
-                reason: "the stylesheet has no @font-face url()",
+                // Every rule lists only local() fonts, or files whose format()
+                // or tech() hints Celesta cannot use (EOT, SVG, COLRv1, ...).
+                reason: "no @font-face rule in the stylesheet names a file Celesta can load \
+                         (TrueType, OpenType, WOFF, or WOFF2)",
             });
         }
         let mut families = Vec::new();

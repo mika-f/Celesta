@@ -244,35 +244,37 @@ export function loadFonts(assets: Asset[], resolve: (asset: Asset) => string): P
             // As the native renderer reads it: comments may hold `}`, `;`,
             // or quotes that would cut the blocks and declarations short.
             const css = stripComments(await response.text());
-            const blocks = Array.from(css.matchAll(/@font-face\s*\{([^}]+)\}/g));
+            const blocks = Array.from(css.matchAll(/@font-face\s*\{([^}]+)\}/gi));
             if (!blocks.length) throw new Error(`No font faces in CSS: ${url}`);
             await Promise.all(blocks.map(async ([, block]) => {
               try {
-                const property = (name: string) => block.match(new RegExp(`(?:^|;)\\s*${name}\\s*:\\s*([^;]+)`))?.[1].trim();
+                // Descriptor names ignore case, and a later one wins.
+                const declarations = splitOutsideNesting(block, ';').flatMap(declaration => {
+                  const [, name, value] = /^\s*([\w-]+)\s*:([\s\S]*)$/.exec(declaration) ?? [];
+                  return name ? [[name.toLowerCase(), value.trim()] as const] : [];
+                }).reverse();
+                const property = (name: string) => declarations.find(([key]) => key === name)?.[1];
                 const family = property('font-family')?.replace(/^['"]|['"]$/g, '');
+                if (!family) throw new Error(`Invalid font CSS: ${url}`);
                 // The last valid `src` wins; one with no supported entry is
                 // invalid, so an earlier one stays in effect. Its first url()
-                // is the file to load; with none (only local() faces), `src`
-                // stays as written and there is no file to copy.
-                let src: string | undefined, location: string | undefined;
-                for (const declaration of splitOutsideNesting(block, ';')) {
-                  const [, name, value] = /^\s*([\w-]+)\s*:([\s\S]*)$/.exec(declaration) ?? [];
-                  if (name?.toLowerCase() !== 'src') continue;
-                  const sources = supportedSources(value);
-                  if (sources.length) { src = value.trim(); location = sources.find(source => source !== null) ?? undefined; }
-                }
-                if (!family || !src) throw new Error(`Invalid font CSS: ${url}`);
+                // is the file to load. With none (only local() faces) there
+                // is no file, and the native renderer skips the rule too.
+                const sources = declarations
+                  .filter(([key]) => key === 'src')
+                  .map(([, value]) => supportedSources(value))
+                  .find(sources => sources.length);
+                if (!sources) throw new Error(`@font-face "${family}" in ${url} has no src entry Celesta can load (TrueType, OpenType, WOFF, or WOFF2).`);
+                const location = sources.find(source => source !== null);
+                if (location == null) throw new Error(`@font-face "${family}" in ${url} has no file Celesta can load: its src names only local() fonts.`);
                 const descriptors: FontFaceDescriptors = {
                   weight: property('font-weight') ?? 'normal', style: property('font-style') ?? 'normal',
                   unicodeRange: property('unicode-range') ?? 'U+0-10FFFF',
                 };
-                if (location === undefined) await add(new FontFace(family, src, descriptors));
-                else {
-                  const file = new URL(location, url).href;
-                  const response = await fetch(file);
-                  if (!response.ok) throw new Error(`Could not load font: ${file} (${response.status}).`);
-                  await add(fromBytes(family, await response.arrayBuffer(), descriptors));
-                }
+                const file = new URL(location, url).href;
+                const response = await fetch(file);
+                if (!response.ok) throw new Error(`Could not load font: ${file} (${response.status}).`);
+                await add(fromBytes(family, await response.arrayBuffer(), descriptors));
               } catch (cause) {
                 if (google) throw cause;
                 console.warn(`Could not load a font face from ${url}; using the default font.`, cause);

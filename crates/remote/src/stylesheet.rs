@@ -240,7 +240,9 @@ fn function_argument<'a>(text: &'a str, name: &str) -> Option<(&'a str, &'a str)
     None
 }
 
-/// Where `reference` points, or `None` for a source that is skipped.
+/// Where `reference` points, or `None` for a protocol-relative (`//host`)
+/// reference in a stylesheet read from a local file, which has no scheme to
+/// inherit.
 fn resolve_reference(
     stylesheet: &AssetLocation,
     reference: &str,
@@ -318,17 +320,25 @@ mod tests {
         assert!(!is_font_stylesheet(b"wOF2\0\0"));
     }
 
-    /// The fixture `packages/web/test/fixtures/font-face-src/` shares with
-    /// @celesta/web's `fonts.test.mts`, so both renderers pick the same files.
+    /// Reads the fixture in `packages/web/test/fixtures/font-face-src/`, which
+    /// @celesta/web's `fonts.test.mts` also reads, so both renderers pick the
+    /// same files under the same families.
     #[test]
     fn picks_the_same_sources_as_the_web_renderer() {
         let css = include_str!("../../../packages/web/test/fixtures/font-face-src/stylesheet.css");
         let expected =
             include_str!("../../../packages/web/test/fixtures/font-face-src/expected.txt");
-        assert_eq!(
-            locations(css, &url("https://fonts.test/css/faces.css")),
-            expected.lines().map(url).collect::<Vec<_>>()
-        );
+        let faces = stylesheet_font_faces(css, &url("https://fonts.test/css/faces.css")).unwrap();
+        let picked: Vec<String> = faces
+            .into_iter()
+            .map(|face| {
+                let AssetLocation::Url { url } = face.location else {
+                    panic!("{:?} is not at a URL", face.location);
+                };
+                format!("{}\t{url}", face.family.unwrap_or_default())
+            })
+            .collect();
+        assert_eq!(picked, expected.lines().collect::<Vec<_>>());
     }
 
     #[test]

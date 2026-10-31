@@ -84,12 +84,14 @@ impl RemoteAssetCache {
             return Ok(path);
         }
         if is_data_url(url) {
+            let invalid = |reason| RemoteAssetError::InvalidData {
+                url: shortened(url),
+                reason,
+            };
             let data = DataUrl::process(url)
-                .ok()
-                .and_then(|data| data.decode_to_vec().ok())
-                .ok_or_else(|| RemoteAssetError::InvalidData {
-                    url: shortened(url),
-                })?;
+                .map_err(|_| invalid("it has no comma before the data"))?
+                .decode_to_vec()
+                .map_err(|_| invalid("its base64 data is invalid"))?;
             self.store(&shortened(url), &path, &mut data.0.as_slice())?;
         } else {
             let response =
@@ -169,15 +171,16 @@ fn shortened(url: &str) -> String {
 
 #[derive(Debug, thiserror::Error)]
 pub enum RemoteAssetError {
-    #[error("`{url}` is not an http or https URL")]
+    #[error("`{url}` is not an http, https, or data URL")]
     UnsupportedScheme { url: String },
     #[error("`{url}` is not a valid URL: {source}")]
     InvalidUrl {
         url: String,
         source: url::ParseError,
     },
-    #[error("`{url}` is not a valid data: URL")]
-    InvalidData { url: String },
+    /// `url` is shortened, since a `data:` URL can hold a whole file.
+    #[error("`{url}` is not a valid data: URL: {reason}")]
+    InvalidData { url: String, reason: &'static str },
     #[error("{}", request_message(.url, .source))]
     Request {
         url: String,
@@ -352,10 +355,7 @@ mod tests {
         let error = cache.fetch(&url).unwrap_err();
         assert!(matches!(error, RemoteAssetError::Request { .. }), "{error}");
         assert_eq!(cache.cached(&url), None);
-        let entry = directory
-            .path()
-            .join(format!("{:016x}", fnv1a(url.as_bytes())));
-        assert!(!entry.exists());
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
     }
 
     #[test]
@@ -439,11 +439,16 @@ mod tests {
             assert_eq!(fs::read(&path).unwrap(), bytes);
             assert_eq!(cache.cached(url), Some(path));
         }
-        let error = cache.fetch("data:font/woff2;base64,***").unwrap_err();
-        assert!(
-            matches!(error, RemoteAssetError::InvalidData { .. }),
-            "{error}"
-        );
+        for (url, why) in [
+            ("data:font/woff2;base64,***", "base64"),
+            ("data:font/woff2", "comma"),
+        ] {
+            let error = cache.fetch(url).unwrap_err();
+            assert!(
+                matches!(&error, RemoteAssetError::InvalidData { reason, .. } if reason.contains(why)),
+                "{error}"
+            );
+        }
         let long = format!("data:font/woff2;base64,{}", "A".repeat(10_000));
         let message = cache.fetch(&format!("{long}*")).unwrap_err().to_string();
         assert!(message.len() < 200, "{message}");
