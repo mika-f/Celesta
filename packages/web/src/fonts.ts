@@ -258,23 +258,26 @@ export function loadFonts(assets: Asset[], resolve: (asset: Asset) => string): P
                 if (!family) throw new Error(`Invalid font CSS: ${url}`);
                 // The last valid `src` wins; one with no supported entry is
                 // invalid, so an earlier one stays in effect. Its first url()
-                // is the file to load. With none (only local() faces) there
-                // is no file, and the native renderer skips the rule too.
-                const sources = declarations
+                // is the file to load. With none (only local() faces), `src`
+                // goes to FontFace as written and there is no file to copy;
+                // the native renderer, which has no local(), skips the rule.
+                const src = declarations
                   .filter(([key]) => key === 'src')
-                  .map(([, value]) => supportedSources(value))
-                  .find(sources => sources.length);
-                if (!sources) throw new Error(`@font-face "${family}" in ${url} has no src entry Celesta can load (TrueType, OpenType, WOFF, or WOFF2).`);
-                const location = sources.find(source => source !== null);
-                if (location == null) throw new Error(`@font-face "${family}" in ${url} has no file Celesta can load: its src names only local() fonts.`);
+                  .map(([, value]) => ({ value, sources: supportedSources(value) }))
+                  .find(({ sources }) => sources.length);
+                if (!src) throw new Error(`@font-face "${family}" in ${url} has no src entry Celesta can load (TrueType, OpenType, WOFF, or WOFF2).`);
+                const location = src.sources.find(source => source !== null);
                 const descriptors: FontFaceDescriptors = {
                   weight: property('font-weight') ?? 'normal', style: property('font-style') ?? 'normal',
                   unicodeRange: property('unicode-range') ?? 'U+0-10FFFF',
                 };
-                const file = new URL(location, url).href;
-                const response = await fetch(file);
-                if (!response.ok) throw new Error(`Could not load font: ${file} (${response.status}).`);
-                await add(fromBytes(family, await response.arrayBuffer(), descriptors));
+                if (location == null) await add(new FontFace(family, src.value, descriptors));
+                else {
+                  const file = new URL(location, url).href;
+                  const response = await fetch(file);
+                  if (!response.ok) throw new Error(`Could not load font: ${file} (${response.status}).`);
+                  await add(fromBytes(family, await response.arrayBuffer(), descriptors));
+                }
               } catch (cause) {
                 if (google) throw cause;
                 console.warn(`Could not load a font face from ${url}; using the default font.`, cause);

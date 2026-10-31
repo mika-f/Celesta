@@ -30,7 +30,8 @@
 
 /*
  * The last valid `src` wins; one with no supported entry is invalid. A winning
- * `src` of only local() faces loads no file, so neither renderer uses the rule.
+ * `src` of only local() faces loads no file: the browser renderer passes it to
+ * FontFace for an installed font, and the native renderer skips the rule.
  */
 @font-face { font-family: Kept; src: url(kept.woff2) format(woff2); src: url(skipped.svg#X) format(svg) }
 @font-face { font-family: AfterLocal; src: url(remote.woff2); src: local(Installed), url(after-local.woff2) }

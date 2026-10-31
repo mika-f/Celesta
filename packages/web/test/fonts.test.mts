@@ -143,11 +143,13 @@ test('a stylesheet face loads the file the native renderer picks from its last v
   const font: Asset = { id: 'faces', location: { type: 'url', url: 'https://fonts.test/css/faces.css' } };
   await loadFonts([font], urlOf);
   assert.deepEqual(fetched.slice(1), expected.map(line => line.split('\t')[1]));
-  const loaded = [...faces].map(face => `${face.family}\t${typeof face.source === 'string' ? face.source : new TextDecoder().decode(face.source)}`);
+  const files = [...faces].filter(face => typeof face.source !== 'string');
+  const loaded = files.map(face => `${face.family}\t${new TextDecoder().decode(face.source as ArrayBuffer)}`);
   assert.deepEqual(loaded.sort(), [...expected].sort());
-  // The rule whose last `src` names only local() faces loads nothing, as natively.
-  assert.equal(warnings.length, 1);
-  assert.match(String(warnings[0][1]), /OnlyLocal.*no file Celesta can load/);
+  // A last `src` of only local() faces goes to FontFace as written, so the
+  // browser can draw an installed font; natively the rule loads nothing.
+  assert.deepEqual([...faces].filter(face => typeof face.source === 'string').map(face => [face.family, face.source]), [['OnlyLocal', "local('Installed')"]]);
+  assert.deepEqual(warnings, []);
 });
 
 test('loadedFamilies lists the families of each font in list order', async () => {
