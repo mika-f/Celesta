@@ -7,7 +7,7 @@ use cosmic_text::{FontSystem, fontdb};
 use std::fs;
 use std::path::Path;
 
-use celesta_composition::{AssetLocation, ResolvedAsset};
+use celesta_composition::{AssetLocation, FontFallbackMode, ResolvedAsset};
 
 const FAMILY: &str = "Celesta Web Font Test";
 
@@ -37,25 +37,35 @@ fn normalizes_language_tags_for_cjk_fallback() {
 /// A minimal sfnt holding only a `name` table: enough for fontdb to list
 /// a face under `FAMILY`.
 fn sfnt() -> Vec<u8> {
+    named_sfnt(&[(1, 0x409, FAMILY), (6, 0x409, "CelestaWebFontTest")])
+}
+
+/// A minimal sfnt whose `name` table holds Windows / Unicode BMP records
+/// of `(name ID, language ID, value)`, in that order.
+fn named_sfnt(records: &[(u16, u16, &str)]) -> Vec<u8> {
     let utf16 =
         |text: &str| -> Vec<u8> { text.encode_utf16().flat_map(u16::to_be_bytes).collect() };
-    let family = utf16(FAMILY);
-    let post_script = utf16("CelestaWebFontTest");
     let mut name = Vec::new();
-    for value in [0_u16, 2, 6 + 2 * 12] {
+    let count = records.len() as u16;
+    for value in [0_u16, count, 6 + count * 12] {
         name.extend(value.to_be_bytes());
     }
-    // Windows / Unicode BMP / en-US records for family (1) and PostScript (6) names.
-    for (name_id, length, offset) in [
-        (1_u16, family.len(), 0),
-        (6, post_script.len(), family.len()),
-    ] {
-        for value in [3_u16, 1, 0x409, name_id, length as u16, offset as u16] {
-            name.extend(value.to_be_bytes());
+    let mut strings = Vec::new();
+    for &(name_id, language, value) in records {
+        let value = utf16(value);
+        for field in [
+            3_u16,
+            1,
+            language,
+            name_id,
+            value.len() as u16,
+            strings.len() as u16,
+        ] {
+            name.extend(field.to_be_bytes());
         }
+        strings.extend(value);
     }
-    name.extend(&family);
-    name.extend(&post_script);
+    name.extend(&strings);
 
     let mut font = Vec::new();
     font.extend(0x0001_0000_u32.to_be_bytes());
@@ -192,15 +202,206 @@ fn stylesheets_with_no_loadable_source_say_so() {
     fs::write(
         directory.path().join("legacy.css"),
         "@font-face { font-family: Legacy; src: url(a.eot) format('embedded-opentype'), url(a.svg#A) format('svg') }\
-         @font-face { font-family: Installed; src: local(Installed) }",
+         @font-face { font-family: Unnamed; src: local('') }",
     )
     .unwrap();
     let error = TextRasterizer::new()
         .load_fonts(&[file_font("legacy.css")], directory.path())
         .unwrap_err();
     assert!(
-        matches!(&error, RenderError::InvalidFont { reason, .. } if reason.contains("TrueType, OpenType, WOFF, or WOFF2")),
+        matches!(&error, RenderError::InvalidFont { reason, .. } if reason.contains("local() font name") && reason.contains("TrueType, OpenType, WOFF, or WOFF2")),
         "{error}"
+    );
+}
+
+const INSTALLED: &str = "Celesta Installed Test";
+
+/// A rasterizer on which a face of `INSTALLED` is installed, with the
+/// full name "Celesta Installed Test Bold" in US English (and a French one)
+/// and the PostScript name "CelestaInstalledTest-Bold".
+fn installed_rasterizer() -> TextRasterizer {
+    let mut rasterizer = TextRasterizer::new();
+    rasterizer.install_font(named_sfnt(&[
+        (1, 0x040c, INSTALLED),
+        (4, 0x040c, "Celesta Installed Test Gras"),
+        (1, 0x409, INSTALLED),
+        (4, 0x409, "Celesta Installed Test Bold"),
+        (6, 0x409, "CelestaInstalledTest-Bold"),
+    ]));
+    rasterizer
+}
+
+/// The family lists of the faces that match `family`.
+fn face_families(rasterizer: &TextRasterizer, family: &str) -> Vec<Vec<String>> {
+    rasterizer
+        .font_system
+        .db()
+        .faces()
+        .filter(|face| face.families.iter().any(|(name, _)| name == family))
+        .map(|face| face.families.iter().map(|(name, _)| name.clone()).collect())
+        .collect()
+}
+
+#[test]
+fn stylesheet_local_faces_draw_installed_fonts_by_full_or_postscript_name() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(directory.path().join("brand.woff2"), woff2()).unwrap();
+    fs::write(
+        directory.path().join("local.css"),
+        "@font-face { font-family: ByFullName; src: local('celesta installed TEST bold') }\
+         @font-face { font-family: ByPostScriptName; src: local(Missing), local(CELESTAINSTALLEDTEST-BOLD) }\
+         @font-face { font-family: ByFamilyName; src: local('Celesta Installed Test') }\
+         @font-face { font-family: ByFrenchName; src: local('Celesta Installed Test Gras') }\
+         @font-face { font-family: NotInstalled; src: local(Missing) }\
+         @font-face { font-family: Downloaded; src: local(CelestaInstalledTest-Bold), url(brand.woff2) }\
+         @font-face { src: local(CelestaInstalledTest-Bold) }",
+    )
+    .unwrap();
+    let mut rasterizer = installed_rasterizer();
+    rasterizer
+        .load_fonts(&[file_font("local.css")], directory.path())
+        .unwrap();
+    for family in ["ByFullName", "ByPostScriptName"] {
+        let families = face_families(&rasterizer, family);
+        assert_eq!(families.len(), 1, "{family}: {families:?}");
+        assert_eq!(families[0][0], family);
+        assert!(families[0][1].starts_with("celesta-stylesheet-face-"));
+        assert_eq!(families[0].len(), 2, "{family} matches only its own names");
+        assert!(rasterizer.fork().matched_weight(family, 400).is_some());
+    }
+    // Neither a family name nor a full name in another language names a face.
+    for family in ["ByFamilyName", "ByFrenchName", "NotInstalled"] {
+        assert!(!has_family(&rasterizer, family), "{family}");
+    }
+    // Text in a family whose local() fonts are not installed falls back,
+    // with the font fallback warning.
+    let not_installed = TextStyle {
+        font_family: Some("NotInstalled".into()),
+        ..TextStyle::default()
+    };
+    assert_eq!(rasterizer.font_fallback("l", &not_installed).len(), 1);
+    // A url() is drawn even after an installed local() font.
+    assert_eq!(
+        face_families(&rasterizer, "Downloaded")
+            .into_iter()
+            .map(|families| families[0].clone())
+            .collect::<Vec<_>>(),
+        vec![FAMILY]
+    );
+    // The installed family keeps exactly its own face, and the last rule,
+    // which has no font-family, adds none.
+    assert_eq!(face_families(&rasterizer, INSTALLED).len(), 1);
+    assert_eq!(
+        rasterizer
+            .font_system
+            .db()
+            .faces()
+            .filter(|face| face.post_script_name == "CelestaInstalledTest-Bold")
+            .count(),
+        3
+    );
+}
+
+#[test]
+fn an_installed_face_is_added_once_per_stylesheet_family() {
+    let directory = tempfile::tempdir().unwrap();
+    // The same face, by two names in one stylesheet and again in another.
+    fs::write(
+        directory.path().join("a.css"),
+        "@font-face { font-family: Brand; src: local(CelestaInstalledTest-Bold) }\
+         @font-face { font-family: Brand; src: local('Celesta Installed Test Bold') }",
+    )
+    .unwrap();
+    fs::write(
+        directory.path().join("b.css"),
+        "@font-face { font-family: Brand; src: local(CelestaInstalledTest-Bold) }",
+    )
+    .unwrap();
+    let mut rasterizer = installed_rasterizer();
+    rasterizer
+        .load_fonts(&[file_font("a.css"), file_font("b.css")], directory.path())
+        .unwrap();
+    assert_eq!(face_families(&rasterizer, "Brand").len(), 1);
+    assert_eq!(rasterizer.stylesheet_faces["Brand"].len(), 1);
+}
+
+#[test]
+fn stylesheet_local_faces_do_not_match_fonts_the_project_loaded() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(directory.path().join("a.ttf"), sfnt()).unwrap();
+    fs::write(
+        directory.path().join("local.css"),
+        "@font-face { font-family: Loaded; src: local(CelestaWebFontTest) }",
+    )
+    .unwrap();
+    let mut rasterizer = TextRasterizer::new();
+    rasterizer
+        .load_fonts(
+            &[file_font("a.ttf"), file_font("local.css")],
+            directory.path(),
+        )
+        .unwrap();
+    assert!(has_family(&rasterizer, FAMILY));
+    assert!(!has_family(&rasterizer, "Loaded"));
+}
+
+#[test]
+fn stylesheet_local_faces_draw_like_the_installed_font() {
+    let directory = tempfile::tempdir().unwrap();
+    let bebas = fs::read(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/prism/assets/fonts/BebasNeue-Regular.ttf"),
+    )
+    .unwrap();
+    fs::write(
+        directory.path().join("local.css"),
+        "@font-face { font-family: Headline; src: local(BebasNeue-Regular) }",
+    )
+    .unwrap();
+    let mut rasterizer = TextRasterizer::new();
+    rasterizer.install_font(bebas);
+    rasterizer
+        .load_fonts(&[file_font("local.css")], directory.path())
+        .unwrap();
+    let style = |family: &str| TextStyle {
+        font_family: Some(family.into()),
+        font_size: Some(48.0),
+        ..TextStyle::default()
+    };
+    // Text in the stylesheet family, the same in a fork, and text falling
+    // back to the font list's families all draw the installed font.
+    let mut fork = rasterizer.fork();
+    let loaded_fallback = TextStyle {
+        font_fallback: Some(FontFallbackMode::Loaded),
+        ..style("No Such Family")
+    };
+    let bebas = rasterizer
+        .rasterize("CELESTA", &style("Bebas Neue"), None, 1.0)
+        .unwrap();
+    let bebas_size = (bebas.width(), bebas.height());
+    let bebas = bebas.into_pixels();
+    for (case, drawn) in [
+        (
+            "family",
+            rasterizer.rasterize("CELESTA", &style("Headline"), None, 1.0),
+        ),
+        (
+            "fork",
+            fork.rasterize("CELESTA", &style("Headline"), None, 1.0),
+        ),
+        (
+            "loaded fallback",
+            rasterizer.rasterize("CELESTA", &loaded_fallback, None, 1.0),
+        ),
+    ] {
+        let drawn = drawn.unwrap();
+        assert_eq!((drawn.width(), drawn.height()), bebas_size, "{case}");
+        assert!(drawn.into_pixels() == bebas, "{case}");
+    }
+    assert!(
+        rasterizer
+            .font_fallback("headline", &style("Headline"))
+            .is_empty()
     );
 }
 

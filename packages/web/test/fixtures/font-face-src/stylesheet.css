@@ -30,12 +30,16 @@
 
 /*
  * The last valid `src` wins; one with no supported entry is invalid. A winning
- * `src` of only local() faces loads no file: the browser renderer passes it to
- * FontFace for an installed font, and the native renderer skips the rule.
+ * `src` with a supported url() loads that file even after a local(). One with
+ * none draws the first installed font its local() faces name, which expected.txt
+ * lists as `local("<name>")` entries: unquoted, a name's words are joined by
+ * one space.
  */
 @font-face { font-family: Kept; src: url(kept.woff2) format(woff2); src: url(skipped.svg#X) format(svg) }
 @font-face { font-family: AfterLocal; src: url(remote.woff2); src: local(Installed), url(after-local.woff2) }
 @font-face { font-family: OnlyLocal; src: url(only-local.woff2); src: local('Installed') }
+@font-face { font-family: LocalNames; src: local(  Gentium
+  Bold ), local("Gentium-Bold"), url(g.svg#G) format(svg) }
 
 /* The first entry with a supported format() and tech(). */
 @font-face { font-family: Formats; src:

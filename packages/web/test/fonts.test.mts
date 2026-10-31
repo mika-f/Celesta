@@ -116,7 +116,7 @@ test('Google Fonts loads every Japanese split face and reports unknown names wit
   assert.equal(hits, 7);
 });
 
-test('a stylesheet face loads the file the native renderer picks from its last valid src', async () => {
+test('a stylesheet face loads the file, or local() names, the native renderer picks from its last valid src', async () => {
   const fetched: string[] = [];
   const originals = { fetch: globalThis.fetch, FontFace: globalThis.FontFace, fonts: scope.fonts };
   onTestFinished(() => { resetFonts(); Object.assign(globalThis, originals); });
@@ -128,8 +128,8 @@ test('a stylesheet face loads the file the native renderer picks from its last v
     async load() { return this; }
   });
   // Shared with `picks_the_same_sources_as_the_web_renderer` in
-  // crates/remote/src/stylesheet.rs, so both renderers pick the same files
-  // under the same families.
+  // crates/remote/src/stylesheet.rs, so both renderers pick the same files,
+  // or local() names, under the same families.
   const fixtures = new URL('./fixtures/font-face-src/', import.meta.url);
   const css = readFileSync(new URL('stylesheet.css', fixtures), 'utf8');
   const expected = readFileSync(new URL('expected.txt', fixtures), 'utf8').trimEnd().split('\n');
@@ -142,13 +142,17 @@ test('a stylesheet face loads the file the native renderer picks from its last v
   });
   const font: Asset = { id: 'faces', location: { type: 'url', url: 'https://fonts.test/css/faces.css' } };
   await loadFonts([font], urlOf);
-  assert.deepEqual(fetched.slice(1), expected.map(line => line.split('\t')[1]));
+  const [installed, downloaded] = [true, false].map(local => expected.filter(line => line.split('\t')[1].startsWith('local(') === local));
+  assert.deepEqual(fetched.slice(1), downloaded.map(line => line.split('\t')[1]));
   const files = [...faces].filter(face => typeof face.source !== 'string');
   const loaded = files.map(face => `${face.family}\t${new TextDecoder().decode(face.source as ArrayBuffer)}`);
-  assert.deepEqual(loaded.sort(), [...expected].sort());
-  // A last `src` of only local() faces goes to FontFace as written, so the
-  // browser can draw an installed font; natively the rule loads nothing.
-  assert.deepEqual([...faces].filter(face => typeof face.source === 'string').map(face => [face.family, face.source]), [['OnlyLocal', "local('Installed')"]]);
+  assert.deepEqual(loaded.sort(), [...downloaded].sort());
+  // A winning `src` with no supported url() names installed fonts, which go
+  // to FontFace in the order the native renderer tries them.
+  const locals = [...faces].filter(face => typeof face.source === 'string').map(face => `${face.family}\t${face.source}`);
+  assert.deepEqual(locals.sort(), [...installed].sort());
+  // Their families are ones `fontFallback: 'loaded'` text falls back to.
+  for (const line of installed) assert.ok(loadedFamilies([font], urlOf).includes(line.split('\t')[0]), line);
   assert.deepEqual(warnings, []);
 });
 

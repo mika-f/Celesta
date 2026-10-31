@@ -1,6 +1,9 @@
 //! Minimal `@font-face` stylesheet reading, enough for web font services such
 //! as Google Fonts: each rule's `src` names at most one font file, picked by
-//! the CSS Fonts 4 parsing rules ("Font reference: the src descriptor"). Unlike
+//! the CSS Fonts 4 parsing rules ("Font reference: the src descriptor"), or,
+//! with no file, the installed fonts its `local()` entries name. A file is
+//! preferred to an installed font even after a `local()`, so a render depends
+//! on the machine only where the stylesheet gives nothing to download. Unlike
 //! a browser, nothing falls back to a later entry when that file fails to load.
 
 use std::path::Path;
@@ -16,19 +19,30 @@ pub fn is_font_stylesheet(data: &[u8]) -> bool {
         .any(|window| window.eq_ignore_ascii_case(b"@font-face"))
 }
 
-/// One `@font-face` rule: the font file it loads and the CSS family name it
-/// declares, which can differ from the family name stored inside the file.
+/// One `@font-face` rule: the font it draws and the CSS family name it
+/// declares, which can differ from the family name stored inside the font.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StylesheetFontFace {
     pub family: Option<String>,
-    pub location: AssetLocation,
+    pub source: FontFaceSource,
+}
+
+/// Where a [`StylesheetFontFace`]'s font comes from.
+#[derive(Clone, Debug, PartialEq)]
+pub enum FontFaceSource {
+    /// A font file to load.
+    File(AssetLocation),
+    /// The `local()` names of installed fonts, in `src` order: the first
+    /// installed one whose full or PostScript name matches is drawn.
+    Local(Vec<String>),
 }
 
 /// The font faces an `@font-face` stylesheet loaded from `stylesheet`
 /// declares, in rule order. A rule contributes the first `url(...)` in its
 /// last valid `src` whose `format()` and `tech()` hints Celesta supports,
-/// resolved against the stylesheet's own location; `local(...)` sources are
-/// skipped.
+/// resolved against the stylesheet's own location, even when a `local(...)`
+/// comes before it. A `src` with no such `url(...)` contributes its
+/// `local(...)` names instead.
 ///
 /// Fails on the first relative reference that does not resolve to a valid
 /// URL; an absolute one is checked when it is fetched.
@@ -37,11 +51,15 @@ pub fn stylesheet_font_faces(
     stylesheet: &AssetLocation,
 ) -> Result<Vec<StylesheetFontFace>, RemoteAssetError> {
     let mut faces = Vec::new();
-    for (family, reference) in font_face_rules(css) {
-        let Some(location) = resolve_reference(stylesheet, &reference)? else {
-            continue;
+    for (family, source) in font_face_rules(css) {
+        let source = match source {
+            Source::Url(reference) => match resolve_reference(stylesheet, &reference)? {
+                Some(location) => FontFaceSource::File(location),
+                None => continue,
+            },
+            Source::Local(names) => FontFaceSource::Local(names),
         };
-        let face = StylesheetFontFace { family, location };
+        let face = StylesheetFontFace { family, source };
         if !faces.contains(&face) {
             faces.push(face);
         }
@@ -49,8 +67,17 @@ pub fn stylesheet_font_faces(
     Ok(faces)
 }
 
-/// `(font-family, chosen src url)` for each `@font-face` rule with a url.
-fn font_face_rules(css: &str) -> Vec<(Option<String>, String)> {
+/// A `url()` reference as written, or `local()` names.
+#[derive(Debug, PartialEq)]
+enum Source {
+    Url(String),
+    Local(Vec<String>),
+}
+
+/// `(font-family, source)` for each `@font-face` rule with a supported
+/// `src`: the first url of the winning `src`, or with none, all its local
+/// names.
+fn font_face_rules(css: &str) -> Vec<(Option<String>, Source)> {
     let css = strip_comments(css);
     let lower = css.to_ascii_lowercase();
     let mut rules = Vec::new();
@@ -73,7 +100,7 @@ fn font_face_rules(css: &str) -> Vec<(Option<String>, String)> {
                 // one stays in effect; otherwise the later one wins.
                 let sources = supported_sources(value);
                 if !sources.is_empty() {
-                    source = sources.into_iter().flatten().next();
+                    source = Some(chosen_source(sources));
                 }
             }
         }
@@ -171,19 +198,37 @@ const SUPPORTED_TECHS: &[&str] = &[
     "color-cbdt",
 ];
 
-/// The entries of a `src` value Celesta supports, in order: `Some(url)` for a
-/// `url()` and `None` for a `local()`. Entries that fail to parse or carry an
-/// unsupported `format()` or `tech()` are dropped.
-fn supported_sources(value: &str) -> Vec<Option<String>> {
+/// The entries of a `src` value Celesta supports, in order, each `local()`
+/// with one name. Entries that fail to parse or carry an unsupported
+/// `format()` or `tech()` are dropped.
+fn supported_sources(value: &str) -> Vec<Source> {
     split_outside_nesting(value, ',')
         .into_iter()
         .filter_map(|entry| font_source(entry.trim()))
         .collect()
 }
 
-fn font_source(entry: &str) -> Option<Option<String>> {
-    if let Some((_, rest)) = function_argument(entry, "local") {
-        return rest.trim().is_empty().then_some(None);
+/// The first url among `sources`, or with none, every local name in order.
+fn chosen_source(sources: Vec<Source>) -> Source {
+    let mut names = Vec::new();
+    for source in sources {
+        match source {
+            Source::Url(url) => return Source::Url(url),
+            Source::Local(local) => names.extend(local),
+        }
+    }
+    Source::Local(names)
+}
+
+fn font_source(entry: &str) -> Option<Source> {
+    if let Some((name, rest)) = function_argument(entry, "local") {
+        // Unquoted, a name is identifiers joined by one space.
+        let name = if name.trim_start().starts_with(['"', '\'']) {
+            unquote(name).to_owned()
+        } else {
+            name.split_whitespace().collect::<Vec<_>>().join(" ")
+        };
+        return (rest.trim().is_empty() && !name.is_empty()).then(|| Source::Local(vec![name]));
     }
     let (url, mut rest) = function_argument(entry, "url")?;
     let url = unquote(url);
@@ -215,7 +260,7 @@ fn font_source(entry: &str) -> Option<Option<String>> {
         }
         rest = after;
     }
-    rest.trim().is_empty().then(|| Some(url.to_owned()))
+    rest.trim().is_empty().then(|| Source::Url(url.to_owned()))
 }
 
 /// For `text` starting with `name(...)`, the argument as written and the text
@@ -297,7 +342,10 @@ mod tests {
         stylesheet_font_faces(css, stylesheet)
             .unwrap()
             .into_iter()
-            .map(|face| face.location)
+            .map(|face| match face.source {
+                FontFaceSource::File(location) => location,
+                FontFaceSource::Local(names) => panic!("local({names:?}) is not a file"),
+            })
             .collect()
     }
 
@@ -310,11 +358,11 @@ mod tests {
             vec![
                 StylesheetFontFace {
                     family: Some("M PLUS Rounded 1c".to_owned()),
-                    location: url("https://fonts.gstatic.com/s/a/v22/bold.ttf"),
+                    source: FontFaceSource::File(url("https://fonts.gstatic.com/s/a/v22/bold.ttf")),
                 },
                 StylesheetFontFace {
                     family: None,
-                    location: url("https://fonts.example.com/regular.woff2"),
+                    source: FontFaceSource::File(url("https://fonts.example.com/regular.woff2")),
                 },
             ]
         );
@@ -324,7 +372,7 @@ mod tests {
 
     /// Reads the fixture in `packages/web/test/fixtures/font-face-src/`, which
     /// @celesta/web's `fonts.test.mts` also reads, so both renderers pick the
-    /// same files under the same families.
+    /// same files, or `local()` names, under the same families.
     #[test]
     fn picks_the_same_sources_as_the_web_renderer() {
         let css = include_str!("../../../packages/web/test/fixtures/font-face-src/stylesheet.css");
@@ -334,13 +382,49 @@ mod tests {
         let picked: Vec<String> = faces
             .into_iter()
             .map(|face| {
-                let AssetLocation::Url { url } = face.location else {
-                    panic!("{:?} is not at a URL", face.location);
+                let source = match face.source {
+                    FontFaceSource::File(AssetLocation::Url { url }) => url,
+                    FontFaceSource::Local(names) => names
+                        .iter()
+                        .map(|name| format!("local(\"{name}\")"))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    FontFaceSource::File(location) => panic!("{location:?} is not at a URL"),
                 };
-                format!("{}\t{url}", face.family.unwrap_or_default())
+                format!("{}\t{source}", face.family.unwrap_or_default())
             })
             .collect();
         assert_eq!(picked, expected.lines().collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn a_src_with_no_url_names_its_installed_fonts_in_order() {
+        let css = "@font-face { font-family: Gentium; src: local(  Gentium\n  Bold ), local('Gentium-Bold'), url(g.svg#G) format(svg) }\
+            @font-face { font-family: Downloaded; src: local(Installed), url(after-local.woff2) }\
+            @font-face { font-family: Empty; src: local(''), local() }\
+            @font-face { font-family: Twice; src: local(Same) }\
+            @font-face { font-family: Twice; src: local(\"Same\") }";
+        let face = |family: &str, source| StylesheetFontFace {
+            family: Some(family.to_owned()),
+            source,
+        };
+        assert_eq!(
+            stylesheet_font_faces(css, &url("https://example.com/fonts.css")).unwrap(),
+            vec![
+                face(
+                    "Gentium",
+                    FontFaceSource::Local(vec![
+                        "Gentium Bold".to_owned(),
+                        "Gentium-Bold".to_owned()
+                    ])
+                ),
+                face(
+                    "Downloaded",
+                    FontFaceSource::File(url("https://example.com/after-local.woff2"))
+                ),
+                face("Twice", FontFaceSource::Local(vec!["Same".to_owned()])),
+            ]
+        );
     }
 
     #[test]
