@@ -249,8 +249,7 @@ export function loadFonts(assets: Asset[], resolve: (asset: Asset) => string): P
       const google = /^https:\/\/fonts\.googleapis\.com\/css2?\?/.test(url);
       const entry: FontLoad = { promise: Promise.resolve(), ready: false, faces: [] };
       loaded.set(url, entry);
-      const add = async (face: FontFace) => {
-        await face.load();
+      const add = (face: FontFace) => {
         if (loaded.get(url) === entry) { fontSet().add(face); fontSetVersion++; entry.faces.push(face); dropFeatureFaces(); }
       };
       entry.promise = (async () => {
@@ -267,7 +266,11 @@ export function loadFonts(assets: Asset[], resolve: (asset: Asset) => string): P
             const css = stripComments(await response.text());
             const blocks = Array.from(css.matchAll(/@font-face\s*\{([^}]+)\}/gi));
             if (!blocks.length) throw new Error(`No font faces in CSS: ${url}`);
-            await Promise.all(blocks.map(async ([, block]) => {
+            // Faces load in parallel but are added in rule order: the
+            // browser tries overlapping faces of a family in the order they
+            // were added, the last first, as CSS orders rules, and as the
+            // native renderer does.
+            const faces = await Promise.all(blocks.map(async ([, block]): Promise<FontFace | undefined> => {
               try {
                 // Descriptor names ignore case, and a later one wins.
                 const declarations = splitOutsideNesting(block, ';').flatMap(declaration => {
@@ -297,22 +300,21 @@ export function loadFonts(assets: Asset[], resolve: (asset: Asset) => string): P
                   const locals = src
                     .filter((source): source is { local: string } => typeof source !== 'string')
                     .map(({ local }) => `local("${local.replace(/["\\]/g, '\\$&')}")`);
-                  await add(withSource(family, locals.join(', '), descriptors));
+                  return await withSource(family, locals.join(', '), descriptors).load();
                 }
-                else {
-                  const file = new URL(location, url).href;
-                  const response = await fetch(file);
-                  if (!response.ok) throw new Error(`Could not load font: ${file} (${response.status}).`);
-                  await add(withSource(family, await response.arrayBuffer(), descriptors));
-                }
+                const file = new URL(location, url).href;
+                const response = await fetch(file);
+                if (!response.ok) throw new Error(`Could not load font: ${file} (${response.status}).`);
+                return await withSource(family, await response.arrayBuffer(), descriptors).load();
               } catch (cause) {
                 if (google) throw cause;
                 console.warn(`Could not load a font face from ${url}; using the default font.`, cause);
               }
             }));
+            for (const face of faces) if (face) add(face);
           } else {
             const bytes = await response.arrayBuffer();
-            await add(withSource(fontName(bytes), bytes));
+            add(await withSource(fontName(bytes), bytes).load());
           }
         } catch (cause) {
           if (google) {
