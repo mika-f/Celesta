@@ -87,7 +87,7 @@ jobs:
       # No pnpm store cache: an install without one takes under 20 seconds,
       # less than restoring and saving the store, and a pull request that
       # changes the lockfile would save its own store on every OS.
-      - uses: jdx/mise-action@v5.2.4
+      - uses: jdx/mise-action@v5.2.5
         with:
           version: 2026.10.19
           cache_save: ${{ github.ref == 'refs/heads/main' }}
