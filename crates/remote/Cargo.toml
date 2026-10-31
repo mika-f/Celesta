@@ -8,6 +8,7 @@ rust-version.workspace = true
 
 [dependencies]
 celesta-composition = { path = "../composition" }
+data-url = "0.3.2"
 fnv = "1.0.7"
 tempfile = "3.23.0"
 thiserror.workspace = true

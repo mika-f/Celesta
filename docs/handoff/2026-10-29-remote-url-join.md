@@ -30,7 +30,9 @@ What changes is that the error now says which URL is wrong.
 
 Unchanged paths:
 
-- `data:` references are still skipped.
+- `data:` references are still skipped. (Superseded by
+  `2026-10-31-font-face-src-selection.md`, where native decodes them as web
+  does.)
 - A stylesheet loaded from a local file still resolves references against its
   folder with `Path::join`.
 
@@ -86,7 +88,7 @@ Different output, with the decision for each:
 | --- | --- | --- | --- | --- |
 | `Q` | `#x` | `…/s.css#x` | `…/s.css?v=1#x` | Take new: RFC 3986 keeps the base query. |
 | `Q#f` | `#x` | `…/s.css#x` | `…/s.css?v=1#x` | Take new, same reason. |
-| `Q` | empty | `…/s.css` | `…/s.css?v=1` | Take new. Unreachable: `first_url` drops an empty `url()`. |
+| `Q` | empty | `…/s.css` | `…/s.css?v=1` | Take new. Unreachable: an empty `url()` is dropped (`first_url` here, `font_source` since the source-selection change). |
 | `HTTPS://Example.COM/css/s.css` | `a.ttf` | `HTTPS://Example.COM/css/a.ttf` | `https://example.com/css/a.ttf` | Take new. Same file, new cache key. |
 | `https://example.com:443/css/s.css` | `a.ttf` | keeps `:443` | drops `:443` | Take new. Same file, new cache key. |
 | `B` | `//EXAMPLE.org/a.ttf` | `https://EXAMPLE.org/a.ttf` | `https://example.org/a.ttf` | Take new. Same file, new cache key. |

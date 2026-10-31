@@ -1,12 +1,14 @@
 //! Minimal `@font-face` stylesheet reading, enough for web font services such
-//! as Google Fonts: each rule's first `src: url(...)` names one font file.
+//! as Google Fonts: each rule's `src` names at most one font file, picked by
+//! the CSS Fonts 4 parsing rules ("Font reference: the src descriptor"). Unlike
+//! a browser, nothing falls back to a later entry when that file fails to load.
 
 use std::path::Path;
 
 use celesta_composition::AssetLocation;
 use url::Url;
 
-use crate::{RemoteAssetError, is_remote_url};
+use crate::{RemoteAssetError, is_data_url, is_remote_url};
 
 /// Whether `data` looks like a CSS stylesheet declaring `@font-face` rules.
 pub fn is_font_stylesheet(data: &[u8]) -> bool {
@@ -24,8 +26,9 @@ pub struct StylesheetFontFace {
 
 /// The font faces an `@font-face` stylesheet loaded from `stylesheet`
 /// declares, in rule order. A rule contributes the first `url(...)` in its
-/// `src`, resolved against the stylesheet's own location; `local(...)` and
-/// `data:` sources are skipped.
+/// last valid `src` whose `format()` and `tech()` hints Celesta supports,
+/// resolved against the stylesheet's own location; `local(...)` sources are
+/// skipped.
 ///
 /// Fails on the first remote reference that is not a valid URL, as a
 /// download of it would.
@@ -46,7 +49,7 @@ pub fn stylesheet_font_faces(
     Ok(faces)
 }
 
-/// `(font-family, first src url)` for each `@font-face` rule with a url.
+/// `(font-family, chosen src url)` for each `@font-face` rule with a url.
 fn font_face_rules(css: &str) -> Vec<(Option<String>, String)> {
     let css = strip_comments(css);
     let lower = css.to_ascii_lowercase();
@@ -65,8 +68,13 @@ fn font_face_rules(css: &str) -> Vec<(Option<String>, String)> {
         for (name, value) in declarations(&css[open..close]) {
             if name.eq_ignore_ascii_case("font-family") {
                 family = Some(unquote(value).to_owned()).filter(|family| !family.is_empty());
-            } else if name.eq_ignore_ascii_case("src") && source.is_none() {
-                source = first_url(value);
+            } else if name.eq_ignore_ascii_case("src") {
+                // A `src` with no supported entry is invalid, so an earlier
+                // one stays in effect; otherwise the later one wins.
+                let sources = supported_sources(value);
+                if !sources.is_empty() {
+                    source = sources.into_iter().flatten().next();
+                }
             }
         }
         rules.extend(source.map(|source| (family, source)));
@@ -95,28 +103,12 @@ fn strip_comments(css: &str) -> String {
     output
 }
 
-/// Splits a declaration block on `;` outside quotes and parentheses.
+/// Splits a declaration block into `(name, value)` declarations.
 fn declarations(block: &str) -> Vec<(&str, &str)> {
-    let mut declarations = Vec::new();
-    let mut depth = 0_u32;
-    let mut quote = None;
-    let mut start = 0;
-    for (index, character) in block.char_indices() {
-        match (quote, character) {
-            (Some(open), _) if character == open => quote = None,
-            (Some(_), _) => {}
-            (None, '"' | '\'') => quote = Some(character),
-            (None, '(') => depth += 1,
-            (None, ')') => depth = depth.saturating_sub(1),
-            (None, ';') if depth == 0 => {
-                declarations.extend(declaration(&block[start..index]));
-                start = index + 1;
-            }
-            _ => {}
-        }
-    }
-    declarations.extend(declaration(&block[start..]));
-    declarations
+    split_outside_nesting(block, ';')
+        .into_iter()
+        .filter_map(declaration)
+        .collect()
 }
 
 fn declaration(text: &str) -> Option<(&str, &str)> {
@@ -124,31 +116,145 @@ fn declaration(text: &str) -> Option<(&str, &str)> {
     Some((name.trim(), value.trim()))
 }
 
-fn first_url(value: &str) -> Option<String> {
-    let lower = value.to_ascii_lowercase();
-    let start = lower.find("url(")? + "url(".len();
-    let end = start + value[start..].find(')')?;
-    let url = unquote(&value[start..end]);
-    (!url.is_empty()).then(|| url.to_owned())
+/// Splits `text` on `separator` outside quotes and parentheses.
+fn split_outside_nesting(text: &str, separator: char) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0_u32;
+    let mut quote = None;
+    let mut start = 0;
+    for (index, character) in text.char_indices() {
+        match (quote, character) {
+            (Some(open), _) if character == open => quote = None,
+            (Some(_), _) => {}
+            (None, '"' | '\'') => quote = Some(character),
+            (None, '(') => depth += 1,
+            (None, ')') => depth = depth.saturating_sub(1),
+            (None, _) if character == separator && depth == 0 => {
+                parts.push(&text[start..index]);
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&text[start..]);
+    parts
 }
 
-/// Where `reference` points, or `None` for a source that is skipped.
+/// `format()` keywords the renderer reads: TrueType, OpenType, WOFF, and
+/// WOFF2. EOT and SVG fonts are skipped, and so are collections, whose
+/// `#PostScriptName` fragment the renderer does not honour.
+const SUPPORTED_FORMATS: &[&str] = &["woff2", "woff", "truetype", "opentype"];
+
+/// `format()` strings the renderer reads: the keywords, plus the legacy
+/// `*-variations` forms, which also mean `tech(variations)` and exist only as
+/// strings.
+const SUPPORTED_FORMAT_STRINGS: &[&str] = &[
+    "woff2",
+    "woff",
+    "truetype",
+    "opentype",
+    "woff2-variations",
+    "woff-variations",
+    "truetype-variations",
+    "opentype-variations",
+];
+
+/// `tech()` values the renderer handles: OpenType and AAT shaping, `wght`
+/// variations, and COLRv0 or bitmap color glyphs. COLRv1, OpenType-SVG,
+/// Graphite, palettes, and incremental loading are not.
+const SUPPORTED_TECHS: &[&str] = &[
+    "features-opentype",
+    "features-aat",
+    "variations",
+    "color-colrv0",
+    "color-sbix",
+    "color-cbdt",
+];
+
+/// The entries of a `src` value Celesta supports, in order: `Some(url)` for a
+/// `url()` and `None` for a `local()`. Entries that fail to parse or carry an
+/// unsupported `format()` or `tech()` are dropped.
+fn supported_sources(value: &str) -> Vec<Option<String>> {
+    split_outside_nesting(value, ',')
+        .into_iter()
+        .filter_map(|entry| font_source(entry.trim()))
+        .collect()
+}
+
+fn font_source(entry: &str) -> Option<Option<String>> {
+    if let Some((_, rest)) = function_argument(entry, "local") {
+        return rest.trim().is_empty().then_some(None);
+    }
+    let (url, mut rest) = function_argument(entry, "url")?;
+    let url = unquote(url);
+    if url.is_empty() {
+        return None;
+    }
+    if let Some((format, after)) = function_argument(rest.trim_start(), "format") {
+        let format = format.trim();
+        let supported = if format.starts_with(['"', '\'']) {
+            SUPPORTED_FORMAT_STRINGS
+        } else {
+            SUPPORTED_FORMATS
+        };
+        if !supported
+            .iter()
+            .any(|supported| unquote(format).eq_ignore_ascii_case(supported))
+        {
+            return None;
+        }
+        rest = after;
+    }
+    if let Some((techs, after)) = function_argument(rest.trim_start(), "tech") {
+        if !techs.split(',').all(|tech| {
+            SUPPORTED_TECHS
+                .iter()
+                .any(|supported| tech.trim().eq_ignore_ascii_case(supported))
+        }) {
+            return None;
+        }
+        rest = after;
+    }
+    rest.trim().is_empty().then(|| Some(url.to_owned()))
+}
+
+/// For `text` starting with `name(...)`, the argument as written and the text
+/// after the closing parenthesis.
+fn function_argument<'a>(text: &'a str, name: &str) -> Option<(&'a str, &'a str)> {
+    let open = name.len();
+    if !text.get(..open)?.eq_ignore_ascii_case(name) || !text[open..].starts_with('(') {
+        return None;
+    }
+    let mut quote = None;
+    for (index, character) in text[open + 1..].char_indices() {
+        match (quote, character) {
+            (Some(open), _) if character == open => quote = None,
+            (Some(_), _) => {}
+            (None, '"' | '\'') => quote = Some(character),
+            (None, ')') => {
+                let close = open + 1 + index;
+                return Some((&text[open + 1..close], &text[close + 1..]));
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Where `reference` points, or `None` for a protocol-relative (`//host`)
+/// reference in a stylesheet read from a local file, which has no scheme to
+/// inherit.
 fn resolve_reference(
     stylesheet: &AssetLocation,
     reference: &str,
 ) -> Result<Option<AssetLocation>, RemoteAssetError> {
-    if reference
-        .as_bytes()
-        .get(..5)
-        .is_some_and(|scheme| scheme.eq_ignore_ascii_case(b"data:"))
-    {
-        return Ok(None);
-    }
     let invalid = |url: &str| {
         let url = url.to_owned();
         move |source| RemoteAssetError::InvalidUrl { url, source }
     };
-    if is_remote_url(reference) {
+    // A data: URL holds the font itself, which `RemoteAssetCache::fetch`
+    // decodes, as a browser's fetch would.
+    if is_remote_url(reference) || is_data_url(reference) {
         let url = Url::parse(reference).map_err(invalid(reference))?;
         return Ok(Some(AssetLocation::Url { url: url.into() }));
     }
@@ -215,10 +321,30 @@ mod tests {
         assert!(!is_font_stylesheet(b"wOF2\0\0"));
     }
 
+    /// Reads the fixture in `packages/web/test/fixtures/font-face-src/`, which
+    /// @celesta/web's `fonts.test.mts` also reads, so both renderers pick the
+    /// same files under the same families.
     #[test]
-    fn skips_comments_data_urls_and_duplicates() {
+    fn picks_the_same_sources_as_the_web_renderer() {
+        let css = include_str!("../../../packages/web/test/fixtures/font-face-src/stylesheet.css");
+        let expected =
+            include_str!("../../../packages/web/test/fixtures/font-face-src/expected.txt");
+        let faces = stylesheet_font_faces(css, &url("https://fonts.test/css/faces.css")).unwrap();
+        let picked: Vec<String> = faces
+            .into_iter()
+            .map(|face| {
+                let AssetLocation::Url { url } = face.location else {
+                    panic!("{:?} is not at a URL", face.location);
+                };
+                format!("{}\t{url}", face.family.unwrap_or_default())
+            })
+            .collect();
+        assert_eq!(picked, expected.lines().collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn skips_comments_and_duplicates() {
         let css = "/* @font-face { src: url(commented.ttf) } */\
-            @font-face { src: url(data:font/woff2;base64,AAAA) }\
             @font-face { src: url(a.ttf) }\
             @font-face { src: url('a.ttf') }\
             @font-face { font-family: NoSource }";
