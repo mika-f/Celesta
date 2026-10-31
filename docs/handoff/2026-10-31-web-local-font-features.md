@@ -30,22 +30,25 @@ with `liga: false`.
   stylesheet files, and `local()` names alike.
 - `featureFamily` makes each copy from that source with the
   `featureSettings` descriptor. A `FontFace` with a string source stays
-  `unloaded` until `load()` is called, and drawing on a canvas does not
-  load it, so `featureFamily` starts loading such a copy as soon as it is
-  made.
-- `featureFacesLoaded()` waits for the copies, as it already did where a
-  face from bytes does not load at once. When a copy fails to load, it
-  throws `fontFeatures cannot use "<family>": this browser did not load
-  local("…") for it.` The face itself loaded, so the browser matched these
-  names once; this covers a browser that limits `local()` differently for
-  the copy. Safari matches only fonts that come with the operating system,
-  so there the face itself already fails to load and the family is not
-  loaded at all.
-- Synchronous measurement (`useTextMetrics`) still needs `prepare()`: a
-  `local()` copy is not ready in the task that makes it, so
-  `featureFacesPending()` is true and `textMeasurer` asks for
-  `await measureText(..., { fonts })` in `prepare()`, as for any copy that
-  is still loading.
+  `unloaded` until `load()` is called, so `featureFamily` calls it as soon
+  as it makes such a copy. In Chromium 152 on macOS, `load()` finds an
+  installed font at once: the copy is `loaded` (or `error`, for names
+  that match nothing) before `load()` returns, in a document and in a
+  worker alike. Other platforms and browsers were not checked, and a
+  `local()` lookup may finish later there.
+- `featureFacesLoaded()` waits for copies that are still loading, as it
+  already did where a face from bytes does not load at once. When a copy
+  fails to load, it throws `fontFeatures cannot use "<family>": this
+  browser did not load local("…") for it.` The face itself loaded from the
+  same names, so this needs a browser that matches them for the face but
+  not for its copy. Safari matches only the `local()` fonts that come with
+  the operating system, so for a user-installed font the face itself
+  already fails to load, and the family has no face to copy.
+- Synchronous measurement (`useTextMetrics`) measures with a `local()`
+  copy that is ready at once, as in Chromium on macOS. Where the copy is
+  still loading, `featureFacesPending()` is true and `textMeasurer` asks
+  for `await measureText(..., { fonts })` in `prepare()`, as for any copy
+  that is still loading.
 - The error for text with `fontFeatures` in a family no `<Font>` loaded now
   says the renderer cannot apply features to installed fonts "by their
   family name", since it can apply them to installed fonts a stylesheet
@@ -56,10 +59,18 @@ with `liga: false`.
 - Text with `fontFeatures` in an installed family named directly, or with
   no `fontFamily`, still throws in the preview. The browser renderer has
   no face to copy; export applies the features.
-- A copy that fails to load fails the frame only through
-  `featureFacesLoaded()`. `featureFacesPending()` counts it as pending, so
-  a synchronous measurement asks for `prepare()` first, where the error
-  then names the fonts.
+- `featureFacesLoaded()` and `featureFacesPending()` look at every copy,
+  and `featureFamily` keeps a copy that failed. So a failed copy makes
+  every later text draw reject with its error, naming its family even for
+  text that does not use it, and every synchronous measurement ask for
+  `prepare()`, until a font is loaded or released. It needs a copy to fail
+  on the names its face loaded with, which was not seen in Chromium.
+- Where `local()` copies load later than `load()` returns, a font that
+  finishes loading while `measureText` waits for its copies drops them,
+  and the copies made again for the measurement may still be loading, so
+  `textMeasurer` asks for `prepare()` inside `prepare()`. Copies made from
+  bytes already had this window in browsers that load them later. In
+  Chromium on macOS the copies made again are ready at once.
 
 ## Checks
 
@@ -69,7 +80,10 @@ pnpm --dir packages/web test
 
 `packages/web/test/font-features.test.mts`: the `StubFontFace` now keeps a
 string-source face `unloaded` until `load()`, then loads it a microtask
-later, or fails it when every `local()` name is in `StubFontFace.missing`.
+later unless `pending` holds it, or fails it when every `local()` name is
+in `StubFontFace.missing`. Loading later than `load()` returns models the
+browsers where a `local()` lookup does not finish at once, the case that
+needs `featureFacesLoaded()`.
 
 - `a local() face's copies name the same installed fonts, and measuring
   waits for them to load`: the copy's source is the face's `local()`
