@@ -15,7 +15,7 @@ use crate::property_controls::{
     parse_number_input, take_picked_color,
 };
 use crate::property_panel::field_label;
-use crate::scope::{CommitGate, HeldOrigin, Scope, ScopedRow, scoped_row};
+use crate::scope::{CommitGate, HeldOrigin, SceneCalls, Scope, ScopedRow, scoped_row};
 use crate::transform_drag::override_sites;
 use crate::view::EditorView;
 use celesta_react_bridge::{
@@ -555,8 +555,9 @@ pub(crate) struct Scrub {
     start_x: f32,
     start_value: f64,
     value: f64,
-    /// The row's override, its position fixed for the scrub: the runtime
-    /// remounts the entry when the positions change.
+    /// The row's overrides (one per call a shared default reaches), their
+    /// positions fixed for the scrub: the runtime remounts the entry when
+    /// the positions change.
     sites: Vec<PropOverride>,
     /// The row's field (its range), kept from the start: the targets are
     /// gone while the write runs.
@@ -572,22 +573,28 @@ pub(crate) struct Scrub {
 }
 
 impl Scrub {
-    /// A scrub of the row `key` pressed at `start_x`, starting from the
-    /// value the row shows (0 when it shows none); `None` when the row does
-    /// not scrub.
+    /// A scrub of the row `key` pressed at `start_x` under `scope` (with
+    /// the scene calls `calls`), starting from the value the row shows (0
+    /// when it shows none); `None` when the row does not scrub.
     pub(crate) fn start(
         targets: &ElementTargets,
         report: &LayerSourceReport,
         key: &PropKey,
         start_x: f32,
+        (scope, calls): (Option<Scope>, Option<&SceneCalls>),
     ) -> Option<Self> {
         let target = targets.entry(key)?;
         if !scrubs(targets, key, target) {
             return None;
         }
-        let (_, site) = override_sites(targets, report)
+        let sites: Vec<_> = override_sites(targets, report, scope, calls)
             .into_iter()
-            .find(|(candidate, _)| candidate == key)?;
+            .filter(|(candidate, _)| candidate == key)
+            .map(|(_, site)| site)
+            .collect();
+        if sites.is_empty() {
+            return None;
+        }
         // The value or the placeholder the row shows, as the value it is
         // (not its text), moved inside the field's range and, for a
         // whole-number field, rounded: a pointer back at the start pixel
@@ -603,11 +610,11 @@ impl Scrub {
             start_x,
             start_value,
             value: start_value,
-            sites: vec![site.with(start_value)],
+            sites: sites.iter().map(|site| site.with(start_value)).collect(),
             field,
             moved: false,
             released: false,
-            scope: None,
+            scope,
         })
     }
 
@@ -1636,13 +1643,16 @@ impl EditorView {
         if self.playing || self.element_rows.scrub.is_some() || self.transform_drag_released() {
             return;
         }
-        let Some(mut scrub) = self
+        let scope = (
+            self.kept_scope(),
+            self.shown_scope_context().and_then(|context| context.calls),
+        );
+        let Some(scrub) = self
             .element_targets()
-            .and_then(|(targets, report)| Scrub::start(targets, report, key, x))
+            .and_then(|(targets, report)| Scrub::start(targets, report, key, x, scope))
         else {
             return;
         };
-        scrub.scope = self.kept_scope();
         // A scrub that would be refused at release (the scope it keeps can't
         // write the row, or would not show it in this scene, or the scenes
         // are being scanned) says why instead.

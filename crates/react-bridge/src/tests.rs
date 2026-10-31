@@ -1571,6 +1571,7 @@ fn frame_requests_carry_prop_overrides_only_when_there_are_some() {
         column: 9,
         prop: "x".to_owned(),
         value: 184.5,
+        within: None,
     }];
     let dragged = serde_json::to_value(request(&overrides)).unwrap();
     assert_eq!(
@@ -1582,6 +1583,20 @@ fn frame_requests_carry_prop_overrides_only_when_there_are_some() {
             "prop": "x",
             "value": 184.5,
         }])
+    );
+    // One copy's override names the call it is under.
+    let one_copy = [PropOverride {
+        within: Some(SourcePos {
+            file: "/project/scene.tsx".into(),
+            line: 12,
+            column: 7,
+        }),
+        ..overrides[0].clone()
+    }];
+    let dragged = serde_json::to_value(request(&one_copy)).unwrap();
+    assert_eq!(
+        dragged["propOverrides"][0]["within"],
+        serde_json::json!({ "file": "/project/scene.tsx", "line": 12, "column": 7 })
     );
     let plain = serde_json::to_value(request(&[])).unwrap();
     assert!(plain.get("propOverrides").is_none(), "{plain}");

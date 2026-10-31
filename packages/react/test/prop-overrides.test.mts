@@ -1,6 +1,7 @@
 // Prop overrides: the editor's drag preview hands the dragged values to the
 // runtime for one frame, and every element written at an overridden position
-// is created with the dragged value instead of the written one.
+// (under the call an override names, when it names one) is created with the
+// dragged value instead of the written one.
 
 import assert from 'node:assert/strict';
 import { memo, useMemo } from 'react';
@@ -70,6 +71,62 @@ test('an override at a call site reaches every layer reading the parameter', () 
   }
   const composition = mount(() => comp(jsxDEV(Label, { x: 10 }, undefined, false, at('entry.tsx', 5, 7))));
   assert.deepEqual(positions(composition, [override(5, 'x', 40)], 'box', 'shadow'), [[40, 0], [40, 0]]);
+});
+
+/**
+ * `function PriceTag({ label }) { return <Rect id={label} x={10} />; }` in
+ * tag.tsx, called at entry.tsx lines 5 (Sale) and 6 (Second); `Tag` wraps
+ * the tag's component, `memo` say.
+ */
+function priceTags(wrap: (component: (props: { label: string }) => ReactNode) => unknown = (component) => component) {
+  const PriceTag = wrap(function PriceTag({ label }: { label: string }) {
+    return jsxDEV(Rect, { id: label, x: 10, width: 1, height: 1 }, undefined, false, at('tag.tsx', 2, 10));
+  });
+  return mount(() =>
+    comp(
+      jsxDEV(PriceTag, { label: 'sale' }, undefined, false, at('entry.tsx', 5, 7)),
+      jsxDEV(PriceTag, { label: 'second' }, undefined, false, at('entry.tsx', 6, 7)),
+    ));
+}
+const tagOverride = (prop: string, value: number, withinLine?: number): PropOverride => ({
+  file: resolveFile('tag.tsx'),
+  line: 2,
+  column: 10,
+  prop,
+  value,
+  ...(withinLine === undefined ? {} : { within: { file: resolveFile('entry.tsx'), line: withinLine, column: 7 } }),
+});
+
+test('an override within a call reaches the copies under that call only', () => {
+  const composition = priceTags();
+  assert.deepEqual(positions(composition, [tagOverride('x', 40, 5)], 'sale', 'second'), [[40, 0], [10, 0]]);
+  assert.deepEqual(positions(composition, [tagOverride('x', 50, 5), tagOverride('y', 5, 5)], 'sale', 'second'), [[50, 5], [10, 0]]);
+  assert.deepEqual(positions(composition, [tagOverride('x', 40, 6)], 'sale', 'second'), [[10, 0], [40, 0]]);
+  // Without `within`, every copy takes it, as before.
+  assert.deepEqual(positions(composition, [tagOverride('x', 40)], 'sale', 'second'), [[40, 0], [40, 0]]);
+  assert.deepEqual(positions(composition, [], 'sale', 'second'), [[10, 0], [10, 0]]);
+});
+
+test('an override within a call reaches a memo component\'s copies under it', () => {
+  const composition = priceTags(memo);
+  for (const value of [40, 50, 50]) {
+    assert.deepEqual(positions(composition, [tagOverride('x', value, 5)], 'sale', 'second'), [[value, 0], [10, 0]]);
+  }
+  assert.deepEqual(positions(composition, [], 'sale', 'second'), [[10, 0], [10, 0]]);
+});
+
+test('an override within a call matches its file as well as its position', () => {
+  const composition = priceTags();
+  const elsewhere = { ...tagOverride('x', 40, 5), within: { file: resolveFile('other.tsx'), line: 5, column: 7 } };
+  assert.deepEqual(positions(composition, [elsewhere], 'sale', 'second'), [[10, 0], [10, 0]]);
+});
+
+test('a layer source report after a frame with an override within a call names the call', () => {
+  const composition = priceTags();
+  positions(composition, [tagOverride('x', 40, 5)], 'sale');
+  const chain = (id: string) =>
+    composition.layerSource(time(0), id, resolveFile)?.chain.map(({ name, file, line }) => `${name} ${file}:${line}`);
+  assert.deepEqual(chain('sale'), ['Rect /abs/tag.tsx:2', 'PriceTag /abs/entry.tsx:5', 'Composition /abs/entry.tsx:1']);
 });
 
 test('an override reaches an element in a memo component that reads no frame', () => {

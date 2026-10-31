@@ -568,7 +568,8 @@ fn scrubbed_to(
     key: &PropKey,
     x: f32,
 ) -> f64 {
-    let mut scrub = Scrub::start(targets, report, key, 100.0).expect("the row scrubs");
+    let mut scrub =
+        Scrub::start(targets, report, key, 100.0, (None, None)).expect("the row scrubs");
     scrub.follow(x, false);
     let overrides = scrub.overrides(false);
     assert_eq!(overrides.len(), 1, "{overrides:?}");
@@ -631,7 +632,7 @@ fn a_scrub_takes_the_focus_unless_another_row_holds_typed_text() {
 fn a_scrub_back_at_its_start_writes_nothing_outside_the_range() {
     // `opacity={1.5}` scrubs from 1, the nearest value inside its range.
     let (targets, report) = drawn_rect("opacity={1.5}", &[("opacity", 1.5)]);
-    let mut scrub = Scrub::start(&targets, &report, &prop("opacity"), 100.0).unwrap();
+    let mut scrub = Scrub::start(&targets, &report, &prop("opacity"), 100.0, (None, None)).unwrap();
     assert!(scrub.follow(95.0, false));
     assert_eq!(
         scrub.overrides(false),
@@ -648,7 +649,7 @@ fn scrub_frames(
     report: &LayerSourceReport,
     key: &PropKey,
 ) -> Option<Vec<Vec<PropOverride>>> {
-    let mut scrub = Scrub::start(targets, report, key, 100.0)?;
+    let mut scrub = Scrub::start(targets, report, key, 100.0, (None, None))?;
     Some(
         [104.0, 110.0, 96.0]
             .into_iter()
@@ -750,7 +751,14 @@ fn corner_radius_rect() -> (ElementTargets, LayerSourceReport) {
 #[test]
 fn a_scrub_overrides_nothing_before_it_moves_or_while_playing() {
     let (targets, report) = corner_radius_rect();
-    let mut scrub = Scrub::start(&targets, &report, &prop("cornerRadius"), 100.0).unwrap();
+    let mut scrub = Scrub::start(
+        &targets,
+        &report,
+        &prop("cornerRadius"),
+        100.0,
+        (None, None),
+    )
+    .unwrap();
     assert_eq!(scrub.overrides(false), []);
     assert!(!scrub.follow(100.0, false));
     assert_eq!(scrub.overrides(false), []);

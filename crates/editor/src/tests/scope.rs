@@ -15,6 +15,7 @@ use crate::scope::{
     scope_in_effect_here, scope_line, scope_state, scoped_removable, scoped_row, targets_in_effect,
     this_scene_tooltip,
 };
+use crate::transform_drag::{override_sites, prop_overrides};
 use celesta_react_bridge::{
     ElementOccurrences, InstanceOccurrences, OccurrenceIndex, ReactChapter,
 };
@@ -623,6 +624,93 @@ fn this_scene_writes_the_element_as_this_call_s_one_instance() {
         let kept = targets_in_effect(&targets, scope, &options);
         assert_eq!(kept.target(&x), Some(&repeated));
     }
+}
+
+#[test]
+fn this_scene_previews_a_lifted_value_on_this_call_s_copies_only() {
+    let report = sale_report();
+    let targets = sale_targets(&report);
+    let calls = sale_calls();
+    let options = options_of(scope_state(
+        &report,
+        &targets,
+        Some(&two_calls_here(1)),
+        Some(&calls),
+        &chapters(),
+        FRAME,
+    ));
+    let override_of = |scope, key: &str| {
+        let kept = targets_in_effect(&targets, scope, &options);
+        override_sites(kept, &report, scope, Some(&calls))
+            .into_iter()
+            .find(|(candidate, _)| *candidate == prop(key))
+            .map(|(_, site)| site.with(1.0))
+    };
+
+    // `x` is written on the `<Rect>`, which both tags draw; "This scene"
+    // writes it at the Sale call, so only the copies under it move.
+    let x = override_of(Some(Scope::ThisScene), "x").expect("x is dragged");
+    assert_eq!((x.line, x.column, x.prop.as_str()), (2, 10, "x"));
+    assert_eq!(x.within, Some(s()));
+    // An absent `y` is lifted the same way.
+    let y = override_of(Some(Scope::ThisScene), "y").expect("y is dragged");
+    assert_eq!(y.within, Some(s()));
+    // `width` passes through: its override is at the Sale call already.
+    let width = override_of(Some(Scope::ThisScene), "width").expect("width is dragged");
+    assert_eq!(
+        (width.line, width.column, width.prop.as_str(), &width.within),
+        (2, 3, "rectWidth", &None)
+    );
+    // Without a scope, a value written on the element reaches every copy.
+    let rotation = override_of(None, "rotation");
+    assert!(rotation.is_none_or(|rotation| rotation.within.is_none()));
+    let unscoped = override_sites(&targets, &report, None, Some(&calls));
+    assert!(
+        unscoped
+            .iter()
+            .all(|(_, site)| site.with(1.0).within.is_none())
+    );
+}
+
+#[test]
+fn shared_value_previews_a_default_at_every_call_it_reaches() {
+    let report = sale_report();
+    let targets = sale_targets(&report);
+    let calls = sale_calls();
+    let options = options_of(scope_state(
+        &report,
+        &targets,
+        Some(&two_calls_here(1)),
+        Some(&calls),
+        &chapters(),
+        FRAME,
+    ));
+    let overrides_of = |scope, key: &str| {
+        let kept = targets_in_effect(&targets, scope, &options);
+        let sites = override_sites(kept, &report, scope, Some(&calls));
+        prop_overrides(&sites, &[(prop(key), 12.0)])
+            .into_iter()
+            .map(|site| (site.file, site.line, site.column, site.prop, site.within))
+            .collect::<Vec<_>>()
+    };
+    let at =
+        |call: SourcePos, prop: &str| (call.file, call.line, call.column, prop.to_owned(), None);
+
+    // No call passes `rectCornerRadius`: "Shared value" writes its default,
+    // which every call draws, so every call's copy moves.
+    assert_eq!(
+        overrides_of(Some(Scope::Shared), "cornerRadius"),
+        vec![
+            at(s(), "rectCornerRadius"),
+            at(second_call(), "rectCornerRadius"),
+            at(intro_call(), "rectCornerRadius"),
+        ]
+    );
+    // "This scene" writes it at the Sale call only.
+    assert_eq!(
+        overrides_of(Some(Scope::ThisScene), "cornerRadius"),
+        vec![at(s(), "rectCornerRadius")]
+    );
 }
 
 /// The scene calls of [`two_calls_here`]: the Sale call sets `rectWidth`

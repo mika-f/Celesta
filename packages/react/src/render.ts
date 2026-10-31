@@ -1699,8 +1699,11 @@ export function mount(defaultExport: EntryComponent, compositionId?: string): Mo
     const overrides = propOverrides && propOverrides.overrides.length > 0 ? propOverrides : undefined;
     const next = overrides ? JSON.stringify(overrides.overrides) : '';
     if (next !== committedOverrides) {
+      // A `within` position gives the element there another type (see
+      // `PropOverride`), so it counts as a position too.
       const positions = overrides
-        ? [...new Set(overrides.overrides.map(({ file, line, column }) => `${file}:${line}:${column}`))].sort().join('\n')
+        ? [...new Set(overrides.overrides.map(({ file, line, column, within }) =>
+          `${file}:${line}:${column}${within ? ` ${within.file}:${within.line}:${within.column}` : ''}`))].sort().join('\n')
         : '';
       if (positions !== committedPositions) entryKey += 1;
       overridesValue = next === '' ? null : {};
