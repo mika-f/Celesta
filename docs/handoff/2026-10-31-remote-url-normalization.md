@@ -76,7 +76,7 @@ source-selection change below this layer.
 - `cargo test -p celesta-remote`: 24 passed. The new test,
   `normalizes_urls_as_a_browser_fetch_does`, failed before the change, because
   the raw-space URL could not be requested.
-- `cargo test -p celesta-renderer`: 224 + 1 passed.
+- `cargo test -p celesta-renderer`: 226 + 1 passed.
 - `cargo clippy -p celesta-remote -p celesta-renderer -p celesta-react-bridge --all-targets -- -D warnings`
   and `cargo fmt --all -- --check` passed.
 - `pnpm --dir packages/web test`: typecheck passed and 150 tests passed. Run
