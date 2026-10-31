@@ -111,9 +111,10 @@ function dropFeatureFaces(): void {
  * font-feature-settings of its own, so each family and feature set gets
  * copies of its faces with the `featureSettings` descriptor. A copy has
  * the face's source: its file, or the installed fonts its stylesheet's
- * `local()` names, as Chromium applies the descriptor to both. A face made
- * from a file is ready at once in Chromium; elsewhere, and for `local()`
- * names, `featureFacesLoaded()` waits for it. Throws for a family with no
+ * `local()` names, as Chromium applies the descriptor to both. Chromium
+ * makes a copy from a file ready at once, and one from installed fonts
+ * ready inside `load()`, at least on macOS; where a copy is still loading,
+ * `featureFacesLoaded()` waits for it. Throws for a family with no
  * face loaded with `<Font>`, as an installed family has no faces to copy.
  */
 export function featureFamily(family: string, settings: string, label: string): string {
@@ -141,8 +142,9 @@ export function featureFamily(family: string, settings: string, label: string): 
 /** Waits for the faces `featureFamily` made, where they do not load at once. */
 export async function featureFacesLoaded(): Promise<void> {
   await Promise.all([...featureFaces.values()].flatMap(({ family, faces }) => faces.map(face => face.loaded.catch(cause => {
-    // The face itself loaded, so this is rare; Safari, for one, matches
-    // only fonts that come with the operating system.
+    // The face itself loaded from the same source, so this is rare: a
+    // browser would have to match these local() names for the face but
+    // not for its copy.
     const source = faceSources.get(face)?.source;
     throw new Error(`fontFeatures cannot use "${family}": this browser did not load ${typeof source === 'string' ? source : 'its font file'} for it.`, { cause });
   }))));

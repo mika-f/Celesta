@@ -12,8 +12,11 @@ import type { Asset, FontFeatures, TextStyle } from '../src/types.js';
 /**
  * A stand-in for the browser's FontFace. A face from a file is loaded at
  * once unless `pending` holds it. A face from `local()` names stays
- * unloaded until `load()`, then loads a microtask later, or fails when it
- * names only fonts in `missing`.
+ * unloaded until `load()`, then loads a microtask later unless `pending`
+ * holds it, or fails when it names only fonts in `missing`. Chromium on
+ * macOS finishes a `local()` load inside `load()`; the stub models a
+ * browser whose lookup finishes later, which `featureFacesLoaded()` waits
+ * for.
  */
 class StubFontFace {
   static pending = false;
@@ -125,7 +128,8 @@ test('a local() face\'s copies name the same installed fonts, and measuring wait
   };
   const style: TextStyle = { fontFamily: 'Display', fontSize: 48, fontFeatures: { liga: false } };
   const measure = textMeasurer();
-  // The copy starts loading at once, and is not ready in the same task.
+  // The copy starts loading at once; where that does not finish inside
+  // `load()`, it is not ready synchronously.
   assert.throws(() => measure({ text: 'fit', style, fonts: [display] }), /need their fonts ready\. Call await measureText/);
   assert.deepEqual(copies().map((face) => [face.family, face.source, face.descriptors.weight, face.descriptors.featureSettings, face.status]), [
     ['Display [celesta-features liga=0]', 'local("Missing-Font"), local("Futura Bold")', '700', '"liga" 0', 'loading'],
