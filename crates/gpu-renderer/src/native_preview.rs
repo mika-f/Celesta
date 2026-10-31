@@ -5,6 +5,7 @@ use core_foundation::{
     string::CFString,
 };
 use core_video::{
+    image_buffer::TCVImageBuffer,
     metal_texture::{CVMetalTexture, CVMetalTextureGetTexture},
     metal_texture_cache::CVMetalTextureCache,
     pixel_buffer::{
@@ -104,7 +105,7 @@ impl NativePreviewBridge {
         let y = self
             .texture_cache
             .create_texture_from_image(
-                pixel_buffer.as_concrete_TypeRef(),
+                &pixel_buffer.as_image_buffer(),
                 None,
                 metal::MTLPixelFormat::R8Unorm,
                 scene.width as usize,
@@ -115,7 +116,7 @@ impl NativePreviewBridge {
         let chroma = self
             .texture_cache
             .create_texture_from_image(
-                pixel_buffer.as_concrete_TypeRef(),
+                &pixel_buffer.as_image_buffer(),
                 None,
                 metal::MTLPixelFormat::RG8Unorm,
                 (scene.width / 2) as usize,
