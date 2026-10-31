@@ -1079,10 +1079,13 @@ conditional plays only on frames where it is rendered.
   or absent; EOT, SVG fonts, collections, and `tech()` such as COLRv1 are
   skipped, and a file that fails to load is not retried with the next
   entry; a `src` with no such `url()` draws the first installed font its
-  `local()` entries name by full or PostScript name, case-insensitively,
-  in preview and export alike — a `url()` wins even after a `local()`, and
-  a rule whose fonts are not installed draws nothing, so prefer files for
-  reproducible exports). Refer to it by the **family name
+  `local()` entries name by full or PostScript name (not family name),
+  case-insensitively — a `url()` wins even after a `local()`, and a rule
+  whose fonts are not installed draws nothing, so prefer files for
+  reproducible exports. Preview and export try the same names in the same
+  order, but the preview's browser matches them itself (Safari: OS fonts
+  only), and export ignores a rule's `font-weight`, `font-style`, and
+  `unicode-range`). Refer to it by the **family name
   stored inside the font**, not the file name. See
   [text.md](text.md#fonts-fallback-and-emoji) for weights and fallback.
 - `<Font google>` requests a family by name instead of `src`. `weights`

@@ -29,8 +29,21 @@ CSS Fonts 4, §4.3 and §4.3.3.1 ("Local font fallback"):
   Macintosh language 0), or the first localization when there is none.
   Matching other localized full names, or family plus style names, is
   non-conformant. Platform substitutions must not be used.
-- The quoted text does not say whether case matters. Chromium and Firefox
-  both compare case-insensitively, and so does Celesta.
+- A face whose full name equals its family name, typically a regular face,
+  matches by that name: the spec's own first example is `local(Gentium)`
+  for "regular face of Gentium". Arial's regular face has the full name
+  "Arial", so `local(Arial)` matches; `local("Hiragino Sans")` matches
+  nothing, because every Hiragino Sans face's full name carries a weight.
+- The spec does not say whether case matters. Celesta ignores it, as
+  browsers do: Chromium compares with `kCFCompareCaseInsensitive` on macOS
+  (`font_matcher_mac.mm`) and case-folds its unique-name table on Linux and
+  Android; Firefox lowercases the key (`gfxPlatformFontList.cpp`).
+- Browsers may hide some installed fonts from `local()`. Safari matches
+  only fonts that come with the operating system, not user-installed ones
+  (https://webkit.org/tracking-prevention/, WebKit bug 230156). Firefox
+  does the same under Resist Fingerprinting (`layout.css.font-visibility`).
+  Chromium has no such limit today. The native renderer matches every
+  installed font.
 
 ## Decision: a `url()` wins over an earlier `local()`
 
@@ -50,8 +63,12 @@ downloads b only when A is missing. Celesta still takes the `url()`:
 So installed fonts are used only where the stylesheet has nothing to
 download. A `local()`-only rule then tries each name in order and draws the
 first installed match. When none is installed, the face draws nothing, as
-in a browser. Its text falls back to another font, with the usual font
-fallback warning. The stylesheet does not fail.
+in a browser, and the stylesheet does not fail. Its text falls back to
+another font. Natively, `font_fallback` then reports the family, which the
+app lists with the preview's warnings and the exporter prints. The web
+renderer has no font fallback warning: a `FontFace` that matches nothing
+fails to load, and `loadFonts` logs "Could not load a font face from …" with
+`console.warn`, which reaches only the browser's developer tools.
 
 ## Implementation
 
@@ -72,7 +89,7 @@ fallback warning. The stylesheet does not fail.
     and the full name to the face id. The full name is read with
     `skrifa`, which `cosmic-text` re-exports, through
     `localized_strings(FULL_NAME).english_or_first()`. `fontdb` stores
-    only family names (IDs 16 and 1), which must not match. When two faces
+    only family names (IDs 16 and 1), which are not looked up. When two faces
     have the same name, the first one in database order wins. The first
     `local()` lookup reads the name table of every installed face.
     `with_face_data` memory-maps each file, because cosmic-text's default
@@ -87,8 +104,13 @@ fallback warning. The stylesheet does not fail.
     behave the same. The same face under the same family is added once.
   - `fonts_changed` is the cache invalidation that `load_font_data` did
     inline. Aliasing an installed face uses it too.
+  - A `local()` rule with no `font-family` adds nothing: the installed
+    font already has its own family. CSS requires the descriptor, and the
+    web renderer warns about the rule.
   - The `InvalidFont` reason for a stylesheet with no usable rule now
-    mentions installed fonts.
+    names `local()` font names among the entries Celesta can use. It fires
+    only when no rule has such an entry; whether a `local()` font is
+    installed is checked later, per face.
 - `packages/web/src/fonts.ts`: `supportedSources` returns `{ local: name }`
   with the same normalization as native. A `local()`-only rule builds its
   `FontFace` source from those names (`local("A"), local("B")`) instead of
@@ -98,16 +120,40 @@ fallback warning. The stylesheet does not fail.
 ## Remaining differences
 
 - `fontFeatures` on a `local()` face works natively. The browser preview
-  throws, because the browser cannot copy an installed font. This is the
-  same rule as for any installed font, and the guide says so.
-- Which fonts are installed is up to each computer. That is the reason for
-  the decision above.
+  throws, as for any installed font, because `featureFamily` copies a
+  face's bytes. Chromium applies a `FontFace`'s `featureSettings`
+  descriptor to `local()` sources too, so the web renderer could make the
+  copy from the same `local()` names; that is left for a follow-up.
+- Which fonts are installed is up to each computer, and the preview's
+  browser may offer only some of them (Safari: OS fonts only). That is the
+  reason for the decision above.
+- The native renderer ignores a rule's `font-weight`, `font-style`, and
+  `unicode-range`. Copies keep the installed font's own weight and style,
+  and a family with several faces draws each character with the first face,
+  in rule order, that has its glyph. The web renderer passes the
+  descriptors to `FontFace`. This was already true for `url()` faces, where
+  Google Fonts' subset files cover roughly their declared ranges, so it did
+  not show; `local()` names whole fonts, so it does:
+  `unicode-range: U+30-39; src: local(Arial)` draws all text in Arial
+  natively and only the digits in a browser.
+- A stylesheet family named like an installed family (`font-family:
+  "Hiragino Sans"; src: local(HiraginoSans-W8)`) does not hide the
+  installed family's other faces natively: font matching still sees W0–W9,
+  and inside a font stack `stack_faces` drops the W8 copy. CSS hides the
+  installed family. A stylesheet family with no face loaded also still
+  matches an installed family of that name natively, which CSS forbids.
+  Both were already true for `url()` faces.
+- The native renderer has no synthetic bold, so a family whose 700 rule
+  names a font that is not installed draws 700 text with its 400 face
+  without a warning. That is true of every family.
 - Neither parser decodes CSS escapes in `local()` names, or rejects
   unquoted CSS-wide or generic keywords such as `local(serif)`. The parsers
   behave the same, so they still pick the same face.
-- `english_or_first` prefers en-US, then any `en`, then a record with no
-  language, then the first record. The spec asks for US English, then the
-  first record. The two differ only for fonts that have no en-US full name.
+- `english_or_first` returns the en-US record (Windows 0x409) first, then
+  the Macintosh English one (`en`), then a record with no language, then
+  the first record. The spec asks for US English (either of the first two),
+  then the first record, so the two differ only for a font with no English
+  full name and a record with no language that is not its first.
 
 ## Checks
 
@@ -130,10 +176,16 @@ New tests:
   (renderer): matching by full name and by PostScript name, ignoring case.
   A family name, a French full name, and a missing font do not match. A
   `url()` wins over an installed `local()`. The installed family keeps
-  one face.
+  one face, a rule with no `font-family` adds none, and text in a family
+  whose fonts are not installed gets a font fallback report.
+- `an_installed_face_is_added_once_per_stylesheet_family`: the same face
+  named twice in one stylesheet and again in another is one copy.
 - `stylesheet_local_faces_do_not_match_fonts_the_project_loaded`.
 - `stylesheet_local_faces_draw_like_the_installed_font`: text in the alias
-  family rasterizes pixel for pixel like the installed family.
+  family, the same text in a fork, and `fontFallback: 'loaded'` text all
+  rasterize pixel for pixel like the installed family.
+- The web fixture test also checks that `loadedFamilies` lists the
+  `local()` faces' families.
 
 The tests add fonts as installed with the test-only
 `TextRasterizer::install_font`, so they do not depend on the CI computer's
