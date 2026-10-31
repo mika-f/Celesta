@@ -83,8 +83,8 @@ later, or fails it when every `local()` name is in `StubFontFace.missing`.
 ## Screenshots
 
 The PR's before and after images are one scene drawn by `SceneCanvas` in
-the Claude desktop app's Chromium browser pane on macOS, from a page that
-imports `@celesta/web`'s `dist/` built on the base branch and on this
+Chromium on macOS, where Hoefler Text comes with the operating system. The
+page imports `@celesta/web`'s `dist/`, built on the base branch and on this
 branch. The scene's `<Font>` loads a stylesheet served as `text/css`:
 
 ```css
