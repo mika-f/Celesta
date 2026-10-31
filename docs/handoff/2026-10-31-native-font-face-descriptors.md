@@ -70,6 +70,14 @@ with the same rules draws the four lines as the new native export does.
   `font-weight: 100 900` therefore draws at the exact weight requested,
   as in a browser. Adding a copy calls `fonts_changed`, so the first use of
   a new weight clears the shaping caches once.
+- **Only stylesheets in the font list.** Fonts stay loaded across
+  reloads, and `load_fonts` loads each path once. Each face records the
+  stylesheets that declare it, and `load_fonts` marks the stylesheets in
+  the list it is given as active (`activate_stylesheets`). Only those
+  stylesheets' families hide installed fonts, and only their faces are
+  matched, so removing a `<Font>` stylesheet shows the installed family
+  again without a restart. A font file, by contrast, still stays
+  drawable after it leaves the list, as before.
 - **Upright text.** Celesta text has no `fontStyle`, so it always asks
   for `normal`, and an italic face draws only when the family has nothing
   upright.
@@ -118,9 +126,11 @@ with the same rules draws the four lines as the new native export does.
 - `crates/renderer/src/fonts.rs`: `stylesheet_faces` maps each CSS family
   to its `StylesheetFace`s, and `stylesheet_privates` maps each private
   family back to its CSS family. `stylesheet_files` caches the template
-  per downloaded file, so one file under several rules is read once. Each
-  rule's family is declared before its source is resolved, so a family
-  whose fonts are missing still hides the installed one. `matched_weight`
+  per downloaded file, so one file under several rules is read once.
+  `stylesheet_families` records every family a stylesheet declares,
+  including families whose fonts are missing, so those still hide the
+  installed family. `active_stylesheets` and `active_stylesheet_families`
+  hold the stylesheets in the current list. `matched_weight`
   answers a stylesheet family from its descriptors. `load_font_data` no
   longer takes an alias. The font list's fallback families for a
   stylesheet are now its CSS families, which have a face, rather than
@@ -151,6 +161,9 @@ with the same rules draws the four lines as the new native export does.
   the requested one, stylesheet copies included. So a code point outside
   a face's `unicode-range` can still be drawn by that face, but only when
   neither the script fallback nor the common fallback fonts have it.
+- A font file loaded directly with `<Font src="….ttf">` whose own family
+  equals a stylesheet's `font-family` is hidden natively by that
+  stylesheet family. In a browser, both are `FontFace`s in one family.
 - `color_emoji_family` looks fonts up by family name, so a color emoji
   font loaded only through a stylesheet is no longer the emoji fallback.
   Text whose family is that stylesheet family still draws its emoji.
@@ -179,7 +192,8 @@ New tests:
   `rules_differing_only_in_descriptors_are_separate_faces`.
   `skips_comments_and_duplicates` now also drops a rule with no family.
 - renderer, `stylesheet_fonts::tests`: §5.2 weight directions on the
-  specification's example family, style ranks, and reverse rule order.
+  specification's example family, style ranks, reverse rule order, and
+  faces of inactive stylesheets.
 - renderer, `stylesheet_font_tests.rs`, which installs Bebas Neue and IBM
   Plex Mono with `install_font`:
   - `unicode_range_limits_what_a_face_draws`
@@ -190,6 +204,9 @@ New tests:
   - `overlapping_faces_try_the_last_rule_first`
   - `a_weight_range_draws_at_the_weight_asked_for`, in a fork too
   - `one_file_under_several_rules_is_several_faces`
+  - `a_stylesheet_left_out_of_the_font_list_stops_drawing_and_hiding`:
+    reloading without one of two stylesheets reveals the installed family
+    and drops that stylesheet's faces from a family that both declare.
 - web: `a stylesheet adds its faces in rule order, whichever loads first`.
 
 Existing tests changed with the behaviour: a `url()` face no longer
