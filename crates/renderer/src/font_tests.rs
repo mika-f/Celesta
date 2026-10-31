@@ -767,7 +767,7 @@ fn rejects_files_that_hold_no_font() {
         (
             "empty.css",
             b"@font-face { font-family: X }",
-            "no @font-face url()",
+            "no @font-face rule",
         ),
     ];
     for (name, data, reason) in cases {
