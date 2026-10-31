@@ -102,7 +102,7 @@ jobs:
       # cache; one it saved would be visible to that tag alone.
       - uses: jdx/mise-action@v5.2.4
         with:
-          version: 2026.10.19
+          version: 2026.10.25
           cache_save: false
 
       - run: pnpm install --frozen-lockfile
