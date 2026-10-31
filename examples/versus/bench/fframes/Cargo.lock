@@ -1017,9 +1017,9 @@ dependencies = [
 
 [[package]]
 name = "fframes_skia_renderer"
-version = "1.1.0"
+version = "1.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5fd957b1be40f46e023af2b2821eabe948e35ede2cc23015d434e274991440c8"
+checksum = "8dd3944bc43359999b55b86e6b08f68b046d4a1ee8f2c7a2db57e7271eb15a84"
 dependencies = [
  "ash",
  "fframes",
