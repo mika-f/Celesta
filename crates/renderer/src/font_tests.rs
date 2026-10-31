@@ -1,3 +1,4 @@
+use crate::RenderError;
 use crate::fonts::{TextRasterizer, fallback_locale};
 use crate::linebreak::emoji_presentation_spans;
 use crate::text::{FontFallback, MissingGlyphs};
@@ -183,6 +184,29 @@ fn loads_stylesheet_faces_under_their_css_family() {
     // Under the family stored in the file and the stylesheet's CSS name.
     assert!(has_family(&rasterizer, FAMILY));
     assert!(has_family(&rasterizer, "Brand"));
+}
+
+#[test]
+fn stylesheet_urls_that_do_not_parse_are_reported_for_the_font() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(
+        directory.path().join("brand.css"),
+        "@font-face { font-family: Brand; src: url('https://exa mple.com/a.woff2') }",
+    )
+    .unwrap();
+    let error = TextRasterizer::new()
+        .load_fonts(&[file_font("brand.css")], directory.path())
+        .unwrap_err();
+    assert!(
+        matches!(
+            &error,
+            RenderError::RemoteAsset {
+                source: celesta_remote::RemoteAssetError::InvalidUrl { url, .. },
+                ..
+            } if url == "https://exa mple.com/a.woff2"
+        ),
+        "{error}"
+    );
 }
 
 #[test]
