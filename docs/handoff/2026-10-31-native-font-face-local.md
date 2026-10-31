@@ -73,7 +73,11 @@ fallback warning. The stylesheet does not fail.
     `skrifa`, which `cosmic-text` re-exports, through
     `localized_strings(FULL_NAME).english_or_first()`. `fontdb` stores
     only family names (IDs 16 and 1), which must not match. When two faces
-    have the same name, the first one in database order wins.
+    have the same name, the first one in database order wins. The first
+    `local()` lookup reads the name table of every installed face.
+    `with_face_data` memory-maps each file, because cosmic-text's default
+    `std` feature turns on `fontdb/memmap`. A project with no `local()`-only
+    rule never builds the index.
   - `alias_installed_face` adds a copy of the installed face's `FaceInfo`.
     The copy keeps the same source and index. Its families are only the CSS
     family and a private `celesta-stylesheet-face-installed-…` family, so
