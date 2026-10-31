@@ -35,6 +35,9 @@ mod rect;
 mod renderer;
 mod shaping;
 #[cfg(test)]
+mod stylesheet_font_tests;
+mod stylesheet_fonts;
+#[cfg(test)]
 mod tests;
 mod text;
 mod types;

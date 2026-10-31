@@ -287,7 +287,6 @@ fn stack_choices_are_kept_until_a_font_loads() {
                     .join("../../examples/afterimage/assets/fonts/BebasNeue-Regular.ttf"),
             )
             .unwrap(),
-            Some("Celesta Extra".to_owned()),
         )
         .unwrap();
     let again = rasterizer.face_runs("AБ", &style);
