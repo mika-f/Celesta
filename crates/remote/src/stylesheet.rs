@@ -372,7 +372,7 @@ mod tests {
 
     /// Reads the fixture in `packages/web/test/fixtures/font-face-src/`, which
     /// @celesta/web's `fonts.test.mts` also reads, so both renderers pick the
-    /// same files under the same families.
+    /// same files, or `local()` names, under the same families.
     #[test]
     fn picks_the_same_sources_as_the_web_renderer() {
         let css = include_str!("../../../packages/web/test/fixtures/font-face-src/stylesheet.css");

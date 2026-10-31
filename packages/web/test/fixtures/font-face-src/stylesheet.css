@@ -30,8 +30,8 @@
 
 /*
  * The last valid `src` wins; one with no supported entry is invalid. A winning
- * `src` with a url() loads that file even after a local(). One with no url()
- * draws the first installed font its local() faces name, which expected.txt
+ * `src` with a supported url() loads that file even after a local(). One with
+ * none draws the first installed font its local() faces name, which expected.txt
  * lists as `local("<name>")` entries: unquoted, a name's words are joined by
  * one space.
  */

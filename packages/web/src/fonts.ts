@@ -263,21 +263,23 @@ export function loadFonts(assets: Asset[], resolve: (asset: Asset) => string): P
                 // The last valid `src` wins; one with no supported entry is
                 // invalid, so an earlier one stays in effect. Its first url()
                 // is the file to load, even after a local(). With none, the
-                // installed fonts its local() faces name go to FontFace, in
-                // order, as the native renderer looks them up; there is no
-                // file to copy.
+                // installed fonts its local() faces name go to FontFace in
+                // the order the native renderer tries them, and the browser
+                // matches them by its own rules; there is no file to copy.
                 const src = declarations
                   .filter(([key]) => key === 'src')
                   .map(([, value]) => supportedSources(value))
                   .find(sources => sources.length);
-                if (!src) throw new Error(`@font-face "${family}" in ${url} has no src entry Celesta can load (an installed font, or TrueType, OpenType, WOFF, or WOFF2).`);
+                if (!src) throw new Error(`@font-face "${family}" in ${url} has no src entry Celesta can use (a local() font name, or a TrueType, OpenType, WOFF, or WOFF2 file).`);
                 const location = src.find((source): source is string => typeof source === 'string');
                 const descriptors: FontFaceDescriptors = {
                   weight: property('font-weight') ?? 'normal', style: property('font-style') ?? 'normal',
                   unicodeRange: property('unicode-range') ?? 'U+0-10FFFF',
                 };
                 if (location == null) {
-                  const locals = src.map(source => `local("${(source as { local: string }).local.replace(/["\\]/g, '\\$&')}")`);
+                  const locals = src
+                    .filter((source): source is { local: string } => typeof source !== 'string')
+                    .map(({ local }) => `local("${local.replace(/["\\]/g, '\\$&')}")`);
                   await add(new FontFace(family, locals.join(', '), descriptors));
                 }
                 else {

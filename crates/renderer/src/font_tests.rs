@@ -7,7 +7,7 @@ use cosmic_text::{FontSystem, fontdb};
 use std::fs;
 use std::path::Path;
 
-use celesta_composition::{AssetLocation, ResolvedAsset};
+use celesta_composition::{AssetLocation, FontFallbackMode, ResolvedAsset};
 
 const FAMILY: &str = "Celesta Web Font Test";
 
@@ -209,7 +209,7 @@ fn stylesheets_with_no_loadable_source_say_so() {
         .load_fonts(&[file_font("legacy.css")], directory.path())
         .unwrap_err();
     assert!(
-        matches!(&error, RenderError::InvalidFont { reason, .. } if reason.contains("installed font") && reason.contains("TrueType, OpenType, WOFF, or WOFF2")),
+        matches!(&error, RenderError::InvalidFont { reason, .. } if reason.contains("local() font name") && reason.contains("TrueType, OpenType, WOFF, or WOFF2")),
         "{error}"
     );
 }
@@ -273,6 +273,13 @@ fn stylesheet_local_faces_draw_installed_fonts_by_full_or_postscript_name() {
     for family in ["ByFamilyName", "ByFrenchName", "NotInstalled"] {
         assert!(!has_family(&rasterizer, family), "{family}");
     }
+    // Text in a family whose local() fonts are not installed falls back,
+    // with the font fallback warning.
+    let not_installed = TextStyle {
+        font_family: Some("NotInstalled".into()),
+        ..TextStyle::default()
+    };
+    assert_eq!(rasterizer.font_fallback("l", &not_installed).len(), 1);
     // A url() is drawn even after an installed local() font.
     assert_eq!(
         face_families(&rasterizer, "Downloaded")
@@ -281,8 +288,41 @@ fn stylesheet_local_faces_draw_installed_fonts_by_full_or_postscript_name() {
             .collect::<Vec<_>>(),
         vec![FAMILY]
     );
-    // The installed family keeps exactly its own face.
+    // The installed family keeps exactly its own face, and the last rule,
+    // which has no font-family, adds none.
     assert_eq!(face_families(&rasterizer, INSTALLED).len(), 1);
+    assert_eq!(
+        rasterizer
+            .font_system
+            .db()
+            .faces()
+            .filter(|face| face.post_script_name == "CelestaInstalledTest-Bold")
+            .count(),
+        3
+    );
+}
+
+#[test]
+fn an_installed_face_is_added_once_per_stylesheet_family() {
+    let directory = tempfile::tempdir().unwrap();
+    // The same face, by two names in one stylesheet and again in another.
+    fs::write(
+        directory.path().join("a.css"),
+        "@font-face { font-family: Brand; src: local(CelestaInstalledTest-Bold) }\
+         @font-face { font-family: Brand; src: local('Celesta Installed Test Bold') }",
+    )
+    .unwrap();
+    fs::write(
+        directory.path().join("b.css"),
+        "@font-face { font-family: Brand; src: local(CelestaInstalledTest-Bold) }",
+    )
+    .unwrap();
+    let mut rasterizer = installed_rasterizer();
+    rasterizer
+        .load_fonts(&[file_font("a.css"), file_font("b.css")], directory.path())
+        .unwrap();
+    assert_eq!(face_families(&rasterizer, "Brand").len(), 1);
+    assert_eq!(rasterizer.stylesheet_faces["Brand"].len(), 1);
 }
 
 #[test]
@@ -328,17 +368,36 @@ fn stylesheet_local_faces_draw_like_the_installed_font() {
         font_size: Some(48.0),
         ..TextStyle::default()
     };
-    let headline = rasterizer
-        .rasterize("CELESTA", &style("Headline"), None, 1.0)
-        .unwrap();
+    // Text in the stylesheet family, the same in a fork, and text falling
+    // back to the font list's families all draw the installed font.
+    let mut fork = rasterizer.fork();
+    let loaded_fallback = TextStyle {
+        font_fallback: Some(FontFallbackMode::Loaded),
+        ..style("No Such Family")
+    };
     let bebas = rasterizer
         .rasterize("CELESTA", &style("Bebas Neue"), None, 1.0)
         .unwrap();
-    assert_eq!(
-        (headline.width(), headline.height()),
-        (bebas.width(), bebas.height())
-    );
-    assert!(headline.into_pixels() == bebas.into_pixels());
+    let bebas_size = (bebas.width(), bebas.height());
+    let bebas = bebas.into_pixels();
+    for (case, drawn) in [
+        (
+            "family",
+            rasterizer.rasterize("CELESTA", &style("Headline"), None, 1.0),
+        ),
+        (
+            "fork",
+            fork.rasterize("CELESTA", &style("Headline"), None, 1.0),
+        ),
+        (
+            "loaded fallback",
+            rasterizer.rasterize("CELESTA", &loaded_fallback, None, 1.0),
+        ),
+    ] {
+        let drawn = drawn.unwrap();
+        assert_eq!((drawn.width(), drawn.height()), bebas_size, "{case}");
+        assert!(drawn.into_pixels() == bebas, "{case}");
+    }
     assert!(
         rasterizer
             .font_fallback("headline", &style("Headline"))

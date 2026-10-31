@@ -46,8 +46,8 @@ pub struct TextRasterizer {
     pub(crate) stylesheet_faces: HashMap<String, Vec<Arc<str>>>,
     /// The system's faces, which a stylesheet's `local()` names can match:
     /// every face in the database when the rasterizer was made, and none
-    /// loaded from a project's fonts.
-    pub(crate) installed_faces: HashSet<fontdb::ID>,
+    /// loaded from a project's fonts. Changing it resets `installed_names`.
+    installed_faces: HashSet<fontdb::ID>,
     /// `installed_face`'s index of installed faces by lowercased full and
     /// PostScript name, built at the first lookup.
     installed_names: Option<Arc<HashMap<String, fontdb::ID>>>,
@@ -273,10 +273,13 @@ impl TextRasterizer {
         if faces.is_empty() {
             return Err(RenderError::InvalidFont {
                 asset: font.id.clone(),
-                // Every rule lists only files whose format() or tech() hints
-                // Celesta cannot use (EOT, SVG, COLRv1, ...).
-                reason: "no @font-face rule in the stylesheet names an installed font, or a \
-                         file Celesta can load (TrueType, OpenType, WOFF, or WOFF2)",
+                // No rule has a src entry Celesta can use: each lists only
+                // files whose format() or tech() hints it cannot read (EOT,
+                // SVG, COLRv1, ...), local() with no name, or a `//host` file
+                // in a stylesheet read from disk. Whether a local() font is
+                // installed is not checked here.
+                reason: "no @font-face rule in the stylesheet has a src entry Celesta can use \
+                         (a local() font name, or a TrueType, OpenType, WOFF, or WOFF2 file)",
             });
         }
         let mut families = Vec::new();
@@ -285,12 +288,14 @@ impl TextRasterizer {
                 FontFaceSource::File(location) => location,
                 FontFaceSource::Local(names) => {
                     // As in a browser, a face whose fonts are not installed
-                    // draws nothing, and its text falls back.
-                    families.extend(
-                        face.family
-                            .zip(names.iter().find_map(|name| self.installed_face(name)))
-                            .map(|(family, id)| self.alias_installed_face(id, family)),
-                    );
+                    // draws nothing, and its text falls back. A rule with no
+                    // font-family adds nothing either: the installed font
+                    // already has its own family.
+                    if let Some(family) = face.family
+                        && let Some(id) = names.iter().find_map(|name| self.installed_face(name))
+                    {
+                        families.push(self.alias_installed_face(id, family));
+                    }
                     continue;
                 }
             };
@@ -429,8 +434,8 @@ impl TextRasterizer {
         self.fonts_changed();
     }
 
-    /// Drops everything that depends on the database's faces, after a face
-    /// is added.
+    /// Drops everything that depends on the database's faces, when they
+    /// change.
     fn fonts_changed(&mut self) {
         self.drop_feature_families();
         self.fonts_revision += 1;
@@ -445,10 +450,13 @@ impl TextRasterizer {
 
     /// The installed face a stylesheet's `local(name)` names: the first,
     /// in database order, whose PostScript name (name ID 6) or full name
-    /// (name ID 4, in US English or else its first language) is `name`,
-    /// ignoring case, as CSS Fonts 4 §4.3.3.1 matches them. Family names
-    /// never match, and neither do fonts loaded from the project.
-    pub(crate) fn installed_face(&mut self, name: &str) -> Option<fontdb::ID> {
+    /// (name ID 4) is `name`. CSS Fonts 4 §4.3.3.1 matches only these two
+    /// names, taking the full name in US English or else the first
+    /// language; skrifa's `english_or_first` also prefers a record with no
+    /// language to the first one. Case is ignored, as Chromium and Firefox
+    /// ignore it; the spec does not say. Family names are not looked up,
+    /// and fonts loaded from the project never match.
+    fn installed_face(&mut self, name: &str) -> Option<fontdb::ID> {
         let names = self.installed_names.get_or_insert_with(|| {
             let database = self.font_system.db();
             let mut names = HashMap::new();
