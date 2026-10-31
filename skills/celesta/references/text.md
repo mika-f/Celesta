@@ -331,9 +331,10 @@ features; turn them off to draw code as it is written:
 - `<Code>` draws with the font's ligatures; pass the same `fontFeatures`
   in its `style` to show code as written ([code.md](code.md)).
 - The browser preview applies features only to fonts loaded with
-  `<Font>` from a file: text with `fontFeatures` and no `fontFamily`, or
-  with an installed family (including one a font stylesheet draws with
-  `local()`), throws there (export applies them to installed fonts too). Characters a fallback font draws do not get them in the preview.
+  `<Font>`, from a file or from a font stylesheet's `local()` fonts: text
+  with `fontFeatures` and no `fontFamily`, or with an installed family
+  named directly, throws there (export applies them to installed fonts
+  too). Characters a fallback font draws do not get them in the preview.
 
 ## Line breaking
 
