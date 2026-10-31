@@ -851,8 +851,8 @@ importers:
         specifier: ^19.3.0
         version: 19.3.0
       ag-psd:
-        specifier: ^31.0.2
-        version: 31.0.3
+        specifier: ^33.0.0
+        version: 33.0.0
       typescript:
         specifier: ^5.7.3
         version: 5.9.3
@@ -2659,6 +2659,9 @@ packages:
 
   ag-psd@31.0.3:
     resolution: {integrity: sha512-THDYK+WK1F5GOH4G0l4wkQRc0Cyq5tnxIwBezACKwa6idKygphnGgMISr4lmW6n0Q89ceoqpdPZQF3Y7TL1pgg==}
+
+  ag-psd@33.0.0:
+    resolution: {integrity: sha512-u/RxJx5/bwFn/+Ba/aXL0mMa66c1Sz9NwwE4MNZenDqzyAiuPbaWi1/PSVCiIEYp+kVIvJJBwy4bZuhsFgqF4Q==}
 
   argparse@1.0.10:
     resolution: {integrity: sha512-o5Roy6tNG4SL/FOkCAN6RzjiakZS25RLYFrcMttJqbdd8BWrnA+fGz57iN5Pb06pvBGvl5gQ0B48dJlslXvoTg==}
@@ -4586,6 +4589,11 @@ snapshots:
   '@vitest/spy@5.0.5': {}
 
   ag-psd@31.0.3:
+    dependencies:
+      base64-js: 1.5.1
+      pako: 2.1.0
+
+  ag-psd@33.0.0:
     dependencies:
       base64-js: 1.5.1
       pako: 2.1.0
