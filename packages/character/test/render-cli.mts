@@ -31,7 +31,7 @@ export const errorOf = (message: CliMessage): string | undefined => ('error' in 
 /** `message`, checked to be a rendered frame and not an error. */
 export function frameOf(message: CliMessage | undefined): FrameMessage {
   assert.ok(message, 'a message');
-  assert.equal(errorOf(message), undefined, errorOf(message));
+  assert.equal(errorOf(message), undefined, 'a frame without an error');
   assert.ok('scene' in message, 'a frame');
   return message;
 }
