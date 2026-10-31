@@ -67,8 +67,9 @@ renderer uses the same lists, so both load the same file.
 
 Supported formats are `woff2`, `woff`, `truetype`, and `opentype`, written as
 keywords or as strings. The four `*-variations` forms are accepted only as
-strings, because CSS Fonts 4 defines them only as strings; Chrome 152 drops an
-unquoted `format(woff2-variations)` entry. Supported techs are
+strings, because CSS Fonts 4 defines them only as strings. In Chrome 152,
+`src: url(a.woff2) format(woff2-variations), url(b.ttf)` serializes through the
+CSSOM as `url("b.ttf")`, so the unquoted entry is dropped. Supported techs are
 `features-opentype`, `features-aat`, `variations`, `color-COLRv0`,
 `color-sbix`, and `color-CBDT`. Matching ignores ASCII case.
 
@@ -79,12 +80,30 @@ unquoted `format(woff2-variations)` entry. Supported techs are
   `format()` and then `tech()`. `local()` is an entry of its own. Each `src`
   declaration with a supported entry replaces the previous choice. The face
   uses that declaration's first supported `url()`. A winning `src` made only
-  of `local()` entries gives no file, so the rule is skipped, as before.
+  of `local()` entries gives no file, so the rule is skipped.
   `declarations` now shares the splitter.
-- Web: the same parser in TypeScript (`supportedSources`), applied to every
-  `src` declaration in the block. When the winning `src` has only `local()`
-  entries, its text still goes to `FontFace`, as before. The format and tech
-  lists sit next to a note naming their Rust counterparts.
+- Web: the same parser in TypeScript (`supportedSources`). Web now also reads
+  the block the way native does:
+  - Descriptors are read once, ignoring case, with the later declaration
+    winning. Before, web matched `@font-face` and `font-family`
+    case-sensitively and took the first `font-family`.
+  - When the winning `src` has only `local()` entries, web skips the rule
+    with a warning, as native does. Native has no `local()` lookup.
+    - Before, web passed the `src` to `FontFace`. Preview and export then
+      differed whenever the font was installed.
+    - The difference was new in this change for a `local()`-only `src` that
+      followed one with a `url()`; before it, both renderers loaded that
+      earlier `url()`.
+
+  The format and tech lists sit next to a note naming their Rust
+  counterparts.
+- Messages: when no rule names a loadable file, native used to say "the
+  stylesheet has no @font-face url()" and web "Invalid font CSS", which is
+  misleading when every entry was simply unsupported. Native's
+  `InvalidFont` reason and web's warning now say that no rule names a
+  TrueType, OpenType, WOFF, or WOFF2 file, or that the rule lists only
+  `local()` fonts. Native has no warning channel, so a single unsupported
+  rule among loadable ones is skipped without a message, as CSS skips it.
 - Comments: web now strips CSS comments before reading the stylesheet, as
   native always did (`strip_comments`). Before this, a declaration that
   started after a comment was invisible to web. CSS-Tricks' bulletproof
@@ -96,15 +115,36 @@ unquoted `format(woff2-variations)` entry. Supported techs are
   `RemoteAssetCache::fetch` decodes it into the cache with the `data-url`
   crate. That crate implements the WHATWG data: URL processor and was
   already built through `resvg`/`usvg`. An invalid `data:` URL fails with
-  `RemoteAssetError::InvalidData`; its message shortens the URL to 64
-  characters.
+  `RemoteAssetError::InvalidData`. The message says whether the comma is
+  missing or the base64 is invalid, and shortens the URL to 64 characters.
+  `UnsupportedScheme` now reads "not an http, https, or data URL".
+  - Side effect: an asset in project JSON with
+    `{ "type": "url", "url": "data:…" }` (`AssetSource::Url`) also reaches
+    `fetch`, and is now decoded instead of failing with `UnsupportedScheme`.
+  - React components cannot produce such a location: `isRemoteUrl` and the
+    bridge accept only `http(s)`.
+  - Each decoded entry is a file named `asset`, with no extension.
+- Cache writes: `RemoteAssetCache::store` now writes both downloads and
+  decoded `data:` URLs. It creates the entry directory only when a file is
+  stored, so an HTTP error no longer leaves an empty directory behind.
+  `http_errors_leave_nothing_cached` checks that the whole cache root stays
+  empty.
 - Shared fixture: `packages/web/test/fixtures/font-face-src/stylesheet.css`
-  and `expected.txt` list the rules and the file each one loads. The Rust
-  test `picks_the_same_sources_as_the_web_renderer` (via `include_str!`) and
-  the web test both read them, so one list of cases covers both parsers.
+  and `expected.txt` list the rules and the `family<TAB>url` each one loads.
+  The Rust test `picks_the_same_sources_as_the_web_renderer` (via
+  `include_str!`) and the web test both read them.
+  - One list of cases covers both parsers.
+  - Every supported `format()` and `tech()` value decides the file for some
+    rule, so dropping a value from either side's list fails a test.
 
 The user guide's "Text and fonts" page (`en` and `ja`) and the Agent Skill's
-`react-core.md` now say which file a stylesheet rule loads.
+`react-core.md` now say which file a stylesheet rule loads. They also say that
+entries without `format()` are used, that `local()` is not, and that nothing
+falls back when a file fails to load.
+
+`docs/handoff/2026-10-29-remote-url-join.md` (#605) is updated where this
+change supersedes it: `data:` references, and `font_source` in place of
+`first_url`.
 
 ## Not changed
 
@@ -126,12 +166,16 @@ The user guide's "Text and fonts" page (`en` and `ja`) and the Agent Skill's
   - Before the source-selection change, native picked the first `src`.
   - Before the review fixes, it still picked the unquoted
     `*-variations` entry and dropped the `data:` face.
+- `cargo test -p celesta-renderer`: `stylesheets_with_no_loadable_source_say_so`
+  is new and failed against the old message.
 - `cargo clippy -p celesta-remote -p celesta-renderer --all-targets -- -D warnings`
   and `cargo fmt --all -- --check` passed.
 - `pnpm --dir packages/web test`: typecheck passed and 150 tests passed. Run
   `pnpm run build:runtime` first, because it generates
   `packages/react/src/generated/`.
   - The new fixture test, `a stylesheet face loads the file the native
-    renderer picks from its last valid src`, failed before the review fixes:
-    web fetched `webfont.eot`, skipped the three comment rules, and took the
-    unquoted `v.woff2`.
+    renderer picks from its last valid src`, failed before each round of
+    review fixes.
+    - First round: web fetched `webfont.eot`, skipped the three comment
+      rules, and took the unquoted `v.woff2`.
+    - Second round: web dropped the `@FONT-FACE` rule.
