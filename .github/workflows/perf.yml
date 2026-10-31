@@ -124,7 +124,7 @@ jobs:
       # Node.js and pnpm as mise.lock pins them.
       - uses: jdx/mise-action@v5.2.4
         with:
-          version: 2026.10.19
+          version: 2026.10.25
           cache_save: ${{ github.ref == 'refs/heads/main' }}
 
       # rust-cache keys on the job, so the cache is saved from this job, with
@@ -210,7 +210,7 @@ jobs:
       # Never on main, so it only restores the cache ci.yml saves there.
       - uses: jdx/mise-action@v5.2.4
         with:
-          version: 2026.10.19
+          version: 2026.10.25
           cache_save: false
 
       - name: Compare with the base
