@@ -142,13 +142,15 @@ test('a stylesheet face loads the file the native renderer picks from its last v
   });
   const font: Asset = { id: 'faces', location: { type: 'url', url: 'https://fonts.test/css/faces.css' } };
   await loadFonts([font], urlOf);
-  assert.deepEqual(fetched.slice(1), expected.map(line => line.split('\t')[1]));
+  const [installed, downloaded] = [true, false].map(local => expected.filter(line => line.split('\t')[1].startsWith('local(') === local));
+  assert.deepEqual(fetched.slice(1), downloaded.map(line => line.split('\t')[1]));
   const files = [...faces].filter(face => typeof face.source !== 'string');
   const loaded = files.map(face => `${face.family}\t${new TextDecoder().decode(face.source as ArrayBuffer)}`);
-  assert.deepEqual(loaded.sort(), [...expected].sort());
-  // A last `src` of only local() faces goes to FontFace as written, so the
-  // browser can draw an installed font; natively the rule loads nothing.
-  assert.deepEqual([...faces].filter(face => typeof face.source === 'string').map(face => [face.family, face.source]), [['OnlyLocal', "local('Installed')"]]);
+  assert.deepEqual(loaded.sort(), [...downloaded].sort());
+  // A winning `src` with no url() names installed fonts, which go to
+  // FontFace in order, as the native renderer looks them up.
+  const locals = [...faces].filter(face => typeof face.source === 'string').map(face => `${face.family}\t${face.source}`);
+  assert.deepEqual(locals.sort(), [...installed].sort());
   assert.deepEqual(warnings, []);
 });
 

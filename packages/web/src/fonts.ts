@@ -61,15 +61,19 @@ function functionArgument(text: string, name: string): [string, string] | undefi
 }
 
 /**
- * The entries of a `src` value Celesta supports, in order: a url, or `null`
- * for a `local()`. Entries that fail to parse or carry an unsupported
+ * The entries of a `src` value Celesta supports, in order: a url, or a
+ * `local()` font's name. Entries that fail to parse or carry an unsupported
  * `format()` or `tech()` are dropped, as CSS Fonts 4 parses `src`.
  */
-function supportedSources(value: string): (string | null)[] {
-  return splitOutsideNesting(value, ',').flatMap(entry => {
+function supportedSources(value: string): (string | { local: string })[] {
+  return splitOutsideNesting(value, ',').flatMap((entry): (string | { local: string })[] => {
     entry = entry.trim();
     const local = functionArgument(entry, 'local');
-    if (local) return local[1].trim() ? [] : [null];
+    if (local) {
+      // Unquoted, a name is identifiers joined by one space.
+      const name = /^\s*['"]/.test(local[0]) ? unquote(local[0]) : local[0].trim().split(/\s+/).join(' ');
+      return local[1].trim() || !name ? [] : [{ local: name }];
+    }
     const url = functionArgument(entry, 'url');
     const location = url && unquote(url[0]);
     if (!url || !location) return [];
@@ -258,20 +262,24 @@ export function loadFonts(assets: Asset[], resolve: (asset: Asset) => string): P
                 if (!family) throw new Error(`Invalid font CSS: ${url}`);
                 // The last valid `src` wins; one with no supported entry is
                 // invalid, so an earlier one stays in effect. Its first url()
-                // is the file to load. With none (only local() faces), `src`
-                // goes to FontFace as written and there is no file to copy;
-                // the native renderer, which has no local(), skips the rule.
+                // is the file to load, even after a local(). With none, the
+                // installed fonts its local() faces name go to FontFace, in
+                // order, as the native renderer looks them up; there is no
+                // file to copy.
                 const src = declarations
                   .filter(([key]) => key === 'src')
-                  .map(([, value]) => ({ value, sources: supportedSources(value) }))
-                  .find(({ sources }) => sources.length);
-                if (!src) throw new Error(`@font-face "${family}" in ${url} has no src entry Celesta can load (TrueType, OpenType, WOFF, or WOFF2).`);
-                const location = src.sources.find(source => source !== null);
+                  .map(([, value]) => supportedSources(value))
+                  .find(sources => sources.length);
+                if (!src) throw new Error(`@font-face "${family}" in ${url} has no src entry Celesta can load (an installed font, or TrueType, OpenType, WOFF, or WOFF2).`);
+                const location = src.find((source): source is string => typeof source === 'string');
                 const descriptors: FontFaceDescriptors = {
                   weight: property('font-weight') ?? 'normal', style: property('font-style') ?? 'normal',
                   unicodeRange: property('unicode-range') ?? 'U+0-10FFFF',
                 };
-                if (location == null) await add(new FontFace(family, src.value, descriptors));
+                if (location == null) {
+                  const locals = src.map(source => `local("${(source as { local: string }).local.replace(/["\\]/g, '\\$&')}")`);
+                  await add(new FontFace(family, locals.join(', '), descriptors));
+                }
                 else {
                   const file = new URL(location, url).href;
                   const response = await fetch(file);

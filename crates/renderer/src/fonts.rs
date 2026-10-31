@@ -5,6 +5,8 @@ use crate::linebreak::{is_emoji_cluster, is_visible_character};
 use crate::shaping::{source_offsets, usable_font_runs};
 use crate::text::{FontFallback, MissingGlyphs};
 use celesta_composition::{FontFamily, FontFeatures, ResolvedAsset, TextStyle};
+use celesta_remote::FontFaceSource;
+use cosmic_text::skrifa::{FontRef, MetadataProvider, string::StringId};
 use cosmic_text::{Family, FontSystem, SwashCache, Weight, fontdb};
 use std::collections::{HashMap, HashSet};
 #[cfg(target_os = "windows")]
@@ -42,6 +44,13 @@ pub struct TextRasterizer {
     /// Each stylesheet face has a private family so shaping can select a
     /// particular Unicode subset instead of only the family's first file.
     pub(crate) stylesheet_faces: HashMap<String, Vec<Arc<str>>>,
+    /// The system's faces, which a stylesheet's `local()` names can match:
+    /// every face in the database when the rasterizer was made, and none
+    /// loaded from a project's fonts.
+    pub(crate) installed_faces: HashSet<fontdb::ID>,
+    /// `installed_face`'s index of installed faces by lowercased full and
+    /// PostScript name, built at the first lookup.
+    installed_names: Option<Arc<HashMap<String, fontdb::ID>>>,
     /// `face_runs` results for text with a font stack, by text and the
     /// style fields they depend on, cleared whenever a font is loaded.
     pub(crate) stacked_runs: HashMap<String, Arc<[FaceRun]>>,
@@ -108,6 +117,8 @@ impl TextRasterizer {
             load_directwrite_system_fonts(&mut font_system);
             font_system
         };
+        // After DirectWrite's fonts, which `initial_db` lacks.
+        let installed_faces = font_system.db().faces().map(|face| face.id).collect();
 
         Self {
             font_system,
@@ -122,6 +133,8 @@ impl TextRasterizer {
             matched_weights: HashMap::new(),
             matched_faces: HashMap::new(),
             stylesheet_faces: HashMap::new(),
+            installed_faces,
+            installed_names: None,
             stacked_runs: HashMap::new(),
             feature_families: HashMap::new(),
             feature_faces: Vec::new(),
@@ -151,6 +164,8 @@ impl TextRasterizer {
             matched_weights: HashMap::new(),
             matched_faces: HashMap::new(),
             stylesheet_faces: self.stylesheet_faces.clone(),
+            installed_faces: self.installed_faces.clone(),
+            installed_names: self.installed_names.clone(),
             stacked_runs: HashMap::new(),
             feature_families: self.feature_families.clone(),
             feature_faces: self.feature_faces.clone(),
@@ -258,17 +273,30 @@ impl TextRasterizer {
         if faces.is_empty() {
             return Err(RenderError::InvalidFont {
                 asset: font.id.clone(),
-                // Every rule lists only local() fonts, or files whose format()
-                // or tech() hints Celesta cannot use (EOT, SVG, COLRv1, ...).
-                reason: "no @font-face rule in the stylesheet names a file Celesta can load \
-                         (TrueType, OpenType, WOFF, or WOFF2)",
+                // Every rule lists only files whose format() or tech() hints
+                // Celesta cannot use (EOT, SVG, COLRv1, ...).
+                reason: "no @font-face rule in the stylesheet names an installed font, or a \
+                         file Celesta can load (TrueType, OpenType, WOFF, or WOFF2)",
             });
         }
         let mut families = Vec::new();
         for face in faces {
+            let location = match face.source {
+                FontFaceSource::File(location) => location,
+                FontFaceSource::Local(names) => {
+                    // As in a browser, a face whose fonts are not installed
+                    // draws nothing, and its text falls back.
+                    families.extend(
+                        face.family
+                            .zip(names.iter().find_map(|name| self.installed_face(name)))
+                            .map(|(family, id)| self.alias_installed_face(id, family)),
+                    );
+                    continue;
+                }
+            };
             let face_asset = ResolvedAsset {
                 id: font.id.clone(),
-                location: face.location,
+                location,
             };
             let face_path = local_asset_path(asset_root, &face_asset)?;
             if !self.loaded_fonts.contains(&face_path) {
@@ -317,17 +345,9 @@ impl TextRasterizer {
         if ids.is_empty() {
             return Err(invalid("no font faces found"));
         }
-        self.drop_feature_families();
-        let database = self.font_system.db_mut();
-        self.fonts_revision += 1;
-        self.locale_systems.clear();
-        self.matched_weights.clear();
-        self.matched_faces.clear();
-        self.stacked_runs.clear();
-        self.color_emoji_family = None;
-        self.missing_characters.clear();
-        self.shaped_buffers.clear();
+        self.fonts_changed();
         let Some(alias) = alias else {
+            let database = self.font_system.db();
             let mut families: Vec<Arc<str>> = Vec::new();
             for id in ids {
                 let Some((family, _)) = database.face(id).and_then(|face| face.families.first())
@@ -342,25 +362,118 @@ impl TextRasterizer {
         };
         let mut families = Vec::new();
         for id in ids {
-            let Some(mut face) = database.face(id).cloned() else {
+            let Some(face) = self.font_system.db().face(id).cloned() else {
                 continue;
             };
-            let private: Arc<str> = format!("celesta-stylesheet-face-{id:?}").into();
-            face.families
-                .push((private.to_string(), fontdb::Language::English_UnitedStates));
-            if !face.families.iter().any(|(family, _)| *family == alias) {
-                face.families
-                    .push((alias.clone(), fontdb::Language::English_UnitedStates));
-            }
-            self.stylesheet_faces
-                .entry(alias.clone())
-                .or_default()
-                .push(Arc::clone(&private));
-            families.push(private);
-            database.remove_face(id);
-            database.push_face_info(face);
+            self.font_system.db_mut().remove_face(id);
+            let private = format!("celesta-stylesheet-face-{id:?}").into();
+            families.push(self.push_stylesheet_face(face, private, &alias));
         }
         Ok(families)
+    }
+
+    /// Adds the installed face `id` under the stylesheet family `alias`, as
+    /// a copy that matches only `alias` and the private family it returns,
+    /// so the installed font's own family keeps one face.
+    fn alias_installed_face(&mut self, id: fontdb::ID, alias: String) -> Arc<str> {
+        let private: Arc<str> = format!("celesta-stylesheet-face-installed-{id:?}-{alias}").into();
+        if self
+            .stylesheet_faces
+            .get(&alias)
+            .is_some_and(|faces| faces.contains(&private))
+        {
+            return private;
+        }
+        let mut face = self
+            .font_system
+            .db()
+            .face(id)
+            .cloned()
+            .expect("installed faces stay in the database");
+        face.families = vec![(alias.clone(), fontdb::Language::English_UnitedStates)];
+        self.fonts_changed();
+        self.push_stylesheet_face(face, private, &alias)
+    }
+
+    /// Adds `face` to the database under `alias` and the private family
+    /// `private`, which it returns.
+    fn push_stylesheet_face(
+        &mut self,
+        mut face: fontdb::FaceInfo,
+        private: Arc<str>,
+        alias: &str,
+    ) -> Arc<str> {
+        face.families
+            .push((private.to_string(), fontdb::Language::English_UnitedStates));
+        if !face.families.iter().any(|(family, _)| family == alias) {
+            face.families
+                .push((alias.to_owned(), fontdb::Language::English_UnitedStates));
+        }
+        self.stylesheet_faces
+            .entry(alias.to_owned())
+            .or_default()
+            .push(Arc::clone(&private));
+        self.font_system.db_mut().push_face_info(face);
+        private
+    }
+
+    /// Adds the font `data` as if it were installed on the system.
+    #[cfg(test)]
+    pub(crate) fn install_font(&mut self, data: Vec<u8>) {
+        let ids = self
+            .font_system
+            .db_mut()
+            .load_font_source(fontdb::Source::Binary(Arc::new(data)));
+        self.installed_faces.extend(ids);
+        self.installed_names = None;
+        self.fonts_changed();
+    }
+
+    /// Drops everything that depends on the database's faces, after a face
+    /// is added.
+    fn fonts_changed(&mut self) {
+        self.drop_feature_families();
+        self.fonts_revision += 1;
+        self.locale_systems.clear();
+        self.matched_weights.clear();
+        self.matched_faces.clear();
+        self.stacked_runs.clear();
+        self.color_emoji_family = None;
+        self.missing_characters.clear();
+        self.shaped_buffers.clear();
+    }
+
+    /// The installed face a stylesheet's `local(name)` names: the first,
+    /// in database order, whose PostScript name (name ID 6) or full name
+    /// (name ID 4, in US English or else its first language) is `name`,
+    /// ignoring case, as CSS Fonts 4 §4.3.3.1 matches them. Family names
+    /// never match, and neither do fonts loaded from the project.
+    pub(crate) fn installed_face(&mut self, name: &str) -> Option<fontdb::ID> {
+        let names = self.installed_names.get_or_insert_with(|| {
+            let database = self.font_system.db();
+            let mut names = HashMap::new();
+            for face in database
+                .faces()
+                .filter(|face| self.installed_faces.contains(&face.id))
+            {
+                let full_name = database.with_face_data(face.id, |data, index| {
+                    FontRef::from_index(data, index).ok().and_then(|font| {
+                        font.localized_strings(StringId::FULL_NAME)
+                            .english_or_first()
+                            .map(|name| name.to_string())
+                    })
+                });
+                for name in [Some(face.post_script_name.clone()), full_name.flatten()]
+                    .into_iter()
+                    .flatten()
+                    .filter(|name| !name.is_empty())
+                {
+                    names.entry(name.to_lowercase()).or_insert(face.id);
+                }
+            }
+            Arc::new(names)
+        });
+        names.get(&name.to_lowercase()).copied()
     }
 
     /// The weight of the face that CSS font matching (CSS Fonts §5.2) picks

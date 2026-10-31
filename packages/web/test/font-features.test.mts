@@ -94,7 +94,7 @@ test('a face is made from the first file the browser can read, which its copies 
   await loadFonts([legacy], resolve);
   assert.deepEqual(fetched, ['https://fonts.test/legacy.css', 'https://fonts.test/legacy.woff', 'https://fonts.test/plain.otf']);
   const installed = faces().find((face) => face.family === 'Installed');
-  assert.equal(installed?.source, 'local(Installed)');
+  assert.equal(installed?.source, 'local("Installed")');
   cssFont({ fontFamily: 'Legacy', fontFeatures: { liga: false } });
   assert.equal(new TextDecoder().decode(copies()[0]!.source as ArrayBuffer), 'https://fonts.test/legacy.woff');
   assert.throws(() => cssFont({ fontFamily: 'Installed', fontFeatures: { liga: false } }),

@@ -25,7 +25,9 @@ mod staged;
 mod stylesheet;
 
 pub use staged::StagedFile;
-pub use stylesheet::{StylesheetFontFace, is_font_stylesheet, stylesheet_font_faces};
+pub use stylesheet::{
+    FontFaceSource, StylesheetFontFace, is_font_stylesheet, stylesheet_font_faces,
+};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_FILE_NAME_LEN: usize = 96;
@@ -452,7 +454,7 @@ mod tests {
         let paths: Vec<_> = faces
             .iter()
             .map(|face| {
-                let AssetLocation::Url { url } = &face.location else {
+                let FontFaceSource::File(AssetLocation::Url { url }) = &face.source else {
                     panic!("remote face")
                 };
                 online.fetch(url).unwrap()
@@ -463,7 +465,7 @@ mod tests {
         let offline = cache(directory.path());
         assert_eq!(offline.fetch(&url).unwrap(), stylesheet);
         for (face, path) in faces.iter().zip(paths) {
-            let AssetLocation::Url { url } = &face.location else {
+            let FontFaceSource::File(AssetLocation::Url { url }) = &face.source else {
                 panic!("remote face")
             };
             assert_eq!(offline.fetch(url).unwrap(), path);

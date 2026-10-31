@@ -6,6 +6,8 @@ Upper	https://fonts.test/css/upper.woff2
 Second	https://fonts.test/css/second.woff2
 Kept	https://fonts.test/css/kept.woff2
 AfterLocal	https://fonts.test/css/after-local.woff2
+OnlyLocal	local("Installed")
+LocalNames	local("Gentium Bold"), local("Gentium-Bold")
 Formats	https://fonts.test/css/h%20(1).woff2
 Aat	https://fonts.test/css/i.ttf
 OpenType	https://fonts.test/css/j.otf
