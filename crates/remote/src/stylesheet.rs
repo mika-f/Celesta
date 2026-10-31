@@ -30,8 +30,8 @@ pub struct StylesheetFontFace {
 /// resolved against the stylesheet's own location; `local(...)` sources are
 /// skipped.
 ///
-/// Fails on the first remote reference that is not a valid URL, as a
-/// download of it would.
+/// Fails on the first relative reference that does not resolve to a valid
+/// URL; an absolute one is checked when it is fetched.
 pub fn stylesheet_font_faces(
     css: &str,
     stylesheet: &AssetLocation,
@@ -252,11 +252,12 @@ fn resolve_reference(
         let url = url.to_owned();
         move |source| RemoteAssetError::InvalidUrl { url, source }
     };
-    // A data: URL holds the font itself, which `RemoteAssetCache::fetch`
-    // decodes, as a browser's fetch would.
+    // `RemoteAssetCache::fetch` normalizes an absolute URL and decodes a
+    // data: URL, which holds the font itself, as a browser's fetch would.
     if is_remote_url(reference) || is_data_url(reference) {
-        let url = Url::parse(reference).map_err(invalid(reference))?;
-        return Ok(Some(AssetLocation::Url { url: url.into() }));
+        return Ok(Some(AssetLocation::Url {
+            url: reference.to_owned(),
+        }));
     }
     match stylesheet {
         AssetLocation::Url { url } => {
@@ -360,18 +361,18 @@ mod tests {
 
     #[test]
     fn references_that_are_not_urls_are_errors() {
+        // An absolute URL is checked when it is fetched
+        // (`normalizes_urls_as_a_browser_fetch_does` in lib.rs).
         let base = url("https://example.com/css/fonts.css");
-        for reference in ["https://exa mple.com/a.ttf", "//exa mple.com/a.ttf"] {
-            let css = format!(
-                "@font-face {{ src: url(a.woff2) }} @font-face {{ src: url('{reference}') }}"
-            );
-            let error = stylesheet_font_faces(&css, &base).unwrap_err();
-            assert!(
-                matches!(&error, RemoteAssetError::InvalidUrl { url, .. } if url == reference),
-                "{error:?}"
-            );
-            assert!(error.to_string().contains(reference), "{error}");
-        }
+        let reference = "//exa mple.com/a.ttf";
+        let css =
+            format!("@font-face {{ src: url(a.woff2) }} @font-face {{ src: url('{reference}') }}");
+        let error = stylesheet_font_faces(&css, &base).unwrap_err();
+        assert!(
+            matches!(&error, RemoteAssetError::InvalidUrl { url, .. } if url == reference),
+            "{error:?}"
+        );
+        assert!(error.to_string().contains(reference), "{error}");
     }
 
     #[test]
@@ -437,9 +438,9 @@ mod tests {
     }
 
     #[test]
-    fn absolute_references_are_normalized_too() {
+    fn absolute_references_are_kept_for_the_fetch_to_normalize() {
         let css = "@font-face { src: url(\"HTTPS://Example.COM/Other Font.ttf?a b\") }";
-        let expected = vec![url("https://example.com/Other%20Font.ttf?a%20b")];
+        let expected = vec![url("HTTPS://Example.COM/Other Font.ttf?a b")];
         assert_eq!(
             locations(css, &url("https://example.com/css/fonts.css")),
             expected

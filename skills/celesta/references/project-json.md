@@ -83,7 +83,8 @@ by id, and the kind must match the use.
 
 - `type`: `video`, `audio`, `image`, or `font`. `name` is an optional label.
 - File paths are relative to the project file's folder.
-- URL sources are downloaded once and cached; change the URL to refresh.
+- URL sources are downloaded once and cached; change the path or query (for
+  example add `?v=2`) to refresh. A `data:` URL is decoded instead.
 - Font assets are loaded for every text item; refer to them by the font's
   internal family name in `style.fontFamily`.
 
