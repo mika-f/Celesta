@@ -12,7 +12,7 @@
 # no GPU. See packaging/linux/README.md.
 
 # --- Build stage: FFmpeg 8.1.x, Rust, and the React runtime ----------------
-FROM ubuntu:24.04 AS build
+FROM ubuntu:26.04 AS build
 
 ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
@@ -56,7 +56,7 @@ RUN mkdir -p /out/runtime \
   && node scripts/stage-react-runtime.mjs /out/runtime/react
 
 # --- Runtime stage ----------------------------------------------------------
-FROM ubuntu:24.04
+FROM ubuntu:26.04
 
 # libx264, libvpx, and libopus are linked dynamically; FFmpeg itself is linked into the executable.
 # mesa-vulkan-drivers provides lavapipe, a CPU implementation of Vulkan. Text
