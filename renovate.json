@@ -142,9 +142,13 @@
       "separateMajorMinor": false
     },
     {
-      "description": "fframes are released together from dmtrKovalenko/fframes",
-      "matchSourceUrls": [
-        "https://github.com/dmtrKovalenko/fframes"
+      "description": "fframes and fframes_* are released together from dmtrKovalenko/fframes. Match by name: only fframes_native_player publishes a repository URL on crates.io, so matching by source URL leaves the others out of the group.",
+      "matchDatasources": [
+        "crate"
+      ],
+      "matchPackageNames": [
+        "fframes",
+        "fframes_*"
       ],
       "groupName": "fframes",
       "separateMajorMinor": false
