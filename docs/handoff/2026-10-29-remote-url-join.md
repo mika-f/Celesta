@@ -12,7 +12,10 @@ An absolute `http(s)` reference used to keep its exact string. It is now parsed
 with `url::Url::parse`, so it gets the same encoding and normalization as a
 joined one. This applies to stylesheets loaded from a URL and from a local
 file. Google Fonts stylesheets name lowercase ASCII `fonts.gstatic.com` URLs,
-so their strings do not change.
+so their strings do not change. (Superseded by
+`2026-10-31-remote-url-normalization.md`: `RemoteAssetCache::fetch` now
+normalizes every URL, so the stylesheet keeps absolute references as written,
+and an invalid one fails when it is fetched.)
 
 A reference that `Url::parse` or `Url::join` rejects is an error.
 `stylesheet_font_faces` returns `RemoteAssetError::InvalidUrl`, which names the
@@ -46,7 +49,8 @@ each face, the resolved `AssetLocation::Url` goes to
 URL string:
 
 - is the download target (`ureq`, which parses it as an `http::Uri`);
-- names the cache directory (`fnv1a` of the exact string);
+- names the cache directory (`fnv1a` of the exact string; of the normalized
+  string since `2026-10-31-remote-url-normalization.md`);
 - names the cached file (`file_name`, from the last path segment);
 - appears in every `RemoteAssetError` message.
 
@@ -144,7 +148,8 @@ in the editor's `gpui` dependency.
 - `cargo test -p celesta-remote`: 21 passed. The tests added here are
   `fragment_only_references_keep_the_base_query`,
   `resolves_edge_case_references_like_browsers`,
-  `absolute_references_are_normalized_too`,
+  `absolute_references_are_normalized_too` (now
+  `absolute_references_are_kept_for_the_fetch_to_normalize`),
   `joined_urls_are_normalized`, and
   `references_that_are_not_urls_are_errors`.
 - `cargo clippy -p celesta-remote --all-targets -- -D warnings` passed.

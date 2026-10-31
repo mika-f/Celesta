@@ -30,7 +30,13 @@ through `resolve_asset_path`. `fetch` and `cached` now pass the URL through
 - lowercases the scheme and host,
 - drops a default port,
 - percent-encodes what a request line cannot carry,
-- writes an IDN host as punycode.
+- writes an IDN host as punycode,
+- resolves dot segments, reads `\` as `/`, and adds `/` to an empty path.
+
+`normalized` also drops the fragment. `http::Uri` never sends it, so before
+this change `a.woff2#iefix` and `a.woff2` were one request but two cache
+entries and two downloads. That predates the stack, since the key was the raw
+string.
 
 The normalized string is used both for the request and for the cache key
 (`fnv1a`). The same URL written two ways now shares one entry. A URL that does
@@ -45,20 +51,25 @@ the fetch normalizes them. Relative references are still resolved there with
 `Url::join`. An absolute reference that is not a valid URL now fails when it
 is fetched, rather than while the stylesheet is read. The error is the same.
 
-An HTTP error no longer leaves an empty entry directory behind, because the
-directory is created only when a file is stored.
+`docs/handoff/2026-10-29-remote-url-join.md` (#605) is updated where this
+change supersedes it: absolute references, the cache key, and the renamed
+test.
 
 ## Behavior changes
 
 - A remote URL with spaces, other characters a request line cannot carry, or
   a raw IDN host now downloads natively, as it does in the browser.
-- A cached file whose URL was written in a non-normalized form, such as an
-  uppercase host, `:443`, or a raw non-ASCII path, is downloaded once more
-  under its normalized key. Everything else keeps its cache entry: a URL that
-  is already in normalized form serializes to the same string.
+- A cached file whose URL was written in a non-normalized form is downloaded
+  once more under its normalized key. Examples: an uppercase host, `:443`, a
+  raw non-ASCII path, a bare origin without `/`, or a URL with a fragment.
+  Everything else keeps its cache entry, because a URL already in normalized
+  form serializes to the same string.
 
-The user guide's media page (en/ja) now says URLs are percent-encoded before
-the download.
+The user guide's media page (en/ja) now describes the normalization. The
+Agent Skill (`SKILL.md` and `references/project-json.md`) says that only a
+change to the path or query refreshes a cached URL. `project-json.md` also
+notes that a `data:` URL source is decoded, which follows from the
+source-selection change below this layer.
 
 ## Checks
 
