@@ -1,6 +1,7 @@
 //! Minimal `@font-face` stylesheet reading, enough for web font services such
-//! as Google Fonts: each rule's `src` names one font file, picked as a browser
-//! would (CSS Fonts 4, "Font reference: the src descriptor").
+//! as Google Fonts: each rule's `src` names at most one font file, picked by
+//! the CSS Fonts 4 parsing rules ("Font reference: the src descriptor"). Unlike
+//! a browser, nothing falls back to a later entry when that file fails to load.
 
 use std::path::Path;
 

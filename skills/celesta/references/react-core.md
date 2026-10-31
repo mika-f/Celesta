@@ -1074,9 +1074,11 @@ conditional plays only on frames where it is rendered.
 ```
 
 - `<Font src>` loads TTF, OTF, WOFF, WOFF2, or a web-font CSS stylesheet
-  (each `@font-face` loads one file: in its last usable `src`, the first
-  `url()` that is TTF/OTF/WOFF/WOFF2; EOT, SVG fonts, collections, and
-  `tech()` such as COLRv1 are skipped). Refer to it by the **family name
+  (each `@font-face` loads at most one file: in its last `src` with a
+  supported entry, the first `url()` whose `format()` is TTF/OTF/WOFF/WOFF2
+  or absent; EOT, SVG fonts, collections, `tech()` such as COLRv1, and
+  `local()` are skipped, and a file that fails to load is not retried with
+  the next entry). Refer to it by the **family name
   stored inside the font**, not the file name. See
   [text.md](text.md#fonts-fallback-and-emoji) for weights and fallback.
 - `<Font google>` requests a family by name instead of `src`. `weights`
