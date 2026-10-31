@@ -57,7 +57,9 @@ pub struct TextRasterizer {
     pub(crate) active_stylesheets: HashSet<PathBuf>,
     pub(crate) active_stylesheet_families: HashSet<String>,
     /// The first face of each font file a stylesheet's `url()` loaded,
-    /// which the database lists only as stylesheet faces' copies.
+    /// which the database lists only as stylesheet faces' copies. Kept apart
+    /// from `loaded_fonts`, so the same file listed as a font of its own
+    /// still loads under its own family.
     stylesheet_files: HashMap<PathBuf, fontdb::FaceInfo>,
     /// The system's faces, which a stylesheet's `local()` names can match:
     /// every face in the database when the rasterizer was made, and none
@@ -232,7 +234,7 @@ impl TextRasterizer {
     /// caller caching rasterized text can compare it across frames to tell
     /// when a newly loaded font may change how existing text lays out.
     pub fn loaded_font_count(&self) -> usize {
-        self.loaded_fonts.len()
+        self.loaded_fonts.len() + self.stylesheet_files.len()
     }
 
     /// Changes whenever a font loads or the font list's fallback families
@@ -335,7 +337,6 @@ impl TextRasterizer {
                             let template = self.load_stylesheet_file(&font.id, face_data)?;
                             self.stylesheet_files
                                 .insert(face_path.clone(), template.clone());
-                            self.loaded_fonts.insert(face_path);
                             template
                         }
                     };

@@ -269,6 +269,60 @@ fn a_weight_range_draws_at_the_weight_asked_for() {
 }
 
 #[test]
+fn a_weight_span_in_a_weight_range_draws_at_its_weight() {
+    let mut rasterizer =
+        rasterizer("@font-face { font-family: Range; font-weight: 300 800; src: url(plex.ttf) }");
+    let style = TextStyle {
+        font_runs: vec![crate::font_run_tests::run(0, 1, Some(700), None)],
+        ..style("Range", 400)
+    };
+    assert_eq!(
+        drawn_by(&mut rasterizer, "AB", &style),
+        [
+            "IBMPlexMono-Regular Range 700",
+            "IBMPlexMono-Regular Range 400"
+        ]
+    );
+}
+
+#[test]
+fn a_stylesheet_file_listed_as_a_font_too_keeps_its_own_family() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(
+        directory.path().join("plex.ttf"),
+        example_font("IBMPlexMono-Regular.ttf"),
+    )
+    .unwrap();
+    fs::write(
+        directory.path().join("fonts.css"),
+        "@font-face { font-family: Code; src: url(plex.ttf) }",
+    )
+    .unwrap();
+    let font = |path: &str| ResolvedAsset {
+        id: path.to_owned(),
+        location: AssetLocation::File {
+            path: path.to_owned(),
+        },
+    };
+    let mut rasterizer = TextRasterizer::new();
+    rasterizer
+        .load_fonts(&[font("fonts.css"), font("plex.ttf")], directory.path())
+        .unwrap();
+    for family in ["Code", "IBM Plex Mono"] {
+        assert!(
+            rasterizer
+                .font_fallback("l", &style(family, 400))
+                .is_empty(),
+            "{family}"
+        );
+    }
+    assert_eq!(
+        drawn_by(&mut rasterizer, "A", &style("IBM Plex Mono", 400)),
+        ["IBMPlexMono-Regular - 400"]
+    );
+}
+
+#[test]
 fn one_file_under_several_rules_is_several_faces() {
     let mut rasterizer = rasterizer(
         "@font-face { font-family: Same; font-weight: 400; src: url(plex.ttf) }\

@@ -123,17 +123,23 @@ impl TextRasterizer {
                 && (style.font_family.is_some()
                     || spans.iter().any(|run| run.font_family.is_some())));
         if !stacked {
+            // A run in the text's stylesheet family at another weight names
+            // the copy for its weight: the text's copy draws at the text's.
+            let text_stylesheet = style.font_family.as_ref().filter(|family| {
+                family
+                    .names()
+                    .iter()
+                    .any(|name| self.is_stylesheet_family(name))
+            });
             let mut runs = Vec::with_capacity(spans.len());
             for run in &spans {
                 let weight = run.font_weight.or(style.font_weight).unwrap_or(400);
+                let family = run.font_family.as_ref().or(text_stylesheet);
                 runs.push(FaceRun {
                     start: run.start,
                     end: run.end,
                     font_weight: run.font_weight,
-                    font_family: run
-                        .font_family
-                        .as_ref()
-                        .map(|family| self.primary_family(family, weight)),
+                    font_family: family.map(|family| self.primary_family(family, weight)),
                     font_features: run.font_features.clone(),
                 });
             }
