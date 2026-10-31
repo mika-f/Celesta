@@ -1990,7 +1990,7 @@ fn mixed_targets() -> ElementTargets {
 
 /// The override sites of [`mixed_targets`].
 fn mixed_override_sites() -> Vec<(PropKey, OverrideSite)> {
-    override_sites(&mixed_targets(), &price_tag_report())
+    override_sites(&mixed_targets(), &price_tag_report(), None, None)
 }
 
 /// An override of the element or call site at line 2, column 3 of `file`.
@@ -2001,6 +2001,7 @@ fn override_at(file: &str, prop: &str, value: f64) -> PropOverride {
         column: 3,
         prop: prop.to_owned(),
         value,
+        within: None,
     }
 }
 

@@ -281,7 +281,7 @@ Edits change  [ This scene ]  [ Shared value ]
 
 タブの下の行は、共有の値が届くシーンと、自分の値を指定しているシーンを示します。後者は **Shared value** の編集では変わりません（**Shared value is used in Intro, Outro · Price sets its own**）。シーンでのコンポーネントの呼び出しが、要素の行が読む prop のどれかを渡していれば、そのシーンは自分の値を指定しています。そうしたシーンが複数あるときは **Price, Sale set their own** のように並び、4 つ以上あるときは **5 scenes** のように数を示します。チャプターのないコンポジションでは **Shared value is used everywhere**、すべてのシーンが自分の値を指定しているときは **Shared value is used in no scene** と表示されます。
 
-現在のシーンがコンポーネントを 2 回以上呼び出しているとき（たとえば Price に Sale と Second の 2 つの `<PriceTag>` があるとき）は、**This scene** は選んだインスタンスの呼び出しだけに書き込み、シーンのほかの呼び出しは値を保ちます。**This scene** が選ばれているあいだ、またはそのタブにポインタを重ねているあいだ、タブの下の行は **Edits this `<PriceTag>` only · this scene calls it 2 times** となり、タイムラインの帯は選んだインスタンスだけを示します。タブのツールチップは **Write the edit for this call only** です。チャプターのないコンポジションでは、タイムライン全体が 1 つのシーンなので、タブの下の行とツールチップは呼び出しが 1 つのときと同じです。
+現在のシーンがコンポーネントを 2 回以上呼び出しているとき（たとえば Price に Sale と Second の 2 つの `<PriceTag>` があるとき）は、**This scene** は選んだインスタンスの呼び出しだけに書き込み、シーンのほかの呼び出しは値を保ちます。**This scene** が選ばれているあいだ、またはそのタブにポインタを重ねているあいだ、タブの下の行は **Edits this `<PriceTag>` only · this scene calls it 2 times** となり、タイムラインの帯は選んだインスタンスだけを示します。タブのツールチップは **Write the edit for this call only** です。レイヤーをドラッグしているあいだや行をスクラブしているあいだも、プレビューは書き込まれるとおり、選んだ呼び出しが描くコピーだけを動かし、Second の値札は元の位置にとどまります。**Shared value** では、すべてのコピーが一緒に動きます。チャプターのないコンポジションでは、タイムライン全体が 1 つのシーンなので、タブの下の行とツールチップは呼び出しが 1 つのときと同じです。
 
 ### This scene が書き込むもの
 

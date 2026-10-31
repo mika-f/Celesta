@@ -153,7 +153,7 @@ pub struct LayerSourceReport {
 }
 
 /// Where a JSX element was written.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Deserialize, Serialize)]
 pub struct SourcePos {
     /// The module holding the element, as an absolute path.
     pub file: PathBuf,
@@ -176,6 +176,12 @@ pub struct PropOverride {
     pub column: u32,
     pub prop: String,
     pub value: f64,
+    /// Only the elements created under an element written here (an entry
+    /// of their source chain): one call of the component the element is
+    /// written in, the copies under its other calls keeping their values.
+    /// `None` reaches every copy.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub within: Option<SourcePos>,
 }
 
 impl From<&LayerSource> for SourcePos {

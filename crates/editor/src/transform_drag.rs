@@ -7,7 +7,10 @@ use crate::element_edit::{
     ElementTargets, PropKey, TransformProp, editable, field_of, inner_target, reason_text,
 };
 use crate::layer_select::{letterbox, to_scene};
-use crate::scope::{CalledHere, CommitGate, Scope, ScopeState, scope_in_effect_here};
+use crate::scope::{
+    CalledHere, CommitGate, SceneCalls, Scope, ScopeState, ScopedRow, scope_in_effect_here,
+    scoped_row,
+};
 use crate::transform_handles::{
     Handle, Marker, PivotMode, Resize, ResizeTool, SizeField, SizeProps, anchor_handle,
     anchor_keys, drag_label, drag_values, marker, pressed_handle, preview_values, prop_values,
@@ -289,12 +292,14 @@ impl TransformDrag {
     }
 }
 
-/// The prop `prop` of the elements written at `position`: where the runtime
-/// takes a dragged or scrubbed value while the pointer moves.
+/// The prop `prop` of the elements written at `position`, under the element
+/// written at `within` when set: where the runtime takes a dragged or
+/// scrubbed value while the pointer moves.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct OverrideSite {
     position: SourcePos,
     prop: String,
+    within: Option<SourcePos>,
 }
 
 impl OverrideSite {
@@ -306,6 +311,7 @@ impl OverrideSite {
             column: self.position.column,
             prop: self.prop.clone(),
             value,
+            within: self.within.clone(),
         }
     }
 }
@@ -316,42 +322,84 @@ impl OverrideSite {
 /// `style` object sets) for a value written there or absent, the
 /// parameter's prop at the call site for a value passed through, which also
 /// moves everything else computed from it, and a component prop at the
-/// component's call. The same prop the write changes. Inputs have none: a
+/// component's call. The same prop the write changes: a value written on the
+/// element that `scope` lifts to the call `S` ([`ScopedRow::Lift`], "This
+/// scene") moves only the copies under `S`, and a parameter's default that
+/// it writes ([`ScopedRow::Default`], "Shared value") is the parameter's prop
+/// at every call of `calls` that leaves it out, so every copy the default
+/// reaches moves. A row may have more than one site. Inputs have none: a
 /// value an expression reads is not a prop.
 pub(crate) fn override_sites(
     targets: &ElementTargets,
     report: &LayerSourceReport,
+    scope: Option<Scope>,
+    calls: Option<&SceneCalls>,
 ) -> Vec<(PropKey, OverrideSite)> {
     let element = report.chain.first().map(SourcePos::from);
     let component = targets
         .component
         .as_ref()
         .map(|component| &component.call_site);
+    let within = |key: &PropKey| {
+        scope
+            .filter(|scope| scoped_row(*scope, targets, key, calls) == ScopedRow::Lift)
+            .and(component.cloned())
+    };
     targets
         .entries()
         .into_iter()
-        .filter(|(_, target)| editable(&target.target))
-        .filter_map(|(key, target)| {
+        .filter(|(key, target)| editable(&target.target) && !matches!(key, PropKey::Input { .. }))
+        .flat_map(|(key, target)| {
             // Where a value not passed through is written.
             let written = match &key {
                 PropKey::Prop(_) => element.as_ref(),
                 PropKey::CallSite(_) => component,
-                PropKey::Input { .. } => return None,
+                PropKey::Input { .. } => None,
             };
-            let site = match (&target.target, &target.call_site) {
-                (EditTarget::PassThrough { param, .. }, Some(call_site)) => OverrideSite {
-                    position: call_site.clone(),
-                    prop: param.clone(),
-                },
-                (EditTarget::PassThrough { .. }, None) => return None,
-                _ => OverrideSite {
-                    position: written?.clone(),
-                    prop: target.path.clone(),
-                },
+            let at = |position: &SourcePos, prop: &str, within| OverrideSite {
+                position: position.clone(),
+                prop: prop.to_owned(),
+                within,
             };
-            Some((key, site))
+            let sites = match (&target.target, &target.call_site) {
+                (EditTarget::PassThrough { param, .. }, Some(call_site)) => {
+                    let defaulted = scope.is_some_and(|scope| {
+                        matches!(
+                            scoped_row(scope, targets, &key, calls),
+                            ScopedRow::Default { .. }
+                        )
+                    });
+                    let leaving_out = calls_leaving_out(calls, param);
+                    if defaulted && !leaving_out.is_empty() {
+                        leaving_out
+                            .into_iter()
+                            .map(|call| at(call, param, None))
+                            .collect()
+                    } else {
+                        vec![at(call_site, param, None)]
+                    }
+                }
+                (EditTarget::PassThrough { .. }, None) => Vec::new(),
+                _ => written
+                    .into_iter()
+                    .map(|position| at(position, &target.path, within(&key)))
+                    .collect(),
+            };
+            sites.into_iter().map(move |site| (key.clone(), site))
         })
         .collect()
+}
+
+/// The distinct calls of `calls` that leave the parameter `param` out, so
+/// its default applies there.
+fn calls_leaving_out<'c>(calls: Option<&'c SceneCalls>, param: &str) -> Vec<&'c SourcePos> {
+    let mut leaving_out: Vec<&SourcePos> = Vec::new();
+    for (call, written) in calls.iter().flat_map(|calls| calls.calls.iter().flatten()) {
+        if !written.iter().any(|name| name == param) && !leaving_out.contains(&call) {
+            leaving_out.push(call);
+        }
+    }
+    leaving_out
 }
 
 /// The overrides that draw the drag values `values` (see `prop_values`).
@@ -361,9 +409,11 @@ pub(crate) fn prop_overrides(
 ) -> Vec<PropOverride> {
     values
         .iter()
-        .filter_map(|(key, value)| {
-            let (_, site) = sites.iter().find(|(candidate, _)| candidate == key)?;
-            Some(site.with(*value))
+        .flat_map(|(key, value)| {
+            sites
+                .iter()
+                .filter(move |(candidate, _)| candidate == key)
+                .map(|(_, site)| site.with(*value))
         })
         .collect()
 }
@@ -1066,10 +1116,12 @@ impl EditorView {
         let DragState::Editable(frame, editable, pivot, resize) = self.drag_state() else {
             return false;
         };
+        let scope = self.kept_scope();
+        let calls = self.shown_scope_context().and_then(|context| context.calls);
         let Some((received, sites, primitive)) = self.element_targets().map(|(targets, report)| {
             (
                 report.props.clone(),
-                override_sites(targets, report),
+                override_sites(targets, report, scope, calls),
                 primitive_of(report).to_owned(),
             )
         }) else {
@@ -1115,7 +1167,6 @@ impl EditorView {
             self.cancel_row_scrub();
         }
         let note = self.pivot_note();
-        let scope = self.kept_scope();
         let called_here = self
             .shown_scope_context()
             .and_then(|context| match context.state {

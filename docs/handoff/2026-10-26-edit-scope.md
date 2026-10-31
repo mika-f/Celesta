@@ -321,10 +321,9 @@ amended to match.
 - Scenes written as components and placed by hand
   (`<Sequence><PriceScene /></Sequence>`) lock "This scene" as "Passes through
   `<PriceScene>`": the scene's own component entry sits after `S`.
-- Moving one of several copies under "This scene": the preview override of
-  a drag, and of a scrub of the X or Y row, is keyed by `E`'s position, so
-  every copy in the frame draws the dragged value until the release; only
-  the selected call is written.
+- Moving one of several copies under "This scene" drew every copy at the
+  dragged value until the release; fixed by the preview overrides' `within`
+  (`docs/handoff/2026-10-31-instance-overrides.md`).
 - Resolving `E` as one instance costs a second resolution (every parse
   again) for a repeated element in a component, also on every commit's
   re-resolve.
