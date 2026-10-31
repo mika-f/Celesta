@@ -9,18 +9,36 @@ import { featureFacesLoaded, loadFonts, releaseFonts, resetFonts } from '../src/
 import { checkFontFeatures, cssFont, loadFeatureFonts, textMeasurer } from '../src/text-layout.js';
 import type { Asset, FontFeatures, TextStyle } from '../src/types.js';
 
-/** A stand-in for the browser's FontFace: loaded at once unless `pending` holds it. */
+/**
+ * A stand-in for the browser's FontFace. A face from a file is loaded at
+ * once unless `pending` holds it. A face from `local()` names stays
+ * unloaded until `load()`, then loads a microtask later unless `pending`
+ * holds it, or fails when it names only fonts in `missing`. Chromium on
+ * macOS finishes a `local()` load inside `load()`; the stub models a
+ * browser whose lookup finishes later, which `featureFacesLoaded()` waits
+ * for.
+ */
 class StubFontFace {
   static pending = false;
+  static missing = new Set<string>();
   status: FontFaceLoadStatus;
   loaded: Promise<StubFontFace>;
   private resolve!: (face: StubFontFace) => void;
+  private reject!: (cause: Error) => void;
   constructor(readonly family: string, readonly source: string | ArrayBuffer, readonly descriptors: FontFaceDescriptors = {}) {
-    this.status = StubFontFace.pending ? 'loading' : 'loaded';
-    this.loaded = new Promise((resolve) => { this.resolve = resolve; });
+    this.loaded = new Promise((resolve, reject) => { this.resolve = resolve; this.reject = reject; });
+    this.status = typeof source === 'string' ? 'unloaded' : StubFontFace.pending ? 'loading' : 'loaded';
     if (this.status === 'loaded') this.resolve(this);
   }
-  async load() { return this; }
+  load() {
+    if (this.status === 'unloaded') {
+      this.status = 'loading';
+      const names = Array.from((this.source as string).matchAll(/local\("([^"]*)"\)/g), ([, name]) => name!);
+      if (names.every((name) => StubFontFace.missing.has(name))) queueMicrotask(() => { this.status = 'error'; this.reject(new Error('NetworkError')); });
+      else if (!StubFontFace.pending) queueMicrotask(() => this.finish());
+    }
+    return this.loaded;
+  }
   finish() { this.status = 'loaded'; this.resolve(this); }
 }
 
@@ -40,6 +58,7 @@ const copies = () => faces().filter((face) => face.descriptors.featureSettings !
 
 beforeEach(() => {
   StubFontFace.pending = false;
+  StubFontFace.missing = new Set();
   globals.document = { fonts: new Set() };
   globals.FontFace = StubFontFace;
   globals.fetch = (async (url: string) => url.endsWith('.css')
@@ -97,14 +116,43 @@ test('a face is made from the first file the browser can read, which its copies 
   assert.equal(installed?.source, 'local("Installed")');
   cssFont({ fontFamily: 'Legacy', fontFeatures: { liga: false } });
   assert.equal(new TextDecoder().decode(copies()[0]!.source as ArrayBuffer), 'https://fonts.test/legacy.woff');
-  assert.throws(() => cssFont({ fontFamily: 'Installed', fontFeatures: { liga: false } }),
-    /fontFeatures cannot use "Installed": its font CSS gives no url\(\) to load it from/);
+});
+
+test('a local() face\'s copies name the same installed fonts, and measuring waits for them to load', async () => {
+  globals.fetch = (async () => new Response(`@font-face {font-family: Display; font-weight: 700; src: local(Missing-Font), local("Futura Bold")}`,
+    { headers: { 'content-type': 'text/css' } })) as typeof fetch;
+  const display: Asset = { id: 'display', location: { type: 'url', url: 'https://fonts.test/display.css' } };
+  await loadFonts([display], resolve);
+  globals.OffscreenCanvas = class {
+    getContext() { return { font: '', measureText: (text: string) => ({ width: text.length * 10, fontBoundingBoxAscent: 8, fontBoundingBoxDescent: 2, actualBoundingBoxAscent: 7 }) }; }
+  };
+  const style: TextStyle = { fontFamily: 'Display', fontSize: 48, fontFeatures: { liga: false } };
+  const measure = textMeasurer();
+  // The copy starts loading at once; where that does not finish inside
+  // `load()`, it is not ready synchronously.
+  assert.throws(() => measure({ text: 'fit', style, fonts: [display] }), /need their fonts ready\. Call await measureText/);
+  assert.deepEqual(copies().map((face) => [face.family, face.source, face.descriptors.weight, face.descriptors.featureSettings, face.status]), [
+    ['Display [celesta-features liga=0]', 'local("Missing-Font"), local("Futura Bold")', '700', '"liga" 0', 'loading'],
+  ]);
+  await loadFeatureFonts(style);
+  assert.equal(copies()[0]!.status, 'loaded');
+  assert.equal(measure({ text: 'fit', style, fonts: [display] }).width, 30);
+});
+
+test('a local() copy that does not load throws with the fonts it names', async () => {
+  globals.fetch = (async () => new Response(`@font-face {font-family: Display; src: local("Futura Bold")}`,
+    { headers: { 'content-type': 'text/css' } })) as typeof fetch;
+  await loadFonts([{ id: 'display', location: { type: 'url', url: 'https://fonts.test/display.css' } }], resolve);
+  // The browser matched the font for the face, but not for its copy.
+  StubFontFace.missing.add('Futura Bold');
+  await assert.rejects(loadFeatureFonts({ fontFamily: 'Display', fontFeatures: { liga: false } }),
+    /fontFeatures cannot use "Display": this browser did not load local\("Futura Bold"\) for it/);
 });
 
 test('features need every family they apply to loaded with <Font>', async () => {
   await loadFonts([mono], resolve);
   assert.throws(() => cssFont({ fontSize: 48, fontFeatures: { liga: false } }),
-    /fontFeatures need a fontFamily loaded with <Font>: the browser renderer cannot apply OpenType features to installed fonts/);
+    /fontFeatures need a fontFamily loaded with <Font>: the browser renderer cannot apply OpenType features to installed fonts by their family name/);
   assert.throws(() => cssFont({ ...ligaturesOff, fontFamily: ['JetBrains Mono', 'Menlo'] }),
     /fontFeatures need "Menlo" loaded with <Font>/);
   assert.throws(() => cssFont({ ...ligaturesOff, fontFamily: 'JetBrains Mono' }, { start: 0, end: 1, fontFamily: 'Menlo' }),

@@ -58,7 +58,11 @@ downloads b only when A is missing. Celesta still takes the `url()`:
   `local()`. It needs the file's bytes for `featureFamily`, which copies a
   face with `featureSettings`; a `FontFace` made from `local()` has no
   bytes to copy. The shared fixture's `AfterLocal` rule pins this for both
-  renderers.
+  renderers. (Superseded in part by
+  `2026-10-31-web-local-font-features.md`: `featureFamily` now copies a
+  `local()` face from its names, so the bytes are no longer needed. The
+  web renderer still loads the first `url()`, and reproducible exports
+  still decide.)
 
 So installed fonts are used only where the stylesheet has nothing to
 download. A `local()`-only rule then tries each name in order and draws the
@@ -124,6 +128,8 @@ fails to load, and `loadFonts` logs "Could not load a font face from …" with
   face's bytes. Chromium applies a `FontFace`'s `featureSettings`
   descriptor to `local()` sources too, so the web renderer could make the
   copy from the same `local()` names; that is left for a follow-up.
+  (Closed in `2026-10-31-web-local-font-features.md`: the preview applies
+  the features to `local()` faces too.)
 - Which fonts are installed is up to each computer, and the preview's
   browser may offer only some of them (Safari: OS fonts only). That is the
   reason for the decision above.

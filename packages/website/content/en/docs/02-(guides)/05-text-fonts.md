@@ -160,7 +160,7 @@ Spans work in `<Text>`, `<TextBox>`, `<TextReveal>`, and `<Dialogue>`, in `Dialo
 
 Each key is a four-character feature tag, such as `liga`, `calt`, `kern`, `zero`, `tnum`, or `ss01`, and each value is `true`, `false`, or the number of an alternate (`salt: 2`). A tag the font does not have changes nothing; a malformed tag or value throws. `<Span style={{ fontFeatures }}>` changes features for part of a text, even inside a word, merged tag by tag over the text’s. Measurements shape with the same features, so measured and drawn widths agree. `<Code>` draws with the font’s ligatures; pass the same `fontFeatures` in its `style` to show code as written.
 
-The browser preview applies features only to fonts loaded with `<Font>` from a file, and throws for text with `fontFeatures` that uses an installed font, including one a stylesheet draws with `local()`, or no `fontFamily`. Export applies them to installed fonts too.
+The browser preview applies features only to fonts loaded with `<Font>`, from a file or from a stylesheet’s `local()` fonts, and throws for text with `fontFeatures` that uses an installed font by its family name, or no `fontFamily`. Export applies them to installed fonts too.
 
 ## Measure and fit text
 
