@@ -26,7 +26,8 @@ mod stylesheet;
 
 pub use staged::StagedFile;
 pub use stylesheet::{
-    FontFaceSource, StylesheetFontFace, is_font_stylesheet, stylesheet_font_faces,
+    FontFaceDescriptors, FontFaceSource, FontFaceStyle, StylesheetFontFace, is_font_stylesheet,
+    stylesheet_font_faces,
 };
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);

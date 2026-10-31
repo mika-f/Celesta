@@ -31,6 +31,7 @@ impl TextRasterizer {
     ) -> Arc<Buffer> {
         let source = text;
         self.select_language(style.lang.as_deref());
+        self.prepare_stylesheet_weights(style);
         let key = (text.len() <= 100_000).then(|| {
             format!(
                 "{text:?}\0{:?}\0{width:?}\0{scale:?}",
@@ -54,11 +55,13 @@ impl TextRasterizer {
         }
         let requested_weight = style.font_weight.unwrap_or(400);
         // A font stack draws with its first family that has a face, except
-        // where a later family is chosen for a cluster (`face_runs` below).
-        let family = style
+        // where a later family is chosen for a cluster (`face_runs` below),
+        // and a stylesheet family with the private family of its face.
+        let primary = style
             .font_family
             .as_ref()
             .map(|family| self.primary_family(family, requested_weight));
+        let family = primary.as_deref();
         // cosmic-text only picks the requested family's face when its weight
         // is exactly the requested one, and otherwise falls back to another
         // family. Ask for the weight CSS matching picks within the family
@@ -198,6 +201,14 @@ impl TextRasterizer {
                 }
             }
         }
+        // Whether text shaped in family `name` (a stylesheet face's private
+        // family stands for its stylesheet family) asks for a color emoji
+        // font itself.
+        let privates = &self.stylesheet_privates;
+        let is_emoji_font = |name: &str| {
+            let name = privates.get(name).map_or(name, String::as_str);
+            COLOR_EMOJI_FAMILIES.contains(&name)
+        };
         // Added to the lines `set_text` made rather than passed to
         // `set_rich_text`, which splits lines differently (dropping the
         // empty line after a trailing newline). Emoji and word-joiner spans
@@ -232,8 +243,7 @@ impl TextRasterizer {
             if let Some(family) = emoji_family.as_deref() {
                 for range in emoji_presentation_spans(line.text()) {
                     let (at, requested) = attrs_at(range.start);
-                    if matches!(at.family, Family::Name(name) if COLOR_EMOJI_FAMILIES.contains(&name))
-                    {
+                    if matches!(at.family, Family::Name(name) if is_emoji_font(name)) {
                         continue;
                     }
                     let weight = emoji_weights
@@ -555,7 +565,7 @@ impl TextRasterizer {
         let mut extent: Option<(f32, f32)> = None;
         for (family, weight) in stacks {
             let primary = self.primary_family(family, weight);
-            let Some(font) = self.matched_face(primary, weight) else {
+            let Some(font) = self.matched_face(&primary, weight) else {
                 continue;
             };
             let metrics = font.metrics();
