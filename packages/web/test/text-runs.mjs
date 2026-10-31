@@ -226,6 +226,7 @@ try {
   const chrome = process.argv[2] ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
   const result = spawnSync(chrome, ['--headless', '--no-sandbox', '--disable-gpu', '--user-data-dir=' + join(directory, 'profile'), '--dump-dom', '--virtual-time-budget=10000', new URL('file://' + join(directory, 'test.html')).href], { encoding: 'utf8', timeout: 30000, maxBuffer: 8 * 1024 * 1024 });
   const report = result.stdout?.match(/<pre>([\s\S]*?)<\/pre>/)?.[1];
-  assert.equal(report, 'PASS', report ?? result.stderr);
+  assert.ok(report !== undefined, `Chrome wrote no report: ${result.stderr}`);
+  assert.equal(report, 'PASS', 'the browser checks pass');
   console.log('PASS: browser color runs, full shaping, multiline and grapheme reveals');
 } finally { rmSync(directory, { recursive: true, force: true }); }
