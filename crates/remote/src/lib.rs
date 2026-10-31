@@ -158,20 +158,23 @@ impl RemoteAssetCache {
     }
 }
 
-/// `url` as a browser's fetch would request it: an `http(s)` URL is parsed
-/// and serialized, which lowercases the scheme and host, drops a default
-/// port, and percent-encodes what a request line cannot carry, so the same
-/// URL written two ways also shares one cache entry. Other URLs are kept.
+/// `url` as a browser's fetch would request it, so the same URL written two
+/// ways also shares one cache entry. An `http(s)` URL is parsed and
+/// serialized again, which lowercases the scheme and host, writes an IDN host
+/// as punycode, drops a default port, resolves dot segments, reads `\` as
+/// `/`, adds `/` to an empty path, and percent-encodes what a request line
+/// cannot carry; its fragment, which is never sent, is dropped. Other URLs
+/// are kept.
 fn normalized(url: &str) -> Result<String, RemoteAssetError> {
     if !is_remote_url(url) {
         return Ok(url.to_owned());
     }
-    Url::parse(url)
-        .map(String::from)
-        .map_err(|source| RemoteAssetError::InvalidUrl {
-            url: url.to_owned(),
-            source,
-        })
+    let mut parsed = Url::parse(url).map_err(|source| RemoteAssetError::InvalidUrl {
+        url: url.to_owned(),
+        source,
+    })?;
+    parsed.set_fragment(None);
+    Ok(parsed.into())
 }
 
 pub(crate) fn is_data_url(url: &str) -> bool {
@@ -381,6 +384,13 @@ mod tests {
         assert_eq!(
             cache
                 .fetch(&format!("{other}/fonts/My%20Font.ttf"))
+                .unwrap(),
+            path
+        );
+        // A fragment is never sent, so it does not make another entry.
+        assert_eq!(
+            cache
+                .fetch(&format!("{base}/fonts/My%20Font.ttf#iefix"))
                 .unwrap(),
             path
         );
