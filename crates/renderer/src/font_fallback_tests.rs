@@ -79,18 +79,12 @@ fn fallback_families_follow_the_font_list() {
 }
 
 #[test]
-fn a_stylesheet_lists_one_private_family_per_face() {
+fn a_stylesheet_lists_its_families() {
     let directory = fixture();
     let mut rasterizer = TextRasterizer::new();
     load(&mut rasterizer, &directory, &["split.css"]);
-    let names = names(&rasterizer);
-    assert_eq!(names.len(), 2, "{names:?}");
-    assert!(
-        names
-            .iter()
-            .all(|name| name.starts_with("celesta-stylesheet-face-")),
-        "{names:?}"
-    );
+    // One family of two faces, which `family_faces` picks between.
+    assert_eq!(names(&rasterizer), ["Celesta Split"]);
 }
 
 #[test]
@@ -202,15 +196,22 @@ fn reordering_the_font_list_swaps_the_fallback() {
         &directory,
         &["bebas.ttf", "a.css", "b.css"],
     );
-    let families = face_families_at(&mut rasterizer, "AБ", &style, 1);
-    assert!(families.contains(&"Fallback A".to_owned()), "{families:?}");
+    let stylesheet_family = |rasterizer: &mut TextRasterizer| {
+        let [private]: [String; 1] = face_families_at(rasterizer, "AБ", &style, 1)
+            .try_into()
+            .unwrap();
+        rasterizer
+            .stylesheet_family_of(&private)
+            .unwrap()
+            .to_owned()
+    };
+    assert_eq!(stylesheet_family(&mut rasterizer), "Fallback A");
     load(
         &mut rasterizer,
         &directory,
         &["bebas.ttf", "b.css", "a.css"],
     );
-    let families = face_families_at(&mut rasterizer, "AБ", &style, 1);
-    assert!(families.contains(&"Fallback B".to_owned()), "{families:?}");
+    assert_eq!(stylesheet_family(&mut rasterizer), "Fallback B");
 }
 
 #[test]
@@ -274,7 +275,7 @@ fn a_loaded_family_in_the_stack_is_not_repeated() {
         rasterizer.face_runs("AБA", &named)
     );
     let families = FontFamily::Stack(vec!["Bebas Neue".to_owned()]);
-    assert_eq!(rasterizer.primary_family(&families, 400), "Bebas Neue");
+    assert_eq!(&*rasterizer.primary_family(&families, 400), "Bebas Neue");
 }
 
 #[test]

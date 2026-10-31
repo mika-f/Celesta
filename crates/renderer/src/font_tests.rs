@@ -191,9 +191,11 @@ fn loads_stylesheet_faces_under_their_css_family() {
     rasterizer
         .load_fonts(&[file_font("css/brand.css")], directory.path())
         .unwrap();
-    // Under the family stored in the file and the stylesheet's CSS name.
-    assert!(has_family(&rasterizer, FAMILY));
-    assert!(has_family(&rasterizer, "Brand"));
+    // Under the stylesheet's CSS name only, as in a browser: the family
+    // stored in the file matches nothing.
+    assert!(rasterizer.matched_weight("Brand", 400).is_some());
+    assert!(!has_family(&rasterizer, FAMILY));
+    assert!(rasterizer.matched_weight(FAMILY, 400).is_none());
 }
 
 #[test]
@@ -231,6 +233,26 @@ fn installed_rasterizer() -> TextRasterizer {
     rasterizer
 }
 
+/// The PostScript names of the stylesheet family `family`'s faces, after
+/// checking that each copy of them is listed under its private family only.
+fn stylesheet_face_names(rasterizer: &TextRasterizer, family: &str) -> Vec<String> {
+    let faces = rasterizer
+        .stylesheet_faces
+        .get(family)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    for face in faces {
+        for (_, private) in face.instances() {
+            let copies = face_families(rasterizer, private);
+            assert_eq!(copies, vec![vec![private.to_string()]], "{family}");
+        }
+    }
+    faces
+        .iter()
+        .map(|face| face.template().post_script_name.clone())
+        .collect()
+}
+
 /// The family lists of the faces that match `family`.
 fn face_families(rasterizer: &TextRasterizer, family: &str) -> Vec<Vec<String>> {
     rasterizer
@@ -262,16 +284,21 @@ fn stylesheet_local_faces_draw_installed_fonts_by_full_or_postscript_name() {
         .load_fonts(&[file_font("local.css")], directory.path())
         .unwrap();
     for family in ["ByFullName", "ByPostScriptName"] {
-        let families = face_families(&rasterizer, family);
-        assert_eq!(families.len(), 1, "{family}: {families:?}");
-        assert_eq!(families[0][0], family);
-        assert!(families[0][1].starts_with("celesta-stylesheet-face-"));
-        assert_eq!(families[0].len(), 2, "{family} matches only its own names");
+        assert_eq!(
+            stylesheet_face_names(&rasterizer, family),
+            vec!["CelestaInstalledTest-Bold"],
+            "{family}"
+        );
+        assert!(!has_family(&rasterizer, family));
         assert!(rasterizer.fork().matched_weight(family, 400).is_some());
     }
     // Neither a family name nor a full name in another language names a face.
     for family in ["ByFamilyName", "ByFrenchName", "NotInstalled"] {
-        assert!(!has_family(&rasterizer, family), "{family}");
+        assert!(
+            stylesheet_face_names(&rasterizer, family).is_empty(),
+            "{family}"
+        );
+        assert!(rasterizer.matched_weight(family, 400).is_none(), "{family}");
     }
     // Text in a family whose local() fonts are not installed falls back,
     // with the font fallback warning.
@@ -282,11 +309,8 @@ fn stylesheet_local_faces_draw_installed_fonts_by_full_or_postscript_name() {
     assert_eq!(rasterizer.font_fallback("l", &not_installed).len(), 1);
     // A url() is drawn even after an installed local() font.
     assert_eq!(
-        face_families(&rasterizer, "Downloaded")
-            .into_iter()
-            .map(|families| families[0].clone())
-            .collect::<Vec<_>>(),
-        vec![FAMILY]
+        stylesheet_face_names(&rasterizer, "Downloaded"),
+        vec!["CelestaWebFontTest"]
     );
     // The installed family keeps exactly its own face, and the last rule,
     // which has no font-family, adds none.
@@ -321,8 +345,10 @@ fn an_installed_face_is_added_once_per_stylesheet_family() {
     rasterizer
         .load_fonts(&[file_font("a.css"), file_font("b.css")], directory.path())
         .unwrap();
-    assert_eq!(face_families(&rasterizer, "Brand").len(), 1);
-    assert_eq!(rasterizer.stylesheet_faces["Brand"].len(), 1);
+    assert_eq!(
+        stylesheet_face_names(&rasterizer, "Brand"),
+        vec!["CelestaInstalledTest-Bold"]
+    );
 }
 
 #[test]
@@ -624,13 +650,21 @@ fn loading_fonts_updates_every_language_and_preserves_the_default_in_forks() {
     let mut rasterizer = TextRasterizer::new();
     rasterizer.select_language(Some("ja"));
     rasterizer.select_language(Some("zh-CN"));
-    let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/prism");
+    // Under a family no computer has installed.
+    let directory = tempfile::tempdir().unwrap();
+    fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../examples/prism/assets/fonts/BebasNeue-Regular.ttf"),
+        directory.path().join("bebas.ttf"),
+    )
+    .unwrap();
+    fs::write(
+        directory.path().join("locale.css"),
+        format!("@font-face {{ font-family: '{FAMILY}'; src: url(bebas.ttf) }}"),
+    )
+    .unwrap();
     rasterizer
-        .load_font_data(
-            "locale-test",
-            fs::read(examples.join("assets/fonts/BebasNeue-Regular.ttf")).unwrap(),
-            Some(FAMILY.to_owned()),
-        )
+        .load_fonts(&[file_font("locale.css")], directory.path())
         .unwrap();
     let mut fork = rasterizer.fork();
     for rasterizer in [&mut rasterizer, &mut fork] {
@@ -645,7 +679,7 @@ fn loading_fonts_updates_every_language_and_preserves_the_default_in_forks() {
                     .missing_glyphs("title", "CELESTA", &style)
                     .is_empty()
             );
-            assert!(has_family(rasterizer, FAMILY));
+            assert!(rasterizer.font_fallback("title", &style).is_empty());
             if lang.is_none() || lang == Some("") {
                 assert_eq!(rasterizer.font_system.locale(), rasterizer.default_locale);
             }
@@ -824,9 +858,7 @@ fn missing_glyph_cache_survives_language_switches_and_clears_when_fonts_load() {
         }
     }
 
-    rasterizer
-        .load_font_data("cache-test", sfnt(), None)
-        .unwrap();
+    rasterizer.load_font_data("cache-test", sfnt()).unwrap();
     assert!(rasterizer.missing_characters.is_empty());
     for (lang, expected) in ["ja", "zh-Hant"].into_iter().zip(&expected) {
         style.lang = Some(lang.to_owned());
