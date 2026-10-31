@@ -33,8 +33,8 @@ ENV PKG_CONFIG_PATH=/opt/ffmpeg8/lib/pkgconfig
 COPY --from=rust:1.99.1-slim-bookworm /usr/local/rustup /usr/local/rustup
 COPY --from=rust:1.99.1-slim-bookworm /usr/local/cargo /usr/local/cargo
 ENV RUSTUP_HOME=/usr/local/rustup CARGO_HOME=/usr/local/cargo PATH=/usr/local/cargo/bin:$PATH
-COPY --from=node:24-bookworm-slim /usr/local/bin/node /usr/local/bin/node
-COPY --from=node:24-bookworm-slim /usr/local/lib/node_modules /usr/local/lib/node_modules
+COPY --from=node:26-bookworm-slim /usr/local/bin/node /usr/local/bin/node
+COPY --from=node:26-bookworm-slim /usr/local/lib/node_modules /usr/local/lib/node_modules
 RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm
 
 WORKDIR /celesta

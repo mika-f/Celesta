@@ -156,7 +156,7 @@ def notarize(path, profile):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", default="0.0.0")
-    parser.add_argument("--node-version", default="26.12.1")
+    parser.add_argument("--node-version", default="26.13.0")
     parser.add_argument("--bundle-id", default="com.natsuneko.celesta")
     parser.add_argument("--sign-identity", help="Developer ID Application certificate identity")
     parser.add_argument("--notary-profile", help="Existing notarytool Keychain profile; uploads to Apple")
