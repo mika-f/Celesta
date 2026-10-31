@@ -248,7 +248,13 @@ impl TextRasterizer {
         // A web font stylesheet (e.g. Google Fonts): load every face its
         // `@font-face` rules point to, under their CSS family too.
         let css = String::from_utf8_lossy(&data);
-        let faces = celesta_remote::stylesheet_font_faces(&css, &font.location);
+        let faces =
+            celesta_remote::stylesheet_font_faces(&css, &font.location).map_err(|source| {
+                RenderError::RemoteAsset {
+                    asset: font.id.clone(),
+                    source,
+                }
+            })?;
         if faces.is_empty() {
             return Err(RenderError::InvalidFont {
                 asset: font.id.clone(),
