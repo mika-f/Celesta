@@ -87,13 +87,19 @@ CSSOM as `url("b.ttf")`, so the unquoted entry is dropped. Supported techs are
   - Descriptors are read once, ignoring case, with the later declaration
     winning. Before, web matched `@font-face` and `font-family`
     case-sensitively and took the first `font-family`.
-  - When the winning `src` has only `local()` entries, web skips the rule
-    with a warning, as native does. Native has no `local()` lookup.
-    - Before, web passed the `src` to `FontFace`. Preview and export then
-      differed whenever the font was installed.
-    - The difference was new in this change for a `local()`-only `src` that
-      followed one with a `url()`; before it, both renderers loaded that
-      earlier `url()`.
+  - When the winning `src` has only `local()` entries, web passes it to
+    `FontFace` as written, so the browser can draw an installed font. Native
+    has no `local()` lookup and skips the rule.
+    - The web behavior is intentional. `font-features.test.mts` loads such a
+      face, and `fontFeatures` has its own error for it.
+    - It therefore stays. The guide now says the desktop app and exporter
+      skip such a rule.
+    - This change also adds a new case: a `local()`-only `src` that follows
+      one with a `url()`. Before this change both renderers loaded that
+      earlier `url()`. Now the later `src` wins, as CSS says.
+    - Native `local()` support (looking up an installed face by its full or
+      PostScript name) would remove the difference. That is left for a
+      separate change.
 
   The format and tech lists sit next to a note naming their Rust
   counterparts.
@@ -101,8 +107,7 @@ CSSOM as `url("b.ttf")`, so the unquoted entry is dropped. Supported techs are
   stylesheet has no @font-face url()" and web "Invalid font CSS", which is
   misleading when every entry was simply unsupported. Native's
   `InvalidFont` reason and web's warning now say that no rule names a
-  TrueType, OpenType, WOFF, or WOFF2 file, or that the rule lists only
-  `local()` fonts. Native has no warning channel, so a single unsupported
+  TrueType, OpenType, WOFF, or WOFF2 file. Native has no warning channel, so a single unsupported
   rule among loadable ones is skipped without a message, as CSS skips it.
 - Comments: web now strips CSS comments before reading the stylesheet, as
   native always did (`strip_comments`). Before this, a declaration that
