@@ -104,9 +104,15 @@ fn a_stylesheet_family_hides_the_installed_family_of_its_name() {
     );
     // Text in Bebas Neue draws the stylesheet's IBM Plex Mono, even a
     // character installed Bebas Neue has and it lacks.
-    let drawn = drawn_by(&mut rasterizer, "AΔ", &style("Bebas Neue", 400));
+    // Whichever fallback font draws Δ, it is not the family's.
+    let bebas = style("Bebas Neue", 400);
+    let drawn = drawn_by(&mut rasterizer, "AΔ", &bebas);
     assert_eq!(drawn[0], "IBMPlexMono-Regular Bebas Neue 400");
-    assert!(!drawn[1].starts_with("BebasNeue"), "{drawn:?}");
+    let [missing] = rasterizer
+        .missing_glyphs("bebas", "AΔ", &bebas)
+        .try_into()
+        .unwrap();
+    assert_eq!(missing.characters, ['Δ']);
     // In a stack too.
     let stack = style(
         FontFamily::Stack(vec!["Bebas Neue".to_owned(), "Celesta None".to_owned()]),
@@ -120,8 +126,131 @@ fn a_stylesheet_family_hides_the_installed_family_of_its_name() {
     // its name: it falls back, with the warning.
     let missing = style("IBM Plex Mono", 400);
     assert_eq!(rasterizer.font_fallback("plex", &missing).len(), 1);
-    let drawn = drawn_by(&mut rasterizer, "Б", &missing);
-    assert!(!drawn[0].contains("Plex"), "{drawn:?}");
+    assert_eq!(
+        &*rasterizer.primary_family(&"IBM Plex Mono".into(), 400),
+        crate::stylesheet_fonts::NO_FACE_FAMILY
+    );
+    // A stack skips it for its next family with a face, and with none,
+    // still matches no installed font of its name.
+    let skipping = FontFamily::Stack(vec!["IBM Plex Mono".to_owned(), "Bebas Neue".to_owned()]);
+    assert_eq!(
+        drawn_by(&mut rasterizer, "A", &style(skipping, 400)),
+        ["IBMPlexMono-Regular Bebas Neue 400"]
+    );
+    let nothing = FontFamily::Stack(vec!["IBM Plex Mono".to_owned(), "Celesta None".to_owned()]);
+    assert_eq!(
+        &*rasterizer.primary_family(&nothing, 400),
+        crate::stylesheet_fonts::NO_FACE_FAMILY
+    );
+    assert_eq!(
+        rasterizer.font_fallback("plex", &style(nothing, 400)).len(),
+        1
+    );
+}
+
+#[test]
+fn spans_features_and_loaded_fallback_reach_stylesheet_faces() {
+    let mut rasterizer = rasterizer(
+        "@font-face { font-family: Code; src: local(IBMPlexMono-Regular) }\
+         @font-face { font-family: Range; font-weight: 300 800; src: url(plex.ttf) }",
+    );
+    // A span naming a stylesheet family of one face.
+    let span = TextStyle {
+        font_runs: vec![crate::font_run_tests::run(0, 1, None, Some("Code"))],
+        ..style("Bebas Neue", 400)
+    };
+    assert_eq!(
+        drawn_by(&mut rasterizer, "AB", &span),
+        ["IBMPlexMono-Regular Code 400", "BebasNeue-Regular - 400"]
+    );
+    // Features apply to the stylesheet face: IBM Plex Mono's `zero`
+    // slashes its zero.
+    let glyph = |rasterizer: &mut TextRasterizer, style: &TextStyle| {
+        let buffer = rasterizer.shaped_buffer("0", style, None, 1.0);
+        buffer.layout_runs().next().unwrap().glyphs[0].glyph_id
+    };
+    let plain = glyph(&mut rasterizer, &style("Code", 400));
+    let slashed = TextStyle {
+        font_features: Some(celesta_composition::FontFeatures::new([("zero", 1)]).unwrap()),
+        ..style("Code", 400)
+    };
+    assert_ne!(glyph(&mut rasterizer, &slashed), plain);
+    assert_eq!(
+        drawn_by(&mut rasterizer, "0", &slashed),
+        ["IBMPlexMono-Regular Code 400"]
+    );
+}
+
+#[test]
+fn loaded_fallback_takes_a_stylesheet_familys_face_at_its_weight() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(
+        directory.path().join("bebas.ttf"),
+        example_font("BebasNeue-Regular.ttf"),
+    )
+    .unwrap();
+    fs::write(
+        directory.path().join("plex.ttf"),
+        example_font("IBMPlexMono-Regular.ttf"),
+    )
+    .unwrap();
+    fs::write(
+        directory.path().join("range.css"),
+        "@font-face { font-family: Range; font-weight: 300 800; src: url(plex.ttf) }",
+    )
+    .unwrap();
+    let font = |path: &str| ResolvedAsset {
+        id: path.to_owned(),
+        location: AssetLocation::File {
+            path: path.to_owned(),
+        },
+    };
+    let mut rasterizer = TextRasterizer::new();
+    rasterizer
+        .load_fonts(&[font("bebas.ttf"), font("range.css")], directory.path())
+        .unwrap();
+    let style = TextStyle {
+        font_fallback: Some(celesta_composition::FontFallbackMode::Loaded),
+        ..style("Bebas Neue", 650)
+    };
+    // Б is not in Bebas Neue; the font list's Range draws it at 650.
+    assert_eq!(
+        drawn_by(&mut rasterizer, "AБ", &style),
+        ["BebasNeue-Regular - 400", "IBMPlexMono-Regular Range 650"]
+    );
+    assert!(rasterizer.missing_glyphs("l", "AБ", &style).is_empty());
+}
+
+#[test]
+fn a_face_two_stylesheets_declare_draws_while_either_is_listed() {
+    let directory = tempfile::tempdir().unwrap();
+    for name in ["a.css", "b.css"] {
+        fs::write(
+            directory.path().join(name),
+            "@font-face { font-family: Brand; src: local(IBMPlexMono-Regular) }",
+        )
+        .unwrap();
+    }
+    let font = |path: &str| ResolvedAsset {
+        id: path.to_owned(),
+        location: AssetLocation::File {
+            path: path.to_owned(),
+        },
+    };
+    let mut rasterizer = TextRasterizer::new();
+    rasterizer.install_font(example_font("IBMPlexMono-Regular.ttf"));
+    rasterizer
+        .load_fonts(&[font("a.css"), font("b.css")], directory.path())
+        .unwrap();
+    rasterizer
+        .load_fonts(&[font("b.css")], directory.path())
+        .unwrap();
+    assert_eq!(
+        drawn_by(&mut rasterizer, "A", &style("Brand", 400)),
+        ["IBMPlexMono-Regular Brand 400"]
+    );
+    rasterizer.load_fonts(&[], directory.path()).unwrap();
+    assert_eq!(rasterizer.font_fallback("l", &style("Brand", 400)).len(), 1);
 }
 
 #[test]
