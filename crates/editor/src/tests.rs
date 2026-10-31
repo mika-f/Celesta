@@ -1077,7 +1077,7 @@ fn layer_select_reads_each_lookup_outcome() {
     );
     assert_eq!(
         source_lookup(Ok(Some(report_of(chain.clone())))),
-        SourceLookup::Found(report_of(chain))
+        SourceLookup::Found(Box::new(report_of(chain)))
     );
     assert_eq!(
         source_lookup(Err("bridge closed".to_string())),
@@ -1165,7 +1165,7 @@ fn layer_select_records_hit_regions_only_in_interactive_mode() {
 
 #[test]
 fn layer_select_looks_up_sources_only_in_interactive_mode() {
-    let found = SourceLookup::Found(report_of(Vec::new()));
+    let found = SourceLookup::Found(Box::new(report_of(Vec::new())));
 
     // Paused with a selection: looked up while picking, never otherwise.
     assert_eq!(

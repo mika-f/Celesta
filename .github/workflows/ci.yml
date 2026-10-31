@@ -81,6 +81,7 @@ jobs:
         with:
           # Update deliberately so compiler releases do not unexpectedly invalidate caches.
           toolchain: 1.99.1
+          components: clippy
 
       # Node.js and pnpm as mise.lock pins them. Like rust-cache, only main
       # saves the cache that pull requests restore.
@@ -162,6 +163,17 @@ jobs:
         env:
           CELESTA_REQUIRE_GPU: ${{ runner.os == 'Linux' && '1' || '0' }}
         run: cargo nextest run --workspace --locked --no-fail-fast --profile ci
+
+      # HANDOFF.md's clippy commands. Linux only: it finishes minutes before
+      # Windows, so the lints add no time to the workflow, and little code is
+      # behind a cfg for one OS. Clippy checks rather than builds, so it adds
+      # check metadata for the dependencies to target/, which main's
+      # rust-cache saves for pull requests to restore.
+      - name: Clippy
+        if: runner.os == 'Linux'
+        run: |
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          cargo clippy -p celesta-composition -p celesta-project --all-targets --features codegen --locked -- -D warnings
 
       # A test that cannot run here passes after printing "skipping ...", so
       # list those as warnings and in the job summary rather than leave them

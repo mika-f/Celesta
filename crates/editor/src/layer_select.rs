@@ -11,13 +11,14 @@ use std::path::Path;
 /// the runtime saw otherwise.
 pub(crate) type LookupResult = Result<Option<LayerSourceReport>, String>;
 
-/// Where the selected layer's source lookup stands.
+/// Where the selected layer's source lookup stands. The report is boxed: it
+/// is about ten times the size of the other variants.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum SourceLookup {
     Pending,
     NotInFrame,
     NoPosition,
-    Found(LayerSourceReport),
+    Found(Box<LayerSourceReport>),
     Failed(String),
 }
 
@@ -70,7 +71,7 @@ pub(crate) fn source_lookup(result: LookupResult) -> SourceLookup {
     match result {
         Ok(None) => SourceLookup::NotInFrame,
         Ok(Some(report)) if report.chain.is_empty() => SourceLookup::NoPosition,
-        Ok(Some(report)) => SourceLookup::Found(report),
+        Ok(Some(report)) => SourceLookup::Found(Box::new(report)),
         Err(error) => SourceLookup::Failed(error),
     }
 }

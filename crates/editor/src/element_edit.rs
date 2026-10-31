@@ -853,7 +853,7 @@ impl EditorView {
     /// [`Self::element_targets`] as resolved, whatever the scope.
     fn resolved_targets(&self) -> Option<(&ElementTargets, &LayerSourceReport)> {
         let lookup = match &self.source_lookup {
-            Some(SourceLookup::Found(report)) => Some((report, self.source_lookup_frame)),
+            Some(SourceLookup::Found(report)) => Some((&**report, self.source_lookup_frame)),
             _ => None,
         };
         self.element_edit
@@ -878,7 +878,7 @@ impl EditorView {
         &self,
     ) -> Option<(Result<&WindowTargets, &str>, &LayerSourceReport)> {
         let lookup = match &self.source_lookup {
-            Some(SourceLookup::Found(report)) => Some((report, self.source_lookup_frame)),
+            Some(SourceLookup::Found(report)) => Some((&**report, self.source_lookup_frame)),
             _ => None,
         };
         self.element_edit
