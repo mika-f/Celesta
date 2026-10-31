@@ -48,6 +48,14 @@ pub struct TextRasterizer {
     /// The stylesheet family of each private family a stylesheet face's
     /// copy is listed under.
     pub(crate) stylesheet_privates: HashMap<Arc<str>, String>,
+    /// The families each loaded stylesheet declares, in rule order, faces
+    /// or not.
+    pub(crate) stylesheet_families: HashMap<PathBuf, Vec<String>>,
+    /// The loaded stylesheets in the font list last given to
+    /// [`Self::load_fonts`], whose faces draw, and the families they
+    /// declare, which no installed font draws.
+    pub(crate) active_stylesheets: HashSet<PathBuf>,
+    pub(crate) active_stylesheet_families: HashSet<String>,
     /// The first face of each font file a stylesheet's `url()` loaded,
     /// which the database lists only as stylesheet faces' copies.
     stylesheet_files: HashMap<PathBuf, fontdb::FaceInfo>,
@@ -141,6 +149,9 @@ impl TextRasterizer {
             matched_faces: HashMap::new(),
             stylesheet_faces: HashMap::new(),
             stylesheet_privates: HashMap::new(),
+            stylesheet_families: HashMap::new(),
+            active_stylesheets: HashSet::new(),
+            active_stylesheet_families: HashSet::new(),
             stylesheet_files: HashMap::new(),
             installed_faces,
             installed_names: None,
@@ -174,6 +185,9 @@ impl TextRasterizer {
             matched_faces: HashMap::new(),
             stylesheet_faces: self.stylesheet_faces.clone(),
             stylesheet_privates: self.stylesheet_privates.clone(),
+            stylesheet_families: self.stylesheet_families.clone(),
+            active_stylesheets: self.active_stylesheets.clone(),
+            active_stylesheet_families: self.active_stylesheet_families.clone(),
             stylesheet_files: self.stylesheet_files.clone(),
             installed_faces: self.installed_faces.clone(),
             installed_names: self.installed_names.clone(),
@@ -234,6 +248,7 @@ impl TextRasterizer {
         asset_root: &Path,
     ) -> Result<(), RenderError> {
         let mut families: Vec<Arc<str>> = Vec::new();
+        let mut paths = Vec::with_capacity(fonts.len());
         for font in fonts {
             // Keyed by the resolved file, not the id: a React `<Font>` keeps
             // its `name` when its `src` changes across a reload.
@@ -248,7 +263,11 @@ impl TextRasterizer {
                     families.push(Arc::clone(family));
                 }
             }
+            paths.push(path);
         }
+        // A font file stays loaded once loaded, but a stylesheet's families
+        // draw, and hide installed ones, only while it is in the list.
+        self.activate_stylesheets(&paths);
         if *self.fallback_families != *families {
             self.fallback_families = families.into();
             self.fonts_revision += 1;
@@ -295,10 +314,13 @@ impl TextRasterizer {
             });
         }
         let mut families: Vec<Arc<str>> = Vec::new();
+        // As in a browser, each family hides any installed family of that
+        // name, even when its faces draw nothing.
+        let mut declared: Vec<String> = Vec::new();
         for face in faces {
-            // As in a browser, the family hides any installed family of that
-            // name even when its face draws nothing.
-            self.declare_stylesheet_family(&face.family);
+            if !declared.contains(&face.family) {
+                declared.push(face.family.clone());
+            }
             let template = match face.source {
                 FontFaceSource::File(location) => {
                     let face_asset = ResolvedAsset {
@@ -332,16 +354,16 @@ impl TextRasterizer {
                             .expect("installed faces stay in the database")
                     }),
             };
-            if let Some(template) = template {
-                self.add_stylesheet_face(&face.family, template, face.descriptors);
-            }
-            if self.stylesheet_faces[&face.family].is_empty()
-                || families.iter().any(|family| **family == face.family)
-            {
+            let Some(template) = template else {
+                continue;
+            };
+            self.add_stylesheet_face(path, &face.family, template, face.descriptors);
+            if families.iter().any(|family| **family == face.family) {
                 continue;
             }
             families.push(face.family.into());
         }
+        self.stylesheet_families.insert(path.to_owned(), declared);
         Ok(families)
     }
 
