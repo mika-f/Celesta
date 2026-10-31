@@ -12,7 +12,9 @@ use crate::fonts::TextRasterizer;
 use celesta_composition::TextStyle;
 use celesta_remote::{FontFaceDescriptors, FontFaceStyle};
 use cosmic_text::{Font, fontdb};
+use std::collections::HashSet;
 use std::ops::RangeInclusive;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 /// A family no face has, which text is shaped in where no face of the
@@ -35,6 +37,17 @@ pub(crate) struct StylesheetFace {
     unicode_range: UnicodeRange,
     /// The weights the face has a copy at, with each copy's private family.
     instances: Vec<(u16, Arc<str>)>,
+    /// The stylesheets that declare the face. It draws only while one of
+    /// them is in the font list.
+    stylesheets: Vec<PathBuf>,
+}
+
+impl StylesheetFace {
+    fn is_active(&self, active: &HashSet<PathBuf>) -> bool {
+        self.stylesheets
+            .iter()
+            .any(|stylesheet| active.contains(stylesheet))
+    }
 }
 
 #[cfg(test)]
@@ -90,7 +103,12 @@ struct FaceMatch {
 /// weight range holds `requested`, or else the nearest weight in the
 /// direction the specification gives. Faces left with the same weight are
 /// one composite face, tried for each character in reverse rule order.
-fn match_faces(faces: &[StylesheetFace], requested: u16) -> Option<FaceMatch> {
+/// Only faces of the `active` stylesheets take part.
+fn match_faces(
+    faces: &[StylesheetFace],
+    requested: u16,
+    active: &HashSet<PathBuf>,
+) -> Option<FaceMatch> {
     let style_rank = |face: &StylesheetFace| match face.descriptors.style {
         FontFaceStyle::Normal => (0, 0.0),
         FontFaceStyle::Oblique { min, max } if min <= 0.0 && max >= 0.0 => (0, 0.0),
@@ -98,11 +116,15 @@ fn match_faces(faces: &[StylesheetFace], requested: u16) -> Option<FaceMatch> {
         FontFaceStyle::Italic => (2, 0.0),
         FontFaceStyle::Oblique { max, .. } => (3, -max),
     };
-    let best = faces
+    let candidates: Vec<usize> = (0..faces.len())
+        .filter(|&index| faces[index].is_active(active))
+        .collect();
+    let best = candidates
         .iter()
-        .map(style_rank)
+        .map(|&index| style_rank(&faces[index]))
         .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))?;
-    let styled: Vec<usize> = (0..faces.len())
+    let styled: Vec<usize> = candidates
+        .into_iter()
         .filter(|&index| style_rank(&faces[index]) == best)
         .collect();
     let contains = |index: usize, weight: u16| {
@@ -142,10 +164,38 @@ fn match_faces(faces: &[StylesheetFace], requested: u16) -> Option<FaceMatch> {
 }
 
 impl TextRasterizer {
-    /// Whether `family` is declared by a loaded font stylesheet, so that
-    /// only its own faces draw it.
+    /// Whether `family` is declared by a font stylesheet in the font list,
+    /// so that only its own faces draw it.
     pub(crate) fn is_stylesheet_family(&self, family: &str) -> bool {
-        self.stylesheet_faces.contains_key(family)
+        self.active_stylesheet_families.contains(family)
+    }
+
+    /// The stylesheet family `family`'s faces, none when they all failed to
+    /// load, while a stylesheet in the font list declares it.
+    fn active_family_faces(&self, family: &str) -> Option<&[StylesheetFace]> {
+        if !self.is_stylesheet_family(family) {
+            return None;
+        }
+        Some(self.stylesheet_faces.get(family).map_or(&[], Vec::as_slice))
+    }
+
+    /// Makes the stylesheets among the font list's `paths` the ones whose
+    /// families and faces draw, after a reload drops or adds one.
+    pub(crate) fn activate_stylesheets(&mut self, paths: &[PathBuf]) {
+        let active: HashSet<PathBuf> = paths
+            .iter()
+            .filter(|path| self.stylesheet_families.contains_key(*path))
+            .cloned()
+            .collect();
+        if active == self.active_stylesheets {
+            return;
+        }
+        self.active_stylesheet_families = active
+            .iter()
+            .flat_map(|path| self.stylesheet_families[path].iter().cloned())
+            .collect();
+        self.active_stylesheets = active;
+        self.fonts_changed();
     }
 
     /// The stylesheet family a face's private family belongs to.
@@ -161,35 +211,29 @@ impl TextRasterizer {
         face.families
             .iter()
             .any(|(name, _)| match self.stylesheet_family_of(name) {
-                Some(owner) => owner == family,
+                Some(owner) => stylesheet && owner == family,
                 None => !stylesheet && name == family,
             })
     }
 
-    /// Declares the stylesheet family `family`, even before any of its
-    /// faces loads: from then on it matches no installed font.
-    pub(crate) fn declare_stylesheet_family(&mut self, family: &str) {
-        if !self.stylesheet_faces.contains_key(family) {
-            self.stylesheet_faces.insert(family.to_owned(), Vec::new());
-            self.fonts_changed();
-        }
-    }
-
     /// Adds `template` to the stylesheet family `family` as a face with
-    /// `descriptors`, unless it has that face already, with a copy at the
-    /// weight 400 text draws it at.
+    /// `descriptors` that `stylesheet` declares, unless it has that face
+    /// already, with a copy at the weight 400 text draws it at.
     pub(crate) fn add_stylesheet_face(
         &mut self,
+        stylesheet: &Path,
         family: &str,
         template: fontdb::FaceInfo,
         descriptors: FontFaceDescriptors,
     ) {
-        self.declare_stylesheet_family(family);
-        let faces = self.stylesheet_faces.get_mut(family).expect("declared");
-        if faces
-            .iter()
-            .any(|face| face.template.id == template.id && face.descriptors == descriptors)
+        let faces = self.stylesheet_faces.entry(family.to_owned()).or_default();
+        if let Some(face) = faces
+            .iter_mut()
+            .find(|face| face.template.id == template.id && face.descriptors == descriptors)
         {
+            if !face.stylesheets.iter().any(|path| path == stylesheet) {
+                face.stylesheets.push(stylesheet.to_owned());
+            }
             return;
         }
         let (min, max) = descriptors.weight;
@@ -199,6 +243,7 @@ impl TextRasterizer {
             descriptors,
             unicode_range,
             instances: Vec::new(),
+            stylesheets: vec![stylesheet.to_owned()],
         });
         let index = faces.len() - 1;
         self.add_instance(family, index, 400.clamp(min, max));
@@ -240,10 +285,10 @@ impl TextRasterizer {
                     .flat_map(|names| names.iter().map(|name| &**name)),
             );
             for name in names {
-                let Some(faces) = self.stylesheet_faces.get(name) else {
+                let Some(faces) = self.active_family_faces(name) else {
                     continue;
                 };
-                let Some(matched) = match_faces(faces, weight) else {
+                let Some(matched) = match_faces(faces, weight, &self.active_stylesheets) else {
                     continue;
                 };
                 for index in matched.faces {
@@ -272,7 +317,12 @@ impl TextRasterizer {
     /// The weight text at `requested` in the stylesheet family `family`
     /// draws at, or `None` when it has no face.
     pub(crate) fn stylesheet_weight(&self, family: &str, requested: u16) -> Option<u16> {
-        match_faces(self.stylesheet_faces.get(family)?, requested).map(|matched| matched.weight)
+        match_faces(
+            self.active_family_faces(family)?,
+            requested,
+            &self.active_stylesheets,
+        )
+        .map(|matched| matched.weight)
     }
 
     /// The faces text in `family` at `weight` is drawn with, in the order
@@ -280,7 +330,7 @@ impl TextRasterizer {
     /// matching picks, the last rule first; for another family, the face
     /// its nearest weight matches. Empty when it has none.
     pub(crate) fn family_faces(&mut self, family: &str, weight: u16) -> Vec<FamilyFace> {
-        let Some(faces) = self.stylesheet_faces.get(family) else {
+        let Some(faces) = self.active_family_faces(family) else {
             return self
                 .matched_face(family, weight)
                 .map(|font| FamilyFace {
@@ -291,24 +341,7 @@ impl TextRasterizer {
                 .into_iter()
                 .collect();
         };
-        let Some(matched) = match_faces(faces, weight) else {
-            return Vec::new();
-        };
-        // [`Self::prepare_stylesheet_weights`] adds the copy at the matched
-        // weight before shaping; elsewhere the nearest copy stands in.
-        let picked: Vec<(Arc<str>, UnicodeRange)> = matched
-            .faces
-            .iter()
-            .filter_map(|&index| {
-                let face = &faces[index];
-                let (_, private) = face
-                    .instances
-                    .iter()
-                    .min_by_key(|(drawn, _)| drawn.abs_diff(matched.weight))?;
-                Some((Arc::clone(private), face.unicode_range.clone()))
-            })
-            .collect();
-        picked
+        self.stylesheet_copies(faces, weight)
             .into_iter()
             .filter_map(|(name, unicode_range)| {
                 let font = self.matched_face(&name, weight)?;
@@ -321,25 +354,54 @@ impl TextRasterizer {
             .collect()
     }
 
+    /// The private families and `unicode-range`s of the copies the
+    /// stylesheet family's `faces` draw text at `weight` with, the last rule
+    /// first. [`Self::prepare_stylesheet_weights`] adds the copy at the
+    /// matched weight before shaping; elsewhere the nearest copy stands in.
+    fn stylesheet_copies(
+        &self,
+        faces: &[StylesheetFace],
+        weight: u16,
+    ) -> Vec<(Arc<str>, UnicodeRange)> {
+        let Some(matched) = match_faces(faces, weight, &self.active_stylesheets) else {
+            return Vec::new();
+        };
+        matched
+            .faces
+            .iter()
+            .filter_map(|&index| {
+                let face = &faces[index];
+                let (_, private) = face
+                    .instances
+                    .iter()
+                    .min_by_key(|(drawn, _)| drawn.abs_diff(matched.weight))?;
+                Some((Arc::clone(private), face.unicode_range.clone()))
+            })
+            .collect()
+    }
+
     /// The family text in `family` at `weight` is shaped in where no other
     /// face is chosen: the private family of a stylesheet family's first
     /// face, or [`NO_FACE_FAMILY`] when it has none; another family itself.
-    pub(crate) fn drawing_family(&mut self, family: &str, weight: u16) -> Arc<str> {
-        if !self.is_stylesheet_family(family) {
+    pub(crate) fn drawing_family(&self, family: &str, weight: u16) -> Arc<str> {
+        let Some(faces) = self.active_family_faces(family) else {
             return family.into();
-        }
-        self.family_faces(family, weight)
+        };
+        self.stylesheet_copies(faces, weight)
             .into_iter()
             .next()
-            .map_or_else(|| NO_FACE_FAMILY.into(), |face| face.name)
+            .map_or_else(|| NO_FACE_FAMILY.into(), |(name, _)| name)
     }
 
     /// Whether text in the stylesheet family `family` needs a face chosen
     /// for each character: it has several faces, or one limited to a
     /// `unicode-range`.
     pub(crate) fn splits_stylesheet_family(&self, family: &str) -> bool {
-        self.stylesheet_faces.get(family).is_some_and(|faces| {
-            faces.len() > 1 || faces.iter().any(|face| face.unicode_range.is_some())
+        self.active_family_faces(family).is_some_and(|faces| {
+            let mut active = faces
+                .iter()
+                .filter(|face| face.is_active(&self.active_stylesheets));
+            active.clone().count() > 1 || active.any(|face| face.unicode_range.is_some())
         })
     }
 }
@@ -368,11 +430,16 @@ mod tests {
             },
             unicode_range: None,
             instances: Vec::new(),
+            stylesheets: vec![PathBuf::from("a.css")],
         }
     }
 
+    fn active() -> HashSet<PathBuf> {
+        HashSet::from([PathBuf::from("a.css")])
+    }
+
     fn matched(faces: &[StylesheetFace], requested: u16) -> (u16, Vec<usize>) {
-        let matched = match_faces(faces, requested).unwrap();
+        let matched = match_faces(faces, requested, &active()).unwrap();
         (matched.weight, matched.faces)
     }
 
@@ -454,7 +521,12 @@ mod tests {
             ),
         ];
         assert_eq!(matched(&faces, 400), (400, vec![1, 0]));
-        assert!(match_faces(&[], 400).is_none());
+        assert!(match_faces(&[], 400, &active()).is_none());
+        // Faces of a stylesheet that left the font list take no part.
+        let mut faces = [face((400, 400), Normal), face((700, 700), Normal)];
+        faces[0].stylesheets = vec![PathBuf::from("gone.css")];
+        assert_eq!(matched(&faces, 400), (700, vec![1]));
+        assert!(match_faces(&faces[..1], 400, &active()).is_none());
     }
 
     #[test]

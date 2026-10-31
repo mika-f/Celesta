@@ -125,6 +125,67 @@ fn a_stylesheet_family_hides_the_installed_family_of_its_name() {
 }
 
 #[test]
+fn a_stylesheet_left_out_of_the_font_list_stops_drawing_and_hiding() {
+    let directory = tempfile::tempdir().unwrap();
+    let write = |name: &str, css: &str| fs::write(directory.path().join(name), css).unwrap();
+    write(
+        "a.css",
+        "@font-face { font-family: 'Bebas Neue'; src: local(IBMPlexMono-Regular) }\
+         @font-face { font-family: Shared; src: local(IBMPlexMono-Regular) }",
+    );
+    write(
+        "b.css",
+        "@font-face { font-family: Shared; src: local(BebasNeue-Regular) }",
+    );
+    let font = |path: &str| ResolvedAsset {
+        id: path.to_owned(),
+        location: AssetLocation::File {
+            path: path.to_owned(),
+        },
+    };
+    let mut rasterizer = TextRasterizer::new();
+    rasterizer.install_font(example_font("BebasNeue-Regular.ttf"));
+    rasterizer.install_font(example_font("IBMPlexMono-Regular.ttf"));
+    rasterizer
+        .load_fonts(&[font("a.css"), font("b.css")], directory.path())
+        .unwrap();
+    assert_eq!(
+        drawn_by(&mut rasterizer, "A", &style("Bebas Neue", 400)),
+        ["IBMPlexMono-Regular Bebas Neue 400"]
+    );
+    // b.css's face is the last rule.
+    assert_eq!(
+        drawn_by(&mut rasterizer, "A", &style("Shared", 400)),
+        ["BebasNeue-Regular Shared 400"]
+    );
+    // A reload without a.css: its family no longer hides the installed
+    // one, and only b.css's face draws Shared.
+    let revision = rasterizer.fonts_revision();
+    rasterizer
+        .load_fonts(&[font("b.css")], directory.path())
+        .unwrap();
+    assert!(rasterizer.fonts_revision() > revision);
+    assert_eq!(
+        drawn_by(&mut rasterizer, "A", &style("Bebas Neue", 400)),
+        ["BebasNeue-Regular - 400"]
+    );
+    let drawn = drawn_by(&mut rasterizer, "Б", &style("Shared", 400));
+    assert!(!drawn[0].contains("Shared"), "{drawn:?}");
+    // And back.
+    rasterizer
+        .load_fonts(&[font("a.css")], directory.path())
+        .unwrap();
+    assert_eq!(
+        drawn_by(&mut rasterizer, "A", &style("Shared", 400)),
+        ["IBMPlexMono-Regular Shared 400"]
+    );
+    assert_eq!(
+        drawn_by(&mut rasterizer.fork(), "A", &style("Bebas Neue", 400)),
+        ["IBMPlexMono-Regular Bebas Neue 400"]
+    );
+}
+
+#[test]
 fn font_weight_and_font_style_replace_the_fonts_own() {
     let mut rasterizer = rasterizer(
         "@font-face { font-family: Pair; font-weight: 700; src: local(BebasNeue-Regular) }\
