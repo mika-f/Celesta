@@ -19,6 +19,7 @@ members = [
   "crates/remote",
   "crates/renderer",
   "crates/source-edit",
+  "examples/plugins/flag",
 ]
 
 [workspace.package]

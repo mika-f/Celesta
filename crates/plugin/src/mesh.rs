@@ -55,8 +55,8 @@ pub struct MeshInfo {
     pub texture: usize,
     pub blend: MeshBlend,
     /// Back faces are drawn too. A triangle faces front when its vertices
-    /// turn clockwise as seen on the canvas (counter-clockwise in a y-up
-    /// space).
+    /// turn counter-clockwise as seen on the canvas: top-left, bottom-left,
+    /// bottom-right.
     pub double_sided: bool,
     pub mask: Option<MeshMask>,
     /// Texture coordinates, `v` counting up from the bottom row.

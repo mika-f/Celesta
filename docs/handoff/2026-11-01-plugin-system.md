@@ -72,8 +72,9 @@ premultiplied, which composites as the layer's texture:
 - a masked mesh is multiplied by the masks' coverage (or one minus it when
   `inverted`): the masking meshes' texture alpha alone, whatever their
   visibility, opacity, or colors;
-- a single-sided mesh draws only triangles whose vertices turn clockwise on
-  the canvas.
+- a single-sided mesh draws only triangles whose vertices turn
+  counter-clockwise as seen on the canvas (top-left, bottom-left,
+  bottom-right).
 
 ## Provider interface (in-process)
 
@@ -189,12 +190,45 @@ checkout to build:
 | `crates/exporter`, `crates/editor` | Install `PluginHost::discover(&[])`; the exporter's `--plugin-dir` (repeatable) goes before `CELESTA_PLUGIN_PATH` for both the host and the React runtime. |
 | `crates/react-bridge/src/project_types.rs` | Copies installed plugins' declarations to `.celesta/plugins/<id>/index.d.ts` on set-up and on every check; the staged tsconfig maps `@celesta-plugin/*` there. |
 | `packages/cli/src/plugins.ts` | Resolves `@celesta-plugin/<id>` to the plugin's `module` and bundles it into the entry. |
+| `examples/plugins` | Two sample plugins and `build.mjs`, which builds each into `examples/plugins/dist/<id>` (git-ignored). `flag` (a workspace member, `celesta-plugin-flag`) is a program and a component: an image waving as 48 single-sided strips, shaded with multiply and screen colors. `beep-voice` is a module only: a speech channel that voices `planDialogue()` lines with beeps in `prepare()`, as `@celesta/voicevox` does with an engine. |
+| `packages/website/content/{en,ja}/docs/05-(more)/05-plugins.md` | The user guide's Content plugins chapter. |
+| `skills/celesta/references/plugins.md` | The skill's page; `inspect.mjs` lists plugin layers with their assets and data. |
 
 Not done: an editor UI to list, enable, and reload plugins (the editor reads
 `CELESTA_PLUGIN_PATH` from its environment); request timeouts (a plugin that
 hangs blocks the frame); plugin signing or an allowlist; `@celesta/web` and
-the CPU renderer; a sample plugin in this repository; the user guide and
-the Celesta skill.
+the CPU renderer; plugins that make sound at render time (the protocol has
+mesh frames only; speech channels synthesize in `prepare()` instead); a
+published SDK (below). The samples' demos are not type-checked in CI, as
+`typecheck:examples` covers `examples/<name>` projects only.
+
+## Publishing an SDK (not done)
+
+What a plugin author would need from registries instead of a checkout:
+
+- **crates.io: `celesta-plugin`.** It already depends on nothing of
+  Celesta's. Path dependencies on it gain versions; `celesta-plugin-host`
+  stays unpublished (Celesta's side only). Its semver is separate from the
+  protocol version, which the manifest and `hello` carry.
+- **npm: a public API for plugin layers.** Plugin modules now call
+  `registerHostElement` from `@celesta/react/internal`, which says it is not
+  stable. A public `<PluginLayer plugin assets time data>` (or a
+  `definePluginLayer()`) should replace it before any plugin is published.
+- **npm: declarations for development.** Plugin modules type-check against
+  the checkout's staged `packages/cli/dist/project-types`. Either publish the
+  `@celesta/*` packages plugins import (as `peerDependencies`; the CLI keeps
+  them external at run time) or a types-only package made from the same
+  staging. `react` must match the runtime's.
+- **npm: a plugin SDK package** with the manifest's type and JSON Schema and
+  a build CLI generalizing `examples/plugins/build.mjs` (per-platform
+  executables merged into one manifest, `--target`, a handshake check).
+- **Language-neutral docs**: the protocol and manifest sections above as a
+  versioned specification, and which protocol versions each Celesta accepts.
+- **Optionally**, a TypeScript implementation of protocol v1, so a program can
+  be written for Node.js; the manifest would then need a command with
+  arguments, not only an executable path.
+- **Distribution**: a package format (a folder or an archive) and a default
+  per-user plugin folder searched without `CELESTA_PLUGIN_PATH`.
 
 ## Checks
 
@@ -208,6 +242,17 @@ the Celesta skill.
   layouts and prefer a platform's exact `<os>-<arch>` entry over its OS's.
 - `project_types` copies plugin declarations into `.celesta/` and removes
   stale ones.
+- `celesta-plugin-flag`'s tests (`examples/plugins/flag/tests/process.rs`)
+  start the built program through `PluginHost` from a plugin directory: its
+  answers equal the in-process provider's for out-of-order times, its errors
+  come back, and the GPU renderer draws its single-sided strips (which caught
+  `MeshInfo::double_sided`'s documented winding being backwards).
+- `packages/cli/test/plugins.test.mts`: plugin discovery and resolution, a
+  `<Flag>` layer's content on a sequence's clock, the error for a plugin no
+  directory provides, and `beep-voice`'s WAV, cache, and lip sync.
+- Both demos exported with `celesta-exporter --plugin-dir examples/plugins/dist`
+  on Windows 11 (Vulkan): 150 flag frames, and the beep dialogue with sound
+  and moving mouths.
 - An out-of-tree plugin (not part of this repository) built against this
   code with the `[patch.crates-io]` set-up above, on Windows 11 (Vulkan) and
   on Linux x86_64, served real content: exported through the plugin process
