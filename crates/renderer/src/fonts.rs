@@ -3,7 +3,7 @@ use crate::error::RenderError;
 use crate::font_stack::{FaceRun, falls_back_to_loaded};
 use crate::linebreak::{is_emoji_cluster, is_visible_character};
 use crate::shaping::{source_offsets, usable_font_runs};
-use crate::stylesheet_fonts::StylesheetFace;
+use crate::stylesheet_fonts::{ActiveStylesheets, StylesheetFace};
 use crate::text::{FontFallback, MissingGlyphs};
 use celesta_composition::{FontFamily, FontFeatures, ResolvedAsset, TextStyle};
 use celesta_remote::FontFaceSource;
@@ -42,8 +42,10 @@ pub struct TextRasterizer {
     /// `matched_face`'s face by family and matched weight, cleared whenever
     /// a font is loaded. Every locale's system shares the database's ids.
     pub(crate) matched_faces: HashMap<(String, u16), Option<fontdb::ID>>,
-    /// The faces of each family a loaded stylesheet declares, in rule
-    /// order: only these draw it, never an installed font of that name.
+    /// The faces of each family a loaded stylesheet declares, in rule order
+    /// (stylesheets in the order they loaded). While a stylesheet in the
+    /// font list declares the family, only these draw it, never an
+    /// installed font of that name.
     pub(crate) stylesheet_faces: HashMap<String, Vec<StylesheetFace>>,
     /// The stylesheet family of each private family a stylesheet face's
     /// copy is listed under.
@@ -54,7 +56,7 @@ pub struct TextRasterizer {
     /// The loaded stylesheets in the font list last given to
     /// [`Self::load_fonts`], whose faces draw, and the families they
     /// declare, which no installed font draws.
-    pub(crate) active_stylesheets: HashSet<PathBuf>,
+    pub(crate) active_stylesheets: ActiveStylesheets,
     pub(crate) active_stylesheet_families: HashSet<String>,
     /// The first face of each font file a stylesheet's `url()` loaded,
     /// which the database lists only as stylesheet faces' copies. Kept apart
@@ -152,7 +154,7 @@ impl TextRasterizer {
             stylesheet_faces: HashMap::new(),
             stylesheet_privates: HashMap::new(),
             stylesheet_families: HashMap::new(),
-            active_stylesheets: HashSet::new(),
+            active_stylesheets: ActiveStylesheets::new(),
             active_stylesheet_families: HashSet::new(),
             stylesheet_files: HashMap::new(),
             installed_faces,
@@ -230,15 +232,18 @@ impl TextRasterizer {
             .insert(previous.locale().to_owned(), previous);
     }
 
-    /// How many font files have been loaded so far. It only grows, so a
+    /// How many font files have been loaded so far (a file that a
+    /// stylesheet's `url()` names and that is also a font of its own counts
+    /// twice). It only grows, so a
     /// caller caching rasterized text can compare it across frames to tell
     /// when a newly loaded font may change how existing text lays out.
     pub fn loaded_font_count(&self) -> usize {
         self.loaded_fonts.len() + self.stylesheet_files.len()
     }
 
-    /// Changes whenever a font loads or the font list's fallback families
-    /// change, so a caller caching rasterized text can compare it across
+    /// Changes whenever a font loads, the font list's fallback families or
+    /// stylesheets change, or shaping adds a stylesheet face's copy at a new
+    /// weight, so a caller caching rasterized text can compare it across
     /// frames to tell when existing text may lay out differently.
     pub fn fonts_revision(&self) -> u64 {
         self.fonts_revision
@@ -293,7 +298,7 @@ impl TextRasterizer {
             return self.load_font_data(&font.id, data);
         }
         // A web font stylesheet (e.g. Google Fonts): load every face its
-        // `@font-face` rules point to, under their CSS family too.
+        // `@font-face` rules point to, as faces of their CSS family only.
         let css = String::from_utf8_lossy(&data);
         let faces =
             celesta_remote::stylesheet_font_faces(&css, &font.location).map_err(|source| {
@@ -319,7 +324,7 @@ impl TextRasterizer {
         // As in a browser, each family hides any installed family of that
         // name, even when its faces draw nothing.
         let mut declared: Vec<String> = Vec::new();
-        for face in faces {
+        for (rule, face) in faces.into_iter().enumerate() {
             if !declared.contains(&face.family) {
                 declared.push(face.family.clone());
             }
@@ -358,7 +363,7 @@ impl TextRasterizer {
             let Some(template) = template else {
                 continue;
             };
-            self.add_stylesheet_face(path, &face.family, template, face.descriptors);
+            self.add_stylesheet_face((path, rule), &face.family, template, face.descriptors);
             if families.iter().any(|family| **family == face.family) {
                 continue;
             }

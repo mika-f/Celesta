@@ -12,7 +12,7 @@ use crate::fonts::TextRasterizer;
 use celesta_composition::TextStyle;
 use celesta_remote::{FontFaceDescriptors, FontFaceStyle};
 use cosmic_text::{Font, fontdb};
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -30,23 +30,33 @@ pub(crate) type UnicodeRange = Option<Arc<[RangeInclusive<u32>]>>;
 #[derive(Clone, Debug)]
 pub(crate) struct StylesheetFace {
     /// The face as the database lists it: the installed one, or the first
-    /// face of the downloaded file, which the database no longer has.
+    /// face of the file a `url()` names, which the database no longer has.
     template: fontdb::FaceInfo,
     descriptors: FontFaceDescriptors,
     /// `descriptors.unicode_range`, shared with each [`FamilyFace`].
     unicode_range: UnicodeRange,
     /// The weights the face has a copy at, with each copy's private family.
     instances: Vec<(u16, Arc<str>)>,
-    /// The stylesheets that declare the face. It draws only while one of
-    /// them is in the font list.
-    stylesheets: Vec<PathBuf>,
+    /// The stylesheets that declare the face, each with the index of its
+    /// rule there. It draws only while one of them is in the font list.
+    stylesheets: Vec<(PathBuf, usize)>,
 }
 
+/// The stylesheets in the font list, each with its position there.
+pub(crate) type ActiveStylesheets = HashMap<PathBuf, usize>;
+
 impl StylesheetFace {
-    fn is_active(&self, active: &HashSet<PathBuf>) -> bool {
+    /// Where the face's rule comes in the font list's stylesheets taken
+    /// as one, by its first stylesheet in the list; `None` when none is.
+    fn rule_order(&self, active: &ActiveStylesheets) -> Option<(usize, usize)> {
         self.stylesheets
             .iter()
-            .any(|stylesheet| active.contains(stylesheet))
+            .filter_map(|(stylesheet, rule)| Some((*active.get(stylesheet)?, *rule)))
+            .min()
+    }
+
+    fn is_active(&self, active: &ActiveStylesheets) -> bool {
+        self.rule_order(active).is_some()
     }
 }
 
@@ -101,13 +111,15 @@ struct FaceMatch {
 /// of the nearest style (normal and oblique angles from 0deg up, then
 /// italic, then negative oblique angles), then of those, the faces whose
 /// weight range holds `requested`, or else the nearest weight in the
-/// direction the specification gives. Faces left with the same weight are
-/// one composite face, tried for each character in reverse rule order.
-/// Only faces of the `active` stylesheets take part.
+/// direction the specification gives. The faces whose weight range holds
+/// the matched weight are one composite face, tried for each character in
+/// reverse rule order. Only faces of the `active` stylesheets take part,
+/// and their rules are ordered as the stylesheets are in the font list,
+/// as a document orders the rules of its stylesheets.
 fn match_faces(
     faces: &[StylesheetFace],
     requested: u16,
-    active: &HashSet<PathBuf>,
+    active: &ActiveStylesheets,
 ) -> Option<FaceMatch> {
     let style_rank = |face: &StylesheetFace| match face.descriptors.style {
         FontFaceStyle::Normal => (0, 0.0),
@@ -116,9 +128,10 @@ fn match_faces(
         FontFaceStyle::Italic => (2, 0.0),
         FontFaceStyle::Oblique { max, .. } => (3, -max),
     };
-    let candidates: Vec<usize> = (0..faces.len())
+    let mut candidates: Vec<usize> = (0..faces.len())
         .filter(|&index| faces[index].is_active(active))
         .collect();
+    candidates.sort_by_key(|&index| faces[index].rule_order(active));
     let best = candidates
         .iter()
         .map(|&index| style_rank(&faces[index]))
@@ -165,13 +178,16 @@ fn match_faces(
 
 impl TextRasterizer {
     /// Whether `family` is declared by a font stylesheet in the font list,
-    /// so that only its own faces draw it.
+    /// so that only its own faces draw it. A face copy's private family is
+    /// never one, even when a stylesheet declares a family of that name.
     pub(crate) fn is_stylesheet_family(&self, family: &str) -> bool {
         self.active_stylesheet_families.contains(family)
+            && !self.stylesheet_privates.contains_key(family)
     }
 
-    /// The stylesheet family `family`'s faces, none when they all failed to
-    /// load, while a stylesheet in the font list declares it.
+    /// The stylesheet family `family`'s faces, inactive stylesheets'
+    /// included (`match_faces` leaves them out), and an empty slice when
+    /// none loaded. `None` when no stylesheet in the font list declares it.
     fn active_family_faces(&self, family: &str) -> Option<&[StylesheetFace]> {
         if !self.is_stylesheet_family(family) {
             return None;
@@ -182,16 +198,17 @@ impl TextRasterizer {
     /// Makes the stylesheets among the font list's `paths` the ones whose
     /// families and faces draw, after a reload drops or adds one.
     pub(crate) fn activate_stylesheets(&mut self, paths: &[PathBuf]) {
-        let active: HashSet<PathBuf> = paths
-            .iter()
-            .filter(|path| self.stylesheet_families.contains_key(*path))
-            .cloned()
-            .collect();
+        let mut active = ActiveStylesheets::new();
+        for path in paths {
+            if self.stylesheet_families.contains_key(path) && !active.contains_key(path) {
+                active.insert(path.clone(), active.len());
+            }
+        }
         if active == self.active_stylesheets {
             return;
         }
         self.active_stylesheet_families = active
-            .iter()
+            .keys()
             .flat_map(|path| self.stylesheet_families[path].iter().cloned())
             .collect();
         self.active_stylesheets = active;
@@ -217,11 +234,13 @@ impl TextRasterizer {
     }
 
     /// Adds `template` to the stylesheet family `family` as a face with
-    /// `descriptors` that `stylesheet` declares, unless it has that face
-    /// already, with a copy at the weight 400 text draws it at.
+    /// `descriptors` that rule `rule` of `stylesheet` declares, with a copy
+    /// at the weight 400 text draws it at. When the family has that face
+    /// already, `stylesheet` is only recorded as declaring it too, so the
+    /// face draws while either stylesheet is in the font list.
     pub(crate) fn add_stylesheet_face(
         &mut self,
-        stylesheet: &Path,
+        (stylesheet, rule): (&Path, usize),
         family: &str,
         template: fontdb::FaceInfo,
         descriptors: FontFaceDescriptors,
@@ -231,8 +250,8 @@ impl TextRasterizer {
             .iter_mut()
             .find(|face| face.template.id == template.id && face.descriptors == descriptors)
         {
-            if !face.stylesheets.iter().any(|path| path == stylesheet) {
-                face.stylesheets.push(stylesheet.to_owned());
+            if !face.stylesheets.iter().any(|(path, _)| path == stylesheet) {
+                face.stylesheets.push((stylesheet.to_owned(), rule));
             }
             return;
         }
@@ -243,7 +262,7 @@ impl TextRasterizer {
             descriptors,
             unicode_range,
             instances: Vec::new(),
-            stylesheets: vec![stylesheet.to_owned()],
+            stylesheets: vec![(stylesheet.to_owned(), rule)],
         });
         let index = faces.len() - 1;
         self.add_instance(family, index, 400.clamp(min, max));
@@ -381,8 +400,9 @@ impl TextRasterizer {
     }
 
     /// The family text in `family` at `weight` is shaped in where no other
-    /// face is chosen: the private family of a stylesheet family's first
-    /// face, or [`NO_FACE_FAMILY`] when it has none; another family itself.
+    /// face is chosen: the private family of the face a stylesheet family's
+    /// characters try first (its last matching rule), or [`NO_FACE_FAMILY`]
+    /// when it has none; another family itself.
     pub(crate) fn drawing_family(&self, family: &str, weight: u16) -> Arc<str> {
         let Some(faces) = self.active_family_faces(family) else {
             return family.into();
@@ -430,12 +450,12 @@ mod tests {
             },
             unicode_range: None,
             instances: Vec::new(),
-            stylesheets: vec![PathBuf::from("a.css")],
+            stylesheets: vec![(PathBuf::from("a.css"), 0)],
         }
     }
 
-    fn active() -> HashSet<PathBuf> {
-        HashSet::from([PathBuf::from("a.css")])
+    fn active() -> ActiveStylesheets {
+        HashMap::from([(PathBuf::from("a.css"), 0)])
     }
 
     fn matched(faces: &[StylesheetFace], requested: u16) -> (u16, Vec<usize>) {
@@ -524,7 +544,7 @@ mod tests {
         assert!(match_faces(&[], 400, &active()).is_none());
         // Faces of a stylesheet that left the font list take no part.
         let mut faces = [face((400, 400), Normal), face((700, 700), Normal)];
-        faces[0].stylesheets = vec![PathBuf::from("gone.css")];
+        faces[0].stylesheets = vec![(PathBuf::from("gone.css"), 0)];
         assert_eq!(matched(&faces, 400), (700, vec![1]));
         assert!(match_faces(&faces[..1], 400, &active()).is_none());
     }

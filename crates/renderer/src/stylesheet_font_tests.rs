@@ -398,6 +398,79 @@ fn a_weight_range_draws_at_the_weight_asked_for() {
 }
 
 #[test]
+fn a_space_outside_the_unicode_range_is_not_the_faces() {
+    let mut rasterizer = rasterizer(
+        "@font-face { font-family: Digits; src: local(BebasNeue-Regular); unicode-range: U+30-39 }",
+    );
+    let drawn = drawn_by(&mut rasterizer, "1 2", &style("Digits", 400));
+    assert_eq!(drawn[0], "BebasNeue-Regular Digits 400");
+    assert!(!drawn[1].contains("Digits"), "{drawn:?}");
+    assert_eq!(drawn[2], "BebasNeue-Regular Digits 400");
+}
+
+#[test]
+fn a_family_named_like_a_private_family_does_not_recurse() {
+    // The first face's copy is listed under `celesta-stylesheet-face-0`.
+    let mut rasterizer = rasterizer(
+        "@font-face { font-family: celesta-stylesheet-face-0; src: local(BebasNeue-Regular) }\
+         @font-face { font-family: Code; src: local(IBMPlexMono-Regular) }",
+    );
+    assert_eq!(
+        drawn_by(&mut rasterizer, "A", &style("Code", 400)),
+        ["IBMPlexMono-Regular Code 400"]
+    );
+    let stack = FontFamily::Stack(vec![
+        "celesta-stylesheet-face-0".to_owned(),
+        "Code".to_owned(),
+    ]);
+    assert_eq!(
+        drawn_by(&mut rasterizer, "AБ", &style(stack, 400)),
+        [
+            "BebasNeue-Regular celesta-stylesheet-face-0 400",
+            "IBMPlexMono-Regular Code 400"
+        ]
+    );
+}
+
+#[test]
+fn stylesheets_declaring_one_family_take_the_font_list_order() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(
+        directory.path().join("a.css"),
+        "@font-face { font-family: Shared; src: local(IBMPlexMono-Regular) }",
+    )
+    .unwrap();
+    fs::write(
+        directory.path().join("b.css"),
+        "@font-face { font-family: Shared; src: local(BebasNeue-Regular) }",
+    )
+    .unwrap();
+    let font = |path: &str| ResolvedAsset {
+        id: path.to_owned(),
+        location: AssetLocation::File {
+            path: path.to_owned(),
+        },
+    };
+    let mut rasterizer = TextRasterizer::new();
+    rasterizer.install_font(example_font("BebasNeue-Regular.ttf"));
+    rasterizer.install_font(example_font("IBMPlexMono-Regular.ttf"));
+    // The later stylesheet's rule is the later rule, whichever loaded first.
+    for (list, last) in [
+        (["a.css", "b.css"], "BebasNeue-Regular"),
+        (["b.css", "a.css"], "IBMPlexMono-Regular"),
+    ] {
+        rasterizer
+            .load_fonts(&list.map(font), directory.path())
+            .unwrap();
+        assert_eq!(
+            drawn_by(&mut rasterizer, "A", &style("Shared", 400)),
+            [format!("{last} Shared 400")],
+            "{list:?}"
+        );
+    }
+}
+
+#[test]
 fn a_weight_span_in_a_weight_range_draws_at_its_weight() {
     let mut rasterizer =
         rasterizer("@font-face { font-family: Range; font-weight: 300 800; src: url(plex.ttf) }");

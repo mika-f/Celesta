@@ -3,7 +3,7 @@
 use crate::fonts::{COLOR_EMOJI_FAMILIES, TextRasterizer};
 use crate::linebreak::{emoji_presentation_spans, is_visible_character};
 use crate::shaping::usable_font_runs;
-use crate::stylesheet_fonts::{FamilyFace, NO_FACE_FAMILY};
+use crate::stylesheet_fonts::{FamilyFace, NO_FACE_FAMILY, in_range};
 use celesta_composition::{FontFallbackMode, FontFamily, FontFeatures, TextFontRun, TextStyle};
 use cosmic_text::{Family, Font, Weight, fontdb};
 use std::sync::Arc;
@@ -304,9 +304,9 @@ pub(crate) fn falls_back_to_loaded(style: &TextStyle) -> bool {
 /// variation selectors stay with their base; failing that, the first loaded
 /// fallback face that draws every one; failing that, the first face that
 /// draws its first character; failing that, the primary family, where the
-/// system's fallback fonts draw it, or, when the primary face's
-/// `unicode-range` leaves the cluster out, a family with no face, so that
-/// face does not draw it. An emoji takes a color emoji font of the stack
+/// system's fallback fonts draw it, or, when the primary face has a
+/// `unicode-range`, a family with no face, so that face cannot draw a
+/// character its range leaves out. An emoji takes a color emoji font of the stack
 /// first, if one has it.
 fn cluster_family<'a>(stack: &'a StackFaces<'_>, cluster: &str, is_emoji: bool) -> &'a str {
     let primary = &*stack.primary;
@@ -317,11 +317,16 @@ fn cluster_family<'a>(stack: &'a StackFaces<'_>, cluster: &str, is_emoji: bool) 
     {
         return primary;
     }
+    // A space needs no glyph to stay with its neighbours, but it must be in
+    // the face's `unicode-range`, as in a browser.
     let covers = |face: &FamilyFace| {
-        cluster
-            .chars()
-            .filter(|&character| is_visible_character(character))
-            .all(|character| face.draws(character))
+        cluster.chars().all(|character| {
+            if is_visible_character(character) {
+                face.draws(character)
+            } else {
+                !character.is_whitespace() || in_range(face.unicode_range.as_deref(), character)
+            }
+        })
     };
     if is_emoji
         && let Some((_, face)) = stack
