@@ -462,7 +462,9 @@ pub(crate) fn export_renderer(
         .map_err(ExportError::Render)?
         .with_render_quality(render_quality)
         .with_asset_root(asset_root)
-        .with_video_decoder(FfmpegBackend::new().with_sequential_video(frame_rate));
+        .with_video_decoder(FfmpegBackend::new().with_sequential_video(frame_rate))
+        // Plugin content comes from the plugins' own processes.
+        .with_content_provider(celesta_plugin_host::PluginHost::discover(&[]));
     let readback = if format.has_alpha() {
         ReadbackFormat::Rgba16Straight
     } else {

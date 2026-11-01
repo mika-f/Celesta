@@ -1,0 +1,17 @@
+[package]
+name = "celesta-plugin"
+description = "What Celesta content plugins return (textured meshes) and how they talk to Celesta. Depends on nothing of Celesta's (only serde, and libc on Unix), so plugins can use it without linking Celesta."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+# Keeps stdout for the protocol alone (see protocol::serve).
+libc = "0.2"

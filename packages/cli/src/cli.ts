@@ -47,6 +47,7 @@ import type {
   WirePropertyTable,
 } from '@celesta/react/internal';
 
+import { PLUGIN_SPECIFIER, resolvePluginModule } from './plugins';
 import { resolvePropertyInputs } from './property-inputs';
 import type { PropertyInputLayer, PropertyIssue } from './property-inputs';
 
@@ -649,6 +650,12 @@ async function loadEntry(entryPath: string, sourceLocations: boolean): Promise<L
             return { errors: [{ text: `${args.path} is not a Celesta package` }] };
           }
           return { path: pathToFileURL(resolved).href, external: true };
+        });
+        // A plugin's module is bundled into the entry, so its own `react`
+        // and `@celesta/*` imports come back here and share the runtime's.
+        build.onResolve({ filter: PLUGIN_SPECIFIER }, (args) => {
+          const resolved = resolvePluginModule(args.path);
+          return 'error' in resolved ? { errors: [{ text: resolved.error }] } : { path: resolved.path };
         });
       },
     }],

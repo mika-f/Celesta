@@ -12,6 +12,8 @@ members = [
   "crates/gpu-renderer",
   "crates/mcp",
   "crates/media",
+  "crates/plugin",
+  "crates/plugin-host",
   "crates/project",
   "crates/react-bridge",
   "crates/remote",

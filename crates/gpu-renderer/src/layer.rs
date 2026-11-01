@@ -195,13 +195,11 @@ impl PreparedLayer {
             PreparedContent::Path(path) => (path.width, path.height, 2.0),
             PreparedContent::Canvas { .. } => (canvas.width, canvas.height, 0.0),
         };
-        let premultiplied = matches!(
-            self.content,
-            PreparedContent::Canvas {
-                premultiplied: true,
-                ..
-            }
-        );
+        let premultiplied = match &self.content {
+            PreparedContent::Canvas { premultiplied, .. } => *premultiplied,
+            PreparedContent::Texture(texture) => texture.premultiplied,
+            PreparedContent::Rect(_) | PreparedContent::Path(_) => false,
+        };
         let (rect, fill, stroke) = match &self.content {
             PreparedContent::Texture(_) => ([0.0; 4], [0.0; 4], [0.0; 4]),
             // A band's values are in its target's space, and the shader

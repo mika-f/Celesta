@@ -44,6 +44,8 @@ pub enum RenderError {
     /// expands every one before it hands a scene on.
     #[error("layer `{layer}` refers to a static subtree that was never expanded")]
     UnresolvedStatic { layer: String },
+    #[error("CPU reference renderer does not draw plugin content (layer `{layer}`)")]
+    UnsupportedPlugin { layer: String },
     #[error("could not load remote asset `{asset}`: {source}")]
     RemoteAsset {
         asset: String,

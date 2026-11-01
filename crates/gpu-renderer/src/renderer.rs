@@ -98,6 +98,9 @@ pub struct GpuRenderer {
     pub(crate) placeholder_texture: LayerTexture,
     pub(crate) asset_root: PathBuf,
     pub(crate) psd_sources: celesta_renderer::psd_source::PsdSources,
+    /// Plugin content: the provider it comes from, the models it opened,
+    /// and the pipelines that draw them.
+    pub(crate) meshes: crate::mesh::MeshState,
     pub(crate) image_sources: celesta_renderer::image_source::ImageSources,
     /// The device's largest 2D texture side. Layer content larger than this
     /// is shrunk before upload and enlarged again by the draw's filtering.
@@ -371,6 +374,7 @@ impl GpuRenderer {
             placeholder_texture,
             asset_root: PathBuf::from("."),
             psd_sources: Default::default(),
+            meshes: Default::default(),
             image_sources: Default::default(),
             max_texture_dimension,
             video_decoder: None,
@@ -552,6 +556,16 @@ impl GpuRenderer {
 
     pub fn with_video_decoder(mut self, decoder: impl VideoFrameDecoder + 'static) -> Self {
         self.video_decoder = Some(Box::new(decoder));
+        self
+    }
+
+    /// Where `LayerContent::Plugin` layers get their meshes: the plugin
+    /// host, or anything else answering as one. Without one they fail.
+    pub fn with_content_provider(
+        mut self,
+        provider: impl celesta_plugin::ContentProvider + 'static,
+    ) -> Self {
+        self.meshes.provider = Some(Box::new(provider));
         self
     }
 

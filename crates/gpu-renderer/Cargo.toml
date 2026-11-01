@@ -10,12 +10,14 @@ rust-version.workspace = true
 bytemuck = "1.25.2"
 image = { version = "0.25.8", default-features = false, features = ["gif", "jpeg", "png", "pnm", "webp"] }
 celesta-composition = { path = "../composition" }
+celesta-plugin = { path = "../plugin" }
 celesta-remote = { path = "../remote" }
 celesta-media = { path = "../media" }
 celesta-renderer = { path = "../renderer" }
 naga = { version = "30.0.1", features = ["wgsl-in"] }
 pollster = "1.0.0"
 rayon = "1.12.0"
+serde_json.workspace = true
 wgpu = { version = "30.0.1", features = ["naga-ir"] }
 clap = { workspace = true, optional = true }
 strum.workspace = true

@@ -16,6 +16,7 @@ mod instances;
 mod layer;
 mod layer_frame;
 mod mask;
+mod mesh;
 mod path;
 mod pipeline;
 mod plan;

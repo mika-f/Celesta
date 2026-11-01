@@ -101,6 +101,7 @@ impl GpuRenderer {
             anchor_span: (1.0, 1.0),
             text_box: None,
             raster_scale: 1.0,
+            premultiplied: false,
         }))
     }
 
@@ -187,6 +188,7 @@ pub(crate) fn upload_texture(
         anchor_span: image.anchor_span,
         text_box: image.text_box,
         raster_scale: image.raster_scale,
+        premultiplied: false,
     }))
 }
 
@@ -327,6 +329,10 @@ impl DecodedImage {
 pub(crate) struct LayerTexture(Arc<TextureData>);
 
 impl LayerTexture {
+    pub(crate) fn from_data(data: TextureData) -> Self {
+        Self(Arc::new(data))
+    }
+
     /// Whether draws with `self` and `other` sample the same texture.
     pub(crate) fn same(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0) || self.bind_group == other.bind_group
@@ -356,6 +362,9 @@ pub(crate) struct TextureData {
     pub(crate) text_box: Option<[f64; 4]>,
     /// See `DecodedImage::raster_scale`.
     pub(crate) raster_scale: f32,
+    /// Whether the texels hold premultiplied alpha (a plugin layer's mesh
+    /// canvas) rather than straight alpha.
+    pub(crate) premultiplied: bool,
 }
 
 pub(crate) struct CachedTexture {

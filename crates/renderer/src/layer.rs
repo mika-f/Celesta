@@ -319,6 +319,11 @@ impl CpuRenderer {
                     layer: layer.id.clone(),
                 });
             }
+            LayerContent::Plugin { .. } => {
+                return Err(RenderError::UnsupportedPlugin {
+                    layer: layer.id.clone(),
+                });
+            }
             LayerContent::MissingComponent { .. } => render_placeholder(
                 frame,
                 layer.transform.anchor,
