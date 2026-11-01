@@ -57,26 +57,20 @@ function flatten(layers: Layer[]): Layer[] {
   return layers.flatMap((layer) => [layer, ...(layer.content.type === 'group' ? flatten(layer.content.layers) : [])]);
 }
 
-test('finds plugins in each path, first of an id winning', () => {
-  const first = pluginPath(['flag']);
+test('finds plugins in each path, first of an id winning', async () => {
+  // A plugin directory itself, then a directory of them.
+  const first = join(pluginPath(['flag']), 'flag');
   const second = pluginPath(['flag', 'beep-voice']);
-  const found = findPlugins([first, second].join(delimiter));
+  const found = await findPlugins([first, join(second, 'missing'), second].join(delimiter));
   assert.deepEqual(
     found.map((plugin) => [plugin.id, plugin.directory]),
     [
-      ['flag', join(first, 'flag')],
+      ['flag', first],
       ['beep-voice', join(second, 'beep-voice')],
     ],
   );
-  const previous = process.env.CELESTA_PLUGIN_PATH;
-  process.env.CELESTA_PLUGIN_PATH = second;
-  try {
-    assert.deepEqual(resolvePluginModule('@celesta-plugin/flag'), { path: join(samples, 'flag', 'js', 'index.ts') });
-    assert.match((resolvePluginModule('@celesta-plugin/missing') as { error: string }).error, /no plugin "missing"/);
-  } finally {
-    if (previous === undefined) delete process.env.CELESTA_PLUGIN_PATH;
-    else process.env.CELESTA_PLUGIN_PATH = previous;
-  }
+  assert.deepEqual(resolvePluginModule('@celesta-plugin/flag', found), { path: join(samples, 'flag', 'js', 'index.ts') });
+  assert.match((resolvePluginModule('@celesta-plugin/missing', found) as { error: string }).error, /no plugin "missing"/);
 });
 
 test('<Flag> puts plugin content in the scene on the sequence clock', () => {

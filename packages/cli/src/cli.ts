@@ -47,7 +47,8 @@ import type {
   WirePropertyTable,
 } from '@celesta/react/internal';
 
-import { PLUGIN_SPECIFIER, resolvePluginModule } from './plugins';
+import { PLUGIN_SPECIFIER, findPlugins, resolvePluginModule } from './plugins';
+import type { FoundPlugin } from './plugins';
 import { resolvePropertyInputs } from './property-inputs';
 import type { PropertyInputLayer, PropertyIssue } from './property-inputs';
 
@@ -653,8 +654,12 @@ async function loadEntry(entryPath: string, sourceLocations: boolean): Promise<L
         });
         // A plugin's module is bundled into the entry, so its own `react`
         // and `@celesta/*` imports come back here and share the runtime's.
-        build.onResolve({ filter: PLUGIN_SPECIFIER }, (args) => {
-          const resolved = resolvePluginModule(args.path);
+        // The plugin directories are read once per bundle, so a reload sees
+        // plugins installed since.
+        let plugins: Promise<FoundPlugin[]> | undefined;
+        build.onResolve({ filter: PLUGIN_SPECIFIER }, async (args) => {
+          plugins ??= findPlugins();
+          const resolved = resolvePluginModule(args.path, await plugins);
           return 'error' in resolved ? { errors: [{ text: resolved.error }] } : { path: resolved.path };
         });
       },

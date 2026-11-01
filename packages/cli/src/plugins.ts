@@ -4,7 +4,7 @@
 // plugin directory or a directory of them, and the first plugin with an id
 // wins. See docs/handoff/2026-11-01-plugin-system.md.
 
-import * as fs from 'node:fs';
+import { readFile, readdir, stat } from 'node:fs/promises';
 import * as path from 'node:path';
 
 export const PLUGIN_PATH_ENV = 'CELESTA_PLUGIN_PATH';
@@ -24,10 +24,19 @@ export interface FoundPlugin {
   module?: string;
 }
 
-function readManifest(directory: string): FoundPlugin | undefined {
+async function isFile(file: string): Promise<boolean> {
+  try {
+    return (await stat(file)).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/** The plugin in `directory`, or undefined when its manifest is missing or unreadable. */
+async function readManifest(directory: string): Promise<FoundPlugin | undefined> {
   let manifest: Manifest;
   try {
-    manifest = JSON.parse(fs.readFileSync(path.join(directory, MANIFEST), 'utf8')) as Manifest;
+    manifest = JSON.parse(await readFile(path.join(directory, MANIFEST), 'utf8')) as Manifest;
   } catch {
     return undefined;
   }
@@ -39,36 +48,40 @@ function readManifest(directory: string): FoundPlugin | undefined {
   };
 }
 
+/** The plugins `root` holds: itself when it has a manifest, else its subdirectories', in name order. */
+async function pluginsIn(root: string): Promise<(FoundPlugin | undefined)[]> {
+  if (await isFile(path.join(root, MANIFEST))) return [await readManifest(root)];
+  let children: string[];
+  try {
+    children = (await readdir(root, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort();
+  } catch {
+    return [];
+  }
+  return Promise.all(children.map((child) => readManifest(path.join(root, child))));
+}
+
 /** The plugins under `CELESTA_PLUGIN_PATH`, first of each id. */
-export function findPlugins(pluginPath = process.env[PLUGIN_PATH_ENV] ?? ''): FoundPlugin[] {
+export async function findPlugins(pluginPath = process.env[PLUGIN_PATH_ENV] ?? ''): Promise<FoundPlugin[]> {
+  // Read concurrently, kept in path order so the first of an id still wins.
+  const roots = await Promise.all(pluginPath.split(path.delimiter).filter(Boolean).map(pluginsIn));
   const found: FoundPlugin[] = [];
-  const add = (plugin: FoundPlugin | undefined) => {
+  for (const plugin of roots.flat()) {
     if (plugin && !found.some((other) => other.id === plugin.id)) found.push(plugin);
-  };
-  for (const root of pluginPath.split(path.delimiter).filter(Boolean)) {
-    if (fs.existsSync(path.join(root, MANIFEST))) {
-      add(readManifest(root));
-      continue;
-    }
-    let children: string[];
-    try {
-      children = fs.readdirSync(root, { withFileTypes: true }).filter((entry) => entry.isDirectory()).map((entry) => entry.name);
-    } catch {
-      continue;
-    }
-    for (const child of children.sort()) add(readManifest(path.join(root, child)));
   }
   return found;
 }
 
 /**
- * The module file `@celesta-plugin/<id>` stands for, or an error message
- * saying why there is none.
+ * The module file `@celesta-plugin/<id>` stands for among `plugins`, or an
+ * error message saying why there is none.
  */
-export function resolvePluginModule(specifier: string): { path: string } | { error: string } {
+export function resolvePluginModule(specifier: string, plugins: readonly FoundPlugin[]): { path: string } | { error: string } {
   const id = PLUGIN_SPECIFIER.exec(specifier)?.[1];
   if (!id) return { error: `${specifier} is not a plugin module` };
-  const plugin = findPlugins().find((candidate) => candidate.id === id);
+  const plugin = plugins.find((candidate) => candidate.id === id);
   if (!plugin) {
     return { error: `no plugin "${id}" is installed (looked in ${PLUGIN_PATH_ENV})` };
   }
