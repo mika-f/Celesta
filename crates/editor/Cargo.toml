@@ -30,7 +30,7 @@ clap.workspace = true
 fnv = "1.0.7"
 rodio = { version = "0.23.0", default-features = false, features = ["playback"] }
 serde_json.workspace = true
-shlex = "1"
+shlex = "2"
 unicode-segmentation = "1.13.3"
 anyhow.workspace = true
 thiserror.workspace = true
