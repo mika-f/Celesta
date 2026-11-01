@@ -20,6 +20,15 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   bundled plugin that other users can write to is skipped.
 - The app looks again each time a project opens and on File > Reload
   Plugins; skipped plugins show in its Problems tab.
+- The app asks the user to trust a project folder before it evaluates
+  anything in it, and to allow each user-folder or project plugin (again
+  when its files change); a plugin waiting for approval draws nothing and
+  shows in Problems. Only the user can answer: tell them to, rather than
+  working around it. `Celesta-export` and MCP do not ask.
+- A project may list its own plugin folders in `celesta.config.json` at its
+  root: `{ "plugins": { "paths": ["./plugins"] } }`, relative and inside
+  the project. Only the app reads it (after trust); give `Celesta-export`
+  the same folders with `--plugin-dir`.
 - Check and export with the folder named:
 
   ```sh

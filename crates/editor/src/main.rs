@@ -142,7 +142,15 @@ fn run() -> anyhow::Result<()> {
     let path = args.path;
     let mut property_args = PropertyArgs::new(args.props_file, args.props);
     property_args.composition = args.composition;
-    let mut editor = EditorView::open(path.as_deref(), property_args, args.driver)?;
+    // A project the user has not trusted runs none of its code at start-up:
+    // the window opens on the demo and asks about the project first.
+    let untrusted = path
+        .as_deref()
+        .and_then(|path| plugins::trust_request(path, &property_args));
+    let mut editor = match untrusted {
+        Some(_) => EditorView::open(None, PropertyArgs::default(), args.driver)?,
+        None => EditorView::open(path.as_deref(), property_args, args.driver)?,
+    };
 
     let app = gpui_kit::application().with_assets(CelestaAssets);
     app.run(move |cx: &mut App| {
@@ -236,6 +244,16 @@ fn run() -> anyhow::Result<()> {
                         editor.refresh_scene_sources(cx);
                     }
                     editor
+                });
+                // Once the root that shows dialogs is in place.
+                window.defer(cx, {
+                    let view = view.clone();
+                    move |window, cx| {
+                        view.update(cx, |this, cx| match untrusted {
+                            Some(request) => this.ask_to_trust(request, window, cx),
+                            None => this.ask_about_pending_plugins(window, cx),
+                        });
+                    }
                 });
                 cx.new(|cx| Root::new(view, window, cx))
             },

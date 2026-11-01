@@ -10,6 +10,7 @@ rust-version.workspace = true
 [dependencies]
 celesta-plugin = { path = "../plugin" }
 serde.workspace = true
+sha2 = "0.10"
 serde_json.workspace = true
 thiserror.workspace = true
 

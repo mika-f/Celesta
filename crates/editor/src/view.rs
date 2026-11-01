@@ -12,7 +12,7 @@ use crate::layer_select::SourceLookup;
 use crate::media_probe::{MediaAssetInfo, MediaProbeWorker, spawn_media_probe};
 use crate::meter::MasterLevels;
 use crate::occurrences::{OccurrenceState, OccurrenceWorker, spawn_occurrences};
-use crate::plugins::FoundPlugins;
+use crate::plugins::{FoundPlugins, trusted_root};
 use crate::preview::{
     AudioPreview, PreviewPresentation, PreviewWorker, ReactPreview, TextOverride, spawn_preview,
 };
@@ -34,7 +34,7 @@ use celesta_gpu_renderer::{
     GpuDriver, GpuRenderOptions, GpuRenderer, HitRegion, LayerFrame, TextLayout,
 };
 use celesta_media::FfmpegBackend;
-use celesta_plugin_host::InstalledPlugins;
+use celesta_plugin_host::{InstalledPlugins, PendingPlugin};
 use celesta_react_bridge::{
     ComponentPropertyField, ComponentPropertySchema, PrimitivePropertyTable, SourcePos,
 };
@@ -378,6 +378,12 @@ pub(crate) struct EditorView {
     /// renderer runs them, and every React runtime and export is given the
     /// same set (see `plugins.rs`).
     pub(crate) plugins: InstalledPlugins,
+    /// Plugins found that wait for the user to allow them.
+    pub(crate) pending_plugins: Vec<PendingPlugin>,
+    /// The plugins (directory and fingerprint) the user was already asked
+    /// about in this window, so "Not Now" is not asked again until they
+    /// change.
+    pub(crate) asked_plugins: HashSet<(PathBuf, String)>,
 }
 
 impl EditorView {
@@ -386,7 +392,7 @@ impl EditorView {
         property_args: PropertyArgs,
         driver: GpuDriver,
     ) -> anyhow::Result<Self> {
-        let plugins = FoundPlugins::find();
+        let plugins = FoundPlugins::find(trusted_root(path).as_deref());
         let (document, react_preview) =
             load_source(path, property_args, &plugins.installed).map_err(anyhow::Error::msg)?;
         Self::from_document(
@@ -569,6 +575,8 @@ impl EditorView {
             inline_refocus: false,
             add: AddState::default(),
             plugins: InstalledPlugins::default(),
+            pending_plugins: Vec::new(),
+            asked_plugins: HashSet::new(),
         };
         editor.set_plugins(plugins);
         editor.refresh_preview();

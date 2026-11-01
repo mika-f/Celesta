@@ -27,6 +27,33 @@ On macOS and Linux, Celesta does not use a folder or plugin in 3 or 4 that other
 celesta-exporter --react film.tsx out.mp4 --plugin-dir ~/celesta-plugins
 ```
 
+## Trust and approval
+
+Opening a project runs its code on your computer, and a plugin runs its own. The desktop app therefore asks before either runs:
+
+- **Projects.** The first time you open a project, the app asks whether you trust its folder, and evaluates nothing until you do. A project downloaded from the internet is marked as such in the question (Windows). Projects you create with **File > Create New Project** are trusted already. Trust covers the folder and everything in it, and is remembered.
+- **Plugins.** A plugin in your user plugin folder or brought by a project runs only once you allow it. The app asks when it finds one, and asks again when the plugin's files change, such as after an update. Until you allow a plugin, its layers are not drawn and Problems says it is waiting. Plugins named with `--plugin-dir` or `CELESTA_PLUGIN_PATH`, and the ones that come with Celesta, are not asked about.
+
+Your choices are kept in `settings.json` in Celesta's settings folder: `%APPDATA%\Celesta` on Windows, `~/Library/Application Support/Celesta` on macOS, and `$XDG_CONFIG_HOME/celesta` (`~/.config/celesta` when unset) elsewhere.
+
+`celesta-exporter` and the MCP server run what you point them at and do not ask.
+
+### Plugins that come with a project
+
+A project can bring plugins in its own folders, listed in `celesta.config.json` at the project's root:
+
+```json
+{
+  "plugins": {
+    "paths": ["./plugins"]
+  }
+}
+```
+
+Each path is relative to the project root and must stay inside it. The desktop app searches these folders after `CELESTA_PLUGIN_PATH` and before your user plugin folder, once you trust the project. The folder holding `celesta.config.json` is also the project root the trust question names; without the file, the root is the entry's own folder. `celesta-exporter` does not read the file: pass the folders with `--plugin-dir`.
+
+## Reloading plugins
+
 The desktop app looks for plugins each time it opens a project; to pick up a plugin installed while it is open, choose **File > Reload Plugins**. Plugins it skipped, and why, are listed in the Problems tab. A plugin that draws layers runs as a program of its own, which Celesta starts when a frame needs it; that program comes with the plugin, one for each platform it supports.
 
 ## Use its components

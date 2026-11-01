@@ -1,13 +1,19 @@
 //! Celesta's side of content plugins: finds plugin directories
 //! (`celesta-plugin.json`) in the locations every part of Celesta shares
-//! ([`search_paths`], [`InstalledPlugins`]) and runs each plugin a renderer
-//! needs in a process of its own, speaking `celesta_plugin::protocol` with
-//! it. Install a [`PluginHost`] with `GpuRenderer::with_content_provider`.
+//! ([`search_paths`], [`InstalledPlugins`]), decides which may run without
+//! asking ([`UserSettings`], [`InstalledPlugins::allowed_by`]), and runs
+//! each plugin a renderer needs in a process of its own, speaking
+//! `celesta_plugin::protocol` with it. Install a [`PluginHost`] with
+//! `GpuRenderer::with_content_provider`.
 
+mod approval;
 mod host;
 mod locations;
 mod manifest;
+mod project;
+mod settings;
 
+pub use approval::{Allowed, PendingPlugin, fingerprint, from_the_internet, zone_is_internet};
 pub use host::PluginHost;
 pub use locations::{
     PluginSource, SearchPath, bundled_plugin_dir, search_paths, unsafe_reason, user_plugin_dir,
@@ -15,4 +21,9 @@ pub use locations::{
 pub use manifest::{
     DiscoveryError, InstalledPlugins, MANIFEST, Manifest, PLUGIN_PATH_ENV, PluginEntry, discover,
     discover_in, is_contained_path, is_valid_id, platform, plugin_paths,
+};
+pub use project::{PROJECT_CONFIG, ProjectConfigError, project_plugin_paths, project_root};
+pub use settings::{
+    Allowance, AllowedPlugin, SETTINGS_FILE, SettingsError, UserSettings, user_settings_dir,
+    user_settings_path,
 };

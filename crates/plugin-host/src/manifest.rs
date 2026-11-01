@@ -352,7 +352,16 @@ pub struct InstalledPlugins {
 impl InstalledPlugins {
     /// Discovers them, with the plugins that were skipped and why.
     pub fn find(explicit: &[PathBuf]) -> (Self, Vec<DiscoveryError>) {
-        let (plugins, errors) = discover_in(&search_paths(explicit));
+        Self::find_with_project(explicit, &[])
+    }
+
+    /// Discovers them with a trusted project's own plugin folders (see
+    /// [`crate::project_plugin_paths`]) searched after the explicit ones.
+    pub fn find_with_project(
+        explicit: &[PathBuf],
+        project: &[PathBuf],
+    ) -> (Self, Vec<DiscoveryError>) {
+        let (plugins, errors) = discover_in(&search_paths(explicit, project));
         (Self { plugins }, errors)
     }
 
