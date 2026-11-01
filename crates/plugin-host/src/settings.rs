@@ -1,5 +1,6 @@
 //! The user's Celesta settings that decide what code Celesta may run: the
-//! projects the user trusts and the plugins they allowed. They live in
+//! projects the user trusts, the plugins they allowed and turned off, and
+//! the folders of plugins they added. They live in
 //! `settings.json` in the user's Celesta settings folder
 //! ([`user_settings_path`]), written whole and replaced atomically, and keep
 //! keys this build does not know so that another build's settings survive.
@@ -82,7 +83,8 @@ pub struct UserSettings {
     /// project, not the projects in folders below it.
     #[serde(default)]
     pub trusted_projects: Vec<PathBuf>,
-    /// User and project plugins the user allowed to run.
+    /// Plugins that need allowing (from the user's folder, a folder they
+    /// added, or a project) the user allowed to run.
     #[serde(default)]
     pub allowed_plugins: Vec<AllowedPlugin>,
     /// Plugins the user turned off: they do not run until turned on again.
@@ -199,6 +201,14 @@ impl UserSettings {
         for allowed in &mut self.allowed_plugins {
             allowed.directory = resolved(&allowed.directory);
         }
+        // A plugin turned off is matched by its resolved folder, so one
+        // written another way would quietly be on again.
+        self.disabled_plugins
+            .retain(|disabled| disabled.directory.is_absolute());
+        for disabled in &mut self.disabled_plugins {
+            disabled.directory = resolved(&disabled.directory);
+        }
+        self.plugin_folders.retain(|folder| folder.is_absolute());
     }
 
     /// Writes the settings to `path` whole, through a temporary file
@@ -520,6 +530,13 @@ mod tests {
                     { "id": "p", "directory": "relative", "fingerprint": "sha256:a" },
                     { "id": "q", "directory": project, "fingerprint": "sha256:b" },
                 ],
+                // Written another way than this build would, but the same
+                // folder: still off.
+                "disabledPlugins": [
+                    { "id": "q", "directory": project.join("..").join("project") },
+                    { "id": "r", "directory": "relative" },
+                ],
+                "pluginFolders": ["relative", project],
             })
             .to_string(),
         )
@@ -533,5 +550,8 @@ mod tests {
             settings.allowance("q", &project, "sha256:b"),
             Allowance::Allowed
         );
+        assert!(settings.is_disabled("q", &project));
+        assert_eq!(settings.disabled_plugins.len(), 1);
+        assert_eq!(settings.plugin_folders, std::slice::from_ref(&project));
     }
 }

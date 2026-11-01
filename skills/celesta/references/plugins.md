@@ -14,9 +14,10 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   `:` elsewhere; absolute paths only, relative ones are skipped), the user's
   plugin folder (`%APPDATA%\Celesta\plugins`,
   `~/Library/Application Support/Celesta/plugins`, or
-  `$XDG_DATA_HOME/celesta/plugins` / `~/.local/share/celesta/plugins`), and
-  the folder bundled with Celesta; the app also searches a trusted
-  project's own folders after `CELESTA_PLUGIN_PATH`. A folder is a plugin
+  `$XDG_DATA_HOME/celesta/plugins` / `~/.local/share/celesta/plugins`),
+  folders the user added in the app's Plugins tab, and the folder bundled
+  with Celesta; the app also searches a trusted project's own folders after
+  `CELESTA_PLUGIN_PATH`. A folder is a plugin
   (it has `celesta-plugin.json`) or holds several. On Unix, a plugin from
   anywhere but `--plugin-dir` and `CELESTA_PLUGIN_PATH` that other users
   can write to (any file in it) is skipped.
@@ -28,7 +29,8 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
 - The app asks the user to trust a project folder before it evaluates
   anything in it (remembered only when the root holds
   `celesta.config.json`, which `--init` writes; a project inside it with
-  its own file is asked about separately), and to allow each user-folder or project plugin (again
+  its own file is asked about separately), and to allow each plugin from
+  the user's folder, an added folder, or a project (again
   when its manifest or a file the manifest names changes). Until allowed, a
   plugin does not run and an entry importing it does not open; Problems
   says it is waiting. Only the user can answer: tell them to, rather than

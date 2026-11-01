@@ -1,5 +1,6 @@
 //! Which plugins may run without asking the user first. Plugins from the
-//! user's folder and from a project run only once the user allowed them as
+//! user's folder, a folder the user added, or a project run only once the
+//! user allowed them as
 //! they are now: a plugin's fingerprint covers its manifest and every file
 //! the manifest names (its programs, module, and declarations), so changing
 //! one of those, as an update does, is asked about again. Other files in the

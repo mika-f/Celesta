@@ -9,10 +9,12 @@ use crate::actions::ReloadPlugins;
 use crate::plugins::FoundPlugins;
 use crate::problems::{Source, error_chain};
 use crate::view::EditorView;
-use celesta_plugin_host::{PluginEntry, SettingsError, UserSettings, user_plugin_dir};
+use celesta_plugin_host::{
+    PluginEntry, SettingsError, UserSettings, create_private_dir_all, user_plugin_dir,
+};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::switch::Switch;
-use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{AnyElement, App, Context, PathPromptOptions, SharedString, Window, div};
 
@@ -91,7 +93,8 @@ impl EditorView {
     pub(crate) fn plugins_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let muted = cx.theme().muted_foreground;
         let rows = PluginRow::all(&self.found_plugins);
-        let folders = UserSettings::current().0.plugin_folders;
+        // As discovery read them, not from disk on every frame.
+        let folders = self.found_plugins.folders.clone();
         let skipped = self.found_plugins.skipped.clone();
         let toolbar = h_flex()
             .flex_wrap()
@@ -309,10 +312,23 @@ impl EditorView {
             prompt: Some("Add Plugin Folder".into()),
         });
         cx.spawn_in(window, async move |view, cx| {
-            let Ok(Ok(Some(paths))) = selection.await else {
-                return;
+            let folder = match selection.await {
+                Ok(Ok(Some(paths))) => paths.into_iter().next(),
+                Ok(Ok(None)) | Err(_) => None,
+                Ok(Err(error)) => {
+                    view.update(cx, |this, cx| {
+                        this.problems.report(
+                            Source::Plugins,
+                            "Couldn’t show the folder dialog",
+                            error_chain(error.as_ref()),
+                        );
+                        cx.notify();
+                    })
+                    .ok();
+                    None
+                }
             };
-            let Some(folder) = paths.into_iter().next() else {
+            let Some(folder) = folder else {
                 return;
             };
             view.update_in(cx, |this, window, cx| {
@@ -338,7 +354,9 @@ impl EditorView {
             cx.notify();
             return;
         };
-        if let Err(error) = std::fs::create_dir_all(&folder) {
+        // The user's alone (on Unix), or discovery would skip it as a
+        // folder other users can change.
+        if let Err(error) = create_private_dir_all(&folder) {
             self.problems.report(
                 Source::Plugins,
                 format!("Couldn’t create {}", folder.display()),
@@ -351,13 +369,23 @@ impl EditorView {
     }
 
     /// Saves `change` to the user's settings, then reopens the project so
-    /// its plugins are found as the settings now say.
+    /// its plugins are found as the settings now say. Refused, before
+    /// anything is saved, while the project cannot be reopened (it is
+    /// opening, or an export runs), so the tab never shows a choice that has
+    /// not taken effect.
     fn change_plugin_settings(
         &mut self,
         change: impl FnOnce(&mut UserSettings) -> Result<(), SettingsError>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.opening {
+            window.push_notification("Wait for the project to open, then try again.", cx);
+            return;
+        }
+        if !self.can_replace_contents(window, cx) {
+            return;
+        }
         let mut outcome = Ok(());
         let saved = UserSettings::update(|settings| outcome = change(settings));
         match saved
@@ -437,7 +465,7 @@ mod tests {
                 from_the_internet: false,
             }],
             disabled: vec![entry("gamma", PluginSource::Project, &[])],
-            skipped: Vec::new(),
+            ..FoundPlugins::default()
         };
         let rows = PluginRow::all(&found);
         let listed: Vec<(&str, &str)> = rows

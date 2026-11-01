@@ -382,9 +382,9 @@ pub(crate) struct EditorView {
     /// The Add menu's mode, what it read about the parent, and the
     /// selection of an element just added.
     pub(crate) add: AddState,
-    /// The content plugins found when this project opened: the preview's
-    /// renderer runs them, and every React runtime and export is given the
-    /// same set (see `plugins.rs`).
+    /// The content plugins that may run (allowed and on) of those found when
+    /// this project opened: the preview's renderer runs them, and every React
+    /// runtime and export is given the same set (see `plugins.rs`).
     pub(crate) plugins: InstalledPlugins,
     /// Everything the last discovery found: what runs, what waits for the
     /// user, what is turned off, and what was skipped (the Plugins tab).

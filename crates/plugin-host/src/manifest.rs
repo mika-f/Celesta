@@ -299,6 +299,18 @@ pub fn discover_in(paths: &[SearchPath]) -> (Vec<PluginEntry>, Vec<DiscoveryErro
             continue;
         }
         if !path.exists() {
+            if source.reports_missing() {
+                add(
+                    Err(DiscoveryError::Io {
+                        path: path.clone(),
+                        source: std::io::Error::new(
+                            std::io::ErrorKind::NotFound,
+                            "the folder does not exist",
+                        ),
+                    }),
+                    &mut found,
+                );
+            }
             continue;
         }
         if source.is_checked()
@@ -613,6 +625,30 @@ mod tests {
             matches!(&errors[..], [DiscoveryError::Invalid { reason, .. }] if reason.contains("leads outside")),
             "{errors:?}"
         );
+    }
+
+    #[test]
+    fn only_a_folder_the_user_added_is_missed_aloud() {
+        let root = tempfile::tempdir().unwrap();
+        let missing = root.path().join("gone");
+        let search = |source| {
+            discover_in(&[SearchPath {
+                path: missing.clone(),
+                source,
+            }])
+            .1
+        };
+        for quiet in [
+            PluginSource::Explicit,
+            PluginSource::User,
+            PluginSource::Bundled,
+        ] {
+            assert!(search(quiet).is_empty(), "{quiet:?}");
+        }
+        assert!(matches!(
+            &search(PluginSource::Folder)[..],
+            [DiscoveryError::Io { .. }]
+        ));
     }
 
     #[test]

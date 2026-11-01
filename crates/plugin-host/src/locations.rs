@@ -1,8 +1,9 @@
 //! Where Celesta looks for plugins, in order: the folders it is told about
-//! (`--plugin-dir`, then `CELESTA_PLUGIN_PATH`), the user's plugin folder,
-//! and the folder that comes with Celesta. Every editor, exporter, and MCP
-//! server finds plugins through [`search_paths`], so they agree on what is
-//! installed.
+//! (`--plugin-dir`, then `CELESTA_PLUGIN_PATH`), the open project's own
+//! folders (in the editor, once trusted), the user's plugin folder, the
+//! folders the user added, and the folder that comes with Celesta. Every
+//! editor, exporter, and MCP server finds plugins through [`search_paths`],
+//! so they agree on what is installed.
 //!
 //! No location depends on the current directory: the user's folder comes
 //! from the platform's absolute per-user locations, and the bundled one from
@@ -35,6 +36,18 @@ impl PluginSource {
     /// the caller's choice.
     pub fn is_checked(self) -> bool {
         !matches!(self, Self::Explicit)
+    }
+
+    /// Whether a folder from here that does not exist is reported: one the
+    /// user added in the app's settings is meant to be there (a project's
+    /// own folders are checked when its `celesta.config.json` is read). The
+    /// standard locations need not exist, and `CELESTA_PLUGIN_PATH` often
+    /// names folders that do not.
+    pub fn reports_missing(self) -> bool {
+        match self {
+            Self::Folder => true,
+            Self::Explicit | Self::Project | Self::User | Self::Bundled => false,
+        }
     }
 
     pub fn label(self) -> &'static str {

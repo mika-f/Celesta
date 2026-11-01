@@ -11,8 +11,9 @@ lets the user change it without editing files or environment variables.
   many plugins wait for approval. With four tabs the dock's default width no
   longer fits every label, so the tab bar shows gpui-component's overflow
   menu (`TabBar::menu(true)`).
-- Each plugin the last discovery found is listed (`PluginRow::all`), by
-  source in search order, then by id, with:
+- Each plugin the last discovery found (of several with the same id, the
+  one used) is listed (`PluginRow::all`), by source in search order, then
+  by id, with:
   - its id, version, and source;
   - whether it brings only components, a program built for this computer,
     or a program built for others only;
@@ -21,21 +22,30 @@ lets the user change it without editing files or environment variables.
     Off;
   - a download warning for a waiting plugin with a Mark of the Web.
 - Actions, each saved with `UserSettings::update` before the project
-  reopens through `ReloadPlugins`:
+  reopens through `ReloadPlugins`. While the project is opening or an
+  export runs, a change is refused before anything is saved, so the tab
+  never shows a choice that has not taken effect.
   - **Allow** (waiting plugins) stores the plugin's current fingerprint.
   - The switch turns a plugin on or off (`disabledPlugins`, by id and
     folder).
   - **Show Folder** opens the plugin's folder in the system file manager.
   - **Open Plugin Folder** opens the user's plugin folder, creating it
-    first.
+    first (0700 on Unix, whatever the umask, since discovery skips a folder
+    other users can change).
   - **Add Folder…** asks for a folder (`pluginFolders`, absolute only);
-    **Remove** takes one out.
+    **Remove** takes one out. A failure to show the folder dialog is
+    reported.
   - **Reload Plugins** is the same as File > Reload Plugins.
+- The added folders the tab lists come with the discovery
+  (`FoundPlugins::folders`), not from reading `settings.json` on every
+  frame.
 - Settings: `settings.json` gains `disabledPlugins` (`id`, `directory`) and
-  `pluginFolders`. Added folders are searched as `PluginSource::Folder`
-  after the user's plugin folder and before the bundled one. They are
-  permission-checked on Unix and their plugins need approval, as the user
-  folder's do.
+  `pluginFolders`; on load, entries that are not absolute are dropped and
+  `disabledPlugins` folders resolved, so one written another way still
+  matches. Added folders are searched as `PluginSource::Folder` after the
+  user's plugin folder and before the bundled one; one that does not exist
+  is reported (`PluginSource::reports_missing`). They are permission-checked
+  on Unix and their plugins need approval, as the user folder's do.
 - A plugin that is off does not run anywhere: `InstalledPlugins::find`
   (what the exporter and MCP use) reads the settings, searches the added
   folders, and leaves out plugins turned off. `allowed_by` sorts them into
@@ -56,11 +66,21 @@ lets the user change it without editing files or environment variables.
 | `crates/editor/src/plugins.rs` | `FoundPlugins::disabled`; the view keeps the whole `FoundPlugins`. |
 | `crates/editor/src/view.rs`, `problems_panel.rs` | The tab and its overflow menu. |
 
+## Open questions
+
+- A waiting plugin's switch shows on, since it is not turned off, though
+  it does not run until allowed; the row says "Waits for approval". It
+  could be greyed out, or its tooltip say "runs once allowed".
+- Turning a plugin off does not fall back to a later plugin with the same
+  id (in a folder further down the search order).
+
 ## Checks
 
 - `cargo test -p celesta-plugin-host`: turning plugins off and on, adding
   and removing folders (relative ones refused), search order with added
-  folders, and plugins turned off in `allowed_by`.
+  folders, plugins turned off in `allowed_by`, `disabledPlugins` written
+  another way still matching after load, and only an added folder that is
+  missing being reported.
 - `cargo test -p celesta-editor`: rows listed by source and id with their
   states; availability per platform; the tab order.
 - The editor run on Windows 11 with `APPDATA` pointed at a scratch folder

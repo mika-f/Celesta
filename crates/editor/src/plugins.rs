@@ -2,8 +2,9 @@
 //! guard what code runs. Opening a project runs its code, so a project folder
 //! is opened only once the user trusts it; a trusted project's own plugin
 //! folders (`plugins.paths` in `celesta.config.json`) are searched too.
-//! Plugins from the user's folder and from a project run only once the user
-//! allowed them as they are now. What may run is found when the project
+//! Plugins from the user's folder, a folder they added, or a project run
+//! only once the user allowed them as they are now, and a plugin the user
+//! turned off does not run. What may run is found when the project
 //! opens and again on File > Reload Plugins, in every location Celesta
 //! searches (`celesta_plugin_host::search_paths`), and the one set serves the
 //! preview's renderer, every React runtime the editor starts, and exports.
@@ -36,6 +37,8 @@ pub(crate) struct FoundPlugins {
     pub(crate) pending: Vec<PendingPlugin>,
     /// What the user turned off, in search order.
     pub(crate) disabled: Vec<PluginEntry>,
+    /// The folders of plugins the user added, as the settings said.
+    pub(crate) folders: Vec<PathBuf>,
     /// Why each skipped plugin or folder was skipped.
     pub(crate) skipped: Vec<String>,
 }
@@ -75,6 +78,7 @@ impl FoundPlugins {
             installed: allowed.plugins,
             pending: allowed.pending,
             disabled: allowed.disabled,
+            folders: settings.plugin_folders.clone(),
             skipped,
         }
     }

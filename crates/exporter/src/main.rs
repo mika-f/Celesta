@@ -151,8 +151,8 @@ struct Cli {
     #[arg(long, value_name = "FILE", requires = "react")]
     props_file: Option<PathBuf>,
     /// A content plugin's directory, or a directory of them, searched before
-    /// CELESTA_PLUGIN_PATH, the user's plugin folder, and the bundled one;
-    /// repeatable.
+    /// every other plugin location (CELESTA_PLUGIN_PATH, the user's plugin
+    /// folder and the folders they added, the bundled one); repeatable.
     #[arg(long, value_name = "DIR")]
     plugin_dir: Vec<PathBuf>,
     /// Replace an existing output file.

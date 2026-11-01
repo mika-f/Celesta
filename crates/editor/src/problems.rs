@@ -38,8 +38,9 @@ impl Source {
         }
     }
 
-    /// Audio, TypeScript, and skipped-plugin problems leave the editor
-    /// usable, so they are warnings; the rest block what the user asked for.
+    /// Audio, TypeScript, and plugin problems (plugins waiting or skipped,
+    /// plugin settings not saved) leave the editor usable, so they are
+    /// warnings; the rest block what the user asked for.
     pub(crate) fn severity(self) -> Severity {
         match self {
             Self::Audio | Self::TypeScript | Self::Plugins => Severity::Warning,
