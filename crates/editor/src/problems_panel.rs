@@ -21,15 +21,21 @@ impl EditorView {
         let offered = RightTab::offered(react_preview);
         let shown = self.right_tab.shown(react_preview);
         let count = self.problems.error_count() + self.problems.warning_count();
+        let waiting = self.found_plugins.pending.len();
         let muted = cx.theme().muted_foreground;
         let tabs = TabBar::new("right-dock-tabs")
             .underline()
+            // Four tabs outgrow a narrow dock; the rest stay a click away.
+            .menu(true)
             .px_3()
             .selected_index(offered.iter().position(|tab| *tab == shown).unwrap_or(0))
             .children(offered.iter().map(|tab| match tab {
                 RightTab::Details if react_preview => Tab::new().label("React Preview"),
                 RightTab::Details => Tab::new().label("Inspector"),
                 RightTab::Properties => Tab::new().label("Properties"),
+                RightTab::Plugins => Tab::new().label("Plugins").when(waiting > 0, |tab| {
+                    tab.suffix(div().text_xs().text_color(muted).child(waiting.to_string()))
+                }),
                 RightTab::Problems => Tab::new().label("Problems").when(count > 0, |tab| {
                     tab.suffix(div().text_xs().text_color(muted).child(count.to_string()))
                 }),
@@ -51,6 +57,7 @@ impl EditorView {
                 }
                 RightTab::Details => self.inspector_panel(cx).into_any_element(),
                 RightTab::Properties => self.properties_panel(cx).into_any_element(),
+                RightTab::Plugins => self.plugins_panel(cx).into_any_element(),
                 RightTab::Problems => self.problems_panel(cx).into_any_element(),
             })
     }

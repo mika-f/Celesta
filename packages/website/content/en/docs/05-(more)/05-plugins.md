@@ -53,9 +53,26 @@ A project can bring plugins in its own folders, listed in `celesta.config.json` 
 
 Each path is relative to the project root and must stay inside it. The desktop app searches these folders after `CELESTA_PLUGIN_PATH` and before your user plugin folder, once you trust the project. The folder holding `celesta.config.json` is also the project root the trust question names; without the file, the root is the entry's own folder. `celesta-exporter` does not read the file: pass the folders with `--plugin-dir`.
 
-## Reloading plugins
+## The Plugins tab
 
-The desktop app looks for plugins each time it opens a project; to pick up a plugin installed while it is open, choose **File > Reload Plugins**. Plugins it skipped, and why, are listed in the Problems tab. A plugin that draws layers runs as a program of its own, which Celesta starts when a frame needs it; that program comes with the plugin, one for each platform it supports.
+The desktop app looks for plugins each time it opens a project. The **Plugins** tab in the right dock lists every plugin it found, with:
+
+- where the plugin came from (a project, your plugin folder, an added folder, `CELESTA_PLUGIN_PATH`, or the folder that comes with Celesta);
+- its version, and whether it brings only components or a program, and whether that program was built for this computer;
+- whether it is on, off, or waiting for your approval.
+
+From the tab you can:
+
+- allow a waiting plugin;
+- turn any plugin off or back on (a plugin that is off does not run, in the app or in `celesta-exporter`);
+- show its folder;
+- open your plugin folder, creating it if needed;
+- add more folders of plugins, which are searched after your plugin folder, and remove them again;
+- reload: **Reload Plugins**, also in the **File** menu, picks up a plugin installed while the app is open.
+
+What you change is kept in `settings.json` with your other choices, and the project reopens with the plugins as they now are. Plugins that were skipped, and why, are listed at the bottom of the tab and in the Problems tab.
+
+A plugin that draws layers runs as a program of its own, which Celesta starts when a frame needs it; that program comes with the plugin, one for each platform it supports.
 
 ## Use its components
 

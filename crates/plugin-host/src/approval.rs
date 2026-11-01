@@ -20,7 +20,7 @@ impl PluginSource {
     /// source is decided here by name, so a new one has to be.
     pub fn needs_allowance(self) -> bool {
         match self {
-            Self::Project | Self::User => true,
+            Self::Project | Self::User | Self::Folder => true,
             Self::Explicit | Self::Bundled => false,
         }
     }
@@ -137,18 +137,24 @@ pub struct Allowed {
     pub plugins: InstalledPlugins,
     /// What waits for the user, in search order.
     pub pending: Vec<PendingPlugin>,
+    /// What the user turned off, in search order.
+    pub disabled: Vec<PluginEntry>,
     /// Plugins whose files could not be read to fingerprint them, and why.
     pub unreadable: Vec<String>,
 }
 
 impl InstalledPlugins {
-    /// Sorts these into the plugins `settings` allows to run and the ones
-    /// that wait for the user (see [`PluginSource::needs_allowance`]). A
-    /// waiting plugin does not run, and does not give way to a later plugin
-    /// with its id either.
+    /// Sorts these into the plugins `settings` allows to run, the ones that
+    /// wait for the user (see [`PluginSource::needs_allowance`]), and the
+    /// ones the user turned off. A plugin that waits or is off does not run,
+    /// and does not give way to a later plugin with its id either.
     pub fn allowed_by(self, settings: &UserSettings) -> Allowed {
         let mut allowed = Allowed::default();
         for entry in self.plugins {
+            if settings.is_disabled(&entry.manifest.id, &entry.directory) {
+                allowed.disabled.push(entry);
+                continue;
+            }
             if !entry.source.needs_allowance() {
                 allowed.plugins.plugins.push(entry);
                 continue;
@@ -306,7 +312,11 @@ mod tests {
             assert_eq!(allowed.plugins.plugins.len(), 1, "{source:?}");
             assert!(allowed.pending.is_empty());
         }
-        for source in [PluginSource::User, PluginSource::Project] {
+        for source in [
+            PluginSource::User,
+            PluginSource::Project,
+            PluginSource::Folder,
+        ] {
             let allowed = found(root.path(), source).allowed_by(&settings);
             assert!(allowed.plugins.plugins.is_empty(), "{source:?}");
             assert_eq!(allowed.pending.len(), 1);
@@ -320,6 +330,13 @@ mod tests {
         settings.allow("p", &pending.entry.directory, &pending.fingerprint);
         let allowed = found(root.path(), PluginSource::User).allowed_by(&settings);
         assert_eq!(allowed.plugins.plugins.len(), 1);
+
+        // Turned off: it neither runs nor waits.
+        let mut off = settings.clone();
+        off.set_enabled("p", &root.path().join("p"), false);
+        let allowed = found(root.path(), PluginSource::User).allowed_by(&off);
+        assert!(allowed.plugins.plugins.is_empty() && allowed.pending.is_empty());
+        assert_eq!(allowed.disabled.len(), 1);
 
         // Changed since it was allowed: asked again, as a change.
         std::fs::write(root.path().join("p/js/index.js"), "export const x = 1;").unwrap();

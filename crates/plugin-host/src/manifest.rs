@@ -1,6 +1,7 @@
 //! Plugin directories: a `celesta-plugin.json` and what it names.
 
 use crate::locations::{PluginSource, SearchPath, search_paths, unsafe_reason};
+use crate::settings::UserSettings;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -91,6 +92,8 @@ pub enum DiscoveryError {
     Invalid { path: PathBuf, reason: String },
     #[error("plugin path {path} was skipped: it is not an absolute path")]
     RelativePath { path: PathBuf },
+    #[error("the user's settings were not used: {0}")]
+    Settings(String),
 }
 
 /// Whether `id` can name a plugin: lowercase ASCII letters, digits, `-`,
@@ -350,18 +353,33 @@ pub struct InstalledPlugins {
 }
 
 impl InstalledPlugins {
-    /// Discovers them, with the plugins that were skipped and why.
+    /// Discovers them, with the plugins that were skipped and why: the
+    /// folders the user added in their settings are searched too, and the
+    /// plugins they turned off are left out. This is what command-line tools
+    /// run, without asking about anything (see
+    /// [`InstalledPlugins::allowed_by`] for the app's questions).
     pub fn find(explicit: &[PathBuf]) -> (Self, Vec<DiscoveryError>) {
-        Self::find_with_project(explicit, &[])
+        let (settings, settings_error) = UserSettings::current();
+        let (mut found, mut errors) = Self::find_with(explicit, &[], &settings);
+        if let Some(error) = settings_error {
+            errors.insert(0, DiscoveryError::Settings(error.to_string()));
+        }
+        found
+            .plugins
+            .retain(|entry| !settings.is_disabled(&entry.manifest.id, &entry.directory));
+        (found, errors)
     }
 
     /// Discovers them with a trusted project's own plugin folders (see
-    /// [`crate::project_plugin_paths`]) searched after the explicit ones.
-    pub fn find_with_project(
+    /// [`crate::project_plugin_paths`]) and the folders `settings` adds,
+    /// leaving nothing out.
+    pub fn find_with(
         explicit: &[PathBuf],
         project: &[PathBuf],
+        settings: &UserSettings,
     ) -> (Self, Vec<DiscoveryError>) {
-        let (plugins, errors) = discover_in(&search_paths(explicit, project));
+        let paths = search_paths(explicit, project, &settings.plugin_folders);
+        let (plugins, errors) = discover_in(&paths);
         (Self { plugins }, errors)
     }
 

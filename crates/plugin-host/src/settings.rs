@@ -57,6 +57,23 @@ pub struct AllowedPlugin {
     pub fingerprint: String,
 }
 
+/// One plugin: its id in its directory (links resolved).
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginKey {
+    pub id: String,
+    pub directory: PathBuf,
+}
+
+impl PluginKey {
+    pub fn new(id: &str, directory: &Path) -> Self {
+        Self {
+            id: id.to_owned(),
+            directory: resolved(directory),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UserSettings {
@@ -68,6 +85,13 @@ pub struct UserSettings {
     /// User and project plugins the user allowed to run.
     #[serde(default)]
     pub allowed_plugins: Vec<AllowedPlugin>,
+    /// Plugins the user turned off: they do not run until turned on again.
+    #[serde(default)]
+    pub disabled_plugins: Vec<PluginKey>,
+    /// More folders of plugins the user added, searched after their plugin
+    /// folder (see [`crate::search_paths`]).
+    #[serde(default)]
+    pub plugin_folders: Vec<PathBuf>,
     /// Keys a newer build wrote, kept as they were.
     #[serde(flatten)]
     pub other: serde_json::Map<String, serde_json::Value>,
@@ -97,6 +121,8 @@ pub enum SettingsError {
     },
     #[error("there is no settings folder (the platform's home or settings variable is not set)")]
     NoFolder,
+    #[error("{} is not an absolute path", .0.display())]
+    RelativeFolder(PathBuf),
 }
 
 /// Creates `folder` and its missing parents, on Unix readable and writable
@@ -248,6 +274,37 @@ impl UserSettings {
         }
     }
 
+    /// Whether the user turned the plugin with `id` in `directory` off.
+    pub fn is_disabled(&self, id: &str, directory: &Path) -> bool {
+        self.disabled_plugins
+            .contains(&PluginKey::new(id, directory))
+    }
+
+    /// Turns the plugin with `id` in `directory` on or off.
+    pub fn set_enabled(&mut self, id: &str, directory: &Path, enabled: bool) {
+        let key = PluginKey::new(id, directory);
+        self.disabled_plugins.retain(|disabled| *disabled != key);
+        if !enabled {
+            self.disabled_plugins.push(key);
+        }
+    }
+
+    /// Adds `folder` to the folders searched for plugins. It must be
+    /// absolute: a relative folder would depend on where Celesta starts.
+    pub fn add_plugin_folder(&mut self, folder: &Path) -> Result<(), SettingsError> {
+        if !folder.is_absolute() {
+            return Err(SettingsError::RelativeFolder(folder.to_path_buf()));
+        }
+        if !self.plugin_folders.iter().any(|known| known == folder) {
+            self.plugin_folders.push(folder.to_path_buf());
+        }
+        Ok(())
+    }
+
+    pub fn remove_plugin_folder(&mut self, folder: &Path) {
+        self.plugin_folders.retain(|known| known != folder);
+    }
+
     /// Allows the plugin as it is now, replacing an earlier allowance.
     pub fn allow(&mut self, id: &str, directory: &Path, fingerprint: &str) {
         let directory = resolved(directory);
@@ -354,6 +411,31 @@ mod tests {
         );
         settings.allow("p", dir, "sha256:b");
         assert_eq!(settings.allowed_plugins.len(), 1);
+    }
+
+    #[test]
+    fn plugins_turn_off_and_folders_are_added() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path();
+        let mut settings = UserSettings::default();
+        assert!(!settings.is_disabled("p", dir));
+        settings.set_enabled("p", dir, false);
+        settings.set_enabled("p", dir, false);
+        assert!(settings.is_disabled("p", dir));
+        assert_eq!(settings.disabled_plugins.len(), 1);
+        assert!(!settings.is_disabled("q", dir));
+        settings.set_enabled("p", dir, true);
+        assert!(!settings.is_disabled("p", dir));
+
+        settings.add_plugin_folder(dir).unwrap();
+        settings.add_plugin_folder(dir).unwrap();
+        assert_eq!(settings.plugin_folders, [dir.to_path_buf()]);
+        assert!(matches!(
+            settings.add_plugin_folder(Path::new("relative")),
+            Err(SettingsError::RelativeFolder(_))
+        ));
+        settings.remove_plugin_folder(dir);
+        assert!(settings.plugin_folders.is_empty());
     }
 
     #[test]

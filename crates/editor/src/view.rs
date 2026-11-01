@@ -34,7 +34,7 @@ use celesta_gpu_renderer::{
     GpuDriver, GpuRenderOptions, GpuRenderer, HitRegion, LayerFrame, TextLayout,
 };
 use celesta_media::FfmpegBackend;
-use celesta_plugin_host::{InstalledPlugins, PendingPlugin};
+use celesta_plugin_host::InstalledPlugins;
 use celesta_react_bridge::{
     ComponentPropertyField, ComponentPropertySchema, PrimitivePropertyTable, SourcePos,
 };
@@ -58,6 +58,9 @@ pub(crate) enum RightTab {
     /// What can be edited in React-preview mode: the selected layer and the
     /// props file. Not offered for a project, whose inspector edits in place.
     Properties,
+    /// The content plugins: what was found, from where, and whether each
+    /// may run.
+    Plugins,
     Problems,
 }
 
@@ -66,7 +69,7 @@ impl RightTab {
     /// Problems.
     pub(crate) fn toggled_problems(self) -> Self {
         match self {
-            Self::Details | Self::Properties => Self::Problems,
+            Self::Details | Self::Properties | Self::Plugins => Self::Problems,
             Self::Problems => Self::Details,
         }
     }
@@ -74,9 +77,14 @@ impl RightTab {
     /// The tabs the right dock offers, in order.
     pub(crate) fn offered(react_preview: bool) -> &'static [Self] {
         if react_preview {
-            &[Self::Details, Self::Properties, Self::Problems]
+            &[
+                Self::Details,
+                Self::Properties,
+                Self::Plugins,
+                Self::Problems,
+            ]
         } else {
-            &[Self::Details, Self::Problems]
+            &[Self::Details, Self::Plugins, Self::Problems]
         }
     }
 
@@ -378,8 +386,9 @@ pub(crate) struct EditorView {
     /// renderer runs them, and every React runtime and export is given the
     /// same set (see `plugins.rs`).
     pub(crate) plugins: InstalledPlugins,
-    /// Plugins found that wait for the user to allow them.
-    pub(crate) pending_plugins: Vec<PendingPlugin>,
+    /// Everything the last discovery found: what runs, what waits for the
+    /// user, what is turned off, and what was skipped (the Plugins tab).
+    pub(crate) found_plugins: FoundPlugins,
     /// The plugins (directory and fingerprint) the user was already asked
     /// about in this window, so "Not Now" is not asked again until they
     /// change.
@@ -575,7 +584,7 @@ impl EditorView {
             inline_refocus: false,
             add: AddState::default(),
             plugins: InstalledPlugins::default(),
-            pending_plugins: Vec::new(),
+            found_plugins: FoundPlugins::default(),
             asked_plugins: HashSet::new(),
         };
         editor.set_plugins(plugins);
@@ -617,14 +626,21 @@ mod tests {
     fn properties_tab_is_offered_only_in_react_preview() {
         assert_eq!(
             RightTab::offered(true),
-            [RightTab::Details, RightTab::Properties, RightTab::Problems]
+            [
+                RightTab::Details,
+                RightTab::Properties,
+                RightTab::Plugins,
+                RightTab::Problems
+            ]
         );
         assert_eq!(
             RightTab::offered(false),
-            [RightTab::Details, RightTab::Problems]
+            [RightTab::Details, RightTab::Plugins, RightTab::Problems]
         );
         assert_eq!(RightTab::Properties.shown(true), RightTab::Properties);
         assert_eq!(RightTab::Properties.shown(false), RightTab::Details);
         assert_eq!(RightTab::Problems.shown(false), RightTab::Problems);
+        assert_eq!(RightTab::Plugins.shown(false), RightTab::Plugins);
+        assert_eq!(RightTab::Plugins.toggled_problems(), RightTab::Problems);
     }
 }

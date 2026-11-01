@@ -21,7 +21,10 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   anywhere but `--plugin-dir` and `CELESTA_PLUGIN_PATH` that other users
   can write to (any file in it) is skipped.
 - The app looks again each time a project opens and on File > Reload
-  Plugins; skipped plugins show in its Problems tab.
+  Plugins; skipped plugins show in its Problems tab. Its Plugins tab lists
+  every plugin with its source and state, and lets the user allow, turn
+  off, and add folders of plugins (kept in their `settings.json`). A plugin
+  turned off there does not run in `Celesta-export` either.
 - The app asks the user to trust a project folder before it evaluates
   anything in it (remembered only when the root holds
   `celesta.config.json`, which `--init` writes; a project inside it with

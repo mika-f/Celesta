@@ -34,6 +34,8 @@ pub(crate) struct FoundPlugins {
     pub(crate) installed: InstalledPlugins,
     /// What waits for the user to allow it, in search order.
     pub(crate) pending: Vec<PendingPlugin>,
+    /// What the user turned off, in search order.
+    pub(crate) disabled: Vec<PluginEntry>,
     /// Why each skipped plugin or folder was skipped.
     pub(crate) skipped: Vec<String>,
 }
@@ -65,13 +67,14 @@ impl FoundPlugins {
             }
             None => Vec::new(),
         };
-        let (found, errors) = InstalledPlugins::find_with_project(&[], &project_paths);
+        let (found, errors) = InstalledPlugins::find_with(&[], &project_paths, settings);
         skipped.extend(errors.iter().map(ToString::to_string));
         let allowed = found.allowed_by(settings);
         skipped.extend(allowed.unreadable);
         Self {
             installed: allowed.plugins,
             pending: allowed.pending,
+            disabled: allowed.disabled,
             skipped,
         }
     }
@@ -227,8 +230,8 @@ impl EditorView {
     /// was skipped.
     pub(crate) fn set_plugins(&mut self, found: FoundPlugins) {
         self.problems.set(Source::Plugins, found.problem());
-        self.plugins = found.installed;
-        self.pending_plugins = found.pending;
+        self.plugins = found.installed.clone();
+        self.found_plugins = found;
     }
 
     /// Asks whether to trust the project `request` opens; trusting saves
@@ -332,7 +335,7 @@ impl EditorView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let pending = self.pending_plugins.clone();
+        let pending = self.found_plugins.pending.clone();
         self.ask_to_allow(&pending, None, window, cx);
     }
 

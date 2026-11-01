@@ -43,6 +43,7 @@ mod occurrences;
 mod panels;
 mod playback;
 mod plugins;
+mod plugins_panel;
 mod preview;
 mod problems;
 mod problems_panel;

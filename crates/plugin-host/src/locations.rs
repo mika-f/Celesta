@@ -22,6 +22,9 @@ pub enum PluginSource {
     Project,
     /// The user's plugin folder ([`user_plugin_dir`]).
     User,
+    /// A folder the user added in the app's settings
+    /// ([`crate::UserSettings::plugin_folders`]).
+    Folder,
     /// The folder that comes with Celesta ([`bundled_plugin_dir`]).
     Bundled,
 }
@@ -39,6 +42,7 @@ impl PluginSource {
             Self::Explicit => "plugin path",
             Self::Project => "project plugins",
             Self::User => "user plugins",
+            Self::Folder => "added folder",
             Self::Bundled => "bundled plugins",
         }
     }
@@ -55,8 +59,13 @@ pub struct SearchPath {
 /// Every folder to look for plugins in, in search order: `explicit` (made
 /// absolute against the current directory, as given on a command line),
 /// `CELESTA_PLUGIN_PATH`, `project` (the open project's own folders, once
-/// the user trusts it), the user's plugin folder, and the bundled one.
-pub fn search_paths(explicit: &[PathBuf], project: &[PathBuf]) -> Vec<SearchPath> {
+/// the user trusts it), the user's plugin folder, `folders` the user added,
+/// and the bundled one.
+pub fn search_paths(
+    explicit: &[PathBuf],
+    project: &[PathBuf],
+    folders: &[PathBuf],
+) -> Vec<SearchPath> {
     let explicit = plugin_paths(explicit).into_iter().map(|path| SearchPath {
         path,
         source: PluginSource::Explicit,
@@ -69,11 +78,20 @@ pub fn search_paths(explicit: &[PathBuf], project: &[PathBuf]) -> Vec<SearchPath
         path,
         source: PluginSource::User,
     });
+    let folders = folders.iter().map(|path| SearchPath {
+        path: path.clone(),
+        source: PluginSource::Folder,
+    });
     let bundled = bundled_plugin_dir().map(|path| SearchPath {
         path,
         source: PluginSource::Bundled,
     });
-    explicit.chain(project).chain(user).chain(bundled).collect()
+    explicit
+        .chain(project)
+        .chain(user)
+        .chain(folders)
+        .chain(bundled)
+        .collect()
 }
 
 /// The user's plugin folder: `%APPDATA%\Celesta\plugins` on Windows,
@@ -279,7 +297,16 @@ mod tests {
     fn search_paths_come_in_order() {
         let dir = std::env::temp_dir().join("celesta-explicit");
         let project = std::env::temp_dir().join("celesta-project").join("plugins");
-        let paths = search_paths(std::slice::from_ref(&dir), std::slice::from_ref(&project));
+        let added = std::env::temp_dir().join("celesta-added");
+        let paths = search_paths(
+            std::slice::from_ref(&dir),
+            std::slice::from_ref(&project),
+            std::slice::from_ref(&added),
+        );
+        assert!(paths.contains(&SearchPath {
+            path: added,
+            source: PluginSource::Folder
+        }));
         assert_eq!(
             paths[0],
             SearchPath {
