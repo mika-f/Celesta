@@ -192,10 +192,8 @@ of the Size handles and property sections); `<Video width height>` in
   nothing and a release refuses with "The source is still being read". While
   paused, a parent the preview never reports a space for keeps that reason
   until the groups are read again or the code reloads.
-- The Rust renderers do not reject an invalid `Video` size (zero, negative,
-  NaN); only the React runtime does. `display_size` could return a `Result`
-  as the image path does. `render.ts` repeats the image's size check instead
-  of sharing a helper.
+- ~~The Rust renderers do not reject an invalid `Video` size.~~ Fixed in
+  `2026-11-01-video-display-size.md` (#562).
 - A zero-scaled or collapsed group still gets a (singular) children space;
   the editor reports it as "Can't draw into a group scaled to zero", also when
   a gesture maps to nothing for another reason.

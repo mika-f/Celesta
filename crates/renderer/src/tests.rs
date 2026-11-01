@@ -2012,6 +2012,28 @@ fn sizes_a_video_frame_like_an_image() {
             "placeholder width {width:?}, height {height:?}"
         );
     }
+
+    // As on an `Image`, a size that is not finite and positive is an error,
+    // with a decoder or without.
+    for mut renderer in [
+        CpuRenderer::default().with_video_decoder(Decoder),
+        CpuRenderer::default(),
+    ] {
+        for (width, height) in [
+            (Some(0.0), None),
+            (Some(-160.0), None),
+            (Some(f64::NAN), None),
+            (Some(f64::INFINITY), None),
+            (None, Some(0.0)),
+            (Some(160.0), Some(-90.0)),
+        ] {
+            let error = renderer.render(&scene(width, height)).unwrap_err();
+            assert!(
+                matches!(&error, RenderError::InvalidVideoSize { layer, .. } if layer == "video"),
+                "width {width:?}, height {height:?}: {error}"
+            );
+        }
+    }
 }
 
 // `examples/assets/lipsync-fixture.psd` mimics a real "tachie" PSD: a

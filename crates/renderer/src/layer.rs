@@ -157,14 +157,24 @@ impl CpuRenderer {
                     let (natural_width, natural_height) =
                         (f64::from(image.width), f64::from(image.height));
                     let (display_width, display_height) =
-                        display_size(natural_width, natural_height, *width, *height);
+                        display_size(natural_width, natural_height, *width, *height).map_err(
+                            |source| RenderError::InvalidVideoSize {
+                                layer: layer.id.clone(),
+                                source,
+                            },
+                        )?;
                     let mut state = state.clone();
                     state.scale.x *= display_width / natural_width;
                     state.scale.y *= display_height / natural_height;
                     render_image(frame, &image, layer.transform.anchor, &state);
                 } else {
                     let (display_width, display_height) =
-                        display_size(320.0, 180.0, *width, *height);
+                        display_size(320.0, 180.0, *width, *height).map_err(|source| {
+                            RenderError::InvalidVideoSize {
+                                layer: layer.id.clone(),
+                                source,
+                            }
+                        })?;
                     render_placeholder(
                         frame,
                         layer.transform.anchor,

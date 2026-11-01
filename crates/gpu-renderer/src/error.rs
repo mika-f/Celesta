@@ -3,6 +3,7 @@ use crate::types::{GpuDriver, ReadbackFormat};
 use celesta_media::MediaError;
 use celesta_remote::RemoteAssetError;
 use celesta_renderer::RenderError;
+use celesta_renderer::image_source::InvalidDisplaySize;
 use std::io;
 
 #[derive(Debug, thiserror::Error)]
@@ -65,6 +66,11 @@ pub enum GpuRenderError {
     },
     #[error("GPU video layer {0} requires a video decoder")]
     MissingVideoDecoder(String),
+    #[error("GPU video layer {layer}: {source}")]
+    InvalidVideoSize {
+        layer: String,
+        source: InvalidDisplaySize,
+    },
     #[error("GPU layer {layer} uses unsupported {content} content")]
     UnsupportedContent {
         layer: String,
@@ -124,6 +130,7 @@ impl GpuRenderError {
             | Self::InvalidImageData { .. }
             | Self::RemoteAsset { .. }
             | Self::MissingVideoDecoder(_)
+            | Self::InvalidVideoSize { .. }
             | Self::UnsupportedContent { .. }
             | Self::TooManyLayers(_)
             | Self::ClipsNestedTooDeep(_)

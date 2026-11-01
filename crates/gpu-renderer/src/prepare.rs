@@ -830,7 +830,11 @@ impl GpuRenderer {
                     f64::from(frame.height),
                     *display_width,
                     *display_height,
-                );
+                )
+                .map_err(|source| GpuRenderError::InvalidVideoSize {
+                    layer: layer.id.clone(),
+                    source,
+                })?;
                 let mut state = state;
                 let x = (display_width / f64::from(width)) as f32;
                 let y = (display_height / f64::from(height)) as f32;

@@ -100,10 +100,7 @@ impl Source {
         density: f64,
     ) -> Result<ImageLayout, image::ImageError> {
         let (sw, sh) = self.size();
-        let (w, h) = display_size(sw, sh, width, height);
-        if !w.is_finite() || !h.is_finite() || w <= 0.0 || h <= 0.0 {
-            return Err(invalid("image dimensions must be finite and positive"));
-        }
+        let (w, h) = display_size(sw, sh, width, height).map_err(invalid)?;
         if fit.is_none()
             && let Some(pixels) = raster
         {
@@ -522,21 +519,36 @@ impl ImageSources {
     }
 }
 
+/// A display size whose width or height is not finite and positive.
+#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
+#[error("display size {width}x{height} must be finite and positive")]
+pub struct InvalidDisplaySize {
+    pub width: f64,
+    pub height: f64,
+}
+
 /// The size an `Image` or a `Video` frame of `natural_width` x
 /// `natural_height` displays at: `width` and `height` when both are set, the
 /// natural aspect ratio from the one that is, and the natural size when
-/// neither is.
+/// neither is. Both renderers draw neither unless that size is finite and
+/// positive.
 pub fn display_size(
     natural_width: f64,
     natural_height: f64,
     width: Option<f64>,
     height: Option<f64>,
-) -> (f64, f64) {
-    match (width, height) {
+) -> Result<(f64, f64), InvalidDisplaySize> {
+    let (width, height) = match (width, height) {
         (Some(w), Some(h)) => (w, h),
         (Some(w), None) => (w, w * natural_height / natural_width),
         (None, Some(h)) => (h * natural_width / natural_height, h),
         (None, None) => (natural_width, natural_height),
+    };
+    let valid = |side: f64| side.is_finite() && side > 0.0;
+    if valid(width) && valid(height) {
+        Ok((width, height))
+    } else {
+        Err(InvalidDisplaySize { width, height })
     }
 }
 
@@ -700,6 +712,29 @@ fn css_fallbacks(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn display_size_must_be_finite_and_positive() {
+        assert_eq!(
+            display_size(320.0, 180.0, Some(160.0), None),
+            Ok((160.0, 90.0))
+        );
+        assert_eq!(display_size(320.0, 180.0, None, None), Ok((320.0, 180.0)));
+        for (width, height) in [
+            (Some(0.0), None),
+            (Some(-160.0), None),
+            (None, Some(f64::INFINITY)),
+            (Some(160.0), Some(-90.0)),
+        ] {
+            assert!(
+                display_size(320.0, 180.0, width, height).is_err(),
+                "{width:?} x {height:?}"
+            );
+        }
+        assert!(display_size(320.0, 180.0, Some(f64::NAN), None).is_err());
+        // A side derived from an empty natural size is not finite either.
+        assert!(display_size(0.0, 0.0, Some(160.0), None).is_err());
+    }
+
     #[test]
     fn fits_within_the_largest_texture_keeping_aspect_ratio() {
         assert_eq!(fit_within(4832, 9488, 8192), (4172, 8192));
