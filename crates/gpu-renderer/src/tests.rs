@@ -4136,12 +4136,7 @@ fn sizes_a_video_frame_like_an_image() {
         return;
     };
     let mut renderer = renderer.with_video_decoder(RedFrameDecoder);
-    for (width, height, drawn) in [
-        (Some(160.0), None, (160, 90)),
-        (Some(160.0), Some(160.0), (160, 160)),
-        (None, Some(90.0), (160, 90)),
-        (None, None, (320, 180)),
-    ] {
+    let scene = |width, height| {
         let mut scene = empty_scene(320, 180);
         scene.layers.push(Layer {
             id: "video".to_owned(),
@@ -4170,11 +4165,35 @@ fn sizes_a_video_frame_like_an_image() {
                 height,
             },
         });
-        let frame = renderer.render(&scene).unwrap();
+        scene
+    };
+    for (width, height, drawn) in [
+        (Some(160.0), None, (160, 90)),
+        (Some(160.0), Some(160.0), (160, 160)),
+        (None, Some(90.0), (160, 90)),
+        (None, None, (320, 180)),
+    ] {
+        let frame = renderer.render(&scene(width, height)).unwrap();
         assert_eq!(
             drawn_size(frame.pixels(), 320, |pixel| pixel[0] >= 128),
             drawn,
             "width {width:?}, height {height:?}"
+        );
+    }
+
+    // As on an `Image`, a size that is not finite and positive is an error.
+    for (width, height) in [
+        (Some(0.0), None),
+        (Some(-160.0), None),
+        (Some(f64::NAN), None),
+        (Some(f64::INFINITY), None),
+        (None, Some(0.0)),
+        (Some(160.0), Some(-90.0)),
+    ] {
+        let error = renderer.render(&scene(width, height)).unwrap_err();
+        assert!(
+            matches!(&error, GpuRenderError::InvalidVideoSize { layer, .. } if layer == "video"),
+            "width {width:?}, height {height:?}: {error}"
         );
     }
 }

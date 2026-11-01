@@ -1,3 +1,4 @@
+use crate::image_source::InvalidDisplaySize;
 use celesta_media::MediaError;
 use celesta_remote::RemoteAssetError;
 use std::io;
@@ -64,6 +65,11 @@ pub enum RenderError {
     InvalidFont { asset: String, reason: &'static str },
     #[error("PSD asset `{asset}` has no layer `{layer}`")]
     MissingPsdLayer { asset: String, layer: String },
+    #[error("video layer `{layer}`: {source}")]
+    InvalidVideoSize {
+        layer: String,
+        source: InvalidDisplaySize,
+    },
     #[error("could not decode video frame: {0}")]
     Media(#[from] MediaError),
     #[error("could not calculate video time: {0}")]

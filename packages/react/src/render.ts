@@ -433,6 +433,24 @@ function numberOr(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
+/**
+ * The `width` and `height` of an `<Image>` or a `<Video>`, each left out
+ * when unset. A set side must be finite and positive; the Rust renderers
+ * check the size they derive from the two the same way.
+ */
+function displaySize(props: Record<string, unknown>, element: 'Image' | 'Video'): { width?: number; height?: number } {
+  const size: { width?: number; height?: number } = {};
+  for (const key of ['width', 'height'] as const) {
+    const value = props[key];
+    if (value === undefined) continue;
+    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+      throw new Error(`${element} ${key} must be finite and positive`);
+    }
+    size[key] = value;
+  }
+  return size;
+}
+
 function extractTransform(props: Record<string, unknown>): EvaluatedTransform {
   // `rawTransform`/`rawOpacity` (checked here and in buildLayer) are an
   // internal escape hatch: project-runtime.ts's <ProjectTimeline /> uses
@@ -706,11 +724,7 @@ function buildLayer(
   } else if (node.type === 'trail') {
     content = { type: 'group', layers: sampleLayers(node, path, id, context, audio) };
   } else if (node.type === 'image') {
-    for (const key of ['width', 'height']) {
-      if (props[key] !== undefined && (typeof props[key] !== 'number' || !Number.isFinite(props[key]) || props[key] <= 0)) {
-        throw new Error(`Image ${key} must be finite and positive`);
-      }
-    }
+    const size = displaySize(props, 'Image');
     if (props.fit !== undefined && props.fit !== 'contain' && props.fit !== 'cover') {
       throw new Error('Image fit must be contain or cover');
     }
@@ -723,8 +737,7 @@ function buildLayer(
       throw new Error('Image loop must be a boolean');
     }
     content = { type: 'image', asset: resolveAsset(props.src),
-      ...(props.width === undefined ? {} : { width: props.width as number }),
-      ...(props.height === undefined ? {} : { height: props.height as number }),
+      ...size,
       ...(props.fit === undefined ? {} : { fit: props.fit as 'contain' | 'cover' }),
       // Whether the file is animated is not known here, so every image
       // carries the time, as a <Video> does; Rust drops it from still
@@ -803,11 +816,7 @@ function buildLayer(
     // to seek/decode — is `startFrom` plus local time scaled by
     // `playbackRate`, mirroring how celesta-evaluator derives it for a
     // project TimelineContent::Video at a constant playback rate.
-    for (const key of ['width', 'height']) {
-      if (props[key] !== undefined && (typeof props[key] !== 'number' || !Number.isFinite(props[key]) || props[key] <= 0)) {
-        throw new Error(`Video ${key} must be finite and positive`);
-      }
-    }
+    const size = displaySize(props, 'Video');
     const startFrom = numberOr(props.startFrom, 0);
     const playbackRate = numberOr(props.playbackRate, 1);
     const localTime = context.mediaTime;
@@ -821,8 +830,7 @@ function buildLayer(
         playbackRate,
         ...(props.loop === true ? { loop: true } : {}),
       },
-      ...(props.width === undefined ? {} : { width: props.width as number }),
-      ...(props.height === undefined ? {} : { height: props.height as number }),
+      ...size,
     };
   } else {
     throw new Error(`unreachable: unknown host node type "${node.type}"`);
