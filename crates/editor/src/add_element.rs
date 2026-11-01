@@ -1127,19 +1127,24 @@ impl EditorView {
     /// A kind chosen in the Add menu: playback stops, and an Image or a
     /// Video asks for its file first.
     pub(crate) fn choose_add_kind(&mut self, kind: NewKind, cx: &mut Context<Self>) {
-        self.add.component = None;
-        self.choose_add(kind, cx);
+        self.choose_add(kind, None, cx);
     }
 
     /// A plugin's component chosen in the Add menu: drawn as its kind (one
     /// that takes a file asks for it first), written as the component.
     pub(crate) fn choose_add_component(&mut self, component: AddComponent, cx: &mut Context<Self>) {
-        let kind = component.kind();
-        self.add.component = Some(component);
-        self.choose_add(kind, cx);
+        self.choose_add(component.kind(), Some(component), cx);
     }
 
-    fn choose_add(&mut self, kind: NewKind, cx: &mut Context<Self>) {
+    /// Starts drawing `kind`, written as `component` when one is given. The
+    /// component is kept only once the choice is taken, so a refused choice
+    /// leaves an earlier one's drawing with its own.
+    fn choose_add(
+        &mut self,
+        kind: NewKind,
+        component: Option<AddComponent>,
+        cx: &mut Context<Self>,
+    ) {
         self.pause();
         self.add.notice = None;
         // The element goes into the parent shown now, or into none.
@@ -1156,6 +1161,7 @@ impl EditorView {
                 return;
             }
         }
+        self.add.component = component;
         self.step_add(AddEvent::Chosen(kind));
         if self.add.mode == AddMode::Picking(kind) {
             self.pick_add_file(kind, cx);

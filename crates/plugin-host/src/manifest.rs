@@ -206,9 +206,10 @@ pub fn plugin_paths(extra: &[PathBuf]) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Why `manifest` cannot be used from `directory`, if it cannot: a bad id,
-/// or a path that leads outside the directory, by its text or through a
-/// link. Files that do not exist yet are left to fail where they are used.
+/// Why `manifest` cannot be used from `directory`, if it cannot: a bad id, a
+/// component that cannot be offered (or components without a module), or a
+/// path that leads outside the directory, by its text or through a link.
+/// Files that do not exist yet are left to fail where they are used.
 fn invalid_reason(manifest: &Manifest, directory: &Path) -> Option<String> {
     if !is_valid_id(&manifest.id) {
         return Some(format!(

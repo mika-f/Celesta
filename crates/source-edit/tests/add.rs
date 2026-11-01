@@ -312,6 +312,23 @@ fn adds_a_component_of_another_module() {
         add_component(&text, &element(&text, "<Group"), &flag, None),
         Err(AddLock::Import(ImportLock::Clash { .. }))
     ));
+
+    // A plugin's own `Sequence` cannot sit in Celesta's: one name, two
+    // imports. Unwrapped it is fine.
+    let sequence = NewComponent {
+        tag: "Sequence".into(),
+        ..flag.clone()
+    };
+    let text = format!("import {{ Group }} from '@celesta/react';\n{body}");
+    let parent = element(&text, "<Group");
+    assert_eq!(
+        add_component(&text, &parent, &sequence, Some(&TIMING)),
+        Err(AddLock::Import(ImportLock::Clash {
+            name: "Sequence".into()
+        }))
+    );
+    let added = add_component(&text, &parent, &sequence, None).unwrap();
+    assert!(parses(&apply(&text, &added.edits).unwrap()));
 }
 
 #[test]

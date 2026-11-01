@@ -125,8 +125,8 @@ To offer components in the desktop app's Add menu, list them in the manifest's `
 ]
 ```
 
-`name` is the component the module exports, and `label` what the menu says (the name when absent). With `src` (`"image"` or `"video"`), the component is added like an Image: the app asks for a file and writes `src`, `x`, `y`, and `width`. Without it, the component is drawn as a box and gets `x`, `y`, `width`, and `height`. `props` are written after those: strings, numbers, and booleans.
+`name` is the component the module exports: a capital letter, then letters, digits, or `_`. `label` is what the menu says (the name when absent). With `src` (`"image"` or `"video"`), the component is added like an Image: the app asks for a file and writes `src`, `x`, `y`, and `width`. Without it, the component is drawn as a box and gets `x`, `y`, `width`, and `height`. `props` are written after those: names made of letters, digits, and `_`, with strings, numbers, and booleans as values, and none of the props the drawing writes. A manifest with `components` needs a `module`.
 
-A plugin's id uses lowercase letters, digits, `-`, `_`, and `.`, and starts with a letter or digit. Every file its manifest names is a relative path inside the plugin's folder, without `..` and without a link that leads out of it. Celesta skips a plugin that breaks these rules and says why.
+A plugin's id uses lowercase letters, digits, `-`, `_`, and `.`, and starts with a letter or digit. Every file its manifest names is a relative path inside the plugin's folder, without `..` and without a link that leads out of it. Celesta skips a plugin that breaks these rules, or has a component that breaks the rules above, and says why.
 
-The samples' READMEs walk through both parts, and the repository's `docs/handoff/2026-11-01-plugin-system.md` describes the manifest and the protocol in full.
+The samples' READMEs walk through both parts. The repository's `docs/handoff/2026-11-01-plugin-system.md` describes the manifest and the protocol, and the `docs/handoff/2026-11-02-plugin-*.md` notes describe what came later (such as `components`).

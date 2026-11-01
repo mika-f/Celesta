@@ -83,5 +83,7 @@ With `src` (`image` or `video`) it is added like an Image (`src`, `x`, `y`,
 
 Start from the samples in the Celesta repository's `examples/plugins`
 (`flag`: a program that returns meshes; `beep-voice`: a module-only speech
-channel) and `docs/handoff/2026-11-01-plugin-system.md` (manifest and
-protocol).
+channel), `docs/handoff/2026-11-01-plugin-system.md` (manifest and
+protocol), and the later `docs/handoff/2026-11-02-plugin-*.md` notes
+(search locations, approval, `components`). A plugin with a bad component
+is skipped whole, like one with a bad id.

@@ -298,8 +298,9 @@ pub fn add_component(
     })
 }
 
-/// [`add_child`]'s insertion of the element `element` writes for its tag
-/// as imported, `tag` of `module`.
+/// Inserts what `element` writes, given the name `tag` of `module` is
+/// imported under, as `parent`'s last child (wrapped when timed), with the
+/// imports it needs; shared by [`add_child`] and [`add_component`].
 fn add_written(
     text: &str,
     parent: &ElementRef,
@@ -432,6 +433,12 @@ fn tags(
     wrapped: bool,
 ) -> Result<Tags, ImportLock> {
     let elsewhere = module != PACKAGE;
+    // Another module's `Sequence` wrapped in Celesta's: both imports would
+    // bind the one name, and each is checked against the unedited text, so
+    // neither would see the other.
+    if elsewhere && wrapped && tag == "Sequence" {
+        return Err(ImportLock::Clash { name: tag.into() });
+    }
     let react: Vec<&str> = [(!elsewhere).then_some(tag), wrapped.then_some("Sequence")]
         .into_iter()
         .flatten()

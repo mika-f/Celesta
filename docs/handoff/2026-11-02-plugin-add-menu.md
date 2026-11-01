@@ -26,10 +26,11 @@ in the Add menu, and the editor writes them with their import.
   the icon of the kind they are drawn as. They are disabled for the same
   reasons as every item (no parent, a timing or 3D problem). An import
   clash shows when the addition is written.
-- **Adding.** Choosing one (`choose_add_component`) keeps it in
-  `AddState::component` and runs the drawing of its kind
-  (`AddComponent::kind`): Image or Video, which asks for and imports the
-  file first, or Rect.
+- **Adding.** Choosing one (`choose_add_component`) runs the drawing of its
+  kind (`AddComponent::kind`): Image or Video, which asks for and imports
+  the file first, or Rect. The component is kept in `AddState::component`
+  only once the choice is taken, so a refused choice (no parent) leaves an
+  earlier drawing with its own kind and component.
   - The button says **Adding Flag**.
   - On release the drawn element becomes the component
     (`AddComponent::element`): the drawn props, then the manifest's `props`.
@@ -39,7 +40,9 @@ in the Add menu, and the editor writes them with their import.
   `<Name attr={…} />` as the parent's last child, wrapped in a `Sequence`
   when timed, and imports `Name` from `@celesta-plugin/<id>`. An existing
   import of the module is reused under its name (an alias or a namespace).
-  A local binding with the name locks the addition (`ImportLock::Clash`).
+  A local binding with the name locks the addition (`ImportLock::Clash`),
+  and so does a component named `Sequence` that would be wrapped in
+  Celesta's `Sequence` (both imports would bind the one name).
   `add_child` and `add_component` share the insertion (`add_written`), and
   the import step now takes any module, `@celesta/shapes` being one case.
 - **The flag sample** lists `Flag` (`src: image`, `amplitude: 0.06`) in its
@@ -62,8 +65,9 @@ in the Add menu, and the editor writes them with their import.
   that repeats a drawn one, an attribute-like or object prop, and
   components without a module.
 - `cargo test -p celesta-source-edit --test add`: a component with every
-  value kind, wrapped in a `Sequence`, reusing an aliased import, and a
-  clashing binding. The existing additions are unchanged.
+  value kind, wrapped in a `Sequence`, reusing an aliased import, a
+  clashing binding, and a component named `Sequence` locked when wrapped
+  and written when not. The existing additions are unchanged.
 - `cargo test -p celesta-editor`: the flag component drawn as an Image and
   written with its import by `add_files`, and a box component's attributes.
 - The editor run on Windows 11 with the rebuilt flag sample in a scratch
