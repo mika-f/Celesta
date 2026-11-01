@@ -279,8 +279,14 @@ mod tests {
         );
         let sources: Vec<_> = paths.iter().map(|path| path.source).collect();
         assert!(sources.is_sorted(), "{sources:?}");
+        // CELESTA_PLUGIN_PATH is the environment's, and a relative entry in
+        // it is reported by discovery; the locations Celesta works out
+        // itself are always absolute.
         assert!(
-            paths.iter().all(|path| path.path.is_absolute()),
+            paths
+                .iter()
+                .filter(|path| path.source != PluginSource::Explicit)
+                .all(|path| path.path.is_absolute()),
             "{paths:?}"
         );
     }

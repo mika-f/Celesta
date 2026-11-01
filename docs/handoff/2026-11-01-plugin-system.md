@@ -1,5 +1,11 @@
 # Content plugins (2026-11-01)
 
+Later notes change parts of what this one describes: where plugins are
+found (`2026-11-02-plugin-search-paths.md`), project trust and plugin
+approval (`2026-11-02-plugin-trust.md`), the editor's Plugins tab
+(`2026-11-02-plugins-panel.md`), and the manifest's `components`
+(`2026-11-02-plugin-add-menu.md`).
+
 The goal: content that needs code Celesta cannot ship (a proprietary
 runtime, or anything whose license must stay apart from the GPL build of
 the official binaries) runs in a plugin process of its own, and Celesta

@@ -30,13 +30,20 @@ environment variable, and the editor looked only once, when it started.
      `/usr/lib/celesta/plugins`). When the executable cannot be found there
      is no bundled folder; the current directory is never used.
 - No location depends on the current directory.
-- On Unix, a user or bundled folder, plugin directory, manifest, or file the
-  manifest names that is group- or other-writable, or belongs to neither
-  root nor the current user, is skipped and reported (`unsafe_reason`,
-  ssh's rule). Explicit folders (1, 2) are the caller's choice and are not
-  judged. Windows ACLs are not judged.
+- On Unix, a user or bundled folder, or anything inside a plugin directory
+  from one (walked without following links, since a program loads
+  libraries and a module imports files the manifest does not name), that is
+  group- or other-writable, or belongs to neither root nor the current
+  user, is skipped and reported (`unsafe_reason`, ssh's rule). Explicit
+  folders (1, 2) are the caller's choice and are not judged. Windows ACLs
+  are not judged.
 - A plugin directory whose path contains the platform's path-list separator
-  is skipped, since it could not be handed to the React runtime.
+  (`;` on Windows, `:` elsewhere) or a `"` is skipped, since it could not be
+  handed to the React runtime. `join_paths` does not catch it: on Windows it
+  quotes an entry with `;`, which the runtime does not unquote.
+- A folder that exists but cannot be read is reported; a plugin folder
+  whose own path cannot be resolved is skipped (its links could not be
+  checked).
 - One discovery serves everything: `InstalledPlugins::find` returns the set
   and what was skipped; `host()` makes the renderer's `PluginHost`, and
   `runtime_path()` the React runtime's `CELESTA_PLUGIN_PATH` (each plugin
@@ -74,8 +81,10 @@ environment variable, and the editor looked only once, when it started.
 
 - `cargo test -p celesta-plugin-host`: the user folder per platform
   (including relative variables giving none), the bundled folder per layout,
-  search order, Unix permission checks (folders, a single plugin, and
-  explicit folders exempt), and the runtime path.
+  search order, Unix permission checks (folders, a single plugin, a file
+  the manifest does not name, and explicit folders exempt), the runtime
+  path, and a folder named with the path-list separator skipped (and left
+  out of a hand-made set's runtime path).
 - `cargo test -p celesta-editor`: the skipped-plugins problem, and exports
   carrying the editor's plugins.
 - `celesta-exporter --react examples/plugins/flag/demo.tsx --frames 40` with

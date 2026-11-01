@@ -143,16 +143,20 @@ fn invalid_reason(manifest: &Manifest, directory: &Path) -> Option<String> {
         .values()
         .chain(&manifest.module)
         .chain(&manifest.types);
-    let root = std::fs::canonicalize(directory).ok();
+    // Without the folder's own resolved path, links out of it could not be
+    // told apart, so such a folder is refused rather than trusted.
+    let root = match std::fs::canonicalize(directory) {
+        Ok(root) => root,
+        Err(error) => return Some(format!("its folder could not be resolved: {error}")),
+    };
     for path in named {
         if !is_contained_path(path) {
             return Some(format!(
                 "{path:?} is not a relative path inside the plugin directory"
             ));
         }
-        let resolved = std::fs::canonicalize(directory.join(path)).ok();
-        if let (Some(root), Some(resolved)) = (&root, resolved)
-            && !resolved.starts_with(root)
+        if let Ok(resolved) = std::fs::canonicalize(directory.join(path))
+            && !resolved.starts_with(&root)
         {
             return Some(format!("{path:?} leads outside the plugin directory"));
         }
@@ -160,24 +164,58 @@ fn invalid_reason(manifest: &Manifest, directory: &Path) -> Option<String> {
     None
 }
 
+/// Whether `directory`'s path would break the path list the React runtime
+/// gets (`CELESTA_PLUGIN_PATH`): it holds the list's separator (`;` on
+/// Windows, `:` elsewhere), or a `"`, which Windows uses to quote such
+/// entries and the runtime does not read. `join_paths` cannot be relied on
+/// to say so: on Windows it quotes an entry with `;` instead of failing.
+fn breaks_path_list(directory: &Path) -> bool {
+    let text = directory.as_os_str().to_string_lossy();
+    let separator = if cfg!(windows) { ';' } else { ':' };
+    text.contains(separator) || text.contains('"')
+}
+
 /// Why a plugin from `source` cannot be used, if other users could change
-/// it: `directory`, its manifest, or a file the manifest names (see
-/// [`unsafe_reason`]). Only checked sources are judged.
-fn unsafe_plugin(manifest: &Manifest, directory: &Path, source: PluginSource) -> Option<String> {
-    if !source.is_checked() {
+/// it: `directory` or anything inside it, since a program loads libraries
+/// beside it and a module imports files the manifest does not name (see
+/// [`unsafe_reason`]). Only checked sources are judged, and only where
+/// permissions are judged at all (Unix).
+fn unsafe_plugin(directory: &Path, source: PluginSource) -> Option<String> {
+    if !source.is_checked() || !cfg!(unix) {
         return None;
     }
-    let named = manifest
-        .executable
-        .values()
-        .chain(&manifest.module)
-        .chain(&manifest.types)
-        .map(|path| directory.join(path))
-        .filter(|path| path.exists());
-    [directory.to_path_buf(), directory.join(MANIFEST)]
-        .into_iter()
-        .chain(named)
-        .find_map(|path| unsafe_reason(&path))
+    let mut folders = vec![directory.to_path_buf()];
+    while let Some(folder) = folders.pop() {
+        if let Some(reason) = unsafe_reason(&folder) {
+            return Some(reason);
+        }
+        let entries = match std::fs::read_dir(&folder) {
+            Ok(entries) => entries,
+            Err(error) => {
+                return Some(format!("{} could not be read: {error}", folder.display()));
+            }
+        };
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => {
+                    return Some(format!("{} could not be read: {error}", folder.display()));
+                }
+            };
+            let path = entry.path();
+            // Links are judged where they lead (`unsafe_reason` follows
+            // them) but not walked into, so a link cannot loop the walk.
+            match entry.file_type() {
+                Ok(kind) if kind.is_dir() => folders.push(path),
+                _ => {
+                    if let Some(reason) = unsafe_reason(&path) {
+                        return Some(reason);
+                    }
+                }
+            }
+        }
+    }
+    None
 }
 
 fn read_manifest(
@@ -196,16 +234,16 @@ fn read_manifest(
             source,
         })?;
     if let Some(reason) =
-        invalid_reason(&manifest, directory).or_else(|| unsafe_plugin(&manifest, directory, source))
+        invalid_reason(&manifest, directory).or_else(|| unsafe_plugin(directory, source))
     {
         return Err(DiscoveryError::Invalid { path, reason });
     }
     // The React runtime gets each plugin directory in a path list, which a
     // directory with the list's separator in its name would split.
-    if std::env::join_paths([directory]).is_err() {
+    if breaks_path_list(directory) {
         return Err(DiscoveryError::Invalid {
             path,
-            reason: "its folder's path contains the path-list separator".into(),
+            reason: "its folder's path contains the path-list separator or a quote".into(),
         });
     }
     Ok(Some(PluginEntry {
@@ -230,10 +268,10 @@ pub fn discover(paths: &[PathBuf]) -> (Vec<PluginEntry>, Vec<DiscoveryError>) {
 
 /// The plugins under `paths`, in order: each is an absolute path to a
 /// plugin directory or a directory of them. The first plugin found with an
-/// id wins. Relative paths, unreadable manifests, manifests that name a bad
-/// id or a file outside their directory, and, from a checked source, a
-/// folder or plugin other users could change are reported, not fatal; a
-/// missing folder is skipped quietly.
+/// id wins. Relative paths, folders and manifests that cannot be read,
+/// manifests that name a bad id or a file outside their directory, and,
+/// from a checked source, a folder or plugin other users could change are
+/// reported, not fatal; a missing folder is skipped quietly.
 pub fn discover_in(paths: &[SearchPath]) -> (Vec<PluginEntry>, Vec<DiscoveryError>) {
     let mut found: Vec<PluginEntry> = Vec::new();
     let mut errors = Vec::new();
@@ -276,8 +314,18 @@ pub fn discover_in(paths: &[SearchPath]) -> (Vec<PluginEntry>, Vec<DiscoveryErro
             add(read_manifest(path, *source), &mut found);
             continue;
         }
-        let Ok(children) = std::fs::read_dir(path) else {
-            continue;
+        let children = match std::fs::read_dir(path) {
+            Ok(children) => children,
+            Err(source) => {
+                add(
+                    Err(DiscoveryError::Io {
+                        path: path.clone(),
+                        source,
+                    }),
+                    &mut found,
+                );
+                continue;
+            }
         };
         let mut children: Vec<PathBuf> = children
             .filter_map(|child| child.ok().map(|child| child.path()))
@@ -324,9 +372,16 @@ impl InstalledPlugins {
     /// folder itself. Give it to the runtime's process explicitly (as
     /// `Command::env` does) rather than through Celesta's own environment.
     pub fn runtime_path(&self) -> std::ffi::OsString {
-        // Directories with the separator in them were skipped (see
-        // `read_manifest`).
-        std::env::join_paths(self.plugins.iter().map(|entry| &entry.directory)).unwrap_or_default()
+        // Discovery skips directories that would break the list (see
+        // `read_manifest`); a set made by hand leaves them out here, so
+        // joining what remains cannot fail.
+        std::env::join_paths(
+            self.plugins
+                .iter()
+                .map(|entry| &entry.directory)
+                .filter(|directory| !breaks_path_list(directory)),
+        )
+        .expect("paths without the separator or a quote join")
     }
 
     /// A host that runs these plugins for a renderer.
@@ -592,6 +647,66 @@ mod tests {
         assert!(found.is_empty());
         assert_eq!(errors.len(), 1, "{errors:?}");
         std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_file_the_manifest_does_not_name_is_judged_too() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let plugin = root.path().join("p");
+        write_plugin(&plugin, "p", "1");
+        let mode = |path: &Path, mode| {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap()
+        };
+        for path in [root.path(), plugin.as_path()] {
+            mode(path, 0o755);
+        }
+        mode(&plugin.join(MANIFEST), 0o644);
+        // A library beside the program, which the manifest does not name.
+        std::fs::create_dir_all(plugin.join("bin")).unwrap();
+        mode(&plugin.join("bin"), 0o755);
+        std::fs::write(plugin.join("bin/libhelper.so"), "").unwrap();
+        mode(&plugin.join("bin/libhelper.so"), 0o644);
+        let search = [SearchPath {
+            path: root.path().to_path_buf(),
+            source: PluginSource::User,
+        }];
+        assert_eq!(discover_in(&search).0.len(), 1);
+
+        mode(&plugin.join("bin/libhelper.so"), 0o666);
+        let (found, errors) = discover_in(&search);
+        assert!(found.is_empty());
+        assert!(
+            matches!(&errors[..], [DiscoveryError::Invalid { reason, .. }] if reason.contains("libhelper")),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn a_folder_that_would_break_the_runtime_path_is_skipped() {
+        let root = tempfile::tempdir().unwrap();
+        let separator = if cfg!(windows) { ';' } else { ':' };
+        write_plugin(&root.path().join(format!("a{separator}b")), "split", "1");
+        write_plugin(&root.path().join("plain"), "plain", "1");
+        let (found, errors) = discover(&[root.path().to_path_buf()]);
+        let ids: Vec<_> = found
+            .iter()
+            .map(|entry| entry.manifest.id.as_str())
+            .collect();
+        assert_eq!(ids, ["plain"]);
+        assert!(
+            matches!(&errors[..], [DiscoveryError::Invalid { reason, .. }] if reason.contains("separator")),
+            "{errors:?}"
+        );
+
+        // A set made by hand with such a folder leaves it out of the path.
+        let mut by_hand = InstalledPlugins { plugins: found };
+        let mut split = by_hand.plugins[0].clone();
+        split.directory = root.path().join(format!("a{separator}b"));
+        by_hand.plugins.push(split);
+        let path: Vec<_> = std::env::split_paths(&by_hand.runtime_path()).collect();
+        assert_eq!(path, [root.path().join("plain")]);
     }
 
     #[test]
