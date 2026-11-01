@@ -458,6 +458,34 @@ fn print_layers(
                     .map_or(&[][..], Vec::as_slice);
                 print_layers(children, depth + 1, files, warnings, out);
             }
+            "plugin" => {
+                // Only the plugin's own program knows what it draws; show what it is given.
+                let assets: Vec<String> = content
+                    .get("assets")
+                    .and_then(Value::as_object)
+                    .into_iter()
+                    .flatten()
+                    .map(|(name, asset)| {
+                        let src = location_src(asset).unwrap_or("");
+                        format!("{name} {src}{}", files.check(location_path(asset)))
+                    })
+                    .collect();
+                let assets = if assets.is_empty() {
+                    String::new()
+                } else {
+                    format!(" [{}]", assets.join(", "))
+                };
+                let data = content
+                    .get("data")
+                    .map(|data| format!(" data {data}"))
+                    .unwrap_or_default();
+                let _ = writeln!(
+                    out,
+                    "{indent}plugin {} at {} s {at}{assets}{data}",
+                    js(&content["plugin"]),
+                    fmt(num(&content["time"]))
+                );
+            }
             "missingComponent" => {
                 let component = js(&content["component"]);
                 warnings.push(format!(
@@ -892,6 +920,30 @@ mod tests {
         assert_eq!(
             warnings,
             ["component \"Foo\" is not registered; export will fail"]
+        );
+    }
+
+    #[test]
+    fn describes_plugin_layers_by_what_they_are_given() {
+        let flag = layer(
+            "f",
+            json!({
+                "type": "plugin",
+                "plugin": "flag",
+                "time": 1.5,
+                "assets": { "image": { "id": "a", "location": { "type": "url", "url": "https://media.test/a.png" } } },
+                "data": { "amplitude": 0.1 },
+            }),
+        );
+        let bare = layer(
+            "b",
+            json!({ "type": "plugin", "plugin": "bare", "time": 0 }),
+        );
+        let (output, _, _) = describe(vec![flag, bare], vec![]);
+        assert_eq!(
+            output,
+            "plugin flag at 1.5 s at (10, 20) [image https://media.test/a.png] data {\"amplitude\":0.1}\n\
+             plugin bare at 0 s at (10, 20)\n"
         );
     }
 

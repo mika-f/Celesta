@@ -77,6 +77,10 @@ pub static TOPICS: &[Topic] = &[
     ),
     reference!("performance", "What is slow to render and how to find it"),
     reference!(
+        "plugins",
+        "Content plugins: @celesta-plugin imports, CELESTA_PLUGIN_PATH and --plugin-dir, their errors"
+    ),
+    reference!(
         "errors",
         "Error messages and warnings, and what to do about them"
     ),
