@@ -4,7 +4,8 @@
 //!
 //! A URL is downloaded once and then served from the cache on every later
 //! run; the cache never revalidates, so changing a remote file needs a new
-//! URL (or a cleared cache). Entries are keyed by the exact URL string.
+//! URL (or a cleared cache). Entries are keyed by the URL as a browser would
+//! request it (see `normalized`).
 
 use std::fs;
 use std::hash::Hasher;
@@ -14,15 +15,20 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use celesta_composition::AssetLocation;
+use data_url::DataUrl;
 use fnv::FnvHasher;
 use ureq::Agent;
 use ureq::tls::{RootCerts, TlsConfig};
+use url::Url;
 
 mod staged;
 mod stylesheet;
 
 pub use staged::StagedFile;
-pub use stylesheet::{StylesheetFontFace, is_font_stylesheet, stylesheet_font_faces};
+pub use stylesheet::{
+    FontFaceDescriptors, FontFaceSource, FontFaceStyle, StylesheetFontFace, is_font_stylesheet,
+    stylesheet_font_faces,
+};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_FILE_NAME_LEN: usize = 96;
@@ -71,69 +77,135 @@ impl RemoteAssetCache {
 
     /// The cached file for `url`, without touching the network.
     pub fn cached(&self, url: &str) -> Option<PathBuf> {
-        let path = self.entry_path(url).ok()?;
+        let path = self.entry_path(&normalized(url).ok()?).ok()?;
         path.is_file().then_some(path)
     }
 
-    /// Returns the cached file for `url`, downloading it first if needed.
+    /// Returns the cached file for `url`, downloading it first if needed. A
+    /// `data:` URL (from a font stylesheet) is decoded instead.
     pub fn fetch(&self, url: &str) -> Result<PathBuf, RemoteAssetError> {
+        let url = &normalized(url)?;
         let path = self.entry_path(url)?;
         if path.is_file() {
             return Ok(path);
         }
-        self.download(url, &path)?;
+        if is_data_url(url) {
+            let invalid = |reason| RemoteAssetError::InvalidData {
+                url: shortened(url),
+                reason,
+            };
+            let data = DataUrl::process(url)
+                .map_err(|_| invalid("it has no comma before the data"))?
+                .decode_to_vec()
+                .map_err(|_| invalid("its base64 data is invalid"))?;
+            self.store(&shortened(url), &path, &mut data.0.as_slice())?;
+        } else {
+            let response =
+                self.agent
+                    .get(url)
+                    .call()
+                    .map_err(|source| RemoteAssetError::Request {
+                        url: url.to_owned(),
+                        source: Box::new(source),
+                    })?;
+            self.store(url, &path, &mut response.into_body().into_reader())?;
+        }
         Ok(path)
     }
 
     fn entry_path(&self, url: &str) -> Result<PathBuf, RemoteAssetError> {
-        let rest = scheme_rest(url).ok_or_else(|| RemoteAssetError::UnsupportedScheme {
-            url: url.to_owned(),
-        })?;
-        // The URL's own file name keeps its extension, which image decoders
-        // and FFmpeg use as a format hint.
+        let name = if is_data_url(url) {
+            "asset".to_owned()
+        } else {
+            // The URL's own file name keeps its extension, which image
+            // decoders and FFmpeg use as a format hint.
+            file_name(
+                scheme_rest(url).ok_or_else(|| RemoteAssetError::UnsupportedScheme {
+                    url: url.to_owned(),
+                })?,
+            )
+        };
         Ok(self
             .root
             .join(format!("{:016x}", fnv1a(url.as_bytes())))
-            .join(file_name(rest)))
+            .join(name))
     }
 
-    fn download(&self, url: &str, path: &Path) -> Result<(), RemoteAssetError> {
-        let io_error = |source| RemoteAssetError::Io {
-            url: url.to_owned(),
-            source,
-        };
-        let directory = path.parent().expect("cache entries live in a directory");
-        fs::create_dir_all(directory).map_err(io_error)?;
-        let response = self
-            .agent
-            .get(url)
-            .call()
-            .map_err(|source| RemoteAssetError::Request {
-                url: url.to_owned(),
-                source: Box::new(source),
-            })?;
-        // Download beside the entry and rename it into place, so a failed or
-        // concurrent download never leaves a truncated file at `path`.
+    /// Writes `contents` to the entry at `path`, staged beside it and renamed
+    /// into place, so a failed or concurrent write never leaves a truncated
+    /// file there.
+    fn store(
+        &self,
+        url: &str,
+        path: &Path,
+        contents: &mut dyn io::Read,
+    ) -> Result<(), RemoteAssetError> {
         let result = (|| {
+            let directory = path.parent().expect("cache entries live in a directory");
+            fs::create_dir_all(directory)?;
             let mut temp = StagedFile::beside(path, ".tmp")?;
             let mut writer = BufWriter::new(temp.as_file_mut());
-            io::copy(&mut response.into_body().into_reader(), &mut writer)?;
+            io::copy(contents, &mut writer)?;
             writer.flush()?;
             drop(writer);
             match temp.publish(path, true) {
-                // Another download of the same URL finished first.
+                // Another fetch of the same URL finished first.
                 Err(_) if path.is_file() => Ok(()),
                 result => result,
             }
         })();
-        result.map_err(io_error)
+        result.map_err(|source| RemoteAssetError::Io {
+            url: url.to_owned(),
+            source,
+        })
+    }
+}
+
+/// `url` as a browser's fetch would request it, so the same URL written two
+/// ways also shares one cache entry. An `http(s)` URL is parsed and
+/// serialized again, which lowercases the scheme and host, writes an IDN host
+/// as punycode, drops a default port, resolves dot segments, reads `\` as
+/// `/`, adds `/` to an empty path, and percent-encodes what a request line
+/// cannot carry; its fragment, which is never sent, is dropped. Other URLs
+/// are kept.
+fn normalized(url: &str) -> Result<String, RemoteAssetError> {
+    if !is_remote_url(url) {
+        return Ok(url.to_owned());
+    }
+    let mut parsed = Url::parse(url).map_err(|source| RemoteAssetError::InvalidUrl {
+        url: url.to_owned(),
+        source,
+    })?;
+    parsed.set_fragment(None);
+    Ok(parsed.into())
+}
+
+pub(crate) fn is_data_url(url: &str) -> bool {
+    url.get(..5)
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("data:"))
+}
+
+/// `url` cut short for a message, since a `data:` URL can hold a whole file.
+fn shortened(url: &str) -> String {
+    const LIMIT: usize = 64;
+    match url.char_indices().nth(LIMIT) {
+        Some((end, _)) => format!("{}…", &url[..end]),
+        None => url.to_owned(),
     }
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum RemoteAssetError {
-    #[error("`{url}` is not an http or https URL")]
+    #[error("`{url}` is not an http, https, or data URL")]
     UnsupportedScheme { url: String },
+    #[error("`{url}` is not a valid URL: {source}")]
+    InvalidUrl {
+        url: String,
+        source: url::ParseError,
+    },
+    /// `url` is shortened, since a `data:` URL can hold a whole file.
+    #[error("`{url}` is not a valid data: URL: {reason}")]
+    InvalidData { url: String, reason: &'static str },
     #[error("{}", request_message(.url, .source))]
     Request {
         url: String,
@@ -299,6 +371,42 @@ mod tests {
     }
 
     #[test]
+    fn normalizes_urls_as_a_browser_fetch_does() {
+        let (base, hits) = serve("200 OK", b"remote bytes");
+        let directory = tempfile::tempdir().unwrap();
+        let cache = cache(directory.path());
+        // A raw space would not make a valid request line.
+        let path = cache.fetch(&format!("{base}/fonts/My Font.ttf")).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"remote bytes");
+        // The same URL written another way is the same entry.
+        let other = base.replacen("http://", "HTTP://", 1);
+        assert_eq!(
+            cache.cached(&format!("{other}/fonts/My%20Font.ttf")),
+            Some(path.clone())
+        );
+        assert_eq!(
+            cache
+                .fetch(&format!("{other}/fonts/My%20Font.ttf"))
+                .unwrap(),
+            path
+        );
+        // A fragment is never sent, so it does not make another entry.
+        assert_eq!(
+            cache
+                .fetch(&format!("{base}/fonts/My%20Font.ttf#iefix"))
+                .unwrap(),
+            path
+        );
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+
+        let error = cache.fetch("https://exa mple.com/a.ttf").unwrap_err();
+        assert!(
+            matches!(&error, RemoteAssetError::InvalidUrl { url, .. } if url == "https://exa mple.com/a.ttf"),
+            "{error}"
+        );
+    }
+
+    #[test]
     fn http_errors_leave_nothing_cached() {
         let (base, _) = serve("404 Not Found", b"missing");
         let directory = tempfile::tempdir().unwrap();
@@ -308,10 +416,7 @@ mod tests {
         let error = cache.fetch(&url).unwrap_err();
         assert!(matches!(error, RemoteAssetError::Request { .. }), "{error}");
         assert_eq!(cache.cached(&url), None);
-        let entry = directory
-            .path()
-            .join(format!("{:016x}", fnv1a(url.as_bytes())));
-        assert_eq!(fs::read_dir(entry).unwrap().count(), 0);
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
     }
 
     #[test]
@@ -344,12 +449,13 @@ mod tests {
         let location = AssetLocation::Url { url: url.clone() };
         let online = cache(directory.path());
         let stylesheet = online.fetch(&url).unwrap();
-        let faces = stylesheet_font_faces(&fs::read_to_string(&stylesheet).unwrap(), &location);
+        let faces =
+            stylesheet_font_faces(&fs::read_to_string(&stylesheet).unwrap(), &location).unwrap();
         assert_eq!(faces.len(), 2);
         let paths: Vec<_> = faces
             .iter()
             .map(|face| {
-                let AssetLocation::Url { url } = &face.location else {
+                let FontFaceSource::File(AssetLocation::Url { url }) = &face.source else {
                     panic!("remote face")
                 };
                 online.fetch(url).unwrap()
@@ -360,7 +466,7 @@ mod tests {
         let offline = cache(directory.path());
         assert_eq!(offline.fetch(&url).unwrap(), stylesheet);
         for (face, path) in faces.iter().zip(paths) {
-            let AssetLocation::Url { url } = &face.location else {
+            let FontFaceSource::File(AssetLocation::Url { url }) = &face.source else {
                 panic!("remote face")
             };
             assert_eq!(offline.fetch(url).unwrap(), path);
@@ -378,6 +484,35 @@ mod tests {
         assert!(!is_remote_url("ftp://example.com/a.png"));
         assert!(!is_remote_url("images/a.png"));
         assert!(is_remote_url("HTTPS://example.com/a.png"));
+    }
+
+    #[test]
+    fn decodes_data_urls_into_the_cache() {
+        let directory = tempfile::tempdir().unwrap();
+        let cache = cache(directory.path());
+        // No network: a data: URL carries its own bytes.
+        for (url, bytes) in [
+            ("data:font/woff2;base64,d09GMg==", &b"wOF2"[..]),
+            ("data:,a%20b", &b"a b"[..]),
+        ] {
+            assert_eq!(cache.cached(url), None);
+            let path = cache.fetch(url).unwrap();
+            assert_eq!(fs::read(&path).unwrap(), bytes);
+            assert_eq!(cache.cached(url), Some(path));
+        }
+        for (url, why) in [
+            ("data:font/woff2;base64,***", "base64"),
+            ("data:font/woff2", "comma"),
+        ] {
+            let error = cache.fetch(url).unwrap_err();
+            assert!(
+                matches!(&error, RemoteAssetError::InvalidData { reason, .. } if reason.contains(why)),
+                "{error}"
+            );
+        }
+        let long = format!("data:font/woff2;base64,{}", "A".repeat(10_000));
+        let message = cache.fetch(&format!("{long}*")).unwrap_err().to_string();
+        assert!(message.len() < 200, "{message}");
     }
 
     #[test]

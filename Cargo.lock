@@ -1139,10 +1139,12 @@ name = "celesta-remote"
 version = "0.9.0"
 dependencies = [
  "celesta-composition",
+ "data-url",
  "fnv",
  "tempfile",
  "thiserror 2.0.21",
  "ureq",
+ "url",
 ]
 
 [[package]]

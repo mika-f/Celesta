@@ -331,8 +331,9 @@ features; turn them off to draw code as it is written:
 - `<Code>` draws with the font's ligatures; pass the same `fontFeatures`
   in its `style` to show code as written ([code.md](code.md)).
 - The browser preview applies features only to fonts loaded with
-  `<Font>`: text with `fontFeatures` and no `fontFamily`, or with an
-  installed family, throws there (export applies them to installed fonts
+  `<Font>`, from a file or from a font stylesheet's `local()` fonts: text
+  with `fontFeatures` and no `fontFamily`, or with an installed family
+  named directly, throws there (export applies them to installed fonts
   too). Characters a fallback font draws do not get them in the preview.
 
 ## Line breaking
@@ -358,7 +359,8 @@ only at whitespace.
 
 Load font files with `<Font src>` inside `<Assets>` (see
 [react-core.md](react-core.md#font-and-assets)) and refer to them by the
-**family name stored inside the font**, not the file name. For reproducible
+**family name stored inside the font**, not the file name (a web-font
+stylesheet's faces go by each rule's `font-family` instead). For reproducible
 output, ship the font file next to the entry rather than relying on
 installed fonts.
 

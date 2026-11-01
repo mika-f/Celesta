@@ -6,15 +6,101 @@ const unresolved = new Set<string>();
 const fontSet = () => 'document' in globalThis ? document.fonts : (globalThis as unknown as { fonts: FontFaceSet }).fonts;
 let fontSetVersion = 0;
 
-/** Each loaded face's file and descriptors, so `featureFamily` can make a copy of it. */
-const faceSources = new WeakMap<FontFace, { bytes: ArrayBuffer; descriptors: FontFaceDescriptors }>();
-/** `featureFamily`'s faces by the family name it gave them. */
-const featureFaces = new Map<string, FontFace[]>();
+/**
+ * Each loaded face's source, its file or its `local()` names, and
+ * descriptors, so `featureFamily` can make a copy of it.
+ */
+const faceSources = new WeakMap<FontFace, { source: ArrayBuffer | string; descriptors: FontFaceDescriptors }>();
+/** `featureFamily`'s faces, and the family they copy, by the family name it gave them. */
+const featureFaces = new Map<string, { family: string; faces: FontFace[] }>();
+
+/**
+ * `format()` keywords and strings, and `tech()` values, the native renderer
+ * reads, so both renderers load the same file from a font stylesheet. Keep in
+ * step with `SUPPORTED_FORMATS`, `SUPPORTED_FORMAT_STRINGS`, and
+ * `SUPPORTED_TECHS` in crates/remote/src/stylesheet.rs; the shared fixture in
+ * test/fixtures/font-face-src/ checks both.
+ */
+const supportedFormats = new Set(['woff2', 'woff', 'truetype', 'opentype']);
+const supportedFormatStrings = new Set([...supportedFormats, 'woff2-variations', 'woff-variations', 'truetype-variations', 'opentype-variations']);
+const supportedTechs = new Set(['features-opentype', 'features-aat', 'variations', 'color-colrv0', 'color-sbix', 'color-cbdt']);
+
+/** `css` without its comments. */
+function stripComments(css: string): string {
+  return css.replace(/\/\*[\s\S]*?(?:\*\/|$)/g, '');
+}
+
+function unquote(value: string): string {
+  return value.trim().replace(/^['"]|['"]$/g, '').trim();
+}
+
+/** Splits `text` on `separator` outside quotes and parentheses. */
+function splitOutsideNesting(text: string, separator: string): string[] {
+  const parts: string[] = [];
+  let depth = 0, quote: string | undefined, start = 0;
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index];
+    if (quote) { if (char === quote) quote = undefined; }
+    else if (char === '"' || char === "'") quote = char;
+    else if (char === '(') depth++;
+    else if (char === ')') depth = Math.max(0, depth - 1);
+    else if (char === separator && depth === 0) { parts.push(text.slice(start, index)); start = index + 1; }
+  }
+  parts.push(text.slice(start));
+  return parts;
+}
+
+/** For `text` starting with `name(...)`, the argument as written and the text after it. */
+function functionArgument(text: string, name: string): [string, string] | undefined {
+  if (text.slice(0, name.length + 1).toLowerCase() !== `${name}(`) return undefined;
+  let quote: string | undefined;
+  for (let index = name.length + 1; index < text.length; index++) {
+    const char = text[index];
+    if (quote) { if (char === quote) quote = undefined; }
+    else if (char === '"' || char === "'") quote = char;
+    else if (char === ')') return [text.slice(name.length + 1, index), text.slice(index + 1)];
+  }
+  return undefined;
+}
+
+/**
+ * The entries of a `src` value Celesta supports, in order: a url, or a
+ * `local()` font's name. Entries that fail to parse or carry an unsupported
+ * `format()` or `tech()` are dropped, as CSS Fonts 4 parses `src`.
+ */
+function supportedSources(value: string): (string | { local: string })[] {
+  return splitOutsideNesting(value, ',').flatMap((entry): (string | { local: string })[] => {
+    entry = entry.trim();
+    const local = functionArgument(entry, 'local');
+    if (local) {
+      // Unquoted, a name is identifiers joined by one space.
+      const name = /^\s*['"]/.test(local[0]) ? unquote(local[0]) : local[0].trim().split(/\s+/).join(' ');
+      return local[1].trim() || !name ? [] : [{ local: name }];
+    }
+    const url = functionArgument(entry, 'url');
+    const location = url && unquote(url[0]);
+    if (!url || !location) return [];
+    let rest = url[1];
+    const format = functionArgument(rest.trimStart(), 'format');
+    if (format) {
+      // The `*-variations` forms exist only as strings.
+      const supported = /^\s*['"]/.test(format[0]) ? supportedFormatStrings : supportedFormats;
+      if (!supported.has(unquote(format[0]).toLowerCase())) return [];
+      rest = format[1];
+    }
+    const tech = functionArgument(rest.trimStart(), 'tech');
+    if (tech) {
+      if (!tech[0].split(',').every(value => supportedTechs.has(value.trim().toLowerCase()))) return [];
+      rest = tech[1];
+    }
+    return rest.trim() ? [] : [location];
+  });
+}
 
 /** Drops every `featureFamily` face, so the next ones copy the fonts loaded now. */
 function dropFeatureFaces(): void {
   if (featureFaces.size === 0) return;
-  for (const faces of featureFaces.values()) for (const face of faces) fontSet().delete(face);
+  for (const { faces } of featureFaces.values()) for (const face of faces) fontSet().delete(face);
   featureFaces.clear();
   fontSetVersion++;
 }
@@ -23,37 +109,50 @@ function dropFeatureFaces(): void {
  * A family drawing `family`'s loaded faces with `settings`, a CSS
  * `font-feature-settings` value, under `label`. Canvas text has no
  * font-feature-settings of its own, so each family and feature set gets
- * copies of its faces with the `featureSettings` descriptor. A face made
- * from a file is ready at once in Chromium; elsewhere `featureFacesLoaded()`
- * waits for it. Throws for a family with no face loaded with `<Font>`, as
- * installed fonts cannot be copied.
+ * copies of its faces with the `featureSettings` descriptor. A copy has
+ * the face's source: its file, or the installed fonts its stylesheet's
+ * `local()` names, as Chromium applies the descriptor to both. Chromium
+ * makes a copy from a file ready at once, and one from installed fonts
+ * ready inside `load()`, at least on macOS; where a copy is still loading,
+ * `featureFacesLoaded()` waits for it. Throws for a family with no
+ * face loaded with `<Font>`, as an installed family has no faces to copy.
  */
 export function featureFamily(family: string, settings: string, label: string): string {
   const name = `${family} [celesta-features ${label}]`;
   if (featureFaces.has(name)) return name;
   const sources = [...loaded.values()].flatMap(entry => entry.faces).filter(face => face.family === family);
   if (sources.length === 0) {
-    throw new Error(`fontFeatures need "${family}" loaded with <Font>: the browser renderer cannot apply OpenType features to installed fonts.`);
+    throw new Error(`fontFeatures need "${family}" loaded with <Font>: the browser renderer cannot apply OpenType features to installed fonts by their family name.`);
   }
   const faces = sources.map(face => {
-    const source = faceSources.get(face);
-    if (!source) throw new Error(`fontFeatures cannot use "${family}": its font CSS gives no url() to load it from.`);
-    return new FontFace(name, source.bytes, { ...source.descriptors, featureSettings: settings });
+    const { source, descriptors } = faceSources.get(face)!;
+    return withSource(name, source, { ...descriptors, featureSettings: settings });
   });
-  for (const face of faces) fontSet().add(face);
+  for (const face of faces) {
+    fontSet().add(face);
+    // A face from `local()` names stays unloaded until asked; its failure
+    // is reported by `featureFacesLoaded()`.
+    if (face.status === 'unloaded') face.load().catch(() => {});
+  }
   fontSetVersion++;
-  featureFaces.set(name, faces);
+  featureFaces.set(name, { family, faces });
   return name;
 }
 
 /** Waits for the faces `featureFamily` made, where they do not load at once. */
 export async function featureFacesLoaded(): Promise<void> {
-  await Promise.all([...featureFaces.values()].flat().map(face => face.loaded));
+  await Promise.all([...featureFaces.values()].flatMap(({ family, faces }) => faces.map(face => face.loaded.catch(cause => {
+    // The face itself loaded from the same source, so this is rare: a
+    // browser would have to match these local() names for the face but
+    // not for its copy.
+    const source = faceSources.get(face)?.source;
+    throw new Error(`fontFeatures cannot use "${family}": this browser did not load ${typeof source === 'string' ? source : 'its font file'} for it.`, { cause });
+  }))));
 }
 
 /** Whether a face `featureFamily` made is still loading. */
 export function featureFacesPending(): boolean {
-  return [...featureFaces.values()].flat().some(face => face.status !== 'loaded');
+  return [...featureFaces.values()].some(({ faces }) => faces.some(face => face.status !== 'loaded'));
 }
 
 /**
@@ -67,6 +166,13 @@ export function featureFacesPending(): boolean {
  */
 export function fontSetFamily(): string | undefined {
   return fontSetVersion === 0 || 'document' in globalThis ? undefined : `celesta-font-set-${fontSetVersion}`;
+}
+
+/** A face from `source`, kept in `faceSources` for `featureFamily` to copy. */
+function withSource(family: string, source: ArrayBuffer | string, descriptors: FontFaceDescriptors = {}): FontFace {
+  const face = new FontFace(family, source, descriptors);
+  faceSources.set(face, { source, descriptors });
+  return face;
 }
 
 function fontName(bytes: ArrayBuffer): string {
@@ -143,15 +249,8 @@ export function loadFonts(assets: Asset[], resolve: (asset: Asset) => string): P
       const google = /^https:\/\/fonts\.googleapis\.com\/css2?\?/.test(url);
       const entry: FontLoad = { promise: Promise.resolve(), ready: false, faces: [] };
       loaded.set(url, entry);
-      const add = async (face: FontFace) => {
-        await face.load();
+      const add = (face: FontFace) => {
         if (loaded.get(url) === entry) { fontSet().add(face); fontSetVersion++; entry.faces.push(face); dropFeatureFaces(); }
-      };
-      // Faces are made from their files, kept for `featureFamily` to copy.
-      const fromBytes = (family: string, bytes: ArrayBuffer, descriptors: FontFaceDescriptors = {}) => {
-        const face = new FontFace(family, bytes, descriptors);
-        faceSources.set(face, { bytes, descriptors });
-        return face;
       };
       entry.promise = (async () => {
         try {
@@ -162,40 +261,60 @@ export function loadFonts(assets: Asset[], resolve: (asset: Asset) => string): P
           }
           if (!response.ok) throw new Error(`Could not load font: ${url} (${response.status}).`);
           if (response.headers.get('content-type')?.includes('text/css') || /fonts\.googleapis\.com|\.css(?:\?|$)/.test(url)) {
-            const css = await response.text();
-            const blocks = Array.from(css.matchAll(/@font-face\s*\{([^}]+)\}/g));
+            // As the native renderer reads it: comments may hold `}`, `;`,
+            // or quotes that would cut the blocks and declarations short.
+            const css = stripComments(await response.text());
+            const blocks = Array.from(css.matchAll(/@font-face\s*\{([^}]+)\}/gi));
             if (!blocks.length) throw new Error(`No font faces in CSS: ${url}`);
-            await Promise.all(blocks.map(async ([, block]) => {
+            // Faces load in parallel but are added in rule order: the
+            // browser tries overlapping faces of a family in the order they
+            // were added, the last first, as CSS orders rules, and as the
+            // native renderer does.
+            const faces = await Promise.all(blocks.map(async ([, block]): Promise<FontFace | undefined> => {
               try {
-                const property = (name: string) => block.match(new RegExp(`(?:^|;)\\s*${name}\\s*:\\s*([^;]+)`))?.[1].trim();
+                // Descriptor names ignore case, and a later one wins.
+                const declarations = splitOutsideNesting(block, ';').flatMap(declaration => {
+                  const [, name, value] = /^\s*([\w-]+)\s*:([\s\S]*)$/.exec(declaration) ?? [];
+                  return name ? [[name.toLowerCase(), value.trim()] as const] : [];
+                }).reverse();
+                const property = (name: string) => declarations.find(([key]) => key === name)?.[1];
                 const family = property('font-family')?.replace(/^['"]|['"]$/g, '');
-                const src = property('src');
-                if (!family || !src) throw new Error(`Invalid font CSS: ${url}`);
+                if (!family) throw new Error(`Invalid font CSS: ${url}`);
+                // The last valid `src` wins; one with no supported entry is
+                // invalid, so an earlier one stays in effect. Its first url()
+                // is the file to load, even after a local(). With none, the
+                // installed fonts its local() faces name go to FontFace in
+                // the order the native renderer tries them, and the browser
+                // matches them by its own rules.
+                const src = declarations
+                  .filter(([key]) => key === 'src')
+                  .map(([, value]) => supportedSources(value))
+                  .find(sources => sources.length);
+                if (!src) throw new Error(`@font-face "${family}" in ${url} has no src entry Celesta can use (a local() font name, or a TrueType, OpenType, WOFF, or WOFF2 file).`);
+                const location = src.find((source): source is string => typeof source === 'string');
                 const descriptors: FontFaceDescriptors = {
                   weight: property('font-weight') ?? 'normal', style: property('font-style') ?? 'normal',
                   unicodeRange: property('unicode-range') ?? 'U+0-10FFFF',
                 };
-                // The first url() the browser can read, as it would pick: one
-                // without a format() hint, or a WOFF2, WOFF, TrueType, or
-                // OpenType one, not EOT or SVG. `src` with none (only local()
-                // faces) stays as written, and has no file to copy.
-                const location = Array.from(src.matchAll(/url\(([^)]+)\)(?:\s*format\(([^)]+)\))?/g))
-                  .find(([, , format]) => format === undefined || /^['"]?(woff2|woff|truetype|opentype)['"]?$/i.test(format.trim()))?.[1];
-                if (location === undefined) await add(new FontFace(family, src, descriptors));
-                else {
-                  const file = new URL(location.replace(/^['"]|['"]$/g, ''), url).href;
-                  const response = await fetch(file);
-                  if (!response.ok) throw new Error(`Could not load font: ${file} (${response.status}).`);
-                  await add(fromBytes(family, await response.arrayBuffer(), descriptors));
+                if (location == null) {
+                  const locals = src
+                    .filter((source): source is { local: string } => typeof source !== 'string')
+                    .map(({ local }) => `local("${local.replace(/["\\]/g, '\\$&')}")`);
+                  return await withSource(family, locals.join(', '), descriptors).load();
                 }
+                const file = new URL(location, url).href;
+                const response = await fetch(file);
+                if (!response.ok) throw new Error(`Could not load font: ${file} (${response.status}).`);
+                return await withSource(family, await response.arrayBuffer(), descriptors).load();
               } catch (cause) {
                 if (google) throw cause;
                 console.warn(`Could not load a font face from ${url}; using the default font.`, cause);
               }
             }));
+            for (const face of faces) if (face) add(face);
           } else {
             const bytes = await response.arrayBuffer();
-            await add(fromBytes(fontName(bytes), bytes));
+            add(await withSource(fontName(bytes), bytes).load());
           }
         } catch (cause) {
           if (google) {

@@ -23,7 +23,7 @@ export function cssFont(style: TextStyle, run?: FontRun): string {
   const features = Object.entries({ ...style.fontFeatures, ...run?.fontFeatures }).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
   if (features.length > 0) {
     if (names.length === 0) {
-      throw new Error('fontFeatures need a fontFamily loaded with <Font>: the browser renderer cannot apply OpenType features to installed fonts.');
+      throw new Error('fontFeatures need a fontFamily loaded with <Font>: the browser renderer cannot apply OpenType features to installed fonts by their family name.');
     }
     const settings = features.map(([tag, value]) => `${JSON.stringify(tag)} ${Number(value)}`).join(', ');
     const label = features.map(([tag, value]) => `${tag}=${Number(value)}`).join(',');

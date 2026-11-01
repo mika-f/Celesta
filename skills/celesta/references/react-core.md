@@ -1074,9 +1074,29 @@ conditional plays only on frames where it is rendered.
 ```
 
 - `<Font src>` loads TTF, OTF, WOFF, WOFF2, or a web-font CSS stylesheet
-  (every `@font-face` in it is loaded). Refer to it by the **family name
-  stored inside the font**, not the file name. See
+  (each `@font-face` loads at most one file: in its last `src` with a
+  supported entry, the first `url()` whose `format()` is TTF/OTF/WOFF/WOFF2
+  or absent; EOT, SVG fonts, collections, and `tech()` such as COLRv1 are
+  skipped, and a file that fails to load is not retried with the next
+  entry; a `src` with no such `url()` draws the first installed font its
+  `local()` entries name by full or PostScript name (not family name),
+  case-insensitively — a `url()` wins even after a `local()`, and a rule
+  whose fonts are not installed draws nothing, so prefer files for
+  reproducible exports. Preview and export try the same names in the same
+  order, but the preview's browser matches them itself (Safari: OS fonts
+  only)). Refer to a font file by the **family name stored inside the
+  font**, not the file name, and to a stylesheet's faces by its
+  `font-family`, not the names in its files. See
   [text.md](text.md#fonts-fallback-and-emoji) for weights and fallback.
+- Stylesheet descriptors work as in CSS in preview and export: each rule's
+  `font-weight` (a range draws a variable font at the asked weight),
+  `font-style` (upright faces first; text is never italic), and
+  `unicode-range` pick, per character, the last matching rule at the
+  matched weight, else the next family or a fallback font, not a face of
+  another weight. A stylesheet family hides an installed family of the
+  same name; in export it does so even when all its own fonts are missing,
+  while the preview then draws the installed family. Rules without
+  `font-family` are ignored.
 - `<Font google>` requests a family by name instead of `src`. `weights`
   defaults to `[400]` (100–900 in steps of 100). Omit `subsets` to load
   every script the family has; listing scripts such as `['japanese']`

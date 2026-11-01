@@ -92,8 +92,10 @@ produces a video that differs between preview and export.
    fallbacks. To measure text during render, use `useTextMetrics()`.
 7. **Relative paths resolve from the entry file's folder**, for `src`,
    `<Font>`, voices, PSDs, and `preloadMedia`. JSON project asset paths
-   resolve from the project file's folder. `http(s)://` URLs are downloaded
-   once and cached forever; change the URL to refresh.
+   resolve from the project file's folder. `http(s)://` URLs are normalized
+   as a browser would (spaces percent-encoded, `#fragment` dropped),
+   downloaded once, and cached forever; change the path or query (for
+   example add `?v=2`) to refresh.
 8. **Imports.** Celesta is split into packages, like Remotion; import each
    API from the package that provides it (see [Packages](#packages)).
    `react` and the packages listed under [Packages](#packages) always come

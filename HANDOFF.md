@@ -229,7 +229,7 @@ covered by the dated handoff notes.
   region, with a scene-sized root canvas for blending/effects.
 - Consecutive layers sharing a texture can batch into an instanced draw.
   Textures are cached across frames by their inputs; unused entries are
-  dropped. Text cache keys include the loaded-font count. React host child
+  dropped. Text cache keys include the rasterizer's `fonts_revision()`. React host child
   insertion must move existing children rather than duplicate them.
 - Group clips follow the group's transform and intersect through nested
   clips. GPU clip nesting is limited to eight levels. Distance scaling is

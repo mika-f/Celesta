@@ -666,11 +666,7 @@ fn a_weight_run_asks_for_the_family_face_at_that_weight_everywhere() {
     let mut rasterizer = TextRasterizer::new();
     for weight in [400, 700] {
         rasterizer
-            .load_font_data(
-                "weight-test",
-                named_face("Celesta Weight Test", weight),
-                None,
-            )
+            .load_font_data("weight-test", named_face("Celesta Weight Test", weight))
             .unwrap();
     }
     assert_eq!(
@@ -720,7 +716,7 @@ fn emoji_ask_for_the_color_emoji_font_inside_runs_everywhere() {
         )
         .unwrap();
     rasterizer
-        .load_font_data("emoji-test", named_face("Noto Color Emoji", 400), None)
+        .load_font_data("emoji-test", named_face("Noto Color Emoji", 400))
         .unwrap();
     assert_eq!(
         rasterizer.color_emoji_family().as_deref(),

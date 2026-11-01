@@ -3,8 +3,11 @@ use crate::error::RenderError;
 use crate::font_stack::{FaceRun, falls_back_to_loaded};
 use crate::linebreak::{is_emoji_cluster, is_visible_character};
 use crate::shaping::{source_offsets, usable_font_runs};
+use crate::stylesheet_fonts::{ActiveStylesheets, StylesheetFace};
 use crate::text::{FontFallback, MissingGlyphs};
 use celesta_composition::{FontFamily, FontFeatures, ResolvedAsset, TextStyle};
+use celesta_remote::FontFaceSource;
+use cosmic_text::skrifa::{FontRef, MetadataProvider, string::StringId};
 use cosmic_text::{Family, FontSystem, SwashCache, Weight, fontdb};
 use std::collections::{HashMap, HashSet};
 #[cfg(target_os = "windows")]
@@ -26,7 +29,7 @@ pub struct TextRasterizer {
     pub(crate) swash_cache: SwashCache,
     pub(crate) loaded_fonts: HashSet<PathBuf>,
     /// The families each loaded font file, or stylesheet, added: a file's
-    /// own family names, a stylesheet's private face families.
+    /// own family names, a stylesheet's families that have a face.
     asset_families: HashMap<PathBuf, Vec<Arc<str>>>,
     /// The families of the font list last given to [`Self::load_fonts`], in
     /// its order, which `fontFallback: 'loaded'` text falls back to.
@@ -39,9 +42,34 @@ pub struct TextRasterizer {
     /// `matched_face`'s face by family and matched weight, cleared whenever
     /// a font is loaded. Every locale's system shares the database's ids.
     pub(crate) matched_faces: HashMap<(String, u16), Option<fontdb::ID>>,
-    /// Each stylesheet face has a private family so shaping can select a
-    /// particular Unicode subset instead of only the family's first file.
-    pub(crate) stylesheet_faces: HashMap<String, Vec<Arc<str>>>,
+    /// The faces of each family a loaded stylesheet declares, in rule order
+    /// (stylesheets in the order they loaded). While a stylesheet in the
+    /// font list declares the family, only these draw it, never an
+    /// installed font of that name.
+    pub(crate) stylesheet_faces: HashMap<String, Vec<StylesheetFace>>,
+    /// The stylesheet family of each private family a stylesheet face's
+    /// copy is listed under.
+    pub(crate) stylesheet_privates: HashMap<Arc<str>, String>,
+    /// The families each loaded stylesheet declares, in rule order, faces
+    /// or not.
+    pub(crate) stylesheet_families: HashMap<PathBuf, Vec<String>>,
+    /// The loaded stylesheets in the font list last given to
+    /// [`Self::load_fonts`], whose faces draw, and the families they
+    /// declare, which no installed font draws.
+    pub(crate) active_stylesheets: ActiveStylesheets,
+    pub(crate) active_stylesheet_families: HashSet<String>,
+    /// The first face of each font file a stylesheet's `url()` loaded,
+    /// which the database lists only as stylesheet faces' copies. Kept apart
+    /// from `loaded_fonts`, so the same file listed as a font of its own
+    /// still loads under its own family.
+    stylesheet_files: HashMap<PathBuf, fontdb::FaceInfo>,
+    /// The system's faces, which a stylesheet's `local()` names can match:
+    /// every face in the database when the rasterizer was made, and none
+    /// loaded from a project's fonts. Changing it resets `installed_names`.
+    installed_faces: HashSet<fontdb::ID>,
+    /// `installed_face`'s index of installed faces by lowercased full and
+    /// PostScript name, built at the first lookup.
+    installed_names: Option<Arc<HashMap<String, fontdb::ID>>>,
     /// `face_runs` results for text with a font stack, by text and the
     /// style fields they depend on, cleared whenever a font is loaded.
     pub(crate) stacked_runs: HashMap<String, Arc<[FaceRun]>>,
@@ -63,7 +91,7 @@ pub(crate) type MissingByFace = Vec<(Vec<String>, u16, Vec<char>)>;
 
 /// The family (or font stack) and weight pairs `style` asks for, the text's
 /// own first, then each font run's (its family, or the text's), once each.
-fn requested_faces(style: &TextStyle) -> Vec<(&FontFamily, u16)> {
+pub(crate) fn requested_faces(style: &TextStyle) -> Vec<(&FontFamily, u16)> {
     let weight = style.font_weight.unwrap_or(400);
     let mut faces: Vec<(&FontFamily, u16)> = style
         .font_family
@@ -108,6 +136,8 @@ impl TextRasterizer {
             load_directwrite_system_fonts(&mut font_system);
             font_system
         };
+        // After DirectWrite's fonts, which `initial_db` lacks.
+        let installed_faces = font_system.db().faces().map(|face| face.id).collect();
 
         Self {
             font_system,
@@ -122,6 +152,13 @@ impl TextRasterizer {
             matched_weights: HashMap::new(),
             matched_faces: HashMap::new(),
             stylesheet_faces: HashMap::new(),
+            stylesheet_privates: HashMap::new(),
+            stylesheet_families: HashMap::new(),
+            active_stylesheets: ActiveStylesheets::new(),
+            active_stylesheet_families: HashSet::new(),
+            stylesheet_files: HashMap::new(),
+            installed_faces,
+            installed_names: None,
             stacked_runs: HashMap::new(),
             feature_families: HashMap::new(),
             feature_faces: Vec::new(),
@@ -151,6 +188,13 @@ impl TextRasterizer {
             matched_weights: HashMap::new(),
             matched_faces: HashMap::new(),
             stylesheet_faces: self.stylesheet_faces.clone(),
+            stylesheet_privates: self.stylesheet_privates.clone(),
+            stylesheet_families: self.stylesheet_families.clone(),
+            active_stylesheets: self.active_stylesheets.clone(),
+            active_stylesheet_families: self.active_stylesheet_families.clone(),
+            stylesheet_files: self.stylesheet_files.clone(),
+            installed_faces: self.installed_faces.clone(),
+            installed_names: self.installed_names.clone(),
             stacked_runs: HashMap::new(),
             feature_families: self.feature_families.clone(),
             feature_faces: self.feature_faces.clone(),
@@ -188,15 +232,18 @@ impl TextRasterizer {
             .insert(previous.locale().to_owned(), previous);
     }
 
-    /// How many font files have been loaded so far. It only grows, so a
+    /// How many font files have been loaded so far (a file that a
+    /// stylesheet's `url()` names and that is also a font of its own counts
+    /// twice). It only grows, so a
     /// caller caching rasterized text can compare it across frames to tell
     /// when a newly loaded font may change how existing text lays out.
     pub fn loaded_font_count(&self) -> usize {
-        self.loaded_fonts.len()
+        self.loaded_fonts.len() + self.stylesheet_files.len()
     }
 
-    /// Changes whenever a font loads or the font list's fallback families
-    /// change, so a caller caching rasterized text can compare it across
+    /// Changes whenever a font loads, the font list's fallback families or
+    /// stylesheets change, or shaping adds a stylesheet face's copy at a new
+    /// weight, so a caller caching rasterized text can compare it across
     /// frames to tell when existing text may lay out differently.
     pub fn fonts_revision(&self) -> u64 {
         self.fonts_revision
@@ -208,6 +255,7 @@ impl TextRasterizer {
         asset_root: &Path,
     ) -> Result<(), RenderError> {
         let mut families: Vec<Arc<str>> = Vec::new();
+        let mut paths = Vec::with_capacity(fonts.len());
         for font in fonts {
             // Keyed by the resolved file, not the id: a React `<Font>` keeps
             // its `name` when its `src` changes across a reload.
@@ -222,7 +270,11 @@ impl TextRasterizer {
                     families.push(Arc::clone(family));
                 }
             }
+            paths.push(path);
         }
+        // A font file stays loaded once loaded, but a stylesheet's families
+        // draw, and hide installed ones, only while it is in the list.
+        self.activate_stylesheets(&paths);
         if *self.fallback_families != *families {
             self.fallback_families = families.into();
             self.fonts_revision += 1;
@@ -243,56 +295,91 @@ impl TextRasterizer {
     ) -> Result<Vec<Arc<str>>, RenderError> {
         let data = read_asset(&font.id, path)?;
         if is_sfnt_or_woff(&data) || !celesta_remote::is_font_stylesheet(&data) {
-            return self.load_font_data(&font.id, data, None);
+            return self.load_font_data(&font.id, data);
         }
         // A web font stylesheet (e.g. Google Fonts): load every face its
-        // `@font-face` rules point to, under their CSS family too.
+        // `@font-face` rules point to, as faces of their CSS family only.
         let css = String::from_utf8_lossy(&data);
-        let faces = celesta_remote::stylesheet_font_faces(&css, &font.location);
+        let faces =
+            celesta_remote::stylesheet_font_faces(&css, &font.location).map_err(|source| {
+                RenderError::RemoteAsset {
+                    asset: font.id.clone(),
+                    source,
+                }
+            })?;
         if faces.is_empty() {
             return Err(RenderError::InvalidFont {
                 asset: font.id.clone(),
-                reason: "the stylesheet has no @font-face url()",
+                // No rule has a font-family and a src entry Celesta can use:
+                // each lists only files whose format() or tech() hints it
+                // cannot read (EOT, SVG, COLRv1, ...), local() with no name,
+                // or a `//host` file in a stylesheet read from disk. Whether
+                // a local() font is installed is not checked here.
+                reason: "no @font-face rule in the stylesheet has a font-family and a src entry \
+                         Celesta can use (a local() font name, or a TrueType, OpenType, WOFF, or \
+                         WOFF2 file)",
             });
         }
-        let mut families = Vec::new();
-        for face in faces {
-            let face_asset = ResolvedAsset {
-                id: font.id.clone(),
-                location: face.location,
-            };
-            let face_path = local_asset_path(asset_root, &face_asset)?;
-            if !self.loaded_fonts.contains(&face_path) {
-                let face_data = read_asset(&font.id, &face_path)?;
-                let added = self.load_font_data(&font.id, face_data, face.family)?;
-                self.asset_families.insert(face_path.clone(), added);
-                self.loaded_fonts.insert(face_path.clone());
+        let mut families: Vec<Arc<str>> = Vec::new();
+        // As in a browser, each family hides any installed family of that
+        // name, even when its faces draw nothing.
+        let mut declared: Vec<String> = Vec::new();
+        for (rule, face) in faces.into_iter().enumerate() {
+            if !declared.contains(&face.family) {
+                declared.push(face.family.clone());
             }
-            families.extend(
-                self.asset_families
-                    .get(&face_path)
-                    .into_iter()
-                    .flatten()
-                    .cloned(),
-            );
+            let template = match face.source {
+                FontFaceSource::File(location) => {
+                    let face_asset = ResolvedAsset {
+                        id: font.id.clone(),
+                        location,
+                    };
+                    let face_path = local_asset_path(asset_root, &face_asset)?;
+                    let template = match self.stylesheet_files.get(&face_path) {
+                        Some(template) => template.clone(),
+                        None => {
+                            let face_data = read_asset(&font.id, &face_path)?;
+                            let template = self.load_stylesheet_file(&font.id, face_data)?;
+                            self.stylesheet_files
+                                .insert(face_path.clone(), template.clone());
+                            template
+                        }
+                    };
+                    Some(template)
+                }
+                // A face whose fonts are not installed draws nothing, and
+                // its text falls back.
+                FontFaceSource::Local(names) => names
+                    .iter()
+                    .find_map(|name| self.installed_face(name))
+                    .map(|id| {
+                        self.font_system
+                            .db()
+                            .face(id)
+                            .cloned()
+                            .expect("installed faces stay in the database")
+                    }),
+            };
+            let Some(template) = template else {
+                continue;
+            };
+            self.add_stylesheet_face((path, rule), &face.family, template, face.descriptors);
+            if families.iter().any(|family| **family == face.family) {
+                continue;
+            }
+            families.push(face.family.into());
         }
+        self.stylesheet_families.insert(path.to_owned(), declared);
         Ok(families)
     }
 
-    /// Loads a TrueType/OpenType font, or a WOFF/WOFF2 one after unpacking it.
-    /// `alias` adds a family name the faces also match, besides the ones
-    /// stored in the file.
-    pub(crate) fn load_font_data(
-        &mut self,
-        asset: &str,
-        data: Vec<u8>,
-        alias: Option<String>,
-    ) -> Result<Vec<Arc<str>>, RenderError> {
+    /// Unpacks a WOFF or WOFF2 font; any other data is returned as it is.
+    fn unpack_font(asset: &str, data: Vec<u8>) -> Result<Vec<u8>, RenderError> {
         let invalid = |reason| RenderError::InvalidFont {
             asset: asset.to_owned(),
             reason,
         };
-        let data = match data.get(..4) {
+        Ok(match data.get(..4) {
             Some(b"wOFF") => {
                 wuff::decompress_woff1(&data).map_err(|_| invalid("invalid WOFF data"))?
             }
@@ -300,16 +387,83 @@ impl TextRasterizer {
                 wuff::decompress_woff2(&data).map_err(|_| invalid("invalid WOFF2 data"))?
             }
             _ => data,
-        };
+        })
+    }
+
+    /// Loads a TrueType/OpenType font, or a WOFF/WOFF2 one after unpacking
+    /// it, and returns the families stored in it.
+    pub(crate) fn load_font_data(
+        &mut self,
+        asset: &str,
+        data: Vec<u8>,
+    ) -> Result<Vec<Arc<str>>, RenderError> {
+        let data = Self::unpack_font(asset, data)?;
         let ids = self
             .font_system
             .db_mut()
             .load_font_source(fontdb::Source::Binary(Arc::new(data)));
         if ids.is_empty() {
-            return Err(invalid("no font faces found"));
+            return Err(RenderError::InvalidFont {
+                asset: asset.to_owned(),
+                reason: "no font faces found",
+            });
         }
+        self.fonts_changed();
+        let database = self.font_system.db();
+        let mut families: Vec<Arc<str>> = Vec::new();
+        for id in ids {
+            let Some((family, _)) = database.face(id).and_then(|face| face.families.first()) else {
+                continue;
+            };
+            if !families.iter().any(|name| **name == *family) {
+                families.push(family.as_str().into());
+            }
+        }
+        Ok(families)
+    }
+
+    /// Reads the first face of a font file a stylesheet's `url()` names,
+    /// as a browser draws a collection's first face. The database keeps
+    /// none of it: only the stylesheet faces' copies are drawn, so the
+    /// family stored in the file matches nothing.
+    fn load_stylesheet_file(
+        &mut self,
+        asset: &str,
+        data: Vec<u8>,
+    ) -> Result<fontdb::FaceInfo, RenderError> {
+        let data = Self::unpack_font(asset, data)?;
+        let ids = self
+            .font_system
+            .db_mut()
+            .load_font_source(fontdb::Source::Binary(Arc::new(data)));
+        let template = ids
+            .first()
+            .and_then(|id| self.font_system.db().face(*id).cloned());
+        for id in ids {
+            self.font_system.db_mut().remove_face(id);
+        }
+        template.ok_or_else(|| RenderError::InvalidFont {
+            asset: asset.to_owned(),
+            reason: "no font faces found",
+        })
+    }
+
+    /// Adds the font `data` as if it were installed on the system.
+    #[cfg(test)]
+    pub(crate) fn install_font(&mut self, data: Vec<u8>) {
+        let ids = self
+            .font_system
+            .db_mut()
+            .load_font_source(fontdb::Source::Binary(Arc::new(data)));
+        self.installed_faces.extend(ids);
+        self.installed_names = None;
+        self.fonts_changed();
+    }
+
+    /// Drops everything that depends on the database's faces, when they
+    /// change.
+    pub(crate) fn fonts_changed(&mut self) {
         self.drop_feature_families();
-        let database = self.font_system.db_mut();
         self.fonts_revision += 1;
         self.locale_systems.clear();
         self.matched_weights.clear();
@@ -318,47 +472,54 @@ impl TextRasterizer {
         self.color_emoji_family = None;
         self.missing_characters.clear();
         self.shaped_buffers.clear();
-        let Some(alias) = alias else {
-            let mut families: Vec<Arc<str>> = Vec::new();
-            for id in ids {
-                let Some((family, _)) = database.face(id).and_then(|face| face.families.first())
-                else {
-                    continue;
-                };
-                if !families.iter().any(|name| **name == *family) {
-                    families.push(family.as_str().into());
+    }
+
+    /// The installed face a stylesheet's `local(name)` names: the first,
+    /// in database order, whose PostScript name (name ID 6) or full name
+    /// (name ID 4) is `name`. CSS Fonts 4 §4.3.3.1 matches only these two
+    /// names, taking the full name in US English or else the first
+    /// language; skrifa's `english_or_first` also prefers a record with no
+    /// language to the first one. Case is ignored, as Chromium and Firefox
+    /// ignore it; the spec does not say. Family names are not looked up,
+    /// and fonts loaded from the project never match.
+    fn installed_face(&mut self, name: &str) -> Option<fontdb::ID> {
+        let names = self.installed_names.get_or_insert_with(|| {
+            let database = self.font_system.db();
+            let mut names = HashMap::new();
+            for face in database
+                .faces()
+                .filter(|face| self.installed_faces.contains(&face.id))
+            {
+                let full_name = database.with_face_data(face.id, |data, index| {
+                    FontRef::from_index(data, index).ok().and_then(|font| {
+                        font.localized_strings(StringId::FULL_NAME)
+                            .english_or_first()
+                            .map(|name| name.to_string())
+                    })
+                });
+                for name in [Some(face.post_script_name.clone()), full_name.flatten()]
+                    .into_iter()
+                    .flatten()
+                    .filter(|name| !name.is_empty())
+                {
+                    names.entry(name.to_lowercase()).or_insert(face.id);
                 }
             }
-            return Ok(families);
-        };
-        let mut families = Vec::new();
-        for id in ids {
-            let Some(mut face) = database.face(id).cloned() else {
-                continue;
-            };
-            let private: Arc<str> = format!("celesta-stylesheet-face-{id:?}").into();
-            face.families
-                .push((private.to_string(), fontdb::Language::English_UnitedStates));
-            if !face.families.iter().any(|(family, _)| *family == alias) {
-                face.families
-                    .push((alias.clone(), fontdb::Language::English_UnitedStates));
-            }
-            self.stylesheet_faces
-                .entry(alias.clone())
-                .or_default()
-                .push(Arc::clone(&private));
-            families.push(private);
-            database.remove_face(id);
-            database.push_face_info(face);
-        }
-        Ok(families)
+            Arc::new(names)
+        });
+        names.get(&name.to_lowercase()).copied()
     }
 
     /// The weight of the face that CSS font matching (CSS Fonts §5.2) picks
     /// from `family` for `requested`: `requested` itself when the family has
     /// a face of that weight, otherwise the nearest one it has. `None` when
-    /// no face of `family` is loaded or installed.
+    /// no face of `family` is loaded or installed. For a stylesheet family,
+    /// the weight its descriptors match, which a `font-weight` range can
+    /// make the request itself.
     pub(crate) fn matched_weight(&mut self, family: &str, requested: u16) -> Option<u16> {
+        if self.is_stylesheet_family(family) {
+            return self.stylesheet_weight(family, requested);
+        }
         let database = self.font_system.db();
         *self
             .matched_weights
@@ -516,7 +677,8 @@ impl TextRasterizer {
         // intended, like a family of the stack.
         let fallback = falls_back_to_loaded(style).then(|| Arc::clone(&self.fallback_families));
         let fallback = fallback.as_deref().unwrap_or_default();
-        let database = self.font_system.db();
+        let this = &*self;
+        let database = this.font_system.db();
         let mut groups: MissingByFace = Vec::new();
         for run in buffer.layout_runs() {
             for glyph in run.glyphs {
@@ -536,9 +698,11 @@ impl TextRasterizer {
                 let drawn = glyph.glyph_id != 0;
                 let from_family = drawn
                     && database.face(glyph.font_id).is_some_and(|face| {
-                        face.families.iter().any(|(name, _)| {
-                            family.contains(name) || fallback.iter().any(|loaded| **loaded == *name)
-                        })
+                        family
+                            .iter()
+                            .map(String::as_str)
+                            .chain(fallback.iter().map(|loaded| &**loaded))
+                            .any(|name| this.face_in_family(face, name))
                     });
                 let Some(cluster) = run.text.get(glyph.start..glyph.end) else {
                     continue;
