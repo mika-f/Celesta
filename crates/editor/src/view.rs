@@ -394,7 +394,7 @@ impl EditorView {
     ) -> anyhow::Result<Self> {
         let plugins = FoundPlugins::find(trusted_root(path).as_deref());
         let (document, react_preview) =
-            load_source(path, property_args, &plugins.installed).map_err(anyhow::Error::msg)?;
+            load_source(path, property_args, &plugins).map_err(anyhow::Error::msg)?;
         Self::from_document(
             path.map(Path::to_path_buf),
             document,

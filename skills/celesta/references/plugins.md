@@ -15,16 +15,21 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   plugin folder (`%APPDATA%\Celesta\plugins`,
   `~/Library/Application Support/Celesta/plugins`, or
   `$XDG_DATA_HOME/celesta/plugins` / `~/.local/share/celesta/plugins`), and
-  the folder bundled with Celesta. A folder is a plugin (it has
-  `celesta-plugin.json`) or holds several. On macOS and Linux a user or
-  bundled plugin that other users can write to is skipped.
+  the folder bundled with Celesta; the app also searches a trusted
+  project's own folders after `CELESTA_PLUGIN_PATH`. A folder is a plugin
+  (it has `celesta-plugin.json`) or holds several. On Unix, a plugin from
+  anywhere but `--plugin-dir` and `CELESTA_PLUGIN_PATH` that other users
+  can write to (any file in it) is skipped.
 - The app looks again each time a project opens and on File > Reload
   Plugins; skipped plugins show in its Problems tab.
 - The app asks the user to trust a project folder before it evaluates
   anything in it, and to allow each user-folder or project plugin (again
-  when its files change); a plugin waiting for approval draws nothing and
-  shows in Problems. Only the user can answer: tell them to, rather than
-  working around it. `Celesta-export` and MCP do not ask.
+  when its manifest or a file the manifest names changes). Until allowed, a
+  plugin does not run and an entry importing it does not open; Problems
+  says it is waiting. Only the user can answer: tell them to, rather than
+  working around it. `Celesta-export` and MCP do not ask: they run the
+  plugins they find (not a project's own) whether or not the app allowed
+  them.
 - A project may list its own plugin folders in `celesta.config.json` at its
   root: `{ "plugins": { "paths": ["./plugins"] } }`, relative and inside
   the project. Only the app reads it (after trust); give `Celesta-export`
@@ -43,15 +48,15 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   `@celesta/web`.
 - The usual rules hold: props must depend only on the frame, and async work
   (a speech channel's synthesis) goes in `prepare()`.
-- `.celesta/plugins/<id>/index.d.ts` holds each installed plugin's
-  declarations for type-checking; they are refreshed with the rest of
-  `.celesta/`.
+- `.celesta/plugins/<id>/index.d.ts` holds each plugin's declarations for
+  type-checking, refreshed with the rest of `.celesta/` (in the app, a
+  trusted project's own plugins and plugins waiting for approval too).
 
 ## Errors
 
 | Message | Fix |
 | --- | --- |
-| `no plugin "<id>" is installed (looked in CELESTA_PLUGIN_PATH)` | The entry imports a plugin no folder provides. Put it in the user plugin folder, pass `--plugin-dir`, or set `CELESTA_PLUGIN_PATH` (absolute paths). |
+| `no plugin "<id>" is installed (looked in CELESTA_PLUGIN_PATH)` | In the app, the plugin may be waiting for the user's approval (Problems says so): ask the user to allow it, and do not work around the question. Otherwise the entry imports a plugin no folder provides: put it in the user plugin folder, pass `--plugin-dir`, or set `CELESTA_PLUGIN_PATH` (absolute paths). |
 | `…; <folder> was skipped: <reason>` | That folder's manifest has a bad id or names a file outside the folder (`..`, an absolute path, a link out). The plugin must be fixed; do not work around it. |
 | `plugin "<id>" has no JavaScript module` | The plugin has only a program; its layers come from another package. |
 | `… has no executable for this platform` | The plugin was not built for this OS and CPU. |

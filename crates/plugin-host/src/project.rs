@@ -39,6 +39,8 @@ pub enum ProjectConfigError {
     },
     #[error("{path}: plugins.paths entry {entry:?} is not a relative path inside the project")]
     Outside { path: PathBuf, entry: String },
+    #[error("{path}: plugins.paths entry {entry:?} is not a folder that exists")]
+    Missing { path: PathBuf, entry: String },
 }
 
 /// The project folder `entry` belongs to: the nearest folder from the
@@ -60,7 +62,8 @@ pub fn project_root(entry: &Path) -> PathBuf {
 
 /// The plugin folders `root`'s `celesta.config.json` lists, absolute, in
 /// order; none without the file. Every entry must stay inside the project,
-/// by its text and with links resolved.
+/// by its text and with links resolved, and must exist: the project named
+/// it, so a mistyped folder is reported rather than skipped.
 pub fn project_plugin_paths(root: &Path) -> Result<Vec<PathBuf>, ProjectConfigError> {
     let path = root.join(PROJECT_CONFIG);
     let text = match std::fs::read_to_string(&path) {
@@ -73,7 +76,13 @@ pub fn project_plugin_paths(root: &Path) -> Result<Vec<PathBuf>, ProjectConfigEr
             path: path.clone(),
             source,
         })?;
-    let canonical_root = std::fs::canonicalize(root).ok();
+    // Without the root's own resolved path, links out of it could not be
+    // told apart, so the folders are refused rather than trusted.
+    let canonical_root =
+        std::fs::canonicalize(root).map_err(|source| ProjectConfigError::Read {
+            path: root.to_path_buf(),
+            source,
+        })?;
     config
         .plugins
         .paths
@@ -87,9 +96,12 @@ pub fn project_plugin_paths(root: &Path) -> Result<Vec<PathBuf>, ProjectConfigEr
                 return Err(outside());
             }
             let folder = root.join(&entry);
-            if let (Some(root), Ok(resolved)) = (&canonical_root, std::fs::canonicalize(&folder))
-                && !resolved.starts_with(root)
-            {
+            let resolved =
+                std::fs::canonicalize(&folder).map_err(|_| ProjectConfigError::Missing {
+                    path: path.clone(),
+                    entry: entry.clone(),
+                })?;
+            if !resolved.starts_with(&canonical_root) {
                 return Err(outside());
             }
             Ok(folder)
@@ -130,6 +142,13 @@ mod tests {
             .unwrap();
         };
         write(&["plugins", "vendor/more"]);
+        // Folders the project names must exist.
+        assert!(matches!(
+            project_plugin_paths(project),
+            Err(ProjectConfigError::Missing { .. })
+        ));
+        std::fs::create_dir_all(project.join("plugins")).unwrap();
+        std::fs::create_dir_all(project.join("vendor/more")).unwrap();
         assert_eq!(
             project_plugin_paths(project).unwrap(),
             [project.join("plugins"), project.join("vendor/more")]

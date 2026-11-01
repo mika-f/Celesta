@@ -16,12 +16,13 @@ Celesta looks for plugins in this order, and of several plugins with the same id
 
 1. Each `--plugin-dir` of the exporter.
 2. Each folder of the `CELESTA_PLUGIN_PATH` environment variable (separated by `;` on Windows and `:` elsewhere).
-3. Your user plugin folder.
-4. The plugin folder that comes with Celesta: `plugins` beside the executable on Windows, `Contents/PlugIns` in the macOS app, and `../lib/celesta/plugins` from the executable's folder elsewhere.
+3. In the desktop app, the open project's own plugin folders, once you trust it (see [Plugins that come with a project](#plugins-that-come-with-a-project)).
+4. Your user plugin folder.
+5. The plugin folder that comes with Celesta: `plugins` beside the executable on Windows, `Contents/PlugIns` in the macOS app, and `../lib/celesta/plugins` from the executable's folder elsewhere.
 
-A folder in 1 or 2 may be a plugin itself or hold several. Give `CELESTA_PLUGIN_PATH` absolute paths: a relative entry is skipped, since the folder it names would depend on where Celesta is started.
+A folder in 1, 2, or 3 may be a plugin itself or hold several. Give `CELESTA_PLUGIN_PATH` absolute paths: a relative entry is skipped, since the folder it names would depend on where Celesta is started.
 
-On macOS and Linux, Celesta does not use a folder or plugin in 3 or 4 that other users can change (it is group- or other-writable, or belongs to neither root nor you): whoever can change a plugin's files can run code as the person who uses it. Remove the write permission with `chmod go-w`.
+On macOS, Linux, and other Unix systems, Celesta does not use a folder in 3, 4, or 5, or anything in a plugin from one, that other users can change (it is group- or other-writable, or belongs to neither root nor you): whoever can change a plugin's files can run code as the person who uses it. Remove the write permission with `chmod -R go-w`.
 
 ```sh
 celesta-exporter --react film.tsx out.mp4 --plugin-dir ~/celesta-plugins
@@ -32,11 +33,11 @@ celesta-exporter --react film.tsx out.mp4 --plugin-dir ~/celesta-plugins
 Opening a project runs its code on your computer, and a plugin runs its own. The desktop app therefore asks before either runs:
 
 - **Projects.** The first time you open a project, the app asks whether you trust its folder, and evaluates nothing until you do. A project downloaded from the internet is marked as such in the question (Windows). Projects you create with **File > Create New Project** are trusted already. Trust covers the folder and everything in it, and is remembered.
-- **Plugins.** A plugin in your user plugin folder or brought by a project runs only once you allow it. The app asks when it finds one, and asks again when the plugin's files change, such as after an update. Until you allow a plugin, its layers are not drawn and Problems says it is waiting. Plugins named with `--plugin-dir` or `CELESTA_PLUGIN_PATH`, and the ones that come with Celesta, are not asked about.
+- **Plugins.** A plugin in your user plugin folder or brought by a project runs only once you allow it. The app asks when it finds one, and asks again when its manifest or a file the manifest names (its program, module, or declarations) changes, such as after an update; other files in the plugin's folder are not checked. Until you allow a plugin, it does not run: a project that imports it does not open, and Problems says the plugin is waiting. Allowing it opens the project. Plugins named with `--plugin-dir` or `CELESTA_PLUGIN_PATH`, and the ones that come with Celesta, are not asked about.
 
 Your choices are kept in `settings.json` in Celesta's settings folder: `%APPDATA%\Celesta` on Windows, `~/Library/Application Support/Celesta` on macOS, and `$XDG_CONFIG_HOME/celesta` (`~/.config/celesta` when unset) elsewhere.
 
-`celesta-exporter` and the MCP server run what you point them at and do not ask.
+`celesta-exporter` and the MCP server do not ask: they use every plugin in the folders above except a project's own, whether or not you allowed it in the app.
 
 ### Plugins that come with a project
 
@@ -73,7 +74,7 @@ export default function Root() {
 
 An entry that imports a plugin no folder provides fails to load and names the plugin. A frame stays a function of its time: a plugin's layer depends only on its props and the frame, so preview, export, and scrubbing agree.
 
-Project TypeScript support copies each installed plugin's declarations into `.celesta/plugins/`, so the editor completes its props.
+Project TypeScript support copies each plugin's declarations into `.celesta/plugins/`, so your code editor completes its props. When the desktop app opens a project, that includes the project's own plugins and plugins still waiting for your approval: declarations run nothing.
 
 ## Samples
 

@@ -1,10 +1,12 @@
 //! Which plugins may run without asking the user first. Plugins from the
 //! user's folder and from a project run only once the user allowed them as
 //! they are now: a plugin's fingerprint covers its manifest and every file
-//! the manifest names, so an update or a replaced file is asked about
-//! again. Plugins named explicitly and the ones bundled with Celesta are not
-//! asked about. A file downloaded from the internet is marked so the
-//! question can say so (the Mark of the Web on Windows).
+//! the manifest names (its programs, module, and declarations), so changing
+//! one of those, as an update does, is asked about again. Other files in the
+//! plugin's folder are not part of it. Plugins named explicitly and the
+//! ones bundled with Celesta are not asked about. A file downloaded from
+//! the internet is marked so the question can say so (the Mark of the Web
+//! on Windows).
 
 use crate::locations::PluginSource;
 use crate::manifest::{InstalledPlugins, MANIFEST, PluginEntry};
@@ -14,14 +16,18 @@ use std::io;
 use std::path::Path;
 
 impl PluginSource {
-    /// Whether plugins from here run only once the user allowed them.
+    /// Whether plugins from here run only once the user allowed them. Every
+    /// source is decided here by name, so a new one has to be.
     pub fn needs_allowance(self) -> bool {
-        matches!(self, Self::Project | Self::User)
+        match self {
+            Self::Project | Self::User => true,
+            Self::Explicit | Self::Bundled => false,
+        }
     }
 }
 
 /// `sha256:` and the hash of `entry`'s manifest and of every file it names
-/// that exists, each with its path, in a fixed order.
+/// (a missing one as empty), each with its path, in a fixed order.
 pub fn fingerprint(entry: &PluginEntry) -> io::Result<String> {
     let manifest = &entry.manifest;
     let mut named: Vec<&String> = manifest
@@ -60,12 +66,31 @@ pub fn from_the_internet(path: &Path) -> bool {
     {
         let mut stream = path.as_os_str().to_owned();
         stream.push(":Zone.Identifier");
-        std::fs::read_to_string(stream).is_ok_and(|text| zone_is_internet(&text))
+        std::fs::read(stream).is_ok_and(|bytes| zone_is_internet(&zone_text(&bytes)))
     }
     #[cfg(not(windows))]
     {
         let _ = path;
         false
+    }
+}
+
+/// A `Zone.Identifier` stream's bytes as text. The format names no
+/// encoding: browsers write ASCII, but a tool may write UTF-16 (with its
+/// byte-order mark) or a local code page in a URL line; the `ZoneId` line is
+/// ASCII in all of them, so reading the rest loosely keeps it.
+pub fn zone_text(bytes: &[u8]) -> String {
+    match bytes {
+        [0xFF, 0xFE, rest @ ..] => {
+            let units: Vec<u16> = rest
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|pair| u16::from_le_bytes(*pair))
+                .collect();
+            String::from_utf16_lossy(&units)
+        }
+        _ => String::from_utf8_lossy(bytes).into_owned(),
     }
 }
 
@@ -191,7 +216,83 @@ mod tests {
         assert!(first.starts_with("sha256:"));
         assert_eq!(fingerprint(&entry()).unwrap(), first);
         std::fs::write(root.path().join("p/js/index.js"), "export const x = 1;").unwrap();
-        assert_ne!(fingerprint(&entry()).unwrap(), first);
+        let module_changed = fingerprint(&entry()).unwrap();
+        assert_ne!(module_changed, first);
+
+        // The program, for this platform or another, and the manifest itself.
+        let (os, arch) = crate::platform();
+        let manifest = |executable: serde_json::Value, version: &str| {
+            std::fs::write(
+                root.path().join("p").join(MANIFEST),
+                serde_json::json!({
+                    "id": "p", "version": version, "protocol": 1,
+                    "module": "js/index.js", "executable": executable,
+                })
+                .to_string(),
+            )
+            .unwrap();
+        };
+        std::fs::create_dir_all(root.path().join("p/bin")).unwrap();
+        std::fs::write(root.path().join("p/bin/p"), "one").unwrap();
+        manifest(serde_json::json!({ format!("{os}-{arch}"): "bin/p" }), "1");
+        let with_program = fingerprint(&entry()).unwrap();
+        assert_ne!(with_program, module_changed);
+        std::fs::write(root.path().join("p/bin/p"), "two").unwrap();
+        let program_changed = fingerprint(&entry()).unwrap();
+        assert_ne!(program_changed, with_program);
+        std::fs::write(root.path().join("p/bin/other"), "x").unwrap();
+        manifest(
+            serde_json::json!({ format!("{os}-{arch}"): "bin/p", "plan9-mips": "bin/other" }),
+            "1",
+        );
+        let other_platform = fingerprint(&entry()).unwrap();
+        assert_ne!(other_platform, program_changed);
+        manifest(
+            serde_json::json!({ format!("{os}-{arch}"): "bin/p", "plan9-mips": "bin/other" }),
+            "2",
+        );
+        assert_ne!(fingerprint(&entry()).unwrap(), other_platform);
+    }
+
+    #[test]
+    fn a_plugin_whose_files_cannot_be_read_neither_runs_nor_waits() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join("p");
+        // The module is a folder, which cannot be read as a file anywhere.
+        std::fs::create_dir_all(directory.join("js")).unwrap();
+        std::fs::write(
+            directory.join(MANIFEST),
+            serde_json::json!({ "id": "p", "version": "1", "protocol": 1, "module": "js" })
+                .to_string(),
+        )
+        .unwrap();
+        let allowed = found(root.path(), PluginSource::User).allowed_by(&UserSettings::default());
+        assert!(allowed.plugins.plugins.is_empty());
+        assert!(allowed.pending.is_empty());
+        assert_eq!(allowed.unreadable.len(), 1, "{:?}", allowed.unreadable);
+    }
+
+    #[test]
+    fn a_zone_stream_reads_whatever_its_encoding() {
+        assert!(zone_is_internet(&zone_text(
+            b"[ZoneTransfer]\r\nZoneId=3\r\n"
+        )));
+        // A local code page in a URL line is not UTF-8.
+        assert!(zone_is_internet(&zone_text(
+            b"[ZoneTransfer]\r\nZoneId=3\r\nReferrerUrl=C:\\\x83\x5c\r\n"
+        )));
+        let utf16: Vec<u8> = [0xFF, 0xFE]
+            .into_iter()
+            .chain(
+                "[ZoneTransfer]\r\nZoneId=3\r\n"
+                    .encode_utf16()
+                    .flat_map(u16::to_le_bytes),
+            )
+            .collect();
+        assert!(zone_is_internet(&zone_text(&utf16)));
+        assert!(!zone_is_internet(&zone_text(
+            b"[ZoneTransfer]\r\nZoneId=2\r\n"
+        )));
     }
 
     #[test]

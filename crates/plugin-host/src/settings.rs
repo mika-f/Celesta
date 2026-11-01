@@ -99,6 +99,34 @@ pub enum SettingsError {
     NoFolder,
 }
 
+/// Creates `folder` and its missing parents, on Unix readable and writable
+/// by the user alone (0700) whatever the umask, as Celesta later refuses
+/// folders other users can change. Folders that exist are left as they are.
+pub fn create_private_dir_all(folder: &Path) -> io::Result<()> {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(folder)
+}
+
+/// Writes `contents` to a new or truncated `file`, on Unix readable and
+/// writable by the user alone (0600) whatever the umask.
+fn write_private(file: &Path, contents: &[u8]) -> io::Result<()> {
+    use std::io::Write;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(file)?.write_all(contents)
+}
+
 /// `path` with links resolved, or as given (absolute) when it does not exist.
 fn resolved(path: &Path) -> PathBuf {
     std::fs::canonicalize(path)
@@ -122,14 +150,35 @@ impl UserSettings {
         if let Some(reason) = unsafe_reason(path) {
             return Err(SettingsError::Unsafe(reason));
         }
-        serde_json::from_str(&text).map_err(|source| SettingsError::Parse {
-            path: path.to_path_buf(),
-            source,
-        })
+        let mut settings: Self =
+            serde_json::from_str(&text).map_err(|source| SettingsError::Parse {
+                path: path.to_path_buf(),
+                source,
+            })?;
+        settings.normalize();
+        Ok(settings)
+    }
+
+    /// Puts what was read in the form this build writes, so comparisons
+    /// mean the same folder: folders that are not absolute (an empty one
+    /// would cover every path) are dropped, and the rest have their links
+    /// resolved.
+    fn normalize(&mut self) {
+        self.trusted_projects.retain(|folder| folder.is_absolute());
+        for folder in &mut self.trusted_projects {
+            *folder = resolved(folder);
+        }
+        self.allowed_plugins
+            .retain(|allowed| allowed.directory.is_absolute());
+        for allowed in &mut self.allowed_plugins {
+            allowed.directory = resolved(&allowed.directory);
+        }
     }
 
     /// Writes the settings to `path` whole, through a temporary file
-    /// renamed over it, so a reader never sees half of them.
+    /// renamed over it, so a reader never sees half of them. On Unix the
+    /// file and any folder made for it are the user's alone, whatever the
+    /// umask, since `load` refuses settings others can change.
     pub fn save(&self, path: &Path) -> Result<(), SettingsError> {
         let write = |source| SettingsError::Write {
             path: path.to_path_buf(),
@@ -141,10 +190,10 @@ impl UserSettings {
                 "the settings file has no folder",
             ))
         })?;
-        std::fs::create_dir_all(folder).map_err(write)?;
+        create_private_dir_all(folder).map_err(write)?;
         let text = serde_json::to_string_pretty(self).map_err(|error| write(error.into()))?;
         let temporary = path.with_extension(format!("json.{}.tmp", std::process::id()));
-        std::fs::write(&temporary, text + "\n").map_err(write)?;
+        write_private(&temporary, (text + "\n").as_bytes()).map_err(write)?;
         std::fs::rename(&temporary, path).map_err(|error| {
             let _ = std::fs::remove_file(&temporary);
             write(error)
@@ -354,5 +403,52 @@ mod tests {
             UserSettings::load(&path),
             Err(SettingsError::Unsafe(_))
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn saved_settings_are_the_users_alone() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let folder = root.path().join("celesta");
+        let path = folder.join(SETTINGS_FILE);
+        UserSettings::default().save(&path).unwrap();
+        let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        // Without explicit modes a umask such as 002 leaves them group
+        // writable, and the next load refuses them.
+        assert_eq!(mode(&path), 0o600);
+        assert_eq!(mode(&folder), 0o700);
+        UserSettings::load(&path).unwrap();
+    }
+
+    #[test]
+    fn folders_read_are_absolute_and_resolved() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join(SETTINGS_FILE);
+        let project = root.path().join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        std::fs::write(
+            &path,
+            serde_json::json!({
+                // An empty folder would cover every path; a relative one
+                // would depend on the current directory.
+                "trustedProjects": ["", "relative", project],
+                "allowedPlugins": [
+                    { "id": "p", "directory": "relative", "fingerprint": "sha256:a" },
+                    { "id": "q", "directory": project, "fingerprint": "sha256:b" },
+                ],
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let settings = UserSettings::load(&path).unwrap();
+        assert_eq!(settings.trusted_projects, [resolved(&project)]);
+        assert!(!settings.is_trusted(&root.path().join("elsewhere")));
+        assert!(settings.is_trusted(&project));
+        assert_eq!(settings.allowed_plugins.len(), 1);
+        assert_eq!(
+            settings.allowance("q", &project, "sha256:b"),
+            Allowance::Allowed
+        );
     }
 }

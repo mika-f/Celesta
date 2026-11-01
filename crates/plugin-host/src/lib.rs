@@ -13,7 +13,9 @@ mod manifest;
 mod project;
 mod settings;
 
-pub use approval::{Allowed, PendingPlugin, fingerprint, from_the_internet, zone_is_internet};
+pub use approval::{
+    Allowed, PendingPlugin, fingerprint, from_the_internet, zone_is_internet, zone_text,
+};
 pub use host::PluginHost;
 pub use locations::{
     PluginSource, SearchPath, bundled_plugin_dir, search_paths, unsafe_reason, user_plugin_dir,
@@ -24,6 +26,6 @@ pub use manifest::{
 };
 pub use project::{PROJECT_CONFIG, ProjectConfigError, project_plugin_paths, project_root};
 pub use settings::{
-    Allowance, AllowedPlugin, SETTINGS_FILE, SettingsError, UserSettings, user_settings_dir,
-    user_settings_path,
+    Allowance, AllowedPlugin, SETTINGS_FILE, SettingsError, UserSettings, create_private_dir_all,
+    user_settings_dir, user_settings_path,
 };

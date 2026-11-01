@@ -13,8 +13,8 @@ use crate::problems::{Problem, Source, error_chain};
 use crate::source::PropertyArgs;
 use crate::view::EditorView;
 use celesta_plugin_host::{
-    InstalledPlugins, PendingPlugin, UserSettings, from_the_internet, project_plugin_paths,
-    project_root,
+    InstalledPlugins, PendingPlugin, PluginEntry, SettingsError, UserSettings, from_the_internet,
+    project_plugin_paths, project_root,
 };
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dialog::{DialogAction, DialogClose, DialogDescription, DialogFooter};
@@ -42,6 +42,16 @@ impl FoundPlugins {
     /// own folders; blocking, so off the UI thread.
     pub(crate) fn find(project: Option<&Path>) -> Self {
         let (settings, settings_error) = UserSettings::current();
+        Self::find_with(project, &settings, settings_error)
+    }
+
+    /// [`Self::find`] with these settings, and why the user's could not be
+    /// read.
+    fn find_with(
+        project: Option<&Path>,
+        settings: &UserSettings,
+        settings_error: Option<SettingsError>,
+    ) -> Self {
         let mut skipped: Vec<String> = settings_error
             .iter()
             .map(|error| error_chain(error))
@@ -56,7 +66,7 @@ impl FoundPlugins {
         };
         let (found, errors) = InstalledPlugins::find_with_project(&[], &project_paths);
         skipped.extend(errors.iter().map(ToString::to_string));
-        let allowed = found.allowed_by(&settings);
+        let allowed = found.allowed_by(settings);
         skipped.extend(allowed.unreadable);
         Self {
             installed: allowed.plugins,
@@ -84,6 +94,37 @@ impl FoundPlugins {
         };
         Some(Problem::new(title, detail.join("\n")))
     }
+
+    /// Every plugin found whose declarations the project's TypeScript
+    /// support gets: waiting ones too, since declarations run nothing and an
+    /// entry that imports a plugin is written before it is allowed.
+    pub(crate) fn declared(&self) -> Vec<PluginEntry> {
+        self.installed
+            .plugins
+            .iter()
+            .chain(self.pending.iter().map(|pending| &pending.entry))
+            .cloned()
+            .collect()
+    }
+
+    /// What to add to an open that failed: the plugins waiting for the
+    /// user, since an entry importing one cannot be bundled until it is
+    /// allowed.
+    pub(crate) fn failure_note(&self) -> Option<String> {
+        if self.pending.is_empty() {
+            return None;
+        }
+        let ids: Vec<&str> = self
+            .pending
+            .iter()
+            .map(|pending| pending.entry.manifest.id.as_str())
+            .collect();
+        Some(format!(
+            "These plugins wait for your approval, and an entry that imports one does not open \
+             until you allow it: {}.",
+            ids.join(", ")
+        ))
+    }
 }
 
 /// A project the user has not trusted yet, as opening asks about it.
@@ -97,10 +138,19 @@ pub(crate) struct TrustRequest {
 }
 
 /// The trust question for opening `path`, or `None` when the user trusts
-/// its project folder already. Blocking (it reads the settings).
+/// its project folder already. Blocking (it reads the settings). Settings
+/// that cannot be read trust nothing, so the question is asked; saving the
+/// answer then reports why they could not be read.
 pub(crate) fn trust_request(path: &Path, property_args: &PropertyArgs) -> Option<TrustRequest> {
+    trust_request_with(&UserSettings::current().0, path, property_args)
+}
+
+fn trust_request_with(
+    settings: &UserSettings,
+    path: &Path,
+    property_args: &PropertyArgs,
+) -> Option<TrustRequest> {
     let root = project_root(path);
-    let (settings, _) = UserSettings::current();
     (!settings.is_trusted(&root)).then(|| TrustRequest {
         path: path.to_path_buf(),
         property_args: property_args.clone(),
@@ -111,8 +161,12 @@ pub(crate) fn trust_request(path: &Path, property_args: &PropertyArgs) -> Option
 
 /// The trusted project folder `path` opens in, whose own plugins are used.
 pub(crate) fn trusted_root(path: Option<&Path>) -> Option<PathBuf> {
+    trusted_root_with(&UserSettings::current().0, path)
+}
+
+fn trusted_root_with(settings: &UserSettings, path: Option<&Path>) -> Option<PathBuf> {
     let root = project_root(path?);
-    UserSettings::current().0.is_trusted(&root).then_some(root)
+    settings.is_trusted(&root).then_some(root)
 }
 
 impl EditorView {
@@ -159,8 +213,8 @@ impl EditorView {
                         .gap_3()
                         .child(DialogDescription::new().child(
                             "Opening a project runs its code on your computer, with your \
-                             permissions, and uses the plugins it brings. Trust only projects \
-                             from people you trust.",
+                             permissions. Plugins it brings are asked about before they run. \
+                             Trust only projects from people you trust.",
                         ))
                         .child(div().text_sm().text_color(muted).child(root))
                         .children(warning),
@@ -211,14 +265,27 @@ impl EditorView {
     }
 
     /// Asks once per change whether to allow the plugins that wait for it;
-    /// allowing saves the choice and reloads the plugins.
+    /// allowing saves the choice and reloads the open project.
     pub(crate) fn ask_about_pending_plugins(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let unasked: Vec<PendingPlugin> = self
-            .pending_plugins
+        let pending = self.pending_plugins.clone();
+        self.ask_to_allow(&pending, None, window, cx);
+    }
+
+    /// Asks once per change whether to allow `pending`; allowing saves the
+    /// choice, then opens `reopen` (a project that could not open while they
+    /// waited), else reloads the open project.
+    pub(crate) fn ask_to_allow(
+        &mut self,
+        pending: &[PendingPlugin],
+        reopen: Option<(Option<PathBuf>, PropertyArgs)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let unasked: Vec<PendingPlugin> = pending
             .iter()
             .filter(|pending| {
                 !self
@@ -237,6 +304,7 @@ impl EditorView {
         );
         let view = cx.entity().downgrade();
         let unasked = std::rc::Rc::new(unasked);
+        let reopen = std::rc::Rc::new(std::cell::RefCell::new(reopen));
         window.open_dialog(cx, move |dialog, _, cx| {
             let muted = cx.theme().muted_foreground;
             let danger = cx.theme().danger;
@@ -270,6 +338,7 @@ impl EditorView {
             });
             let view = view.clone();
             let allowed = unasked.clone();
+            let reopen = reopen.clone();
             dialog
                 .title(if unasked.len() == 1 {
                     "Allow this plugin to run?"
@@ -283,7 +352,8 @@ impl EditorView {
                         .child(DialogDescription::new().child(
                             "A plugin runs its own code on your computer, with your \
                              permissions. Allow only plugins from people you trust. Until \
-                             you do, their layers are not drawn.",
+                             you do, it does not run, and a project that imports it does \
+                             not open.",
                         ))
                         .children(rows),
                 )
@@ -314,8 +384,14 @@ impl EditorView {
                             );
                         }
                     });
+                    let reopen = reopen.borrow_mut().take();
                     view.update(cx, |this, cx| match saved {
-                        Ok(_) => this.load_path(this.source_path.clone(), window, cx),
+                        Ok(_) => match reopen {
+                            Some((path, property_args)) => {
+                                this.load_path_with(path, property_args, window, cx)
+                            }
+                            None => this.load_path(this.source_path.clone(), window, cx),
+                        },
                         Err(error) => {
                             this.problems.report(
                                 Source::Plugins,
@@ -359,20 +435,101 @@ mod tests {
         );
     }
 
+    /// A scratch project with `celesta.config.json` listing `plugins/`, which
+    /// holds a plugin `p` with a module; removed when dropped.
+    struct Project(PathBuf);
+
+    impl Project {
+        fn new(name: &str) -> Self {
+            let root =
+                std::env::temp_dir().join(format!("celesta-trust-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            let plugin = root.join("plugins").join("p");
+            std::fs::create_dir_all(plugin.join("js")).unwrap();
+            std::fs::write(
+                root.join(celesta_plugin_host::PROJECT_CONFIG),
+                r#"{ "plugins": { "paths": ["plugins"] } }"#,
+            )
+            .unwrap();
+            std::fs::write(
+                plugin.join(celesta_plugin_host::MANIFEST),
+                r#"{ "id": "p", "version": "1", "protocol": 1, "module": "js/index.js" }"#,
+            )
+            .unwrap();
+            std::fs::write(plugin.join("js/index.js"), "export {};").unwrap();
+            std::fs::write(root.join("film.tsx"), "").unwrap();
+            Self(root)
+        }
+    }
+
+    impl Drop for Project {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn ids(plugins: &InstalledPlugins) -> Vec<&str> {
+        plugins
+            .plugins
+            .iter()
+            .map(|entry| entry.manifest.id.as_str())
+            .collect()
+    }
+
     #[test]
-    fn a_project_is_trusted_once_its_folder_is() {
-        let root = std::env::temp_dir().join(format!("celesta-trust-{}", std::process::id()));
-        std::fs::create_dir_all(&root).unwrap();
-        let entry = root.join("film.tsx");
-        std::fs::write(&entry, "").unwrap();
-        // Whatever the user's own settings say, a fresh temporary folder is
-        // not among their trusted projects.
-        let request = trust_request(&entry, &PropertyArgs::default()).unwrap();
+    fn a_project_is_asked_about_until_its_folder_is_trusted() {
+        let project = Project::new("ask");
+        let entry = project.0.join("film.tsx");
+        let mut settings = UserSettings::default();
+        let request = trust_request_with(&settings, &entry, &PropertyArgs::default()).unwrap();
         assert_eq!(request.path, entry);
-        assert_eq!(request.root, root);
+        assert_eq!(request.root, project.0);
         assert!(!request.from_the_internet);
-        assert_eq!(trusted_root(Some(&entry)), None);
-        assert_eq!(trusted_root(None), None);
-        std::fs::remove_dir_all(&root).unwrap();
+        assert_eq!(trusted_root_with(&settings, Some(&entry)), None);
+        assert_eq!(trusted_root_with(&settings, None), None);
+
+        settings.trust(&project.0);
+        assert!(trust_request_with(&settings, &entry, &PropertyArgs::default()).is_none());
+        assert_eq!(
+            trusted_root_with(&settings, Some(&entry)),
+            Some(project.0.clone())
+        );
+    }
+
+    #[test]
+    fn a_projects_plugins_are_searched_once_trusted_and_run_once_allowed() {
+        let project = Project::new("plugins");
+        let entry = project.0.join("film.tsx");
+        let mut settings = UserSettings::default();
+        let found = |settings: &UserSettings| {
+            let root = trusted_root_with(settings, Some(&entry));
+            FoundPlugins::find_with(root.as_deref(), settings, None)
+        };
+        let is_project = |entry: &PluginEntry| entry.manifest.id == "p";
+
+        // Untrusted: the project's folders are not even searched.
+        let untrusted = found(&settings);
+        assert!(!untrusted.declared().iter().any(is_project));
+
+        // Trusted: found, but waiting, and not on the runtime's path.
+        settings.trust(&project.0);
+        let waiting = found(&settings);
+        assert!(!ids(&waiting.installed).contains(&"p"));
+        let pending = waiting
+            .pending
+            .iter()
+            .find(|pending| is_project(&pending.entry))
+            .unwrap();
+        assert!(waiting.declared().iter().any(is_project));
+        assert!(waiting.failure_note().unwrap().contains('p'));
+        let runtime: Vec<_> = std::env::split_paths(&waiting.installed.runtime_path()).collect();
+        assert!(!runtime.contains(&pending.entry.directory));
+
+        // Allowed: it runs.
+        settings.allow("p", &pending.entry.directory, &pending.fingerprint);
+        let allowed = found(&settings);
+        assert!(ids(&allowed.installed).contains(&"p"));
+        let runtime: Vec<_> = std::env::split_paths(&allowed.installed.runtime_path()).collect();
+        assert!(runtime.contains(&project.0.join("plugins").join("p")));
     }
 }
