@@ -4,7 +4,7 @@
 
 ## プラグインを入れる
 
-プラグインは `celesta-plugin.json` のあるフォルダーです。Celesta は環境変数 `CELESTA_PLUGIN_PATH` の各フォルダー（Windows は `;`、それ以外は `:` 区切り）から、エクスポーターはさらに各 `--plugin-dir` からプラグインを探します。指定するフォルダーはプラグインそのものでも、複数のプラグインを入れたフォルダーでもかまいません。
+プラグインは `celesta-plugin.json` のあるフォルダーです。Celesta は環境変数 `CELESTA_PLUGIN_PATH` の各フォルダー（Windows は `;`、それ以外は `:` 区切り）から、エクスポーターはさらに各 `--plugin-dir` からプラグインを探します。指定するフォルダーはプラグインそのものでも、複数のプラグインを入れたフォルダーでもかまいません。`CELESTA_PLUGIN_PATH` には絶対パスを指定してください。相対パスは、Celesta を起動した場所によって指すフォルダーが変わるため読み飛ばされます。
 
 ```sh
 celesta-exporter --react film.tsx out.mp4 --plugin-dir ~/celesta-plugins
@@ -51,5 +51,7 @@ cargo run -p celesta-exporter -- --react examples/plugins/flag/demo.tsx flag.mp4
 
 - **コンポーネント**（マニフェストの `module` と `types`）：ES モジュールとその型定義です。Celesta はモジュールをエントリーにバンドルし、その中の `react` と `@celesta/*` の import はアプリ自身のものを使います。音声合成チャンネルはこれだけで作れます。`@celesta/voicevox` と同じく `prepare()` の中で動き、`audio` と `lipSync` を付けたセリフを返します。
 - **プログラム**（`executable`、プラットフォームごと）：標準入力でリクエストを読み、標準出力で答えます。レイヤーについては、指定された時刻のテクスチャ付き三角形メッシュと、その色・マスク・合成方法を返し、Celesta が描きます。Rust なら `celesta-plugin` クレートを使えます。プロトコル自体は長さ付きの素朴な JSON です。
+
+プラグインの id には英小文字・数字・`-`・`_`・`.` を使い、先頭は英小文字か数字にします。マニフェストで指定するファイルはすべて、プラグインのフォルダー内を指す相対パスにします。`..` を含むパスや、フォルダーの外へ向かうリンクは使えません。これに反するプラグインは、理由を示したうえで読み飛ばされます。
 
 両方の部分の作り方はサンプルの README で、マニフェストとプロトコルの詳細はリポジトリの `docs/handoff/2026-11-01-plugin-system.md` で説明しています。

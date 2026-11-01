@@ -48,7 +48,7 @@ import type {
 } from '@celesta/react/internal';
 
 import { PLUGIN_SPECIFIER, findPlugins, resolvePluginModule } from './plugins';
-import type { FoundPlugin } from './plugins';
+import type { Plugins } from './plugins';
 import { resolvePropertyInputs } from './property-inputs';
 import type { PropertyInputLayer, PropertyIssue } from './property-inputs';
 
@@ -656,7 +656,7 @@ async function loadEntry(entryPath: string, sourceLocations: boolean): Promise<L
         // and `@celesta/*` imports come back here and share the runtime's.
         // The plugin directories are read once per bundle, so a reload sees
         // plugins installed since.
-        let plugins: Promise<FoundPlugin[]> | undefined;
+        let plugins: Promise<Plugins> | undefined;
         build.onResolve({ filter: PLUGIN_SPECIFIER }, async (args) => {
           plugins ??= findPlugins();
           const resolved = resolvePluginModule(args.path, await plugins);

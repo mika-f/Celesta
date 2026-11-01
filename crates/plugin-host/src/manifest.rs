@@ -84,16 +84,77 @@ pub enum DiscoveryError {
         #[source]
         source: serde_json::Error,
     },
+    #[error("{path} was skipped: {reason}")]
+    Invalid { path: PathBuf, reason: String },
+    #[error("plugin path {path} was skipped: it is not an absolute path")]
+    RelativePath { path: PathBuf },
 }
 
-/// Where to look for plugins: `extra` first, then `CELESTA_PLUGIN_PATH`.
+/// Whether `id` can name a plugin: lowercase ASCII letters, digits, `-`,
+/// `_`, and `.`, starting with a letter or digit. That keeps
+/// `@celesta-plugin/<id>` one specifier segment and `<id>` one path
+/// component wherever Celesta files things under it.
+pub fn is_valid_id(id: &str) -> bool {
+    let allowed = |c: char| c.is_ascii_lowercase() || c.is_ascii_digit();
+    let mut chars = id.chars();
+    chars.next().is_some_and(allowed) && chars.all(|c| allowed(c) || matches!(c, '-' | '_' | '.'))
+}
+
+/// Whether a path a manifest names stays inside the plugin directory on
+/// every platform: relative, with no `..` part, drive, or `:` (which would
+/// also name an NTFS stream). Either separator counts, since one manifest
+/// serves every platform.
+pub fn is_contained_path(path: &str) -> bool {
+    !path.is_empty()
+        && !path.starts_with(['/', '\\'])
+        && !path.contains([':', '\0'])
+        && path.split(['/', '\\']).all(|part| part != "..")
+}
+
+/// Where to look for plugins: `extra` first, made absolute against the
+/// current directory, then `CELESTA_PLUGIN_PATH`. [`discover`] skips a
+/// relative entry of the latter, whose folder would depend on where Celesta
+/// happens to be started, as `.` on `PATH` does.
 pub fn plugin_paths(extra: &[PathBuf]) -> Vec<PathBuf> {
     let from_env = std::env::var_os(PLUGIN_PATH_ENV).unwrap_or_default();
     extra
         .iter()
-        .cloned()
+        .map(|path| std::path::absolute(path).unwrap_or_else(|_| path.clone()))
         .chain(std::env::split_paths(&from_env).filter(|path| !path.as_os_str().is_empty()))
         .collect()
+}
+
+/// Why `manifest` cannot be used from `directory`, if it cannot: a bad id,
+/// or a path that leads outside the directory, by its text or through a
+/// link. Files that do not exist yet are left to fail where they are used.
+fn invalid_reason(manifest: &Manifest, directory: &Path) -> Option<String> {
+    if !is_valid_id(&manifest.id) {
+        return Some(format!(
+            "its id {:?} may use only lowercase letters, digits, '-', '_', and '.', \
+             and must start with a letter or digit",
+            manifest.id
+        ));
+    }
+    let named = manifest
+        .executable
+        .values()
+        .chain(&manifest.module)
+        .chain(&manifest.types);
+    let root = std::fs::canonicalize(directory).ok();
+    for path in named {
+        if !is_contained_path(path) {
+            return Some(format!(
+                "{path:?} is not a relative path inside the plugin directory"
+            ));
+        }
+        let resolved = std::fs::canonicalize(directory.join(path)).ok();
+        if let (Some(root), Some(resolved)) = (&root, resolved)
+            && !resolved.starts_with(root)
+        {
+            return Some(format!("{path:?} leads outside the plugin directory"));
+        }
+    }
+    None
 }
 
 fn read_manifest(directory: &Path) -> Result<Option<PluginEntry>, DiscoveryError> {
@@ -103,17 +164,24 @@ fn read_manifest(directory: &Path) -> Result<Option<PluginEntry>, DiscoveryError
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(source) => return Err(DiscoveryError::Io { path, source }),
     };
-    let manifest =
-        serde_json::from_str(&text).map_err(|source| DiscoveryError::Manifest { path, source })?;
+    let manifest: Manifest =
+        serde_json::from_str(&text).map_err(|source| DiscoveryError::Manifest {
+            path: path.clone(),
+            source,
+        })?;
+    if let Some(reason) = invalid_reason(&manifest, directory) {
+        return Err(DiscoveryError::Invalid { path, reason });
+    }
     Ok(Some(PluginEntry {
         manifest,
         directory: directory.to_path_buf(),
     }))
 }
 
-/// The plugins under `paths`: each is a plugin directory or a directory of
-/// them. The first plugin found with an id wins. Unreadable manifests are
-/// reported, not fatal.
+/// The plugins under `paths`: each is an absolute path to a plugin
+/// directory or a directory of them. The first plugin found with an id
+/// wins. Relative paths, unreadable manifests, and manifests that name a bad
+/// id or a file outside their directory are reported, not fatal.
 pub fn discover(paths: &[PathBuf]) -> (Vec<PluginEntry>, Vec<DiscoveryError>) {
     let mut found: Vec<PluginEntry> = Vec::new();
     let mut errors = Vec::new();
@@ -130,6 +198,13 @@ pub fn discover(paths: &[PathBuf]) -> (Vec<PluginEntry>, Vec<DiscoveryError>) {
         Err(error) => errors.push(error),
     };
     for path in paths {
+        if !path.is_absolute() {
+            add(
+                Err(DiscoveryError::RelativePath { path: path.clone() }),
+                &mut found,
+            );
+            continue;
+        }
         if path.join(MANIFEST).is_file() {
             add(read_manifest(path), &mut found);
             continue;
@@ -227,5 +302,128 @@ mod tests {
         );
         assert_eq!(entry.module(), Some(single.join("js/index.js")));
         assert_eq!(entry.types(), None);
+    }
+
+    #[test]
+    fn ids_are_one_path_component() {
+        for id in ["flag", "beep-voice", "live2d", "a.b_c", "0"] {
+            assert!(is_valid_id(id), "{id}");
+        }
+        for id in ["", "..", ".hidden", "-x", "Flag", "a/b", "a\\b", "c:", "ü"] {
+            assert!(!is_valid_id(id), "{id}");
+        }
+    }
+
+    #[test]
+    fn manifest_paths_stay_relative_and_inside() {
+        for path in ["bin/p.exe", "./js/index.js", "a..b/c", "js\\index.js"] {
+            assert!(is_contained_path(path), "{path}");
+        }
+        for path in [
+            "",
+            "../p",
+            "bin/../../p",
+            "bin\\..\\p",
+            "/usr/bin/p",
+            "\\\\server\\share\\p",
+            "C:\\p.exe",
+            "C:p.exe",
+            "p.exe:stream",
+        ] {
+            assert!(!is_contained_path(path), "{path}");
+        }
+    }
+
+    fn write_manifest(directory: &Path, manifest: serde_json::Value) {
+        std::fs::create_dir_all(directory).unwrap();
+        std::fs::write(directory.join(MANIFEST), manifest.to_string()).unwrap();
+    }
+
+    #[test]
+    fn skips_manifests_that_reach_outside_their_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let collection = root.path().join("collection");
+        let manifest = |id: &str, field: &str, path: &str| {
+            let mut manifest = serde_json::json!({ "id": id, "version": "1", "protocol": 1 });
+            if field == "executable" {
+                manifest["executable"] = serde_json::json!({ platform().0: path });
+            } else {
+                manifest[field] = path.into();
+            }
+            manifest
+        };
+        write_manifest(
+            &collection.join("a"),
+            manifest("../escape", "module", "js/index.js"),
+        );
+        write_manifest(
+            &collection.join("b"),
+            manifest("b", "executable", "../../p"),
+        );
+        write_manifest(
+            &collection.join("c"),
+            manifest("c", "module", "/etc/index.js"),
+        );
+        write_manifest(
+            &collection.join("d"),
+            manifest("d", "types", "C:\\index.d.ts"),
+        );
+        write_manifest(
+            &collection.join("e"),
+            manifest("e", "module", "js/index.js"),
+        );
+
+        let (found, errors) = discover(&[PathBuf::from("relative"), collection]);
+        let ids: Vec<_> = found
+            .iter()
+            .map(|entry| entry.manifest.id.as_str())
+            .collect();
+        assert_eq!(ids, ["e"]);
+        assert!(
+            matches!(errors[0], DiscoveryError::RelativePath { .. }),
+            "{errors:?}"
+        );
+        assert_eq!(errors.len(), 5, "{errors:?}");
+        assert!(
+            errors[1..]
+                .iter()
+                .all(|error| matches!(error, DiscoveryError::Invalid { .. })),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn skips_manifests_whose_files_link_outside() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = root.path().join("outside.js");
+        std::fs::write(&outside, "").unwrap();
+        let plugin = root.path().join("plugin");
+        write_manifest(
+            &plugin,
+            serde_json::json!({ "id": "p", "version": "1", "protocol": 1, "module": "index.js" }),
+        );
+        #[cfg(unix)]
+        let linked = std::os::unix::fs::symlink(&outside, plugin.join("index.js"));
+        #[cfg(windows)]
+        let linked = std::os::windows::fs::symlink_file(&outside, plugin.join("index.js"));
+        if linked.is_err() {
+            // Windows creates symbolic links only in developer mode or as an
+            // administrator.
+            eprintln!("skipped: could not create a symbolic link");
+            return;
+        }
+
+        let (found, errors) = discover(std::slice::from_ref(&plugin));
+        assert!(found.is_empty());
+        assert!(
+            matches!(&errors[..], [DiscoveryError::Invalid { reason, .. }] if reason.contains("leads outside")),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn makes_extra_paths_absolute() {
+        let paths = plugin_paths(&[PathBuf::from("plugins")]);
+        assert_eq!(paths[0], std::env::current_dir().unwrap().join("plugins"));
     }
 }

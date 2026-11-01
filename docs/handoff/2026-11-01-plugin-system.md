@@ -141,9 +141,22 @@ stderr, so native libraries that print cannot corrupt the protocol.
   architecture. The host takes this platform's exact entry, else its OS's
   (`celesta_plugin_host::platform`). One directory can carry every
   platform's build.
+- `id` is lowercase ASCII letters, digits, `-`, `_`, and `.`, starting with
+  a letter or digit (`is_valid_id`), since it becomes one specifier segment
+  and one path component (`.celesta/plugins/<id>/`).
+- Every path the manifest names (`executable`'s values, `module`, `types`)
+  is relative and stays inside the plugin directory: no leading `/` or `\`,
+  no `..` part, no `:` (drives and NTFS streams), with either separator
+  counting (`is_contained_path`), and a file that exists must not lead
+  outside through a link. A manifest that breaks either rule is skipped and
+  reported, the Rust host and the CLI alike, so a later plugin with that id
+  can still be found.
 - Plugin directories are found under each path of `CELESTA_PLUGIN_PATH`
   (the OS path-list separator) and each `--plugin-dir`; a path is a plugin
-  directory itself or a directory of them.
+  directory itself or a directory of them. A relative `CELESTA_PLUGIN_PATH`
+  entry is skipped and reported, since its folder would depend on the
+  current directory (as `.` on `PATH` does); `--plugin-dir` is made
+  absolute against the current directory when it is given.
 - `celesta-plugin-host` starts a plugin's process the first time a layer
   needs it, one per renderer (the exporter's, the editor's preview), and
   restarts it once if it dies. A plugin the scene names but no directory
@@ -240,6 +253,9 @@ What a plugin author would need from registries instead of a checkout:
   masks) and frames, reject short payloads, and serve a whole session.
 - `celesta-plugin-host`'s tests discover plugin directories from both
   layouts and prefer a platform's exact `<os>-<arch>` entry over its OS's.
+  They also skip and report relative paths and manifests with a bad id, a
+  path outside their directory (`..`, absolute, a drive), or a file that
+  links outside it, and make `--plugin-dir` paths absolute.
 - `project_types` copies plugin declarations into `.celesta/` and removes
   stale ones.
 - `celesta-plugin-flag`'s tests (`examples/plugins/flag/tests/process.rs`)
@@ -247,7 +263,9 @@ What a plugin author would need from registries instead of a checkout:
   answers equal the in-process provider's for out-of-order times, its errors
   come back, and the GPU renderer draws its single-sided strips (which caught
   `MeshInfo::double_sided`'s documented winding being backwards).
-- `packages/cli/test/plugins.test.mts`: plugin discovery and resolution, a
+- `packages/cli/test/plugins.test.mts`: plugin discovery and resolution
+  (with the same skipped ids, paths, and links as the host's, named in the
+  missing-plugin error), a
   `<Flag>` layer's content on a sequence's clock, the error for a plugin no
   directory provides, and `beep-voice`'s WAV, cache, and lip sync.
 - Both demos exported with `celesta-exporter --plugin-dir examples/plugins/dist`

@@ -8,6 +8,6 @@ mod manifest;
 
 pub use host::PluginHost;
 pub use manifest::{
-    DiscoveryError, MANIFEST, Manifest, PLUGIN_PATH_ENV, PluginEntry, discover, platform,
-    plugin_paths,
+    DiscoveryError, MANIFEST, Manifest, PLUGIN_PATH_ENV, PluginEntry, discover, is_contained_path,
+    is_valid_id, platform, plugin_paths,
 };

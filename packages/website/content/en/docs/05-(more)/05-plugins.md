@@ -4,7 +4,7 @@ Plugins are new and still change. They work in the desktop app's preview and in 
 
 ## Install a plugin
 
-A plugin is a folder with a `celesta-plugin.json`. Celesta looks for plugins in each folder of the `CELESTA_PLUGIN_PATH` environment variable (separated by `;` on Windows and `:` elsewhere), and the exporter also in each `--plugin-dir`. A folder may be a plugin itself or hold several.
+A plugin is a folder with a `celesta-plugin.json`. Celesta looks for plugins in each folder of the `CELESTA_PLUGIN_PATH` environment variable (separated by `;` on Windows and `:` elsewhere), and the exporter also in each `--plugin-dir`. A folder may be a plugin itself or hold several. Give `CELESTA_PLUGIN_PATH` absolute paths: a relative entry is skipped, since the folder it names would depend on where Celesta is started.
 
 ```sh
 celesta-exporter --react film.tsx out.mp4 --plugin-dir ~/celesta-plugins
@@ -51,5 +51,7 @@ A plugin has up to two parts, in any language:
 
 - **Components** (`module` and `types` in the manifest): an ES module and its declarations. Celesta bundles the module into the entry, and its `react` and `@celesta/*` imports use the app's own. A speech channel needs nothing else: it runs in `prepare()` like `@celesta/voicevox` and returns lines with `audio` and `lipSync`.
 - **A program** (`executable`, one per platform): it reads requests on standard input and answers on standard output. For a layer it returns textured triangle meshes and their colors, masks, and blending for a given time, and Celesta draws them. Rust programs can use the `celesta-plugin` crate; the protocol itself is plain length-prefixed JSON.
+
+A plugin's id uses lowercase letters, digits, `-`, `_`, and `.`, and starts with a letter or digit. Every file its manifest names is a relative path inside the plugin's folder, without `..` and without a link that leads out of it. Celesta skips a plugin that breaks these rules and says why.
 
 The samples' READMEs walk through both parts, and the repository's `docs/handoff/2026-11-01-plugin-system.md` describes the manifest and the protocol in full.

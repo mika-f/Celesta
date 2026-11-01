@@ -13,12 +13,16 @@ use celesta_plugin_host::PluginHost;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-/// A plugin directory whose manifest names this build's executable, and a
-/// 160x100 image: red on the left half, blue on the right.
+/// A plugin directory holding this build's executable, and a 160x100 image:
+/// red on the left half, blue on the right.
 fn plugin_directory() -> (tempfile::TempDir, PathBuf) {
     let directory = tempfile::tempdir().unwrap();
     let plugin = directory.path().join("flag");
     std::fs::create_dir(&plugin).unwrap();
+    // A manifest names files inside its directory only.
+    let executable = Path::new(env!("CARGO_BIN_EXE_celesta-plugin-flag"));
+    let name = executable.file_name().unwrap().to_str().unwrap();
+    std::fs::copy(executable, plugin.join(name)).unwrap();
     let (os, arch) = celesta_plugin_host::platform();
     std::fs::write(
         plugin.join("celesta-plugin.json"),
@@ -26,7 +30,7 @@ fn plugin_directory() -> (tempfile::TempDir, PathBuf) {
             "id": PLUGIN,
             "version": "0.1.0",
             "protocol": 1,
-            "executable": { format!("{os}-{arch}"): env!("CARGO_BIN_EXE_celesta-plugin-flag") },
+            "executable": { format!("{os}-{arch}"): name },
         })
         .to_string(),
     )

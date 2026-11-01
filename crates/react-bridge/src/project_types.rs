@@ -120,9 +120,13 @@ pub fn install_plugin_types(target: &Path, plugins: &[PluginEntry]) -> io::Resul
         fs::remove_dir_all(&directory)?;
     }
     for plugin in plugins {
+        // `discover` already skips bad ids; the id names a directory here.
         let Some(types) = plugin.types() else {
             continue;
         };
+        if !celesta_plugin_host::is_valid_id(&plugin.manifest.id) {
+            continue;
+        }
         let destination = directory.join(&plugin.manifest.id);
         fs::create_dir_all(&destination)?;
         fs::copy(&types, destination.join("index.d.ts"))?;

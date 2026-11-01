@@ -1,19 +1,19 @@
 // `@celesta-plugin/<id>` through the built CLI (bin/ loads dist/cli.js): run
 // `pnpm run build:runtime` (repository root) first. The plugins are the
-// samples in examples/plugins, found through plugin directories on
+// samples in examples/plugins, copied into plugin directories on
 // CELESTA_PLUGIN_PATH whose manifests name the samples' TypeScript sources;
 // the CLI bundles them into the entry as esbuild would any module.
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, test } from 'vitest';
 
 import type { Layer, Scene } from '@celesta/react';
-import { findPlugins, resolvePluginModule } from '../src/plugins.js';
+import { findPlugins, isContainedPath, isValidPluginId, resolvePluginModule } from '../src/plugins.js';
 import { contentOf } from './layer-content.mjs';
 
 const cli = fileURLToPath(new URL('../bin/celesta-react-render.js', import.meta.url));
@@ -24,16 +24,20 @@ afterEach(() => {
   for (const dir of scratch.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-/** A directory of plugin directories, one per sample in `ids`, with manifests naming their sources. */
+/** A directory of plugin directories, one per sample in `ids`, each with a copy of the sample's sources. */
 function pluginPath(ids: string[]): string {
   const dir = mkdtempSync(join(tmpdir(), 'celesta-plugins-'));
   scratch.push(dir);
   for (const id of ids) {
-    mkdirSync(join(dir, id));
-    const module = join(samples, id, 'js', 'index.ts');
-    writeFileSync(join(dir, id, 'celesta-plugin.json'), JSON.stringify({ id, version: '0.0.0', protocol: 1, module }));
+    cpSync(join(samples, id, 'js'), join(dir, id, 'js'), { recursive: true });
+    writeManifest(join(dir, id), { id, module: 'js/index.ts' });
   }
   return dir;
+}
+
+function writeManifest(directory: string, fields: { id: string; module?: string }): void {
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(join(directory, 'celesta-plugin.json'), JSON.stringify({ version: '0.0.0', protocol: 1, ...fields }));
 }
 
 /** The scenes of 30 fps frames `frames` of `source`, with plugins from `plugins`. */
@@ -61,16 +65,64 @@ test('finds plugins in each path, first of an id winning', async () => {
   // A plugin directory itself, then a directory of them.
   const first = join(pluginPath(['flag']), 'flag');
   const second = pluginPath(['flag', 'beep-voice']);
-  const found = await findPlugins([first, join(second, 'missing'), second].join(delimiter));
+  const plugins = await findPlugins([first, join(second, 'missing'), second].join(delimiter));
   assert.deepEqual(
-    found.map((plugin) => [plugin.id, plugin.directory]),
+    plugins.found.map((plugin) => [plugin.id, plugin.directory]),
     [
       ['flag', first],
       ['beep-voice', join(second, 'beep-voice')],
     ],
   );
-  assert.deepEqual(resolvePluginModule('@celesta-plugin/flag', found), { path: join(samples, 'flag', 'js', 'index.ts') });
-  assert.match((resolvePluginModule('@celesta-plugin/missing', found) as { error: string }).error, /no plugin "missing"/);
+  assert.deepEqual(plugins.skipped, []);
+  assert.deepEqual(resolvePluginModule('@celesta-plugin/flag', plugins), { path: join(first, 'js', 'index.ts') });
+  assert.match((resolvePluginModule('@celesta-plugin/missing', plugins) as { error: string }).error, /no plugin "missing"/);
+});
+
+test('plugin ids and manifest paths stay inside their directories', () => {
+  for (const id of ['flag', 'beep-voice', 'a.b_c', '0']) assert.ok(isValidPluginId(id), id);
+  for (const id of ['', '..', '.hidden', '-x', 'Flag', 'a/b', 'a\\b', 'c:', 'ü']) assert.ok(!isValidPluginId(id), id);
+  for (const file of ['bin/p.exe', './js/index.js', 'a..b/c', 'js\\index.js']) assert.ok(isContainedPath(file), file);
+  for (const file of ['', '../p', 'bin/../../p', 'bin\\..\\p', '/usr/p', '\\\\server\\p', 'C:\\p', 'C:p', 'p:stream']) {
+    assert.ok(!isContainedPath(file), file);
+  }
+});
+
+test('skips manifests that reach outside their directory, and relative paths', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'celesta-plugins-'));
+  scratch.push(root);
+  writeFileSync(join(root, 'outside.ts'), '');
+  writeManifest(join(root, 'plugins', 'a'), { id: '../escape', module: 'index.ts' });
+  writeManifest(join(root, 'plugins', 'b'), { id: 'b', module: '../../outside.ts' });
+  writeManifest(join(root, 'plugins', 'c'), { id: 'c', module: join(root, 'outside.ts') });
+  writeManifest(join(root, 'plugins', 'd'), { id: 'd', module: 'index.ts' });
+  let linked = true;
+  try {
+    // Windows creates symbolic links only in developer mode or as an administrator.
+    symlinkSync(join(root, 'outside.ts'), join(root, 'plugins', 'd', 'index.ts'), 'file');
+  } catch {
+    linked = false;
+  }
+  // The skipped "b" does not shadow a later one, as in Celesta's host.
+  writeManifest(join(root, 'later', 'b'), { id: 'b' });
+
+  const plugins = await findPlugins(['relative', join(root, 'plugins'), join(root, 'later')].join(delimiter));
+  assert.deepEqual(
+    plugins.found.map((plugin) => plugin.id),
+    linked ? ['b'] : ['d', 'b'],
+  );
+  assert.deepEqual(
+    plugins.skipped.map((plugin) => [plugin.id, plugin.reason]),
+    [
+      [undefined, 'it is not an absolute path'],
+      [undefined, 'its id "../escape" is not a valid plugin id'],
+      ['b', '"../../outside.ts" is not a relative path inside the plugin directory'],
+      ['c', `${JSON.stringify(join(root, 'outside.ts'))} is not a relative path inside the plugin directory`],
+      ...(linked ? [['d', '"index.ts" leads outside the plugin directory']] : []),
+    ],
+  );
+  const missing = resolvePluginModule('@celesta-plugin/c', plugins) as { error: string };
+  assert.match(missing.error, /no plugin "c" is installed .*was skipped: .* is not a relative path inside/);
+  assert.match((resolvePluginModule('@celesta-plugin/..', plugins) as { error: string }).error, /not name a valid plugin id/);
 });
 
 test('<Flag> puts plugin content in the scene on the sequence clock', () => {
