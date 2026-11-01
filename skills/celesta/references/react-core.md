@@ -1084,16 +1084,19 @@ conditional plays only on frames where it is rendered.
   whose fonts are not installed draws nothing, so prefer files for
   reproducible exports. Preview and export try the same names in the same
   order, but the preview's browser matches them itself (Safari: OS fonts
-  only). Both apply each rule's `font-weight` (a range draws a variable
-  font at the asked weight), `font-style` (upright faces first), and
-  `unicode-range` as CSS does: per character, the last matching rule at
-  the matched weight, else the next family or a fallback font — never a
-  face of another weight. A stylesheet family hides an installed family
-  of the same name, even when its own fonts are missing. Rules without
-  `font-family` are ignored). Refer to a font file by the **family name
-  stored inside the font**, not the file name, and to a stylesheet's
-  faces by its `font-family`, not the names in its files. See
+  only)). Refer to a font file by the **family name stored inside the
+  font**, not the file name, and to a stylesheet's faces by its
+  `font-family`, not the names in its files. See
   [text.md](text.md#fonts-fallback-and-emoji) for weights and fallback.
+- Stylesheet descriptors work as in CSS in preview and export: each rule's
+  `font-weight` (a range draws a variable font at the asked weight),
+  `font-style` (upright faces first; text is never italic), and
+  `unicode-range` pick, per character, the last matching rule at the
+  matched weight, else the next family or a fallback font, not a face of
+  another weight. A stylesheet family hides an installed family of the
+  same name; in export it does so even when all its own fonts are missing,
+  while the preview then draws the installed family. Rules without
+  `font-family` are ignored.
 - `<Font google>` requests a family by name instead of `src`. `weights`
   defaults to `[400]` (100–900 in steps of 100). Omit `subsets` to load
   every script the family has; listing scripts such as `['japanese']`

@@ -32,8 +32,8 @@ pub struct StylesheetFontFace {
 
 /// The `font-weight`, `font-style`, and `unicode-range` descriptors of an
 /// `@font-face` rule, each its last valid declaration or, with none, its
-/// `normal` (every code point) value, which is also what the web renderer
-/// passes to `FontFace` for a missing one.
+/// initial value (weight 400, style normal, every code point), which is
+/// also what the web renderer passes to `FontFace` for a missing one.
 #[derive(Clone, Debug, PartialEq)]
 pub struct FontFaceDescriptors {
     /// The inclusive weights the face is matched and drawn at, rounded; one
@@ -143,8 +143,9 @@ fn font_face_rules(css: &str) -> Vec<Rule> {
         let mut family = None;
         let mut source = None;
         let mut descriptors = FontFaceDescriptors::default();
-        // An invalid declaration is dropped, so an earlier one stays in
-        // effect; otherwise the later one wins.
+        // An invalid `src` or descriptor is dropped, so an earlier one stays
+        // in effect; otherwise the later one wins. An empty `font-family`
+        // drops the rule, as the web renderer does.
         for (name, value) in declarations(&css[open..close]) {
             let name = name.to_ascii_lowercase();
             match name.as_str() {

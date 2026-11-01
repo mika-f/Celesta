@@ -359,7 +359,8 @@ only at whitespace.
 
 Load font files with `<Font src>` inside `<Assets>` (see
 [react-core.md](react-core.md#font-and-assets)) and refer to them by the
-**family name stored inside the font**, not the file name. For reproducible
+**family name stored inside the font**, not the file name (a web-font
+stylesheet's faces go by each rule's `font-family` instead). For reproducible
 output, ship the font file next to the entry rather than relying on
 installed fonts.
 
