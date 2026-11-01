@@ -330,7 +330,7 @@ export default function Entry() { return <Composition width={16} height={16} fps
         break;
       }
       assert.ok(ready, 'a ready message');
-      assert.equal(errorOf(ready), undefined, errorOf(ready));
+      assert.equal(errorOf(ready), undefined, 'a ready message without an error');
       assert.ok('config' in ready, 'a ready message');
       assert.equal(ready.config.durationInFrames, 1);
       const paths = ready.dependencies.map((dependency) => dependency.path);

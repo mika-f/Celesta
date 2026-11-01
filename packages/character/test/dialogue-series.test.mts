@@ -181,7 +181,7 @@ async function renderEntry(t: TestContext, source: string, frames: number[]) {
         config = message.config;
         send(time(frames[0]));
       } else {
-        assert.equal(errorOf(message), undefined, errorOf(message));
+        assert.equal(errorOf(message), undefined, `frame ${frames[results.length]} without an error`);
         assert.ok('scene' in message);
         results.push(message);
         if (results.length < frames.length) send(time(frames[results.length]));

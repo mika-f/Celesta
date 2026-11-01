@@ -25,7 +25,7 @@ type ShaderFilter = Extract<LayerFilter, { type: 'shader' }>;
 
 /** The scene of a frame that rendered. */
 function sceneOf(frame: RenderResult): Scene {
-  assert.equal(frame.error, undefined, frame.error);
+  assert.equal(frame.error, undefined, 'a frame without an error');
   assert.ok(frame.scene);
   return frame.scene;
 }

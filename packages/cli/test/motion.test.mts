@@ -46,8 +46,8 @@ function render(source: string, frames = [0], durationInFrames = 60): Layer[][] 
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const [, ...responses]: (FrameMessage & { error?: string })[] = result.stdout.split(/\r?\n/).filter(Boolean)
       .map((line) => JSON.parse(line));
-    for (const response of responses) {
-      assert.equal(response.error, undefined, response.error);
+    for (const [i, response] of responses.entries()) {
+      assert.equal(response.error, undefined, `frame ${frames[i]} without an error`);
     }
     return responses.map((response) => response.scene.layers);
   } finally {

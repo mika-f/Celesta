@@ -412,7 +412,7 @@ for (const packaged of [false, true]) test(`${packaged ? 'packaged' : 'source'} 
     for await (const line of createInterface({ input: child.stdout })) {
       const message: BridgeMessage = JSON.parse(line);
       const send = (value: unknown) => child.stdin.write(JSON.stringify(value) + '\n');
-      assert.equal(message.error, undefined, message.error);
+      assert.equal(message.error, undefined, 'a message without an error');
       if (message.measureText) {
         measured++;
         send({ metrics: metrics(message.measureText) });

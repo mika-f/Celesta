@@ -102,7 +102,7 @@ test('ranking variants validate', async () => {
   assert.ok(propsFiles.length >= 2, `variants: ${propsFiles.map(({ name }) => name)}`);
   for (const { name, file, values } of propsFiles) {
     const result = await evaluate(join(dir, 'film.tsx'), [{ source: 'propsFile', file, baseDir: variants, values }]);
-    assert.equal(result.invalidProperties, undefined, `${name}: ${JSON.stringify(result.invalidProperties)}`);
+    assert.equal(result.invalidProperties, undefined, `${name}: no invalid properties`);
     assert.ok(result.config, `${name}: ${JSON.stringify(result)}`);
   }
 });
