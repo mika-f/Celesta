@@ -7,7 +7,7 @@
 //! Copying them from the running Celesta keeps them in step with the runtime
 //! without a package registry or an install step.
 
-use celesta_plugin_host::{PluginEntry, discover, plugin_paths};
+use celesta_plugin_host::{InstalledPlugins, PluginEntry};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -107,8 +107,10 @@ pub fn refresh_project_types(template: &Path, entry: &Path) -> io::Result<Option
     Ok(Some(root.to_owned()))
 }
 
+/// The plugins every location Celesta searches provides, as the editor's
+/// preview and the exporter find them.
 fn installed_plugins() -> Vec<PluginEntry> {
-    discover(&plugin_paths(&[])).0
+    InstalledPlugins::find(&[]).0.plugins
 }
 
 /// Copies each plugin's declarations to `target/plugins/<id>/index.d.ts`,
@@ -238,6 +240,7 @@ pub(crate) mod tests {
                 types: Some("js/index.d.ts".into()),
             },
             directory: plugin,
+            source: celesta_plugin_host::PluginSource::Explicit,
         };
         let target = scratch.0.join("project/.celesta");
         write(&target.join("plugins/old/index.d.ts"), "");

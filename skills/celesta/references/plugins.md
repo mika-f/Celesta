@@ -9,12 +9,17 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
 - Import its components as `@celesta-plugin/<id>`. Never `npm install` it:
   the runtime finds the plugin's folder and bundles its module into the
   entry.
-- Celesta finds plugins in each folder of `CELESTA_PLUGIN_PATH` (`;` on
-  Windows, `:` elsewhere) and, for `Celesta-export`, each `--plugin-dir`.
-  A folder is a plugin (it has `celesta-plugin.json`) or holds several.
-  `CELESTA_PLUGIN_PATH` entries must be absolute; relative ones are skipped.
-  The app's preview reads `CELESTA_PLUGIN_PATH` from the environment it was
-  started in.
+- Celesta finds plugins, first of an id winning, in: each `--plugin-dir`
+  (`Celesta-export`), each folder of `CELESTA_PLUGIN_PATH` (`;` on Windows,
+  `:` elsewhere; absolute paths only, relative ones are skipped), the user's
+  plugin folder (`%APPDATA%\Celesta\plugins`,
+  `~/Library/Application Support/Celesta/plugins`, or
+  `$XDG_DATA_HOME/celesta/plugins` / `~/.local/share/celesta/plugins`), and
+  the folder bundled with Celesta. A folder is a plugin (it has
+  `celesta-plugin.json`) or holds several. On macOS and Linux a user or
+  bundled plugin that other users can write to is skipped.
+- The app looks again each time a project opens and on File > Reload
+  Plugins; skipped plugins show in its Problems tab.
 - Check and export with the folder named:
 
   ```sh
@@ -37,7 +42,7 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
 
 | Message | Fix |
 | --- | --- |
-| `no plugin "<id>" is installed (looked in CELESTA_PLUGIN_PATH)` | The entry imports a plugin no folder provides. Pass `--plugin-dir` or set `CELESTA_PLUGIN_PATH` (absolute paths). |
+| `no plugin "<id>" is installed (looked in CELESTA_PLUGIN_PATH)` | The entry imports a plugin no folder provides. Put it in the user plugin folder, pass `--plugin-dir`, or set `CELESTA_PLUGIN_PATH` (absolute paths). |
 | `…; <folder> was skipped: <reason>` | That folder's manifest has a bad id or names a file outside the folder (`..`, an absolute path, a link out). The plugin must be fixed; do not work around it. |
 | `plugin "<id>" has no JavaScript module` | The plugin has only a program; its layers come from another package. |
 | `… has no executable for this platform` | The plugin was not built for this OS and CPU. |

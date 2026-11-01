@@ -4,6 +4,7 @@ use celesta_exporter::{
     AudioLoudness, ExportCancellation, ExportError, ExportOptions, ExportProgress, ExportRange,
     ExportedFile, Exporter, GpuDriver, LoudnessTarget, ReactRuntimeOptions, VideoFormat,
 };
+use celesta_plugin_host::InstalledPlugins;
 use celesta_project::Project;
 use celesta_react_bridge::PropertyInputs;
 use std::path::PathBuf;
@@ -18,6 +19,8 @@ pub(crate) struct ExportRequest {
     pub(crate) loudness: Option<LoudnessTarget>,
     pub(crate) cancellation: ExportCancellation,
     pub(crate) driver: GpuDriver,
+    /// The plugins the preview draws with, so the export draws the same.
+    pub(crate) plugins: InstalledPlugins,
 }
 
 /// What the export worker renders: a normal `project.json`, or a standalone
@@ -113,6 +116,7 @@ pub(crate) fn export_options(request: &ExportRequest) -> ExportOptions {
         video_format: request.format,
         driver: request.driver,
         loudness: request.loudness,
+        plugins: Some(request.plugins.clone()),
         ..ExportOptions::default()
     }
 }

@@ -1,5 +1,6 @@
 //! Plugin directories: a `celesta-plugin.json` and what it names.
 
+use crate::locations::{PluginSource, SearchPath, search_paths, unsafe_reason};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -41,6 +42,8 @@ pub const fn platform() -> (&'static str, &'static str) {
 pub struct PluginEntry {
     pub manifest: Manifest,
     pub directory: PathBuf,
+    /// Which search path it was found under.
+    pub source: PluginSource,
 }
 
 impl PluginEntry {
@@ -157,7 +160,30 @@ fn invalid_reason(manifest: &Manifest, directory: &Path) -> Option<String> {
     None
 }
 
-fn read_manifest(directory: &Path) -> Result<Option<PluginEntry>, DiscoveryError> {
+/// Why a plugin from `source` cannot be used, if other users could change
+/// it: `directory`, its manifest, or a file the manifest names (see
+/// [`unsafe_reason`]). Only checked sources are judged.
+fn unsafe_plugin(manifest: &Manifest, directory: &Path, source: PluginSource) -> Option<String> {
+    if !source.is_checked() {
+        return None;
+    }
+    let named = manifest
+        .executable
+        .values()
+        .chain(&manifest.module)
+        .chain(&manifest.types)
+        .map(|path| directory.join(path))
+        .filter(|path| path.exists());
+    [directory.to_path_buf(), directory.join(MANIFEST)]
+        .into_iter()
+        .chain(named)
+        .find_map(|path| unsafe_reason(&path))
+}
+
+fn read_manifest(
+    directory: &Path,
+    source: PluginSource,
+) -> Result<Option<PluginEntry>, DiscoveryError> {
     let path = directory.join(MANIFEST);
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
@@ -169,20 +195,46 @@ fn read_manifest(directory: &Path) -> Result<Option<PluginEntry>, DiscoveryError
             path: path.clone(),
             source,
         })?;
-    if let Some(reason) = invalid_reason(&manifest, directory) {
+    if let Some(reason) =
+        invalid_reason(&manifest, directory).or_else(|| unsafe_plugin(&manifest, directory, source))
+    {
         return Err(DiscoveryError::Invalid { path, reason });
+    }
+    // The React runtime gets each plugin directory in a path list, which a
+    // directory with the list's separator in its name would split.
+    if std::env::join_paths([directory]).is_err() {
+        return Err(DiscoveryError::Invalid {
+            path,
+            reason: "its folder's path contains the path-list separator".into(),
+        });
     }
     Ok(Some(PluginEntry {
         manifest,
         directory: directory.to_path_buf(),
+        source,
     }))
 }
 
-/// The plugins under `paths`: each is an absolute path to a plugin
-/// directory or a directory of them. The first plugin found with an id
-/// wins. Relative paths, unreadable manifests, and manifests that name a bad
-/// id or a file outside their directory are reported, not fatal.
+/// The plugins under `paths`, each an absolute path to a plugin directory
+/// or a directory of them, all named explicitly (see [`discover_in`]).
 pub fn discover(paths: &[PathBuf]) -> (Vec<PluginEntry>, Vec<DiscoveryError>) {
+    let paths: Vec<_> = paths
+        .iter()
+        .map(|path| SearchPath {
+            path: path.clone(),
+            source: PluginSource::Explicit,
+        })
+        .collect();
+    discover_in(&paths)
+}
+
+/// The plugins under `paths`, in order: each is an absolute path to a
+/// plugin directory or a directory of them. The first plugin found with an
+/// id wins. Relative paths, unreadable manifests, manifests that name a bad
+/// id or a file outside their directory, and, from a checked source, a
+/// folder or plugin other users could change are reported, not fatal; a
+/// missing folder is skipped quietly.
+pub fn discover_in(paths: &[SearchPath]) -> (Vec<PluginEntry>, Vec<DiscoveryError>) {
     let mut found: Vec<PluginEntry> = Vec::new();
     let mut errors = Vec::new();
     let mut add = |entry: Result<Option<PluginEntry>, DiscoveryError>,
@@ -197,7 +249,7 @@ pub fn discover(paths: &[PathBuf]) -> (Vec<PluginEntry>, Vec<DiscoveryError>) {
         Ok(_) => {}
         Err(error) => errors.push(error),
     };
-    for path in paths {
+    for SearchPath { path, source } in paths {
         if !path.is_absolute() {
             add(
                 Err(DiscoveryError::RelativePath { path: path.clone() }),
@@ -205,8 +257,23 @@ pub fn discover(paths: &[PathBuf]) -> (Vec<PluginEntry>, Vec<DiscoveryError>) {
             );
             continue;
         }
+        if !path.exists() {
+            continue;
+        }
+        if source.is_checked()
+            && let Some(reason) = unsafe_reason(path)
+        {
+            add(
+                Err(DiscoveryError::Invalid {
+                    path: path.clone(),
+                    reason,
+                }),
+                &mut found,
+            );
+            continue;
+        }
         if path.join(MANIFEST).is_file() {
-            add(read_manifest(path), &mut found);
+            add(read_manifest(path, *source), &mut found);
             continue;
         }
         let Ok(children) = std::fs::read_dir(path) else {
@@ -218,10 +285,54 @@ pub fn discover(paths: &[PathBuf]) -> (Vec<PluginEntry>, Vec<DiscoveryError>) {
             .collect();
         children.sort();
         for child in children {
-            add(read_manifest(&child), &mut found);
+            add(read_manifest(&child, *source), &mut found);
         }
     }
     (found, errors)
+}
+
+/// The plugins found in every location Celesta searches ([`search_paths`]
+/// with `explicit` first), as one set every part of Celesta shares: the
+/// renderer's [`crate::PluginHost`] and the React runtime's
+/// `CELESTA_PLUGIN_PATH` ([`InstalledPlugins::runtime_path`]) are made from
+/// the same discovery, so they agree on what is installed.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct InstalledPlugins {
+    pub plugins: Vec<PluginEntry>,
+}
+
+impl InstalledPlugins {
+    /// Discovers them, with the plugins that were skipped and why.
+    pub fn find(explicit: &[PathBuf]) -> (Self, Vec<DiscoveryError>) {
+        let (plugins, errors) = discover_in(&search_paths(explicit));
+        (Self { plugins }, errors)
+    }
+
+    /// Discovers them, reporting skipped plugins on stderr, for tools
+    /// without a better place to show them.
+    pub fn find_reporting(explicit: &[PathBuf]) -> Self {
+        let (plugins, errors) = Self::find(explicit);
+        for error in errors {
+            eprintln!("celesta: skipped a plugin: {error}");
+        }
+        plugins
+    }
+
+    /// The value of `CELESTA_PLUGIN_PATH` for the React runtime: each plugin
+    /// directory in search order, so the runtime resolves
+    /// `@celesta-plugin/<id>` to the same plugins, without searching any
+    /// folder itself. Give it to the runtime's process explicitly (as
+    /// `Command::env` does) rather than through Celesta's own environment.
+    pub fn runtime_path(&self) -> std::ffi::OsString {
+        // Directories with the separator in them were skipped (see
+        // `read_manifest`).
+        std::env::join_paths(self.plugins.iter().map(|entry| &entry.directory)).unwrap_or_default()
+    }
+
+    /// A host that runs these plugins for a renderer.
+    pub fn host(&self) -> crate::PluginHost {
+        crate::PluginHost::new(self.plugins.iter().cloned())
+    }
 }
 
 #[cfg(test)]
@@ -260,6 +371,7 @@ mod tests {
                 types: None,
             },
             directory: PathBuf::from("plugin"),
+            source: PluginSource::Explicit,
         };
         let any = entry(&[(os.to_owned(), "any")]);
         assert_eq!(any.executable(), Some(PathBuf::from("plugin/any")));
@@ -419,6 +531,67 @@ mod tests {
             matches!(&errors[..], [DiscoveryError::Invalid { reason, .. }] if reason.contains("leads outside")),
             "{errors:?}"
         );
+    }
+
+    #[test]
+    fn the_runtime_gets_each_plugin_directory_in_order() {
+        let root = tempfile::tempdir().unwrap();
+        write_plugin(&root.path().join("b"), "two", "1");
+        write_plugin(&root.path().join("a"), "one", "1");
+        let (found, errors) = discover_in(&[SearchPath {
+            path: root.path().to_path_buf(),
+            source: PluginSource::User,
+        }]);
+        assert!(errors.is_empty(), "{errors:?}");
+        assert!(found.iter().all(|entry| entry.source == PluginSource::User));
+        let installed = InstalledPlugins { plugins: found };
+        let path: Vec<_> = std::env::split_paths(&installed.runtime_path()).collect();
+        assert_eq!(path, [root.path().join("a"), root.path().join("b")]);
+        assert_eq!(InstalledPlugins::default().runtime_path(), "");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn checked_sources_skip_what_other_users_can_change() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+        let open = root.path().join("open");
+        write_plugin(&open, "open", "1");
+        std::fs::set_permissions(&open, std::fs::Permissions::from_mode(0o777)).unwrap();
+        let shut = root.path().join("shut");
+        write_plugin(&shut, "shut", "1");
+        std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::set_permissions(shut.join(MANIFEST), std::fs::Permissions::from_mode(0o644))
+            .unwrap();
+        let path = |source| SearchPath {
+            path: root.path().to_path_buf(),
+            source,
+        };
+        let ids = |found: &[PluginEntry]| -> Vec<String> {
+            found
+                .iter()
+                .map(|entry| entry.manifest.id.clone())
+                .collect()
+        };
+
+        let (found, errors) = discover_in(&[path(PluginSource::User)]);
+        assert_eq!(ids(&found), ["shut"]);
+        assert!(
+            matches!(&errors[..], [DiscoveryError::Invalid { reason, .. }] if reason.contains("other users")),
+            "{errors:?}"
+        );
+        // Folders named explicitly are the caller's choice.
+        let (found, errors) = discover_in(&[path(PluginSource::Explicit)]);
+        assert_eq!(ids(&found), ["open", "shut"]);
+        assert!(errors.is_empty(), "{errors:?}");
+
+        // A whole checked folder others can change is skipped at once.
+        std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o777)).unwrap();
+        let (found, errors) = discover_in(&[path(PluginSource::Bundled)]);
+        assert!(found.is_empty());
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        std::fs::set_permissions(root.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
     }
 
     #[test]

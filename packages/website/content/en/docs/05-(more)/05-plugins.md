@@ -4,13 +4,30 @@ Plugins are new and still change. They work in the desktop app's preview and in 
 
 ## Install a plugin
 
-A plugin is a folder with a `celesta-plugin.json`. Celesta looks for plugins in each folder of the `CELESTA_PLUGIN_PATH` environment variable (separated by `;` on Windows and `:` elsewhere), and the exporter also in each `--plugin-dir`. A folder may be a plugin itself or hold several. Give `CELESTA_PLUGIN_PATH` absolute paths: a relative entry is skipped, since the folder it names would depend on where Celesta is started.
+A plugin is a folder with a `celesta-plugin.json`. The simplest place for one is your user plugin folder:
+
+| OS | User plugin folder |
+| --- | --- |
+| Windows | `%APPDATA%\Celesta\plugins` |
+| macOS | `~/Library/Application Support/Celesta/plugins` |
+| Linux and others | `$XDG_DATA_HOME/celesta/plugins` (`~/.local/share/celesta/plugins` when unset) |
+
+Celesta looks for plugins in this order, and of several plugins with the same id uses the first it finds:
+
+1. Each `--plugin-dir` of the exporter.
+2. Each folder of the `CELESTA_PLUGIN_PATH` environment variable (separated by `;` on Windows and `:` elsewhere).
+3. Your user plugin folder.
+4. The plugin folder that comes with Celesta: `plugins` beside the executable on Windows, `Contents/PlugIns` in the macOS app, and `../lib/celesta/plugins` from the executable's folder elsewhere.
+
+A folder in 1 or 2 may be a plugin itself or hold several. Give `CELESTA_PLUGIN_PATH` absolute paths: a relative entry is skipped, since the folder it names would depend on where Celesta is started.
+
+On macOS and Linux, Celesta does not use a folder or plugin in 3 or 4 that other users can change (it is group- or other-writable, or belongs to neither root nor you): whoever can change a plugin's files can run code as the person who uses it. Remove the write permission with `chmod go-w`.
 
 ```sh
 celesta-exporter --react film.tsx out.mp4 --plugin-dir ~/celesta-plugins
 ```
 
-Set `CELESTA_PLUGIN_PATH` before you start the desktop app for its preview to find them. A plugin that draws layers runs as a program of its own, which Celesta starts when a frame needs it; that program comes with the plugin, one for each platform it supports.
+The desktop app looks for plugins each time it opens a project; to pick up a plugin installed while it is open, choose **File > Reload Plugins**. Plugins it skipped, and why, are listed in the Problems tab. A plugin that draws layers runs as a program of its own, which Celesta starts when a frame needs it; that program comes with the plugin, one for each platform it supports.
 
 ## Use its components
 

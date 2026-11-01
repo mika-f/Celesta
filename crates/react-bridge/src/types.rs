@@ -3,6 +3,7 @@ use celesta_composition::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::path::PathBuf;
 
 /// A companion project's layers for one exact frame, evaluated up front by
@@ -26,6 +27,12 @@ pub struct SpawnOptions {
     /// [`ReactBridge::layer_source`](crate::ReactBridge::layer_source) can
     /// answer. Costs render time, so only the editor preview asks for it.
     pub source_locations: bool,
+    /// The plugin directories `@celesta-plugin/<id>` resolves among, as
+    /// [`InstalledPlugins::runtime_path`](celesta_plugin_host::InstalledPlugins::runtime_path)
+    /// gives them; pass the same set the renderer's plugin host runs. `None`
+    /// discovers every location Celesta searches. The runtime never reads
+    /// `CELESTA_PLUGIN_PATH` from Celesta's own environment as it is.
+    pub plugin_path: Option<OsString>,
 }
 
 /// One element of the chain of JSX that produced a layer (see

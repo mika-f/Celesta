@@ -11,6 +11,7 @@ use crate::subtitles;
 use celesta_composition::Time;
 use celesta_evaluator::Evaluator;
 use celesta_media::{AudioMixError, FfmpegBackend, mix_audio_graph_unclipped_cancellable};
+use celesta_plugin_host::InstalledPlugins;
 use celesta_project::Project;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -21,8 +22,21 @@ pub struct Exporter {
 }
 
 impl Exporter {
-    pub const fn new(options: ExportOptions) -> Self {
+    /// An exporter with `options`. Without `options.plugins`, the plugins
+    /// are discovered here, once, in every location Celesta searches.
+    pub fn new(mut options: ExportOptions) -> Self {
+        options
+            .plugins
+            .get_or_insert_with(|| InstalledPlugins::find_reporting(&[]));
         Self { options }
+    }
+
+    /// The plugins this export's renderer and React runtime share.
+    pub(crate) fn plugins(&self) -> &InstalledPlugins {
+        self.options
+            .plugins
+            .as_ref()
+            .expect("Exporter::new discovers the plugins")
     }
 
     pub fn export_file(

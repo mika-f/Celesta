@@ -17,6 +17,7 @@ use std::path::Path;
 
 use celesta_composition::Time;
 use celesta_exporter::ReactRuntimeOptions;
+use celesta_plugin_host::InstalledPlugins;
 use celesta_react_bridge::{ReactBridge, ReactBridgeError, SpawnOptions};
 use serde_json::{Value, json};
 
@@ -27,8 +28,13 @@ struct InspectRequest {
     open_end: bool,
 }
 
-/// Runs the inspection protocol until stdin closes; `false` if anything failed.
-pub fn run(entry: &Path, runtime: &ReactRuntimeOptions) -> Result<bool, io::Error> {
+/// Runs the inspection protocol until stdin closes, resolving
+/// `@celesta-plugin/<id>` among `plugins`; `false` if anything failed.
+pub fn run(
+    entry: &Path,
+    runtime: &ReactRuntimeOptions,
+    plugins: &InstalledPlugins,
+) -> Result<bool, io::Error> {
     let spawned = ReactBridge::spawn_with_options(
         &runtime.node,
         &runtime.cli_script,
@@ -36,6 +42,7 @@ pub fn run(entry: &Path, runtime: &ReactRuntimeOptions) -> Result<bool, io::Erro
         &runtime.properties,
         SpawnOptions {
             composition_id: runtime.composition_id.clone(),
+            plugin_path: Some(plugins.runtime_path()),
             ..SpawnOptions::default()
         },
     );

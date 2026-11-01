@@ -12,6 +12,7 @@ use crate::layer_select::SourceLookup;
 use crate::media_probe::{MediaAssetInfo, MediaProbeWorker, spawn_media_probe};
 use crate::meter::MasterLevels;
 use crate::occurrences::{OccurrenceState, OccurrenceWorker, spawn_occurrences};
+use crate::plugins::FoundPlugins;
 use crate::preview::{
     AudioPreview, PreviewPresentation, PreviewWorker, ReactPreview, TextOverride, spawn_preview,
 };
@@ -33,6 +34,7 @@ use celesta_gpu_renderer::{
     GpuDriver, GpuRenderOptions, GpuRenderer, HitRegion, LayerFrame, TextLayout,
 };
 use celesta_media::FfmpegBackend;
+use celesta_plugin_host::InstalledPlugins;
 use celesta_react_bridge::{
     ComponentPropertyField, ComponentPropertySchema, PrimitivePropertyTable, SourcePos,
 };
@@ -372,6 +374,10 @@ pub(crate) struct EditorView {
     /// The Add menu's mode, what it read about the parent, and the
     /// selection of an element just added.
     pub(crate) add: AddState,
+    /// The content plugins found when this project opened: the preview's
+    /// renderer runs them, and every React runtime and export is given the
+    /// same set (see `plugins.rs`).
+    pub(crate) plugins: InstalledPlugins,
 }
 
 impl EditorView {
@@ -380,15 +386,23 @@ impl EditorView {
         property_args: PropertyArgs,
         driver: GpuDriver,
     ) -> anyhow::Result<Self> {
+        let plugins = FoundPlugins::find();
         let (document, react_preview) =
-            load_source(path, property_args).map_err(anyhow::Error::msg)?;
-        Self::from_document(path.map(Path::to_path_buf), document, react_preview, driver)
+            load_source(path, property_args, &plugins.installed).map_err(anyhow::Error::msg)?;
+        Self::from_document(
+            path.map(Path::to_path_buf),
+            document,
+            react_preview,
+            plugins,
+            driver,
+        )
     }
 
     pub(crate) fn from_document(
         source_path: Option<PathBuf>,
         document: EditorDocument,
         react_preview: Option<ReactPreview>,
+        plugins: FoundPlugins,
         driver: GpuDriver,
     ) -> anyhow::Result<Self> {
         let settings = &document.project().settings;
@@ -416,7 +430,7 @@ impl EditorView {
         })?
         .with_asset_root(document.asset_root())
         .with_video_decoder(FfmpegBackend::new().with_sequential_video(frame_rate_value))
-        .with_content_provider(celesta_plugin_host::PluginHost::discover(&[]));
+        .with_content_provider(plugins.installed.host());
         let adapter = renderer.adapter_info();
         let gpu_name = format!("{} ({})", adapter.name, adapter.backend).into();
         let preview_worker = spawn_preview(renderer)?;
@@ -554,7 +568,9 @@ impl EditorView {
             inline_end_due: None,
             inline_refocus: false,
             add: AddState::default(),
+            plugins: InstalledPlugins::default(),
         };
+        editor.set_plugins(plugins);
         editor.refresh_preview();
         editor.refresh_audio_preview();
         editor.refresh_occurrences(false);

@@ -42,6 +42,7 @@ mod media_probe;
 mod occurrences;
 mod panels;
 mod playback;
+mod plugins;
 mod preview;
 mod problems;
 mod problems_panel;
@@ -67,10 +68,10 @@ mod worker;
 use actions::{
     ClearExportRange, CloseWindow, CreateNewProject, ExportProject, GoToEnd, GoToIn, GoToOut,
     GoToStart, JumpBackward, JumpForward, NextEditPoint, NextFrame, OpenProject, PausePlayback,
-    PlayForward, PreviousEditPoint, PreviousFrame, Quit, Redo, ReloadProject, SetExportIn,
-    SetExportOut, SetUpTypeScript, SetUpTypeScriptInFolder, ShowProblems, ToggleInteractive,
-    ToggleLoop, TogglePlayback, ToggleSafeAreas, Undo, ZoomTimelineIn, ZoomTimelineOut,
-    ZoomTimelineToFit,
+    PlayForward, PreviousEditPoint, PreviousFrame, Quit, Redo, ReloadPlugins, ReloadProject,
+    SetExportIn, SetExportOut, SetUpTypeScript, SetUpTypeScriptInFolder, ShowProblems,
+    ToggleInteractive, ToggleLoop, TogglePlayback, ToggleSafeAreas, Undo, ZoomTimelineIn,
+    ZoomTimelineOut, ZoomTimelineToFit,
 };
 use inline_text_view::EditEvent;
 use source::PropertyArgs;
@@ -252,6 +253,7 @@ fn app_menus() -> Vec<Menu> {
             MenuItem::action("Create New Project…", CreateNewProject),
             MenuItem::action("Open…", OpenProject),
             MenuItem::action("Reload", ReloadProject),
+            MenuItem::action("Reload Plugins", ReloadPlugins),
             MenuItem::separator(),
             MenuItem::action("Export…", ExportProject),
             MenuItem::separator(),

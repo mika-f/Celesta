@@ -162,6 +162,7 @@ impl Exporter {
             project
                 .as_ref()
                 .map(|(project, root)| (*project, root.as_path())),
+            self.plugins(),
         )?;
         let metadata = bridge.metadata().clone();
         report_composition(&metadata, &mut progress);
@@ -302,6 +303,7 @@ impl Exporter {
             project
                 .as_ref()
                 .map(|(project, root)| (*project, root.as_path())),
+            self.plugins(),
         )?;
         let metadata = bridge.metadata().clone();
         report_composition(&metadata, &mut progress);
@@ -362,6 +364,7 @@ impl Exporter {
             project
                 .as_ref()
                 .map(|(project, root)| (*project, root.as_path())),
+            self.plugins(),
         )?;
         report_composition(bridge.metadata(), &mut progress);
         Ok(())

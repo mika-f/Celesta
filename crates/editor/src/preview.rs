@@ -18,6 +18,7 @@ use gpui_kit::RenderImage;
 use rodio::Player;
 use rodio::buffer::SamplesBuffer;
 use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -337,6 +338,8 @@ pub(crate) struct ReactPreviewContext {
     /// pays nothing for it.
     pub(crate) source_locations: bool,
     pub(crate) composition_id: Option<String>,
+    /// The editor's plugins, as the runtime takes them.
+    pub(crate) plugin_path: OsString,
 }
 
 /// Whether the renderer records where each leaf layer was drawn for this
@@ -622,6 +625,7 @@ pub(crate) fn ensure_react_bridge<'a>(
                 SpawnOptions {
                     source_locations: react.source_locations,
                     composition_id: react.composition_id.clone(),
+                    plugin_path: Some(react.plugin_path.clone()),
                 },
             ) {
                 Ok(mut bridge) => {

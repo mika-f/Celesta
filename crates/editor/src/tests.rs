@@ -107,6 +107,7 @@ fn export_worker_reports_cancellation_without_creating_output() {
             loudness: None,
             cancellation,
             driver: GpuDriver::default(),
+            plugins: Default::default(),
         })
         .unwrap();
 
@@ -133,11 +134,14 @@ fn export_options_carry_the_chosen_loudness() {
         loudness: loudness.target(),
         cancellation: ExportCancellation::default(),
         driver: GpuDriver::default(),
+        plugins: Default::default(),
     };
 
     let off = export_options(&request(ExportLoudness::Off));
     assert_eq!(off.loudness, None);
     assert!(off.overwrite);
+    // The export draws with the preview's plugins rather than finding its own.
+    assert_eq!(off.plugins, Some(Default::default()));
     assert_eq!(off.video_format, VideoFormat::Mov);
     assert_eq!(
         export_options(&request(ExportLoudness::Streaming)).loudness,
@@ -1134,6 +1138,7 @@ fn react_context(source_locations: bool) -> ReactPreviewContext {
         entry: PathBuf::from("entry.tsx"),
         properties: celesta_react_bridge::PropertyInputs::default(),
         source_locations,
+        plugin_path: Default::default(),
     }
 }
 

@@ -2,6 +2,7 @@ use crate::EDITOR_DEMO_PROJECT;
 use crate::preview::{KeptSchema, ReactPreview};
 use crate::problems::error_chain;
 use celesta_editor_core::EditorDocument;
+use celesta_plugin_host::InstalledPlugins;
 use celesta_react_bridge::{
     PrepareDependency, PropertyInputs, ReactBridge, SpawnOptions, project_types_template,
     refresh_project_types, runtime_paths as react_runtime_paths,
@@ -64,6 +65,7 @@ impl PropertyArgs {
 pub(crate) fn load_source(
     path: Option<&Path>,
     property_args: PropertyArgs,
+    plugins: &InstalledPlugins,
 ) -> Result<(EditorDocument, Option<ReactPreview>), String> {
     if !property_args.is_empty() && !path.is_some_and(is_react_entry) {
         return Err(
@@ -83,6 +85,7 @@ pub(crate) fn load_source(
                 &properties,
                 SpawnOptions {
                     composition_id: property_args.composition.clone(),
+                    plugin_path: Some(plugins.runtime_path()),
                     ..SpawnOptions::default()
                 },
             )

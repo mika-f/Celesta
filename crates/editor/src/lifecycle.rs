@@ -1,8 +1,9 @@
 use crate::actions::{
-    CloseWindow, CreateNewProject, OpenProject, ReloadProject, SetUpTypeScript,
+    CloseWindow, CreateNewProject, OpenProject, ReloadPlugins, ReloadProject, SetUpTypeScript,
     SetUpTypeScriptInFolder,
 };
 use crate::inline_text_view::EditEvent;
+use crate::plugins::FoundPlugins;
 use crate::problems::{Source, error_chain};
 use crate::source::load_source;
 use crate::view::EditorView;
@@ -400,6 +401,24 @@ impl EditorView {
         self.after_inline_commit(window, cx, Self::reload_project);
     }
 
+    /// File > Reload Plugins: looks for plugins again and reopens the
+    /// project with them, so the preview's plugin processes and React
+    /// runtimes start over with what is installed now.
+    pub(crate) fn reload_plugins_action(
+        &mut self,
+        _: &ReloadPlugins,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.end_inline_text(EditEvent::ProjectCommand, cx);
+        self.after_inline_commit(window, cx, |this, window, cx| {
+            if this.opening || !this.can_replace_contents(window, cx) {
+                return;
+            }
+            this.load_path(this.source_path.clone(), window, cx);
+        });
+    }
+
     fn reload_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.is_react_preview() {
             self.request_react_reload(cx);
@@ -612,13 +631,19 @@ impl EditorView {
             let load_path = path.clone();
             let loaded = cx
                 .background_executor()
-                .spawn(async move { load_source(load_path.as_deref(), property_args) })
+                .spawn(async move {
+                    // Every open looks for plugins again, so ones installed
+                    // since are found.
+                    let plugins = FoundPlugins::find();
+                    load_source(load_path.as_deref(), property_args, &plugins.installed)
+                        .map(|loaded| (loaded, plugins))
+                })
                 .await;
             view.update_in(cx, |this, _, cx| {
                 this.opening = false;
                 let driver = this.driver;
-                let result = loaded.and_then(|(document, react_preview)| {
-                    EditorView::from_document(path, document, react_preview, driver)
+                let result = loaded.and_then(|((document, react_preview), plugins)| {
+                    EditorView::from_document(path, document, react_preview, plugins, driver)
                         .map_err(|error| error_chain(error.as_ref()))
                 });
                 match result {
