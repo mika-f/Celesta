@@ -30,6 +30,82 @@ pub struct Manifest {
     /// Its declarations, for project TypeScript support.
     #[serde(default)]
     pub types: Option<String>,
+    /// Components of `module` the editor's Add menu offers.
+    #[serde(default)]
+    pub components: Vec<ComponentInfo>,
+}
+
+/// A component a plugin's module exports, as the editor's Add menu offers
+/// it: drawn on the canvas like an Image or a Video when it takes a file as
+/// `src` (`src`, `x`, `y`, `width`), else like a Rect (`x`, `y`, `width`,
+/// `height`), and written with `props` after those.
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ComponentInfo {
+    /// The export's name: a JSX component name such as `Flag`.
+    pub name: String,
+    /// What the Add menu says; the name when absent.
+    #[serde(default)]
+    pub label: Option<String>,
+    /// The kind of file the component takes as `src`, chosen when it is
+    /// added.
+    #[serde(default)]
+    pub src: Option<ComponentSource>,
+    /// Props the component is added with: strings, numbers, and booleans.
+    #[serde(default)]
+    pub props: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ComponentSource {
+    Image,
+    Video,
+}
+
+impl ComponentInfo {
+    /// What the Add menu says.
+    pub fn label(&self) -> &str {
+        self.label.as_deref().unwrap_or(&self.name)
+    }
+
+    /// The props the editor writes from the drawn box, which `props` may not
+    /// set again.
+    pub fn drawn_props(&self) -> &'static [&'static str] {
+        match self.src {
+            Some(_) => &["src", "x", "y", "width"],
+            None => &["x", "y", "width", "height"],
+        }
+    }
+
+    /// Why the component cannot be offered, if it cannot.
+    fn invalid_reason(&self) -> Option<String> {
+        let name = &self.name;
+        let mut chars = name.chars();
+        if !(chars.next().is_some_and(|c| c.is_ascii_uppercase())
+            && chars.all(|c| c.is_ascii_alphanumeric() || c == '_'))
+        {
+            return Some(format!(
+                "component {name:?} is not a component name (a capital letter, then letters, digits, or '_')"
+            ));
+        }
+        for (prop, value) in &self.props {
+            let mut chars = prop.chars();
+            let is_name = chars
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                && chars.all(|c| c.is_ascii_alphanumeric() || c == '_');
+            if !is_name || self.drawn_props().contains(&prop.as_str()) {
+                return Some(format!("component {name:?} cannot set the prop {prop:?}"));
+            }
+            if !(value.is_string() || value.is_number() || value.is_boolean()) {
+                return Some(format!(
+                    "component {name:?}'s prop {prop:?} is not a string, number, or boolean"
+                ));
+            }
+        }
+        None
+    }
 }
 
 /// This platform as manifests name it: `(os, arch)` in Rust's names, such
@@ -140,6 +216,16 @@ fn invalid_reason(manifest: &Manifest, directory: &Path) -> Option<String> {
              and must start with a letter or digit",
             manifest.id
         ));
+    }
+    if !manifest.components.is_empty() && manifest.module.is_none() {
+        return Some("it lists components but has no module to import them from".into());
+    }
+    if let Some(reason) = manifest
+        .components
+        .iter()
+        .find_map(ComponentInfo::invalid_reason)
+    {
+        return Some(reason);
     }
     let named = manifest
         .executable
@@ -463,6 +549,7 @@ mod tests {
                     .collect(),
                 module: None,
                 types: None,
+                components: Vec::new(),
             },
             directory: PathBuf::from("plugin"),
             source: PluginSource::Explicit,
@@ -543,6 +630,55 @@ mod tests {
     fn write_manifest(directory: &Path, manifest: serde_json::Value) {
         std::fs::create_dir_all(directory).unwrap();
         std::fs::write(directory.join(MANIFEST), manifest.to_string()).unwrap();
+    }
+
+    #[test]
+    fn components_are_offered_only_as_written_safely() {
+        let root = tempfile::tempdir().unwrap();
+        let write = |name: &str, components: serde_json::Value| {
+            write_manifest(
+                &root.path().join(name),
+                serde_json::json!({
+                    "id": name, "version": "1", "protocol": 1,
+                    "module": "js/index.js", "components": components,
+                }),
+            );
+        };
+        write(
+            "good",
+            serde_json::json!([
+                { "name": "Flag", "label": "Waving flag", "src": "image", "props": { "amplitude": 0.1, "loop": true, "tone": "warm" } },
+                { "name": "Box_2" },
+            ]),
+        );
+        write("lowercase", serde_json::json!([{ "name": "flag" }]));
+        write("markup", serde_json::json!([{ "name": "Flag x={1}" }]));
+        write(
+            "geometry",
+            serde_json::json!([{ "name": "Flag", "src": "video", "props": { "width": 3 } }]),
+        );
+        write(
+            "attribute",
+            serde_json::json!([{ "name": "Flag", "props": { "on:click": 1 } }]),
+        );
+        write(
+            "object",
+            serde_json::json!([{ "name": "Flag", "props": { "style": { "a": 1 } } }]),
+        );
+        write_manifest(
+            &root.path().join("moduleless"),
+            serde_json::json!({ "id": "moduleless", "version": "1", "protocol": 1, "components": [{ "name": "Flag" }] }),
+        );
+
+        let (found, errors) = discover(&[root.path().to_path_buf()]);
+        assert_eq!(found.len(), 1, "{errors:?}");
+        assert_eq!(errors.len(), 6, "{errors:?}");
+        let components = &found[0].manifest.components;
+        assert_eq!(components[0].label(), "Waving flag");
+        assert_eq!(components[0].src, Some(ComponentSource::Image));
+        assert_eq!(components[0].drawn_props(), ["src", "x", "y", "width"]);
+        assert_eq!(components[1].label(), "Box_2");
+        assert_eq!(components[1].drawn_props(), ["x", "y", "width", "height"]);
     }
 
     #[test]

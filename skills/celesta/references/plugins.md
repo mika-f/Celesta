@@ -26,6 +26,9 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   every plugin with its source and state, and lets the user allow, turn
   off, and add folders of plugins (kept in their `settings.json`). A plugin
   turned off there does not run in `Celesta-export` either.
+- A plugin whose manifest lists `components` offers them in the app's Add
+  menu; the app writes the element with its `@celesta-plugin/<id>` import.
+  Code written by hand works the same.
 - The app asks the user to trust a project folder before it evaluates
   anything in it (remembered only when the root holds
   `celesta.config.json`, which `--init` writes; a project inside it with
@@ -70,6 +73,13 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
 | `plugin "<id>": …` | The plugin's own error, such as a missing asset. |
 
 ## Writing one
+
+The manifest's optional `components` puts a component in the app's Add
+menu: `{ "name": "Flag", "label": "Flag", "src": "image", "props": {
+"amplitude": 0.06 } }`. `name` is the export (a capitalized identifier).
+With `src` (`image` or `video`) it is added like an Image (`src`, `x`, `y`,
+`width`); without, like a Rect's box (`x`, `y`, `width`, `height`). `props`
+(strings, numbers, booleans) follow those and may not repeat them.
 
 Start from the samples in the Celesta repository's `examples/plugins`
 (`flag`: a program that returns meshes; `beep-voice`: a module-only speech

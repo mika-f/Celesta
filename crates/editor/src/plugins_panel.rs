@@ -443,6 +443,7 @@ mod tests {
                     .collect::<BTreeMap<_, _>>(),
                 module: Some("js/index.js".into()),
                 types: None,
+                components: Vec::new(),
             },
             directory: PathBuf::from("plugins").join(id),
             source,

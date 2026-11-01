@@ -232,8 +232,8 @@ pub fn add_locks(
     if failed || !has_region(&program, parent) {
         return None;
     }
-    let lock = |kind| {
-        tags(text, &program, kind, wrapped)
+    let lock = |kind: NewKind| {
+        tags(text, &program, kind.module(), kind.tag(), wrapped)
             .err()
             .map(AddLock::Import)
     };
@@ -262,6 +262,52 @@ pub fn add_child(
     new: &NewElement,
     timing: Option<&Timing>,
 ) -> Result<Added, AddLock> {
+    let kind = new.kind();
+    add_written(text, parent, kind.module(), kind.tag(), timing, |tag| {
+        new.written(tag)
+    })
+}
+
+/// A component another module exports, such as a content plugin's, to add
+/// with these attributes: `<Tag attribute={…} />`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct NewComponent {
+    /// What `tag` is imported from, such as `@celesta-plugin/flag`.
+    pub module: String,
+    pub tag: String,
+    /// Written in order, a string in `"` when it can be.
+    pub attributes: Vec<(String, EditValue)>,
+}
+
+/// [`add_child`] for a component of another module: the component is
+/// imported from its module (a named import, or the name of an existing
+/// import of it) and written self-closing with its attributes.
+pub fn add_component(
+    text: &str,
+    parent: &ElementRef,
+    new: &NewComponent,
+    timing: Option<&Timing>,
+) -> Result<Added, AddLock> {
+    add_written(text, parent, &new.module, &new.tag, timing, |tag| {
+        let attrs: Vec<(&str, EditValue)> = new
+            .attributes
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.clone()))
+            .collect();
+        format!("<{tag}{} />", attributes(&attrs))
+    })
+}
+
+/// [`add_child`]'s insertion of the element `element` writes for its tag
+/// as imported, `tag` of `module`.
+fn add_written(
+    text: &str,
+    parent: &ElementRef,
+    module: &str,
+    tag: &str,
+    timing: Option<&Timing>,
+    element: impl FnOnce(&str) -> String,
+) -> Result<Added, AddLock> {
     let alloc = Allocator::default();
     let (program, failed) = parse_checked(text, &alloc);
     if failed {
@@ -273,7 +319,7 @@ pub fn add_child(
         .found
         .filter(|found| !found.prop_only)
         .ok_or(AddLock::NoChildrenRegion)?;
-    let tags = tags(text, &program, new.kind(), timing.is_some()).map_err(AddLock::Import)?;
+    let tags = tags(text, &program, module, tag, timing.is_some()).map_err(AddLock::Import)?;
 
     let start = parent.start as usize;
     let line_start = text[..start].rfind('\n').map_or(0, |i| i + 1);
@@ -283,7 +329,7 @@ pub fn add_child(
     let newline = line_break(text);
 
     // The element, in its wrapper when timed, and what goes before its `<`.
-    let element = new.written(&tags.tag);
+    let element = element(&tags.tag);
     let lead = format!("{newline}{indent}{unit}");
     let (block, before_element) = match (timing, tags.sequence) {
         (Some(timing), Some(sequence)) => {
@@ -375,39 +421,37 @@ struct Tags {
     edits: Vec<Edit>,
 }
 
-/// [`Tags`] for a `kind` in `text`, parsed without error as `program`: one
-/// [`ensure_imports`](crate::ensure_imports) per module, so the names a
-/// module needs land in one edit.
+/// [`Tags`] for `tag` exported by `module`, in `text` parsed without error
+/// as `program`: one [`ensure_imports`](crate::ensure_imports) per module,
+/// so the names a module needs land in one edit.
 fn tags(
     text: &str,
     program: &Program<'_>,
-    kind: NewKind,
+    module: &str,
+    tag: &str,
     wrapped: bool,
 ) -> Result<Tags, ImportLock> {
-    let shapes = kind.module() == SHAPES;
-    let react: Vec<&str> = [
-        (!shapes).then_some(kind.tag()),
-        wrapped.then_some("Sequence"),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
+    let elsewhere = module != PACKAGE;
+    let react: Vec<&str> = [(!elsewhere).then_some(tag), wrapped.then_some("Sequence")]
+        .into_iter()
+        .flatten()
+        .collect();
     let (react_edit, react_names) = ensure_imports_in(text, program, PACKAGE, &react)?;
-    let (shapes_edit, shapes_names) = if shapes {
-        ensure_imports_in(text, program, SHAPES, &[kind.tag()])?
+    let (module_edit, module_names) = if elsewhere {
+        ensure_imports_in(text, program, module, &[tag])?
     } else {
         (None, Vec::new())
     };
     let mut react_names = react_names.into_iter().map(written);
-    let tag = if shapes {
-        shapes_names.into_iter().map(written).next()
+    let written_tag = if elsewhere {
+        module_names.into_iter().map(written).next()
     } else {
         react_names.next()
     };
     Ok(Tags {
-        tag: tag.unwrap_or_else(|| kind.tag().to_string()),
+        tag: written_tag.unwrap_or_else(|| tag.to_string()),
         sequence: react_names.next(),
-        edits: react_edit.into_iter().chain(shapes_edit).collect(),
+        edits: react_edit.into_iter().chain(module_edit).collect(),
     })
 }
 

@@ -246,6 +246,7 @@ pub(crate) mod tests {
                 executable: Default::default(),
                 module: Some("js/index.js".into()),
                 types: Some("js/index.d.ts".into()),
+                components: Vec::new(),
             },
             directory: plugin,
             source: celesta_plugin_host::PluginSource::Explicit,

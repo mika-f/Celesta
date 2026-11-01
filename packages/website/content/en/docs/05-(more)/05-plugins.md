@@ -94,6 +94,8 @@ An entry that imports a plugin no folder provides fails to load and names the pl
 
 Project TypeScript support copies each plugin's declarations into `.celesta/plugins/`, so your code editor completes its props. When the desktop app opens a project, that includes the project's own plugins and plugins still waiting for your approval: declarations run nothing.
 
+In the desktop app, a plugin can also offer its components in the **Add** menu, after Celesta's own elements. Choosing one adds it like an Image or a Rect: a component that takes a file asks for it first, and you drag where it goes. The app writes the element with the plugin's import, such as `import { Flag } from '@celesta-plugin/flag'`.
+
 ## Samples
 
 The repository's `examples/plugins` has two plugins to start from:
@@ -114,6 +116,16 @@ A plugin has up to two parts, in any language:
 
 - **Components** (`module` and `types` in the manifest): an ES module and its declarations. Celesta bundles the module into the entry, and its `react` and `@celesta/*` imports use the app's own. A speech channel needs nothing else: it runs in `prepare()` like `@celesta/voicevox` and returns lines with `audio` and `lipSync`.
 - **A program** (`executable`, one per platform): it reads requests on standard input and answers on standard output. For a layer it returns textured triangle meshes and their colors, masks, and blending for a given time, and Celesta draws them. Rust programs can use the `celesta-plugin` crate; the protocol itself is plain length-prefixed JSON.
+
+To offer components in the desktop app's Add menu, list them in the manifest's `components`:
+
+```json
+"components": [
+  { "name": "Flag", "label": "Flag", "src": "image", "props": { "amplitude": 0.06 } }
+]
+```
+
+`name` is the component the module exports, and `label` what the menu says (the name when absent). With `src` (`"image"` or `"video"`), the component is added like an Image: the app asks for a file and writes `src`, `x`, `y`, and `width`. Without it, the component is drawn as a box and gets `x`, `y`, `width`, and `height`. `props` are written after those: strings, numbers, and booleans.
 
 A plugin's id uses lowercase letters, digits, `-`, `_`, and `.`, and starts with a letter or digit. Every file its manifest names is a relative path inside the plugin's folder, without `..` and without a link that leads out of it. Celesta skips a plugin that breaks these rules and says why.
 

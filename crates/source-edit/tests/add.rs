@@ -1,6 +1,6 @@
 use celesta_source_edit::{
-    AddLock, ElementRef, ImportLock, NewElement, NewKind, Timing, accepts_children, add_child,
-    add_lock, add_locks, apply, element_at, parses,
+    AddLock, EditValue, ElementRef, ImportLock, NewComponent, NewElement, NewKind, Timing,
+    accepts_children, add_child, add_component, add_lock, add_locks, apply, element_at, parses,
 };
 
 /// The element whose `<` is the first `needle` in `text` (ASCII only).
@@ -262,6 +262,56 @@ fn imports_from_react_and_shapes() {
         ),
         "{after}"
     );
+}
+
+#[test]
+fn adds_a_component_of_another_module() {
+    let body = "\nconst a = (\n  <Group>\n  </Group>\n);\n";
+    let flag = NewComponent {
+        module: "@celesta-plugin/flag".into(),
+        tag: "Flag".into(),
+        attributes: vec![
+            ("src".into(), EditValue::String("./flag.png".into())),
+            ("x".into(), EditValue::Number(40.0)),
+            ("amplitude".into(), EditValue::Number(0.1)),
+            ("double".into(), EditValue::Bool(true)),
+        ],
+    };
+    let component = |text: &str, timing: Option<&Timing>| {
+        let added = add_component(text, &element(text, "<Group"), &flag, timing).unwrap();
+        let after = apply(text, &added.edits).unwrap();
+        assert!(parses(&after), "{after}");
+        after
+    };
+    let text = format!("import {{ Group }} from '@celesta/react';\n{body}");
+    assert_eq!(
+        component(&text, None),
+        "import { Group } from '@celesta/react';\nimport { Flag } from '@celesta-plugin/flag';\n\nconst a = (\n  <Group>\n    <Flag src=\"./flag.png\" x={40} amplitude={0.1} double={true} />\n  </Group>\n);\n"
+    );
+
+    // Wrapped: `Sequence` from Celesta, `Flag` from the plugin.
+    let after = component(&text, Some(&TIMING));
+    assert!(
+        after.starts_with(
+            "import { Group, Sequence } from '@celesta/react';\nimport { Flag } from '@celesta-plugin/flag';\n"
+        ),
+        "{after}"
+    );
+
+    // An existing import of the module is reused, under its name.
+    let text = format!(
+        "import {{ Group }} from '@celesta/react';\nimport {{ Flag as Banner }} from '@celesta-plugin/flag';\n{body}"
+    );
+    let after = component(&text, None);
+    assert!(after.contains("<Banner src="), "{after}");
+    assert_eq!(after.matches("@celesta-plugin/flag").count(), 1, "{after}");
+
+    // A `Flag` that is not the plugin's locks the addition.
+    let text = format!("import {{ Group }} from '@celesta/react';\nconst Flag = 1;\n{body}");
+    assert!(matches!(
+        add_component(&text, &element(&text, "<Group"), &flag, None),
+        Err(AddLock::Import(ImportLock::Clash { .. }))
+    ));
 }
 
 #[test]

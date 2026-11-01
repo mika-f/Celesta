@@ -23,6 +23,10 @@ The layer is the image's width, and its height plus 15% above and below for
 the wave. The common props (`x`, `y`, `scale`, `opacity`, …) work as on any
 layer.
 
+In the desktop app, **Add > Flag** asks for an image and draws the flag
+where you drag, as **Add > Image** does: its manifest lists the component
+(`components` in [`plugin.json`](plugin.json)).
+
 ## How it works
 
 - [`js/index.ts`](js/index.ts) is the module entries import. `<Flag>` renders
