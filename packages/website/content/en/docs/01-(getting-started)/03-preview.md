@@ -451,7 +451,7 @@ If the entry changed or got locked by the time you release, or the write fails, 
 
 ### Give an element its own timing
 
-An element without a window of its own, such as a background drawn for its whole scene, has no grips. Instead, a **Set timing** button sits at the start of its filled band at the playhead. Clicking it pauses playback and wraps the element in a `<Sequence>` that starts at the playhead and runs to the end of the scene:
+An element without a window of its own, such as a background drawn for its whole scene, has no grips. Instead, a **Set timing** button sits at the start of its filled band at the playhead, or just after the entry's file name when the band starts under it, and at the lane's left edge when the band starts before the part of the timeline in view. Clicking it pauses playback and wraps the element in a `<Sequence>` that starts at the playhead and runs to the end of the scene:
 
 ```tsx
 // before: the playhead is 45 frames into a 120-frame scene

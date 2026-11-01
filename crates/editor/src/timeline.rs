@@ -1170,9 +1170,10 @@ impl EditorView {
                 Some((notice.at, vec![notice.text.clone()], true))
             });
         // Without a window of its own, the band offers one instead of grips.
+        // The button draws the entry's file name beside itself.
         let set_timing = match &grips {
             Some(_) => None,
-            None => self.set_timing_overlay(&ranges[..filled], view, cx),
+            None => self.set_timing_overlay(&ranges[..filled], &entry, view, cx),
         };
         let grips = grips.map(|grips| self.band_grip_overlay(&grips, ranges, filled, view, cx));
         div()
@@ -1238,7 +1239,7 @@ impl EditorView {
                             .px_1()
                             .text_xs()
                             .text_color(theme::waveform())
-                            .child(entry),
+                            .when(set_timing.is_none(), |block| block.child(entry)),
                     )
                     .children(bands)
                     .children(grips)
@@ -1349,18 +1350,22 @@ impl EditorView {
 
     /// "Set timing" at the start of the band holding the lookup frame, for
     /// an element without a window of its own: `filled` are this instance's
-    /// bands in the current scene (frames). Disabled with why, as the
-    /// action's offer says; `None` when it is hidden or no band holds the
-    /// frame.
+    /// bands in the current scene (frames). It draws `entry`, the file name
+    /// the composition block would, and stays right of it and of the lane's
+    /// leading edge when the band starts under the name or before the
+    /// view. Disabled with why, as the action's offer says; `None` when it
+    /// is hidden or no band holds the frame.
     fn set_timing_overlay(
         &self,
         filled: &[(f64, f64)],
+        entry: &str,
         view: LaneView,
         cx: &mut Context<Self>,
     ) -> Option<gpui_kit::AnyElement> {
         let offer = self.set_timing_action()?;
         let band = draggable_band(filled, self.source_lookup_frame as f64)?;
         let start = filled[band].0 / view.end_frame;
+        let lane_width = self.lane_width();
         let button = Button::new("timeline-set-timing")
             .xsmall()
             .label("Set timing");
@@ -1383,16 +1388,31 @@ impl EditorView {
                 }))
                 .into_any_element(),
         };
+        // From the block's start, as wide as the furthest of the name, the
+        // band's start and the lane's leading edge: the button goes after.
+        let offset = div()
+            .flex_none()
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .px_1()
+                    .text_xs()
+                    .text_color(theme::waveform())
+                    .whitespace_nowrap()
+                    .child(SharedString::from(entry.to_owned())),
+            )
+            .child(div().w(px(view.width(start) * lane_width)))
+            .child(div().w(px((-view.x(0.0) * lane_width).max(0.0))));
         Some(
             div()
                 .absolute()
                 .top(px(3.0))
                 .bottom(px(3.0))
-                .left(relative(view.x(start).max(0.0)))
+                .left(relative(view.x(0.0)))
                 .flex()
-                .items_center()
-                .pl_1()
-                .child(action)
+                .child(offset)
+                .child(div().flex().items_center().pl_1().child(action))
                 .into_any_element(),
         )
     }
