@@ -12,9 +12,10 @@
 //! (`scene.wgsl`).
 //!
 //! Besides the model's buffers and textures, `SceneFrameResources` keeps
-//! the canvases of each size the last frame drew and the buffers a frame's
-//! skinning and draws read, so that a frame allocates only what it outgrows.
-//! Nothing a frame draws depends on an earlier one: the canvases are
+//! the canvases of each size the last frame drew, within
+//! `SCENE_TARGET_TEXELS`, and the buffers a frame's skinning and draws read,
+//! so that a frame allocates only what it outgrows; a frame without a scene
+//! lets them go. Nothing a frame draws depends on an earlier one: the canvases are
 //! cleared, and every part of a buffer the frame reads is written by it.
 
 use crate::error::GpuRenderError;
@@ -44,6 +45,10 @@ const SKIN_VERTEX_STRIDE: u64 = 32;
 /// this is about 500 MB; a 4K frame (3840 × 2160) still fits at 1×, and a
 /// larger canvas is drawn at a lower density.
 pub(crate) const SCENE_CANVAS_TEXELS: u64 = 8_388_608;
+/// The most texels of scene canvases kept from frame to frame: two capped
+/// canvases, about 1 GB. A frame that draws more still gets every canvas it
+/// draws, but the canvases it does not draw are dropped first.
+pub(crate) const SCENE_TARGET_TEXELS: u64 = 2 * SCENE_CANVAS_TEXELS;
 /// The most bytes of buffers a scene model has the GPU allocate when it is
 /// opened: its geometries' streams, morph targets, and triangles, and each
 /// draw's skinned vertices.
@@ -129,13 +134,16 @@ pub(crate) struct DrawBuffers {
 }
 
 /// What scene frames draw with, kept from frame to frame: the canvases of
-/// each size drawn since the last frame began, and the buffers of a frame's
-/// skinning and draws, which grow to the largest frame's and are rewritten
-/// by every frame.
-#[derive(Default)]
+/// each size drawn since the last frame began, within `target_texels`, and
+/// the buffers of a frame's skinning and draws, which grow to the largest
+/// frame's and are rewritten by every frame. A frame that draws no scene
+/// lets all of it go.
 pub(crate) struct SceneFrameResources {
     /// By canvas size in texels.
     targets: HashMap<(u32, u32), SceneTargets>,
+    /// The most texels `targets` keeps before it drops the sizes this frame
+    /// has not drawn: `SCENE_TARGET_TEXELS`, lowered by tests.
+    pub(crate) target_texels: u64,
     /// The sizes drawn since the last `begin_frame`.
     used: HashSet<(u32, u32)>,
     /// `STORAGE`: every skin's matrices, then each queued draw's morph
@@ -153,12 +161,70 @@ pub(crate) struct SceneFrameResources {
     pub(crate) allocations: u64,
 }
 
+impl Default for SceneFrameResources {
+    fn default() -> Self {
+        Self {
+            targets: HashMap::new(),
+            target_texels: SCENE_TARGET_TEXELS,
+            used: HashSet::new(),
+            frame_data: GrowingBuffer::default(),
+            skin_params: GrowingBuffer::default(),
+            draws: GrowingBuffer::default(),
+            view: GrowingBuffer::default(),
+            groups: None,
+            allocations: 0,
+        }
+    }
+}
+
 impl SceneFrameResources {
     /// Starts a frame: the canvases of sizes the last frame did not draw
-    /// are dropped.
+    /// are dropped, and everything else too when it drew no scene.
     pub(crate) fn begin_frame(&mut self) {
+        if self.used.is_empty() {
+            *self = Self {
+                target_texels: self.target_texels,
+                allocations: self.allocations,
+                ..Self::default()
+            };
+            return;
+        }
         self.targets.retain(|size, _| self.used.contains(size));
         self.used.clear();
+    }
+
+    /// The canvas sizes kept, smallest first.
+    #[cfg(test)]
+    pub(crate) fn cached_sizes(&self) -> Vec<(u32, u32)> {
+        let mut sizes: Vec<_> = self.targets.keys().copied().collect();
+        sizes.sort_by_key(|&size| texels(size));
+        sizes
+    }
+
+    /// Whether any frame buffer, or what binds them, is kept.
+    #[cfg(test)]
+    pub(crate) fn holds_buffers(&self) -> bool {
+        let buffers = [&self.frame_data, &self.skin_params, &self.draws, &self.view];
+        self.groups.is_some() || buffers.iter().any(|buffer| buffer.buffer.is_some())
+    }
+}
+
+fn texels((width, height): (u32, u32)) -> u64 {
+    u64::from(width) * u64::from(height)
+}
+
+/// Makes room in `targets` for a canvas of `size`, which it lacks: when
+/// the canvases kept and it would be more than `budget` texels, the sizes
+/// not in `used` are dropped. What `used` holds stays, even over `budget`.
+fn make_room<T>(
+    targets: &mut HashMap<(u32, u32), T>,
+    used: &HashSet<(u32, u32)>,
+    size: (u32, u32),
+    budget: u64,
+) {
+    let kept: u64 = targets.keys().map(|&size| texels(size)).sum();
+    if kept + texels(size) > budget {
+        targets.retain(|size, _| used.contains(size));
     }
 }
 
@@ -1601,6 +1667,7 @@ impl GpuRenderer {
         // submitted below, and after any earlier layer's.
         let SceneFrameResources {
             targets,
+            target_texels,
             used,
             frame_data: frame_buffer,
             skin_params: params_buffer,
@@ -1691,13 +1758,17 @@ impl GpuRenderer {
             draws: draw_group,
         } = groups.as_ref().expect("made above");
 
-        used.insert((width, height));
+        let size = (width, height);
+        if !targets.contains_key(&size) {
+            make_room(targets, used, size, *target_texels);
+        }
+        used.insert(size);
         let SceneTargets {
             multisampled,
             depth,
             resolved,
             convert_group,
-        } = &*targets.entry((width, height)).or_insert_with(|| {
+        } = &*targets.entry(size).or_insert_with(|| {
             let mut target = |label, format, sample_count, usage| {
                 *allocations += 1;
                 device
@@ -1991,6 +2062,30 @@ mod tests {
         let model = bare_model(100_000, 230);
         let message = invalid_scene(&model).expect("over the budget");
         assert!(message.contains("bytes"), "{message}");
+    }
+
+    #[test]
+    fn make_room_drops_sizes_not_drawn_only_past_the_budget() {
+        let sizes = |targets: &HashMap<(u32, u32), ()>| {
+            let mut sizes: Vec<_> = targets.keys().copied().collect();
+            sizes.sort();
+            sizes
+        };
+        let mut targets = HashMap::from([((10, 10), ()), ((20, 10), ())]);
+        let used = HashSet::from([(20, 10)]);
+        // 300 + 100 texels fit 400: nothing goes.
+        make_room(&mut targets, &used, (10, 10), 400);
+        assert_eq!(sizes(&targets), [(10, 10), (20, 10)]);
+        // 300 + 200 do not: the size not drawn goes, the drawn one stays.
+        make_room(&mut targets, &used, (20, 10), 400);
+        assert_eq!(sizes(&targets), [(20, 10)]);
+        // Over the budget by the drawn sizes alone, they still stay.
+        make_room(&mut targets, &used, (30, 30), 400);
+        assert_eq!(sizes(&targets), [(20, 10)]);
+        assert_eq!(
+            SceneFrameResources::default().target_texels,
+            2 * SCENE_CANVAS_TEXELS
+        );
     }
 
     #[test]

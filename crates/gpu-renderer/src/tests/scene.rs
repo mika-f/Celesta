@@ -811,6 +811,147 @@ fn scene_resources_keep_every_size_a_frame_draws() {
     assert_eq!(renderer.meshes.scene_frames.allocations, allocations);
 }
 
+/// A `width` by 64 scene of scene layers, each given as its id, time,
+/// scale, and left edge.
+fn scene_layers(width: u32, layers: &[(&str, f64, f64, f64)]) -> Scene {
+    let mut scene = empty_scene(width, 64);
+    for &(id, time, scale, x) in layers {
+        let mut layer = scene_at(time, scale).layers.remove(0);
+        layer.id = id.into();
+        layer.transform.position = Point { x, y: 0.0 };
+        scene.layers.push(layer);
+    }
+    scene
+}
+
+#[test]
+fn scene_resources_evict_unused_sizes_over_budget() {
+    let Some(mut renderer) = renderer(transparent()) else {
+        return;
+    };
+    renderer.renderer = renderer.renderer.with_content_provider(one_square());
+    // Room for a 128² canvas and a 64² one.
+    renderer.meshes.scene_frames.target_texels = 128 * 128 + 64 * 64;
+    let sizes = |renderer: &TestRenderer| renderer.meshes.scene_frames.cached_sizes();
+    let layers = [
+        ("scenes", 0.0, 1.0, 0.0),
+        ("scenes-2x", 0.0, 2.0, 0.0),
+        ("scenes-3x", 0.0, 3.0, 0.0),
+    ];
+    renderer.render(&scene_layers(64, &layers[..2])).unwrap();
+    assert_eq!(sizes(&renderer), [(64, 64), (128, 128)]);
+    // 192² does not fit beside them: the sizes this frame does not draw
+    // go, though the last frame drew them.
+    renderer.render(&scene_layers(64, &layers[2..])).unwrap();
+    assert_eq!(sizes(&renderer), [(192, 192)]);
+    renderer.render(&scene_layers(64, &layers[..1])).unwrap();
+    assert_eq!(sizes(&renderer), [(64, 64)]);
+    // A frame drawing more than the budget still gets every size.
+    renderer.render(&scene_layers(64, &layers)).unwrap();
+    assert_eq!(sizes(&renderer), [(64, 64), (128, 128), (192, 192)]);
+}
+
+#[test]
+fn scene_frame_buffers_are_released_when_no_scene_is_drawn() {
+    let Some(mut renderer) = renderer(transparent()) else {
+        return;
+    };
+    renderer.renderer = renderer.renderer.with_content_provider(one_square());
+    let first = renderer.render(&scene()).unwrap();
+    assert!(renderer.meshes.scene_frames.holds_buffers());
+    let allocations = renderer.meshes.scene_frames.allocations;
+    // The frame after one that drew no scene starts with nothing.
+    renderer.render(&empty_scene(64, 64)).unwrap();
+    renderer.render(&empty_scene(64, 64)).unwrap();
+    assert!(!renderer.meshes.scene_frames.holds_buffers());
+    assert_eq!(renderer.meshes.scene_frames.cached_sizes(), []);
+    let again = renderer.render(&scene()).unwrap();
+    assert!(renderer.meshes.scene_frames.allocations > allocations);
+    assert!(first.pixels == again.pixels, "the scene drew differently");
+}
+
+/// `one_square` with two more draws of its square, small, red and blue, in
+/// front of it at the top corners; at time 0 the frame lists only draw 0.
+fn three_squares() -> Scenes {
+    let mut scenes = one_square();
+    let model = &mut scenes.model;
+    model
+        .materials
+        .extend([plain([1.0, 0.0, 0.0, 1.0]), plain([0.0, 0.0, 1.0, 1.0])]);
+    for material in [1, 2] {
+        model.draws.push(DrawInfo {
+            geometry: 0,
+            material,
+            skin: None,
+        });
+    }
+    for (index, x) in [(1, -0.75), (2, 0.75)] {
+        let mut world = scaling(0.4, 0.4, 1.0);
+        world[12] = x;
+        world[13] = 0.75;
+        world[14] = 0.1;
+        let mut state = scenes.frame.draws[0].clone();
+        state.index = index;
+        state.world = world;
+        scenes.frame.draws.push(state);
+    }
+    scenes.animate = Some(|frame, time| {
+        if time == 0.0 {
+            frame.draws.truncate(1);
+        }
+    });
+    scenes
+}
+
+#[test]
+fn scene_frame_buffers_regrow_and_rebind() {
+    // Each time drawn by a renderer of its own.
+    let mut expected = Vec::new();
+    for time in [0.0, 1.0] {
+        let Some(mut renderer) = renderer(transparent()) else {
+            return;
+        };
+        renderer.renderer = renderer.renderer.with_content_provider(three_squares());
+        expected.push(renderer.render(&scene_at(time, 1.0)).unwrap());
+    }
+    assert!(expected[0].pixels != expected[1].pixels);
+    let Some(mut renderer) = renderer(transparent()) else {
+        return;
+    };
+    renderer.renderer = renderer.renderer.with_content_provider(three_squares());
+    let one = renderer.render(&scene_at(0.0, 1.0)).unwrap();
+    assert!(one.pixels == expected[0].pixels, "one draw");
+    let allocations = renderer.meshes.scene_frames.allocations;
+    // Three draws' uniforms outgrow one's buffers.
+    let three = renderer.render(&scene_at(1.0, 1.0)).unwrap();
+    assert!(renderer.meshes.scene_frames.allocations > allocations);
+    assert!(three.pixels == expected[1].pixels, "three draws");
+    let one = renderer.render(&scene_at(0.0, 1.0)).unwrap();
+    assert!(one.pixels == expected[0].pixels, "one draw again");
+}
+
+#[test]
+fn two_same_size_scene_layers_keep_their_own_pixels() {
+    let mut scenes = one_square();
+    scenes.animate = Some(|frame, time| {
+        if time == 1.0 {
+            frame.draws[0].overrides.base_color = Some([1.0, 0.0, 0.0, 1.0]);
+        }
+    });
+    let Some(mut renderer) = renderer(transparent()) else {
+        return;
+    };
+    renderer.renderer = renderer.renderer.with_content_provider(scenes);
+    // Both 64² canvases: the white square, then beside it the red one.
+    let scene = scene_layers(128, &[("white", 0.0, 1.0, 0.0), ("red", 1.0, 1.0, 64.0)]);
+    let frame = renderer.render(&scene).unwrap();
+    assert_eq!(renderer.meshes.scene_frames.cached_sizes(), [(64, 64)]);
+    assert_pixel(&frame, 32, 32, WHITE);
+    assert_pixel(&frame, 96, 32, RED);
+    assert_pixel(&frame, 2, 2, CLEAR);
+    assert_pixel(&frame, 66, 2, CLEAR);
+}
+
 #[test]
 fn zoomed_scene_canvas_is_capped() {
     // ×64, the 64-unit canvas would be 4096² texels, twice the cap.
