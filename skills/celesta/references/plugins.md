@@ -73,6 +73,8 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
 | `plugin "<id>" has no JavaScript module` | The plugin has only a program; its layers come from another package. |
 | `… has no executable for this platform` | The plugin was not built for this OS and CPU. |
 | `plugin "<id>": …` | The plugin's own error, such as a missing asset. |
+| `plugin layer <layer> cannot be drawn: …` | The plugin answered with meshes or a scene that fails Celesta's checks (bad indices, counts that do not match, a camera that sees nothing). The plugin must be fixed. |
+| A warning `<id> (layer <layer>): …` (starting `note: ` for information) | Not an error: the plugin's notice about a model it opened, such as its terms of use (the app's Problems tab lists it too). Relay it to the user; do not try to silence it. |
 
 ## Writing one
 
@@ -83,9 +85,15 @@ With `src` (`image` or `video`) it is added like an Image (`src`, `x`, `y`,
 `width`); without, like a Rect's box (`x`, `y`, `width`, `height`). `props`
 (strings, numbers, booleans) follow those and may not repeat them.
 
+A plugin's program answers each frame with either 2D meshes or a 3D scene
+(skinned, morphing geometry with materials and a camera; Celesta draws it
+with depth, for now unlit), and may return notices when it opens a model.
+
 Start from the samples in the Celesta repository's `examples/plugins`
-(`flag`: a program that returns meshes; `beep-voice`: a module-only speech
-channel), `docs/handoff/2026-11-01-plugin-system.md` (manifest and
-protocol), and the later `docs/handoff/2026-11-02-plugin-*.md` notes
-(search locations, approval, `components`). A plugin with a bad component
-is skipped whole, like one with a bad id.
+(`flag`: a program that returns meshes; `turntable`: a program that returns
+a 3D scene; `beep-voice`: a module-only speech channel),
+`docs/handoff/2026-11-01-plugin-system.md` (manifest and protocol), the
+later `docs/handoff/2026-11-02-plugin-*.md` notes (search locations,
+approval, `components`), and `docs/handoff/2026-11-03-plugin-scene-content.md`
+(scenes, notices, the current `ContentProvider`). A plugin with a bad
+component is skipped whole, like one with a bad id.

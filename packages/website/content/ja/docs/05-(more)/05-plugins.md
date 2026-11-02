@@ -92,22 +92,26 @@ export default function Root() {
 
 どのフォルダーにもないプラグインを import したエントリーは読み込みに失敗し、プラグイン名がエラーに表示されます。フレームは時刻だけで決まります。プラグインのレイヤーも props とフレームだけで決まるため、プレビュー・書き出し・シークの結果が一致します。
 
+プラグインは、モデルの利用条件のように、レイヤーが描くものについてのお知らせを出すことがあります。デスクトップアプリはそれを Problems タブに表示し、`celesta-exporter` は警告として一度だけ出力します。
+
 プロジェクトの TypeScript サポートは、各プラグインの型定義を `.celesta/plugins/` にコピーするので、コードエディターで props を補完できます。デスクトップアプリがプロジェクトを開いたときは、プロジェクト自身のプラグインと承認待ちのプラグインの型定義もコピーします。型定義はコードを実行しません。
 
 デスクトップアプリでは、プラグインのコンポーネントを **Add** メニューから追加することもできます。メニューでは Celesta 本体の要素の後に並びます。選ぶと Image や Rect と同じように追加できます。ファイルを受け取るコンポーネントは先にファイルを尋ね、そのあとドラッグで置く場所を決めます。アプリは要素を書き込むとき、`import { Flag } from '@celesta-plugin/flag'` のようなプラグインの import も追加します。
 
 ## サンプル
 
-リポジトリの `examples/plugins` に、出発点になるプラグインが 2 つあります。
+リポジトリの `examples/plugins` に、出発点になるプラグインが 3 つあります。
 
 | プラグイン | 内容 |
 | --- | --- |
 | `flag` | プラグインのプログラムが描くレイヤー。画像を旗のようになびかせ、Celesta がテクスチャ付きメッシュとして描きます。 |
+| `turntable` | プラグインのプログラムが 3D で描くレイヤー。ターンテーブルの上で回る市松模様の立方体を、半透明の板と切り抜いた葉と一緒に、Celesta が奥行きのあるシーンとして描きます。 |
 | `beep-voice` | コンポーネントだけのプラグイン。音声合成エンジンの代わりにゲーム風のビープ音で `planDialogue()` のセリフを読み上げ、口パクも付ける音声チャンネルです。 |
 
 ```sh
 node examples/plugins/build.mjs
 cargo run -p celesta-exporter -- --react examples/plugins/flag/demo.tsx flag.mp4 --plugin-dir examples/plugins/dist
+cargo run -p celesta-exporter -- --react examples/plugins/turntable/demo.tsx turntable.mp4 --plugin-dir examples/plugins/dist
 ```
 
 ## プラグインを作る
@@ -115,7 +119,7 @@ cargo run -p celesta-exporter -- --react examples/plugins/flag/demo.tsx flag.mp4
 プラグインは最大 2 つの部分からなり、どちらも言語を問いません。
 
 - **コンポーネント**（マニフェストの `module` と `types`）：ES モジュールとその型定義です。Celesta はモジュールをエントリーにバンドルし、その中の `react` と `@celesta/*` の import はアプリ自身のものを使います。音声合成チャンネルはこれだけで作れます。`@celesta/voicevox` と同じく `prepare()` の中で動き、`audio` と `lipSync` を付けたセリフを返します。
-- **プログラム**（`executable`、プラットフォームごと）：標準入力でリクエストを読み、標準出力で答えます。レイヤーについては、指定された時刻のテクスチャ付き三角形メッシュと、その色・マスク・合成方法を返し、Celesta が描きます。Rust なら `celesta-plugin` クレートを使えます。プロトコル自体は長さ付きの素朴な JSON です。
+- **プログラム**（`executable`、プラットフォームごと）：標準入力でリクエストを読み、標準出力で答えます。レイヤーについては、指定された時刻の 2D のテクスチャ付き三角形メッシュとその色・マスク・合成方法か、3D のシーンを返し、Celesta が描きます。シーンは、スキニングとモーフィングをする三角形のジオメトリーにマテリアルを付けたもので、プログラムが置いたカメラから見て描かれます。Celesta はシーンを奥行きとアンチエイリアス付きで描き、不透明・切り抜き・半透明のマテリアルを扱います。今のところライティングはありません。モデルを開いたときには、モデルの利用条件のようなお知らせも返せます。お知らせは上で説明したように表示されます。Rust なら `celesta-plugin` クレートを使えます。プロトコル自体は長さ付きの素朴な JSON です。
 
 デスクトップアプリの Add メニューにコンポーネントを出すには、マニフェストの `components` に書きます。
 
@@ -129,4 +133,4 @@ cargo run -p celesta-exporter -- --react examples/plugins/flag/demo.tsx flag.mp4
 
 プラグインの id には英小文字・数字・`-`・`_`・`.` を使い、先頭は英小文字か数字にします。マニフェストで指定するファイルはすべて、プラグインのフォルダー内を指す相対パスにします。`..` を含むパスや、フォルダーの外へ向かうリンクは使えません。これに反するプラグインや、上の決まりに反するコンポーネントを持つプラグインは、理由を示したうえで読み飛ばされます。
 
-両方の部分の作り方はサンプルの README で説明しています。マニフェストとプロトコルはリポジトリの `docs/handoff/2026-11-01-plugin-system.md` で、その後の変更（`components` など）は `docs/handoff/2026-11-02-plugin-*.md` で説明しています。
+両方の部分の作り方はサンプルの README で説明しています。マニフェストとプロトコルはリポジトリの `docs/handoff/2026-11-01-plugin-system.md` で、その後の変更（`components` など）は `docs/handoff/2026-11-02-plugin-*.md` で、3D のシーンとお知らせは `docs/handoff/2026-11-03-plugin-scene-content.md` で説明しています。
