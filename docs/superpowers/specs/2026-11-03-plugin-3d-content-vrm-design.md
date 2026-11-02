@@ -31,7 +31,10 @@ UniVRM (vrm-c/UniVRM), the reference implementation.
   for code structure only.
 - **VRM 1.0 first.** VRM 0.x support follows later and is experimental. It
   works by migrating the file to 1.0 on load as UniVRM's VRM10
-  loader does, so one shading formula draws both.
+  loader does, so one shading formula draws both. That migration is also the
+  bar for 0.x, not UniVRM's legacy 0.x loader: the legacy loader is a
+  separate package, and a usual UniVRM set-up installs only VRM10 and lets
+  it convert 0.x files.
 - **glTF PBR is optional.** Unlit and toon come first; metallic-roughness is
   a later phase.
 - **The VRM plugin lives in this repository** but builds apart from the
@@ -382,9 +385,6 @@ side once the protocol types land.
 
 ## Open questions
 
-- When 0.x support stops being experimental, whether its bar is UniVRM's
-  VRM10 migration (as here) or its legacy 0.x loader (the 0.x formula, which
-  keeps light color attenuation and the `min(col, lit)` clamp).
 - The parity tolerance, and which sample models can be committed.
 - How far the per-frame protocol should go toward #645's shared-memory
   transport, should a plugin ever send CPU-deformed vertices instead of
