@@ -93,12 +93,20 @@ the identity as `world` for a glTF skinned mesh.
   with area, vertex streams of equal length, triangles inside their
   vertices, references to things it has (textures, geometries, materials,
   skins), and skins with every joint their geometries' vertices name;
-  buffers and textures must fit the GPU. Each frame must list only draws
-  the model has, each once, with as many morph weights as targets, as many
+  buffers and textures must fit the GPU. The buffers the model has the GPU
+  allocate (every geometry's streams, morph targets, and indices, and a
+  48-byte skinned vertex per vertex of each draw's geometry) must come to
+  at most 1 GiB (`SCENE_BUFFER_BUDGET`, 1 << 30 bytes), counted before
+  anything is allocated, so a small model listing many draws of a large
+  geometry is refused rather than run out of memory. Each frame must list
+  only draws the model has, each once, with as many morph weights as targets, as many
   skinning matrices per skin as joints, finite numbers, and a camera that
   sees something (`0 < near < far`, a `yfov` between 0 and π or a positive
-  `height`, an invertible `view`). Anything else is `InvalidPluginContent`.
-  A model that fails to load is closed again.
+  `height`, an invertible `view`), and its buffers (skinning matrices and
+  morph weights, and the per-draw skinning and draw uniforms, 256 bytes a
+  draw each on most GPUs) must each fit the largest buffer the GPU allows.
+  Anything else is `InvalidPluginContent`. A model that fails to load is
+  closed again.
 - **Uploaded once.** Geometries and textures go to the GPU when the model
   is opened and are cached with it, by plugin and asset paths, as 2D models
   are.
@@ -124,8 +132,16 @@ the identity as `world` for a glTF skinned mesh.
   coordinates moved by the texture transform and the frame's overrides.
 - **Into the layer.** The resolved canvas is converted to the layer
   texture's encoding: un-premultiplied, colors above 1 clipped (no tone
-  mapping), encoded to sRGB, premultiplied again as `Rgba8Unorm`. The
-  canvas's size follows the render density as 2D meshes' does.
+  mapping), encoded to sRGB, premultiplied again as `Rgba8Unorm`.
+- **Canvas size.** The canvas follows the render density as 2D meshes'
+  does, no side longer than the GPU's largest texture, but a scene canvas
+  also has at most 8,388,608 texels (`SCENE_CANVAS_TEXELS`): each costs
+  about 60 bytes (four color and four depth samples, the resolved color,
+  the layer texture), so the cap is about 500 MB. A 4K frame
+  (3840 × 2160, 8,294,400 texels) fits at 1×; a canvas that would be
+  larger, such as a zoomed layer's, is drawn at the density that fits, its
+  aspect kept, and so softer. 2D mesh canvases keep the per-side limit
+  only.
 
 ## Notices
 
@@ -137,10 +153,13 @@ the identity as `world` for a glTF skinned mesh.
   plugin, level, message), once per plugin and message, with the first
   layer it was said for. Its `Display` is
   `<plugin> (layer <id>): <message>`, prefixed `note: ` for `info`.
-- The exporter reports each one once per export as a warning
-  (`warning: …` on the terminal, and in `--json`'s warnings), for videos
-  and stills alike. The editor adds them to the preview's warnings, which
-  the Problems tab lists.
+- The exporter reports each one once per export, for videos and stills
+  alike: a `warning` notice as `ExportProgress::Warning` (`warning: …` on
+  the terminal), an `info` one as `ExportProgress::Note`, printed as it
+  reads (`note: …`) without the `warning:` label. `--json` and
+  `--json-progress` list both among the warnings (a note keeps its
+  `note: `), so their schema is unchanged. The editor adds them to the
+  preview's warnings, which the Problems tab lists.
 - The plugin host keeps the notices of a model's first open: when a
   restarted process opens the model again, that answer's notices are
   dropped.
@@ -201,10 +220,11 @@ the cube). It takes no assets; its geometry and textures are made in code
 | `crates/plugin/src/scene.rs` | The scene types: `SceneModel`, `SceneTexture`, `ColorSpace`, `Sampler`, `Geometry`, `MorphTarget`, `Skin`, `Material` (`AlphaMode`, `MaterialKind::Unlit`), `TextureRef`, `TextureTransform`, `DrawInfo`, `SceneFrame`, `Camera`, `Projection`, `Lights`, `DrawState`, `MaterialOverrides`. |
 | `crates/plugin/src/provider.rs` | `ContentModel`, `ContentFrame`, `Opened`, `Notice`, `NoticeLevel`; `ContentProvider::open` returns `Opened` and `frame` returns `ContentFrame`. |
 | `crates/plugin/src/protocol.rs` | `ContentKind`, `ROLES`, `encode_opened`/`decode_opened`, `encode_content_frame`/`decode_content_frame`, the scene encoding; `serve_on` answers `hello` with `roles`. A geometry's morph target count is bounded by the payload. |
-| `crates/plugin-host/src/host.rs` | `PluginHost` returns `Opened`, remembers each model's kind, decodes its frames as that kind, and refuses a reopen of the other kind. |
+| `crates/plugin-host/src/host.rs` | `PluginHost` returns `Opened`, remembers each model's kind, decodes its frames as that kind, and refuses (and closes) a reopen of the other kind. |
 | `crates/gpu-renderer/src/scene.rs`, `scene.wgsl`, `scene_skin.wgsl` | Loading and checking scenes, the compute skinning and morphing, the queue-ordered, depth-tested, multisampled unlit draw, and the conversion to the layer texture. |
 | `crates/gpu-renderer/src/mesh.rs`, `renderer.rs` | Models of either kind; `PluginNotice` and `GpuRenderer::plugin_notices()`. |
-| `crates/exporter/src/render.rs`, `stills.rs` | `report_render_warnings` reports plugin notices with the font warnings. |
+| `crates/exporter/src/render.rs`, `stills.rs` | `report_render_warnings` reports plugin notices with the font warnings: warnings as `ExportProgress::Warning`, info notices as `ExportProgress::Note`. |
+| `crates/exporter/src/control.rs`, `progress.rs`, `report.rs` | `ExportProgress::Note`, printed without the `warning:` label and listed among the JSON warnings. |
 | `crates/editor/src/preview.rs` | Plugin notices among the preview's warnings. |
 | `examples/plugins/turntable` | The sample above, with `README.md`, `demo.tsx`, and tests. |
 | `examples/plugins/flag` | Updated to `Opened` and `ContentFrame`. |
@@ -232,6 +252,25 @@ Not done:
   `ContentProvider`: `open` returns `Opened` (its `MeshModel` as
   `content`, no notices) and `frame` returns `ContentFrame` (its
   `MeshFrame` with `.into()`). Its process's answers need no change.
+- **Blend draws sort by view-space z,** not by distance to the camera as
+  Unity does; the two differ for draws off the view axis. Parity is for
+  phase 2; the VRM plugin should send `center` for skinned draws, whose
+  rest bounds do not follow the pose.
+- **Joint indices in zero-weight slots count** toward the check that a
+  skin has every joint its geometry names. The VRM plugin should zero
+  them.
+- **glTF primitives sharing accessors** become separate geometries, each a
+  full copy of the shared streams. The plugin should compact each
+  primitive to the vertices it references.
+- **The default 128 MiB storage-binding limit**
+  (`max_storage_buffer_binding_size`) may refuse morph-heavy high-poly
+  geometry: all of a geometry's morph targets are one buffer.
+- **Straight-alpha mipmaps fringe cut-outs at distance:** averaging
+  straight colors with transparent texels pulls in their (often black or
+  arbitrary) colors.
+- **No test for the reopen of the other kind.** Closing the reopened model
+  needs a plugin that changes kind across a restart, which no test plugin
+  does.
 
 ## Checks
 
@@ -252,9 +291,19 @@ Not done:
   unless double-sided; hidden draws are not drawn; edges are anti-aliased
   at density 2; mask cuts at its cutoff; blend draws go back to front
   whatever the list order, after opaque ones, and by `center` when given;
-  and frames repeat exactly. Unit tests check that projections put `near`
-  at depth 0 and `far` at 1, the determinant, and that sRGB mipmaps
-  average in linear light.
+  frames repeat exactly; a layer zoomed ×64 renders on a canvas within
+  `SCENE_CANVAS_TEXELS`; a model over the 1 GiB buffer budget is refused;
+  the texture transform offsets, scales, and rotates (a quarter turn
+  taking `(u, v)` to `(−v, u)`, as `KHR_texture_transform`'s column-major
+  `mat3`), scaled before it is rotated; and the frame's overrides replace
+  the material's offset, scale, and base color. Unit tests check that
+  projections put `near` at depth 0 and `far` at 1, the determinant, that
+  sRGB mipmaps average in linear light, the capped canvas size (4K at 1×
+  untouched, aspect kept), the buffer byte count, and the per-draw uniform
+  check (a GPU test would need over 500,000 queued draws).
+- The exporter's tests list a note among the JSON warnings and
+  `--json-progress`'s `warning` events, and keep it out of the progress
+  display's warnings.
 - `crates/gpu-renderer/src/tests/plugin.rs`: plugin notices are reported
   per frame, once per plugin and message.
 - `celesta-plugin-turntable`'s unit tests check its geometry (faces out,
