@@ -14,7 +14,7 @@ use crate::source::PropertyArgs;
 use crate::view::EditorView;
 use celesta_plugin_host::{
     InstalledPlugins, PendingPlugin, PluginEntry, SettingsError, UserSettings, from_the_internet,
-    project_plugin_paths, project_root,
+    has_project_config, project_plugin_paths, project_root,
 };
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dialog::{DialogAction, DialogClose, DialogDescription, DialogFooter};
@@ -22,6 +22,7 @@ use gpui_kit::component::{ActiveTheme as _, WindowExt as _, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::{Context, Pixels, Window, div, px};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
 
 /// Wide enough for a plugin's folder on one or two lines.
 const PLUGIN_DIALOG_WIDTH: Pixels = px(560.);
@@ -127,12 +128,39 @@ impl FoundPlugins {
     }
 }
 
+/// Project folders without `celesta.config.json` that the user trusted while
+/// Celesta runs, links resolved. Nothing marks such a folder as a project,
+/// so the choice is not saved and is asked again the next time Celesta
+/// starts.
+static TRUSTED_FOR_NOW: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+
+fn trusted_for_now() -> Vec<PathBuf> {
+    TRUSTED_FOR_NOW
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .clone()
+}
+
+/// `folder` with links resolved, as the folders trusted for now are kept.
+fn resolved(folder: &Path) -> PathBuf {
+    std::fs::canonicalize(folder).unwrap_or_else(|_| folder.to_path_buf())
+}
+
+/// Whether the user trusts the project at `root`: saved in their settings,
+/// or trusted for now (`for_now`).
+fn is_trusted(settings: &UserSettings, for_now: &[PathBuf], root: &Path) -> bool {
+    settings.is_trusted(root) || for_now.contains(&resolved(root))
+}
+
 /// A project the user has not trusted yet, as opening asks about it.
 pub(crate) struct TrustRequest {
     pub(crate) path: PathBuf,
     pub(crate) property_args: PropertyArgs,
-    /// The folder trusting covers.
+    /// The project folder trusting covers.
     pub(crate) root: PathBuf,
+    /// The root holds `celesta.config.json`, so trusting it is saved;
+    /// otherwise it lasts until Celesta quits.
+    pub(crate) remembered: bool,
     /// The entry came from the internet (its Mark of the Web).
     pub(crate) from_the_internet: bool,
 }
@@ -142,18 +170,25 @@ pub(crate) struct TrustRequest {
 /// that cannot be read trust nothing, so the question is asked; saving the
 /// answer then reports why they could not be read.
 pub(crate) fn trust_request(path: &Path, property_args: &PropertyArgs) -> Option<TrustRequest> {
-    trust_request_with(&UserSettings::current().0, path, property_args)
+    trust_request_with(
+        &UserSettings::current().0,
+        &trusted_for_now(),
+        path,
+        property_args,
+    )
 }
 
 fn trust_request_with(
     settings: &UserSettings,
+    for_now: &[PathBuf],
     path: &Path,
     property_args: &PropertyArgs,
 ) -> Option<TrustRequest> {
     let root = project_root(path);
-    (!settings.is_trusted(&root)).then(|| TrustRequest {
+    (!is_trusted(settings, for_now, &root)).then(|| TrustRequest {
         path: path.to_path_buf(),
         property_args: property_args.clone(),
+        remembered: has_project_config(&root),
         root,
         from_the_internet: from_the_internet(path),
     })
@@ -161,12 +196,30 @@ fn trust_request_with(
 
 /// The trusted project folder `path` opens in, whose own plugins are used.
 pub(crate) fn trusted_root(path: Option<&Path>) -> Option<PathBuf> {
-    trusted_root_with(&UserSettings::current().0, path)
+    trusted_root_with(&UserSettings::current().0, &trusted_for_now(), path)
 }
 
-fn trusted_root_with(settings: &UserSettings, path: Option<&Path>) -> Option<PathBuf> {
+fn trusted_root_with(
+    settings: &UserSettings,
+    for_now: &[PathBuf],
+    path: Option<&Path>,
+) -> Option<PathBuf> {
     let root = project_root(path?);
-    settings.is_trusted(&root).then_some(root)
+    is_trusted(settings, for_now, &root).then_some(root)
+}
+
+/// Trusts `request`'s project: saved when it has `celesta.config.json`,
+/// else until Celesta quits.
+fn trust(request: &TrustRequest) -> Result<(), SettingsError> {
+    if request.remembered {
+        UserSettings::update(|settings| settings.trust(&request.root)).map(drop)
+    } else {
+        TRUSTED_FOR_NOW
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(resolved(&request.root));
+        Ok(())
+    }
 }
 
 impl EditorView {
@@ -190,14 +243,23 @@ impl EditorView {
         let request = std::rc::Rc::new(std::cell::RefCell::new(Some(request)));
         window.open_dialog(cx, move |dialog, _, cx| {
             let muted = cx.theme().muted_foreground;
-            let Some((root, from_the_internet)) = request.borrow().as_ref().map(|request| {
-                (
-                    request.root.display().to_string(),
-                    request.from_the_internet,
-                )
-            }) else {
+            let Some((root, remembered, from_the_internet)) =
+                request.borrow().as_ref().map(|request| {
+                    (
+                        request.root.display().to_string(),
+                        request.remembered,
+                        request.from_the_internet,
+                    )
+                })
+            else {
                 return dialog;
             };
+            let for_now = (!remembered).then(|| {
+                div().text_sm().text_color(muted).child(
+                    "This folder has no celesta.config.json, so Celesta asks again the next \
+                     time it starts.",
+                )
+            });
             let warning = from_the_internet.then(|| {
                 div()
                     .text_color(cx.theme().danger)
@@ -217,6 +279,7 @@ impl EditorView {
                              Trust only projects from people you trust.",
                         ))
                         .child(div().text_sm().text_color(muted).child(root))
+                        .children(for_now)
                         .children(warning),
                 )
                 .footer(
@@ -241,8 +304,8 @@ impl EditorView {
                         return true;
                     };
                     view.update(cx, |this, cx| {
-                        match UserSettings::update(|settings| settings.trust(&request.root)) {
-                            Ok(_) => this.load_path_with(
+                        match trust(&request) {
+                            Ok(()) => this.load_path_with(
                                 Some(request.path),
                                 request.property_args,
                                 window,
@@ -481,18 +544,59 @@ mod tests {
         let project = Project::new("ask");
         let entry = project.0.join("film.tsx");
         let mut settings = UserSettings::default();
-        let request = trust_request_with(&settings, &entry, &PropertyArgs::default()).unwrap();
+        let request =
+            trust_request_with(&settings, &[], &entry, &PropertyArgs::default()).unwrap();
         assert_eq!(request.path, entry);
         assert_eq!(request.root, project.0);
+        assert!(request.remembered);
         assert!(!request.from_the_internet);
-        assert_eq!(trusted_root_with(&settings, Some(&entry)), None);
-        assert_eq!(trusted_root_with(&settings, None), None);
+        assert_eq!(trusted_root_with(&settings, &[], Some(&entry)), None);
+        assert_eq!(trusted_root_with(&settings, &[], None), None);
 
         settings.trust(&project.0);
-        assert!(trust_request_with(&settings, &entry, &PropertyArgs::default()).is_none());
+        assert!(trust_request_with(&settings, &[], &entry, &PropertyArgs::default()).is_none());
         assert_eq!(
-            trusted_root_with(&settings, Some(&entry)),
+            trusted_root_with(&settings, &[], Some(&entry)),
             Some(project.0.clone())
+        );
+    }
+
+    #[test]
+    fn a_project_inside_a_trusted_one_is_asked_about_on_its_own() {
+        let project = Project::new("nested");
+        let inner = project.0.join("inner");
+        std::fs::create_dir_all(&inner).unwrap();
+        std::fs::write(inner.join(celesta_plugin_host::PROJECT_CONFIG), "{}").unwrap();
+        let entry = inner.join("film.tsx");
+        let mut settings = UserSettings::default();
+        settings.trust(&project.0);
+        let request =
+            trust_request_with(&settings, &[], &entry, &PropertyArgs::default()).unwrap();
+        assert_eq!(request.root, inner);
+        assert_eq!(trusted_root_with(&settings, &[], Some(&entry)), None);
+    }
+
+    #[test]
+    fn a_folder_without_project_settings_is_trusted_for_now() {
+        let project = Project::new("for-now");
+        let folder = project.0.join("loose");
+        std::fs::create_dir_all(&folder).unwrap();
+        let entry = folder.join("film.tsx");
+        std::fs::write(&entry, "").unwrap();
+        // With no project settings above, the entry's own folder is the root.
+        std::fs::remove_file(project.0.join(celesta_plugin_host::PROJECT_CONFIG)).unwrap();
+        let settings = UserSettings::default();
+        let request =
+            trust_request_with(&settings, &[], &entry, &PropertyArgs::default()).unwrap();
+        assert_eq!(request.root, folder);
+        assert!(!request.remembered);
+        let for_now = [resolved(&request.root)];
+        assert!(
+            trust_request_with(&settings, &for_now, &entry, &PropertyArgs::default()).is_none()
+        );
+        assert_eq!(
+            trusted_root_with(&settings, &for_now, Some(&entry)),
+            Some(folder)
         );
     }
 
@@ -502,7 +606,7 @@ mod tests {
         let entry = project.0.join("film.tsx");
         let mut settings = UserSettings::default();
         let found = |settings: &UserSettings| {
-            let root = trusted_root_with(settings, Some(&entry));
+            let root = trusted_root_with(settings, &[], Some(&entry));
             FoundPlugins::find_with(root.as_deref(), settings, None)
         };
         let is_project = |entry: &PluginEntry| entry.manifest.id == "p";

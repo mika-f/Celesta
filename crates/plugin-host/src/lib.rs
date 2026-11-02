@@ -24,7 +24,9 @@ pub use manifest::{
     DiscoveryError, InstalledPlugins, MANIFEST, Manifest, PLUGIN_PATH_ENV, PluginEntry, discover,
     discover_in, is_contained_path, is_valid_id, platform, plugin_paths,
 };
-pub use project::{PROJECT_CONFIG, ProjectConfigError, project_plugin_paths, project_root};
+pub use project::{
+    PROJECT_CONFIG, ProjectConfigError, has_project_config, project_plugin_paths, project_root,
+};
 pub use settings::{
     Allowance, AllowedPlugin, SETTINGS_FILE, SettingsError, UserSettings, create_private_dir_all,
     user_settings_dir, user_settings_path,

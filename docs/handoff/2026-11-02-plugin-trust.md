@@ -13,13 +13,19 @@ now asks before either runs.
   count: a home folder with a `package.json` would otherwise become the
   project (seen on the development machine).
 - **Trust** (`UserSettings::is_trusted`/`trust`): a list of trusted
-  folders, links resolved; a folder covers what is inside it (component-wise,
-  so `project-other` is not inside `project`).
+  project roots, links resolved. A root is trusted only when it is in the
+  list itself: a project below a trusted one, with its own
+  `celesta.config.json`, is another root and is asked about on its own.
+  - Trust is saved only for a root that holds `celesta.config.json`
+    (`has_project_config`). A root without it is just the folder the entry
+    was opened from (`~/Downloads`, say), so trusting it lasts until the app
+    quits (`TRUSTED_FOR_NOW` in the editor, shared by its windows) and the
+    question says it will be asked again.
   - `load_path_with` checks trust on the background thread before
     `load_source` runs anything. An untrusted project returns a
     `TrustRequest` and the window shows **Trust this project?**
-    (`ask_to_trust`). **Trust and Open** saves the folder and opens it;
-    **Don’t Open** keeps the current contents.
+    (`ask_to_trust`). **Trust and Open** trusts the root (`trust`) and opens
+    it; **Don’t Open** keeps the current contents.
   - At start-up an untrusted command-line project opens the demo and asks
     once the window's root exists (`window.defer` in `main.rs`). A trusted
     one that fails to open (see below) opens the demo too and is tried
@@ -27,7 +33,12 @@ now asks before either runs.
     with the error on a console a release build does not have.
   - **File > Create New Project** trusts the folder it initialized; a
     failure to save that is reported after the load starts, which clears
-    the project's problems.
+    the project's problems. Initializing a project (`initialize_project`:
+    the menu, `--init`, and MCP's `init_project`) writes `{}` to
+    `celesta.config.json` when it is missing, so the new folder is its own
+    root, even inside another project, and its trust is saved. Opening or
+    trusting a project never writes the file: a downloaded project is not
+    changed behind the user's back.
   - The question says when the entry has a Mark of the Web naming the
     internet or restricted zone (`from_the_internet`, Windows only). The
     stream is read as bytes: UTF-16 with its byte-order mark, else loosely
@@ -80,52 +91,46 @@ now asks before either runs.
   settings file other users can change is refused (treated as empty,
   reported).
 
-## Open questions
+## Decisions from review
 
-Raised in review and left for a decision:
+Questions raised in review, as the maintainer decided them:
 
-- **Trust of a folder without `celesta.config.json`.** Its root is the
-  entry's folder, and trust covers what is inside: trusting
-  `~/Downloads/film.tsx` trusts every project later put under
-  `~/Downloads`. Options: a root without the file covers only itself; or
-  warn about (or refuse) home, Downloads, Desktop, and drive roots.
-- **What the fingerprint covers.** Only the manifest and the files it
-  names; a JS file the module imports or a library beside the program can
-  change without a question, and approval is checked when a project opens,
-  not each time a runtime starts. Options: hash every file in the folder
-  (slower for large plugins), or keep it and say so (the guide now does).
-- **Command-line tools and approval.** `celesta-exporter` and MCP run user
-  and bundled plugins without asking, including ones the app shows as
-  waiting (the guide says so). Options: apply approvals there too, at
-  least for MCP, which an AI agent drives.
-- **Settings that cannot be read.** Everything falls back to empty
+- **Trust of a folder without `celesta.config.json`**: asked each time the
+  app starts, and a trusted root covers only itself (above). Before, trust
+  covered everything inside the folder, so trusting `~/Downloads/film.tsx`
+  trusted every project later put under `~/Downloads`.
+- **Create New Project inside another project**: the new project gets its
+  own `celesta.config.json` (above), so it is its own root.
+- **What the fingerprint covers**: kept as the manifest and the files it
+  names, which the guide says. Hashing the whole folder (cost: time for
+  large plugins, and re-approval whenever a plugin writes logs or caches
+  beside itself) is tracked in mika-f/Celesta#652, undecided.
+- **Command-line tools and approval**: `celesta-exporter` and MCP keep
+  running the plugins they find without asking, for now (also in #652).
+- **Settings that cannot be read**: kept. Everything falls back to empty
   settings: in the app nothing is trusted or allowed (fails closed), but a
   bundled or explicit plugin the user turned off (layer 3) runs again.
-- **A waiting plugin in an entry.** Today the project does not open until
-  the plugin is allowed (above). Alternative: the runtime resolves a
-  waiting plugin's import to an empty stand-in, so the project opens with
-  that plugin's layers undrawn.
-- **Create New Project inside another project.** The new folder is
-  trusted, but if a folder above it holds `celesta.config.json`, the root
-  is that folder and the user is asked about it. Options: write a
-  `celesta.config.json` into new projects.
+- **A waiting plugin in an entry**: the project should open with that
+  plugin's layers undrawn rather than fail. Done on top of the stack, in
+  `2026-11-02-plugin-waiting-stand-in.md`.
 
 ## Implementation
 
 | Where | What |
 | --- | --- |
 | `crates/plugin-host/src/settings.rs` | `UserSettings`, `Allowance`, `user_settings_dir`. |
-| `crates/plugin-host/src/project.rs` | `project_root`, `project_plugin_paths`, `PROJECT_CONFIG`. |
+| `crates/plugin-host/src/project.rs` | `project_root`, `has_project_config`, `project_plugin_paths`, `PROJECT_CONFIG`. |
+| `crates/react-bridge/src/project_templates.rs` | `initialize_project` writes `celesta.config.json` when missing. |
 | `crates/plugin-host/src/approval.rs` | `fingerprint`, `from_the_internet`, `PendingPlugin`, `Allowed`, `InstalledPlugins::allowed_by`. |
 | `crates/plugin-host/src/locations.rs` | `PluginSource::Project`; `search_paths(explicit, project)`. |
-| `crates/editor/src/plugins.rs` | `FoundPlugins::find(project)`, `TrustRequest`, `trust_request`, `trusted_root`, the two dialogs. |
+| `crates/editor/src/plugins.rs` | `FoundPlugins::find(project)`, `TrustRequest`, `trust_request`, `trusted_root`, `trust` and `TRUSTED_FOR_NOW`, the two dialogs. |
 | `crates/editor/src/lifecycle.rs`, `main.rs` | `load_path_with` with the trust gate; start-up deferral; Create New Project trusts. |
 
 ## Checks
 
 - `cargo test -p celesta-plugin-host`:
-  - settings folders per platform, trust coverage, allowances following
-    fingerprints;
+  - settings folders per platform, trust covering the root alone,
+    allowances following fingerprints;
   - settings round-trip with unknown keys and no leftover temporary file,
     unreadable and (Unix) unsafe settings, saved settings 0600 in a 0700
     folder (Unix), empty and relative folders dropped on load;
@@ -136,8 +141,12 @@ Raised in review and left for a decision:
     neither runs nor waits; waiting by source;
   - the Mark of the Web: zone parsing, UTF-16 and non-UTF-8 streams, and a
     real `Zone.Identifier` stream on Windows.
+- `cargo test -p celesta-react-bridge project_templates`: a new project
+  gets `celesta.config.json`; an existing one is kept.
 - `cargo test -p celesta-editor`: the Problems entry; with settings given
-  rather than the developer's own, a project asked about until trusted, and
+  rather than the developer's own, a project asked about until trusted, a
+  project inside a trusted one asked about on its own, a folder without
+  `celesta.config.json` trusted for now but not saved, and
   a project's plugin unsearched while untrusted, waiting (and off the
   runtime's path, but declared) once trusted, and running once allowed.
 - The editor run on Windows 11 with `APPDATA` pointed at a scratch folder

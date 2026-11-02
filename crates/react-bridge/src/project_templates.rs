@@ -4,12 +4,13 @@
 //! Each template is a folder with a `template.json` (shown to the user, never
 //! copied) and the files a new project starts with. The project's `.celesta/`
 //! support directory and the files every project needs (`tsconfig.json`,
-//! `package.json`, `.gitignore`) are not part of a template; they are always
-//! created when missing and never overwritten.
+//! `package.json`, `.gitignore`, `celesta.config.json`) are not part of a
+//! template; they are always created when missing and never overwritten.
 
 use crate::project_types::{
     ProjectTypesSetup, STAMP, project_types_template, set_up_project_types_in,
 };
+use celesta_plugin_host::PROJECT_CONFIG;
 use serde::Deserialize;
 use std::ffi::OsStr;
 use std::fs;
@@ -153,6 +154,9 @@ pub fn initialize_project(
         &setup.root.join(".gitignore"),
         "node_modules/\noutput.mp4\n",
     )?;
+    // Marks the project root, so the editor remembers that the user
+    // trusts it and a project made inside another stays its own.
+    write_new(&setup.root.join(PROJECT_CONFIG), "{}\n")?;
     Ok(ProjectSetup {
         types: setup,
         template: info,
@@ -329,9 +333,17 @@ mod tests {
             fs::read_to_string(project.join(".gitignore")).unwrap(),
             "node_modules/\noutput.mp4\n"
         );
+        assert_eq!(
+            fs::read_to_string(project.join(PROJECT_CONFIG)).unwrap(),
+            "{}\n"
+        );
         assert!(!project.join("template.json").exists());
 
         let files = [
+            (
+                PROJECT_CONFIG,
+                "{\"plugins\":{\"paths\":[\"plugins\"]}}",
+            ),
             (
                 "package.json",
                 "{\"dependencies\":{\"ag-psd\":\"^31.0.2\"},\"scripts\":{\"prepare\":\"node prepare-assets.ts\"}}",
@@ -399,6 +411,7 @@ mod tests {
         assert!(!project.join("template.json").exists());
         assert!(project.join("package.json").is_file());
         assert!(project.join(".gitignore").is_file());
+        assert!(project.join(PROJECT_CONFIG).is_file());
     }
 
     #[test]

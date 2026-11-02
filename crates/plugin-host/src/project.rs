@@ -55,9 +55,16 @@ pub fn project_root(entry: &Path) -> PathBuf {
         .map_or_else(|| entry.clone(), Path::to_path_buf);
     folder
         .ancestors()
-        .find(|dir| dir.join(PROJECT_CONFIG).is_file())
+        .find(|dir| has_project_config(dir))
         .unwrap_or(&folder)
         .to_path_buf()
+}
+
+/// Whether `root` holds `celesta.config.json`, which marks it as a project.
+/// Only such a root's trust is saved: without the file, the folder trusted
+/// would be whatever folder an entry happened to be opened from.
+pub fn has_project_config(root: &Path) -> bool {
+    root.join(PROJECT_CONFIG).is_file()
 }
 
 /// The plugin folders `root`'s `celesta.config.json` lists, absolute, in
@@ -124,7 +131,9 @@ mod tests {
             project_root(&project.join("scenes").join("a.tsx")),
             project.join("scenes")
         );
+        assert!(!has_project_config(&project));
         std::fs::write(project.join(PROJECT_CONFIG), "{}").unwrap();
+        assert!(has_project_config(&project));
         assert_eq!(project_root(&project.join("scenes").join("a.tsx")), project);
         assert_eq!(project_root(&project.join("film.tsx")), project);
     }

@@ -60,9 +60,9 @@ pub struct AllowedPlugin {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UserSettings {
-    /// Project folders, links resolved, whose code Celesta may run: their
-    /// entries are evaluated and their own plugins used. A folder covers
-    /// everything inside it.
+    /// Project roots, links resolved, whose code Celesta may run: their
+    /// entries are evaluated and their own plugins used. Each covers its own
+    /// project, not the projects in folders below it.
     #[serde(default)]
     pub trusted_projects: Vec<PathBuf>,
     /// User and project plugins the user allowed to run.
@@ -218,12 +218,12 @@ impl UserSettings {
         }
     }
 
-    /// Whether `folder` is, or is inside, a trusted project folder.
+    /// Whether `folder` is a trusted project folder. Only the folder itself
+    /// is: a project found inside a trusted one (its own
+    /// `celesta.config.json`) is another project, asked about on its own.
     pub fn is_trusted(&self, folder: &Path) -> bool {
         let folder = resolved(folder);
-        self.trusted_projects
-            .iter()
-            .any(|trusted| folder.starts_with(trusted))
+        self.trusted_projects.contains(&folder)
     }
 
     /// Trusts `folder` from now on.
@@ -319,17 +319,18 @@ mod tests {
     }
 
     #[test]
-    fn trust_covers_a_folder_and_what_is_inside() {
+    fn trust_covers_the_project_folder_alone() {
         let root = tempfile::tempdir().unwrap();
         let project = root.path().join("project");
-        std::fs::create_dir_all(project.join("scenes")).unwrap();
+        std::fs::create_dir_all(project.join("nested")).unwrap();
         let mut settings = UserSettings::default();
         assert!(!settings.is_trusted(&project));
         settings.trust(&project);
-        settings.trust(&project.join("scenes"));
+        settings.trust(&project);
         assert_eq!(settings.trusted_projects.len(), 1);
         assert!(settings.is_trusted(&project));
-        assert!(settings.is_trusted(&project.join("scenes")));
+        // A project inside it is another project.
+        assert!(!settings.is_trusted(&project.join("nested")));
         assert!(!settings.is_trusted(root.path()));
         // A sibling whose name starts the same is another folder.
         let sibling = root.path().join("project-other");

@@ -23,7 +23,9 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
 - The app looks again each time a project opens and on File > Reload
   Plugins; skipped plugins show in its Problems tab.
 - The app asks the user to trust a project folder before it evaluates
-  anything in it, and to allow each user-folder or project plugin (again
+  anything in it (remembered only when the root holds
+  `celesta.config.json`, which `--init` writes; a project inside it with
+  its own file is asked about separately), and to allow each user-folder or project plugin (again
   when its manifest or a file the manifest names changes). Until allowed, a
   plugin does not run and an entry importing it does not open; Problems
   says it is waiting. Only the user can answer: tell them to, rather than
