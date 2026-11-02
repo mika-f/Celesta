@@ -39,6 +39,7 @@ pub use celesta_renderer::{GlyphMetrics, TextMetrics};
 pub use error::GpuRenderError;
 pub use hit::{HitClip, HitRegion, hit_test};
 pub use layer_frame::{LayerFrame, invert_affine, layer_frame, parent_space};
+pub use mesh::PluginNotice;
 pub use renderer::GpuRenderer;
 pub use text::TextLayout;
 pub use transform::path_transform;

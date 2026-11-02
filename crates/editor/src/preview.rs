@@ -530,6 +530,7 @@ pub(crate) fn spawn_preview(mut renderer: GpuRenderer) -> anyhow::Result<Preview
                 .map(prepare_preview_frame);
             warnings.extend(renderer.font_fallbacks().iter().map(ToString::to_string));
             warnings.extend(renderer.missing_glyphs().iter().map(ToString::to_string));
+            warnings.extend(renderer.plugin_notices().iter().map(ToString::to_string));
             frame
         });
         // Measured after the render, which loaded its fonts.

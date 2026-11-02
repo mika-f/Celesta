@@ -12,10 +12,12 @@ use crate::scene::{LoadedScene, ScenePipelines};
 use crate::texture::{LayerTexture, TextureData};
 use celesta_composition::ResolvedAsset;
 use celesta_plugin::{
-    ContentFrame, ContentModel, ContentProvider, MeshBlend, MeshModel, ModelId, TextureSource,
+    ContentFrame, ContentModel, ContentProvider, MeshBlend, MeshModel, ModelId, Notice,
+    NoticeLevel, TextureSource,
 };
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
+use std::fmt;
 use std::path::PathBuf;
 use wgpu::util::DeviceExt;
 
@@ -30,6 +32,29 @@ pub(crate) struct PluginContent<'a> {
     pub(crate) data: &'a Value,
 }
 
+/// Something the plugin of a `Plugin` layer wants the user to know about the
+/// model it opened for the layer, such as the model's terms of use.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PluginNotice {
+    pub layer: String,
+    pub plugin: String,
+    pub level: NoticeLevel,
+    pub message: String,
+}
+
+impl fmt::Display for PluginNotice {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.level == NoticeLevel::Info {
+            formatter.write_str("note: ")?;
+        }
+        write!(
+            formatter,
+            "{} (layer {}): {}",
+            self.plugin, self.layer, self.message
+        )
+    }
+}
+
 /// The provider plugin content comes from, the models it opened, and the
 /// pipelines that draw them (created by the first `Plugin` layer).
 #[derive(Default)]
@@ -39,7 +64,13 @@ pub(crate) struct MeshState {
     /// What draws scenes, created by the first scene opened.
     pub(crate) scene_pipelines: Option<ScenePipelines>,
     /// By plugin and asset paths.
-    models: HashMap<(String, BTreeMap<String, PathBuf>), LoadedModel>,
+    models: HashMap<(String, BTreeMap<String, PathBuf>), OpenModel>,
+}
+
+/// A model the provider opened, and what it said about the model then.
+struct OpenModel {
+    loaded: LoadedModel,
+    notices: Vec<Notice>,
 }
 
 /// A model opened as 2D meshes or as a 3D scene.
@@ -511,6 +542,7 @@ impl GpuRenderer {
                 .open(content.plugin, &key.1)
                 .map_err(plugin_error)?;
             let id = opened.model;
+            let notices = opened.notices;
             let loaded = match opened.content {
                 ContentModel::Meshes(model) => LoadedMeshes::load(
                     &self.device,
@@ -548,9 +580,24 @@ impl GpuRenderer {
                     return Err(error);
                 }
             };
-            self.meshes.models.insert(key.clone(), loaded);
+            self.meshes
+                .models
+                .insert(key.clone(), OpenModel { loaded, notices });
         }
-        let canvas = self.meshes.models[&key].canvas();
+        let open = &self.meshes.models[&key];
+        for notice in &open.notices {
+            if !self.plugin_notices.iter().any(|reported| {
+                reported.plugin == content.plugin && reported.message == notice.message
+            }) {
+                self.plugin_notices.push(PluginNotice {
+                    layer: layer.to_owned(),
+                    plugin: content.plugin.to_owned(),
+                    level: notice.level,
+                    message: notice.message.clone(),
+                });
+            }
+        }
+        let canvas = open.loaded.canvas();
         let largest = canvas[0].max(canvas[1]).max(1.0);
         let scale = density.min(f64::from(self.max_texture_dimension) / f64::from(largest));
         let width = ((f64::from(canvas[0]) * scale).ceil() as u32).max(1);
@@ -559,7 +606,7 @@ impl GpuRenderer {
             return Ok((self.stand_in_texture(width, height), canvas));
         }
 
-        let id = self.meshes.models[&key].id();
+        let id = self.meshes.models[&key].loaded.id();
         let provider = self
             .meshes
             .provider
@@ -572,7 +619,7 @@ impl GpuRenderer {
             layer: layer.to_owned(),
             message: message.to_owned(),
         };
-        let (frame, loaded) = match (frame, &self.meshes.models[&key]) {
+        let (frame, loaded) = match (frame, &self.meshes.models[&key].loaded) {
             (ContentFrame::Meshes(frame), LoadedModel::Meshes(loaded)) => (frame, loaded),
             (ContentFrame::Scene(frame), LoadedModel::Scene(scene)) => {
                 let texture = self.scene_texture(layer, scene, &frame, width, height)?;

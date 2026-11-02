@@ -5,7 +5,7 @@
 use super::*;
 use celesta_plugin::{
     ContentFrame, ContentProvider, MeshBlend, MeshFrame, MeshInfo, MeshMask, MeshModel, MeshState,
-    ModelId, Opened, PluginError, TextureSource,
+    ModelId, Notice, NoticeLevel, Opened, PluginError, TextureSource,
 };
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -14,8 +14,10 @@ use std::sync::Arc;
 /// mesh 1 covers it all in green, inside mesh 0; mesh 2 covers it all in
 /// half-transparent blue, outside mesh 0. Meshes sample one white texture.
 /// With `shift`, every mesh lists positions moved right by `time` pixels.
+/// Opening the model reports `notices`.
 struct Quads {
     model: MeshModel,
+    notices: Vec<Notice>,
 }
 
 /// A quad whose corners `positions` gives, top-left first, clockwise.
@@ -56,6 +58,7 @@ impl Quads {
                     })),
                 ],
             },
+            notices: vec![],
         }
     }
 }
@@ -73,7 +76,7 @@ impl ContentProvider for Quads {
         Ok(Opened {
             model: ModelId(7),
             content: self.model.clone().into(),
-            notices: vec![],
+            notices: self.notices.clone(),
         })
     }
 
@@ -199,6 +202,54 @@ fn refuses_frames_that_do_not_fit_the_model() {
     renderer
         .render(&scene(0.0, serde_json::Value::Null))
         .unwrap();
+}
+
+#[test]
+fn plugin_notices_are_reported_per_frame() {
+    let Some(renderer) = renderer(transparent()) else {
+        return;
+    };
+    let mut renderer = renderer;
+    let mut quads = Quads::new();
+    quads.notices = vec![
+        Notice {
+            level: NoticeLevel::Info,
+            message: "made by someone".into(),
+        },
+        Notice {
+            level: NoticeLevel::Warning,
+            message: "not for commercial use".into(),
+        },
+    ];
+    renderer.renderer = renderer.renderer.with_content_provider(quads);
+    // Two layers draw the one model: each notice is listed once.
+    let mut twice = scene(0.0, serde_json::Value::Null);
+    let mut copy = twice.layers[0].clone();
+    copy.id = "copy".into();
+    twice.layers.push(copy);
+    let expected = [
+        "note: quads (layer quads): made by someone",
+        "quads (layer quads): not for commercial use",
+    ];
+    renderer.render(&twice).unwrap();
+    let listed: Vec<String> = renderer
+        .plugin_notices()
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(listed, expected);
+
+    // The model is already open, and its notices still hold.
+    renderer.render(&twice).unwrap();
+    let listed: Vec<String> = renderer
+        .plugin_notices()
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(listed, expected);
+
+    renderer.render(&empty_scene(64, 64)).unwrap();
+    assert!(renderer.plugin_notices().is_empty());
 }
 
 #[test]

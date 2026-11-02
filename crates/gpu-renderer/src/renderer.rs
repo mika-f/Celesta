@@ -156,6 +156,9 @@ pub struct GpuRenderer {
     /// The last prepared frame's text layers with characters their family
     /// has no glyph for, one per family, weight, and set of characters.
     pub(crate) missing_glyphs: Vec<MissingGlyphs>,
+    /// What the plugins of the last prepared frame's `Plugin` layers said
+    /// about their models, one per plugin and message.
+    pub(crate) plugin_notices: Vec<crate::mesh::PluginNotice>,
     /// Whether `prepare_draws` records `hit_regions`.
     pub(crate) record_hit_regions: bool,
     /// What `prepare_layer` carries down the layer tree besides the
@@ -396,6 +399,7 @@ impl GpuRenderer {
             text_fonts_revision: 0,
             font_fallbacks: Vec::new(),
             missing_glyphs: Vec::new(),
+            plugin_notices: Vec::new(),
             record_hit_regions: false,
             walk: Walk::default(),
             hit_leaves: Vec::new(),
@@ -421,6 +425,14 @@ impl GpuRenderer {
     /// family and weight are listed once, with the first of them.
     pub fn missing_glyphs(&self) -> &[MissingGlyphs] {
         &self.missing_glyphs
+    }
+
+    /// What the plugins of `Plugin` layers in the most recently rendered or
+    /// submitted frame said when they opened the layers' models, such as a
+    /// model's terms of use. Each plugin's message is listed once, with the
+    /// first layer it was said for.
+    pub fn plugin_notices(&self) -> &[crate::mesh::PluginNotice] {
+        &self.plugin_notices
     }
 
     /// Lays `text` out as the last rendered frame's fonts do (call after a

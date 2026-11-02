@@ -6,9 +6,7 @@ use crate::output;
 use crate::project::{absolutize_fonts, absolutize_layers};
 use crate::range::{ExportRange, resolve_window};
 use crate::react::{CompanionProject, ReactRuntimeOptions};
-use crate::render::{
-    ReportedFontWarnings, ensure_not_cancelled, frame_count, report_font_fallbacks,
-};
+use crate::render::{ReportedWarnings, ensure_not_cancelled, frame_count, report_render_warnings};
 use celesta_composition::{Rational, Scene, Time};
 use celesta_evaluator::{EvaluationError, Evaluator};
 use celesta_gpu_renderer::{Color, GpuFrame, GpuRenderOptions, GpuRenderer};
@@ -572,7 +570,7 @@ fn render_stills(
     progress: &mut impl FnMut(ExportProgress),
     mut scene_at: impl FnMut(u64) -> Result<Scene, ExportError>,
 ) -> Result<(), ExportError> {
-    let mut fallbacks = ReportedFontWarnings::default();
+    let mut reported_warnings = ReportedWarnings::default();
     let mut failures = Vec::new();
     for (index, &frame) in frames.iter().enumerate() {
         ensure_not_cancelled(cancellation)?;
@@ -582,7 +580,7 @@ fn render_stills(
         });
         let rendered =
             scene_at(frame).and_then(|scene| renderer.render(&scene).map_err(ExportError::Render));
-        report_font_fallbacks(renderer, &mut fallbacks, progress);
+        report_render_warnings(renderer, &mut reported_warnings, progress);
         let file = match rendered {
             Ok(rendered) => destination.accept(index, frame, &rendered, overwrite),
             Err(error) if error.is_frame_scoped() && destination.place_failed(index, frame) => {

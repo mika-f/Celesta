@@ -57,6 +57,7 @@ impl GpuRenderer {
         self.scene_area = u64::from(scene.width) * u64::from(scene.height);
         self.font_fallbacks.clear();
         self.missing_glyphs.clear();
+        self.plugin_notices.clear();
         self.hit_leaves.clear();
         self.hit_regions.clear();
         self.plane_entries.clear();
