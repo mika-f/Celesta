@@ -340,10 +340,7 @@ mod tests {
         assert!(!project.join("template.json").exists());
 
         let files = [
-            (
-                PROJECT_CONFIG,
-                "{\"plugins\":{\"paths\":[\"plugins\"]}}",
-            ),
+            (PROJECT_CONFIG, "{\"plugins\":{\"paths\":[\"plugins\"]}}"),
             (
                 "package.json",
                 "{\"dependencies\":{\"ag-psd\":\"^31.0.2\"},\"scripts\":{\"prepare\":\"node prepare-assets.ts\"}}",

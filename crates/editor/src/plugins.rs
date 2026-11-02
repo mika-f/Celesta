@@ -303,22 +303,20 @@ impl EditorView {
                     let Some(request) = request.borrow_mut().take() else {
                         return true;
                     };
-                    view.update(cx, |this, cx| {
-                        match trust(&request) {
-                            Ok(()) => this.load_path_with(
-                                Some(request.path),
-                                request.property_args,
-                                window,
-                                cx,
-                            ),
-                            Err(error) => {
-                                this.problems.report(
-                                    Source::Project,
-                                    "Couldn’t save that you trust this project",
-                                    error_chain(&error),
-                                );
-                                cx.notify();
-                            }
+                    view.update(cx, |this, cx| match trust(&request) {
+                        Ok(()) => this.load_path_with(
+                            Some(request.path),
+                            request.property_args,
+                            window,
+                            cx,
+                        ),
+                        Err(error) => {
+                            this.problems.report(
+                                Source::Project,
+                                "Couldn’t save that you trust this project",
+                                error_chain(&error),
+                            );
+                            cx.notify();
                         }
                     })
                     .ok();
@@ -544,8 +542,7 @@ mod tests {
         let project = Project::new("ask");
         let entry = project.0.join("film.tsx");
         let mut settings = UserSettings::default();
-        let request =
-            trust_request_with(&settings, &[], &entry, &PropertyArgs::default()).unwrap();
+        let request = trust_request_with(&settings, &[], &entry, &PropertyArgs::default()).unwrap();
         assert_eq!(request.path, entry);
         assert_eq!(request.root, project.0);
         assert!(request.remembered);
@@ -570,8 +567,7 @@ mod tests {
         let entry = inner.join("film.tsx");
         let mut settings = UserSettings::default();
         settings.trust(&project.0);
-        let request =
-            trust_request_with(&settings, &[], &entry, &PropertyArgs::default()).unwrap();
+        let request = trust_request_with(&settings, &[], &entry, &PropertyArgs::default()).unwrap();
         assert_eq!(request.root, inner);
         assert_eq!(trusted_root_with(&settings, &[], Some(&entry)), None);
     }
@@ -586,8 +582,7 @@ mod tests {
         // With no project settings above, the entry's own folder is the root.
         std::fs::remove_file(project.0.join(celesta_plugin_host::PROJECT_CONFIG)).unwrap();
         let settings = UserSettings::default();
-        let request =
-            trust_request_with(&settings, &[], &entry, &PropertyArgs::default()).unwrap();
+        let request = trust_request_with(&settings, &[], &entry, &PropertyArgs::default()).unwrap();
         assert_eq!(request.root, folder);
         assert!(!request.remembered);
         let for_now = [resolved(&request.root)];
