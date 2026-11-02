@@ -148,9 +148,13 @@ to follow UniVRM's code anyway, so it is ported.
 - `camera`: `view` matrix and `projection`, either
   `{ perspective: { yfov, near, far } }` or
   `{ orthographic: { height, near, far } }`. The aspect is the canvas's.
-- `lights`: a list of `{ directional: { direction, color, intensity } }`
-  (the first is the main light) and an `ambient` as nine SH coefficients
-  per channel (Unity's `ShadeSH9` order and scale).
+- `lights`: up to four directional lights `{ direction, color, intensity }`
+  (the direction light travels; the first is the main light; Unity's default
+  pixel-light count) and an `ambient` as nine RGB coefficients `c0…c8` of
+  `c0·x + c1·y + c2·z + c3 + c4·xy + c5·yz + c6·z² + c7·zx + c8·(x² − y²)`,
+  Unity's `ShadeSH9` (SHA, SHB, SHC) in this space's axes; a flat ambient
+  is `c3` alone. Values copied from a Unity scene negate `c0`, `c4`, `c7`
+  (and a light's x), since UniVRM mirrors X.
 - `time`: seconds for material UV animation.
 - `draws`: every draw, with `visible`, `world` matrix, morph weights, and
   `overrides` (material color and texture-transform values for this frame).
@@ -230,22 +234,40 @@ rim    = (matcapFactor × matcapTex(uvMatcap)
 color  = direct + gi + emissiveTex × emissiveFactor + rim
 ```
 
-- `uvMatcap`: `right = normalize(cross(V, +Y))`, `up = normalize(cross(right, V))`,
-  `(dot(right, N), dot(up, N)) × ½ + ½`, computed only when a matcap or rim
-  texture is set.
+- `uvMatcap`: UniVRM's basis (`right = cross(V, +Y)`, `up = cross(right, V)`
+  in Unity's left-handed space) written in this right-handed space:
+  `right = normalize(cross(+Y, V))`, `up = cross(V, right)`,
+  `(dot(right, N) × ½ + ½, ½ − dot(up, N) × ½)` (glTF's top-left UV origin).
+  When V is parallel to ±Y, `right` falls back to the view's x axis.
 - Additional directional lights add
   `lerp(shadeColor, lit, linearstep(…)) × lightColor × shadow`, with
   `shadow = atten × ½(min(0, dot(N, L)) + 1)` and no attenuation inside the
   step, and their rim with `lerp(0, lightColor × shadow, rimLightingMix)`;
   no GI or emission (Unity's ForwardAdd pass).
-- UV animation: `uv = rot(frac(t × rotationSpeed) × 2π) × (uv + t × scroll − ½) + ½`,
-  with `t = time × uvAnimationMaskTex.b`, before the texture transform, on
-  every texture but the matcap. Speeds are the file's, in glTF's UV space.
+- UV animation, as UniVRM's `GetMToonGeometry_Uv` does it: the base color
+  texture's transform applies first (to every MToon texture but the matcap,
+  like `_MainTex_ST`); the animation mask is sampled there; then
+  `uv = R(−t × rotationSpeed) × (uv + t × scroll − ½) + ½` with
+  `t = time × uvAnimationMaskTex.b`. The file's speeds are used as they are
+  (scroll in UV units per second in glTF's UV space, rotation in radians per
+  second), which is what UniVRM's conversion to Unity's space amounts to.
 - Back faces of double-sided materials flip the normal. Vertex colors are
   ignored.
 - **Defaults follow UniVRM's importer.** A field missing from the file takes
   the value UniVRM's shader would, not the specification's: shading shift
-  −0.05, toony 0.95, shade color white, matcap factor black.
+  −0.05, toony 0.95, shade color white, matcap factor black. Empty texture
+  slots take Unity's default textures (black for shading shift and matcap,
+  white for the rest).
+- Also taken from UniVRM's MToon10: depth compare `LessEqual` (Unity's
+  `ZTest LEqual`); `blend` pixels with alpha below 2^−10 are discarded; the
+  outline pass shades with the main light only (ForwardBase), with the
+  outward normal, and draws whenever its mode is not `none`; the tangent's
+  sign follows the world matrix's determinant; normal maps decode as
+  Unity's desktop layout (`z = sqrt(1 − |xy|²)` after scaling).
+- `mask` keeps coverage from the sharpened alpha (above) rather than
+  UniVRM's `clip(t − cutoff)` with alpha 1, whose alpha-to-coverage has no
+  effect: edges move by at most `|cutoff − ½|` of a pixel. A known
+  difference, recorded for the parity checks.
 
 ### Unlit and PBR
 
