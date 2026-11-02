@@ -32,6 +32,10 @@ UniVRM (vrm-c/UniVRM), the reference implementation.
   loader does, so one shading formula draws both.
 - **glTF PBR is optional.** Unlit and toon come first; metallic-roughness is
   a later phase.
+- **The VRM plugin lives in this repository** but builds apart from the
+  workspace and is not bundled with Celesta.
+- **Existing libraries where they fit:** crates for the file formats, and
+  UniVRM's code, ported, for the runtime behavior.
 - **GPU renderer only.** `@celesta/web` does not draw 3D content. The CPU
   reference renderer keeps refusing plugin content (`UnsupportedPlugin`);
   nothing Celesta ships draws scenes with it (the exporter, editor, and MCP
@@ -56,13 +60,42 @@ UniVRM (vrm-c/UniVRM), the reference implementation.
 | --- | --- |
 | `celesta-plugin` (protocol crate) | The `scene` content kind: model and frame types, their encoding, `ContentProvider` returning either kind. |
 | `celesta-gpu-renderer` | The 3D pass: skinning and morphing, depth, MSAA, draw order, toon and unlit shading, outlines, conversion to the layer texture. |
-| VRM plugin (`plugins/vrm`, a workspace member built into the bundled plugin folder) | glTF/VRM loading, 0.x migration, humanoid, VRMA, expressions, lookAt, constraints, spring bones, camera presets, usage terms, the `<Vrm>` component. |
+| VRM plugin (`plugins/vrm` in this repository, built on its own) | glTF/VRM loading, 0.x migration, humanoid, VRMA, expressions, lookAt, constraints, spring bones, camera presets, usage terms, the `<Vrm>` component. |
 
-The VRM plugin depends only on `celesta-plugin` and MIT/Apache crates
-(`gltf`, `glam`, `image`, `mikktspace`), so it can ship in the bundled plugin
-folder, which is never asked about (`2026-11-02-plugin-trust.md`). Code
-ported from UniVRM (MIT) carries its notice. It stays a separate process like
-any plugin: Celesta's crates do not depend on it.
+- **In the monorepo, built apart.** `plugins/vrm` has a `[workspace]` of its
+  own and is excluded from the root workspace, so `cargo build --workspace`,
+  the root's tests, and the official packages do not build it. It depends on
+  `crates/plugin` by path (no `[patch]` set-up is needed inside the
+  repository). Its own build script writes the plugin directory (manifest,
+  per-platform executable, component module, declarations), as
+  `examples/plugins/build.mjs` does for the samples, and its own CI job runs
+  its tests.
+- **Not bundled.** It is not put in the bundled plugin folder. A user
+  installs the built directory into the user plugin folder (or passes
+  `--plugin-dir`), and it is asked about like any user plugin
+  (`2026-11-02-plugin-trust.md`).
+- It stays a separate process like any plugin: Celesta's crates do not
+  depend on it. Its licence is MIT OR Apache-2.0, like the workspace; code
+  ported from UniVRM (MIT) carries UniVRM's notice.
+
+### Libraries for the VRM plugin
+
+The file formats have good crates; the runtime behavior does not, and it has
+to follow UniVRM's code anyway, so it is ported.
+
+| Part | Source |
+| --- | --- |
+| glb, accessors (including sparse ones), skins, morph targets, embedded images | `gltf` (MIT/Apache); VRM extensions read as raw JSON from it |
+| VRM extension types | `vrm-spec` (pixiv's `vrm-utils-rs`, Apache-2.0): `VRMC_vrm`, `VRMC_materials_mtoon`, `VRMC_springBone`, `VRMC_vrm_animation` 1.0, and VRM 0.0. Early (0.1.x), so pinned. It has no `VRMC_node_constraint` or `VRMC_springBone_extended_collider` types; the plugin defines those (and anything else it lacks) with serde itself. |
+| Math, tangents, images | `glam`, `mikktspace`, `image` |
+| 0.x migration, expressions and their overrides, lookAt, constraints, spring bones, VRMA retargeting | Ported from UniVRM (`Packages/VRM10/Runtime`, `Packages/UniGLTF/Runtime/SpringBoneJobs`) |
+
+- **Not dependencies:** existing Rust runtimes.
+  - `vrm-runtime` is renderer-agnostic, but it is at 0.1 with one author, and it refuses VRM 0.x.
+  - `bevy_vrm` and `bevy_vrm1` are Bevy ECS systems that render themselves.
+  - Neither follows UniVRM's runtime order or spring stepping.
+  - They, three-vrm, and godot-vrm stay references for structure and test ideas.
+- **Migration is a separate step.** The 0.x migration is a document-to-document step: a 0.x glTF in, a VRM 1.0 model out. UniVRM migrates this way. Everything after loading then knows VRM 1.0 only.
 
 ## Protocol
 
@@ -341,8 +374,6 @@ side once the protocol types land.
 
 ## Open questions
 
-- Whether the VRM plugin lives in this repository and the bundled folder (as
-  proposed) or in a repository of its own.
 - Whether parity should also cover UniVRM's legacy 0.x loader (the 0.x
   formula, which keeps light color attenuation and the `min(col, lit)`
   clamp) rather than only its VRM10 migration.
