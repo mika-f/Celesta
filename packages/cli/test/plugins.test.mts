@@ -9,11 +9,18 @@ import { spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterEach, test } from 'vitest';
 
 import type { Layer, Scene } from '@celesta/react';
-import { findPlugins, isContainedPath, isValidPluginId, resolvePluginModule } from '../src/plugins.js';
+import {
+  findPlugins,
+  isContainedPath,
+  isValidPluginId,
+  resolvePluginImport,
+  resolvePluginModule,
+  standInSource,
+} from '../src/plugins.js';
 import { contentOf } from './layer-content.mjs';
 
 const cli = fileURLToPath(new URL('../bin/celesta-react-render.js', import.meta.url));
@@ -40,8 +47,8 @@ function writeManifest(directory: string, fields: { id: string; module?: string 
   writeFileSync(join(directory, 'celesta-plugin.json'), JSON.stringify({ version: '0.0.0', protocol: 1, ...fields }));
 }
 
-/** The scenes of 30 fps frames `frames` of `source`, with plugins from `plugins`. */
-function render(source: string, frames: number[], plugins: string): { scenes: Scene[]; dir: string } {
+/** The run of the built CLI on `source` for 30 fps frames `frames`, with plugins from `plugins` and waiting ones from `waiting`. */
+function run(source: string, frames: number[], plugins: string, waiting = '') {
   const dir = mkdtempSync(join(tmpdir(), 'celesta-plugin-entry-'));
   scratch.push(dir);
   const entry = join(dir, 'entry.tsx');
@@ -49,8 +56,14 @@ function render(source: string, frames: number[], plugins: string): { scenes: Sc
   const result = spawnSync(process.execPath, [cli, entry], {
     input: frames.map((frame) => `{"time":{"value":${frame},"timescale":30}}\n`).join(''),
     encoding: 'utf8',
-    env: { ...process.env, CELESTA_PLUGIN_PATH: plugins },
+    env: { ...process.env, CELESTA_PLUGIN_PATH: plugins, CELESTA_WAITING_PLUGIN_PATH: waiting },
   });
+  return { result, dir };
+}
+
+/** The scenes of 30 fps frames `frames` of `source`, with plugins from `plugins` and waiting ones from `waiting`. */
+function render(source: string, frames: number[], plugins: string, waiting = ''): { scenes: Scene[]; dir: string } {
+  const { result, dir } = run(source, frames, plugins, waiting);
   assert.equal(result.status, 0, result.stderr || result.stdout);
   const [, ...lines] = result.stdout.split(/\r?\n/).filter(Boolean);
   return { scenes: lines.map((line) => (JSON.parse(line) as { scene: Scene }).scene), dir };
@@ -143,6 +156,71 @@ test('<Flag> puts plugin content in the scene on the sequence clock', () => {
   assert.equal(content.time, 0.5);
   assert.ok(content.assets?.image?.id.endsWith('flag.png'));
   assert.deepEqual(content.data, { amplitude: 0.1 });
+});
+
+test('a waiting plugin resolves to a stand-in, after the plugins that may run', async () => {
+  const allowed = pluginPath(['flag']);
+  const waiting = pluginPath(['flag', 'beep-voice']);
+  const plugins = await findPlugins(allowed);
+  const waitingPlugins = await findPlugins(waiting);
+  assert.deepEqual(resolvePluginImport('@celesta-plugin/flag', plugins, waitingPlugins), {
+    path: join(allowed, 'flag', 'js', 'index.ts'),
+  });
+  assert.deepEqual(resolvePluginImport('@celesta-plugin/beep-voice', plugins, waitingPlugins), {
+    standIn: { id: 'beep-voice', module: join(waiting, 'beep-voice', 'js', 'index.ts') },
+  });
+  const none = { found: [], skipped: [] };
+  assert.match(
+    (resolvePluginImport('@celesta-plugin/missing', plugins, waitingPlugins) as { error: string }).error,
+    /no plugin "missing"/,
+  );
+  assert.ok('error' in resolvePluginImport('@celesta-plugin/flag', none, none));
+});
+
+test('a stand-in draws nothing for components and throws for anything else', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'celesta-stand-in-'));
+  scratch.push(dir);
+  const file = join(dir, 'stand-in.mjs');
+  writeFileSync(file, standInSource('p', ['Flag', 'default', 'useWave', 'odd-name']));
+  const standIn = (await import(pathToFileURL(file).href)) as Record<string, (props?: unknown) => unknown>;
+  assert.equal(standIn.Flag!({}), null);
+  assert.equal(standIn.default!({ children: 'kept' }), 'kept');
+  assert.throws(() => standIn.useWave!(), /plugin "p" waits for your approval/);
+  assert.throws(() => standIn['odd-name']!(), /waits for your approval/);
+});
+
+test('an entry that imports a waiting plugin opens without its layers or code', () => {
+  const plugins = pluginPath([]);
+  const waiting = pluginPath(['flag']);
+  const { scenes } = render(
+    `import { Composition, Text } from '@celesta/react';
+     import { Flag } from '@celesta-plugin/flag';
+     export default function Root() {
+       return <Composition width={64} height={64} fps={30} durationInFrames={1}>
+         <Flag id="flag" src="flag.png" />
+         <Text id="title">kept</Text>
+       </Composition>;
+     }`,
+    [0],
+    plugins,
+    join(waiting, 'flag'),
+  );
+  const layers = flatten(scenes[0]!.layers);
+  assert.ok(!layers.some((layer) => layer.content.type === 'plugin'));
+  assert.ok(layers.some((layer) => layer.id.endsWith('title')));
+
+  // Calling one of its functions says it waits.
+  const { result } = run(
+    `import { Composition } from '@celesta/react';
+     import { prepareBeepNarration } from '@celesta-plugin/beep-voice';
+     export async function prepare() { await prepareBeepNarration([], {}); }
+     export default function Root() { return <Composition width={64} height={64} fps={30} durationInFrames={1} />; }`,
+    [0],
+    plugins,
+    pluginPath(['beep-voice']),
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(result.stdout + result.stderr, /plugin \\?"beep-voice\\?" waits for your approval/);
 });
 
 test('an entry that imports a plugin no directory provides fails naming it', () => {

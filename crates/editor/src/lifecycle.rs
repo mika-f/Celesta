@@ -686,8 +686,8 @@ impl EditorView {
                     }
                     Ok(loaded) => loaded,
                 };
-                // Kept for a failed open: an entry that imports a plugin
-                // waiting for approval cannot be bundled until it is allowed.
+                // Kept for a failed open: an entry that calls a plugin
+                // waiting for approval fails until it is allowed.
                 let waiting = plugins.pending.clone();
                 let note = plugins.failure_note();
                 let result = loaded.and_then(|(document, react_preview)| {

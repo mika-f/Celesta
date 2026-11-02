@@ -13,6 +13,11 @@ pub const MANIFEST: &str = "celesta-plugin.json";
 /// path list (`;` on Windows, `:` elsewhere).
 pub const PLUGIN_PATH_ENV: &str = "CELESTA_PLUGIN_PATH";
 
+/// The environment variable listing, like [`PLUGIN_PATH_ENV`], the plugins
+/// that wait for the user's approval. The React runtime resolves their
+/// imports to stand-ins that run none of their code.
+pub const WAITING_PLUGIN_PATH_ENV: &str = "CELESTA_WAITING_PLUGIN_PATH";
+
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Manifest {
@@ -444,11 +449,50 @@ pub fn discover_in(paths: &[SearchPath]) -> (Vec<PluginEntry>, Vec<DiscoveryErro
 /// The plugins found in every location Celesta searches ([`search_paths`]
 /// with `explicit` first), as one set every part of Celesta shares: the
 /// renderer's [`crate::PluginHost`] and the React runtime's
-/// `CELESTA_PLUGIN_PATH` ([`InstalledPlugins::runtime_path`]) are made from
-/// the same discovery, so they agree on what is installed.
+/// `CELESTA_PLUGIN_PATH` ([`InstalledPlugins::runtime`]) are made from the
+/// same discovery, so they agree on what is installed.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct InstalledPlugins {
+    /// What may run.
     pub plugins: Vec<PluginEntry>,
+    /// What waits for the user's approval (the app's
+    /// [`InstalledPlugins::allowed_by`]): never run, but the React runtime
+    /// stands in for their imports so an entry using one still opens.
+    pub waiting: Vec<PluginEntry>,
+}
+
+/// What a React runtime's process is told about plugins, as environment
+/// variables: give it explicitly (as `Command::env` does) rather than
+/// through Celesta's own environment.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RuntimePlugins {
+    /// [`PLUGIN_PATH_ENV`]: the plugins it may load.
+    pub path: std::ffi::OsString,
+    /// [`WAITING_PLUGIN_PATH_ENV`]: the plugins it stands in for.
+    pub waiting: std::ffi::OsString,
+}
+
+impl RuntimePlugins {
+    /// The variables to set, by name.
+    pub fn env(&self) -> [(&'static str, &std::ffi::OsStr); 2] {
+        [
+            (PLUGIN_PATH_ENV, &self.path),
+            (WAITING_PLUGIN_PATH_ENV, &self.waiting),
+        ]
+    }
+}
+
+/// `entries`' directories as a path list, in order. Discovery skips
+/// directories that would break the list (see `read_manifest`); a set made
+/// by hand leaves them out here, so joining what remains cannot fail.
+fn path_list(entries: &[PluginEntry]) -> std::ffi::OsString {
+    std::env::join_paths(
+        entries
+            .iter()
+            .map(|entry| &entry.directory)
+            .filter(|directory| !breaks_path_list(directory)),
+    )
+    .expect("paths without the separator or a quote join")
 }
 
 impl InstalledPlugins {
@@ -479,7 +523,13 @@ impl InstalledPlugins {
     ) -> (Self, Vec<DiscoveryError>) {
         let paths = search_paths(explicit, project, &settings.plugin_folders);
         let (plugins, errors) = discover_in(&paths);
-        (Self { plugins }, errors)
+        (
+            Self {
+                plugins,
+                waiting: Vec::new(),
+            },
+            errors,
+        )
     }
 
     /// Discovers them, reporting skipped plugins on stderr, for tools
@@ -495,19 +545,18 @@ impl InstalledPlugins {
     /// The value of `CELESTA_PLUGIN_PATH` for the React runtime: each plugin
     /// directory in search order, so the runtime resolves
     /// `@celesta-plugin/<id>` to the same plugins, without searching any
-    /// folder itself. Give it to the runtime's process explicitly (as
-    /// `Command::env` does) rather than through Celesta's own environment.
+    /// folder itself.
     pub fn runtime_path(&self) -> std::ffi::OsString {
-        // Discovery skips directories that would break the list (see
-        // `read_manifest`); a set made by hand leaves them out here, so
-        // joining what remains cannot fail.
-        std::env::join_paths(
-            self.plugins
-                .iter()
-                .map(|entry| &entry.directory)
-                .filter(|directory| !breaks_path_list(directory)),
-        )
-        .expect("paths without the separator or a quote join")
+        path_list(&self.plugins)
+    }
+
+    /// Everything the React runtime is told: [`Self::runtime_path`], and
+    /// the waiting plugins it stands in for.
+    pub fn runtime(&self) -> RuntimePlugins {
+        RuntimePlugins {
+            path: self.runtime_path(),
+            waiting: path_list(&self.waiting),
+        }
     }
 
     /// A host that runs these plugins for a renderer.
@@ -799,10 +848,23 @@ mod tests {
         }]);
         assert!(errors.is_empty(), "{errors:?}");
         assert!(found.iter().all(|entry| entry.source == PluginSource::User));
-        let installed = InstalledPlugins { plugins: found };
+        let installed = InstalledPlugins {
+            plugins: found.clone(),
+            waiting: found[1..].to_vec(),
+        };
         let path: Vec<_> = std::env::split_paths(&installed.runtime_path()).collect();
         assert_eq!(path, [root.path().join("a"), root.path().join("b")]);
-        assert_eq!(InstalledPlugins::default().runtime_path(), "");
+        let runtime = installed.runtime();
+        assert_eq!(runtime.path, installed.runtime_path());
+        assert_eq!(runtime.waiting, root.path().join("b").into_os_string());
+        assert_eq!(
+            runtime.env().map(|(name, _)| name),
+            [PLUGIN_PATH_ENV, WAITING_PLUGIN_PATH_ENV]
+        );
+        assert_eq!(
+            InstalledPlugins::default().runtime(),
+            RuntimePlugins::default()
+        );
     }
 
     #[cfg(unix)]
@@ -901,7 +963,10 @@ mod tests {
         );
 
         // A set made by hand with such a folder leaves it out of the path.
-        let mut by_hand = InstalledPlugins { plugins: found };
+        let mut by_hand = InstalledPlugins {
+            plugins: found,
+            ..InstalledPlugins::default()
+        };
         let mut split = by_hand.plugins[0].clone();
         split.directory = root.path().join(format!("a{separator}b"));
         by_hand.plugins.push(split);

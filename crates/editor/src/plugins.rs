@@ -116,7 +116,8 @@ impl FoundPlugins {
     }
 
     /// What to add to an open that failed: the plugins waiting for the
-    /// user, since an entry importing one cannot be bundled until it is
+    /// user. An entry importing one opens with stand-ins for it, but one
+    /// that calls its functions (in `prepare`, say) fails until it is
     /// allowed.
     pub(crate) fn failure_note(&self) -> Option<String> {
         if self.pending.is_empty() {
@@ -128,8 +129,8 @@ impl FoundPlugins {
             .map(|pending| pending.entry.manifest.id.as_str())
             .collect();
         Some(format!(
-            "These plugins wait for your approval, and an entry that imports one does not open \
-             until you allow it: {}.",
+            "These plugins wait for your approval: until you allow them, their components draw \
+             nothing and calling their functions fails: {}.",
             ids.join(", ")
         ))
     }
@@ -420,8 +421,8 @@ impl EditorView {
                         .child(DialogDescription::new().child(
                             "A plugin runs its own code on your computer, with your \
                              permissions. Allow only plugins from people you trust. Until \
-                             you do, it does not run, and a project that imports it does \
-                             not open.",
+                             you do, it does not run: what it draws is left out, and \
+                             calling its functions fails.",
                         ))
                         .children(rows),
                 )
@@ -630,6 +631,10 @@ mod tests {
         assert!(waiting.failure_note().unwrap().contains('p'));
         let runtime: Vec<_> = std::env::split_paths(&waiting.installed.runtime_path()).collect();
         assert!(!runtime.contains(&pending.entry.directory));
+        // The runtime stands in for it instead.
+        let standing_in: Vec<_> =
+            std::env::split_paths(&waiting.installed.runtime().waiting).collect();
+        assert_eq!(standing_in, std::slice::from_ref(&pending.entry.directory));
 
         // Allowed: it runs.
         settings.allow("p", &pending.entry.directory, &pending.fingerprint);

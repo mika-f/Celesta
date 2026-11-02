@@ -35,9 +35,11 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   its own file is asked about separately), and to allow each plugin from
   the user's folder, an added folder, or a project (again
   when its manifest or a file the manifest names changes). Until allowed, a
-  plugin does not run and an entry importing it does not open; Problems
-  says it is waiting. Only the user can answer: tell them to, rather than
-  working around it. `Celesta-export` and MCP do not ask: they run the
+  plugin does not run: an entry importing it opens in the app with its
+  components drawing nothing (missing layers are expected, not a bug in the
+  entry), and calling its other exports throws "waits for your approval";
+  Problems says it is waiting. Only the user can answer: tell them to,
+  rather than working around it. `Celesta-export` and MCP do not ask: they run the
   plugins they find (not a project's own) whether or not the app allowed
   them.
 - A project may list its own plugin folders in `celesta.config.json` at its

@@ -79,7 +79,7 @@ impl ReactRuntimeOptions {
             &properties,
             SpawnOptions {
                 composition_id: self.composition_id.clone(),
-                plugin_path: Some(plugins.runtime_path()),
+                plugins: Some(plugins.runtime()),
                 ..SpawnOptions::default()
             },
         )

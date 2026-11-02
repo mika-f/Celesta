@@ -86,7 +86,7 @@ pub(crate) fn load_source(
                 &properties,
                 SpawnOptions {
                     composition_id: property_args.composition.clone(),
-                    plugin_path: Some(plugins.installed.runtime_path()),
+                    plugins: Some(plugins.installed.runtime()),
                     ..SpawnOptions::default()
                 },
             )

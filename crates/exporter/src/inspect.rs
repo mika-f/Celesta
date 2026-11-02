@@ -42,7 +42,7 @@ pub fn run(
         &runtime.properties,
         SpawnOptions {
             composition_id: runtime.composition_id.clone(),
-            plugin_path: Some(plugins.runtime_path()),
+            plugins: Some(plugins.runtime()),
             ..SpawnOptions::default()
         },
     );

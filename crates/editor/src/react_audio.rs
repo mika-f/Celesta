@@ -3,10 +3,10 @@ use crate::worker::LatestWorker;
 use celesta_composition::{AssetLocation, AudioClip, AudioGraph};
 use celesta_editor_core::{ClipKind, ClipSummary, TrackSummary};
 use celesta_media::FfmpegBackend;
+use celesta_plugin_host::RuntimePlugins;
 use celesta_project::TrackKind;
 use celesta_react_bridge::{PropertyInputs, ReactBridge, SpawnOptions};
 use std::collections::HashMap;
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 pub(crate) struct ReactAudioRequest {
@@ -18,7 +18,7 @@ pub(crate) struct ReactAudioRequest {
     pub(crate) sample_rate: u32,
     pub(crate) master_volume: f64,
     /// The editor's plugins, as the runtime takes them.
-    pub(crate) plugin_path: OsString,
+    pub(crate) plugins: RuntimePlugins,
 }
 
 pub(crate) type ReactAudioResult = Result<ReactMediaClips, String>;
@@ -52,7 +52,7 @@ pub(crate) fn spawn_react_audio() -> anyhow::Result<ReactAudioWorker> {
             &request.properties,
             SpawnOptions {
                 composition_id: Some(request.composition_id),
-                plugin_path: Some(request.plugin_path),
+                plugins: Some(request.plugins),
                 ..SpawnOptions::default()
             },
         )

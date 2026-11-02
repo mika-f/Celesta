@@ -1,10 +1,10 @@
 use crate::problems::error_chain;
 use crate::view::EditorView;
 use crate::worker::{Worker, take_latest};
+use celesta_plugin_host::RuntimePlugins;
 use celesta_react_bridge::runtime_paths as react_runtime_paths;
 use celesta_react_bridge::{OccurrenceIndex, PropertyInputs, ReactBridge, SpawnOptions};
 use gpui_kit::Context;
-use std::ffi::OsString;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -25,7 +25,7 @@ pub(crate) struct OccurrenceRequest {
     pub(crate) composition_id: String,
     pub(crate) duration_in_frames: u64,
     /// The editor's plugins, as the runtime takes them.
-    pub(crate) plugin_path: OsString,
+    pub(crate) plugins: RuntimePlugins,
 }
 
 pub(crate) struct OccurrenceResult {
@@ -92,7 +92,7 @@ pub(crate) fn spawn_occurrences() -> anyhow::Result<OccurrenceWorker> {
                 SpawnOptions {
                     composition_id: Some(request.composition_id),
                     source_locations: true,
-                    plugin_path: Some(request.plugin_path),
+                    plugins: Some(request.plugins),
                 },
             ) {
                 Ok(mut bridge) => {
@@ -295,7 +295,7 @@ impl EditorView {
             properties: react.properties.clone(),
             composition_id: react.composition_id.clone(),
             duration_in_frames: u64::try_from(self.clock.end_frame()).unwrap_or(0),
-            plugin_path: self.plugins.runtime_path(),
+            plugins: self.plugins.runtime(),
         }) {
             self.occurrences = Some((generation, OccurrenceState::Failed(error)));
             self.occurrence_generation += 1;

@@ -1,10 +1,10 @@
 use crate::problems::error_chain;
 use crate::worker::LatestWorker;
+use celesta_plugin_host::RuntimePlugins;
 use celesta_react_bridge::{
     ComponentPropertyField, ComponentPropertySchema, PropertyInputs, ReactBridge, SpawnOptions,
 };
 use std::collections::BTreeMap;
-use std::ffi::OsString;
 use std::path::PathBuf;
 
 pub(crate) struct ComponentSchemaRequest {
@@ -12,7 +12,7 @@ pub(crate) struct ComponentSchemaRequest {
     pub(crate) cli_script: PathBuf,
     pub(crate) entry: PathBuf,
     /// The editor's plugins, as the runtime takes them.
-    pub(crate) plugin_path: OsString,
+    pub(crate) plugins: RuntimePlugins,
 }
 
 pub(crate) struct ComponentSchemaResult {
@@ -36,7 +36,7 @@ pub(crate) fn spawn_component_schema() -> anyhow::Result<ComponentSchemaWorker> 
             &request.entry,
             &PropertyInputs::default(),
             SpawnOptions {
-                plugin_path: Some(request.plugin_path),
+                plugins: Some(request.plugins),
                 ..SpawnOptions::default()
             },
         );

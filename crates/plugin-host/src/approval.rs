@@ -148,7 +148,9 @@ impl InstalledPlugins {
     /// Sorts these into the plugins `settings` allows to run, the ones that
     /// wait for the user (see [`PluginSource::needs_allowance`]), and the
     /// ones the user turned off. A plugin that waits or is off does not run,
-    /// and does not give way to a later plugin with its id either.
+    /// and does not give way to a later plugin with its id either. The
+    /// waiting ones are also the result's [`InstalledPlugins::waiting`], for
+    /// the React runtime to stand in for.
     pub fn allowed_by(self, settings: &UserSettings) -> Allowed {
         let mut allowed = Allowed::default();
         for entry in self.plugins {
@@ -184,6 +186,11 @@ impl InstalledPlugins {
                 }
             }
         }
+        allowed.plugins.waiting = allowed
+            .pending
+            .iter()
+            .map(|pending| pending.entry.clone())
+            .collect();
         allowed
     }
 }
@@ -211,7 +218,10 @@ mod tests {
             source,
         }]);
         assert!(errors.is_empty(), "{errors:?}");
-        InstalledPlugins { plugins }
+        InstalledPlugins {
+            plugins,
+            ..InstalledPlugins::default()
+        }
     }
 
     #[test]
@@ -322,6 +332,11 @@ mod tests {
             assert!(allowed.plugins.plugins.is_empty(), "{source:?}");
             assert_eq!(allowed.pending.len(), 1);
             assert!(!allowed.pending[0].changed);
+            // The runtime stands in for it, and does not load it.
+            assert_eq!(allowed.plugins.waiting, [allowed.pending[0].entry.clone()]);
+            let runtime = allowed.plugins.runtime();
+            assert_eq!(runtime.path, "");
+            assert_eq!(runtime.waiting, root.path().join("p").into_os_string());
         }
 
         let pending = found(root.path(), PluginSource::User)
@@ -337,6 +352,7 @@ mod tests {
         off.set_enabled("p", &root.path().join("p"), false);
         let allowed = found(root.path(), PluginSource::User).allowed_by(&off);
         assert!(allowed.plugins.plugins.is_empty() && allowed.pending.is_empty());
+        assert!(allowed.plugins.waiting.is_empty());
         assert_eq!(allowed.disabled.len(), 1);
 
         // Changed since it was allowed: asked again, as a change.

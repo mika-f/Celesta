@@ -3,13 +3,17 @@
 // finds plugins (crates/plugin-host): each absolute path of
 // CELESTA_PLUGIN_PATH is a plugin directory or a directory of them, the
 // first plugin with an id wins, and a manifest with a bad id or a module
-// outside its directory is skipped. See
-// docs/handoff/2026-11-01-plugin-system.md.
+// outside its directory is skipped. A plugin listed in
+// CELESTA_WAITING_PLUGIN_PATH instead waits for the user's approval in the
+// app: its import resolves to a stand-in that runs none of its code. See
+// docs/handoff/2026-11-01-plugin-system.md and
+// docs/handoff/2026-11-02-plugin-waiting-stand-in.md.
 
 import { readFile, readdir, realpath, stat } from 'node:fs/promises';
 import * as path from 'node:path';
 
 export const PLUGIN_PATH_ENV = 'CELESTA_PLUGIN_PATH';
+export const WAITING_PLUGIN_PATH_ENV = 'CELESTA_WAITING_PLUGIN_PATH';
 const MANIFEST = 'celesta-plugin.json';
 export const PLUGIN_SPECIFIER = /^@celesta-plugin\/([^/]+)$/;
 
@@ -155,4 +159,50 @@ export function resolvePluginModule(specifier: string, plugins: Plugins): { path
   }
   if (!plugin.module) return { error: `plugin "${id}" has no JavaScript module` };
   return { path: plugin.module };
+}
+
+/** A waiting plugin whose import a stand-in answers. */
+export interface StandIn {
+  id: string;
+  /** Its module, read for the names it exports and never run. */
+  module: string;
+}
+
+/**
+ * What `@celesta-plugin/<id>` resolves to: the module of a plugin in
+ * `plugins`, else a stand-in for a plugin in `waiting` (the user has not
+ * allowed it yet), else an error message saying why there is neither.
+ */
+export function resolvePluginImport(
+  specifier: string,
+  plugins: Plugins,
+  waiting: Plugins,
+): { path: string } | { standIn: StandIn } | { error: string } {
+  const resolved = resolvePluginModule(specifier, plugins);
+  if (!('error' in resolved)) return resolved;
+  const id = PLUGIN_SPECIFIER.exec(specifier)?.[1];
+  // A plugin that may run but cannot be imported is its own error.
+  if (!id || plugins.found.some((plugin) => plugin.id === id)) return resolved;
+  const plugin = waiting.found.find((candidate) => candidate.id === id);
+  return plugin?.module ? { standIn: { id, module: plugin.module } } : resolved;
+}
+
+/**
+ * The source of the module that stands in for waiting plugin `id`, which
+ * exports `names`. A capitalized export (or a default one) is taken for a
+ * component and draws nothing of its own, but keeps what it wraps; any other
+ * throws, when called, that the plugin waits for approval.
+ */
+export function standInSource(id: string, names: string[]): string {
+  const message = `plugin "${id}" waits for your approval in the Celesta app, and does not run until you allow it`;
+  const lines = [
+    `const waiting = () => { throw new Error(${JSON.stringify(message)}); };`,
+    'const component = (props) => props?.children ?? null;',
+  ];
+  names.forEach((name, index) => {
+    const binding = name === 'default' || /^[A-Z]/.test(name) ? 'component' : 'waiting';
+    const exported = /^[A-Za-z_$][\w$]*$/.test(name) ? name : JSON.stringify(name);
+    lines.push(`const standIn${index} = ${binding};`, `export { standIn${index} as ${exported} };`);
+  });
+  return `${lines.join('\n')}\n`;
 }

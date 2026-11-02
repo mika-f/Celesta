@@ -1138,7 +1138,7 @@ fn react_context(source_locations: bool) -> ReactPreviewContext {
         entry: PathBuf::from("entry.tsx"),
         properties: celesta_react_bridge::PropertyInputs::default(),
         source_locations,
-        plugin_path: Default::default(),
+        plugins: Default::default(),
     }
 }
 

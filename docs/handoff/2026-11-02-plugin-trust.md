@@ -69,7 +69,9 @@ now asks before either runs.
     waiting. A plugin (directory and fingerprint) is asked about once per
     window (`asked_plugins` carries over reopens).
   - **An entry that imports a waiting plugin cannot open**: the runtime
-    gets only allowed plugins, so bundling fails. `load_path_with` keeps
+    gets only allowed plugins, so bundling fails. (Changed on top of the
+    stack: it now opens with stand-ins, and only calling the plugin
+    fails; see `2026-11-02-plugin-waiting-stand-in.md`.) `load_path_with` keeps
     that open's discovery: the failure in Problems names the waiting
     plugins (`FoundPlugins::failure_note`), and the approval question is
     asked for them (`ask_to_allow`), whose **Allow and Reload** opens that

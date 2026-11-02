@@ -22,8 +22,8 @@ pub use locations::{
 };
 pub use manifest::{
     ComponentInfo, ComponentSource, DiscoveryError, InstalledPlugins, MANIFEST, Manifest,
-    PLUGIN_PATH_ENV, PluginEntry, discover, discover_in, is_contained_path, is_valid_id, platform,
-    plugin_paths,
+    PLUGIN_PATH_ENV, PluginEntry, RuntimePlugins, WAITING_PLUGIN_PATH_ENV, discover, discover_in,
+    is_contained_path, is_valid_id, platform, plugin_paths,
 };
 pub use project::{
     PROJECT_CONFIG, ProjectConfigError, has_project_config, project_plugin_paths, project_root,

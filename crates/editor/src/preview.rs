@@ -9,6 +9,7 @@ use celesta_composition::{
 use celesta_gpu_renderer::{
     GpuRenderer, HitRegion, LayerFrame, RenderQuality, TextLayout, layer_frame, parent_space,
 };
+use celesta_plugin_host::RuntimePlugins;
 use celesta_react_bridge::{
     ComponentPropertyField, ComponentPropertySchema, ComponentResolutionRequest,
     ComponentResolutions, PrepareDependency, PrimitivePropertyTable, PropOverride, PropertyInputs,
@@ -18,7 +19,6 @@ use gpui_kit::RenderImage;
 use rodio::Player;
 use rodio::buffer::SamplesBuffer;
 use std::collections::BTreeMap;
-use std::ffi::OsString;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -339,7 +339,7 @@ pub(crate) struct ReactPreviewContext {
     pub(crate) source_locations: bool,
     pub(crate) composition_id: Option<String>,
     /// The editor's plugins, as the runtime takes them.
-    pub(crate) plugin_path: OsString,
+    pub(crate) plugins: RuntimePlugins,
 }
 
 /// Whether the renderer records where each leaf layer was drawn for this
@@ -625,7 +625,7 @@ pub(crate) fn ensure_react_bridge<'a>(
                 SpawnOptions {
                     source_locations: react.source_locations,
                     composition_id: react.composition_id.clone(),
-                    plugin_path: Some(react.plugin_path.clone()),
+                    plugins: Some(react.plugins.clone()),
                 },
             ) {
                 Ok(mut bridge) => {

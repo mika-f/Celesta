@@ -458,6 +458,7 @@ mod tests {
                     entry("zeta", PluginSource::Bundled, &[]),
                     entry("alpha", PluginSource::User, &[]),
                 ],
+                ..Default::default()
             },
             pending: vec![PendingPlugin {
                 entry: entry("beta", PluginSource::User, &[]),
