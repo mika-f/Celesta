@@ -271,6 +271,9 @@ impl ContentProvider for PluginHost {
                     let assets = open.assets.clone();
                     let reopened = host.open_remote(&plugin, &assets)?;
                     if reopened.content.kind() != kind {
+                        // Nothing will draw it: the next frame reopens it.
+                        let close = json!({ "type": "close", "model": reopened.model.0 });
+                        let _ = host.send(&plugin, &Message::new(close));
                         return Err(PluginError::Failed {
                             plugin: plugin.clone(),
                             message: format!(
