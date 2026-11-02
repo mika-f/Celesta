@@ -34,6 +34,38 @@ const WORKGROUP: u32 = 64;
 const SKINNED_STRIDE: u64 = 48;
 /// The bytes of one `SkinVertex`, the largest element a stream holds.
 const SKIN_VERTEX_STRIDE: u64 = 32;
+/// The most texels a scene's canvas has. A texel of it costs about 60 bytes
+/// (four samples of color and of depth, the resolved color, the layer's), so
+/// this is about 500 MB; a 4K frame (3840 × 2160) still fits at 1×, and a
+/// larger canvas is drawn at a lower density.
+pub(crate) const SCENE_CANVAS_TEXELS: u64 = 8_388_608;
+/// The most bytes of buffers a scene model has the GPU allocate when it is
+/// opened: its geometries' streams, morph targets, and triangles, and each
+/// draw's skinned vertices.
+pub(crate) const SCENE_BUFFER_BUDGET: u64 = 1 << 30;
+
+/// The size in texels of a scene canvas `canvas` layer units large drawn
+/// at `density` texels a unit: lowered, the aspect kept, until no side is
+/// longer than `max_dimension` and there are no more than
+/// `SCENE_CANVAS_TEXELS` in all.
+pub(crate) fn scene_canvas_size(canvas: [f32; 2], density: f64, max_dimension: u32) -> (u32, u32) {
+    let (width, height) = (f64::from(canvas[0]), f64::from(canvas[1]));
+    let largest = width.max(height).max(1.0);
+    let scale = density.min(f64::from(max_dimension) / largest);
+    let size = |scale: f64, round: fn(f64) -> f64| {
+        (
+            (round(width * scale) as u32).max(1),
+            (round(height * scale) as u32).max(1),
+        )
+    };
+    let (columns, rows) = size(scale, f64::ceil);
+    if u64::from(columns) * u64::from(rows) <= SCENE_CANVAS_TEXELS {
+        return (columns, rows);
+    }
+    // Rounded down, the product of the sides stays within the cap.
+    let fits = (SCENE_CANVAS_TEXELS as f64 / (width * height)).sqrt();
+    size(scale.min(fits), f64::floor)
+}
 
 /// A scene model and its copy on the GPU.
 pub(crate) struct LoadedScene {
@@ -506,9 +538,9 @@ fn finite(values: &[f32]) -> bool {
 
 /// Why `model` cannot be drawn: a canvas without area, vertex streams of
 /// different lengths, triangles outside their vertices, or a reference to
-/// something it lacks. A draw's skin must have every joint its geometry's
-/// vertices name; both are fixed, so that is checked here, once, rather
-/// than in every frame.
+/// something it lacks, or buffers past `SCENE_BUFFER_BUDGET`. A draw's skin
+/// must have every joint its geometry's vertices name; both are fixed, so
+/// that is checked here, once, rather than in every frame.
 pub(crate) fn invalid_scene(model: &SceneModel) -> Option<String> {
     if !model
         .canvas
@@ -635,6 +667,78 @@ pub(crate) fn invalid_scene(model: &SceneModel) -> Option<String> {
                     ));
                 }
             }
+        }
+    }
+    let bytes = scene_buffer_bytes(model);
+    if bytes > SCENE_BUFFER_BUDGET {
+        return Some(format!(
+            "the scene's geometries and draws take {bytes} bytes of GPU buffers, more than the {SCENE_BUFFER_BUDGET} allowed"
+        ));
+    }
+    None
+}
+
+/// The bytes of the buffers `LoadedScene::load` makes for `model`, whose
+/// draws name geometries it has: each geometry's streams, morph targets,
+/// and triangles, and each draw's skinned vertices. An empty stream still
+/// takes a 32-byte element. Saturates rather than overflowing.
+fn scene_buffer_bytes(model: &SceneModel) -> u64 {
+    let stream = |elements: usize, size: u64| {
+        (elements as u64)
+            .saturating_mul(size)
+            .max(SKIN_VERTEX_STRIDE)
+    };
+    let mut total = 0_u64;
+    for geometry in &model.geometries {
+        let vertices = geometry.positions.len();
+        let morphs = vertices.saturating_mul(geometry.targets.len());
+        let mut streams = vec![
+            stream(vertices, 16),
+            stream(vertices, 16),
+            stream(vertices, 8),
+            stream(geometry.indices.len(), 4),
+        ];
+        if geometry.tangents.is_some() {
+            streams.push(stream(vertices, 16));
+        }
+        if geometry.joints.is_some() {
+            streams.push(stream(vertices, SKIN_VERTEX_STRIDE));
+        }
+        if !geometry.targets.is_empty() {
+            streams.push(stream(morphs, 16));
+        }
+        if geometry
+            .targets
+            .iter()
+            .any(|target| !target.normals.is_empty())
+        {
+            streams.push(stream(morphs, 16));
+        }
+        for bytes in streams {
+            total = total.saturating_add(bytes);
+        }
+    }
+    for draw in &model.draws {
+        let vertices = model.geometries[draw.geometry].positions.len().max(1);
+        total = total.saturating_add((vertices as u64).saturating_mul(SKINNED_STRIDE));
+    }
+    total
+}
+
+/// Why the uniforms of a frame of `draws` queued draws cannot be written:
+/// one skinning parameter block and one draw uniform per draw, each
+/// `alignment`-aligned, in buffers no larger than `largest` bytes.
+fn oversized_uniforms(draws: usize, alignment: u32, largest: u64) -> Option<String> {
+    let buffers = [
+        ("skinning parameters", std::mem::size_of::<SkinParams>()),
+        ("draw uniforms", std::mem::size_of::<DrawUniform>()),
+    ];
+    for (name, size) in buffers {
+        let bytes = (draws as u64).saturating_mul(aligned(size, alignment) as u64);
+        if bytes > largest {
+            return Some(format!(
+                "the frame's {draws} draws' {name} take {bytes} bytes, more than this GPU's {largest}"
+            ));
         }
     }
     None
@@ -1328,6 +1432,13 @@ impl GpuRenderer {
             .expect("created when the scene was opened");
         let model = &scene.model;
         let limits = self.device.limits();
+        let largest_buffer = limits
+            .max_buffer_size
+            .min(limits.max_storage_buffer_binding_size);
+        let alignment = limits.min_uniform_buffer_offset_alignment;
+        if let Some(message) = oversized_uniforms(queue.len(), alignment, largest_buffer) {
+            return Err(invalid(message));
+        }
 
         // Every skin's matrices, then each queued draw's morph pairs.
         let mut frame_data: Vec<[u32; 4]> = Vec::new();
@@ -1371,9 +1482,6 @@ impl GpuRenderer {
             frame_data.push([0; 4]);
         }
         let frame_bytes = std::mem::size_of_val(frame_data.as_slice()) as u64;
-        let largest_buffer = limits
-            .max_buffer_size
-            .min(limits.max_storage_buffer_binding_size);
         if frame_bytes > largest_buffer {
             return Err(invalid(format!(
                 "the frame's skinning matrices and morph weights take {frame_bytes} bytes, more than this GPU's {largest_buffer}"
@@ -1388,7 +1496,6 @@ impl GpuRenderer {
                     usage,
                 })
         };
-        let alignment = limits.min_uniform_buffer_offset_alignment;
         let params_stride = aligned(std::mem::size_of::<SkinParams>(), alignment);
         let draw_stride = aligned(std::mem::size_of::<DrawUniform>(), alignment);
         let frame_buffer = buffer(
@@ -1647,6 +1754,100 @@ mod tests {
             2.0,
         );
         assert_eq!((matrix[0] * 2.0, matrix[5]), (1.0, 1.0));
+    }
+
+    #[test]
+    fn scene_canvas_size_caps_texels_and_keeps_the_aspect() {
+        // A 4K frame fits at 1×, and smaller ones follow the density.
+        assert_eq!(scene_canvas_size([3840.0, 2160.0], 1.0, 8192), (3840, 2160));
+        assert_eq!(scene_canvas_size([64.0, 64.0], 2.0, 8192), (128, 128));
+        // ×64, a 64-unit square would be 4096² texels; capped, it keeps
+        // its aspect and stays within the cap.
+        let (width, height) = scene_canvas_size([64.0, 64.0], 64.0, 8192);
+        assert_eq!(width, height);
+        assert!(u64::from(width) * u64::from(height) <= SCENE_CANVAS_TEXELS);
+        assert!(width >= 2895, "{width}");
+        // A 4K frame at 2× is drawn at about 1.01×.
+        let (width, height) = scene_canvas_size([3840.0, 2160.0], 2.0, 8192);
+        assert!(u64::from(width) * u64::from(height) <= SCENE_CANVAS_TEXELS);
+        assert!((f64::from(width) / f64::from(height) - 16.0 / 9.0).abs() < 1e-3);
+        assert!(width >= 3860, "{width}");
+        // The longest side's limit still holds first.
+        assert_eq!(scene_canvas_size([100_000.0, 1.0], 1.0, 8192), (8192, 1));
+    }
+
+    /// A model of one unskinned geometry of `vertices` vertices without
+    /// triangles, drawn `draws` times.
+    fn bare_model(vertices: usize, draws: usize) -> SceneModel {
+        SceneModel {
+            canvas: [1.0, 1.0],
+            textures: vec![],
+            geometries: vec![celesta_plugin::Geometry {
+                positions: vec![[0.0; 3]; vertices],
+                normals: vec![[0.0; 3]; vertices],
+                uvs: vec![[0.0; 2]; vertices],
+                tangents: None,
+                joints: None,
+                weights: None,
+                targets: vec![],
+                indices: vec![],
+            }],
+            skins: vec![],
+            materials: vec![celesta_plugin::Material {
+                alpha_mode: AlphaMode::Opaque,
+                double_sided: false,
+                kind: MaterialKind::Unlit(celesta_plugin::UnlitMaterial {
+                    base_color: [1.0; 4],
+                    base_color_texture: None,
+                }),
+            }],
+            draws: vec![
+                celesta_plugin::DrawInfo {
+                    geometry: 0,
+                    material: 0,
+                    skin: None,
+                };
+                draws
+            ],
+        }
+    }
+
+    #[test]
+    fn scene_buffer_bytes_counts_streams_and_skinned_draws() {
+        // Positions and normals 16 bytes a vertex, UVs 8, no triangles (one
+        // 32-byte element), and 48 bytes a vertex for each of 3 draws.
+        let mut model = bare_model(100, 3);
+        assert_eq!(
+            scene_buffer_bytes(&model),
+            1600 + 1600 + 800 + 32 + 3 * 4800
+        );
+        // Morph targets with normals add both offset streams.
+        model.geometries[0].targets = vec![
+            celesta_plugin::MorphTarget {
+                positions: vec![[0.0; 3]; 100],
+                normals: vec![[0.0; 3]; 100],
+            };
+            2
+        ];
+        assert_eq!(
+            scene_buffer_bytes(&model),
+            1600 + 1600 + 800 + 32 + 3 * 4800 + 2 * 3200
+        );
+        assert!(invalid_scene(&model).is_none());
+        // 100,000 vertices, 48 bytes each skinned, drawn 230 times: over
+        // 1 GiB, refused before anything is allocated.
+        let model = bare_model(100_000, 230);
+        let message = invalid_scene(&model).expect("over the budget");
+        assert!(message.contains("bytes"), "{message}");
+    }
+
+    #[test]
+    fn uniforms_past_the_largest_buffer_are_refused() {
+        // 256-byte aligned, 1,000 draws take 256,000 bytes of each.
+        assert_eq!(oversized_uniforms(1000, 256, 256_000), None);
+        let message = oversized_uniforms(1001, 256, 256_000).expect("too large");
+        assert!(message.contains("256256 bytes"), "{message}");
+        assert!(oversized_uniforms(usize::MAX, 256, u64::MAX - 1).is_some());
     }
 
     #[test]

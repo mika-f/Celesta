@@ -757,3 +757,193 @@ fn frames_repeat_exactly() {
     assert!(first.pixels != rest.pixels, "time does not move the square");
     assert!(first.pixels == again.pixels, "time 1 drew differently");
 }
+
+#[test]
+fn zoomed_scene_canvas_is_capped() {
+    // ×64, the 64-unit canvas would be 4096² texels, twice the cap.
+    let Some(mut renderer) = renderer(transparent()) else {
+        return;
+    };
+    renderer.renderer = renderer.renderer.with_content_provider(one_square());
+    let assets = BTreeMap::new();
+    let content = crate::mesh::PluginContent {
+        plugin: "scenes",
+        assets: &assets,
+        time: 0.0,
+        data: &serde_json::Value::Null,
+    };
+    let (texture, canvas) = renderer.plugin_texture("scenes", &content, 64.0).unwrap();
+    assert_eq!(canvas, [64.0, 64.0]);
+    assert_eq!(texture.width, texture.height);
+    assert!(
+        u64::from(texture.width) * u64::from(texture.height) <= crate::scene::SCENE_CANVAS_TEXELS,
+        "{}x{}",
+        texture.width,
+        texture.height
+    );
+    // The whole layer still renders, zoomed.
+    renderer.render(&scene_at(0.0, 64.0)).unwrap();
+}
+
+#[test]
+fn scene_too_large_for_the_gpu_budget_is_invalid() {
+    // 100,000 vertices without triangles, drawn 230 times: each draw's
+    // skinned copy takes 4.8 MB, and the geometry's streams 4 MB, over
+    // 1 GiB in all. It is refused before any of it is allocated.
+    let mut scenes = one_square();
+    scenes.model.geometries = vec![Geometry {
+        positions: vec![[0.0; 3]; 100_000],
+        normals: vec![[0.0, 0.0, 1.0]; 100_000],
+        uvs: vec![[0.0; 2]; 100_000],
+        tangents: None,
+        joints: None,
+        weights: None,
+        targets: vec![],
+        indices: vec![],
+    }];
+    scenes.model.draws = vec![scenes.model.draws[0]; 230];
+    let Some(message) = invalid(scenes) else {
+        return;
+    };
+    assert!(message.contains("1108000032 bytes"), "{message}");
+}
+
+const RED: [u8; 4] = [255, 0, 0, 255];
+const GREEN: [u8; 4] = [0, 255, 0, 255];
+const BLUE: [u8; 4] = [0, 0, 255, 255];
+
+/// `one_square` four times the canvas, textured with a 2x2 texture, red
+/// and green on its top row and blue and white below, sampled nearest and
+/// repeated, through `transform`: untransformed, the canvas's quarters
+/// show the texture's.
+fn quarters(transform: Option<celesta_plugin::TextureTransform>) -> Scenes {
+    let mut scenes = one_square();
+    scenes.model.textures = vec![SceneTexture {
+        source: TextureSource::Rgba {
+            width: 2,
+            height: 2,
+            pixels: Arc::new([RED, GREEN, BLUE, WHITE].concat()),
+        },
+        color_space: ColorSpace::Srgb,
+        sampler: Sampler {
+            mag_filter: Filter::Nearest,
+            min_filter: Filter::Nearest,
+            mipmaps: false,
+            ..Sampler::default()
+        },
+    }];
+    let MaterialKind::Unlit(unlit) = &mut scenes.model.materials[0].kind;
+    unlit.base_color_texture = Some(celesta_plugin::TextureRef {
+        texture: 0,
+        transform,
+    });
+    scenes.frame.draws[0].world = scaling(4.0, 4.0, 1.0);
+    scenes
+}
+
+/// The canvas's top-left, top-right, bottom-left, and bottom-right quarters
+/// of `scenes`, sampled well inside each.
+fn quarter_colors(scenes: Scenes) -> Option<[[u8; 4]; 4]> {
+    let frame = render_scenes(scenes)?;
+    let quarters = [(16, 16), (48, 16), (16, 48), (48, 48)];
+    for (x, y) in quarters {
+        // The quarter is one color throughout.
+        for (dx, dy) in [(-8, -8), (8, -8), (-8, 8), (8, 8)] {
+            let corner = pixel(&frame, (x + dx) as u32, (y + dy) as u32);
+            assert_eq!(corner, pixel(&frame, x as u32, y as u32), "({x}, {y})");
+        }
+    }
+    Some(quarters.map(|(x, y)| pixel(&frame, x as u32, y as u32)))
+}
+
+fn transform(offset: [f32; 2], rotation: f32, scale: [f32; 2]) -> celesta_plugin::TextureTransform {
+    celesta_plugin::TextureTransform {
+        offset,
+        rotation,
+        scale,
+    }
+}
+
+#[track_caller]
+fn assert_quarters(scenes: Scenes, expected: [[u8; 4]; 4]) {
+    let Some(actual) = quarter_colors(scenes) else {
+        return;
+    };
+    for (actual, expected) in actual.iter().zip(expected) {
+        assert!(near(*actual, expected), "{actual:?}, not {expected:?}");
+    }
+}
+
+#[test]
+fn texture_transform_offsets_scales_and_rotates() {
+    // The canvas shows the middle of the square: u and v 0.25 to 0.75, v
+    // counting down from the texture's top row.
+    assert_quarters(quarters(None), [RED, GREEN, BLUE, WHITE]);
+    // Offset half a texture in u: each row's columns swap.
+    assert_quarters(
+        quarters(Some(transform([0.5, 0.0], 0.0, [1.0; 2]))),
+        [GREEN, RED, WHITE, BLUE],
+    );
+    // Halved in u: u 0.125 to 0.375, the left column throughout.
+    assert_quarters(
+        quarters(Some(transform([0.0; 2], 0.0, [0.5, 1.0]))),
+        [RED, RED, BLUE, BLUE],
+    );
+    // KHR_texture_transform's rotation, `mat3(cos, sin, 0, -sin, cos, 0,
+    // 0, 0, 1)` column by column: a quarter turn takes (u, v) to (-v, u).
+    // The top-left quarter, u and v 0.25 to 0.5, samples u -0.5 to -0.25
+    // (0.5 to 0.75 repeated) and v 0.25 to 0.5: green.
+    assert_quarters(
+        quarters(Some(transform(
+            [0.0; 2],
+            std::f32::consts::FRAC_PI_2,
+            [1.0; 2],
+        ))),
+        [GREEN, WHITE, RED, BLUE],
+    );
+    // Scaled, then rotated, then offset: halved in v, turned, and moved
+    // half a texture in u, (u, v) goes to (0.5 - v / 2, u). u' stays
+    // within 0.125 to 0.375, the left column, and v' = u picks the row by
+    // the quarter's column. (Rotated before it is scaled, the right
+    // quarters would be red too.)
+    assert_quarters(
+        quarters(Some(transform(
+            [0.5, 0.0],
+            std::f32::consts::FRAC_PI_2,
+            [1.0, 0.5],
+        ))),
+        [RED, BLUE, RED, BLUE],
+    );
+}
+
+#[test]
+fn overrides_replace_the_material_texture_transform_and_color() {
+    // The material offsets half a texture in u and halves u; the frame's
+    // overrides put both back.
+    let mut scenes = quarters(Some(transform([0.5, 0.0], 0.0, [0.5, 1.0])));
+    scenes.frame.draws[0].overrides.texture_offset = Some([0.0, 0.0]);
+    scenes.frame.draws[0].overrides.texture_scale = Some([1.0, 1.0]);
+    assert_quarters(scenes, [RED, GREEN, BLUE, WHITE]);
+    // An offset override in v alone: the rows swap, the material's u
+    // offset gone.
+    let mut scenes = quarters(Some(transform([0.5, 0.0], 0.0, [1.0; 2])));
+    scenes.frame.draws[0].overrides.texture_offset = Some([0.0, 0.5]);
+    assert_quarters(scenes, [BLUE, WHITE, RED, GREEN]);
+
+    // A blue base color in place of the material's red, not multiplied by
+    // it.
+    let mut scenes = one_square();
+    scenes.model.materials = vec![plain([1.0, 0.0, 0.0, 1.0])];
+    scenes.frame.draws[0].overrides.base_color = Some([0.0, 0.0, 1.0, 1.0]);
+    let Some(frame) = render_scenes(scenes) else {
+        return;
+    };
+    assert_pixel(&frame, 32, 32, BLUE);
+    // It multiplies the texture as the material's would: green leaves the
+    // red and blue texels black.
+    let mut scenes = quarters(None);
+    scenes.frame.draws[0].overrides.base_color = Some([0.0, 1.0, 0.0, 1.0]);
+    assert_quarters(scenes, [BLACK, GREEN, BLACK, GREEN]);
+}
+
+const BLACK: [u8; 4] = [0, 0, 0, 255];

@@ -8,7 +8,7 @@
 
 use crate::error::GpuRenderError;
 use crate::renderer::GpuRenderer;
-use crate::scene::{LoadedScene, ScenePipelines};
+use crate::scene::{LoadedScene, ScenePipelines, scene_canvas_size};
 use crate::texture::{LayerTexture, TextureData};
 use celesta_composition::ResolvedAsset;
 use celesta_plugin::{
@@ -598,10 +598,17 @@ impl GpuRenderer {
             }
         }
         let canvas = open.loaded.canvas();
-        let largest = canvas[0].max(canvas[1]).max(1.0);
-        let scale = density.min(f64::from(self.max_texture_dimension) / f64::from(largest));
-        let width = ((f64::from(canvas[0]) * scale).ceil() as u32).max(1);
-        let height = ((f64::from(canvas[1]) * scale).ceil() as u32).max(1);
+        let (width, height) = match &open.loaded {
+            // A scene's canvas costs many times a mesh canvas's texels.
+            LoadedModel::Scene(_) => scene_canvas_size(canvas, density, self.max_texture_dimension),
+            LoadedModel::Meshes(_) => {
+                let largest = canvas[0].max(canvas[1]).max(1.0);
+                let scale = density.min(f64::from(self.max_texture_dimension) / f64::from(largest));
+                let width = ((f64::from(canvas[0]) * scale).ceil() as u32).max(1);
+                let height = ((f64::from(canvas[1]) * scale).ceil() as u32).max(1);
+                (width, height)
+            }
+        };
         if self.measuring_plane {
             return Ok((self.stand_in_texture(width, height), canvas));
         }
