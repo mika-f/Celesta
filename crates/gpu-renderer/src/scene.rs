@@ -3,8 +3,9 @@
 //! draws onto the same kind of canvas as 2D meshes (see `mesh.rs`).
 //!
 //! Each frame, a compute pass morphs and skins every visible draw's
-//! vertices (`scene_skin.wgsl`). A render pass then draws them through the
-//! camera onto a 4× multisampled canvas of linear, premultiplied
+//! vertices (`scene_skin.wgsl`). A render pass then draws them, in UniVRM's
+//! queue order (`draw_queue`) and by their material's alpha mode, through
+//! the camera onto a 4× multisampled canvas of linear, premultiplied
 //! `Rgba16Float` color with `Depth32Float` depth, both cleared (to
 //! transparent black and to 1). The resolved canvas is converted to the
 //! layer's encoding, premultiplied sRGB-encoded `Rgba8Unorm`
@@ -53,6 +54,9 @@ pub(crate) struct LoadedScene {
 /// single zeroed 32-byte element, so that it can be bound.
 pub(crate) struct GeometryBuffers {
     pub(crate) vertices: u32,
+    /// The centre of the rest positions' bounds, which a blended draw
+    /// without its own `center` is sorted by.
+    pub(crate) center: [f32; 3],
     /// `vec4<f32>`: the position, `w` 1.
     pub(crate) positions: wgpu::Buffer,
     /// `vec4<f32>`: the normal, `w` 0.
@@ -96,6 +100,64 @@ struct Facing {
     clockwise: bool,
 }
 
+/// How a draw's alpha is drawn, as UniVRM draws its material's alpha mode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Alpha {
+    /// Alpha ignored, depth written.
+    Opaque,
+    /// Coverage from the alpha against the cutoff, depth written.
+    Mask,
+    /// Blended by alpha over what is drawn, depth tested but not written.
+    Blend,
+}
+
+impl Alpha {
+    const ALL: [Self; 3] = [Self::Opaque, Self::Mask, Self::Blend];
+
+    fn of(mode: AlphaMode) -> Self {
+        match mode {
+            AlphaMode::Opaque => Self::Opaque,
+            AlphaMode::Mask { .. } => Self::Mask,
+            AlphaMode::Blend => Self::Blend,
+        }
+    }
+
+    /// Unity's render queue: lower queues draw first.
+    fn queue(self) -> u32 {
+        match self {
+            Self::Opaque => 2000,
+            Self::Mask => 2450,
+            Self::Blend => 3000,
+        }
+    }
+
+    /// `scene.wgsl`'s fragment entry point.
+    fn entry_point(self) -> &'static str {
+        match self {
+            Self::Opaque => "fs_opaque",
+            Self::Mask => "fs_mask",
+            Self::Blend => "fs_blend",
+        }
+    }
+
+    /// Straight color over the canvas's premultiplied color, as Unity
+    /// blends it; alpha accumulates as coverage.
+    fn blend(self) -> Option<wgpu::BlendState> {
+        (self == Self::Blend).then_some(wgpu::BlendState {
+            color: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::SrcAlpha,
+                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                operation: wgpu::BlendOperation::Add,
+            },
+            alpha: wgpu::BlendComponent {
+                src_factor: wgpu::BlendFactor::One,
+                dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                operation: wgpu::BlendOperation::Add,
+            },
+        })
+    }
+}
+
 /// What `scene_skin.wgsl` reads as `Params`.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -110,6 +172,7 @@ struct SkinParams {
 struct DrawUniform {
     world: [f32; 16],
     base_color: [f32; 4],
+    /// The texture transform's first row, then a mask material's cutoff.
     uv_u: [f32; 4],
     uv_v: [f32; 4],
 }
@@ -123,7 +186,7 @@ pub(crate) struct ScenePipelines {
     camera_layout: wgpu::BindGroupLayout,
     draw_layout: wgpu::BindGroupLayout,
     material_layout: wgpu::BindGroupLayout,
-    draw: HashMap<Facing, wgpu::RenderPipeline>,
+    draw: HashMap<(Facing, Alpha), wgpu::RenderPipeline>,
     convert_layout: wgpu::BindGroupLayout,
     convert: wgpu::RenderPipeline,
     /// Zeros, bound in place of a stream a geometry lacks.
@@ -269,7 +332,7 @@ impl ScenePipelines {
                 attributes: &wgpu::vertex_attr_array![1 => Float32x2],
             }),
         ];
-        let draw_pipeline = |facing: Facing| {
+        let draw_pipeline = |facing: Facing, alpha: Alpha| {
             device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("Celesta scene draw"),
                 layout: Some(&draw_pipeline_layout),
@@ -281,11 +344,11 @@ impl ScenePipelines {
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
-                    entry_point: Some("fs_unlit"),
+                    entry_point: Some(alpha.entry_point()),
                     compilation_options: Default::default(),
                     targets: &[Some(wgpu::ColorTargetState {
                         format: COLOR_FORMAT,
-                        blend: None,
+                        blend: alpha.blend(),
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
                 }),
@@ -301,7 +364,7 @@ impl ScenePipelines {
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: DEPTH_FORMAT,
-                    depth_write_enabled: Some(true),
+                    depth_write_enabled: Some(alpha != Alpha::Blend),
                     depth_compare: Some(wgpu::CompareFunction::Less),
                     stencil: Default::default(),
                     bias: Default::default(),
@@ -317,8 +380,10 @@ impl ScenePipelines {
         let mut draw = HashMap::new();
         for culled in [false, true] {
             for clockwise in [false, true] {
-                let facing = Facing { culled, clockwise };
-                draw.insert(facing, draw_pipeline(facing));
+                for alpha in Alpha::ALL {
+                    let facing = Facing { culled, clockwise };
+                    draw.insert((facing, alpha), draw_pipeline(facing, alpha));
+                }
             }
         }
 
@@ -765,6 +830,23 @@ fn straight_mips(
     }
 }
 
+/// The midpoint of `positions`' bounding box; the origin when there are
+/// none.
+fn bounds_center(positions: &[[f32; 3]]) -> [f32; 3] {
+    let Some(first) = positions.first() else {
+        return [0.0; 3];
+    };
+    let (low, high) = positions
+        .iter()
+        .fold((*first, *first), |(low, high), position| {
+            (
+                std::array::from_fn(|axis| low[axis].min(position[axis])),
+                std::array::from_fn(|axis| high[axis].max(position[axis])),
+            )
+        });
+    std::array::from_fn(|axis| (low[axis] + high[axis]) * 0.5)
+}
+
 fn address_mode(wrap: Wrap) -> wgpu::AddressMode {
     match wrap {
         Wrap::Repeat => wgpu::AddressMode::Repeat,
@@ -878,6 +960,7 @@ impl LoadedScene {
             }
             geometries.push(GeometryBuffers {
                 vertices: vertices as u32,
+                center: bounds_center(&geometry.positions),
                 positions: buffer(
                     "positions",
                     bytemuck::cast_slice(&vec4(&geometry.positions, 1.0)),
@@ -1115,17 +1198,51 @@ fn projection_matrix(projection: &Projection, aspect: f32) -> [f32; 16] {
     }
 }
 
-/// The draws of `frame` to draw, in the order the frame lists them. Hidden
+/// `matrix × (point, 1)`, `matrix` column-major.
+fn transform_point(matrix: &[f32; 16], point: [f32; 3]) -> [f32; 3] {
+    std::array::from_fn(|row| {
+        (0..3)
+            .map(|column| matrix[column * 4 + row] * point[column])
+            .sum::<f32>()
+            + matrix[12 + row]
+    })
+}
+
+/// The draws of `frame` to draw, in UniVRM's order: by their material's
+/// queue, opaque before mask before blend. Blended draws go farthest first
+/// by the view-space depth of their `center`, or else of their geometry's
+/// rest bounds centre moved by `world`. Ties go by draw index. Hidden
 /// draws, and draws without triangles, are left out.
 fn draw_queue<'a>(scene: &LoadedScene, frame: &'a SceneFrame) -> Vec<&'a DrawState> {
-    frame
+    let mut queue: Vec<(u32, f32, &DrawState)> = frame
         .draws
         .iter()
-        .filter(|state| {
-            let geometry = scene.model.draws[state.index].geometry;
-            state.visible && scene.geometries[geometry].index_count > 0
+        .filter_map(|state| {
+            let info = &scene.model.draws[state.index];
+            let geometry = &scene.geometries[info.geometry];
+            if !state.visible || geometry.index_count == 0 {
+                return None;
+            }
+            let alpha = Alpha::of(scene.model.materials[info.material].alpha_mode);
+            // The camera looks down −Z: the farther, the lower its z.
+            let depth = if alpha == Alpha::Blend {
+                let center = state
+                    .center
+                    .unwrap_or_else(|| transform_point(&state.world, geometry.center));
+                transform_point(&frame.camera.view, center)[2]
+            } else {
+                0.0
+            };
+            Some((alpha.queue(), depth, state))
         })
-        .collect()
+        .collect();
+    queue.sort_by(|(a_queue, a_depth, a), (b_queue, b_depth, b)| {
+        a_queue
+            .cmp(b_queue)
+            .then(a_depth.total_cmp(b_depth))
+            .then(a.index.cmp(&b.index))
+    });
+    queue.into_iter().map(|(_, _, state)| state).collect()
 }
 
 /// One `size`-byte element of `buffer`, bound at a dynamic offset.
@@ -1169,10 +1286,14 @@ fn draw_uniform(material: &celesta_plugin::Material, state: &DrawState) -> DrawU
     let offset = state.overrides.texture_offset.unwrap_or(offset);
     let scale = state.overrides.texture_scale.unwrap_or(scale);
     let (sin, cos) = rotation.sin_cos();
+    let cutoff = match material.alpha_mode {
+        AlphaMode::Mask { cutoff } => cutoff,
+        AlphaMode::Opaque | AlphaMode::Blend => 0.0,
+    };
     DrawUniform {
         world: state.world,
         base_color: state.overrides.base_color.unwrap_or(unlit.base_color),
-        uv_u: [cos * scale[0], -sin * scale[1], offset[0], 0.0],
+        uv_u: [cos * scale[0], -sin * scale[1], offset[0], cutoff],
         uv_v: [sin * scale[0], cos * scale[1], offset[1], 0.0],
     }
 }
@@ -1426,7 +1547,8 @@ impl GpuRenderer {
                     culled: !material.double_sided,
                     clockwise: determinant(&state.world) < 0.0,
                 };
-                pass.set_pipeline(&pipelines.draw[&facing]);
+                let alpha = Alpha::of(material.alpha_mode);
+                pass.set_pipeline(&pipelines.draw[&(facing, alpha)]);
                 pass.set_bind_group(1, &draw_group, &[(slot * draw_stride) as u32]);
                 let MaterialKind::Unlit(unlit) = &material.kind;
                 let texture = unlit

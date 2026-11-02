@@ -4,9 +4,9 @@
 
 use super::*;
 use celesta_plugin::{
-    AlphaMode, Camera, ColorSpace, ContentFrame, ContentProvider, DrawInfo, DrawState, Geometry,
-    Lights, Material, MaterialKind, ModelId, MorphTarget, Opened, PluginError, Projection, Sampler,
-    SceneFrame, SceneModel, SceneTexture, Skin, TextureSource, UnlitMaterial,
+    AlphaMode, Camera, ColorSpace, ContentFrame, ContentProvider, DrawInfo, DrawState, Filter,
+    Geometry, Lights, Material, MaterialKind, ModelId, MorphTarget, Opened, PluginError,
+    Projection, Sampler, SceneFrame, SceneModel, SceneTexture, Skin, TextureSource, UnlitMaterial,
 };
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -623,6 +623,121 @@ fn edges_are_antialiased_at_density_two() {
         (32..=224).contains(&edge[3]) && edge.iter().all(|value| *value == edge[3]),
         "{edge:?}"
     );
+}
+
+#[test]
+fn mask_cuts_at_cutoff() {
+    // A texture whose left column has alpha 0.3 and right 0.8, sampled
+    // nearest, on a square four times the canvas: the left half of the
+    // canvas shows the left column and the right half the right one.
+    let mut scenes = one_square();
+    scenes.model.textures = vec![SceneTexture {
+        source: TextureSource::Rgba {
+            width: 2,
+            height: 1,
+            pixels: Arc::new(vec![255, 255, 255, 77, 255, 255, 255, 204]),
+        },
+        color_space: ColorSpace::Srgb,
+        sampler: Sampler {
+            mag_filter: Filter::Nearest,
+            min_filter: Filter::Nearest,
+            mipmaps: false,
+            ..Sampler::default()
+        },
+    }];
+    let material = &mut scenes.model.materials[0];
+    material.alpha_mode = AlphaMode::Mask { cutoff: 0.5 };
+    let MaterialKind::Unlit(unlit) = &mut material.kind;
+    unlit.base_color_texture = Some(celesta_plugin::TextureRef {
+        texture: 0,
+        transform: None,
+    });
+    scenes.frame.draws[0].world = scaling(4.0, 4.0, 1.0);
+    let Some(frame) = render_scenes(scenes) else {
+        return;
+    };
+    for (x, y) in [(0, 32), (24, 10), (30, 60)] {
+        assert_pixel(&frame, x, y, CLEAR);
+    }
+    for (x, y) in [(34, 32), (40, 10), (63, 60)] {
+        assert_pixel(&frame, x, y, WHITE);
+    }
+}
+
+/// An unlit, single-sided material of `color` blended by its alpha.
+fn blended(color: [f32; 4]) -> Material {
+    Material {
+        alpha_mode: AlphaMode::Blend,
+        ..plain(color)
+    }
+}
+
+/// `one_square` with two squares half transparent: red (draw 0) at z = 0
+/// and blue (draw 1) 1 m behind it, listed red first.
+fn red_over_blue() -> Scenes {
+    let mut scenes = one_square();
+    scenes.model.materials = vec![blended([1.0, 0.0, 0.0, 0.5]), blended([0.0, 0.0, 1.0, 0.5])];
+    scenes.model.draws.push(DrawInfo {
+        geometry: 0,
+        material: 1,
+        skin: None,
+    });
+    let red = scenes.frame.draws[0].clone();
+    let blue = DrawState {
+        index: 1,
+        world: translation(0.0, 0.0, -1.0),
+        ..red.clone()
+    };
+    scenes.frame.draws = vec![red, blue];
+    scenes
+}
+
+/// Half red over half blue over nothing: linear (0.5, 0, 0.25) at alpha
+/// 0.75, premultiplied and sRGB-encoded.
+const RED_OVER_BLUE: [u8; 4] = [160, 0, 117, 191];
+/// Half blue over half red: the same with red and blue swapped.
+const BLUE_OVER_RED: [u8; 4] = [117, 0, 160, 191];
+
+#[test]
+fn blend_draws_back_to_front_whatever_the_list_order() {
+    for reversed in [false, true] {
+        let mut scenes = red_over_blue();
+        if reversed {
+            scenes.frame.draws.reverse();
+        }
+        let Some(frame) = render_scenes(scenes) else {
+            return;
+        };
+        let centre = pixel(&frame, 32, 32);
+        assert!(centre[0] > centre[2], "reversed {reversed}: {centre:?}");
+        assert_pixel(&frame, 32, 32, RED_OVER_BLUE);
+    }
+}
+
+#[test]
+fn opaque_draws_before_blend_even_if_listed_after() {
+    // Half-transparent blue in front, listed before an opaque red behind.
+    let mut scenes = red_over_blue();
+    scenes.model.materials = vec![blended([0.0, 0.0, 1.0, 0.5]), plain([1.0, 0.0, 0.0, 1.0])];
+    let Some(frame) = render_scenes(scenes) else {
+        return;
+    };
+    // Linear (0.5, 0, 0.5), opaque.
+    assert_pixel(&frame, 32, 32, [188, 0, 188, 255]);
+}
+
+#[test]
+fn center_overrides_sorting() {
+    // Red's centre put behind blue's: red draws first, and blue over it.
+    let mut scenes = red_over_blue();
+    scenes.frame.draws[0].center = Some([0.0, 0.0, -5.0]);
+    scenes.frame.draws[1].center = Some([0.0, 0.0, 1.0]);
+    let Some(frame) = render_scenes(scenes) else {
+        return;
+    };
+    let centre = pixel(&frame, 32, 32);
+    assert!(centre[2] > centre[0], "{centre:?}");
+    assert_pixel(&frame, 32, 32, BLUE_OVER_RED);
 }
 
 #[test]
