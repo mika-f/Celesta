@@ -12,7 +12,8 @@ same protocol.
 A plugin can return 3D content: skinned, morphing triangle meshes with
 materials, a camera, and lights. Celesta draws it with depth into the layer's
 own canvas, which then composites like any other layer. On top of that, a VRM
-plugin draws VRM 1.0 and VRM 0.x avatars that look as close as practical to
+plugin draws VRM 1.0 avatars (and later, as an experiment, VRM 0.x ones)
+that look as close as practical to
 UniVRM (vrm-c/UniVRM), the reference implementation.
 
 ## Decisions taken
@@ -28,7 +29,8 @@ UniVRM (vrm-c/UniVRM), the reference implementation.
   lighting, outline width, draw order, spring bone stepping), UniVRM's
   behavior decides. three-vrm and the other implementations are references
   for code structure only.
-- **VRM 0.x is supported**, by migrating it to 1.0 on load as UniVRM's VRM10
+- **VRM 1.0 first.** VRM 0.x support follows later and is experimental. It
+  works by migrating the file to 1.0 on load as UniVRM's VRM10
   loader does, so one shading formula draws both.
 - **glTF PBR is optional.** Unlit and toon come first; metallic-roughness is
   a later phase.
@@ -256,9 +258,13 @@ color  = direct + gi + emissiveTex × emissiveFactor + rim
 
 ### Loading
 
-- `.vrm` (glb) with `VRMC_vrm` 1.0 or the 0.x `VRM` extension; `.vrma`
-  (`VRMC_vrm_animation`) as motion assets.
-- **0.x migration**, ported from UniVRM's `Packages/VRM10/Runtime/Migration`:
+- `.vrm` (glb) with `VRMC_vrm` 1.0; `.vrma` (`VRMC_vrm_animation`) as
+  motion assets.
+- **VRM 0.x** (the `VRM` extension):
+  - Until the migration lands, opening a 0.x file is an error. The error says that VRM 0.x is not supported yet, and that UniVRM or Blender's VRM add-on can convert the file to 1.0.
+  - Once the migration lands, a 0.x file opens with a `warning` notice that 0.x support is experimental. The parity checks below cover 1.0 only.
+- **0.x migration** (experimental, a later phase), ported from UniVRM's
+  `Packages/VRM10/Runtime/Migration`:
   - Coordinates turned 180° about Y (positions, normals, morph deltas,
     node translations, inverse binds: `(x, y, z) → (−x, y, −z)`);
     extension vectors (collider offsets, gravity, first-person offset)
@@ -345,15 +351,16 @@ refuse to draw; the user decides.
   matrices and morph weights moving vertices; material overrides; the final
   encoding against a 2D layer of the same color; frames on lavapipe in CI.
 - **Plugin:**
-  - 0.x migration of sample files against fixtures produced once with
+  - a 0.x file refused with the conversion hint (until the migration),
+    then 0.x migration of sample files against fixtures produced once with
     UniVRM;
   - frames for out-of-order times equal frames played in order, including
     after a restart;
   - spring bone sequences against UniVRM recordings at 60 fps.
 - **Parity:** a reference Unity scene with UniVRM, a fixed camera, one
   directional light, a flat ambient color, and shadows off renders sample
-  models (VRM 1.0 and 0.x, MToon with outline, rim, matcap, cutout hair,
-  transparency). Celesta renders the same with the plugin's reference preset.
+  VRM 1.0 models (MToon with outline, rim, matcap, cutout hair,
+  transparency). Experimental 0.x support has no parity bar. Celesta renders the same with the plugin's reference preset.
   The images are compared with a stated tolerance, and the differences are
   recorded. Only models whose licence allows it are committed; the rest are
   checked locally.
@@ -366,7 +373,8 @@ refuse to draw; the user decides.
    outlines, rim and matcap, UV animation, normal maps, emission.
 3. **The VRM plugin, 1.0:** loading, humanoid and VRMA, expressions, lookAt,
    constraints, deterministic spring bones, usage terms, `<Vrm>`, Add menu.
-4. **VRM 0.x migration.**
+4. **VRM 0.x, experimental:** the migration step, its fixtures, and the
+   experimental notice. Until then 0.x files are refused (phase 3).
 5. **Later:** main-light shadows, glTF PBR, point and spot lights.
 
 Phases 1–2 (Celesta) and 3 (plugin, drawn unlit at first) can proceed side by
@@ -374,9 +382,9 @@ side once the protocol types land.
 
 ## Open questions
 
-- Whether parity should also cover UniVRM's legacy 0.x loader (the 0.x
-  formula, which keeps light color attenuation and the `min(col, lit)`
-  clamp) rather than only its VRM10 migration.
+- When 0.x support stops being experimental, whether its bar is UniVRM's
+  VRM10 migration (as here) or its legacy 0.x loader (the 0.x formula, which
+  keeps light color attenuation and the `min(col, lit)` clamp).
 - The parity tolerance, and which sample models can be committed.
 - How far the per-frame protocol should go toward #645's shared-memory
   transport, should a plugin ever send CPU-deformed vertices instead of
