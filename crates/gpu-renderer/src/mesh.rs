@@ -3,10 +3,12 @@
 //! premultiplied, which then composites as the layer's texture. A mesh can
 //! be clipped by other meshes, tinted with multiply and screen colors,
 //! culled when it faces away, and blended normally, additively, or
-//! multiplicatively.
+//! multiplicatively. A provider can supply a 3D scene instead; `scene.rs`
+//! draws those onto the same kind of canvas.
 
 use crate::error::GpuRenderError;
 use crate::renderer::GpuRenderer;
+use crate::scene::LoadedScene;
 use crate::texture::{LayerTexture, TextureData};
 use celesta_composition::ResolvedAsset;
 use celesta_plugin::{
@@ -38,7 +40,29 @@ pub(crate) struct MeshState {
     models: HashMap<(String, BTreeMap<String, PathBuf>), LoadedModel>,
 }
 
-struct LoadedModel {
+/// A model opened as 2D meshes or as a 3D scene.
+enum LoadedModel {
+    Meshes(LoadedMeshes),
+    Scene(LoadedScene),
+}
+
+impl LoadedModel {
+    fn id(&self) -> ModelId {
+        match self {
+            Self::Meshes(meshes) => meshes.id,
+            Self::Scene(scene) => scene.id,
+        }
+    }
+
+    fn canvas(&self) -> [f32; 2] {
+        match self {
+            Self::Meshes(meshes) => meshes.model.canvas,
+            Self::Scene(scene) => scene.model.canvas,
+        }
+    }
+}
+
+struct LoadedMeshes {
     id: ModelId,
     model: MeshModel,
     /// Each model texture, bound as group 0.
@@ -362,7 +386,32 @@ fn invalid_model(model: &MeshModel) -> Option<String> {
     None
 }
 
-impl LoadedModel {
+/// A model texture's pixels, read from its file or taken as sent.
+pub(crate) fn texture_image(
+    source: &TextureSource,
+    layer: &str,
+) -> Result<image::RgbaImage, GpuRenderError> {
+    Ok(match source {
+        TextureSource::Path(path) => image::open(path)
+            .map_err(|source| GpuRenderError::ImageDecode {
+                asset: path.display().to_string(),
+                source,
+            })?
+            .to_rgba8(),
+        TextureSource::Rgba {
+            width,
+            height,
+            pixels,
+        } => image::RgbaImage::from_raw(*width, *height, pixels.as_ref().clone()).ok_or_else(
+            || GpuRenderError::InvalidPluginContent {
+                layer: layer.to_owned(),
+                message: format!("a {width}x{height} texture of {} bytes", pixels.len()),
+            },
+        )?,
+    })
+}
+
+impl LoadedMeshes {
     fn load(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -379,23 +428,7 @@ impl LoadedModel {
         }
         let mut textures = Vec::new();
         for source in &model.textures {
-            let image = match source {
-                TextureSource::Path(path) => image::open(path)
-                    .map_err(|source| GpuRenderError::ImageDecode {
-                        asset: path.display().to_string(),
-                        source,
-                    })?
-                    .to_rgba8(),
-                TextureSource::Rgba {
-                    width,
-                    height,
-                    pixels,
-                } => image::RgbaImage::from_raw(*width, *height, pixels.as_ref().clone())
-                    .ok_or_else(|| GpuRenderError::InvalidPluginContent {
-                        layer: layer.to_owned(),
-                        message: format!("a {width}x{height} texture of {} bytes", pixels.len()),
-                    })?,
-            };
+            let image = texture_image(source, layer)?;
             let levels = premultiplied_mips(image.width(), image.height(), image.as_raw());
             let data: Vec<u8> = levels
                 .iter()
@@ -475,27 +508,40 @@ impl GpuRenderer {
             let opened = provider
                 .open(content.plugin, &key.1)
                 .map_err(plugin_error)?;
-            let (id, model) = match opened.content {
-                ContentModel::Meshes(model) => (opened.model, model),
-                ContentModel::Scene(_) => {
-                    provider.close(opened.model);
-                    return Err(GpuRenderError::InvalidPluginContent {
-                        layer: layer.to_owned(),
-                        message: "scene content is not drawn yet".to_owned(),
-                    });
+            let id = opened.model;
+            let loaded = match opened.content {
+                ContentModel::Meshes(model) => LoadedMeshes::load(
+                    &self.device,
+                    &self.queue,
+                    pipelines_ref(&self.meshes),
+                    id,
+                    model,
+                    layer,
+                )
+                .map(LoadedModel::Meshes),
+                ContentModel::Scene(model) => LoadedScene::load(
+                    &self.device,
+                    &self.queue,
+                    self.max_texture_dimension,
+                    id,
+                    model,
+                    layer,
+                )
+                .map(LoadedModel::Scene),
+            };
+            let loaded = match loaded {
+                Ok(loaded) => loaded,
+                Err(error) => {
+                    // Nothing draws a model that failed to load.
+                    if let Some(provider) = self.meshes.provider.as_mut() {
+                        provider.close(id);
+                    }
+                    return Err(error);
                 }
             };
-            let loaded = LoadedModel::load(
-                &self.device,
-                &self.queue,
-                pipelines_ref(&self.meshes),
-                id,
-                model,
-                layer,
-            )?;
             self.meshes.models.insert(key.clone(), loaded);
         }
-        let canvas = self.meshes.models[&key].model.canvas;
+        let canvas = self.meshes.models[&key].canvas();
         let largest = canvas[0].max(canvas[1]).max(1.0);
         let scale = density.min(f64::from(self.max_texture_dimension) / f64::from(largest));
         let width = ((f64::from(canvas[0]) * scale).ceil() as u32).max(1);
@@ -504,23 +550,33 @@ impl GpuRenderer {
             return Ok((self.stand_in_texture(width, height), canvas));
         }
 
-        let id = self.meshes.models[&key].id;
+        let id = self.meshes.models[&key].id();
         let provider = self
             .meshes
             .provider
             .as_mut()
             .ok_or_else(|| GpuRenderError::MissingContentProvider(layer.to_owned()))?;
-        let ContentFrame::Meshes(frame) = provider
+        let frame = provider
             .frame(id, content.time, content.data)
-            .map_err(plugin_error)?
-        else {
-            return Err(GpuRenderError::InvalidPluginContent {
-                layer: layer.to_owned(),
-                message: "scene content is not drawn yet".to_owned(),
-            });
+            .map_err(plugin_error)?;
+        let mismatch = |message: &str| GpuRenderError::InvalidPluginContent {
+            layer: layer.to_owned(),
+            message: message.to_owned(),
+        };
+        let (frame, loaded) = match (frame, &self.meshes.models[&key]) {
+            (ContentFrame::Meshes(frame), LoadedModel::Meshes(loaded)) => (frame, loaded),
+            (ContentFrame::Scene(frame), LoadedModel::Scene(scene)) => {
+                let texture = self.scene_texture(layer, scene, &frame, width, height)?;
+                return Ok((texture, canvas));
+            }
+            (ContentFrame::Scene(_), LoadedModel::Meshes(_)) => {
+                return Err(mismatch("the plugin sent a scene frame for meshes"));
+            }
+            (ContentFrame::Meshes(_), LoadedModel::Scene(_)) => {
+                return Err(mismatch("the plugin sent a meshes frame for a scene"));
+            }
         };
         let pipelines = pipelines_ref(&self.meshes);
-        let loaded = &self.meshes.models[&key];
         let infos = &loaded.model.meshes;
         for state in &frame.meshes {
             let Some(info) = infos.get(state.index) else {
@@ -574,20 +630,7 @@ impl GpuRenderer {
                 opacity_mask: [mesh.opacity, mask, 0.0, 0.0],
             };
         }
-        let output = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Celesta mesh canvas"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: OUTPUT_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
+        let output = self.plugin_canvas(width, height);
         let output_view = output.create_view(&Default::default());
         let drawn: Vec<_> = frame
             .meshes
@@ -741,15 +784,46 @@ impl GpuRenderer {
             }
             self.queue.submit([encoder.finish()]);
         }
+        Ok((self.plugin_layer_texture(output, width, height), canvas))
+    }
+
+    /// A `width` by `height` canvas plugin content is drawn onto: transparent
+    /// until something draws on it.
+    pub(crate) fn plugin_canvas(&self, width: u32, height: u32) -> wgpu::Texture {
+        self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Celesta mesh canvas"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: OUTPUT_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        })
+    }
+
+    /// A drawn `plugin_canvas` as the layer's texture, premultiplied.
+    pub(crate) fn plugin_layer_texture(
+        &self,
+        output: wgpu::Texture,
+        width: u32,
+        height: u32,
+    ) -> LayerTexture {
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Celesta mesh layer texture"),
             layout: &self.texture_bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
-                resource: wgpu::BindingResource::TextureView(&output_view),
+                resource: wgpu::BindingResource::TextureView(
+                    &output.create_view(&Default::default()),
+                ),
             }],
         });
-        let texture = LayerTexture::from_data(TextureData {
+        LayerTexture::from_data(TextureData {
             _texture: output,
             bind_group,
             width,
@@ -760,8 +834,7 @@ impl GpuRenderer {
             text_box: None,
             raster_scale: 1.0,
             premultiplied: true,
-        });
-        Ok((texture, canvas))
+        })
     }
 }
 

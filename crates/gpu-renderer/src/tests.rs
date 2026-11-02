@@ -40,6 +40,7 @@ mod motion_blur;
 mod plane_bands;
 mod plugin;
 mod readback;
+mod scene;
 mod shader;
 mod transform_3d;
 

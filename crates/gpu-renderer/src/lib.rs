@@ -25,6 +25,7 @@ mod prepare;
 mod quantize;
 mod readback;
 mod renderer;
+mod scene;
 mod shader;
 #[cfg(test)]
 mod tests;
