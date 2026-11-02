@@ -1,37 +1,58 @@
 //! `LayerContent::Plugin` scene content: a provider's 3D scene, uploaded
 //! once when it is opened and checked against each of its frames. A scene
 //! draws onto the same kind of canvas as 2D meshes (see `mesh.rs`).
+//!
+//! Each frame, a compute pass morphs and skins every visible draw's
+//! vertices (`scene_skin.wgsl`). A render pass then draws them through the
+//! camera onto a 4× multisampled canvas of linear, premultiplied
+//! `Rgba16Float` color with `Depth32Float` depth, both cleared (to
+//! transparent black and to 1). The resolved canvas is converted to the
+//! layer's encoding, premultiplied sRGB-encoded `Rgba8Unorm`
+//! (`scene.wgsl`). Only the model's buffers and textures outlive a frame:
+//! every buffer a frame draws from is written by that frame.
 
 use crate::error::GpuRenderError;
-use crate::mesh::texture_image;
+use crate::mesh::{OUTPUT_FORMAT, texture_image};
 use crate::renderer::GpuRenderer;
 use crate::texture::LayerTexture;
 use celesta_plugin::{
-    AlphaMode, Camera, ColorSpace, Filter, MaterialKind, ModelId, Projection, SceneFrame,
-    SceneModel, Wrap,
+    AlphaMode, Camera, ColorSpace, DrawState, Filter, MaterialKind, ModelId, Projection,
+    SceneFrame, SceneModel, Wrap,
 };
+use std::collections::HashMap;
 use wgpu::util::DeviceExt;
+
+/// The canvas a scene is drawn on before it is converted to the layer's.
+const COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+/// Samples per pixel of the color and depth canvases.
+const SAMPLES: u32 = 4;
+/// Vertices per compute workgroup, as `scene_skin.wgsl` declares.
+const WORKGROUP: u32 = 64;
+/// The bytes of one skinned vertex: `scene_skin.wgsl`'s `Skinned`.
+const SKINNED_STRIDE: u64 = 48;
+/// The bytes of one `SkinVertex`, the largest element a stream holds.
+const SKIN_VERTEX_STRIDE: u64 = 32;
 
 /// A scene model and its copy on the GPU.
 pub(crate) struct LoadedScene {
     pub(crate) id: ModelId,
     pub(crate) model: SceneModel,
     /// One per `model.geometries` entry.
-    #[expect(dead_code, reason = "read once scenes are drawn")]
     pub(crate) geometries: Vec<GeometryBuffers>,
-    /// One per `model.textures` entry.
-    #[expect(dead_code, reason = "read once scenes are drawn")]
-    pub(crate) textures: Vec<SceneTextureView>,
+    /// One per `model.textures` entry: the texture and its sampler, bound
+    /// as group 2 of a draw.
+    pub(crate) textures: Vec<wgpu::BindGroup>,
+    /// One per `model.draws` entry.
+    pub(crate) draws: Vec<DrawBuffers>,
 }
 
 /// A geometry's vertex streams and triangles, laid out to be read as
 /// storage buffers (each is also usable as a vertex buffer). Every stream
 /// has one element per vertex, in vertex order; an empty one still holds a
-/// single zeroed 16-byte element, so that it can be bound.
-#[expect(dead_code, reason = "read once scenes are drawn")]
+/// single zeroed 32-byte element, so that it can be bound.
 pub(crate) struct GeometryBuffers {
     pub(crate) vertices: u32,
-    pub(crate) targets: u32,
     /// `vec4<f32>`: the position, `w` 1.
     pub(crate) positions: wgpu::Buffer,
     /// `vec4<f32>`: the normal, `w` 0.
@@ -40,10 +61,10 @@ pub(crate) struct GeometryBuffers {
     pub(crate) uvs: wgpu::Buffer,
     /// `vec4<f32>`, the bitangent's sign in `w`.
     pub(crate) tangents: Option<wgpu::Buffer>,
-    /// `vec4<u32>`, widened from the model's `u16`s; with `weights`
-    /// (`vec4<f32>`) when the geometry is skinned.
-    pub(crate) joints: Option<wgpu::Buffer>,
-    pub(crate) weights: Option<wgpu::Buffer>,
+    /// `scene_skin.wgsl`'s `SkinVertex`, when the geometry is skinned: the
+    /// joints as `vec4<u32>`, widened from the model's `u16`s, then their
+    /// weights as `vec4<f32>`.
+    pub(crate) skin: Option<wgpu::Buffer>,
     /// `vec4<f32>` position offsets, `w` 0, target by target: target `t`'s
     /// offset for vertex `v` is element `t × vertices + v`.
     pub(crate) morph_positions: Option<wgpu::Buffer>,
@@ -55,11 +76,363 @@ pub(crate) struct GeometryBuffers {
     pub(crate) index_count: u32,
 }
 
-/// A scene texture and the sampler its `Sampler` describes.
-#[expect(dead_code, reason = "read once scenes are drawn")]
-pub(crate) struct SceneTextureView {
-    pub(crate) view: wgpu::TextureView,
-    pub(crate) sampler: wgpu::Sampler,
+/// What one draw's vertices are skinned into, and the bind group that
+/// skins them.
+pub(crate) struct DrawBuffers {
+    /// `scene_skin.wgsl`'s `Skinned`, one per vertex of the draw's
+    /// geometry, rewritten each frame the draw is visible; read as the
+    /// draw's vertex buffer.
+    skinned: wgpu::Buffer,
+    /// The geometry's streams and `skinned`, as `scene_skin.wgsl`'s group 0.
+    skin_group: wgpu::BindGroup,
+}
+
+/// Which faces a draw keeps: back faces are culled unless its material is
+/// double-sided, and its front faces are clockwise on screen when its world
+/// matrix mirrors it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct Facing {
+    culled: bool,
+    clockwise: bool,
+}
+
+/// What `scene_skin.wgsl` reads as `Params`.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct SkinParams {
+    counts: [u32; 4],
+    flags: [u32; 4],
+}
+
+/// What `scene.wgsl` reads as `Draw`.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct DrawUniform {
+    world: [f32; 16],
+    base_color: [f32; 4],
+    uv_u: [f32; 4],
+    uv_v: [f32; 4],
+}
+
+/// The pipelines that draw scenes and what they bind, shared by every
+/// scene.
+pub(crate) struct ScenePipelines {
+    geometry_layout: wgpu::BindGroupLayout,
+    frame_layout: wgpu::BindGroupLayout,
+    skin: wgpu::ComputePipeline,
+    camera_layout: wgpu::BindGroupLayout,
+    draw_layout: wgpu::BindGroupLayout,
+    material_layout: wgpu::BindGroupLayout,
+    draw: HashMap<Facing, wgpu::RenderPipeline>,
+    convert_layout: wgpu::BindGroupLayout,
+    convert: wgpu::RenderPipeline,
+    /// Zeros, bound in place of a stream a geometry lacks.
+    empty: wgpu::Buffer,
+    /// A white texel, bound for materials without a texture.
+    white: wgpu::BindGroup,
+}
+
+fn storage_entry(binding: u32, read_only: bool) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::COMPUTE,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    }
+}
+
+/// A uniform bound at a different offset for each draw.
+fn dynamic_uniform_entry<T>(
+    binding: u32,
+    visibility: wgpu::ShaderStages,
+) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Uniform,
+            has_dynamic_offset: true,
+            min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<T>() as u64),
+        },
+        count: None,
+    }
+}
+
+impl ScenePipelines {
+    pub(crate) fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
+        let skin_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Celesta scene skinning shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("scene_skin.wgsl").into()),
+        });
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Celesta scene shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("scene.wgsl").into()),
+        });
+
+        let geometry_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Celesta scene geometry layout"),
+            entries: &[
+                storage_entry(0, true),
+                storage_entry(1, true),
+                storage_entry(2, true),
+                storage_entry(3, true),
+                storage_entry(4, true),
+                storage_entry(5, true),
+                storage_entry(6, false),
+            ],
+        });
+        let frame_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Celesta scene skinning frame layout"),
+            entries: &[
+                storage_entry(0, true),
+                dynamic_uniform_entry::<SkinParams>(1, wgpu::ShaderStages::COMPUTE),
+            ],
+        });
+        let skin = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("Celesta scene skinning"),
+            layout: Some(
+                &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("Celesta scene skinning layout"),
+                    bind_group_layouts: &[Some(&geometry_layout), Some(&frame_layout)],
+                    immediate_size: 0,
+                }),
+            ),
+            module: &skin_shader,
+            entry_point: Some("cs_main"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+
+        let camera_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Celesta scene camera layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+        let draw_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Celesta scene draw layout"),
+            entries: &[dynamic_uniform_entry::<DrawUniform>(
+                0,
+                wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+            )],
+        });
+        let material_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Celesta scene material layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        let draw_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Celesta scene draw pipeline layout"),
+            bind_group_layouts: &[
+                Some(&camera_layout),
+                Some(&draw_layout),
+                Some(&material_layout),
+            ],
+            immediate_size: 0,
+        });
+        let vertex_buffers = [
+            Some(wgpu::VertexBufferLayout {
+                array_stride: SKINNED_STRIDE,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &wgpu::vertex_attr_array![0 => Float32x4],
+            }),
+            Some(wgpu::VertexBufferLayout {
+                array_stride: 8,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &wgpu::vertex_attr_array![1 => Float32x2],
+            }),
+        ];
+        let draw_pipeline = |facing: Facing| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("Celesta scene draw"),
+                layout: Some(&draw_pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some("vs_main"),
+                    compilation_options: Default::default(),
+                    buffers: &vertex_buffers,
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some("fs_unlit"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: COLOR_FORMAT,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    front_face: if facing.clockwise {
+                        wgpu::FrontFace::Cw
+                    } else {
+                        wgpu::FrontFace::Ccw
+                    },
+                    cull_mode: facing.culled.then_some(wgpu::Face::Back),
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: DEPTH_FORMAT,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::Less),
+                    stencil: Default::default(),
+                    bias: Default::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: SAMPLES,
+                    ..Default::default()
+                },
+                multiview_mask: None,
+                cache: None,
+            })
+        };
+        let mut draw = HashMap::new();
+        for culled in [false, true] {
+            for clockwise in [false, true] {
+                let facing = Facing { culled, clockwise };
+                draw.insert(facing, draw_pipeline(facing));
+            }
+        }
+
+        let convert_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Celesta scene convert layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            }],
+        });
+        let convert = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Celesta scene convert"),
+            layout: Some(
+                &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("Celesta scene convert layout"),
+                    bind_group_layouts: &[Some(&convert_layout)],
+                    immediate_size: 0,
+                }),
+            ),
+            vertex: wgpu::VertexState {
+                module: &shader,
+                entry_point: Some("vs_full"),
+                compilation_options: Default::default(),
+                buffers: &[],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &shader,
+                entry_point: Some("fs_convert"),
+                compilation_options: Default::default(),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: OUTPUT_FORMAT,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+            }),
+            primitive: Default::default(),
+            depth_stencil: None,
+            multisample: Default::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
+        let empty = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Celesta scene empty stream"),
+            contents: &[0; SKIN_VERTEX_STRIDE as usize],
+            usage: wgpu::BufferUsages::STORAGE,
+        });
+        let white = device.create_texture_with_data(
+            queue,
+            &wgpu::TextureDescriptor {
+                label: Some("Celesta scene white texture"),
+                size: wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            },
+            wgpu::util::TextureDataOrder::LayerMajor,
+            &[255; 4],
+        );
+        let white = material_group(
+            device,
+            &material_layout,
+            &white.create_view(&Default::default()),
+            &device.create_sampler(&Default::default()),
+        );
+        Self {
+            geometry_layout,
+            frame_layout,
+            skin,
+            camera_layout,
+            draw_layout,
+            material_layout,
+            draw,
+            convert_layout,
+            convert,
+            empty,
+            white,
+        }
+    }
+}
+
+fn material_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    view: &wgpu::TextureView,
+    sampler: &wgpu::Sampler,
+) -> wgpu::BindGroup {
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("Celesta scene material"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+        ],
+    })
 }
 
 fn finite(values: &[f32]) -> bool {
@@ -408,10 +781,12 @@ fn filter_mode(filter: Filter) -> wgpu::FilterMode {
 }
 
 impl LoadedScene {
-    /// Checks `model` and uploads its geometries and textures.
+    /// Checks `model`, uploads its geometries and textures, and makes what
+    /// each draw is skinned into.
     pub(crate) fn load(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
+        pipelines: &ScenePipelines,
         max_texture_dimension: u32,
         id: ModelId,
         model: SceneModel,
@@ -441,7 +816,7 @@ impl LoadedScene {
                     device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                         label: Some("Celesta scene geometry"),
                         contents: if contents.is_empty() {
-                            &[0; 16]
+                            &[0; SKIN_VERTEX_STRIDE as usize]
                         } else {
                             contents
                         },
@@ -479,16 +854,30 @@ impl LoadedScene {
                         })
                         .collect()
                 });
-            let joints: Option<Vec<u32>> = geometry.joints.as_ref().map(|joints| {
-                joints
-                    .as_flattened()
-                    .iter()
-                    .map(|joint| u32::from(*joint))
-                    .collect()
-            });
+            // Each vertex's four joints, then the bits of their four weights.
+            let skin: Option<Vec<u32>> = geometry
+                .joints
+                .as_ref()
+                .zip(geometry.weights.as_ref())
+                .map(|(joints, weights)| {
+                    joints
+                        .iter()
+                        .zip(weights)
+                        .flat_map(|(joints, weights)| {
+                            let joints = joints.map(u32::from);
+                            let weights = weights.map(f32::to_bits);
+                            joints.into_iter().chain(weights)
+                        })
+                        .collect()
+                });
+            if vertices as u64 * SKINNED_STRIDE > largest_buffer {
+                return Err(invalid(format!(
+                    "geometry {index}'s {vertices} vertices take {} bytes skinned, more than this GPU's {largest_buffer}",
+                    vertices as u64 * SKINNED_STRIDE
+                )));
+            }
             geometries.push(GeometryBuffers {
                 vertices: vertices as u32,
-                targets: geometry.targets.len() as u32,
                 positions: buffer(
                     "positions",
                     bytemuck::cast_slice(&vec4(&geometry.positions, 1.0)),
@@ -515,19 +904,8 @@ impl LoadedScene {
                         )
                     })
                     .transpose()?,
-                joints: joints
-                    .map(|joints| buffer("joints", bytemuck::cast_slice(&joints), stream))
-                    .transpose()?,
-                weights: geometry
-                    .weights
-                    .as_ref()
-                    .map(|weights| {
-                        buffer(
-                            "weights",
-                            bytemuck::cast_slice(weights.as_flattened()),
-                            stream,
-                        )
-                    })
+                skin: skin
+                    .map(|skin| buffer("joints and weights", bytemuck::cast_slice(&skin), stream))
                     .transpose()?,
                 morph_positions: (!geometry.targets.is_empty())
                     .then(|| {
@@ -597,9 +975,11 @@ impl LoadedScene {
                 wgpu::util::TextureDataOrder::LayerMajor,
                 &data,
             );
-            textures.push(SceneTextureView {
-                view: uploaded.create_view(&Default::default()),
-                sampler: device.create_sampler(&wgpu::SamplerDescriptor {
+            textures.push(material_group(
+                device,
+                &pipelines.material_layout,
+                &uploaded.create_view(&Default::default()),
+                &device.create_sampler(&wgpu::SamplerDescriptor {
                     label: Some("Celesta scene sampler"),
                     address_mode_u: address_mode(sampler.wrap_s),
                     address_mode_v: address_mode(sampler.wrap_t),
@@ -612,21 +992,194 @@ impl LoadedScene {
                     },
                     ..Default::default()
                 }),
-            });
+            ));
         }
+
+        let draws = model
+            .draws
+            .iter()
+            .map(|draw| {
+                let geometry = &geometries[draw.geometry];
+                let skinned = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("Celesta scene skinned vertices"),
+                    size: u64::from(geometry.vertices.max(1)) * SKINNED_STRIDE,
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::VERTEX,
+                    mapped_at_creation: false,
+                });
+                let or_empty = |stream: &Option<wgpu::Buffer>| {
+                    stream.as_ref().unwrap_or(&pipelines.empty).clone()
+                };
+                let (tangents, skin, morph_positions, morph_normals) = (
+                    or_empty(&geometry.tangents),
+                    or_empty(&geometry.skin),
+                    or_empty(&geometry.morph_positions),
+                    or_empty(&geometry.morph_normals),
+                );
+                let streams = [
+                    geometry.positions.as_entire_binding(),
+                    geometry.normals.as_entire_binding(),
+                    tangents.as_entire_binding(),
+                    skin.as_entire_binding(),
+                    morph_positions.as_entire_binding(),
+                    morph_normals.as_entire_binding(),
+                    skinned.as_entire_binding(),
+                ];
+                let entries: Vec<wgpu::BindGroupEntry> = streams
+                    .into_iter()
+                    .enumerate()
+                    .map(|(binding, resource)| wgpu::BindGroupEntry {
+                        binding: binding as u32,
+                        resource,
+                    })
+                    .collect();
+                let skin_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Celesta scene geometry"),
+                    layout: &pipelines.geometry_layout,
+                    entries: &entries,
+                });
+                DrawBuffers {
+                    skinned,
+                    skin_group,
+                }
+            })
+            .collect();
         Ok(Self {
             id,
             model,
             geometries,
             textures,
+            draws,
         })
+    }
+}
+
+/// `a × b`, both column-major.
+fn multiply(a: &[f32; 16], b: &[f32; 16]) -> [f32; 16] {
+    std::array::from_fn(|index| {
+        let (column, row) = (index / 4, index % 4);
+        (0..4).map(|k| a[k * 4 + row] * b[column * 4 + k]).sum()
+    })
+}
+
+/// The projection of `projection` onto a canvas `aspect` times as wide as
+/// it is high: right-handed, the camera looking down −Z, with depth 0 at
+/// `near` and 1 at `far`. An orthographic camera sees `height` metres.
+fn projection_matrix(projection: &Projection, aspect: f32) -> [f32; 16] {
+    match *projection {
+        Projection::Perspective { yfov, near, far } => {
+            let y = 1.0 / (yfov * 0.5).tan();
+            let x = y / aspect;
+            let z = far / (near - far);
+            [
+                x,
+                0.0,
+                0.0,
+                0.0, //
+                0.0,
+                y,
+                0.0,
+                0.0, //
+                0.0,
+                0.0,
+                z,
+                -1.0, //
+                0.0,
+                0.0,
+                z * near,
+                0.0,
+            ]
+        }
+        Projection::Orthographic { height, near, far } => {
+            let y = 2.0 / height;
+            let x = y / aspect;
+            let z = 1.0 / (near - far);
+            [
+                x,
+                0.0,
+                0.0,
+                0.0, //
+                0.0,
+                y,
+                0.0,
+                0.0, //
+                0.0,
+                0.0,
+                z,
+                0.0, //
+                0.0,
+                0.0,
+                z * near,
+                1.0,
+            ]
+        }
+    }
+}
+
+/// The draws of `frame` to draw, in the order the frame lists them. Hidden
+/// draws, and draws without triangles, are left out.
+fn draw_queue<'a>(scene: &LoadedScene, frame: &'a SceneFrame) -> Vec<&'a DrawState> {
+    frame
+        .draws
+        .iter()
+        .filter(|state| {
+            let geometry = scene.model.draws[state.index].geometry;
+            state.visible && scene.geometries[geometry].index_count > 0
+        })
+        .collect()
+}
+
+/// One `size`-byte element of `buffer`, bound at a dynamic offset.
+fn uniform_binding(buffer: &wgpu::Buffer, size: usize) -> wgpu::BindingResource<'_> {
+    wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+        buffer,
+        offset: 0,
+        size: wgpu::BufferSize::new(size as u64),
+    })
+}
+
+/// `size` rounded up to a multiple of `alignment`.
+fn aligned(size: usize, alignment: u32) -> usize {
+    size.next_multiple_of(alignment as usize)
+}
+
+/// `values` laid out `stride` bytes apart.
+fn strided<T: bytemuck::Pod>(values: &[T], stride: usize) -> Vec<u8> {
+    let mut bytes = vec![0; values.len() * stride];
+    for (index, value) in values.iter().enumerate() {
+        let value = bytemuck::bytes_of(value);
+        bytes[index * stride..][..value.len()].copy_from_slice(value);
+    }
+    bytes
+}
+
+/// What `state` draws its material with: the base color, and the rows of
+/// its texture transform, which scales, then rotates, then offsets
+/// coordinates as `KHR_texture_transform`'s sample code does. A rotation
+/// turns `(1, 0)` toward `(0, 1)`. The frame's overrides replace the
+/// material's values.
+fn draw_uniform(material: &celesta_plugin::Material, state: &DrawState) -> DrawUniform {
+    let MaterialKind::Unlit(unlit) = &material.kind;
+    let transform = unlit
+        .base_color_texture
+        .as_ref()
+        .and_then(|texture| texture.transform);
+    let (offset, rotation, scale) = transform.map_or(([0.0; 2], 0.0, [1.0; 2]), |transform| {
+        (transform.offset, transform.rotation, transform.scale)
+    });
+    let offset = state.overrides.texture_offset.unwrap_or(offset);
+    let scale = state.overrides.texture_scale.unwrap_or(scale);
+    let (sin, cos) = rotation.sin_cos();
+    DrawUniform {
+        world: state.world,
+        base_color: state.overrides.base_color.unwrap_or(unlit.base_color),
+        uv_u: [cos * scale[0], -sin * scale[1], offset[0], 0.0],
+        uv_v: [sin * scale[0], cos * scale[1], offset[1], 0.0],
     }
 }
 
 impl GpuRenderer {
     /// `frame` of `scene` on a `width` by `height` canvas, once the frame is
-    /// checked against the model. Drawing is not implemented yet: the
-    /// canvas stays transparent.
+    /// checked against the model.
     pub(crate) fn scene_texture(
         &self,
         layer: &str,
@@ -635,13 +1188,281 @@ impl GpuRenderer {
         width: u32,
         height: u32,
     ) -> Result<LayerTexture, GpuRenderError> {
+        let invalid = |message| GpuRenderError::InvalidPluginContent {
+            layer: layer.to_owned(),
+            message,
+        };
         if let Some(message) = invalid_scene_frame(&scene.model, frame) {
-            return Err(GpuRenderError::InvalidPluginContent {
-                layer: layer.to_owned(),
-                message,
-            });
+            return Err(invalid(message));
         }
         let output = self.plugin_canvas(width, height);
+        let queue = draw_queue(scene, frame);
+        if queue.is_empty() {
+            return Ok(self.plugin_layer_texture(output, width, height));
+        }
+        let pipelines = self
+            .meshes
+            .scene_pipelines
+            .as_ref()
+            .expect("created when the scene was opened");
+        let model = &scene.model;
+        let limits = self.device.limits();
+
+        // Every skin's matrices, then each queued draw's morph pairs.
+        let mut frame_data: Vec<[u32; 4]> = Vec::new();
+        let mut first_matrix = Vec::with_capacity(frame.skins.len());
+        for matrices in &frame.skins {
+            first_matrix.push(frame_data.len() as u32);
+            for matrix in matrices {
+                for column in matrix.as_chunks::<4>().0 {
+                    frame_data.push(column.map(f32::to_bits));
+                }
+            }
+        }
+        let mut skin_params = Vec::with_capacity(queue.len());
+        let mut draw_uniforms = Vec::with_capacity(queue.len());
+        for state in &queue {
+            let info = &model.draws[state.index];
+            let geometry = &scene.geometries[info.geometry];
+            let first_morph = frame_data.len() as u32;
+            for (morph, weight) in state.morph_weights.iter().enumerate() {
+                if *weight != 0.0 {
+                    frame_data.push([morph as u32, weight.to_bits(), 0, 0]);
+                }
+            }
+            skin_params.push(SkinParams {
+                counts: [
+                    geometry.vertices,
+                    info.skin.map_or(0, |skin| first_matrix[skin]),
+                    first_morph,
+                    frame_data.len() as u32 - first_morph,
+                ],
+                flags: [
+                    u32::from(info.skin.is_some()),
+                    u32::from(geometry.tangents.is_some()),
+                    u32::from(geometry.morph_normals.is_some()),
+                    0,
+                ],
+            });
+            draw_uniforms.push(draw_uniform(&model.materials[info.material], state));
+        }
+        if frame_data.is_empty() {
+            frame_data.push([0; 4]);
+        }
+        let frame_bytes = std::mem::size_of_val(frame_data.as_slice()) as u64;
+        let largest_buffer = limits
+            .max_buffer_size
+            .min(limits.max_storage_buffer_binding_size);
+        if frame_bytes > largest_buffer {
+            return Err(invalid(format!(
+                "the frame's skinning matrices and morph weights take {frame_bytes} bytes, more than this GPU's {largest_buffer}"
+            )));
+        }
+
+        let buffer = |label, contents: &[u8], usage| {
+            self.device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some(label),
+                    contents,
+                    usage,
+                })
+        };
+        let alignment = limits.min_uniform_buffer_offset_alignment;
+        let params_stride = aligned(std::mem::size_of::<SkinParams>(), alignment);
+        let draw_stride = aligned(std::mem::size_of::<DrawUniform>(), alignment);
+        let frame_buffer = buffer(
+            "Celesta scene skinning frame",
+            bytemuck::cast_slice(&frame_data),
+            wgpu::BufferUsages::STORAGE,
+        );
+        let params_buffer = buffer(
+            "Celesta scene skinning params",
+            &strided(&skin_params, params_stride),
+            wgpu::BufferUsages::UNIFORM,
+        );
+        let draw_buffer = buffer(
+            "Celesta scene draws",
+            &strided(&draw_uniforms, draw_stride),
+            wgpu::BufferUsages::UNIFORM,
+        );
+        let aspect = model.canvas[0] / model.canvas[1];
+        let view_projection = multiply(
+            &projection_matrix(&frame.camera.projection, aspect),
+            &frame.camera.view,
+        );
+        let camera_buffer = buffer(
+            "Celesta scene camera",
+            bytemuck::cast_slice(&view_projection),
+            wgpu::BufferUsages::UNIFORM,
+        );
+        let frame_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Celesta scene skinning frame"),
+            layout: &pipelines.frame_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: frame_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: uniform_binding(&params_buffer, std::mem::size_of::<SkinParams>()),
+                },
+            ],
+        });
+        let camera_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Celesta scene camera"),
+            layout: &pipelines.camera_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: camera_buffer.as_entire_binding(),
+            }],
+        });
+        let draw_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Celesta scene draws"),
+            layout: &pipelines.draw_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform_binding(&draw_buffer, std::mem::size_of::<DrawUniform>()),
+            }],
+        });
+
+        let target = |label, format, sample_count, usage| {
+            self.device
+                .create_texture(&wgpu::TextureDescriptor {
+                    label: Some(label),
+                    size: wgpu::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count,
+                    dimension: wgpu::TextureDimension::D2,
+                    format,
+                    usage,
+                    view_formats: &[],
+                })
+                .create_view(&Default::default())
+        };
+        let multisampled = target(
+            "Celesta scene color",
+            COLOR_FORMAT,
+            SAMPLES,
+            wgpu::TextureUsages::RENDER_ATTACHMENT,
+        );
+        let resolved = target(
+            "Celesta scene resolved color",
+            COLOR_FORMAT,
+            1,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        );
+        let depth = target(
+            "Celesta scene depth",
+            DEPTH_FORMAT,
+            SAMPLES,
+            wgpu::TextureUsages::RENDER_ATTACHMENT,
+        );
+        let convert_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Celesta scene resolved color"),
+            layout: &pipelines.convert_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&resolved),
+            }],
+        });
+
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Celesta scene"),
+            });
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("Celesta scene skinning"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&pipelines.skin);
+            let most = limits.max_compute_workgroups_per_dimension;
+            for (slot, state) in queue.iter().enumerate() {
+                let vertices = skin_params[slot].counts[0];
+                pass.set_bind_group(0, &scene.draws[state.index].skin_group, &[]);
+                pass.set_bind_group(1, &frame_group, &[(slot * params_stride) as u32]);
+                // Rows of workgroups when one row cannot hold them.
+                let groups = vertices.div_ceil(WORKGROUP);
+                let columns = groups.min(most);
+                pass.dispatch_workgroups(columns, groups.div_ceil(columns), 1);
+            }
+        }
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Celesta scene draw"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &multisampled,
+                    depth_slice: None,
+                    resolve_target: Some(&resolved),
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Discard,
+                    },
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &depth,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Discard,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_bind_group(0, &camera_group, &[]);
+            for (slot, state) in queue.iter().enumerate() {
+                let info = &model.draws[state.index];
+                let geometry = &scene.geometries[info.geometry];
+                let material = &model.materials[info.material];
+                let facing = Facing {
+                    culled: !material.double_sided,
+                    clockwise: determinant(&state.world) < 0.0,
+                };
+                pass.set_pipeline(&pipelines.draw[&facing]);
+                pass.set_bind_group(1, &draw_group, &[(slot * draw_stride) as u32]);
+                let MaterialKind::Unlit(unlit) = &material.kind;
+                let texture = unlit
+                    .base_color_texture
+                    .as_ref()
+                    .map_or(&pipelines.white, |texture| &scene.textures[texture.texture]);
+                pass.set_bind_group(2, texture, &[]);
+                pass.set_vertex_buffer(0, scene.draws[state.index].skinned.slice(..));
+                pass.set_vertex_buffer(1, geometry.uvs.slice(..));
+                pass.set_index_buffer(geometry.indices.slice(..), wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..geometry.index_count, 0, 0..1);
+            }
+        }
+        {
+            let output_view = output.create_view(&Default::default());
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Celesta scene convert"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &output_view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&pipelines.convert);
+            pass.set_bind_group(0, &convert_group, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        self.queue.submit([encoder.finish()]);
         Ok(self.plugin_layer_texture(output, width, height))
     }
 }
@@ -666,6 +1487,44 @@ mod tests {
         assert_eq!(determinant(&swapped), -24.0);
         m[0] = 0.0;
         assert_eq!(determinant(&m), 0.0);
+    }
+
+    #[test]
+    fn projections_put_near_at_depth_0_and_far_at_1() {
+        let projections = [
+            Projection::Perspective {
+                yfov: 1.0,
+                near: 0.5,
+                far: 20.0,
+            },
+            Projection::Orthographic {
+                height: 2.0,
+                near: 0.5,
+                far: 20.0,
+            },
+        ];
+        for projection in projections {
+            let matrix = projection_matrix(&projection, 2.0);
+            let depth = |z: f32| {
+                let clip: Vec<f32> = (0..4)
+                    .map(|row| matrix[8 + row] * z + matrix[12 + row])
+                    .collect();
+                clip[2] / clip[3]
+            };
+            assert!(depth(-0.5).abs() < 1e-6, "{projection:?}");
+            assert!((depth(-20.0) - 1.0).abs() < 1e-6, "{projection:?}");
+        }
+        // 2 m high on a canvas twice as wide as high: 1 m reaches the top
+        // edge and 2 m the side.
+        let matrix = projection_matrix(
+            &Projection::Orthographic {
+                height: 2.0,
+                near: 0.5,
+                far: 20.0,
+            },
+            2.0,
+        );
+        assert_eq!((matrix[0] * 2.0, matrix[5]), (1.0, 1.0));
     }
 
     #[test]

@@ -8,7 +8,7 @@
 
 use crate::error::GpuRenderError;
 use crate::renderer::GpuRenderer;
-use crate::scene::LoadedScene;
+use crate::scene::{LoadedScene, ScenePipelines};
 use crate::texture::{LayerTexture, TextureData};
 use celesta_composition::ResolvedAsset;
 use celesta_plugin::{
@@ -19,7 +19,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use wgpu::util::DeviceExt;
 
-const OUTPUT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+pub(crate) const OUTPUT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const MASK_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 
 /// What a `Plugin` layer is drawn from.
@@ -36,6 +36,8 @@ pub(crate) struct PluginContent<'a> {
 pub(crate) struct MeshState {
     pub(crate) provider: Option<Box<dyn ContentProvider>>,
     pipelines: Option<Pipelines>,
+    /// What draws scenes, created by the first scene opened.
+    pub(crate) scene_pipelines: Option<ScenePipelines>,
     /// By plugin and asset paths.
     models: HashMap<(String, BTreeMap<String, PathBuf>), LoadedModel>,
 }
@@ -519,15 +521,22 @@ impl GpuRenderer {
                     layer,
                 )
                 .map(LoadedModel::Meshes),
-                ContentModel::Scene(model) => LoadedScene::load(
-                    &self.device,
-                    &self.queue,
-                    self.max_texture_dimension,
-                    id,
-                    model,
-                    layer,
-                )
-                .map(LoadedModel::Scene),
+                ContentModel::Scene(model) => {
+                    let pipelines = self
+                        .meshes
+                        .scene_pipelines
+                        .get_or_insert_with(|| ScenePipelines::new(&self.device, &self.queue));
+                    LoadedScene::load(
+                        &self.device,
+                        &self.queue,
+                        pipelines,
+                        self.max_texture_dimension,
+                        id,
+                        model,
+                        layer,
+                    )
+                    .map(LoadedModel::Scene)
+                }
             };
             let loaded = match loaded {
                 Ok(loaded) => loaded,
