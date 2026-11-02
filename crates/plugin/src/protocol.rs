@@ -612,6 +612,20 @@ fn decode_scene_model(message: &Message) -> Result<(ModelId, SceneModel), Protoc
         } else {
             (None, None)
         };
+        // A target's size, not the header's count, bounds how many are made:
+        // targets without bytes, or more than the payload holds, are refused.
+        let target_bytes = count as usize * 12 * if info.target_normals { 2 } else { 1 };
+        if info.targets > 0
+            && (target_bytes == 0
+                || (info.targets as usize)
+                    .checked_mul(target_bytes)
+                    .is_none_or(|bytes| bytes > cursor.bytes.len()))
+        {
+            return Err(malformed(format!(
+                "{} morph targets of {count} vertices",
+                info.targets
+            )));
+        }
         let targets = (0..info.targets)
             .map(|_| {
                 Ok(MorphTarget {
@@ -1278,7 +1292,7 @@ mod tests {
                     index: 1,
                     visible: false,
                     world,
-                    morph_weights: vec![],
+                    morph_weights: vec![0.75, 0.5, 0.125],
                     center: Some([0.0, 1.5, -2.0]),
                     overrides: MaterialOverrides::default(),
                 },
@@ -1321,9 +1335,9 @@ mod tests {
         write_message(&mut bytes, &encode_content_frame(&frame)).unwrap();
         let message = read_message(&mut &bytes[..]).unwrap().unwrap();
         assert_eq!(message.kind(), "frame");
-        // The skins' matrices, then the draws' weights.
+        // The skins' matrices, then the draws' weights in draw order.
         let mut weights = Vec::new();
-        push_f32(&mut weights, [0.25, 1.25]);
+        push_f32(&mut weights, [0.25, 1.25, 0.75, 0.5, 0.125]);
         assert_eq!(message.payload.len(), 3 * 64 + weights.len());
         assert!(message.payload.ends_with(&weights));
         assert_eq!(
@@ -1346,6 +1360,29 @@ mod tests {
             decode_content_frame(&frame, ContentKind::Scene),
             Err(ProtocolError::Malformed(_))
         ));
+    }
+
+    #[test]
+    fn zero_vertex_targets_are_malformed() {
+        // Targets of a geometry without vertices take no payload, so their
+        // count alone must not decide how many are made.
+        for targets in [1, u32::MAX] {
+            let message = Message::new(json!({
+                "type": "opened",
+                "kind": "scene",
+                "model": 1,
+                "canvas": [1.0, 1.0],
+                "textures": [],
+                "geometries": [{ "vertices": 0, "indices": 0, "targets": targets }],
+                "skins": [],
+                "materials": [],
+                "draws": [],
+            }));
+            assert!(
+                matches!(decode_opened(&message), Err(ProtocolError::Malformed(_))),
+                "{targets} targets"
+            );
+        }
     }
 
     struct SceneFixed;
