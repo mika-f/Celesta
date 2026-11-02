@@ -10,7 +10,7 @@
 //! See `docs/handoff/2026-11-01-plugin-system.md` for the requests.
 
 use crate::mesh::{MeshBlend, MeshFrame, MeshInfo, MeshMask, MeshModel, MeshState, TextureSource};
-use crate::provider::{ContentProvider, ModelId};
+use crate::provider::{ContentFrame, ContentModel, ContentProvider, ModelId, Opened};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -393,7 +393,15 @@ pub fn serve_on(
             }
             "open" => match BTreeMap::<String, PathBuf>::deserialize(&request.header["assets"]) {
                 Ok(assets) => match provider.open(plugin, &assets) {
-                    Ok((id, model)) => encode_model(id, &model),
+                    Ok(Opened {
+                        model,
+                        content: ContentModel::Meshes(content),
+                        ..
+                    }) => encode_model(model, &content),
+                    Ok(Opened {
+                        content: ContentModel::Scene(_),
+                        ..
+                    }) => error_message("scene content is not encoded yet"),
                     Err(error) => error_message(error),
                 },
                 Err(error) => error_message(format!("invalid assets: {error}")),
@@ -404,7 +412,10 @@ pub fn serve_on(
             ) {
                 (Some(model), Some(time)) => {
                     match provider.frame(ModelId(model), time, &request.header["data"]) {
-                        Ok(frame) => encode_frame(&frame),
+                        Ok(ContentFrame::Meshes(frame)) => encode_frame(&frame),
+                        Ok(ContentFrame::Scene(_)) => {
+                            error_message("scene content is not encoded yet")
+                        }
                         Err(error) => error_message(error),
                     }
                 }
@@ -543,10 +554,14 @@ mod tests {
             &mut self,
             plugin: &str,
             assets: &BTreeMap<String, PathBuf>,
-        ) -> Result<(ModelId, MeshModel), PluginError> {
+        ) -> Result<Opened, PluginError> {
             assert_eq!(plugin, "fixed");
             assert_eq!(assets["model"], PathBuf::from("C:/m.json"));
-            Ok((ModelId(1), model()))
+            Ok(Opened {
+                model: ModelId(1),
+                content: model().into(),
+                notices: vec![],
+            })
         }
 
         fn frame(
@@ -554,7 +569,7 @@ mod tests {
             model: ModelId,
             time: f64,
             data: &Value,
-        ) -> Result<MeshFrame, PluginError> {
+        ) -> Result<ContentFrame, PluginError> {
             if data["fail"] == true {
                 return Err(PluginError::Failed {
                     plugin: "fixed".into(),
@@ -562,7 +577,7 @@ mod tests {
                 });
             }
             assert_eq!(model, ModelId(1));
-            Ok(frame(time))
+            Ok(frame(time).into())
         }
     }
 

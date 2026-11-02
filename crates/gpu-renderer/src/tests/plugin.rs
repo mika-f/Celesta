@@ -4,8 +4,8 @@
 
 use super::*;
 use celesta_plugin::{
-    ContentProvider, MeshBlend, MeshFrame, MeshInfo, MeshMask, MeshModel, MeshState, ModelId,
-    PluginError, TextureSource,
+    ContentFrame, ContentProvider, MeshBlend, MeshFrame, MeshInfo, MeshMask, MeshModel, MeshState,
+    ModelId, Opened, PluginError, TextureSource,
 };
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -65,12 +65,16 @@ impl ContentProvider for Quads {
         &mut self,
         plugin: &str,
         assets: &BTreeMap<String, PathBuf>,
-    ) -> Result<(ModelId, MeshModel), PluginError> {
+    ) -> Result<Opened, PluginError> {
         if plugin != "quads" {
             return Err(PluginError::UnknownPlugin(plugin.to_owned()));
         }
         assert!(assets.is_empty());
-        Ok((ModelId(7), self.model.clone()))
+        Ok(Opened {
+            model: ModelId(7),
+            content: self.model.clone().into(),
+            notices: vec![],
+        })
     }
 
     fn frame(
@@ -78,7 +82,7 @@ impl ContentProvider for Quads {
         model: ModelId,
         time: f64,
         data: &serde_json::Value,
-    ) -> Result<MeshFrame, PluginError> {
+    ) -> Result<ContentFrame, PluginError> {
         assert_eq!(model, ModelId(7));
         let shift = time as f32;
         let state = |index, opacity, color: [f32; 3], left: f32, right: f32| MeshState {
@@ -97,7 +101,7 @@ impl ContentProvider for Quads {
         if data["broken"] == true {
             meshes[1].index = 9;
         }
-        Ok(MeshFrame { meshes })
+        Ok(MeshFrame { meshes }.into())
     }
 }
 

@@ -6,7 +6,7 @@ use celesta_plugin::protocol::{
     Message, PROTOCOL_VERSION, ProtocolError, decode_frame, decode_model, read_message,
     write_message,
 };
-use celesta_plugin::{ContentProvider, MeshFrame, MeshModel, ModelId, PluginError};
+use celesta_plugin::{ContentFrame, ContentProvider, MeshModel, ModelId, Opened, PluginError};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
 use std::io::{BufReader, BufWriter};
@@ -212,6 +212,12 @@ impl PluginHost {
     ) -> Result<(ModelId, MeshModel), PluginError> {
         let request = Message::new(json!({ "type": "open", "assets": assets }));
         let answer = self.send(plugin, &request)?;
+        if answer.header["kind"] == "scene" {
+            return Err(PluginError::Failed {
+                plugin: plugin.to_owned(),
+                message: "scene content is not supported yet".to_owned(),
+            });
+        }
         decode_model(&answer).map_err(|error| PluginError::Failed {
             plugin: plugin.to_owned(),
             message: error.to_string(),
@@ -224,7 +230,7 @@ impl ContentProvider for PluginHost {
         &mut self,
         plugin: &str,
         assets: &BTreeMap<String, PathBuf>,
-    ) -> Result<(ModelId, MeshModel), PluginError> {
+    ) -> Result<Opened, PluginError> {
         let (remote, model) = self.retry(plugin, |host| host.open_remote(plugin, assets))?;
         self.next += 1;
         let id = ModelId(self.next);
@@ -236,10 +242,19 @@ impl ContentProvider for PluginHost {
                 remote: Some(remote),
             },
         );
-        Ok((id, model))
+        Ok(Opened {
+            model: id,
+            content: model.into(),
+            notices: vec![],
+        })
     }
 
-    fn frame(&mut self, model: ModelId, time: f64, data: &Value) -> Result<MeshFrame, PluginError> {
+    fn frame(
+        &mut self,
+        model: ModelId,
+        time: f64,
+        data: &Value,
+    ) -> Result<ContentFrame, PluginError> {
         let plugin = self
             .models
             .get(&model)
@@ -268,10 +283,12 @@ impl ContentProvider for PluginHost {
                 ),
             )
         })?;
-        decode_frame(&answer).map_err(|error| PluginError::Failed {
-            plugin,
-            message: error.to_string(),
-        })
+        decode_frame(&answer)
+            .map(ContentFrame::Meshes)
+            .map_err(|error| PluginError::Failed {
+                plugin,
+                message: error.to_string(),
+            })
     }
 
     fn close(&mut self, model: ModelId) {

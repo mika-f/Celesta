@@ -14,8 +14,8 @@
 //! function of the time.
 
 use celesta_plugin::{
-    ContentProvider, MeshBlend, MeshFrame, MeshInfo, MeshModel, MeshState, ModelId, PluginError,
-    TextureSource,
+    ContentFrame, ContentProvider, MeshBlend, MeshFrame, MeshInfo, MeshModel, MeshState, ModelId,
+    Opened, PluginError, TextureSource,
 };
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
@@ -115,7 +115,7 @@ impl ContentProvider for FlagProvider {
         &mut self,
         plugin: &str,
         assets: &BTreeMap<String, PathBuf>,
-    ) -> Result<(ModelId, MeshModel), PluginError> {
+    ) -> Result<Opened, PluginError> {
         if plugin != PLUGIN {
             return Err(PluginError::UnknownPlugin(plugin.to_owned()));
         }
@@ -152,18 +152,25 @@ impl ContentProvider for FlagProvider {
         self.next += 1;
         let id = ModelId(self.next);
         self.flags.insert(id, Flag { width, height });
-        Ok((
-            id,
-            MeshModel {
-                canvas: [width, height * (1.0 + 2.0 * PADDING)],
-                // Celesta decodes the file itself.
-                textures: vec![TextureSource::Path(image.clone())],
-                meshes,
-            },
-        ))
+        let model = MeshModel {
+            canvas: [width, height * (1.0 + 2.0 * PADDING)],
+            // Celesta decodes the file itself.
+            textures: vec![TextureSource::Path(image.clone())],
+            meshes,
+        };
+        Ok(Opened {
+            model: id,
+            content: model.into(),
+            notices: vec![],
+        })
     }
 
-    fn frame(&mut self, model: ModelId, time: f64, data: &Value) -> Result<MeshFrame, PluginError> {
+    fn frame(
+        &mut self,
+        model: ModelId,
+        time: f64,
+        data: &Value,
+    ) -> Result<ContentFrame, PluginError> {
         let flag = self
             .flags
             .get(&model)
@@ -197,7 +204,7 @@ impl ContentProvider for FlagProvider {
                 }
             })
             .collect();
-        Ok(MeshFrame { meshes })
+        Ok(MeshFrame { meshes }.into())
     }
 
     fn close(&mut self, model: ModelId) {
@@ -208,6 +215,7 @@ impl ContentProvider for FlagProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use celesta_plugin::ContentModel;
 
     fn opened(provider: &mut FlagProvider) -> (ModelId, MeshModel, tempfile::TempDir) {
         let directory = tempfile::tempdir().unwrap();
@@ -215,10 +223,20 @@ mod tests {
         image::RgbaImage::from_pixel(200, 100, image::Rgba([255, 0, 0, 255]))
             .save(&path)
             .unwrap();
-        let (id, model) = provider
+        let opened = provider
             .open(PLUGIN, &BTreeMap::from([("image".to_owned(), path)]))
             .unwrap();
-        (id, model, directory)
+        let ContentModel::Meshes(model) = opened.content else {
+            panic!("a flag is meshes");
+        };
+        (opened.model, model, directory)
+    }
+
+    fn meshes(frame: ContentFrame) -> MeshFrame {
+        let ContentFrame::Meshes(frame) = frame else {
+            panic!("a flag is meshes");
+        };
+        frame
     }
 
     #[test]
@@ -234,7 +252,8 @@ mod tests {
         let mut provider = FlagProvider::default();
         let (id, _, _directory) = opened(&mut provider);
         let data = serde_json::json!({ "amplitude": 0.1 });
-        let at = |provider: &mut FlagProvider, time| provider.frame(id, time, &data).unwrap();
+        let at =
+            |provider: &mut FlagProvider, time| meshes(provider.frame(id, time, &data).unwrap());
         let (first, later) = (at(&mut provider, 0.0), at(&mut provider, 0.3));
         // The pole's top vertex, then the free edge's.
         let pole = |frame: &MeshFrame| frame.meshes[0].positions[0];

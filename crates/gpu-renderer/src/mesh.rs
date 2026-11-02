@@ -9,7 +9,9 @@ use crate::error::GpuRenderError;
 use crate::renderer::GpuRenderer;
 use crate::texture::{LayerTexture, TextureData};
 use celesta_composition::ResolvedAsset;
-use celesta_plugin::{ContentProvider, MeshBlend, MeshModel, ModelId, TextureSource};
+use celesta_plugin::{
+    ContentFrame, ContentModel, ContentProvider, MeshBlend, MeshModel, ModelId, TextureSource,
+};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
@@ -470,9 +472,19 @@ impl GpuRenderer {
                 .provider
                 .as_mut()
                 .ok_or_else(|| GpuRenderError::MissingContentProvider(layer.to_owned()))?;
-            let (id, model) = provider
+            let opened = provider
                 .open(content.plugin, &key.1)
                 .map_err(plugin_error)?;
+            let (id, model) = match opened.content {
+                ContentModel::Meshes(model) => (opened.model, model),
+                ContentModel::Scene(_) => {
+                    provider.close(opened.model);
+                    return Err(GpuRenderError::InvalidPluginContent {
+                        layer: layer.to_owned(),
+                        message: "scene content is not drawn yet".to_owned(),
+                    });
+                }
+            };
             let loaded = LoadedModel::load(
                 &self.device,
                 &self.queue,
@@ -498,9 +510,15 @@ impl GpuRenderer {
             .provider
             .as_mut()
             .ok_or_else(|| GpuRenderError::MissingContentProvider(layer.to_owned()))?;
-        let frame = provider
+        let ContentFrame::Meshes(frame) = provider
             .frame(id, content.time, content.data)
-            .map_err(plugin_error)?;
+            .map_err(plugin_error)?
+        else {
+            return Err(GpuRenderError::InvalidPluginContent {
+                layer: layer.to_owned(),
+                message: "scene content is not drawn yet".to_owned(),
+            });
+        };
         let pipelines = pipelines_ref(&self.meshes);
         let loaded = &self.meshes.models[&key];
         let infos = &loaded.model.meshes;

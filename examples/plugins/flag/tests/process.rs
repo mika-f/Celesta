@@ -54,9 +54,11 @@ fn the_process_answers_as_the_provider_does() {
     let assets = BTreeMap::from([("image".to_owned(), image)]);
     let mut host = PluginHost::discover(&[directory.path().to_path_buf()]);
     let mut provider = FlagProvider::default();
-    let (remote, remote_model) = host.open(PLUGIN, &assets).unwrap();
-    let (local, local_model) = provider.open(PLUGIN, &assets).unwrap();
-    assert_eq!(remote_model, local_model);
+    let remote = host.open(PLUGIN, &assets).unwrap();
+    let local = provider.open(PLUGIN, &assets).unwrap();
+    assert_eq!(remote.content, local.content);
+    assert_eq!(remote.notices, local.notices);
+    let (remote, local) = (remote.model, local.model);
     let data = serde_json::json!({ "amplitude": 0.1, "speed": 2 });
     // Out of order, as a renderer may ask.
     for time in [1.5, 0.0, 0.75, 1.5] {
