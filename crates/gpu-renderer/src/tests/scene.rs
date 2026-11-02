@@ -759,6 +759,59 @@ fn frames_repeat_exactly() {
 }
 
 #[test]
+fn scene_resources_are_reused_between_frames() {
+    let Some(mut renderer) = renderer(transparent()) else {
+        return;
+    };
+    renderer.renderer = renderer.renderer.with_content_provider(one_square());
+    let first = renderer.render(&scene()).unwrap();
+    let allocations = renderer.meshes.scene_frames.allocations;
+    assert!(allocations > 0, "the first frame allocated nothing");
+    let second = renderer.render(&scene()).unwrap();
+    assert_eq!(renderer.meshes.scene_frames.allocations, allocations);
+    assert!(
+        first.pixels == second.pixels,
+        "the second frame drew differently"
+    );
+}
+
+#[test]
+fn scene_resources_follow_the_canvas_size() {
+    let Some(mut renderer) = renderer(transparent()) else {
+        return;
+    };
+    renderer.renderer = renderer.renderer.with_content_provider(one_square());
+    let allocations = |renderer: &TestRenderer| renderer.meshes.scene_frames.allocations;
+    renderer.render(&scene_at(0.0, 1.0)).unwrap();
+    let a = allocations(&renderer);
+    // ×2, the canvas is 128² texels: new targets.
+    renderer.render(&scene_at(0.0, 2.0)).unwrap();
+    let b = allocations(&renderer);
+    assert!(b > a, "{b} after {a}");
+    renderer.render(&scene_at(0.0, 2.0)).unwrap();
+    assert_eq!(allocations(&renderer), b);
+    // The 64² targets went with the frame that did not draw them.
+    renderer.render(&scene_at(0.0, 1.0)).unwrap();
+    assert!(allocations(&renderer) > b, "the 64² targets were kept");
+}
+
+#[test]
+fn scene_resources_keep_every_size_a_frame_draws() {
+    let Some(mut renderer) = renderer(transparent()) else {
+        return;
+    };
+    renderer.renderer = renderer.renderer.with_content_provider(one_square());
+    let mut scene = scene_at(0.0, 1.0);
+    let mut doubled = scene_at(0.0, 2.0).layers.remove(0);
+    doubled.id = "scenes-2x".into();
+    scene.layers.push(doubled);
+    renderer.render(&scene).unwrap();
+    let allocations = renderer.meshes.scene_frames.allocations;
+    renderer.render(&scene).unwrap();
+    assert_eq!(renderer.meshes.scene_frames.allocations, allocations);
+}
+
+#[test]
 fn zoomed_scene_canvas_is_capped() {
     // ×64, the 64-unit canvas would be 4096² texels, twice the cap.
     let Some(mut renderer) = renderer(transparent()) else {

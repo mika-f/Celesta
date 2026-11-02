@@ -8,7 +8,7 @@
 
 use crate::error::GpuRenderError;
 use crate::renderer::GpuRenderer;
-use crate::scene::{LoadedScene, ScenePipelines, scene_canvas_size};
+use crate::scene::{LoadedScene, SceneFrameResources, ScenePipelines, scene_canvas_size};
 use crate::texture::{LayerTexture, TextureData};
 use celesta_composition::ResolvedAsset;
 use celesta_plugin::{
@@ -63,6 +63,9 @@ pub(crate) struct MeshState {
     pipelines: Option<Pipelines>,
     /// What draws scenes, created by the first scene opened.
     pub(crate) scene_pipelines: Option<ScenePipelines>,
+    /// The canvases and buffers scene frames draw with, kept between
+    /// frames.
+    pub(crate) scene_frames: SceneFrameResources,
     /// By plugin and asset paths.
     models: HashMap<(String, BTreeMap<String, PathBuf>), OpenModel>,
 }
@@ -629,8 +632,11 @@ impl GpuRenderer {
         let (frame, loaded) = match (frame, &self.meshes.models[&key].loaded) {
             (ContentFrame::Meshes(frame), LoadedModel::Meshes(loaded)) => (frame, loaded),
             (ContentFrame::Scene(frame), LoadedModel::Scene(scene)) => {
-                let texture = self.scene_texture(layer, scene, &frame, width, height)?;
-                return Ok((texture, canvas));
+                let mut resources = std::mem::take(&mut self.meshes.scene_frames);
+                let texture =
+                    self.scene_texture(layer, scene, &frame, width, height, &mut resources);
+                self.meshes.scene_frames = resources;
+                return Ok((texture?, canvas));
             }
             (ContentFrame::Scene(_), LoadedModel::Meshes(_)) => {
                 return Err(mismatch("the plugin sent a scene frame for meshes"));

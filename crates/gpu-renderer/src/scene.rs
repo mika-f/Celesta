@@ -9,8 +9,13 @@
 //! `Rgba16Float` color with `Depth32Float` depth, both cleared (to
 //! transparent black and to 1). The resolved canvas is converted to the
 //! layer's encoding, premultiplied sRGB-encoded `Rgba8Unorm`
-//! (`scene.wgsl`). Only the model's buffers and textures outlive a frame:
-//! every buffer a frame draws from is written by that frame.
+//! (`scene.wgsl`).
+//!
+//! Besides the model's buffers and textures, `SceneFrameResources` keeps
+//! the canvases of each size the last frame drew and the buffers a frame's
+//! skinning and draws read, so that a frame allocates only what it outgrows.
+//! Nothing a frame draws depends on an earlier one: the canvases are
+//! cleared, and every part of a buffer the frame reads is written by it.
 
 use crate::error::GpuRenderError;
 use crate::mesh::{OUTPUT_FORMAT, texture_image};
@@ -20,7 +25,7 @@ use celesta_plugin::{
     AlphaMode, Camera, ColorSpace, DrawState, Filter, MaterialKind, ModelId, Projection,
     SceneFrame, SceneModel, Wrap,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use wgpu::util::DeviceExt;
 
 /// The canvas a scene is drawn on before it is converted to the layer's.
@@ -121,6 +126,102 @@ pub(crate) struct DrawBuffers {
     skinned: wgpu::Buffer,
     /// The geometry's streams and `skinned`, as `scene_skin.wgsl`'s group 0.
     skin_group: wgpu::BindGroup,
+}
+
+/// What scene frames draw with, kept from frame to frame: the canvases of
+/// each size drawn since the last frame began, and the buffers of a frame's
+/// skinning and draws, which grow to the largest frame's and are rewritten
+/// by every frame.
+#[derive(Default)]
+pub(crate) struct SceneFrameResources {
+    /// By canvas size in texels.
+    targets: HashMap<(u32, u32), SceneTargets>,
+    /// The sizes drawn since the last `begin_frame`.
+    used: HashSet<(u32, u32)>,
+    /// `STORAGE`: every skin's matrices, then each queued draw's morph
+    /// pairs.
+    frame_data: GrowingBuffer,
+    /// `UNIFORM`: one `SkinParams` per queued draw.
+    skin_params: GrowingBuffer,
+    /// `UNIFORM`: one `DrawUniform` per queued draw.
+    draws: GrowingBuffer,
+    /// `UNIFORM`: the camera's view-projection.
+    view: GrowingBuffer,
+    /// What binds the buffers above, made again when one of them is.
+    groups: Option<FrameGroups>,
+    /// The textures and buffers created, ever.
+    pub(crate) allocations: u64,
+}
+
+impl SceneFrameResources {
+    /// Starts a frame: the canvases of sizes the last frame did not draw
+    /// are dropped.
+    pub(crate) fn begin_frame(&mut self) {
+        self.targets.retain(|size, _| self.used.contains(size));
+        self.used.clear();
+    }
+}
+
+/// A scene canvas of one size: its multisampled color and depth, the color
+/// they resolve to, and the bind group that converts it.
+struct SceneTargets {
+    multisampled: wgpu::TextureView,
+    depth: wgpu::TextureView,
+    resolved: wgpu::TextureView,
+    convert_group: wgpu::BindGroup,
+}
+
+/// The bind groups of a frame's buffers.
+struct FrameGroups {
+    /// `frame_data` and `skin_params`, as `scene_skin.wgsl`'s group 1.
+    frame: wgpu::BindGroup,
+    /// `view`, as `scene.wgsl`'s group 0.
+    camera: wgpu::BindGroup,
+    /// `draws`, as `scene.wgsl`'s group 1.
+    draws: wgpu::BindGroup,
+}
+
+/// A buffer reused from frame to frame, made larger when what is written
+/// does not fit.
+#[derive(Default)]
+struct GrowingBuffer {
+    buffer: Option<wgpu::Buffer>,
+    capacity: u64,
+}
+
+impl GrowingBuffer {
+    /// Writes `bytes` at the start of the buffer, first making a buffer of
+    /// `usage` large enough for them when this one is not: their size's
+    /// next power of two, at least 256 bytes and at most `largest`, which
+    /// they fit. Returns whether it made a new buffer.
+    fn write(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        usage: wgpu::BufferUsages,
+        bytes: &[u8],
+        largest: u64,
+        allocations: &mut u64,
+    ) -> bool {
+        let size = bytes.len() as u64;
+        let reallocated = self.buffer.is_none() || size > self.capacity;
+        if reallocated {
+            self.capacity = size.next_power_of_two().max(256).min(largest);
+            self.buffer = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("Celesta scene frame buffer"),
+                size: self.capacity,
+                usage: usage | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }));
+            *allocations += 1;
+        }
+        queue.write_buffer(self.buffer(), 0, bytes);
+        reallocated
+    }
+
+    fn buffer(&self) -> &wgpu::Buffer {
+        self.buffer.as_ref().expect("written before it is bound")
+    }
 }
 
 /// Which faces a draw keeps: back faces are culled unless its material is
@@ -1404,7 +1505,7 @@ fn draw_uniform(material: &celesta_plugin::Material, state: &DrawState) -> DrawU
 
 impl GpuRenderer {
     /// `frame` of `scene` on a `width` by `height` canvas, once the frame is
-    /// checked against the model.
+    /// checked against the model, drawn with and into `resources`.
     pub(crate) fn scene_texture(
         &self,
         layer: &str,
@@ -1412,6 +1513,7 @@ impl GpuRenderer {
         frame: &SceneFrame,
         width: u32,
         height: u32,
+        resources: &mut SceneFrameResources,
     ) -> Result<LayerTexture, GpuRenderError> {
         let invalid = |message| GpuRenderError::InvalidPluginContent {
             layer: layer.to_owned(),
@@ -1488,115 +1590,165 @@ impl GpuRenderer {
             )));
         }
 
-        let buffer = |label, contents: &[u8], usage| {
-            self.device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some(label),
-                    contents,
-                    usage,
-                })
-        };
         let params_stride = aligned(std::mem::size_of::<SkinParams>(), alignment);
         let draw_stride = aligned(std::mem::size_of::<DrawUniform>(), alignment);
-        let frame_buffer = buffer(
-            "Celesta scene skinning frame",
-            bytemuck::cast_slice(&frame_data),
-            wgpu::BufferUsages::STORAGE,
-        );
-        let params_buffer = buffer(
-            "Celesta scene skinning params",
-            &strided(&skin_params, params_stride),
-            wgpu::BufferUsages::UNIFORM,
-        );
-        let draw_buffer = buffer(
-            "Celesta scene draws",
-            &strided(&draw_uniforms, draw_stride),
-            wgpu::BufferUsages::UNIFORM,
-        );
         let aspect = model.canvas[0] / model.canvas[1];
         let view_projection = multiply(
             &projection_matrix(&frame.camera.projection, aspect),
             &frame.camera.view,
         );
-        let camera_buffer = buffer(
-            "Celesta scene camera",
-            bytemuck::cast_slice(&view_projection),
-            wgpu::BufferUsages::UNIFORM,
-        );
-        let frame_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Celesta scene skinning frame"),
-            layout: &pipelines.frame_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: frame_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: uniform_binding(&params_buffer, std::mem::size_of::<SkinParams>()),
-                },
-            ],
-        });
-        let camera_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Celesta scene camera"),
-            layout: &pipelines.camera_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: camera_buffer.as_entire_binding(),
-            }],
-        });
-        let draw_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Celesta scene draws"),
-            layout: &pipelines.draw_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: uniform_binding(&draw_buffer, std::mem::size_of::<DrawUniform>()),
-            }],
-        });
+        // Each queue write lands before this layer's commands, which are
+        // submitted below, and after any earlier layer's.
+        let SceneFrameResources {
+            targets,
+            used,
+            frame_data: frame_buffer,
+            skin_params: params_buffer,
+            draws: draw_buffer,
+            view: view_buffer,
+            groups,
+            allocations,
+        } = resources;
+        let (device, gpu_queue) = (&self.device, &self.queue);
+        let uniform = wgpu::BufferUsages::UNIFORM;
+        let wrote = [
+            frame_buffer.write(
+                device,
+                gpu_queue,
+                wgpu::BufferUsages::STORAGE,
+                bytemuck::cast_slice(&frame_data),
+                largest_buffer,
+                allocations,
+            ),
+            params_buffer.write(
+                device,
+                gpu_queue,
+                uniform,
+                &strided(&skin_params, params_stride),
+                largest_buffer,
+                allocations,
+            ),
+            draw_buffer.write(
+                device,
+                gpu_queue,
+                uniform,
+                &strided(&draw_uniforms, draw_stride),
+                largest_buffer,
+                allocations,
+            ),
+            view_buffer.write(
+                device,
+                gpu_queue,
+                uniform,
+                bytemuck::cast_slice(&view_projection),
+                largest_buffer,
+                allocations,
+            ),
+        ];
+        if groups.is_none() || wrote.contains(&true) {
+            *groups = Some(FrameGroups {
+                frame: device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Celesta scene skinning frame"),
+                    layout: &pipelines.frame_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: frame_buffer.buffer().as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: uniform_binding(
+                                params_buffer.buffer(),
+                                std::mem::size_of::<SkinParams>(),
+                            ),
+                        },
+                    ],
+                }),
+                camera: device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Celesta scene camera"),
+                    layout: &pipelines.camera_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: view_buffer.buffer().as_entire_binding(),
+                    }],
+                }),
+                draws: device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Celesta scene draws"),
+                    layout: &pipelines.draw_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: uniform_binding(
+                            draw_buffer.buffer(),
+                            std::mem::size_of::<DrawUniform>(),
+                        ),
+                    }],
+                }),
+            });
+        }
+        let FrameGroups {
+            frame: frame_group,
+            camera: camera_group,
+            draws: draw_group,
+        } = groups.as_ref().expect("made above");
 
-        let target = |label, format, sample_count, usage| {
-            self.device
-                .create_texture(&wgpu::TextureDescriptor {
-                    label: Some(label),
-                    size: wgpu::Extent3d {
-                        width,
-                        height,
-                        depth_or_array_layers: 1,
-                    },
-                    mip_level_count: 1,
-                    sample_count,
-                    dimension: wgpu::TextureDimension::D2,
-                    format,
-                    usage,
-                    view_formats: &[],
-                })
-                .create_view(&Default::default())
-        };
-        let multisampled = target(
-            "Celesta scene color",
-            COLOR_FORMAT,
-            SAMPLES,
-            wgpu::TextureUsages::RENDER_ATTACHMENT,
-        );
-        let resolved = target(
-            "Celesta scene resolved color",
-            COLOR_FORMAT,
-            1,
-            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-        );
-        let depth = target(
-            "Celesta scene depth",
-            DEPTH_FORMAT,
-            SAMPLES,
-            wgpu::TextureUsages::RENDER_ATTACHMENT,
-        );
-        let convert_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Celesta scene resolved color"),
-            layout: &pipelines.convert_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&resolved),
-            }],
+        used.insert((width, height));
+        let SceneTargets {
+            multisampled,
+            depth,
+            resolved,
+            convert_group,
+        } = &*targets.entry((width, height)).or_insert_with(|| {
+            let mut target = |label, format, sample_count, usage| {
+                *allocations += 1;
+                device
+                    .create_texture(&wgpu::TextureDescriptor {
+                        label: Some(label),
+                        size: wgpu::Extent3d {
+                            width,
+                            height,
+                            depth_or_array_layers: 1,
+                        },
+                        mip_level_count: 1,
+                        sample_count,
+                        dimension: wgpu::TextureDimension::D2,
+                        format,
+                        usage,
+                        view_formats: &[],
+                    })
+                    .create_view(&Default::default())
+            };
+            let multisampled = target(
+                "Celesta scene color",
+                COLOR_FORMAT,
+                SAMPLES,
+                wgpu::TextureUsages::RENDER_ATTACHMENT,
+            );
+            let resolved = target(
+                "Celesta scene resolved color",
+                COLOR_FORMAT,
+                1,
+                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            );
+            let depth = target(
+                "Celesta scene depth",
+                DEPTH_FORMAT,
+                SAMPLES,
+                wgpu::TextureUsages::RENDER_ATTACHMENT,
+            );
+            let convert_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Celesta scene resolved color"),
+                layout: &pipelines.convert_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&resolved),
+                }],
+            });
+            SceneTargets {
+                multisampled,
+                depth,
+                resolved,
+                convert_group,
+            }
         });
 
         let mut encoder = self
@@ -1614,7 +1766,7 @@ impl GpuRenderer {
             for (slot, state) in queue.iter().enumerate() {
                 let vertices = skin_params[slot].counts[0];
                 pass.set_bind_group(0, &scene.draws[state.index].skin_group, &[]);
-                pass.set_bind_group(1, &frame_group, &[(slot * params_stride) as u32]);
+                pass.set_bind_group(1, frame_group, &[(slot * params_stride) as u32]);
                 // Rows of workgroups when one row cannot hold them.
                 let groups = vertices.div_ceil(WORKGROUP);
                 let columns = groups.min(most);
@@ -1625,16 +1777,16 @@ impl GpuRenderer {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Celesta scene draw"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &multisampled,
+                    view: multisampled,
                     depth_slice: None,
-                    resolve_target: Some(&resolved),
+                    resolve_target: Some(resolved),
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
                         store: wgpu::StoreOp::Discard,
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &depth,
+                    view: depth,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Discard,
@@ -1645,7 +1797,7 @@ impl GpuRenderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_bind_group(0, &camera_group, &[]);
+            pass.set_bind_group(0, camera_group, &[]);
             for (slot, state) in queue.iter().enumerate() {
                 let info = &model.draws[state.index];
                 let geometry = &scene.geometries[info.geometry];
@@ -1656,7 +1808,7 @@ impl GpuRenderer {
                 };
                 let alpha = Alpha::of(material.alpha_mode);
                 pass.set_pipeline(&pipelines.draw[&(facing, alpha)]);
-                pass.set_bind_group(1, &draw_group, &[(slot * draw_stride) as u32]);
+                pass.set_bind_group(1, draw_group, &[(slot * draw_stride) as u32]);
                 let MaterialKind::Unlit(unlit) = &material.kind;
                 let texture = unlit
                     .base_color_texture
@@ -1688,7 +1840,7 @@ impl GpuRenderer {
                 multiview_mask: None,
             });
             pass.set_pipeline(&pipelines.convert);
-            pass.set_bind_group(0, &convert_group, &[]);
+            pass.set_bind_group(0, convert_group, &[]);
             pass.draw(0..3, 0..1);
         }
         self.queue.submit([encoder.finish()]);

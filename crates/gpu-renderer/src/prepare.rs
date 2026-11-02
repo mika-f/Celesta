@@ -58,6 +58,7 @@ impl GpuRenderer {
         self.font_fallbacks.clear();
         self.missing_glyphs.clear();
         self.plugin_notices.clear();
+        self.meshes.scene_frames.begin_frame();
         self.hit_leaves.clear();
         self.hit_regions.clear();
         self.plane_entries.clear();
