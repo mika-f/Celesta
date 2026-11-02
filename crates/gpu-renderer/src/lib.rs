@@ -35,6 +35,8 @@ mod transform;
 mod types;
 mod yuv;
 
+/// A `PluginNotice`'s level.
+pub use celesta_plugin::NoticeLevel;
 pub use celesta_renderer::{GlyphMetrics, TextMetrics};
 pub use error::GpuRenderError;
 pub use hit::{HitClip, HitRegion, hit_test};

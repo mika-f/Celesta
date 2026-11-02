@@ -206,7 +206,9 @@ pub fn build(
                 compositions = Some(roots.clone());
             }
             ExportProgress::Wrote(file) => files.push(file.clone()),
-            ExportProgress::Warning(warning) => warnings.push(warning.clone()),
+            ExportProgress::Warning(warning) | ExportProgress::Note(warning) => {
+                warnings.push(warning.clone());
+            }
             _ => {}
         }
         timing.update(&event);
@@ -304,7 +306,8 @@ impl Events {
             &ExportProgress::Rendering { frame, total } => Event::Rendering { frame, total },
             ExportProgress::MixingAudio => Event::MixingAudio,
             ExportProgress::Muxing => Event::Muxing,
-            ExportProgress::Warning(message) => Event::Warning {
+            // A note keeps its `note: ` label among the warnings.
+            ExportProgress::Warning(message) | ExportProgress::Note(message) => Event::Warning {
                 message: message.clone(),
             },
             ExportProgress::Wrote(file) => Event::Wrote {
@@ -808,6 +811,7 @@ mod tests {
                 frames: 90,
             }));
             progress(ExportProgress::Warning("font fallback".into()));
+            progress(ExportProgress::Note("note: terms of use".into()));
             progress(ExportProgress::Wrote(ExportedFile::Frame {
                 path: PathBuf::from("/tmp/c-000000.png"),
                 frame: 0,
@@ -816,7 +820,10 @@ mod tests {
         });
         assert_eq!(value["error"]["code"], "invalid_selection");
         assert_eq!(value["outputs"][0]["frame"], 0);
-        assert_eq!(value["warnings"], serde_json::json!(["font fallback"]));
+        assert_eq!(
+            value["warnings"],
+            serde_json::json!(["font fallback", "note: terms of use"])
+        );
         assert_eq!(value["composition"]["frames"], 90);
     }
 
@@ -997,6 +1004,11 @@ mod tests {
         assert_eq!(
             line(ExportProgress::Warning("fallback font".into())),
             serde_json::json!({ "event": "warning", "message": "fallback font" })
+        );
+        // A note keeps its label among the warnings.
+        assert_eq!(
+            line(ExportProgress::Note("note: terms of use".into())),
+            serde_json::json!({ "event": "warning", "message": "note: terms of use" })
         );
         // Written files are timed in the composition's frame rate.
         assert_eq!(

@@ -7,7 +7,7 @@ use crate::range::ExportWindow;
 use crate::react::ReactVideoRequest;
 use celesta_composition::{Rational, Time, TimeError};
 use celesta_evaluator::{EvaluationError, Evaluator};
-use celesta_gpu_renderer::{Color, GpuRenderOptions, GpuRenderer, ReadbackFormat};
+use celesta_gpu_renderer::{Color, GpuRenderOptions, GpuRenderer, NoticeLevel, ReadbackFormat};
 use celesta_media::FfmpegBackend;
 use celesta_project::Project;
 use celesta_react_bridge::{ProjectFrame, ReactBridge};
@@ -590,7 +590,8 @@ pub(crate) struct ReportedWarnings {
 /// Reports each font family and weight the frame `renderer` last submitted
 /// draws with a fallback font, each character it draws with a fallback font
 /// because its family has no glyph for it, and each notice a plugin gave
-/// for a model the frame draws, unless an earlier frame already did.
+/// for a model the frame draws (a warning, or a note for an info notice),
+/// unless an earlier frame already did.
 pub(crate) fn report_render_warnings(
     renderer: &GpuRenderer,
     reported: &mut ReportedWarnings,
@@ -630,7 +631,11 @@ pub(crate) fn report_render_warnings(
             .plugin_notices
             .insert((notice.plugin.clone(), notice.message.clone()))
         {
-            progress(ExportProgress::Warning(notice.to_string()));
+            // An info notice's text is labelled `note: ` already.
+            progress(match notice.level {
+                NoticeLevel::Info => ExportProgress::Note(notice.to_string()),
+                NoticeLevel::Warning => ExportProgress::Warning(notice.to_string()),
+            });
         }
     }
 }
