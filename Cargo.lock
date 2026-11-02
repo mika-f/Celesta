@@ -1148,6 +1148,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "celesta-plugin-turntable"
+version = "0.1.0"
+dependencies = [
+ "celesta-composition",
+ "celesta-gpu-renderer",
+ "celesta-plugin",
+ "celesta-plugin-host",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "celesta-project"
 version = "0.9.0"
 dependencies = [

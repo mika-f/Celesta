@@ -3,8 +3,8 @@
 // component module entries import as `@celesta-plugin/<id>`, and that
 // module's declarations. Each sample's plugin.json says what it has.
 //
-//   node examples/plugins/build.mjs [flag] [beep-voice] [--out <dir>]
-//                                   [--target <triple>] [--skip-js]
+//   node examples/plugins/build.mjs [flag] [turntable] [beep-voice]
+//                                   [--out <dir>] [--target <triple>] [--skip-js]
 //
 // Run `pnpm install && pnpm run build:runtime` at the repository root first:
 // the runtime supplies the declarations of `react` and `@celesta/*`, `tsc`,
@@ -124,7 +124,7 @@ async function buildModule(source, out, module) {
   });
 }
 
-const names = positionals.length ? positionals : ['flag', 'beep-voice'];
+const names = positionals.length ? positionals : ['flag', 'turntable', 'beep-voice'];
 for (const name of names) {
   const source = join(here, name);
   const plugin = JSON.parse(readFileSync(join(source, 'plugin.json'), 'utf8'));

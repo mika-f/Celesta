@@ -20,6 +20,7 @@ members = [
   "crates/renderer",
   "crates/source-edit",
   "examples/plugins/flag",
+  "examples/plugins/turntable",
 ]
 
 [workspace.package]
