@@ -532,7 +532,9 @@ fn srgb_texture_round_trips() {
         color_space: ColorSpace::Srgb,
         sampler: Sampler::default(),
     }];
-    let MaterialKind::Unlit(unlit) = &mut scenes.model.materials[0].kind;
+    let MaterialKind::Unlit(unlit) = &mut scenes.model.materials[0].kind else {
+        unreachable!("the test scene's material is unlit");
+    };
     unlit.base_color_texture = Some(celesta_plugin::TextureRef {
         texture: 0,
         transform: None,
@@ -647,7 +649,9 @@ fn mask_cuts_at_cutoff() {
     }];
     let material = &mut scenes.model.materials[0];
     material.alpha_mode = AlphaMode::Mask { cutoff: 0.5 };
-    let MaterialKind::Unlit(unlit) = &mut material.kind;
+    let MaterialKind::Unlit(unlit) = &mut material.kind else {
+        unreachable!("the test scene's material is unlit");
+    };
     unlit.base_color_texture = Some(celesta_plugin::TextureRef {
         texture: 0,
         transform: None,
@@ -1026,7 +1030,9 @@ fn quarters(transform: Option<celesta_plugin::TextureTransform>) -> Scenes {
             ..Sampler::default()
         },
     }];
-    let MaterialKind::Unlit(unlit) = &mut scenes.model.materials[0].kind;
+    let MaterialKind::Unlit(unlit) = &mut scenes.model.materials[0].kind else {
+        unreachable!("the test scene's material is unlit");
+    };
     unlit.base_color_texture = Some(celesta_plugin::TextureRef {
         texture: 0,
         transform,

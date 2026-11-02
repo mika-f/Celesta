@@ -767,7 +767,12 @@ pub(crate) fn invalid_scene(model: &SceneModel) -> Option<String> {
         {
             return Some(format!("material {index}'s alphaCutoff is {cutoff}"));
         }
-        let MaterialKind::Unlit(unlit) = &material.kind;
+        let unlit = match &material.kind {
+            MaterialKind::Unlit(unlit) => unlit,
+            MaterialKind::Mtoon(_) => {
+                return Some(format!("material {index} is mtoon, which is not drawn yet"));
+            }
+        };
         if let Some(texture) = &unlit.base_color_texture
             && texture.texture >= model.textures.len()
         {
@@ -1540,17 +1545,24 @@ fn strided<T: bytemuck::Pod>(values: &[T], stride: usize) -> Vec<u8> {
     bytes
 }
 
+/// A material's base color and texture, the whole of what an unlit material
+/// draws. `invalid_scene` refuses MToon until it is drawn, so an MToon
+/// material reaches here only if that changes; it then draws as unlit.
+fn base_layer(kind: &MaterialKind) -> ([f32; 4], Option<&celesta_plugin::TextureRef>) {
+    match kind {
+        MaterialKind::Unlit(unlit) => (unlit.base_color, unlit.base_color_texture.as_ref()),
+        MaterialKind::Mtoon(mtoon) => (mtoon.base_color, mtoon.base_color_texture.as_ref()),
+    }
+}
+
 /// What `state` draws its material with: the base color, and the rows of
 /// its texture transform, which scales, then rotates, then offsets
 /// coordinates as `KHR_texture_transform`'s sample code does. A rotation
 /// turns `(1, 0)` toward `(0, 1)`. The frame's overrides replace the
 /// material's values.
 fn draw_uniform(material: &celesta_plugin::Material, state: &DrawState) -> DrawUniform {
-    let MaterialKind::Unlit(unlit) = &material.kind;
-    let transform = unlit
-        .base_color_texture
-        .as_ref()
-        .and_then(|texture| texture.transform);
+    let (base_color, texture) = base_layer(&material.kind);
+    let transform = texture.and_then(|texture| texture.transform);
     let (offset, rotation, scale) = transform.map_or(([0.0; 2], 0.0, [1.0; 2]), |transform| {
         (transform.offset, transform.rotation, transform.scale)
     });
@@ -1563,7 +1575,7 @@ fn draw_uniform(material: &celesta_plugin::Material, state: &DrawState) -> DrawU
     };
     DrawUniform {
         world: state.world,
-        base_color: state.overrides.base_color.unwrap_or(unlit.base_color),
+        base_color: state.overrides.base_color.unwrap_or(base_color),
         uv_u: [cos * scale[0], -sin * scale[1], offset[0], cutoff],
         uv_v: [sin * scale[0], cos * scale[1], offset[1], 0.0],
     }
@@ -1880,10 +1892,8 @@ impl GpuRenderer {
                 let alpha = Alpha::of(material.alpha_mode);
                 pass.set_pipeline(&pipelines.draw[&(facing, alpha)]);
                 pass.set_bind_group(1, draw_group, &[(slot * draw_stride) as u32]);
-                let MaterialKind::Unlit(unlit) = &material.kind;
-                let texture = unlit
-                    .base_color_texture
-                    .as_ref()
+                let texture = base_layer(&material.kind)
+                    .1
                     .map_or(&pipelines.white, |texture| &scene.textures[texture.texture]);
                 pass.set_bind_group(2, texture, &[]);
                 pass.set_vertex_buffer(0, scene.draws[state.index].skinned.slice(..));
@@ -2062,6 +2072,16 @@ mod tests {
         let model = bare_model(100_000, 230);
         let message = invalid_scene(&model).expect("over the budget");
         assert!(message.contains("bytes"), "{message}");
+    }
+
+    #[test]
+    fn mtoon_materials_are_refused_until_drawn() {
+        let mut model = bare_model(3, 1);
+        model.materials[0].kind = MaterialKind::Mtoon(celesta_plugin::MtoonMaterial::default());
+        assert_eq!(
+            invalid_scene(&model).as_deref(),
+            Some("material 0 is mtoon, which is not drawn yet")
+        );
     }
 
     #[test]

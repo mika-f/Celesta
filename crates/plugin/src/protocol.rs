@@ -911,8 +911,9 @@ mod tests {
     use super::*;
     use crate::provider::{NoticeLevel, PluginError};
     use crate::scene::{
-        AlphaMode, DirectionalLight, Filter, MaterialKind, Projection, TextureRef,
-        TextureTransform, UnlitMaterial, Wrap,
+        AlphaMode, DirectionalLight, Filter, MaterialKind, MtoonMaterial, OutlineWidthMode,
+        Projection, ScaledTextureSlot, TextureRef, TextureSlot, TextureTransform, UnlitMaterial,
+        Wrap,
     };
 
     fn model() -> MeshModel {
@@ -1285,7 +1286,7 @@ mod tests {
                     overrides: MaterialOverrides {
                         base_color: Some([1.0, 0.0, 0.0, 1.0]),
                         texture_offset: Some([0.5, 0.0]),
-                        texture_scale: None,
+                        ..MaterialOverrides::default()
                     },
                 },
                 DrawState {
@@ -1340,6 +1341,104 @@ mod tests {
         push_f32(&mut weights, [0.25, 1.25, 0.75, 0.5, 0.125]);
         assert_eq!(message.payload.len(), 3 * 64 + weights.len());
         assert!(message.payload.ends_with(&weights));
+        assert_eq!(
+            decode_content_frame(&message, ContentKind::Scene).unwrap(),
+            frame
+        );
+    }
+
+    /// An MToon material with every slot and value set away from its
+    /// default.
+    fn mtoon_material() -> Material {
+        let slot = |texture| Some(TextureSlot { texture });
+        Material {
+            alpha_mode: AlphaMode::Mask { cutoff: 0.25 },
+            double_sided: true,
+            kind: MaterialKind::Mtoon(MtoonMaterial {
+                base_color: [0.9, 0.8, 0.7, 0.6],
+                base_color_texture: Some(TextureRef {
+                    texture: 0,
+                    transform: Some(TextureTransform {
+                        offset: [0.5, 0.25],
+                        rotation: 0.125,
+                        scale: [2.0, 3.0],
+                    }),
+                }),
+                normal_texture: Some(ScaledTextureSlot {
+                    texture: 1,
+                    scale: 0.5,
+                }),
+                emissive_factor: [2.0, 1.5, 0.0],
+                emissive_texture: slot(0),
+                transparent_with_z_write: true,
+                render_queue_offset_number: 7,
+                shade_color_factor: [0.5, 0.4, 0.3],
+                shade_multiply_texture: slot(0),
+                shading_shift_factor: 0.1,
+                shading_shift_texture: Some(ScaledTextureSlot {
+                    texture: 1,
+                    scale: 2.0,
+                }),
+                shading_toony_factor: 0.5,
+                gi_equalization_factor: 0.25,
+                matcap_factor: [1.0, 0.5, 0.25],
+                matcap_texture: slot(0),
+                parametric_rim_color_factor: [0.25, 0.5, 1.0],
+                rim_multiply_texture: slot(0),
+                rim_lighting_mix_factor: 0.75,
+                parametric_rim_fresnel_power_factor: 3.0,
+                parametric_rim_lift_factor: 0.125,
+                outline_width_mode: OutlineWidthMode::ScreenCoordinates,
+                outline_width_factor: 0.01,
+                outline_width_multiply_texture: slot(1),
+                outline_color_factor: [0.1, 0.2, 0.3],
+                outline_lighting_mix_factor: 0.5,
+                uv_animation_mask_texture: slot(1),
+                uv_animation_scroll_x_speed_factor: 0.25,
+                uv_animation_scroll_y_speed_factor: -0.5,
+                uv_animation_rotation_speed_factor: 1.5,
+            }),
+        }
+    }
+
+    #[test]
+    fn mtoon_scene_model_round_trips() {
+        let mut model = scene_model();
+        model.materials = vec![mtoon_material()];
+        model.draws.iter_mut().for_each(|draw| draw.material = 0);
+        let opened = Opened {
+            model: ModelId(8),
+            content: model.into(),
+            notices: vec![],
+        };
+        let mut bytes = Vec::new();
+        write_message(&mut bytes, &encode_opened(&opened)).unwrap();
+        let message = read_message(&mut &bytes[..]).unwrap().unwrap();
+        assert_eq!(message.header["materials"][0]["kind"], "mtoon");
+        assert_eq!(decode_opened(&message).unwrap(), opened);
+    }
+
+    #[test]
+    fn mtoon_overrides_round_trip() {
+        let mut frame = scene_frame(0.5);
+        frame.draws[1].overrides = MaterialOverrides {
+            base_color: Some([0.5, 0.25, 0.125, 1.0]),
+            texture_offset: Some([0.25, 0.5]),
+            texture_scale: Some([2.0, 4.0]),
+            shade_color: Some([0.1, 0.2, 0.3]),
+            emission_color: Some([1.5, 1.0, 0.5]),
+            matcap_color: Some([0.4, 0.5, 0.6]),
+            rim_color: Some([0.7, 0.8, 0.9]),
+            outline_color: Some([0.0, 0.25, 1.0]),
+        };
+        let frame = ContentFrame::Scene(frame);
+        let mut bytes = Vec::new();
+        write_message(&mut bytes, &encode_content_frame(&frame)).unwrap();
+        let message = read_message(&mut &bytes[..]).unwrap().unwrap();
+        assert_eq!(
+            message.header["draws"][1]["overrides"]["outlineColor"],
+            json!([0.0, 0.25, 1.0])
+        );
         assert_eq!(
             decode_content_frame(&message, ContentKind::Scene).unwrap(),
             frame

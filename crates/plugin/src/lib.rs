@@ -17,6 +17,7 @@ pub use provider::{
 };
 pub use scene::{
     AlphaMode, Camera, ColorSpace, DirectionalLight, DrawInfo, DrawState, Filter, Geometry, Lights,
-    Material, MaterialKind, MaterialOverrides, MorphTarget, Projection, Sampler, SceneFrame,
-    SceneModel, SceneTexture, Skin, TextureRef, TextureTransform, UnlitMaterial, Wrap,
+    Material, MaterialKind, MaterialOverrides, MorphTarget, MtoonMaterial, OutlineWidthMode,
+    Projection, Sampler, ScaledTextureSlot, SceneFrame, SceneModel, SceneTexture, Skin, TextureRef,
+    TextureSlot, TextureTransform, UnlitMaterial, Wrap,
 };

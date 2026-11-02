@@ -258,8 +258,11 @@ fn unlit(alpha_mode: AlphaMode, double_sided: bool, base_color: [f32; 4]) -> Mat
 }
 
 fn textured(mut material: Material, texture: usize) -> Material {
-    let MaterialKind::Unlit(unlit) = &mut material.kind;
-    unlit.base_color_texture = Some(TextureRef {
+    let base_color_texture = match &mut material.kind {
+        MaterialKind::Unlit(unlit) => &mut unlit.base_color_texture,
+        MaterialKind::Mtoon(mtoon) => &mut mtoon.base_color_texture,
+    };
+    *base_color_texture = Some(TextureRef {
         texture,
         transform: None,
     });
