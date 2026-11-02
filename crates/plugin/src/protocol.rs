@@ -10,7 +10,11 @@
 //! See `docs/handoff/2026-11-01-plugin-system.md` for the requests.
 
 use crate::mesh::{MeshBlend, MeshFrame, MeshInfo, MeshMask, MeshModel, MeshState, TextureSource};
-use crate::provider::{ContentFrame, ContentModel, ContentProvider, ModelId, Opened};
+use crate::provider::{ContentFrame, ContentModel, ContentProvider, ModelId, Notice, Opened};
+use crate::scene::{
+    Camera, ColorSpace, DrawInfo, DrawState, Geometry, Lights, Material, MaterialOverrides,
+    MorphTarget, Sampler, SceneFrame, SceneModel, SceneTexture, Skin,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -19,6 +23,30 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 pub const PROTOCOL_VERSION: u32 = 1;
+
+/// What a plugin answers `hello` with as its roles: it provides content.
+pub const ROLES: &[&str] = &["content"];
+
+/// Which kind of model an `opened` answer carries, as its `kind` says. A
+/// model's frames are of the same kind.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ContentKind {
+    /// 2D meshes, which an `opened` answer without `kind` carries too.
+    #[default]
+    Meshes,
+    Scene,
+}
+
+impl ContentModel {
+    /// The kind this model is sent as.
+    pub fn kind(&self) -> ContentKind {
+        match self {
+            Self::Meshes(_) => ContentKind::Meshes,
+            Self::Scene(_) => ContentKind::Scene,
+        }
+    }
+}
 
 /// The largest header or payload either side accepts.
 const MAX_PART: u32 = 1 << 30;
@@ -152,10 +180,132 @@ struct StateHeader {
     vertices: u32,
 }
 
+/// What every `opened` header has beside its kind's own fields.
+#[derive(Deserialize)]
+struct OpenedCommon {
+    #[serde(default)]
+    kind: ContentKind,
+    #[serde(default)]
+    notices: Vec<Notice>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SceneOpenedHeader {
+    model: u64,
+    canvas: [f32; 2],
+    textures: Vec<SceneTextureHeader>,
+    geometries: Vec<GeometryHeader>,
+    skins: Vec<Skin>,
+    materials: Vec<Material>,
+    draws: Vec<DrawInfo>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SceneTextureHeader {
+    #[serde(flatten)]
+    source: TextureHeader,
+    color_space: ColorSpace,
+    sampler: Sampler,
+}
+
+/// A geometry's counts and which optional streams the payload has for it.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GeometryHeader {
+    vertices: u32,
+    indices: u32,
+    #[serde(default)]
+    tangents: bool,
+    /// Joints and weights follow the tangents.
+    #[serde(default)]
+    skinned: bool,
+    #[serde(default)]
+    targets: u32,
+    /// Every target has normals after its positions. When only some of a
+    /// geometry's targets change normals, the others send zeros, which
+    /// leave the normals as they are just as no normals do.
+    #[serde(default)]
+    target_normals: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SceneFrameHeader {
+    camera: Camera,
+    lights: Lights,
+    time: f64,
+    draws: Vec<DrawStateHeader>,
+    skins: Vec<Skin>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DrawStateHeader {
+    index: usize,
+    visible: bool,
+    world: [f32; 16],
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    center: Option<[f32; 3]>,
+    #[serde(default)]
+    overrides: MaterialOverrides,
+    /// How many morph weights this draw has in the payload.
+    #[serde(default)]
+    weights: u32,
+}
+
 fn push_f32(payload: &mut Vec<u8>, values: impl IntoIterator<Item = f32>) {
     for value in values {
         payload.extend_from_slice(&value.to_le_bytes());
     }
+}
+
+fn push_u32(payload: &mut Vec<u8>, values: &[u32]) {
+    for value in values {
+        payload.extend_from_slice(&value.to_le_bytes());
+    }
+}
+
+fn texture_header(texture: &TextureSource) -> TextureHeader {
+    match texture {
+        TextureSource::Path(path) => TextureHeader::Path { path: path.clone() },
+        TextureSource::Rgba { width, height, .. } => TextureHeader::Rgba {
+            width: *width,
+            height: *height,
+        },
+    }
+}
+
+/// Appends inline textures' pixels, in texture order.
+fn push_pixels<'a>(payload: &mut Vec<u8>, textures: impl IntoIterator<Item = &'a TextureSource>) {
+    for texture in textures {
+        if let TextureSource::Rgba { pixels, .. } = texture {
+            payload.extend_from_slice(pixels);
+        }
+    }
+}
+
+/// The texture `header` describes, taking its pixels from `cursor` when
+/// they are inline.
+fn texture_source(
+    header: TextureHeader,
+    cursor: &mut Cursor<'_>,
+) -> Result<TextureSource, ProtocolError> {
+    Ok(match header {
+        TextureHeader::Path { path } => TextureSource::Path(path),
+        TextureHeader::Rgba { width, height } => {
+            let length = (width as usize)
+                .checked_mul(height as usize)
+                .and_then(|pixels| pixels.checked_mul(4))
+                .ok_or_else(|| malformed("a texture too large"))?;
+            TextureSource::Rgba {
+                width,
+                height,
+                pixels: Arc::new(cursor.take(length)?.to_vec()),
+            }
+        }
+    })
 }
 
 /// Reads the payload front to back.
@@ -173,17 +323,47 @@ impl<'a> Cursor<'a> {
         Ok(taken)
     }
 
+    /// `count` groups of `N` floats.
+    fn floats<const N: usize>(&mut self, count: u32) -> Result<Vec<[f32; N]>, ProtocolError> {
+        let bytes = self.take(count as usize * N * 4)?;
+        Ok(bytes
+            .chunks_exact(N * 4)
+            .map(|group| {
+                std::array::from_fn(|i| {
+                    f32::from_le_bytes(group[i * 4..i * 4 + 4].try_into().expect("four bytes"))
+                })
+            })
+            .collect())
+    }
+
+    fn f32s(&mut self, count: u32) -> Result<Vec<f32>, ProtocolError> {
+        Ok(self.floats::<1>(count)?.into_iter().flatten().collect())
+    }
+
     fn pairs(&mut self, count: u32) -> Result<Vec<[f32; 2]>, ProtocolError> {
+        self.floats(count)
+    }
+
+    fn triples(&mut self, count: u32) -> Result<Vec<[f32; 3]>, ProtocolError> {
+        self.floats(count)
+    }
+
+    fn quads(&mut self, count: u32) -> Result<Vec<[f32; 4]>, ProtocolError> {
+        self.floats(count)
+    }
+
+    fn matrices(&mut self, count: u32) -> Result<Vec<[f32; 16]>, ProtocolError> {
+        self.floats(count)
+    }
+
+    fn u16x4(&mut self, count: u32) -> Result<Vec<[u16; 4]>, ProtocolError> {
         let bytes = self.take(count as usize * 8)?;
         Ok(bytes
             .as_chunks::<8>()
             .0
             .iter()
-            .map(|pair| {
-                [
-                    f32::from_le_bytes([pair[0], pair[1], pair[2], pair[3]]),
-                    f32::from_le_bytes([pair[4], pair[5], pair[6], pair[7]]),
-                ]
+            .map(|group| {
+                std::array::from_fn(|i| u16::from_le_bytes([group[i * 2], group[i * 2 + 1]]))
             })
             .collect())
     }
@@ -207,23 +387,14 @@ impl<'a> Cursor<'a> {
     }
 }
 
-/// `{"type":"opened"}`: a model's header, then its meshes' UVs, their
-/// indices, and inline textures' pixels.
-pub fn encode_model(id: ModelId, model: &MeshModel) -> Message {
+/// `{"type":"opened"}` for 2D meshes, without `kind` or `notices`: a
+/// model's header, then its meshes' UVs, their indices, and inline
+/// textures' pixels.
+fn encode_model(id: ModelId, model: &MeshModel) -> Message {
     let header = OpenedHeader {
         model: id.0,
         canvas: model.canvas,
-        textures: model
-            .textures
-            .iter()
-            .map(|texture| match texture {
-                TextureSource::Path(path) => TextureHeader::Path { path: path.clone() },
-                TextureSource::Rgba { width, height, .. } => TextureHeader::Rgba {
-                    width: *width,
-                    height: *height,
-                },
-            })
-            .collect(),
+        textures: model.textures.iter().map(texture_header).collect(),
         meshes: model
             .meshes
             .iter()
@@ -242,20 +413,15 @@ pub fn encode_model(id: ModelId, model: &MeshModel) -> Message {
         push_f32(&mut payload, mesh.uvs.iter().flatten().copied());
     }
     for mesh in &model.meshes {
-        for index in &mesh.indices {
-            payload.extend_from_slice(&index.to_le_bytes());
-        }
+        push_u32(&mut payload, &mesh.indices);
     }
-    for texture in &model.textures {
-        if let TextureSource::Rgba { pixels, .. } = texture {
-            payload.extend_from_slice(pixels);
-        }
-    }
+    push_pixels(&mut payload, &model.textures);
     let mut header = serde_json::to_value(header).expect("serializable");
     header["type"] = json!("opened");
     Message { header, payload }
 }
 
+/// The 2D meshes an `opened` answer carries, ignoring its `kind`.
 pub fn decode_model(message: &Message) -> Result<(ModelId, MeshModel), ProtocolError> {
     let header = OpenedHeader::deserialize(&message.header).map_err(malformed)?;
     let mut cursor = Cursor {
@@ -271,23 +437,11 @@ pub fn decode_model(message: &Message) -> Result<(ModelId, MeshModel), ProtocolE
         .iter()
         .map(|mesh| cursor.u32s(mesh.indices))
         .collect::<Result<_, _>>()?;
-    let mut textures = Vec::new();
-    for texture in header.textures {
-        textures.push(match texture {
-            TextureHeader::Path { path } => TextureSource::Path(path),
-            TextureHeader::Rgba { width, height } => {
-                let length = (width as usize)
-                    .checked_mul(height as usize)
-                    .and_then(|pixels| pixels.checked_mul(4))
-                    .ok_or_else(|| malformed("a texture too large"))?;
-                TextureSource::Rgba {
-                    width,
-                    height,
-                    pixels: Arc::new(cursor.take(length)?.to_vec()),
-                }
-            }
-        });
-    }
+    let textures: Vec<_> = header
+        .textures
+        .into_iter()
+        .map(|texture| texture_source(texture, &mut cursor))
+        .collect::<Result<_, _>>()?;
     cursor.finish()?;
     let meshes = header
         .meshes
@@ -312,8 +466,9 @@ pub fn decode_model(message: &Message) -> Result<(ModelId, MeshModel), ProtocolE
     ))
 }
 
-/// `{"type":"frame"}`: every mesh's state, then their positions in order.
-pub fn encode_frame(frame: &MeshFrame) -> Message {
+/// `{"type":"frame"}` for 2D meshes: every mesh's state, then their
+/// positions in order.
+fn encode_frame(frame: &MeshFrame) -> Message {
     let header = FrameHeader {
         meshes: frame
             .meshes
@@ -337,6 +492,7 @@ pub fn encode_frame(frame: &MeshFrame) -> Message {
     Message { header, payload }
 }
 
+/// A 2D meshes model's frame.
 pub fn decode_frame(message: &Message) -> Result<MeshFrame, ProtocolError> {
     let header = FrameHeader::deserialize(&message.header).map_err(malformed)?;
     let mut cursor = Cursor {
@@ -358,6 +514,281 @@ pub fn decode_frame(message: &Message) -> Result<MeshFrame, ProtocolError> {
         .collect::<Result<_, ProtocolError>>()?;
     cursor.finish()?;
     Ok(MeshFrame { meshes })
+}
+
+/// `{"type":"opened"}` for a scene, without `kind` or `notices`: its
+/// header, then each geometry's vertex streams and morph targets, every
+/// geometry's indices, and inline textures' pixels.
+fn encode_scene_model(id: ModelId, model: &SceneModel) -> Message {
+    let header = SceneOpenedHeader {
+        model: id.0,
+        canvas: model.canvas,
+        textures: model
+            .textures
+            .iter()
+            .map(|texture| SceneTextureHeader {
+                source: texture_header(&texture.source),
+                color_space: texture.color_space,
+                sampler: texture.sampler,
+            })
+            .collect(),
+        geometries: model
+            .geometries
+            .iter()
+            .map(|geometry| GeometryHeader {
+                vertices: geometry.positions.len() as u32,
+                indices: geometry.indices.len() as u32,
+                tangents: geometry.tangents.is_some(),
+                skinned: geometry.joints.is_some() && geometry.weights.is_some(),
+                targets: geometry.targets.len() as u32,
+                target_normals: geometry
+                    .targets
+                    .iter()
+                    .any(|target| !target.normals.is_empty()),
+            })
+            .collect(),
+        skins: model.skins.clone(),
+        materials: model.materials.clone(),
+        draws: model.draws.clone(),
+    };
+    let mut payload = Vec::new();
+    for (geometry, info) in model.geometries.iter().zip(&header.geometries) {
+        push_f32(&mut payload, geometry.positions.iter().flatten().copied());
+        push_f32(&mut payload, geometry.normals.iter().flatten().copied());
+        push_f32(&mut payload, geometry.uvs.iter().flatten().copied());
+        if let Some(tangents) = &geometry.tangents {
+            push_f32(&mut payload, tangents.iter().flatten().copied());
+        }
+        if let (Some(joints), Some(weights)) = (&geometry.joints, &geometry.weights) {
+            for value in joints.iter().flatten() {
+                payload.extend_from_slice(&value.to_le_bytes());
+            }
+            push_f32(&mut payload, weights.iter().flatten().copied());
+        }
+        for target in &geometry.targets {
+            push_f32(&mut payload, target.positions.iter().flatten().copied());
+            if info.target_normals {
+                if target.normals.is_empty() {
+                    push_f32(
+                        &mut payload,
+                        std::iter::repeat_n(0.0, geometry.positions.len() * 3),
+                    );
+                } else {
+                    push_f32(&mut payload, target.normals.iter().flatten().copied());
+                }
+            }
+        }
+    }
+    for geometry in &model.geometries {
+        push_u32(&mut payload, &geometry.indices);
+    }
+    push_pixels(
+        &mut payload,
+        model.textures.iter().map(|texture| &texture.source),
+    );
+    let mut header = serde_json::to_value(header).expect("serializable");
+    header["type"] = json!("opened");
+    Message { header, payload }
+}
+
+fn decode_scene_model(message: &Message) -> Result<(ModelId, SceneModel), ProtocolError> {
+    let header = SceneOpenedHeader::deserialize(&message.header).map_err(malformed)?;
+    let mut cursor = Cursor {
+        bytes: &message.payload,
+    };
+    let mut geometries = Vec::with_capacity(header.geometries.len());
+    for info in &header.geometries {
+        let count = info.vertices;
+        let positions = cursor.triples(count)?;
+        let normals = cursor.triples(count)?;
+        let uvs = cursor.pairs(count)?;
+        let tangents = if info.tangents {
+            Some(cursor.quads(count)?)
+        } else {
+            None
+        };
+        let (joints, weights) = if info.skinned {
+            (Some(cursor.u16x4(count)?), Some(cursor.quads(count)?))
+        } else {
+            (None, None)
+        };
+        let targets = (0..info.targets)
+            .map(|_| {
+                Ok(MorphTarget {
+                    positions: cursor.triples(count)?,
+                    normals: if info.target_normals {
+                        cursor.triples(count)?
+                    } else {
+                        Vec::new()
+                    },
+                })
+            })
+            .collect::<Result<_, ProtocolError>>()?;
+        geometries.push(Geometry {
+            positions,
+            normals,
+            uvs,
+            tangents,
+            joints,
+            weights,
+            targets,
+            indices: Vec::new(),
+        });
+    }
+    for (geometry, info) in geometries.iter_mut().zip(&header.geometries) {
+        geometry.indices = cursor.u32s(info.indices)?;
+    }
+    let textures = header
+        .textures
+        .into_iter()
+        .map(|texture| {
+            Ok(SceneTexture {
+                source: texture_source(texture.source, &mut cursor)?,
+                color_space: texture.color_space,
+                sampler: texture.sampler,
+            })
+        })
+        .collect::<Result<_, ProtocolError>>()?;
+    cursor.finish()?;
+    Ok((
+        ModelId(header.model),
+        SceneModel {
+            canvas: header.canvas,
+            textures,
+            geometries,
+            skins: header.skins,
+            materials: header.materials,
+            draws: header.draws,
+        },
+    ))
+}
+
+/// `{"type":"frame"}` for a scene: the camera, lights, and every draw's
+/// state, then every skin's skinning matrices and every draw's morph
+/// weights in order.
+fn encode_scene_frame(frame: &SceneFrame) -> Message {
+    let header = SceneFrameHeader {
+        camera: frame.camera,
+        lights: frame.lights.clone(),
+        time: frame.time,
+        draws: frame
+            .draws
+            .iter()
+            .map(|draw| DrawStateHeader {
+                index: draw.index,
+                visible: draw.visible,
+                world: draw.world,
+                center: draw.center,
+                overrides: draw.overrides,
+                weights: draw.morph_weights.len() as u32,
+            })
+            .collect(),
+        skins: frame
+            .skins
+            .iter()
+            .map(|matrices| Skin {
+                joints: matrices.len() as u32,
+            })
+            .collect(),
+    };
+    let mut payload = Vec::new();
+    for matrices in &frame.skins {
+        push_f32(&mut payload, matrices.iter().flatten().copied());
+    }
+    for draw in &frame.draws {
+        push_f32(&mut payload, draw.morph_weights.iter().copied());
+    }
+    let mut header = serde_json::to_value(header).expect("serializable");
+    header["type"] = json!("frame");
+    Message { header, payload }
+}
+
+fn decode_scene_frame(message: &Message) -> Result<SceneFrame, ProtocolError> {
+    let header = SceneFrameHeader::deserialize(&message.header).map_err(malformed)?;
+    let mut cursor = Cursor {
+        bytes: &message.payload,
+    };
+    let skins = header
+        .skins
+        .iter()
+        .map(|skin| cursor.matrices(skin.joints))
+        .collect::<Result<_, _>>()?;
+    let draws = header
+        .draws
+        .into_iter()
+        .map(|draw| {
+            Ok(DrawState {
+                index: draw.index,
+                visible: draw.visible,
+                world: draw.world,
+                morph_weights: cursor.f32s(draw.weights)?,
+                center: draw.center,
+                overrides: draw.overrides,
+            })
+        })
+        .collect::<Result<_, ProtocolError>>()?;
+    cursor.finish()?;
+    Ok(SceneFrame {
+        camera: header.camera,
+        lights: header.lights,
+        time: header.time,
+        draws,
+        skins,
+    })
+}
+
+/// `{"type":"opened"}`: the model's header with its `kind` and any
+/// `notices`, and its payload.
+pub fn encode_opened(opened: &Opened) -> Message {
+    let mut message = match &opened.content {
+        ContentModel::Meshes(model) => encode_model(opened.model, model),
+        ContentModel::Scene(model) => encode_scene_model(opened.model, model),
+    };
+    message.header["kind"] = json!(opened.content.kind());
+    if !opened.notices.is_empty() {
+        message.header["notices"] = json!(opened.notices);
+    }
+    message
+}
+
+/// The model an `opened` answer carries, of the kind its `kind` names.
+pub fn decode_opened(message: &Message) -> Result<Opened, ProtocolError> {
+    let common = OpenedCommon::deserialize(&message.header).map_err(malformed)?;
+    let (model, content) = match common.kind {
+        ContentKind::Meshes => {
+            let (model, content) = decode_model(message)?;
+            (model, content.into())
+        }
+        ContentKind::Scene => {
+            let (model, content) = decode_scene_model(message)?;
+            (model, content.into())
+        }
+    };
+    Ok(Opened {
+        model,
+        content,
+        notices: common.notices,
+    })
+}
+
+/// `{"type":"frame"}`: a frame of either kind.
+pub fn encode_content_frame(frame: &ContentFrame) -> Message {
+    match frame {
+        ContentFrame::Meshes(frame) => encode_frame(frame),
+        ContentFrame::Scene(frame) => encode_scene_frame(frame),
+    }
+}
+
+/// A frame of a model opened as `kind`: a frame's header does not say its
+/// kind.
+pub fn decode_content_frame(
+    message: &Message,
+    kind: ContentKind,
+) -> Result<ContentFrame, ProtocolError> {
+    match kind {
+        ContentKind::Meshes => decode_frame(message).map(ContentFrame::Meshes),
+        ContentKind::Scene => decode_scene_frame(message).map(ContentFrame::Scene),
+    }
 }
 
 pub fn error_message(message: impl ToString) -> Message {
@@ -383,6 +814,7 @@ pub fn serve_on(
                         "protocol": PROTOCOL_VERSION,
                         "plugin": plugin,
                         "version": version,
+                        "roles": ROLES,
                     }))
                 } else {
                     error_message(format!(
@@ -393,15 +825,7 @@ pub fn serve_on(
             }
             "open" => match BTreeMap::<String, PathBuf>::deserialize(&request.header["assets"]) {
                 Ok(assets) => match provider.open(plugin, &assets) {
-                    Ok(Opened {
-                        model,
-                        content: ContentModel::Meshes(content),
-                        ..
-                    }) => encode_model(model, &content),
-                    Ok(Opened {
-                        content: ContentModel::Scene(_),
-                        ..
-                    }) => error_message("scene content is not encoded yet"),
+                    Ok(opened) => encode_opened(&opened),
                     Err(error) => error_message(error),
                 },
                 Err(error) => error_message(format!("invalid assets: {error}")),
@@ -412,10 +836,7 @@ pub fn serve_on(
             ) {
                 (Some(model), Some(time)) => {
                     match provider.frame(ModelId(model), time, &request.header["data"]) {
-                        Ok(ContentFrame::Meshes(frame)) => encode_frame(&frame),
-                        Ok(ContentFrame::Scene(_)) => {
-                            error_message("scene content is not encoded yet")
-                        }
+                        Ok(frame) => encode_content_frame(&frame),
                         Err(error) => error_message(error),
                     }
                 }
@@ -474,7 +895,11 @@ fn protocol_output() -> io::Result<io::StdoutLock<'static>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::PluginError;
+    use crate::provider::{NoticeLevel, PluginError};
+    use crate::scene::{
+        AlphaMode, DirectionalLight, Filter, MaterialKind, Projection, TextureRef,
+        TextureTransform, UnlitMaterial, Wrap,
+    };
 
     fn model() -> MeshModel {
         MeshModel {
@@ -608,6 +1033,363 @@ mod tests {
                 .as_str()
                 .unwrap()
                 .contains("asked to")
+        );
+        assert_eq!(next().kind(), "closed");
+    }
+
+    #[test]
+    fn hello_names_roles() {
+        let mut requests = Vec::new();
+        write_message(
+            &mut requests,
+            &Message::new(json!({ "type": "hello", "protocol": 1 })),
+        )
+        .unwrap();
+        let mut answers = Vec::new();
+        serve_on(&mut Fixed, "fixed", "1.0.0", &requests[..], &mut answers).unwrap();
+        let hello = read_message(&mut &answers[..]).unwrap().unwrap();
+        assert_eq!(hello.header["roles"], json!(["content"]));
+    }
+
+    #[test]
+    fn opened_without_kind_is_meshes() {
+        let mut payload = Vec::new();
+        push_f32(&mut payload, [0.5, 0.25]);
+        let message = Message {
+            header: json!({
+                "type": "opened",
+                "model": 2,
+                "canvas": [4.0, 2.0],
+                "textures": [{ "path": "C:/a.png" }],
+                "meshes": [{ "texture": 0, "vertices": 1, "indices": 0 }],
+            }),
+            payload,
+        };
+        assert_eq!(
+            decode_opened(&message).unwrap(),
+            Opened {
+                model: ModelId(2),
+                content: MeshModel {
+                    canvas: [4.0, 2.0],
+                    textures: vec![TextureSource::Path("C:/a.png".into())],
+                    meshes: vec![MeshInfo {
+                        texture: 0,
+                        blend: MeshBlend::Normal,
+                        double_sided: false,
+                        mask: None,
+                        uvs: vec![[0.5, 0.25]],
+                        indices: vec![],
+                    }],
+                }
+                .into(),
+                notices: vec![],
+            }
+        );
+    }
+
+    #[test]
+    fn meshes_opened_adds_only_kind_and_notices() {
+        let opened = Opened {
+            model: ModelId(3),
+            content: model().into(),
+            notices: vec![],
+        };
+        let message = encode_opened(&opened);
+        let mut header = message.header.clone();
+        assert_eq!(header["kind"], "meshes");
+        header.as_object_mut().unwrap().remove("kind");
+        assert_eq!(
+            Message {
+                header,
+                payload: message.payload
+            },
+            encode_model(ModelId(3), &model())
+        );
+    }
+
+    #[test]
+    fn notices_round_trip() {
+        let opened = Opened {
+            model: ModelId(3),
+            content: model().into(),
+            notices: vec![
+                Notice {
+                    level: NoticeLevel::Info,
+                    message: "made by someone".into(),
+                },
+                Notice {
+                    level: NoticeLevel::Warning,
+                    message: "no redistribution".into(),
+                },
+            ],
+        };
+        let message = encode_opened(&opened);
+        assert_eq!(message.header["notices"][1]["level"], "warning");
+        assert_eq!(decode_opened(&message).unwrap(), opened);
+    }
+
+    fn unlit(alpha_mode: AlphaMode, texture: Option<TextureRef>) -> Material {
+        Material {
+            alpha_mode,
+            double_sided: false,
+            kind: MaterialKind::Unlit(UnlitMaterial {
+                base_color: [1.0, 0.5, 0.25, 0.75],
+                base_color_texture: texture,
+            }),
+        }
+    }
+
+    fn scene_model() -> SceneModel {
+        SceneModel {
+            canvas: [640.0, 360.0],
+            textures: vec![
+                SceneTexture {
+                    source: TextureSource::Rgba {
+                        width: 2,
+                        height: 1,
+                        pixels: Arc::new(vec![1, 2, 3, 4, 5, 6, 7, 8]),
+                    },
+                    color_space: ColorSpace::Srgb,
+                    sampler: Sampler::default(),
+                },
+                SceneTexture {
+                    source: TextureSource::Path("C:/normal.png".into()),
+                    color_space: ColorSpace::Linear,
+                    sampler: Sampler {
+                        wrap_s: Wrap::ClampToEdge,
+                        wrap_t: Wrap::MirroredRepeat,
+                        mag_filter: Filter::Nearest,
+                        min_filter: Filter::Nearest,
+                        mipmaps: false,
+                    },
+                },
+            ],
+            geometries: vec![
+                Geometry {
+                    positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+                    normals: vec![[0.0, 0.0, 1.0]; 3],
+                    uvs: vec![[0.0, 1.0], [1.0, 1.0], [0.0, 0.0]],
+                    tangents: Some(vec![[1.0, 0.0, 0.0, -1.0]; 3]),
+                    joints: Some(vec![[0, 1, 0, 0], [1, 0, 0, 0], [65535, 2, 1, 0]]),
+                    weights: Some(vec![
+                        [0.5, 0.5, 0.0, 0.0],
+                        [1.0, 0.0, 0.0, 0.0],
+                        [0.25, 0.25, 0.5, 0.0],
+                    ]),
+                    targets: vec![
+                        MorphTarget {
+                            positions: vec![[0.0, 0.1, 0.0]; 3],
+                            normals: vec![[0.0, 0.0, -0.1]; 3],
+                        },
+                        MorphTarget {
+                            positions: vec![[0.2, 0.0, 0.0]; 3],
+                            normals: vec![[0.1, 0.0, 0.0]; 3],
+                        },
+                    ],
+                    indices: vec![0, 1, 2],
+                },
+                Geometry {
+                    positions: vec![[0.0, 0.0, 1.0], [1.0, 1.0, 1.0]],
+                    normals: vec![[0.0, 1.0, 0.0]; 2],
+                    uvs: vec![[0.5, 0.5]; 2],
+                    tangents: None,
+                    joints: None,
+                    weights: None,
+                    targets: vec![],
+                    indices: vec![1, 0, 1],
+                },
+            ],
+            skins: vec![Skin { joints: 3 }],
+            materials: vec![
+                unlit(
+                    AlphaMode::Mask { cutoff: 0.5 },
+                    Some(TextureRef {
+                        texture: 0,
+                        transform: Some(TextureTransform {
+                            offset: [0.1, 0.2],
+                            rotation: 0.3,
+                            scale: [2.0, 0.5],
+                        }),
+                    }),
+                ),
+                unlit(
+                    AlphaMode::Blend,
+                    Some(TextureRef {
+                        texture: 1,
+                        transform: None,
+                    }),
+                ),
+            ],
+            draws: vec![
+                DrawInfo {
+                    geometry: 0,
+                    material: 0,
+                    skin: Some(0),
+                },
+                DrawInfo {
+                    geometry: 1,
+                    material: 1,
+                    skin: None,
+                },
+            ],
+        }
+    }
+
+    fn scene_frame(time: f64) -> SceneFrame {
+        let mut ambient = [[0.0; 3]; 9];
+        ambient[0] = [0.25, 0.5, 0.75];
+        ambient[8] = [-0.125, 0.0, 0.125];
+        let mut world = [0.0; 16];
+        for (column, value) in world.iter_mut().enumerate().step_by(5) {
+            *value = 1.0 + column as f32;
+        }
+        SceneFrame {
+            camera: Camera {
+                view: world,
+                projection: Projection::Perspective {
+                    yfov: 0.8,
+                    near: 0.1,
+                    far: 100.0,
+                },
+            },
+            lights: Lights {
+                directional: vec![DirectionalLight {
+                    direction: [0.0, -1.0, -0.5],
+                    color: [1.0, 0.9, 0.8],
+                    intensity: 1.5,
+                }],
+                ambient,
+            },
+            time,
+            draws: vec![
+                DrawState {
+                    index: 0,
+                    visible: true,
+                    world,
+                    morph_weights: vec![0.25, time as f32],
+                    center: None,
+                    overrides: MaterialOverrides {
+                        base_color: Some([1.0, 0.0, 0.0, 1.0]),
+                        texture_offset: Some([0.5, 0.0]),
+                        texture_scale: None,
+                    },
+                },
+                DrawState {
+                    index: 1,
+                    visible: false,
+                    world,
+                    morph_weights: vec![],
+                    center: Some([0.0, 1.5, -2.0]),
+                    overrides: MaterialOverrides::default(),
+                },
+            ],
+            skins: vec![vec![world, [2.0; 16], [-0.5; 16]]],
+        }
+    }
+
+    fn scene_opened() -> Opened {
+        Opened {
+            model: ModelId(7),
+            content: scene_model().into(),
+            notices: vec![Notice {
+                level: NoticeLevel::Info,
+                message: "a scene".into(),
+            }],
+        }
+    }
+
+    #[test]
+    fn scene_model_round_trips() {
+        let mut bytes = Vec::new();
+        write_message(&mut bytes, &encode_opened(&scene_opened())).unwrap();
+        let message = read_message(&mut &bytes[..]).unwrap().unwrap();
+        assert_eq!(message.header["kind"], "scene");
+        // Every geometry's streams, then every geometry's indices, then the
+        // inline pixels.
+        let (rest, pixels) = message.payload.split_at(message.payload.len() - 8);
+        assert_eq!(pixels, [1, 2, 3, 4, 5, 6, 7, 8]);
+        let mut indices = Vec::new();
+        push_u32(&mut indices, &[0, 1, 2, 1, 0, 1]);
+        assert!(rest.ends_with(&indices));
+        assert_eq!(decode_opened(&message).unwrap(), scene_opened());
+    }
+
+    #[test]
+    fn scene_frame_round_trips() {
+        let frame = ContentFrame::Scene(scene_frame(1.25));
+        let mut bytes = Vec::new();
+        write_message(&mut bytes, &encode_content_frame(&frame)).unwrap();
+        let message = read_message(&mut &bytes[..]).unwrap().unwrap();
+        assert_eq!(message.kind(), "frame");
+        // The skins' matrices, then the draws' weights.
+        let mut weights = Vec::new();
+        push_f32(&mut weights, [0.25, 1.25]);
+        assert_eq!(message.payload.len(), 3 * 64 + weights.len());
+        assert!(message.payload.ends_with(&weights));
+        assert_eq!(
+            decode_content_frame(&message, ContentKind::Scene).unwrap(),
+            frame
+        );
+    }
+
+    #[test]
+    fn scene_payload_too_short_is_malformed() {
+        let mut opened = encode_opened(&scene_opened());
+        opened.payload.pop();
+        assert!(matches!(
+            decode_opened(&opened),
+            Err(ProtocolError::Malformed(_))
+        ));
+        let mut frame = encode_content_frame(&scene_frame(0.0).into());
+        frame.payload.pop();
+        assert!(matches!(
+            decode_content_frame(&frame, ContentKind::Scene),
+            Err(ProtocolError::Malformed(_))
+        ));
+    }
+
+    struct SceneFixed;
+
+    impl ContentProvider for SceneFixed {
+        fn open(
+            &mut self,
+            _plugin: &str,
+            _assets: &BTreeMap<String, PathBuf>,
+        ) -> Result<Opened, PluginError> {
+            Ok(scene_opened())
+        }
+
+        fn frame(
+            &mut self,
+            model: ModelId,
+            time: f64,
+            _data: &Value,
+        ) -> Result<ContentFrame, PluginError> {
+            assert_eq!(model, ModelId(7));
+            Ok(scene_frame(time).into())
+        }
+    }
+
+    #[test]
+    fn serves_a_scene_session() {
+        let mut requests = Vec::new();
+        for header in [
+            json!({ "type": "hello", "protocol": 1 }),
+            json!({ "type": "open", "assets": { "model": "C:/m.vrm" } }),
+            json!({ "type": "frame", "model": 7, "time": 0.5 }),
+            json!({ "type": "close", "model": 7 }),
+        ] {
+            write_message(&mut requests, &Message::new(header)).unwrap();
+        }
+        let mut answers = Vec::new();
+        serve_on(&mut SceneFixed, "vrm", "0.1.0", &requests[..], &mut answers).unwrap();
+        let mut reader = &answers[..];
+        let mut next = || read_message(&mut reader).unwrap().unwrap();
+        assert_eq!(next().kind(), "hello");
+        assert_eq!(decode_opened(&next()).unwrap(), scene_opened());
+        assert_eq!(
+            decode_content_frame(&next(), ContentKind::Scene).unwrap(),
+            scene_frame(0.5).into()
         );
         assert_eq!(next().kind(), "closed");
     }
