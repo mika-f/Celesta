@@ -1,6 +1,6 @@
 # Sample content plugins
 
-Three plugins to start a plugin of your own from. Each shows one kind:
+Three plugins to start a plugin of your own from:
 
 | Plugin | Kind | What it does |
 | --- | --- | --- |
