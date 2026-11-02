@@ -3,10 +3,10 @@
 
 use crate::manifest::{InstalledPlugins, PluginEntry};
 use celesta_plugin::protocol::{
-    Message, PROTOCOL_VERSION, ProtocolError, decode_frame, decode_model, read_message,
-    write_message,
+    ContentKind, Message, PROTOCOL_VERSION, ProtocolError, decode_content_frame, decode_opened,
+    read_message, write_message,
 };
-use celesta_plugin::{ContentFrame, ContentProvider, MeshModel, ModelId, Opened, PluginError};
+use celesta_plugin::{ContentFrame, ContentProvider, ModelId, Opened, PluginError};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
 use std::io::{BufReader, BufWriter};
@@ -104,6 +104,9 @@ impl Drop for PluginProcess {
 struct OpenModel {
     plugin: String,
     assets: BTreeMap<String, PathBuf>,
+    /// What the model was first opened as; its frames are decoded as this,
+    /// and a reopened model must be the same.
+    kind: ContentKind,
     /// The plugin process's own id for the model; `None` after the process
     /// was restarted, until it is opened again.
     remote: Option<ModelId>,
@@ -209,16 +212,10 @@ impl PluginHost {
         &mut self,
         plugin: &str,
         assets: &BTreeMap<String, PathBuf>,
-    ) -> Result<(ModelId, MeshModel), PluginError> {
+    ) -> Result<Opened, PluginError> {
         let request = Message::new(json!({ "type": "open", "assets": assets }));
         let answer = self.send(plugin, &request)?;
-        if answer.header["kind"] == "scene" {
-            return Err(PluginError::Failed {
-                plugin: plugin.to_owned(),
-                message: "scene content is not supported yet".to_owned(),
-            });
-        }
-        decode_model(&answer).map_err(|error| PluginError::Failed {
+        decode_opened(&answer).map_err(|error| PluginError::Failed {
             plugin: plugin.to_owned(),
             message: error.to_string(),
         })
@@ -231,7 +228,7 @@ impl ContentProvider for PluginHost {
         plugin: &str,
         assets: &BTreeMap<String, PathBuf>,
     ) -> Result<Opened, PluginError> {
-        let (remote, model) = self.retry(plugin, |host| host.open_remote(plugin, assets))?;
+        let opened = self.retry(plugin, |host| host.open_remote(plugin, assets))?;
         self.next += 1;
         let id = ModelId(self.next);
         self.models.insert(
@@ -239,13 +236,13 @@ impl ContentProvider for PluginHost {
             OpenModel {
                 plugin: plugin.to_owned(),
                 assets: assets.clone(),
-                remote: Some(remote),
+                kind: opened.content.kind(),
+                remote: Some(opened.model),
             },
         );
         Ok(Opened {
             model: id,
-            content: model.into(),
-            notices: vec![],
+            ..opened
         })
     }
 
@@ -255,10 +252,10 @@ impl ContentProvider for PluginHost {
         time: f64,
         data: &Value,
     ) -> Result<ContentFrame, PluginError> {
-        let plugin = self
+        let (plugin, kind) = self
             .models
             .get(&model)
-            .map(|open| open.plugin.clone())
+            .map(|open| (open.plugin.clone(), open.kind))
             .ok_or_else(|| PluginError::Failed {
                 plugin: String::new(),
                 message: format!("no open model {}", model.0),
@@ -269,11 +266,22 @@ impl ContentProvider for PluginHost {
                 Some(remote) => remote,
                 None => {
                     // The process was restarted: the model must be opened in
-                    // the new one first.
-                    let (plugin, assets) = (open.plugin.clone(), open.assets.clone());
-                    let (remote, _) = host.open_remote(&plugin, &assets)?;
-                    host.models.get_mut(&model).expect("open").remote = Some(remote);
-                    remote
+                    // the new one first, as the same kind. Its notices were
+                    // given at the first open.
+                    let assets = open.assets.clone();
+                    let reopened = host.open_remote(&plugin, &assets)?;
+                    if reopened.content.kind() != kind {
+                        return Err(PluginError::Failed {
+                            plugin: plugin.clone(),
+                            message: format!(
+                                "model {} was opened as {kind:?} content but reopened as {:?}",
+                                model.0,
+                                reopened.content.kind()
+                            ),
+                        });
+                    }
+                    host.models.get_mut(&model).expect("open").remote = Some(reopened.model);
+                    reopened.model
                 }
             };
             host.send(
@@ -283,12 +291,10 @@ impl ContentProvider for PluginHost {
                 ),
             )
         })?;
-        decode_frame(&answer)
-            .map(ContentFrame::Meshes)
-            .map_err(|error| PluginError::Failed {
-                plugin,
-                message: error.to_string(),
-            })
+        decode_content_frame(&answer, kind).map_err(|error| PluginError::Failed {
+            plugin,
+            message: error.to_string(),
+        })
     }
 
     fn close(&mut self, model: ModelId) {
