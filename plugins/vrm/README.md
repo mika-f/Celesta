@@ -4,12 +4,15 @@ A Celesta content plugin that draws VRM 1.0 avatars (`.vrm`) as 3D scenes.
 Like every plugin, it is a program of its own: Celesta starts it and talks to
 it over standard input and output (`celesta_plugin::serve`).
 
-It draws the avatar in its rest pose with MToon and unlit materials (glTF
-PBR materials as unlit base colour), expressions, eyes following a gaze
-target, a camera framed from the humanoid, and its reference light, and
-reports the model's usage terms as notices. Motion (`.vrma`), constraints,
-and spring bones come later. How it works, what it leaves out, and where
-it differs from UniVRM: `docs/handoff/2026-11-03-plugin-vrm.md`.
+It draws the avatar with MToon and unlit materials (glTF PBR materials as
+unlit base colour), expressions, eyes following a gaze target, a camera
+framed from the humanoid, and its reference light, and reports the model's
+usage terms as notices. VRM animation clips (`.vrma`) and keyframed bone
+tracks move it, its node constraints follow, and its spring bones swing on
+a fixed 60 Hz clock, so any frame is the same however it is reached. How
+it works, what it leaves out, and where it differs from UniVRM:
+`docs/handoff/2026-11-03-plugin-vrm.md` and
+`docs/handoff/2026-11-03-plugin-vrm-motion.md`.
 
 ## Opening files
 
@@ -55,6 +58,22 @@ pnpm --filter celesta-plugin-vrm-js test # the component's tests
 `--out <dir>`, `--target <triple>`, and `--skip-js` work as for
 `examples/plugins/build.mjs`. Add `plugins/vrm/dist` to the app's plugin
 folders, or pass it as the exporter's `--plugin-dir`.
+
+## VRM animation clips
+
+`<Vrm>`'s `motions` play `.vrma` files (`VRMC_vrm_animation` 1.0). None is
+in the repository, and none may be committed: keep them in
+`plugins/vrm/assets/` (ignored by Git) or next to your composition. Two
+sources:
+
+- `test.vrma`, from [pixiv/three-vrm](https://github.com/pixiv/three-vrm)'s
+  `packages/three-vrm-animation/examples/models` (MIT, © pixiv Inc.): a
+  short clip, the one the tests and the demo use.
+- VRoid Project's VRMA motion pack, free on BOOTH (pixiv): seven
+  motion-capture clips. Its terms allow free use, commercial use included,
+  but not redistributing the files, and ask for the credit
+  「キャラクターアニメーション: ピクシブ株式会社 VRoidプロジェクト」 where a work
+  using them is published.
 
 ## The demo
 
