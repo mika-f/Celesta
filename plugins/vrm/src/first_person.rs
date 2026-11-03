@@ -5,14 +5,15 @@
 //! meshes are drawn. That is what UniVRM's third-person camera layer shows.
 
 use crate::document::{Document, LoadError};
-use celesta_plugin::{Notice, NoticeLevel};
+use crate::notices::Warnings;
+use celesta_plugin::Notice;
 use vrm_spec::vrmc_vrm_1_0::FirstPersonType;
 
 /// By node: whether its mesh is hidden from a third-person camera. A node
 /// annotated more than once takes its first annotation, as UniVRM's
 /// `VRM10ObjectFirstPerson` does, and each later one adds a warning to
-/// `notices`. An annotation without a node is ignored; one naming a node
-/// the file lacks is refused.
+/// `notices` (see `notices`). An annotation without a node is ignored; one
+/// naming a node the file lacks is refused.
 pub(crate) fn hidden_nodes(
     document: &Document,
     notices: &mut Vec<Notice>,
@@ -20,6 +21,7 @@ pub(crate) fn hidden_nodes(
     let nodes = document.gltf.nodes().len();
     let mut hidden = vec![false; nodes];
     let mut annotated = vec![false; nodes];
+    let mut repeated = Warnings::new("repeated firstPerson annotations");
     let annotations = document
         .vrm
         .first_person
@@ -36,11 +38,10 @@ pub(crate) fn hidden_nodes(
             )));
         };
         if std::mem::replace(seen, true) {
-            notices.push(Notice {
-                level: NoticeLevel::Warning,
-                message: format!(
+            repeated.push(|| {
+                format!(
                     "firstPerson annotation {index} names node {node} again; only its first annotation counts"
-                ),
+                )
             });
             continue;
         }
@@ -49,5 +50,6 @@ pub(crate) fn hidden_nodes(
             FirstPersonType::FirstPersonOnly
         );
     }
+    repeated.finish(notices);
     Ok(hidden)
 }

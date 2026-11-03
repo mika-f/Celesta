@@ -20,6 +20,7 @@ mod meta;
 mod model;
 pub mod mtoon;
 mod nodes;
+mod notices;
 mod provider;
 #[cfg(any(test, feature = "synthetic"))]
 pub mod synthetic;

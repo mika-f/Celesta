@@ -44,7 +44,8 @@
 //! - **Notices:** the usage terms (see `meta`), then what loading left out
 //!   or changed: images, PBR materials drawn unlit, primitives that are
 //!   not triangles (a warning each, for meshes a node of the scene draws),
-//!   repeated `firstPerson` annotations, and expressions.
+//!   repeated `firstPerson` annotations, and expressions. Warnings of one
+//!   kind are listed up to a limit and the rest counted (see `notices`).
 //! - **Budgets:** the model's geometry, draws, and skins together take at
 //!   most [`GEOMETRY_BUDGET`] bytes, and its accessors decode at most
 //!   `READ_BUDGET` (see `geometry`).
@@ -66,6 +67,7 @@ use crate::materials::{materials, texture_cache_dir};
 use crate::meta::usage_notices;
 use crate::mtoon::{self, Mtoon, MtoonOverrides};
 use crate::nodes::{NodeTree, Pose};
+use crate::notices::Warnings;
 use crate::provider::{LookAtData, LookAtKeyword, PerformanceData};
 use celesta_plugin::{
     AlphaMode, Camera, DrawInfo, DrawState, Geometry, Material, MaterialKind, MaterialOverrides,
@@ -183,7 +185,8 @@ struct Draws {
     centres: Vec<Vec3>,
     /// A primitive has no material, so glTF's default one is appended.
     default_material: bool,
-    /// A warning for each primitive of a drawn mesh that is not triangles.
+    /// A warning for each primitive of a drawn mesh that is not triangles
+    /// (see `notices`).
     notices: Vec<Notice>,
 }
 
@@ -880,7 +883,7 @@ struct MeshDraws<'d> {
 fn mesh_draws<'d>(
     document: &Document,
     mesh: &gltf::Mesh<'d>,
-    notices: &mut Vec<Notice>,
+    notices: &mut Warnings,
 ) -> Result<MeshDraws<'d>, LoadError> {
     let weights = mesh.weights();
     if let Some(weights) = weights
@@ -900,13 +903,12 @@ fn mesh_draws<'d>(
             // A strip or fan too short for a triangle draws nothing to miss.
             Mode::Triangles | Mode::TriangleStrip | Mode::TriangleFan => continue,
         };
-        let at = At::Primitive {
-            mesh,
-            primitive: primitive.index(),
-        };
-        notices.push(Notice {
-            level: NoticeLevel::Warning,
-            message: format!("{at} is {mode}, which is not drawn"),
+        notices.push(|| {
+            let at = At::Primitive {
+                mesh,
+                primitive: primitive.index(),
+            };
+            format!("{at} is {mode}, which is not drawn")
         });
     }
     let primitives = mesh
@@ -954,6 +956,7 @@ fn read_draws(
     let mut meshes: Vec<Option<MeshDraws>> = (0..gltf.meshes().len()).map(|_| None).collect();
     // By (mesh, skin): the geometry of each primitive its `MeshDraws` has.
     let mut read: BTreeMap<(usize, Option<usize>), Vec<Option<usize>>> = BTreeMap::new();
+    let mut not_drawn = Warnings::new("primitives that are not drawn");
     let mut draws = Draws {
         sources: Vec::new(),
         infos: Vec::new(),
@@ -974,7 +977,7 @@ fn read_draws(
             continue;
         };
         if meshes[mesh.index()].is_none() {
-            meshes[mesh.index()] = Some(mesh_draws(document, &mesh, &mut draws.notices)?);
+            meshes[mesh.index()] = Some(mesh_draws(document, &mesh, &mut not_drawn)?);
         }
         let Some(drawn) = &meshes[mesh.index()] else {
             continue;
@@ -1083,6 +1086,7 @@ fn read_draws(
         .map(|bound| bound.map_or(Vec3::ZERO, |(min, max)| (min + max) / 2.0))
         .collect();
     draws.bounds = bounds;
+    not_drawn.finish(&mut draws.notices);
     Ok(draws)
 }
 
@@ -1810,6 +1814,45 @@ mod tests {
             [(node::BODY, 0, Some(0)), (node::BODY, 1, Some(0))]
         );
         assert_eq!(model.scene_model().skins.len(), 1 + COUNT);
+        // Listed up to a limit, then counted.
+        let skipped = skipped_notices(&model);
+        assert_eq!(skipped.len(), crate::notices::LISTED + 1);
+        assert_eq!(
+            skipped[0],
+            "mesh \"FirstPersonOnly\" primitive 0 is POINTS, which is not drawn"
+        );
+        assert_eq!(
+            skipped[crate::notices::LISTED],
+            format!(
+                "and {} more primitives that are not drawn",
+                COUNT - crate::notices::LISTED
+            )
+        );
+    }
+
+    #[test]
+    fn repeated_first_person_annotations_past_the_listed_are_counted() {
+        let model = edited(|root| {
+            let repeat = json!({ "node": node::FIRST_PERSON_ONLY, "type": "both" });
+            root["extensions"]["VRMC_vrm"]["firstPerson"]["meshAnnotations"]
+                .as_array_mut()
+                .unwrap()
+                .extend(std::iter::repeat_n(repeat, 100));
+        });
+        let repeated: Vec<&str> = model
+            .notices()
+            .iter()
+            .map(|notice| notice.message.as_str())
+            .filter(|message| message.contains("firstPerson"))
+            .collect();
+        assert_eq!(repeated.len(), crate::notices::LISTED + 1, "{repeated:?}");
+        assert_eq!(
+            repeated[crate::notices::LISTED],
+            format!(
+                "and {} more repeated firstPerson annotations",
+                100 - crate::notices::LISTED
+            )
+        );
     }
 
     /// The avatar with node 25, drawing Body (mesh 0) with skin 1, whose

@@ -26,10 +26,11 @@
 
 use crate::document::{Document, LoadError};
 use crate::mtoon::{self, Mtoon, OutlineWidthMode, ScaledTextureSlot, TextureSlot};
+use crate::notices::Warnings;
 use base64::Engine as _;
 use celesta_plugin::{
-    AlphaMode, ColorSpace, Filter, Material, MaterialKind, Notice, NoticeLevel, Sampler,
-    SceneShader, SceneTexture, TextureRef, TextureSource, TextureTransform, UnlitMaterial, Wrap,
+    AlphaMode, ColorSpace, Filter, Material, MaterialKind, Notice, Sampler, SceneShader,
+    SceneTexture, TextureRef, TextureSource, TextureTransform, UnlitMaterial, Wrap,
 };
 use gltf::json;
 use gltf::json::validation::Checked::Valid;
@@ -216,7 +217,7 @@ pub(crate) fn materials(document: &Document, cache: &Path) -> Result<Materials, 
         used: Vec::new(),
         keys: Vec::new(),
         lookup: HashMap::new(),
-        notices: Vec::new(),
+        warnings: Warnings::new("textures a material draws without"),
         noticed: HashSet::new(),
     };
     let mut read = Vec::new();
@@ -248,7 +249,8 @@ pub(crate) fn materials(document: &Document, cache: &Path) -> Result<Materials, 
         read.push((alpha_mode, material.double_sided(), kind));
         base_transforms.push(transform);
     }
-    let notices = reader.notices;
+    let mut notices = Vec::new();
+    reader.warnings.finish(&mut notices);
 
     // Every image is sized before anything is written. Celesta decodes each
     // scene texture's file on its own, so an image two scene textures
@@ -403,7 +405,7 @@ struct Reader<'d> {
     /// The scene textures: image, color space, and sampler.
     keys: Vec<(usize, ColorSpace, Sampler)>,
     lookup: HashMap<(usize, ColorSpace, Sampler), usize>,
-    notices: Vec<Notice>,
+    warnings: Warnings,
     noticed: HashSet<String>,
 }
 
@@ -658,13 +660,10 @@ impl<'d> Reader<'d> {
         Ok(Some(self.keys.len() - 1))
     }
 
-    /// A warning, once however many slots give it.
+    /// A warning, once however many slots give it (see `notices`).
     fn warn(&mut self, message: String) {
         if self.noticed.insert(message.clone()) {
-            self.notices.push(Notice {
-                level: NoticeLevel::Warning,
-                message,
-            });
+            self.warnings.push(|| message);
         }
     }
 
@@ -960,6 +959,7 @@ mod tests {
     use super::*;
     use crate::document::Document;
     use crate::synthetic::SyntheticVrm;
+    use celesta_plugin::NoticeLevel;
     use image::{ExtendedColorType, ImageEncoder};
     use serde_json::{Value, json};
     use tempfile::TempDir;
@@ -1471,6 +1471,37 @@ mod tests {
             ]
         );
         assert_eq!(materials.textures.len(), 1);
+    }
+
+    #[test]
+    fn texture_warnings_past_the_listed_are_counted() {
+        let (materials, _cache) = load_with(&SyntheticVrm::avatar(), |root| {
+            root["textures"][1] =
+                json!({ "extensions": { "KHR_texture_basisu": { "source": 1 } } });
+            root["extensionsRequired"] = json!(["KHR_texture_basisu"]);
+            root["extensionsUsed"]
+                .as_array_mut()
+                .unwrap()
+                .push("KHR_texture_basisu".into());
+            let body = root["materials"][0].clone();
+            let materials = root["materials"].as_array_mut().unwrap();
+            for copy in 0..30 {
+                let mut copy_of_body = body.clone();
+                copy_of_body["name"] = json!(format!("Copy {copy}"));
+                materials.push(copy_of_body);
+            }
+        });
+        // Body and its 30 copies each draw without texture 1.
+        let found = warnings(&materials);
+        assert_eq!(found.len(), crate::notices::LISTED + 1, "{found:?}");
+        assert!(found[0].contains("material \"Body\" draws without it"));
+        assert_eq!(
+            found[crate::notices::LISTED],
+            format!(
+                "and {} more textures a material draws without",
+                31 - crate::notices::LISTED
+            )
+        );
     }
 
     /// With a PNG `source` beside it, a compressed texture draws the PNG.

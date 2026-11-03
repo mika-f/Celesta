@@ -39,7 +39,8 @@
 //!   - A morph target bind is ignored with a warning when its node is not
 //!     the file's (`ExpressionExtensions`), has no mesh, or has no such
 //!     target, and when the expression already binds that node's target
-//!     (`MorphTargetBindingMerger` keeps the first).
+//!     (`MorphTargetBindingMerger` keeps the first). The warnings are
+//!     listed up to a limit and the rest counted (see `notices`).
 //!   - A colour or texture transform bind naming a material the file lacks
 //!     refuses the model, as UniVRM's importer throws on it.
 //!   - A `targetValue` needs four numbers and reads the first four; a
@@ -51,6 +52,7 @@
 use crate::document::{Document, LoadError};
 use crate::model::DrawSource;
 use crate::mtoon::{Mtoon, MtoonOverrides};
+use crate::notices::Warnings;
 use celesta_plugin::{Material, MaterialKind, Notice, NoticeLevel, TextureTransform};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
@@ -457,6 +459,9 @@ pub(crate) fn read_expressions(
         }
     }
 
+    // A preset name is all a custom expression can repeat, so those
+    // warnings are few; a file can repeat a morph bind any number of times.
+    let mut ignored_binds = Warnings::new("morph target binds ignored");
     let mut definitions = Vec::with_capacity(keyed.len());
     for (key, expression) in keyed {
         let material = |index: usize| {
@@ -478,12 +483,6 @@ pub(crate) fn read_expressions(
             colours: Vec::new(),
             uvs: Vec::new(),
         };
-        let warn = |notices: &mut Vec<Notice>, message: String| {
-            notices.push(Notice {
-                level: NoticeLevel::Warning,
-                message,
-            });
-        };
         // The (node, target)s this expression binds: UniVRM keeps the
         // first bind of each.
         let mut bound = BTreeSet::new();
@@ -491,13 +490,12 @@ pub(crate) fn read_expressions(
             let index = bind.node.value();
             let target = bind.index;
             let Some(node) = nodes.get(index) else {
-                warn(
-                    notices,
+                ignored_binds.push(|| {
                     format!(
                         "expression \"{key}\" binds morph target {target} of node {index}, but the file has {} nodes; the bind is ignored",
                         nodes.len()
-                    ),
-                );
+                    )
+                });
                 continue;
             };
             let weight = bind.weight as f32;
@@ -524,7 +522,7 @@ pub(crate) fn read_expressions(
                 ))
             });
             match ignored {
-                Some(message) => warn(notices, message),
+                Some(message) => ignored_binds.push(|| message),
                 None => binds.morphs.push((index, target, weight)),
             }
         }
@@ -564,6 +562,7 @@ pub(crate) fn read_expressions(
         }
         definitions.push(binds);
     }
+    ignored_binds.finish(notices);
 
     // One node's draws are together (`read_draws` makes them node by node).
     let mut node_draws: BTreeMap<usize, Range<usize>> = BTreeMap::new();
@@ -1392,6 +1391,26 @@ mod tests {
             .filter(|notice| notice.level == NoticeLevel::Warning)
             .map(|notice| notice.message.as_str())
             .collect()
+    }
+
+    #[test]
+    fn expression_warnings_past_the_listed_are_counted() {
+        let listed = crate::notices::LISTED;
+        // 100 binds of a target Body lacks.
+        let model = load(&with_expressions(|e| {
+            let bind = json!({ "node": node::BODY, "index": 99, "weight": 1.0 });
+            e["preset"]["blink"]["morphTargetBinds"] = json!(vec![bind; 100]);
+        }));
+        let found = warnings(&model);
+        assert_eq!(found.len(), listed + 1, "{found:?}");
+        assert_eq!(
+            found[0],
+            "expression \"blink\" binds morph target 99 of node 23, whose mesh has 3; the bind is ignored"
+        );
+        assert_eq!(
+            found[listed],
+            format!("and {} more morph target binds ignored", 100 - listed)
+        );
     }
 
     #[test]

@@ -591,6 +591,16 @@ follow the terms: unreadable images, PBR materials drawn unlit, primitives
 that are not drawn, repeated `firstPerson` annotations, and expression
 binds left out.
 
+A file can repeat one mistake for a few bytes each, and every notice goes
+back in `open`'s answer, whose header Celesta caps. So warnings of one
+kind (primitives not drawn, textures a material draws without, ignored
+morph target binds, repeated `firstPerson` annotations) are listed up to
+20 (`notices::LISTED`), then counted in one line: `and {n} more primitives
+that are not drawn`, `… textures a material draws without`, `… morph
+target binds ignored`, `… repeated firstPerson annotations`. A custom
+expression named like a preset can only repeat the 18 presets, so those
+warnings are not counted.
+
 ## The provider and `data`
 
 - `open` takes one asset, `model`, the `.vrm` (`asset "model" (the .vrm)
@@ -667,6 +677,7 @@ Celesta's side knows no format.
 | `plugins/vrm/src/expressions.rs`, `look_at.rs` | Expressions and lookAt with UniVRM's rules. |
 | `plugins/vrm/src/camera.rs` | The canvas, camera presets, explicit cameras, and the reference light. |
 | `plugins/vrm/src/meta.rs`, `provider.rs` | Usage-term notices; the provider and `data`. |
+| `plugins/vrm/src/notices.rs` | Warnings of one kind listed up to a limit, the rest counted. |
 | `plugins/vrm/src/synthetic.rs` | A small VRM 1.0 avatar built in code (feature `synthetic`), which every test opens. |
 | `plugins/vrm/js`, `plugin.json`, `build.mjs`, `demo.tsx`, `README.md` | `<Vrm>` and its tests, the manifest, the build, and the demo. |
 | `crates/plugin-host/src/manifest.rs` | `ComponentSource::Model`, `extensions`, `aspect`, and their checks. |
@@ -770,6 +781,10 @@ Besides MToon's list above, to check against UniVRM:
     explicit cameras, refused cameras, canvases, and lights, the reference
     light.
   - `meta`: every term as a line in order, and the warnings.
+  - `notices`: warnings past the 20 listed counted in one line, and their
+    messages not made; at each site (10,000 point primitives, 31 materials
+    without a texture, 100 ignored morph binds, 100 repeated
+    annotations).
   - `provider`: `data` checked, nulls named, assets checked, frames equal
     to the model's, textures written to the cache the provider is given.
 - `tests/mtoon.rs`: Celesta's former MToon GPU tests (`lit_`, `shading_`,
