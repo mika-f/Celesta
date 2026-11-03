@@ -49,7 +49,7 @@ materials share one.
 | `shader` | Which `shaders` entry draws it. |
 | `params` | The shader's `Params`, as bytes: exactly as many as its `struct Params` takes, in WGSL's uniform layout, little-endian. They travel in the payload, never in the JSON. |
 | `textures` | A `SceneModel::textures` index or `null` per slot. Missing and `null` slots are empty. No more entries than the shader has slots. |
-| `outline` | Optional `{ cull, depthBias }`: an outline pass (below). `cull` is `"front"` (the default), `"back"`, or `"none"`; `depthBias` is `{ constant, slopeScale }`, by default `{ 1, 1.0 }`, Unity's `Offset 1, 1`. `{}` reads as the defaults. |
+| `outline` | Optional `{ cull, depthBias }`: an outline pass (below). `cull` is `"front"` (the default), `"back"`, or `"none"`; `depthBias` is `{ constant, slopeScale }`, by default `{ 1, 1.0 }`, Unity's `Offset 1, 1`. `{}` reads as the defaults, for `outline` and `depthBias` alike, and a missing field takes its default. |
 | `requiresTangents` | The shader reads `Vertex.tangent`: a draw of this material on a geometry without tangents is refused. Without it, such a geometry gives the shader tangents of 0. |
 
 Each texture is bound with its own sampler. Celesta reads nothing of the

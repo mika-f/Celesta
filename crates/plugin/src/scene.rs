@@ -320,9 +320,9 @@ impl CullFace {
 /// How far a pass's depth is pushed away from the camera, as Unity's
 /// `Offset slope_scale, constant` and WebGPU's depth bias: `constant`
 /// units of depth resolution plus `slope_scale` times the depth's slope.
-/// By default `Offset 1, 1`.
+/// By default `Offset 1, 1`, field by field.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(default, rename_all = "camelCase")]
 pub struct DepthBias {
     pub constant: i32,
     pub slope_scale: f32,
@@ -622,6 +622,30 @@ mod tests {
                     slope_scale: 1.0,
                 },
             }
+        );
+    }
+
+    #[test]
+    fn depth_bias_fields_default_one_by_one() {
+        let bias = |json| serde_json::from_str::<DepthBias>(json).unwrap();
+        assert_eq!(bias("{}"), DepthBias::default());
+        assert_eq!(
+            bias(r#"{"constant":2}"#),
+            DepthBias {
+                constant: 2,
+                slope_scale: 1.0,
+            }
+        );
+        assert_eq!(
+            bias(r#"{"slopeScale":0.5}"#),
+            DepthBias {
+                constant: 1,
+                slope_scale: 0.5,
+            }
+        );
+        assert_eq!(
+            serde_json::from_str::<OutlinePass>(r#"{"depthBias":{}}"#).unwrap(),
+            OutlinePass::default()
         );
     }
 
