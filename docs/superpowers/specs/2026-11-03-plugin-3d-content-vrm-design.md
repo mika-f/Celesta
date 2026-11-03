@@ -416,12 +416,16 @@ service), which differs from the specification's recommendation:
   recently used cursors go. Nothing caps how many performances are kept.
 - A request from a cold start steps from 0 s, so a frame is refused when
   it is past four hours of the layer, or when its steps times a step's
-  cost pass a work budget (2^31 units). A step's cost is the model's (its
+  cost pass a work budget (2^33 units, so the worst frame accepted from a
+  cold start takes under a minute). A step's cost is the model's (its
   nodes, moving joints, joint–collider pairs, and aim constraint climbs,
-  fixed when it opens) plus its data's (each motion's clip channels and
-  each track keyframe). Refusals depend on the model, the data, and the
-  time alone, never on what is kept. A model that cannot reach four hours
-  this way warns how far it reaches when it opens; real avatars reach it.
+  fixed when it opens) plus its data's (each motion by its clip's
+  channels, each track axis, and its keyframes), charged as measured, so
+  the cost follows a step's real work within a factor of two. Refusals
+  depend on the model, the data, and the time alone, never on what is
+  kept. A model that cannot reach four hours this way warns how far it
+  reaches when it opens; real avatars reach it with room for motions and
+  tracks.
 
 ### The `<Vrm>` component
 
