@@ -107,13 +107,49 @@ pub(crate) fn check_declarations(
             );
         }
     }
-    // Celesta's own declarations lie outside the author's code.
+    // Celesta's own declarations lie outside the author's code. Read from
+    // naga's module, then from the source for what the module keeps no
+    // name of (aliases).
+    let reserved = |at: Option<usize>, name: &str| {
+        fail(
+            at,
+            format!("declares `{name}`; names starting with `celesta` belong to Celesta"),
+        )
+    };
+    let declared = module
+        .functions
+        .iter()
+        .map(|(handle, function)| (function.name.as_deref(), module.functions.get_span(handle)))
+        .chain(module.global_variables.iter().map(|(handle, global)| {
+            (
+                global.name.as_deref(),
+                module.global_variables.get_span(handle),
+            )
+        }))
+        .chain(module.constants.iter().map(|(handle, constant)| {
+            (constant.name.as_deref(), module.constants.get_span(handle))
+        }))
+        .chain(module.overrides.iter().map(|(handle, constant)| {
+            (constant.name.as_deref(), module.overrides.get_span(handle))
+        }))
+        .chain(
+            module
+                .types
+                .iter()
+                .map(|(handle, ty)| (ty.name.as_deref(), module.types.get_span(handle))),
+        );
+    for (name, span) in declared {
+        let at = start(span);
+        if let Some(name) = name
+            && (rules.reserved)(name)
+            && at.is_some_and(|at| author.contains(&at))
+        {
+            return reserved(at, name);
+        }
+    }
     for (offset, name) in module_declarations(&code[author.clone()]) {
         if (rules.reserved)(name) {
-            return fail(
-                Some(author.start + offset),
-                format!("declares `{name}`; names starting with `celesta` belong to Celesta"),
-            );
+            return reserved(Some(author.start + offset), name);
         }
     }
     Ok(())
@@ -124,7 +160,6 @@ pub(crate) fn check_declarations(
 /// byte where it starts. Read from the source rather than from naga's
 /// module, which keeps no alias names.
 pub(crate) fn module_declarations(source: &str) -> Vec<(usize, &str)> {
-    let identifier = |c: char| c == '_' || c.is_alphanumeric();
     let mut declarations = Vec::new();
     let mut depth = 0usize;
     // After a declaring keyword: the name comes next, once a `var`'s
@@ -158,14 +193,26 @@ pub(crate) fn module_declarations(source: &str) -> Vec<(usize, &str)> {
             }
             continue;
         }
-        if identifier(c) {
+        // A number declares nothing; its digits, letters, and points are
+        // skipped together.
+        if c.is_ascii_digit() {
+            while chars
+                .next_if(|&(_, next)| next == '.' || unicode_ident::is_xid_continue(next))
+                .is_some()
+            {}
+            continue;
+        }
+        // naga's lexer's rule for a word: `_` or XID_Start, then
+        // XID_Continue.
+        if c == '_' || unicode_ident::is_xid_start(c) {
             let mut end = at + c.len_utf8();
-            while let Some((next_at, next)) = chars.next_if(|&(_, next)| identifier(next)) {
+            while let Some((next_at, next)) =
+                chars.next_if(|&(_, next)| unicode_ident::is_xid_continue(next))
+            {
                 end = next_at + next.len_utf8();
             }
             let word = &source[at..end];
-            // A number starts with a digit; it declares nothing.
-            if c.is_ascii_digit() || depth > 0 {
+            if depth > 0 {
                 continue;
             }
             if pending && angle == 0 {
@@ -309,6 +356,16 @@ mod tests {
             })
             .collect();
         assert_eq!(names, ["a", "b", "c", "d", "f", "h", "i"]);
+
+        // naga's word rule: `_` or XID_Start, then XID_Continue, which
+        // takes connector punctuation and combining marks.
+        let names: Vec<_> = module_declarations(
+            "const a\u{203f}fn = 1.0;\nfn min\u{301}() {}\nfn _x() {}\nconst \u{3b1}\u{3b2} = 1;\n",
+        )
+        .into_iter()
+        .map(|(_, name)| name)
+        .collect();
+        assert_eq!(names, ["a\u{203f}fn", "min\u{301}", "_x", "\u{3b1}\u{3b2}"]);
     }
 
     #[test]

@@ -456,6 +456,20 @@ mod tests {
         // function's own locals are the material's.
         let own = "// fn clamp\n/* alias dot = f32; /* nested */ fn max */\nfn clamped(value: f32) -> f32 {\n    let min = 0.0;\n    return clamp(value, min, 1.0);\n}\nconst texture_scale = 2.0;\nstruct vec4data { a: f32 };\n";
         check_material(&with_params(&format!("{FRAGMENT}{own}")), 0).unwrap();
+
+        // Words split where naga splits them: `a‿fn` (U+203F joins words)
+        // is one name, so `min` after it is still declared.
+        let joined =
+            "const a\u{203f}fn = 1.0;\nfn min(a: f32, b: f32) -> f32 {\n    return a;\n}\n";
+        let error = check_material(&with_params(&format!("{FRAGMENT}{joined}")), 0).unwrap_err();
+        assert!(error.starts_with("6:"), "{error}");
+        assert!(
+            error.contains("declares `min`, which WGSL predeclares"),
+            "{error}"
+        );
+        // A combining mark makes another name than the built-in's.
+        let marked = "fn min\u{301}(a: f32, b: f32) -> f32 {\n    return a;\n}\n";
+        check_material(&with_params(&format!("{FRAGMENT}{marked}")), 0).unwrap();
     }
 
     #[test]

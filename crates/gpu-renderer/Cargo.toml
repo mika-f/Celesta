@@ -22,6 +22,8 @@ wgpu = { version = "30.0.1", features = ["naga-ir"] }
 clap = { workspace = true, optional = true }
 strum.workspace = true
 thiserror.workspace = true
+# naga's own identifier rule, which `wgsl.rs` reads declarations by.
+unicode-ident = "1.0.27"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.10.0"
