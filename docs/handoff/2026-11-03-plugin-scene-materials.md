@@ -237,7 +237,10 @@ fails to load is closed again. The limits are `pub const`s in
   short: a material that loops long enough hangs the GPU until the
   operating system resets it. GPU hangs and device loss a hostile plugin
   causes this way are out of scope: a plugin is a program the user
-  installs and allows, which can already use the GPU as it likes.
+  installs and allows, which can already use the GPU as it likes. On the
+  CPU, naga 30.0.1's WGSL parser caps its recursion depth (nested
+  expressions and statements) at 200: deeper nesting is refused as a parse
+  error (`Parser recursion limit exceeded`), not a stack overflow.
 - **Parameters on open:** a custom material's `params` must be as long as
   its shader's `Params` (`material {m}'s parameters are {a} bytes, but
   shader {s}'s Params is {b}`).
