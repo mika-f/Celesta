@@ -16,6 +16,7 @@ mod humanoid;
 mod look_at;
 mod materials;
 mod model;
+pub mod mtoon;
 mod nodes;
 mod provider;
 #[cfg(any(test, feature = "synthetic"))]
