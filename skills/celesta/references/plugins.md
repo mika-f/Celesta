@@ -131,8 +131,8 @@ With `src` (`image` or `video`) it is added like an Image (`src`, `x`, `y`,
 `width`); without, like a Rect's box (`x`, `y`, `width`, `height`). `props`
 (strings, numbers, booleans) follow those and may not repeat them.
 `"src": "model"` is a file the plugin reads itself: it needs `extensions`
-(lowercase letters and digits, no dot, no repeats, e.g. `["glb"]`) and may
-give `aspect` (width / height, 1/16384 to 16384) for the drawn box. It is
+(lowercase letters and digits, no dot, no repeats, e.g. `["glb"]`) and
+`aspect` (width / height, 1/16384 to 16384) for the drawn box. It is
 added like an Image, `width` only, so the component's own default aspect
 must equal `aspect`.
 

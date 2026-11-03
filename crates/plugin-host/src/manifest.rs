@@ -62,15 +62,17 @@ pub struct ComponentInfo {
     /// The file types a model component takes: lowercase, without the dot.
     #[serde(default)]
     pub extensions: Vec<String>,
-    /// A model component's layer width over its height, for drawing it.
+    /// A model component's layer width over its height, for drawing it:
+    /// required of a model component, which is added with only a width,
+    /// and refused on any other.
     #[serde(default)]
     pub aspect: Option<f64>,
 }
 
 /// The widest a model component's `aspect` may be, and one over it the
-/// narrowest: a layer side is at most 16384 pixels, so no wider layer could
-/// be drawn.
-const MAX_COMPONENT_ASPECT: f64 = 16384.0;
+/// narrowest: a scene canvas side is at most `MAX_SCENE_CANVAS_SIDE`
+/// pixels and at least 1, so no wider layer could be drawn.
+const MAX_COMPONENT_ASPECT: f64 = celesta_plugin::scene::MAX_SCENE_CANVAS_SIDE as f64;
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -145,11 +147,18 @@ impl ComponentInfo {
                 ));
             }
         }
+        // Added with only a width, a model component without an aspect
+        // would draw a box whose height the layer does not keep.
+        if self.src == Some(ComponentSource::Model) && self.aspect.is_none() {
+            return Some(format!(
+                "component {name:?} takes a model file but gives no aspect"
+            ));
+        }
         if let Some(aspect) = self.aspect
             && !(MAX_COMPONENT_ASPECT.recip()..=MAX_COMPONENT_ASPECT).contains(&aspect)
         {
             return Some(format!(
-                "component {name:?}'s aspect {aspect} is not from 1/16384 to 16384"
+                "component {name:?}'s aspect {aspect} is not from 1/{MAX_COMPONENT_ASPECT} to {MAX_COMPONENT_ASPECT}"
             ));
         }
         for (prop, value) in &self.props {
@@ -790,7 +799,7 @@ mod tests {
     }
 
     #[test]
-    fn model_components_need_extensions() {
+    fn model_components_need_extensions_and_an_aspect() {
         let root = tempfile::tempdir().unwrap();
         let write = |id: &str, component: serde_json::Value| {
             write_manifest(
@@ -808,6 +817,10 @@ mod tests {
         write(
             "bare",
             serde_json::json!({ "name": "Model", "src": "model" }),
+        );
+        write(
+            "shapeless",
+            serde_json::json!({ "name": "Model", "src": "model", "extensions": ["glb"] }),
         );
         write(
             "upper",
@@ -868,10 +881,14 @@ mod tests {
                 })
                 .unwrap_or_else(|| panic!("{id} was not skipped: {errors:?}"))
         };
-        assert_eq!(errors.len(), 11, "{errors:?}");
+        assert_eq!(errors.len(), 12, "{errors:?}");
         assert_eq!(
             reason("bare"),
             "component \"Model\" takes a model file but lists no extensions"
+        );
+        assert_eq!(
+            reason("shapeless"),
+            "component \"Model\" takes a model file but gives no aspect"
         );
         assert_eq!(
             reason("upper"),

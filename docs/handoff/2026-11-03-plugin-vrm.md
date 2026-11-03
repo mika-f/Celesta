@@ -658,17 +658,19 @@ The manifest gains a component kind for files a plugin reads itself;
 Celesta's side knows no format.
 
 - `"src": "model"` with `extensions` (the file types it takes, lowercase
-  letters and digits, without the dot, none repeated, at least one) and an
-  optional `aspect` (the layer's width over its height, from 1/16384 to
-  16384). `extensions` or `aspect` on a component that does not take a
-  model file is refused. A refused component skips its whole plugin with
+  letters and digits, without the dot, none repeated, at least one) and
+  `aspect` (the layer's width over its height, from 1/16384 to 16384,
+  `MAX_SCENE_CANVAS_SIDE` and one over it). Both are required: without an
+  aspect, the box drawn would have a height the layer does not keep.
+  `extensions` or `aspect` on a component that does not take a model file
+  is refused. A refused component skips its whole plugin with
   the reason, as before. An older Celesta that does not know `"model"`
   skips the plugin too.
 - The editor adds a model component like an Image: it asks for a file,
   refuses one whose extension (compared ASCII case-insensitively) is not
   listed (`Choose a .vrm file`; several, `Choose a .glb, .gltf, or .obj
   file`), draws the box at the manifest's `aspect` without reading the
-  file (a free box without one), and writes `src`, `x`, `y`, and `width`.
+  file, and writes `src`, `x`, `y`, and `width`.
 - Since only `width` is written, the component's own default aspect must
   equal its manifest `aspect`, or the layer is not the box that was drawn.
   `<Vrm>`'s is 16:9, and so is its manifest's (`1.7777778`).
@@ -834,7 +836,7 @@ Besides MToon's list above, to check against UniVRM:
   (each side, given or computed, from 1 to 16384), the element's
   props, lookAt and camera passed through, and the mounted layer's
   content.
-- `celesta-plugin-host`'s `model_components_need_extensions` and
+- `celesta-plugin-host`'s `model_components_need_extensions_and_an_aspect` and
   `celesta-editor`'s `model_components_draw_as_images_and_check_the_file`,
   with format-neutral fixtures.
 - `celesta-plugin-host`'s `the_repositorys_plugins_pass_the_manifest_checks`
