@@ -57,8 +57,10 @@
 //! - **Notices:** the usage terms (see `meta`), then what loading left out
 //!   or changed: images, PBR materials drawn unlit, primitives that are
 //!   not triangles (a warning each, for meshes a node of the scene draws),
-//!   repeated `firstPerson` annotations, and expressions. Warnings of one
-//!   kind are listed up to a limit and the rest counted (see `notices`).
+//!   repeated `firstPerson` annotations, expressions, and spring bones
+//!   whose steps cost too much to reach four hours of a layer (see
+//!   `stepping`). Warnings of one kind are listed up to a limit and the
+//!   rest counted (see `notices`).
 //! - **Budgets:** the model's geometry, draws, and skins together take at
 //!   most [`GEOMETRY_BUDGET`] bytes, and its accessors decode at most
 //!   `READ_BUDGET` (see `geometry`).
@@ -86,8 +88,8 @@ use crate::nodes::{NodeTree, Pose};
 use crate::notices::Warnings;
 use crate::provider::{LookAtData, LookAtKeyword, PerformanceData};
 use crate::springs::Springs;
-use crate::stepping::{SharedSpringCache, Stepper};
-use crate::tracks::apply_tracks;
+use crate::stepping::{self, SharedSpringCache, Stepper};
+use crate::tracks::{TrackData, apply_checked_tracks, apply_tracks};
 use crate::vrma::{Clip, ClipPose, Retarget};
 use celesta_plugin::{
     AlphaMode, Camera, DrawInfo, DrawState, Geometry, Material, MaterialKind, MaterialOverrides,
@@ -114,6 +116,10 @@ pub const CANVAS: [f32; 2] = [1920.0, 1080.0];
 /// by its node. A skinned geometry ignores its nodes, so it is walked
 /// once however many draw it, and the geometry budget bounds those walks.
 const FRAMING_VISITS: u64 = 50_000_000;
+
+/// How the base pose applies the tracks: checking them, or reading tracks
+/// already checked.
+type TrackStage = fn(&BTreeMap<String, TrackData>, f64, &mut ClipPose) -> Result<(), FrameError>;
 
 /// Why a frame could not be made.
 #[derive(Debug, thiserror::Error)]
@@ -165,6 +171,9 @@ pub struct VrmModel {
     look_at: LookAt,
     constraints: Constraints,
     springs: Springs,
+    /// A spring step's work, before the motions and tracks (see
+    /// `stepping::step_cost`).
+    step_cost: u64,
     /// The springs' states kept between frames (see `stepping`), in a
     /// cache of the model's own unless it shares its process's.
     stepper: Stepper,
@@ -340,6 +349,15 @@ impl VrmModel {
         notices.append(&mut draws.notices);
         notices.extend(first_person_notices);
         notices.extend(expression_notices);
+        let step_cost = stepping::step_cost(
+            tree.parents.len() as u64,
+            springs.joints(),
+            springs.pairs,
+            constraints.climbed(),
+        );
+        if !springs.springs.is_empty() {
+            notices.extend(stepping::reach_notice(step_cost));
+        }
 
         let expressions = Expressions::new(
             expression_binds,
@@ -380,6 +398,7 @@ impl VrmModel {
             look_at,
             constraints,
             springs,
+            step_cost,
             stepper: Stepper::default(),
             clips: BTreeMap::new(),
             retarget,
@@ -689,6 +708,16 @@ impl VrmModel {
         time: f64,
         data: &PerformanceData,
     ) -> Result<(Pose, BTreeMap<ExpressionKey, f32>), FrameError> {
+        self.base_pose_with(time, data, apply_tracks)
+    }
+
+    /// [`Self::base_pose`], with the tracks applied by `tracks`.
+    fn base_pose_with(
+        &self,
+        time: f64,
+        data: &PerformanceData,
+        tracks: TrackStage,
+    ) -> Result<(Pose, BTreeMap<ExpressionKey, f32>), FrameError> {
         let mut pose = self.tree.rest_pose();
         let motion = motion_pose(&self.clips, &data.motions, time)?;
         if motion.is_none() && data.tracks.is_empty() {
@@ -702,7 +731,7 @@ impl VrmModel {
             clip.hips
                 .map_or(rest, |raw| self.retarget.hips_world(raw, source)),
         );
-        apply_tracks(&data.tracks, time, &mut clip)?;
+        tracks(&data.tracks, time, &mut clip)?;
         self.retarget.apply(&clip, rest, &self.tree, &mut pose);
         Ok((pose, clip.expressions))
     }
@@ -719,9 +748,9 @@ impl VrmModel {
 
     /// The pose a spring step at `time` sees: the base pose with its
     /// constraints, without the frame's own lookAt and expressions (see
-    /// `stepping`).
+    /// `stepping`). `data`'s tracks are checked (`tracks::check_tracks`).
     pub(crate) fn step_pose(&self, time: f64, data: &PerformanceData) -> Result<Pose, FrameError> {
-        let (mut pose, _) = self.base_pose(time, data)?;
+        let (mut pose, _) = self.base_pose_with(time, data, apply_checked_tracks)?;
         self.apply_constraints(&mut pose);
         Ok(pose)
     }
@@ -775,6 +804,18 @@ impl VrmModel {
 
     pub(crate) fn springs(&self) -> &Springs {
         &self.springs
+    }
+
+    /// A spring step's work in `stepping`'s units, before the motions and
+    /// tracks.
+    pub(crate) fn step_cost(&self) -> u64 {
+        self.step_cost
+    }
+
+    /// The channels the layer's clip `name` samples (none for a clip the
+    /// layer did not open, which no frame plays).
+    pub(crate) fn clip_channels(&self, name: &str) -> u64 {
+        self.clips.get(name).map_or(0, Clip::channels)
     }
 
     /// Keeps the springs' states in `cache`, which the process's other

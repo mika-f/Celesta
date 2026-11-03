@@ -385,6 +385,18 @@ fn vrma_moves_seed_san() {
     assert!(swung, "no spring joint turned more than 1° at 2 s");
 }
 
+/// The model's spring bones step the whole four hours the plugin steps
+/// any avatar's: no notice says they reach less.
+fn assert_steps_four_hours(model: &VrmModel) {
+    let notices = model.notices();
+    assert!(
+        !notices
+            .iter()
+            .any(|notice| notice.message.contains("spring bones are stepped for")),
+        "{notices:?}"
+    );
+}
+
 #[test]
 fn seed_san_opens() {
     let Some(path) = sample("Seed-san.vrm") else {
@@ -405,6 +417,7 @@ fn seed_san_opens() {
             .any(|notice| notice.message.contains("drawn as unlit base colour")),
         "{notices:?}"
     );
+    assert_steps_four_hours(&model);
 
     // Out of order, as a renderer may ask, a frame is what playing the
     // times in order on a fresh model gives.
@@ -431,6 +444,8 @@ fn constraint_twist_sample_opens_with_bone_look_at() {
     };
     let cache = TempDir::new().unwrap();
     let mut model = load(&path, &cache);
+    // 171 nodes, 57 moving joints, 529 joint–collider pairs, and aims.
+    assert_steps_four_hours(&model);
     let eyes = [HumanBone::LeftEye, HumanBone::RightEye].map(|bone| {
         model
             .humanoid()

@@ -33,13 +33,22 @@
 //!   while it steps, so it is never evicted by its own request, and keeps
 //!   checkpoints only within what the others leave; its cursor is always
 //!   kept. So the states kept are at most the ceiling plus one cursor.
-//! - **Bounds:** a frame past [`MAX_SPRING_STEPS`] is refused before any
-//!   state is looked up: a request from a cold start runs every step up to
-//!   its time.
+//! - **Bounds:** a request from a cold start runs every step up to its
+//!   time, so a frame is refused, before any state is looked up, past
+//!   [`MAX_SPRING_STEPS`] or when its steps would take more than
+//!   [`MAX_STEP_WORK`]: `(n + 1) × cost`, the cost of a step being the
+//!   model's ([`step_cost`], fixed when it opens) plus its data's (each
+//!   motion's clip channels and each track keyframe, which every step
+//!   reads). Both depend on the model, the data, and the time alone, never
+//!   on what is kept, so a frame refused cold is refused warm. A model
+//!   that cannot step four hours this way says how far it can when it
+//!   opens ([`reach_notice`]).
 
 use crate::model::{FrameError, VrmModel};
 use crate::provider::PerformanceData;
 use crate::springs::SpringState;
+use crate::tracks::check_tracks;
+use celesta_plugin::{Notice, NoticeLevel};
 use glam::Vec3;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -56,6 +65,18 @@ pub const CHECKPOINT_STEPS: u64 = 30;
 /// A frame further in is refused, since a request from a cold start (or one
 /// whose performance was dropped) steps all the way from 0 s.
 pub const MAX_SPRING_STEPS: u64 = 4 * 3600 * 60;
+
+/// The most work a frame's steps may take, in [`step_cost`]'s units (a
+/// unit is a few nanoseconds of a laptop core, so the worst frame takes
+/// seconds). A fence against hostile files: Seed-san (610 units a step)
+/// and UniVRM's constraint twist sample (2,183) reach [`MAX_SPRING_STEPS`]
+/// within it, while a file of a million empty nodes steps about 35 s of a
+/// layer.
+pub const MAX_STEP_WORK: u64 = 1 << 31;
+
+/// What any step takes beyond its nodes, joints, pairs, and climbs, in
+/// [`step_cost`]'s units.
+const STEP_BASE_COST: u64 = 300;
 
 /// The most bytes of spring states the plugin's process keeps, over every
 /// model and performance. A ceiling against hostile files, not a size for
@@ -264,6 +285,8 @@ pub(crate) struct Stepper {
     model: u64,
     /// [`MAX_SPRING_STEPS`], or a test's.
     max_steps: u64,
+    /// [`MAX_STEP_WORK`], or a test's.
+    max_work: u64,
     /// The steps run, for tests.
     #[cfg(test)]
     steps: std::cell::Cell<u64>,
@@ -285,12 +308,12 @@ impl Drop for Stepper {
 impl Stepper {
     /// A stepper keeping its states in `cache`.
     pub(crate) fn new(cache: &SharedSpringCache) -> Self {
-        Self::with_limits(cache, MAX_SPRING_STEPS)
+        Self::with_limits(cache, MAX_SPRING_STEPS, MAX_STEP_WORK)
     }
 
     /// A stepper keeping its states in `cache`, refusing frames past
-    /// `max_steps`.
-    pub(crate) fn with_limits(cache: &SharedSpringCache, max_steps: u64) -> Self {
+    /// `max_steps` or whose steps take more than `max_work`.
+    pub(crate) fn with_limits(cache: &SharedSpringCache, max_steps: u64, max_work: u64) -> Self {
         let model = {
             let mut cache = cache.lock();
             cache.models += 1;
@@ -300,6 +323,7 @@ impl Stepper {
             cache: cache.clone(),
             model,
             max_steps,
+            max_work,
             #[cfg(test)]
             steps: std::cell::Cell::new(0),
         }
@@ -322,6 +346,25 @@ impl Stepper {
                 self.max_steps
             )));
         }
+        let cost = model.step_cost().saturating_add(data_cost(model, data));
+        let work = (last + 1).saturating_mul(cost);
+        if work > self.max_work {
+            return Err(FrameError(format!(
+                "this frame is {time} s into the layer, past {}: its {} steps of {cost} work units \
+                 each take {work}, more than the {} a frame may take",
+                reach(cost, self.max_work).map_or_else(
+                    || "any frame the VRM plugin steps this avatar's spring bones to".to_owned(),
+                    |seconds| format!(
+                        "the {seconds} s up to which the VRM plugin steps this avatar's spring \
+                         bones with these motions and tracks"
+                    )
+                ),
+                last + 1,
+                self.max_work
+            )));
+        }
+        // Checked once here, so the steps only read them.
+        check_tracks(&data.tracks)?;
         let id = (self.model, performance_key(data)?);
         let springs = model.springs();
         let tree = model.tree();
@@ -416,6 +459,67 @@ impl Stepper {
         assert_eq!(cache.bytes, counted, "the cache's running total drifted");
         cache.bytes
     }
+}
+
+/// A spring step's work, in units of a few nanoseconds, for a model of
+/// `nodes` nodes whose springs move `joints` joints and check `pairs`
+/// joint–collider pairs, and whose aim constraints climb `climbed` nodes:
+/// `300 + nodes + joints + 3 × pairs + climbed`. A step clones and walks
+/// every node (the pose, the retarget, the springs' transforms), climbs
+/// for each aim, moves each joint, and checks each pair (about three
+/// units). Within a factor of two of what the steps take, which is all a
+/// fence needs.
+pub(crate) fn step_cost(nodes: u64, joints: u64, pairs: u64, climbed: u64) -> u64 {
+    STEP_BASE_COST
+        .saturating_add(nodes)
+        .saturating_add(joints)
+        .saturating_add(pairs.saturating_mul(3))
+        .saturating_add(climbed)
+}
+
+/// What `data` adds to each step's work: each motion's clip channels (and
+/// one for the motion), since a step may sample every motion in a fade,
+/// and each track keyframe, since reading a track walks its keyframes.
+fn data_cost(model: &VrmModel, data: &PerformanceData) -> u64 {
+    let motions = data.motions.iter().fold(0u64, |sum, motion| {
+        sum.saturating_add(1 + model.clip_channels(&motion.clip))
+    });
+    data.tracks
+        .values()
+        .fold(motions, |sum, track| sum.saturating_add(track.keyframes()))
+}
+
+/// The latest time, in seconds floored to the hundredth, a frame reaches
+/// when each step costs `cost` and a frame may take `max_work`: steps
+/// `0..=n` with `(n + 1) × cost ≤ max_work`. `None` when not even step 0
+/// fits.
+fn reach(cost: u64, max_work: u64) -> Option<f64> {
+    let last = (max_work / cost.max(1)).checked_sub(1)?;
+    Some((last * 100 / SPRING_HZ as u64) as f64 / 100.0)
+}
+
+/// A warning, for a model with springs whose steps cost `cost` before any
+/// motion or track, that its frames reach less than [`MAX_SPRING_STEPS`]
+/// under [`MAX_STEP_WORK`]; `None` when they reach it.
+pub(crate) fn reach_notice(cost: u64) -> Option<Notice> {
+    let last = (MAX_STEP_WORK / cost.max(1)).checked_sub(1);
+    if last.is_some_and(|last| last >= MAX_SPRING_STEPS) {
+        return None;
+    }
+    let reach = reach(cost, MAX_STEP_WORK).map_or_else(
+        || "no frame of a layer".to_owned(),
+        |seconds| format!("frames up to {seconds} s into a layer"),
+    );
+    Some(Notice {
+        level: NoticeLevel::Warning,
+        message: format!(
+            "this avatar's spring bones are stepped for {reach} (less with motions and \
+             tracks), short of the {} s the VRM plugin steps other avatars for: each step takes \
+             {cost} work units for its nodes, spring joints, collider checks, and aim \
+             constraints, and a frame may take {MAX_STEP_WORK}; later frames are refused",
+            MAX_SPRING_STEPS / SPRING_HZ as u64
+        ),
+    })
 }
 
 /// `data`'s performance key: the SHA-256 of its motions and tracks as JSON,
@@ -794,12 +898,102 @@ mod tests {
                 "{error}"
             );
         }
-        *model.stepper_mut() = Stepper::with_limits(&SharedSpringCache::default(), 120);
+        *model.stepper_mut() =
+            Stepper::with_limits(&SharedSpringCache::default(), 120, MAX_STEP_WORK);
         render(&mut model, 2.0, &a());
         assert!(model.render(2.0 + 1.0 / SPRING_HZ, &a()).is_err());
 
         // An avatar without springs has no clock to run.
         let (mut still, _still) = open_vrm(&SyntheticVrm::avatar());
         render(&mut still, past, &a());
+    }
+
+    /// Whether a model's notices warn of its springs' reach.
+    fn reach_warnings(model: &VrmModel) -> Vec<&str> {
+        model
+            .notices()
+            .iter()
+            .filter(|notice| notice.message.contains("spring bones are stepped for"))
+            .map(|notice| {
+                assert_eq!(notice.level, NoticeLevel::Warning);
+                notice.message.as_str()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn frames_past_the_work_fence_are_refused() {
+        let (mut model, _files) = open();
+        // 25 nodes, two moving joints, no colliders or aims.
+        assert_eq!(model.step_cost(), 300 + 25 + 2);
+        assert!(reach_warnings(&model).is_empty());
+        // The clip's channels and one for the motion; a keyframe more.
+        let cost_a = model.step_cost() + data_cost(&model, &a());
+        assert_eq!(
+            cost_a,
+            model.step_cost() + 1 + model.clip_channels("motion0")
+        );
+        assert_eq!(data_cost(&model, &b()), cost_a - model.step_cost() + 1);
+
+        // A frame may take steps 0..=120 of A.
+        let limit = 121 * cost_a;
+        let fenced = |model: &mut VrmModel| {
+            *model.stepper_mut() =
+                Stepper::with_limits(&SharedSpringCache::default(), MAX_SPRING_STEPS, limit);
+        };
+        fenced(&mut model);
+        render(&mut model, 2.0, &a());
+        let error = model.render(2.0 + 1.0 / SPRING_HZ, &a()).unwrap_err().0;
+        assert!(
+            error.contains(&format!(
+                "past the 2 s up to which the VRM plugin steps this avatar's spring bones with \
+                 these motions and tracks: its 122 steps of {cost_a} work units each take {}, \
+                 more than the {limit} a frame may take",
+                122 * cost_a
+            )),
+            "{error}"
+        );
+        // B's keyframe costs a unit a step: 2 s is past it.
+        assert!(model.render(2.0, &b()).is_err());
+        // Refused before any step, warm or cold.
+        let (mut cold, _cold) = open();
+        fenced(&mut cold);
+        assert!(cold.render(2.0 + 1.0 / SPRING_HZ, &a()).is_err());
+        assert_eq!(cold.stepper().steps(), 0);
+        assert_eq!(cold.stepper().performances(), 0);
+    }
+
+    #[test]
+    fn many_nodes_shorten_the_reach() {
+        // 200,000 empty nodes outside the scene: each step clones them.
+        const EXTRA: u64 = 200_000;
+        let mut vrm = SyntheticVrm::avatar();
+        vrm.extensions.insert(VRMC_SPRING_BONE.into(), hair());
+        let glb = vrm.glb_with(|root| {
+            let nodes = root["nodes"].as_array_mut().unwrap();
+            nodes.extend((0..EXTRA).map(|_| json!({})));
+        });
+        let directory = TempDir::new().unwrap();
+        let mut model = VrmModel::load_slice(&glb, &directory.path().join("cache")).unwrap();
+        let cost = 300 + 25 + EXTRA + 2;
+        assert_eq!(model.step_cost(), cost);
+        // 2^31 units: steps 0..=n with (n + 1) × cost within them.
+        let last = MAX_STEP_WORK / cost - 1;
+        let seconds = (last * 100 / 60) as f64 / 100.0;
+        assert!(seconds < 180.0, "{seconds}");
+        let warnings = reach_warnings(&model);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(
+            warnings[0].contains(&format!("frames up to {seconds} s into a layer")),
+            "{}",
+            warnings[0]
+        );
+        assert!(warnings[0].contains(&format!("each step takes {cost} work units")));
+
+        // A frame an hour in is refused before any step.
+        let still = PerformanceData::default();
+        let error = model.render(3600.0, &still).unwrap_err().0;
+        assert!(error.contains(&format!("past the {seconds} s")), "{error}");
+        assert_eq!(model.stepper().steps(), 0);
     }
 }

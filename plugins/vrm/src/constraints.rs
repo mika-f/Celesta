@@ -163,6 +163,8 @@ struct Constraint {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Constraints {
     constraints: Vec<Constraint>,
+    /// The nodes a frame's aims climb (see the module documentation).
+    climbed: u64,
 }
 
 impl Constraints {
@@ -264,7 +266,15 @@ impl Constraints {
                  {AIM_CLIMB_LIMIT} the VRM plugin allows"
             )));
         }
-        Ok(Self { constraints })
+        Ok(Self {
+            constraints,
+            climbed,
+        })
+    }
+
+    /// The nodes a frame's aims climb.
+    pub(crate) fn climbed(&self) -> u64 {
+        self.climbed
     }
 
     /// Applies every constraint to `pose`, a pose of `tree`, in order.

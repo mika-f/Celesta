@@ -15,7 +15,9 @@
 //!   rest position when no motion moves them).
 //! - **Data** is checked every frame, whatever its time: bone names,
 //!   axes, and each keyframe (a time with a timescale, times in order,
-//!   values finite as `f32`), each refusal naming its key.
+//!   values finite as `f32`), each refusal naming its key. The spring
+//!   steps a frame runs read the tracks the frame checked, so each step
+//!   costs only the reading.
 
 use crate::humanoid::HumanBone;
 use crate::model::FrameError;
@@ -43,6 +45,30 @@ pub struct TrackData {
     pub z: Option<KeyframeAnimation<f64>>,
 }
 
+impl TrackData {
+    /// Its six axes by name, in pitch, yaw, roll, x, y, z order.
+    fn axes(&self) -> [(&'static str, &Option<KeyframeAnimation<f64>>); 6] {
+        [
+            ("pitch", &self.pitch),
+            ("yaw", &self.yaw),
+            ("roll", &self.roll),
+            ("x", &self.x),
+            ("y", &self.y),
+            ("z", &self.z),
+        ]
+    }
+
+    /// Its keyframes over every axis, each of which a reading walks.
+    pub(crate) fn keyframes(&self) -> u64 {
+        self.axes()
+            .into_iter()
+            .filter_map(|(_, animation)| animation.as_ref())
+            .fold(0, |sum, animation| {
+                sum.saturating_add(animation.keyframes.len() as u64)
+            })
+    }
+}
+
 /// Applies `tracks` at `time` seconds to `pose`: each bone's turn after its
 /// rotation (identity when the pose lacks the bone), and the hips' move
 /// added to `pose.hips` when it is set. Every track is checked first.
@@ -51,23 +77,19 @@ pub(crate) fn apply_tracks(
     time: f64,
     pose: &mut ClipPose,
 ) -> Result<(), FrameError> {
-    let at = track_time(time);
+    check_tracks(tracks)?;
+    apply_checked_tracks(tracks, time, pose)
+}
+
+/// Checks `tracks` whatever the time: bone names, axes, and keyframes.
+pub(crate) fn check_tracks(tracks: &BTreeMap<String, TrackData>) -> Result<(), FrameError> {
     for (name, track) in tracks {
         let Some(bone) = HumanBone::from_name(name) else {
             return Err(FrameError(format!(
                 "tracks name {name:?}, which is not a humanoid bone"
             )));
         };
-        let axes = [
-            ("pitch", &track.pitch),
-            ("yaw", &track.yaw),
-            ("roll", &track.roll),
-            ("x", &track.x),
-            ("y", &track.y),
-            ("z", &track.z),
-        ];
-        let mut values = [None; 6];
-        for (slot, (axis, animation)) in values.iter_mut().zip(axes) {
+        for (axis, animation) in track.axes() {
             let Some(animation) = animation else {
                 continue;
             };
@@ -76,7 +98,29 @@ pub(crate) fn apply_tracks(
                     "tracks.{name}.{axis}: only hips takes x, y, z tracks"
                 )));
             }
-            *slot = Some(value(&format!("tracks.{name}.{axis}"), animation, at)?);
+            check_keyframes(&format!("tracks.{name}.{axis}"), animation)?;
+        }
+    }
+    Ok(())
+}
+
+/// [`apply_tracks`] for `tracks` that [`check_tracks`] passed: what a
+/// spring step runs, its request having checked them once.
+pub(crate) fn apply_checked_tracks(
+    tracks: &BTreeMap<String, TrackData>,
+    time: f64,
+    pose: &mut ClipPose,
+) -> Result<(), FrameError> {
+    let at = track_time(time);
+    for (name, track) in tracks {
+        let Some(bone) = HumanBone::from_name(name) else {
+            continue;
+        };
+        let mut values = [None; 6];
+        for (slot, (axis, animation)) in values.iter_mut().zip(track.axes()) {
+            if let Some(animation) = animation {
+                *slot = Some(value(&format!("tracks.{name}.{axis}"), animation, at)?);
+            }
         }
         let [pitch, yaw, roll, x, y, z] = values;
         if pitch.is_some() || yaw.is_some() || roll.is_some() {
@@ -102,10 +146,10 @@ fn track_time(seconds: f64) -> Time {
     Time::new((seconds * 1_000_000.0).round() as i64, 1_000_000)
 }
 
-/// `animation` (at `key`) at `at`, its keyframes checked: at least one,
-/// each time with a timescale and none before the one before it, each
-/// value finite as an `f32`.
-fn value(key: &str, animation: &KeyframeAnimation<f64>, at: Time) -> Result<f32, FrameError> {
+/// Checks `animation`'s keyframes (at `key`): at least one, each time with
+/// a timescale and none before the one before it, each value finite as an
+/// `f32`.
+fn check_keyframes(key: &str, animation: &KeyframeAnimation<f64>) -> Result<(), FrameError> {
     let keyframes = &animation.keyframes;
     if keyframes.is_empty() {
         return Err(FrameError(format!("{key} has no keyframes")));
@@ -137,6 +181,11 @@ fn value(key: &str, animation: &KeyframeAnimation<f64>, at: Time) -> Result<f32,
             }
         }
     }
+    Ok(())
+}
+
+/// `animation` (at `key`), its keyframes checked, at `at`.
+fn value(key: &str, animation: &KeyframeAnimation<f64>, at: Time) -> Result<f32, FrameError> {
     let (from, to, eased) = keyframe_segment(animation, at)
         .map_err(|error| FrameError(format!("{key} cannot be read at {at:?}: {error}")))?;
     let value = (from + (to - from) * eased) as f32;

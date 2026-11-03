@@ -119,6 +119,8 @@ pub(crate) struct SpringState {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Springs {
     pub springs: Vec<Spring>,
+    /// The joint–collider pairs a step checks.
+    pub pairs: u64,
 }
 
 /// `VRMC_springBone_extended_collider`, read here: `vrm-spec` has no types
@@ -335,7 +337,18 @@ impl Springs {
                 center,
             });
         }
-        Ok(Self { springs })
+        Ok(Self {
+            springs,
+            pairs: work,
+        })
+    }
+
+    /// The joints that move, over every spring.
+    pub(crate) fn joints(&self) -> u64 {
+        self.springs
+            .iter()
+            .map(|spring| spring.joints.len() as u64)
+            .sum()
     }
 
     /// Every joint at rest in `pose`, still (`InitCurrentTailsJob`): each

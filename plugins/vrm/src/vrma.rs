@@ -414,6 +414,12 @@ impl Clip {
         }
     }
 
+    /// The channels a sample reads: its bones, its hips, and its
+    /// expressions.
+    pub(crate) fn channels(&self) -> u64 {
+        (self.bones.len() + usize::from(self.hips.is_some()) + self.expressions.len()) as u64
+    }
+
     /// The hips' rest position in the clip's root space (`H₀`).
     pub fn hips_rest(&self) -> Vec3 {
         self.hips_rest
