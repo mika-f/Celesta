@@ -105,19 +105,7 @@ impl Document {
     /// are `data:` URIs. JSON past [`JSON_LIMIT`] is refused: a `.vrm`'s JSON
     /// chunk, or a glTF JSON file as a whole, its `data:` buffers included.
     pub(crate) fn parse(bytes: &[u8]) -> Result<Self, LoadError> {
-        let (json, blob) = if bytes.starts_with(b"glTF") {
-            let glb = gltf::binary::Glb::from_slice(bytes)?;
-            (glb.json, glb.bin.map(Cow::into_owned))
-        } else {
-            (Cow::Borrowed(bytes), None)
-        };
-        if json.len() > JSON_LIMIT {
-            return Err(LoadError::Invalid(format!(
-                "the glTF JSON is {} bytes, more than the {} MiB the VRM plugin reads",
-                json.len(),
-                JSON_LIMIT >> 20
-            )));
-        }
+        let (json, blob) = json_and_blob(bytes)?;
 
         // Which VRM this is comes first, before glTF's own validation, so a
         // VRM 0.x file always gets the conversion hint.
@@ -148,18 +136,7 @@ impl Document {
         let root = gltf::json::Root::from_slice(&json).map_err(gltf::Error::Deserialize)?;
         let gltf = gltf::Document::from_json(root)?;
         check_humanoid(&vrm, gltf.nodes().len())?;
-
-        for buffer in gltf.buffers() {
-            if let gltf::buffer::Source::Uri(uri) = buffer.source()
-                && !uri.starts_with("data:")
-            {
-                return Err(LoadError::Invalid(format!(
-                    "buffer {} is an external file; a .vrm keeps everything in itself",
-                    buffer.index()
-                )));
-            }
-        }
-        let buffers = gltf::import_buffers(&gltf, None, blob)?;
+        let buffers = embedded_buffers(&gltf, blob, ".vrm")?;
 
         let mtoon = gltf
             .materials()
@@ -188,6 +165,50 @@ impl Document {
             mtoon,
         })
     }
+}
+
+/// A glTF file's JSON and, for binary glTF, its binary chunk.
+pub(crate) type Chunks<'a> = (Cow<'a, [u8]>, Option<Vec<u8>>);
+
+/// A glTF file's JSON and binary chunk: a binary glTF file's two chunks, or
+/// a glTF JSON file as a whole. JSON past [`JSON_LIMIT`] is refused before
+/// it is parsed.
+pub(crate) fn json_and_blob(bytes: &[u8]) -> Result<Chunks<'_>, LoadError> {
+    let (json, blob) = if bytes.starts_with(b"glTF") {
+        let glb = gltf::binary::Glb::from_slice(bytes)?;
+        (glb.json, glb.bin.map(Cow::into_owned))
+    } else {
+        (Cow::Borrowed(bytes), None)
+    };
+    if json.len() > JSON_LIMIT {
+        return Err(LoadError::Invalid(format!(
+            "the glTF JSON is {} bytes, more than the {} MiB the VRM plugin reads",
+            json.len(),
+            JSON_LIMIT >> 20
+        )));
+    }
+    Ok((json, blob))
+}
+
+/// `gltf`'s buffers, each the binary chunk or a `data:` URI: a buffer
+/// naming another file is refused, since a `kind` file (`.vrm`, `.vrma`)
+/// keeps everything in itself.
+pub(crate) fn embedded_buffers(
+    gltf: &gltf::Document,
+    blob: Option<Vec<u8>>,
+    kind: &str,
+) -> Result<Vec<gltf::buffer::Data>, LoadError> {
+    for buffer in gltf.buffers() {
+        if let gltf::buffer::Source::Uri(uri) = buffer.source()
+            && !uri.starts_with("data:")
+        {
+            return Err(LoadError::Invalid(format!(
+                "buffer {} is an external file; a {kind} keeps everything in itself",
+                buffer.index()
+            )));
+        }
+    }
+    Ok(gltf::import_buffers(gltf, None, blob)?)
 }
 
 /// Every required bone is there, and each bone names a node of its own.

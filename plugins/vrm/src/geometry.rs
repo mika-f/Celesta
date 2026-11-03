@@ -49,7 +49,8 @@ const MAX_TARGETS: usize = 1 << 16;
 /// primitive of a mesh over one set of vertex accessors). What they decode
 /// counts toward a budget, [`READ_BUDGET`] by default.
 pub(crate) struct Accessors<'d> {
-    document: &'d Document,
+    /// The file's buffers, by glTF buffer index.
+    buffers: &'d [gltf::buffer::Data],
     budget: u64,
     left: Cell<u64>,
     /// By accessor index and the element type it was decoded to. Looked up,
@@ -63,8 +64,14 @@ impl<'d> Accessors<'d> {
     }
 
     pub(crate) fn with_budget(document: &'d Document, budget: u64) -> Self {
+        Self::of_buffers(&document.buffers, budget)
+    }
+
+    /// The accessors over `buffers`, a file's that is not a `Document`
+    /// (a `.vrma`), with `budget` bytes to decode.
+    pub(crate) fn of_buffers(buffers: &'d [gltf::buffer::Data], budget: u64) -> Self {
         Self {
-            document,
+            buffers,
             budget,
             left: Cell::new(budget),
             decoded: RefCell::new(HashMap::new()),
@@ -375,6 +382,11 @@ pub(crate) enum At<'a, 'd> {
         primitive: usize,
     },
     Skin(usize),
+    /// An animation's sampler: `animation 0 sampler 2`.
+    Sampler {
+        animation: usize,
+        sampler: usize,
+    },
 }
 
 impl fmt::Display for At<'_, '_> {
@@ -385,8 +397,26 @@ impl fmt::Display for At<'_, '_> {
                 None => write!(f, "mesh {} primitive {primitive}", mesh.index()),
             },
             At::Skin(skin) => write!(f, "skin {skin}"),
+            At::Sampler { animation, sampler } => {
+                write!(f, "animation {animation} sampler {sampler}")
+            }
         }
     }
+}
+
+/// `accessor`'s `FLOAT` elements of `dimensions` (`T` is `f32`, or an array
+/// of as many), checked as every accessor is, decoded once, and counted
+/// toward `accessors`' budget: an animation sampler's times and values.
+pub(crate) fn floats<'d, T: Item + 'static>(
+    accessors: &Accessors<'d>,
+    at: At<'_, 'd>,
+    accessor: &Accessor<'d>,
+    what: &str,
+    dimensions: Dimensions,
+) -> Result<Rc<Vec<T>>, LoadError> {
+    let streams = Streams { accessors, at };
+    streams.expect(accessor, what, dimensions, &[DataType::F32])?;
+    streams.decoded(accessor, what, None, || streams.read(accessor, what))
 }
 
 impl At<'_, '_> {
@@ -404,7 +434,6 @@ struct Streams<'a, 'd> {
 impl<'d> Streams<'_, 'd> {
     fn buffer(&self, buffer: gltf::Buffer<'d>) -> Option<&'d [u8]> {
         self.accessors
-            .document
             .buffers
             .get(buffer.index())
             .map(|data| data.0.as_slice())
@@ -980,18 +1009,18 @@ mod tests {
             Err(error) => panic!("the file did not parse: {error}"),
         };
         let accessors = Accessors::new(&document);
-        read_mesh(&accessors, mesh, tangents, GEOMETRY_BUDGET)
+        read_mesh(&document, &accessors, mesh, tangents, GEOMETRY_BUDGET)
     }
 
-    /// Mesh `mesh`'s primitives through `accessors`, each with `budget`
-    /// bytes of geometry to make.
-    fn read_mesh(
-        accessors: &Accessors,
+    /// Mesh `mesh`'s primitives of `document` through `accessors` (over its
+    /// buffers), each with `budget` bytes of geometry to make.
+    fn read_mesh<'d>(
+        document: &'d Document,
+        accessors: &Accessors<'d>,
         mesh: usize,
         tangents: bool,
         budget: u64,
     ) -> Result<Vec<Option<Geometry>>, LoadError> {
-        let document = accessors.document;
         let mesh = document.gltf.meshes().nth(mesh).unwrap();
         let skin = (mesh.index() == 0).then(|| document.gltf.skins().next().unwrap());
         mesh.primitives()
@@ -1033,14 +1062,14 @@ mod tests {
         // Body's own two primitives.
         let alone = copied_box(0, |_| {});
         let accessors = Accessors::new(&alone);
-        read_mesh(&accessors, 0, false, GEOMETRY_BUDGET).unwrap();
+        read_mesh(&alone, &accessors, 0, false, GEOMETRY_BUDGET).unwrap();
         let once = accessors.decoded();
         assert!(once > 0);
 
         // 500 more primitives over the same accessors decode nothing more.
         let copied = copied_box(500, |_| {});
         let accessors = Accessors::new(&copied);
-        let read = read_mesh(&accessors, 0, false, GEOMETRY_BUDGET).unwrap();
+        let read = read_mesh(&copied, &accessors, 0, false, GEOMETRY_BUDGET).unwrap();
         assert_eq!(read.len(), 502);
         assert_eq!(read[501], read[0]);
         assert_eq!(accessors.decoded(), once);
@@ -1078,7 +1107,7 @@ mod tests {
         // Room for Body's own primitives and ten aliases of 12 positions.
         let budget = alone.decoded() + 10 * 12 * 12;
         let accessors = Accessors::with_budget(&document, budget);
-        let message = match read_mesh(&accessors, 0, false, GEOMETRY_BUDGET) {
+        let message = match read_mesh(&document, &accessors, 0, false, GEOMETRY_BUDGET) {
             Ok(_) => panic!("every alias was decoded"),
             Err(error) => error.to_string(),
         };
@@ -1131,7 +1160,7 @@ mod tests {
             root["meshes"][1]["primitives"] = json!(vec![primitive; PRIMITIVES]);
         }));
         let accessors = Accessors::new(&document);
-        let read = read_mesh(&accessors, 1, false, GEOMETRY_BUDGET).unwrap();
+        let read = read_mesh(&document, &accessors, 1, false, GEOMETRY_BUDGET).unwrap();
         assert_eq!(read.len(), PRIMITIVES);
         for geometry in &read {
             let geometry = geometry.as_ref().unwrap();

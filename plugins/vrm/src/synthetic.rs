@@ -18,7 +18,10 @@
 //!   glTF), and `Unlit` (`KHR_materials_unlit`);
 //! - expressions `happy`, `blink`, `aa`, `lookLeft`, and a custom `wink`; a
 //!   bone lookAt; permissive-for-video usage terms.
+//!
+//! [`SyntheticVrma`] builds a VRM animation (`.vrma`) the same way.
 
+use glam::{Quat, Vec3};
 use image::{ExtendedColorType, ImageEncoder, codecs::png::PngEncoder};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeSet;
@@ -601,6 +604,160 @@ impl SyntheticVrm {
                 { "wrapS": 33071, "wrapT": 33648, "magFilter": 9728, "minFilter": 9728 },
             ],
             "images": images,
+            "accessors": bin.accessors,
+            "bufferViews": bin.views,
+            "buffers": [{ "byteLength": bin.data.len() }],
+        });
+        edit(&mut root);
+        glb(&root, bin.data)
+    }
+}
+
+/// The clip's nodes, by index.
+pub mod vrma_node {
+    pub const HIPS: usize = 0;
+    pub const SPINE: usize = 1;
+    pub const LEFT_UPPER_ARM: usize = 2;
+    pub const LEFT_LOWER_ARM: usize = 3;
+    /// The node whose translation x is `happy`'s weight.
+    pub const HAPPY: usize = 4;
+}
+
+/// How to build a VRM animation; [`SyntheticVrma::clip`] is the reference
+/// one: a humanoid whose bones all rest unrotated, the hips at
+/// (0, `hips_rest_y`, 0) at the scene's root, the spine 0.1 m above them,
+/// the left upper arm 0.25 m above the spine and 0.15 m to the left, and
+/// the left lower arm 0.25 m further left; one animation of one second.
+/// A key list left empty writes no channel.
+#[derive(Clone, Debug)]
+pub struct SyntheticVrma {
+    /// The hips' rest height, the rig's scale.
+    pub hips_rest_y: f32,
+    /// `leftUpperArm`'s rotation keys: (seconds, local rotation).
+    pub arm: Vec<(f32, Quat)>,
+    /// The hips' translation keys: (seconds, local translation).
+    pub hips: Vec<(f32, Vec3)>,
+    /// `happy`'s keys: (seconds, weight).
+    pub happy: Vec<(f32, f32)>,
+    /// Every sampler's: `"LINEAR"`, `"STEP"`, or `"CUBICSPLINE"` (with zero
+    /// tangents).
+    pub interpolation: &'static str,
+}
+
+impl SyntheticVrma {
+    /// The reference clip: over one second the left upper arm turns from
+    /// rest to Rz(−90°) (lowered), the hips travel 0.5 m to +Z, and `happy`
+    /// rises from 0 to 1, all `LINEAR`.
+    pub fn clip() -> Self {
+        let h = 1.0;
+        Self {
+            hips_rest_y: h,
+            arm: vec![
+                (0.0, Quat::IDENTITY),
+                (1.0, Quat::from_rotation_z(-std::f32::consts::FRAC_PI_2)),
+            ],
+            hips: vec![(0.0, Vec3::new(0.0, h, 0.0)), (1.0, Vec3::new(0.0, h, 0.5))],
+            happy: vec![(0.0, 0.0), (1.0, 1.0)],
+            interpolation: "LINEAR",
+        }
+    }
+
+    /// The clip as a `.vrma` (binary glTF) file.
+    pub fn glb(&self) -> Vec<u8> {
+        self.glb_with(|_| {})
+    }
+
+    /// The clip as a `.vrma` file whose root JSON `edit` changes first, for
+    /// files no field above describes. The binary chunk is the clip's.
+    pub fn glb_with(&self, edit: impl FnOnce(&mut Value)) -> Vec<u8> {
+        use vrma_node::*;
+        let cubic = self.interpolation == "CUBICSPLINE";
+        let mut bin = Bin::default();
+        let mut samplers = Vec::new();
+        let mut channels = Vec::new();
+        let mut keyed = |times: Vec<f32>, values: Vec<[f32; 4]>, kind: &str, node, path| {
+            if times.is_empty() {
+                return;
+            }
+            let times: Vec<[f32; 1]> = times.into_iter().map(|time| [time]).collect();
+            // glTF asks for an input's bounds; NaN has none to write.
+            let bounded = times.iter().all(|[time]| time.is_finite());
+            let input = bin.floats(&times, "SCALAR", bounded);
+            let values: Vec<[f32; 4]> = if cubic {
+                values
+                    .into_iter()
+                    .flat_map(|value| [[0.0; 4], value, [0.0; 4]])
+                    .collect()
+            } else {
+                values
+            };
+            let output = if kind == "VEC4" {
+                bin.floats(&values, kind, false)
+            } else {
+                let values: Vec<[f32; 3]> = values.iter().map(|&[x, y, z, _]| [x, y, z]).collect();
+                bin.floats(&values, kind, false)
+            };
+            channels.push(json!({
+                "sampler": samplers.len(),
+                "target": { "node": node, "path": path },
+            }));
+            samplers.push(json!({
+                "input": input,
+                "output": output,
+                "interpolation": self.interpolation,
+            }));
+        };
+        let (times, values) = self
+            .arm
+            .iter()
+            .map(|&(time, rotation)| (time, rotation.to_array()))
+            .unzip();
+        keyed(times, values, "VEC4", LEFT_UPPER_ARM, "rotation");
+        let (times, values) = self
+            .hips
+            .iter()
+            .map(|&(time, Vec3 { x, y, z })| (time, [x, y, z, 0.0]))
+            .unzip();
+        keyed(times, values, "VEC3", HIPS, "translation");
+        let (times, values) = self
+            .happy
+            .iter()
+            .map(|&(time, weight)| (time, [weight, 0.0, 0.0, 0.0]))
+            .unzip();
+        keyed(times, values, "VEC3", HAPPY, "translation");
+
+        let h = self.hips_rest_y;
+        let mut root = json!({
+            "asset": { "version": "2.0", "generator": "Celesta synthetic VRMA" },
+            "extensionsUsed": ["VRMC_vrm_animation"],
+            "extensions": {
+                "VRMC_vrm_animation": {
+                    "specVersion": "1.0",
+                    "humanoid": {
+                        "humanBones": {
+                            "hips": { "node": HIPS },
+                            "spine": { "node": SPINE },
+                            "leftUpperArm": { "node": LEFT_UPPER_ARM },
+                            "leftLowerArm": { "node": LEFT_LOWER_ARM },
+                        },
+                    },
+                    "expressions": { "preset": { "happy": { "node": HAPPY } } },
+                },
+            },
+            "scene": 0,
+            "scenes": [{ "nodes": [HIPS, HAPPY] }],
+            "nodes": [
+                { "name": "hips", "translation": [0.0, h, 0.0], "children": [SPINE] },
+                { "name": "spine", "translation": [0.0, 0.1, 0.0], "children": [LEFT_UPPER_ARM] },
+                {
+                    "name": "leftUpperArm",
+                    "translation": [0.15, 0.25, 0.0],
+                    "children": [LEFT_LOWER_ARM],
+                },
+                { "name": "leftLowerArm", "translation": [0.25, 0.0, 0.0] },
+                { "name": "happy" },
+            ],
+            "animations": [{ "channels": channels, "samplers": samplers }],
             "accessors": bin.accessors,
             "bufferViews": bin.views,
             "buffers": [{ "byteLength": bin.data.len() }],

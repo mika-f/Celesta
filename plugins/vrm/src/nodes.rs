@@ -42,7 +42,12 @@ impl NodeTree {
     /// The tree of `document`'s nodes; a node with two parents or a cycle
     /// is refused, as is a transform that is not finite in `f32`.
     pub(crate) fn new(document: &Document) -> Result<Self, LoadError> {
-        let gltf = &document.gltf;
+        Self::from_gltf(&document.gltf)
+    }
+
+    /// The tree of any glTF file's nodes (a `.vrma`'s too), refused as
+    /// [`Self::new`] refuses it.
+    pub(crate) fn from_gltf(gltf: &gltf::Document) -> Result<Self, LoadError> {
         let count = gltf.nodes().len();
         let mut parents: Vec<Option<usize>> = vec![None; count];
         let mut children = vec![Vec::new(); count];

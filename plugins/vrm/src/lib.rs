@@ -24,6 +24,7 @@ mod notices;
 mod provider;
 #[cfg(any(test, feature = "synthetic"))]
 pub mod synthetic;
+mod vrma;
 
 pub use camera::{
     CameraData, CameraPreset, ExplicitCamera, LightsData, REFERENCE_AMBIENT, REFERENCE_LIGHT,
@@ -35,6 +36,7 @@ pub use humanoid::{HumanBone, Humanoid};
 pub use model::{CANVAS, FrameError, VrmModel};
 pub use nodes::{NodeTree, Pose, Trs};
 pub use provider::{LookAtData, LookAtKeyword, PerformanceData, VrmProvider};
+pub use vrma::{Clip, ClipPose};
 
 /// The plugin's id, as its manifest and its layers name it.
 pub const PLUGIN: &str = "vrm";
