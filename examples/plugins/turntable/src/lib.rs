@@ -430,6 +430,7 @@ impl ContentProvider for TurntableProvider {
         .iter()
         .fold(IDENTITY, |world, step| multiply(&world, step));
         Ok(SceneFrame {
+            canvas: None,
             camera: Camera {
                 view: look_at_origin(EYE),
                 projection: Projection::Perspective {

@@ -240,6 +240,8 @@ struct GeometryHeader {
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SceneFrameHeader {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    canvas: Option<[f32; 2]>,
     camera: Camera,
     lights: Lights,
     time: f64,
@@ -737,12 +739,13 @@ fn decode_scene_model(message: &Message) -> Result<(ModelId, SceneModel), Protoc
     ))
 }
 
-/// `{"type":"frame"}` for a scene: the camera, lights, and every draw's
-/// state, then every skin's skinning matrices and every draw's morph
+/// `{"type":"frame"}` for a scene: the frame's own canvas when it has one,
+/// the camera, lights, and every draw's state, then every skin's skinning matrices and every draw's morph
 /// weights, each followed by the draw's parameters when it has any, in
 /// order.
 fn encode_scene_frame(frame: &SceneFrame) -> Message {
     let header = SceneFrameHeader {
+        canvas: frame.canvas,
         camera: frame.camera,
         lights: frame.lights.clone(),
         time: frame.time,
@@ -814,6 +817,7 @@ fn decode_scene_frame(message: &Message) -> Result<SceneFrame, ProtocolError> {
         .collect::<Result<_, ProtocolError>>()?;
     cursor.finish()?;
     Ok(SceneFrame {
+        canvas: header.canvas,
         camera: header.camera,
         lights: header.lights,
         time: header.time,
@@ -1330,6 +1334,7 @@ mod tests {
             *value = 1.0 + column as f32;
         }
         SceneFrame {
+            canvas: None,
             camera: Camera {
                 view: world,
                 projection: Projection::Perspective {
@@ -1418,6 +1423,26 @@ mod tests {
             decode_content_frame(&message, ContentKind::Scene).unwrap(),
             frame
         );
+    }
+
+    #[test]
+    fn scene_frame_canvas_round_trips() {
+        for canvas in [Some([1080.0, 1920.0]), None] {
+            let frame = ContentFrame::Scene(SceneFrame {
+                canvas,
+                ..scene_frame(0.5)
+            });
+            let message = encode_content_frame(&frame);
+            assert_eq!(
+                message.header.get("canvas").is_some(),
+                canvas.is_some(),
+                "{canvas:?}"
+            );
+            assert_eq!(
+                decode_content_frame(&message, ContentKind::Scene).unwrap(),
+                frame
+            );
+        }
     }
 
     fn custom(shader: usize, params: Vec<u8>) -> Material {

@@ -446,10 +446,12 @@ materials as `frame.lights` and `frame.ambient`.
   buffers that grow to the next power of two (at least 256 bytes) when a
   frame does not fit, are rewritten each frame, and do not shrink; their
   bind groups are made again only when a buffer is. After a frame without
-  a scene layer, all of it is let go. A scene layer marks its size as
-  drawn before the plugin is asked for its frame, so a frame that the
-  plugin fails, that is refused, or that has nothing to draw keeps the
-  canvas and buffers for the next.
+  a scene layer, all of it is let go. A scene layer marks the size its
+  model's last frame was drawn at as drawn before the plugin is asked for
+  its frame, so a frame that the plugin fails, that is refused, or that
+  has nothing to draw keeps the canvas and buffers for the next; a frame
+  that sets another canvas (`2026-11-03-plugin-scene-content.md`) marks
+  that size too once it arrives.
 
 ## Protocol (still version 1)
 

@@ -32,7 +32,7 @@ use crate::scene_material::{
     MAX_MATERIAL_PARAMS, MAX_MATERIAL_TEXTURES, MAX_SHADER_BYTES, check_material,
 };
 use crate::texture::LayerTexture;
-use celesta_plugin::scene::MAX_SCENE_SHADERS;
+use celesta_plugin::scene::{MAX_FRAME_CANVAS_SIDE, MAX_SCENE_SHADERS};
 use celesta_plugin::{
     AlphaMode, Camera, ColorSpace, CullFace, DrawState, EmptyTexel, Filter, Material, MaterialKind,
     MaterialOverrides, ModelId, Projection, SceneFrame, SceneModel, SceneShader, TextureRef,
@@ -129,10 +129,35 @@ pub(crate) fn scene_canvas_size(canvas: [f32; 2], density: f64, max_dimension: u
     size(scale.min(fits), f64::floor)
 }
 
+/// The canvas `frame` of `model` is drawn on: its own, or else the
+/// model's.
+pub(crate) fn frame_canvas(model: &SceneModel, frame: &SceneFrame) -> [f32; 2] {
+    frame.canvas.unwrap_or(model.canvas)
+}
+
+/// Why `frame`'s own canvas cannot be drawn on: a side that is not finite,
+/// not positive, or longer than `MAX_FRAME_CANVAS_SIDE`. Checked before the
+/// canvas is sized, so that it is refused rather than clamped.
+pub(crate) fn invalid_frame_canvas(frame: &SceneFrame) -> Option<String> {
+    let canvas = frame.canvas?;
+    if canvas
+        .iter()
+        .all(|size| size.is_finite() && *size > 0.0 && *size <= MAX_FRAME_CANVAS_SIDE)
+    {
+        return None;
+    }
+    Some(format!(
+        "the frame's canvas is {canvas:?}: each side must be finite, positive, and at most {MAX_FRAME_CANVAS_SIDE}"
+    ))
+}
+
 /// A scene model and its copy on the GPU.
 pub(crate) struct LoadedScene {
     pub(crate) id: ModelId,
     pub(crate) model: SceneModel,
+    /// The canvas its last frame was drawn on, which a layer marks used
+    /// before the plugin is asked for the next frame.
+    pub(crate) last_canvas: [f32; 2],
     /// One per `model.geometries` entry.
     pub(crate) geometries: Vec<GeometryBuffers>,
     /// One per `model.materials` entry: its textures and samplers, bound as
@@ -255,9 +280,10 @@ impl SceneFrameResources {
     }
 
     /// Keeps the canvas of `size`, and the buffers, past the next
-    /// `begin_frame`. A scene layer marks its size before anything can
-    /// fail, so that a frame that errors or has nothing to draw does not
-    /// let go of what the next frame draws with.
+    /// `begin_frame`. A scene layer marks the size its model's last frame
+    /// had before anything can fail, so that a frame that errors or has
+    /// nothing to draw does not let go of what the next frame draws with,
+    /// and the size of its frame's canvas once the frame says it.
     pub(crate) fn mark_used(&mut self, size: (u32, u32)) {
         self.used.insert(size);
     }
@@ -1908,9 +1934,10 @@ fn determinant(m: &[f32; 16]) -> f64 {
 }
 
 /// Why `frame` does not fit `model` (which `invalid_scene` passed), whose
-/// materials are drawn with `shaders`, one each: a draw it lacks or lists
-/// twice, morph weights or skinning matrices that do not match, parameters
-/// for a built-in material or of a length its shader's `Params` is not,
+/// materials are drawn with `shaders`, one each: a canvas of its own that
+/// `invalid_frame_canvas` refuses, a draw it lacks or lists twice, morph
+/// weights or skinning matrices that do not match, parameters for a
+/// built-in material or of a length its shader's `Params` is not,
 /// overrides for a custom material, a number that is not finite, or a
 /// camera that sees nothing.
 pub(crate) fn invalid_scene_frame(
@@ -1918,6 +1945,9 @@ pub(crate) fn invalid_scene_frame(
     shaders: &[Arc<CompiledShader>],
     frame: &SceneFrame,
 ) -> Option<String> {
+    if let Some(message) = invalid_frame_canvas(frame) {
+        return Some(message);
+    }
     if let Some(message) = invalid_camera(&frame.camera) {
         return Some(message);
     }
@@ -2402,6 +2432,7 @@ impl LoadedScene {
             .collect();
         Ok(Self {
             id,
+            last_canvas: model.canvas,
             model,
             geometries,
             materials,
@@ -2849,7 +2880,8 @@ impl GpuRenderer {
             )));
         }
 
-        let frame_uniform = frame_uniform(frame, model.canvas[0] / model.canvas[1]);
+        let canvas = frame_canvas(model, frame);
+        let frame_uniform = frame_uniform(frame, canvas[0] / canvas[1]);
         // Each queue write lands before this layer's commands, which are
         // submitted below, and after any earlier layer's.
         let SceneFrameResources {
@@ -3456,6 +3488,7 @@ mod tests {
     #[test]
     fn shading_eye_is_where_the_view_takes_the_origin_from() {
         let frame = |view: [f32; 16]| SceneFrame {
+            canvas: None,
             camera: Camera {
                 view,
                 projection: Projection::Perspective {

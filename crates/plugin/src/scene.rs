@@ -22,6 +22,9 @@ pub const MAX_MATERIAL_TEXTURES: usize = 12;
 /// The most bytes a scene shader's `Params` takes.
 pub const MAX_MATERIAL_PARAMS: usize = 512;
 
+/// The longest side, in pixels, of the canvas a scene frame sets.
+pub const MAX_FRAME_CANVAS_SIDE: f32 = 16_384.0;
+
 /// A scene's fixed part, sent once when its assets are opened.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SceneModel {
@@ -380,6 +383,12 @@ pub struct DrawInfo {
 /// A scene at one moment.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SceneFrame {
+    /// The layer's size in pixels for this frame, when it is not the
+    /// model's `canvas`: a resolution the composition sets, which the
+    /// frame's `data` carries and opening the model does not see. The
+    /// camera's aspect is this canvas's. Each side is finite, positive, and
+    /// at most `MAX_FRAME_CANVAS_SIDE`.
+    pub canvas: Option<[f32; 2]>,
     pub camera: Camera,
     pub lights: Lights,
     /// Seconds, for materials that animate their texture coordinates.

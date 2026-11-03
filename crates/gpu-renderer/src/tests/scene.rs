@@ -141,6 +141,7 @@ fn valid() -> Scenes {
             ],
         },
         frame: SceneFrame {
+            canvas: None,
             camera: Camera {
                 view,
                 projection: Projection::Perspective {
@@ -237,6 +238,7 @@ fn one_square() -> Scenes {
             }],
         },
         frame: SceneFrame {
+            canvas: None,
             camera: Camera {
                 view: translation(0.0, 0.0, -2.0),
                 projection: Projection::Orthographic {
@@ -1200,6 +1202,56 @@ fn zoomed_scene_canvas_is_capped() {
     );
     // The whole layer still renders, zoomed.
     renderer.render(&scene_at(0.0, 64.0)).unwrap();
+}
+
+#[test]
+fn frame_canvas_overrides_the_model_canvas() {
+    // The model's canvas is 64², the frame's 32 wide and 64 high.
+    let canvas_of = || {
+        let mut scenes = one_square();
+        scenes.frame.canvas = Some([32.0, 64.0]);
+        scenes
+    };
+    let Some(mut renderer) = renderer(transparent()) else {
+        return;
+    };
+    renderer.renderer = renderer.renderer.with_content_provider(canvas_of());
+    let assets = BTreeMap::new();
+    let content = crate::mesh::PluginContent {
+        plugin: "scenes",
+        assets: &assets,
+        time: 0.0,
+        data: &serde_json::Value::Null,
+    };
+    let (texture, canvas) = renderer.plugin_texture("scenes", &content, 1.0).unwrap();
+    assert_eq!(canvas, [32.0, 64.0]);
+    assert_eq!((texture.width, texture.height), (32, 64));
+
+    let Some(frame) = render_scenes(canvas_of()) else {
+        return;
+    };
+    // 2 m high on 64 pixels, so 1 m wide on 32: the 1 m square fills the
+    // layer's width and rows 16 to 47, as wide as it is high. Seen with
+    // the model's aspect, it would be 16 pixels wide.
+    assert_pixel(&frame, 2, 32, WHITE);
+    assert_pixel(&frame, 29, 32, WHITE);
+    assert_pixel(&frame, 16, 16, WHITE);
+    assert_pixel(&frame, 16, 47, WHITE);
+    assert_pixel(&frame, 16, 15, CLEAR);
+    assert_pixel(&frame, 16, 48, CLEAR);
+    assert_pixel(&frame, 40, 32, CLEAR);
+}
+
+#[test]
+fn bad_frame_canvas_is_refused() {
+    for canvas in [[0.0, 64.0], [f32::NAN, 1.0], [20000.0, 10.0]] {
+        let mut scenes = one_square();
+        scenes.frame.canvas = Some(canvas);
+        let Some(message) = invalid(scenes) else {
+            return;
+        };
+        assert!(message.contains("canvas"), "{canvas:?}: {message}");
+    }
 }
 
 #[test]

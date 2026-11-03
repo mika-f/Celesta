@@ -8,7 +8,10 @@
 
 use crate::error::GpuRenderError;
 use crate::renderer::GpuRenderer;
-use crate::scene::{LoadedScene, SceneFrameResources, ScenePipelines, scene_canvas_size};
+use crate::scene::{
+    LoadedScene, SceneFrameResources, ScenePipelines, frame_canvas, invalid_frame_canvas,
+    scene_canvas_size,
+};
 use crate::texture::{LayerTexture, TextureData};
 use celesta_composition::ResolvedAsset;
 use celesta_plugin::{
@@ -109,6 +112,22 @@ impl LoadedModel {
         match self {
             Self::Meshes(meshes) => meshes.model.canvas,
             Self::Scene(scene) => scene.model.canvas,
+        }
+    }
+
+    /// The size in texels of `canvas` drawn at `density` texels a layer
+    /// unit, no side longer than `max_dimension`.
+    fn texels(&self, canvas: [f32; 2], density: f64, max_dimension: u32) -> (u32, u32) {
+        match self {
+            // A scene's canvas costs many times a mesh canvas's texels.
+            Self::Scene(_) => scene_canvas_size(canvas, density, max_dimension),
+            Self::Meshes(_) => {
+                let largest = canvas[0].max(canvas[1]).max(1.0);
+                let scale = density.min(f64::from(max_dimension) / f64::from(largest));
+                let width = ((f64::from(canvas[0]) * scale).ceil() as u32).max(1);
+                let height = ((f64::from(canvas[1]) * scale).ceil() as u32).max(1);
+                (width, height)
+            }
         }
     }
 }
@@ -622,28 +641,32 @@ impl GpuRenderer {
                 });
             }
         }
-        let canvas = open.loaded.canvas();
-        let (width, height) = match &open.loaded {
-            // A scene's canvas costs many times a mesh canvas's texels.
-            LoadedModel::Scene(_) => scene_canvas_size(canvas, density, self.max_texture_dimension),
-            LoadedModel::Meshes(_) => {
-                let largest = canvas[0].max(canvas[1]).max(1.0);
-                let scale = density.min(f64::from(self.max_texture_dimension) / f64::from(largest));
-                let width = ((f64::from(canvas[0]) * scale).ceil() as u32).max(1);
-                let height = ((f64::from(canvas[1]) * scale).ceil() as u32).max(1);
-                (width, height)
-            }
+        let max_dimension = self.max_texture_dimension;
+        let id = open.loaded.id();
+        let last_canvas = match &open.loaded {
+            LoadedModel::Scene(scene) => Some(scene.last_canvas),
+            LoadedModel::Meshes(_) => None,
         };
-        if self.measuring_plane {
-            return Ok((self.stand_in_texture(width, height), canvas));
-        }
-        if matches!(self.meshes.models[&key].loaded, LoadedModel::Scene(_)) {
+        match last_canvas {
+            // A meshes frame keeps the model's canvas, so measuring one
+            // asks for no frame.
+            None if self.measuring_plane => {
+                let canvas = open.loaded.canvas();
+                let (width, height) = open.loaded.texels(canvas, density, max_dimension);
+                return Ok((self.stand_in_texture(width, height), canvas));
+            }
             // Before the plugin's frame and its checks, any of which can
-            // fail: one bad frame does not cost the next its canvas.
-            self.meshes.scene_frames.mark_used((width, height));
+            // fail: one bad frame does not cost the next its canvas. A
+            // frame that sets another canvas marks that one too.
+            Some(last) if !self.measuring_plane => {
+                let size = scene_canvas_size(last, density, max_dimension);
+                self.meshes.scene_frames.mark_used(size);
+            }
+            _ => {}
         }
 
-        let id = self.meshes.models[&key].loaded.id();
+        // A scene frame can set its own canvas, so it is asked for before
+        // the canvas is sized, when only measuring too.
         let provider = self
             .meshes
             .provider
@@ -652,10 +675,33 @@ impl GpuRenderer {
         let frame = provider
             .frame(id, content.time, content.data)
             .map_err(plugin_error)?;
-        let mismatch = |message: &str| GpuRenderError::InvalidPluginContent {
+        let invalid = |message: String| GpuRenderError::InvalidPluginContent {
             layer: layer.to_owned(),
-            message: message.to_owned(),
+            message,
         };
+        let mismatch = |message: &str| invalid(message.to_owned());
+        let open = self.meshes.models.get_mut(&key).expect("opened above");
+        let canvas = match (&frame, &mut open.loaded) {
+            (ContentFrame::Scene(frame), LoadedModel::Scene(scene)) => {
+                if let Some(message) = invalid_frame_canvas(frame) {
+                    return Err(invalid(message));
+                }
+                let canvas = frame_canvas(&scene.model, frame);
+                if !self.measuring_plane {
+                    scene.last_canvas = canvas;
+                }
+                canvas
+            }
+            (_, loaded) => loaded.canvas(),
+        };
+        let (width, height) = open.loaded.texels(canvas, density, max_dimension);
+        if self.measuring_plane {
+            return Ok((self.stand_in_texture(width, height), canvas));
+        }
+        if matches!(open.loaded, LoadedModel::Scene(_)) {
+            self.meshes.scene_frames.mark_used((width, height));
+        }
+
         let (frame, loaded) = match (frame, &self.meshes.models[&key].loaded) {
             (ContentFrame::Meshes(frame), LoadedModel::Meshes(loaded)) => (frame, loaded),
             (ContentFrame::Scene(frame), LoadedModel::Scene(scene)) => {

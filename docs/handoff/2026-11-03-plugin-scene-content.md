@@ -38,8 +38,8 @@ field says otherwise.
 
 A model (`SceneModel`, sent once per opened asset set):
 
-- `canvas: [width, height]`: the layer's size in pixels. The camera's
-  aspect is the canvas's.
+- `canvas: [width, height]`: the layer's size in pixels, unless a frame
+  sets its own. The camera's aspect is the canvas's.
 - `textures`: an image file (absolute path) or inline RGBA, straight alpha,
   each with a `colorSpace` (`srgb`, decoded to linear when sampled, or
   `linear` for data) and a glTF-like `sampler` (`wrapS`, `wrapT`:
@@ -66,6 +66,16 @@ A model (`SceneModel`, sent once per opened asset set):
 
 A frame (`SceneFrame`, per request):
 
+- `canvas` (optional, `[width, height]`): the layer's size in pixels for
+  this frame, replacing the model's `canvas`. A model's canvas is fixed
+  when it is opened, which sees only the assets, while a layer's
+  resolution belongs to the composition: a component passes it in the
+  frame's `data`, and the plugin answers it here. The canvas's texel
+  size, the projection's aspect, and the layer size Celesta composites
+  all follow it. Each side must be finite, positive, and at most 16384
+  (`MAX_FRAME_CANVAS_SIDE`); the 8,388,608-texel cap below still applies
+  to the texels drawn. Without it, the frame is drawn on the model's
+  canvas. 2D meshes frames have no such field.
 - `camera`: `view` (world to camera) and `projection`, either
   `{ "perspective": { yfov, near, far } }` (radians) or
   `{ "orthographic": { height, near, far } }` (metres).
@@ -104,7 +114,10 @@ the identity as `world` for a glTF skinned mesh.
   48-byte skinned vertex per vertex of each draw's geometry) must come to
   at most 1 GiB (`SCENE_BUFFER_BUDGET`, 1 << 30 bytes), counted before
   anything is allocated, so a small model listing many draws of a large
-  geometry is refused rather than run out of memory. Each frame must list
+  geometry is refused rather than run out of memory. A frame's own
+  canvas, when it has one, must have finite, positive sides of at most
+  16384, checked before the canvas is sized, so that a bad one is refused
+  rather than clamped. Each frame must list
   only draws the model has, each once, with as many morph weights as targets, as many
   skinning matrices per skin as joints, finite numbers, and a camera that
   sees something (`0 < near < far`, a `yfov` between 0 and π or a positive
@@ -167,7 +180,9 @@ the identity as `world` for a glTF skinned mesh.
   (3840 × 2160, 8,294,400 texels) fits at 1×; a canvas that would be
   larger, such as a zoomed layer's, is drawn at the density that fits, its
   aspect kept, and so softer. 2D mesh canvases keep the per-side limit
-  only.
+  only. The canvas sized is the frame's own when it sets one, so the
+  plugin is asked for the frame before the canvas is sized, also when a
+  3D plane only measures the layer's bounds.
 
 ## Notices
 
@@ -221,7 +236,7 @@ repository are updated.
 | `hello` answer | Gains `"roles":["content"]`. The host does not read it yet. |
 | `opened` | Gains `"kind":"meshes"` or `"scene"` and, when there are any, `"notices":[{"level","message"}]`. An `opened` without `kind` is meshes, as before. |
 | `opened`, `kind: "scene"` | Header: `model`, `canvas`, `textures` (`path` or `width`/`height`, with `colorSpace` and `sampler`), `geometries` (`vertices`, `indices`, and `tangents`, `skinned`, `targets`, `targetNormals` when present), `skins` (`joints`), `materials`, `draws`. Payload: for each geometry, its positions (`f32` triples), normals (triples), UVs (pairs), tangents (quads) if any, joints (`u16` quads) then weights (`f32` quads) if skinned, then each target's position offsets and, with `targetNormals`, its normal offsets (zeros for a target that has none); then every geometry's indices (`u32`); then inline textures' pixels. |
-| `frame` for a scene | Header: `camera`, `lights`, `time`, `draws` (`index`, `visible`, `world`, `center`, `overrides`, and `weights`, the count of its morph weights), `skins` (`joints`, the count of its matrices). Payload: every skin's matrices (16 `f32`s each), then every draw's morph weights, in order. |
+| `frame` for a scene | Header: `canvas` (only when the frame sets its own), `camera`, `lights`, `time`, `draws` (`index`, `visible`, `world`, `center`, `overrides`, and `weights`, the count of its morph weights), `skins` (`joints`, the count of its matrices). Payload: every skin's matrices (16 `f32`s each), then every draw's morph weights, in order. |
 
 A frame's header does not say its kind: the host decodes it as the kind
 its model was opened as, and refuses a model a restarted process reopens as
@@ -311,7 +326,8 @@ Not done:
   with tangents and morph targets, an unskinned one, file and inline
   textures, mask and blend materials, a texture transform) and a scene
   frame through the wire, checking
-  the payload's order; reject short scene payloads and morph targets of
+  the payload's order; round-trip a scene frame with and without its own
+  `canvas`, writing no `canvas` key without one; reject short scene payloads and morph targets of
   zero-vertex geometries; serve a scene session; read an `opened` without
   `kind` as meshes; encode a meshes `opened` as before plus `kind`;
   round-trip notices; and answer `hello` with `roles`.
@@ -325,7 +341,10 @@ Not done:
   at density 2; mask cuts at its cutoff; blend draws go back to front
   whatever the list order, after opaque ones, and by `center` when given;
   frames repeat exactly; a layer zoomed ×64 renders on a canvas within
-  `SCENE_CANVAS_TEXELS`; a model over the 1 GiB buffer budget is refused;
+  `SCENE_CANVAS_TEXELS`; a frame's own canvas (32×64 on a 64×64 model)
+  sizes the layer and the projection's aspect, a unit square staying
+  square, and a frame canvas of `[0, 64]`, `[NaN, 1]`, or `[20000, 10]` is
+  refused naming `canvas`; a model over the 1 GiB buffer budget is refused;
   the texture transform offsets, scales, and rotates (a quarter turn
   taking `(u, v)` to `(−v, u)`, as `KHR_texture_transform`'s column-major
   `mat3`), scaled before it is rotated; and the frame's overrides replace
