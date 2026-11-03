@@ -99,13 +99,30 @@ import { Vrm } from '@celesta-plugin/vrm';
 - `lights`: `{ directional: [{ direction, color, intensity }], ambient }`,
   at most 4 (a fifth throws), colours `#rgb`/`#rrggbb`; without
   `ambient`, the ambient is black. Default, the plugin's reference light
-  (Unity's default light and ambient).
+  (Unity's default light and ambient). `intensity`, and colour times
+  `intensity`, must stay finite in f32, or the frame fails naming
+  `lights.directional[i].intensity`.
 - On open it reports the model's terms of use as notices; a term that
   likely forbids the video (author only, separately licensed people only,
   no commercial use, credit required) is a `warning`, and a term the file
   omits counts as VRM 1.0's strict default. It still draws: relay the
   terms, the user decides. Plain glTF PBR materials draw as flat base
   colour, with a note.
+- First-person-only meshes are hidden (UniVRM's third-person view); a node
+  annotated twice keeps its first annotation, as UniVRM, and each later
+  one warns. Repeated warnings of one kind (primitives not drawn, textures
+  a material draws without, morph binds ignored, repeated firstPerson
+  annotations) list 20, then `and N more …`.
+- Emission: `KHR_materials_emissive_strength`, else
+  `VRMC_materials_hdr_emissiveMultiplier` (as UniVRM); a multiplier that is
+  not a finite number refuses the model.
+- Files: over 1 GiB, or glTF JSON over 64 MiB, refused. `src` may be a
+  `.gltf` with `data:` URI buffers, but those are JSON too, so the whole
+  `.gltf` is capped at 64 MiB. Buffers or images in other files: refused.
+- Textures are written as image files to a cache: `celesta-plugin-vrm` in
+  the user's cache folder, or `CELESTA_VRM_TEXTURE_CACHE`, which must be
+  an absolute path to a real folder of the user's own, not writable by
+  others. Never emptied.
 - Not yet: VRM 0.x (refused, with how to convert it to 1.0), `.vrma`
   motion, constraints, spring bones: the avatar stands in its T-shaped
   rest pose.
@@ -120,6 +137,9 @@ import { Vrm } from '@celesta-plugin/vrm';
 | `… has no executable for this platform` | The plugin was not built for this OS and CPU. |
 | `plugin "<id>": …` | The plugin's own error, such as a missing asset. |
 | `plugin layer <layer> cannot be drawn: …` | The plugin answered with meshes or a scene that fails Celesta's checks (bad indices, counts that do not match, a camera that sees nothing, more than 4 directional lights, a material shader that does not compile, parameters of the wrong size, a material that needs tangents on geometry without them, a model's or frame's canvas with a side under 1 or over 16384). The plugin must be fixed. |
+| `the texture cache <path> is not an absolute path; set CELESTA_VRM_TEXTURE_CACHE …` (or `is a symbolic link`, `belongs to another user`, …) | The VRM plugin's texture cache is unsafe or relative: have the user set `CELESTA_VRM_TEXTURE_CACHE` to an absolute path of a folder of their own. |
+| `the file is larger than the 1024 MiB the VRM plugin reads`, `the glTF JSON is <n> bytes, more than the 64 MiB the VRM plugin reads` | The model is past the VRM plugin's limits (a `.gltf`'s `data:` buffers count as JSON). Use a smaller file, or a `.vrm` instead of a `.gltf`. |
+| `lights.directional[<i>].intensity is not finite: …`, or `… intensity times its color is not finite: …` | A `<Vrm>` light's `intensity` is too large for f32: lower it. |
 | `<id> (layer <layer>): …`, or `note: <id> (layer <layer>): …` for information | Not an error: the plugin's notice about a model it opened, such as its terms of use. The exporter's terminal output prints a warning as a `warning: …` line; the app's Problems tab and `--json` (either kind among `warnings`) carry the message itself, a note keeping its `note: `. Relay it to the user; do not try to silence it. |
 
 ## Writing one

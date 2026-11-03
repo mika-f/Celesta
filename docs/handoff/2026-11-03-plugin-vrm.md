@@ -64,7 +64,10 @@ Files ported from UniVRM carry its MIT notice and name their source.
   JSON past 64 MiB (`JSON_LIMIT`; a VRM's is a few MB) is refused before
   it is parsed: `the glTF JSON is {n} bytes, more than the 64 MiB the VRM
   plugin reads`. Parsed JSON takes many times its size, and the budgets
-  count only what the buffers decode to.
+  count only what the buffers decode to. For a `.vrm` (binary glTF) the
+  JSON cap covers the JSON chunk alone; a glTF JSON file is JSON
+  throughout, its `data:` URI buffers included, so such a file is capped
+  at 64 MiB in all (about 48 MB of binary data, as base64).
 - **Parsing.** The JSON is never held as one `serde_json::Value`: the
   root's `VRMC_vrm` and `VRM` are read first with the rest skipped, then
   gltf-json reads its typed root. Extensions `vrm-spec` has no types for
