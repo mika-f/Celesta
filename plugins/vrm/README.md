@@ -58,10 +58,19 @@ folders, or pass it as the exporter's `--plugin-dir`.
 
 ## The demo
 
-[`demo.tsx`](demo.tsx) shows Seed-san from the bust up, mouthing the vowels.
-Download `Seed-san.vrm` (VRM Public License 1.0) from
-[vrm-c/vrm-specification](https://github.com/vrm-c/vrm-specification)'s
-`samples/Seed-san/vrm` into `plugins/vrm/assets/`, which Git ignores, then:
+[`demo.tsx`](demo.tsx) shows Seed-san from the bust up, playing a VRM
+animation on a loop, nodding once, and mouthing the vowels. It needs two
+files in `plugins/vrm/assets/`, which Git ignores:
+
+- `Seed-san.vrm` (VRM Public License 1.0), from
+  [vrm-c/vrm-specification](https://github.com/vrm-c/vrm-specification)'s
+  `samples/Seed-san/vrm`.
+- `test.vrma`, the VRM animation the plugin's tests use, from
+  [pixiv/three-vrm](https://github.com/pixiv/three-vrm)'s
+  `packages/three-vrm-animation/examples/models`. Any other `.vrma` works
+  too; change the demo's `motions` to its name.
+
+Then:
 
 ```sh
 node plugins/vrm/build.mjs

@@ -1,6 +1,8 @@
-// The VRM plugin's demo: Seed-san from the bust up, relaxed, looking at the
-// camera and mouthing the vowels. Seed-san is not in the repository; see
-// README.md for where to download it. Build the plugin first, then export
+// The VRM plugin's demo: Seed-san from the bust up, relaxed, playing a VRM
+// animation on a loop, nodding once, looking at the camera and mouthing the
+// vowels. Neither Seed-san nor the animation is in the repository, and the
+// demo needs both: see README.md for where to download `Seed-san.vrm` and
+// `test.vrma` into plugins/vrm/assets/. Build the plugin first, then export
 // with its directory:
 //
 //   node plugins/vrm/build.mjs
@@ -21,6 +23,18 @@ function Avatar() {
       lookAt="camera"
       expressions={{ relaxed: 0.3 }}
       mouth={mouth}
+      // Without ./assets/test.vrma the export fails: the layer cannot open the clip.
+      motions={[{ src: './assets/test.vrma', loop: true }]}
+      // A nod from frame 60 to 90, on top of the animation.
+      tracks={{
+        head: {
+          pitch: [
+            { frame: 60, value: 0 },
+            { frame: 75, value: 15, easing: 'ease-in-out' },
+            { frame: 90, value: 0, easing: 'ease-in-out' },
+          ],
+        },
+      }}
     />
   );
 }

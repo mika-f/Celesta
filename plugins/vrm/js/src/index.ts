@@ -6,6 +6,7 @@
 // layer scaled up is not sharper than this one.
 //
 // Like everything in a composition, the layer depends only on the frame:
+// motions (`.vrma` clips) and tracks are placed on the sequence's timeline,
 // blinking and lip sync come from `@celesta/character`, and every value the
 // plugin gets is in `vrmData`, a pure function of the frame.
 
@@ -14,7 +15,7 @@ import * as React from 'react';
 import { blinkPhase } from '@celesta/character';
 import type { BlinkTiming, LipSyncTrack, MouthShape } from '@celesta/character';
 import { useCurrentFrame, useVideoConfig } from '@celesta/react';
-import type { AssetInput, CommonProps, JsonValue, LayerContent } from '@celesta/react';
+import type { AssetInput, CommonProps, Easing, JsonValue, KeyframeAnimation, LayerContent } from '@celesta/react';
 import { registerHostElement } from '@celesta/react/internal';
 import type { HostNode, HostWalk } from '@celesta/react/internal';
 
@@ -48,6 +49,44 @@ export interface VrmLights {
   ambient?: string;
 }
 
+/** A VRM animation (`.vrma`), placed on the sequence's timeline. */
+export interface VrmMotion {
+  /** The `.vrma` (`VRMC_vrm_animation` 1.0). */
+  src: AssetInput;
+  /** The frame of the enclosing sequence the motion starts on. Default 0. */
+  from?: number;
+  /** Repeat it until the next motion starts; otherwise its last pose holds. */
+  loop?: boolean;
+  /** Frames over which it blends in from the motion before it. Default 0. */
+  fadeIn?: number;
+}
+
+/** VRM 1.0's humanoid bones (`hips`, `head`, `leftUpperArm`, …). */
+export type VrmHumanBone = (typeof HUMAN_BONES)[number];
+
+/** A value of a track at a frame of the enclosing sequence. */
+export interface VrmKeyframe {
+  frame: number;
+  value: number;
+  /** How the value eases in from the previous keyframe. Default linear. */
+  easing?: Easing;
+}
+
+/**
+ * Keyframed turns of a bone, in degrees, added after the motions: `yaw`
+ * turns it to the avatar's left, `pitch` tips it forward and down, `roll`
+ * tilts its top toward the avatar's right. `x`, `y`, and `z` (hips only)
+ * move the avatar, in metres.
+ */
+export interface VrmTrack {
+  pitch?: VrmKeyframe[];
+  yaw?: VrmKeyframe[];
+  roll?: VrmKeyframe[];
+  x?: VrmKeyframe[];
+  y?: VrmKeyframe[];
+  z?: VrmKeyframe[];
+}
+
 export interface VrmProps extends CommonProps {
   /** The `.vrm` (VRM 1.0). */
   src: AssetInput;
@@ -79,6 +118,14 @@ export interface VrmProps extends CommonProps {
   camera?: 'full' | 'bust' | 'face' | VrmCamera;
   /** Default: the plugin's reference light. */
   lights?: VrmLights;
+  /**
+   * Motions in the order they start. Before the first the avatar rests;
+   * each plays until the next starts. Expressions given here win over a
+   * motion's.
+   */
+  motions?: VrmMotion[];
+  /** Keyframed turns of humanoid bones, and moves of the hips, on top of the motions. */
+  tracks?: Partial<Record<VrmHumanBone, VrmTrack>>;
 }
 
 /** The plugin's directional light, in linear colour. */
@@ -96,6 +143,17 @@ export interface VrmData {
   lookAt?: VrmProps['lookAt'];
   camera?: VrmProps['camera'];
   lights?: { directional: VrmDirectionalLight[]; ambient?: [number, number, number] };
+  motions?: VrmMotionData[];
+  tracks?: Partial<Record<VrmHumanBone, Partial<Record<keyof VrmTrack, KeyframeAnimation<number>>>>>;
+}
+
+/** A motion as the plugin reads it: its clip's asset name, and seconds on the layer's clock. */
+export interface VrmMotionData {
+  /** `motion<i>`, `i` the index of the first motion with the same `src`. */
+  clip: string;
+  from: number;
+  loop?: boolean;
+  fadeIn?: number;
 }
 
 const ELEMENT = 'celesta-plugin-vrm';
@@ -124,7 +182,72 @@ const DATA_PROPS = [
   'lookAt',
   'camera',
   'lights',
+  'motions',
+  'tracks',
 ] as const;
+
+/** VRM 1.0's humanoid bones, as the plugin's `HumanBone` names them. */
+const HUMAN_BONES = [
+  'hips',
+  'spine',
+  'chest',
+  'upperChest',
+  'neck',
+  'head',
+  'leftEye',
+  'rightEye',
+  'jaw',
+  'leftUpperLeg',
+  'leftLowerLeg',
+  'leftFoot',
+  'leftToes',
+  'rightUpperLeg',
+  'rightLowerLeg',
+  'rightFoot',
+  'rightToes',
+  'leftShoulder',
+  'leftUpperArm',
+  'leftLowerArm',
+  'leftHand',
+  'rightShoulder',
+  'rightUpperArm',
+  'rightLowerArm',
+  'rightHand',
+  'leftThumbMetacarpal',
+  'leftThumbProximal',
+  'leftThumbDistal',
+  'leftIndexProximal',
+  'leftIndexIntermediate',
+  'leftIndexDistal',
+  'leftMiddleProximal',
+  'leftMiddleIntermediate',
+  'leftMiddleDistal',
+  'leftRingProximal',
+  'leftRingIntermediate',
+  'leftRingDistal',
+  'leftLittleProximal',
+  'leftLittleIntermediate',
+  'leftLittleDistal',
+  'rightThumbMetacarpal',
+  'rightThumbProximal',
+  'rightThumbDistal',
+  'rightIndexProximal',
+  'rightIndexIntermediate',
+  'rightIndexDistal',
+  'rightMiddleProximal',
+  'rightMiddleIntermediate',
+  'rightMiddleDistal',
+  'rightRingProximal',
+  'rightRingIntermediate',
+  'rightRingDistal',
+  'rightLittleProximal',
+  'rightLittleIntermediate',
+  'rightLittleDistal',
+] as const;
+
+const HUMAN_BONE_NAMES: ReadonlySet<string> = new Set(HUMAN_BONES);
+
+const TRACK_AXES = ['pitch', 'yaw', 'roll', 'x', 'y', 'z'] as const;
 
 export function Vrm(props: VrmProps): React.ReactElement {
   const frame = useCurrentFrame();
@@ -132,11 +255,33 @@ export function Vrm(props: VrmProps): React.ReactElement {
   return React.createElement(ELEMENT, vrmElementProps(props, frame, fps));
 }
 
-/** The host element's props: the common ones and `src`, the time, and `vrmData`. */
+/**
+ * The host element's props: the common ones and `src`, the time, `vrmData`,
+ * and with motions their `.vrma` files by asset name (`clips`).
+ */
 export function vrmElementProps(props: VrmProps, frame: number, fps: number): Record<string, unknown> {
   const rest: Record<string, unknown> = { ...props };
   for (const key of DATA_PROPS) delete rest[key];
-  return { ...rest, time: frame / fps, data: vrmData(props, frame, fps) };
+  const clips = motionClips(props.motions ?? []);
+  return {
+    ...rest,
+    ...(Object.keys(clips).length ? { clips } : {}),
+    time: frame / fps,
+    data: vrmData(props, frame, fps),
+  };
+}
+
+/** Each distinct `src` (`===`) once, as `motion<i>`, `i` the index of its first motion. */
+function motionClips(motions: VrmMotion[]): Record<string, AssetInput> {
+  const clips: Record<string, AssetInput> = {};
+  motions.forEach((motion, index) => {
+    if (clipIndex(motions, index) === index) clips[`motion${index}`] = motion.src;
+  });
+  return clips;
+}
+
+function clipIndex(motions: VrmMotion[], index: number): number {
+  return motions.findIndex((motion) => motion.src === motions[index].src);
 }
 
 /** What the layer sends on `frame` at `fps`: a pure function of them. */
@@ -150,12 +295,81 @@ export function vrmData(props: VrmProps, frame: number, fps: number): VrmData {
     expressions.blink = BLINK[blinkPhase(frame, fps, props.blink ?? {})];
   }
   Object.assign(expressions, mouthExpressions(props, frame, fps), props.expressions);
+  const motions = motionData(props.motions ?? [], fps);
+  const tracks = trackData(props.tracks ?? {}, fps);
   return {
     canvas: canvas(props),
     ...(Object.keys(expressions).length ? { expressions } : {}),
     ...(props.lookAt !== undefined ? { lookAt: props.lookAt } : {}),
     ...(props.camera !== undefined ? { camera: props.camera } : {}),
     ...(props.lights !== undefined ? { lights: lights(props.lights) } : {}),
+    ...(motions.length ? { motions } : {}),
+    ...(Object.keys(tracks).length ? { tracks } : {}),
+  };
+}
+
+/** The motions in seconds, each naming its clip's asset. */
+function motionData(motions: VrmMotion[], fps: number): VrmMotionData[] {
+  return motions.map((motion, index) => {
+    const from = motion.from ?? 0;
+    if (!Number.isFinite(from)) throw new Error(`Vrm motion ${index} from is a finite number of frames`);
+    const { fadeIn } = motion;
+    if (fadeIn !== undefined && !(Number.isFinite(fadeIn) && fadeIn >= 0)) {
+      throw new Error(`Vrm motion ${index} fadeIn is a number of frames, 0 or more`);
+    }
+    return {
+      clip: `motion${clipIndex(motions, index)}`,
+      from: from / fps,
+      ...(motion.loop ? { loop: true } : {}),
+      ...(fadeIn !== undefined ? { fadeIn: fadeIn / fps } : {}),
+    };
+  });
+}
+
+/**
+ * The tracks as keyframe animations, checked as the plugin checks them: a
+ * humanoid bone's name, the six axes, `x`, `y`, and `z` on the hips only,
+ * and at least one keyframe each.
+ */
+function trackData(tracks: NonNullable<VrmProps['tracks']>, fps: number): NonNullable<VrmData['tracks']> {
+  const data: NonNullable<VrmData['tracks']> = {};
+  for (const [bone, track] of Object.entries(tracks) as [string, VrmTrack | undefined][]) {
+    if (!HUMAN_BONE_NAMES.has(bone)) throw new Error(`Vrm tracks name "${bone}", which is not a VRM humanoid bone`);
+    if (track === undefined) continue;
+    const axes: Partial<Record<keyof VrmTrack, KeyframeAnimation<number>>> = {};
+    for (const [axis, keyframes] of Object.entries(track) as [string, VrmKeyframe[] | undefined][]) {
+      if (!(TRACK_AXES as readonly string[]).includes(axis)) {
+        throw new Error(`Vrm tracks: ${bone} has "${axis}"; a track is pitch, yaw, roll, x, y, or z`);
+      }
+      if (keyframes === undefined) continue;
+      if (bone !== 'hips' && (axis === 'x' || axis === 'y' || axis === 'z')) {
+        throw new Error(`Vrm tracks: only hips takes x, y, and z (${bone} has ${axis})`);
+      }
+      if (!keyframes.length) throw new Error(`Vrm tracks: ${bone} ${axis} has no keyframes`);
+      if (!keyframes.every((keyframe) => Number.isFinite(keyframe.frame) && Number.isFinite(keyframe.value))) {
+        throw new Error(`Vrm tracks: ${bone} ${axis} has a keyframe whose frame or value is not a finite number`);
+      }
+      axes[axis as keyof VrmTrack] = keyframeAnimation(keyframes, fps);
+    }
+    data[bone as VrmHumanBone] = axes;
+  }
+  return data;
+}
+
+/** `keyframes` on the layer's clock: frames of the sequence, as `<Live2D>` times them. */
+function keyframeAnimation(keyframes: VrmKeyframe[], fps: number): KeyframeAnimation<number> {
+  // Whole frame rates time keyframes exactly; others to the microsecond.
+  const timescale = Number.isInteger(fps) ? fps : 1_000_000;
+  const scale = Number.isInteger(fps) ? 1 : 1_000_000 / fps;
+  return {
+    type: 'keyframes',
+    keyframes: [...keyframes]
+      .sort((a, b) => a.frame - b.frame)
+      .map((keyframe) => ({
+        time: { value: Math.round(keyframe.frame * scale), timescale },
+        value: keyframe.value,
+        ...(keyframe.easing ? { easing: keyframe.easing } : {}),
+      })),
   };
 }
 
@@ -248,14 +462,18 @@ function linearColor(color: string): [number, number, number] {
   return [channel(0), channel(1), channel(2)];
 }
 
-/** The layer the plugin draws: the `.vrm` as asset `model`, and `vrmData`. */
+/**
+ * The layer the plugin draws: the `.vrm` as asset `model`, each motion's
+ * `.vrma` as asset `motion<i>`, and `vrmData`.
+ */
 function vrmContent(node: HostNode, walk: HostWalk): LayerContent {
   // `data` is `vrmData`'s: JSON, though its interfaces do not say so.
-  const props = node.props as { src: unknown; time: number; data: JsonValue };
+  const props = node.props as { src: unknown; clips?: Record<string, unknown>; time: number; data: JsonValue };
+  const clips = Object.entries(props.clips ?? {}).map(([name, src]) => [name, walk.resolveAsset(src)]);
   return {
     type: 'plugin',
     plugin: 'vrm',
-    assets: { model: walk.resolveAsset(props.src) },
+    assets: { model: walk.resolveAsset(props.src), ...Object.fromEntries(clips) },
     time: props.time,
     data: props.data,
   };

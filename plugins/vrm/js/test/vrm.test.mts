@@ -177,9 +177,14 @@ test('element_props_keep_only_the_common_ones', () => {
     lookAt: 'camera',
     camera: 'face',
     lights: { ambient: '#fff' },
+    tracks: { head: { yaw: [{ frame: 0, value: 0 }] } },
   };
   const element = vrmElementProps(props, 45, 30);
   assert.deepEqual(Object.keys(element).sort(), ['data', 'id', 'scale', 'src', 'time', 'x']);
+  // Motions add their clips, by asset name, for the layer to resolve.
+  const moving = vrmElementProps({ ...props, motions: [{ src: './idle.vrma' }] }, 45, 30);
+  assert.deepEqual(Object.keys(moving).sort(), ['clips', 'data', 'id', 'scale', 'src', 'time', 'x']);
+  assert.deepEqual(moving.clips, { motion0: './idle.vrma' });
   assert.equal(element.scale, 0.5);
   assert.equal(element.x, 10);
   assert.equal(element.src, src);
@@ -220,4 +225,124 @@ test('the_layer_is_plugin_vrm_with_the_model_asset', () => {
     time: 0.5,
     data: { canvas: [960, 540], camera: 'bust' },
   });
+});
+
+test('motions_name_their_clips', () => {
+  const data = vrmData(
+    {
+      src,
+      blink: false,
+      motions: [
+        { src: './a.vrma', loop: true },
+        { src: './a.vrma', from: 30, fadeIn: 15 },
+        { src: './b.vrma', from: 60 },
+      ],
+    },
+    0,
+    30,
+  );
+  assert.deepEqual(data.motions, [
+    { clip: 'motion0', from: 0, loop: true },
+    { clip: 'motion0', from: 1, fadeIn: 0.5 },
+    { clip: 'motion2', from: 2 },
+  ]);
+  // No motions, no key.
+  assert.ok(!('motions' in vrmData({ src, motions: [] }, 0, 30)));
+});
+
+test('motion_times_are_numbers_of_frames', () => {
+  const motion = (extra: { from?: number; fadeIn?: number }) => () =>
+    vrmData({ src, motions: [{ src: './a.vrma', ...extra }] }, 0, 30);
+  // A motion may start before the sequence does.
+  assert.equal(motion({ from: -30 })().motions?.[0].from, -1);
+  for (const from of [Number.NaN, Number.POSITIVE_INFINITY]) {
+    assert.throws(motion({ from }), { message: 'Vrm motion 0 from is a finite number of frames' }, `${from}`);
+  }
+  for (const fadeIn of [Number.NaN, Number.POSITIVE_INFINITY, -1]) {
+    assert.throws(motion({ fadeIn }), { message: 'Vrm motion 0 fadeIn is a number of frames, 0 or more' }, `${fadeIn}`);
+  }
+});
+
+test('tracks_are_keyframes_on_the_layer_clock', () => {
+  const tracks = {
+    head: {
+      yaw: [
+        { frame: 30, value: 20, easing: 'ease-in-out' as const },
+        { frame: 0, value: 0 },
+      ],
+    },
+  };
+  assert.deepEqual(vrmData({ src, blink: false, tracks }, 0, 30).tracks, {
+    head: {
+      yaw: {
+        type: 'keyframes',
+        keyframes: [
+          { time: { value: 0, timescale: 30 }, value: 0 },
+          { time: { value: 30, timescale: 30 }, value: 20, easing: 'ease-in-out' },
+        ],
+      },
+    },
+  });
+  // Rates that are not whole time keyframes to the microsecond.
+  const yaw = vrmData({ src, tracks }, 0, 29.97).tracks?.head?.yaw;
+  assert.deepEqual(
+    yaw?.keyframes.map((keyframe) => keyframe.time),
+    [
+      { value: 0, timescale: 1_000_000 },
+      { value: 1_001_001, timescale: 1_000_000 },
+    ],
+  );
+  // The hips move too; no tracks, no key.
+  const hips = vrmData({ src, tracks: { hips: { y: [{ frame: 0, value: 0.1 }] } } }, 0, 30).tracks;
+  assert.deepEqual(hips, {
+    hips: { y: { type: 'keyframes', keyframes: [{ time: { value: 0, timescale: 30 }, value: 0.1 }] } },
+  });
+  assert.ok(!('tracks' in vrmData({ src, tracks: {} }, 0, 30)));
+});
+
+test('bad_tracks_throw', () => {
+  const data = (tracks: unknown) => () => vrmData({ src, tracks: tracks as VrmProps['tracks'] }, 0, 30);
+  assert.throws(data({ tail: { yaw: [{ frame: 0, value: 0 }] } }), {
+    message: 'Vrm tracks name "tail", which is not a VRM humanoid bone',
+  });
+  assert.throws(data({ head: { x: [{ frame: 0, value: 0 }] } }), {
+    message: 'Vrm tracks: only hips takes x, y, and z (head has x)',
+  });
+  assert.throws(data({ head: { rotation: [{ frame: 0, value: 0 }] } }), {
+    message: 'Vrm tracks: head has "rotation"; a track is pitch, yaw, roll, x, y, or z',
+  });
+  assert.throws(data({ head: { yaw: [] } }), { message: 'Vrm tracks: head yaw has no keyframes' });
+  assert.throws(data({ head: { yaw: [{ frame: Number.NaN, value: 0 }] } }), {
+    message: 'Vrm tracks: head yaw has a keyframe whose frame or value is not a finite number',
+  });
+  assert.throws(data({ head: { yaw: [{ frame: 0, value: Number.POSITIVE_INFINITY }] } }), {
+    message: 'Vrm tracks: head yaw has a keyframe whose frame or value is not a finite number',
+  });
+});
+
+test('the_layer_opens_each_clip_once', () => {
+  const h = React.createElement;
+  const mounted = mount(() =>
+    h(
+      Composition,
+      { width: 1920, height: 1080, fps: 30, durationInFrames: 90 },
+      h(Vrm, {
+        src: './a.vrm',
+        blink: false,
+        motions: [{ src: './idle.vrma', loop: true }, { src: './idle.vrma', from: 30 }, { src: './wave.vrma', from: 60 }],
+      }),
+    ),
+  );
+  const { scene } = mounted.renderAt({ value: 0, timescale: 30 }, null);
+  const content = scene.layers[0].content as unknown as { assets: unknown; data: { motions: unknown } };
+  assert.deepEqual(content.assets, {
+    model: { id: './a.vrm', location: { type: 'file', path: './a.vrm' } },
+    motion0: { id: './idle.vrma', location: { type: 'file', path: './idle.vrma' } },
+    motion2: { id: './wave.vrma', location: { type: 'file', path: './wave.vrma' } },
+  });
+  assert.deepEqual(content.data.motions, [
+    { clip: 'motion0', from: 0, loop: true },
+    { clip: 'motion0', from: 1 },
+    { clip: 'motion2', from: 2 },
+  ]);
 });
