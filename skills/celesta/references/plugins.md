@@ -74,7 +74,7 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
 | `… has no executable for this platform` | The plugin was not built for this OS and CPU. |
 | `plugin "<id>": …` | The plugin's own error, such as a missing asset. |
 | `plugin layer <layer> cannot be drawn: …` | The plugin answered with meshes or a scene that fails Celesta's checks (bad indices, counts that do not match, a camera that sees nothing). The plugin must be fixed. |
-| `warning: <id> (layer <layer>): …`, or `note: <id> (layer <layer>): …` for information | Not an error: the plugin's notice about a model it opened, such as its terms of use (the app's Problems tab lists it too; `--json` lists either kind among `warnings`, a note keeping its `note: `). Relay it to the user; do not try to silence it. |
+| `<id> (layer <layer>): …`, or `note: <id> (layer <layer>): …` for information | Not an error: the plugin's notice about a model it opened, such as its terms of use. The exporter's terminal output prints a warning as a `warning: …` line; the app's Problems tab and `--json` (either kind among `warnings`) carry the message itself, a note keeping its `note: `. Relay it to the user; do not try to silence it. |
 
 ## Writing one
 
