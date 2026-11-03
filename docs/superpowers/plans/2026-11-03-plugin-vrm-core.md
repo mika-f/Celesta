@@ -22,7 +22,7 @@
 - A frame depends only on the model, `time`, and `data`; nothing iterates a `HashMap` into output (expressions in preset order then custom names in byte order, nodes in pre-order).
 - The plugin sends only the protocol's vertex streams: position, normal, `TEXCOORD_0`, tangents where a material has a `normalTexture`, `JOINTS_0`/`WEIGHTS_0` (the skinning pass is at its 8 storage bindings).
 - Required humanoid bones (VRM 1.0): `hips spine head leftUpperArm leftLowerArm leftHand rightUpperArm rightLowerArm rightHand leftUpperLeg leftLowerLeg leftFoot rightUpperLeg rightLowerLeg rightFoot`.
-- Canvas: every model's `canvas` is `[1920.0, 1080.0]` (`CANVAS`); `<Vrm width>` scales the layer.
+- Canvas: the layer's size in px is a resolution the composition sets — `<Vrm width height>` (`aspect` fills whichever one is missing), default 1920×1080 — and travels as `data.canvas`; the plugin answers it in the frame's `canvas` (Task 13), which overrides the model's `canvas` (`CANVAS` = `[1920.0, 1080.0]`, the default). Sharpness does not depend on it: Celesta draws scene canvases at the layer's density.
 - Decoded textures (width × height × 4 over distinct images) at most 1 GiB (`TEXTURE_BUDGET = 1 << 30`).
 - Reference lighting (Unity: directional light rotation (50°, 150°, 0°), colour sRGB (255, 244, 214), intensity 1, ambient mode Color sRGB (54, 58, 66), shadows off), in Celesta's terms: `direction [-0.3213938, -0.7660444, -0.5566704]`, `color [1.0, 0.9046612, 0.6724432]`, `intensity 1.0`, `ambient[3] = [0.0368895, 0.0423114, 0.0544803]`, other coefficients 0.
 - Camera presets: perspective `yfov` 0.5235988 (30°), `near` 0.01, `far` 100.
@@ -295,6 +295,24 @@ impl LookAt {
 - [ ] **Step 3:** Implement. **Step 4:** Pass; then the task checks.
 - [ ] **Step 5:** Commit `feat(plugins): VRM lookAt by bones or expressions`.
 
+### Task 13: A frame's own canvas size (Celesta side; do it after Task 6, before Task 7)
+
+A scene's canvas is fixed at `open`, which only sees assets; a layer's resolution belongs to the composition. A scene frame may therefore carry its own canvas.
+
+**Files:** Modify `crates/plugin/src/scene.rs`, `crates/plugin/src/protocol.rs`, `crates/gpu-renderer/src/mesh.rs` (`plugin_texture`), `crates/gpu-renderer/src/scene.rs` (validation); tests in `crates/plugin/src/protocol.rs` and `crates/gpu-renderer/src/tests/scene.rs`; docs in `docs/handoff/2026-11-03-plugin-scene-content.md` (Frame section) in the same commit.
+
+**Interfaces — Produces:** `SceneFrame.canvas: Option<[f32; 2]>` (serde `canvas`, skipped when `None`; the frame header's `canvas`). When set, it replaces the model's `canvas` for that frame: the canvas texel size, the projection's aspect, and the layer size `plugin_texture` returns all follow it.
+
+**Decisions:**
+- `plugin_texture` asks the provider for the frame before sizing the canvas (the measuring-plane stand-in included, so a layer's bounds follow the frame's canvas too).
+- A frame canvas must be finite and positive, each side ≤ 16384 → else `InvalidPluginContent` naming `canvas`; the 8,388,608-texel cap still applies to the texels drawn.
+- Meshes (2D) frames are unchanged.
+
+- [ ] **Step 1:** Tests: `scene_frame_canvas_round_trips` (protocol: `Some([1080, 1920])` and `None` both round-trip; `None` writes no key); `frame_canvas_overrides_the_model_canvas` (GPU: a model with canvas 64×64 whose frame says 32×64 gives a layer 32 wide, and an orthographic unit quad stays square on screen); `bad_frame_canvas_is_refused` (`[0, 64]`, `[NaN, 1]`, `[20000, 10]` → `"canvas"`).
+- [ ] **Step 2:** `cargo test -p celesta-plugin protocol` and `env CELESTA_REQUIRE_GPU=1 cargo test -p celesta-gpu-renderer canvas` → fail.
+- [ ] **Step 3:** Implement. **Step 4:** Pass; then the root checks (`env CELESTA_REQUIRE_GPU=1 cargo test -p celesta-gpu-renderer`, workspace clippy, fmt).
+- [ ] **Step 5:** Commit `feat(plugins): let a scene frame set its own canvas`.
+
 ### Task 7: Camera presets, explicit cameras, and lights
 
 **Files:**
@@ -311,19 +329,19 @@ pub struct ExplicitCamera { pub position: [f32; 3], pub target: [f32; 3], #[serd
 #[derive(Deserialize)] #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LightsData { #[serde(default)] pub directional: Vec<DirectionalLight>, #[serde(default)] pub ambient: [f32; 3] }
 pub(crate) struct Framing { pub bounds_min: Vec3, pub bounds_max: Vec3 }        // rest-pose skinned bounds of visible draws, at load
-pub(crate) fn camera(data: Option<&CameraData>, framing: &Framing, humanoid: &Humanoid, rest: &[Mat4]) -> Result<(Camera, Vec3 /* eye */), FrameError>
+pub(crate) fn camera(data: Option<&CameraData>, framing: &Framing, humanoid: &Humanoid, rest: &[Mat4], aspect: f32 /* canvas width / height */) -> Result<(Camera, Vec3 /* eye */), FrameError>
 pub(crate) fn lights(data: Option<&LightsData>) -> Lights
 pub const REFERENCE_LIGHTS: … // the Global Constraints' values
 ```
 
 **Decisions:**
 - **Framing bounds:** every vertex of every visible draw at rest (skinned with the rest skinning matrices, no morphs), in model space, computed once at load.
-- **Presets** frame a vertical span `[y0, y1]` on the 16:9 canvas (width never binds at that aspect): `full` `[min.y, max.y]`, x centre of the bounds; `bust` `[spine.y, max.y]`, x of the head; `face` `[neck.y, max.y]` (without a neck `head.y − ½(max.y − head.y)`), x of the head; positions at rest. `h = 1.1 (y1 − y0)`, `d = (h / 2) / tan(15°)`, eye `(x, (y0 + y1) / 2, head.z + d)`, looking down −Z: `view = translation(−eye)`. Default `full`.
+- **Presets** frame a vertical span `[y0, y1]` on the frame's canvas (its aspect from `data.canvas`, Task 13): `full` `[min.y, max.y]`, x centre of the bounds; `bust` `[spine.y, max.y]`, x of the head; `face` `[neck.y, max.y]` (without a neck `head.y − ½(max.y − head.y)`), x of the head; positions at rest. `h = 1.1 (y1 − y0)`, `d = (h / 2) / tan(15°)`; for `full` the bounds' width must also fit: `d = max(d, (1.1 (max.x − min.x) / 2) / (tan(15°) × aspect))`. Eye `(x, (y0 + y1) / 2, head.z + d)`, looking down −Z: `view = translation(−eye)`. Default `full`. The frame answers `canvas = data.canvas` (default `CANVAS`).
 - **Explicit:** `view = look_at_rh(position, target, up)` with up +Y, or −Z when the direction is within 1e-6 of ±Y; `fov` default 30 (degrees), `near` 0.01, `far` 100. `position == target`, `fov` outside (0, 180), or `0 < near < far` failing → `FrameError` naming the field.
 - **Lights:** absent → `REFERENCE_LIGHTS`; given → its directional lights (linear colours, at most 4, checked by Celesta) and `ambient` as `c3` alone.
 
 - [ ] **Step 1:** Tests (`camera.rs`, synthetic avatar: framing bounds x ±0.2, y 0–1.6, z ±0.1; the hidden quad does not count):
-  - `presets_frame_the_humanoid`: `full` eye (0, 0.8, 3.2842047), `bust` (0, 1.3, 1.2315768), `face` (0, 1.45, 0.6157884), within 1e-4; projection `Perspective { yfov: 0.5235988, near: 0.01, far: 100.0 }`; default equals `full`.
+  - `presets_frame_the_humanoid`: at aspect 16/9, `full` eye (0, 0.8, 3.2842047), `bust` (0, 1.3, 1.2315768), `face` (0, 1.45, 0.6157884), within 1e-4; projection `Perspective { yfov: 0.5235988, near: 0.01, far: 100.0 }`; default equals `full`; at aspect 9/16 the same (the 0.44 m width doesn't bind); at aspect 0.1 `full`'s eye z is `0.1 + (0.22 / (tan(15°) × 0.1))` = 8.3104…, within 1e-3 (width binds).
   - `explicit_camera_looks_at_its_target`: `{position: [0, 1.5, 2], target: [0, 1.5, 0], fov: 40}` → `view` translates by (0, −1.5, −2), `yfov` 0.6981317; `{position: [0, 3, 0], target: [0, 0, 0]}` → finite view mapping world −Y to view −Z.
   - `bad_explicit_cameras_are_refused`: same position and target → `"camera position and target"`; `fov: 0` → `"fov"`.
   - `reference_lights_by_default`: `lights(None)` equals the Global Constraints' preset; `{ambient: [0.1, 0.2, 0.3]}` → `ambient[3] == [0.1, 0.2, 0.3]`, no directional lights.
@@ -415,7 +433,8 @@ pub(crate) fn refused_model_file(info: &ComponentInfo, path: &Path) -> Option<St
 ```ts
 export interface VrmProps extends CommonProps {
   src: AssetInput;                                    // the .vrm
-  width?: number;                                     // layer width in px; the layer is 16:9; default 1920
+  width?: number; height?: number;                    // the layer's resolution in px; default 1920×1080
+  aspect?: number;                                    // width / height, filling whichever of width/height is missing (else 16:9)
   expressions?: Record<string, number>;               // preset or custom names, 0..1; win over blink and mouth
   mouth?: MouthShape | Partial<Record<Vowel, number>>;// 'a'…'o' → aa…oh at 1
   lipSync?: LipSyncTrack; mouthSmoothing?: number;    // as <Live2D>: default 2
@@ -433,7 +452,8 @@ export function vrmData(props: VrmProps, frame: number, fps: number): VrmData;  
 ```
 
 **Decisions:**
-- `vrmElementProps` gives the host element `celesta-plugin-vrm` the common props (without `width`) with `scale = (width ?? 1920) / 1920 × (scale ?? 1)`, `time = frame / fps`, and `data = vrmData(…)`; `content` returns `{ type: 'plugin', plugin: 'vrm', assets: { model: walk.resolveAsset(src) }, time, data }`. Keys are sent only when set (as `<Live2D>`).
+- **Canvas:** `vrmData(…).canvas` is `[w, h]`: both given → as given; one given → the other from `aspect` (default 16/9); neither → 1920×1080, or 1920 wide by `aspect`. Non-finite or non-positive values throw `Error('Vrm width, height, and aspect are positive numbers')`. The layer is not scaled by them: the canvas is the layer's size.
+- `vrmElementProps` gives the host element `celesta-plugin-vrm` the common props (without `width`, `height`, `aspect`), `time = frame / fps`, and `data = vrmData(…)`; `content` returns `{ type: 'plugin', plugin: 'vrm', assets: { model: walk.resolveAsset(src) }, time, data }`. Keys are sent only when set (as `<Live2D>`).
 - **Blink:** `blinkPhase(frame, fps, blink)`: `open` 0, `half` 0.5, `closed` 1 → `expressions.blink`. **Mouth:** a shape sets its vowel to 1 (`closed` none); an object passes through; `lipSync` mixes the shapes of this frame and the `mouthSmoothing` frames before it, nearest weighted most (weights `smoothing + 1 − back`), per vowel. Explicit `expressions` replace these keys.
 - **Lights colours** are CSS `#rgb`/`#rrggbb` (sRGB), decoded to linear; `color` default `#ffffff`, `intensity` default 1; anything else throws `Error('Vrm lights colors are #rgb or #rrggbb')`.
 - `plugin.json`: `{ "id": "vrm", "version": "0.1.0", "module": "js/index.ts", "cargoPackage": "celesta-plugin-vrm", "components": [{ "name": "Vrm", "label": "VRM avatar", "src": "model", "extensions": ["vrm"], "aspect": 1.7777778 }] }`.
@@ -445,7 +465,7 @@ export function vrmData(props: VrmProps, frame: number, fps: number): VrmData;  
   - `mouth_shapes_set_vowels`: `mouth: 'a'` → `{aa: 1}`; with `expressions: {aa: 0.2}` → 0.2.
   - `lip_sync_smooths_like_live2d`: a track that is `'a'` before 1 s and `'closed'` after, frame 30 at 30 fps, smoothing 2 → `aa` 0.5.
   - `lights_take_srgb_hex`: `{directional: [{direction: [0, -1, 0], color: '#808080'}], ambient: '#fff'}` → colour `[0.2158605, 0.2158605, 0.2158605]` (5e-7), intensity 1, ambient `[1, 1, 1]`; `'red'` throws.
-  - `width_scales_the_layer`: `vrmElementProps({src, width: 960}, 0, 30).scale` is 0.5, with `scale: 2` it is 1, and it has no `width`.
+  - `canvas_follows_width_height_and_aspect`: `{}` → `[1920, 1080]`; `{width: 1080, height: 1920}` → `[1080, 1920]`; `{height: 1920, aspect: 9/16}` → `[1080, 1920]`; `{width: 960}` → `[960, 540]`; `{aspect: 1}` → `[1920, 1920]`; `{width: 0}` throws; the element props carry no `width`/`height`/`aspect` and leave `scale` as given.
 - [ ] **Step 2:** `pnpm run build:runtime`, then `pnpm --filter celesta-plugin-vrm-js test` → fails (no module).
 - [ ] **Step 3:** Implement. **Step 4:** The tests pass; `node plugins/vrm/build.mjs` writes `plugins/vrm/dist/vrm` with the manifest, the executable, `js/index.js`, `js/index.d.ts`; then the task checks.
 - [ ] **Step 5:** Commit `feat(plugins): the <Vrm> component and the VRM plugin's build`.
@@ -475,7 +495,7 @@ export function vrmData(props: VrmProps, frame: number, fps: number): VrmData;  
 - Create: `docs/handoff/2026-11-03-plugin-vrm.md` (what the plugin is and how it builds and installs; loading rules; geometry, materials, textures; skins, draws, `center`; expressions, lookAt, first person; camera presets and the reference light (with its Unity values); usage terms; `<Vrm>`; the manifest's model kind and the Add menu; What landed; Not done; Where Celesta knowingly differs from UniVRM; Checks)
 - Modify: `packages/website/content/en/docs/05-(more)/05-plugins.md` and `packages/website/content/ja/docs/05-(more)/05-plugins.md` (a "The VRM plugin" section: building it with `node plugins/vrm/build.mjs`, installing `plugins/vrm/dist/vrm`, `<Vrm>`'s props with an example, the usage-term notices, PBR drawn unlit; "Use its components": components that take a model file), `skills/celesta/references/plugins.md` (the same, and the notes list), `docs/handoff/2026-11-03-plugin-scene-mtoon.md` (its phase-3 list: which items the plugin now handles, pointing to the new note)
 
-**Not done** lists at least: VRM 0.x (refused; phase 4); glTF PBR drawn unlit; humanoid motion, constraints, and spring bones (the motion plan); `VRMC_vrm_expressions_node_transform`; KTX2 textures; `TEXCOORD_1`, vertex colours, more than four joints a vertex; a fixed 16:9 canvas; the texture cache is never cleaned; Celesta still compiles a model's pipelines when it opens (a stall on the first MToon avatar); parity renders against UniVRM not yet made. **Knowingly differs / to check against UniVRM:** colour binds blended in sRGB; the `center` offset from the skin's skeleton; expression inputs clamped to 0..1; texture rotation honoured.
+**Not done** lists at least: VRM 0.x (refused; phase 4); glTF PBR drawn unlit; humanoid motion, constraints, and spring bones (the motion plan); `VRMC_vrm_expressions_node_transform`; KTX2 textures; `TEXCOORD_1`, vertex colours, more than four joints a vertex; the texture cache is never cleaned; Celesta still compiles a model's pipelines when it opens (a stall on the first MToon avatar); parity renders against UniVRM not yet made. **Knowingly differs / to check against UniVRM:** colour binds blended in sRGB; the `center` offset from the skin's skeleton; expression inputs clamped to 0..1; texture rotation honoured.
 
 - [ ] **Step 1:** Write the docs. **Step 2:** `pnpm --dir packages/website run build` passes.
 - [ ] **Step 3:** Commit `docs: the VRM plugin`.
