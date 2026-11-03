@@ -6,21 +6,38 @@
 //! counts, strides, and byte ranges (which the reader trusts, panicking or
 //! misreading on a hostile file), so a broken file is an error and nothing
 //! is allocated past what the file's buffers hold.
+//!
+//! A model's primitives share two budgets: what their accessors decode
+//! ([`READ_BUDGET`], each accessor decoded once for every primitive that
+//! reads it) and the geometry they make ([`GEOMETRY_BUDGET`], which the
+//! model hands each primitive what is left of). So a file of many primitives
+//! over one large accessor, a few JSON bytes each, costs neither memory nor
+//! time in proportion to their number.
 
 use crate::document::{Document, LoadError};
 use celesta_plugin::{Geometry, MorphTarget};
 use glam::Vec3;
 use gltf::accessor::{Accessor, DataType, Dimensions, Item, Iter};
 use gltf::mesh::{Mode, Semantic};
+use std::any::{Any, TypeId};
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::fmt;
+use std::mem::size_of;
+use std::rc::Rc;
 
 /// The tangent a vertex gets when MikkTSpace has none for it.
 const DEFAULT_TANGENT: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
 
-/// The most one primitive's morph targets may take, dense: Celesta's whole
-/// scene buffer budget (`SCENE_BUFFER_BUDGET`), past which it refuses the
-/// model anyway.
-const TARGET_BUDGET: u64 = 1 << 30;
+/// The most a model's geometry may take, every primitive's streams, morph
+/// targets, and indices together: Celesta's whole scene buffer budget
+/// (`SCENE_BUFFER_BUDGET`), past which it refuses the model anyway.
+pub(crate) const GEOMETRY_BUDGET: u64 = 1 << 30;
+
+/// The most a model's accessors may take once decoded, each counted once.
+/// Distinct accessors can all cover the same bytes of a buffer, so the
+/// file's size alone does not bound what they decode.
+pub(crate) const READ_BUDGET: u64 = 1 << 30;
 
 /// The most morph targets one primitive may have: far past any avatar's
 /// (VRoid's faces have about 60), so a file of empty targets cannot make
@@ -36,39 +53,86 @@ pub(crate) struct PrimitiveGeometry {
     pub primitive: usize,
 }
 
+/// The accessors of one model, each decoded once, the first time a
+/// primitive or skin reads it, and kept for the next (UniVRM exports every
+/// primitive of a mesh over one set of vertex accessors). What they decode
+/// counts toward a budget, [`READ_BUDGET`] by default.
+// Made by the model (Task 4).
+#[allow(dead_code)]
+pub(crate) struct Accessors<'d> {
+    document: &'d Document,
+    budget: u64,
+    left: Cell<u64>,
+    /// By accessor index and the element type it was decoded to. Looked up,
+    /// never iterated.
+    decoded: RefCell<HashMap<(usize, TypeId), Rc<dyn Any>>>,
+}
+
+// Called by the model (Task 4).
+#[allow(dead_code)]
+impl<'d> Accessors<'d> {
+    pub(crate) fn new(document: &'d Document) -> Self {
+        Self::with_budget(document, READ_BUDGET)
+    }
+
+    pub(crate) fn with_budget(document: &'d Document, budget: u64) -> Self {
+        Self {
+            document,
+            budget,
+            left: Cell::new(budget),
+            decoded: RefCell::new(HashMap::new()),
+        }
+    }
+
+    /// The bytes decoded so far.
+    pub(crate) fn decoded(&self) -> u64 {
+        self.budget - self.left.get()
+    }
+}
+
+/// The bytes `geometry` takes: each stream's, its morph targets', and its
+/// indices'. A model's geometries together stay within its geometry budget.
+// Called by the model (Task 4).
+#[allow(dead_code)]
+pub(crate) fn geometry_bytes(geometry: &Geometry) -> u64 {
+    let bytes = |size: usize| size as u64;
+    let mut total = bytes(size_of_val(geometry.positions.as_slice()))
+        + bytes(size_of_val(geometry.normals.as_slice()))
+        + bytes(size_of_val(geometry.uvs.as_slice()))
+        + bytes(size_of_val(geometry.indices.as_slice()));
+    if let Some(tangents) = &geometry.tangents {
+        total += bytes(size_of_val(tangents.as_slice()));
+    }
+    if let Some(joints) = &geometry.joints {
+        total += bytes(size_of_val(joints.as_slice()));
+    }
+    if let Some(weights) = &geometry.weights {
+        total += bytes(size_of_val(weights.as_slice()));
+    }
+    for target in &geometry.targets {
+        total += bytes(size_of_val(target.positions.as_slice()))
+            + bytes(size_of_val(target.normals.as_slice()));
+    }
+    total
+}
+
 /// `primitive` of `mesh` as a triangle list, or `None` when it draws no
 /// triangles: points, lines, or a strip or fan of fewer than 3 vertices
 /// (skipped, like points and lines). `skin`, the skin of the node drawing
 /// the mesh, makes the geometry skinned when the primitive has `JOINTS_0`
 /// and `WEIGHTS_0`; `needs_tangents` (the material has a `normalTexture`)
-/// adds tangents.
+/// adds tangents. The geometry takes at most `budget` bytes
+/// ([`geometry_bytes`]): a primitive that would take more is refused before
+/// its streams are made.
 // Called by the model (Task 4).
 #[allow(dead_code)]
-pub(crate) fn primitive_geometry(
-    document: &Document,
-    mesh: gltf::Mesh,
-    primitive: gltf::Primitive,
-    skin: Option<gltf::Skin>,
+pub(crate) fn primitive_geometry<'d>(
+    accessors: &Accessors<'d>,
+    mesh: gltf::Mesh<'d>,
+    primitive: gltf::Primitive<'d>,
+    skin: Option<gltf::Skin<'d>>,
     needs_tangents: bool,
-) -> Result<Option<PrimitiveGeometry>, LoadError> {
-    read_primitive(
-        document,
-        mesh,
-        primitive,
-        skin,
-        needs_tangents,
-        TARGET_BUDGET,
-    )
-}
-
-/// [`primitive_geometry`] with the morph targets' budget in bytes.
-fn read_primitive(
-    document: &Document,
-    mesh: gltf::Mesh,
-    primitive: gltf::Primitive,
-    skin: Option<gltf::Skin>,
-    needs_tangents: bool,
-    target_budget: u64,
+    budget: u64,
 ) -> Result<Option<PrimitiveGeometry>, LoadError> {
     let mode = primitive.mode();
     if !matches!(
@@ -78,8 +142,8 @@ fn read_primitive(
         return Ok(None);
     }
     let streams = Streams {
-        document,
-        at: At {
+        accessors,
+        at: At::Primitive {
             mesh: &mesh,
             primitive: primitive.index(),
         },
@@ -94,56 +158,97 @@ fn read_primitive(
         return Err(at.invalid(format_args!("has POSITION with no bufferView")));
     }
     let vertices = position.count();
-    let positions: Vec<[f32; 3]> = streams.floats3(&position, "POSITION", vertices)?;
+    let positions = streams.floats3(&position, "POSITION", vertices)?;
 
     // Triangles, three indices each, over the file's vertices.
-    let drawn: Vec<u32> = match primitive.indices() {
-        Some(indices) => streams.indices(&indices)?,
+    let triangles = match primitive.indices() {
+        Some(indices) => {
+            let drawn = streams.indices(&indices)?;
+            check_drawn(&drawn, vertices, at)?;
+            triangle_list(mode, &drawn, at)?
+        }
         None => {
             let count = u32::try_from(vertices)
                 .map_err(|_| at.invalid(format_args!("has {vertices} vertices")))?;
-            (0..count).collect()
+            triangle_list(mode, &(0..count).collect::<Vec<u32>>(), at)?
         }
     };
-    if let Some(&past) = drawn.iter().find(|&&index| index as usize >= vertices) {
-        return Err(at.invalid(format_args!(
-            "uses vertex {past}, past its {vertices} vertices"
-        )));
-    }
-    let triangles = triangle_list(mode, drawn, at)?;
     if triangles.is_empty() {
         // A strip or fan of fewer than 3 vertices: nothing to draw. (A list
         // cannot get here: its indices are at least one, in threes.)
         return Ok(None);
     }
 
-    // The vertices the triangles use, in their order in the file.
-    let mut remap = vec![u32::MAX; vertices];
-    for &index in &triangles {
-        remap[index as usize] = 0;
-    }
-    let mut kept: Vec<usize> = Vec::new();
-    for (vertex, slot) in remap.iter_mut().enumerate() {
-        if *slot != u32::MAX {
-            *slot = kept.len() as u32;
-            kept.push(vertex);
-        }
-    }
+    // The vertices the triangles use, in their order in the file. Sorted
+    // rather than marked in a table of every vertex, so a primitive costs
+    // its own triangles, not the size of an accessor it shares.
+    let mut kept: Vec<usize> = triangles.iter().map(|&index| index as usize).collect();
+    kept.sort_unstable();
+    kept.dedup();
     let indices: Vec<u32> = triangles
         .iter()
-        .map(|&index| remap[index as usize])
+        .map(|&index| kept.partition_point(|&vertex| vertex < index as usize) as u32)
         .collect();
+    drop(triangles);
+
+    // An empty target (`{}`), or a sparse one with no bufferView, costs the
+    // file a few bytes and a dense copy here, so the targets are counted and
+    // their total capped before any is read: every target's dense positions,
+    // and its normals where it has them. Then the whole geometry is.
+    let target_count = primitive.morph_targets().len();
+    if target_count > MAX_TARGETS {
+        return Err(at.invalid(format_args!(
+            "has {target_count} morph targets, more than {MAX_TARGETS}"
+        )));
+    }
+    let streams_per_vertex: u64 = primitive
+        .morph_targets()
+        .map(|target| 1 + u64::from(target.normals().is_some()))
+        .sum();
+    if let Some(bytes) = past_budget(streams_per_vertex, kept.len(), budget) {
+        return Err(at.invalid(format_args!(
+            "has morph targets of {} MiB, more than {} MiB",
+            bytes >> 20,
+            budget >> 20
+        )));
+    }
+    let skinned = skin.is_some()
+        && (primitive.get(&Semantic::Joints(0)).is_some()
+            || primitive.get(&Semantic::Weights(0)).is_some());
+    let per_vertex = 2 * size_of::<[f32; 3]>()
+        + size_of::<[f32; 2]>()
+        + if needs_tangents {
+            size_of::<[f32; 4]>()
+        } else {
+            0
+        }
+        + if skinned {
+            size_of::<[u16; 4]>() + size_of::<[f32; 4]>()
+        } else {
+            0
+        };
+    let bytes = (kept.len() as u64)
+        .saturating_mul(per_vertex as u64)
+        .saturating_add(streams_per_vertex.saturating_mul(kept.len() as u64 * 12))
+        .saturating_add(indices.len() as u64 * 4);
+    if bytes > budget {
+        return Err(at.invalid(format_args!(
+            "makes {bytes} bytes of geometry, but the model has {budget} left of its {} MiB",
+            GEOMETRY_BUDGET >> 20
+        )));
+    }
+
     // The kept vertices' values, each finite: a NaN or infinity the file
     // holds would otherwise reach Celesta and draw as NaN.
-    let compact = |stream: Vec<[f32; 3]>, what: &str| -> Result<Vec<[f32; 3]>, LoadError> {
+    let compact = |stream: &[[f32; 3]], what: &str| -> Result<Vec<[f32; 3]>, LoadError> {
         let kept: Vec<[f32; 3]> = kept.iter().map(|&vertex| stream[vertex]).collect();
         finite(at, what, &kept)?;
         Ok(kept)
     };
 
-    let positions = compact(positions, "POSITION")?;
+    let positions = compact(&positions, "POSITION")?;
     let normals = match primitive.get(&Semantic::Normals) {
-        Some(normals) => compact(streams.floats3(&normals, "NORMAL", vertices)?, "NORMAL")?,
+        Some(normals) => compact(&streams.floats3(&normals, "NORMAL", vertices)?, "NORMAL")?,
         None => computed_normals(&positions, &indices),
     };
     let uvs: Vec<[f32; 2]> = match primitive.get(&Semantic::TexCoords(0)) {
@@ -161,40 +266,19 @@ fn read_primitive(
         None => (None, None),
     };
 
-    // An empty target (`{}`), or a sparse one with no bufferView, costs the
-    // file a few bytes and a dense copy here, so the targets are counted and
-    // their total capped before any is read: every target's dense positions,
-    // and its normals where it has them.
-    let target_count = primitive.morph_targets().len();
-    if target_count > MAX_TARGETS {
-        return Err(at.invalid(format_args!(
-            "has {target_count} morph targets, more than {MAX_TARGETS}"
-        )));
-    }
-    let streams_per_vertex: u64 = primitive
-        .morph_targets()
-        .map(|target| 1 + u64::from(target.normals().is_some()))
-        .sum();
-    if let Some(bytes) = past_budget(streams_per_vertex, kept.len(), target_budget) {
-        return Err(at.invalid(format_args!(
-            "has morph targets of {} MiB, more than {} MiB",
-            bytes >> 20,
-            target_budget >> 20
-        )));
-    }
     let mut targets = Vec::new();
     for target in primitive.morph_targets() {
         let positions = match target.positions() {
             Some(deltas) => {
                 let what = "morph target POSITION";
-                compact(streams.floats3(&deltas, what, vertices)?, what)?
+                compact(&streams.floats3(&deltas, what, vertices)?, what)?
             }
             None => vec![[0.0; 3]; kept.len()],
         };
         let normals = match target.normals() {
             Some(deltas) => {
                 let what = "morph target NORMAL";
-                compact(streams.floats3(&deltas, what, vertices)?, what)?
+                compact(&streams.floats3(&deltas, what, vertices)?, what)?
             }
             None => Vec::new(),
         };
@@ -202,34 +286,49 @@ fn read_primitive(
     }
 
     let tangents = needs_tangents.then(|| tangents(&positions, &normals, &uvs, &indices));
+    let geometry = Geometry {
+        positions,
+        normals,
+        uvs,
+        tangents,
+        joints,
+        weights,
+        targets,
+        indices,
+    };
+    debug_assert_eq!(geometry_bytes(&geometry), bytes);
     Ok(Some(PrimitiveGeometry {
-        geometry: Geometry {
-            positions,
-            normals,
-            uvs,
-            tangents,
-            joints,
-            weights,
-            targets,
-            indices,
-        },
+        geometry,
         mesh: mesh.index(),
         primitive: primitive.index(),
     }))
 }
 
-/// Where in the file a primitive is, for messages:
-/// `mesh "Body" primitive 0`.
-struct At<'a, 'd> {
-    mesh: &'a gltf::Mesh<'d>,
-    primitive: usize,
+/// Every index `drawn` names is one of the primitive's `vertices`.
+fn check_drawn(drawn: &[u32], vertices: usize, at: &At) -> Result<(), LoadError> {
+    match drawn.iter().find(|&&index| index as usize >= vertices) {
+        Some(past) => Err(at.invalid(format_args!(
+            "uses vertex {past}, past its {vertices} vertices"
+        ))),
+        None => Ok(()),
+    }
+}
+
+/// Where in the file a primitive is, for messages: `mesh "Body" primitive 0`.
+enum At<'a, 'd> {
+    Primitive {
+        mesh: &'a gltf::Mesh<'d>,
+        primitive: usize,
+    },
 }
 
 impl fmt::Display for At<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.mesh.name() {
-            Some(name) => write!(f, "mesh {name:?} primitive {}", self.primitive),
-            None => write!(f, "mesh {} primitive {}", self.mesh.index(), self.primitive),
+        match self {
+            At::Primitive { mesh, primitive } => match mesh.name() {
+                Some(name) => write!(f, "mesh {name:?} primitive {primitive}"),
+                None => write!(f, "mesh {} primitive {primitive}", mesh.index()),
+            },
         }
     }
 }
@@ -240,15 +339,16 @@ impl At<'_, '_> {
     }
 }
 
-/// Reads one primitive's accessors, each checked first.
+/// Reads one primitive's (or skin's) accessors, each checked first.
 struct Streams<'a, 'd> {
-    document: &'d Document,
+    accessors: &'a Accessors<'d>,
     at: At<'a, 'd>,
 }
 
 impl<'d> Streams<'_, 'd> {
     fn buffer(&self, buffer: gltf::Buffer<'d>) -> Option<&'d [u8]> {
-        self.document
+        self.accessors
+            .document
             .buffers
             .get(buffer.index())
             .map(|data| data.0.as_slice())
@@ -261,20 +361,66 @@ impl<'d> Streams<'_, 'd> {
             .ok_or_else(|| self.at.invalid(format_args!("has {what} it cannot read")))
     }
 
+    /// `accessor` as `decode` decodes it to `T`, from an earlier read when
+    /// there was one. `count` is how many elements this use needs, when it
+    /// needs a number; it is checked on every use. The first decode is
+    /// checked ([`Self::check`]) and counted toward the model's budget
+    /// before it runs; an accessor decodes to `T` the same way wherever it
+    /// is used, since `decode` follows its own type.
+    fn decoded<T: 'static>(
+        &self,
+        accessor: &Accessor<'d>,
+        what: &str,
+        count: Option<usize>,
+        decode: impl FnOnce() -> Result<Vec<T>, LoadError>,
+    ) -> Result<Rc<Vec<T>>, LoadError> {
+        self.check_count(accessor, what, count)?;
+        let key = (accessor.index(), TypeId::of::<T>());
+        let earlier = self.accessors.decoded.borrow().get(&key).cloned();
+        if let Some(earlier) = earlier
+            && let Ok(earlier) = earlier.downcast::<Vec<T>>()
+        {
+            return Ok(earlier);
+        }
+        self.check(accessor, what)?;
+        // The sparse indices are walked by `check_sparse_order`, so they
+        // count too.
+        let sparse = accessor.sparse().map_or(0, |sparse| {
+            (sparse.count() as u64).saturating_mul(sparse.indices().index_type().size() as u64)
+        });
+        let bytes = (accessor.count() as u64)
+            .saturating_mul(size_of::<T>() as u64)
+            .saturating_add(sparse);
+        let left = self.accessors.left.get();
+        if bytes > left {
+            return Err(self.at.invalid(format_args!(
+                "has {what} of {bytes} bytes to decode, past the {left} bytes left of the {} MiB a model's accessors may decode",
+                self.accessors.budget >> 20
+            )));
+        }
+        self.accessors.left.set(left - bytes);
+        self.check_sparse_order(accessor, what)?;
+        let decoded = Rc::new(decode()?);
+        self.accessors
+            .decoded
+            .borrow_mut()
+            .insert(key, decoded.clone());
+        Ok(decoded)
+    }
+
     /// `VEC3` floats: positions, normals, and their morph deltas.
     fn floats3(
         &self,
         accessor: &Accessor<'d>,
         what: &str,
         count: usize,
-    ) -> Result<Vec<[f32; 3]>, LoadError> {
+    ) -> Result<Rc<Vec<[f32; 3]>>, LoadError> {
         self.expect(accessor, what, Dimensions::Vec3, &[DataType::F32])?;
-        self.check(accessor, what, Some(count))?;
-        self.read(accessor, what)
+        self.decoded(accessor, what, Some(count), || self.read(accessor, what))
     }
 
     /// `TEXCOORD_0` as floats, normalised integers widened.
-    fn uvs(&self, accessor: &Accessor<'d>, count: usize) -> Result<Vec<[f32; 2]>, LoadError> {
+    fn uvs(&self, accessor: &Accessor<'d>, count: usize) -> Result<Rc<Vec<[f32; 2]>>, LoadError> {
         let what = "TEXCOORD_0";
         self.expect(
             accessor,
@@ -282,16 +428,17 @@ impl<'d> Streams<'_, 'd> {
             Dimensions::Vec2,
             &[DataType::F32, DataType::U8, DataType::U16],
         )?;
-        self.check(accessor, what, Some(count))?;
-        Ok(match accessor.data_type() {
-            DataType::U8 => widen(self.read::<[u8; 2]>(accessor, what)?, 255.0),
-            DataType::U16 => widen(self.read::<[u16; 2]>(accessor, what)?, 65535.0),
-            _ => self.read(accessor, what)?,
+        self.decoded(accessor, what, Some(count), || {
+            Ok(match accessor.data_type() {
+                DataType::U8 => widen(self.read::<[u8; 2]>(accessor, what)?, 255.0),
+                DataType::U16 => widen(self.read::<[u16; 2]>(accessor, what)?, 65535.0),
+                _ => self.read(accessor, what)?,
+            })
         })
     }
 
     /// The triangles' vertex indices as the file lists them.
-    fn indices(&self, accessor: &Accessor<'d>) -> Result<Vec<u32>, LoadError> {
+    fn indices(&self, accessor: &Accessor<'d>) -> Result<Rc<Vec<u32>>, LoadError> {
         let what = "indices";
         self.expect(
             accessor,
@@ -304,19 +451,20 @@ impl<'d> Streams<'_, 'd> {
                 .at
                 .invalid(format_args!("has indices with no bufferView")));
         }
-        self.check(accessor, what, None)?;
-        Ok(match accessor.data_type() {
-            DataType::U8 => self
-                .read::<u8>(accessor, what)?
-                .into_iter()
-                .map(u32::from)
-                .collect(),
-            DataType::U16 => self
-                .read::<u16>(accessor, what)?
-                .into_iter()
-                .map(u32::from)
-                .collect(),
-            _ => self.read(accessor, what)?,
+        self.decoded(accessor, what, None, || {
+            Ok(match accessor.data_type() {
+                DataType::U8 => self
+                    .read::<u8>(accessor, what)?
+                    .into_iter()
+                    .map(u32::from)
+                    .collect(),
+                DataType::U16 => self
+                    .read::<u16>(accessor, what)?
+                    .into_iter()
+                    .map(u32::from)
+                    .collect(),
+                _ => self.read(accessor, what)?,
+            })
         })
     }
 
@@ -354,27 +502,30 @@ impl<'d> Streams<'_, 'd> {
             Dimensions::Vec4,
             &[DataType::U8, DataType::U16],
         )?;
-        self.check(&joints, "JOINTS_0", Some(count))?;
-        let joints: Vec<[u16; 4]> = match joints.data_type() {
-            DataType::U8 => self
-                .read::<[u8; 4]>(&joints, "JOINTS_0")?
-                .into_iter()
-                .map(|joint| joint.map(u16::from))
-                .collect(),
-            _ => self.read(&joints, "JOINTS_0")?,
-        };
+        let joints: Rc<Vec<[u16; 4]>> = self.decoded(&joints, "JOINTS_0", Some(count), || {
+            Ok(match joints.data_type() {
+                DataType::U8 => self
+                    .read::<[u8; 4]>(&joints, "JOINTS_0")?
+                    .into_iter()
+                    .map(|joint| joint.map(u16::from))
+                    .collect(),
+                _ => self.read(&joints, "JOINTS_0")?,
+            })
+        })?;
         self.expect(
             &weights,
             "WEIGHTS_0",
             Dimensions::Vec4,
             &[DataType::F32, DataType::U8, DataType::U16],
         )?;
-        self.check(&weights, "WEIGHTS_0", Some(count))?;
-        let weights: Vec<[f32; 4]> = match weights.data_type() {
-            DataType::U8 => widen(self.read::<[u8; 4]>(&weights, "WEIGHTS_0")?, 255.0),
-            DataType::U16 => widen(self.read::<[u16; 4]>(&weights, "WEIGHTS_0")?, 65535.0),
-            _ => self.read(&weights, "WEIGHTS_0")?,
-        };
+        let weights: Rc<Vec<[f32; 4]>> =
+            self.decoded(&weights, "WEIGHTS_0", Some(count), || {
+                Ok(match weights.data_type() {
+                    DataType::U8 => widen(self.read::<[u8; 4]>(&weights, "WEIGHTS_0")?, 255.0),
+                    DataType::U16 => widen(self.read::<[u16; 4]>(&weights, "WEIGHTS_0")?, 65535.0),
+                    _ => self.read(&weights, "WEIGHTS_0")?,
+                })
+            })?;
 
         let joint_count = skin.joints().len();
         let mut kept_joints = Vec::with_capacity(kept.len());
@@ -413,11 +564,9 @@ impl<'d> Streams<'_, 'd> {
         )))
     }
 
-    /// Everything `gltf`'s reader assumes of `accessor`: at least one
-    /// element (`count` of them for a vertex stream), each view's stride at
-    /// least an element, and every element inside its view and buffer. A
-    /// sparse accessor's indices must also rise and stay below its count.
-    fn check(
+    /// `accessor` has at least one element (the reader computes
+    /// `count − 1`), and `count` of them when this use needs a number.
+    fn check_count(
         &self,
         accessor: &Accessor<'d>,
         what: &str,
@@ -434,6 +583,15 @@ impl<'d> Streams<'_, 'd> {
                 .at
                 .invalid(format_args!("has {elements} {what} for {count} vertices")));
         }
+        Ok(())
+    }
+
+    /// Everything else `gltf`'s reader assumes of `accessor` (after
+    /// [`Self::check_count`]): each view's stride at least an element, and
+    /// every element inside its view and buffer; a sparse accessor's values
+    /// no more than its elements.
+    fn check(&self, accessor: &Accessor<'d>, what: &str) -> Result<(), LoadError> {
+        let elements = accessor.count();
         let size = accessor.size();
         match accessor.view() {
             Some(view) => self.check_view(&view, accessor.offset(), size, elements, what)?,
@@ -463,10 +621,22 @@ impl<'d> Streams<'_, 'd> {
             size,
             values,
             what,
-        )?;
+        )
+    }
 
-        // The reader matches indices to elements in order and skips the
-        // rest: indices out of order would silently drop values.
+    /// A sparse accessor's indices rise and stay below its count (after
+    /// [`Self::check`]): the reader matches indices to elements in order
+    /// and skips the rest, so indices out of order would silently drop
+    /// values.
+    fn check_sparse_order(&self, accessor: &Accessor<'d>, what: &str) -> Result<(), LoadError> {
+        let Some(sparse) = accessor.sparse() else {
+            return Ok(());
+        };
+        let elements = accessor.count();
+        let values = sparse.count();
+        let indices = sparse.indices();
+        let index_size = indices.index_type().size();
+        let view = indices.view();
         let stride = view.stride().unwrap_or(index_size);
         let start = view.offset() + indices.offset();
         let bytes = self.buffer(view.buffer()).unwrap_or_default();
@@ -565,7 +735,7 @@ fn widen<T: Copy + Into<f32>, const N: usize>(items: Vec<[T; N]>, max: f32) -> V
 /// `TRIANGLE_STRIP` and `TRIANGLE_FAN` as a list, in glTF's winding
 /// (glTF 2.0, 3.7.2.1): strip triangle `i` is `v[i], v[i + 1 + i % 2],
 /// v[i + 2 − i % 2]`, fan triangle `i` is `v[i + 1], v[i + 2], v[0]`.
-fn triangle_list(mode: Mode, drawn: Vec<u32>, at: &At) -> Result<Vec<u32>, LoadError> {
+fn triangle_list(mode: Mode, drawn: &[u32], at: &At) -> Result<Vec<u32>, LoadError> {
     let triangles = drawn.len().saturating_sub(2);
     match mode {
         Mode::TriangleStrip => Ok((0..triangles)
@@ -581,7 +751,7 @@ fn triangle_list(mode: Mode, drawn: Vec<u32>, at: &At) -> Result<Vec<u32>, LoadE
             "has {} indices, which is not a whole number of triangles",
             drawn.len()
         ))),
-        _ => Ok(drawn),
+        _ => Ok(drawn.to_vec()),
     }
 }
 
@@ -753,16 +923,196 @@ mod tests {
             Ok(document) => document,
             Err(error) => panic!("the file did not parse: {error}"),
         };
+        let accessors = Accessors::new(&document);
+        read_mesh(&accessors, mesh, tangents, GEOMETRY_BUDGET)
+    }
+
+    /// Mesh `mesh`'s primitives through `accessors`, each with `budget`
+    /// bytes of geometry to make.
+    fn read_mesh(
+        accessors: &Accessors,
+        mesh: usize,
+        tangents: bool,
+        budget: u64,
+    ) -> Result<Vec<Option<Geometry>>, LoadError> {
+        let document = accessors.document;
         let mesh = document.gltf.meshes().nth(mesh).unwrap();
         let skin = (mesh.index() == 0).then(|| document.gltf.skins().next().unwrap());
         mesh.primitives()
             .map(|primitive| {
                 let needs = tangents || primitive.material().normal_texture().is_some();
-                let read =
-                    primitive_geometry(&document, mesh.clone(), primitive, skin.clone(), needs)?;
+                let read = primitive_geometry(
+                    accessors,
+                    mesh.clone(),
+                    primitive,
+                    skin.clone(),
+                    needs,
+                    budget,
+                )?;
                 Ok(read.map(|read| read.geometry))
             })
             .collect()
+    }
+
+    fn parse(glb: &[u8]) -> Document {
+        match Document::parse(glb) {
+            Ok(document) => document,
+            Err(error) => panic!("the file did not parse: {error}"),
+        }
+    }
+
+    /// The avatar with `copies` copies of Body primitive 0 after its two,
+    /// each sharing primitive 0's accessors, then `edit`.
+    fn copied_box(copies: usize, edit: impl FnOnce(&mut Value)) -> Document {
+        parse(&SyntheticVrm::avatar().glb_with(|root| {
+            let primitives = root["meshes"][0]["primitives"].as_array_mut().unwrap();
+            let first = primitives[0].clone();
+            primitives.extend(std::iter::repeat_n(first, copies));
+            edit(root);
+        }))
+    }
+
+    #[test]
+    fn shared_accessors_are_decoded_once() {
+        // Body's own two primitives.
+        let alone = copied_box(0, |_| {});
+        let accessors = Accessors::new(&alone);
+        read_mesh(&accessors, 0, false, GEOMETRY_BUDGET).unwrap();
+        let once = accessors.decoded();
+        assert!(once > 0);
+
+        // 500 more primitives over the same accessors decode nothing more.
+        let copied = copied_box(500, |_| {});
+        let accessors = Accessors::new(&copied);
+        let read = read_mesh(&accessors, 0, false, GEOMETRY_BUDGET).unwrap();
+        assert_eq!(read.len(), 502);
+        assert_eq!(read[501], read[0]);
+        assert_eq!(accessors.decoded(), once);
+    }
+
+    #[test]
+    fn aliased_accessors_share_one_read_budget() {
+        // Each copy has its own POSITION accessor, all over the same bytes,
+        // so the file's size bounds nothing a cache would.
+        let document = copied_box(500, |root| {
+            let position = accessor(root, "POSITION");
+            let copy = root["accessors"][position].clone();
+            let accessors = root["accessors"].as_array_mut().unwrap();
+            let first = accessors.len();
+            accessors.extend(std::iter::repeat_n(copy, 500));
+            let primitives = root["meshes"][0]["primitives"].as_array_mut().unwrap();
+            for (index, primitive) in primitives[2..].iter_mut().enumerate() {
+                primitive["attributes"]["POSITION"] = json!(first + index);
+            }
+        });
+        let alone = Accessors::new(&document);
+        let mesh = document.gltf.meshes().next().unwrap();
+        let skin = document.gltf.skins().next();
+        for primitive in mesh.primitives().take(2) {
+            primitive_geometry(
+                &alone,
+                mesh.clone(),
+                primitive,
+                skin.clone(),
+                false,
+                GEOMETRY_BUDGET,
+            )
+            .unwrap();
+        }
+        // Room for Body's own primitives and ten aliases of 12 positions.
+        let budget = alone.decoded() + 10 * 12 * 12;
+        let accessors = Accessors::with_budget(&document, budget);
+        let message = match read_mesh(&accessors, 0, false, GEOMETRY_BUDGET) {
+            Ok(_) => panic!("every alias was decoded"),
+            Err(error) => error.to_string(),
+        };
+        assert!(
+            message.contains(
+                "mesh \"Body\" primitive 12 has POSITION of 144 bytes to decode, past the 0 bytes left"
+            ),
+            "{message}"
+        );
+        assert_eq!(accessors.decoded(), budget);
+    }
+
+    #[test]
+    fn many_primitives_over_one_large_accessor_are_read_once() {
+        // Mesh 1 as 5,000 one-triangle primitives over one accessor of
+        // 100,000 positions: read for each, they would decode 6 GB.
+        const VERTICES: usize = 100_000;
+        const PRIMITIVES: usize = 5_000;
+        use base64::Engine as _;
+        let mut bytes = vec![0u8; VERTICES * 12];
+        for index in [0u16, 50_000, 65_535] {
+            bytes.extend(index.to_le_bytes());
+        }
+        let uri = format!(
+            "data:application/octet-stream;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(&bytes)
+        );
+        let document = parse(&SyntheticVrm::avatar().glb_with(|root| {
+            root["buffers"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({ "byteLength": bytes.len(), "uri": uri }));
+            let buffer = root["buffers"].as_array().unwrap().len() - 1;
+            let views = root["bufferViews"].as_array_mut().unwrap();
+            views.push(json!({ "buffer": buffer, "byteLength": VERTICES * 12 }));
+            views.push(json!({ "buffer": buffer, "byteOffset": VERTICES * 12, "byteLength": 6 }));
+            let positions = views.len() - 2;
+            let accessors = root["accessors"].as_array_mut().unwrap();
+            accessors.push(json!({
+                "bufferView": positions, "componentType": 5126, "count": VERTICES,
+                "type": "VEC3", "min": [0.0, 0.0, 0.0], "max": [0.0, 0.0, 0.0],
+            }));
+            accessors.push(json!({
+                "bufferView": positions + 1, "componentType": 5123, "count": 3, "type": "SCALAR",
+            }));
+            let primitive = json!({
+                "attributes": { "POSITION": accessors.len() - 2 },
+                "indices": accessors.len() - 1,
+            });
+            root["meshes"][1]["primitives"] = json!(vec![primitive; PRIMITIVES]);
+        }));
+        let accessors = Accessors::new(&document);
+        let read = read_mesh(&accessors, 1, false, GEOMETRY_BUDGET).unwrap();
+        assert_eq!(read.len(), PRIMITIVES);
+        for geometry in &read {
+            let geometry = geometry.as_ref().unwrap();
+            assert_eq!(geometry.positions.len(), 3);
+            assert_eq!(geometry.indices, [0, 1, 2]);
+        }
+        assert_eq!(accessors.decoded(), (VERTICES * 12 + 3 * 4) as u64);
+    }
+
+    #[test]
+    fn a_primitive_past_its_geometry_budget_is_refused_before_it_is_made() {
+        let document = parse(&SyntheticVrm::avatar().glb());
+        let read = |budget| {
+            let accessors = Accessors::new(&document);
+            let mesh = document.gltf.meshes().next().unwrap();
+            let primitive = mesh.primitives().next().unwrap();
+            let skin = document.gltf.skins().next();
+            primitive_geometry(&accessors, mesh.clone(), primitive, skin, true, budget)
+                .map(|read| read.unwrap().geometry)
+        };
+        let cube = read(GEOMETRY_BUDGET).unwrap();
+        // 8 vertices: positions, normals 96 bytes each; UVs and joints 64;
+        // weights and tangents 128; 3 targets 288; 36 indices 144.
+        assert_eq!(
+            geometry_bytes(&cube),
+            96 + 96 + 64 + 128 + 64 + 128 + 288 + 144
+        );
+        assert_eq!(read(1008).unwrap(), cube);
+        let message = match read(1007) {
+            Ok(_) => panic!("the primitive was made"),
+            Err(error) => error.to_string(),
+        };
+        assert!(
+            message.contains("mesh \"Body\" primitive 0 makes 1008 bytes of geometry")
+                && message.contains("1007 left"),
+            "{message}"
+        );
     }
 
     fn body(vrm: &SyntheticVrm) -> Vec<Geometry> {
@@ -879,14 +1229,14 @@ mod tests {
         assert_eq!(past_budget(6, 8, 576), None);
         assert_eq!(past_budget(6, 8, 575), Some(576));
         assert_eq!(
-            past_budget(u64::MAX, usize::MAX, TARGET_BUDGET),
+            past_budget(u64::MAX, usize::MAX, GEOMETRY_BUDGET),
             Some(u64::MAX)
         );
-        assert_eq!(past_budget(0, usize::MAX, TARGET_BUDGET), None);
+        assert_eq!(past_budget(0, usize::MAX, GEOMETRY_BUDGET), None);
     }
 
     /// Body primitive 0 with `extra` empty targets (`{}`) after its three,
-    /// read with a morph target budget of `budget` bytes.
+    /// read with a geometry budget of `budget` bytes.
     fn empty_targets(extra: usize, budget: u64) -> Result<Option<Geometry>, LoadError> {
         let glb = SyntheticVrm::avatar().glb_with(|root| {
             let targets = root["meshes"][0]["primitives"][0]["targets"]
@@ -898,19 +1248,26 @@ mod tests {
         let mesh = document.gltf.meshes().next().unwrap();
         let primitive = mesh.primitives().next().unwrap();
         let skin = document.gltf.skins().next();
-        let read = read_primitive(&document, mesh.clone(), primitive, skin, false, budget)?;
+        let accessors = Accessors::new(&document);
+        let read = primitive_geometry(&accessors, mesh.clone(), primitive, skin, false, budget)?;
         Ok(read.map(|read| read.geometry))
     }
 
     #[test]
     fn empty_targets_count_toward_the_budget() {
-        // 13 targets, each with dense positions over 8 vertices: 1248 bytes.
-        let cube = empty_targets(10, 1248).unwrap().unwrap();
+        // 13 targets, each with dense positions over 8 vertices: 1248 bytes,
+        // and 592 for the rest of the box.
+        let cube = empty_targets(10, 1248 + 592).unwrap().unwrap();
         assert_eq!(cube.targets.len(), 13);
         for target in &cube.targets[3..] {
             assert_eq!(target.positions, vec![[0.0; 3]; 8]);
             assert!(target.normals.is_empty());
         }
+        let message = match empty_targets(10, 1248 + 591) {
+            Ok(_) => panic!("the box was read"),
+            Err(error) => error.to_string(),
+        };
+        assert!(message.contains("bytes of geometry"), "{message}");
         let message = match empty_targets(10, 1247) {
             Ok(_) => panic!("the targets were read"),
             Err(error) => error.to_string(),
@@ -920,7 +1277,7 @@ mod tests {
 
     #[test]
     fn too_many_targets_are_refused() {
-        let message = match empty_targets(MAX_TARGETS - 2, TARGET_BUDGET) {
+        let message = match empty_targets(MAX_TARGETS - 2, GEOMETRY_BUDGET) {
             Ok(_) => panic!("the targets were read"),
             Err(error) => error.to_string(),
         };
