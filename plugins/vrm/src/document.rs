@@ -3,10 +3,14 @@
 //! VRM 1.0 avatar. Images are left encoded; the materials read them.
 
 use serde::Deserialize;
+use serde::de::IgnoredAny;
 use serde_json::Value;
 use std::borrow::Cow;
+use std::fs::File;
+use std::io::Read;
+use std::path::Path;
 use vrm_spec::vrmc_materials_mtoon_1_0::{VRMC_MATERIALS_MTOON, VrmcMaterialsMtoonSchema};
-use vrm_spec::vrmc_vrm_1_0::{HumanBoneName, VRMC_VRM, VRMCVrmSchema};
+use vrm_spec::vrmc_vrm_1_0::{HumanBoneName, VRMCVrmSchema};
 
 /// Why a file did not open.
 #[derive(Debug, thiserror::Error)]
@@ -39,45 +43,96 @@ const REQUIRED_BONES: [(HumanBoneName, &str); 15] = [
     (HumanBoneName::RightFoot, "rightFoot"),
 ];
 
-/// A VRM 1.0 file, read but not yet turned into a scene.
+/// The largest JSON the plugin parses: a VRM's is a few MB. Parsed JSON
+/// takes many times its size, and the budgets count only what is read
+/// from the buffers, so the JSON is refused past this before it is parsed.
+pub(crate) const JSON_LIMIT: usize = 64 << 20;
+
+/// The largest file the plugin reads, far past any avatar's.
+pub(crate) const FILE_LIMIT: u64 = 1 << 30;
+
+/// The file at `path`, refused past [`FILE_LIMIT`]: by its size before it
+/// is read, and while it is read for a file whose size says nothing (a
+/// device such as `/dev/zero`).
+pub(crate) fn read_file(path: &Path) -> Result<Vec<u8>, LoadError> {
+    let too_large = || {
+        LoadError::Invalid(format!(
+            "the file is larger than the {} MiB the VRM plugin reads",
+            FILE_LIMIT >> 20
+        ))
+    };
+    let file = File::open(path)?;
+    if file.metadata()?.len() > FILE_LIMIT {
+        return Err(too_large());
+    }
+    let mut bytes = Vec::new();
+    file.take(FILE_LIMIT + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > FILE_LIMIT {
+        return Err(too_large());
+    }
+    Ok(bytes)
+}
+
+/// What the root says about VRM before glTF reads it: the rest of the JSON
+/// is skipped, not parsed.
+#[derive(Deserialize)]
+struct Head {
+    #[serde(default)]
+    extensions: Option<HeadExtensions>,
+}
+
+#[derive(Deserialize)]
+struct HeadExtensions {
+    #[serde(rename = "VRMC_vrm", default)]
+    vrm: Option<Value>,
+    #[serde(rename = "VRM", default)]
+    vrm0: Option<IgnoredAny>,
+}
+
+/// A VRM 1.0 file, read but not yet turned into a scene. Extensions
+/// `vrm-spec` has no types for are in gltf-json's `extensions().others`
+/// of the object holding them.
 pub(crate) struct Document {
     pub gltf: gltf::Document,
     pub buffers: Vec<gltf::buffer::Data>,
     pub vrm: VRMCVrmSchema,
     /// Each material's `VRMC_materials_mtoon`, by glTF material index.
     pub mtoon: Vec<Option<VrmcMaterialsMtoonSchema>>,
-    /// The root JSON, for extensions `vrm-spec` has no types for.
-    // The motion plan reads its constraints here.
-    #[allow(dead_code)]
-    pub raw: Value,
 }
 
 impl Document {
     /// Reads a `.vrm` (binary glTF) file, or a glTF JSON file whose buffers
-    /// are `data:` URIs.
+    /// are `data:` URIs. JSON past [`JSON_LIMIT`] is refused.
     pub(crate) fn parse(bytes: &[u8]) -> Result<Self, LoadError> {
-        let (raw, blob): (Value, _) = if bytes.starts_with(b"glTF") {
+        let (json, blob) = if bytes.starts_with(b"glTF") {
             let glb = gltf::binary::Glb::from_slice(bytes)?;
-            let raw = serde_json::from_slice(&glb.json).map_err(gltf::Error::Deserialize)?;
-            (raw, glb.bin.map(Cow::into_owned))
+            (glb.json, glb.bin.map(Cow::into_owned))
         } else {
-            let raw = serde_json::from_slice(bytes).map_err(gltf::Error::Deserialize)?;
-            (raw, None)
+            (Cow::Borrowed(bytes), None)
         };
+        if json.len() > JSON_LIMIT {
+            return Err(LoadError::Invalid(format!(
+                "the glTF JSON is {} bytes, more than the {} MiB the VRM plugin reads",
+                json.len(),
+                JSON_LIMIT >> 20
+            )));
+        }
 
         // Which VRM this is comes first, before glTF's own validation, so a
         // VRM 0.x file always gets the conversion hint.
-        let extensions = &raw["extensions"];
-        let vrm = &extensions[VRMC_VRM];
-        if vrm.is_null() {
-            return Err(LoadError::Invalid(if extensions["VRM"].is_null() {
+        let head: Head = serde_json::from_slice(&json).map_err(gltf::Error::Deserialize)?;
+        let (vrm, vrm0) = head
+            .extensions
+            .map_or((None, None), |extensions| (extensions.vrm, extensions.vrm0));
+        let Some(vrm) = vrm else {
+            return Err(LoadError::Invalid(if vrm0.is_none() {
                 "this glTF file has no VRMC_vrm extension: it is not a VRM 1.0 avatar".into()
             } else {
                 "this is a VRM 0.x avatar, which the VRM plugin does not open yet; convert it \
                  to VRM 1.0 with UniVRM or the VRM Add-on for Blender"
                     .into()
             }));
-        }
+        };
         match vrm["specVersion"].as_str() {
             Some(version) if version == "1.0" || version.starts_with("1.0-") => {}
             Some(version) => {
@@ -92,7 +147,7 @@ impl Document {
         let vrm = VRMCVrmSchema::deserialize(vrm)
             .map_err(|error| LoadError::Invalid(format!("VRMC_vrm is malformed: {error}")))?;
 
-        let root = gltf::json::Root::deserialize(&raw).map_err(gltf::Error::Deserialize)?;
+        let root = gltf::json::Root::from_slice(&json).map_err(gltf::Error::Deserialize)?;
         let gltf = gltf::Document::from_json(root)?;
         check_humanoid(&vrm, gltf.nodes().len())?;
 
@@ -108,12 +163,16 @@ impl Document {
         }
         let buffers = gltf::import_buffers(&gltf, None, blob)?;
 
-        let mtoon = (0..gltf.materials().len())
-            .map(|index| {
-                let value = &raw["materials"][index]["extensions"][VRMC_MATERIALS_MTOON];
-                if value.is_null() {
+        let mtoon = gltf
+            .materials()
+            .enumerate()
+            .map(|(index, material)| {
+                let Some(value) = material
+                    .extension_value(VRMC_MATERIALS_MTOON)
+                    .filter(|value| !value.is_null())
+                else {
                     return Ok(None);
-                }
+                };
                 VrmcMaterialsMtoonSchema::deserialize(value)
                     .map(Some)
                     .map_err(|error| {
@@ -129,7 +188,6 @@ impl Document {
             buffers,
             vrm,
             mtoon,
-            raw,
         })
     }
 }
@@ -316,6 +374,66 @@ mod tests {
         let json = u32::from_le_bytes([glb[12], glb[13], glb[14], glb[15]]) as usize;
         short_bin[20 + json..24 + json].copy_from_slice(&u32::MAX.to_le_bytes());
         error(&short_bin);
+    }
+
+    /// `glb` with its JSON chunk padded with spaces to at least `length`.
+    fn padded_json(glb: &[u8], length: usize) -> Vec<u8> {
+        let parsed = gltf::binary::Glb::from_slice(glb).unwrap();
+        let mut json = parsed.json.into_owned();
+        json.resize(length.next_multiple_of(4), b' ');
+        let bin = parsed.bin.unwrap();
+        let total = 12 + 8 + json.len() + 8 + bin.len();
+        let mut out = Vec::with_capacity(total);
+        out.extend_from_slice(b"glTF");
+        out.extend_from_slice(&2u32.to_le_bytes());
+        out.extend_from_slice(&(total as u32).to_le_bytes());
+        out.extend_from_slice(&(json.len() as u32).to_le_bytes());
+        out.extend_from_slice(b"JSON");
+        out.extend_from_slice(&json);
+        out.extend_from_slice(&(bin.len() as u32).to_le_bytes());
+        out.extend_from_slice(b"BIN\0");
+        out.extend_from_slice(&bin);
+        out
+    }
+
+    #[test]
+    fn json_past_its_limit_is_refused_before_it_is_parsed() {
+        let glb = SyntheticVrm::avatar().glb();
+        Document::parse(&padded_json(&glb, JSON_LIMIT)).unwrap();
+        let message = error(&padded_json(&glb, JSON_LIMIT + 1));
+        let expected = format!(
+            "the glTF JSON is {} bytes, more than the 64 MiB the VRM plugin reads",
+            JSON_LIMIT + 4
+        );
+        assert!(message.contains(&expected), "{message}");
+        // A glTF JSON file is its JSON.
+        let mut json = br#"{"asset": {"version": "2.0"}}"#.to_vec();
+        json.resize(JSON_LIMIT + 1, b' ');
+        let message = error(&json);
+        assert!(
+            message.contains("the 64 MiB the VRM plugin reads"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn files_past_their_limit_are_refused_before_they_are_read() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("huge.vrm");
+        let file = std::fs::File::create(&path).unwrap();
+        // Sparse: nothing is written.
+        file.set_len(FILE_LIMIT + 1).unwrap();
+        let message = match read_file(&path) {
+            Ok(_) => panic!("the file was read"),
+            Err(error) => error.to_string(),
+        };
+        assert!(
+            message.contains("the file is larger than the 1024 MiB the VRM plugin reads"),
+            "{message}"
+        );
+        let glb = SyntheticVrm::avatar().glb();
+        std::fs::write(&path, &glb).unwrap();
+        assert_eq!(read_file(&path).unwrap(), glb);
     }
 
     #[test]

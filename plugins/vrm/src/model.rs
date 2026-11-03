@@ -53,7 +53,7 @@
 //! constraints, the lookAt, expressions, spring bones, then world matrices.
 
 use crate::camera::{self, Framing, check_lights, frame_canvas};
-use crate::document::{Document, LoadError};
+use crate::document::{Document, LoadError, read_file};
 use crate::expressions::{Applied, ExpressionKey, Expressions, read_expressions};
 use crate::first_person::hidden_nodes;
 use crate::geometry::{
@@ -196,7 +196,7 @@ impl VrmModel {
     /// Opens the `.vrm` at `path`, writing its textures to `cache` rather
     /// than the user's cache: for tests, which never write there.
     pub fn load_with_cache(path: &Path, cache: &Path) -> Result<Self, LoadError> {
-        let bytes = std::fs::read(path)?;
+        let bytes = read_file(path)?;
         Self::load_slice(&bytes, cache)
     }
 

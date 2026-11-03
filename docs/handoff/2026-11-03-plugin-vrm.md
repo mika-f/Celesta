@@ -58,6 +58,19 @@ Files ported from UniVRM carry its MIT notice and name their source.
 - A `.vrm` is binary glTF; a glTF JSON file whose buffers are `data:` URIs
   opens too. A buffer or an image that names another file is refused:
   `buffer {i} is an external file; a .vrm keeps everything in itself`.
+- **Sizes.** A file past 1 GiB (`FILE_LIMIT`) is refused by its size
+  before it is read, and while it is read when its size says nothing (a
+  device): `the file is larger than the 1024 MiB the VRM plugin reads`.
+  JSON past 64 MiB (`JSON_LIMIT`; a VRM's is a few MB) is refused before
+  it is parsed: `the glTF JSON is {n} bytes, more than the 64 MiB the VRM
+  plugin reads`. Parsed JSON takes many times its size, and the budgets
+  count only what the buffers decode to.
+- **Parsing.** The JSON is never held as one `serde_json::Value`: the
+  root's `VRMC_vrm` and `VRM` are read first with the rest skipped, then
+  gltf-json reads its typed root. Extensions `vrm-spec` has no types for
+  stay in gltf-json's `extensions().others` of the object holding them
+  (each material's `VRMC_materials_mtoon`, and the nodes' constraints for
+  the motion plan).
 - Refusals, in this order, the first three before glTF's own validation
   (so a VRM 0.x file always gets the conversion hint) and the humanoid's
   after it:
@@ -724,7 +737,8 @@ Besides MToon's list above, to check against UniVRM:
 - Unit tests, on the synthetic avatar:
   - `document`: VRM 0.x refused with the hint, plain glTF, other spec
     versions, a missing bone, external buffers, bones past the nodes or
-    sharing one, truncated and garbage files.
+    sharing one, truncated and garbage files, JSON past its limit (a GLB
+    padded with spaces, and a JSON file), a file past its limit (sparse).
   - `nodes`, `humanoid`: rest worlds, decomposed matrices, deep chains
     without overflow, two parents and cycles refused.
   - `geometry`: shared accessors compacted and decoded once, zero-weight
