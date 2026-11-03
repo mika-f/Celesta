@@ -3,7 +3,8 @@
 // morph target offsets, then taken through its weighted skinning matrices:
 // `Σ wᵢ·skinᵢ·(p + Σ wₜ·Δpₜ)`. Normals and tangents follow the matrices'
 // upper 3×3 and are renormalised; a tangent keeps its `w`. An unskinned
-// draw keeps its morphed values. The result is what `scene.wgsl` draws.
+// draw keeps its morphed values. The result is the vertex buffer every
+// scene material's entry points read (`scene_material_entry.wgsl`).
 
 struct SkinVertex {
     joints: vec4<u32>,

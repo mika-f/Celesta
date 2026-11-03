@@ -7,10 +7,6 @@
 //! the CPU; errors are located in the material's own code by line and
 //! column, or name the interface when they lie in Celesta's declarations.
 
-// Nothing draws through these checks until scene materials are compiled
-// from them.
-#![allow(dead_code)]
-
 use crate::wgsl;
 use std::fmt::Write as _;
 

@@ -1,174 +1,96 @@
-
 // MToon, as UniVRM's MToon10 shader draws it in Unity's built-in render
-// pipeline. Compiled after `scene.wgsl`, as one module: it reads that
-// file's `frame` (group 0) and `draw` (group 1), and its `base_texture` and
-// `base_sampler` as slot 0 of the material's group 2.
+// pipeline, written against Celesta's scene material interface
+// (`scene_material_prelude.wgsl`).
 //
-// `vs_mtoon` and a fragment entry point for the material's alpha mode
-// (`fs_mtoon_opaque`, `fs_mtoon_mask`, `fs_mtoon_blend`) draw a draw's
-// skinned vertices. `mtoon_color` is the shaded color (lights, ambient,
-// emission, rim, and matcap). `vs_outline` and `fs_outline_opaque`,
-// `fs_outline_mask`, or `fs_outline_blend` then draw the draw's outline
-// when its material has one, mixing its color toward that shaded color.
+// Its nine texture slots are `scene.rs`'s `MTOON_SLOTS`, in order: the base
+// color (0), the shade multiply (1), the shading shift (2), the normal (3),
+// the emissive (4), the matcap (5), the rim multiply (6), the outline width
+// (7, read by the vertex stage), and the UV animation mask (8). An empty
+// slot binds Unity's default texel for the property: black for the shading
+// shift and the matcap, white for the rest.
+//
+// `material_fragment` is the shaded color (lights, ambient, emission, rim,
+// and matcap) with the base color's alpha. `material_outline_vertex` and
+// `material_outline_fragment` draw the outline, mixing its color toward
+// that shaded color.
 
-// Group 2: slot `k`'s texture at binding `2k`, its sampler at `2k + 1`, in
-// `scene.rs`'s `MTOON_SLOTS` order. An empty slot binds Unity's default
-// texel for the property: black for the shading shift and the matcap,
-// white for the rest.
-@group(2) @binding(2)
-var shade_multiply_texture: texture_2d<f32>;
-@group(2) @binding(3)
-var shade_multiply_sampler: sampler;
-@group(2) @binding(4)
-var shading_shift_texture: texture_2d<f32>;
-@group(2) @binding(5)
-var shading_shift_sampler: sampler;
-@group(2) @binding(6)
-var normal_texture: texture_2d<f32>;
-@group(2) @binding(7)
-var normal_sampler: sampler;
-@group(2) @binding(8)
-var emissive_texture: texture_2d<f32>;
-@group(2) @binding(9)
-var emissive_sampler: sampler;
-@group(2) @binding(10)
-var matcap_texture: texture_2d<f32>;
-@group(2) @binding(11)
-var matcap_sampler: sampler;
-@group(2) @binding(12)
-var rim_multiply_texture: texture_2d<f32>;
-@group(2) @binding(13)
-var rim_multiply_sampler: sampler;
-// Read by the vertex stage.
-@group(2) @binding(14)
-var outline_width_texture: texture_2d<f32>;
-@group(2) @binding(15)
-var outline_width_sampler: sampler;
-@group(2) @binding(16)
-var uv_animation_mask_texture: texture_2d<f32>;
-@group(2) @binding(17)
-var uv_animation_mask_sampler: sampler;
-
-// `scene_skin.wgsl`'s `Skinned`, then the geometry's texture coordinates.
-struct MtoonInput {
-    @location(0) position: vec4<f32>,
-    @location(1) normal: vec4<f32>,
-    @location(2) tangent: vec4<f32>,
-    @location(3) uv: vec2<f32>,
-};
-
-struct MtoonVarying {
-    @builtin(position) clip: vec4<f32>,
-    // Through the base color texture's transform, before the UV animation.
-    @location(0) uv: vec2<f32>,
-    @location(1) position: vec3<f32>,
-    // In world space, length 1 at the vertices.
-    @location(2) normal: vec3<f32>,
-    // The tangent through `world`'s 3×3, length 1 at the vertices; `w` the
-    // bitangent's sign, ±1 at the vertices, flipped when `world` mirrors.
-    @location(3) tangent: vec4<f32>,
+// `scene.rs`'s `mtoon_params`.
+struct Params {
+    base_color: vec4f,
+    // The base color texture's transform's rows, as unlit's.
+    uv_u: vec4f,
+    uv_v: vec4f,
+    // The shade color and the shading shift factor.
+    shade: vec4f,
+    // The emissive factor and the shading shift texture's scale.
+    emissive: vec4f,
+    // The matcap factor and the shading toony factor.
+    matcap: vec4f,
+    // The parametric rim color and the rim lighting mix.
+    rim: vec4f,
+    // The rim's fresnel power and lift, the GI equalization factor, and
+    // the normal texture's scale.
+    rim_shape: vec4f,
+    // The outline color and the outline lighting mix.
+    outline: vec4f,
+    // The outline width factor and mode (0 none, 1 world, 2 screen).
+    outline_width: vec4f,
+    // How far the UV animation has scrolled in x and y at the frame's time,
+    // before the mask scales it; its rotation in turns a second; and 1 when
+    // the material has a normal texture.
+    uv_animation: vec4f,
 };
 
 const TAU: f32 = 6.283185307179586;
 
 // What `mtoon_color` shades: a point of a surface, in world space.
 struct Surface {
-    position: vec3<f32>,
+    position: vec3f,
     // Length 1, facing the side drawn; on an outline, outward.
-    normal: vec3<f32>,
+    normal: vec3f,
     // Towards the viewer, length 1.
-    view: vec3<f32>,
+    view: vec3f,
     // The texture coordinates every slot but the matcap, the outline width,
     // and the UV animation mask samples at: through the base color
     // texture's transform, then the UV animation.
-    uv: vec2<f32>,
+    uv: vec2f,
     // The base color times its texture: the lit color and the alpha.
-    lit: vec4<f32>,
+    lit: vec4f,
 };
 
-// `value` scaled to length 1, or left as it is when it has no length.
-fn unit(value: vec3<f32>) -> vec3<f32> {
-    let length_squared = dot(value, value);
-    if length_squared > 0.0 {
-        return value * inverseSqrt(length_squared);
+// `uv` through the base color texture's transform.
+fn transformed_uv(uv: vec2f) -> vec2f {
+    let point = vec3f(uv, 1.0);
+    return vec2f(dot(params.uv_u.xyz, point), dot(params.uv_v.xyz, point));
+}
+
+// The outline pass's vertex offset: along the normal by the outline width
+// times the width texture's green, sampled at the geometry's raw texture
+// coordinates. In world mode the width is in metres, whatever `world`'s
+// scale. In screen mode it is a share of the canvas's height, applied in
+// clip space, up to the distance at which a metre fills the height, and
+// fading out as the normal turns to face the camera.
+fn material_outline_vertex(vertex: Vertex) -> VertexOffset {
+    let width = params.outline_width.x
+        * textureSampleLevel(texture_7, sampler_7, vertex.uv, 0.0).g;
+    let n = vertex.normal;
+    if params.outline_width.y == 1.0 {
+        return VertexOffset(n * width, vec2f(0.0));
     }
-    return value;
-}
-
-@vertex
-fn vs_mtoon(input: MtoonInput) -> MtoonVarying {
-    return mtoon_varying(input);
-}
-
-// What the main pass's fragments read of a vertex.
-fn mtoon_varying(input: MtoonInput) -> MtoonVarying {
-    var output: MtoonVarying;
-    let position = draw.world * input.position;
-    output.clip = frame.view_projection * position;
-    output.uv = transformed_uv(input.uv);
-    output.position = position.xyz;
-    output.normal = unit(draw.normal_matrix * input.normal.xyz);
-    // UniVRM's `MToon_GetTangentToWorld`: the tangent through the world
-    // matrix itself, not the normal matrix, and its sign times
-    // `unity_WorldTransformParams.w`.
-    let world = mat3x3<f32>(draw.world[0].xyz, draw.world[1].xyz, draw.world[2].xyz);
-    let sign = select(-1.0, 1.0, input.tangent.w > 0.0) * draw.outline_width.z;
-    output.tangent = vec4<f32>(unit(world * input.tangent.xyz), sign);
-    return output;
-}
-
-// The outline pass's vertex: the main pass's, pushed out along its normal
-// by the outline width times the width texture's green, sampled at the
-// geometry's raw texture coordinates. In world mode the width is in
-// metres, whatever `world`'s scale. In screen mode it is a share of the
-// canvas's height, applied in clip space, up to the distance at which a
-// metre fills the height, and fading out as the normal turns to face the
-// camera.
-@vertex
-fn vs_outline(input: MtoonInput) -> MtoonVarying {
-    var output = mtoon_varying(input);
-    let width = draw.outline_width.x
-        * textureSampleLevel(outline_width_texture, outline_width_sampler, input.uv, 0.0).g;
-    let n = output.normal;
-    if draw.outline_width.y == 1.0 {
-        output.position += n * width;
-        output.clip = frame.view_projection * vec4<f32>(output.position, 1.0);
-    } else if draw.outline_width.y == 2.0 {
-        let n_view = unit((frame.view * vec4<f32>(n, 0.0)).xyz);
-        let n_clip = (frame.projection * vec4<f32>(n_view, 0.0)).xy;
+    if params.outline_width.y == 2.0 {
+        let n_view = safe_normalize((frame.view * vec4f(n, 0.0)).xyz);
+        let n_clip = (frame.projection * vec4f(n_view, 0.0)).xy;
         // A normal facing the camera has no direction on screen.
         if dot(n_clip, n_clip) > 0.0 {
             var offset = normalize(n_clip) * 2.0 * width
-                * min(output.clip.w, frame.projection[1][1]);
+                * min(vertex.clip.w, frame.projection[1][1]);
             // Clip space x spans the canvas's width, not its height.
-            offset.x *= frame.params.y;
+            offset.x *= frame.height_over_width;
             let facing = saturate(1.0 - n_view.z * n_view.z);
-            output.clip = vec4<f32>(output.clip.xy + offset * facing, output.clip.zw);
+            return VertexOffset(vec3f(0.0), offset * facing);
         }
     }
-    return output;
-}
-
-// UniVRM's `saturate((t − start) / (end − start))`: 0 at `start`, 1 at
-// `end`, linear between and clamped beyond. Above toony 1, `end` is below
-// `start` and the ramp runs the other way, 1 below `end` and 0 above
-// `start`. At toony 1 they meet and Unity divides by 0: a step, 0 up to
-// `start` (where `saturate(NaN)` gives 0) and 1 above, written out here
-// because WGSL does not promise what `saturate(NaN)` is.
-fn linearstep(start: f32, end: f32, t: f32) -> f32 {
-    let span = end - start;
-    if span == 0.0 {
-        return select(0.0, 1.0, t > start);
-    }
-    return saturate((t - start) / span);
-}
-
-// The ambient light from the direction `n`: Unity's `ShadeSH9`.
-fn sh(n: vec3<f32>) -> vec3<f32> {
-    let c = frame.ambient;
-    return c[0].rgb * n.x + c[1].rgb * n.y + c[2].rgb * n.z + c[3].rgb
-        + c[4].rgb * (n.x * n.y) + c[5].rgb * (n.y * n.z) + c[6].rgb * (n.z * n.z)
-        + c[7].rgb * (n.z * n.x) + c[8].rgb * (n.x * n.x - n.y * n.y);
+    return VertexOffset(vec3f(0.0), vec2f(0.0));
 }
 
 // `uv` moved by the UV animation, as UniVRM's `GetMToonGeometry_Uv` does
@@ -176,50 +98,38 @@ fn sh(n: vec3<f32>) -> vec3<f32> {
 // space: scrolled by the time times the scroll speed (`uv_scroll`'s, on the
 // CPU), then turned about the texture's centre by the time times the
 // rotation speed. The mask's blue, sampled at `uv`, scales the time.
-fn animated_uv(uv: vec2<f32>) -> vec2<f32> {
-    let mask = textureSample(uv_animation_mask_texture, uv_animation_mask_sampler, uv).b;
-    let t = frame.params.x * mask;
-    let angle = fract(t * draw.uv_animation.z) * TAU;
-    let d = uv + mask * draw.uv_animation.xy - 0.5;
+fn animated_uv(uv: vec2f) -> vec2f {
+    let mask = textureSample(texture_8, sampler_8, uv).b;
+    let t = frame.time * mask;
+    let angle = fract(t * params.uv_animation.z) * TAU;
+    let d = uv + mask * params.uv_animation.xy - 0.5;
     let c = cos(angle);
     let s = sin(angle);
-    return vec2<f32>(c * d.x + s * d.y, -s * d.x + c * d.y) + 0.5;
+    return vec2f(c * d.x + s * d.y, -s * d.x + c * d.y) + 0.5;
 }
 
 // `n`, a geometric normal facing the side drawn, tilted by the normal
-// texture's `packed` texel in the tangent space of `tangent` (a varying's
-// interpolated value). Decoded as Unity's `UnpackNormalWithScale` reads its
-// desktop layout: red and green scaled by the normal texture's scale, blue
-// unread. `n` itself when the material has no normal texture.
-fn normal_mapped(n: vec3<f32>, tangent: vec4<f32>, packed: vec4<f32>) -> vec3<f32> {
-    let xy = (packed.rg * 2.0 - 1.0) * draw.rim_shape.w;
+// texture's `packed` texel in the tangent space of `tangent` (the
+// fragment's). Decoded as Unity's `UnpackNormalWithScale` reads its desktop
+// layout: red and green scaled by the normal texture's scale, blue unread.
+// `n` itself when the material has no normal texture.
+fn normal_mapped(n: vec3f, tangent: vec4f, packed: vec4f) -> vec3f {
+    let xy = (packed.rg * 2.0 - 1.0) * params.rim_shape.w;
     let z = sqrt(saturate(1.0 - dot(xy, xy)));
-    let t = unit(tangent.xyz);
+    let t = tangent.xyz;
     let sign = select(-1.0, 1.0, tangent.w > 0.0);
-    let b = unit(sign * cross(n, t));
-    return select(n, unit(t * xy.x + b * xy.y + n * z), draw.uv_animation.w != 0.0);
+    let b = safe_normalize(sign * cross(n, t));
+    return select(n, safe_normalize(t * xy.x + b * xy.y + n * z), params.uv_animation.w != 0.0);
 }
 
-// The surface a fragment shows. The normal turns to face the viewer's side
-// on a back face, which only a double-sided material draws, and then
-// follows the normal texture.
-fn mtoon_surface(input: MtoonVarying, front_facing: bool) -> Surface {
-    let geometric = unit(input.normal);
-    let uv = animated_uv(input.uv);
-    // In perspective, towards the eye; orthographic, along the camera's +Z.
-    let view = select(
-        unit(frame.forward.xyz),
-        unit(frame.eye.xyz - input.position),
-        frame.eye.w == 1.0,
-    );
-    let lit = draw.base_color * textureSample(base_texture, base_sampler, uv);
-    let packed = textureSample(normal_texture, normal_sampler, uv);
-    let normal = normal_mapped(
-        select(-geometric, geometric, front_facing),
-        input.tangent,
-        packed,
-    );
-    return Surface(input.position, normal, view, uv, lit);
+// The surface `fragment` shows with the geometric normal `normal`, which
+// then follows the normal texture.
+fn mtoon_surface(fragment: Fragment, normal: vec3f) -> Surface {
+    let uv = animated_uv(transformed_uv(fragment.uv));
+    let lit = params.base_color * textureSample(texture_0, sampler_0, uv);
+    let packed = textureSample(texture_3, sampler_3, uv);
+    let mapped = normal_mapped(normal, fragment.tangent, packed);
+    return Surface(fragment.position, mapped, fragment.view, uv, lit);
 }
 
 // Where the matcap texture is sampled for the normal `n` seen along `v`:
@@ -228,59 +138,58 @@ fn mtoon_surface(input: MtoonVarying, front_facing: bool) -> Surface {
 // this right-handed one the same axes are `cross(+Y, V)` and
 // `cross(V, right)`. Looking along ±Y, right is the view's x axis. glTF's
 // `v` counts down, so a normal leaning up samples the texture's top row.
-fn matcap_uv(n: vec3<f32>, v: vec3<f32>) -> vec2<f32> {
-    let across = cross(vec3<f32>(0.0, 1.0, 0.0), v);
-    let view_x = vec3<f32>(frame.view[0].x, frame.view[1].x, frame.view[2].x);
-    let right = unit(select(view_x, across, dot(across, across) >= 1e-12));
-    let up = unit(cross(v, right));
-    return vec2<f32>(dot(right, n) * 0.5 + 0.5, 0.5 - dot(up, n) * 0.5);
+fn matcap_uv(n: vec3f, v: vec3f) -> vec2f {
+    let across = cross(vec3f(0.0, 1.0, 0.0), v);
+    let view_x = vec3f(frame.view[0].x, frame.view[1].x, frame.view[2].x);
+    let right = safe_normalize(select(view_x, across, dot(across, across) >= 1e-12));
+    let up = safe_normalize(cross(v, right));
+    return vec2f(dot(right, n) * 0.5 + 0.5, 0.5 - dot(up, n) * 0.5);
 }
 
 // How far `light` steps `shade` to `lit` at the normal `n`, `shift` and
-// `toony` placing the step.
-fn toon_step(n: vec3<f32>, light: Light, shift: f32, toony: f32) -> f32 {
+// `toony` placing the step: UniVRM's `linearstep`, which above toony 1
+// runs the other way and at toony 1 is a step.
+fn toon_step(n: vec3f, light: Light, shift: f32, toony: f32) -> f32 {
     return linearstep(-1.0 + toony, 1.0 - toony, dot(n, light.to_light.xyz) + shift);
 }
 
 // MToon's color of `surface`: the main light's step from shade to lit, the
-// ambient light, the emission, and the rim (the matcap and the parametric
-// rim); then each additional light's step and rim, as Unity's ForwardAdd
-// pass adds them. `main_only` leaves out the additional lights, which an
-// outline does not see.
-fn mtoon_color(surface: Surface, main_only: bool) -> vec3<f32> {
+// ambient light (Unity's `ShadeSH9`), the emission, and the rim (the matcap
+// and the parametric rim); then each additional light's step and rim, as
+// Unity's ForwardAdd pass adds them. `main_only` leaves out the additional
+// lights, which an outline does not see.
+fn mtoon_color(surface: Surface, main_only: bool) -> vec3f {
     let n = surface.normal;
     let v = surface.view;
     let uv = surface.uv;
     let lit = surface.lit.rgb;
     // Every texture is sampled here, in uniform control flow.
-    let shift = draw.shade.w
-        + textureSample(shading_shift_texture, shading_shift_sampler, uv).r * draw.emissive.w;
-    let toony = draw.matcap.w;
-    let shade = draw.shade.rgb * textureSample(shade_multiply_texture, shade_multiply_sampler, uv).rgb;
-    let emission = draw.emissive.rgb * textureSample(emissive_texture, emissive_sampler, uv).rgb;
+    let shift = params.shade.w + textureSample(texture_2, sampler_2, uv).r * params.emissive.w;
+    let toony = params.matcap.w;
+    let shade = params.shade.rgb * textureSample(texture_1, sampler_1, uv).rgb;
+    let emission = params.emissive.rgb * textureSample(texture_4, sampler_4, uv).rgb;
     // Black, so nothing, without a matcap texture.
-    let matcap = draw.matcap.rgb
-        * textureSample(matcap_texture, matcap_sampler, matcap_uv(n, v)).rgb;
-    let rim_multiply = textureSample(rim_multiply_texture, rim_multiply_sampler, uv).rgb;
+    let matcap = params.matcap.rgb * textureSample(texture_5, sampler_5, matcap_uv(n, v)).rgb;
+    let rim_multiply = textureSample(texture_6, sampler_6, uv).rgb;
 
     // The parametric rim: `pow(x, power)`, 0 at `x` 0, where WGSL's `pow`
     // is undefined.
-    let x = saturate(1.0 - dot(n, v) + draw.rim_shape.y);
-    let parametric = select(pow(x, max(draw.rim_shape.x, 1.0 / 1024.0)), 0.0, x <= 0.0)
-        * draw.rim.rgb;
+    let x = saturate(1.0 - dot(n, v) + params.rim_shape.y);
+    let parametric = select(pow(x, max(params.rim_shape.x, 1.0 / 1024.0)), 0.0, x <= 0.0)
+        * params.rim.rgb;
     let rim = (matcap + parametric) * rim_multiply;
-    let rim_mix = draw.rim.w;
+    let rim_mix = params.rim.w;
 
     // Black when the frame has no lights.
     let main_light = frame.lights[0];
     var color = mix(shade, lit, toon_step(n, main_light, shift, toony)) * main_light.color.rgb;
-    let vertical = 0.5 * (sh(vec3<f32>(0.0, 1.0, 0.0)) + sh(vec3<f32>(0.0, -1.0, 0.0)));
-    color += lit * mix(sh(n), vertical, draw.rim_shape.z);
+    let vertical = 0.5 * (ambient_light(vec3f(0.0, 1.0, 0.0)) + ambient_light(vec3f(0.0, -1.0, 0.0)));
+    color += lit * mix(ambient_light(n), vertical, params.rim_shape.z);
     color += emission;
-    color += rim * mix(vec3<f32>(1.0), main_light.color.rgb + sh(n), rim_mix);
+    color += rim * mix(vec3f(1.0), main_light.color.rgb + ambient_light(n), rim_mix);
 
     if !main_only {
-        let count = min(u32(frame.params.z), 4u);
+        let count = min(frame.light_count, MAX_LIGHTS);
         for (var i = 1u; i < count; i++) {
             let light = frame.lights[i];
             // MToon's additional-light shadow: 1 facing the light, down to
@@ -295,77 +204,22 @@ fn mtoon_color(surface: Surface, main_only: bool) -> vec3<f32> {
     return color;
 }
 
-@fragment
-fn fs_mtoon_opaque(
-    input: MtoonVarying,
-    @builtin(front_facing) front_facing: bool,
-) -> @location(0) vec4<f32> {
-    let surface = mtoon_surface(input, front_facing);
-    return vec4<f32>(mtoon_color(surface, false), 1.0);
-}
-
-@fragment
-fn fs_mtoon_mask(
-    input: MtoonVarying,
-    @builtin(front_facing) front_facing: bool,
-) -> Covered {
-    let surface = mtoon_surface(input, front_facing);
-    let color = mtoon_color(surface, false);
-    return Covered(vec4<f32>(color, 1.0), coverage(surface.lit.a));
-}
-
-@fragment
-fn fs_mtoon_blend(
-    input: MtoonVarying,
-    @builtin(front_facing) front_facing: bool,
-) -> @location(0) vec4<f32> {
-    let surface = mtoon_surface(input, front_facing);
-    // Shaded before the discard, so that its texture samples stay in
-    // uniform control flow.
-    let color = mtoon_color(surface, false);
-    let alpha = clamp(surface.lit.a, 0.0, 1.0);
-    // UniVRM discards alpha below 2^−10 (vrm-c/UniVRM#2598), so that a
-    // clear pixel of a blend writing depth writes none.
-    if alpha < 0.0009765625 {
-        discard;
-    }
-    return vec4<f32>(color, alpha);
-}
-
-// The outline's surface. Its pipeline culls front faces, so every fragment
-// is on a back face, which `mtoon_surface` would turn to face the viewer.
-// UniVRM negates the outline's normal and that flip negates it again: it
-// shades with the outward normal, so this one is not flipped.
-fn outline_surface(input: MtoonVarying) -> Surface {
-    return mtoon_surface(input, true);
+// The surface's color. Its normal turns to face the viewer's side on a
+// back face, which only a double-sided material draws.
+fn material_fragment(fragment: Fragment) -> vec4f {
+    let normal = select(-fragment.normal, fragment.normal, fragment.front_facing);
+    let surface = mtoon_surface(fragment, normal);
+    return vec4f(mtoon_color(surface, false), surface.lit.a);
 }
 
 // The outline's color: its own, mixed toward the shaded color by the
 // outline lighting mix. Unity's built-in pipeline draws the outline in
-// ForwardBase only, so the additional lights do not reach it.
-fn outline_color(surface: Surface) -> vec3<f32> {
-    return draw.outline.rgb * mix(vec3<f32>(1.0), mtoon_color(surface, true), draw.outline.w);
-}
-
-@fragment
-fn fs_outline_opaque(input: MtoonVarying) -> @location(0) vec4<f32> {
-    return vec4<f32>(outline_color(outline_surface(input)), 1.0);
-}
-
-@fragment
-fn fs_outline_mask(input: MtoonVarying) -> Covered {
-    let surface = outline_surface(input);
-    return Covered(vec4<f32>(outline_color(surface), 1.0), coverage(surface.lit.a));
-}
-
-@fragment
-fn fs_outline_blend(input: MtoonVarying) -> @location(0) vec4<f32> {
-    let surface = outline_surface(input);
-    // As `fs_mtoon_blend`: shaded, then discarded when nearly clear.
-    let color = outline_color(surface);
-    let alpha = clamp(surface.lit.a, 0.0, 1.0);
-    if alpha < 0.0009765625 {
-        discard;
-    }
-    return vec4<f32>(color, alpha);
+// ForwardBase only, so the additional lights do not reach it. Its pipeline
+// culls front faces, so every fragment is on a back face; UniVRM negates
+// the outline's normal and turning it to face the viewer negates it again,
+// so it shades with the outward normal, not turned.
+fn material_outline_fragment(fragment: Fragment) -> vec4f {
+    let surface = mtoon_surface(fragment, fragment.normal);
+    let color = params.outline.rgb * mix(vec3f(1.0), mtoon_color(surface, true), params.outline.w);
+    return vec4f(color, surface.lit.a);
 }
