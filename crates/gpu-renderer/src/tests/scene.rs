@@ -1606,19 +1606,22 @@ fn material_fragment(fragment: Fragment) -> vec4f {
 /// What the interface gives a material, by `mode`: 0 the tangent's `w` and
 /// the draw's handedness, each as 0.5 + 0.5 x; 1 red on a front face, blue
 /// on a back one; 2 `V`'s x as 0.5 + 0.5 x; 3 `linearstep(p.x, p.y, p.z)`
-/// and the length of `safe_normalize` of zero.
+/// and the length of `safe_normalize` of zero; 4 the color of light
+/// `p.x`; 5 the light count over 4, the time, and the height over the
+/// width; 6 the view's z translation over −4 and the projection's `[1][1]`
+/// over 4; 7 the normal's z and x, each as 0.5 + 0.5 x.
 const PROBE: &str = "struct Params { mode: u32, p: vec4f };
 fn material_fragment(fragment: Fragment) -> vec4f {
-    let handed = vec4f(0.5 + 0.5 * fragment.tangent.w, 0.5 + 0.5 * draw.handedness, 0.0, 1.0);
-    let facing = select(vec4f(0.0, 0.0, 1.0, 1.0), vec4f(1.0, 0.0, 0.0, 1.0), fragment.front_facing);
-    let view = vec4f(0.5 + 0.5 * fragment.view.x, 0.0, 0.0, 1.0);
-    let helpers = vec4f(
-        linearstep(params.p.x, params.p.y, params.p.z),
-        length(safe_normalize(vec3f(0.0))),
-        0.0,
-        1.0,
-    );
-    return select(select(select(helpers, view, params.mode == 2u), facing, params.mode == 1u), handed, params.mode == 0u);
+    switch params.mode {
+        case 0u: { return vec4f(0.5 + 0.5 * fragment.tangent.w, 0.5 + 0.5 * draw.handedness, 0.0, 1.0); }
+        case 1u: { return select(vec4f(0.0, 0.0, 1.0, 1.0), vec4f(1.0, 0.0, 0.0, 1.0), fragment.front_facing); }
+        case 2u: { return vec4f(0.5 + 0.5 * fragment.view.x, 0.0, 0.0, 1.0); }
+        case 3u: { return vec4f(linearstep(params.p.x, params.p.y, params.p.z), length(safe_normalize(vec3f(0.0))), 0.0, 1.0); }
+        case 4u: { return vec4f(frame.lights[u32(params.p.x)].color.rgb, 1.0); }
+        case 5u: { return vec4f(f32(frame.light_count) / 4.0, frame.time, frame.height_over_width, 1.0); }
+        case 6u: { return vec4f(frame.view[3].z / -4.0, frame.projection[1][1] / 4.0, 0.0, 1.0); }
+        default: { return vec4f(0.5 + 0.5 * fragment.normal.z, 0.5 + 0.5 * fragment.normal.x, 0.0, 1.0); }
+    }
 }";
 
 /// `PROBE`'s 32 parameter bytes: `mode` at 0, `p` at 16.
@@ -1785,6 +1788,70 @@ fn material_fragments_know_their_facing() {
     assert_centre(scenes(IDENTITY), RED);
     // Turned half about Y, the square shows its back.
     assert_centre(scenes(scaling(-1.0, 1.0, -1.0)), BLUE);
+}
+
+#[test]
+fn material_normals_are_not_turned_on_back_faces() {
+    let scenes = |world| {
+        let mut scenes = probe_square(7, [0.0; 4]);
+        scenes.model.materials[0].double_sided = true;
+        scenes.frame.draws[0].world = world;
+        scenes
+    };
+    // The front face's normal is +Z. Turned half about Y, the square shows
+    // its back, whose normal is −Z, away from the viewer.
+    assert_centre(scenes(IDENTITY), [255, 188, 0, 255]);
+    assert_centre(scenes(scaling(-1.0, 1.0, -1.0)), [0, 188, 0, 255]);
+}
+
+#[test]
+fn material_lights_are_their_colour_times_their_intensity_in_order() {
+    // Three lights at intensity 0.5, each of its own primary: light k is
+    // linear 0.5 in channel k, and light 3, which the frame lacks, black.
+    let lights = vec![
+        light(HALF_LIT, [1.0, 0.0, 0.0], 0.5),
+        light(HALF_LIT, [0.0, 1.0, 0.0], 0.5),
+        light(HALF_LIT, [0.0, 0.0, 1.0], 0.5),
+    ];
+    let expected = [[188, 0, 0, 255], [0, 188, 0, 255], [0, 0, 188, 255], BLACK];
+    for (k, expected) in expected.into_iter().enumerate() {
+        let mut scenes = probe_square(4, [k as f32, 0.0, 0.0, 0.0]);
+        scenes.frame.lights.directional = lights.clone();
+        let Some(actual) = centre(scenes) else {
+            return;
+        };
+        assert!(near(actual, expected), "light {k}: {actual:?}");
+    }
+}
+
+#[test]
+fn material_frames_count_their_lights_and_know_the_time_and_aspect() {
+    // Three lights (0.75 of 4), at time 0.5, on a canvas twice as wide as
+    // it is high (0.5): the square, 32 px a metre, is at the middle of the
+    // 128x64 canvas.
+    let mut scenes = probe_square(5, [0.0; 4]);
+    scenes.model.canvas = [128.0, 64.0];
+    scenes.frame.lights.directional = vec![light(HALF_LIT, [1.0; 3], 1.0); 3];
+    scenes.frame.time = 0.5;
+    let Some(frame) = render_scenes_in(scenes, &layer_on(empty_scene(128, 64), 0.0, 1.0)) else {
+        return;
+    };
+    assert_pixel(&frame, 64, 32, [225, 188, 188, 255]);
+}
+
+#[test]
+fn material_frames_keep_the_view_and_the_projection_apart() {
+    // Seen from 2 m, the view's z translation is −2: 0.5. Through a
+    // perspective camera of `yfov` 1, the projection's `[1][1]` is
+    // 1 / tan 0.5 = 1.8305: 0.4576, sRGB 180. Swapped, they would read
+    // 0.025 and 0.25.
+    let mut scenes = probe_square(6, [0.0; 4]);
+    scenes.frame.camera.projection = Projection::Perspective {
+        yfov: 1.0,
+        near: 0.1,
+        far: 100.0,
+    };
+    assert_centre(scenes, [188, 180, 0, 255]);
 }
 
 #[test]
