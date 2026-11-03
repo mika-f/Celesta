@@ -315,7 +315,8 @@ fn toon() -> Material {
 
 /// The plugin's reference lighting: one white light from above, behind,
 /// and to the right, and a flat ambient a little blue. Light and ambient
-/// add up to about 1, so a lit white texel stays below white.
+/// add up to about 1 (1.02, and the rim adds to that), so the checker's
+/// light squares stay below white, though a lit white texel would not.
 fn lights() -> Lights {
     let mut ambient = [[0.0; 3]; 9];
     ambient[3] = [0.22, 0.22, 0.24];

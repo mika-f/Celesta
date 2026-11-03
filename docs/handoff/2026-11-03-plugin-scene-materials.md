@@ -193,7 +193,7 @@ fails to load is closed again. The limits are `pub const`s in
   material's `baseColor` and its texture's transform finite
   (`material {m}'s base color is not finite`,
   `material {m}'s texture transform is not finite`); a draw whose
-  material has `requiresTangents` on a geometry with tangents. Messages
+  material has `requiresTangents` on a geometry without tangents. Messages
   name the shader as `shader {s} ({name})`, the name only when it has one.
 - **Each shader the model lists, used or not, is checked** with naga on
   the CPU: the WGSL must parse and validate (`ValidationFlags::all()`,
@@ -478,7 +478,9 @@ lights the cube with one white directional light of intensity 0.8
 travelling along (−0.65, −0.65, 0.3), from above, behind, and to the
 right, and a flat ambient `ambient[3]` = (0.22, 0.22, 0.24): the top and a
 face turned right are lit, a face turned left or toward the camera is in
-shade, and a lit white texel stays below white. The pane and the leaf stay
+shade. Light and ambient add up to about 1 (1.02, and the rim adds to
+that), so the checker's light squares stay below white, though a lit white
+texel would not. The pane and the leaf stay
 unlit. The cube's faces keep their own normals, so its outline breaks at
 the corners; the README says so.
 

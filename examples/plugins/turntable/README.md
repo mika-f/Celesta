@@ -59,7 +59,9 @@ work as on any layer.
   right, and a flat ambient, (0.22, 0.22, 0.24) in the constant coefficient
   alone; and where each draw is: the cube turned about +Y by the speed
   times the time, the pane and the leaf where they always are. Light and
-  ambient add up to about 1, so a lit white texel stays just below white.
+  ambient add up to about 1 (1.02, and the rim adds to that), so the
+  checker's light squares stay below white, though a lit white texel would
+  not.
   From the camera, the top and a face turned to the right are lit, and a
   face turned to the left or squarely toward the camera is in shade. Celesta
   draws the cube and the leaf first, writing depth, so the cube hides the
