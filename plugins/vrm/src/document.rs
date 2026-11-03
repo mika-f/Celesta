@@ -172,11 +172,11 @@ pub(crate) type Chunks<'a> = (Cow<'a, [u8]>, Option<Vec<u8>>);
 
 /// A glTF file's JSON and binary chunk: a binary glTF file's two chunks, or
 /// a glTF JSON file as a whole. JSON past [`JSON_LIMIT`] is refused before
-/// it is parsed.
+/// it is parsed, and before the binary chunk is copied.
 pub(crate) fn json_and_blob(bytes: &[u8]) -> Result<Chunks<'_>, LoadError> {
-    let (json, blob) = if bytes.starts_with(b"glTF") {
+    let (json, bin) = if bytes.starts_with(b"glTF") {
         let glb = gltf::binary::Glb::from_slice(bytes)?;
-        (glb.json, glb.bin.map(Cow::into_owned))
+        (glb.json, glb.bin)
     } else {
         (Cow::Borrowed(bytes), None)
     };
@@ -187,7 +187,7 @@ pub(crate) fn json_and_blob(bytes: &[u8]) -> Result<Chunks<'_>, LoadError> {
             JSON_LIMIT >> 20
         )));
     }
-    Ok((json, blob))
+    Ok((json, bin.map(Cow::into_owned)))
 }
 
 /// `gltf`'s buffers, each the binary chunk or a `data:` URI: a buffer
@@ -441,6 +441,26 @@ mod tests {
             message.contains("the 64 MiB the VRM plugin reads"),
             "{message}"
         );
+    }
+
+    #[test]
+    fn a_binary_chunk_behind_json_past_its_limit_is_refused() {
+        // The chunks of a `.vrm` or a `.vrma`: the JSON is checked before
+        // the binary chunk is copied, so only the refusal comes back.
+        let glb = padded_json(&SyntheticVrm::avatar().glb(), JSON_LIMIT + 1);
+        let message = match json_and_blob(&glb) {
+            Ok(_) => panic!("the chunks were read"),
+            Err(error) => error.to_string(),
+        };
+        assert!(
+            message.contains("more than the 64 MiB the VRM plugin reads"),
+            "{message}"
+        );
+        // Within it, both chunks come back.
+        let glb = padded_json(&SyntheticVrm::avatar().glb(), JSON_LIMIT);
+        let (json, bin) = json_and_blob(&glb).unwrap();
+        assert_eq!(json.len(), JSON_LIMIT);
+        assert!(bin.is_some_and(|bin| !bin.is_empty()));
     }
 
     #[test]
