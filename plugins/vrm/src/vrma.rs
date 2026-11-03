@@ -40,7 +40,7 @@
 //!   [`CLIP_BUDGET`] bytes of keys.
 
 use crate::document::{LoadError, embedded_buffers, json_and_blob};
-use crate::expressions::ExpressionKey;
+use crate::expressions::{ExpressionKey, Preset};
 use crate::geometry::{Accessors, At, floats};
 use crate::humanoid::{HumanBone, Humanoid};
 use crate::nodes::{NodeTree, Pose};
@@ -498,12 +498,11 @@ fn clip_expressions(
         if looks.contains(preset) {
             continue;
         }
-        let name = match serde_json::to_value(preset) {
-            Ok(Value::String(name)) => name,
-            _ => continue,
-        };
         if let Some(node) = expression.node {
-            named.insert(ExpressionKey::parse(&name), node.value());
+            named.insert(
+                ExpressionKey::Preset(Preset::from_spec(*preset)),
+                node.value(),
+            );
         }
     }
     for (name, expression) in expressions.custom.iter().flatten() {
@@ -817,6 +816,18 @@ mod tests {
         assert!((happy - 0.5).abs() < 1e-6, "{happy}");
         assert_eq!(clip.sample(2.0), clip.sample(1.0));
         assert_eq!(clip.sample(-1.0), clip.sample(0.0));
+
+        // A preset of a camelCase name is that preset, not a custom name.
+        let blink = Clip::load(&SyntheticVrma::clip().glb_with(|root| {
+            root["extensions"]["VRMC_vrm_animation"]["expressions"]["preset"] =
+                json!({ "blinkLeft": { "node": vrma_node::HAPPY } });
+        }))
+        .unwrap();
+        let expressions = blink.sample(1.0).expressions;
+        assert_eq!(
+            expressions.keys().collect::<Vec<_>>(),
+            [&ExpressionKey::Preset(Preset::BlinkLeft)]
+        );
     }
 
     #[test]

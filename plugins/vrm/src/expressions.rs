@@ -130,7 +130,7 @@ impl Preset {
         }
     }
 
-    fn from_spec(name: ExpressionPresetName) -> Self {
+    pub(crate) fn from_spec(name: ExpressionPresetName) -> Self {
         use ExpressionPresetName as N;
         match name {
             N::Happy => Self::Happy,
