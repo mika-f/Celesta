@@ -16,7 +16,7 @@
 
 use crate::document::{Document, LoadError};
 use celesta_plugin::{Geometry, MorphTarget};
-use glam::Vec3;
+use glam::{Mat4, Vec3};
 use gltf::accessor::{Accessor, DataType, Dimensions, Item, Iter};
 use gltf::mesh::{Mode, Semantic};
 use std::any::{Any, TypeId};
@@ -44,21 +44,10 @@ pub(crate) const READ_BUDGET: u64 = 1 << 30;
 /// one primitive hold millions.
 const MAX_TARGETS: usize = 1 << 16;
 
-/// One glTF primitive's geometry.
-// Read by the model (Task 4).
-#[allow(dead_code)]
-pub(crate) struct PrimitiveGeometry {
-    pub geometry: Geometry,
-    pub mesh: usize,
-    pub primitive: usize,
-}
-
 /// The accessors of one model, each decoded once, the first time a
 /// primitive or skin reads it, and kept for the next (UniVRM exports every
 /// primitive of a mesh over one set of vertex accessors). What they decode
 /// counts toward a budget, [`READ_BUDGET`] by default.
-// Made by the model (Task 4).
-#[allow(dead_code)]
 pub(crate) struct Accessors<'d> {
     document: &'d Document,
     budget: u64,
@@ -68,8 +57,6 @@ pub(crate) struct Accessors<'d> {
     decoded: RefCell<HashMap<(usize, TypeId), Rc<dyn Any>>>,
 }
 
-// Called by the model (Task 4).
-#[allow(dead_code)]
 impl<'d> Accessors<'d> {
     pub(crate) fn new(document: &'d Document) -> Self {
         Self::with_budget(document, READ_BUDGET)
@@ -85,15 +72,14 @@ impl<'d> Accessors<'d> {
     }
 
     /// The bytes decoded so far.
-    pub(crate) fn decoded(&self) -> u64 {
+    #[cfg(test)]
+    fn decoded(&self) -> u64 {
         self.budget - self.left.get()
     }
 }
 
 /// The bytes `geometry` takes: each stream's, its morph targets', and its
 /// indices'. A model's geometries together stay within its geometry budget.
-// Called by the model (Task 4).
-#[allow(dead_code)]
 pub(crate) fn geometry_bytes(geometry: &Geometry) -> u64 {
     let bytes = |size: usize| size as u64;
     let mut total = bytes(size_of_val(geometry.positions.as_slice()))
@@ -124,8 +110,6 @@ pub(crate) fn geometry_bytes(geometry: &Geometry) -> u64 {
 /// adds tangents. The geometry takes at most `budget` bytes
 /// ([`geometry_bytes`]): a primitive that would take more is refused before
 /// its streams are made.
-// Called by the model (Task 4).
-#[allow(dead_code)]
 pub(crate) fn primitive_geometry<'d>(
     accessors: &Accessors<'d>,
     mesh: gltf::Mesh<'d>,
@@ -133,7 +117,7 @@ pub(crate) fn primitive_geometry<'d>(
     skin: Option<gltf::Skin<'d>>,
     needs_tangents: bool,
     budget: u64,
-) -> Result<Option<PrimitiveGeometry>, LoadError> {
+) -> Result<Option<Geometry>, LoadError> {
     let mode = primitive.mode();
     if !matches!(
         mode,
@@ -297,11 +281,7 @@ pub(crate) fn primitive_geometry<'d>(
         indices,
     };
     debug_assert_eq!(geometry_bytes(&geometry), bytes);
-    Ok(Some(PrimitiveGeometry {
-        geometry,
-        mesh: mesh.index(),
-        primitive: primitive.index(),
-    }))
+    Ok(Some(geometry))
 }
 
 /// Every index `drawn` names is one of the primitive's `vertices`.
@@ -314,12 +294,53 @@ fn check_drawn(drawn: &[u32], vertices: usize, at: &At) -> Result<(), LoadError>
     }
 }
 
-/// Where in the file a primitive is, for messages: `mesh "Body" primitive 0`.
+/// `skin`'s inverse bind matrices, one per joint (a file may list more;
+/// the rest are not used), or the identity for each without any.
+pub(crate) fn inverse_binds<'d>(
+    accessors: &Accessors<'d>,
+    skin: &gltf::Skin<'d>,
+) -> Result<Vec<Mat4>, LoadError> {
+    let joints = skin.joints().len();
+    let Some(accessor) = skin.inverse_bind_matrices() else {
+        return Ok(vec![Mat4::IDENTITY; joints]);
+    };
+    let streams = Streams {
+        accessors,
+        at: At::Skin(skin.index()),
+    };
+    let what = "inverseBindMatrices";
+    streams.expect(&accessor, what, Dimensions::Mat4, &[DataType::F32])?;
+    if accessor.count() < joints {
+        return Err(streams.at.invalid(format_args!(
+            "has {} {what} for {joints} joints",
+            accessor.count()
+        )));
+    }
+    let matrices = streams.decoded(&accessor, what, None, || {
+        streams.read::<[[f32; 4]; 4]>(&accessor, what)
+    })?;
+    let matrices: Vec<Mat4> = matrices
+        .iter()
+        .take(joints)
+        .map(Mat4::from_cols_array_2d)
+        .collect();
+    if let Some(matrix) = matrices.iter().find(|matrix| !matrix.is_finite()) {
+        return Err(streams.at.invalid(format_args!(
+            "has an inverse bind matrix that is not finite: {:?}",
+            matrix.to_cols_array()
+        )));
+    }
+    Ok(matrices)
+}
+
+/// Where in the file a primitive or skin is, for messages:
+/// `mesh "Body" primitive 0`, `skin 0`.
 enum At<'a, 'd> {
     Primitive {
         mesh: &'a gltf::Mesh<'d>,
         primitive: usize,
     },
+    Skin(usize),
 }
 
 impl fmt::Display for At<'_, '_> {
@@ -329,6 +350,7 @@ impl fmt::Display for At<'_, '_> {
                 Some(name) => write!(f, "mesh {name:?} primitive {primitive}"),
                 None => write!(f, "mesh {} primitive {primitive}", mesh.index()),
             },
+            At::Skin(skin) => write!(f, "skin {skin}"),
         }
     }
 }
@@ -949,7 +971,7 @@ mod tests {
                     needs,
                     budget,
                 )?;
-                Ok(read.map(|read| read.geometry))
+                Ok(read)
             })
             .collect()
     }
@@ -1094,7 +1116,7 @@ mod tests {
             let primitive = mesh.primitives().next().unwrap();
             let skin = document.gltf.skins().next();
             primitive_geometry(&accessors, mesh.clone(), primitive, skin, true, budget)
-                .map(|read| read.unwrap().geometry)
+                .map(Option::unwrap)
         };
         let cube = read(GEOMETRY_BUDGET).unwrap();
         // 8 vertices: positions, normals 96 bytes each; UVs and joints 64;
@@ -1249,8 +1271,7 @@ mod tests {
         let primitive = mesh.primitives().next().unwrap();
         let skin = document.gltf.skins().next();
         let accessors = Accessors::new(&document);
-        let read = primitive_geometry(&accessors, mesh.clone(), primitive, skin, false, budget)?;
-        Ok(read.map(|read| read.geometry))
+        primitive_geometry(&accessors, mesh.clone(), primitive, skin, false, budget)
     }
 
     #[test]

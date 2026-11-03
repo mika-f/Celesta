@@ -9,9 +9,11 @@
 //! texture coordinates from the top-left.
 
 mod document;
+mod first_person;
 mod geometry;
 mod humanoid;
 mod materials;
+mod model;
 mod nodes;
 mod provider;
 #[cfg(any(test, feature = "synthetic"))]
@@ -19,8 +21,9 @@ pub mod synthetic;
 
 pub use document::LoadError;
 pub use humanoid::{HumanBone, Humanoid};
+pub use model::{CANVAS, FrameError, VrmModel};
 pub use nodes::{NodeTree, Pose, Trs};
-pub use provider::VrmProvider;
+pub use provider::{PerformanceData, VrmProvider};
 
 /// The plugin's id, as its manifest and its layers name it.
 pub const PLUGIN: &str = "vrm";

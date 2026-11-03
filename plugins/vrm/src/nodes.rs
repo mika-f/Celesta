@@ -41,8 +41,6 @@ pub struct Pose {
 impl NodeTree {
     /// The tree of `document`'s nodes; a node with two parents or a cycle
     /// is refused, as is a transform that is not finite in `f32`.
-    // Called by the model (Task 4).
-    #[allow(dead_code)]
     pub(crate) fn new(document: &Document) -> Result<Self, LoadError> {
         let gltf = &document.gltf;
         let count = gltf.nodes().len();
@@ -150,7 +148,6 @@ impl NodeTree {
 
 /// A node's rest transform. A matrix is decomposed as glTF's crate does; one
 /// that scales an axis to 0 has no rotation to find, so it gets none.
-#[allow(dead_code)]
 fn rest_transform(node: &gltf::Node) -> Result<Trs, LoadError> {
     let transform = node.transform();
     let is_matrix = matches!(transform, Transform::Matrix { .. });

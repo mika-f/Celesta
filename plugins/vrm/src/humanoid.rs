@@ -104,8 +104,6 @@ impl Humanoid {
     /// The humanoid of a parsed file, whose bones `Document::parse` has
     /// checked: every required bone is there, each on a node of its own
     /// within the file.
-    // Called by the model (Task 4).
-    #[allow(dead_code)]
     pub(crate) fn new(document: &Document) -> Self {
         let bones = document
             .vrm

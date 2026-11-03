@@ -40,8 +40,6 @@ const REQUIRED_BONES: [(HumanBoneName, &str); 15] = [
 ];
 
 /// A VRM 1.0 file, read but not yet turned into a scene.
-// The geometry, materials, and model (later tasks) read every field.
-#[allow(dead_code)]
 pub(crate) struct Document {
     pub gltf: gltf::Document,
     pub buffers: Vec<gltf::buffer::Data>,
@@ -49,11 +47,11 @@ pub(crate) struct Document {
     /// Each material's `VRMC_materials_mtoon`, by glTF material index.
     pub mtoon: Vec<Option<VrmcMaterialsMtoonSchema>>,
     /// The root JSON, for extensions `vrm-spec` has no types for.
+    // The motion plan reads its constraints here.
+    #[allow(dead_code)]
     pub raw: Value,
 }
 
-// Read by the geometry, materials, and model (later tasks).
-#[allow(dead_code)]
 impl Document {
     /// Reads a `.vrm` (binary glTF) file, or a glTF JSON file whose buffers
     /// are `data:` URIs.

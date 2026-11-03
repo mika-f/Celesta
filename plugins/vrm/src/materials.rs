@@ -4,8 +4,8 @@
 //!   has, on top of UniVRM's importer defaults (`MtoonMaterial::default()`).
 //! - `KHR_materials_unlit` is unlit: the base color times its texture.
 //! - Any other material is glTF PBR, which Celesta does not shade yet: it is
-//!   drawn unlit with its base color and base color texture, and one `info`
-//!   notice names them all.
+//!   drawn unlit with its base color and base color texture, and the model
+//!   names those its draws use in one `info` notice.
 //!
 //! Materials keep glTF's indices, unused ones too, so expression binds can
 //! name them. Every slot samples `TEXCOORD_0` whatever its `texCoord`, as
@@ -64,12 +64,14 @@ const READABLE: [&str; 4] = ["image/png", "image/jpeg", "image/jpg", "image/webp
 
 /// A model's materials, by glTF index, and the textures they sample.
 #[derive(Debug)]
-// The model (Task 4) reads these.
-#[allow(dead_code)]
 pub(crate) struct Materials {
     pub textures: Vec<SceneTexture>,
     pub materials: Vec<Material>,
     pub notices: Vec<Notice>,
+    /// The glTF PBR materials drawn as unlit base colour, by index, with
+    /// their names (`material {i}` without one): the model names those its
+    /// draws use in one notice.
+    pub pbr: Vec<(usize, String)>,
     /// By material: its base color texture's transform, which texture
     /// transform binds start from. `None` without a base color texture,
     /// or when that texture's image cannot be read.
@@ -85,8 +87,6 @@ const CACHE_NAME: &str = "celesta-plugin-vrm";
 /// `$XDG_CACHE_HOME` or `~/.cache` elsewhere). Without one, a directory
 /// named for the user in the temporary directory. [`materials`] refuses
 /// any of them that is not the user's own and private.
-// The provider (Task 4) calls this.
-#[allow(dead_code)]
 pub(crate) fn texture_cache_dir() -> PathBuf {
     cache_dir_from(|name| std::env::var_os(name))
 }
@@ -188,8 +188,6 @@ fn check_cache(cache: &Path, #[cfg(unix)] user: u32) -> Result<(), LoadError> {
 
 /// Reads every material of `document`, and writes the images they use to
 /// `cache` once the textures are known to fit [`TEXTURE_BUDGET`].
-// The model (Task 4) calls this.
-#[allow(dead_code)]
 pub(crate) fn materials(document: &Document, cache: &Path) -> Result<Materials, LoadError> {
     let mut reader = Reader {
         document,
@@ -215,26 +213,17 @@ pub(crate) fn materials(document: &Document, cache: &Path) -> Result<Materials, 
         let (read, transform) = reader.material(&material, &at)?;
         let is_mtoon = matches!(read.kind, MaterialKind::Mtoon(_));
         if !is_mtoon && !material.unlit() {
-            pbr.push(
+            pbr.push((
+                index,
                 material
                     .name()
                     .map_or_else(|| format!("material {index}"), str::to_owned),
-            );
+            ));
         }
         materials.push(read);
         base_transforms.push(transform);
     }
-    let mut notices = reader.notices;
-    if !pbr.is_empty() {
-        notices.push(Notice {
-            level: NoticeLevel::Info,
-            message: format!(
-                "{} glTF PBR material(s) are drawn as unlit base colour: {}",
-                pbr.len(),
-                pbr.join(", ")
-            ),
-        });
-    }
+    let notices = reader.notices;
 
     // Every image is sized before anything is written. Celesta decodes each
     // scene texture's file on its own, so an image two scene textures
@@ -282,6 +271,7 @@ pub(crate) fn materials(document: &Document, cache: &Path) -> Result<Materials, 
         textures,
         materials,
         notices,
+        pbr,
         base_transforms,
     })
 }
@@ -1052,17 +1042,9 @@ mod tests {
         let (materials, _cache) = load(&SyntheticVrm::avatar());
         assert_eq!(unlit(&materials, 2).base_color, [0.5, 0.5, 0.5, 1.0]);
         assert_eq!(unlit(&materials, 3).base_color, [0.0, 1.0, 0.0, 1.0]);
-        assert_eq!(materials.notices.len(), 1, "{:?}", materials.notices);
-        let notice = &materials.notices[0];
-        assert_eq!(notice.level, NoticeLevel::Info);
-        assert!(
-            notice.message.contains("drawn as unlit base colour"),
-            "{}",
-            notice.message
-        );
-        assert!(notice.message.contains("Pbr"), "{}", notice.message);
-        assert!(!notice.message.contains("Unlit"), "{}", notice.message);
-        assert!(notice.message.starts_with("1 glTF PBR material(s)"));
+        // The model, which knows which materials its draws use, names them.
+        assert!(materials.notices.is_empty(), "{:?}", materials.notices);
+        assert_eq!(materials.pbr, [(2, "Pbr".to_string())]);
     }
 
     #[test]
