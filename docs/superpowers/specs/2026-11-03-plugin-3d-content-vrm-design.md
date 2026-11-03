@@ -397,11 +397,31 @@ service), which differs from the specification's recommendation:
   rate. Here the step is fixed at 60 Hz (a usual Unity frame rate, and the
   rate the parity recordings use), advanced in whole steps to the requested
   time, so a 30 fps and a 60 fps export show the same motion.
+- A step sees the pose from the motions, tracks, and constraints alone.
+  The lookAt and expressions are a frame's own values, which earlier steps
+  cannot be given; in a VRM 1.0 avatar they turn no bone but the eyes, so
+  a spring hanging from an eye swings as if the eye rested.
 - Frames may be asked for in any order. As in the Live2D plugin, the
-  simulation runs from time 0 with checkpoints every 30 steps, keyed by
-  everything the motion depends on (motions, tracks, expressions, lookAt,
-  the springs' settings); a request resumes from the nearest checkpoint
-  before it.
+  simulation runs from time 0, and kept states only save work. They are
+  keyed by a hash of everything the steps read beyond the model: the
+  motions and the tracks (the springs' settings are the model's). Each
+  such performance keeps a cursor, the state its last request ended on,
+  and checkpoints every 30 steps; a request resumes from the later of its
+  cursor and the latest checkpoint before it, so an export steps each
+  performance once and a scrub back resumes at most 30 steps early.
+- The plugin's process keeps at most 256 MiB of states over every model
+  and performance, a ceiling against hostile files that real compositions
+  stay far below. Past it, latency gives way, never output: checkpoints
+  thin out (the performance with the most first), then go, then the least
+  recently used cursors go. Nothing caps how many performances are kept.
+- A request from a cold start steps from 0 s, so a frame is refused when
+  it is past four hours of the layer, or when its steps times a step's
+  cost pass a work budget (2^31 units). A step's cost is the model's (its
+  nodes, moving joints, joint–collider pairs, and aim constraint climbs,
+  fixed when it opens) plus its data's (each motion's clip channels and
+  each track keyframe). Refusals depend on the model, the data, and the
+  time alone, never on what is kept. A model that cannot reach four hours
+  this way warns how far it reaches when it opens; real avatars reach it.
 
 ### The `<Vrm>` component
 

@@ -16,9 +16,9 @@
 - `PerformanceData` keeps `deny_unknown_fields` and gains `motions: Vec<MotionData>` and `tracks: BTreeMap<String, TrackData>`, both `#[serde(default)]`.
 - Assets: `model` plus `motion0`, `motion1`, … (decimal, one `.vrma` each); any other name is refused.
 - Per frame, in UniVRM's order (`Vrm10Runtime.Process`): clips and tracks → constraints → lookAt → expressions → spring bones.
-- Spring bones step at `SPRING_HZ = 60`, `Δt = 1/60` s; checkpoints every `CHECKPOINT_STEPS = 30` steps; at most `CHECKPOINT_KEYS = 8` performances per model, least recently used dropped.
+- Spring bones step at `SPRING_HZ = 60`, `Δt = 1/60` s; each performance (motions and tracks) keeps a cursor and checkpoints every `CHECKPOINT_STEPS = 30` steps, within one `SPRING_CACHE_BYTES` ceiling per process and no cap on how many performances are kept; a frame is refused past `MAX_SPRING_STEPS` (4 h) or past `MAX_STEP_WORK` units of work.
 - Track times are read to the microsecond (`Time::new((seconds × 1e6).round(), 1_000_000)`), as the Live2D plugin reads them.
-- `VRMC_springBone_limit`, the VRMA `lookAt` animation, and glTF animations other than the clip's first are not read.
+- `VRMC_springBone_limit` (a warning says when a joint carries it), the VRMA `lookAt` animation, and glTF animations other than the clip's first are not read.
 
 ## Review Focus
 
@@ -153,7 +153,7 @@ pub(crate) fn from_to_rotation(from: Vec3, to: Vec3) -> Quat
 ```
 
 **Decisions:**
-- Read from each node's `extensions.VRMC_node_constraint` (`specVersion` "1.0"); exactly one of roll, aim, rotation, else `LoadError` `"node {n}'s constraint has {k} kinds; it needs one"`; a source out of range or equal to the node → `"node {n}'s constraint source {s} …"`; `weight` clamped to 0..1.
+- Read from each node's `extensions.VRMC_node_constraint` (`specVersion` "1.0"); exactly one of roll, aim, rotation, else `LoadError` `"node {n}'s constraint has {k} kinds; it needs one"`; a source out of range or equal to the node → `"node {n}'s constraint source {s} …"`; `weight` used as given (the schema bounds it to 0..1, but UniVRM's importer copies it unchecked and `Process` blends with `SlerpUnclamped`, so a weight past 0..1 extrapolates).
 - **Order:** destinations in node pre-order (UniVRM's `GetComponentsInChildren`); each reads the current pose, so a constraint whose source an earlier one moved sees the move. World matrices are recomputed after each constraint.
 - With rest (initial) local rotations `D₀` (destination) and `S₀` (source), and `slerp` along the shorter arc:
   - **Rotation:** `local = slerp(D₀, D₀ · (S₀⁻¹ · S), w)`.
@@ -227,31 +227,45 @@ impl Springs {
 
 **Files:**
 - Create: `plugins/vrm/src/stepping.rs`
-- Modify: `src/model.rs` (`apply_springs`)
+- Modify: `src/model.rs` (`apply_springs`, the model's step cost and notices), `src/provider.rs` (one spring cache for the process), `src/springs.rs` (pairs, the nodes a step reads), `src/constraints.rs` (the aims' climb), `src/vrma.rs` (a clip's channels), `src/tracks.rs` (checking apart from reading)
 
 **Interfaces — Produces:**
 
 ```rust
-pub const SPRING_HZ: f64 = 60.0; pub const CHECKPOINT_STEPS: u64 = 30; pub const CHECKPOINT_KEYS: usize = 8;
-pub(crate) struct Stepper { keys: BTreeMap<String, Checkpoints>, clock: u64 }
-struct Checkpoints { after_step: BTreeMap<u64, SpringState>, last_used: u64 }
-impl Stepper { pub(crate) fn state_at(&mut self, model: &VrmModel /* pose stages and springs */, time: f64, data: &PerformanceData) -> Result<SpringState, FrameError> }
+pub const SPRING_HZ: f64 = 60.0; pub const CHECKPOINT_STEPS: u64 = 30;
+pub const MAX_SPRING_STEPS: u64 = 4 * 3600 * 60; pub const MAX_STEP_WORK: u64 = 1 << 31; pub const SPRING_CACHE_BYTES: u64 = 256 << 20;
+#[derive(Clone, Default)] pub(crate) struct SharedSpringCache(Arc<Mutex<SpringCache>>);   // one per provider, so per process
+pub(crate) struct SpringCache { performances: BTreeMap<(u64 /* model */, [u8; 32] /* SHA-256 */), Performance>, bytes: u64, ceiling: u64, clock: u64, models: u64 }
+struct Performance { grid: BTreeMap<u64, SpringState>, cursor: Option<(u64, SpringState)>, spacing: u64, last_used: u64, state_bytes: u64 }
+pub(crate) struct Stepper { cache: SharedSpringCache, model: u64, max_steps: u64, max_work: u64 }   // Drop forgets the model's performances
+impl Stepper { pub(crate) fn state_at(&self, model: &VrmModel /* pose stages and springs */, time: f64, data: &PerformanceData) -> Result<SpringState, FrameError> }
 pub(crate) fn steps_until(time: f64) -> u64   // floor(max(time, 0) × 60 + 1e-6)
+pub(crate) fn step_cost(nodes: u64, joints: u64, pairs: u64, climbed: u64) -> u64   // 300 + nodes + joints + 3 × pairs + climbed
+pub(crate) fn reach_notice(cost: u64) -> Option<Notice>
 ```
 
 **Decisions:**
 - **Clock:** a frame at `t` has run steps `0..=n`, `n = steps_until(t)`, step `k` at `k / 60` s with `Δt = 1/60`. Before step 0 the tails start from the pose at 0 s (velocity zero); step 0 integrates once, as UniVRM's first frame does. The frame then takes its own pose at `t` (clips, tracks, constraints, lookAt, expressions) and `settle`s on step `n`'s tails, so a time between steps shows the last step's tails on the current pose.
-- **What a step sees:** the pose at `k / 60` from `base_pose` and `apply_constraints` only. LookAt and expressions are not in the steps: in a VRM 1.0 avatar they turn no bone but the eyes, and a frame's gaze and expression values are that frame's alone, which earlier steps cannot be given. A spring hanging from an eye bone swings as if the eye rested; recorded.
-- **Checkpoints:** keyed by `serde_json::to_string(&(&data.motions, &data.tracks))` (the springs' settings are the model's); a state is kept after every step `k` with `(k + 1) % 30 == 0`. A request resumes from the latest kept state at or before `n` (else from step 0) and keeps the ones it passes. At most 8 keys per model; a new key drops the least recently used.
+- **What a step sees:** the pose at `k / 60` from `base_pose` and `apply_constraints` only. LookAt and expressions are not in the steps: in a VRM 1.0 avatar they turn no bone but the eyes, and a frame's gaze and expression values are that frame's alone, which earlier steps cannot be given. A spring hanging from an eye bone swings as if the eye rested; recorded. A step's transforms place only the nodes it reads (heads and their parents, centres, collider nodes) and their ancestors, by the same operations as the whole tree's walk, so the result is the same bit for bit.
+- **Kept states** only save work; no frame depends on them. A performance is a model's motions and tracks, everything the steps read (the springs' settings are the model's), keyed by the SHA-256 of `serde_json` of `(motions, tracks)`. It keeps a **cursor**, the state its last request ended on, which each request replaces, and **grid checkpoints** after each step `k` with `(k + 1) % (30 × spacing) == 0`. A request resumes from the later of its cursor and the latest checkpoint at or before `n` (else from step 0), so sequential frames step only the steps between them and a scrub back resumes at most `30 × spacing` steps early.
+- **Memory:** the process (one `SharedSpringCache` in `VrmProvider`, which every model it opens joins; a model opened alone has its own) keeps at most `SPRING_CACHE_BYTES` of states, a ceiling against hostile files: real performances take about 1 MB per ten minutes of layer. Nothing counts performances. Past the ceiling, latency gives way, never output: the performance with the most checkpoints doubles its spacing (dropping the states off it), repeatedly; then a performance's last checkpoint goes; then the least recently used performances (cursors) go. A request takes its own performance out of the cache while it steps, so it is never evicted by its own request and keeps checkpoints only within what the others leave; its cursor is always kept, so the cache holds at most the ceiling plus one cursor. A performance's initial state is built before the cache changes, so one failing at step 0 leaves the cache as it was; `close` drops a model's performances.
+- **Bounds:** before any state is looked up, a frame is refused past `MAX_SPRING_STEPS` (4 h), or when `(n + 1) × cost > MAX_STEP_WORK`, with `cost` the model's `step_cost` (computed when it opens, from its node count, moving joints, joint–collider pairs, and aim climb) plus the data's (for each motion one plus its clip's channels, which a step in a fade samples; each track keyframe, which reading a track walks). Refusals depend on the model, the data, and the time alone. The tracks are checked once per request; each step only reads them. A model with springs whose cost alone cannot reach `MAX_SPRING_STEPS` gets a `Warning` notice when it opens, naming the latest time it reaches; Seed-san (610 units) and the constraint twist sample (2,183) reach the ceiling, a million empty nodes reach about 35 s.
 - A model without springs skips all of it.
 
-- [ ] **Step 1:** Tests (`stepping.rs`; the synthetic avatar with a hair spring `[hair0, hair1, hair2]`, stiffness 0.5, drag 0.4, gravity power 1; data A = `motions: [{motion0, loop: true}]`, B = the same plus `tracks: {head: {yaw: 30}}`; frames compared with `==`):
+- [ ] **Step 1:** Tests (`stepping.rs`; the synthetic avatar with a hair spring `[hair0, hair1, hair2]`, stiffness 0.5, drag 0.4, gravity power 1; data A = `motions: [{motion0, loop: true}]`, B = the same plus `tracks: {head: {yaw: 30}}`; frames compared with `==`; a test-only step counter on `Stepper`):
   - `springs_do_not_depend_on_frame_order` (Review Focus): on a model that first rendered B at 4 s, frames of A at `[2.0, 0.5, 3.3, 0.5, 1.0]` equal those of a fresh model asked in increasing order.
   - `thirty_and_sixty_fps_agree` (Review Focus): A at `k / 30` for k in 0..60 on one model equals A at the same times on another that is also asked every `k / 60` in between.
-  - `checkpoints_are_keyed_by_motions_and_tracks`: A at 2 s, B at 2 s, A at 2 s → the last equals the first; the model holds 2 keys; after 9 distinct keys it holds 8.
+  - `states_are_kept_by_motions_and_tracks`: A at 2 s, B at 2 s, A at 2 s → the last equals the first; 2 performances, A's with 4 checkpoints and its cursor on step 120; after 20 more performances all 22 are kept.
   - `per_frame_values_leave_the_springs_alone`: A at 2 s with `expressions: {happy: 1}` and `lookAt: {yaw: 30, pitch: 0}` has the same hair node worlds as A at 2 s without them.
+  - `a_gaze_does_not_reach_the_steps`: with the hair's centre on `leftEye`, the springs' state at 2 s is the same with and without a gaze (which does turn the frame's eye).
   - `between_steps_the_last_step_holds`: with no motion (a still avatar), the hair nodes at `1/60 + 0.004` s equal those at `1/60` s.
+  - `sequential_frames_step_only_the_delta`: 60 s at 30 fps runs 1 step, then 2 per frame (3,599 in all); a scrub back to 30 s runs at most 30, and the next frame 2.
+  - `interleaved_performances_keep_requests_small`: 12 performances asked in turn at every frame of 10 s at 30 fps run 12 × 599 steps, at most 2 per request, within the ceiling; with a ceiling of 12 cursors and one state, one performance's checkpoints filling it first, no request runs more than 2.
+  - `the_ceiling_costs_latency_only`: three performances scrubbed back and forth under ceilings of 4 KB (cursors kept, checkpoints thinned) and 100 B (each request evicts the others) give frames equal to an uncapped model's.
+  - `models_share_the_ceiling_and_take_their_states_when_they_go`, `a_performance_failing_at_step_zero_leaves_the_cache_alone`.
+  - `frames_past_the_last_step_are_refused`, `frames_past_the_work_fence_are_refused` (an injected budget of 121 steps of A: 2 s renders, the next step is refused, B's extra keyframe makes 2 s too much, and a cold model refuses with no step run), `many_nodes_shorten_the_reach` (200,000 empty nodes: the cost, the warning's time, a frame an hour in refused with no step run).
   - `steps_until_counts_whole_steps`: `steps_until(0.0) == 0`, `(1.0) == 60`, `(1.0 / 3.0) == 20`, `(-1.0) == 0`.
+  - `springs.rs`: `steps_read_their_nodes_alone_and_exactly` (240 swaying steps equal to a whole-tree reading, on the synthetic avatar and the samples); `samples.rs`: Seed-san and the twist sample open without the reach warning.
 - [ ] **Step 2:** `cargo test --manifest-path plugins/vrm/Cargo.toml stepping` → fails.
 - [ ] **Step 3:** Implement. **Step 4:** Pass; the core plan's `frames_repeat_exactly` and process test still pass; then the task checks.
 - [ ] **Step 5:** Commit `feat(plugins): deterministic VRM spring bones at 60 Hz with checkpoints`.
@@ -273,12 +287,12 @@ export type VrmHumanBone = 'hips' | 'spine' | /* … every VRM 1.0 humanoid bone
 
 **Decisions:**
 - `vrmData` sends `motions: [{ clip: 'motion<i>', from: from / fps, loop?, fadeIn?: fadeIn / fps }]`, `i` the index of the first motion with the same `src` (`===`); `content` resolves each distinct `src` once as asset `motion<i>`.
-- `tracks` become `KeyframeAnimation<number>` on the layer's clock exactly as `<Live2D>`'s `keyframeAnimation` does (frame-rate timescale for whole rates, microseconds otherwise), sorted by frame.
+- `tracks` become `KeyframeAnimation<number>` on the layer's clock as `<Live2D>`'s `keyframeAnimation` does (frame-rate timescale for whole rates, microseconds otherwise), sorted by frame. A fractional frame is rounded to the nearest frame at every rate (as a whole rate's timescale rounds it), so 29.97 fps places it where 30 fps does.
 - The demo adds `motions={[{ src: './assets/idle.vrma', loop: true }]}` and a head nod track; the README says where to get a `.vrma` (any VRM animation, for example the one three-vrm's repository tests with) and that it goes in `plugins/vrm/assets/`.
 
 - [ ] **Step 1:** Tests in `vrm.test.mts`:
   - `motions_name_their_clips`: two motions with `src: './a.vrma'` and one `'./b.vrma'`, `from: 30` at 30 fps → clips `motion0`, `motion0`, `motion2`, `from` 1; `fadeIn: 15` → 0.5.
-  - `tracks_are_keyframes_on_the_layer_clock`: `head: { yaw: [{frame: 30, value: 20}, {frame: 0, value: 0}] }` at 30 fps → keyframes sorted, times `{value: 0, timescale: 30}` and `{value: 30, timescale: 30}`; at 29.97 fps timescale 1 000 000.
+  - `tracks_are_keyframes_on_the_layer_clock`: `head: { yaw: [{frame: 30, value: 20}, {frame: 0, value: 0}] }` at 30 fps → keyframes sorted, times `{value: 0, timescale: 30}` and `{value: 30, timescale: 30}`; at 29.97 fps timescale 1 000 000; frames 10.4 and 20.6 are frames 10 and 21 at 30 fps and at 29.97 fps.
 - [ ] **Step 2:** `pnpm --filter celesta-plugin-vrm-js test` → fails.
 - [ ] **Step 3:** Implement. **Step 4:** Pass; `node plugins/vrm/build.mjs`; then the task checks.
 - [ ] **Step 5:** Commit `feat(plugins): <Vrm> motions and tracks`.
