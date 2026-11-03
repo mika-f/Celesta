@@ -407,14 +407,15 @@ service), which differs from the specification's recommendation:
   motions and the tracks (the springs' settings are the model's). Each
   such performance keeps a cursor, the state its last request ended on,
   and checkpoints every 30 steps; a request resumes from the later of its
-  cursor and the latest checkpoint before it, so an export steps each
-  performance once and a scrub back resumes at most 30 steps early (more
+  cursor and its latest checkpoint, of those at or before the requested
+  step, so an export steps each performance once and a scrub back resumes at most 30 steps early (more
   once the memory ceiling below has thinned the checkpoints).
 - The plugin's process keeps at most 256 MiB of states over every model
   and performance, a ceiling against hostile files that real compositions
   stay far below. Past it, latency gives way, never output: checkpoints
   thin out (the performance with the most first), then go, then the least
-  recently used cursors go. Nothing caps how many performances are kept.
+  recently used performances go; each is charged its entry too, so no
+  other limit on their number is needed.
 - A request from a cold start steps from 0 s, so a frame is refused when
   it is past four hours of the layer, or when its steps times a step's
   cost pass a work budget (2^33 units, so the worst frame accepted from a

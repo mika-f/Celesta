@@ -19,8 +19,8 @@
 //!   its last request ended on, which each request replaces, and **grid
 //!   checkpoints**, the states after each step `k` with
 //!   `(k + 1) % (30 × spacing) == 0`. A request resumes from the later of
-//!   its cursor and the latest checkpoint at or before its step (else from
-//!   step 0), so sequential frames step only the steps between them and a
+//!   its cursor and its latest checkpoint, of those at or before the
+//!   requested step (else from step 0), so sequential frames step only the steps between them and a
 //!   scrub back resumes at most `30 × spacing` steps before its step.
 //!   Performances are keyed by a SHA-256 of their motions and tracks.
 //! - **Memory:** the plugin's process keeps at most [`SPRING_CACHE_BYTES`]
