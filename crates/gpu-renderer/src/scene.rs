@@ -2526,6 +2526,56 @@ mod tests {
     use super::*;
 
     #[test]
+    fn render_queue_clamps_and_ignores_offsets() {
+        let mtoon = |alpha_mode, z_write, offset| Material {
+            alpha_mode,
+            double_sided: false,
+            kind: MaterialKind::Mtoon(MtoonMaterial {
+                transparent_with_z_write: z_write,
+                render_queue_offset_number: offset,
+                ..MtoonMaterial::default()
+            }),
+        };
+        let unlit = |alpha_mode| Material {
+            alpha_mode,
+            double_sided: false,
+            kind: MaterialKind::Unlit(celesta_plugin::UnlitMaterial {
+                base_color: [1.0; 4],
+                base_color_texture: None,
+            }),
+        };
+        let (opaque, mask, blend) = (
+            AlphaMode::Opaque,
+            AlphaMode::Mask { cutoff: 0.5 },
+            AlphaMode::Blend,
+        );
+        let cases = [
+            (mtoon(blend, false, 5), Alpha::Blend, 3000),
+            (mtoon(blend, false, -3), Alpha::Blend, 2997),
+            (mtoon(blend, false, -20), Alpha::Blend, 2991),
+            (mtoon(blend, false, i32::MIN), Alpha::Blend, 2991),
+            (mtoon(blend, true, -3), Alpha::BlendZWrite, 2501),
+            (mtoon(blend, true, 4), Alpha::BlendZWrite, 2505),
+            (mtoon(blend, true, 600), Alpha::BlendZWrite, 2510),
+            (mtoon(blend, true, i32::MAX), Alpha::BlendZWrite, 2510),
+            (mtoon(mask, false, -5), Alpha::Mask, 2450),
+            (mtoon(mask, true, 5), Alpha::Mask, 2450),
+            (mtoon(opaque, false, 7), Alpha::Opaque, 2000),
+            (mtoon(opaque, true, -7), Alpha::Opaque, 2000),
+            (unlit(blend), Alpha::Blend, 3000),
+            (unlit(mask), Alpha::Mask, 2450),
+            (unlit(opaque), Alpha::Opaque, 2000),
+        ];
+        for (case, (material, alpha, queue)) in cases.into_iter().enumerate() {
+            assert_eq!(
+                (Alpha::of(&material), render_queue(&material)),
+                (alpha, queue),
+                "case {case}"
+            );
+        }
+    }
+
+    #[test]
     fn determinant_of_scaled_and_singular_matrices() {
         let mut m = [0.0_f32; 16];
         for (i, scale) in [2.0, 3.0, 4.0, 1.0].into_iter().enumerate() {
