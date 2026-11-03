@@ -502,7 +502,15 @@ fit its aspect.
 - **Framing bounds:** every vertex of every visible draw at rest, skinned
   with the rest skinning matrices and no morphs, in model space, computed
   once when the model opens (without a visible vertex, the humanoid's
-  bones at rest).
+  bones at rest). Draws of one mesh share its geometry, so a file can draw
+  one large mesh from many nodes almost for free; the walk is bounded so
+  that `open` stays fast for it. A skinned geometry ignores its nodes'
+  transforms, so it is walked once however many draws use it. Unskinned
+  draws are walked vertex by vertex until the model's walks reach
+  `FRAMING_VISITS` (50 million vertices, far past any avatar); a later
+  unskinned draw is bounded by the 8 corners of its mesh's bounds, placed
+  by its node, which is conservative for a rotated instance. Real models
+  stay under the cap, so their framing is the exact walk's.
 - **Presets** frame a vertical span `[y0, y1]`, 10% larger, through a
   perspective lens of 30° (`yfov` 0.5235988), `near` 0.01, `far` 100,
   looking down −Z from `(x, (y0 + y1) / 2, z)`:
@@ -731,7 +739,11 @@ Besides MToon's list above, to check against UniVRM:
     checks, the shader's nine slots, the outline and tangents.
   - `model`: draw order, the rest frame, one `center` per mesh following
     its skeleton, hidden first-person meshes, morph weight defaults,
-    frames that repeat, the default material, notices in order, skins.
+    frames that repeat, the default material, notices in order, skins;
+    the framing walk's vertex count for one large mesh drawn by 800 nodes
+    (240 million vertices walked one by one before the cap), corners
+    past the cap equal to the exact walk for nodes that only translate,
+    and a skinned geometry walked once for 1,000 draws.
   - `expressions`: blink blocked and blended, binary rounding, the mouth
     override, clamped inputs, sRGB and linear colour binds, UV binds,
     ignored and refused binds, sums past `f32`.

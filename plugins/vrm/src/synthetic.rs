@@ -726,7 +726,7 @@ impl Bin {
 
 /// A binary glTF file: the header, the JSON chunk padded with spaces, and
 /// the binary chunk padded with zeros.
-fn glb(root: &Value, mut bin: Vec<u8>) -> Vec<u8> {
+pub(crate) fn glb(root: &Value, mut bin: Vec<u8>) -> Vec<u8> {
     let mut json = serde_json::to_vec(root).expect("JSON in memory");
     while !json.len().is_multiple_of(4) {
         json.push(b' ');

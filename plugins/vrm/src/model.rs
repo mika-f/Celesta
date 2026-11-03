@@ -37,8 +37,10 @@
 //! - **The camera** (see `camera`) frames the avatar at rest: what a
 //!   third-person camera sees, every vertex of every visible draw skinned
 //!   at rest without morphs, bounded once when the model opens (without a
-//!   visible vertex, the humanoid's bones at rest). The frame answers
-//!   `data.canvas`, else [`CANVAS`], and the lights `data` asks for.
+//!   visible vertex, the humanoid's bones at rest). Past
+//!   [`FRAMING_VISITS`], an unskinned draw is bounded by its mesh's
+//!   corners instead. The frame answers `data.canvas`, else [`CANVAS`],
+//!   and the lights `data` asks for.
 //! - **Notices:** the usage terms (see `meta`), then what loading left out
 //!   or changed: images, PBR materials drawn unlit, primitives that are
 //!   not triangles (a warning each, for meshes a node of the scene draws),
@@ -79,6 +81,14 @@ use std::path::Path;
 /// The canvas a model opens with, in pixels, and a frame's when `data` has
 /// none.
 pub const CANVAS: [f32; 2] = [1920.0, 1080.0];
+
+/// The most vertices the framing bounds transform for a model, far past
+/// any avatar's. Draws of one mesh share its geometry, so a file can draw
+/// one large mesh from many nodes for little: past this, an unskinned
+/// draw is bounded by the 8 corners of its mesh's bounds instead, placed
+/// by its node. A skinned geometry ignores its nodes, so it is walked
+/// once however many draw it, and the geometry budget bounds those walks.
+const FRAMING_VISITS: u64 = 50_000_000;
 
 /// Why a frame could not be made.
 #[derive(Debug, thiserror::Error)]
@@ -132,6 +142,9 @@ pub struct VrmModel {
     rest: Vec<Mat4>,
     /// What the camera presets frame.
     framing: Framing,
+    /// The vertices `framing` transformed.
+    #[cfg_attr(not(test), allow(dead_code))]
+    framing_visits: u64,
     /// `take_scene_model` has moved `scene.geometries` out.
     geometries_taken: bool,
     /// The bytes of the geometry budget the model takes.
@@ -165,6 +178,8 @@ struct Draws {
     sources: Vec<DrawSource>,
     infos: Vec<DrawInfo>,
     geometries: Vec<Geometry>,
+    /// By mesh: the bounds of its drawn primitives, in mesh space.
+    bounds: Vec<Option<(Vec3, Vec3)>>,
     centres: Vec<Vec3>,
     /// A primitive has no material, so glTF's default one is appended.
     default_material: bool,
@@ -187,11 +202,17 @@ impl VrmModel {
 
     /// Opens a `.vrm` held in memory, writing its textures to `cache`.
     pub fn load_slice(bytes: &[u8], cache: &Path) -> Result<Self, LoadError> {
-        Self::load_with(bytes, cache, GEOMETRY_BUDGET)
+        Self::load_with(bytes, cache, GEOMETRY_BUDGET, FRAMING_VISITS)
     }
 
-    /// [`Self::load_slice`] with a geometry budget of `budget` bytes.
-    fn load_with(bytes: &[u8], cache: &Path, budget: u64) -> Result<Self, LoadError> {
+    /// [`Self::load_slice`] with a geometry budget of `budget` bytes, and
+    /// `framing_visits` in place of [`FRAMING_VISITS`].
+    fn load_with(
+        bytes: &[u8],
+        cache: &Path,
+        budget: u64,
+        framing_visits: u64,
+    ) -> Result<Self, LoadError> {
         let mut document = Document::parse(bytes)?;
         let tree = NodeTree::new(&document)?;
         let humanoid = Humanoid::new(&document);
@@ -258,7 +279,7 @@ impl VrmModel {
             &read.base_transforms,
         );
         let rest = tree.world(&tree.rest_pose());
-        let framing = framing(&draws, &skins, &rest, &humanoid);
+        let (framing, framing_visits) = framing(&draws, &skins, &rest, &humanoid, framing_visits);
         let scene = SceneModel {
             canvas: CANVAS,
             textures: read.textures,
@@ -289,6 +310,7 @@ impl VrmModel {
             look_at,
             rest,
             framing,
+            framing_visits,
             geometries_taken: false,
             bytes: budget.total - budget.left,
         })
@@ -708,7 +730,22 @@ fn read_skins(
 /// visible draw at rest, skinned by the skins' joints at `rest` (world
 /// matrices by node) without morphs, else placed by its node. Without a
 /// visible vertex, the bounds of the humanoid's bones at rest.
-fn framing(draws: &Draws, skins: &[SkinSource], rest: &[Mat4], humanoid: &Humanoid) -> Framing {
+///
+/// Every draw of a skinned geometry has the same points (the geometry
+/// fixes the mesh and the skin, and the node's transform is ignored), so
+/// each is walked once. An unskinned draw is walked while the vertices
+/// transformed stay within `cap`; past it, the 8 corners of its mesh's
+/// bounds are placed by its node instead. Also the vertices transformed.
+fn framing(
+    draws: &Draws,
+    skins: &[SkinSource],
+    rest: &[Mat4],
+    humanoid: &Humanoid,
+    cap: u64,
+) -> (Framing, u64) {
+    let mut visits = 0u64;
+    // By geometry: the bounds of its points skinned at rest, once walked.
+    let mut skinned_bounds: Vec<Option<Option<(Vec3, Vec3)>>> = vec![None; draws.geometries.len()];
     let skinning: Vec<Vec<Mat4>> = skins
         .iter()
         .map(|skin| {
@@ -734,21 +771,56 @@ fn framing(draws: &Draws, skins: &[SkinSource], rest: &[Mat4], humanoid: &Humano
         let skinned = source
             .skin
             .zip(geometry.joints.as_ref().zip(geometry.weights.as_ref()));
-        for (vertex, &position) in geometry.positions.iter().enumerate() {
-            let position = Vec3::from(position);
-            let point = match skinned {
-                Some((skin, (joints, weights))) => joints[vertex]
-                    .iter()
-                    .zip(weights[vertex])
-                    .filter(|(_, weight)| *weight != 0.0)
-                    .filter_map(|(&joint, weight)| {
-                        let matrix = skinning[skin].get(usize::from(joint))?;
-                        Some(matrix.transform_point3(position) * weight)
-                    })
-                    .sum(),
-                None => rest[source.node].transform_point3(position),
-            };
-            include(&mut bounds, point);
+        let count = geometry.positions.len() as u64;
+        let points = match skinned {
+            Some((skin, (joints, weights))) => {
+                *skinned_bounds[info.geometry].get_or_insert_with(|| {
+                    visits += count;
+                    let mut own = None;
+                    for (vertex, &position) in geometry.positions.iter().enumerate() {
+                        let position = Vec3::from(position);
+                        let point = joints[vertex]
+                            .iter()
+                            .zip(weights[vertex])
+                            .filter(|(_, weight)| *weight != 0.0)
+                            .filter_map(|(&joint, weight)| {
+                                let matrix = skinning[skin].get(usize::from(joint))?;
+                                Some(matrix.transform_point3(position) * weight)
+                            })
+                            .sum();
+                        include(&mut own, point);
+                    }
+                    own
+                })
+            }
+            None if visits.saturating_add(count) <= cap => {
+                visits += count;
+                let world = rest[source.node];
+                for &position in &geometry.positions {
+                    include(&mut bounds, world.transform_point3(Vec3::from(position)));
+                }
+                None
+            }
+            None => draws.bounds[source.mesh].and_then(|(min, max)| {
+                let world = rest[source.node];
+                let mut own = None;
+                for corner in 0..8u32 {
+                    let pick = |bit: u32, low: f32, high: f32| {
+                        if corner & bit == 0 { low } else { high }
+                    };
+                    let point = Vec3::new(
+                        pick(1, min.x, max.x),
+                        pick(2, min.y, max.y),
+                        pick(4, min.z, max.z),
+                    );
+                    include(&mut own, world.transform_point3(point));
+                }
+                own
+            }),
+        };
+        if let Some((min, max)) = points {
+            include(&mut bounds, min);
+            include(&mut bounds, max);
         }
     }
     if bounds.is_none() {
@@ -757,10 +829,11 @@ fn framing(draws: &Draws, skins: &[SkinSource], rest: &[Mat4], humanoid: &Humano
         }
     }
     let (bounds_min, bounds_max) = bounds.unwrap_or((Vec3::ZERO, Vec3::ZERO));
-    Framing {
+    let framing = Framing {
         bounds_min,
         bounds_max,
-    }
+    };
+    (framing, visits)
 }
 
 /// By node: whether it is in the default scene (else scene 0), which is
@@ -883,6 +956,7 @@ fn read_draws(
         sources: Vec::new(),
         infos: Vec::new(),
         geometries: Vec::new(),
+        bounds: Vec::new(),
         centres: Vec::new(),
         default_material: false,
         notices: Vec::new(),
@@ -1003,9 +1077,10 @@ fn read_draws(
     }
 
     draws.centres = bounds
-        .into_iter()
+        .iter()
         .map(|bound| bound.map_or(Vec3::ZERO, |(min, max)| (min + max) / 2.0))
         .collect();
+    draws.bounds = bounds;
     Ok(draws)
 }
 
@@ -1539,18 +1614,145 @@ mod tests {
     fn the_geometry_budget_is_shared_by_every_primitive() {
         let glb = copied_box(50);
         let cache = TempDir::new().unwrap();
-        let model = VrmModel::load_with(&glb, cache.path(), GEOMETRY_BUDGET).unwrap();
+        let load = |budget| VrmModel::load_with(&glb, cache.path(), budget, FRAMING_VISITS);
+        let model = load(GEOMETRY_BUDGET).unwrap();
         assert_eq!(model.draws.len(), 53);
         // Each copy's geometry counts, though they share their accessors.
         let one = geometry_bytes(&model.scene_model().geometries[0]);
         assert!(model.bytes > 50 * one, "{} for {one} each", model.bytes);
-        VrmModel::load_with(&glb, cache.path(), model.bytes).unwrap();
-        let message = match VrmModel::load_with(&glb, cache.path(), model.bytes - 1) {
+        load(model.bytes).unwrap();
+        let message = match load(model.bytes - 1) {
             Ok(_) => panic!("the model opened"),
             Err(error) => error.to_string(),
         };
         assert!(message.contains("bytes"), "{message}");
         assert!(message.contains("left"), "{message}");
+    }
+
+    /// The avatar with `nodes` more nodes under its root, node `i` moved
+    /// `i` mm along +X, each drawing one new unskinned mesh: a triangle
+    /// list of `vertices` points (a multiple of 3) in [0, 0.6] × [0, 1] ×
+    /// [0, 0.12], without indices or a material.
+    fn instanced(vertices: usize, nodes: usize) -> Vec<u8> {
+        let avatar = SyntheticVrm::avatar().glb();
+        let glb = gltf::binary::Glb::from_slice(&avatar).unwrap();
+        let mut root: Value = serde_json::from_slice(&glb.json).unwrap();
+        let mut bin = glb.bin.unwrap().into_owned();
+        let points: Vec<[f32; 3]> = (0..vertices)
+            .map(|i| {
+                let step = |modulus: usize, size: f32| (i % modulus) as f32 * size;
+                [step(7, 0.1), step(11, 0.1), step(13, 0.01)]
+            })
+            .collect();
+        let fold = |pick: fn(f32, f32) -> f32| -> Vec<f32> {
+            (0..3)
+                .map(|axis| points.iter().map(|point| point[axis]).reduce(pick).unwrap())
+                .collect()
+        };
+        let (min, max) = (fold(f32::min), fold(f32::max));
+        bin.resize(bin.len().next_multiple_of(4), 0);
+        let offset = bin.len();
+        bin.extend(points.as_flattened().iter().flat_map(|v| v.to_le_bytes()));
+        root["buffers"][0]["byteLength"] = json!(bin.len());
+        let push = |array: &mut Value, item: Value| {
+            let array = array.as_array_mut().unwrap();
+            array.push(item);
+            array.len() - 1
+        };
+        let view = push(
+            &mut root["bufferViews"],
+            json!({ "buffer": 0, "byteOffset": offset, "byteLength": 12 * vertices }),
+        );
+        let accessor = push(
+            &mut root["accessors"],
+            json!({
+                "bufferView": view, "componentType": 5126, "count": vertices,
+                "type": "VEC3", "min": min, "max": max,
+            }),
+        );
+        let mesh = push(
+            &mut root["meshes"],
+            json!({ "primitives": [{ "attributes": { "POSITION": accessor } }] }),
+        );
+        let first = root["nodes"].as_array().unwrap().len();
+        for i in 0..nodes {
+            let translation = [0.001 * i as f64, 0.0, 0.0];
+            push(
+                &mut root["nodes"],
+                json!({ "mesh": mesh, "translation": translation }),
+            );
+            push(&mut root["nodes"][node::ROOT]["children"], json!(first + i));
+        }
+        crate::synthetic::glb(&root, bin)
+    }
+
+    fn load_framing(glb: &[u8], visits: u64) -> VrmModel {
+        let cache = TempDir::new().unwrap();
+        VrmModel::load_with(glb, cache.path(), GEOMETRY_BUDGET, visits).unwrap()
+    }
+
+    /// The vertices of the avatar's own visible draws: Body's two
+    /// primitives, skinned.
+    fn avatar_visits() -> u64 {
+        let model = avatar();
+        let geometries = &model.scene_model().geometries;
+        (geometries[0].positions.len() + geometries[1].positions.len()) as u64
+    }
+
+    #[test]
+    fn instances_past_the_framing_cap_are_bounded_by_their_mesh_s_corners() {
+        // 6 million vertex visits walked one by one.
+        let glb = instanced(30_000, 200);
+        let exact = load_framing(&glb, u64::MAX);
+        assert_eq!(exact.framing_visits, avatar_visits() + 30_000 * 200);
+        // Past the cap, an instance is its mesh's corners: for nodes that
+        // only move it, the same bounds to the bit.
+        let capped = load_framing(&glb, 100_000);
+        assert!(
+            capped.framing_visits <= 100_000,
+            "{}",
+            capped.framing_visits
+        );
+        assert_eq!(capped.framing(), exact.framing());
+        assert!(
+            exact.framing().bounds_max.x > 0.6 + 0.19,
+            "{:?}",
+            exact.framing()
+        );
+    }
+
+    #[test]
+    fn framing_one_large_mesh_drawn_by_many_nodes_is_bounded() {
+        // The shape of a file that took seconds to open: 240 million
+        // vertex visits walked one by one.
+        let glb = instanced(300_000, 800);
+        let model = load_framing(&glb, 1_000_000);
+        assert!(
+            model.framing_visits <= 1_000_000,
+            "{}",
+            model.framing_visits
+        );
+        let framing = model.framing();
+        assert!(framing.bounds_max.x >= 0.6 + 0.799 - 1e-6, "{framing:?}");
+    }
+
+    #[test]
+    fn skinned_draws_of_one_geometry_are_walked_once() {
+        let model = edited(|root| {
+            let first = root["nodes"].as_array().unwrap().len();
+            let nodes = root["nodes"].as_array_mut().unwrap();
+            nodes.extend(
+                (0..1_000).map(|i| json!({ "mesh": 0, "skin": 0, "translation": [i, 0, 0] })),
+            );
+            let children = root["nodes"][node::ROOT]["children"]
+                .as_array_mut()
+                .unwrap();
+            children.extend((first..first + 1_000).map(|n| json!(n)));
+        });
+        assert_eq!(model.draws.len(), 3 + 2 * 1_000);
+        assert_eq!(model.framing_visits, avatar_visits());
+        // A skinned draw ignores its node's transform.
+        assert_eq!(model.framing(), avatar().framing());
     }
 
     #[test]
