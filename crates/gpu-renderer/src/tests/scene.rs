@@ -2459,3 +2459,135 @@ fn outline_screen_normals_facing_the_camera_stay_put() {
     assert_pixel(&frame, 14, 32, CLEAR);
     assert_pixel(&frame, 32, 32, GREEN);
 }
+
+const GREEN_OVERRIDE: [f32; 3] = [0.0, 1.0, 0.0];
+
+#[test]
+fn override_replaces_mtoon_colors() {
+    // Each MToon color is red in the material and green in the frame's
+    // overrides; the pixel shows that color alone, so a multiplied override
+    // would be black.
+    let red = [1.0, 0.0, 0.0];
+    let emission = {
+        let mut scenes = toon_square(
+            MtoonMaterial {
+                emissive_factor: red,
+                ..black_toon()
+            },
+            vec![],
+        );
+        scenes.frame.draws[0].overrides.emission_color = Some(GREEN_OVERRIDE);
+        (scenes, (32, 32))
+    };
+    // A light from behind, `dot(N, L)` −1: all shade at toony 0.5.
+    let shade = {
+        let mut scenes = toon_square(
+            MtoonMaterial {
+                shade_color_factor: red,
+                shading_toony_factor: 0.5,
+                ..flat_toon()
+            },
+            vec![light([0.0, 0.0, 1.0], [1.0; 3], 1.0)],
+        );
+        scenes.frame.draws[0].overrides.shade_color = Some(GREEN_OVERRIDE);
+        (scenes, (32, 32))
+    };
+    let matcap = {
+        let mut scenes = toon_square(
+            MtoonMaterial {
+                matcap_factor: red,
+                ..matcap()
+            },
+            vec![],
+        );
+        scenes.model.textures = vec![texel(WHITE, ColorSpace::Srgb)];
+        scenes.frame.draws[0].overrides.matcap_color = Some(GREEN_OVERRIDE);
+        (scenes, (32, 32))
+    };
+    // Facing the camera, `1 − dot(N, V) + 1` is 1.
+    let rim = {
+        let mut scenes = toon_square(
+            MtoonMaterial {
+                parametric_rim_color_factor: red,
+                parametric_rim_lift_factor: 1.0,
+                ..rim(0.0)
+            },
+            vec![],
+        );
+        scenes.frame.draws[0].overrides.rim_color = Some(GREEN_OVERRIDE);
+        (scenes, (32, 32))
+    };
+    let outline = {
+        let mut scenes = shell_scene(
+            outlined(OutlineWidthMode::WorldCoordinates, FOUR_PX_IN_METRES),
+            vec![],
+        );
+        scenes.frame.draws[0].overrides.outline_color = Some(GREEN_OVERRIDE);
+        (scenes, (14, 32))
+    };
+    // Under an ambient light of 1, the lit color is the base color.
+    let base = {
+        let mut scenes = toon_square(
+            MtoonMaterial {
+                base_color: [1.0, 0.0, 0.0, 1.0],
+                ..flat_toon()
+            },
+            vec![],
+        );
+        scenes.frame.lights.ambient[3] = [1.0; 3];
+        scenes.frame.draws[0].overrides.base_color = Some([0.0, 1.0, 0.0, 1.0]);
+        (scenes, (32, 32))
+    };
+    for (name, (scenes, (x, y))) in [
+        ("emission", emission),
+        ("shade", shade),
+        ("matcap", matcap),
+        ("rim", rim),
+        ("outline", outline),
+        ("base", base),
+    ] {
+        let Some(frame) = render_scenes(scenes) else {
+            return;
+        };
+        let actual = pixel(&frame, x, y);
+        assert!(near(actual, GREEN), "{name}: {actual:?}");
+    }
+}
+
+#[test]
+fn override_mtoon_colors_on_unlit_draws_are_ignored() {
+    let mut scenes = one_square();
+    scenes.frame.draws[0].overrides.emission_color = Some(GREEN_OVERRIDE);
+    assert_centre(scenes, WHITE);
+}
+
+#[test]
+fn override_not_finite_is_refused() {
+    type Set = fn(&mut celesta_plugin::MaterialOverrides);
+    let cases: [(&str, Set); 5] = [
+        ("emission color override", |o| {
+            o.emission_color = Some([f32::NAN, 0.0, 0.0]);
+        }),
+        ("shade color override", |o| {
+            o.shade_color = Some([0.0, f32::INFINITY, 0.0]);
+        }),
+        ("matcap color override", |o| {
+            o.matcap_color = Some([0.0, 0.0, f32::NEG_INFINITY]);
+        }),
+        ("rim color override", |o| o.rim_color = Some([f32::NAN; 3])),
+        ("outline color override", |o| {
+            o.outline_color = Some([f32::NAN, 1.0, 1.0]);
+        }),
+    ];
+    for (name, set) in cases {
+        let mut scenes = toon_square(black_toon(), vec![]);
+        set(&mut scenes.frame.draws[0].overrides);
+        let Some(message) = invalid(scenes) else {
+            return;
+        };
+        assert!(
+            message.contains("draw 0") && message.contains(name),
+            "{name}: {message}"
+        );
+    }
+}

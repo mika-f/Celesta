@@ -1486,6 +1486,28 @@ pub(crate) fn invalid_scene_frame(model: &SceneModel, frame: &SceneFrame) -> Opt
                 "texture scale override",
                 overrides.texture_scale.as_ref().map(|scale| &scale[..]),
             ),
+            // Refused on an unlit draw too, which ignores them: the
+            // plugin that sent them is broken all the same.
+            (
+                "shade color override",
+                overrides.shade_color.as_ref().map(|color| &color[..]),
+            ),
+            (
+                "emission color override",
+                overrides.emission_color.as_ref().map(|color| &color[..]),
+            ),
+            (
+                "matcap color override",
+                overrides.matcap_color.as_ref().map(|color| &color[..]),
+            ),
+            (
+                "rim color override",
+                overrides.rim_color.as_ref().map(|color| &color[..]),
+            ),
+            (
+                "outline color override",
+                overrides.outline_color.as_ref().map(|color| &color[..]),
+            ),
         ];
         for (name, values) in numbers {
             if let Some(values) = values
@@ -2171,22 +2193,35 @@ fn draw_uniform(material: &Material, state: &DrawState) -> DrawUniform {
     };
     match &material.kind {
         MaterialKind::Unlit(_) => uniform,
-        MaterialKind::Mtoon(mtoon) => mtoon_factors(mtoon, uniform),
+        MaterialKind::Mtoon(mtoon) => mtoon_factors(mtoon, &state.overrides, uniform),
     }
 }
 
-/// `uniform` with `mtoon`'s factors.
-fn mtoon_factors(mtoon: &MtoonMaterial, uniform: DrawUniform) -> DrawUniform {
+/// `uniform` with `mtoon`'s factors, the colors `overrides` names in place
+/// of the material's.
+fn mtoon_factors(
+    mtoon: &MtoonMaterial,
+    overrides: &celesta_plugin::MaterialOverrides,
+    uniform: DrawUniform,
+) -> DrawUniform {
     let with = |[r, g, b]: [f32; 3], w: f32| [r, g, b, w];
     DrawUniform {
-        shade: with(mtoon.shade_color_factor, mtoon.shading_shift_factor),
+        shade: with(
+            overrides.shade_color.unwrap_or(mtoon.shade_color_factor),
+            mtoon.shading_shift_factor,
+        ),
         emissive: with(
-            mtoon.emissive_factor,
+            overrides.emission_color.unwrap_or(mtoon.emissive_factor),
             mtoon.shading_shift_texture.map_or(0.0, |slot| slot.scale),
         ),
-        matcap: with(mtoon.matcap_factor, mtoon.shading_toony_factor),
+        matcap: with(
+            overrides.matcap_color.unwrap_or(mtoon.matcap_factor),
+            mtoon.shading_toony_factor,
+        ),
         rim: with(
-            mtoon.parametric_rim_color_factor,
+            overrides
+                .rim_color
+                .unwrap_or(mtoon.parametric_rim_color_factor),
             mtoon.rim_lighting_mix_factor,
         ),
         rim_shape: [
@@ -2196,7 +2231,9 @@ fn mtoon_factors(mtoon: &MtoonMaterial, uniform: DrawUniform) -> DrawUniform {
             mtoon.normal_texture.map_or(0.0, |slot| slot.scale),
         ],
         outline: with(
-            mtoon.outline_color_factor,
+            overrides
+                .outline_color
+                .unwrap_or(mtoon.outline_color_factor),
             mtoon.outline_lighting_mix_factor,
         ),
         outline_width: [
