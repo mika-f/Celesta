@@ -34,9 +34,9 @@ use crate::scene_material::{
 use crate::texture::LayerTexture;
 use celesta_plugin::scene::MAX_SCENE_SHADERS;
 use celesta_plugin::{
-    AlphaMode, Camera, ColorSpace, DrawState, EmptyTexel, Filter, Material, MaterialKind,
-    MaterialOverrides, ModelId, MtoonMaterial, OutlineWidthMode, Projection, SceneFrame,
-    SceneModel, SceneShader, TextureRef, UnlitMaterial, Wrap,
+    AlphaMode, Camera, ColorSpace, CullFace, DrawState, EmptyTexel, Filter, Material, MaterialKind,
+    MaterialOverrides, ModelId, MtoonMaterial, OutlinePass, OutlineWidthMode, Projection,
+    SceneFrame, SceneModel, SceneShader, TextureRef, UnlitMaterial, Wrap,
 };
 use sha2::{Digest, Sha256};
 use std::borrow::Cow;
@@ -429,11 +429,11 @@ enum Pass {
 /// Which faces a pipeline culls.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Cull {
-    /// A double-sided material keeps both.
+    /// A double-sided material keeps both, as does an outline asking to.
     None,
     /// A single-sided material shows its front faces.
     Back,
-    /// An outline shows the back faces it pushes out.
+    /// An outline, by default, shows the back faces it pushes out.
     Front,
 }
 
@@ -476,35 +476,40 @@ impl PipelineKey {
     }
 
     /// The outline pass of `material`, drawn with `shader`, its front faces
-    /// clockwise or not: an MToon material's whose `outlineWidthMode` is
-    /// not `none`, whatever its width, as UniVRM draws it. It culls the
+    /// clockwise or not, when `shader` has the outline's entry points: a
+    /// custom material's with an `outline`, culled and pushed away from
+    /// the camera as it asks; an MToon material's whose `outlineWidthMode`
+    /// is not `none`, whatever its width, as UniVRM draws it, culling the
     /// front faces whether or not the material is double-sided (UniVRM's
-    /// `Cull Front`), is pushed away from the camera by Unity's
-    /// `Offset 1, 1`, so that the draw's own surface stays in front of it,
-    /// and draws the material's alpha.
-    fn outline(material: &Material, shader: ShaderId, clockwise: bool) -> Option<Self> {
-        match &material.kind {
+    /// `Cull Front`) and pushed away by Unity's `Offset 1, 1`, so that the
+    /// draw's own surface stays in front of it. Either draws the material's
+    /// alpha.
+    fn outline(material: &Material, shader: &CompiledShader, clockwise: bool) -> Option<Self> {
+        let pass = match &material.kind {
+            MaterialKind::Custom(custom) => custom.outline?,
             MaterialKind::Mtoon(mtoon) if mtoon.outline_width_mode != OutlineWidthMode::None => {
-                Some(Self {
-                    shader,
-                    pass: Pass::Outline {
-                        bias_constant: 1,
-                        bias_slope: 1.0_f32.to_bits(),
-                    },
-                    facing: Facing {
-                        cull: Cull::Front,
-                        clockwise,
-                    },
-                    alpha: Alpha::of(&material.alpha_mode),
-                })
+                OutlinePass::default()
             }
-            MaterialKind::Mtoon(_) | MaterialKind::Unlit(_) => None,
-            // `prepare` refuses a custom material with an outline pass.
-            MaterialKind::Custom(custom) => {
-                debug_assert!(custom.outline.is_none());
-                None
-            }
-        }
+            MaterialKind::Mtoon(_) | MaterialKind::Unlit(_) => return None,
+        };
+        // `prepare` refuses a custom material asking for an outline its
+        // shader does not define.
+        shader.outline.then_some(Self {
+            shader: shader.id,
+            pass: Pass::Outline {
+                bias_constant: pass.depth_bias.constant,
+                bias_slope: pass.depth_bias.slope_scale.to_bits(),
+            },
+            facing: Facing {
+                cull: match pass.cull {
+                    CullFace::None => Cull::None,
+                    CullFace::Front => Cull::Front,
+                    CullFace::Back => Cull::Back,
+                },
+                clockwise,
+            },
+            alpha: Alpha::of(&material.alpha_mode),
+        })
     }
 
     /// Its vertex and fragment entry points: `scene_material_entry.wgsl`'s
@@ -1191,7 +1196,8 @@ impl ScenePipelines {
     /// pipelines its materials draw with, surface passes and outlines, for
     /// either winding, unless they are made already; and gives the shader
     /// each material is drawn with. A custom material's parameters must be
-    /// as long as its shader's `Params`. Each material's pipelines are made
+    /// as long as its shader's `Params`, and its shader must define the
+    /// outline it asks for. Each material's pipelines are made
     /// in one error scope: when any fails, the message names the material
     /// and none of its pipelines is kept.
     pub(crate) fn prepare(
@@ -1230,8 +1236,11 @@ impl ScenePipelines {
                             shader.params_size
                         ));
                     }
-                    if custom.outline.is_some() {
-                        return Err(format!("material {index}'s outline is not drawn yet"));
+                    if custom.outline.is_some() && !shader.outline {
+                        return Err(format!(
+                            "material {index} asks for an outline, but shader {} defines no `material_outline_fragment`",
+                            custom.shader
+                        ));
                     }
                     shader
                 }
@@ -1243,7 +1252,7 @@ impl ScenePipelines {
                 .into_iter()
                 .flat_map(|clockwise| {
                     std::iter::once(PipelineKey::surface(material, shader.id, clockwise))
-                        .chain(PipelineKey::outline(material, shader.id, clockwise))
+                        .chain(PipelineKey::outline(material, &shader, clockwise))
                 })
                 .filter(|key| !self.draw.contains_key(key))
                 .collect();
@@ -1269,7 +1278,6 @@ impl ScenePipelines {
         key: PipelineKey,
     ) -> wgpu::RenderPipeline {
         debug_assert_eq!(key.shader, shader.id);
-        debug_assert!(shader.outline || key.pass == Pass::Surface);
         // The skinned vertices, then the geometry's texture coordinates.
         let skinned_attributes =
             wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4, 2 => Float32x4];
@@ -3136,8 +3144,10 @@ impl GpuRenderer {
                         .get(&key)
                         .expect("prepared when the model loaded")
                 };
-                let shader = scene.shaders[info.material].id;
-                pass.set_pipeline(pipeline(PipelineKey::surface(material, shader, clockwise)));
+                let shader = &scene.shaders[info.material];
+                pass.set_pipeline(pipeline(PipelineKey::surface(
+                    material, shader.id, clockwise,
+                )));
                 let at = slot * draw_stride;
                 pass.set_bind_group(1, draw_group, &[at as u32, (at + params_at) as u32]);
                 pass.set_bind_group(2, &scene.materials[info.material], &[]);

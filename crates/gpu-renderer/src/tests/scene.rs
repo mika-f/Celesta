@@ -4,11 +4,11 @@
 
 use super::*;
 use celesta_plugin::{
-    AlphaMode, Camera, ColorSpace, ContentFrame, ContentProvider, CustomMaterial, DirectionalLight,
-    DrawInfo, DrawState, EmptyTexel, Filter, Geometry, Lights, Material, MaterialKind, ModelId,
-    MorphTarget, MtoonMaterial, Opened, OutlineWidthMode, PluginError, Projection, Sampler,
-    ScaledTextureSlot, SceneFrame, SceneModel, SceneShader, SceneTexture, ShaderTexture, Skin,
-    TextureSlot, TextureSource, UnlitMaterial,
+    AlphaMode, Camera, ColorSpace, ContentFrame, ContentProvider, CullFace, CustomMaterial,
+    DepthBias, DirectionalLight, DrawInfo, DrawState, EmptyTexel, Filter, Geometry, Lights,
+    Material, MaterialKind, ModelId, MorphTarget, MtoonMaterial, Opened, OutlinePass,
+    OutlineWidthMode, PluginError, Projection, Sampler, ScaledTextureSlot, SceneFrame, SceneModel,
+    SceneShader, SceneTexture, ShaderTexture, Skin, TextureSlot, TextureSource, UnlitMaterial,
 };
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -3448,6 +3448,153 @@ fn frame_params_must_match_the_material() {
     };
     assert!(
         message.contains("draw 0's material 0 is custom: overrides are for unlit materials"),
+        "{message}"
+    );
+}
+
+/// Green, with a red outline of `params.width.w` alpha whose width is
+/// `params.width.x`: in metres when `y` is 0, of the screen when it is 1,
+/// times `texture_0`'s green when `z` is 1. One slot, empty white.
+const RINGED: &str = "struct Params { width: vec4f };   // x width, y 0 world / 1 clip, z 1 to scale by texture_0's green
+fn material_fragment(fragment: Fragment) -> vec4f { return vec4f(0.0, 1.0, 0.0, 1.0); }
+fn material_outline_fragment(fragment: Fragment) -> vec4f { return vec4f(1.0, 0.0, 0.0, params.width.w); }
+fn material_outline_vertex(vertex: Vertex) -> VertexOffset {
+    var width = params.width.x;
+    if params.width.z == 1.0 { width *= textureSampleLevel(texture_0, sampler_0, vertex.uv, 0.0).g; }
+    if params.width.y == 0.0 { return VertexOffset(vertex.normal * width, vec2f(0.0)); }
+    return VertexOffset(vec3f(0.0), normalize(vertex.normal.xy) * width * vertex.clip.w);
+}";
+
+/// `shell_scene`'s view of `shell` drawn with `RINGED` and the default
+/// outline pass, its parameters `width`: the square covers 16..48 in x
+/// and y.
+fn ringed(width: [f32; 4]) -> Scenes {
+    let mut material = custom(0, bytes(&width));
+    custom_of(&mut material).outline = Some(OutlinePass::default());
+    let mut scenes = custom_square(vec![shader(RINGED, &[EmptyTexel::White])], material);
+    scenes.model.geometries = vec![shell()];
+    scenes
+}
+
+/// `RINGED`'s outline in metres, then of the screen, opaque.
+const WORLD: [f32; 4] = [FOUR_PX_IN_METRES, 0.0, 0.0, 1.0];
+/// 0.125 of normalised device coordinates a side, 4 px.
+const CLIP: [f32; 4] = [FOUR_PX_IN_METRES, 1.0, 0.0, 1.0];
+
+#[test]
+fn outline_vertex_offsets_in_world_and_clip_space() {
+    for width in [WORLD, CLIP] {
+        let Some(frame) = render_scenes(ringed(width)) else {
+            return;
+        };
+        // The ring 12..16 and 48..52; the depth bias keeps the surface in
+        // front of its outline.
+        assert_pixel(&frame, 14, 32, RED);
+        assert_pixel(&frame, 50, 32, RED);
+        assert_pixel(&frame, 10, 32, CLEAR);
+        assert_pixel(&frame, 32, 32, GREEN);
+    }
+}
+
+#[test]
+fn outline_texture_slots_reach_the_vertex_stage() {
+    // Green 1 on the left corners (u 0), 0 on the right ones (u 1): the
+    // ring grows on the left only.
+    let mut scenes = ringed([FOUR_PX_IN_METRES, 0.0, 1.0, 1.0]);
+    custom_of(&mut scenes.model.materials[0]).textures = vec![Some(0)];
+    scenes.model.textures = vec![SceneTexture {
+        color_space: ColorSpace::Linear,
+        ..nearest(2, 1, &[[0, 255, 0, 255], [0, 0, 0, 255]])
+    }];
+    let Some(frame) = render_scenes(scenes) else {
+        return;
+    };
+    assert_pixel(&frame, 14, 32, RED);
+    assert_pixel(&frame, 50, 32, CLEAR);
+}
+
+#[test]
+fn outline_culls_and_biases_as_asked() {
+    // 0 wide, the outline lies on the surface. By default it culls the
+    // front faces and is pushed behind the twin's back face.
+    let Some(frame) = render_scenes(ringed([0.0, 0.0, 0.0, 1.0])) else {
+        return;
+    };
+    assert_pixel(&frame, 32, 32, GREEN);
+    // Culling nothing and unbiased, it draws the front face too, after the
+    // surface and coplanar with it, which `LessEqual` lets through.
+    let mut scenes = ringed([0.0, 0.0, 0.0, 1.0]);
+    custom_of(&mut scenes.model.materials[0]).outline = Some(OutlinePass {
+        cull: CullFace::None,
+        depth_bias: DepthBias {
+            constant: 0,
+            slope_scale: 0.0,
+        },
+    });
+    let Some(frame) = render_scenes(scenes) else {
+        return;
+    };
+    assert_pixel(&frame, 32, 32, RED);
+}
+
+#[test]
+fn outline_mirrored_worlds_cull_the_front_faces() {
+    let mut scenes = ringed(WORLD);
+    scenes.frame.draws[0].world = scaling(-1.0, 1.0, 1.0);
+    let Some(frame) = render_scenes(scenes) else {
+        return;
+    };
+    assert_pixel(&frame, 14, 32, RED);
+    assert_pixel(&frame, 50, 32, RED);
+    assert_pixel(&frame, 10, 32, CLEAR);
+    assert_pixel(&frame, 32, 32, GREEN);
+}
+
+#[test]
+fn outline_draws_with_the_material_alpha() {
+    let mut scenes = ringed([FOUR_PX_IN_METRES, 0.0, 0.0, 0.5]);
+    scenes.model.materials[0].alpha_mode = AlphaMode::BLEND;
+    let Some(frame) = render_scenes(scenes) else {
+        return;
+    };
+    let alpha = pixel(&frame, 14, 32)[3];
+    assert!(alpha.abs_diff(128) <= 2, "alpha {alpha}");
+
+    let mut scenes = ringed([FOUR_PX_IN_METRES, 0.0, 0.0, 0.3]);
+    scenes.model.materials[0].alpha_mode = AlphaMode::Mask { cutoff: 0.5 };
+    let Some(frame) = render_scenes(scenes) else {
+        return;
+    };
+    assert_pixel(&frame, 14, 32, CLEAR);
+    assert_pixel(&frame, 32, 32, GREEN);
+}
+
+#[test]
+fn outline_needs_its_fragment_function() {
+    let mut material = custom(0, bytes(&FLAT_RED));
+    custom_of(&mut material).outline = Some(OutlinePass::default());
+    let Some(message) = invalid(custom_square(vec![shader(FLAT, &[])], material)) else {
+        return;
+    };
+    assert!(
+        message.contains(
+            "material 0 asks for an outline, but shader 0 defines no `material_outline_fragment`"
+        ),
+        "{message}"
+    );
+
+    let mut scenes = ringed(WORLD);
+    custom_of(&mut scenes.model.materials[0])
+        .outline
+        .as_mut()
+        .unwrap()
+        .depth_bias
+        .slope_scale = f32::NAN;
+    let Some(message) = invalid(scenes) else {
+        return;
+    };
+    assert!(
+        message.contains("outline depth bias is not finite"),
         "{message}"
     );
 }
