@@ -68,6 +68,9 @@ writeJson(join(destination, 'tsconfig.json'), {
       ...Object.fromEntries(celesta.map((name) => [name, [`./node_modules/${name}`]])),
       // Other packages' declarations import the core runtime's internals.
       '@celesta/react/internal': ['./node_modules/@celesta/react/dist/internal.d.ts'],
+      // Installed content plugins' modules; Celesta copies their declarations
+      // into ./plugins/<id>/ (crates/react-bridge/src/project_types.rs).
+      '@celesta-plugin/*': ['./plugins/*'],
       react: ['./node_modules/@types/react'],
       'react/*': ['./node_modules/@types/react/*'],
     },

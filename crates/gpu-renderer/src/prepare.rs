@@ -1036,6 +1036,36 @@ impl GpuRenderer {
                 });
                 output.push(PreparedItem::PendingPath);
             }
+            LayerContent::Plugin {
+                plugin,
+                assets,
+                time,
+                data,
+            } => {
+                let content = crate::mesh::PluginContent {
+                    plugin,
+                    assets,
+                    time: *time,
+                    data,
+                };
+                let (texture, canvas) =
+                    self.plugin_texture(&layer.id, &content, largest_stretch(state.transform))?;
+                // The layer is the canvas's size in layer units, whatever
+                // its texture's.
+                let mut state = state;
+                let x = canvas[0] / texture.width as f32;
+                let y = canvas[1] / texture.height as f32;
+                state.transform.a *= x;
+                state.transform.b *= x;
+                state.transform.c *= y;
+                state.transform.d *= y;
+                output.push(PreparedItem::Layer(PreparedLayer::new(
+                    texture,
+                    layer.transform.anchor,
+                    state,
+                    blend_mode,
+                )));
+            }
             LayerContent::MissingComponent { .. } => {
                 return Err(GpuRenderError::UnsupportedContent {
                     layer: layer.id.clone(),

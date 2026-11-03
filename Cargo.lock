@@ -972,6 +972,7 @@ dependencies = [
  "celesta-exporter",
  "celesta-gpu-renderer",
  "celesta-media",
+ "celesta-plugin-host",
  "celesta-project",
  "celesta-react-bridge",
  "celesta-remote",
@@ -1026,6 +1027,7 @@ dependencies = [
  "celesta-evaluator",
  "celesta-gpu-renderer",
  "celesta-media",
+ "celesta-plugin-host",
  "celesta-project",
  "celesta-react-bridge",
  "celesta-remote",
@@ -1049,6 +1051,7 @@ dependencies = [
  "bytemuck",
  "celesta-composition",
  "celesta-media",
+ "celesta-plugin",
  "celesta-remote",
  "celesta-renderer",
  "clap",
@@ -1064,6 +1067,7 @@ dependencies = [
  "objc2-metal 0.3.2",
  "pollster 1.0.1",
  "rayon",
+ "serde_json",
  "strum",
  "tempfile",
  "thiserror 2.0.21",
@@ -1108,6 +1112,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "celesta-plugin"
+version = "0.9.0"
+dependencies = [
+ "libc",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "celesta-plugin-flag"
+version = "0.1.0"
+dependencies = [
+ "celesta-composition",
+ "celesta-gpu-renderer",
+ "celesta-plugin",
+ "celesta-plugin-host",
+ "image",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "celesta-plugin-host"
+version = "0.9.0"
+dependencies = [
+ "celesta-plugin",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "celesta-project"
 version = "0.9.0"
 dependencies = [
@@ -1125,6 +1163,7 @@ version = "0.9.0"
 dependencies = [
  "celesta-composition",
  "celesta-media",
+ "celesta-plugin-host",
  "celesta-remote",
  "celesta-renderer",
  "serde",

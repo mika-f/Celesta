@@ -149,6 +149,10 @@ struct Cli {
     /// from the file's directory.
     #[arg(long, value_name = "FILE", requires = "react")]
     props_file: Option<PathBuf>,
+    /// A content plugin's directory, or a directory of them, searched before
+    /// CELESTA_PLUGIN_PATH; repeatable.
+    #[arg(long, value_name = "DIR")]
+    plugin_dir: Vec<PathBuf>,
     /// Replace an existing output file.
     #[arg(long)]
     overwrite: bool,
@@ -402,6 +406,20 @@ fn main() -> ExitCode {
         .try_get_matches()
         .unwrap_or_else(|error| parse_failed(error));
     let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|error| parse_failed(error));
+    if !cli.plugin_dir.is_empty() {
+        // The plugin host and the React runtime (which resolves the plugins'
+        // modules) both read the search path from the environment.
+        let paths = celesta_plugin_host::plugin_paths(&cli.plugin_dir);
+        let joined = std::env::join_paths(paths).unwrap_or_else(|error| {
+            usage_error(
+                cli.json,
+                ErrorKind::InvalidValue,
+                &format!("--plugin-dir: {error}"),
+            )
+        });
+        // SAFETY: nothing else runs yet; no thread reads the environment.
+        unsafe { std::env::set_var(celesta_plugin_host::PLUGIN_PATH_ENV, joined) };
+    }
     if cli.inspect {
         return inspect(&cli);
     }

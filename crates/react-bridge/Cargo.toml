@@ -9,6 +9,7 @@ rust-version.workspace = true
 [dependencies]
 celesta-composition = { path = "../composition" }
 celesta-media = { path = "../media" }
+celesta-plugin-host = { path = "../plugin-host" }
 celesta-remote = { path = "../remote" }
 celesta-renderer = { path = "../renderer" }
 serde = { workspace = true }

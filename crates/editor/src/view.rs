@@ -415,7 +415,8 @@ impl EditorView {
             ..GpuRenderOptions::default()
         })?
         .with_asset_root(document.asset_root())
-        .with_video_decoder(FfmpegBackend::new().with_sequential_video(frame_rate_value));
+        .with_video_decoder(FfmpegBackend::new().with_sequential_video(frame_rate_value))
+        .with_content_provider(celesta_plugin_host::PluginHost::discover(&[]));
         let adapter = renderer.adapter_info();
         let gpu_name = format!("{} ({})", adapter.name, adapter.backend).into();
         let preview_worker = spawn_preview(renderer)?;

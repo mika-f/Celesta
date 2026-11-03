@@ -20,6 +20,7 @@ celesta-editor-theme = { path = "../editor-theme" }
 celesta-evaluator = { path = "../evaluator" }
 celesta-exporter = { path = "../exporter" }
 celesta-gpu-renderer = { path = "../gpu-renderer", features = ["clap"] }
+celesta-plugin-host = { path = "../plugin-host" }
 celesta-media = { path = "../media" }
 celesta-remote = { path = "../remote" }
 celesta-project = { path = "../project" }

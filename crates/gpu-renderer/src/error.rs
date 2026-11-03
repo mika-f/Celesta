@@ -76,6 +76,17 @@ pub enum GpuRenderError {
         layer: String,
         content: &'static str,
     },
+    #[error("could not draw plugin layer {layer}: {source}")]
+    Plugin {
+        layer: String,
+        #[source]
+        source: celesta_plugin::PluginError,
+    },
+    /// A plugin answered with meshes that cannot be drawn.
+    #[error("plugin layer {layer} cannot be drawn: {message}")]
+    InvalidPluginContent { layer: String, message: String },
+    #[error("GPU plugin layer {0} requires a content provider")]
+    MissingContentProvider(String),
     #[error("GPU frame size must be non-zero, got {width}x{height}")]
     InvalidSurfaceSize { width: u32, height: u32 },
     #[error("GPU target size must be non-zero, got {width}x{height}")]
@@ -132,6 +143,9 @@ impl GpuRenderError {
             | Self::MissingVideoDecoder(_)
             | Self::InvalidVideoSize { .. }
             | Self::UnsupportedContent { .. }
+            | Self::Plugin { .. }
+            | Self::InvalidPluginContent { .. }
+            | Self::MissingContentProvider(_)
             | Self::TooManyLayers(_)
             | Self::ClipsNestedTooDeep(_)
             | Self::PathsTooComplex(_) => true,

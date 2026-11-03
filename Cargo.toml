@@ -12,11 +12,14 @@ members = [
   "crates/gpu-renderer",
   "crates/mcp",
   "crates/media",
+  "crates/plugin",
+  "crates/plugin-host",
   "crates/project",
   "crates/react-bridge",
   "crates/remote",
   "crates/renderer",
   "crates/source-edit",
+  "examples/plugins/flag",
 ]
 
 [workspace.package]

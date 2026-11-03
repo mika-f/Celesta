@@ -781,6 +781,15 @@ function printLayers(layers, depth, checkFile, warnings, sources) {
         printLayers(content.layers, depth + 1, checkFile, warnings, sources);
         break;
       }
+      case 'plugin': {
+        // Only the plugin's own program knows what it draws; show what it is given.
+        const assets = Object.entries(content.assets ?? {}).map(
+          ([name, asset]) => `${name} ${asset.location.path ?? asset.location.url}${checkFile(asset.location.path)}`,
+        );
+        const data = content.data === undefined ? '' : ` data ${JSON.stringify(content.data)}`;
+        console.log(`${indent}plugin ${content.plugin} at ${fmt(content.time)} s ${where}${assets.length ? ` [${assets.join(', ')}]` : ''}${data}`);
+        break;
+      }
       case 'missingComponent':
         warnings.push(`component "${content.component}" is not registered; export will fail`);
         console.log(`${indent}UNREGISTERED COMPONENT ${content.component} ${where}`);

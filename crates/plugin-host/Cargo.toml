@@ -1,0 +1,17 @@
+[package]
+name = "celesta-plugin-host"
+description = "Finds Celesta content plugins and runs each in a process of its own, answering the renderer for them."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+celesta-plugin = { path = "../plugin" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+tempfile = "3.23.0"

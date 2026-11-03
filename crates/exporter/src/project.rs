@@ -119,6 +119,11 @@ pub(crate) fn absolutize_layer_content(content: &mut LayerContent, asset_root: &
         | LayerContent::Psd { asset, .. } => {
             absolutize_asset(asset, asset_root);
         }
+        LayerContent::Plugin { assets, .. } => {
+            for asset in assets.values_mut() {
+                absolutize_asset(asset, asset_root);
+            }
+        }
         LayerContent::Group {
             layers,
             clip: _,

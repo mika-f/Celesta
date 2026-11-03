@@ -100,6 +100,9 @@ compositions: no package a composition imports depends on them, though
 | `celesta-source-edit` | Locates JSX elements in user TSX source and applies byte-span edits for the editor's write-back. |
 | `celesta-remote` | Asset path resolution, remote download cache, and stylesheet font discovery. |
 | `celesta-react-bridge` | Long-lived Node process and frame/component requests over stdin/stdout. |
+| `celesta-plugin` | Content plugins' meshes, the `ContentProvider` interface, and the plugin protocol; depends on serde only. See [`docs/handoff/2026-11-01-plugin-system.md`](docs/handoff/2026-11-01-plugin-system.md). |
+| `celesta-plugin-host` | Finds plugin directories and runs each plugin in its own process for the renderer. |
+| `celesta-plugin-flag` | `examples/plugins/flag`, a sample plugin program; with `beep-voice` beside it, built by `examples/plugins/build.mjs`. |
 | `packages/math` (`@celesta/math`) | Pure, React-free math utilities for compositions. |
 | `packages/react` (`@celesta/react`) | Core components, hooks, animation helpers, reconciler, and scene walker. |
 | `packages/shapes` (`@celesta/shapes`) | Lines, polylines, paths, circles, ellipses, arrows, triangles, polygons, stars, pies, and hearts, plus generators for their path commands. |

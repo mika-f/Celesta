@@ -606,6 +606,21 @@ pub enum LayerContent {
         #[cfg_attr(feature = "codegen", ts(type = "string"))]
         colors: Option<U8Column>,
     },
+    /// Content a plugin makes, such as a rigged character: the plugin `plugin`
+    /// turns `assets` into textured meshes and poses them for `time`
+    /// seconds on the content's own clock as `data` directs, which only the
+    /// plugin reads. The layer is the size of the canvas the plugin reports.
+    /// A frame depends on nothing else, so it may be drawn in any order. Only
+    /// the GPU renderer draws it, through a content provider (see
+    /// `celesta-plugin`). See `docs/handoff/2026-11-01-plugin-system.md`.
+    Plugin {
+        plugin: String,
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        assets: BTreeMap<String, ResolvedAsset>,
+        time: f64,
+        #[serde(default, skip_serializing_if = "Value::is_null")]
+        data: Value,
+    },
     /// A `<Static>` subtree the React bridge already sent under `key`. It
     /// only travels inside the bridge, which replaces it with a `Group` of
     /// that subtree's layers before handing the scene on; renderers refuse
@@ -796,6 +811,14 @@ enum LayerContentDef {
         rotation: Option<F32Column>,
         #[serde(default)]
         colors: Option<U8Column>,
+    },
+    Plugin {
+        plugin: String,
+        #[serde(default)]
+        assets: BTreeMap<String, ResolvedAsset>,
+        time: f64,
+        #[serde(default)]
+        data: Value,
     },
     StaticRef {
         key: u32,
