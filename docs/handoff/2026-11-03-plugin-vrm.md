@@ -489,7 +489,10 @@ Ported from UniVRM's `Vrm10RuntimeLookAt` and its helpers.
 Celesta's cameras are never the avatar's own eyes, so the third-person
 view applies: a node annotated `firstPersonOnly` draws `visible: false`;
 `thirdPersonOnly`, `both`, `auto`, and unannotated nodes are drawn. A node
-annotated twice takes the last annotation.
+annotated more than once takes its first annotation, as UniVRM's
+`VRM10ObjectFirstPerson.SetupAsync` keeps a renderer's first; each later
+one is skipped with a `warning`, `firstPerson annotation {i} names node
+{n} again; only its first annotation counts`.
 
 ## Camera presets and the reference light
 
@@ -572,7 +575,8 @@ allowed is for the person to decide.
 So a file that leaves the three warned terms out opens with three
 warnings. Seed-san always gives one, its credit line. The other notices
 follow the terms: unreadable images, PBR materials drawn unlit, primitives
-that are not drawn, and expression binds left out.
+that are not drawn, repeated `firstPerson` annotations, and expression
+binds left out.
 
 ## The provider and `data`
 
@@ -699,8 +703,6 @@ Besides MToon's list above, to check against UniVRM:
   importer throws.
 - **The lookAt origin under a non-uniformly scaled head** follows glTF's
   matrices and differs from where Unity's transform hierarchy puts it.
-- **A firstPerson node annotated twice** takes the last annotation; not
-  checked against UniVRM.
 - **Stricter than UniVRM:** a mesh's morph weights that are not finite
   refuse the model even when nothing draws them, and so does a morph bind
   whose weight is not finite, even one ignored for its target or as a
@@ -738,7 +740,8 @@ Besides MToon's list above, to check against UniVRM:
     values, the scroll's precision and wrapping, the slot and number
     checks, the shader's nine slots, the outline and tangents.
   - `model`: draw order, the rest frame, one `center` per mesh following
-    its skeleton, hidden first-person meshes, morph weight defaults,
+    its skeleton, hidden first-person meshes and a node's first annotation
+    holding, morph weight defaults,
     frames that repeat, the default material, notices in order, skins;
     the framing walk's vertex count for one large mesh drawn by 800 nodes
     (240 million vertices walked one by one before the cap), corners

@@ -44,7 +44,7 @@
 //! - **Notices:** the usage terms (see `meta`), then what loading left out
 //!   or changed: images, PBR materials drawn unlit, primitives that are
 //!   not triangles (a warning each, for meshes a node of the scene draws),
-//!   and expressions.
+//!   repeated `firstPerson` annotations, and expressions.
 //! - **Budgets:** the model's geometry, draws, and skins together take at
 //!   most [`GEOMETRY_BUDGET`] bytes, and its accessors decode at most
 //!   `READ_BUDGET` (see `geometry`).
@@ -217,7 +217,8 @@ impl VrmModel {
         let tree = NodeTree::new(&document)?;
         let humanoid = Humanoid::new(&document);
         let look_at = LookAt::new(&document, &tree, &humanoid)?;
-        let hidden = hidden_nodes(&document)?;
+        let mut first_person_notices = Vec::new();
+        let hidden = hidden_nodes(&document, &mut first_person_notices)?;
         let mut budget = Budget {
             left: budget,
             total: budget,
@@ -270,6 +271,7 @@ impl VrmModel {
             });
         }
         notices.append(&mut draws.notices);
+        notices.extend(first_person_notices);
         notices.extend(expression_notices);
 
         let expressions = Expressions::new(
@@ -1301,14 +1303,40 @@ mod tests {
             });
             assert!(rest(&mut model).draws[2].visible, "{annotation}");
         }
-        // The last annotation of a node is the one that holds.
-        let mut model = edited(|root| {
-            root["extensions"]["VRMC_vrm"]["firstPerson"]["meshAnnotations"]
-                .as_array_mut()
-                .unwrap()
-                .push(json!({ "node": node::FIRST_PERSON_ONLY, "type": "both" }));
-        });
+    }
+
+    /// The avatar with node 24 annotated `first`, then `second`.
+    fn annotated_twice(first: &str, second: &str) -> VrmModel {
+        edited(|root| {
+            root["extensions"]["VRMC_vrm"]["firstPerson"]["meshAnnotations"] = json!([
+                { "node": node::FIRST_PERSON_ONLY, "type": first },
+                { "node": node::FIRST_PERSON_ONLY, "type": second },
+            ]);
+        })
+    }
+
+    #[test]
+    fn a_node_s_first_annotation_holds() {
+        // As UniVRM's VRM10ObjectFirstPerson keeps a renderer's first.
+        let mut model = annotated_twice("firstPersonOnly", "both");
+        assert!(!rest(&mut model).draws[2].visible);
+        let mut model = annotated_twice("both", "firstPersonOnly");
         assert!(rest(&mut model).draws[2].visible);
+        let repeated: Vec<&Notice> = model
+            .notices()
+            .iter()
+            .filter(|notice| notice.message.contains("firstPerson"))
+            .collect();
+        assert_eq!(
+            repeated,
+            [&Notice {
+                level: NoticeLevel::Warning,
+                message: format!(
+                    "firstPerson annotation 1 names node {} again; only its first annotation counts",
+                    node::FIRST_PERSON_ONLY
+                ),
+            }]
+        );
     }
 
     #[test]

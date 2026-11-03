@@ -5,16 +5,21 @@
 //! meshes are drawn. That is what UniVRM's third-person camera layer shows.
 
 use crate::document::{Document, LoadError};
+use celesta_plugin::{Notice, NoticeLevel};
 use vrm_spec::vrmc_vrm_1_0::FirstPersonType;
 
 /// By node: whether its mesh is hidden from a third-person camera. A node
-/// annotated more than once takes its last annotation: this plugin's
-/// choice, not checked against what UniVRM does with such a file. An
-/// annotation without a node is ignored; one naming a node the file lacks
-/// is refused.
-pub(crate) fn hidden_nodes(document: &Document) -> Result<Vec<bool>, LoadError> {
+/// annotated more than once takes its first annotation, as UniVRM's
+/// `VRM10ObjectFirstPerson` does, and each later one adds a warning to
+/// `notices`. An annotation without a node is ignored; one naming a node
+/// the file lacks is refused.
+pub(crate) fn hidden_nodes(
+    document: &Document,
+    notices: &mut Vec<Notice>,
+) -> Result<Vec<bool>, LoadError> {
     let nodes = document.gltf.nodes().len();
     let mut hidden = vec![false; nodes];
+    let mut annotated = vec![false; nodes];
     let annotations = document
         .vrm
         .first_person
@@ -25,12 +30,21 @@ pub(crate) fn hidden_nodes(document: &Document) -> Result<Vec<bool>, LoadError> 
         let Some(node) = annotation.node.map(|node| node.value()) else {
             continue;
         };
-        let Some(slot) = hidden.get_mut(node) else {
+        let Some(seen) = annotated.get_mut(node) else {
             return Err(LoadError::Invalid(format!(
                 "firstPerson annotation {index} names node {node}, but the file has {nodes} nodes"
             )));
         };
-        *slot = matches!(
+        if std::mem::replace(seen, true) {
+            notices.push(Notice {
+                level: NoticeLevel::Warning,
+                message: format!(
+                    "firstPerson annotation {index} names node {node} again; only its first annotation counts"
+                ),
+            });
+            continue;
+        }
+        hidden[node] = matches!(
             annotation.mesh_annotation_type,
             FirstPersonType::FirstPersonOnly
         );
