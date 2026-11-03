@@ -356,6 +356,71 @@ fn a_new_content_provider_opens_its_own_models() {
     assert_pixel(&frame, 32, 32, GREEN);
 }
 
+/// `Scenes`, listing the models it is asked to close.
+struct Closing {
+    scenes: Scenes,
+    closed: Arc<std::sync::Mutex<Vec<ModelId>>>,
+}
+
+impl Closing {
+    fn new(scenes: Scenes) -> (Self, Arc<std::sync::Mutex<Vec<ModelId>>>) {
+        let closed = Arc::default();
+        let provider = Self {
+            scenes,
+            closed: Arc::clone(&closed),
+        };
+        (provider, closed)
+    }
+}
+
+impl ContentProvider for Closing {
+    fn open(
+        &mut self,
+        plugin: &str,
+        assets: &BTreeMap<String, PathBuf>,
+    ) -> Result<Opened, PluginError> {
+        self.scenes.open(plugin, assets)
+    }
+
+    fn frame(
+        &mut self,
+        model: ModelId,
+        time: f64,
+        data: &serde_json::Value,
+    ) -> Result<ContentFrame, PluginError> {
+        self.scenes.frame(model, time, data)
+    }
+
+    fn close(&mut self, model: ModelId) {
+        self.closed.lock().unwrap().push(model);
+    }
+}
+
+#[test]
+fn a_new_content_provider_closes_the_models_the_previous_one_opened() {
+    let Some(mut renderer) = renderer(transparent()) else {
+        return;
+    };
+    let (drawn, drawn_closed) = Closing::new(one_square());
+    renderer.renderer = renderer.renderer.with_content_provider(drawn);
+    renderer.render(&scene()).unwrap();
+    assert_eq!(*drawn_closed.lock().unwrap(), []);
+    // The model drawn is closed once, on the provider that opened it.
+    let mut refused = one_square();
+    refused.model.draws[0].material = 1;
+    let (refused, refused_closed) = Closing::new(refused);
+    renderer.renderer = renderer.renderer.with_content_provider(refused);
+    assert_eq!(*drawn_closed.lock().unwrap(), [ModelId(9)]);
+    assert_eq!(*refused_closed.lock().unwrap(), []);
+    // A model that failed to load was closed then, and is not open: it is
+    // not closed again.
+    assert!(renderer.render(&scene()).is_err());
+    assert_eq!(*refused_closed.lock().unwrap(), [ModelId(9)]);
+    renderer.renderer = renderer.renderer.with_content_provider(one_square());
+    assert_eq!(*refused_closed.lock().unwrap(), [ModelId(9)]);
+    assert_eq!(*drawn_closed.lock().unwrap(), [ModelId(9)]);
+}
+
 #[test]
 fn scene_with_bad_index_is_invalid() {
     let mut scenes = valid();
