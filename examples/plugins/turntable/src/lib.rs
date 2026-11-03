@@ -259,24 +259,31 @@ fn unlit(alpha_mode: AlphaMode, double_sided: bool, base_color: [f32; 4]) -> Mat
     }
 }
 
-/// The cube's look: the checker toon-shaded, each texel darkened toward a
-/// cool lilac on the side away from the light, a blue-grey rim at the
-/// silhouette, and a 1 cm dark outline half lit by the scene.
+/// The cube's look: the checker toon-shaded, each texel multiplied by a
+/// bluish lilac on the side away from the light, a faint blue-grey rim
+/// where a face turns away from the camera, and a near-black outline a few
+/// pixels wide.
 fn toon() -> Material {
     textured(
         Material {
             alpha_mode: AlphaMode::Opaque,
             double_sided: false,
             kind: MaterialKind::Mtoon(MtoonMaterial {
-                shade_color_factor: [0.6, 0.55, 0.7],
+                shade_color_factor: [0.4, 0.42, 0.75],
                 shade_multiply_texture: Some(TextureSlot { texture: 0 }),
-                parametric_rim_color_factor: [0.3, 0.3, 0.4],
-                parametric_rim_lift_factor: 0.1,
-                parametric_rim_fresnel_power_factor: 3.0,
+                // Power 8 and no lift: only faces seen at a slant glow,
+                // most where they slant most.
+                parametric_rim_color_factor: [0.25, 0.25, 0.32],
+                parametric_rim_lift_factor: 0.0,
+                parametric_rim_fresnel_power_factor: 8.0,
                 rim_lighting_mix_factor: 1.0,
-                outline_width_mode: OutlineWidthMode::WorldCoordinates,
-                outline_width_factor: 0.01,
-                outline_color_factor: [0.15, 0.1, 0.1],
+                // 2% of the canvas's height where a metre fills it; at the
+                // camera's 3.2 m, about 5 of the layer's pixels where the
+                // face beyond the silhouette is seen edge-on, fewer as it
+                // turns toward the camera.
+                outline_width_mode: OutlineWidthMode::ScreenCoordinates,
+                outline_width_factor: 0.02,
+                outline_color_factor: [0.01, 0.008, 0.012],
                 outline_lighting_mix_factor: 0.5,
                 ..MtoonMaterial::default()
             }),
@@ -285,16 +292,17 @@ fn toon() -> Material {
     )
 }
 
-/// The plugin's reference lighting: one white light from above, in front
-/// and to the right, and a flat ambient a little blue.
+/// The plugin's reference lighting: one white light from above, behind,
+/// and to the right, and a flat ambient a little blue. Light and ambient
+/// add up to about 1, so a lit white texel stays below white.
 fn lights() -> Lights {
     let mut ambient = [[0.0; 3]; 9];
-    ambient[3] = [0.25, 0.25, 0.28];
+    ambient[3] = [0.22, 0.22, 0.24];
     Lights {
         directional: vec![DirectionalLight {
-            direction: [-0.4, -1.0, -0.7],
+            direction: [-0.65, -0.65, 0.3],
             color: [1.0; 3],
-            intensity: 1.0,
+            intensity: 0.8,
         }],
         ambient,
     }
@@ -570,8 +578,12 @@ mod tests {
         let MaterialKind::Mtoon(mtoon) = &cube.kind else {
             panic!("the cube is MToon: {:?}", cube.kind);
         };
-        assert_eq!(mtoon.outline_width_mode, OutlineWidthMode::WorldCoordinates);
-        assert_eq!(mtoon.outline_width_factor, 0.01);
+        // A share of the canvas's height, so it stays a few pixels wide.
+        assert_eq!(
+            mtoon.outline_width_mode,
+            OutlineWidthMode::ScreenCoordinates
+        );
+        assert_eq!(mtoon.outline_width_factor, 0.02);
         // The checker is both the lit and the shaded color.
         assert_eq!(
             mtoon.base_color_texture,
