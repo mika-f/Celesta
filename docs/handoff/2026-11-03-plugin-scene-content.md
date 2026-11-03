@@ -11,8 +11,8 @@ This is the first phase of the design in
 `docs/superpowers/specs/2026-11-03-plugin-3d-content-vrm-design.md`: the
 protocol, the 3D pass with unlit materials, notices, and a sample.
 Plugins' own materials in WGSL, lights, and outlines landed next, in
-`2026-11-03-plugin-scene-materials.md`; the VRM plugin comes later. The
-plugin system
+`2026-11-03-plugin-scene-materials.md`; the VRM plugin after them, in
+`2026-11-03-plugin-vrm.md`. The plugin system
 itself (manifest, process, protocol framing, 2D meshes) is
 `2026-11-01-plugin-system.md`.
 

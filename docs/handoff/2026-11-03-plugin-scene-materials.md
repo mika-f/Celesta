@@ -12,10 +12,10 @@ its render queue, and each frame can replace a custom material's
 parameters, as a model's material animation does. Scene frames keep their
 canvases and buffers from frame to frame.
 
-Celesta knows no file format's shading. The VRM plugin, which comes
-later, brings MToon, VRM's toon shading, as a material of its own written
-against this interface; the turntable sample already brings a small toon
-material of its own.
+Celesta knows no file format's shading. The VRM plugin
+(`2026-11-03-plugin-vrm.md`) brings MToon, VRM's toon shading, as a
+material of its own written against this interface; the turntable sample
+brings a small toon material of its own.
 
 This is the second phase of the design in
 `docs/superpowers/specs/2026-11-03-plugin-3d-content-vrm-design.md`. The
@@ -520,8 +520,9 @@ the corners; the README says so.
 
 ## For plugins
 
-What a plugin, the VRM plugin first, should handle, or Celesta should
-change once it shows:
+What a plugin should handle, or Celesta should change once it shows. Each
+item ends with what the VRM plugin does about it
+(`2026-11-03-plugin-vrm.md`).
 
 - **Transparent sorting per renderer.** Unity sorts a renderer's
   transparent submeshes as one, by one centre, and draws them in submesh
@@ -529,26 +530,34 @@ change once it shows:
   `center` for all of a mesh's parts and list them in order (ties go by
   draw index). A skinned draw's default centre, its rest bounds moved by
   `world`, does not follow the pose, since `world` is the identity for a
-  skinned mesh; a plugin should send `center` for skinned draws.
+  skinned mesh; a plugin should send `center` for skinned draws. The VRM
+  plugin does: one `center` per mesh, following the skin's skeleton, its
+  primitives in order.
 - **Shared accessors are copied per primitive.** Primitives that share a
   vertex accessor each upload all of it; a plugin should compact each
-  primitive's vertices to those its indices use.
+  primitive's vertices to those its indices use. The VRM plugin does.
 - **Compute storage bindings are at the limit.** The skinning pass binds 8
   storage buffers, WebGPU's default `maxStorageBuffersPerShaderStage`; a
-  new vertex stream would need a higher limit or packed streams.
+  new vertex stream would need a higher limit or packed streams. The VRM
+  plugin sends only the streams there are, and leaves vertex colours and
+  a second UV set out.
 - **No byte budget on `model.textures`.** Each texture's dimensions are
   checked against the GPU's, but not their total bytes, which a model with
-  many large textures can run past.
+  many large textures can run past. The VRM plugin keeps its own: 1 GiB
+  of decoded scene textures.
 - **Tangents are the plugin's.** Celesta makes up none: a material that
   needs them sets `requiresTangents`, and the plugin generates MikkTSpace
-  tangents for a primitive that lacks them.
+  tangents for a primitive that lacks them. The VRM plugin does, for every
+  primitive whose material has a normal texture.
 - **A model's shaders and pipelines compile when it opens:** every shader
   it lists that is not cached, and, in both windings, each pass, culling,
   and alpha mode its materials use that is not cached, a one-off stall on
-  open, most of it at the first model of a plugin.
+  open, most of it at the first model of a plugin. Still so for the VRM
+  plugin: its MToon shader compiles when the first avatar opens.
 - **Checking its own parameters.** Celesta cannot see inside the bytes: a
   plugin checks the numbers it packs (finite, in range) before sending
-  them.
+  them. The VRM plugin checks MToon's slots and numbers when it opens a
+  model, and each frame's binds before it packs them.
 
 ## Not done
 

@@ -28,7 +28,9 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   turned off there does not run in `Celesta-export` either.
 - A plugin whose manifest lists `components` offers them in the app's Add
   menu; the app writes the element with its `@celesta-plugin/<id>` import.
-  Code written by hand works the same.
+  Code written by hand works the same. A component that takes a model file
+  (such as `<Vrm>`) accepts only the file types it lists and is drawn at
+  its manifest's aspect.
 - The app asks the user to trust a project folder before it evaluates
   anything in it (remembered only when the root holds
   `celesta.config.json`, which `--init` writes; a project inside it with
@@ -64,6 +66,48 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
   type-checking, refreshed with the rest of `.celesta/` (in the app, a
   trusted project's own plugins and plugins waiting for approval too).
 
+## The VRM plugin
+
+The Celesta repository's `plugins/vrm` draws VRM 1.0 avatars (`.vrm`) as a
+3D layer, MToon-shaded as UniVRM draws them. Build it with
+`node plugins/vrm/build.mjs` (after `pnpm install && pnpm run
+build:runtime` at the repository root); it writes `plugins/vrm/dist/vrm`,
+which the user copies into a plugin folder, or name `plugins/vrm/dist`
+with `--plugin-dir`.
+
+```tsx
+import { Vrm } from '@celesta-plugin/vrm';
+
+<Vrm src="./avatar.vrm" camera="bust" lookAt="camera" expressions={{ happy: 0.4 }} mouth="a" />
+```
+
+- `width`, `height`, `aspect`: the layer's size in pixels (both, or one
+  and `aspect`, default 16:9; neither is 1920×1080). It is drawn at that
+  resolution, not scaled.
+- `expressions`: weights 0..1 by VRM preset (`happy`, `aa`, `blink`, …) or
+  the model's custom names; they win over `blink` and the mouth. `mouth`:
+  `'a'`…`'o'`, `'closed'`, or vowel weights (`aa ih ou ee oh`).
+  `lipSync` (a `LipSyncTrack`) with `mouthSmoothing` (frames, default 2)
+  when `mouth` is absent. `blink`: blink timing, `false` for none.
+- `lookAt`: `'camera'`, `[x, y, z]` in the avatar's space (metres, +Y up,
+  facing +Z, its left at +X), or `{ yaw, pitch }` in degrees.
+- `camera`: `'full'` (default), `'bust'`, `'face'`, or
+  `{ position, target, fov?, near?, far? }`. Presets frame the avatar at
+  rest on the layer's shape; `full` also fits a prop held out sideways,
+  which moves the avatar off centre.
+- `lights`: `{ directional: [{ direction, color, intensity }], ambient }`,
+  at most 4, colours `#rgb`/`#rrggbb`; default, the plugin's reference
+  light (Unity's default light and ambient).
+- On open it reports the model's terms of use as notices; a term that
+  likely forbids the video (author only, separately licensed people only,
+  no commercial use, credit required) is a `warning`, and a term the file
+  omits counts as VRM 1.0's strict default. It still draws: relay the
+  terms, the user decides. Plain glTF PBR materials draw as flat base
+  colour, with a note.
+- Not yet: VRM 0.x (refused, with how to convert it to 1.0), `.vrma`
+  motion, constraints, spring bones: the avatar stands in its T-shaped
+  rest pose.
+
 ## Errors
 
 | Message | Fix |
@@ -84,6 +128,11 @@ menu: `{ "name": "Flag", "label": "Flag", "src": "image", "props": {
 With `src` (`image` or `video`) it is added like an Image (`src`, `x`, `y`,
 `width`); without, like a Rect's box (`x`, `y`, `width`, `height`). `props`
 (strings, numbers, booleans) follow those and may not repeat them.
+`"src": "model"` is a file the plugin reads itself: it needs `extensions`
+(lowercase letters and digits, no dot, no repeats, e.g. `["glb"]`) and may
+give `aspect` (width / height, 1/16384 to 16384) for the drawn box. It is
+added like an Image, `width` only, so the component's own default aspect
+must equal `aspect`.
 
 A plugin's program answers each frame with either 2D meshes or a 3D scene
 (skinned, morphing geometry with materials and a camera; Celesta draws it
@@ -107,6 +156,7 @@ later `docs/handoff/2026-11-02-plugin-*.md` notes (search locations,
 approval, `components`), `docs/handoff/2026-11-03-plugin-scene-content.md`
 (scenes, notices, the current `ContentProvider`), and
 `docs/handoff/2026-11-03-plugin-scene-materials.md` (materials in WGSL and
-their interface, lights, render queues, outlines, per-frame parameters). A
-plugin with a bad
-component is skipped whole, like one with a bad id.
+their interface, lights, render queues, outlines, per-frame parameters),
+and `docs/handoff/2026-11-03-plugin-vrm.md` (the VRM plugin, its own
+material, and model-file components). A plugin with a bad component is
+skipped whole, like one with a bad id.

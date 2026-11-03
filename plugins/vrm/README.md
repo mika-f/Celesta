@@ -4,7 +4,12 @@ A Celesta content plugin that draws VRM 1.0 avatars (`.vrm`) as 3D scenes.
 Like every plugin, it is a program of its own: Celesta starts it and talks to
 it over standard input and output (`celesta_plugin::serve`).
 
-It is a work in progress: the program opens no model yet.
+It draws the avatar in its rest pose with MToon and unlit materials (glTF
+PBR materials as unlit base colour), expressions, eyes following a gaze
+target, a camera framed from the humanoid, and its reference light, and
+reports the model's usage terms as notices. Motion (`.vrma`), constraints,
+and spring bones come later. How it works, what it leaves out, and where
+it differs from UniVRM: `docs/handoff/2026-11-03-plugin-vrm.md`.
 
 ## Opening files
 

@@ -96,7 +96,7 @@ export default function Root() {
 
 プロジェクトの TypeScript サポートは、各プラグインの型定義を `.celesta/plugins/` にコピーするので、コードエディターで props を補完できます。デスクトップアプリがプロジェクトを開いたときは、プロジェクト自身のプラグインと承認待ちのプラグインの型定義もコピーします。型定義はコードを実行しません。
 
-デスクトップアプリでは、プラグインのコンポーネントを **Add** メニューから追加することもできます。メニューでは Celesta 本体の要素の後に並びます。選ぶと Image や Rect と同じように追加できます。ファイルを受け取るコンポーネントは先にファイルを尋ね、そのあとドラッグで置く場所を決めます。アプリは要素を書き込むとき、`import { Flag } from '@celesta-plugin/flag'` のようなプラグインの import も追加します。
+デスクトップアプリでは、プラグインのコンポーネントを **Add** メニューから追加することもできます。メニューでは Celesta 本体の要素の後に並びます。選ぶと Image や Rect と同じように追加できます。ファイルを受け取るコンポーネントは先にファイルを尋ね、そのあとドラッグで置く場所を決めます。VRM アバターのようにモデルファイルを受け取るコンポーネントは、指定された種類のファイルだけを受け付け（`Choose a .vrm file`）、レイヤーの縦横比で枠を描きます。アプリは要素を書き込むとき、`import { Flag } from '@celesta-plugin/flag'` のようなプラグインの import も追加します。
 
 ## サンプル
 
@@ -114,6 +114,50 @@ cargo run -p celesta-exporter -- --react examples/plugins/flag/demo.tsx flag.mp4
 cargo run -p celesta-exporter -- --react examples/plugins/turntable/demo.tsx turntable.mp4 --plugin-dir examples/plugins/dist
 ```
 
+## VRM プラグイン
+
+リポジトリの `plugins/vrm` は、VRM 1.0 のアバター（`.vrm`）を 3D で描くプラグインです。UniVRM と同じ MToon のトゥーン調の陰影で描き、表情・まばたき・口パク・目線を付けられます。ビルドしてから、書き出されたフォルダーをインストールします。
+
+```sh
+pnpm install && pnpm run build:runtime   # 最初に一度、リポジトリのルートで
+node plugins/vrm/build.mjs               # plugins/vrm/dist/vrm に書き出します
+```
+
+`plugins/vrm/dist/vrm` をユーザーのプラグインフォルダーにコピーするか、書き出しのときに `--plugin-dir` で `plugins/vrm/dist` を指定します。ビルドには、Celesta 本体のビルドと同じく Rust と Node.js が必要です。
+
+```tsx
+import { Composition } from '@celesta/react';
+import { Vrm } from '@celesta-plugin/vrm';
+
+export default function Root() {
+  return (
+    <Composition width={1920} height={1080} fps={30} durationInFrames={180}>
+      <Vrm src="./avatar.vrm" camera="bust" lookAt="camera" expressions={{ happy: 0.4 }} mouth="a" />
+    </Composition>
+  );
+}
+```
+
+| props | 内容 |
+| --- | --- |
+| `src` | `.vrm` ファイル（VRM 1.0）。 |
+| `width`・`height`・`aspect` | レイヤーのピクセル数です。両方を指定するか、片方と `aspect`（幅÷高さ、既定は 16:9）を指定すると、もう片方が決まります。どれもなければ 1920×1080 です。アバターはこの解像度で描かれ、小さなレイヤーを拡大することはありません。 |
+| `expressions` | 表情の重み（0〜1）。VRM のプリセット名（`happy`・`angry`・`sad`・`relaxed`・`surprised`・`aa`・`blink` など）か、モデル独自のカスタム表情の名前で指定します。`blink` や口の形より優先されます。 |
+| `mouth` | 口の形（`'a'`・`'i'`・`'u'`・`'e'`・`'o'`・`'closed'`）か、`{ aa: 0.5, oh: 0.3 }` のような母音ごとの重み。 |
+| `lipSync`・`mouthSmoothing` | 口パクのトラック（`loadLipSync()` の結果や、読み上げたセリフの `lipSync`）。`mouth` がないときに使い、口の形を `mouthSmoothing` フレームかけてなめらかに切り替えます（既定は 2、0 で即座に切り替え）。 |
+| `blink` | まばたきのタイミング。キャラクターの立ち絵と同じくシードで決まります。`false` でまばたきしません。 |
+| `lookAt` | 目線の先です。`'camera'`、アバターの空間の点 `[x, y, z]`、または度数の `{ yaw, pitch }`（yaw はアバターから見て右が正、pitch は上が正）。なければ正面を向きます。 |
+| `camera` | `'full'`（既定。全身）、`'bust'`（胸から上）、`'face'`、またはアバターの空間での `{ position, target, fov?, near?, far? }`（`fov` は度数、既定は 30）。 |
+| `lights` | `{ directional: [{ direction, color, intensity }], ambient }`。平行光源は 4 つまで、色は `#rgb` か `#rrggbb` です。なければプラグインの基準ライト（Unity の既定の平行光源を前上方から当て、既定の環境光の色を加えたもの）を使います。 |
+
+アバターの空間はファイルのままで、単位はメートル、+Y が上、アバターは +Z を向き、左手側が +X、足元はおおむね 0 です。カメラのプリセットは、レイヤーの縦横比に合わせて、基本姿勢で立つアバターを収めます。`full` は横幅も収めるので、片側に大きく張り出した持ち物があると、アバターが中央からずれます。
+
+モデルを開くと、プラグインはモデルの利用条件をお知らせとして 1 行ずつ出します。作者・ライセンス・各条件です。作ろうとしている動画を禁じていそうな条件は `warning` になります。アバターを使えるのが作者本人か作者が個別に許諾した人だけの場合、商用利用ができない場合、クレジット表記が必要な場合（動画を公開する場所で誰をクレジットするかも書かれます）です。ファイルに書かれていない条件は VRM 1.0 の既定値として扱われ、既定値はいちばん厳しい側です。どの場合もプラグインはアバターを描きます。使ってよいかどうかを判断するのは利用者です。
+
+ファイルが素の glTF PBR で指定しているマテリアル（金属やガラスの部品によくあります）は、今のところベースカラーだけの平らな色で描かれ、その名前がお知らせで示されます。まだ対応していないもの：VRM 0.x のファイル（変換の方法を示すメッセージとともに開くのを断ります。UniVRM か VRM Add-on for Blender で VRM 1.0 に変換してください）、モーション（`.vrma`）・コンストレイント・揺れもの（スプリングボーン）。このため、アバターは腕を横に広げた基本姿勢で立ち、コンストレイントで動く部品も基本の位置のままです。
+
+デスクトップアプリの Add メニューでは、**VRM avatar** を選ぶと `.vrm` ファイルを尋ね、16:9 の枠を描きます。
+
 ## プラグインを作る
 
 プラグインは最大 2 つの部分からなり、どちらも言語を問いません。
@@ -129,8 +173,8 @@ cargo run -p celesta-exporter -- --react examples/plugins/turntable/demo.tsx tur
 ]
 ```
 
-`name` はモジュールが export するコンポーネント名で、英大文字で始まり、英字・数字・`_` が続きます。`label` はメニューに表示する名前です（省略すると `name`）。`src`（`"image"` または `"video"`）があると Image と同じように追加され、アプリはファイルを尋ねて `src`・`x`・`y`・`width` を書きます。`src` がなければ四角形として描かれ、`x`・`y`・`width`・`height` を書きます。`props` はそのあとに書かれる props です。名前には英字・数字・`_` を使い、値は文字列・数値・真偽値のいずれかで、描いた範囲から書く props と同じ名前は使えません。`components` を持つマニフェストには `module` も必要です。
+`name` はモジュールが export するコンポーネント名で、英大文字で始まり、英字・数字・`_` が続きます。`label` はメニューに表示する名前です（省略すると `name`）。`src`（`"image"` または `"video"`）があると Image と同じように追加され、アプリはファイルを尋ねて `src`・`x`・`y`・`width` を書きます。`"src": "model"` は、3D モデルのようにプラグインが自分で読むファイルのためのものです。受け取るファイルの種類を `extensions` に（英小文字と数字、ドットなし、重複なし。`["glb"]` など）、レイヤーの幅÷高さを `aspect` に（1/16384〜16384）書くと、アプリはその縦横比で枠を描きます。アプリはその種類のファイルだけを受け付け、Image と同じく `src`・`x`・`y`・`width` を書きます。`height` は書かないので、コンポーネント自身の既定の縦横比を `aspect` と同じにしてください。違うと、描いた枠とレイヤーが一致しません。`src` がなければ四角形として描かれ、`x`・`y`・`width`・`height` を書きます。`props` はそのあとに書かれる props です。名前には英字・数字・`_` を使い、値は文字列・数値・真偽値のいずれかで、描いた範囲から書く props と同じ名前は使えません。`components` を持つマニフェストには `module` も必要です。
 
 プラグインの id には英小文字・数字・`-`・`_`・`.` を使い、先頭は英小文字か数字にします。マニフェストで指定するファイルはすべて、プラグインのフォルダー内を指す相対パスにします。`..` を含むパスや、フォルダーの外へ向かうリンクは使えません。これに反するプラグインや、上の決まりに反するコンポーネントを持つプラグインは、理由を示したうえで読み飛ばされます。
 
-両方の部分の作り方はサンプルの README で説明しています。マニフェストとプロトコルはリポジトリの `docs/handoff/2026-11-01-plugin-system.md` で、その後の変更（`components` など）は `docs/handoff/2026-11-02-plugin-*.md` で、3D のシーンとお知らせは `docs/handoff/2026-11-03-plugin-scene-content.md` で、プラグインが持ち込むマテリアル（WGSL）・ライト・描画順・アウトラインは `docs/handoff/2026-11-03-plugin-scene-materials.md` で説明しています。
+両方の部分の作り方はサンプルの README で説明しています。マニフェストとプロトコルはリポジトリの `docs/handoff/2026-11-01-plugin-system.md` で、その後の変更（`components` など）は `docs/handoff/2026-11-02-plugin-*.md` で、3D のシーンとお知らせは `docs/handoff/2026-11-03-plugin-scene-content.md` で、プラグインが持ち込むマテリアル（WGSL）・ライト・描画順・アウトラインは `docs/handoff/2026-11-03-plugin-scene-materials.md` で、VRM プラグインとモデルファイルを受け取るコンポーネントは `docs/handoff/2026-11-03-plugin-vrm.md` で説明しています。
