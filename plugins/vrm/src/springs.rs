@@ -30,8 +30,9 @@
 //! head's *local* rotation, which is the same wherever a head's parent is
 //! the previous joint or a node no spring turns.
 //!
-//! Not read: `VRMC_springBone_limit` (UniVRM's angle limits) and UniVRM's
-//! runtime options (external force, scaling with the model, stopping the
+//! Not read: `VRMC_springBone_limit` (UniVRM's angle limits, which the
+//! model's notices warn of when a joint carries them) and UniVRM's runtime
+//! options (external force, scaling with the model, stopping the
 //! write-back), which stay at their defaults.
 
 use crate::document::{Document, LoadError};
@@ -42,6 +43,10 @@ use vrm_spec::vrmc_spring_bone_1_0::{Collider, VRMC_SPRING_BONE, VrmcSpringBoneS
 
 /// The collider extension that adds planes and inside shapes.
 const EXTENDED_COLLIDER: &str = "VRMC_springBone_extended_collider";
+
+/// The joint extension that limits a joint's swing (UniVRM's angle
+/// limits): not read, so a joint carrying it swings past its limits.
+pub(crate) const SPRING_BONE_LIMIT: &str = "VRMC_springBone_limit";
 
 /// The most joint–collider pairs a step checks, over every spring (each
 /// spring's joints, its last excepted, times its colliders). A file lists
@@ -122,6 +127,8 @@ pub(crate) struct Springs {
     pub springs: Vec<Spring>,
     /// The joint–collider pairs a step checks.
     pub pairs: u64,
+    /// The joints that carry [`SPRING_BONE_LIMIT`], which is not read.
+    pub limited: usize,
     /// The nodes a step reads (each joint's head and its parent, each
     /// spring's centre, each collider's node) and their ancestors, in node
     /// pre-order: the nodes UniVRM's `Transforms` array holds, and those
@@ -238,6 +245,18 @@ impl Springs {
         let mut taken = vec![false; count];
         let mut work = 0u64;
         let mut springs = Vec::new();
+        let limited = spec
+            .springs
+            .iter()
+            .flatten()
+            .flat_map(|spring| &spring.joints)
+            .filter(|joint| {
+                joint
+                    .extensions
+                    .as_ref()
+                    .is_some_and(|extensions| extensions.contains_key(SPRING_BONE_LIMIT))
+            })
+            .count();
         for (s, spring) in spec.springs.iter().flatten().enumerate() {
             if spring.joints.is_empty() {
                 continue;
@@ -375,6 +394,7 @@ impl Springs {
         Ok(Self {
             springs,
             pairs: work,
+            limited,
             read,
             slots,
         })

@@ -57,9 +57,9 @@
 //! - **Notices:** the usage terms (see `meta`), then what loading left out
 //!   or changed: images, PBR materials drawn unlit, primitives that are
 //!   not triangles (a warning each, for meshes a node of the scene draws),
-//!   repeated `firstPerson` annotations, expressions, and spring bones
-//!   whose steps cost too much to reach four hours of a layer (see
-//!   `stepping`). Warnings of one kind are listed up to a limit and the
+//!   repeated `firstPerson` annotations, expressions, spring joints'
+//!   angle limits (not read), and spring bones whose steps cost too much
+//!   to reach four hours of a layer (see `stepping`). Warnings of one kind are listed up to a limit and the
 //!   rest counted (see `notices`).
 //! - **Budgets:** the model's geometry, draws, and skins together take at
 //!   most [`GEOMETRY_BUDGET`] bytes, and its accessors decode at most
@@ -87,7 +87,7 @@ use crate::mtoon::{self, Mtoon, MtoonOverrides};
 use crate::nodes::{NodeTree, Pose};
 use crate::notices::Warnings;
 use crate::provider::{LookAtData, LookAtKeyword, PerformanceData};
-use crate::springs::Springs;
+use crate::springs::{SPRING_BONE_LIMIT, Springs};
 use crate::stepping::{self, SharedSpringCache, Stepper};
 use crate::tracks::{TrackData, apply_checked_tracks, apply_tracks};
 use crate::vrma::{Clip, ClipPose, Retarget};
@@ -357,6 +357,16 @@ impl VrmModel {
         );
         if !springs.springs.is_empty() {
             notices.extend(stepping::reach_notice(step_cost));
+        }
+        if springs.limited > 0 {
+            notices.push(Notice {
+                level: NoticeLevel::Warning,
+                message: format!(
+                    "{} spring joint(s) carry {SPRING_BONE_LIMIT}, which the VRM plugin does not \
+                     read: they swing past their angle limits",
+                    springs.limited
+                ),
+            });
         }
 
         let expressions = Expressions::new(
@@ -1742,6 +1752,49 @@ mod tests {
         );
         let model = edited(|root| root["meshes"][1]["primitives"][0]["material"] = json!(3));
         assert!(pbr_notices(&model).is_empty());
+    }
+
+    #[test]
+    fn spring_limits_are_warned_of() {
+        let limited = |limits: &[bool]| {
+            let joints: Vec<Value> = [node::HAIR0, node::HAIR1, node::HAIR2]
+                .iter()
+                .zip(limits)
+                .map(|(&node, &limited)| {
+                    let mut joint = json!({ "node": node });
+                    if limited {
+                        joint["extensions"] = json!({ SPRING_BONE_LIMIT: {
+                            "specVersion": "1.0",
+                            "limit": { "cone": { "angle": 0.5 } },
+                        } });
+                    }
+                    joint
+                })
+                .collect();
+            let mut vrm = SyntheticVrm::avatar();
+            vrm.extensions.insert(
+                vrm_spec::vrmc_spring_bone_1_0::VRMC_SPRING_BONE.into(),
+                json!({ "specVersion": "1.0", "springs": [{ "joints": joints }] }),
+            );
+            let model = load_glb(&vrm.glb()).unwrap();
+            model
+                .notices()
+                .iter()
+                .filter(|notice| notice.message.contains(SPRING_BONE_LIMIT))
+                .map(|notice| {
+                    assert_eq!(notice.level, NoticeLevel::Warning);
+                    notice.message.clone()
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            limited(&[true, true, false]),
+            [
+                "2 spring joint(s) carry VRMC_springBone_limit, which the VRM plugin does not \
+                 read: they swing past their angle limits"
+            ]
+        );
+        assert!(limited(&[false, false, false]).is_empty());
     }
 
     #[test]
