@@ -29,7 +29,7 @@ use celesta_plugin::{
 };
 use gltf::json;
 use gltf::json::validation::Checked::Valid;
-use image::{ImageFormat, ImageReader};
+use image::{ImageDecoder, ImageFormat, ImageReader};
 use sha2::{Digest, Sha256};
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
@@ -47,6 +47,13 @@ use vrm_spec::vrmc_materials_mtoon_1_0::{
 /// texel: Celesta decodes each scene texture's image on its own.
 pub(crate) const TEXTURE_BUDGET: u64 = 1 << 30;
 const MIB: u64 = 1 << 20;
+
+/// The most one image may take decoded in its own pixel format (4 bytes a
+/// texel for 8-bit RGBA, 8 for a 16-bit RGBA PNG, 3 for a JPEG): the
+/// default `Limits::max_alloc` of image 0.25, which Celesta's
+/// `image::open` reserves before it decodes. A larger image fails there,
+/// so its slot is left empty with a warning instead.
+const IMAGE_DECODE_LIMIT: u64 = 512 * MIB;
 
 /// The environment variable that moves the texture cache.
 const CACHE_VARIABLE: &str = "CELESTA_VRM_TEXTURE_CACHE";
@@ -243,7 +250,7 @@ pub(crate) fn materials(document: &Document, cache: &Path) -> Result<Materials, 
     if decoded > TEXTURE_BUDGET {
         return Err(LoadError::Invalid(format!(
             "the model's textures decode to {} MiB, more than {} MiB",
-            decoded.saturating_add(MIB / 2) / MIB,
+            mib(decoded),
             TEXTURE_BUDGET / MIB
         )));
     }
@@ -322,11 +329,19 @@ impl At<'_> {
     }
 }
 
-/// An image a slot uses: its encoded bytes, or the MIME type the plugin
-/// cannot read.
+/// An image a slot uses: its encoded bytes, or why the slot draws without
+/// it (`is image/ktx2, which the VRM plugin cannot read`).
 enum Image<'d> {
     Readable(Readable<'d>),
     Unreadable(String),
+}
+
+/// Where a texture's pixels are: an image the plugin may read, or only an
+/// image of a MIME type it cannot (`KHR_texture_basisu`, `MSFT_texture_dds`
+/// without a `source` to fall back on).
+enum TextureImage {
+    Image(usize),
+    Unreadable(&'static str),
 }
 
 struct Readable<'d> {
@@ -561,7 +576,15 @@ impl<'d> Reader<'d> {
                 self.json.textures.len()
             )));
         };
-        let image = self.texture_image(texture, json)?;
+        let image = match self.texture_image(texture, json)? {
+            TextureImage::Image(image) => image,
+            TextureImage::Unreadable(mime) => {
+                self.warn(format!(
+                    "texture {texture} is {mime}, which the VRM plugin cannot read; {at} draws without it"
+                ));
+                return Ok(None);
+            }
+        };
         let sampler = match json.sampler {
             None => Sampler::default(),
             Some(index) => match self.json.samplers.get(index.value()) {
@@ -582,16 +605,9 @@ impl<'d> Reader<'d> {
             }
             self.images[image] = Some(read);
         }
-        if let Some(Image::Unreadable(mime)) = &self.images[image] {
-            let message = format!(
-                "texture {texture} is {mime}, which the VRM plugin cannot read; {at} draws without it"
-            );
-            if self.noticed.insert(message.clone()) {
-                self.notices.push(Notice {
-                    level: NoticeLevel::Warning,
-                    message,
-                });
-            }
+        if let Some(Image::Unreadable(reason)) = &self.images[image] {
+            let message = format!("texture {texture} {reason}; {at} draws without it");
+            self.warn(message);
             return Ok(None);
         }
         let key = (image, color_space, sampler);
@@ -603,14 +619,30 @@ impl<'d> Reader<'d> {
         Ok(Some(self.keys.len() - 1))
     }
 
+    /// A warning, once however many slots give it.
+    fn warn(&mut self, message: String) {
+        if self.noticed.insert(message.clone()) {
+            self.notices.push(Notice {
+                level: NoticeLevel::Warning,
+                message,
+            });
+        }
+    }
+
     /// The image a texture shows: `EXT_texture_webp`'s when it has one,
-    /// else its `source`.
-    fn texture_image(&self, texture: usize, json: &json::Texture) -> Result<usize, LoadError> {
-        let webp = json
-            .extensions
-            .as_ref()
-            .and_then(|extensions| extensions.others.get("EXT_texture_webp"));
-        let image = match webp {
+    /// else its `source`. Without either, a `KHR_texture_basisu` (KTX2) or
+    /// `MSFT_texture_dds` texture shows an image the plugin cannot read.
+    fn texture_image(
+        &self,
+        texture: usize,
+        json: &json::Texture,
+    ) -> Result<TextureImage, LoadError> {
+        let extension = |name: &str| {
+            json.extensions
+                .as_ref()
+                .and_then(|extensions| extensions.others.get(name))
+        };
+        let image = match extension("EXT_texture_webp") {
             Some(webp) => webp
                 .get("source")
                 .and_then(serde_json::Value::as_u64)
@@ -621,6 +653,12 @@ impl<'d> Reader<'d> {
                 })?,
             // `u32::MAX` stands for no `source`.
             None if json.source.value() == u32::MAX as usize => {
+                if extension("KHR_texture_basisu").is_some() {
+                    return Ok(TextureImage::Unreadable("image/ktx2"));
+                }
+                if extension("MSFT_texture_dds").is_some() {
+                    return Ok(TextureImage::Unreadable("image/vnd-ms.dds"));
+                }
                 return Err(LoadError::Invalid(format!(
                     "texture {texture} has no image"
                 )));
@@ -629,7 +667,7 @@ impl<'d> Reader<'d> {
         };
         let images = self.json.images.len();
         match usize::try_from(image) {
-            Ok(image) if image < images => Ok(image),
+            Ok(image) if image < images => Ok(TextureImage::Image(image)),
             _ => Err(LoadError::Invalid(format!(
                 "texture {texture} uses image {image}, but the file has {images} images"
             ))),
@@ -650,7 +688,9 @@ impl<'d> Reader<'d> {
         if let Some(mime) = mime
             && !READABLE.contains(&mime)
         {
-            return Ok(Image::Unreadable(mime.to_owned()));
+            return Ok(Image::Unreadable(format!(
+                "is {mime}, which the VRM plugin cannot read"
+            )));
         }
 
         let bytes: Cow<'d, [u8]> = match (&json.buffer_view, &json.uri) {
@@ -680,10 +720,20 @@ impl<'d> Reader<'d> {
                 )));
             }
         };
-        // The header alone: no pixel is decoded here.
-        let (width, height) = reader
-            .into_dimensions()
+        // The header alone: no pixel is decoded here. The decoder gets the
+        // default limits, as Celesta's `image::open` does.
+        // What Celesta's decoder reserves is in the image's own pixel format.
+        let ((width, height), native) = reader
+            .into_decoder()
+            .map(|decoder| (decoder.dimensions(), decoder.total_bytes()))
             .map_err(|error| invalid(format_args!("cannot be read as {format}: {error}")))?;
+        if native > IMAGE_DECODE_LIMIT {
+            return Ok(Image::Unreadable(format!(
+                "is a {width}x{height} {format} image, which decodes to {} MiB, more than the {} MiB Celesta decodes one image to",
+                mib(native),
+                IMAGE_DECODE_LIMIT / MIB
+            )));
+        }
         Ok(Image::Readable(Readable {
             bytes,
             extension,
@@ -770,6 +820,11 @@ fn data_uri_bytes(image: usize, data: &str) -> Result<Vec<u8>, LoadError> {
                 "image {image}'s data: URI is not valid base64: {error}"
             ))
         })
+}
+
+/// `bytes` in MiB, to the nearest.
+fn mib(bytes: u64) -> u64 {
+    bytes.saturating_add(MIB / 2) / MIB
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -1048,10 +1103,16 @@ mod tests {
         assert_eq!(files(cache.path()), 2);
     }
 
-    /// A PNG of `width × height` that has a signature, an IHDR, an empty
-    /// IDAT, and an IEND: a header that claims the size and no pixels. (The
-    /// header is read up to the first IDAT, which must be there.)
+    /// An 8-bit RGBA [`png_header_of`].
     fn png_header(width: u32, height: u32) -> Vec<u8> {
+        png_header_of(width, height, 8)
+    }
+
+    /// A PNG of `width × height` RGBA, `depth` bits a channel, that has a
+    /// signature, an IHDR, an empty IDAT, and an IEND: a header that claims
+    /// the size and no pixels. (The header is read up to the first IDAT,
+    /// which must be there.)
+    fn png_header_of(width: u32, height: u32, depth: u8) -> Vec<u8> {
         fn crc32(bytes: &[u8]) -> u32 {
             let mut crc = !0u32;
             for &byte in bytes {
@@ -1078,66 +1139,155 @@ mod tests {
         let mut ihdr = Vec::new();
         ihdr.extend(width.to_be_bytes());
         ihdr.extend(height.to_be_bytes());
-        // 8 bits a channel, RGBA, deflate, adaptive filters, no interlace.
-        ihdr.extend([8, 6, 0, 0, 0]);
+        // RGBA, deflate, adaptive filters, no interlace.
+        ihdr.extend([depth, 6, 0, 0, 0]);
         chunk(&mut png, b"IHDR", &ihdr);
         chunk(&mut png, b"IDAT", &[]);
         chunk(&mut png, b"IEND", &[]);
         png
     }
 
-    #[test]
-    fn texture_budget_is_refused() {
+    /// The model's warnings.
+    fn warnings(materials: &Materials) -> Vec<&str> {
+        materials
+            .notices
+            .iter()
+            .filter(|notice| notice.level == NoticeLevel::Warning)
+            .map(|notice| notice.message.as_str())
+            .collect()
+    }
+
+    /// An avatar whose image 0 is a 10240×10240 RGBA PNG: 400 MiB decoded,
+    /// under Celesta's 512 MiB for one image. The avatar samples it in two
+    /// scene textures (the base color and shade in sRGB, the shading shift
+    /// in linear through sampler 1): 800 MiB.
+    fn four_hundred_mib() -> SyntheticVrm {
         let mut vrm = SyntheticVrm::avatar();
-        vrm.images[0].1 = png_header(32768, 32768);
-        // Image 0 in one scene texture only (the shading shift samples it
-        // in linear, a second).
-        let message = refusal_of(&vrm, |root| {
-            mtoon_extension(root, 0)
-                .as_object_mut()
-                .unwrap()
-                .remove("shadingShiftTexture");
-        });
-        assert!(
-            message.contains("4096 MiB, more than 1024 MiB"),
-            "{message}"
-        );
+        vrm.images[0].1 = png_header(10240, 10240);
+        vrm
+    }
+
+    /// A third scene texture of image 0: the matcap, sRGB through sampler 1.
+    fn third_sampling(root: &mut Value) {
+        mtoon_extension(root, 0)["matcapTexture"] = json!({ "index": 2 });
     }
 
     /// Celesta decodes each scene texture's file on its own, so an image
-    /// sampled two ways counts twice.
+    /// sampled three ways counts three times.
     #[test]
     fn the_budget_counts_every_scene_texture() {
-        let mut vrm = SyntheticVrm::avatar();
-        // 1,024,000,000 bytes decoded: under the budget once, over it twice.
-        vrm.images[0].1 = png_header(16000, 16000);
-        let once = |root: &mut Value| {
-            mtoon_extension(root, 0)
-                .as_object_mut()
-                .unwrap()
-                .remove("shadingShiftTexture");
-        };
-        let (materials, _cache) = load_with(&vrm, once);
-        assert_eq!(materials.textures.len(), 2);
-        // The same image in sRGB through sampler 1: another scene texture.
-        let message = refusal_of(&vrm, |root| {
-            once(root);
-            mtoon_extension(root, 0)["matcapTexture"] = json!({ "index": 2 });
-        });
+        let (materials, _cache) = load(&four_hundred_mib());
+        assert_eq!(materials.textures.len(), 3);
+        let message = refusal_of(&four_hundred_mib(), third_sampling);
         assert!(
-            message.contains("1953 MiB, more than 1024 MiB"),
+            message.contains("the model's textures decode to 1200 MiB, more than 1024 MiB"),
             "{message}"
         );
     }
 
     #[test]
     fn a_refused_model_writes_nothing() {
-        let mut vrm = SyntheticVrm::avatar();
-        vrm.images[0].1 = png_header(32768, 32768);
-        let document = document(&vrm, |_| {});
+        let document = document(&four_hundred_mib(), third_sampling);
         let cache = TempDir::new().unwrap();
         assert!(materials(&document, cache.path()).is_err());
         assert_eq!(files(cache.path()), 0);
+    }
+
+    /// An image larger than Celesta decodes would fail the model there; it
+    /// is left out instead, and counts toward nothing.
+    #[test]
+    fn an_image_past_what_celesta_decodes_leaves_the_slot_empty() {
+        let mut vrm = SyntheticVrm::avatar();
+        vrm.images[0].1 = png_header(32768, 32768);
+        let (materials, cache) = load(&vrm);
+        let body = mtoon(&materials, 0);
+        assert_eq!(body.base_color_texture, None);
+        assert_eq!(body.shade_multiply_texture, None);
+        assert_eq!(body.shading_shift_texture, None);
+        assert_eq!(materials.base_transforms[0], None);
+        assert_eq!(
+            warnings(&materials),
+            [0, 2].map(|texture| format!(
+                "texture {texture} is a 32768x32768 PNG image, which decodes to 4096 MiB, \
+                 more than the 512 MiB Celesta decodes one image to; material \"Body\" draws \
+                 without it"
+            ))
+        );
+        assert_eq!(materials.textures.len(), 1);
+        assert_eq!(files(cache.path()), 1);
+    }
+
+    /// Celesta decodes a 16-bit PNG at 16 bits, 8 bytes an RGBA texel,
+    /// before it makes 8-bit RGBA of it.
+    #[test]
+    fn sixteen_bit_images_count_their_own_bytes() {
+        // 8192 × 8200 × 8 bytes is just over 512 MiB; at 8 bits, half that.
+        let mut vrm = SyntheticVrm::avatar();
+        vrm.images[0].1 = png_header_of(8192, 8200, 16);
+        let (materials, _cache) = load(&vrm);
+        assert_eq!(mtoon(&materials, 0).base_color_texture, None);
+        assert!(
+            warnings(&materials)[0].contains("decodes to 513 MiB"),
+            "{:?}",
+            warnings(&materials)
+        );
+        vrm.images[0].1 = png_header_of(8192, 8200, 8);
+        let (materials, _cache) = load(&vrm);
+        assert!(mtoon(&materials, 0).base_color_texture.is_some());
+        assert_eq!(warnings(&materials), Vec::<&str>::new());
+        // Exactly 512 MiB is what Celesta allows.
+        vrm.images[0].1 = png_header_of(8192, 8192, 16);
+        let (materials, _cache) = load(&vrm);
+        assert!(mtoon(&materials, 0).base_color_texture.is_some());
+    }
+
+    /// `KHR_texture_basisu` and `MSFT_texture_dds` textures, as their
+    /// specifications have them: no `source`, so the extensions are
+    /// required.
+    #[test]
+    fn compressed_textures_leave_the_slot_empty() {
+        let (materials, _cache) = load_with(&SyntheticVrm::avatar(), |root| {
+            root["textures"][1] =
+                json!({ "extensions": { "KHR_texture_basisu": { "source": 1 } } });
+            root["textures"][2] =
+                json!({ "sampler": 1, "extensions": { "MSFT_texture_dds": { "source": 1 } } });
+            root["extensionsRequired"] = json!(["KHR_texture_basisu", "MSFT_texture_dds"]);
+            for name in ["KHR_texture_basisu", "MSFT_texture_dds"] {
+                root["extensionsUsed"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(name.into());
+            }
+        });
+        let body = mtoon(&materials, 0);
+        assert_eq!(body.normal_texture, None);
+        assert_eq!(body.shading_shift_texture, None);
+        assert!(body.base_color_texture.is_some());
+        assert_eq!(
+            warnings(&materials),
+            [
+                "texture 1 is image/ktx2, which the VRM plugin cannot read; material \"Body\" \
+                 draws without it",
+                "texture 2 is image/vnd-ms.dds, which the VRM plugin cannot read; material \
+                 \"Body\" draws without it",
+            ]
+        );
+        assert_eq!(materials.textures.len(), 1);
+    }
+
+    /// With a PNG `source` beside it, a compressed texture draws the PNG.
+    #[test]
+    fn compressed_textures_fall_back_to_their_source() {
+        let (materials, _cache) = load_with(&SyntheticVrm::avatar(), |root| {
+            root["textures"][1]["extensions"] = json!({ "KHR_texture_basisu": { "source": 0 } });
+            root["extensionsUsed"]
+                .as_array_mut()
+                .unwrap()
+                .push("KHR_texture_basisu".into());
+        });
+        assert_eq!(mtoon(&materials, 0).normal_texture.unwrap().texture, 1);
+        assert_eq!(warnings(&materials), Vec::<&str>::new());
+        assert_eq!(materials.textures.len(), 3);
     }
 
     #[test]
@@ -1146,12 +1296,7 @@ mod tests {
         vrm.images[1].0 = "image/ktx2".into();
         let (materials, cache) = load(&vrm);
         assert_eq!(mtoon(&materials, 0).normal_texture, None);
-        let warnings: Vec<&str> = materials
-            .notices
-            .iter()
-            .filter(|notice| notice.level == NoticeLevel::Warning)
-            .map(|notice| notice.message.as_str())
-            .collect();
+        let warnings = warnings(&materials);
         assert_eq!(warnings.len(), 1, "{warnings:?}");
         assert!(warnings[0].contains("image/ktx2"), "{}", warnings[0]);
         assert!(warnings[0].contains("\"Body\""), "{}", warnings[0]);
