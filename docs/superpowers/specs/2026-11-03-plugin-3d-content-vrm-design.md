@@ -23,8 +23,11 @@ UniVRM (vrm-c/UniVRM), the reference implementation.
   design keeps (2D meshes stay as they are).
 - **Celesta draws.** The plugin sends geometry, materials, and per-frame
   state, never pixels. Celesta owns the 3D pass. Celesta knows no VRM
-  concept; it knows triangle meshes, skins, morph targets, a toon material,
-  a camera, and lights.
+  concept: it knows triangle meshes, skins, morph targets, a camera,
+  lights, render queues and alpha modes, an outline pass, a built-in unlit
+  material, and materials whose shading the plugin writes in WGSL against
+  Celesta's material interface. MToon is such a material, shipped by the
+  VRM plugin.
 - **Look like UniVRM.** Where the VRM specification leaves room (defaults,
   lighting, outline width, draw order, spring bone stepping), UniVRM's
   behavior decides. three-vrm and the other implementations are references
@@ -63,9 +66,9 @@ UniVRM (vrm-c/UniVRM), the reference implementation.
 
 | Piece | Responsibility |
 | --- | --- |
-| `celesta-plugin` (protocol crate) | The `scene` content kind: model and frame types, their encoding, `ContentProvider` returning either kind. |
-| `celesta-gpu-renderer` | The 3D pass: skinning and morphing, depth, MSAA, draw order, toon and unlit shading, outlines, conversion to the layer texture. |
-| VRM plugin (`plugins/vrm` in this repository, built on its own) | glTF/VRM loading, 0.x migration, humanoid, VRMA, expressions, lookAt, constraints, spring bones, camera presets, usage terms, the `<Vrm>` component. |
+| `celesta-plugin` (protocol crate) | The `scene` content kind: model and frame types (shaders, custom and unlit materials, parameter bytes), their encoding, `ContentProvider` returning either kind. |
+| `celesta-gpu-renderer` | The 3D pass: skinning and morphing, depth, MSAA, render queues, alpha modes, the material interface (checking and compiling a plugin's WGSL), lights and ambient as frame data, the outline pass, the built-in unlit material, conversion to the layer texture. |
+| VRM plugin (`plugins/vrm` in this repository, built on its own) | glTF/VRM loading, 0.x migration, humanoid, VRMA, expressions, lookAt, constraints, spring bones, MToon as its own WGSL material, camera presets, usage terms, the `<Vrm>` component. |
 
 - **In the monorepo, built apart.** `plugins/vrm` has a `[workspace]` of its
   own and is excluded from the root workspace, so `cargo build --workspace`,
@@ -135,11 +138,19 @@ to follow UniVRM's code anyway, so it is ported.
   as UniVRM does).
 - `skins`: joint counts. Inverse bind matrices stay in the plugin, which
   sends final skinning matrices.
-- `materials`: `kind` (`"unlit"`, `"mtoon"`, later `"pbr"`), `alphaMode`
-  (`opaque`, `mask` with `alphaCutoff`, `blend`), `doubleSided`, and the
-  kind's parameters. `mtoon` takes `VRMC_materials_mtoon` 1.0's parameter
-  set and texture slots, with `transparentWithZWrite` and
-  `renderQueueOffsetNumber`.
+- `shaders`: the model's material shaders, each
+  `{ name?, wgsl, textures: [{ name?, empty: "white" | "black" }] }`: WGSL
+  written against Celesta's material interface (below) and its texture
+  slots, slot `k` being `texture_k` and `sampler_k` in the WGSL. Many
+  materials share one shader; Celesta compiles a source once.
+- `materials`: `alphaMode` (`opaque`; `mask` with `alphaCutoff`; `blend`
+  with optional `depthWrite` and `queueOffset`), `doubleSided`, and `kind`:
+  - `unlit` (`KHR_materials_unlit`): base colour × texture, Celesta's own.
+  - `custom`: `shader` (an index into `shaders`), `textures` (a texture
+    index or `null` per slot), optional `outline` (`{ cull, depthBias }`,
+    an outline pass), `requiresTangents`, and a parameter block of bytes
+    laid out as the shader's `struct Params` in WGSL's uniform layout. The
+    bytes travel in the payload.
 - `draws`: `{ geometry, material, skin? }`, the units of drawing and of
   transparent sorting (Unity's renderers).
 
@@ -157,9 +168,11 @@ to follow UniVRM's code anyway, so it is ported.
   (and a light's x), since UniVRM mirrors X.
 - `time`: seconds for material UV animation.
 - `draws`: every draw, with `visible`, `world` matrix, morph weights, and
-  `overrides` (material color and texture-transform values for this frame).
-  The payload carries each skin's skinning matrices (joint world × inverse
-  bind) and the weights.
+  either `params` (a custom material's parameter bytes for this frame,
+  replacing the material's) or `overrides` (an unlit material's colour and
+  texture transform for this frame). The payload carries each skin's
+  skinning matrices (joint world × inverse bind), the weights, and the
+  parameter bytes.
 
 A VRoid-sized avatar (about 100 joints, 50 morph targets) is a few KB per
 frame, so the pipe is enough. The `open` payload is a few MB once.
@@ -189,36 +202,108 @@ it unchanged.
 ### Per frame
 
 1. **Skin and morph** in a compute pass into per-draw storage buffers
-   (positions, normals, tangents). The main and outline passes read the same
-   results, as MToon's outline uses post-skinning vertices.
-2. **Draw** in UniVRM's queue order, opaque before transparent, ties by draw
-   index for determinism:
+   (positions, normals, tangents). A draw's surface and its outline pass
+   read the same results: an outline pass offsets post-skinning vertices.
+2. **Draw** in render-queue order, opaque before transparent, ties by draw
+   index for determinism, for every material kind:
 
-   | Material | Queue | Blend | Depth write | Notes |
+   | Alpha mode | Queue | Blend | Depth write | Notes |
    | --- | --- | --- | --- | --- |
    | `opaque` | 2000 | none | on | |
-   | `mask` | 2450 | none | on | alpha-to-coverage with the sharpened alpha `(a − cutoff) / max(fwidth(a), 1e-5) + 0.5` |
-   | `blend` + `transparentWithZWrite` | 2501 + clamp(offset, 0, 9) | src-alpha | on | |
-   | `blend` | 3000 + clamp(offset, −9, 0) | src-alpha | off | sorted back to front by draw bounds centre |
+   | `mask` | 2450 | none | on | the material's alpha to coverage, sharpened: `(a − cutoff) / max(fwidth(a), 1e-5) + 0.5` |
+   | `blend` with `depthWrite` | 2501 + clamp(`queueOffset`, 0, 9) | src-alpha | on | |
+   | `blend` | 3000 + clamp(`queueOffset`, −9, 0) | src-alpha | off | sorted back to front by draw bounds centre |
 
-   Color blends as Unity does (`SrcAlpha, OneMinusSrcAlpha` in linear
-   space). Alpha accumulates as coverage (`One, OneMinusSrcAlpha`) rather
-   than UniVRM's `Max`, because Celesta composites the layer's alpha and
-   Unity discards it.
-3. **Outlines** after each draw's main pass, in the same queue slot:
-   front faces culled, depth bias (Unity's `Offset 1,1`), the material's
-   blend and depth write, color
-   `outlineColor × lerp(1, shaded, outlineLightingMix)` where `shaded`
-   includes emission and rim.
-   - World width: `position + normalize(normal) × width × widthTex.g`
-     (metres, unaffected by scale).
-   - Screen width, in clip space:
-     `offset = normalize(normalClip.xy) × 2 × width × min(clip.w, P[1][1])`,
-     `offset.x ×= height / width`, `offset ×= saturate(1 − normalView.z²)`.
-   - The width texture is sampled with raw `uv0`: no texture transform, no
-     UV animation.
+   Colour blends as Unity does (`SrcAlpha, OneMinusSrcAlpha` in linear
+   space). Alpha accumulates as coverage (`One, OneMinusSrcAlpha`), because
+   Celesta composites the layer's alpha. Depth compares `LessEqual`. A
+   blended fragment with alpha below 2⁻¹⁰ is discarded, so a clear pixel of
+   a depth-writing blend writes no depth.
+3. **Outline pass** for a material that asks for one, right after its
+   surface in the same queue slot, from the same skinned vertices: the cull
+   face and depth bias the material gives (by default front faces culled
+   and Unity's `Offset 1, 1`), the material's alpha mode, and the
+   material's outline functions, whose vertex hook offsets each vertex in
+   world space before projection and in clip space after it.
+
+### Materials
+
+- **The material interface.** Celesta prepends a prelude to a material's
+  WGSL and appends its entry points. The prelude gives `frame` (camera
+  matrices, eye, forward, time, the canvas's height over width, up to four
+  directional lights, nine SH ambient coefficients), `draw` (world, normal
+  matrix, handedness, alpha cutoff), the material's `params`, its texture
+  slots, the structs `Vertex`, `VertexOffset`, and `Fragment`, and the
+  helpers `linearstep`, `ambient_light` (the SH polynomial), and
+  `safe_normalize`. A material defines `struct Params` and
+  `fn material_fragment(fragment: Fragment) -> vec4f` (straight linear
+  colour and alpha), and may define `material_vertex`,
+  `material_outline_fragment`, and `material_outline_vertex`. Celesta's
+  entry points apply the alpha mode: alpha 1 for opaque, coverage for
+  mask, the near-clear discard for blend.
+- **Safety and limits.** A material binds nothing of its own; the bindings
+  are Celesta's and hold only the scene's own frame, draw, parameters, and
+  textures. Celesta checks the WGSL with naga before any pipeline exists
+  (no entry points, resources, or `celesta` names of the material's own;
+  at most 262,144 bytes; at most 12 texture slots; `Params` at most 512
+  bytes and equal to the bytes sent; at most 32 shaders a model) and
+  compiles it with runtime bounds checks and loop bounding. Any failure is
+  `InvalidPluginContent` naming the material and the line in its WGSL.
+- **`unlit`** is Celesta's built-in material, drawn through the same
+  interface.
+- **PBR** (later) is a plugin material too: the VRM plugin brings glTF
+  metallic-roughness as WGSL under the same lights. UniVRM maps it to
+  Unity's Standard shader; matching that is out of scope, so it is
+  documented as an approximation.
+
+### Lighting presets and shadows
+
+- UniVRM takes lights from the Unity scene, so there is no "UniVRM default".
+  The VRM plugin's default is the reference scene below (one directional
+  light, a flat ambient), which is also what the parity checks use.
+- Shadows (the main light's `atten`) are a later phase: Celesta renders a
+  shadow map for the main light, self-shadowing only, since the layer has
+  no other casters, and offers it to materials through the interface.
+
+## The VRM plugin
+
+### Loading
+
+- `.vrm` (glb) with `VRMC_vrm` 1.0; `.vrma` (`VRMC_vrm_animation`) as
+  motion assets.
+- **VRM 0.x** (the `VRM` extension):
+  - Until the migration lands, opening a 0.x file is an error. The error says that VRM 0.x is not supported yet, and that UniVRM or Blender's VRM add-on can convert the file to 1.0.
+  - Once the migration lands, a 0.x file opens with a `warning` notice that 0.x support is experimental. The parity checks below cover 1.0 only.
+- **0.x migration** (experimental, a later phase), ported from UniVRM's
+  `Packages/VRM10/Runtime/Migration`:
+  - Coordinates turned 180° about Y (positions, normals, morph deltas,
+    node translations, inverse binds: `(x, y, z) → (−x, y, −z)`);
+    extension vectors (collider offsets, gravity, first-person offset)
+    `(x, y, z) → (−x, y, z)`.
+  - Blend shape groups → expressions (`a/i/u/e/o → aa/ih/ou/ee/oh`,
+    `joy → happy`, `sorrow → sad`, `fun → relaxed`, …), weights ÷ 100,
+    material binds and texture-transform binds carried over.
+  - Secondary animation → spring chains (group parameters on every joint,
+    a 7 cm `_end` tail for leaves, sphere colliders).
+  - LookAt (bone or blend shape, range maps), first person.
+  - Materials: MToon 0.x → MToon 1.0 with UniVRM's formulas (shading
+    range, `giEqualization = 1 − indirectLightIntensity`, outline width
+    units, UV animation units, render queue re-ranking); the 0.x unlit
+    shaders → unlit (and `UnlitTransparentZWrite` → MToon). Parameters with
+    no 1.0 equivalent (light color attenuation, receive-shadow and
+    shading-grade, the `min(col, lit)` clamp) are dropped, as UniVRM does.
+- Tangents are always recomputed (UniVRM ignores the file's), with
+  MikkTSpace.
 
 ### MToon (UniVRM's MToon10, built-in render pipeline)
+
+The plugin's MToon is a material in WGSL (`plugins/vrm/src/mtoon.wgsl`)
+with a parameter block it packs from `VRMC_materials_mtoon` (and, each
+frame, from material binds and the UV animation's time). It maps the
+file's `transparentWithZWrite` and `renderQueueOffsetNumber` to
+`alphaMode: blend`'s `depthWrite` and `queueOffset`, asks for an outline
+pass when `outlineWidthMode` is not `none`, and asks for tangents when the
+material has a `normalTexture`.
 
 For the main light (`atten` is 1 until shadows exist):
 
@@ -272,51 +357,19 @@ color  = direct + gi + emissiveTex × emissiveFactor + rim
   UniVRM's `clip(t − cutoff)` with alpha 1, whose alpha-to-coverage has no
   effect: edges move by at most `|cutoff − ½|` of a pixel. A known
   difference, recorded for the parity checks.
-
-### Unlit and PBR
-
-- `unlit` (`KHR_materials_unlit`): base color × texture, alpha modes as above.
-- `pbr` (later): glTF metallic-roughness under the same lights. UniVRM maps
-  it to Unity's Standard shader; matching that is out of scope, so it is
-  documented as an approximation.
-
-### Lighting presets and shadows
-
-- UniVRM takes lights from the Unity scene, so there is no "UniVRM default".
-  The VRM plugin's default is the reference scene below (one directional
-  light, a flat ambient), which is also what the parity checks use.
-- Shadows (the main light's `atten`) are a later phase: a shadow map for the
-  main light, self-shadowing only, since the layer has no other casters.
-
-## The VRM plugin
-
-### Loading
-
-- `.vrm` (glb) with `VRMC_vrm` 1.0; `.vrma` (`VRMC_vrm_animation`) as
-  motion assets.
-- **VRM 0.x** (the `VRM` extension):
-  - Until the migration lands, opening a 0.x file is an error. The error says that VRM 0.x is not supported yet, and that UniVRM or Blender's VRM add-on can convert the file to 1.0.
-  - Once the migration lands, a 0.x file opens with a `warning` notice that 0.x support is experimental. The parity checks below cover 1.0 only.
-- **0.x migration** (experimental, a later phase), ported from UniVRM's
-  `Packages/VRM10/Runtime/Migration`:
-  - Coordinates turned 180° about Y (positions, normals, morph deltas,
-    node translations, inverse binds: `(x, y, z) → (−x, y, −z)`);
-    extension vectors (collider offsets, gravity, first-person offset)
-    `(x, y, z) → (−x, y, z)`.
-  - Blend shape groups → expressions (`a/i/u/e/o → aa/ih/ou/ee/oh`,
-    `joy → happy`, `sorrow → sad`, `fun → relaxed`, …), weights ÷ 100,
-    material binds and texture-transform binds carried over.
-  - Secondary animation → spring chains (group parameters on every joint,
-    a 7 cm `_end` tail for leaves, sphere colliders).
-  - LookAt (bone or blend shape, range maps), first person.
-  - Materials: MToon 0.x → MToon 1.0 with UniVRM's formulas (shading
-    range, `giEqualization = 1 − indirectLightIntensity`, outline width
-    units, UV animation units, render queue re-ranking); the 0.x unlit
-    shaders → unlit (and `UnlitTransparentZWrite` → MToon). Parameters with
-    no 1.0 equivalent (light color attenuation, receive-shadow and
-    shading-grade, the `min(col, lit)` clamp) are dropped, as UniVRM does.
-- Tangents are always recomputed (UniVRM ignores the file's), with
-  MikkTSpace.
+- Outline colour `outlineColor × lerp(1, shaded, outlineLightingMix)` where
+  `shaded` includes emission and rim, under the main light only.
+- World width: `position + normalize(normal) × width × widthTex.g`
+  (metres, unaffected by scale), as the outline's world offset.
+- Screen width, as the outline's clip offset:
+  `offset = normalize(normalClip.xy) × 2 × width × min(clip.w, P[1][1])`,
+  `offset.x ×= height / width`, `offset ×= saturate(1 − normalView.z²)`.
+- The width texture is sampled with raw `uv0`: no texture transform, no
+  UV animation.
+- Material binds (`color`, `shadeColor`, `emissionColor`, `matcapColor`,
+  `rimColor`, `outlineColor`, texture transforms) and the UV animation's
+  scroll, formed in `f64`, are packed into each frame's parameters by the
+  plugin.
 
 ### Per frame
 
@@ -380,10 +433,15 @@ refuse to draw; the user decides.
 
 ## Checks
 
-- **Renderer**, with a fake provider: depth occlusion; the four queues and
-  their order; alpha-to-coverage edges; outline widths in both modes; skinning
-  matrices and morph weights moving vertices; material overrides; the final
-  encoding against a 2D layer of the same color; frames on lavapipe in CI.
+- **Renderer**, with a fake provider and small test materials written
+  against the interface: depth occlusion; the four queues and their order;
+  alpha-to-coverage edges; parameters, texture slots and their empty
+  texels, lights and ambient, the normal matrix and handedness, and the
+  view direction reaching a material; the outline pass's world and clip
+  offsets, culling, and bias; per-frame parameters; refused WGSL, sizes,
+  and limits; a shader compiled once; skinning matrices and morph weights
+  moving vertices; the final encoding against a 2D layer of the same
+  colour; frames on lavapipe in CI.
 - **Plugin:**
   - a 0.x file refused with the conversion hint (until the migration),
     then 0.x migration of sample files against fixtures produced once with
@@ -391,25 +449,32 @@ refuse to draw; the user decides.
   - frames for out-of-order times equal frames played in order, including
     after a restart;
   - spring bone sequences against UniVRM recordings at 60 fps.
-- **Parity:** a reference Unity scene with UniVRM, a fixed camera, one
-  directional light, a flat ambient color, and shadows off renders sample
-  VRM 1.0 models (MToon with outline, rim, matcap, cutout hair,
-  transparency). Experimental 0.x support has no parity bar. Celesta renders the same with the plugin's reference preset.
-  The images are compared with a stated tolerance, and the differences are
-  recorded. Only models whose licence allows it are committed; the rest are
-  checked locally.
+- **Parity:** in the VRM plugin. A reference Unity scene with UniVRM, a
+  fixed camera, one directional light, a flat ambient colour, and shadows
+  off renders sample VRM 1.0 models (MToon with outline, rim, matcap,
+  cutout hair, transparency). Experimental 0.x support has no parity bar.
+  Celesta renders the same with the plugin's reference preset and its
+  MToon material. The images are compared with a stated tolerance, and the
+  differences are recorded. Only models whose licence allows it are
+  committed; the rest are checked locally. The plugin's MToon formula tests
+  (one lit square per term, expected pixels worked out by hand) live with
+  its material.
 
 ## Phases
 
 1. **Protocol and the 3D pass:** the `scene` kind, `notices`, `roles`;
    skinning and morphing, depth, MSAA, unlit, camera; renderer tests.
-2. **MToon:** the main and additional lights, GI from SH, the queues,
-   outlines, rim and matcap, UV animation, normal maps, emission.
-3. **The VRM plugin, 1.0:** loading, humanoid and VRMA, expressions, lookAt,
+2. **Materials:** the material interface and custom WGSL materials; lights
+   and SH ambient as frame data; the queues with depth-writing blend and
+   offsets; the outline pass; per-frame parameters; the built-in unlit
+   material on the same interface.
+3. **The VRM plugin, 1.0:** loading, MToon as its own material (moved from
+   Celesta with its formula tests), humanoid and VRMA, expressions, lookAt,
    constraints, deterministic spring bones, usage terms, `<Vrm>`, Add menu.
 4. **VRM 0.x, experimental:** the migration step, its fixtures, and the
    experimental notice. Until then 0.x files are refused (phase 3).
-5. **Later:** main-light shadows, glTF PBR, point and spot lights.
+5. **Later:** main-light shadows offered to materials (Celesta), point and
+   spot lights (Celesta), glTF PBR as a plugin material.
 
 Phases 1–2 (Celesta) and 3 (plugin, drawn unlit at first) can proceed side by
 side once the protocol types land.

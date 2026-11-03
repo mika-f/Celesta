@@ -1,5 +1,7 @@
 # Plugin scene MToon (phase 2) Implementation Plan
 
+> Superseded: Celesta's MToon became the VRM plugin's material; see `2026-11-03-plugin-scene-materials.md`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Scene materials can be MToon (`VRMC_materials_mtoon` 1.0 as UniVRM's MToon10 draws it): lit by the frame's directional lights and SH ambient, with UniVRM's render queues, outlines, rim and matcap, UV animation, normal maps, and emission; frame resources are reused instead of reallocated.

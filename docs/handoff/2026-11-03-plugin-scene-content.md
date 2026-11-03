@@ -9,9 +9,10 @@ exporter and the editor show.
 
 This is the first phase of the design in
 `docs/superpowers/specs/2026-11-03-plugin-3d-content-vrm-design.md`: the
-protocol, the 3D pass with unlit materials, notices, and a sample. MToon,
-lights, and outlines landed next, in `2026-11-03-plugin-scene-mtoon.md`;
-the VRM plugin comes later. The plugin system
+protocol, the 3D pass with unlit materials, notices, and a sample.
+Plugins' own materials in WGSL, lights, and outlines landed next, in
+`2026-11-03-plugin-scene-materials.md`; the VRM plugin comes later. The
+plugin system
 itself (manifest, process, protocol framing, 2D meshes) is
 `2026-11-01-plugin-system.md`.
 
@@ -56,7 +57,9 @@ A model (`SceneModel`, sent once per opened asset set):
   `doubleSided`, and a `kind` with its parameters: `unlit`, `baseColor`
   times the optional `baseColorTexture` (`{ texture, transform? }`, the
   transform as `KHR_texture_transform`: scaled, rotated, then offset), or
-  `mtoon`, VRM's toon shading (`2026-11-03-plugin-scene-mtoon.md`).
+  `custom`, the plugin's own WGSL against Celesta's material interface
+  (`2026-11-03-plugin-scene-materials.md`, which also adds `depthWrite`
+  and `queueOffset` to `blend`).
 - `draws`: what can be drawn, each a `geometry` with a `material`, and a
   `skin` when the geometry is skinned. Draws are what frames place and what
   Celesta sorts.
@@ -69,16 +72,17 @@ A frame (`SceneFrame`, per request):
 - `lights`: `directional` lights (`direction` they travel, `color`,
   `intensity`; the first is the main light) and `ambient` as nine spherical
   harmonics coefficients per channel, in Unity's `ShadeSH9` order and scale.
-  MToon materials shade with them; unlit ones ignore them. At most 4
-  directional lights (`2026-11-03-plugin-scene-mtoon.md`).
-- `time`: seconds, which MToon's UV animation follows.
+  Custom materials read them; unlit ones ignore them. At most 4
+  directional lights (`2026-11-03-plugin-scene-materials.md`).
+- `time`: seconds, which custom materials read as `frame.time`.
 - `draws`: the draws to place, in any order. Each has its `index`,
   `visible`, `world`, one morph weight per target of its geometry, an
   optional `center` (the world-space point a blended draw is sorted by),
-  and `overrides` (`baseColor`, `textureOffset`, `textureScale`, and
-  MToon's `shadeColor`, `emissionColor`, `matcapColor`, `rimColor`, and
-  `outlineColor`) replacing its material's values for this frame. A draw
-  the frame does not list is not drawn.
+  and either `overrides` (`baseColor`, `textureOffset`, `textureScale`)
+  replacing an unlit material's values or `params` replacing a custom
+  material's parameters, for this frame
+  (`2026-11-03-plugin-scene-materials.md`). A draw the frame does not list
+  is not drawn.
 - `skins`: each skin's skinning matrices, one per joint: the joint's world
   matrix times its inverse bind matrix.
 
@@ -117,19 +121,20 @@ the identity as `world` for a glTF skinned mesh.
 - **Skinned by a compute pass.** Each frame, `scene_skin.wgsl` morphs and
   skins every visible draw's vertices: `Σ wᵢ·skinᵢ·(p + Σ wₜ·Δpₜ)`; normals
   and tangents follow the matrices' upper 3×3 and are renormalised.
-- **Drawn in UniVRM's order.** Draws go by their material's render queue:
-  opaque (2000), then mask (2450), then blend (3000). Blended draws go
-  farthest first, by their `center`, or else their geometry's rest-bounds
-  centre moved by `world`; ties go by draw index. Hidden draws and draws
-  without triangles are skipped. MToon's queue offsets and
-  `transparentWithZWrite`, and the farthest-first order (by distance from
-  the eye through a perspective camera, by view-space depth through an
-  orthographic one), are in `2026-11-03-plugin-scene-mtoon.md`.
+- **Drawn in Unity's render queue order.** Draws go by their material's
+  render queue: opaque (2000), then mask (2450), then blend (3000).
+  Blended draws go farthest first, by their `center`, or else their
+  geometry's rest-bounds centre moved by `world`; ties go by draw index.
+  Hidden draws and draws without triangles are skipped. A blend's
+  `queueOffset` and `depthWrite`, and the farthest-first order (by
+  distance from the eye through a perspective camera, by view-space depth
+  through an orthographic one), are in
+  `2026-11-03-plugin-scene-materials.md`.
 - **Depth and anti-aliasing.** The canvas is 4× multisampled linear,
   premultiplied `Rgba16Float` with `Depth32Float` depth, cleared to
   transparent black and to 1. Opaque and mask draws write depth; blend
-  draws test it but do not write it, unless an MToon material sets
-  `transparentWithZWrite`. Depth is tested with `LessEqual`, so of two
+  draws test it but do not write it, unless the material sets
+  `depthWrite`. Depth is tested with `LessEqual`, so of two
   exactly coplanar draws the later shows. Back faces are culled unless the
   material is double-sided, and a `world` or a camera `view` that mirrors
   (its upper 3×3's determinant negative) flips which winding is front; both
@@ -221,8 +226,9 @@ member) is a program and a component, built by `build.mjs` like `flag`.
 +Y by `speed` turns a second (default 0.5), a half-transparent blue pane in
 front of it (`blend`), and a leaf cut out of a square (`mask`, its stem in
 the cube). It takes no assets; its geometry and textures are made in code
-(inline RGBA). It returns no notices. The cube is now toon-shaded,
-outlined, and lit (`2026-11-03-plugin-scene-mtoon.md`).
+(inline RGBA). It returns no notices. The cube is now toon-shaded by the
+sample's own WGSL material, outlined, and lit
+(`2026-11-03-plugin-scene-materials.md`).
 
 ## What landed
 
@@ -242,20 +248,23 @@ outlined, and lit (`2026-11-03-plugin-scene-mtoon.md`).
 
 Not done:
 
-- **MToon and lit shading.** Done for MToon in
-  `2026-11-03-plugin-scene-mtoon.md`; glTF PBR is still to come.
-- **Lights are not used.** Done: MToon shades with
-  `SceneFrame::lights`, and its UV animation follows `SceneFrame::time`
-  (`2026-11-03-plugin-scene-mtoon.md`).
-- **Outlines** (MToon's). Done in `2026-11-03-plugin-scene-mtoon.md`.
+- **Lit shading.** Done: a plugin brings its own materials in WGSL,
+  lit as it likes (`2026-11-03-plugin-scene-materials.md`); glTF PBR is
+  still to come, as a plugin's material.
+- **Lights are not used.** Done: custom materials read
+  `SceneFrame::lights` and `SceneFrame::time`
+  (`2026-11-03-plugin-scene-materials.md`).
+- **Outlines.** Done: a custom material can have an outline pass
+  (`2026-11-03-plugin-scene-materials.md`).
 - **Normals are not transformed by `world`.** Done: the draw pass takes
   normals to world space by `world`'s signed cofactor matrix
-  (`2026-11-03-plugin-scene-mtoon.md`).
+  (`2026-11-03-plugin-scene-materials.md`).
 - **Per-frame GPU resources are not cached.** Done for the canvases
   (multisampled color and depth, the resolved color), the buffers of
   skinning matrices, morph weights, and uniforms, and their bind groups,
-  which `SceneFrameResources` keeps (`2026-11-03-plugin-scene-mtoon.md`).
-  The layer texture is still made each frame.
+  which `SceneFrameResources` keeps
+  (`2026-11-03-plugin-scene-materials.md`). The layer texture is still
+  made each frame.
 - **No Add-menu entry for `<Turntable>`.** Its `plugin.json` lists no
   `components`.
 - **The CPU renderer and `@celesta/web`** refuse plugin content, scenes
@@ -266,7 +275,7 @@ Not done:
   `MeshFrame` with `.into()`). Its process's answers need no change.
 - **Blend draws sort by view-space z,** not by distance to the camera as
   Unity does. Done: through a perspective camera they now sort by distance
-  (`2026-11-03-plugin-scene-mtoon.md`). The VRM plugin should still send
+  (`2026-11-03-plugin-scene-materials.md`). The VRM plugin should still send
   `center` for skinned draws, whose rest bounds do not follow the pose.
 - **Joint indices in zero-weight slots count** toward the check that a
   skin has every joint its geometry names. The VRM plugin should zero
