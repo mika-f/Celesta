@@ -340,12 +340,27 @@ mod tests {
         let (model, _files) = open();
         // The clip lowers the arm by Rz(−90°) at 1 s; a roll of 90° brings it
         // back up, while the hips keep the clip's travel.
-        let data = data(json!({
+        let rolled = data(json!({
             "motions": [{ "clip": "motion0", "from": 0 }],
             "tracks": { "leftUpperArm": { "roll": keys(&[(0.0, 90.0)]) } },
         }));
-        let lower = position(&worlds(&model, 1.0, &data), node::LEFT_LOWER_ARM);
+        let lower = position(&worlds(&model, 1.0, &rolled), node::LEFT_LOWER_ARM);
         assert!(near(lower, Vec3::new(0.40, 1.25, 0.45)), "{lower}");
+
+        // A turn about another axis does not commute with the clip's. The
+        // upper arm sits at (0.15, 1.25, 0.45) at 1 s and the lower arm
+        // 0.25 m along its +X. A yaw of 90° to the avatar's right is
+        // Ry(−90°), which swings the arm from +X to +Z, forward; the clip's
+        // Rz(−90°) after it only spins the arm about its length, so the
+        // lower arm is at (0.15, 1.25, 0.70). Turned the other way round,
+        // the clip would lower the arm to −Y first, about which the yaw
+        // only spins it: (0.15, 1.00, 0.45).
+        let yawed = data(json!({
+            "motions": [{ "clip": "motion0", "from": 0 }],
+            "tracks": { "leftUpperArm": { "yaw": keys(&[(0.0, 90.0)]) } },
+        }));
+        let lower = position(&worlds(&model, 1.0, &yawed), node::LEFT_LOWER_ARM);
+        assert!(near(lower, Vec3::new(0.15, 1.25, 0.70)), "{lower}");
     }
 
     #[test]
