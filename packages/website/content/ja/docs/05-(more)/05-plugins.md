@@ -147,7 +147,7 @@ export default function Root() {
 | `lipSync`・`mouthSmoothing` | 口パクのトラック（`loadLipSync()` の結果や、読み上げたセリフの `lipSync`）。`mouth` がないときに使い、口の形を `mouthSmoothing` フレームかけてなめらかに切り替えます（既定は 2、0 で即座に切り替え）。 |
 | `blink` | まばたきのタイミング。キャラクターの立ち絵と同じくシードで決まります。`false` でまばたきしません。 |
 | `lookAt` | 目線の先です。`'camera'`、アバターの空間の点 `[x, y, z]`、または度数の `{ yaw, pitch }`（yaw はアバターから見て右が正、pitch は上が正）。なければ正面を向きます。 |
-| `camera` | `'full'`（既定。全身）、`'bust'`（胸から上）、`'face'`、またはアバターの空間での `{ position, target, fov?, near?, far? }`（`fov` は度数、既定は 30）。 |
+| `camera` | `'full'`（既定。全身）、`'bust'`（腰から上。ヒューマノイドの spine ボーンから）、`'face'`、またはアバターの空間での `{ position, target, fov?, near?, far? }`（`fov` は度数、既定は 30）。 |
 | `lights` | `{ directional: [{ direction, color, intensity }], ambient }`。平行光源は 4 つまで（5 つ目でエラー）、色は `#rgb` か `#rrggbb` です。基準ライトを置き換えるので、`ambient` がなければ環境光は黒になります。`lights` がなければプラグインの基準ライト（Unity の既定の平行光源を前上方から当て、既定の環境光の色を加えたもの）を使います。 |
 
 アバターの空間はファイルのままで、単位はメートル、+Y が上、アバターは +Z を向き、左手側が +X、足元はおおむね 0 です。カメラのプリセットは、レイヤーの縦横比に合わせて、基本姿勢で立つアバターを収めます。`full` は横幅も収めるので、片側に大きく張り出した持ち物があると、アバターが中央からずれます。
