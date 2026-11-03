@@ -589,9 +589,10 @@ change once it shows:
   - `material_`: parameters coloring the surface; texture slots sampling
     their texture or their empty texel; lights and ambient reaching the
     shader, and more lights than the frame holds or a light without a
-    direction refused; each light its color times its intensity (0.5), in
-    order past the first, and a light the frame lacks black; the light
-    count, the time, and the height over the width of a 128x64 canvas;
+    direction refused; each light its color times its own intensity (0.5,
+    0.25, and 0.75), in order past the first, and a light the frame lacks
+    black; the light count, the time (0.25), and the height over the width
+    of a 128x64 canvas (0.5);
     the view and the projection apart, by the view's translation and the
     projection's `[1][1]`; each SH coefficient; normals through the inverse
     transpose of `world`; tangents and handedness following `world`

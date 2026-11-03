@@ -1806,14 +1806,15 @@ fn material_normals_are_not_turned_on_back_faces() {
 
 #[test]
 fn material_lights_are_their_colour_times_their_intensity_in_order() {
-    // Three lights at intensity 0.5, each of its own primary: light k is
-    // linear 0.5 in channel k, and light 3, which the frame lacks, black.
+    // Three lights, each of its own primary and intensity: light k is its
+    // intensity in channel k (linear 0.5, 0.25, and 0.75), and light 3,
+    // which the frame lacks, black.
     let lights = vec![
         light(HALF_LIT, [1.0, 0.0, 0.0], 0.5),
-        light(HALF_LIT, [0.0, 1.0, 0.0], 0.5),
-        light(HALF_LIT, [0.0, 0.0, 1.0], 0.5),
+        light(HALF_LIT, [0.0, 1.0, 0.0], 0.25),
+        light(HALF_LIT, [0.0, 0.0, 1.0], 0.75),
     ];
-    let expected = [[188, 0, 0, 255], [0, 188, 0, 255], [0, 0, 188, 255], BLACK];
+    let expected = [[188, 0, 0, 255], [0, 137, 0, 255], [0, 0, 225, 255], BLACK];
     for (k, expected) in expected.into_iter().enumerate() {
         let mut scenes = probe_square(4, [k as f32, 0.0, 0.0, 0.0]);
         scenes.frame.lights.directional = lights.clone();
@@ -1826,17 +1827,18 @@ fn material_lights_are_their_colour_times_their_intensity_in_order() {
 
 #[test]
 fn material_frames_count_their_lights_and_know_the_time_and_aspect() {
-    // Three lights (0.75 of 4), at time 0.5, on a canvas twice as wide as
+    // Three lights (0.75 of 4), at time 0.25, on a canvas twice as wide as
     // it is high (0.5): the square, 32 px a metre, is at the middle of the
-    // 128x64 canvas.
+    // 128x64 canvas. The time and the height over the width differ, so
+    // neither reads as the other.
     let mut scenes = probe_square(5, [0.0; 4]);
     scenes.model.canvas = [128.0, 64.0];
     scenes.frame.lights.directional = vec![light(HALF_LIT, [1.0; 3], 1.0); 3];
-    scenes.frame.time = 0.5;
+    scenes.frame.time = 0.25;
     let Some(frame) = render_scenes_in(scenes, &layer_on(empty_scene(128, 64), 0.0, 1.0)) else {
         return;
     };
-    assert_pixel(&frame, 64, 32, [225, 188, 188, 255]);
+    assert_pixel(&frame, 64, 32, [225, 137, 188, 255]);
 }
 
 #[test]
