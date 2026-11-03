@@ -249,4 +249,82 @@ mod tests {
         });
         assert!(message.contains("no leftFoot bone"), "{message}");
     }
+
+    #[test]
+    #[should_panic(expected = "omit_bone names leftFot")]
+    fn misspelled_omitted_bone_fails_the_fixture() {
+        SyntheticVrm {
+            omit_bone: Some("leftFot".into()),
+            ..SyntheticVrm::avatar()
+        }
+        .glb();
+    }
+
+    /// The reason `bytes` did not open, whatever kind it is.
+    fn error(bytes: &[u8]) -> String {
+        match Document::parse(bytes) {
+            Ok(_) => panic!("the file opened"),
+            Err(error) => error.to_string(),
+        }
+    }
+
+    fn edited(edit: impl FnOnce(&mut Value)) -> String {
+        error(&SyntheticVrm::avatar().glb_with(edit))
+    }
+
+    #[test]
+    fn external_buffers_are_refused() {
+        let message = edited(|root| root["buffers"][0]["uri"] = "avatar.bin".into());
+        assert!(
+            message.contains("buffer 0 is an external file"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn bone_past_the_nodes_is_refused() {
+        let message = edited(|root| {
+            root["extensions"]["VRMC_vrm"]["humanoid"]["humanBones"]["hips"]["node"] = 999.into();
+        });
+        assert!(
+            message.contains("humanoid bone hips names node 999, but the file has 25 nodes"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn two_bones_on_one_node_are_refused() {
+        let message = edited(|root| {
+            root["extensions"]["VRMC_vrm"]["humanoid"]["humanBones"]["leftEye"]["node"] = 5.into();
+        });
+        assert!(
+            message.contains("humanoid bone leftEye names node 5, which bone head names too"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn truncated_files_are_errors() {
+        let glb = SyntheticVrm::avatar().glb();
+        for length in [0, 4, 11, 12, 19, 20, 100, glb.len() / 2, glb.len() - 1] {
+            error(&glb[..length]);
+        }
+        // A header and chunk headers that claim more than the file holds.
+        let mut lying = glb[..20].to_vec();
+        lying[8..12].copy_from_slice(&u32::MAX.to_le_bytes());
+        lying[12..16].copy_from_slice(&u32::MAX.to_le_bytes());
+        error(&lying);
+        let mut short_bin = glb.clone();
+        let json = u32::from_le_bytes([glb[12], glb[13], glb[14], glb[15]]) as usize;
+        short_bin[20 + json..24 + json].copy_from_slice(&u32::MAX.to_le_bytes());
+        error(&short_bin);
+    }
+
+    #[test]
+    fn garbage_is_an_error() {
+        error(b"\x00\x01\x02 not a model at all");
+        error(b"glTF\x02\x00\x00\x00garbage garbage garbage");
+        error(b"{\"asset\": ");
+        error(&[0xff; 64]);
+    }
 }

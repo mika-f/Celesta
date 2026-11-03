@@ -247,7 +247,20 @@ impl SyntheticVrm {
 
     /// The avatar as a `.vrm` (binary glTF) file.
     pub fn glb(&self) -> Vec<u8> {
+        self.glb_with(|_| {})
+    }
+
+    /// The avatar as a `.vrm` file whose root JSON `edit` changes first,
+    /// for files no field above describes (a broken accessor, a node with
+    /// two parents, …). The binary chunk is the avatar's.
+    pub fn glb_with(&self, edit: impl FnOnce(&mut Value)) -> Vec<u8> {
         let specs = nodes();
+        if let Some(omitted) = &self.omit_bone {
+            assert!(
+                specs.iter().any(|spec| spec.bone == Some(omitted.as_str())),
+                "omit_bone names {omitted}, which the avatar does not have"
+            );
+        }
         let mut bin = Bin::default();
 
         // Mesh 0, Body: the box's eight corners (bit 0: +x, bit 1: top,
@@ -522,7 +535,7 @@ impl SyntheticVrm {
             }
             json!({ "VRMC_materials_mtoon": mtoon })
         };
-        let root = json!({
+        let mut root = json!({
             "asset": { "version": "2.0", "generator": "Celesta synthetic VRM" },
             "extensionsUsed": used,
             "extensions": extensions,
@@ -592,6 +605,7 @@ impl SyntheticVrm {
             "bufferViews": bin.views,
             "buffers": [{ "byteLength": bin.data.len() }],
         });
+        edit(&mut root);
         glb(&root, bin.data)
     }
 }

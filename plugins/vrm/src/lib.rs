@@ -9,11 +9,16 @@
 //! texture coordinates from the top-left.
 
 mod document;
+mod geometry;
+mod humanoid;
+mod nodes;
 mod provider;
 #[cfg(any(test, feature = "synthetic"))]
 pub mod synthetic;
 
 pub use document::LoadError;
+pub use humanoid::{HumanBone, Humanoid};
+pub use nodes::{NodeTree, Pose, Trs};
 pub use provider::VrmProvider;
 
 /// The plugin's id, as its manifest and its layers name it.

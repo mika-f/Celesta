@@ -22,6 +22,7 @@ synthetic = []
 
 [dependencies]
 celesta-plugin = { path = "../../crates/plugin" }
+glam = "0.34.2"
 gltf = { version = "1.4.1", default-features = false, features = [
   "import",
   "utils",
@@ -33,6 +34,7 @@ gltf = { version = "1.4.1", default-features = false, features = [
   "KHR_materials_emissive_strength",
 ] }
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg"] }
+mikktspace = { version = "0.3.0", default-features = false, features = ["glam"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0.21"
