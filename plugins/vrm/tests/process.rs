@@ -13,8 +13,9 @@ use celesta_plugin::{
     ContentFrame, ContentModel, ContentProvider, PROTOCOL_VERSION, TextureSource,
 };
 use celesta_plugin_host::PluginHost;
-use celesta_plugin_vrm::synthetic::SyntheticVrm;
+use celesta_plugin_vrm::synthetic::{SyntheticVrm, SyntheticVrma, node};
 use celesta_plugin_vrm::{PLUGIN, VrmProvider};
+use glam::{Mat4, Quat};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -52,6 +53,8 @@ fn main() {
     unsafe { std::env::set_var("CELESTA_VRM_TEXTURE_CACHE", cache.path()) };
     the_process_answers_as_the_provider_does(cache.path());
     println!("test the_process_answers_as_the_provider_does ... ok");
+    motions_cross_the_process(cache.path());
+    println!("test motions_cross_the_process ... ok");
 }
 
 fn the_process_answers_as_the_provider_does(cache: &Path) {
@@ -94,5 +97,73 @@ fn the_process_answers_as_the_provider_does(cache: &Path) {
         let frame = host.frame(remote, time, &data).unwrap();
         assert!(matches!(frame, ContentFrame::Scene(_)), "{frame:?}");
         assert_eq!(frame, provider.frame(local, time, &data).unwrap());
+    }
+}
+
+/// Motions and spring bones answered alike by the process and in process,
+/// and by a fresh process asked the later frames only, as after a restart:
+/// a frame depends on its time and data, never on what was asked before.
+fn motions_cross_the_process(cache: &Path) {
+    let mut vrm = SyntheticVrm::avatar();
+    let joint = |node: usize| serde_json::json!({ "node": node, "stiffness": 0.5, "dragForce": 0.4, "gravityPower": 1.0 });
+    vrm.extensions.insert(
+        "VRMC_springBone".into(),
+        serde_json::json!({
+            "specVersion": "1.0",
+            "springs": [{ "joints": [joint(node::HAIR0), joint(node::HAIR1), joint(node::HAIR2)] }],
+        }),
+    );
+    let files = tempfile::tempdir().unwrap();
+    let model = files.path().join("avatar.vrm");
+    // The hair nodes are no skin's joints, so a second skin of them, at
+    // identity inverse binds, sends their worlds in each frame.
+    let glb = vrm.glb_with(|root| {
+        root["skins"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({ "joints": [node::HAIR0, node::HAIR1, node::HAIR2] }));
+    });
+    std::fs::write(&model, glb).unwrap();
+    let clip = files.path().join("clip.vrma");
+    std::fs::write(&clip, SyntheticVrma::clip().glb()).unwrap();
+    let assets: BTreeMap<String, PathBuf> =
+        [("model".to_owned(), model), ("motion0".to_owned(), clip)].into();
+    let data = serde_json::json!({ "motions": [{ "clip": "motion0", "loop": true }] });
+
+    let directory = plugin_directory();
+    let mut host = PluginHost::discover(&[directory.path().to_path_buf()]);
+    let mut provider = VrmProvider::with_texture_cache(cache);
+    let remote = host.open(PLUGIN, &assets).unwrap().model;
+    let local = provider.open(PLUGIN, &assets).unwrap().model;
+    let mut frames = BTreeMap::new();
+    for time in [2.0, 0.25, 2.0] {
+        let frame = host.frame(remote, time, &data).unwrap();
+        assert_eq!(frame, provider.frame(local, time, &data).unwrap());
+        frames.insert(time.to_bits(), frame);
+    }
+    // The hair swung: `hair1` turned from its rest in `hair0`'s frame.
+    let ContentFrame::Scene(scene) = &frames[&2.0f64.to_bits()] else {
+        panic!("a VRM frame is a scene");
+    };
+    let rotation = |joint: usize| {
+        let world = Mat4::from_cols_array(&scene.skins[1][joint]);
+        world.to_scale_rotation_translation().1
+    };
+    let local = rotation(0).inverse() * rotation(1);
+    assert!(
+        local.angle_between(Quat::IDENTITY) > 1e-3,
+        "the hair did not swing: {local:?}"
+    );
+    drop(host);
+
+    let mut restarted = PluginHost::discover(&[directory.path().to_path_buf()]);
+    let remote = restarted.open(PLUGIN, &assets).unwrap().model;
+    for time in [0.25, 2.0] {
+        let frame = restarted.frame(remote, time, &data).unwrap();
+        assert_eq!(
+            frame,
+            frames[&time.to_bits()],
+            "at {time} s after a restart"
+        );
     }
 }

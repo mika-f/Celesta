@@ -1,9 +1,12 @@
 //! The VRM Consortium's and pixiv's official sample models, opened, framed,
 //! and drawn. They are never committed: each test reads the folder
 //! `CELESTA_VRM_SAMPLES_DIR` names (holding `Seed-san.vrm`,
-//! `VRM1_Constraint_Twist_Sample.vrm`, and
-//! `VRMC_materials_mtoon_UV_Animation_Test.vrm`), and passes, saying it
-//! skipped, without it.
+//! `VRM1_Constraint_Twist_Sample.vrm`,
+//! `VRMC_materials_mtoon_UV_Animation_Test.vrm`, and the VRM animation
+//! `test.vrma`), and passes, saying it skipped, without it.
+//!
+//! A frame sends no node's pose, only skinning matrices, so the tests read
+//! a joint's world back from its matrix and the file's inverse bind matrix.
 //!
 //! The drawing test returns early without a GPU adapter, unless
 //! `CELESTA_REQUIRE_GPU=1`.
@@ -15,6 +18,7 @@ use celesta_composition::{
 use celesta_gpu_renderer::{Color, GpuFrame, GpuRenderError, GpuRenderOptions, GpuRenderer};
 use celesta_plugin::{Lights, NoticeLevel, Projection, SceneFrame};
 use celesta_plugin_vrm::{HumanBone, PLUGIN, PerformanceData, VrmModel, VrmProvider};
+use glam::{Mat4, Quat};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -94,6 +98,291 @@ fn assert_finite(frame: &SceneFrame) {
             );
         }
     }
+}
+
+/// What a test needs of a sample's glTF to read a frame's skinning
+/// matrices back: each node's parent and rest pose, and each skin joint.
+struct Skeleton {
+    parents: Vec<Option<usize>>,
+    /// Each node's rest local rotation.
+    rest: Vec<Quat>,
+    /// Each node's rest world, in the default scene's root space.
+    rest_worlds: Vec<Mat4>,
+    /// (skin, joint, node, inverse bind matrix), every skin's joints.
+    joints: Vec<(usize, usize, usize, Mat4)>,
+}
+
+impl Skeleton {
+    fn read(path: &Path) -> Self {
+        let gltf = gltf::Gltf::from_slice(&std::fs::read(path).unwrap()).unwrap();
+        let count = gltf.nodes().len();
+        let mut parents = vec![None; count];
+        for node in gltf.nodes() {
+            for child in node.children() {
+                parents[child.index()] = Some(node.index());
+            }
+        }
+        let rest = gltf
+            .nodes()
+            .map(|node| Quat::from_array(node.transform().decomposed().1))
+            .collect();
+        let mut rest_worlds = vec![Mat4::IDENTITY; count];
+        let scene = gltf
+            .default_scene()
+            .or_else(|| gltf.scenes().next())
+            .unwrap();
+        let mut stack: Vec<(gltf::Node, Mat4)> =
+            scene.nodes().map(|node| (node, Mat4::IDENTITY)).collect();
+        while let Some((node, parent)) = stack.pop() {
+            let world = parent * Mat4::from_cols_array_2d(&node.transform().matrix());
+            rest_worlds[node.index()] = world;
+            stack.extend(node.children().map(|child| (child, world)));
+        }
+        let mut joints = Vec::new();
+        for skin in gltf.skins() {
+            let reader = skin.reader(|_| gltf.blob.as_deref());
+            let binds: Vec<Mat4> = match reader.read_inverse_bind_matrices() {
+                Some(binds) => binds.map(|bind| Mat4::from_cols_array_2d(&bind)).collect(),
+                None => vec![Mat4::IDENTITY; skin.joints().len()],
+            };
+            for ((joint, node), bind) in skin.joints().enumerate().zip(binds) {
+                joints.push((skin.index(), joint, node.index(), bind));
+            }
+        }
+        Self {
+            parents,
+            rest,
+            rest_worlds,
+            joints,
+        }
+    }
+
+    /// Every skin joint's world in `frame`: its skinning matrix times the
+    /// inverse of its inverse bind matrix.
+    fn worlds(&self, frame: &SceneFrame) -> BTreeMap<usize, Mat4> {
+        self.joints
+            .iter()
+            .map(|&(skin, joint, node, bind)| {
+                let matrix = Mat4::from_cols_array(&frame.skins[skin][joint]);
+                (node, matrix * bind.inverse())
+            })
+            .collect()
+    }
+
+    /// The local rotation in `frame` of every skin joint whose parent is a
+    /// skin joint too.
+    fn locals(&self, frame: &SceneFrame) -> BTreeMap<usize, Quat> {
+        let worlds = self.worlds(frame);
+        let rotation = |world: &Mat4| world.to_scale_rotation_translation().1;
+        worlds
+            .iter()
+            .filter_map(|(&node, world)| {
+                let parent = worlds.get(&self.parents[node]?)?;
+                Some((node, rotation(parent).inverse() * rotation(world)))
+            })
+            .collect()
+    }
+}
+
+/// The angle in degrees between two rotations.
+fn degrees(a: Quat, b: Quat) -> f32 {
+    a.angle_between(b).to_degrees()
+}
+
+/// A track of one key at 0 s and another at 1 s, frame-rate timed.
+fn ramp(from: f64, to: f64) -> Value {
+    json!({
+        "type": "keyframes",
+        "keyframes": [
+            { "time": { "value": 0, "timescale": 30 }, "value": from },
+            { "time": { "value": 30, "timescale": 30 }, "value": to },
+        ],
+    })
+}
+
+#[test]
+fn twist_sample_constraints_follow_their_sources() {
+    let Some(path) = sample("VRM1_Constraint_Twist_Sample.vrm") else {
+        return;
+    };
+    let cache = TempDir::new().unwrap();
+    let mut model = load(&path, &cache);
+    let skeleton = Skeleton::read(&path);
+    let gltf = gltf::Gltf::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    // The nodes a roll constraint turns, by their rolls' weights.
+    let rolls: BTreeMap<usize, f32> = gltf
+        .nodes()
+        .filter_map(|node| {
+            let roll = node.extension_value("VRMC_node_constraint")?["constraint"].get("roll")?;
+            Some((node.index(), roll["weight"].as_f64().unwrap_or(1.0) as f32))
+        })
+        .collect();
+    assert!(!rolls.is_empty(), "the sample has roll constraints");
+
+    // Each roll node's turn at 1 s with `tracks`, from where it is at 1 s
+    // without them: the sample's spring bones swing alike in both, so only
+    // the constraints differ.
+    let still = skeleton.locals(&model.frame(1.0, &PerformanceData::default()).unwrap());
+    let turned = |model: &mut VrmModel, tracks: Value| {
+        let frame = model
+            .frame(1.0, &data(json!({ "tracks": tracks })))
+            .unwrap();
+        assert_finite(&frame);
+        let locals = skeleton.locals(&frame);
+        rolls
+            .keys()
+            .map(|&node| (node, degrees(still[&node], locals[&node])))
+            .collect::<BTreeMap<usize, f32>>()
+    };
+
+    // A roll track tilts the T-posed left forearm down in the body's plane:
+    // a swing, with no twist about any roll's axis, so no roll turns.
+    let swing = turned(
+        &mut model,
+        json!({ "leftLowerArm": { "roll": ramp(0.0, 90.0) } }),
+    );
+    assert!(
+        swing.values().all(|&angle| angle < 0.1),
+        "a swing turned a roll: {swing:?}"
+    );
+
+    // Pitch twists the left hand about the arm's length, which its twist
+    // bones follow (`J_Roll_L_Hand` by weight 1, `J_Roll_L_LowerArm` by
+    // 0.5); yaw bends the elbow about Y, which `J_Roll_L_Elbow` follows by
+    // 0.5. The right arm's rolls stay put.
+    let twist = turned(
+        &mut model,
+        json!({ "leftHand": { "pitch": ramp(0.0, 90.0) } }),
+    );
+    let bend = turned(
+        &mut model,
+        json!({ "leftLowerArm": { "yaw": ramp(0.0, 90.0) } }),
+    );
+    let name = |node: usize| gltf.nodes().nth(node).unwrap().name().unwrap().to_owned();
+    let mut followed = 0;
+    for (node, weight) in &rolls {
+        let (expected_twist, expected_bend) = match name(*node).as_str() {
+            "J_Roll_L_Hand" | "J_Roll_L_LowerArm" => (90.0 * weight, 0.0),
+            "J_Roll_L_Elbow" => (0.0, 90.0 * weight),
+            _ => (0.0, 0.0),
+        };
+        followed += usize::from(expected_twist + expected_bend > 0.0);
+        for (turns, expected) in [(&twist, expected_twist), (&bend, expected_bend)] {
+            assert!(
+                (turns[node] - expected).abs() < 0.5,
+                "{} turned {}°, not {expected}°",
+                name(*node),
+                turns[node]
+            );
+        }
+    }
+    assert_eq!(followed, 3, "the sample's left-arm rolls: {rolls:?}");
+}
+
+#[test]
+fn vrma_moves_seed_san() {
+    let (Some(path), Some(clip)) = (sample("Seed-san.vrm"), sample("test.vrma")) else {
+        return;
+    };
+    let cache = TempDir::new().unwrap();
+    let assets: BTreeMap<String, PathBuf> = [
+        ("model".to_owned(), path.clone()),
+        ("motion0".to_owned(), clip),
+    ]
+    .into();
+    let open = || VrmModel::open_with_cache(&assets, cache.path()).unwrap();
+    let skeleton = Skeleton::read(&path);
+    // The clip, looped, with the head swaying: the clip moves only the right
+    // arm, and Seed-san's springs have no gravity and swing in the hips'
+    // space, so without the sway her hair would hang still.
+    let sway = json!({
+        "type": "keyframes",
+        "keyframes": [
+            { "time": { "value": 0, "timescale": 30 }, "value": 0 },
+            { "time": { "value": 30, "timescale": 30 }, "value": 30 },
+            { "time": { "value": 60, "timescale": 30 }, "value": -30 },
+            { "time": { "value": 90, "timescale": 30 }, "value": 0 },
+        ],
+    });
+    let played = data(json!({
+        "motions": [{ "clip": "motion0", "loop": true }],
+        "tracks": { "head": { "yaw": sway } },
+    }));
+
+    // The clip raises the right arm by its one key away from rest, at
+    // 0.5 s (Rx(90°); at 1 s and after it rests again), so at 0.5 s a
+    // humanoid bone has turned.
+    let mut model = open();
+    let frame = model.frame(0.5, &played).unwrap();
+    assert_finite(&frame);
+    let locals = skeleton.locals(&frame);
+    let turned = model
+        .humanoid()
+        .bones
+        .values()
+        .filter(|node| {
+            locals
+                .get(node)
+                .is_some_and(|&local| degrees(skeleton.rest[**node], local) > 1.0)
+        })
+        .count();
+    assert!(turned > 0, "no humanoid bone turned more than 1° at 0.5 s");
+    let arm = model.humanoid().required(HumanBone::RightUpperArm);
+    let raised = degrees(skeleton.rest[arm], locals[&arm]);
+    assert!(
+        (raised - 90.0).abs() < 0.5,
+        "rightUpperArm turned {raised}°"
+    );
+
+    // Out of order on a model another performance warmed, the frames equal
+    // fresh frames played in order, spring bones included.
+    let mut warmed = open();
+    let nodding = data(json!({
+        "motions": [{ "clip": "motion0", "loop": true }],
+        "tracks": { "head": { "pitch": ramp(0.0, 20.0) } },
+    }));
+    warmed.frame(2.5, &nodding).unwrap();
+    let mut fresh = open();
+    let in_order: BTreeMap<u64, SceneFrame> = [0.5, 2.0, 3.0]
+        .into_iter()
+        .map(|time: f64| (time.to_bits(), fresh.frame(time, &played).unwrap()))
+        .collect();
+    for time in [3.0, 0.5, 2.0, 0.5] {
+        let frame = warmed.frame(time, &played).unwrap();
+        assert_finite(&frame);
+        assert!(
+            frame == in_order[&time.to_bits()],
+            "the frame at {time} s differs"
+        );
+    }
+
+    // At 2 s the head swings back through the middle, so the hair trails
+    // it: a spring joint is away from its rest, and one is turned from its
+    // rest within its parent, which only the springs do.
+    let gltf = gltf::Gltf::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let springs = gltf.extension_value("VRMC_springBone").unwrap()["springs"]
+        .as_array()
+        .unwrap();
+    let joints: Vec<usize> = springs
+        .iter()
+        .flat_map(|spring| spring["joints"].as_array().unwrap())
+        .map(|joint| joint["node"].as_u64().unwrap() as usize)
+        .collect();
+    let swinging = &in_order[&2.0f64.to_bits()];
+    let (worlds, locals) = (skeleton.worlds(swinging), skeleton.locals(swinging));
+    let position = |world: &Mat4| world.to_scale_rotation_translation().2;
+    let moved = joints.iter().any(|node| {
+        worlds.get(node).is_some_and(|world| {
+            position(world).distance(position(&skeleton.rest_worlds[*node])) > 1e-3
+        })
+    });
+    assert!(moved, "no spring joint moved from its rest at 2 s");
+    let swung = joints.iter().any(|node| {
+        locals
+            .get(node)
+            .is_some_and(|&local| degrees(skeleton.rest[*node], local) > 1.0)
+    });
+    assert!(swung, "no spring joint turned more than 1° at 2 s");
 }
 
 #[test]
