@@ -2607,6 +2607,87 @@ fn outline_none_draws_nothing() {
 }
 
 #[test]
+fn outline_every_alpha_side_and_mode_draws() {
+    // One MToon material for each alpha mode (opaque, mask, blend, and
+    // blend with `transparentWithZWrite`), side (single, double), and
+    // outline mode (none, world, screen), each drawing the shell, every
+    // other draw mirrored: opening the model makes every surface and
+    // outline pipeline in both windings, and the frame draws with both.
+    let alphas = [
+        (AlphaMode::Opaque, false),
+        (AlphaMode::Mask { cutoff: 0.5 }, false),
+        (AlphaMode::Blend, false),
+        (AlphaMode::Blend, true),
+    ];
+    let outlines = [
+        (OutlineWidthMode::None, 0.0),
+        (OutlineWidthMode::WorldCoordinates, FOUR_PX_IN_METRES),
+        (OutlineWidthMode::ScreenCoordinates, FOUR_PX_OF_SCREEN),
+    ];
+    let mut materials = Vec::new();
+    for (alpha_mode, z_write) in alphas {
+        for double_sided in [false, true] {
+            for (mode, width) in outlines {
+                materials.push(Material {
+                    alpha_mode,
+                    double_sided,
+                    kind: MaterialKind::Mtoon(MtoonMaterial {
+                        transparent_with_z_write: z_write,
+                        ..outlined(mode, width)
+                    }),
+                });
+            }
+        }
+    }
+    assert_eq!(materials.len(), 24);
+    let mut scenes = shell_scene(black_toon(), vec![light(HALF_LIT, [1.0; 3], 1.0)]);
+    let state = scenes.frame.draws[0].clone();
+    scenes.model.draws = (0..materials.len())
+        .map(|material| DrawInfo {
+            geometry: 0,
+            material,
+            skin: None,
+        })
+        .collect();
+    scenes.frame.draws = (0..materials.len())
+        .map(|index| DrawState {
+            index,
+            world: if index % 2 == 1 {
+                scaling(-1.0, 1.0, 1.0)
+            } else {
+                IDENTITY
+            },
+            ..state.clone()
+        })
+        .collect();
+    scenes.model.materials = materials;
+    let Some(frame) = render_scenes(scenes) else {
+        return;
+    };
+    // The opaque surfaces cover the centre; outlines the ring.
+    assert_eq!(pixel(&frame, 32, 32)[3], 255);
+    assert_eq!(pixel(&frame, 14, 32)[3], 255);
+
+    // A mask material's outline is cut out with its surface: at alpha 0.8
+    // the green surface and its red ring show, at 0.3 neither does.
+    for (alpha, surface, ring) in [(0.8, GREEN, RED), (0.3, CLEAR, CLEAR)] {
+        let mut scenes = shell_scene(black_toon(), vec![]);
+        scenes.model.materials = vec![Material {
+            alpha_mode: AlphaMode::Mask { cutoff: 0.5 },
+            ..toon(MtoonMaterial {
+                base_color: [0.0, 0.0, 0.0, alpha],
+                ..outlined(OutlineWidthMode::WorldCoordinates, FOUR_PX_IN_METRES)
+            })
+        }];
+        let Some(frame) = render_scenes(scenes) else {
+            return;
+        };
+        assert_pixel(&frame, 32, 32, surface);
+        assert_pixel(&frame, 14, 32, ring);
+    }
+}
+
+#[test]
 fn outline_uses_the_material_blend() {
     let mut material = toon(MtoonMaterial {
         base_color: [0.0, 0.0, 0.0, 0.5],

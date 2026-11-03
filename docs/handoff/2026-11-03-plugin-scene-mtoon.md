@@ -389,7 +389,9 @@ reading its source, to check once UniVRM reference renders exist:
     coordinates; the color's lighting mix; the main light only; the
     outward normal; following the UV animation and the normal texture;
     `none` drawing nothing; the material's blend; normals facing the
-    camera staying put.
+    camera staying put; every alpha mode (`transparentWithZWrite`
+    included) × side × outline mode opened and drawn in both windings, and
+    a mask material's outline cut out with its surface.
   - `mirrored_views_keep_front_faces`: a view mirrored in x shows the
     square's front face and culls its back, also with a mirrored world.
   - `override_`: each MToon color replaced; MToon colors ignored on unlit
