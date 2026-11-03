@@ -105,7 +105,7 @@ const CACHE_NAME: &str = "celesta-plugin-vrm";
 /// (`%LOCALAPPDATA%` on Windows, `~/Library/Caches` on macOS,
 /// `$XDG_CACHE_HOME` or `~/.cache` elsewhere). Without one, a directory
 /// named for the user in the temporary directory. [`materials`] refuses
-/// any of them that is not the user's own and private.
+/// any of them that is relative, or not the user's own and private.
 pub(crate) fn texture_cache_dir() -> PathBuf {
     cache_dir_from(|name| std::env::var_os(name))
 }
@@ -146,8 +146,13 @@ fn user() -> u32 {
 
 /// Makes the cache directory, private to the user where it is new, and
 /// refuses one that is not safe to write images to and read them back
-/// from.
+/// from. A relative cache is refused before anything is made: Celesta
+/// starts the plugin in the plugin's own folder and resolves the paths it
+/// is sent against its own working directory, so the two would differ.
 fn prepare_cache(cache: &Path) -> Result<(), LoadError> {
+    if !cache.is_absolute() {
+        return Err(cache_refusal(cache, "is not an absolute path"));
+    }
     let mut builder = fs::DirBuilder::new();
     builder.recursive(true);
     #[cfg(unix)]
@@ -2015,6 +2020,27 @@ mod tests {
             Ok(_) => panic!("the cache was used"),
             Err(error) => error.to_string(),
         }
+    }
+
+    /// Celesta starts the plugin in its own folder and resolves a path it
+    /// is sent against its own working directory, so a relative cache
+    /// would name another place to each.
+    #[test]
+    fn a_relative_cache_is_refused_before_it_is_made() {
+        let relative = Path::new("relative-texture-cache-of-a-test");
+        let document = document(&SyntheticVrm::avatar(), |_| {});
+        let message = match materials(&document, relative) {
+            Ok(_) => panic!("the cache was used"),
+            Err(error) => error.to_string(),
+        };
+        assert!(
+            message.contains(
+                "the texture cache relative-texture-cache-of-a-test is not an absolute path; \
+                 set CELESTA_VRM_TEXTURE_CACHE to a directory of your own"
+            ),
+            "{message}"
+        );
+        assert!(!relative.exists());
     }
 
     #[cfg(unix)]

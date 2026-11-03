@@ -168,7 +168,11 @@ Files ported from UniVRM carry its MIT notice and name their source.
   `$XDG_CACHE_HOME` / `~/.cache`), else a directory named for the user in
   the temporary directory. It is made private (0700 on Unix); a cache that
   is a link, not a directory, another user's, or writable by others is
-  refused, naming the variable that moves it. Nothing ever cleans it.
+  refused, naming the variable that moves it. So is a relative one, before
+  anything is made (`the texture cache {path} is not an absolute path`):
+  the host starts the plugin in the plugin's own folder, and Celesta
+  resolves the paths it is sent against its own working directory.
+  Nothing ever cleans it.
 - **Budgets.** Each image is sized from its header alone. The scene
   textures may decode to at most 1 GiB at 4 bytes a texel
   (`TEXTURE_BUDGET`), an image two scene textures sample counted twice,
@@ -760,7 +764,8 @@ Besides MToon's list above, to check against UniVRM:
   - `materials`: scene textures by image, colour space, and sampler; the
     base colour transform; blend fields; PBR drawn unlit with its notice;
     the emissive strength, else VRM's emissive multiplier;
-    samplers; images written once by content; the cache's privacy checks;
+    samplers; images written once by content; the cache's privacy checks
+    and a relative cache refused;
     the texture budget; compressed and oversized images leaving the slot
     empty; WebP and `data:` images.
   - `mtoon`: UniVRM's defaults packed, binds in place of the material's
