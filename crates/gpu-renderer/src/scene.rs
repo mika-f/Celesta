@@ -631,22 +631,43 @@ enum DefaultTexel {
     Black,
 }
 
+/// One of an MToon material's texture slots.
+#[derive(Clone, Copy, Debug)]
+struct MtoonSlot {
+    /// Its JSON name.
+    name: &'static str,
+    /// The texel bound when it is empty.
+    default: DefaultTexel,
+    /// Whether `scene_mtoon.wgsl` samples it at the UV-animated
+    /// coordinates; the matcap, the outline width, and the mask itself have
+    /// their own.
+    animated: bool,
+}
+
+const fn slot(name: &'static str, default: DefaultTexel, animated: bool) -> MtoonSlot {
+    MtoonSlot {
+        name,
+        default,
+        animated,
+    }
+}
+
 /// An MToon material's texture slots, in binding order: slot `k` binds its
-/// texture at `2k` and its sampler at `2k + 1` of group 2. Each has its
-/// JSON name and the texel bound when it is empty, which leaves its term
-/// as UniVRM's keyword gates do without the texture: no shift but the
-/// factor's, no matcap, the whole of the UV animation, the width factor
-/// alone. An empty normal slot is not read.
-const MTOON_SLOTS: [(&str, DefaultTexel); 9] = [
-    ("baseColorTexture", DefaultTexel::White),
-    ("shadeMultiplyTexture", DefaultTexel::White),
-    ("shadingShiftTexture", DefaultTexel::Black),
-    ("normalTexture", DefaultTexel::White),
-    ("emissiveTexture", DefaultTexel::White),
-    ("matcapTexture", DefaultTexel::Black),
-    ("rimMultiplyTexture", DefaultTexel::White),
-    ("outlineWidthMultiplyTexture", DefaultTexel::White),
-    ("uvAnimationMaskTexture", DefaultTexel::White),
+/// texture at `2k` and its sampler at `2k + 1` of group 2. An empty slot's
+/// default texel leaves its term as UniVRM's keyword gates do without the
+/// texture: no shift but the factor's, no matcap, the whole of the UV
+/// animation, the width factor alone. An empty normal slot is sampled but
+/// has no effect: the shader keeps the geometric normal.
+const MTOON_SLOTS: [MtoonSlot; 9] = [
+    slot("baseColorTexture", DefaultTexel::White, true),
+    slot("shadeMultiplyTexture", DefaultTexel::White, true),
+    slot("shadingShiftTexture", DefaultTexel::Black, true),
+    slot("normalTexture", DefaultTexel::White, true),
+    slot("emissiveTexture", DefaultTexel::White, true),
+    slot("matcapTexture", DefaultTexel::Black, false),
+    slot("rimMultiplyTexture", DefaultTexel::White, true),
+    slot("outlineWidthMultiplyTexture", DefaultTexel::White, false),
+    slot("uvAnimationMaskTexture", DefaultTexel::White, false),
 ];
 
 /// The slot the vertex stage samples (the outline's width); the fragment
@@ -1073,7 +1094,7 @@ impl ScenePipelines {
                 mtoon_textures(mtoon)
                     .into_iter()
                     .zip(MTOON_SLOTS)
-                    .map(|(texture, (_, default))| bound(texture, default))
+                    .map(|(texture, slot)| bound(texture, slot.default))
                     .collect(),
             ),
         };
@@ -1208,12 +1229,13 @@ pub(crate) fn invalid_scene(model: &SceneModel) -> Option<String> {
                 }
             }
             MaterialKind::Mtoon(mtoon) => {
-                for (texture, (name, _)) in mtoon_textures(mtoon).into_iter().zip(MTOON_SLOTS) {
+                for (texture, slot) in mtoon_textures(mtoon).into_iter().zip(MTOON_SLOTS) {
                     if let Some(texture) = texture
                         && texture >= textures
                     {
                         return Some(format!(
-                            "material {index}'s {name} uses texture {texture}, of {textures}"
+                            "material {index}'s {} uses texture {texture}, of {textures}",
+                            slot.name
                         ));
                     }
                 }
@@ -2236,23 +2258,17 @@ fn uv_scroll(
     textures: &[celesta_plugin::SceneTexture],
     time: f64,
 ) -> [f32; 2] {
-    // Every slot but the matcap, the outline width, and the mask itself.
-    let animated = [
-        mtoon.base_color_texture.as_ref().map(|slot| slot.texture),
-        mtoon.shade_multiply_texture.map(|slot| slot.texture),
-        mtoon.shading_shift_texture.map(|slot| slot.texture),
-        mtoon.normal_texture.map(|slot| slot.texture),
-        mtoon.emissive_texture.map(|slot| slot.texture),
-        mtoon.rim_multiply_texture.map(|slot| slot.texture),
-    ];
+    let animated = mtoon_textures(mtoon)
+        .into_iter()
+        .zip(MTOON_SLOTS)
+        .filter_map(|(texture, slot)| texture.filter(|_| slot.animated));
     let still = mtoon.uv_animation_rotation_speed_factor == 0.0
         && mtoon.uv_animation_mask_texture.is_none();
     let scroll = |speed: f32, wrap: fn(&celesta_plugin::Sampler) -> Wrap| {
         let offset = time * f64::from(speed);
         let repeats = animated
-            .iter()
-            .flatten()
-            .all(|&texture| wrap(&textures[texture].sampler) != Wrap::ClampToEdge);
+            .clone()
+            .all(|texture| wrap(&textures[texture].sampler) != Wrap::ClampToEdge);
         (if still && repeats {
             offset.rem_euclid(2.0)
         } else {
