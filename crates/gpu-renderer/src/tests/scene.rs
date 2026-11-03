@@ -2339,6 +2339,40 @@ fn material_pipeline_refusals_stand_for_any_culling_and_bias() {
 }
 
 #[test]
+fn material_pipeline_refusals_refuse_the_model_before_any_is_made() {
+    let Some(renderer) = renderer(transparent()) else {
+        return;
+    };
+    let device = &renderer.device;
+    let mut pipelines = ScenePipelines::new(device, &renderer.queue);
+    // Bias 0's pipelines are made, and bias 1's outline stages refused.
+    pipelines
+        .prepare(device, &outlined(0, CullFace::Front))
+        .unwrap();
+    pipelines.refuse_pipeline = Some(refusal());
+    assert!(
+        pipelines
+            .prepare(device, &outlined(1, CullFace::Front))
+            .is_err()
+    );
+    let (made, kept) = (pipelines.pipelines_made, pipelines.kept());
+    // Material 0, masked, lacks pipelines of stages none refused; material
+    // 1 is bias 1's. The model is refused each time without making
+    // material 0's.
+    let mut model = outlined(1, CullFace::Front);
+    let mut masked = model.materials[0].clone();
+    masked.alpha_mode = AlphaMode::Mask { cutoff: 0.5 };
+    custom_of(&mut masked).outline = None;
+    model.materials.insert(0, masked);
+    for _ in 0..2 {
+        let error = pipelines.prepare(device, &model).err().expect("made");
+        assert!(error.contains("material 1's pipelines"), "{error}");
+        assert!(error.contains("the test refuses it"), "{error}");
+    }
+    assert_eq!((pipelines.pipelines_made, pipelines.kept()), (made, kept));
+}
+
+#[test]
 fn material_models_needing_too_many_pipelines_are_refused() {
     let Some(renderer) = renderer(transparent()) else {
         return;

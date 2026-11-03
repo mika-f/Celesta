@@ -383,8 +383,9 @@ materials as `frame.lights` and `frame.ambient`.
   winding, depth bias, depth writes, and blending are the pipeline's state
   around the compiled stages. A model sent again, or with another depth
   bias or culling, is refused with the same message without making it
-  again, and a shader has at most one refusal for each pair of entry
-  points. One that ran out of memory is not remembered and is tried
+  again: a pipeline it lacks of refused stages refuses it before any of
+  its pipelines, other materials' too, is made. A shader has at most one
+  refusal for each pair of entry points. One that ran out of memory is not remembered and is tried
   again. A model whose materials need more than 1,024 pipelines
   (`MAX_MODEL_PIPELINES`) is refused before any is made, so distinct
   depth biases cannot make pipelines without end in one load. When the
@@ -612,7 +613,9 @@ change once it shows:
     the material, and refused again without being made again; a pipeline
     the device refused not made again while one that ran out of memory is;
     a refusal standing for every depth bias and culling of its stages,
-    none of them made and nothing more kept; a model needing 1,026
+    none of them made and nothing more kept; a model whose later material
+    has refused stages refused, again and again, without making an earlier
+    material's pipelines; a model needing 1,026
     pipelines refused before any is made, and one needing 1,024 not;
     a shader compiled once for many materials, the same WGSL with one
     texture slot and with two compiled apart and both drawn, and a broken

@@ -1169,7 +1169,8 @@ impl ScenePipelines {
     /// scope: when one fails, the message names the material and none of
     /// the material's pipelines is kept, and one the device refused is
     /// refused without being made again the next time a model asks for it
-    /// or for another of the same `Stages`.
+    /// or for another of the same `Stages`, before any of that model's
+    /// pipelines is made.
     pub(crate) fn prepare(
         &mut self,
         device: &wgpu::Device,
@@ -1241,6 +1242,17 @@ impl ScenePipelines {
         if self.draw.len() >= MAX_CACHED_PIPELINES {
             self.drop_unused_pipelines();
         }
+        // A pipeline it lacks that the device refused refuses the model
+        // before any is made, so that one sent again makes none.
+        for (index, (_, keys)) in drawn.iter().enumerate() {
+            if let Some(message) = keys
+                .iter()
+                .filter(|key| !self.draw.contains_key(key))
+                .find_map(|key| self.refused.get(&key.stages()))
+            {
+                return Err(format!("material {index}'s pipelines: {message}"));
+            }
+        }
         let mut shaders = Vec::with_capacity(drawn.len());
         let mut pipelines = Vec::new();
         for (index, (shader, keys)) in drawn.into_iter().enumerate() {
@@ -1251,12 +1263,6 @@ impl ScenePipelines {
                 .copied()
                 .filter(|key| !self.draw.contains_key(key))
                 .collect();
-            if let Some(message) = missing
-                .iter()
-                .find_map(|key| self.refused.get(&key.stages()))
-            {
-                return Err(format!("material {index}'s pipelines: {message}"));
-            }
             let mut made = Vec::with_capacity(missing.len());
             for key in missing {
                 match self.make_pipeline(device, &shader, &layout, key) {
