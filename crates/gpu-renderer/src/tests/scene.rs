@@ -447,6 +447,20 @@ fn scene_with_bad_camera_is_invalid() {
 }
 
 #[test]
+fn scene_with_eye_beyond_f32_is_invalid() {
+    // Scaled by 10⁻⁵ (determinant 10⁻¹⁵, invertible) and moved 3 × 10³⁸
+    // in x, every number finite: the eye, `−M⁻¹t`, is at −3 × 10⁴³.
+    let mut scenes = valid();
+    let mut view = scaling(1e-5, 1e-5, 1e-5);
+    view[12] = 3e38;
+    scenes.frame.camera.view = view;
+    let Some(message) = invalid(scenes) else {
+        return;
+    };
+    assert!(message.contains("beyond f32's range"), "{message}");
+}
+
+#[test]
 fn nearer_quad_covers_farther_in_either_order() {
     // Red 2 m and green 4 m in front of a camera at the origin.
     let mut scenes = one_square();

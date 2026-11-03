@@ -1420,6 +1420,14 @@ fn invalid_camera(camera: &Camera) -> Option<String> {
     if determinant(&camera.view).abs() <= f64::EPSILON {
         return Some("the camera's view is not invertible".to_owned());
     }
+    // The shader reads the eye as `f32`: a view that shrinks the world and
+    // moves it far away can put it past `f32`'s range.
+    let eye = camera_position(&camera.view);
+    if !eye.iter().all(|&value| (value as f32).is_finite()) {
+        return Some(format!(
+            "the camera's view puts the eye at {eye:?}, beyond f32's range"
+        ));
+    }
     None
 }
 

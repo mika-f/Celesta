@@ -104,7 +104,8 @@ the identity as `world` for a glTF skinned mesh.
   only draws the model has, each once, with as many morph weights as targets, as many
   skinning matrices per skin as joints, finite numbers, and a camera that
   sees something (`0 < near < far`, a `yfov` between 0 and π or a positive
-  `height`, an invertible `view`), and its buffers (skinning matrices and
+  `height`, an invertible `view` that puts the eye within `f32`'s range),
+  and its buffers (skinning matrices and
   morph weights, and the per-draw skinning and draw uniforms, each a
   draw's aligned to the GPU's uniform offset alignment) must each fit the
   largest buffer the GPU allows.
