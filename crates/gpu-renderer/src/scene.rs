@@ -1757,10 +1757,17 @@ fn determinant(m: &[f32; 16]) -> f64 {
         + low(0, 2, 3) * low(2, 0, 1)
 }
 
-/// Why `frame` does not fit `model` (which `invalid_scene` passed): a draw
-/// it lacks or lists twice, morph weights or skinning matrices that do not
-/// match, a number that is not finite, or a camera that sees nothing.
-pub(crate) fn invalid_scene_frame(model: &SceneModel, frame: &SceneFrame) -> Option<String> {
+/// Why `frame` does not fit `model` (which `invalid_scene` passed), whose
+/// materials are drawn with `shaders`, one each: a draw it lacks or lists
+/// twice, morph weights or skinning matrices that do not match, parameters
+/// for a built-in material or of a length its shader's `Params` is not,
+/// overrides for a custom material, a number that is not finite, or a
+/// camera that sees nothing.
+pub(crate) fn invalid_scene_frame(
+    model: &SceneModel,
+    shaders: &[Arc<CompiledShader>],
+    frame: &SceneFrame,
+) -> Option<String> {
     if let Some(message) = invalid_camera(&frame.camera) {
         return Some(message);
     }
@@ -1817,10 +1824,35 @@ pub(crate) fn invalid_scene_frame(model: &SceneModel, frame: &SceneFrame) -> Opt
         if std::mem::replace(&mut listed[index], true) {
             return Some(format!("the frame lists draw {index} twice"));
         }
-        if state.params.is_some() {
-            return Some(format!(
-                "draw {index} has parameters, which are not drawn yet"
-            ));
+        let material = info.material;
+        match &model.materials[material].kind {
+            MaterialKind::Custom(custom) => {
+                if state.overrides != MaterialOverrides::default() {
+                    return Some(format!(
+                        "draw {index}'s material {material} is custom: overrides are for unlit materials"
+                    ));
+                }
+                let size = shaders[material].params_size;
+                if let Some(params) = &state.params
+                    && params.len() != size as usize
+                {
+                    return Some(format!(
+                        "draw {index}'s parameters are {} bytes, but its material {material}'s shader {} takes {size}",
+                        params.len(),
+                        custom.shader
+                    ));
+                }
+            }
+            builtin if state.params.is_some() => {
+                let kind = match builtin {
+                    MaterialKind::Mtoon(_) => "MToon",
+                    _ => "unlit",
+                };
+                return Some(format!(
+                    "draw {index}'s material {material} is {kind}, which takes no parameters"
+                ));
+            }
+            _ => {}
         }
         let targets = model.geometries[info.geometry].targets.len();
         if state.morph_weights.len() != targets {
@@ -2543,7 +2575,9 @@ fn draw_uniform(material: &Material, state: &DrawState) -> DrawUniform {
 }
 
 /// The parameters `state` draws its `material` with at `time`, reading
-/// `textures`' samplers, padded with zeros to `MAX_MATERIAL_PARAMS`.
+/// `textures`' samplers, padded with zeros to `MAX_MATERIAL_PARAMS`: a
+/// built-in material's with `state`'s overrides, a custom one's own or, for
+/// this frame only, `state`'s.
 fn material_params(
     material: &Material,
     textures: &[celesta_plugin::SceneTexture],
@@ -2559,9 +2593,11 @@ fn material_params(
             let scroll = uv_scroll(mtoon, textures, time);
             slot[..MTOON_PARAMS].copy_from_slice(&mtoon_params(mtoon, &state.overrides, scroll));
         }
-        // As long as its shader's `Params`, which `prepare` checked.
+        // As long as its shader's `Params`, which `prepare` checked for the
+        // material's and `invalid_scene_frame` for the draw's.
         MaterialKind::Custom(custom) => {
-            slot[..custom.params.len()].copy_from_slice(&custom.params);
+            let params = state.params.as_deref().unwrap_or(&custom.params);
+            slot[..params.len()].copy_from_slice(params);
         }
     }
     slot
@@ -2725,7 +2761,7 @@ impl GpuRenderer {
             layer: layer.to_owned(),
             message,
         };
-        if let Some(message) = invalid_scene_frame(&scene.model, frame) {
+        if let Some(message) = invalid_scene_frame(&scene.model, &scene.shaders, frame) {
             return Err(invalid(message));
         }
         let output = self.plugin_canvas(width, height);

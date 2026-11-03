@@ -617,6 +617,7 @@ pub struct DrawState {
     /// Celesta uses the centre of the geometry's rest bounds, moved by
     /// `world`.
     pub center: Option<[f32; 3]>,
+    /// Only a built-in material's draw has them.
     pub overrides: MaterialOverrides,
     /// Replaces a custom material's `CustomMaterial::params` for this draw
     /// in this frame, as material animation does: as many bytes as the
@@ -625,11 +626,13 @@ pub struct DrawState {
     pub params: Option<Vec<u8>>,
 }
 
-/// Values that replace the draw's material's for this frame, as material
-/// animation sets them: VRM 1.0's `materialColorBind` and
-/// `textureTransformBind` targets. By default none do. The MToon-only ones,
-/// from `shade_color` on, are ignored on an unlit draw, but must still be
-/// finite there.
+/// The unlit material's values for this frame, which replace the draw's
+/// material's as material animation sets them: VRM 1.0's
+/// `materialColorBind` and `textureTransformBind` targets. By default none
+/// do. The MToon-only ones, from `shade_color` on, apply to an MToon draw
+/// and are ignored on an unlit draw, but must still be finite there. A
+/// custom material's draw has none: its `DrawState::params` replace its
+/// parameters instead.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MaterialOverrides {

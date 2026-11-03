@@ -3322,3 +3322,95 @@ fn material_fragment(fragment: Fragment) -> vec4f { return nope; }";
     }
     assert_eq!(compiles(&renderer), 1);
 }
+
+const FLAT_RED: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
+const FLAT_GREEN: [f32; 4] = [0.0, 1.0, 0.0, 1.0];
+
+#[test]
+fn frame_params_replace_the_material_params() {
+    let Some(mut renderer) = renderer(transparent()) else {
+        return;
+    };
+    let mut scenes = custom_square(vec![shader(FLAT, &[])], custom(0, bytes(&FLAT_RED)));
+    // Frame 1's draw is green; the frames around it are not.
+    scenes.animate = Some(|frame, time| {
+        if time == 1.0 {
+            frame.draws[0].params = Some(bytes(&FLAT_GREEN));
+        }
+    });
+    renderer.renderer = renderer.renderer.with_content_provider(scenes);
+    let frame = renderer.render(&scene_at(1.0, 1.0)).unwrap();
+    assert_pixel(&frame, 32, 32, GREEN);
+    // Nothing of frame 1's parameters is kept.
+    let frame = renderer.render(&scene_at(2.0, 1.0)).unwrap();
+    assert_pixel(&frame, 32, 32, RED);
+}
+
+#[test]
+fn frame_params_follow_each_draw() {
+    // Two squares of material 0 side by side, 32 px each: only the right
+    // one, draw 1, is given green.
+    let mut scenes = custom_square(vec![shader(FLAT, &[])], custom(0, bytes(&FLAT_RED)));
+    scenes.model.draws.push(scenes.model.draws[0]);
+    let left = scenes.frame.draws[0].clone();
+    scenes.frame.draws = vec![
+        DrawState {
+            world: translation(-0.5, 0.0, 0.0),
+            ..left.clone()
+        },
+        DrawState {
+            index: 1,
+            world: translation(0.5, 0.0, 0.0),
+            params: Some(bytes(&FLAT_GREEN)),
+            ..left
+        },
+    ];
+    let Some(frame) = render_scenes(scenes) else {
+        return;
+    };
+    assert_pixel(&frame, 16, 32, RED);
+    assert_pixel(&frame, 48, 32, GREEN);
+}
+
+#[test]
+fn frame_params_must_match_the_material() {
+    let mut scenes = custom_square(vec![shader(FLAT, &[])], custom(0, bytes(&FLAT_RED)));
+    scenes.frame.draws[0].params = Some(bytes(&[1.0; 2]));
+    let Some(message) = invalid(scenes) else {
+        return;
+    };
+    assert!(
+        message.contains("draw 0's parameters are 8 bytes, but its material 0's shader 0 takes 16"),
+        "{message}"
+    );
+
+    let mut scenes = one_square();
+    scenes.model.materials = vec![plain(FLAT_RED)];
+    scenes.frame.draws[0].params = Some(bytes(&FLAT_GREEN));
+    let Some(message) = invalid(scenes) else {
+        return;
+    };
+    assert!(
+        message.contains("draw 0's material 0 is unlit, which takes no parameters"),
+        "{message}"
+    );
+    let mut scenes = toon_square(black_toon(), vec![]);
+    scenes.frame.draws[0].params = Some(bytes(&FLAT_GREEN));
+    let Some(message) = invalid(scenes) else {
+        return;
+    };
+    assert!(
+        message.contains("is MToon, which takes no parameters"),
+        "{message}"
+    );
+
+    let mut scenes = custom_square(vec![shader(FLAT, &[])], custom(0, bytes(&FLAT_RED)));
+    scenes.frame.draws[0].overrides.base_color = Some([0.0, 1.0, 0.0, 1.0]);
+    let Some(message) = invalid(scenes) else {
+        return;
+    };
+    assert!(
+        message.contains("draw 0's material 0 is custom: overrides are for unlit materials"),
+        "{message}"
+    );
+}
