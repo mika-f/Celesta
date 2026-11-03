@@ -1866,6 +1866,80 @@ fn surface_texture_transform_applies_before_uv_animation() {
     );
 }
 
+#[test]
+fn surface_uv_animation_scrolls_v_down_the_texture() {
+    // glTF's v counts down from the top row: scrolled 0.5 a second in v,
+    // the top-left samples (0.234, 0.734) after 1 s, the bottom-left.
+    assert_top_left(
+        animated(
+            None,
+            |mtoon| MtoonMaterial {
+                uv_animation_scroll_y_speed_factor: 0.5,
+                ..mtoon
+            },
+            1.0,
+        ),
+        BLUE,
+    );
+}
+
+/// `animated`'s texture repeated in both directions.
+fn repeated(mut scenes: Scenes) -> Scenes {
+    let sampler = &mut scenes.model.textures[0].sampler;
+    sampler.wrap_s = celesta_plugin::Wrap::Repeat;
+    sampler.wrap_t = celesta_plugin::Wrap::Repeat;
+    scenes
+}
+
+#[test]
+fn surface_uv_animation_scroll_keeps_its_precision_over_long_videos() {
+    // Scrolled 0.5 a second in u on a repeated texture, an odd number of
+    // seconds moves it half a texture: green. After an hour f32 still holds
+    // the half; past 2^25 s it rounds the time to an even number of seconds
+    // and the scroll to whole textures, and red would show.
+    for time in [1.0, 3601.0, 33_554_433.0] {
+        let Some(actual) = top_left(repeated(animated(None, scroll_half_in_x, time))) else {
+            return;
+        };
+        assert!(near(actual, GREEN), "time {time}: {actual:?}");
+    }
+}
+
+#[test]
+fn surface_uv_animation_scroll_wraps_only_where_whole_textures_vanish() {
+    // Scrolled 0.5 a second in u for 4 s, two whole textures: dropping them
+    // would sample (0.234, 0.234), red. Each case below would show red if
+    // they were dropped.
+    // A clamped texture stays at its right edge.
+    assert_top_left(animated(None, scroll_half_in_x, 4.0), GREEN);
+    // A mask's blue of 0.251 scales the scroll to 0.502 of a texture.
+    let mut scenes = repeated(animated(
+        None,
+        |mtoon| MtoonMaterial {
+            uv_animation_mask_texture: Some(TextureSlot { texture: 1 }),
+            ..scroll_half_in_x(mtoon)
+        },
+        4.0,
+    ));
+    scenes
+        .model
+        .textures
+        .push(texel([0, 0, 64, 255], ColorSpace::Linear));
+    assert_top_left(scenes, GREEN);
+    // A twelfth of a turn in 4 s turns the scrolled (1.734, −0.266) from
+    // the centre to (1.369, −1.097): (1.869, −0.597) repeated is (0.869,
+    // 0.403), the top-right. Unscrolled, (0.137, 0.403) would be red.
+    let scenes = repeated(animated(
+        None,
+        |mtoon| MtoonMaterial {
+            uv_animation_rotation_speed_factor: std::f32::consts::PI / 24.0,
+            ..scroll_half_in_x(mtoon)
+        },
+        4.0,
+    ));
+    assert_top_left(scenes, GREEN);
+}
+
 /// An MToon material blended by `alpha`, black but for its `emissive`
 /// color: under no light, its color is its emission. `z_write` is its
 /// `transparentWithZWrite`, `offset` its render queue offset.

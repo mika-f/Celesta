@@ -169,14 +169,14 @@ fn sh(n: vec3<f32>) -> vec3<f32> {
 
 // `uv` moved by the UV animation, as UniVRM's `GetMToonGeometry_Uv` does
 // after the base color texture's transform, in glTF's `v`-down texture
-// space: scrolled by the time times the scroll speed, then turned about
-// the texture's centre by the time times the rotation speed. The mask's
-// blue, sampled at `uv`, scales the time.
+// space: scrolled by the time times the scroll speed (`uv_scroll`'s, on the
+// CPU), then turned about the texture's centre by the time times the
+// rotation speed. The mask's blue, sampled at `uv`, scales the time.
 fn animated_uv(uv: vec2<f32>) -> vec2<f32> {
     let mask = textureSample(uv_animation_mask_texture, uv_animation_mask_sampler, uv).b;
     let t = frame.params.x * mask;
     let angle = fract(t * draw.uv_animation.z) * TAU;
-    let d = uv + t * draw.uv_animation.xy - 0.5;
+    let d = uv + mask * draw.uv_animation.xy - 0.5;
     let c = cos(angle);
     let s = sin(angle);
     return vec2<f32>(c * d.x + s * d.y, -s * d.x + c * d.y) + 0.5;

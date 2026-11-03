@@ -65,8 +65,9 @@ struct Draw {
     // `world`'s handedness: −1 when it mirrors, else 1, the sign the
     // normal matrix and the bitangent take.
     outline_width: vec4<f32>,
-    // The UV animation's scroll in x and y, its rotation in turns a second,
-    // and 1 when the material has a normal texture.
+    // How far the UV animation has scrolled in x and y at the frame's time,
+    // before the mask scales it; its rotation in turns a second; and 1 when
+    // the material has a normal texture.
     uv_animation: vec4<f32>,
 };
 

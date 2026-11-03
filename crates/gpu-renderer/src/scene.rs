@@ -569,8 +569,9 @@ struct DrawUniform {
     /// The outline width factor, the outline width mode (0 none, 1 world
     /// coordinates, 2 screen coordinates), `handedness(world)`, 0.
     outline_width: [f32; 4],
-    /// The UV animation's scroll in x and y, its rotation in turns a second,
-    /// and 1 when the material has a normal texture, else 0.
+    /// How far the UV animation has scrolled in x and y at the frame's
+    /// time (`uv_scroll`), its rotation in turns a second, and 1 when the
+    /// material has a normal texture, else 0.
     uv_animation: [f32; 4],
 }
 
@@ -2169,8 +2170,14 @@ fn base_layer(kind: &MaterialKind) -> ([f32; 4], Option<&celesta_plugin::Texture
 /// scales, then rotates, then offsets coordinates as
 /// `KHR_texture_transform`'s sample code does. A rotation turns `(1, 0)`
 /// toward `(0, 1)`. The frame's overrides replace the material's values.
-/// An MToon material adds its factors.
-fn draw_uniform(material: &Material, state: &DrawState) -> DrawUniform {
+/// An MToon material adds its factors, its UV animation's at `time`, and
+/// reads `textures`' samplers.
+fn draw_uniform(
+    material: &Material,
+    textures: &[celesta_plugin::SceneTexture],
+    state: &DrawState,
+    time: f64,
+) -> DrawUniform {
     let (base_color, texture) = base_layer(&material.kind);
     let transform = texture.and_then(|texture| texture.transform);
     let (offset, rotation, scale) = transform.map_or(([0.0; 2], 0.0, [1.0; 2]), |transform| {
@@ -2193,15 +2200,68 @@ fn draw_uniform(material: &Material, state: &DrawState) -> DrawUniform {
     };
     match &material.kind {
         MaterialKind::Unlit(_) => uniform,
-        MaterialKind::Mtoon(mtoon) => mtoon_factors(mtoon, &state.overrides, uniform),
+        MaterialKind::Mtoon(mtoon) => mtoon_factors(
+            mtoon,
+            &state.overrides,
+            uv_scroll(mtoon, textures, time),
+            uniform,
+        ),
     }
 }
 
+/// How far `mtoon`'s UV animation has scrolled at `time`, before its mask
+/// scales it: the time times the scroll speed, formed in f64 so that a
+/// long video keeps the fraction of a texture f32 would round away. Whole
+/// textures are dropped, two at a time for a mirrored repeat's period,
+/// along an axis where they cannot show: where every texture the animated
+/// coordinates sample repeats, and only when the animation neither turns
+/// (a turn that is not a quarter one takes a whole-texture step off the
+/// texel grid) nor has a mask (the mask scales the dropped textures by a
+/// fraction).
+fn uv_scroll(
+    mtoon: &MtoonMaterial,
+    textures: &[celesta_plugin::SceneTexture],
+    time: f64,
+) -> [f32; 2] {
+    // Every slot but the matcap, the outline width, and the mask itself.
+    let animated = [
+        mtoon.base_color_texture.as_ref().map(|slot| slot.texture),
+        mtoon.shade_multiply_texture.map(|slot| slot.texture),
+        mtoon.shading_shift_texture.map(|slot| slot.texture),
+        mtoon.normal_texture.map(|slot| slot.texture),
+        mtoon.emissive_texture.map(|slot| slot.texture),
+        mtoon.rim_multiply_texture.map(|slot| slot.texture),
+    ];
+    let still = mtoon.uv_animation_rotation_speed_factor == 0.0
+        && mtoon.uv_animation_mask_texture.is_none();
+    let scroll = |speed: f32, wrap: fn(&celesta_plugin::Sampler) -> Wrap| {
+        let offset = time * f64::from(speed);
+        let repeats = animated
+            .iter()
+            .flatten()
+            .all(|&texture| wrap(&textures[texture].sampler) != Wrap::ClampToEdge);
+        (if still && repeats {
+            offset.rem_euclid(2.0)
+        } else {
+            offset
+        }) as f32
+    };
+    [
+        scroll(mtoon.uv_animation_scroll_x_speed_factor, |sampler| {
+            sampler.wrap_s
+        }),
+        scroll(mtoon.uv_animation_scroll_y_speed_factor, |sampler| {
+            sampler.wrap_t
+        }),
+    ]
+}
+
 /// `uniform` with `mtoon`'s factors, the colors `overrides` names in place
-/// of the material's.
+/// of the material's, and the UV animation's `scroll`.
 fn mtoon_factors(
     mtoon: &MtoonMaterial,
     overrides: &celesta_plugin::MaterialOverrides,
+    scroll: [f32; 2],
     uniform: DrawUniform,
 ) -> DrawUniform {
     let with = |[r, g, b]: [f32; 3], w: f32| [r, g, b, w];
@@ -2247,8 +2307,8 @@ fn mtoon_factors(
             0.0,
         ],
         uv_animation: [
-            mtoon.uv_animation_scroll_x_speed_factor,
-            mtoon.uv_animation_scroll_y_speed_factor,
+            scroll[0],
+            scroll[1],
             mtoon.uv_animation_rotation_speed_factor / std::f32::consts::TAU,
             if mtoon.normal_texture.is_some() {
                 1.0
@@ -2335,7 +2395,12 @@ impl GpuRenderer {
                     0,
                 ],
             });
-            draw_uniforms.push(draw_uniform(&model.materials[info.material], state));
+            draw_uniforms.push(draw_uniform(
+                &model.materials[info.material],
+                &model.textures,
+                state,
+                frame.time,
+            ));
         }
         if frame_data.is_empty() {
             frame_data.push([0; 4]);
