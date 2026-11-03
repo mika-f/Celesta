@@ -239,7 +239,10 @@ fails to load is closed again. The limits are `pub const`s in
 - **Not bounded: a material's own memory and time.** Private and
   function-local memory (`var<private>`, a function's `var`) has no cap of
   Celesta's: naga accepts arrays of any size. A backend may refuse the
-  pipeline (Metal past a fragment function's stack, refused as above), or
+  pipeline (Metal past a fragment function's stack, refused as above: an
+  Apple M5 makes a fragment of 12,288 private `vec4f`, 192 KiB, and
+  refuses one of 16,384, 256 KiB), make it (the macOS CI runner's Metal
+  makes one of 16 MiB), or
   give each invocation the scratch memory it asks for, which can run the
   device out of memory or, on Vulkan or DX12 (not tried), may lose the
   device when it draws. Loop bounding keeps a long loop defined, not
@@ -398,6 +401,16 @@ materials as `frame.lights` and `frame.ambient`.
   are never dropped, however many loaded models there are; the bounds are
   on what models that failed or are gone leave behind. Each model holds at
   most 32 plugin shaders and the unlit one, and 1,024 pipelines.
+- **Another provider opens its own models.** Models are kept by plugin and
+  asset paths, under the id the provider gave them.
+  `with_content_provider` on a renderer that already opened models closes
+  them on the previous provider (`ContentProvider::close`) and forgets
+  them, so the next frame opens the model from the new provider, and the
+  shaders and pipelines only they held can be dropped. Until then, the
+  renderer kept drawing the previous provider's model and asked the new
+  one for frames of an id it never gave. The editor and the exporter
+  install their provider once, when the renderer is made; tests replace
+  it.
 - **The normal matrix** is the cofactor matrix of `world`'s upper 3×3
   times the sign of its determinant (+1 for 0), worked out in `f64` and
   divided by its largest entry: the inverse transpose up to a positive
@@ -481,7 +494,7 @@ the corners; the README says so.
 | `crates/gpu-renderer/src/scene_unlit.wgsl` | The built-in unlit material against the interface. |
 | `crates/gpu-renderer/src/scene.wgsl` | Only the conversion to the layer texture remains. |
 | `crates/gpu-renderer/src/scene.rs` | The frame uniform and draw slots, the bounded shader and pipeline caches with refusals remembered by stages, a cap on one model's pipelines, material bind groups and pipelines made on open, outline passes, per-frame parameters, the normal matrix, render queues with offsets and distance sorting, `LessEqual`, and `SceneFrameResources`. |
-| `crates/gpu-renderer/src/mesh.rs`, `prepare.rs` | A model's material and pipeline errors as `InvalidPluginContent`; the renderer keeps `SceneFrameResources`, and each frame begins it. |
+| `crates/gpu-renderer/src/mesh.rs`, `prepare.rs` | A model's material and pipeline errors as `InvalidPluginContent`; the renderer keeps `SceneFrameResources`, and each frame begins it; another content provider closes the previous one's models (`MeshState::replace_provider`). |
 | `examples/plugins/turntable` | The cube's own toon material (`src/toon.wgsl`), its light, and tests. |
 
 ## For plugins
@@ -609,9 +622,12 @@ change once it shows:
     near-clear discard of a depth-writing blend; degenerate worlds without
     NaN; broken WGSL refused naming the material and the line; parameters
     that do not fit their shader; the limits; tangents required on
-    geometry without them; pipelines the backend refuses refused naming
-    the material, and refused again without being made again; a pipeline
-    the device refused not made again while one that ran out of memory is;
+    geometry without them; on Metal only, 16 MiB of private memory a
+    fragment drawn or refused naming the material, whichever the device
+    does; a pipeline the device refused (the test's hook, on every
+    backend) refused naming the material and not made again, and a model
+    of another shader drawn after it, while one that ran out of memory is
+    made again;
     a refusal standing for every depth bias and culling of its stages,
     none of them made and nothing more kept; a model whose later material
     has refused stages refused, again and again, without making an earlier
@@ -649,6 +665,9 @@ change once it shows:
     frame without a scene, kept through a frame that is refused or draws
     nothing, grown and rebound when a frame outgrows them; two layers of
     one size keeping their own pixels.
+  - `a_new_content_provider_opens_its_own_models`: a red model drawn,
+    then another provider's green one of the same plugin and assets drawn
+    in its place.
   - The first phase's scene tests, unlit materials and overrides
     included, pass with their expected pixels unchanged.
 - `celesta-plugin-turntable`'s unit tests check that the cube is drawn by
