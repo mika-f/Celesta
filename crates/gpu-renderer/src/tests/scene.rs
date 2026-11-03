@@ -25,11 +25,13 @@ const IDENTITY: [f32; 16] = [
 ];
 
 /// Answers `scenes` with `model` and every frame with `frame`, changed by
-/// `animate` for the frame's time when there is one.
+/// `animate` for the frame's time and by `by_data` for the layer's data
+/// when there are those.
 struct Scenes {
     model: SceneModel,
     frame: SceneFrame,
     animate: Option<fn(&mut SceneFrame, f64)>,
+    by_data: Option<fn(&mut SceneFrame, &serde_json::Value)>,
 }
 
 impl ContentProvider for Scenes {
@@ -53,12 +55,15 @@ impl ContentProvider for Scenes {
         &mut self,
         model: ModelId,
         time: f64,
-        _data: &serde_json::Value,
+        data: &serde_json::Value,
     ) -> Result<ContentFrame, PluginError> {
         assert_eq!(model, ModelId(9));
         let mut frame = self.frame.clone();
         if let Some(animate) = self.animate {
             animate(&mut frame, time);
+        }
+        if let Some(by_data) = self.by_data {
+            by_data(&mut frame, data);
         }
         Ok(frame.into())
     }
@@ -157,6 +162,7 @@ fn valid() -> Scenes {
             skins: vec![vec![IDENTITY; 2]],
         },
         animate: None,
+        by_data: None,
     }
 }
 
@@ -262,6 +268,7 @@ fn one_square() -> Scenes {
             skins: vec![],
         },
         animate: None,
+        by_data: None,
     }
 }
 
@@ -602,6 +609,7 @@ fn nearer_quad_covers_farther_in_either_order() {
             model: scenes.model.clone(),
             frame: scenes.frame.clone(),
             animate: None,
+            by_data: None,
         };
         scenes.frame.draws = draws;
         let Some(frame) = render_scenes(scenes) else {
@@ -1412,6 +1420,87 @@ fn a_render_asks_for_a_planes_scene_frame_once() {
     // The next render asks again.
     renderer.render(&scene).unwrap();
     assert_eq!(frames.load(Ordering::Relaxed), 2);
+}
+
+/// Two layers of one model side by side in one render, `left` at x 0 and
+/// `right` at x 64, each given as its time and data: the frame drawn, and
+/// how many frames the provider was asked for. `one_square`'s square is
+/// red at time 1 and takes `data["color"]` as its colour.
+fn two_layers_of_one_model(
+    left: (f64, serde_json::Value),
+    right: (f64, serde_json::Value),
+) -> Option<(GpuFrame, usize)> {
+    let mut scenes = one_square();
+    scenes.animate = Some(|frame, time| {
+        if time == 1.0 {
+            frame.draws[0].overrides.base_color = Some([1.0, 0.0, 0.0, 1.0]);
+        }
+    });
+    scenes.by_data = Some(|frame, data| {
+        if let Ok(color) = serde_json::from_value(data["color"].clone()) {
+            frame.draws[0].overrides.base_color = Some(color);
+        }
+    });
+    let mut renderer = renderer(transparent())?;
+    let frames = Arc::new(AtomicUsize::new(0));
+    renderer.renderer = renderer.renderer.with_content_provider(Counting {
+        scenes,
+        frames: Arc::clone(&frames),
+    });
+    let mut scene = scene_layers(
+        128,
+        &[("left", left.0, 1.0, 0.0), ("right", right.0, 1.0, 64.0)],
+    );
+    for (layer, data) in scene.layers.iter_mut().zip([left.1, right.1]) {
+        let LayerContent::Plugin {
+            data: layer_data, ..
+        } = &mut layer.content
+        else {
+            unreachable!("scene_layers makes plugin layers");
+        };
+        *layer_data = data;
+    }
+    let frame = renderer.render(&scene).unwrap();
+    Some((frame, frames.load(Ordering::Relaxed)))
+}
+
+#[test]
+fn a_render_asks_again_for_other_data() {
+    // One model, one time: the layer with other data is asked for and
+    // drawn as its own frame, not the first layer's.
+    let Some((frame, frames)) = two_layers_of_one_model(
+        (0.0, serde_json::Value::Null),
+        (0.0, serde_json::json!({ "color": [0.0, 0.0, 1.0, 1.0] })),
+    ) else {
+        return;
+    };
+    assert_eq!(frames, 2);
+    assert_pixel(&frame, 32, 32, WHITE);
+    assert_pixel(&frame, 96, 32, BLUE);
+}
+
+#[test]
+fn a_render_asks_again_for_another_time() {
+    let Some((frame, frames)) = two_layers_of_one_model(
+        (0.0, serde_json::Value::Null),
+        (1.0, serde_json::Value::Null),
+    ) else {
+        return;
+    };
+    assert_eq!(frames, 2);
+    assert_pixel(&frame, 32, 32, WHITE);
+    assert_pixel(&frame, 96, 32, RED);
+}
+
+#[test]
+fn a_render_asks_once_for_the_same_time_and_data() {
+    let data = serde_json::json!({ "color": [0.0, 0.0, 1.0, 1.0] });
+    let Some((frame, frames)) = two_layers_of_one_model((1.0, data.clone()), (1.0, data)) else {
+        return;
+    };
+    assert_eq!(frames, 1);
+    assert_pixel(&frame, 32, 32, BLUE);
+    assert_pixel(&frame, 96, 32, BLUE);
 }
 
 #[test]
