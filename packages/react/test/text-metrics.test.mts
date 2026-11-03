@@ -91,8 +91,8 @@ test('CLI shares prepare and render RPCs, handles large UTF-8 replies, and forwa
   const dir = mkdtempSync(join(tmpdir(), 'celesta-metrics-'));
   const entry = join(dir, 'entry.tsx');
   writeFileSync(entry, `
-    import { Composition, Rect, measureText, useCurrentFrame, useTextMetrics } from '@celesta/react';
-    import { preloadMedia } from '@celesta/media-utils';
+    import { Composition, Rect, measureText, useCurrentFrame, useTextMetrics } from '@celesta.studio/react';
+    import { preloadMedia } from '@celesta.studio/media-utils';
     export async function prepare() {
       const [m, media] = await Promise.all([measureText('prepare'), preloadMedia('voice.wav')]);
       if (m.width !== 7 || media.durationSeconds !== 1) throw new Error('incorrect prepare response');

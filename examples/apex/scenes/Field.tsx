@@ -1,5 +1,5 @@
-import { Group, Rect, progress, useBeat, useCurrentFrame } from '@celesta/react';
-import { Grid } from '@celesta/layout';
+import { Group, Rect, progress, useBeat, useCurrentFrame } from '@celesta.studio/react';
+import { Grid } from '@celesta.studio/layout';
 import { Label } from '../components/Label';
 import { ACID, BONE, CYAN, H, INK, MAG, W } from '../constants';
 

@@ -1,9 +1,9 @@
 import * as React from 'react';
 
-import { Assets, Composition } from '@celesta/react';
-import { Character, CharacterView, Dialogue } from '@celesta/character';
-import type { AssetReference } from '@celesta/react';
-import type { CharacterViewReference } from '@celesta/character';
+import { Assets, Composition } from '@celesta.studio/react';
+import { Character, CharacterView, Dialogue } from '@celesta.studio/character';
+import type { AssetReference } from '@celesta.studio/react';
+import type { CharacterViewReference } from '@celesta.studio/character';
 
 const character = React.createRef<AssetReference>();
 const view = React.createRef<CharacterViewReference>();

@@ -1,5 +1,5 @@
-import { Group, Rect, Text, useTextMetrics } from '@celesta/react';
-import type { TextStyle } from '@celesta/react';
+import { Group, Rect, Text, useTextMetrics } from '@celesta.studio/react';
+import type { TextStyle } from '@celesta.studio/react';
 import type { DemoProps } from '../../components/ChapterShell';
 import { STAGE, enter } from '../../components/ChapterShell';
 import { C, FONT, solid } from '../../components/theme';

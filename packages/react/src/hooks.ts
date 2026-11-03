@@ -65,7 +65,7 @@ export const FreezeFrameContext = React.createContext<object | null>(null);
 // `<ProjectTimeline />` does not evaluate the project itself: celesta-evaluator
 // (Rust) already does that, once per frame, for whatever project a project-
 // aware export/preview call was given. render.ts wraps each render pass in
-// this Provider with those pre-evaluated layers so `@celesta/project` only has
+// this Provider with those pre-evaluated layers so `@celesta.studio/project` only has
 // to hand them to the reconciler. There is currently no way to ask Rust to
 // evaluate on demand mid-render — the Rust side is synchronously blocked
 // waiting for this render's response, so any such round trip would deadlock.

@@ -1,4 +1,4 @@
-import { Instances, Rect, Static } from '@celesta/react';
+import { Instances, Rect, Static } from '@celesta.studio/react';
 import { C, H, W } from './theme';
 
 // The dotted ground every scene stands on: one <Instances> layer of dots,

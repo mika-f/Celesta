@@ -1,4 +1,4 @@
-import { Composition, Group, Rect, Text, useCurrentFrame } from '@celesta/react';
+import { Composition, Group, Rect, Text, useCurrentFrame } from '@celesta.studio/react';
 
 // Stand-in green-screen footage, drawn by Celesta so it can ship with the
 // repository: a smiling presenter waving and holding a HELLO card before

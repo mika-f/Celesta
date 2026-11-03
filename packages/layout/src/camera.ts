@@ -1,9 +1,9 @@
-import { noise } from '@celesta/math';
+import { noise } from '@celesta.studio/math';
 import * as React from 'react';
 import type { ReactNode } from 'react';
 
-import { Group, useCurrentFrame, useVideoConfig } from '@celesta/react';
-import type { BlendMode } from '@celesta/react';
+import { Group, useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
+import type { BlendMode } from '@celesta.studio/react';
 
 import { useLayoutBounds } from './layout';
 

@@ -3,11 +3,11 @@ import { beforeEach, test } from 'vitest';
 import * as React from 'react';
 import type { ReactElement, ReactNode } from 'react';
 
-import { Composition, Rect, Sequence, Span, Theme, useCurrentFrame } from '@celesta/react';
-import type { Layer, LayerContent, Paint, TextMetrics, TextStyle, ThemeValues } from '@celesta/react';
-import { mount, setTextMeasurer } from '@celesta/react/internal';
-import type { MeasureTextRequest } from '@celesta/react/internal';
-import { Center, useLayoutBounds } from '@celesta/layout';
+import { Composition, Rect, Sequence, Span, Theme, useCurrentFrame } from '@celesta.studio/react';
+import type { Layer, LayerContent, Paint, TextMetrics, TextStyle, ThemeValues } from '@celesta.studio/react';
+import { mount, setTextMeasurer } from '@celesta.studio/react/internal';
+import type { MeasureTextRequest } from '@celesta.studio/react/internal';
+import { Center, useLayoutBounds } from '@celesta.studio/layout';
 import { Badge } from '../src/index.js';
 import type { BadgeProps } from '../src/index.js';
 

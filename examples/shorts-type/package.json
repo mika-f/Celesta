@@ -1,15 +1,15 @@
 {
-  "name": "@celesta/example-shorts-type",
+  "name": "@celesta.studio/example-shorts-type",
   "private": true,
   "dependencies": {
-    "@celesta/debug": "workspace:*",
-    "@celesta/layout": "workspace:*",
-    "@celesta/math": "workspace:*",
-    "@celesta/react": "workspace:*",
-    "@celesta/shader": "workspace:*",
-    "@celesta/shapes": "workspace:*",
-    "@celesta/text": "workspace:*",
-    "@celesta/transitions": "workspace:*",
+    "@celesta.studio/debug": "workspace:*",
+    "@celesta.studio/layout": "workspace:*",
+    "@celesta.studio/math": "workspace:*",
+    "@celesta.studio/react": "workspace:*",
+    "@celesta.studio/shader": "workspace:*",
+    "@celesta.studio/shapes": "workspace:*",
+    "@celesta.studio/text": "workspace:*",
+    "@celesta.studio/transitions": "workspace:*",
     "react": "^19.3.0"
   },
   "devDependencies": {

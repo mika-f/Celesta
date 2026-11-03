@@ -1,4 +1,4 @@
-import { Assets, Audio, Composition, Font, Group, Rect, Text, useCurrentFrame } from '@celesta/react';
+import { Assets, Audio, Composition, Font, Group, Rect, Text, useCurrentFrame } from '@celesta.studio/react';
 import { FPS, FRAMES, HEIGHT, INK, PAPER, WIDTH, tunnelAt } from './motion';
 
 function Label({ children, x, y, size = 18, align = 'left' }: {

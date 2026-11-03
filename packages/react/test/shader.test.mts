@@ -1,5 +1,5 @@
 // The core side of custom shaders: what the walker accepts and how it
-// serializes it. `@celesta/shader`'s own API is tested in its package.
+// serializes it. `@celesta.studio/shader`'s own API is tested in its package.
 
 import assert from 'node:assert/strict';
 import { test } from 'vitest';
@@ -102,7 +102,7 @@ test('the shader prop only takes a ShaderEffect or an array of them', () => {
   for (const shader of shaders) {
     assert.throws(
       () => frame(h(Rect, { width: 4, height: 4, shader })),
-      /shader must be a value returned by @celesta\/shader \(defineShader\(\) or a built-in filter such as brightness\(\)\), or an array of them/,
+      /shader must be a value returned by @celesta\.studio\/shader \(defineShader\(\) or a built-in filter such as brightness\(\)\), or an array of them/,
     );
   }
 });

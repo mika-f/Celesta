@@ -8,9 +8,9 @@ import { join } from 'node:path';
 import { test } from 'vitest';
 import React from 'react';
 
-import { Assets, Composition, Span } from '@celesta/react';
-import type { AssetReference } from '@celesta/react';
-import { mount } from '@celesta/react/internal';
+import { Assets, Composition, Span } from '@celesta.studio/react';
+import type { AssetReference } from '@celesta.studio/react';
+import { mount } from '@celesta.studio/react/internal';
 import {
   Character, CharacterView, DialogueSeries, loadDialogueLipSync, loadLipSync, planDialogue, spokenTextOf,
 } from '../src/index.js';

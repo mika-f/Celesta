@@ -1,4 +1,4 @@
-import { Group, Rect, Text, useCurrentFrame } from '@celesta/react';
+import { Group, Rect, Text, useCurrentFrame } from '@celesta.studio/react';
 import { C, FONT, solid } from './theme';
 
 // Top-right: the series name and one segment per chapter, the current one

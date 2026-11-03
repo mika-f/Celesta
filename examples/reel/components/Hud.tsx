@@ -1,4 +1,4 @@
-import { FrameChrome } from '@celesta/components';
+import { FrameChrome } from '@celesta.studio/components';
 import { DURATION, FPS, H, W } from '../constants';
 import { SCENES } from '../timeline';
 

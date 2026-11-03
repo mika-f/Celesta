@@ -1,4 +1,4 @@
-import { Audio, Composition, Text, useCurrentFrame } from '@celesta/react';
+import { Audio, Composition, Text, useCurrentFrame } from '@celesta.studio/react';
 
 // Two things at once: an <Audio> behind an ordinary React conditional
 // (gathered from each rendered frame's tree, so it only sounds on frames 15+)

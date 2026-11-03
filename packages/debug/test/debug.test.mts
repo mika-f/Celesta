@@ -6,10 +6,10 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'vitest';
 
-import type { Layer, Scene } from '@celesta/react';
+import type { Layer, Scene } from '@celesta.studio/react';
 
 // Integration tests of the build: each test renders through the CLI, which
-// loads @celesta/debug from its dist/, so `pnpm run build:runtime` (repository
+// loads @celesta.studio/debug from its dist/, so `pnpm run build:runtime` (repository
 // root) must run first.
 const cli = fileURLToPath(new URL('../../cli/bin/celesta-react-render.js', import.meta.url));
 
@@ -37,7 +37,7 @@ function render(body: string, requests: FrameRequest[]): Layer[][] {
   const entry = join(dir, 'entry.tsx');
   writeFileSync(
     entry,
-    `import { Composition, Rect } from '@celesta/react'; import { DebugBounds, DebugOverlay } from '@celesta/debug';\n` +
+    `import { Composition, Rect } from '@celesta.studio/react'; import { DebugBounds, DebugOverlay } from '@celesta.studio/debug';\n` +
       `export default function Root() {\n` +
       `  return <Composition width={1080} height={1920} fps={30} durationInFrames={1}>${body}</Composition>;\n` +
       `}\n`,

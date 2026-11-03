@@ -29,7 +29,7 @@ React コンポジションは自動で再読み込みされます。**File → 
 口パクには非圧縮 WAV と、母音を読めるかな・ローマ字の文字起こしが必要です。`prepare()` 内で `loadLipSync()` を実行し、トラックを `lipSync` として渡し、口のパスが PSD のレイヤーと完全一致するか確認します。PSD が何も表示しない場合は、PSDTool のプリセットで `layers` を指定します。
 
 :::
-:::toggle[エディタが @celesta/react などの Celesta パッケージを解決できない]
+:::toggle[エディタが @celesta.studio/react などの Celesta パッケージを解決できない]
 
 Celesta でコンポジションを開き、**File → Set Up TypeScript** を選びます。`tsconfig.json` が `./.celesta/tsconfig.json` を継承しているか確認します。ソースビルドの場合はランタイムのインストール・型生成・ビルドも済ませてください。
 

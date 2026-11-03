@@ -1,4 +1,4 @@
-The remaining helpers in [`@celesta/math`](/en/docs/math/) reshape numbers, build repeating motion, and do the angle and point arithmetic that layout and orbits need. They are plain functions, so you can use them anywhere: in a component, in `prepare()`, or in a data file.
+The remaining helpers in [`@celesta.studio/math`](/en/docs/math/) reshape numbers, build repeating motion, and do the angle and point arithmetic that layout and orbits need. They are plain functions, so you can use them anywhere: in a component, in `prepare()`, or in a data file.
 
 ## Shaping numbers
 
@@ -22,10 +22,10 @@ The remaining helpers in [`@celesta/math`](/en/docs/math/) reshape numbers, buil
 
 > [!NOTE]
 > **remap or interpolate?**
-> `remap` is a plain linear conversion with no easing and, unless you use `remapClamped`, no clamping. For motion over frames, with easing and `extrapolateLeft`/`extrapolateRight`, use [`interpolate`](/en/docs/animation/) from `@celesta/react`. `remap` shines when converting other kinds of values, such as turning a noise result into an opacity.
+> `remap` is a plain linear conversion with no easing and, unless you use `remapClamped`, no clamping. For motion over frames, with easing and `extrapolateLeft`/`extrapolateRight`, use [`interpolate`](/en/docs/animation/) from `@celesta.studio/react`. `remap` shines when converting other kinds of values, such as turning a noise result into an opacity.
 
 ```tsx title="Loops and bounces"
-import { pingPong, snap, wrap } from '@celesta/math';
+import { pingPong, snap, wrap } from '@celesta.studio/math';
 
 const frame = useCurrentFrame();
 const ticker = wrap(frame * 4, -200, 1920);   // scrolls right, re-enters at the left
@@ -47,7 +47,7 @@ The four wave functions repeat with a **period of 1** and return values in `[-1,
 | `sawtoothWave(t)` | Ramps from 0 up to 1, drops to -1 halfway, and ramps back to 0. Repeating sweeps. |
 
 ```tsx title="A breathing circle on a 2-second cycle"
-import { sineWave } from '@celesta/math';
+import { sineWave } from '@celesta.studio/math';
 
 const { fps } = useVideoConfig();
 const frame = useCurrentFrame();
@@ -87,7 +87,7 @@ Points are plain `{ x, y }` objects, typed as `Vec2`. Celesta’s y axis points 
 | `quadraticBezierPoint(p0, p1, p2, t)`, `cubicBezierPoint(p0, p1, p2, p3, t)` | The point at `t` (0–1) along a Bézier curve, as drawn by a path’s `quadTo` and `cubicTo`. Use them to move an object along a curve you also draw. |
 
 ```tsx title="Dots on a rotating ring"
-import { TAU, polarToCartesian } from '@celesta/math';
+import { TAU, polarToCartesian } from '@celesta.studio/math';
 
 const frame = useCurrentFrame();
 const dots = Array.from({ length: 12 }, (_, i) => {
@@ -99,7 +99,7 @@ const dots = Array.from({ length: 12 }, (_, i) => {
 ```
 
 ```tsx title="A marker riding a curve"
-import { cubicBezierPoint } from '@celesta/math';
+import { cubicBezierPoint } from '@celesta.studio/math';
 
 const p0 = { x: 200, y: 800 }, p1 = { x: 500, y: 200 };
 const p2 = { x: 1400, y: 200 }, p3 = { x: 1700, y: 800 };
@@ -128,7 +128,7 @@ Color props take `#RRGGBB` or `#RRGGBBAA`, in either case. These two helpers rea
 | `parseHexColor(color)` | The color as `[r, g, b, a]`, each 0–255 (`#RRGGBB` has an alpha of 255), or `undefined` when it is not one. |
 
 ```tsx title="A data color with a fallback, at half its alpha"
-import { isHexColor, parseHexColor } from '@celesta/math';
+import { isHexColor, parseHexColor } from '@celesta.studio/math';
 
 const fill = isHexColor(row.color) ? row.color : '#a68bbf';
 const [r, g, b, a] = parseHexColor(fill)!;

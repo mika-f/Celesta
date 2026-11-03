@@ -4,7 +4,7 @@ Captions from an SRT file, and the video's subtitles written back out as a
 file. Twelve seconds at 30 fps, 1920 × 1080.
 
 `captions.srt` is imported as text and read with `parseSubtitles()` into
-frame-timed cues. `<CaptionTrack>` (from `@celesta/components`) draws the
+frame-timed cues. `<CaptionTrack>` (from `@celesta.studio/components`) draws the
 cue on each frame in a band, with two words of cue 2 emphasized by grapheme
 range, and declares the cues for the exported file. Each cue's
 `<Sequence>` shows its SRT block as `formatSubtitles()` writes it, beside a

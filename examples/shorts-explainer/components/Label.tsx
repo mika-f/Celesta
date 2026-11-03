@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Text } from '@celesta/react';
+import { Text } from '@celesta.studio/react';
 import { C, FONT } from '../constants';
 
 export type LabelProps = {

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Assets, Composition, Easings, Font, Rect, Text, progress, useCurrentFrame } from '@celesta/react';
+import { Assets, Composition, Easings, Font, Rect, Text, progress, useCurrentFrame } from '@celesta.studio/react';
 import {
   Line,
   Path,
@@ -10,8 +10,8 @@ import {
   parseSvgPath,
   pointOnPath,
   tangentOnPath,
-} from '@celesta/shapes';
-import type { PathCommand, TextStyle } from '@celesta/react';
+} from '@celesta.studio/shapes';
+import type { PathCommand, TextStyle } from '@celesta.studio/react';
 
 // Motion along a path, and morphing between paths. Left: a route written as
 // SVG path data (cubic, smooth cubic, arc, and quadratic segments) draws

@@ -3,7 +3,7 @@
 A 12.8-second vertical loop for YouTube Shorts and TikTok, made to be watched
 on repeat: the last frame runs into the first, picture and sound alike, so
 the player's restart is invisible. Four custom WGSL shaders from
-`@celesta/shader` do the work. `silk` computes the whole background per
+`@celesta.studio/shader` do the work. `silk` computes the whole background per
 pixel, `kaleido` folds a group of plain Celesta shapes into a kaleidoscope,
 `sheen` runs a band of light across the copy, and `lens` sends a refracting
 ring across the finished frame on every bar.

@@ -1,4 +1,4 @@
-import { Easings, Group, Rect, Text, interpolate, interpolateColor } from '@celesta/react';
+import { Easings, Group, Rect, Text, interpolate, interpolateColor } from '@celesta.studio/react';
 import { STAGE, enter } from '../../components/ChapterShell';
 import type { DemoProps } from '../../components/ChapterShell';
 import { C, FONT, solid } from '../../components/theme';

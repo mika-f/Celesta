@@ -1,4 +1,4 @@
-import { Group, Rect, Text } from '@celesta/react';
+import { Group, Rect, Text } from '@celesta.studio/react';
 import { C } from '../constants';
 
 // A section tag: accent square, number, and name.

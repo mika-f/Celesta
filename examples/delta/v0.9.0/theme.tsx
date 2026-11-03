@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Theme } from '@celesta/react';
+import { Theme } from '@celesta.studio/react';
 import { C, FONT } from '../components/theme';
 
 // The DELTA look as a <Theme>: the film's font stacks and colors by name.

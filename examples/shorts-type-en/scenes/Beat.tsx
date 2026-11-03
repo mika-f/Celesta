@@ -1,4 +1,4 @@
-import { Easings, Group, Rect, progress, useBeat, useCurrentFrame } from '@celesta/react';
+import { Easings, Group, Rect, progress, useBeat, useCurrentFrame } from '@celesta.studio/react';
 import { Burst } from '../components/Burst';
 import { Copy } from '../components/Copy';
 import { Stage } from '../components/Stage';

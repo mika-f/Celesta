@@ -1,6 +1,6 @@
 import * as React from 'react';
-import { Group, Rect, Text, textCaret, useTextMetrics } from '@celesta/react';
-import type { CommonProps, TextColorRun, TextStyle } from '@celesta/react';
+import { Group, Rect, Text, textCaret, useTextMetrics } from '@celesta.studio/react';
+import type { CommonProps, TextColorRun, TextStyle } from '@celesta.studio/react';
 import { codeLines, tokenizeCode, validateTabSize } from './syntax.js';
 import type { CodeLanguage, CodeLine } from './syntax.js';
 

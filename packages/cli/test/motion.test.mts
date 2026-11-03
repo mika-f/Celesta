@@ -6,11 +6,11 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'vitest';
 
-import * as celesta from '@celesta/react';
-import { Easings, beatAt, computeSeries, cueAt, frameToTimecode, progress } from '@celesta/react';
-import type { Layer } from '@celesta/react';
-import { pointOnPolyline } from '@celesta/shapes';
-import type { PolylinePoint } from '@celesta/shapes';
+import * as celesta from '@celesta.studio/react';
+import { Easings, beatAt, computeSeries, cueAt, frameToTimecode, progress } from '@celesta.studio/react';
+import type { Layer } from '@celesta.studio/react';
+import { pointOnPolyline } from '@celesta.studio/shapes';
+import type { PolylinePoint } from '@celesta.studio/shapes';
 import type { FrameMessage } from '../src/cli.js';
 import { contentOf } from './layer-content.mjs';
 
@@ -28,11 +28,11 @@ function render(source: string, frames = [0], durationInFrames = 60): Layer[][] 
   const entry = join(dir, 'entry.tsx');
   writeFileSync(
     entry,
-    `import * as Core from '@celesta/react';\n` +
-      `import * as Layout from '@celesta/layout';\n` +
-      `import * as Shapes from '@celesta/shapes';\n` +
-      `import * as TextMotion from '@celesta/text';\n` +
-      `import * as Transitions from '@celesta/transitions';\n` +
+    `import * as Core from '@celesta.studio/react';\n` +
+      `import * as Layout from '@celesta.studio/layout';\n` +
+      `import * as Shapes from '@celesta.studio/shapes';\n` +
+      `import * as TextMotion from '@celesta.studio/text';\n` +
+      `import * as Transitions from '@celesta.studio/transitions';\n` +
       `const C = { ...Core, ...Layout, ...Shapes, ...TextMotion, ...Transitions };\n` +
       `const { Composition } = C;\n` +
       `${source}\n` +
@@ -81,12 +81,12 @@ test('every easing starts at exactly 0 and ends at exactly 1', () => {
   assert.equal(progress(40, 10, 20, Easings.easeInBack), 1);
 });
 
-test('entries import random and noise from @celesta/math', () => {
-  // Names @celesta/react does not declare, looked up anyway.
+test('entries import random and noise from @celesta.studio/math', () => {
+  // Names @celesta.studio/react does not declare, looked up anyway.
   assert.equal((celesta as Record<string, unknown>).random, undefined);
   assert.equal((celesta as Record<string, unknown>).noise, undefined);
   const [layers] = render(
-    `import { noise, random } from '@celesta/math';\n` +
+    `import { noise, random } from '@celesta.studio/math';\n` +
       `function Body() {\n` +
       `  return <C.Text>{String(random(7)) + ' ' + String(noise(3, 2.5))}</C.Text>;\n` +
       `}`,
@@ -178,7 +178,7 @@ test('Series rejects children other than Series.Sequence', () => {
   const entry = join(dir, 'entry.tsx');
   writeFileSync(
     entry,
-    `import { Composition, Series, Text } from '@celesta/react';\n` +
+    `import { Composition, Series, Text } from '@celesta.studio/react';\n` +
       `export default function Root() {\n` +
       `  return <Composition width={300} height={200} fps={30} durationInFrames={1}><Series><Text>x</Text></Series></Composition>;\n` +
       `}\n`,

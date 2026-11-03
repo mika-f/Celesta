@@ -6,9 +6,9 @@
 
 import * as React from 'react';
 
-import { Group } from '@celesta/react';
-import type { GradientStop, LineCap, LineJoin, Paint, PathCommand } from '@celesta/react';
-import { Path, trimPath } from '@celesta/shapes';
+import { Group } from '@celesta.studio/react';
+import type { GradientStop, LineCap, LineJoin, Paint, PathCommand } from '@celesta.studio/react';
+import { Path, trimPath } from '@celesta.studio/shapes';
 
 import {
   bezierCommands,

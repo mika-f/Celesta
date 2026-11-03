@@ -10,8 +10,8 @@
 //
 // 音声は prepare() が VOICEVOX Engine で作る（初回だけ Engine が必要。README.md）。
 
-import { Assets, Audio, Composition, Font, Sequence, useCurrentFrame } from '@celesta/react';
-import { Camera } from '@celesta/layout';
+import { Assets, Audio, Composition, Font, Sequence, useCurrentFrame } from '@celesta.studio/react';
+import { Camera } from '@celesta.studio/layout';
 
 import { LINES } from './script.ts';
 import { cameraAt } from './src/camera.ts';

@@ -803,6 +803,7 @@ mod property_outcome {
             project_property_schema: (!keys.is_empty()).then_some(declared.fields),
             project_property_order: keys.iter().map(|key| (*key).to_owned()).collect(),
             prepare_dependencies: Vec::new(),
+            legacy_imports: Vec::new(),
             chapters: Vec::new(),
         }
     }

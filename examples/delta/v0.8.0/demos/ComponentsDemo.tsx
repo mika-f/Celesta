@@ -1,11 +1,11 @@
-import { Group, Sequence, Text } from '@celesta/react';
-import { Badge, BarChart, PatternBackground, StatCard } from '@celesta/components';
+import { Group, Sequence, Text } from '@celesta.studio/react';
+import { Badge, BarChart, PatternBackground, StatCard } from '@celesta.studio/components';
 import type { DemoProps } from '../../components/ChapterShell';
 import { CUT, STAGE } from '../../components/ChapterShell';
 import { PRS } from '../prs';
 import { BEAT, DURATION } from '../timeline';
 
-// This release in numbers, drawn with @celesta/components alone and the
+// This release in numbers, drawn with @celesta.studio/components alone and the
 // film's <Theme> names: a PatternBackground, three StatCards that count up,
 // a BarChart of the pull requests by kind (counted from their titles), and
 // a Badge for each new package, sized from its measured text. Everything
@@ -21,7 +21,7 @@ const KINDS = Object.entries(PRS.reduce<Record<string, number>>((counts, [, titl
 /** Components the package exports in 0.8.0. */
 const COMPONENTS = ['Badge', 'BarChart', 'Counter', 'FrameChrome', 'MediaFrame', 'Motion', 'Panel',
   'PatternBackground', 'Ranking', 'StatCard', 'TitleCard', 'TypewriterText'];
-const PACKAGES = ['@celesta/components', '@celesta/lottie', '@celesta/exporter'];
+const PACKAGES = ['@celesta.studio/components', '@celesta.studio/lottie', '@celesta.studio/exporter'];
 
 const label = { fontFamily: 'mono', fontSize: 16, fill: { type: 'solid', color: '#8E929B' } } as const;
 const value = { fontFamily: 'display', fontSize: 92 } as const;

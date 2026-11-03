@@ -5,10 +5,10 @@ import assert from 'node:assert/strict';
 import { test } from 'vitest';
 import React from 'react';
 
-import { Composition } from '@celesta/react';
-import type { Layer, LayerContent, TextMetrics, TextStyle } from '@celesta/react';
-import { mount, setTextMeasurer } from '@celesta/react/internal';
-import type { MeasureTextRequest } from '@celesta/react/internal';
+import { Composition } from '@celesta.studio/react';
+import type { Layer, LayerContent, TextMetrics, TextStyle } from '@celesta.studio/react';
+import { mount, setTextMeasurer } from '@celesta.studio/react/internal';
+import type { MeasureTextRequest } from '@celesta.studio/react/internal';
 import { Code } from '../src/index.js';
 
 type TextContent = Extract<LayerContent, { type: 'text' }>;

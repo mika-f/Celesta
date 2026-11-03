@@ -1,5 +1,5 @@
 {
-  "name": "@celesta/code",
+  "name": "@celesta.studio/code",
   "version": "0.9.0",
   "private": true,
   "description": "Optional syntax-highlighted code components for Celesta compositions.",
@@ -23,7 +23,7 @@
     "check:examples": "tsc -p tsconfig.examples.json"
   },
   "peerDependencies": {
-    "@celesta/react": "0.0.0",
+    "@celesta.studio/react": "0.0.0",
     "react": "^19.3.0"
   },
   "dependencies": {
@@ -34,8 +34,8 @@
     "@twinkleplop/typescript": "^0.1.7"
   },
   "devDependencies": {
-    "@celesta/react": "workspace:*",
-    "@celesta/text": "workspace:*",
+    "@celesta.studio/react": "workspace:*",
+    "@celesta.studio/text": "workspace:*",
     "@types/node": "^24.13.6",
     "@types/react": "^19.3.0",
     "react": "^19.3.0",

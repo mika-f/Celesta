@@ -55,7 +55,7 @@ PowerShell を使います。`C:\path\to\Celesta` を Celesta のインストー
 SRT や WebVTT の字幕ファイルは、`import` してから `parseSubtitles()` で読み込みます。結果は `{ from, durationInFrames, text }` の配列で、`Sequence` にそのまま渡せる形です。BOM、CRLF、複数行の字幕、`,` と `.` のどちらで区切ったミリ秒にも対応し、`<i>` などのタグは取り除きます。
 
 ```tsx title="SRT の字幕を描く"
-import { Sequence, Subtitles, Text, parseSubtitles } from '@celesta/react';
+import { Sequence, Subtitles, Text, parseSubtitles } from '@celesta.studio/react';
 import captions from './captions.srt';
 
 const cues = parseSubtitles(captions, { fps: 30 });
@@ -155,7 +155,7 @@ Shorts や TikTok は動画を繰り返し再生します。最後のフレー�
 :::
 ::::
 
-ラウドネスは、エンコードする前のサウンドトラックで測定・調整します。`.mov` の PCM ではその値がそのまま保たれます。AAC（`.mp4`）と Opus（`.webm`）では、ラウドネスが 0.1 LU 程度、トゥルーピークが上下に 0.5 dB 程度動くため、既定の -1 dBTP がファイルでは -0.5 dBTP 程度になることがあります。余裕が必要なら `--true-peak -2` を指定します。アプリでは **Export…** の隣の **Loudness** で、配信向けか放送向けの目標値を -1 dBTP のリミッター付きで指定できます。それ以外の目標値や上限、`--peak-handling lower` を使うには、コマンドライン、MCP の `export_video` ツール、`@celesta/exporter` を使います。
+ラウドネスは、エンコードする前のサウンドトラックで測定・調整します。`.mov` の PCM ではその値がそのまま保たれます。AAC（`.mp4`）と Opus（`.webm`）では、ラウドネスが 0.1 LU 程度、トゥルーピークが上下に 0.5 dB 程度動くため、既定の -1 dBTP がファイルでは -0.5 dBTP 程度になることがあります。余裕が必要なら `--true-peak -2` を指定します。アプリでは **Export…** の隣の **Loudness** で、配信向けか放送向けの目標値を -1 dBTP のリミッター付きで指定できます。それ以外の目標値や上限、`--peak-handling lower` を使うには、コマンドライン、MCP の `export_video` ツール、`@celesta.studio/exporter` を使います。
 
 ## 透過動画
 

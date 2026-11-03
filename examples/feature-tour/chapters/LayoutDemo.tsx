@@ -1,4 +1,4 @@
-import { Easings, Group, Rect, progress, useCurrentFrame } from '@celesta/react';
+import { Easings, Group, Rect, progress, useCurrentFrame } from '@celesta.studio/react';
 import { Label } from '../components/Label';
 import { C } from '../constants';
 import { pad } from '../helpers';

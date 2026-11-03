@@ -1,5 +1,5 @@
 import { useContext } from 'react';
-import { FreezeFrame, Group, Rect, Span, Text, useCurrentFrame } from '@celesta/react';
+import { FreezeFrame, Group, Rect, Span, Text, useCurrentFrame } from '@celesta.studio/react';
 import { Backdrop } from '../components/Backdrop';
 import { CUT } from '../components/ChapterShell';
 import { Delta } from '../components/Delta';

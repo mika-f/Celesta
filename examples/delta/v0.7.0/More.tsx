@@ -1,9 +1,9 @@
 import { useContext } from 'react';
 import type { ReactNode } from 'react';
-import { Easings, FreezeFrame, Group, Rect, Text, formatSubtitles, interpolate, parseSubtitles, progress, useCurrentFrame, useTextMetrics } from '@celesta/react';
-import { safeAreaInsets } from '@celesta/layout';
-import { chromaticAberration, pixelate } from '@celesta/shader';
-import { useFitText } from '@celesta/text';
+import { Easings, FreezeFrame, Group, Rect, Text, formatSubtitles, interpolate, parseSubtitles, progress, useCurrentFrame, useTextMetrics } from '@celesta.studio/react';
+import { safeAreaInsets } from '@celesta.studio/layout';
+import { chromaticAberration, pixelate } from '@celesta.studio/shader';
+import { useFitText } from '@celesta.studio/text';
 import { Backdrop } from '../components/Backdrop';
 import { CUT } from '../components/ChapterShell';
 import { Delta } from '../components/Delta';

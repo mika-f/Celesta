@@ -1,4 +1,4 @@
-import { defineShader } from '@celesta/shader';
+import { defineShader } from '@celesta.studio/shader';
 
 // A halftone field drawn over a flat background rect: dots that grow towards
 // the bottom of the frame (where the platform UI sits and no copy is placed),

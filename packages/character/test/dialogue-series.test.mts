@@ -1,6 +1,6 @@
 // planDialogue() and expressionAt(), and <DialogueSeries> through the CLI. The
 // CLI renders are integration tests of the build: the CLI loads
-// @celesta/character from dist/, so run them after `pnpm run build:runtime`
+// @celesta.studio/character from dist/, so run them after `pnpm run build:runtime`
 // (repository root).
 
 import assert from 'node:assert/strict';
@@ -13,11 +13,11 @@ import { fileURLToPath } from 'node:url';
 import { test } from 'vitest';
 import type { TestContext } from 'vitest';
 
-import type { AssetLocation, CompositionConfig, Layer } from '@celesta/react';
+import type { AssetLocation, CompositionConfig, Layer } from '@celesta.studio/react';
 import { expressionAt, planDialogue } from '../src/index.js';
 import type { DialogueExpression, ExpressionCue } from '../src/index.js';
-import { setMediaProbe } from '@celesta/react/internal';
-import type { ProbedMediaInfo } from '@celesta/react/internal';
+import { setMediaProbe } from '@celesta.studio/react/internal';
+import type { ProbedMediaInfo } from '@celesta.studio/react/internal';
 import { errorOf, parseMessage } from './render-cli.mjs';
 import type { FrameMessage } from './render-cli.mjs';
 
@@ -220,8 +220,8 @@ test('DialogueSeries plays each planned line in its window with its voice and sp
     t,
     `
     import * as React from 'react';
-    import { Assets, Composition, Rect, Sequence } from '@celesta/react';
-    import { Character, CharacterView, DialogueSeries, planDialogue } from '@celesta/character';
+    import { Assets, Composition, Rect, Sequence } from '@celesta.studio/react';
+    import { Character, CharacterView, DialogueSeries, planDialogue } from '@celesta.studio/character';
     const mira = React.createRef();
     const hana = React.createRef();
     const miraView = React.createRef();
@@ -278,8 +278,8 @@ test('DialogueSeries plays each planned line in its window with its voice and sp
 test('expression cues change the face within a line and hold through the gap', async (t) => {
   const source = (holdThroughGap: boolean) => `
     import * as React from 'react';
-    import { Assets, Composition, Sequence } from '@celesta/react';
-    import { Character, CharacterView, Dialogue, DialogueSeries, planDialogue } from '@celesta/character';
+    import { Assets, Composition, Sequence } from '@celesta.studio/react';
+    import { Character, CharacterView, Dialogue, DialogueSeries, planDialogue } from '@celesta.studio/character';
     const mira = React.createRef();
     const hana = React.createRef();
     const miraView = React.createRef();
@@ -357,8 +357,8 @@ test('expressionAt picks the last cue at or before the time', () => {
 test('DialogueSeries can hold subtitles through the gap and reports unmapped speakers', async (t) => {
   const source = (series: string) => `
     import * as React from 'react';
-    import { Assets, Composition } from '@celesta/react';
-    import { Character, CharacterView, DialogueSeries, planDialogue } from '@celesta/character';
+    import { Assets, Composition } from '@celesta.studio/react';
+    import { Character, CharacterView, DialogueSeries, planDialogue } from '@celesta.studio/character';
     const mira = React.createRef();
     const view = React.createRef();
     let plan;

@@ -1,4 +1,4 @@
-import { Rect } from '@celesta/react';
+import { Rect } from '@celesta.studio/react';
 import { H, W } from '../constants';
 
 export function Ring({ r, color, opacity = 1, x = W / 2, y = H / 2, width = 3 }: {

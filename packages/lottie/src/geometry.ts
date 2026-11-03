@@ -2,7 +2,7 @@
 // Bézier paths and parametric shapes, built as lottie-web builds them so
 // trim paths start and run the same way.
 
-import type { PathCommand } from '@celesta/react';
+import type { PathCommand } from '@celesta.studio/react';
 
 import { positionAt, scalarAt, vectorAt } from './property';
 import type { LottieBezier, LottieShape, LottieTransform, LottieValue } from './types';

@@ -18,25 +18,25 @@ use celesta_source_edit::{ElementRef, ImportLock, TimingKind, WrapLock};
 
 /// `<Sequence from={30}>` in a scene function at 4:3, around a `<Rect>` at
 /// 5:5.
-const SEQUENCE: &str = "import { Sequence } from \"@celesta/react\";\n\nexport const Intro = () => (\n  <Sequence from={30}>\n    <Rect width={200} />\n  </Sequence>\n);\n";
+const SEQUENCE: &str = "import { Sequence } from \"@celesta.studio/react\";\n\nexport const Intro = () => (\n  <Sequence from={30}>\n    <Rect width={200} />\n  </Sequence>\n);\n";
 
 /// Three `Series` items of 60 frames at 5:5, 8:5 and 11:5.
-const SERIES: &str = "import { Series } from \"@celesta/react\";\n\nexport const Intro = () => (\n  <Series>\n    <Series.Sequence durationInFrames={60}>\n      <Rect />\n    </Series.Sequence>\n    <Series.Sequence durationInFrames={60}>\n      <Rect />\n    </Series.Sequence>\n    <Series.Sequence durationInFrames={60}>\n      <Rect />\n    </Series.Sequence>\n  </Series>\n);\n";
+const SERIES: &str = "import { Series } from \"@celesta.studio/react\";\n\nexport const Intro = () => (\n  <Series>\n    <Series.Sequence durationInFrames={60}>\n      <Rect />\n    </Series.Sequence>\n    <Series.Sequence durationInFrames={60}>\n      <Rect />\n    </Series.Sequence>\n    <Series.Sequence durationInFrames={60}>\n      <Rect />\n    </Series.Sequence>\n  </Series>\n);\n";
 
 /// A `<FreezeFrame>` at 4:3.
-const FREEZE: &str = "import { FreezeFrame } from \"@celesta/react\";\n\nexport const Intro = () => (\n  <FreezeFrame frame={10}>\n    <Rect />\n  </FreezeFrame>\n);\n";
+const FREEZE: &str = "import { FreezeFrame } from \"@celesta.studio/react\";\n\nexport const Intro = () => (\n  <FreezeFrame frame={10}>\n    <Rect />\n  </FreezeFrame>\n);\n";
 
 /// `Fade` passes its `start` to the `<Sequence>` at 4:5.
-const FADE: &str = "import { Sequence } from \"@celesta/react\";\n\nexport function Fade({ start }) {\n  return (\n    <Sequence from={start}>\n      <Rect />\n    </Sequence>\n  );\n}\n";
+const FADE: &str = "import { Sequence } from \"@celesta.studio/react\";\n\nexport function Fade({ start }) {\n  return (\n    <Sequence from={start}>\n      <Rect />\n    </Sequence>\n  );\n}\n";
 
 /// The scene's call of `Fade` at 2:3.
 const FADE_CALL: &str = "export const Intro = () => (\n  <Fade start={30} />\n);\n";
 
 /// `PriceTag` writes `<Sequence from={30}>` at 9:5.
-const TAG: &str = "import { Sequence } from \"@celesta/react\";\n\ninterface Props {\n  label: string;\n}\n\nexport function PriceTag({ label }: Props) {\n  return (\n    <Sequence from={30}>\n      <Text>{label}</Text>\n    </Sequence>\n  );\n}\n";
+const TAG: &str = "import { Sequence } from \"@celesta.studio/react\";\n\ninterface Props {\n  label: string;\n}\n\nexport function PriceTag({ label }: Props) {\n  return (\n    <Sequence from={30}>\n      <Text>{label}</Text>\n    </Sequence>\n  );\n}\n";
 
 /// [`TAG`] after "This scene" lifted `from`.
-const TAG_LIFTED: &str = "import { Sequence } from \"@celesta/react\";\n\ninterface Props {\n  label: string;\n  sequenceFrom?: number;\n}\n\nexport function PriceTag({ label, sequenceFrom = 30 }: Props) {\n  return (\n    <Sequence from={sequenceFrom}>\n      <Text>{label}</Text>\n    </Sequence>\n  );\n}\n";
+const TAG_LIFTED: &str = "import { Sequence } from \"@celesta.studio/react\";\n\ninterface Props {\n  label: string;\n  sequenceFrom?: number;\n}\n\nexport function PriceTag({ label, sequenceFrom = 30 }: Props) {\n  return (\n    <Sequence from={sequenceFrom}>\n      <Text>{label}</Text>\n    </Sequence>\n  );\n}\n";
 
 /// The Price scene's call of `PriceTag` at 2:3.
 const PRICE: &str = "export const Price = () => (\n  <PriceTag label=\"Sale\" />\n);\n";
@@ -45,14 +45,14 @@ const PRICE: &str = "export const Price = () => (\n  <PriceTag label=\"Sale\" />
 const INTRO: &str = "export const Intro = () => (\n  <PriceTag label=\"Hello\" />\n);\n";
 
 /// A `<Rect>` at 5:5 without timing of its own.
-const UNTIMED: &str = "import { Rect } from \"@celesta/react\";\n\nexport const Intro = () => (\n  <>\n    <Rect width={200} />\n  </>\n);\n";
+const UNTIMED: &str = "import { Rect } from \"@celesta.studio/react\";\n\nexport const Intro = () => (\n  <>\n    <Rect width={200} />\n  </>\n);\n";
 
 /// [`UNTIMED`] after "Set timing" at frame 45 of a 120-frame scene.
-const TIMED: &str = "import { Rect, Sequence } from \"@celesta/react\";\n\nexport const Intro = () => (\n  <>\n    <Sequence from={45} durationInFrames={75}>\n      <Rect width={200} />\n    </Sequence>\n  </>\n);\n";
+const TIMED: &str = "import { Rect, Sequence } from \"@celesta.studio/react\";\n\nexport const Intro = () => (\n  <>\n    <Sequence from={45} durationInFrames={75}>\n      <Rect width={200} />\n    </Sequence>\n  </>\n);\n";
 
 /// Indented with tabs, `Sequence` imported as `Seq`: a `<Rect>` over
 /// three lines at 5:3.
-const TABS: &str = "import { Rect, Sequence as Seq } from \"@celesta/react\";\n\nexport const Intro = () => (\n\t<>\n\t\t<Rect\n\t\t\twidth={200}\n\t\t/>\n\t</>\n);\n";
+const TABS: &str = "import { Rect, Sequence as Seq } from \"@celesta.studio/react\";\n\nexport const Intro = () => (\n\t<>\n\t\t<Rect\n\t\t\twidth={200}\n\t\t/>\n\t</>\n);\n";
 
 /// Source files in a directory of their own, removed when dropped.
 struct Files {
@@ -404,7 +404,7 @@ fn a_drag_of_a_lifted_prop_the_call_leaves_out_starts_at_its_default() {
 }
 
 /// `Delayed` wraps its children in `<Sequence from={30}>` at 4:10.
-const DELAYED: &str = "import { Sequence } from \"@celesta/react\";\n\nexport function Delayed({ children }) {\n  return <Sequence from={30}>{children}</Sequence>;\n}\n";
+const DELAYED: &str = "import { Sequence } from \"@celesta.studio/react\";\n\nexport function Delayed({ children }) {\n  return <Sequence from={30}>{children}</Sequence>;\n}\n";
 
 /// Intro calls `Delayed` at 2:3 around a `<Rect>` at 3:5 and a
 /// `<Circle>` at 4:5.
@@ -599,7 +599,7 @@ fn a_window_a_scene_calls_twice_writes_this_call_under_this_scene() {
 
 /// Intro writes `<Sequence from={30}>` at 5:5 around its `<Tag>` call at
 /// 6:7.
-const INTRO_TAGGED: &str = "import { Sequence } from \"@celesta/react\";\n\nexport function Intro() {\n  return (\n    <Sequence from={30}>\n      <Tag />\n    </Sequence>\n  );\n}\n";
+const INTRO_TAGGED: &str = "import { Sequence } from \"@celesta.studio/react\";\n\nexport function Intro() {\n  return (\n    <Sequence from={30}>\n      <Tag />\n    </Sequence>\n  );\n}\n";
 
 /// The film calls Intro at 3:5 and Main at 4:5.
 const FILM: &str = "export const Film = () => (\n  <>\n    <Intro />\n    <Main />\n  </>\n);\n";
@@ -779,13 +779,13 @@ fn set_timing_files_uses_the_alias_and_keeps_tabs() {
 
     assert_eq!(
         files.read("scene.tsx"),
-        "import { Rect, Sequence as Seq } from \"@celesta/react\";\n\nexport const Intro = () => (\n\t<>\n\t\t<Seq from={45} durationInFrames={75}>\n\t\t\t<Rect\n\t\t\t\twidth={200}\n\t\t\t/>\n\t\t</Seq>\n\t</>\n);\n"
+        "import { Rect, Sequence as Seq } from \"@celesta.studio/react\";\n\nexport const Intro = () => (\n\t<>\n\t\t<Seq from={45} durationInFrames={75}>\n\t\t\t<Rect\n\t\t\t\twidth={200}\n\t\t\t/>\n\t\t</Seq>\n\t</>\n);\n"
     );
 }
 
 #[test]
 fn set_timing_files_writes_through_a_namespace_import() {
-    let text = "import * as C from \"@celesta/react\";\n\nexport const Intro = () => (\n  <>\n    <C.Rect width={200} />\n  </>\n);\n";
+    let text = "import * as C from \"@celesta.studio/react\";\n\nexport const Intro = () => (\n  <>\n    <C.Rect width={200} />\n  </>\n);\n";
     let files = Files::new("set-timing-namespace", &[("scene.tsx", text)]);
     let expected = element_at(text, 5, 5).unwrap();
 
@@ -793,7 +793,7 @@ fn set_timing_files_writes_through_a_namespace_import() {
 
     assert_eq!(
         files.read("scene.tsx"),
-        "import * as C from \"@celesta/react\";\n\nexport const Intro = () => (\n  <>\n    <C.Sequence from={45} durationInFrames={75}>\n      <C.Rect width={200} />\n    </C.Sequence>\n  </>\n);\n"
+        "import * as C from \"@celesta.studio/react\";\n\nexport const Intro = () => (\n  <>\n    <C.Sequence from={45} durationInFrames={75}>\n      <C.Rect width={200} />\n    </C.Sequence>\n  </>\n);\n"
     );
 }
 

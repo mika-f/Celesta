@@ -1,6 +1,6 @@
-import type { LipSyncTrack } from '@celesta/character';
-import { Easings, Group, Rect, Sequence, progress, spring, useCurrentFrame, useVideoConfig } from '@celesta/react';
-import { CharacterView, Dialogue, useLipSync } from '@celesta/character';
+import type { LipSyncTrack } from '@celesta.studio/character';
+import { Easings, Group, Rect, Sequence, progress, spring, useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
+import { CharacterView, Dialogue, useLipSync } from '@celesta.studio/character';
 import { Label } from '../components/Label';
 import { C, DW, DX } from '../constants';
 import { VOICE, VOICE_AT, VOICE_TEXT, akane, akaneView, lipSync, voiceBars, voiceSeconds } from '../voice';

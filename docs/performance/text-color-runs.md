@@ -25,7 +25,7 @@ omitting it shows all text. The full text still determines width, alignment,
 wrapping and anchors. A ligature or combining cluster uses its first code point's
 color and is revealed as a whole. Color emoji retain their original colors.
 Paint and visibility do not divide shaping runs. These fields also work on
-subtitle styles; language parsing and code themes remain in `@celesta/code`.
+subtitle styles; language parsing and code themes remain in `@celesta.studio/code`.
 
 `GlyphMetrics` now includes `start`, `end` and `rtl`. `textCaret(metrics, offset)`
 returns `{ x, y, line }` from full-source shaping. Native metrics also include

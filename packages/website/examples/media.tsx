@@ -1,5 +1,5 @@
-import { Audio, Composition, Image, Sequence, Video, frameKeyframes } from '@celesta/react';
-import { mediaDurationInFrames, preloadMedia } from '@celesta/media-utils';
+import { Audio, Composition, Image, Sequence, Video, frameKeyframes } from '@celesta.studio/react';
+import { mediaDurationInFrames, preloadMedia } from '@celesta.studio/media-utils';
 
 const FPS = 30;
 let clipFrames = 150;

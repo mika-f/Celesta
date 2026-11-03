@@ -76,7 +76,7 @@ else: status, the composition's size, fps and frame count, every written
 file with its frame numbers, warnings, and on failure an error code and
 message. It suits scripts and AI agents. --json-progress adds a JSON line
 for each progress event before the result, and --stdin-cancel cancels the
-export when stdin reads a `cancel` line or closes; @celesta/exporter uses
+export when stdin reads a `cancel` line or closes; @celesta.studio/exporter uses
 both. --info prints the composition's size, frame rate and length (and a
 React entry's compositions) without rendering.
 

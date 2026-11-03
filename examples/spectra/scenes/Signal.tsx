@@ -1,9 +1,9 @@
 // Chapter 5: a dashboard. Gradient bars, a line chart that draws on, a
 // donut of path arcs, an orbiting particle swarm, and a closing logo that
 // focuses out of a blur.
-import { Easings, Group, Rect, Text, progress, spring, useCurrentFrame } from '@celesta/react';
-import { Circle, Path, Polyline } from '@celesta/shapes';
-import { useCountUp } from '@celesta/text';
+import { Easings, Group, Rect, Text, progress, spring, useCurrentFrame } from '@celesta.studio/react';
+import { Circle, Path, Polyline } from '@celesta.studio/shapes';
+import { useCountUp } from '@celesta.studio/text';
 
 import { DIM, DISPLAY, FPS, INK, MONO, PALETTE, arc, rand, style } from '../shared';
 

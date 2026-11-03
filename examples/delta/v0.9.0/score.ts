@@ -1,5 +1,5 @@
-import { loadAudioSpectrum, spectrumAt } from '@celesta/media-utils';
-import type { AudioSpectrum, AudioSpectrumFrame } from '@celesta/media-utils';
+import { loadAudioSpectrum, spectrumAt } from '@celesta.studio/media-utils';
+import type { AudioSpectrum, AudioSpectrumFrame } from '@celesta.studio/media-utils';
 import { FPS } from '../components/theme';
 
 // The film's own score, analyzed once in prepare(): the meters, the

@@ -3,10 +3,10 @@ import { beforeEach, test } from 'vitest';
 import * as React from 'react';
 import type { ReactElement } from 'react';
 
-import { Composition, Group, Rect, Sequence, Theme } from '@celesta/react';
-import type { Layer, LayerContent, Paint, TextMetrics, ThemeValues } from '@celesta/react';
-import { mount, setTextMeasurer } from '@celesta/react/internal';
-import type { MeasureTextRequest } from '@celesta/react/internal';
+import { Composition, Group, Rect, Sequence, Theme } from '@celesta.studio/react';
+import type { Layer, LayerContent, Paint, TextMetrics, ThemeValues } from '@celesta.studio/react';
+import { mount, setTextMeasurer } from '@celesta.studio/react/internal';
+import type { MeasureTextRequest } from '@celesta.studio/react/internal';
 import { Callout } from '../src/index.js';
 import type { CalloutProps } from '../src/index.js';
 

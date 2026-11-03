@@ -20,7 +20,7 @@ function render(requests: FrameRequest[]): FrameMessage[] {
   const dir = mkdtempSync(join(tmpdir(), 'celesta-open-end-'));
   const entry = join(dir, 'entry.tsx');
   writeFileSync(entry, `
-    import { Composition, Rect, Sequence } from '@celesta/react';
+    import { Composition, Rect, Sequence } from '@celesta.studio/react';
     export default function Film() {
       return <Composition width={64} height={64} fps={30} durationInFrames={4}>
         <Sequence from={2}><Rect width={4} height={4} fill="#ffffff" /></Sequence>

@@ -1,5 +1,5 @@
-import { Composition } from '@celesta/react';
-import { DebugOverlay } from '@celesta/debug';
+import { Composition } from '@celesta.studio/react';
+import { DebugOverlay } from '@celesta.studio/debug';
 import { FPS } from './components/theme';
 import { Fonts } from './v0.9.0/fonts';
 import { PORTRAIT } from './v0.9.0/layout';

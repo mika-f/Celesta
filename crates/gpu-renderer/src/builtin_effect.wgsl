@@ -1,6 +1,6 @@
 // The built-in stylize effects and the chroma key (`LayerFilter`), assembled
 // like a custom shader (`shader.rs`) with two parameters: `op` is the
-// effect's kind and its first three values, `more` the rest. `@celesta/web`
+// effect's kind and its first three values, `more` the rest. `@celesta.studio/web`
 // repeats this arithmetic in `packages/web/src/filters.ts`.
 
 const PIXELATE: u32 = 0u;

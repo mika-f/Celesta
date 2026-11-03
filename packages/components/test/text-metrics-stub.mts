@@ -2,9 +2,9 @@
 // characters are a full em wide, others half an em (0.6 em in "mono"); `\n`
 // breaks lines; the line box is 1.25 em with the baseline 1 em down.
 
-import type { TextMetrics, TextStyle } from '@celesta/react';
-import { setTextMeasurer } from '@celesta/react/internal';
-import type { MeasureTextRequest } from '@celesta/react/internal';
+import type { TextMetrics, TextStyle } from '@celesta.studio/react';
+import { setTextMeasurer } from '@celesta.studio/react/internal';
+import type { MeasureTextRequest } from '@celesta.studio/react/internal';
 
 function advance(character: string, style: TextStyle): number {
   const size = style.fontSize ?? 20;

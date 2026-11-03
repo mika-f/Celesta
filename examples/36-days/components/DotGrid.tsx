@@ -1,5 +1,5 @@
-import { PatternBackground } from '@celesta/components';
-import { useBeat } from '@celesta/react';
+import { PatternBackground } from '@celesta.studio/components';
+import { useBeat } from '@celesta.studio/react';
 import { BPM, C } from '../constants';
 
 // Faint square dots every 80 px that brighten on the beat, each by its own

@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'vitest';
 
-import type { LayerSourceReport, OccurrenceIndex } from '@celesta/react/internal';
+import type { LayerSourceReport, OccurrenceIndex } from '@celesta.studio/react/internal';
 import type { FrameMessage, Request } from '../src/cli.js';
 import { contentOf } from './layer-content.mjs';
 
@@ -29,14 +29,14 @@ function run(requests: Request[], flags = ['--source-locations']) {
   const title = join(dir, 'title.tsx');
   // The Rect is on line 3, column 10 of title.tsx.
   writeFileSync(title, [
-    "import { Rect } from '@celesta/react';",
+    "import { Rect } from '@celesta.studio/react';",
     'export function Title() {',
     '  return <Rect id="title-rect" width={4} height={4} fill="#ffffff" />;',
     '}',
     '',
   ].join('\n'));
   writeFileSync(entry, `
-    import { Composition, Rect, Static, Text } from '@celesta/react';
+    import { Composition, Rect, Static, Text } from '@celesta.studio/react';
     import { Title } from './title';
     export default function Film() {
       return <Composition width={64} height={64} fps={30} durationInFrames={3}>
@@ -135,8 +135,8 @@ function runCharacter(requests: Request[]) {
   // The <CharacterView> is on line 9, column 7; the <Dialogue> on line 10, column 7.
   writeFileSync(entry, [
     "import React from 'react';",
-    "import { Assets, Composition } from '@celesta/react';",
-    "import { Character, CharacterView, Dialogue } from '@celesta/character';",
+    "import { Assets, Composition } from '@celesta.studio/react';",
+    "import { Character, CharacterView, Dialogue } from '@celesta.studio/character';",
     'const character = React.createRef();',
     'const view = React.createRef();',
     'export default function Film() {',

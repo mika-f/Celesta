@@ -4,7 +4,7 @@
 // `crates/composition/tests/fixtures/duck-curves.json` pins the curves to.
 // Only types are imported, so browser export can load this file alone.
 
-import type { AnimatedNumber, AudioDuck } from '@celesta/react';
+import type { AnimatedNumber, AudioDuck } from '@celesta.studio/react';
 
 /** A clip's ducking with the defaults applied, in seconds; `to` is a multiplier. */
 export interface ResolvedDuck {

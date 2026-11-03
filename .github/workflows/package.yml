@@ -107,7 +107,7 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # @celesta/web imports Rust-generated types from @celesta/react.
+      # @celesta.studio/web imports Rust-generated types from @celesta.studio/react.
       # Each job has a fresh checkout, so generate them before building the website.
       - name: Generate TypeScript bindings
         run: pnpm --dir packages/react run codegen --locked

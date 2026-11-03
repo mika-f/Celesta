@@ -24,8 +24,8 @@
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 
-import type { AnimatedNumber } from '@celesta/react';
-import { entryRelativePath, isRemoteUrl } from '@celesta/react/internal';
+import type { AnimatedNumber } from '@celesta.studio/react';
+import { entryRelativePath, isRemoteUrl } from '@celesta.studio/react/internal';
 
 import type { DialogueLine } from './dialogue-series';
 import { decodeWavChannels } from './lipsync';

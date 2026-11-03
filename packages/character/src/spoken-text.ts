@@ -5,7 +5,7 @@
 
 import * as fs from 'node:fs';
 
-import { entryRelativePath, isRemoteUrl, trackPrepareDependency } from '@celesta/react/internal';
+import { entryRelativePath, isRemoteUrl, trackPrepareDependency } from '@celesta.studio/react/internal';
 
 import type { DialogueLine } from './dialogue-series';
 import { decodeWav, lipSyncFromAudio, vowelShapes } from './lipsync';

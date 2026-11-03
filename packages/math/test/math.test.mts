@@ -81,7 +81,7 @@ test('random and noise are deterministic and stay in range', () => {
   assert.throws(() => noise(1, Number.POSITIVE_INFINITY), /noise\(\) requires a finite t/);
 });
 
-test('random and noise keep the values they had in @celesta/react', () => {
+test('random and noise keep the values they had in @celesta.studio/react', () => {
   // Existing compositions must render the same after moving packages.
   assert.equal(random(7), 0.3443175407592207);
   assert.equal(random('star-3-x'), 0.11351002054288983);

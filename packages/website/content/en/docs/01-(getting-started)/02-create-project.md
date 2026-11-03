@@ -71,7 +71,7 @@ Install external packages in the project that imports them. For a project outsid
 pnpm add ag-psd
 ```
 
-Preview and export resolve external imports from the importing file’s project `node_modules`. Celesta supplies every `@celesta/*` package and React from its runtime; you do not need to install them in an external project.
+Preview and export resolve external imports from the importing file’s project `node_modules`. Celesta supplies every `@celesta.studio/*` package and React from its runtime; you do not need to install them in an external project.
 
 Node asset preparation scripts use the same dependencies. Save this as `prepare-assets.mjs` beside `package.json`, with `portrait.psd` in the same folder:
 

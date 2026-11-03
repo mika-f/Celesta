@@ -1,4 +1,4 @@
-import { Composition, Rect } from '@celesta/react';
+import { Composition, Rect } from '@celesta.studio/react';
 
 export default function Root() {
   return (

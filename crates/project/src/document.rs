@@ -106,7 +106,7 @@ pub struct ProjectSettings {
     /// resolves against. Nothing in `celesta-project` or `celesta-evaluator`
     /// reads this — it exists so a GUI editor knows which Node process to
     /// query for a registered component's property schema (see
-    /// `@celesta/react`'s `registerComponent`/`ComponentPropertySchema`).
+    /// `@celesta.studio/react`'s `registerComponent`/`ComponentPropertySchema`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub react_entry: Option<String>,
 }

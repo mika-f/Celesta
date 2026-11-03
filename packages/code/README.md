@@ -1,13 +1,13 @@
-# @celesta/code
+# @celesta.studio/code
 
 Optional syntax-highlighted code for Celesta React compositions. It uses
 twinkleplop to tokenize source and Celesta's `Text` and `Rect` to draw it.
-`@celesta/react` does not depend on or re-export this package.
+`@celesta.studio/react` does not depend on or re-export this package.
 
 ## Build and try
 
-Building `@celesta/cli` as described in the root README also builds
-`@celesta/code` and stages its TypeScript support. From the repository root:
+Building `@celesta.studio/cli` as described in the root README also builds
+`@celesta.studio/code` and stages its TypeScript support. From the repository root:
 
 ```sh
 pnpm install
@@ -17,14 +17,14 @@ cargo run -p celesta-editor --release -- packages/code/examples/highlight.tsx
 cargo run -p celesta-editor --release -- packages/code/examples/lines.tsx
 ```
 
-Like `@celesta/react`, this package is currently private and has not been
-published to npm. It depends on the matching `@celesta/react` runtime and
+Like `@celesta.studio/react`, this package is currently private and has not been
+published to npm. It depends on the matching `@celesta.studio/react` runtime and
 React 19 as peers. Celesta's desktop app ships it as a separate package;
 the CLI resolves it from that runtime when a composition imports it, sharing
 the CLI's React and Celesta instances.
 
 Choose **File > Set Up TypeScript** with a React composition open. Its
-`.celesta/` support directory automatically includes the `@celesta/code`
+`.celesta/` support directory automatically includes the `@celesta.studio/code`
 declarations and import mapping, alongside the other Celesta packages.
 You can import `Code` without adding a dependency or installing from npm,
 including in repository compositions under `examples/<name>`.
@@ -34,15 +34,15 @@ General example dependency setup and a possible `celesta-editor --init`
 command are tracked in
 [#107](https://github.com/mika-f/Celesta/issues/107).
 
-The browser playground currently only accepts `@celesta/react`, `@celesta/math`, and `react`
+The browser playground currently only accepts `@celesta.studio/react`, `@celesta.studio/math`, and `react`
 imports, and does not support this optional package. Browser integration is
 tracked in [#100](https://github.com/mika-f/Celesta/issues/100).
 
 ## Code
 
 ```tsx
-import { useTypewriter } from '@celesta/text';
-import { Code, codeThemes } from '@celesta/code';
+import { useTypewriter } from '@celesta.studio/text';
+import { Code, codeThemes } from '@celesta.studio/code';
 
 const source = `const message: string = 'Hello, Celesta.';`;
 const style = { fontFamily: 'IBM Plex Mono', fontSize: 24, lineHeight: 36 };
@@ -152,7 +152,7 @@ It is a plain function and can be used outside React. For example, to reveal
 the first three lines when the source has a fourth line:
 
 ```tsx
-import { Code, codeCharacterCount } from '@celesta/code';
+import { Code, codeCharacterCount } from '@celesta.studio/code';
 
 function FirstThreeLines({ source }: { source: string }) {
   const count = codeCharacterCount(source, { line: 4, column: 1 });
@@ -197,8 +197,8 @@ Draw each non-empty line as one `Text` with `Code`'s style, its baseline at the
 ascent of `'M'` below the line's top, to match `Code` exactly:
 
 ```tsx
-import { Group, Text, useTextMetrics } from '@celesta/react';
-import { codeThemes, highlightCode } from '@celesta/code';
+import { Group, Text, useTextMetrics } from '@celesta.studio/react';
+import { codeThemes, highlightCode } from '@celesta.studio/code';
 
 const style = { fontFamily: 'IBM Plex Mono', fontSize: 24, lineHeight: 36 };
 const theme = codeThemes.dark;

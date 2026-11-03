@@ -4,10 +4,10 @@
 import * as React from 'react';
 import type { ReactNode } from 'react';
 
-import { LayoutBounds } from '@celesta/layout';
-import type { Insets } from '@celesta/layout';
-import { Text, useTextMetrics } from '@celesta/react';
-import type { TextShorthand, TextStyle } from '@celesta/react';
+import { LayoutBounds } from '@celesta.studio/layout';
+import type { Insets } from '@celesta.studio/layout';
+import { Text, useTextMetrics } from '@celesta.studio/react';
+import type { TextShorthand, TextStyle } from '@celesta.studio/react';
 
 import { Panel } from './panel';
 import type { PanelProps } from './panel';

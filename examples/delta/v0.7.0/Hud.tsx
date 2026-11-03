@@ -1,5 +1,5 @@
-import { Group, Rect, Text, useCurrentFrame } from '@celesta/react';
-import { useAudioSpectrum } from '@celesta/media-utils';
+import { Group, Rect, Text, useCurrentFrame } from '@celesta.studio/react';
+import { useAudioSpectrum } from '@celesta.studio/media-utils';
 import { C, FONT, solid } from '../components/theme';
 import { scoreSpectrum } from './score';
 

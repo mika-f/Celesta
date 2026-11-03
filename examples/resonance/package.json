@@ -1,5 +1,5 @@
 {
-  "name": "@celesta/example-resonance",
+  "name": "@celesta.studio/example-resonance",
   "private": true,
   "scripts": {
     "preview": "celesta-editor film.tsx",

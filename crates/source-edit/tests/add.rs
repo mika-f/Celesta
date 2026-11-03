@@ -37,7 +37,7 @@ fn rect() -> NewElement {
 
 const RECT: &str = "<Rect x={120} y={80} width={320} height={180} fill=\"#4F7CFF\" />";
 
-const IMPORTS: &str = "import { Group, Image, Rect, Sequence, Text, Video } from '@celesta/react';\nimport { Circle, Ellipse } from '@celesta/shapes';\n\n";
+const IMPORTS: &str = "import { Group, Image, Rect, Sequence, Text, Video } from '@celesta.studio/react';\nimport { Circle, Ellipse } from '@celesta.studio/shapes';\n\n";
 
 const TIMING: Timing = Timing {
     from: 45,
@@ -95,10 +95,10 @@ fn opens_a_self_closing_parent() {
     );
 
     // With attributes, and a member tag closed by its name.
-    let text = "import * as C from '@celesta/react';\n\nconst a = (\n  <C.Group>\n    <C.Group x={10}/>\n  </C.Group>\n);\n";
+    let text = "import * as C from '@celesta.studio/react';\n\nconst a = (\n  <C.Group>\n    <C.Group x={10}/>\n  </C.Group>\n);\n";
     assert_eq!(
         add(text, "<C.Group x", &rect(), None),
-        "import * as C from '@celesta/react';\n\nconst a = (\n  <C.Group>\n    <C.Group x={10}>\n      <C.Rect x={120} y={80} width={320} height={180} fill=\"#4F7CFF\" />\n    </C.Group>\n  </C.Group>\n);\n"
+        "import * as C from '@celesta.studio/react';\n\nconst a = (\n  <C.Group>\n    <C.Group x={10}>\n      <C.Rect x={120} y={80} width={320} height={180} fill=\"#4F7CFF\" />\n    </C.Group>\n  </C.Group>\n);\n"
     );
 }
 
@@ -193,10 +193,10 @@ fn writes_each_kind_s_literals() {
 
     assert_eq!(rect().kind(), NewKind::Rect);
     assert_eq!(NewKind::Ellipse.tag(), "Ellipse");
-    assert_eq!(NewKind::Ellipse.module(), "@celesta/shapes");
-    assert_eq!(NewKind::Circle.module(), "@celesta/shapes");
+    assert_eq!(NewKind::Ellipse.module(), "@celesta.studio/shapes");
+    assert_eq!(NewKind::Circle.module(), "@celesta.studio/shapes");
     for kind in [NewKind::Rect, NewKind::Text, NewKind::Image, NewKind::Video] {
-        assert_eq!(kind.module(), "@celesta/react", "{kind:?}");
+        assert_eq!(kind.module(), "@celesta.studio/react", "{kind:?}");
     }
 }
 
@@ -233,11 +233,11 @@ fn imports_from_react_and_shapes() {
         width: 10.0,
         height: 10.0,
     };
-    let text = format!("import {{ Group }} from '@celesta/react';\n{body}");
+    let text = format!("import {{ Group }} from '@celesta.studio/react';\n{body}");
     let after = add(&text, "<Group", &ellipse, None);
     assert!(
         after.starts_with(
-            "import { Group } from '@celesta/react';\nimport { Ellipse } from '@celesta/shapes';\n\nconst a = (\n  <Group>\n    <Ellipse "
+            "import { Group } from '@celesta.studio/react';\nimport { Ellipse } from '@celesta.studio/shapes';\n\nconst a = (\n  <Group>\n    <Ellipse "
         ),
         "{after}"
     );
@@ -246,19 +246,19 @@ fn imports_from_react_and_shapes() {
     let after = add(&text, "<Group", &ellipse, Some(&TIMING));
     assert!(
         after.starts_with(
-            "import { Group, Sequence } from '@celesta/react';\nimport { Ellipse } from '@celesta/shapes';\n"
+            "import { Group, Sequence } from '@celesta.studio/react';\nimport { Ellipse } from '@celesta.studio/shapes';\n"
         ),
         "{after}"
     );
 
-    // Into an existing `@celesta/shapes` import.
+    // Into an existing `@celesta.studio/shapes` import.
     let text = format!(
-        "import {{ Group }} from '@celesta/react';\nimport {{ Circle }} from '@celesta/shapes';\n{body}"
+        "import {{ Group }} from '@celesta.studio/react';\nimport {{ Circle }} from '@celesta.studio/shapes';\n{body}"
     );
     let after = add(&text, "<Group", &ellipse, None);
     assert!(
         after.starts_with(
-            "import { Group } from '@celesta/react';\nimport { Circle, Ellipse } from '@celesta/shapes';\n"
+            "import { Group } from '@celesta.studio/react';\nimport { Circle, Ellipse } from '@celesta.studio/shapes';\n"
         ),
         "{after}"
     );
@@ -283,31 +283,31 @@ fn adds_a_component_of_another_module() {
         assert!(parses(&after), "{after}");
         after
     };
-    let text = format!("import {{ Group }} from '@celesta/react';\n{body}");
+    let text = format!("import {{ Group }} from '@celesta.studio/react';\n{body}");
     assert_eq!(
         component(&text, None),
-        "import { Group } from '@celesta/react';\nimport { Flag } from '@celesta-plugin/flag';\n\nconst a = (\n  <Group>\n    <Flag src=\"./flag.png\" x={40} amplitude={0.1} double={true} />\n  </Group>\n);\n"
+        "import { Group } from '@celesta.studio/react';\nimport { Flag } from '@celesta-plugin/flag';\n\nconst a = (\n  <Group>\n    <Flag src=\"./flag.png\" x={40} amplitude={0.1} double={true} />\n  </Group>\n);\n"
     );
 
     // Wrapped: `Sequence` from Celesta, `Flag` from the plugin.
     let after = component(&text, Some(&TIMING));
     assert!(
         after.starts_with(
-            "import { Group, Sequence } from '@celesta/react';\nimport { Flag } from '@celesta-plugin/flag';\n"
+            "import { Group, Sequence } from '@celesta.studio/react';\nimport { Flag } from '@celesta-plugin/flag';\n"
         ),
         "{after}"
     );
 
     // An existing import of the module is reused, under its name.
     let text = format!(
-        "import {{ Group }} from '@celesta/react';\nimport {{ Flag as Banner }} from '@celesta-plugin/flag';\n{body}"
+        "import {{ Group }} from '@celesta.studio/react';\nimport {{ Flag as Banner }} from '@celesta-plugin/flag';\n{body}"
     );
     let after = component(&text, None);
     assert!(after.contains("<Banner src="), "{after}");
     assert_eq!(after.matches("@celesta-plugin/flag").count(), 1, "{after}");
 
     // A `Flag` that is not the plugin's locks the addition.
-    let text = format!("import {{ Group }} from '@celesta/react';\nconst Flag = 1;\n{body}");
+    let text = format!("import {{ Group }} from '@celesta.studio/react';\nconst Flag = 1;\n{body}");
     assert!(matches!(
         add_component(&text, &element(&text, "<Group"), &flag, None),
         Err(AddLock::Import(ImportLock::Clash { .. }))
@@ -319,7 +319,7 @@ fn adds_a_component_of_another_module() {
         tag: "Sequence".into(),
         ..flag.clone()
     };
-    let text = format!("import {{ Group }} from '@celesta/react';\n{body}");
+    let text = format!("import {{ Group }} from '@celesta.studio/react';\n{body}");
     let parent = element(&text, "<Group");
     assert_eq!(
         add_component(&text, &parent, &sequence, Some(&TIMING)),
@@ -343,7 +343,7 @@ fn a_shapes_alias_or_namespace_is_written() {
 
     // `import * as S`: `<S.Ellipse />`, the imports untouched.
     let imports =
-        "import { Group } from '@celesta/react';\nimport * as S from '@celesta/shapes';\n";
+        "import { Group } from '@celesta.studio/react';\nimport * as S from '@celesta.studio/shapes';\n";
     let text = format!("{imports}{body}");
     let added = add_child(&text, &element(&text, "<Group"), &ellipse, None).unwrap();
     assert_eq!(added.edits.len(), 1);
@@ -356,7 +356,7 @@ fn a_shapes_alias_or_namespace_is_written() {
     );
 
     // `Ellipse as E`: `<E />`.
-    let imports = "import { Group } from '@celesta/react';\nimport { Ellipse as E } from '@celesta/shapes';\n";
+    let imports = "import { Group } from '@celesta.studio/react';\nimport { Ellipse as E } from '@celesta.studio/shapes';\n";
     let text = format!("{imports}{body}");
     let after = add(&text, "<Group", &ellipse, None);
     assert!(
@@ -370,14 +370,14 @@ fn a_shapes_alias_or_namespace_is_written() {
 #[test]
 fn rect_and_sequence_both_new_land_in_one_import() {
     let body = "\nconst a = (\n  <Group>\n  </Group>\n);\n";
-    let text = format!("import {{ Group, Text }} from '@celesta/react';\n{body}");
+    let text = format!("import {{ Group, Text }} from '@celesta.studio/react';\n{body}");
     let added = add_child(&text, &element(&text, "<Group"), &rect(), Some(&TIMING)).unwrap();
     // The import edit and the insertion.
     assert_eq!(added.edits.len(), 2);
     let after = apply(&text, &added.edits).unwrap();
     assert!(parses(&after), "{after}");
     assert!(
-        after.starts_with("import { Group, Rect, Sequence, Text } from '@celesta/react';\n\n"),
+        after.starts_with("import { Group, Rect, Sequence, Text } from '@celesta.studio/react';\n\n"),
         "{after}"
     );
 
@@ -386,7 +386,7 @@ fn rect_and_sequence_both_new_land_in_one_import() {
     let after = add(&text, "<Group", &rect(), Some(&TIMING));
     assert!(
         after.starts_with(
-            "import React from 'react';\nimport { Rect, Sequence } from '@celesta/react';\n\n"
+            "import React from 'react';\nimport { Rect, Sequence } from '@celesta.studio/react';\n\n"
         ),
         "{after}"
     );
@@ -394,7 +394,7 @@ fn rect_and_sequence_both_new_land_in_one_import() {
     let after = add(&text, "<Group", &rect(), Some(&TIMING));
     assert!(
         after.starts_with(
-            "import React from \"react\"\nimport { Rect, Sequence } from \"@celesta/react\"\n\n"
+            "import React from \"react\"\nimport { Rect, Sequence } from \"@celesta.studio/react\"\n\n"
         ),
         "{after}"
     );
@@ -415,7 +415,7 @@ fn already_imported_needs_nothing() {
     assert_eq!(added.edits.len(), 1);
 
     // An alias is written as imported.
-    let text = "import { Group, Rect as R, Sequence as S } from '@celesta/react';\n\nconst a = <Group></Group>;\n";
+    let text = "import { Group, Rect as R, Sequence as S } from '@celesta.studio/react';\n\nconst a = <Group></Group>;\n";
     let after = add(text, "<Group", &rect(), Some(&TIMING));
     assert!(
         after.contains(
@@ -427,16 +427,16 @@ fn already_imported_needs_nothing() {
 
 #[test]
 fn a_namespace_import_writes_members() {
-    let text = "import * as C from '@celesta/react';\n\nconst a = (\n  <C.Group>\n    <C.Rect />\n  </C.Group>\n);\n";
+    let text = "import * as C from '@celesta.studio/react';\n\nconst a = (\n  <C.Group>\n    <C.Rect />\n  </C.Group>\n);\n";
     assert_eq!(
         add(text, "<C.Group", &rect(), Some(&TIMING)),
-        "import * as C from '@celesta/react';\n\nconst a = (\n  <C.Group>\n    <C.Rect />\n    <C.Sequence from={45} durationInFrames={75}>\n      <C.Rect x={120} y={80} width={320} height={180} fill=\"#4F7CFF\" />\n    </C.Sequence>\n  </C.Group>\n);\n"
+        "import * as C from '@celesta.studio/react';\n\nconst a = (\n  <C.Group>\n    <C.Rect />\n    <C.Sequence from={45} durationInFrames={75}>\n      <C.Rect x={120} y={80} width={320} height={180} fill=\"#4F7CFF\" />\n    </C.Sequence>\n  </C.Group>\n);\n"
     );
 }
 
 #[test]
 fn a_clashing_binding_locks() {
-    let text = "import { Group, Text } from '@celesta/react';\n\nconst Rect = () => null;\n\nconst a = (\n  <Group>\n  </Group>\n);\n";
+    let text = "import { Group, Text } from '@celesta.studio/react';\n\nconst Rect = () => null;\n\nconst a = (\n  <Group>\n  </Group>\n);\n";
     let parent = element(text, "<Group");
     let lock = AddLock::Import(ImportLock::Clash {
         name: "Rect".to_string(),
@@ -452,7 +452,7 @@ fn a_clashing_binding_locks() {
     assert_eq!(add_lock(text, &parent, NewKind::Text, true), None);
 
     // A clashing `Sequence` locks only a wrapped addition.
-    let text = "import { Group } from '@celesta/react';\n\nfunction Sequence() {}\n\nconst a = <Group></Group>;\n";
+    let text = "import { Group } from '@celesta.studio/react';\n\nfunction Sequence() {}\n\nconst a = <Group></Group>;\n";
     let parent = element(text, "<Group");
     let lock = AddLock::Import(ImportLock::Clash {
         name: "Sequence".to_string(),
@@ -495,7 +495,7 @@ fn every_kind_s_lock_at_once() {
 
     // `Rect` clashes; so does `Sequence`, for a wrapped addition only, and
     // a wrapped `Rect` names `Rect`, imported first.
-    let text = "import { Group } from '@celesta/react';\n\nconst Rect = () => null;\nfunction Sequence() {}\n\nconst a = (\n  <Group>\n  </Group>\n);\n";
+    let text = "import { Group } from '@celesta.studio/react';\n\nconst Rect = () => null;\nfunction Sequence() {}\n\nconst a = (\n  <Group>\n  </Group>\n);\n";
     let parent = element(text, "<Group");
     assert_eq!(
         add_locks(text, &parent, &kinds, false),
@@ -515,7 +515,7 @@ fn every_kind_s_lock_at_once() {
     );
 
     // `Circle` clashes, from the other module.
-    let text = "import { Group } from '@celesta/react';\n\nconst Circle = 1;\n\nconst a = <Group></Group>;\n";
+    let text = "import { Group } from '@celesta.studio/react';\n\nconst Circle = 1;\n\nconst a = <Group></Group>;\n";
     let parent = element(text, "<Group");
     for wrapped in [false, true] {
         assert_eq!(

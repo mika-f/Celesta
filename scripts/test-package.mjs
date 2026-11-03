@@ -41,7 +41,7 @@ try {
   assertNoLinks(runtime);
   writeFileSync(entry, `
 import { useState } from 'react';
-import { Composition, Text, useCurrentFrame } from '@celesta/react';
+import { Composition, Text, useCurrentFrame } from '@celesta.studio/react';
 function Content() {
   const [text] = useState('Celesta');
   const frame = useCurrentFrame();
@@ -67,28 +67,28 @@ export default function Root() {
     'Package must include the TypeScript support template',
   );
   assert.ok(
-    existsSync(join(runtime, 'react/dist/project-types/node_modules/@celesta/code/dist/index.d.ts')),
+    existsSync(join(runtime, 'react/dist/project-types/node_modules/@celesta.studio/code/dist/index.d.ts')),
     'Set Up TypeScript must include Code declarations',
   );
   assert.ok(
-    existsSync(join(runtime, 'react/dist/project-types/node_modules/@celesta/voicevox/dist/index.d.ts')),
+    existsSync(join(runtime, 'react/dist/project-types/node_modules/@celesta.studio/voicevox/dist/index.d.ts')),
     'Set Up TypeScript must include VOICEVOX declarations',
   );
   assert.ok(
-    existsSync(join(runtime, 'react/dist/project-types/node_modules/@celesta/aivis-speech/dist/index.d.ts')),
+    existsSync(join(runtime, 'react/dist/project-types/node_modules/@celesta.studio/aivis-speech/dist/index.d.ts')),
     'Set Up TypeScript must include AivisSpeech declarations',
   );
   assert.ok(
-    existsSync(join(runtime, 'react/dist/project-types/node_modules/@celesta/character/dist/index.d.ts')),
+    existsSync(join(runtime, 'react/dist/project-types/node_modules/@celesta.studio/character/dist/index.d.ts')),
     'Set Up TypeScript must include the split package declarations',
   );
   writeFileSync(entry, `
-import { Composition } from '@celesta/react';
-import { Code, codeCharacterCount } from '@celesta/code';
-import { Center } from '@celesta/layout';
-import { Circle } from '@celesta/shapes';
-import { lipSyncFromVoicevox } from '@celesta/voicevox';
-import { lipSyncFromAivisSpeech } from '@celesta/aivis-speech';
+import { Composition } from '@celesta.studio/react';
+import { Code, codeCharacterCount } from '@celesta.studio/code';
+import { Center } from '@celesta.studio/layout';
+import { Circle } from '@celesta.studio/shapes';
+import { lipSyncFromVoicevox } from '@celesta.studio/voicevox';
+import { lipSyncFromAivisSpeech } from '@celesta.studio/aivis-speech';
 const track = lipSyncFromVoicevox({ accent_phrases: [{ moras: [{ vowel: 'a', vowel_length: 0.2 }] }] });
 if (track.mouthAtSeconds(0.1) !== 'a') throw new Error('VOICEVOX lip sync failed');
 const aivis = lipSyncFromAivisSpeech({ accent_phrases: [{ moras: [{ text: 'ア', vowel: 'a' }] }] },

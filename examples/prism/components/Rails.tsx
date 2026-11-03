@@ -1,4 +1,4 @@
-import { Rect } from '@celesta/react';
+import { Rect } from '@celesta.studio/react';
 import { Label } from './Label';
 import { INK, PAPER } from '../constants';
 

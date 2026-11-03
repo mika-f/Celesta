@@ -1,4 +1,4 @@
-import { Audio, Composition, Sequence, Text, frameKeyframes } from '@celesta/react';
+import { Audio, Composition, Sequence, Text, frameKeyframes } from '@celesta.studio/react';
 
 const FPS = 30;
 const DURATION = 90;

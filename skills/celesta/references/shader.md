@@ -1,7 +1,7 @@
-# @celesta/shader: custom WGSL filters
+# @celesta.studio/shader: custom WGSL filters
 
 ```tsx
-import { defineShader } from '@celesta/shader';
+import { defineShader } from '@celesta.studio/shader';
 import rippleSource from './ripple.wgsl';
 ```
 
@@ -14,7 +14,7 @@ Celesta's runtime supplies the package; never install it from npm.
 
 Shaders run in the desktop preview and in export (on the GPU), including
 in components placed on project timelines (`registerComponent` resolved
-into a `.celesta.json`). The browser editor (`@celesta/web`) cannot run
+into a `.celesta.json`). The browser editor (`@celesta.studio/web`) cannot run
 them; it runs the built-in filters.
 
 ## Contents
@@ -167,11 +167,11 @@ scanlines, a zoom blur, or a chroma key, write no WGSL: each layer and
 `Group` takes them as props (`<Image src="a.png" saturation={0.4}
 vignette={0.5} />`; see the layer props in [react-core.md](react-core.md)).
 The props run after `shader`, in a fixed order. To place a built-in filter
-elsewhere among custom shaders, use its function from `@celesta/shader` in
+elsewhere among custom shaders, use its function from `@celesta.studio/shader` in
 the `shader` array:
 
 ```tsx
-import { brightness, contrast, grayscale, hue, invert, saturation, tint, vignette } from '@celesta/shader';
+import { brightness, contrast, grayscale, hue, invert, saturation, tint, vignette } from '@celesta.studio/shader';
 
 <Group shader={[ripple({ time }), grayscale(), tint({ color: '#704214', amount: 0.35 }), vignette(0.6)]}>…</Group>
 ```

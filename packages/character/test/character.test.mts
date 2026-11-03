@@ -1,5 +1,5 @@
 // PSD portraits through the CLI. These are integration tests of the build:
-// the CLI loads @celesta/character from dist/, so run them after
+// the CLI loads @celesta.studio/character from dist/, so run them after
 // `pnpm run build:runtime` (repository root).
 
 import assert from 'node:assert/strict';
@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'vitest';
 
-import type { Layer, LayerContent } from '@celesta/react';
+import type { Layer, LayerContent } from '@celesta.studio/react';
 import { errorOf, frameOf, parseMessage } from './render-cli.mjs';
 
 const cli = fileURLToPath(new URL('../../cli/bin/celesta-react-render.js', import.meta.url));
@@ -28,7 +28,7 @@ function renderPortrait({ portrait, view = '', dialogue }: { portrait: string; v
   writeFileSync(
     entry,
     `import * as React from 'react';\n` +
-      `import { Assets, Composition } from '@celesta/react'; import { Character, CharacterView, Dialogue } from '@celesta/character';\n` +
+      `import { Assets, Composition } from '@celesta.studio/react'; import { Character, CharacterView, Dialogue } from '@celesta.studio/character';\n` +
       `const hana = React.createRef();\n` +
       `const view = React.createRef();\n` +
       `export default function Root() {\n` +

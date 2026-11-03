@@ -11,7 +11,7 @@
     "types": ["node"]
   },
   "include": ["./**/*.ts"],
-  // The package's tsconfig has no references; @celesta/character is the
+  // The package's tsconfig has no references; @celesta.studio/character is the
   // workspace package src/ and the tests import.
   "references": [{ "path": "../../character" }]
 }

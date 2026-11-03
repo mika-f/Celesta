@@ -1,9 +1,9 @@
 import * as React from 'react';
 import type { ReactNode } from 'react';
 
-import { Group, Sequence, frameKeyframes, useCurrentFrame, useVideoConfig } from '@celesta/react';
-import type { AnimatedNumber, CommonProps } from '@celesta/react';
-import { useLayoutBounds } from '@celesta/layout';
+import { Group, Sequence, frameKeyframes, useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
+import type { AnimatedNumber, CommonProps } from '@celesta.studio/react';
+import { useLayoutBounds } from '@celesta.studio/layout';
 
 import { BUILT_IN_TRANSITIONS } from './built-in-transitions';
 import { isTransitionDefinition } from './presentation';
@@ -331,7 +331,7 @@ export interface TransitionSeriesProps {
    * the `width` a defined transition gets. Set it, with `height`, when the
    * series plays in a frame smaller than the composition, positioned by an
    * enclosing `Group`. Defaults to the enclosing `<SafeArea>`'s or `<Fit>`'s
-   * width (see `useLayoutBounds()` in `@celesta/layout`), or the
+   * width (see `useLayoutBounds()` in `@celesta.studio/layout`), or the
    * composition's.
    */
   width?: number;

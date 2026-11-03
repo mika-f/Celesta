@@ -1,9 +1,9 @@
 import * as React from 'react';
 
-import { clamp01, random } from '@celesta/math';
-import { Mask, Rect } from '@celesta/react';
-import type { Paint, PathCommand } from '@celesta/react';
-import { Path } from '@celesta/shapes';
+import { clamp01, random } from '@celesta.studio/math';
+import { Mask, Rect } from '@celesta.studio/react';
+import type { Paint, PathCommand } from '@celesta.studio/react';
+import { Path } from '@celesta.studio/shapes';
 
 import { defineTransition } from './presentation';
 import type { TransitionDefinition, TransitionSceneStyle, TransitionSeriesEdge } from './presentation';

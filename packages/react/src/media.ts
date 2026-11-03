@@ -61,7 +61,7 @@ export function setMediaProbe(next: (path: string) => Promise<ProbedMediaInfo>):
 }
 
 /**
- * `@celesta/media-utils`' `preloadMedia()`: probes and caches media metadata
+ * `@celesta.studio/media-utils`' `preloadMedia()`: probes and caches media metadata
  * during an entry's async `prepare()`. The cache lives here, beside the probe
  * the CLI installs. Relative paths resolve from the entry file, matching
  * `<Video>` and `<Audio>`; an `http`/`https` URL is downloaded into Celesta's
@@ -106,7 +106,7 @@ export function setAudioDecoder(next: (path: string) => Promise<DecodedAudio>): 
  */
 export function decodeAudio(src: string): Promise<DecodedAudio> {
   if (!audioDecoder) {
-    return Promise.reject(new Error('decoding audio requires a Celesta editor, exporter, or @celesta/web runtime'));
+    return Promise.reject(new Error('decoding audio requires a Celesta editor, exporter, or @celesta.studio/web runtime'));
   }
   const path = isRemoteUrl(src) ? src : entryRelativePath(src);
   let pending = decoded.get(path);

@@ -1,5 +1,5 @@
-import { Assets, Font, Group, Subtitles, progress, useCurrentFrame } from '@celesta/react';
-import { TransitionSeries, computeTransitionSeries } from '@celesta/transitions';
+import { Assets, Font, Group, Subtitles, progress, useCurrentFrame } from '@celesta.studio/react';
+import { TransitionSeries, computeTransitionSeries } from '@celesta.studio/transitions';
 import { CUT, ChapterShell } from '../components/ChapterShell';
 import { japaneseText } from '../components/theme';
 import { CAPTIONS, CAPTION_LANGUAGES } from './captions';

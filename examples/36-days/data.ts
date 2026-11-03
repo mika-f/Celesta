@@ -19,7 +19,7 @@ export const NON_MERGE = DAYS.reduce((n, d) => n + d.commits, 0);
 export const SOURCES = [
   { name: 'editor', lines: 5176 },
   { name: 'gpu-renderer', lines: 4610 },
-  { name: '@celesta/react', lines: 3418, ts: true },
+  { name: '@celesta.studio/react', lines: 3418, ts: true },
   { name: 'renderer', lines: 2859 },
   { name: 'exporter', lines: 2601 },
   { name: 'react-bridge', lines: 2248 },

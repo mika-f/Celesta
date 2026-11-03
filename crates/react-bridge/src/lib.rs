@@ -1,4 +1,4 @@
-//! Spawns the `@celesta/cli` Node.js runtime and evaluates a React
+//! Spawns the `@celesta.studio/cli` Node.js runtime and evaluates a React
 //! composition into the shared `celesta_composition::Scene` model.
 //!
 //! A single Node process is kept alive for the lifetime of a [`ReactBridge`]
@@ -36,7 +36,7 @@ pub use properties::{
 pub use types::{
     ComponentPropertyField, ComponentPropertySchema, ComponentResolutionRequest,
     ComponentResolutions, ComponentSchemaField, ElementKind, FrameEvaluation, FrameSpan,
-    LayerSource, LayerSourceReport, PrepareDependency, PrimitivePropertyField,
+    LayerSource, LayerSourceReport, LegacyImport, PrepareDependency, PrimitivePropertyField,
     PrimitivePropertyGroup, PrimitivePropertyRow, PrimitivePropertyTable, PrimitiveSize,
     ProjectFrame, PropOverride, ReactAudioClipDescriptor, ReactChapter, ReactCompositionInfo,
     ReactCompositionMetadata, ReactDuck, ReactSubtitleDescriptor, ReceivedProps, ReceivedValue,

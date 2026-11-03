@@ -1,6 +1,6 @@
-import { Composition, Group, Rect, Text, interpolate, useCurrentFrame } from '@celesta/react';
-import { Circle, Line, Path } from '@celesta/shapes';
-import { chromaticAberration, noise, scanlines } from '@celesta/shader';
+import { Composition, Group, Rect, Text, interpolate, useCurrentFrame } from '@celesta.studio/react';
+import { Circle, Line, Path } from '@celesta.studio/shapes';
+import { chromaticAberration, noise, scanlines } from '@celesta.studio/shader';
 
 // Built-in stylize effects. Each panel shows the same scene with one
 // effect prop whose values change every frame; the last stacks three

@@ -21,9 +21,9 @@ const result = await build({
   plugins: [{ name: 'worker-in-node', setup(build) {
     // The same source aliases as vite.config.ts.
     build.onResolve({ filter: /^\.\/entry-dir$/ }, () => ({ path: join(packages, 'react/src/entry-dir.browser.ts') }));
-    build.onResolve({ filter: /^@celesta\/react$/ }, () => ({ path: join(packages, 'react/src/browser.ts') }));
-    build.onResolve({ filter: /^@celesta\/react\/internal$/ }, () => ({ path: join(packages, 'react/src/internal.ts') }));
-    build.onResolve({ filter: /^@celesta\/[a-z-]+$/ }, args => ({ path: join(packages, args.path.slice('@celesta/'.length), 'src/index.ts') }));
+    build.onResolve({ filter: /^@celesta\.studio\/react$/ }, () => ({ path: join(packages, 'react/src/browser.ts') }));
+    build.onResolve({ filter: /^@celesta\.studio\/react\/internal$/ }, () => ({ path: join(packages, 'react/src/internal.ts') }));
+    build.onResolve({ filter: /^@celesta\.studio\/[a-z-]+$/ }, args => ({ path: join(packages, args.path.slice('@celesta.studio/'.length), 'src/index.ts') }));
     build.onResolve({ filter: /^esbuild-wasm$/ }, () => ({ path: 'esbuild', namespace: 'fixture' }));
     build.onLoad({ filter: /.*/, namespace: 'fixture' }, () => ({ contents: `export async function initialize() {} export {build, transform} from ${JSON.stringify(require.resolve('esbuild-wasm'))};` }));
     build.onResolve({ filter: /esbuild-wasm\/lib\/main\.js$/ }, args => ({ path: args.path, external: true }));
@@ -89,7 +89,7 @@ test('compiles serialize, fonts refresh the same mount, and recompile unmounts t
   globalThis.self = standIn(worker);
   require(modulePath);
   const send = (data: Request) => { const pending = Promise.withResolvers<Reply>(); completion.set(data.id, pending); worker.onmessage!({ data }); return pending.promise; };
-  const source = `import { React, Composition, Font, Rect, Audio, useTextMetrics } from '@celesta/react';
+  const source = `import { React, Composition, Font, Rect, Audio, useTextMetrics } from '@celesta.studio/react';
     export default function Root() {
       React.useState(() => { globalThis.mountCount++; return 0; });
       React.useLayoutEffect(() => () => { globalThis.cleanupCount++; }, []);
@@ -119,7 +119,7 @@ test('compiles serialize, fonts refresh the same mount, and recompile unmounts t
   assert.match(new TextDecoder().decode([...fonts][0].source), /second\.test\/demo\.woff/);
   // The mount measured Demo before <Font> loaded it; frames measure with it.
   // A frame-dependent string is not the mount's memoized result.
-  const growing = `import { Composition, Font, Rect, useCurrentFrame, useTextMetrics } from '@celesta/react';
+  const growing = `import { Composition, Font, Rect, useCurrentFrame, useTextMetrics } from '@celesta.studio/react';
     export default function Root() {
       const metrics = useTextMetrics('0'.repeat(useCurrentFrame() + 1), { fontFamily: 'Demo' });
       return <Composition width={100} height={100} fps={30} durationInFrames={3}><Font src="font.css" /><Rect width={metrics.width} height={10}/></Composition>;
@@ -132,7 +132,7 @@ test('compiles serialize, fonts refresh the same mount, and recompile unmounts t
   assert.equal(fonts.size, 0);
   assert.equal(content((await send({ id: 24, type: 'frame', frame: 2 })).value!.scene.layers[0], 'rect').width, 30);
 
-  const explicit = `import {Composition, Rect, useTextMetrics, measureText} from '@celesta/react';
+  const explicit = `import {Composition, Rect, useTextMetrics, measureText} from '@celesta.studio/react';
     export default function Root() { const m=useTextMetrics('abc', {fontFamily:'Demo'}, {fonts:['https://extra.test/font.css']}); return <Composition width={100} height={100} fps={30} durationInFrames={1}><Rect width={m.width} height={1}/></Composition>; }`;
   const expectedError = vi.spyOn(console, 'error').mockImplementation(() => {});
   const rejected = await send({ id: 5, type: 'compile', source: explicit });
@@ -152,11 +152,11 @@ test('compiles serialize, fonts refresh the same mount, and recompile unmounts t
   // across packages, as a Panel's for a Center inside it), the text
   // measurer (a Badge sizes itself with it), and the character elements
   // registered with its scene walker.
-  const split = await send({ id: 9, type: 'compile', source: `import { React, Assets, Composition } from '@celesta/react';
-    import { Center } from '@celesta/layout';
-    import { Badge, Callout, CaptionTrack, Counter, MediaFrame, Panel } from '@celesta/components';
-    import { Circle } from '@celesta/shapes';
-    import { Character, CharacterView } from '@celesta/character';
+  const split = await send({ id: 9, type: 'compile', source: `import { React, Assets, Composition } from '@celesta.studio/react';
+    import { Center } from '@celesta.studio/layout';
+    import { Badge, Callout, CaptionTrack, Counter, MediaFrame, Panel } from '@celesta.studio/components';
+    import { Circle } from '@celesta.studio/shapes';
+    import { Character, CharacterView } from '@celesta.studio/character';
     export default function Root() {
       const actor = React.useRef(null);
       return <Composition width={100} height={100} fps={30} durationInFrames={1}>
@@ -182,7 +182,7 @@ test('compiles serialize, fonts refresh the same mount, and recompile unmounts t
     : (layer.content.type === 'group' ? layer.content.layers : []).map(firstText).find(Boolean);
   const captionText = firstText(caption)!;
   assert.deepEqual([captionText.text, captionText.style.colorRuns], ['a👍b', [{ start: 1, end: 3, color: '#ff0000' }]]);
-  // A Callout's arrow, from @celesta/shapes, ends at its target, and its box
+  // A Callout's arrow, from @celesta.studio/shapes, ends at its target, and its box
   // is the measured title (a 33.6 px line box at 28 px) plus the padding.
   const [arrow, box] = content(callout, 'group').layers;
   assert.equal(arrow.content.type, 'path');
@@ -200,11 +200,11 @@ test('compiles serialize, fonts refresh the same mount, and recompile unmounts t
   const badgeBox = content(content(badge, 'group').layers[0], 'rect');
   assert.deepEqual([badgeBox.width, badgeBox.height], [28, 46.4]);
   assert.deepEqual(content(content(view, 'group').layers[0], 'image').asset.location, { type: 'file', path: 'n.png' });
-  const missing = await send({ id: 11, type: 'compile', source: `import { ProjectTimeline } from '@celesta/project'; export default ProjectTimeline;` });
+  const missing = await send({ id: 11, type: 'compile', source: `import { ProjectTimeline } from '@celesta.studio/project'; export default ProjectTimeline;` });
   assert.match(missing.error!, /unavailable in the web editor/);
   // The color filters run in the browser; custom shaders fail when drawn.
-  const shader = await send({ id: 12, type: 'compile', source: `import { Composition, Rect } from '@celesta/react';
-    import { grayscale } from '@celesta/shader';
+  const shader = await send({ id: 12, type: 'compile', source: `import { Composition, Rect } from '@celesta.studio/react';
+    import { grayscale } from '@celesta.studio/shader';
     export default function Scene() {
       return <Composition width={100} height={100} fps={30} durationInFrames={1}>
         <Rect width={10} height={10} fill="#ff0000" shader={grayscale()} brightness={1.5} />
@@ -219,8 +219,8 @@ test('compiles serialize, fonts refresh the same mount, and recompile unmounts t
 
   // Lottie animations draw as paths here too, at the composition's time.
   const demo = readFileSync(fileURLToPath(new URL('../../../examples/assets/lottie/demo.json', import.meta.url)), 'utf8');
-  const lottie = await send({ id: 30, type: 'compile', source: `import { Composition } from '@celesta/react';
-    import { Lottie } from '@celesta/lottie';
+  const lottie = await send({ id: 30, type: 'compile', source: `import { Composition } from '@celesta.studio/react';
+    import { Lottie } from '@celesta.studio/lottie';
     const demo = ${demo};
     export default function Scene() {
       return <Composition width={480} height={270} fps={30} durationInFrames={90}><Lottie data={demo} /></Composition>;
@@ -232,9 +232,9 @@ test('compiles serialize, fonts refresh the same mount, and recompile unmounts t
 
   // prepare() decodes an uploaded file with mediabunny, to the same samples
   // as the WAV parser reads from the same bytes.
-  const spectrum = await send({ id: 14, type: 'compile', options: { assets: new Map([['voice.wav', new File([voice], 'voice.wav')]]) }, source: `import { Composition, Rect } from '@celesta/react';
-    import { analyzeAudioSpectrum, loadAudioSpectrum, useAudioSpectrum } from '@celesta/media-utils';
-    import { decodeWav } from '@celesta/character';
+  const spectrum = await send({ id: 14, type: 'compile', options: { assets: new Map([['voice.wav', new File([voice], 'voice.wav')]]) }, source: `import { Composition, Rect } from '@celesta.studio/react';
+    import { analyzeAudioSpectrum, loadAudioSpectrum, useAudioSpectrum } from '@celesta.studio/media-utils';
+    import { decodeWav } from '@celesta.studio/character';
     let music, reference;
     export async function prepare() {
       music = await loadAudioSpectrum('./voice.wav', { bands: 4 });
@@ -262,8 +262,8 @@ test('compiles serialize, fonts refresh the same mount, and recompile unmounts t
   silence.writeUInt32LE(16, 16); silence.writeUInt16LE(1, 20); silence.writeUInt16LE(1, 22);
   silence.writeUInt32LE(44100, 24); silence.writeUInt32LE(88200, 28); silence.writeUInt16LE(2, 32); silence.writeUInt16LE(16, 34);
   silence.write('data', 36); silence.writeUInt32LE(2 * 44100, 40);
-  const recompiled = await send({ id: 17, type: 'compile', options: { assets: new Map([['voice.wav', new File([silence], 'voice.wav')]]) }, source: `import { Composition, Rect } from '@celesta/react';
-    import { loadAudioSpectrum, useAudioSpectrum } from '@celesta/media-utils';
+  const recompiled = await send({ id: 17, type: 'compile', options: { assets: new Map([['voice.wav', new File([silence], 'voice.wav')]]) }, source: `import { Composition, Rect } from '@celesta.studio/react';
+    import { loadAudioSpectrum, useAudioSpectrum } from '@celesta.studio/media-utils';
     let music;
     export async function prepare() { music = await loadAudioSpectrum('./voice.wav', { bands: 4 }); }
     function Meter() { const { rms } = useAudioSpectrum(music); return <Rect width={rms} height={1} />; }
@@ -271,8 +271,8 @@ test('compiles serialize, fonts refresh the same mount, and recompile unmounts t
   assert.equal(recompiled.error, undefined);
   const quiet = await send({ id: 18, type: 'frame', frame: 15 });
   assert.equal(content(quiet.value!.scene.layers[0], 'rect').width, 0);
-  const missingAudio = await send({ id: 19, type: 'compile', source: `import { Composition } from '@celesta/react';
-    import { loadAudioSpectrum } from '@celesta/media-utils';
+  const missingAudio = await send({ id: 19, type: 'compile', source: `import { Composition } from '@celesta.studio/react';
+    import { loadAudioSpectrum } from '@celesta.studio/media-utils';
     export async function prepare() { await loadAudioSpectrum('nowhere.wav'); }
     export default function Scene() { return <Composition width={10} height={10} fps={30} durationInFrames={1} />; }` });
   assert.match(missingAudio.error!, /Missing audio file: nowhere\.wav/);

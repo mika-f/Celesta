@@ -5,10 +5,10 @@
 
 import * as React from 'react';
 
-import { parseHexColor, random } from '@celesta/math';
-import type { Seed } from '@celesta/math';
-import { Group, Instances, Rect, useCurrentFrame, useTheme, useVideoConfig } from '@celesta/react';
-import type { BlendMode } from '@celesta/react';
+import { parseHexColor, random } from '@celesta.studio/math';
+import type { Seed } from '@celesta.studio/math';
+import { Group, Instances, Rect, useCurrentFrame, useTheme, useVideoConfig } from '@celesta.studio/react';
+import type { BlendMode } from '@celesta.studio/react';
 
 import { alphaOf, hexColor } from './color';
 import { validators } from './validate';

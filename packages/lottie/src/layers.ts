@@ -5,9 +5,9 @@
 
 import * as React from 'react';
 
-import { Group, Image, Mask, Rect } from '@celesta/react';
-import type { BlendMode, PathCommand } from '@celesta/react';
-import { Path } from '@celesta/shapes';
+import { Group, Image, Mask, Rect } from '@celesta.studio/react';
+import type { BlendMode, PathCommand } from '@celesta.studio/react';
+import { Path } from '@celesta.studio/shapes';
 
 import {
   bezierCommands,

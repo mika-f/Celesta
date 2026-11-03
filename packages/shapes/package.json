@@ -1,5 +1,5 @@
 {
-  "name": "@celesta/shapes",
+  "name": "@celesta.studio/shapes",
   "version": "0.9.0",
   "private": true,
   "description": "Lines, polylines, paths, circles, ellipses, arrows, triangles, polygons, stars, pies, and hearts for Celesta compositions.",
@@ -23,11 +23,11 @@
     "clean": "rm -rf dist"
   },
   "peerDependencies": {
-    "@celesta/react": "0.0.0",
+    "@celesta.studio/react": "0.0.0",
     "react": "^19.3.0"
   },
   "devDependencies": {
-    "@celesta/react": "workspace:*",
+    "@celesta.studio/react": "workspace:*",
     "@types/node": "^24.13.6",
     "@types/react": "^19.3.0",
     "react": "^19.3.0",

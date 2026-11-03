@@ -1,4 +1,4 @@
-import { Composition, Easings, Rect, Text, useCurrentFrame, useVideoConfig } from '@celesta/react';
+import { Composition, Easings, Rect, Text, useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
 import {
   TransitionSeries,
   clockWipe,
@@ -8,8 +8,8 @@ import {
   iris,
   useTransitionSeriesScene,
   zoom,
-} from '@celesta/transitions';
-import type { TransitionSeriesTransitionProps } from '@celesta/transitions';
+} from '@celesta.studio/transitions';
+import type { TransitionSeriesTransitionProps } from '@celesta.studio/transitions';
 
 // Every built-in transition, in turn, each into a card named after it. All
 // but the cut overlap their cards by 20 frames. The names alone use each

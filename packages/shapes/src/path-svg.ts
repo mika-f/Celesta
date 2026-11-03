@@ -1,6 +1,6 @@
 // SVG path data (`d`) to path commands and back.
 
-import type { PathCommand } from '@celesta/react';
+import type { PathCommand } from '@celesta.studio/react';
 
 const NUMBER = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?/;
 

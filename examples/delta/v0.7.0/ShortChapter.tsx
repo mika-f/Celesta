@@ -1,6 +1,6 @@
 import type { ComponentType } from 'react';
-import { Easings, Group, Rect, Text, interpolate, useCurrentFrame, useTextMetrics } from '@celesta/react';
-import { useFitText } from '@celesta/text';
+import { Easings, Group, Rect, Text, interpolate, useCurrentFrame, useTextMetrics } from '@celesta.studio/react';
+import { useFitText } from '@celesta.studio/text';
 import { Backdrop } from '../components/Backdrop';
 import { CUT, STAGE } from '../components/ChapterShell';
 import type { Chapter, DemoProps } from '../components/ChapterShell';

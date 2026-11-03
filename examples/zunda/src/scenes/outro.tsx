@@ -2,9 +2,9 @@
 // ロゴ、キャッチコピー、クレジット。クレジットは素材の利用条件で必要なので、
 // 画面のどこかに必ず出す。
 
-import { Group, Rect, Text, progress, spring } from '@celesta/react';
-import { Line } from '@celesta/shapes';
-import { TextReveal } from '@celesta/text';
+import { Group, Rect, Text, progress, spring } from '@celesta.studio/react';
+import { Line } from '@celesta.studio/shapes';
+import { TextReveal } from '@celesta.studio/text';
 
 import { line, sceneStart, useFilmFrame } from '../timing.ts';
 import { CANVAS, COLOR, FONT, FPS, solid } from '../theme.ts';

@@ -3,12 +3,12 @@ import { test } from 'vitest';
 import * as React from 'react';
 import type { ReactNode } from 'react';
 
-import { Audio, Composition, Easings, Sequence, Text, Video, useCurrentFrame } from '@celesta/react';
-import type { Layer } from '@celesta/react';
-import { mount } from '@celesta/react/internal';
-import type { MountedComposition } from '@celesta/react/internal';
-import { Transition } from '@celesta/transitions';
-import type { TransitionEffect } from '@celesta/transitions';
+import { Audio, Composition, Easings, Sequence, Text, Video, useCurrentFrame } from '@celesta.studio/react';
+import type { Layer } from '@celesta.studio/react';
+import { mount } from '@celesta.studio/react/internal';
+import type { MountedComposition } from '@celesta.studio/react/internal';
+import { Transition } from '@celesta.studio/transitions';
+import type { TransitionEffect } from '@celesta.studio/transitions';
 import { Motion } from '../src/index.js';
 import type { MotionEffect, MotionPreset, MotionProps } from '../src/index.js';
 

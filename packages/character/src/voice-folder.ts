@@ -17,7 +17,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { TextDecoder } from 'node:util';
 
-import { entryRelativePath, trackPrepareDependency } from '@celesta/react/internal';
+import { entryRelativePath, trackPrepareDependency } from '@celesta.studio/react/internal';
 
 import type { DialogueExpression } from './components';
 import type { DialogueLine } from './dialogue-series';

@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
-import { clamp } from '@celesta/math';
-import { Easings, Group, Rect, progress, spring, useCurrentFrame } from '@celesta/react';
+import { clamp } from '@celesta.studio/math';
+import { Easings, Group, Rect, progress, spring, useCurrentFrame } from '@celesta.studio/react';
 import { Label } from '../components/Label';
 import { BAR, C, DX, FPS } from '../constants';
 import { pad } from '../helpers';

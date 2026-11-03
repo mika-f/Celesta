@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
-import { Easings, Group, Rect, progress, spring, useBeat, useCurrentFrame, useVideoConfig } from '@celesta/react';
-import { Camera, SafeArea } from '@celesta/layout';
-import { Transition } from '@celesta/transitions';
+import { Easings, Group, Rect, progress, spring, useBeat, useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
+import { Camera, SafeArea } from '@celesta.studio/layout';
+import { Transition } from '@celesta.studio/transitions';
 import { BPM, C, H, SAFE, W } from '../constants';
 import { halftone } from '../halftone';
 import { Tape } from './Tape';

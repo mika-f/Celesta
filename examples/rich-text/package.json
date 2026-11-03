@@ -1,10 +1,10 @@
 {
-  "name": "@celesta/example-rich-text",
+  "name": "@celesta.studio/example-rich-text",
   "private": true,
   "dependencies": {
-    "@celesta/character": "workspace:*",
-    "@celesta/react": "workspace:*",
-    "@celesta/text": "workspace:*",
+    "@celesta.studio/character": "workspace:*",
+    "@celesta.studio/react": "workspace:*",
+    "@celesta.studio/text": "workspace:*",
     "react": "^19.3.0"
   },
   "devDependencies": {

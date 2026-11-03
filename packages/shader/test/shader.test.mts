@@ -6,12 +6,12 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'vitest';
 
-import type { Layer, LayerFilter, Scene, ShaderSource } from '@celesta/react';
+import type { Layer, LayerFilter, Scene, ShaderSource } from '@celesta.studio/react';
 import { defineShader } from '../src/index.js';
 import type { ShaderParamSpec } from '../src/index.js';
 
 // The tests that render are integration tests of the build: they go through the
-// CLI, which loads @celesta/shader from its dist/, so `pnpm run build:runtime`
+// CLI, which loads @celesta.studio/shader from its dist/, so `pnpm run build:runtime`
 // (repository root) must run first. The in-process test below imports the
 // source.
 const cli = fileURLToPath(new URL('../../cli/bin/celesta-react-render.js', import.meta.url));
@@ -57,8 +57,8 @@ function render(setup: string, body: string): RenderResult {
   const entry = join(dir, 'entry.tsx');
   writeFileSync(
     entry,
-    `import { Composition, Group, Rect } from '@celesta/react';\n` +
-      `import { defineShader } from '@celesta/shader';\n` +
+    `import { Composition, Group, Rect } from '@celesta.studio/react';\n` +
+      `import { defineShader } from '@celesta.studio/shader';\n` +
       `const wgsl = ${JSON.stringify(WGSL)};\n` +
       `${setup}\n` +
       `export default function Root() {\n` +
@@ -156,7 +156,7 @@ test('a layer takes several shaders, run in the order given', () => {
 
 test('the built-in color filters run where the array lists them', () => {
   const frame = render(
-    `import { brightness, contrast, grayscale, hue, invert, saturation, tint, vignette } from '@celesta/shader';
+    `import { brightness, contrast, grayscale, hue, invert, saturation, tint, vignette } from '@celesta.studio/shader';
      const plain = defineShader({ name: 'plain', wgsl });`,
     `<Rect width={8} height={8} shader={[
        brightness(1.2), plain(), contrast(0.5), saturation(0), hue(-30), grayscale(), invert(0.5),
@@ -182,7 +182,7 @@ test('the built-in color filters run where the array lists them', () => {
 
 test('the stylize effects and the chroma key run where the array lists them', () => {
   const frame = render(
-    `import { chromaKey, chromaticAberration, halftone, noise, pixelate, scanlines, wave, zoomBlur } from '@celesta/shader';`,
+    `import { chromaKey, chromaticAberration, halftone, noise, pixelate, scanlines, wave, zoomBlur } from '@celesta.studio/shader';`,
     `<Rect width={8} height={8} shader={[
        scanlines(0.4), pixelate(6), halftone({ size: 8, angle: 15 }), chromaticAberration(2),
        wave({ amplitude: 3, wavelength: 40, phase: 90 }), noise(0.1), noise({ amount: 0.1, seed: 5, monochrome: false }),
@@ -207,7 +207,7 @@ test('the stylize effects and the chroma key run where the array lists them', ()
 
 test('color filters without custom shaders list no shaders in the scene', () => {
   const frame = render(
-    `import { invert } from '@celesta/shader';`,
+    `import { invert } from '@celesta.studio/shader';`,
     `<Rect width={8} height={8} shader={invert()} />`,
   );
   const scene = sceneOf(frame);

@@ -761,6 +761,9 @@ impl Exporter {
             frame_rate: metadata.frame_rate,
             frames: metadata.duration_in_frames,
         }));
+        for legacy in &metadata.legacy_imports {
+            progress(ExportProgress::Warning(legacy.to_string()));
+        }
         let duration = Time::frames(
             i64::try_from(metadata.duration_in_frames).map_err(|_| ExportError::TimelineTooLong)?,
             metadata.frame_rate,

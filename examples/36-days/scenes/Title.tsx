@@ -1,5 +1,5 @@
-import { Rect, progress, useCurrentFrame } from '@celesta/react';
-import { TextReveal } from '@celesta/text';
+import { Rect, progress, useCurrentFrame } from '@celesta.studio/react';
+import { TextReveal } from '@celesta.studio/text';
 import { DotGrid } from '../components/DotGrid';
 import { Exit } from '../components/Exit';
 import { Label, textStyle } from '../components/Label';

@@ -1,7 +1,7 @@
 import * as React from 'react';
-import { Assets, Composition, Font, Rect, Sequence, Text } from '@celesta/react';
-import { CaptionTrack, PatternBackground } from '@celesta/components';
-import type { CaptionCue, CaptionTrackProps } from '@celesta/components';
+import { Assets, Composition, Font, Rect, Sequence, Text } from '@celesta.studio/react';
+import { CaptionTrack, PatternBackground } from '@celesta.studio/components';
+import type { CaptionCue, CaptionTrackProps } from '@celesta.studio/components';
 
 // Captions lit word by word, as vertical short videos set them. Three
 // takes on one <CaptionTrack>:

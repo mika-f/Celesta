@@ -1,4 +1,4 @@
-import type { TextStyle } from '@celesta/react';
+import type { TextStyle } from '@celesta.studio/react';
 import { FONT } from './constants';
 
 // The two tapes under every scene: a line of the manifesto, and the API the

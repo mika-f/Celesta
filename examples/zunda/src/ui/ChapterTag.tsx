@@ -1,8 +1,8 @@
 // 右上の「01 レイヤーを重ねる」のようなチャプター表示。シーンの <Sequence> の
 // 中に置くと、シーンが始まって少ししてから右から滑り込み、シーンの終わりで消える。
 
-import { Rect, Text } from '@celesta/react';
-import { Badge, Motion } from '@celesta/components';
+import { Rect, Text } from '@celesta.studio/react';
+import { Badge, Motion } from '@celesta.studio/components';
 
 import { COLOR, FONT, solid } from '../theme.ts';
 

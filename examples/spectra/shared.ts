@@ -1,8 +1,8 @@
 // Shared constants and helpers for SPECTRA. Every value is derived from the
 // frame, so any frame renders on its own (the bench and the exporter request
 // frames out of order).
-import type { PathCommand, TextStyle } from '@celesta/react';
-import { random } from '@celesta/math';
+import type { PathCommand, TextStyle } from '@celesta.studio/react';
+import { random } from '@celesta.studio/math';
 
 export const W = 1920;
 export const H = 1080;

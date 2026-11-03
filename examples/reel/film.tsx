@@ -1,4 +1,4 @@
-import { Assets, Audio, Composition, Font, Scenes, Sequence, Theme } from '@celesta/react';
+import { Assets, Audio, Composition, Font, Scenes, Sequence, Theme } from '@celesta.studio/react';
 import { Hud } from './components/Hud';
 import { Wipe } from './components/Wipe';
 import { C, DURATION, FONT, FPS, FONT_SRC, H, W } from './constants';

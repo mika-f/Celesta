@@ -2,8 +2,8 @@
 // ターミナルに、この動画を作ったエージェントの作業が流れる（説明のための絵）。
 // 台本の行数やフレーム数は、実際の値を計算して出す。最後に「出番なし」の判子。
 
-import { Easings, Group, Rect, Text, progress, spring, useTextMetrics } from '@celesta/react';
-import type { TextStyle } from '@celesta/react';
+import { Easings, Group, Rect, Text, progress, spring, useTextMetrics } from '@celesta.studio/react';
+import type { TextStyle } from '@celesta.studio/react';
 
 import { LINES } from '../../script.ts';
 import { dialoguePlan, filmDuration, line, partway, sceneEnd, sceneStart, useFilmFrame } from '../timing.ts';

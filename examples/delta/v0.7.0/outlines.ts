@@ -1,5 +1,5 @@
-import type { PathCommand } from '@celesta/react';
-import { heartPath, polygonPath, starPath, trianglePath } from '@celesta/shapes';
+import type { PathCommand } from '@celesta.studio/react';
+import { heartPath, polygonPath, starPath, trianglePath } from '@celesta.studio/shapes';
 
 // Outlines centred on 0,0, for morphing one into another: the shape
 // generators measure from their box's top-left corner.

@@ -1,6 +1,6 @@
-import { Group, Span } from '@celesta/react';
-import type { CommonProps } from '@celesta/react';
-import { TextReveal } from '@celesta/text';
+import { Group, Span } from '@celesta.studio/react';
+import type { CommonProps } from '@celesta.studio/react';
+import { TextReveal } from '@celesta.studio/text';
 import { textStyle } from './Copy';
 import { C } from '../constants';
 import type { Line } from '../measure';

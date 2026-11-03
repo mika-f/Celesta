@@ -409,10 +409,10 @@ mod tests {
 
     #[test]
     fn flowing_joins_lines_with_one_space_and_drops_indentation_and_blank_lines() {
-        let text = "React preview unavailable: exited\nIts last output:\n\n    Error: Cannot find module '@celesta/react'\n      at require  \n";
+        let text = "React preview unavailable: exited\nIts last output:\n\n    Error: Cannot find module '@celesta.studio/react'\n      at require  \n";
         assert_eq!(
             flow_line_breaks(text),
-            "React preview unavailable: exited Its last output: Error: Cannot find module '@celesta/react' at require"
+            "React preview unavailable: exited Its last output: Error: Cannot find module '@celesta.studio/react' at require"
         );
     }
 

@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Easings, cueAt, progress } from '@celesta/react';
+import { Easings, cueAt, progress } from '@celesta.studio/react';
 
 // Swaps between strings on the given frames; each new one rises into place.
 export function Swap({ f, cues, render }: {

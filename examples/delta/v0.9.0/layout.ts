@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import { safeAreaInsets } from '@celesta/layout';
+import { safeAreaInsets } from '@celesta.studio/layout';
 import { H, W } from '../components/theme';
 
 // The canvas the broadcast is laid out for: the film's 16:9, or the

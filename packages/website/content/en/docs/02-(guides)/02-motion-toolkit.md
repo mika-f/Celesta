@@ -1,4 +1,4 @@
-These helpers cover the patterns that come up in almost every video: scenes in a row (with transitions between them), lists that cascade in, and cuts on the beat. Each is built on `Sequence`, `Group`, and the frame, so everything stays scrubbable and deterministic. Text effects, the camera, and line drawing are on [the next page](/en/docs/text-camera-lines/); seeded randomness and noise are in [`@celesta/math`](/en/docs/math/).
+These helpers cover the patterns that come up in almost every video: scenes in a row (with transitions between them), lists that cascade in, and cuts on the beat. Each is built on `Sequence`, `Group`, and the frame, so everything stays scrubbable and deterministic. Text effects, the camera, and line drawing are on [the next page](/en/docs/text-camera-lines/); seeded randomness and noise are in [`@celesta.studio/math`](/en/docs/math/).
 
 ## Scenes back to back
 
@@ -94,7 +94,7 @@ Like the size and clock, `chapters` is read once when the entry loads, and again
 
 Each scene is an ordinary Sequence whose frame 0 is the first frame of its transition in, and the next scene is drawn above. A transition longer than either scene, or a scene too short for its transitions in and out together, throws instead of leaving a gap or showing three scenes at once. Overlapping scenes play their sound together: `useTransitionVolume(volume)` gives an Audio in the scene a volume that fades with its picture, and `useTransitionSeriesScene()` reports the scene’s transitions for any other timing.
 
-`type` names one of these. A name uses the defaults in brackets; call the function of the same name from `@celesta/transitions` for other values, as in `type={iris({ center: { x: 0.3, y: 0.5 }, feather: 40 })}`. `from` (`'left'` by default) is the edge `'slide'`, `'wipe'`, and `'cube'` come from, and the axis `'flip'` turns about. `easing` shapes every type’s progress.
+`type` names one of these. A name uses the defaults in brackets; call the function of the same name from `@celesta.studio/transitions` for other values, as in `type={iris({ center: { x: 0.3, y: 0.5 }, feather: 40 })}`. `from` (`'left'` by default) is the edge `'slide'`, `'wipe'`, and `'cube'` come from, and the axis `'flip'` turns about. `easing` shapes every type’s progress.
 
 | `type` | What happens | Options |
 | --- | --- | --- |
@@ -168,4 +168,4 @@ return <Text opacity={progress(active.frame, 0, 10)}>{active.cue.text}</Text>;
 
 ## Timecodes
 
-`frameToTimecode(frame, fps)`, from `@celesta/react`, formats `HH:MM:SS:FF` for an on-screen clock.
+`frameToTimecode(frame, fps)`, from `@celesta.studio/react`, formats `HH:MM:SS:FF` for an on-screen clock.

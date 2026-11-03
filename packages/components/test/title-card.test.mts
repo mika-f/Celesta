@@ -3,11 +3,11 @@ import { beforeEach, test } from 'vitest';
 import * as React from 'react';
 import type { ReactElement } from 'react';
 
-import { Composition, Sequence, Theme } from '@celesta/react';
-import type { Layer, LayerContent, Paint, TextMetrics } from '@celesta/react';
-import { SafeArea } from '@celesta/layout';
-import { mount, setTextMeasurer } from '@celesta/react/internal';
-import type { MeasureTextRequest, MountedComposition } from '@celesta/react/internal';
+import { Composition, Sequence, Theme } from '@celesta.studio/react';
+import type { Layer, LayerContent, Paint, TextMetrics } from '@celesta.studio/react';
+import { SafeArea } from '@celesta.studio/layout';
+import { mount, setTextMeasurer } from '@celesta.studio/react/internal';
+import type { MeasureTextRequest, MountedComposition } from '@celesta.studio/react/internal';
 import { TitleCard } from '../src/index.js';
 import type { TitleCardProps } from '../src/index.js';
 

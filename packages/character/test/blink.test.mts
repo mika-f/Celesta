@@ -1,7 +1,7 @@
 // Portrait blinking: the pure `blinkPhase()` schedule, and the layers or images
 // a <CharacterView> renders on blinking and open frames. The renders are
 // integration tests of the build: they run the CLI, which loads
-// @celesta/character from dist/, so run them after `pnpm run build:runtime`
+// @celesta.studio/character from dist/, so run them after `pnpm run build:runtime`
 // (repository root).
 
 import assert from 'node:assert/strict';
@@ -12,7 +12,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'vitest';
 
-import type { Layer, LayerContent } from '@celesta/react';
+import type { Layer, LayerContent } from '@celesta.studio/react';
 import { blinkPhase } from '../src/index.js';
 import type { BlinkPhase, BlinkTiming } from '../src/index.js';
 import { frameOf, parseMessage } from './render-cli.mjs';
@@ -41,7 +41,7 @@ function render({ portrait, view = '', wrap = ['', ''], frames }: { portrait: st
   writeFileSync(
     entry,
     `import * as React from 'react';\n` +
-      `import { Assets, Composition, Sequence } from '@celesta/react'; import { Character, CharacterView } from '@celesta/character';\n` +
+      `import { Assets, Composition, Sequence } from '@celesta.studio/react'; import { Character, CharacterView } from '@celesta.studio/character';\n` +
       `const hana = React.createRef();\n` +
       `export default function Root() {\n` +
       `  return <Composition width={300} height={200} fps={${FPS}} durationInFrames={100000}>\n` +

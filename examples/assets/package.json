@@ -1,9 +1,9 @@
 {
-  "name": "@celesta/example-assets",
+  "name": "@celesta.studio/example-assets",
   "private": true,
   "dependencies": {
-    "@celesta/react": "workspace:*",
-    "@celesta/shapes": "workspace:*",
+    "@celesta.studio/react": "workspace:*",
+    "@celesta.studio/shapes": "workspace:*",
     "react": "^19.3.0"
   },
   "devDependencies": {

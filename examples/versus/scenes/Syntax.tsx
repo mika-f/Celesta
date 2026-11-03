@@ -1,4 +1,4 @@
-import { Easings, Group, Rect, Text, progress, useCurrentFrame, useVideoConfig } from '@celesta/react';
+import { Easings, Group, Rect, Text, progress, useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
 import { Header, ToolTag } from '../components/Chrome';
 import { CodeBlock } from '../components/CodeBlock';
 import { C, FONT, ORDER, TOOL } from '../constants';

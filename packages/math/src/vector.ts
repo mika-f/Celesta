@@ -1,7 +1,7 @@
 // 2D point helpers. Angles are radians; with Celesta's y-down coordinates a
 // positive angle turns clockwise on screen, like a layer's `rotation`.
 
-/** A 2D point or vector. Structurally the same as `@celesta/react`'s `Point`. */
+/** A 2D point or vector. Structurally the same as `@celesta.studio/react`'s `Point`. */
 export interface Vec2 {
   x: number;
   y: number;

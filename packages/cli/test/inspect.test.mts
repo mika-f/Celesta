@@ -51,7 +51,7 @@ function withEntry(prefix: string, body: (context: EntryContext) => void) {
 }
 
 const measuring = `
-  import { Composition, Text, useTextMetrics, useCurrentFrame } from '@celesta/react';
+  import { Composition, Text, useTextMetrics, useCurrentFrame } from '@celesta.studio/react';
   function Title() {
     const frame = useCurrentFrame();
     if (frame === 1) throw new Error('broken scene');
@@ -97,7 +97,7 @@ test('measuring before the handshake stops inspection as unsupported', () => {
     assert.match(text.stderr, /^UNSUPPORTED inspection: /m);
 
     write(`
-      import { Composition, Text, measureText } from '@celesta/react';
+      import { Composition, Text, measureText } from '@celesta.studio/react';
       export async function prepare() { await measureText('Celesta'); }
       export default function Root() {
         return <Composition width={400} height={200} fps={30} durationInFrames={1}><Text>Celesta</Text></Composition>;
@@ -109,7 +109,7 @@ test('measuring before the handshake stops inspection as unsupported', () => {
 
     // An entry that catches the refusal falls back and inspects normally.
     write(`
-      import { Composition, Text, measureText } from '@celesta/react';
+      import { Composition, Text, measureText } from '@celesta.studio/react';
       export async function prepare() { try { await measureText('Celesta'); } catch {} }
       export default function Root() {
         return <Composition width={400} height={200} fps={30} durationInFrames={1}><Text>Celesta</Text></Composition>;
@@ -125,7 +125,7 @@ test('measuring before the handshake stops inspection as unsupported', () => {
 test('other startup failures are errors', () => {
   withEntry('celesta-inspect-error-', ({ write, inspect }) => {
     write(`
-      import { Composition } from '@celesta/react';
+      import { Composition } from '@celesta.studio/react';
       export async function prepare() { throw new Error('prepare exploded'); }
       export default function Root() { return <Composition width={400} height={200} fps={30} durationInFrames={1} />; }
     `);

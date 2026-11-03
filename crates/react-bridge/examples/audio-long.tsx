@@ -1,6 +1,6 @@
 // Synthetic five-minute / 60 fps workload for audio-bench. Generate the reel's
 // music first. Only the first 32 seconds have audio; the rest is silent.
-import { Audio, Composition, Rect, Sequence, useCurrentFrame } from '@celesta/react';
+import { Audio, Composition, Rect, Sequence, useCurrentFrame } from '@celesta.studio/react';
 
 export default function Root() {
   const frame = useCurrentFrame();

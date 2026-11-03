@@ -17,27 +17,27 @@ import * as text from '../../text/src/index';
 import * as transitions from '../../transitions/src/index';
 import type { CompileOptions } from './engine';
 import { audioBytes, decodeAudioBytes } from './audio-decode';
-import { projectFiles, runtimeModules } from './project-files';
+import { currentModuleName, projectFiles, runtimeModules } from './project-files';
 import { loadFonts, loadedFamilies, requireLoadedFonts, resetFonts } from './fonts';
 import { loadFeatureFonts, textMeasurer, withLoadedFallback } from './text-layout';
 
 // What compositions may import; `project-files.ts` keeps them external.
 const modules: Record<(typeof runtimeModules)[number], unknown> = {
   react: celesta.React,
-  '@celesta/react': celesta,
-  '@celesta/math': math,
-  '@celesta/shapes': shapes,
-  '@celesta/lottie': lottie,
-  '@celesta/layout': layout,
-  '@celesta/components': components,
-  '@celesta/transitions': transitions,
-  '@celesta/text': text,
-  '@celesta/debug': debug,
-  '@celesta/media-utils': mediaUtils,
-  '@celesta/character': character,
-  '@celesta/code': codeComponents,
+  '@celesta.studio/react': celesta,
+  '@celesta.studio/math': math,
+  '@celesta.studio/shapes': shapes,
+  '@celesta.studio/lottie': lottie,
+  '@celesta.studio/layout': layout,
+  '@celesta.studio/components': components,
+  '@celesta.studio/transitions': transitions,
+  '@celesta.studio/text': text,
+  '@celesta.studio/debug': debug,
+  '@celesta.studio/media-utils': mediaUtils,
+  '@celesta.studio/character': character,
+  '@celesta.studio/code': codeComponents,
   // Its color filters run here; custom shaders fail when a frame draws them.
-  '@celesta/shader': shader,
+  '@celesta.studio/shader': shader,
 };
 
 let initialized: Promise<void> | undefined;
@@ -74,8 +74,14 @@ async function handle(data: Request) {
         })).outputFiles![0].text
         : (await esbuild.transform(source, transformOptions)).code;
       const module: { exports: Record<string, unknown> } = { exports: {} };
+      const warned = new Set<string>();
       const require = (name: string): unknown => {
-        if (Object.hasOwn(modules, name)) return modules[name as keyof typeof modules];
+        const current = currentModuleName(name);
+        if (current !== name && !warned.has(name)) {
+          warned.add(name);
+          console.warn(`${name} is an old name; import ${current} instead.`);
+        }
+        if (Object.hasOwn(modules, current)) return modules[current as keyof typeof modules];
         throw new Error(`Import ${JSON.stringify(name)} is unavailable in the web editor. Use ${runtimeModules.join(', ')}.`);
       };
       // Visitor-authored code runs in a dedicated worker, away from the page DOM.

@@ -16,7 +16,7 @@ frameKeyframes(keys, { fps, origin? }) は、フレーム番号から音量・�
 
 ## 枠に入れて表示する
 
-`@celesta/components` の `MediaFrame` は、画像や動画を指定した `width` × `height` の枠に収めます。枠は `Panel` が描き（背景、メディアの上に描く枠線、角丸、影、`padding` による余白）、下に任意の `caption` を付けられます。メディアの種類は `kind`（`"image"` または `"video"`）で明示し、ファイル名からは推測しません。`fit="contain"`（既定）は全体を中央に表示し、`"cover"` は枠を埋めてはみ出す部分を切り取ります。`Video` には `fit` がないので、`MediaFrame` は動画を拡縮して収めます。そのため、動画には大きさを表す `sourceWidth` と `sourceHeight` も必要です。`prepare()` で `preloadMedia()` を 1 回呼んで取得してください。`startFrom`、`playbackRate`、`volume`、`muted`、`loop` はそのまま `Video` に渡るので、`Sequence` と同時に始まり、音声も単独の `Video` と同じに鳴ります。現在の装飾は plain だけです。
+`@celesta.studio/components` の `MediaFrame` は、画像や動画を指定した `width` × `height` の枠に収めます。枠は `Panel` が描き（背景、メディアの上に描く枠線、角丸、影、`padding` による余白）、下に任意の `caption` を付けられます。メディアの種類は `kind`（`"image"` または `"video"`）で明示し、ファイル名からは推測しません。`fit="contain"`（既定）は全体を中央に表示し、`"cover"` は枠を埋めてはみ出す部分を切り取ります。`Video` には `fit` がないので、`MediaFrame` は動画を拡縮して収めます。そのため、動画には大きさを表す `sourceWidth` と `sourceHeight` も必要です。`prepare()` で `preloadMedia()` を 1 回呼んで取得してください。`startFrom`、`playbackRate`、`volume`、`muted`、`loop` はそのまま `Video` に渡るので、`Sequence` と同時に始まり、音声も単独の `Video` と同じに鳴ります。現在の装飾は plain だけです。
 
 ```tsx title="角丸の枠に入れた動画"
 let clip: MediaInfo;
@@ -69,7 +69,7 @@ export async function prepare() { clip = await preloadMedia("./demo.mp4"); }
 - `pitch` はクリップを半音単位で移調します。既定値は 0、範囲は −24〜24 で、小数はセント（`0.5` は 50 セント）です。数値またはキーフレームを指定でき、キーフレームは `volume` と同じく `frameKeyframes` で作れます。範囲外の値は、React では ±24 に丸められ、プロジェクト JSON では検証エラーになります。
 - `preservePitch` の既定値は `false` で、`playbackRate` は従来どおり速度とピッチを一緒に変えます。`true` にすると、`playbackRate` は再生時間だけを変え、ピッチは `pitch` だけで決まります。
 - 聞こえる音は `2^(pitch / 12)` 倍の周波数になり、`preservePitch` を指定しないときはさらに `playbackRate` 倍になります。`pitch={12}` で 1 オクターブ上がります。
-- 指定できるのは `Audio` だけです。`Video` の音声や `Dialogue` の声には使えません。プレビューと書き出しは同じ音になりますが、`@celesta/web` のブラウザ書き出しは、これらを使ったクリップを「Audio pitch and preservePitch are not supported by browser export yet.」のエラーで拒否します。
+- 指定できるのは `Audio` だけです。`Video` の音声や `Dialogue` の声には使えません。プレビューと書き出しは同じ音になりますが、`@celesta.studio/web` のブラウザ書き出しは、これらを使ったクリップを「Audio pitch and preservePitch are not supported by browser export yet.」のエラーで拒否します。
 
 ## メディアに合わせてシーンの長さを決める
 

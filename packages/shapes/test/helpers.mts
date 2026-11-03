@@ -2,7 +2,7 @@
 
 import assert from 'node:assert/strict';
 
-import type { Layer, LayerContent, Scene } from '@celesta/react';
+import type { Layer, LayerContent, Scene } from '@celesta.studio/react';
 import type { PathCommand } from '../src/index.js';
 
 /** The content of a layer of type `T`. */

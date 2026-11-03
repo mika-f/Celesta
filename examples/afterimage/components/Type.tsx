@@ -1,4 +1,4 @@
-import { Text } from '@celesta/react';
+import { Text } from '@celesta.studio/react';
 import { PAPER } from '../constants';
 
 export function Type({ children, x = 0, y = 0, size = 100, color = PAPER,

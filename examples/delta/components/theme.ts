@@ -1,4 +1,4 @@
-import { Easings, progress } from '@celesta/react';
+import { Easings, progress } from '@celesta.studio/react';
 
 // The DELTA look, shared by every release film in this folder: ink black,
 // one orange, paper white; Bebas Neue headlines, Space Grotesk copy and

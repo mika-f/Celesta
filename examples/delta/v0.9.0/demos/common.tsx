@@ -1,5 +1,5 @@
-import { Group, Rect, Text } from '@celesta/react';
-import { Path } from '@celesta/shapes';
+import { Group, Rect, Text } from '@celesta.studio/react';
+import { Path } from '@celesta.studio/shapes';
 import { C, FONT, solid } from '../../components/theme';
 
 // What the demos share: text styles, a label in the stage's corner, a

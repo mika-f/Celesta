@@ -1,4 +1,4 @@
-import { defineScenes } from '@celesta/react';
+import { defineScenes } from '@celesta.studio/react';
 
 // Where things land, in composition frames. 0.9.0 is cut to a 100 BPM
 // newsroom theme: one beat = 18 frames, one bar = 72 frames.

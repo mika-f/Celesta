@@ -1,12 +1,12 @@
-# @celesta/math: random, noise, and math helpers
+# @celesta.studio/math: random, noise, and math helpers
 
 ```tsx
-import { noise, random, randomRange } from '@celesta/math';
+import { noise, random, randomRange } from '@celesta.studio/math';
 ```
 
 Pure functions with no React; they work in components, `prepare()`, and
 module scope alike. Celesta's runtime supplies the package; never install it
-from npm. (Older code imported `random`/`noise` from `@celesta/react`; they
+from npm. (Older code imported `random`/`noise` from `@celesta.studio/react`; they
 now live only here.)
 
 Everything seeded takes a number or string `seed` and returns the same value

@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'vitest';
 
-import { listPrimitiveProperties } from '@celesta/react/internal';
+import { listPrimitiveProperties } from '@celesta.studio/react/internal';
 
 import '../src/index.js';
 

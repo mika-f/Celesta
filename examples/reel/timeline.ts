@@ -1,4 +1,4 @@
-import { defineScenes } from '@celesta/react';
+import { defineScenes } from '@celesta.studio/react';
 import { BAR, BEAT, DURATION } from './constants';
 import { Code } from './scenes/Code';
 import { Export } from './scenes/Export';

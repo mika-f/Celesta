@@ -1,5 +1,5 @@
-import { Composition, useCurrentFrame } from '@celesta/react';
-import { Code } from '@celesta/code';
+import { Composition, useCurrentFrame } from '@celesta.studio/react';
+import { Code } from '@celesta.studio/code';
 const source = process.env.CELESTA_CODE_BENCH_MULTILINE
   ? Array(10).fill('const n = 1; '.repeat(10)).join('\n')
   : 'const n = 1; '.repeat(100);

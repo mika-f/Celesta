@@ -12,7 +12,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { entryRelativePath } from '@celesta/react/internal';
+import { entryRelativePath } from '@celesta.studio/react/internal';
 
 /** One named favorite from a `.pfv` file: its layer-state string plus the
  *  folder path it lives under in PSDTool's favorites tree. */

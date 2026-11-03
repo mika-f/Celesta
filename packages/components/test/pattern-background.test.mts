@@ -3,9 +3,9 @@ import { test } from 'vitest';
 import * as React from 'react';
 import type { ReactElement } from 'react';
 
-import { Composition, Sequence, Theme } from '@celesta/react';
-import type { Layer, LayerContent, Paint, ThemeValues } from '@celesta/react';
-import { mount } from '@celesta/react/internal';
+import { Composition, Sequence, Theme } from '@celesta.studio/react';
+import type { Layer, LayerContent, Paint, ThemeValues } from '@celesta.studio/react';
+import { mount } from '@celesta.studio/react/internal';
 import { PatternBackground } from '../src/index.js';
 import type { PatternBackgroundProps, PatternName, PatternTile } from '../src/index.js';
 

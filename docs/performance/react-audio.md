@@ -115,7 +115,7 @@ From the repository root (on macOS, select an installed compatible FFmpeg):
 ```sh
 pnpm install --frozen-lockfile
 cargo test -p celesta-project -p celesta-composition --features codegen
-pnpm --filter @celesta/react... build
+pnpm --filter @celesta.studio/react... build
 python3 examples/reel/make-music.py
 PKG_CONFIG_PATH=/opt/homebrew/opt/ffmpeg@8/lib/pkgconfig \
   cargo build --release -p celesta-react-bridge --example audio-bench

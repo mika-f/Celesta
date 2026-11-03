@@ -3,9 +3,9 @@ import { test } from 'vitest';
 import React from 'react';
 import type { ReactElement } from 'react';
 
-import { Composition, Text, Theme } from '@celesta/react';
-import type { Layer, LayerContent, ResolvedTheme, Scene } from '@celesta/react';
-import { mount } from '@celesta/react/internal';
+import { Composition, Text, Theme } from '@celesta.studio/react';
+import type { Layer, LayerContent, ResolvedTheme, Scene } from '@celesta.studio/react';
+import { mount } from '@celesta.studio/react/internal';
 import { emphasisContent, graphemes, resolveEmphasis, sliceEmphasis } from '../src/index.js';
 import type { EmphasisOptions, TextEmphasis } from '../src/index.js';
 

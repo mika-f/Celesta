@@ -12,7 +12,7 @@ import { delimiter, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterEach, test } from 'vitest';
 
-import type { Layer, Scene } from '@celesta/react';
+import type { Layer, Scene } from '@celesta.studio/react';
 import {
   findPlugins,
   isContainedPath,
@@ -140,7 +140,7 @@ test('skips manifests that reach outside their directory, and relative paths', a
 
 test('<Flag> puts plugin content in the scene on the sequence clock', () => {
   const { scenes } = render(
-    `import { Composition, Sequence } from '@celesta/react';
+    `import { Composition, Sequence } from '@celesta.studio/react';
      import { Flag } from '@celesta-plugin/flag';
      export default function Root() {
        return <Composition width={320} height={240} fps={30} durationInFrames={90}>
@@ -193,7 +193,7 @@ test('an entry that imports a waiting plugin opens without its layers or code', 
   const plugins = pluginPath([]);
   const waiting = pluginPath(['flag']);
   const { scenes } = render(
-    `import { Composition, Text } from '@celesta/react';
+    `import { Composition, Text } from '@celesta.studio/react';
      import { Flag } from '@celesta-plugin/flag';
      export default function Root() {
        return <Composition width={64} height={64} fps={30} durationInFrames={1}>
@@ -211,7 +211,7 @@ test('an entry that imports a waiting plugin opens without its layers or code', 
 
   // Calling one of its functions says it waits.
   const { result } = run(
-    `import { Composition } from '@celesta/react';
+    `import { Composition } from '@celesta.studio/react';
      import { prepareBeepNarration } from '@celesta-plugin/beep-voice';
      export async function prepare() { await prepareBeepNarration([], {}); }
      export default function Root() { return <Composition width={64} height={64} fps={30} durationInFrames={1} />; }`,
@@ -242,7 +242,7 @@ test('an entry that imports a plugin no directory provides fails naming it', () 
 // does not answer; the lines it would be given are checked instead.
 test('beep-voice voices lines in prepare() with audio and lip sync', () => {
   const { scenes, dir } = render(
-    `import { Composition, Text } from '@celesta/react';
+    `import { Composition, Text } from '@celesta.studio/react';
      import { prepareBeepNarration } from '@celesta-plugin/beep-voice';
      let summary = '';
      export async function prepare() {

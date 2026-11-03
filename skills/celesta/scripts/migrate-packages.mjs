@@ -1,12 +1,14 @@
 #!/usr/bin/env node
-// Moves imports of APIs that left `@celesta/react` to the package that now
-// provides them, for code written before Celesta was split into packages:
+// Moves imports of APIs that left `@celesta.studio/react` to the package that now
+// provides them, for code written before Celesta was split into packages, and
+// renames imports of the `@celesta/` scope the packages had before
+// `@celesta.studio/`:
 //
-//   import { Circle, Composition, TextBox } from '@celesta/react';
+//   import { Circle, Composition, TextBox } from '@celesta.studio/react';
 // becomes
-//   import { Composition } from '@celesta/react';
-//   import { Circle } from '@celesta/shapes';
-//   import { TextBox } from '@celesta/text';
+//   import { Composition } from '@celesta.studio/react';
+//   import { Circle } from '@celesta.studio/shapes';
+//   import { TextBox } from '@celesta.studio/text';
 //
 //   node migrate-packages.mjs [paths...] [--dry-run | --check]
 //
@@ -15,41 +17,44 @@
 // node_modules, dist, .celesta, and .git. Named imports and `export { … } from`
 // re-exports are rewritten, including `import type` and inline `type`
 // specifiers, aliases, and multi-line lists; a moved name joins an existing
-// import from its new package. `import * as C from '@celesta/react'` cannot be
-// rewritten safely, so the moved names it uses are reported instead. A
-// package.json that lists `@celesta/react` gets the new packages with the same
-// version range. --dry-run reports without writing; --check also exits 1 when
-// anything would change, or when an `import * as` namespace uses a moved name.
+// import from its new package. `import * as C from '@celesta.studio/react'`
+// cannot be rewritten safely, so the moved names it uses are reported instead.
+// Every quoted `@celesta/…` specifier becomes `@celesta.studio/…`. A
+// package.json beside a migrated file has its `@celesta/…` dependencies
+// renamed, and one that lists `@celesta.studio/react` gets the new packages with
+// the same version range. --dry-run reports without writing; --check also exits
+// 1 when anything would change, or when an `import * as` namespace uses a moved
+// name.
 // Needs only Node.js.
 
 import { readFileSync, readdirSync, statSync, writeFileSync, existsSync } from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-/** Every name `@celesta/react` exported before the split that now lives elsewhere. */
+/** Every name `@celesta.studio/react` exported before the split that now lives elsewhere. */
 export const movedExports = {
-  '@celesta/shapes': [
+  '@celesta.studio/shapes': [
     'Arrow', 'ArrowProps', 'Circle', 'CircleProps', 'Ellipse', 'EllipseProps', 'Line', 'LineProps', 'Path',
     'PathProps', 'Polyline', 'PolylinePoint', 'PolylineProps', 'pointOnPolyline',
   ],
-  '@celesta/layout': [
+  '@celesta.studio/layout': [
     'Camera', 'CameraProps', 'Center', 'CenterProps', 'Fit', 'FitProps', 'Grid', 'GridProps', 'Insets', 'SafeArea',
     'SafeAreaProps', 'Stack', 'StackProps', 'useLayoutBounds',
   ],
-  '@celesta/transitions': [
+  '@celesta.studio/transitions': [
     'SlideFrom', 'Transition', 'TransitionDirection', 'TransitionProps', 'TransitionSeries', 'TransitionSeriesEdge',
     'TransitionSeriesItem', 'TransitionSeriesProps', 'TransitionSeriesScene', 'TransitionSeriesSceneItem',
     'TransitionSeriesSceneTransition', 'TransitionSeriesSequenceProps', 'TransitionSeriesTiming',
     'TransitionSeriesTransitionItem', 'TransitionSeriesTransitionProps', 'TransitionSeriesType', 'TransitionType',
     'computeTransitionSeries', 'useTransitionSeriesScene', 'useTransitionVolume',
   ],
-  '@celesta/text': [
+  '@celesta.studio/text': [
     'CountUpOptions', 'FitTextOptions', 'FitTextResult', 'FitTextStyle', 'TextBox', 'TextBoxProps', 'TextReveal',
     'TextRevealProps', 'Typewriter', 'TypewriterOptions', 'fitText', 'useCountUp', 'useFitText', 'useTypewriter',
   ],
-  '@celesta/debug': ['DebugBounds', 'DebugBoundsProps', 'DebugOverlay', 'DebugOverlayProps'],
-  '@celesta/media-utils': ['MediaAnimationInfo', 'MediaAudioInfo', 'MediaInfo', 'MediaVideoInfo', 'mediaDurationInFrames', 'preloadMedia'],
-  '@celesta/character': [
+  '@celesta.studio/debug': ['DebugBounds', 'DebugBoundsProps', 'DebugOverlay', 'DebugOverlayProps'],
+  '@celesta.studio/media-utils': ['MediaAnimationInfo', 'MediaAudioInfo', 'MediaInfo', 'MediaVideoInfo', 'mediaDurationInFrames', 'preloadMedia'],
+  '@celesta.studio/character': [
     'BlinkPhase', 'BlinkTiming', 'Character', 'CharacterLipSync', 'CharacterPortrait', 'CharacterProps',
     'CharacterSubtitle', 'CharacterView', 'CharacterViewProps', 'CharacterViewReference', 'Dialogue', 'DialogueLine',
     'DialoguePlan', 'DialogueProps', 'DialogueRange', 'DialogueScene', 'DialogueSeries', 'DialogueSeriesProps',
@@ -60,7 +65,7 @@ export const movedExports = {
     'lipSyncTimeline', 'loadLipSync', 'loadPsdPreset', 'parsePfv', 'planDialogue', 'resolveVisibleLayers',
     'useLipSync', 'vowelShapes',
   ],
-  '@celesta/project': [
+  '@celesta.studio/project': [
     'Asset', 'AssetSource', 'CharacterDefinition', 'LipSyncCue', 'LipSyncDefinition', 'PortraitDefinition',
     'Project', 'ProjectProvider', 'ProjectProviderProps', 'ProjectSettings', 'ProjectTimeline', 'ProjectTrack',
     'ProjectTrackProps', 'ProjectVersion', 'SourceRange', 'SubtitleDefinition', 'TimelineContent', 'TimelineItem',
@@ -69,11 +74,13 @@ export const movedExports = {
   ],
 };
 
-const CORE = '@celesta/react';
+const CORE = '@celesta.studio/react';
+const LEGACY_SCOPE = '@celesta/';
+const LEGACY_SPECIFIER = /(['"`])@celesta\/(?=[a-z])/g;
 const PACKAGE_ORDER = [CORE, ...Object.keys(movedExports)];
 const NEW_HOME = new Map(Object.entries(movedExports).flatMap(([pkg, names]) => names.map((name) => [name, pkg])));
-const DECLARATION = /\b(import|export)(\s+type)?\s*\{([^}]*)\}\s*from\s*(['"])(@celesta\/[a-z-]+)\4(\s*;)?/g;
-const NAMESPACE = /\bimport\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s*(['"])@celesta\/react\2/g;
+const DECLARATION = /\b(import|export)(\s+type)?\s*\{([^}]*)\}\s*from\s*(['"])(@celesta\.studio\/[a-z-]+)\4(\s*;)?/g;
+const NAMESPACE = /\bimport\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s*(['"])@celesta\.studio\/react\2/g;
 const LINE_WIDTH = 100;
 
 /** A specifier's imported name: `/* note *\/ type Foo as Bar` → `Foo`. */
@@ -126,7 +133,9 @@ function lineOf(text, offset) {
  * Rewrites one file's source. Returns the new text, the packages its moved
  * names now come from, and warnings for what it could not rewrite.
  */
-export function migrateSource(text) {
+export function migrateSource(input) {
+  const text = input.replace(LEGACY_SPECIFIER, '$1@celesta.studio/');
+  const renamed = text !== input;
   const declarations = [];
   for (const match of text.matchAll(DECLARATION)) {
     const [whole, keyword, typeKeyword = '', body, quote, pkg, semi = ''] = match;
@@ -187,7 +196,7 @@ export function migrateSource(text) {
         used.map((name) => `${namespace}.${name} (${NEW_HOME.get(name)})`).join(', '));
     }
   }
-  if (!changed) return { text, packages, warnings };
+  if (!changed) return { text, packages, warnings, renamed };
 
   const render = (declaration) => {
     const from = `from ${declaration.quote}${declaration.pkg}${declaration.quote}`;
@@ -228,7 +237,7 @@ export function migrateSource(text) {
     cursor = end;
   }
   output += text.slice(cursor);
-  return { text: output, packages, warnings };
+  return { text: output, packages, warnings, renamed };
 }
 
 const EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mts', '.cts', '.mjs', '.cjs']);
@@ -257,13 +266,24 @@ function nearestManifest(file) {
   }
 }
 
-/** Adds `packages` beside `@celesta/react` in whichever dependency list has it. Returns what it added. */
+/**
+ * Renames `@celesta/…` dependencies to `@celesta.studio/…` and adds `packages`
+ * beside `@celesta.studio/react` in whichever dependency list has it. Returns
+ * what it renamed and added.
+ */
 export function addDependencies(manifestText, packages) {
   const manifest = JSON.parse(manifestText);
   const added = [];
+  const renamed = [];
   for (const field of ['dependencies', 'devDependencies', 'peerDependencies']) {
+    if (!manifest[field]) continue;
+    manifest[field] = Object.fromEntries(Object.entries(manifest[field]).map(([name, range]) => {
+      if (!name.startsWith(LEGACY_SCOPE)) return [name, range];
+      renamed.push(name);
+      return [`@celesta.studio/${name.slice(LEGACY_SCOPE.length)}`, range];
+    }));
     const list = manifest[field];
-    if (!list || !(CORE in list)) continue;
+    if (!(CORE in list)) continue;
     const missing = [...packages].filter((pkg) => !(pkg in list)).sort();
     if (missing.length === 0) continue;
     const next = {};
@@ -274,9 +294,9 @@ export function addDependencies(manifestText, packages) {
     manifest[field] = next;
     added.push(...missing);
   }
-  if (added.length === 0) return { text: manifestText, added };
+  if (added.length === 0 && renamed.length === 0) return { text: manifestText, added, renamed };
   const indent = manifestText.match(/\n([ \t]+)"/)?.[1] ?? '  ';
-  return { text: `${JSON.stringify(manifest, null, indent)}\n`, added };
+  return { text: `${JSON.stringify(manifest, null, indent)}\n`, added, renamed };
 }
 
 function main(argv) {
@@ -295,13 +315,14 @@ function main(argv) {
   for (const target of targets.length > 0 ? targets : ['.']) {
     for (const file of sourceFiles(target)) {
       const source = readFileSync(file, 'utf8');
-      if (!source.includes(CORE)) continue;
+      if (!source.includes(CORE) && !source.includes(LEGACY_SCOPE)) continue;
       const result = migrateSource(source);
       for (const warning of result.warnings) console.warn(`${file}:${warning.replace(/^line /, '')}`);
       warnings += result.warnings.length;
       if (result.text === source) continue;
       changedFiles += 1;
-      console.log(`${write ? 'updated' : 'would update'} ${file} (${[...result.packages].join(', ')})`);
+      const notes = [...(result.renamed ? ['@celesta.studio scope'] : []), ...result.packages];
+      console.log(`${write ? 'updated' : 'would update'} ${file} (${notes.join(', ')})`);
       if (write) writeFileSync(file, result.text);
       const manifest = nearestManifest(file);
       if (manifest) {
@@ -312,9 +333,10 @@ function main(argv) {
   }
   for (const [manifest, packages] of manifests) {
     const before = readFileSync(manifest, 'utf8');
-    const { text, added } = addDependencies(before, packages);
-    if (added.length === 0) continue;
-    console.log(`${write ? 'added' : 'would add'} ${added.join(', ')} to ${manifest}`);
+    const { text, added, renamed } = addDependencies(before, packages);
+    if (renamed.length > 0) console.log(`${write ? 'renamed' : 'would rename'} ${renamed.join(', ')} in ${manifest}`);
+    if (added.length > 0) console.log(`${write ? 'added' : 'would add'} ${added.join(', ')} to ${manifest}`);
+    if (text === before) continue;
     if (write) writeFileSync(manifest, text);
   }
   console.log(changedFiles === 0 ? 'Nothing to migrate.' : `${changedFiles} file(s) ${write ? 'migrated' : 'to migrate'}.`);

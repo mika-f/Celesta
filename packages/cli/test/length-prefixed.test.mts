@@ -30,7 +30,7 @@ test('--length-prefixed frames every message with its UTF-8 byte count', () => {
   const dir = mkdtempSync(join(tmpdir(), 'celesta-length-prefixed-'));
   const entry = join(dir, 'entry.tsx');
   writeFileSync(entry, `
-    import { Composition, Rect } from '@celesta/react';
+    import { Composition, Rect } from '@celesta.studio/react';
     export default function Film() {
       return <Composition width={64} height={64} fps={30} durationInFrames={1}>
         <Rect id="四角" width={4} height={4} fill="#ffffff" />

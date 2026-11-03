@@ -1,4 +1,4 @@
-import { Composition, Text } from '@celesta/react';
+import { Composition, Text } from '@celesta.studio/react';
 
 const settings = { title: 'Chapter 3', accent: '#a68bbf' };
 type TitleProps = { title: string; accent: string };

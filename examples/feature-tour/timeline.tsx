@@ -1,4 +1,4 @@
-import { defineScenes, type SceneEntry } from '@celesta/react';
+import { defineScenes, type SceneEntry } from '@celesta.studio/react';
 import { CHAPTERS } from './chapters';
 import { ChapterShell } from './components/ChapterShell';
 import { BAR } from './constants';

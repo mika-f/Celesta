@@ -1,5 +1,5 @@
-import { Easings, Group, Rect, interpolate, useCurrentFrame } from '@celesta/react';
-import { Circle } from '@celesta/shapes';
+import { Easings, Group, Rect, interpolate, useCurrentFrame } from '@celesta.studio/react';
+import { Circle } from '@celesta.studio/shapes';
 import { CodeCard, highlightTsx } from '../components/CodeCard';
 import { Label } from '../components/Label';
 import { BODY, Panel } from '../components/Panel';

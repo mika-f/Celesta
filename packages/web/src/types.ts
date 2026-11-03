@@ -1,4 +1,4 @@
-import type { AudioDuck } from '@celesta/react';
+import type { AudioDuck } from '@celesta.studio/react';
 
 /** Types returned by the Celesta React evaluator in the browser. */
 export interface CompositionConfig {
@@ -72,7 +72,7 @@ export type LayerContent =
     type: 'group';
     layers: Layer[];
     clip?: { x: number; y: number; width: number; height: number; cornerRadius: number } | null;
-    /** Shows the layers only where `mask.layers` draw; see `GroupMask` in `@celesta/react`. */
+    /** Shows the layers only where `mask.layers` draw; see `GroupMask` in `@celesta.studio/react`. */
     mask?: { layers: Layer[]; mode?: 'alpha' | 'luminance'; invert?: boolean } | null;
     motionBlur?: boolean;
   }
@@ -83,13 +83,13 @@ export type LayerContent =
   | { type: 'video'; asset: Asset; timing: { sourceTimeSeconds: number; loop?: boolean }; width?: number; height?: number }
   | { type: 'psd'; asset: Asset }
   | { type: 'missingComponent'; component: string; props: Record<string, unknown> };
-/** A built-in color filter; see `LayerFilter` in `@celesta/react`. */
+/** A built-in color filter; see `LayerFilter` in `@celesta.studio/react`. */
 export type ColorFilter =
   | { type: 'brightness' | 'contrast' | 'saturation' | 'grayscale' | 'invert'; amount: number }
   | { type: 'hue'; degrees: number }
   | { type: 'tint'; color: string; amount: number }
   | { type: 'vignette'; amount: number; radius: number; softness: number };
-/** A built-in stylize effect or the chroma key; see `LayerFilter` in `@celesta/react`. */
+/** A built-in stylize effect or the chroma key; see `LayerFilter` in `@celesta.studio/react`. */
 export type EffectFilter =
   | { type: 'pixelate'; size: number }
   | { type: 'halftone'; size: number; angle: number }

@@ -4,8 +4,8 @@
 // only what the subtitle shows, never the voice, the lip sync, or the clock
 // a `subtitle.render` band runs on.
 
-import { graphemes, resolveEmphasis, resolveTimedRanges, sliceEmphasis, timedRangeAt } from '@celesta/text';
-import type { ResolvedEmphasis, TextEmphasis, TimedRange } from '@celesta/text';
+import { graphemes, resolveEmphasis, resolveTimedRanges, sliceEmphasis, timedRangeAt } from '@celesta.studio/text';
+import type { ResolvedEmphasis, TextEmphasis, TimedRange } from '@celesta.studio/text';
 
 /** How a page's start was found. */
 export type SubtitlePageTiming = 'manual' | 'aligned' | 'approximate';

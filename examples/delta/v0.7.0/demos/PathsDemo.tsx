@@ -1,5 +1,5 @@
-import { Easings, Group, Rect, Text, interpolate, progress } from '@celesta/react';
-import { Path, getLength, interpolatePath, parseSvgPath, pointOnPath, tangentOnPath, toSvgPath } from '@celesta/shapes';
+import { Easings, Group, Rect, Text, interpolate, progress } from '@celesta.studio/react';
+import { Path, getLength, interpolatePath, parseSvgPath, pointOnPath, tangentOnPath, toSvgPath } from '@celesta.studio/shapes';
 import type { DemoProps } from '../../components/ChapterShell';
 import { STAGE, enter } from '../../components/ChapterShell';
 import { C, FONT, solid } from '../../components/theme';

@@ -6,12 +6,12 @@
 import * as React from 'react';
 import type { ReactNode } from 'react';
 
-import { Group, useCurrentFrame, useCurrentTime, useVideoConfig } from '@celesta/react';
-import { emphasisContent, resolveEmphasis } from '@celesta/text';
-import type { EmphasisStyle, ResolvedEmphasis, TextEmphasis } from '@celesta/text';
+import { Group, useCurrentFrame, useCurrentTime, useVideoConfig } from '@celesta.studio/react';
+import { emphasisContent, resolveEmphasis } from '@celesta.studio/text';
+import type { EmphasisStyle, ResolvedEmphasis, TextEmphasis } from '@celesta.studio/text';
 import type {
   AnimatedNumber, AssetInput, AssetReference, CommonProps, ResolvedTheme, TextMetrics, TextStyle,
-} from '@celesta/react';
+} from '@celesta.studio/react';
 import {
   CompositionRuntimeContext,
   FreezeFrameContext,
@@ -25,8 +25,8 @@ import {
   useMeasurementFonts,
   withInheritedText,
   withTextRuns,
-} from '@celesta/react/internal';
-import type { MeasureTextRequest } from '@celesta/react/internal';
+} from '@celesta.studio/react/internal';
+import type { MeasureTextRequest } from '@celesta.studio/react/internal';
 
 import type { BlinkTiming } from './blink';
 import { useOptionalLipSync } from './lipsync';

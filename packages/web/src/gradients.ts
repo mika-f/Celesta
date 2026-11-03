@@ -1,4 +1,4 @@
-import { parseHexColor } from '@celesta/math';
+import { parseHexColor } from '@celesta.studio/math';
 import type { Paint } from './types';
 
 type Gradient = Exclude<Paint, { type: 'solid' }>;

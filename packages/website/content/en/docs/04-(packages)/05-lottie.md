@@ -1,14 +1,14 @@
-`@celesta/lottie` draws a Lottie JSON file, exported from After Effects with Bodymovin, in step with the composition's frames. Each frame is drawn as paths, groups, and masks that depend only on its time, so preview, export, and `@celesta/web` draw the same picture, and scrubbing to any frame gives the same result as playing up to it.
+`@celesta.studio/lottie` draws a Lottie JSON file, exported from After Effects with Bodymovin, in step with the composition's frames. Each frame is drawn as paths, groups, and masks that depend only on its time, so preview, export, and `@celesta.studio/web` draw the same picture, and scrubbing to any frame gives the same result as playing up to it.
 
-The desktop app, the CLI, and `@celesta/web` include it. It is private and is not published to npm.
+The desktop app, the CLI, and `@celesta.studio/web` include it. It is private and is not published to npm.
 
 ## Place an animation
 
 Import the JSON file and pass its contents as `data`.
 
 ```tsx
-import { Composition, Sequence } from '@celesta/react';
-import { Lottie } from '@celesta/lottie';
+import { Composition, Sequence } from '@celesta.studio/react';
+import { Lottie } from '@celesta.studio/lottie';
 
 import confetti from './confetti.json';
 

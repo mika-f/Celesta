@@ -1,7 +1,7 @@
 import * as React from 'react';
 import type { ReactNode } from 'react';
 
-import type { TextMetrics, TextStyle } from '@celesta/react';
+import type { TextMetrics, TextStyle } from '@celesta.studio/react';
 import {
   CompositionRuntimeContext,
   ThemeContext,
@@ -12,7 +12,7 @@ import {
   useMeasurementFonts,
   withInheritedText,
   withTextRuns,
-} from '@celesta/react/internal';
+} from '@celesta.studio/react/internal';
 
 /** Measures `content` with `style`, wrapped at `maxWidth` when given. */
 export type TextMeasurer = (content: ReactNode, style: TextStyle, maxWidth?: number) => TextMetrics;

@@ -1,4 +1,4 @@
-import { Group, Rect, Text } from '@celesta/react';
+import { Group, Rect, Text } from '@celesta.studio/react';
 import { C, FONT, HEADER, SAFE } from '../constants';
 import { SLOTS } from '../slots';
 

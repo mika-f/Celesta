@@ -1,4 +1,4 @@
-import { Group, Rect, Text } from '@celesta/react';
+import { Group, Rect, Text } from '@celesta.studio/react';
 import { STAGE, enter } from '../../components/ChapterShell';
 import type { DemoProps } from '../../components/ChapterShell';
 import { BEAT, C, FONT, solid } from '../../components/theme';

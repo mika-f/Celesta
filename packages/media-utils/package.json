@@ -1,5 +1,5 @@
 {
-  "name": "@celesta/media-utils",
+  "name": "@celesta.studio/media-utils",
   "version": "0.9.0",
   "private": true,
   "description": "Media metadata helpers (preloadMedia, mediaDurationInFrames) and audio spectrum analysis (loadAudioSpectrum, useAudioSpectrum) for Celesta compositions.",
@@ -27,10 +27,10 @@
     "clean": "rm -rf dist"
   },
   "peerDependencies": {
-    "@celesta/react": "0.0.0"
+    "@celesta.studio/react": "0.0.0"
   },
   "devDependencies": {
-    "@celesta/react": "workspace:*",
+    "@celesta.studio/react": "workspace:*",
     "@types/node": "^24.13.6",
     "@types/react": "^19.3.0",
     "react": "^19.3.0",

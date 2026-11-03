@@ -1,12 +1,12 @@
 import * as React from 'react';
-import { Assets, Composition, Rect } from '@celesta/react';
-import { Character, CharacterView, Dialogue } from '@celesta/character';
-import type { AssetReference } from '@celesta/react';
-import type { CharacterViewReference, LipSyncTrack } from '@celesta/character';
+import { Assets, Composition, Rect } from '@celesta.studio/react';
+import { Character, CharacterView, Dialogue } from '@celesta.studio/character';
+import type { AssetReference } from '@celesta.studio/react';
+import type { CharacterViewReference, LipSyncTrack } from '@celesta.studio/character';
 
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { lipSyncFromAivisSpeech } from '@celesta/aivis-speech';
+import { lipSyncFromAivisSpeech } from '@celesta.studio/aivis-speech';
 import query from './aivis-speech-query.json';
 
 // The WAV is needed too: AivisSpeech queries hold no phoneme lengths.

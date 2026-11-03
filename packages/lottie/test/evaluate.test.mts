@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'vitest';
 
-import type { PathCommand } from '@celesta/react';
+import type { PathCommand } from '@celesta.studio/react';
 import { inspectLottie, lottieFrameAt } from '../src/index.js';
 import type { LottieBezier, LottieKeyframe } from '../src/index.js';
 import {

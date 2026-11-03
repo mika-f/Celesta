@@ -1,8 +1,8 @@
-import { TypewriterText } from '@celesta/components';
-import { noise, random } from '@celesta/math';
-import { Easings, Rect, progress, useBeat, useCurrentFrame, useVideoConfig } from '@celesta/react';
-import { Camera } from '@celesta/layout';
-import { TextReveal } from '@celesta/text';
+import { TypewriterText } from '@celesta.studio/components';
+import { noise, random } from '@celesta.studio/math';
+import { Easings, Rect, progress, useBeat, useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
+import { Camera } from '@celesta.studio/layout';
+import { TextReveal } from '@celesta.studio/text';
 import { Label, textStyle } from '../components/Label';
 import { BEAT, BPM, C, H, W } from '../constants';
 import { TOTAL_COMMITS } from '../data';

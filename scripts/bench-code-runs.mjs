@@ -16,7 +16,7 @@ for (const file of ['index.ts', 'syntax.ts']) {
 }
 if (!existsSync(resolve(directory, 'node_modules'))) symlinkSync(resolve(root, 'packages/code/node_modules'), resolve(directory, 'node_modules'));
 const entry = resolve(root, 'packages/code/examples/benchmark.tsx');
-writeFileSync(resolve(directory, 'benchmark.tsx'), readFileSync(entry, 'utf8').replace("'@celesta/code'", "'./index.ts'"));
+writeFileSync(resolve(directory, 'benchmark.tsx'), readFileSync(entry, 'utf8').replace("'@celesta.studio/code'", "'./index.ts'"));
 // Observe the first actual compact Scene response and initial measurement RPCs.
 // Only the first Scene writes a tiny probe file; steady-state timings do not
 // parse or record responses.

@@ -1,5 +1,5 @@
-import { Easings, Group, Rect, interpolate, spring, useCurrentFrame, useVideoConfig } from '@celesta/react';
-import { Arrow } from '@celesta/shapes';
+import { Easings, Group, Rect, interpolate, spring, useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
+import { Arrow } from '@celesta.studio/shapes';
 import { Label } from '../components/Label';
 import { BODY, Panel } from '../components/Panel';
 import { CAST } from '../character';

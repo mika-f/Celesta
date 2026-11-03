@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 
-import type { Layer, LayerContent } from '@celesta/react';
+import type { Layer, LayerContent } from '@celesta.studio/react';
 
 export type ContentOf<T extends LayerContent['type']> = Extract<LayerContent, { type: T }>;
 

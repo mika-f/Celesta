@@ -1,5 +1,5 @@
-import { PatternBackground, TitleCard } from '@celesta/components';
-import { Easings, Group, Rect } from '@celesta/react';
+import { PatternBackground, TitleCard } from '@celesta.studio/components';
+import { Easings, Group, Rect } from '@celesta.studio/react';
 import { C, FONT, TOOL, W, type ToolId } from '../constants';
 import { Label } from './Label';
 

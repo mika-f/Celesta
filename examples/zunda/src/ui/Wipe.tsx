@@ -1,7 +1,7 @@
 // シーンの切り替わりで、緑とピンクの斜めの帯が画面を横切る。
 // 帯が画面を覆っている瞬間にシーンが入れ替わるので、切れ目が見えない。
 
-import { Easings, Rect, interpolate, useCurrentFrame } from '@celesta/react';
+import { Easings, Rect, interpolate, useCurrentFrame } from '@celesta.studio/react';
 
 import { COLOR } from '../theme.ts';
 

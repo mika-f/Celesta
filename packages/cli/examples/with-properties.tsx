@@ -1,6 +1,6 @@
-import { Composition, Text, defineProjectProperties } from '@celesta/react';
-import { ProjectProvider, loadProjectFromString, useProjectProperty } from '@celesta/project';
-import type { ProjectPropertySchema } from '@celesta/react';
+import { Composition, Text, defineProjectProperties } from '@celesta.studio/react';
+import { ProjectProvider, loadProjectFromString, useProjectProperty } from '@celesta.studio/project';
+import type { ProjectPropertySchema } from '@celesta.studio/react';
 
 // Declared at module scope so it has run before the CLI's startup Ready
 // message is sent — the GPUI editor reads this schema off the handshake and

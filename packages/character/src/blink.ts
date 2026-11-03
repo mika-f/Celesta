@@ -2,7 +2,7 @@
 // function of the composition frame and a seed, so preview and export agree
 // and every frame can be rendered on its own, in any order.
 
-import { random } from '@celesta/math';
+import { random } from '@celesta.studio/math';
 
 /** When a portrait blinks; see `blinkPhase()`. */
 export interface BlinkTiming {

@@ -27,7 +27,7 @@ use std::io::{self, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
-/// A live connection to the `@celesta/cli` process evaluating one entry module.
+/// A live connection to the `@celesta.studio/cli` process evaluating one entry module.
 pub struct ReactBridge {
     pub(crate) child: Child,
     pub(crate) stdin: ChildStdin,
@@ -180,6 +180,7 @@ impl ReactBridge {
                         primitive_properties,
                         project_property_schema,
                         dependencies,
+                        legacy_imports,
                     } => {
                         // Without an order, fall back to the map's sorted keys.
                         let mut project_property_order = ready_property_order(&message);
@@ -210,6 +211,7 @@ impl ReactBridge {
                             project_property_schema,
                             project_property_order,
                             prepare_dependencies: dependencies,
+                            legacy_imports,
                             chapters: config.chapters,
                         });
                     }

@@ -6,10 +6,10 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'vitest';
 
-import type { Layer, LayerContent, Scene } from '@celesta/react';
+import type { Layer, LayerContent, Scene } from '@celesta.studio/react';
 
 // Integration tests of the build: each test renders through the CLI, which
-// loads @celesta/layout from its dist/, so `pnpm run build:runtime` (repository
+// loads @celesta.studio/layout from its dist/, so `pnpm run build:runtime` (repository
 // root) must run first.
 const cli = fileURLToPath(new URL('../../cli/bin/celesta-react-render.js', import.meta.url));
 
@@ -41,7 +41,7 @@ test('layout components position children inside inherited bounds', () => {
   const entry = join(dir, 'entry.tsx');
   writeFileSync(
     entry,
-    `import { Composition, Text } from '@celesta/react'; import { Center, Fit, Grid, SafeArea, Stack } from '@celesta/layout';\n` +
+    `import { Composition, Text } from '@celesta.studio/react'; import { Center, Fit, Grid, SafeArea, Stack } from '@celesta.studio/layout';\n` +
       `export default function Root() {\n` +
       `  return (\n` +
       `    <Composition width={300} height={200} fps={30} durationInFrames={1}>\n` +
@@ -86,7 +86,7 @@ test('safe areas take per-edge insets and scale presets to the canvas', () => {
   const entry = join(dir, 'entry.tsx');
   writeFileSync(
     entry,
-    `import { Composition, Text } from '@celesta/react'; import { Center, SafeArea, safeAreaInsets } from '@celesta/layout';\n` +
+    `import { Composition, Text } from '@celesta.studio/react'; import { Center, SafeArea, safeAreaInsets } from '@celesta.studio/layout';\n` +
       `export default function Root() {\n` +
       `  return (\n` +
       `    <Composition width={1080} height={1920} fps={30} durationInFrames={1}>\n` +
@@ -122,7 +122,7 @@ test('an unknown safe area preset names the known ones', () => {
   const entry = join(dir, 'entry.tsx');
   writeFileSync(
     entry,
-    `import { Composition } from '@celesta/react'; import { SafeArea } from '@celesta/layout';\n` +
+    `import { Composition } from '@celesta.studio/react'; import { SafeArea } from '@celesta.studio/layout';\n` +
       `export default function Root() {\n` +
       `  return <Composition width={1080} height={1920} fps={30} durationInFrames={1}><SafeArea padding="shorts" /></Composition>;\n` +
       `}\n`,
@@ -144,7 +144,7 @@ test('LayoutBounds sets the area nested helpers see without moving them', () => 
   const entry = join(dir, 'entry.tsx');
   writeFileSync(
     entry,
-    `import { Composition, Group, Text } from '@celesta/react'; import { Center, LayoutBounds, SafeArea } from '@celesta/layout';\n` +
+    `import { Composition, Group, Text } from '@celesta.studio/react'; import { Center, LayoutBounds, SafeArea } from '@celesta.studio/layout';\n` +
       `export default function Root() {\n` +
       `  return <Composition width={300} height={200} fps={30} durationInFrames={1}>` +
       `<Group x={40} y={30}><LayoutBounds width={100} height={60}>` +
@@ -179,7 +179,7 @@ test('LayoutBounds rejects a negative or non-finite size', () => {
     const entry = join(dir, 'entry.tsx');
     writeFileSync(
       entry,
-      `import { Composition } from '@celesta/react'; import { LayoutBounds } from '@celesta/layout';\n` +
+      `import { Composition } from '@celesta.studio/react'; import { LayoutBounds } from '@celesta.studio/layout';\n` +
         `export default function Root() {\n` +
         `  return <Composition width={100} height={100} fps={30} durationInFrames={1}>` +
         `<LayoutBounds width={${size}} height={10} />` +
@@ -203,7 +203,7 @@ test('a camera blends its view as one layer', () => {
   const entry = join(dir, 'entry.tsx');
   writeFileSync(
     entry,
-    `import { Composition, Rect } from '@celesta/react'; import { Camera } from '@celesta/layout';\n` +
+    `import { Composition, Rect } from '@celesta.studio/react'; import { Camera } from '@celesta.studio/layout';\n` +
       `export default function Root() {\n` +
       `  return <Composition width={100} height={100} fps={30} durationInFrames={1}>` +
       `<Camera blendMode="softLight" opacity={0.5}><Rect width={10} height={10} fill="#808080" /></Camera>` +

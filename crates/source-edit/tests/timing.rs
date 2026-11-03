@@ -24,14 +24,14 @@ fn kind(import: &str, body: &str, tag: &str) -> Option<TimingKind> {
 
 #[test]
 fn timing_kind_reads_the_import() {
-    let named = "import { Rect, Sequence, Series } from '@celesta/react';";
+    let named = "import { Rect, Sequence, Series } from '@celesta.studio/react';";
     assert_eq!(
         kind(named, "<Sequence from={30}><Rect /></Sequence>", "Sequence"),
         Some(TimingKind::Sequence)
     );
     assert_eq!(
         kind(
-            "import { Sequence as Seq } from '@celesta/react';",
+            "import { Sequence as Seq } from '@celesta.studio/react';",
             "<Seq from={30} />",
             "Seq"
         ),
@@ -39,7 +39,7 @@ fn timing_kind_reads_the_import() {
     );
     assert_eq!(
         kind(
-            "import * as C from '@celesta/react';",
+            "import * as C from '@celesta.studio/react';",
             "<C.Sequence from={30} />",
             "C.Sequence"
         ),
@@ -55,7 +55,7 @@ fn timing_kind_reads_the_import() {
     );
     assert_eq!(
         kind(
-            "import { Series as S } from '@celesta/react';",
+            "import { Series as S } from '@celesta.studio/react';",
             "<S><S.Sequence durationInFrames={30} /></S>",
             "S.Sequence"
         ),
@@ -63,7 +63,7 @@ fn timing_kind_reads_the_import() {
     );
     assert_eq!(
         kind(
-            "import * as C from '@celesta/react';",
+            "import * as C from '@celesta.studio/react';",
             "<C.Series><C.Series.Sequence durationInFrames={30} /></C.Series>",
             "C.Series.Sequence"
         ),
@@ -74,7 +74,7 @@ fn timing_kind_reads_the_import() {
     assert_eq!(kind(named, "<Series />", "Series"), None);
 
     // A local component named `Sequence` is not the wrapper.
-    let text = "import { Rect } from '@celesta/react';\nfunction Sequence() {\n  return <Rect />;\n}\nexport const Scene = () => <Sequence from={30} />;\n";
+    let text = "import { Rect } from '@celesta.studio/react';\nfunction Sequence() {\n  return <Rect />;\n}\nexport const Scene = () => <Sequence from={30} />;\n";
     assert_eq!(timing_kind(text, &element(text, "<Sequence")), None);
 
     // Nor one imported from elsewhere, or as a type only.
@@ -88,7 +88,7 @@ fn timing_kind_reads_the_import() {
     );
     assert_eq!(
         kind(
-            "import type { Sequence } from '@celesta/react';",
+            "import type { Sequence } from '@celesta.studio/react';",
             "<Sequence />",
             "Sequence"
         ),
@@ -98,7 +98,7 @@ fn timing_kind_reads_the_import() {
 
 #[test]
 fn later_series_items_are_the_following_siblings() {
-    let text = "import { Rect, Series } from '@celesta/react';\nexport const Scene = () => (\n  <Series>\n    <Series.Sequence durationInFrames={30}><Rect /></Series.Sequence>\n    <Series.Sequence durationInFrames={40}><Rect /></Series.Sequence>\n    <Series.Sequence durationInFrames={50}><Rect /></Series.Sequence>\n  </Series>\n);\n";
+    let text = "import { Rect, Series } from '@celesta.studio/react';\nexport const Scene = () => (\n  <Series>\n    <Series.Sequence durationInFrames={30}><Rect /></Series.Sequence>\n    <Series.Sequence durationInFrames={40}><Rect /></Series.Sequence>\n    <Series.Sequence durationInFrames={50}><Rect /></Series.Sequence>\n  </Series>\n);\n";
     let items: Vec<ElementRef> = text
         .match_indices("<Series.Sequence")
         .map(|(offset, _)| {
@@ -126,7 +126,7 @@ fn later_series_items_are_the_following_siblings() {
     );
 
     // Columns count UTF-16 code units.
-    let text = "import { Series } from '@celesta/react';\nexport const Scene = () => <Series><Series.Sequence durationInFrames={1} />{/* 🎬 */}<Series.Sequence durationInFrames={2} /></Series>;\n";
+    let text = "import { Series } from '@celesta.studio/react';\nexport const Scene = () => <Series><Series.Sequence durationInFrames={1} />{/* 🎬 */}<Series.Sequence durationInFrames={2} /></Series>;\n";
     let first = element(text, "<Series.Sequence");
     let later = later_series_items(text, &first);
     let offset = text.rfind("<Series.Sequence").unwrap();

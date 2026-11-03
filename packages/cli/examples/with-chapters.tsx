@@ -1,4 +1,4 @@
-import { Composition, Rect, Scenes, Text, defineScenes, listChapters, useScene } from '@celesta/react';
+import { Composition, Rect, Scenes, Text, defineScenes, listChapters, useScene } from '@celesta.studio/react';
 
 // Chapters for the editor preview. The scenes are declared once with
 // defineScenes: <Scenes> plays them, and `chapters` on the <Composition>

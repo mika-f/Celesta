@@ -1,6 +1,6 @@
-import { Audio, Group, Rect, Sequence, Subtitles, Text, interpolate, useCurrentFrame } from '@celesta/react';
-import { FrameChrome } from '@celesta/components';
-import { Path } from '@celesta/shapes';
+import { Audio, Group, Rect, Sequence, Subtitles, Text, interpolate, useCurrentFrame } from '@celesta.studio/react';
+import { FrameChrome } from '@celesta.studio/components';
+import { Path } from '@celesta.studio/shapes';
 import { C, FONT, H, W, solid } from '../components/theme';
 import { CAPTIONS, CAPTION_LANGUAGES } from './captions';
 import { CHAPTERS } from './chapters';

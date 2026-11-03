@@ -1,7 +1,7 @@
-import { Composition, Font, Group, Rect, Text, Theme, useCurrentFrame, useTheme } from '@celesta/react';
-import type { TextStyle } from '@celesta/react';
-import { emphasisContent, graphemes, resolveEmphasis, resolveTimedRanges, timedRangeAt } from '@celesta/text';
-import type { EmphasisStyle, TextEmphasis } from '@celesta/text';
+import { Composition, Font, Group, Rect, Text, Theme, useCurrentFrame, useTheme } from '@celesta.studio/react';
+import type { TextStyle } from '@celesta.studio/react';
+import { emphasisContent, graphemes, resolveEmphasis, resolveTimedRanges, timedRangeAt } from '@celesta.studio/text';
+import type { EmphasisStyle, TextEmphasis } from '@celesta.studio/text';
 
 // Emphasis by grapheme cluster, and phrases on half-open frame ranges: the
 // shared shapes <CaptionTrack> and dialogue subtitles build on. Each phrase

@@ -1,4 +1,4 @@
-import { checkDuckGroup, duckEnvelope, duckGroups } from '@celesta/media-utils/duck';
+import { checkDuckGroup, duckEnvelope, duckGroups } from '@celesta.studio/media-utils/duck';
 import type { AnimatedNumber, AudioClip } from './types';
 import { type AutomationEvent, automationEvents, integrateAnimated } from './keyframes';
 

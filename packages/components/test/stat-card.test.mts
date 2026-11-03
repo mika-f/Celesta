@@ -3,9 +3,9 @@ import { beforeEach, test } from 'vitest';
 import * as React from 'react';
 import type { ReactElement } from 'react';
 
-import { Composition, Sequence } from '@celesta/react';
-import type { Layer, LayerContent, Paint } from '@celesta/react';
-import { mount } from '@celesta/react/internal';
+import { Composition, Sequence } from '@celesta.studio/react';
+import type { Layer, LayerContent, Paint } from '@celesta.studio/react';
+import { mount } from '@celesta.studio/react/internal';
 import { StatCard } from '../src/index.js';
 import type { StatCardProps } from '../src/index.js';
 import { installStubMeasurer } from './text-metrics-stub.mjs';

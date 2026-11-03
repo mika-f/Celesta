@@ -1,5 +1,5 @@
 {
-  "name": "@celesta/example-scene-timing",
+  "name": "@celesta.studio/example-scene-timing",
   "private": true,
   "scripts": {
     "preview": "celesta-editor film.tsx",

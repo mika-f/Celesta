@@ -1,4 +1,4 @@
-import { Audio, Composition, Sequence, Text, Video, useCurrentFrame } from '@celesta/react';
+import { Audio, Composition, Sequence, Text, Video, useCurrentFrame } from '@celesta.studio/react';
 
 // Hooks read the enclosing <Sequence>'s shifted clock only when called from
 // a component *inside* it — JSX children evaluate where they are written,

@@ -5,10 +5,10 @@
 // explicit mapping of the text to moras when there is one, and are otherwise
 // shared out by text length and marked approximate.
 
-import { measureText } from '@celesta/react';
-import type { TextMetrics, TextStyle, ThemeValues } from '@celesta/react';
-import { emphasisContent, graphemes, resolveEmphasis } from '@celesta/text';
-import type { EmphasisStyle } from '@celesta/text';
+import { measureText } from '@celesta.studio/react';
+import type { TextMetrics, TextStyle, ThemeValues } from '@celesta.studio/react';
+import { emphasisContent, graphemes, resolveEmphasis } from '@celesta.studio/text';
+import type { EmphasisStyle } from '@celesta.studio/text';
 
 import { lineDuration } from './dialogue-series';
 import type { DialogueLine } from './dialogue-series';

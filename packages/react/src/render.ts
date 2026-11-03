@@ -7,7 +7,7 @@
 // they would across re-renders in any other React host.
 
 import * as React from 'react';
-import { isHexColor } from '@celesta/math';
+import { isHexColor } from '@celesta.studio/math';
 
 import type { AudioDuck } from './components';
 import { isRemoteUrl } from './entry-dir';
@@ -935,7 +935,7 @@ function extractFilters(props: Record<string, unknown>, context: WalkContext): L
   const effects = value === undefined ? [] : Array.isArray(value) ? Array.from(value as unknown[]) : [value];
   const filters = effects.map((effect) => {
     if (!(effect instanceof ShaderEffect)) {
-      throw new Error("shader must be a value returned by @celesta/shader (defineShader() or a built-in filter such as brightness()), or an array of them");
+      throw new Error("shader must be a value returned by @celesta.studio/shader (defineShader() or a built-in filter such as brightness()), or an array of them");
     }
     const source = ShaderEffect.source(effect);
     if (source) useShaderSource(source.source, context);

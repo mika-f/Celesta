@@ -1,4 +1,4 @@
-import { Audio, Composition, Text } from '@celesta/react';
+import { Audio, Composition, Text } from '@celesta.studio/react';
 
 export default function Root() {
   return (

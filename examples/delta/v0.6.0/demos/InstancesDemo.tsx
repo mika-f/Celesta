@@ -1,6 +1,6 @@
-import { Easings, Group, Instances, Rect, Text, progress } from '@celesta/react';
-import { random } from '@celesta/math';
-import { useCountUp } from '@celesta/text';
+import { Easings, Group, Instances, Rect, Text, progress } from '@celesta.studio/react';
+import { random } from '@celesta.studio/math';
+import { useCountUp } from '@celesta.studio/text';
 import { trianglePoints } from '../../components/Delta';
 import { enter, STAGE } from '../../components/ChapterShell';
 import type { DemoProps } from '../../components/ChapterShell';

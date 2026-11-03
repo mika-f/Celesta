@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
-import type { TextStyle } from '@celesta/react';
-import { Text } from '@celesta/react';
+import type { TextStyle } from '@celesta.studio/react';
+import { Text } from '@celesta.studio/react';
 import { C, FONT } from '../constants';
 
 export const textStyle = (size: number, weight = 900, color: string = C.paper, font: keyof typeof FONT = 'ja'): TextStyle => ({

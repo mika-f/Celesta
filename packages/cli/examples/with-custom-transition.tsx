@@ -1,6 +1,6 @@
-import { Composition, Rect, Text, useVideoConfig } from '@celesta/react';
-import { defineShader } from '@celesta/shader';
-import { TransitionSeries, computeTransitionSeries, defineTransition } from '@celesta/transitions';
+import { Composition, Rect, Text, useVideoConfig } from '@celesta.studio/react';
+import { defineShader } from '@celesta.studio/shader';
+import { TransitionSeries, computeTransitionSeries, defineTransition } from '@celesta.studio/transitions';
 
 // Two transitions written with defineTransition(): blinds, which masks the
 // next scene with slats that open, and pixelate, which runs a shader on both

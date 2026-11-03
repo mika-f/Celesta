@@ -13,7 +13,7 @@ column.
 - `poster.jpg` — a still from the exported video.
 
 It runs in the Celesta desktop app and the exporter. The browser renderer
-(`@celesta/web`) cannot run custom shaders, and its text measurer has no
+(`@celesta.studio/web`) cannot run custom shaders, and its text measurer has no
 per-glyph metrics, so this example does not run there.
 
 ![poster](poster.jpg)
@@ -64,7 +64,7 @@ Celesta-export --react examples/shorts-type-en/film.tsx --debug-guides --every 3
 
 ## Effects
 
-- **Halftone** (`halftone.ts`): a `@celesta/shader` filter on the background
+- **Halftone** (`halftone.ts`): a `@celesta.studio/shader` filter on the background
   rect. Dots grow towards the bottom, drift up, and swell where a ring rises
   from below on every beat.
 - **Finishing pass** (`fx.ts`, `components/Fx.tsx`): a shader on the whole

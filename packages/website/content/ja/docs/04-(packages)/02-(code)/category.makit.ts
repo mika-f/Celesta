@@ -1,3 +1,3 @@
 import { defineCategory } from '@natsuneko-laboratory/makit/metadata';
 
-export default defineCategory({ title: '@celesta/code' });
+export default defineCategory({ title: '@celesta.studio/code' });

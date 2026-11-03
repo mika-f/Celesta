@@ -8,10 +8,10 @@
 
 import * as React from 'react';
 
-import { useCurrentFrame, useVideoConfig } from '@celesta/react';
-import type { AssetInput, CommonProps, LayerContent } from '@celesta/react';
-import { registerHostElement } from '@celesta/react/internal';
-import type { HostNode, HostWalk } from '@celesta/react/internal';
+import { useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
+import type { AssetInput, CommonProps, LayerContent } from '@celesta.studio/react';
+import { registerHostElement } from '@celesta.studio/react/internal';
+import type { HostNode, HostWalk } from '@celesta.studio/react/internal';
 
 export interface FlagProps extends CommonProps {
   /** A PNG or JPEG. Its left edge is the pole. */

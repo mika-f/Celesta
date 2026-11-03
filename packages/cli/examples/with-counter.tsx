@@ -1,5 +1,5 @@
-import { Counter, PatternBackground, StatCard } from '@celesta/components';
-import { Composition, Easings, Font, Text, Theme } from '@celesta/react';
+import { Counter, PatternBackground, StatCard } from '@celesta.studio/components';
+import { Composition, Easings, Font, Text, Theme } from '@celesta.studio/react';
 
 // <Counter> is a <Text> that counts to `value`, printed with formatNumber():
 // grouped for `locale` ('en-US' unless given, so the machine's locale never

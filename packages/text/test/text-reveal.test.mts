@@ -3,11 +3,11 @@ import { test } from 'vitest';
 import React from 'react';
 import type { ReactElement } from 'react';
 
-import { Composition, Span, useCurrentFrame } from '@celesta/react';
-import type { Layer, LayerContent, Scene, TextMetrics } from '@celesta/react';
+import { Composition, Span, useCurrentFrame } from '@celesta.studio/react';
+import type { Layer, LayerContent, Scene, TextMetrics } from '@celesta.studio/react';
 import { TextReveal } from '../src/index.js';
-import { mount, setTextMeasurer } from '@celesta/react/internal';
-import type { MeasureTextRequest } from '@celesta/react/internal';
+import { mount, setTextMeasurer } from '@celesta.studio/react/internal';
+import type { MeasureTextRequest } from '@celesta.studio/react/internal';
 
 type GroupContent = Extract<LayerContent, { type: 'group' }>;
 type TextContent = Extract<LayerContent, { type: 'text' }>;

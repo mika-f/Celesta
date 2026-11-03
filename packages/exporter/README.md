@@ -1,4 +1,4 @@
-# @celesta/exporter
+# @celesta.studio/exporter
 
 Export Celesta compositions from Node.js: videos, stills, and composition
 information, with progress callbacks and cancellation. It runs
@@ -6,7 +6,7 @@ information, with progress callbacks and cancellation. It runs
 arguments or parse output itself.
 
 ```ts
-import { CelestaExportError, exportStills, exportVideo, getComposition } from '@celesta/exporter';
+import { CelestaExportError, exportStills, exportVideo, getComposition } from '@celesta.studio/exporter';
 
 const { composition } = await getComposition({ source: 'scene.tsx' });
 console.log(`${composition.width}x${composition.height}, ${composition.duration}s`);

@@ -1,4 +1,4 @@
-import { Group, Rect, frameToTimecode, useCurrentFrame, useScene } from '@celesta/react';
+import { Group, Rect, frameToTimecode, useCurrentFrame, useScene } from '@celesta.studio/react';
 import { CHAPTERS } from '../chapters';
 import { Label } from './Label';
 import { C, FPS, H, W } from '../constants';

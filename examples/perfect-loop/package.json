@@ -1,5 +1,5 @@
 {
-  "name": "@celesta/example-perfect-loop",
+  "name": "@celesta.studio/example-perfect-loop",
   "private": true,
   "scripts": {
     "preview": "celesta-editor film.tsx",

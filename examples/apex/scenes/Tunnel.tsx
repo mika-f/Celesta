@@ -1,4 +1,4 @@
-import { Group, Rect, progress, useBeat, useCurrentFrame } from '@celesta/react';
+import { Group, Rect, progress, useBeat, useCurrentFrame } from '@celesta.studio/react';
 import { Glitch } from '../components/Glitch';
 import { Label } from '../components/Label';
 import { ACID, BONE, CYAN, H, INK, MAG, W } from '../constants';

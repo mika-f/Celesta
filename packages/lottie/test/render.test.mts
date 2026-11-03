@@ -1,5 +1,5 @@
 // `<Lottie>` through the CLI: the scene it draws, scrubbing, timing, and
-// warnings. Integration tests of the build: the CLI loads @celesta/lottie
+// warnings. Integration tests of the build: the CLI loads @celesta.studio/lottie
 // from its dist/, so `pnpm run build:runtime` (repository root) must run first.
 
 import assert from 'node:assert/strict';
@@ -10,7 +10,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'vitest';
 
-import type { Layer, LayerContent, Scene } from '@celesta/react';
+import type { Layer, LayerContent, Scene } from '@celesta.studio/react';
 import type { LottieAnimation } from '../src/index.js';
 
 const cli = fileURLToPath(new URL('../../cli/bin/celesta-react-render.js', import.meta.url));
@@ -48,7 +48,7 @@ function render(body: string, { frames = [0], data = demo, allowFailure = false 
   }
   writeFileSync(
     entry,
-    `import { Composition } from '@celesta/react'; import { Lottie } from '@celesta/lottie';\n` +
+    `import { Composition } from '@celesta.studio/react'; import { Lottie } from '@celesta.studio/lottie';\n` +
       `import animation from ${JSON.stringify(source)};\n` +
       `export default function Root() {\n` +
       `  return <Composition width={480} height={270} fps={30} durationInFrames={600}>${body}</Composition>;\n` +

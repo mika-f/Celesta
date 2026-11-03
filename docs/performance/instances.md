@@ -56,7 +56,7 @@ output and an external string beyond that; one external string sends the
 whole frame down the slow path. A 300,000-particle column is 1.6 MB of
 base64.
 
-`@celesta/react` therefore encodes a column in pieces of 384 KiB of data
+`@celesta.studio/react` therefore encodes a column in pieces of 384 KiB of data
 (512 KiB of text, whole 3-byte groups so the pieces concatenate into the
 base64 of the whole) and joins them, which copies them into one flat
 string. `packages/react/test/flat-strings.test.mts` renders a

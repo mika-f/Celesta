@@ -8,7 +8,7 @@ export default defineConfig({
     server: {
       deps: {
         // dist/ is CommonJS; let Node load it so the tests and src/ share one
-        // instance of @celesta/react (the text measurer the tests install).
+        // instance of @celesta.studio/react (the text measurer the tests install).
         external: [/\/dist\//],
       },
     },

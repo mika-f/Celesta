@@ -15,7 +15,20 @@ use crate::resolve::Span;
 use crate::{line_break, parse_checked};
 
 /// The package whose components the editor knows.
-pub const PACKAGE: &str = "@celesta/react";
+pub const PACKAGE: &str = "@celesta.studio/react";
+
+/// The scope the Celesta packages had before `@celesta.studio`, which the
+/// runtime still resolves.
+const LEGACY_SCOPE: &str = "@celesta/";
+
+/// An import's source with [`LEGACY_SCOPE`] renamed, so a file importing
+/// from `@celesta/react` imports [`PACKAGE`].
+fn current_source(source: String) -> String {
+    match source.strip_prefix(LEGACY_SCOPE) {
+        Some(name) => format!("@celesta.studio/{name}"),
+        None => source,
+    }
+}
 
 /// How to write a name imported from a module.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -179,7 +192,7 @@ impl Module {
                 let span = specifier.span();
                 imports.push(Import {
                     local: local.name.to_string(),
-                    source: import.source.value.display().to_string(),
+                    source: current_source(import.source.value.display().to_string()),
                     imported,
                     type_only: type_only || member_type,
                     member,
@@ -196,7 +209,7 @@ impl Module {
                     end: import.span.end,
                 },
                 source_start: import.source.span.start,
-                source: import.source.value.display().to_string(),
+                source: current_source(import.source.value.display().to_string()),
                 type_only,
             });
         }
@@ -225,7 +238,7 @@ impl Module {
         self.declared.get(name).copied().unwrap_or(0)
     }
 
-    /// The `@celesta/react` export a JSX tag names, as a path:
+    /// The `@celesta.studio/react` export a JSX tag names, as a path:
     /// `<Series.Sequence>`, `<S.Sequence>` with `Series as S` and
     /// `<C.Series.Sequence>` with `import * as C` are all
     /// `["Series", "Sequence"]`. `None` when the tag's root is not bound by

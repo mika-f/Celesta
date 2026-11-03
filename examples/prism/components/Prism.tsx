@@ -1,4 +1,4 @@
-import { Group } from '@celesta/react';
+import { Group } from '@celesta.studio/react';
 import { Line } from './Line';
 import { RED } from '../constants';
 

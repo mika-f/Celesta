@@ -2,7 +2,7 @@
 // between two lengths. Curves are measured with adaptive Gauss–Legendre
 // quadrature, accurate to well under a thousandth of a pixel.
 
-import type { PathCommand } from '@celesta/react';
+import type { PathCommand } from '@celesta.studio/react';
 
 /** A point, as `{ x, y }` like a path command's coordinates. */
 export interface PathPoint {

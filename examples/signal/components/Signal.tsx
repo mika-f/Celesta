@@ -1,4 +1,4 @@
-import { Rect } from '@celesta/react';
+import { Rect } from '@celesta.studio/react';
 
 // The same evolving signal recurs in the source scene and final title.
 export function Signal({ frame, top, color, count = 96, amplitude = 150 }: {

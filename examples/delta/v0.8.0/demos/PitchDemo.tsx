@@ -1,4 +1,4 @@
-import { Audio, Group, Rect, Sequence, Text } from '@celesta/react';
+import { Audio, Group, Rect, Sequence, Text } from '@celesta.studio/react';
 import type { DemoProps } from '../../components/ChapterShell';
 import { STAGE, enter } from '../../components/ChapterShell';
 import { C, FONT, solid } from '../../components/theme';

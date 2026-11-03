@@ -1,5 +1,5 @@
-import { Composition, Group, Rect, Text, interpolate, useCurrentFrame } from '@celesta/react';
-import { grayscale, tint, vignette } from '@celesta/shader';
+import { Composition, Group, Rect, Text, interpolate, useCurrentFrame } from '@celesta.studio/react';
+import { grayscale, tint, vignette } from '@celesta.studio/shader';
 
 // Built-in color filters. The top row shows each filter prop on the same
 // swatch; the bottom panel grades a whole group with props that animate,

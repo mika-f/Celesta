@@ -4,7 +4,7 @@
 //! into an intermediate tree before it picks the variant, and a group
 //! layer's children are copied through that tree again at every level. A
 //! React frame's scene is hundreds of KiB of such objects, and both
-//! `@celesta/react` and these types' `Serialize` write `type` first.
+//! `@celesta.studio/react` and these types' `Serialize` write `type` first.
 //!
 //! Each enum derives an externally tagged mirror with
 //! `#[serde(remote = "...")]` and deserializes it from a [`TypeTagged`]

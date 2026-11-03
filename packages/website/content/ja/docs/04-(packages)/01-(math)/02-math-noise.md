@@ -1,11 +1,11 @@
-ノイズは滑らかな乱数です。近い入力は近い出力になるので、跳ねずに揺れます。漂い、手持ちの揺れ、浮かぶ粒子、有機的な質感に使えます。[`@celesta/math`](/ja/docs/math/) のほかの関数と同じく、シードと座標が同じなら毎回同じ値です。
+ノイズは滑らかな乱数です。近い入力は近い出力になるので、跳ねずに揺れます。漂い、手持ちの揺れ、浮かぶ粒子、有機的な質感に使えます。[`@celesta.studio/math`](/ja/docs/math/) のほかの関数と同じく、シードと座標が同じなら毎回同じ値です。
 
 ## 時間に沿った 1D ノイズ
 
 `noise(seed, t)` は `[-1, 1]` の値を返します。`t` の各整数で乱数を選び、その間を滑らかに補間します。`t` の尺度で速度が決まり、`frame / 20` は約 20 フレームごとに方向を変えます。
 
 ```tsx title="ゆったり浮かぶ動き"
-import { noise } from '@celesta/math';
+import { noise } from '@celesta.studio/math';
 
 function Floating({ children }: { children: React.ReactNode }) {
   const frame = useCurrentFrame();
@@ -32,7 +32,7 @@ function Floating({ children }: { children: React.ReactNode }) {
 `noise2D(seed, x, y)` は平面上の滑らかな場を取得します。`x / 200` のように座標を縮めると模様が伸びます。除数が小さいほど細かく変化します。`noise3D(seed, x, y, z)` の 3 つ目の座標を時間として使うと、場を滑らかに動かせます。
 
 ```tsx title="呼吸する点の場"
-import { noise3D } from '@celesta/math';
+import { noise3D } from '@celesta.studio/math';
 
 function Field() {
   const frame = useCurrentFrame();
@@ -66,7 +66,7 @@ function Field() {
 | `gain` | 次の層の弱さ。0 以上の有限数で、既定は `0.5`。小さいほど滑らか、大きいほど粗くなります。 |
 
 ```tsx title="凹凸のある地平線"
-import { fbm } from '@celesta/math';
+import { fbm } from '@celesta.studio/math';
 
 const points: [number, number][] = Array.from({ length: 97 }, (_, i) => [
   i * 20,
@@ -83,7 +83,7 @@ const points: [number, number][] = Array.from({ length: 97 }, (_, i) => [
 `noise` と `fbm` は繰り返しません。繰り返し再生される動画（Shorts や TikTok）でこれらを使って揺らすと、最後のフレームから最初のフレームへ戻るところで値が飛びます。`loopNoise(seed, t, period)` は同じく滑らかなノイズで、`t` と同じ単位で数えた `period` ごとに繰り返します。ループの長さをフレームと同じ尺度にして渡します。重ねたノイズには `loopFbm` を使います。
 
 ```tsx title="ループする揺れ"
-import { loopNoise } from '@celesta/math';
+import { loopNoise } from '@celesta.studio/math';
 
 const LOOP = 384; // the composition's durationInFrames
 

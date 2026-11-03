@@ -5,7 +5,7 @@
 // out, since the WAV contains it), then timed from the WAV alone.
 //
 //   docker run --rm -p 50021:50021 voicevox/voicevox_engine:cpu-ubuntu24.04-0.25.2
-//   pnpm --filter "@celesta/cli..." run build
+//   pnpm --filter "@celesta.studio/cli..." run build
 //   node packages/aivis-speech/scripts/measure-accuracy.mjs [--lines] [--cache <dir>]
 //
 // VOICEVOX_URL overrides http://127.0.0.1:50021. Synthesized voices are
@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseArgs } from 'node:util';
 
-import { buildEnvelope, decodeWav, lipSyncTimeline } from '@celesta/character';
+import { buildEnvelope, decodeWav, lipSyncTimeline } from '@celesta.studio/character';
 import { lipSyncFromVoicevox, timingFromVoicevox } from '../../voicevox/dist/index.js';
 import { lipSyncFromAivisSpeech, timingFromAivisSpeech } from '../dist/index.js';
 

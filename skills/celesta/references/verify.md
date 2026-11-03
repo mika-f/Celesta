@@ -102,7 +102,7 @@ file is missing, and 2 when the only problem is text it could not measure
 ### Measured text: `--native`
 
 Entries that call `useTextMetrics`, `measureText`, `TextBox`,
-`useFitText`, `fitText`, use `@celesta/code`, or read `metrics` in a
+`useFitText`, `fitText`, use `@celesta.studio/code`, or read `metrics` in a
 `subtitle.render` need text shaping, which Node alone cannot do. So
 `inspect.mjs` evaluates frames through `Celesta-export --inspect` when it
 finds one: the same bridge, fonts, and shaping as an export, and

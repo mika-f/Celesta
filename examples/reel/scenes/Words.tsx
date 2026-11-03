@@ -1,5 +1,5 @@
-import { clamp } from '@celesta/math';
-import { Easings, Rect, Text, progress, useCurrentFrame } from '@celesta/react';
+import { clamp } from '@celesta.studio/math';
+import { Easings, Rect, Text, progress, useCurrentFrame } from '@celesta.studio/react';
 import { BEAT, C, H, W } from '../constants';
 
 const WORDS: { text: string; bg: string; ax: number; size: number }[] = [

@@ -1,4 +1,4 @@
-import { Composition, Rect, Text, defineProjectProperties, getProjectProperty, useVideoConfig } from '@celesta/react';
+import { Composition, Rect, Text, defineProjectProperties, getProjectProperty, useVideoConfig } from '@celesta.studio/react';
 
 // Both formats share the entry's schema, props.json and prepare() data.
 defineProjectProperties({ title: { type: 'string', defaultValue: 'One entry, two formats' } });

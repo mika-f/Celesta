@@ -247,6 +247,30 @@ pub struct PrepareDependency {
     pub size: Option<u64>,
 }
 
+/// An import of a Celesta package by its name before the `@celesta.studio`
+/// scope (`@celesta/react`). The runtime still resolves it, and the editor
+/// and the exporter warn about it.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct LegacyImport {
+    /// The importing file, relative to the entry's directory, with `/`
+    /// separators.
+    pub file: String,
+    /// What it imports: `@celesta/react`.
+    pub specifier: String,
+    /// The package's current name: `@celesta.studio/react`.
+    pub current: String,
+}
+
+impl std::fmt::Display for LegacyImport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} imports {}, an old name; import {} instead",
+            self.file, self.specifier, self.current
+        )
+    }
+}
+
 impl PrepareDependency {
     /// `path`'s state now, in the form the runtime reports it.
     pub fn sample(path: &std::path::Path) -> Self {
@@ -285,7 +309,7 @@ pub struct ReactCompositionMetadata {
     pub component_schemas: BTreeMap<String, ComponentPropertySchema>,
     /// Every primitive's property table, keyed by the primitive's name as a
     /// source chain reports it: Celesta's own, and those of the packages the
-    /// entry imports (`@celesta/shapes`). The order inside a table is its
+    /// entry imports (`@celesta.studio/shapes`). The order inside a table is its
     /// `Vec`s'. Empty from a runtime that sends none.
     pub primitive_properties: BTreeMap<String, PrimitivePropertyTable>,
     /// The project property schema declared via `defineProjectProperties()`,
@@ -301,6 +325,9 @@ pub struct ReactCompositionMetadata {
     /// Files and directories `prepare()` read, beyond the entry's own
     /// sources. Empty for an entry that reads none.
     pub prepare_dependencies: Vec<PrepareDependency>,
+    /// The entry's imports by the names before `@celesta.studio`; empty
+    /// when it uses only the current names.
+    pub legacy_imports: Vec<LegacyImport>,
     /// The selected composition's `<Composition chapters>`; empty when it
     /// declares none.
     pub chapters: Vec<ReactChapter>,

@@ -1,4 +1,4 @@
-import type { SubtitleCue } from '@celesta/react';
+import type { SubtitleCue } from '@celesta.studio/react';
 import { PRS } from './prs';
 import { CHAPTER_COUNT, CHAPTER_LENGTHS, OPEN_LENGTH, OUTRO_AT, OUTRO_LENGTH, chapterAt } from './timeline';
 

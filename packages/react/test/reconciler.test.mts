@@ -19,7 +19,7 @@ test('reordering keyed children moves them instead of duplicating them', () => {
   // does, in a group and at the composition root.
   writeFileSync(
     entry,
-    `import { Composition, Group, Rect, useCurrentFrame } from '@celesta/react';\n` +
+    `import { Composition, Group, Rect, useCurrentFrame } from '@celesta.studio/react';\n` +
       `function Rects({ prefix }: { prefix: string }) {\n` +
       `  const frame = useCurrentFrame();\n` +
       `  const ids = [0, 1, 2, 3].map((index) => (index + frame) % 4);\n` +

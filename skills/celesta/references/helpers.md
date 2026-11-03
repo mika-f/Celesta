@@ -7,38 +7,38 @@ preview and export, and other people (and agents) reading the file know them.
 
 | Instead of writing… | Use | From |
 | --- | --- | --- |
-| `Math.min(1, Math.max(0, x))` | `clamp01(x)`, `clamp(x, min, max)` | `@celesta/math` |
-| `a + (b - a) * t`, mapping one range onto another | `lerp(a, b, t)`, `remap(v, inMin, inMax, outMin, outMax)`, `remapClamped(...)` | `@celesta/math` |
-| `easing(clamp((f - start) / frames))` | `progress(f, start, frames, easing?)` | `@celesta/react` |
-| A frame range mapped to values, with easing | `interpolate(f, [a, b], [from, to], { easing, extrapolateLeft: 'clamp', extrapolateRight: 'clamp' })` | `@celesta/react` |
-| A hex color blended by hand | `interpolateColor(f, [a, b], ['#…', '#…'])` | `@celesta/react` |
-| `fract(Math.sin(i * 12.9898 + …) * 43758.5453)` | `random(seed)`, `randomRange(seed, min, max)`, `randomInt(...)` | `@celesta/math` |
-| Wobble from summed sines | `noise(seed, t)`, `loopNoise(seed, t, period)` for loops | `@celesta/math` |
-| `pad2(minutes) + ':' + pad2(seconds) + …` | `frameToTimecode(f, fps)` (`HH:MM:SS:FF`, or `MM:SS:FF` with `{ hours: false }`), `timecodeToFrame('01:02.5', fps)` | `@celesta/react` |
-| SRT/WebVTT times written by hand | `formatSubtitles(cues, { fps, format })` | `@celesta/react` |
-| `text.length * fontSize * 0.6` | `useTextMetrics(text, style).width`, `textCaret(metrics, offset)` | `@celesta/react` |
-| A text width measured during `prepare()` | `measureText(text, style, { fonts })` | `@celesta/react` |
-| `[...items].reverse().find((s) => f >= s.at)` | `useCue(cues)`, `cueAt(cues, f)` | `@celesta/react` |
-| Corner brackets, a timecode, and a progress bar drawn by hand in a HUD | `<FrameChrome corners timecode progress />` | `@celesta/components` |
-| `Array.from({ length: cols * rows }, …)` of `<Rect>` dots or grid lines | `<PatternBackground pattern="dots" spacing={80} size={3} />` | `@celesta/components` |
-| A card as a `<Group clip>` around a `<Rect>` of the same size, with the content at `x={PAD} y={PAD}` | `<Panel width height padding={PAD} fill cornerRadius clip>` | `@celesta/components` |
-| `useTextMetrics(label)` and a `<Rect width={m.width + PAD * 2}>` behind a `<Text>` for a tag or chip | `<Badge fill padding cornerRadius="pill" leading leadingWidth>` | `@celesta/components` |
-| `useCountUp(n)` printed with `toLocaleString()` and a unit in a `<Text>` | `<Counter value={n} suffix=" 件" anchorX={1} />` (`<StatCard>` with a label) | `@celesta/components` |
-| Bars as `<Rect width={track * value / max * grow}>` with a counting value beside each and `from: start + i * stagger` | `<BarChart data width stagger />` (`<Ranking order>` with ranks) | `@celesta/components` |
-| A note as a `<Rect>` and `<Text>` sized by hand, with a `<Line>` or `<Arrow>` from its edge to the thing it points at | `<Callout target={{ x, y }} x y width title text />` | `@celesta/components` |
-| A `<Rect>` frame behind a `<Group clip>` around a `<Video width={w} />` centred by hand, and a `<Text>` caption under it | `<MediaFrame kind="video" sourceWidth sourceHeight width height fit cornerRadius caption />` | `@celesta/components` |
-| `opacity={progress(f, 0, 12) * (1 - progress(f, d - 10, 10))}`, or an entrance `<Transition>` nested in an exit one | `<Motion enter="fade-up" exit="fade">` | `@celesta/components` |
-| A chapter number, kicker, title, and subtitle placed and staggered by hand | `<TitleCard chapter="01" kicker="…" title="…" subtitle="…" />` | `@celesta/components` |
-| A name and role on a `<Rect>` band measured with `useTextMetrics` and slid in from a corner | `<LowerThird title="…" subtitle="…" placement="bottom-left" />` | `@celesta/components` |
-| `useTypewriter` text plus a caret `<Rect>` at `length * advance` or `textCaret(…)` | `<TypewriterText caretShape="block">…</TypewriterText>` | `@celesta/components` |
-| `from: i * 6` on each item | `<Stagger each={6}>` | `@celesta/react` |
-| Scene start frames summed by hand | `<Series>` + `computeSeries` | `@celesta/react` |
-| A beat counter from the BPM | `useBeat({ bpm })` | `@celesta/react` |
+| `Math.min(1, Math.max(0, x))` | `clamp01(x)`, `clamp(x, min, max)` | `@celesta.studio/math` |
+| `a + (b - a) * t`, mapping one range onto another | `lerp(a, b, t)`, `remap(v, inMin, inMax, outMin, outMax)`, `remapClamped(...)` | `@celesta.studio/math` |
+| `easing(clamp((f - start) / frames))` | `progress(f, start, frames, easing?)` | `@celesta.studio/react` |
+| A frame range mapped to values, with easing | `interpolate(f, [a, b], [from, to], { easing, extrapolateLeft: 'clamp', extrapolateRight: 'clamp' })` | `@celesta.studio/react` |
+| A hex color blended by hand | `interpolateColor(f, [a, b], ['#…', '#…'])` | `@celesta.studio/react` |
+| `fract(Math.sin(i * 12.9898 + …) * 43758.5453)` | `random(seed)`, `randomRange(seed, min, max)`, `randomInt(...)` | `@celesta.studio/math` |
+| Wobble from summed sines | `noise(seed, t)`, `loopNoise(seed, t, period)` for loops | `@celesta.studio/math` |
+| `pad2(minutes) + ':' + pad2(seconds) + …` | `frameToTimecode(f, fps)` (`HH:MM:SS:FF`, or `MM:SS:FF` with `{ hours: false }`), `timecodeToFrame('01:02.5', fps)` | `@celesta.studio/react` |
+| SRT/WebVTT times written by hand | `formatSubtitles(cues, { fps, format })` | `@celesta.studio/react` |
+| `text.length * fontSize * 0.6` | `useTextMetrics(text, style).width`, `textCaret(metrics, offset)` | `@celesta.studio/react` |
+| A text width measured during `prepare()` | `measureText(text, style, { fonts })` | `@celesta.studio/react` |
+| `[...items].reverse().find((s) => f >= s.at)` | `useCue(cues)`, `cueAt(cues, f)` | `@celesta.studio/react` |
+| Corner brackets, a timecode, and a progress bar drawn by hand in a HUD | `<FrameChrome corners timecode progress />` | `@celesta.studio/components` |
+| `Array.from({ length: cols * rows }, …)` of `<Rect>` dots or grid lines | `<PatternBackground pattern="dots" spacing={80} size={3} />` | `@celesta.studio/components` |
+| A card as a `<Group clip>` around a `<Rect>` of the same size, with the content at `x={PAD} y={PAD}` | `<Panel width height padding={PAD} fill cornerRadius clip>` | `@celesta.studio/components` |
+| `useTextMetrics(label)` and a `<Rect width={m.width + PAD * 2}>` behind a `<Text>` for a tag or chip | `<Badge fill padding cornerRadius="pill" leading leadingWidth>` | `@celesta.studio/components` |
+| `useCountUp(n)` printed with `toLocaleString()` and a unit in a `<Text>` | `<Counter value={n} suffix=" 件" anchorX={1} />` (`<StatCard>` with a label) | `@celesta.studio/components` |
+| Bars as `<Rect width={track * value / max * grow}>` with a counting value beside each and `from: start + i * stagger` | `<BarChart data width stagger />` (`<Ranking order>` with ranks) | `@celesta.studio/components` |
+| A note as a `<Rect>` and `<Text>` sized by hand, with a `<Line>` or `<Arrow>` from its edge to the thing it points at | `<Callout target={{ x, y }} x y width title text />` | `@celesta.studio/components` |
+| A `<Rect>` frame behind a `<Group clip>` around a `<Video width={w} />` centred by hand, and a `<Text>` caption under it | `<MediaFrame kind="video" sourceWidth sourceHeight width height fit cornerRadius caption />` | `@celesta.studio/components` |
+| `opacity={progress(f, 0, 12) * (1 - progress(f, d - 10, 10))}`, or an entrance `<Transition>` nested in an exit one | `<Motion enter="fade-up" exit="fade">` | `@celesta.studio/components` |
+| A chapter number, kicker, title, and subtitle placed and staggered by hand | `<TitleCard chapter="01" kicker="…" title="…" subtitle="…" />` | `@celesta.studio/components` |
+| A name and role on a `<Rect>` band measured with `useTextMetrics` and slid in from a corner | `<LowerThird title="…" subtitle="…" placement="bottom-left" />` | `@celesta.studio/components` |
+| `useTypewriter` text plus a caret `<Rect>` at `length * advance` or `textCaret(…)` | `<TypewriterText caretShape="block">…</TypewriterText>` | `@celesta.studio/components` |
+| `from: i * 6` on each item | `<Stagger each={6}>` | `@celesta.studio/react` |
+| Scene start frames summed by hand | `<Series>` + `computeSeries` | `@celesta.studio/react` |
+| A beat counter from the BPM | `useBeat({ bpm })` | `@celesta.studio/react` |
 
 ## Numbers
 
 ```tsx
-import { clamp, clamp01, lerp, remapClamped } from '@celesta/math';
+import { clamp, clamp01, lerp, remapClamped } from '@celesta.studio/math';
 
 const t = clamp01((frame - 30) / 20);
 const x = lerp(-200, 960, t);
@@ -53,7 +53,7 @@ given). It replaces `ease(x)` wrappers and local `progress` helpers with a
 house easing: pass the easing at each call.
 
 ```tsx
-import { Easings, progress } from '@celesta/react';
+import { Easings, progress } from '@celesta.studio/react';
 
 // Was: ease((frame - 12) / 20), with ease = (n) => 1 - (1 - clamp(n)) ** 4
 const enter = progress(frame, 12, 20, Easings.easeOutQuart);
@@ -69,7 +69,7 @@ hash, so a scene converted from one keeps its density but not its exact
 layout.
 
 ```tsx
-import { random, randomRange } from '@celesta/math';
+import { random, randomRange } from '@celesta.studio/math';
 
 // Was: hash(i, 1) * W, hash(i, 2) * H
 const stars = Array.from({ length: 120 }, (_, i) => ({
@@ -83,7 +83,7 @@ More: [math.md](math.md).
 ## Timecodes
 
 ```tsx
-import { frameToTimecode } from '@celesta/react';
+import { frameToTimecode } from '@celesta.studio/react';
 
 frameToTimecode(1234, 30);           // '00:00:41:04'
 frameToTimecode(1234, 30, { hours: false });  // '00:41:04', minutes:seconds:frames
@@ -102,7 +102,7 @@ Measure with the same style the `<Text>` uses; never multiply a character
 count by an advance width. `width` includes spaces.
 
 ```tsx
-import { Group, Rect, Text, textCaret, useTextMetrics } from '@celesta/react';
+import { Group, Rect, Text, textCaret, useTextMetrics } from '@celesta.studio/react';
 
 function Chip({ label }: { label: string }) {
   const style = { fontFamily: 'JetBrains Mono', fontSize: 22, fontWeight: 500 };
@@ -129,7 +129,7 @@ Cues are `{ at, …data }` sorted by `at`. `cueAt` returns the cue in effect
 started), and its `previous` and `next` cues.
 
 ```tsx
-import { cueAt, progress, useCue } from '@celesta/react';
+import { cueAt, progress, useCue } from '@celesta.studio/react';
 
 const SECTIONS = [{ at: 0, name: 'INTRO' }, { at: 120, name: 'DEMO' }, { at: 480, name: 'OUTRO' }];
 

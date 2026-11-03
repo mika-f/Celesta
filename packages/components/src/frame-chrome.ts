@@ -4,8 +4,8 @@
 
 import * as React from 'react';
 
-import { Group, Rect, Span, Text, frameToTimecode, sceneAt, useCurrentFrame, useTheme, useVideoConfig } from '@celesta/react';
-import type { BlendMode, FontFamily, SceneEntry, SceneList, SceneState } from '@celesta/react';
+import { Group, Rect, Span, Text, frameToTimecode, sceneAt, useCurrentFrame, useTheme, useVideoConfig } from '@celesta.studio/react';
+import type { BlendMode, FontFamily, SceneEntry, SceneList, SceneState } from '@celesta.studio/react';
 
 import { fade, hexColor } from './color';
 

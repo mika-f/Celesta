@@ -5,7 +5,7 @@
 //   cargo run -p celesta-exporter -- --react examples/plugins/flag/demo.tsx out.mp4 --plugin-dir examples/plugins/dist
 import { Fragment } from 'react';
 
-import { Composition, Font, Rect, Text } from '@celesta/react';
+import { Composition, Font, Rect, Text } from '@celesta.studio/react';
 import { Flag } from '@celesta-plugin/flag';
 import type { FlagProps } from '@celesta-plugin/flag';
 

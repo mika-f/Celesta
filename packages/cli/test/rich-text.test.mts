@@ -3,14 +3,14 @@ import { test } from 'vitest';
 import React from 'react';
 import type { ReactNode } from 'react';
 
-import { Assets, Composition, Group, Span, Text, useTextMetrics } from '@celesta/react';
-import type { AssetReference, FontFamily, Layer, LayerContent, TextMetrics } from '@celesta/react';
-import { TextBox, TextReveal, useFitText, useTypewriter } from '@celesta/text';
-import type { FitTextOptions, Typewriter } from '@celesta/text';
-import { Character, CharacterView, Dialogue, DialogueSeries, planDialogue } from '@celesta/character';
-import type { CharacterViewReference, SubtitleRenderProps } from '@celesta/character';
-import { flattenTextContent, mount, setTextMeasurer, sliceTextRuns, withTextRuns } from '@celesta/react/internal';
-import type { EntryComponent, MeasureTextRequest } from '@celesta/react/internal';
+import { Assets, Composition, Group, Span, Text, useTextMetrics } from '@celesta.studio/react';
+import type { AssetReference, FontFamily, Layer, LayerContent, TextMetrics } from '@celesta.studio/react';
+import { TextBox, TextReveal, useFitText, useTypewriter } from '@celesta.studio/text';
+import type { FitTextOptions, Typewriter } from '@celesta.studio/text';
+import { Character, CharacterView, Dialogue, DialogueSeries, planDialogue } from '@celesta.studio/character';
+import type { CharacterViewReference, SubtitleRenderProps } from '@celesta.studio/character';
+import { flattenTextContent, mount, setTextMeasurer, sliceTextRuns, withTextRuns } from '@celesta.studio/react/internal';
+import type { EntryComponent, MeasureTextRequest } from '@celesta.studio/react/internal';
 import { contentOf } from './layer-content.mjs';
 
 type TextContent = Extract<LayerContent, { type: 'text' }>;

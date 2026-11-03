@@ -1,14 +1,14 @@
-`@celesta/lottie` は、After Effects から Bodymovin で書き出した Lottie の JSON を、コンポジションのフレームに合わせて描きます。各フレームはその時刻だけから決まるパス・グループ・マスクとして描かれるので、プレビュー、書き出し、`@celesta/web` のどれでも同じ絵になり、どのフレームへスクラブしても再生したときと同じ結果になります。
+`@celesta.studio/lottie` は、After Effects から Bodymovin で書き出した Lottie の JSON を、コンポジションのフレームに合わせて描きます。各フレームはその時刻だけから決まるパス・グループ・マスクとして描かれるので、プレビュー、書き出し、`@celesta.studio/web` のどれでも同じ絵になり、どのフレームへスクラブしても再生したときと同じ結果になります。
 
-デスクトップアプリ、CLI、`@celesta/web` に同梱されています。非公開パッケージのため npm では配布していません。
+デスクトップアプリ、CLI、`@celesta.studio/web` に同梱されています。非公開パッケージのため npm では配布していません。
 
 ## アニメーションを置く
 
 JSON ファイルを読み込み、その内容を `data` に渡します。
 
 ```tsx
-import { Composition, Sequence } from '@celesta/react';
-import { Lottie } from '@celesta/lottie';
+import { Composition, Sequence } from '@celesta.studio/react';
+import { Lottie } from '@celesta.studio/lottie';
 
 import confetti from './confetti.json';
 

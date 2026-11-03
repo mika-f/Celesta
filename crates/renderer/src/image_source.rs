@@ -166,7 +166,7 @@ pub fn frame_duration_micros(numer: u32, denom: u32) -> u64 {
 /// The frame showing `seconds` into an animation whose frames end at `ends`
 /// (microseconds). Before the start it is the first frame; past the end the
 /// animation starts over with `looped` and holds its last frame otherwise.
-/// `@celesta/web` picks frames the same way.
+/// `@celesta.studio/web` picks frames the same way.
 pub fn animation_frame(ends: &[u64], seconds: f64, looped: bool) -> usize {
     let total = ends.last().copied().unwrap_or(0);
     if total == 0 {

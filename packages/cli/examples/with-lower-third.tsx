@@ -1,5 +1,5 @@
-import { LowerThird } from '@celesta/components';
-import { Composition, Font, Rect, Sequence, Theme } from '@celesta/react';
+import { LowerThird } from '@celesta.studio/components';
+import { Composition, Font, Rect, Sequence, Theme } from '@celesta.studio/react';
 
 // <LowerThird> puts a name and a role on a band sized to them, in a corner
 // of the canvas or a safe area. The band slides in toward the middle of the

@@ -145,7 +145,7 @@ export const CHAPTERS: readonly Chapter[] = [
     headline: <>Draw it, and it is {hi('in the code')}.</>,
     caption: 'Choose Rect, Ellipse, Circle, Text, Image or Video from Add, draw it on the canvas, and it is written into the group.',
     file: 'Main.tsx',
-    code: "import { Ellipse } from '@celesta/shapes';\n<Ellipse x={340} y={150} width={300}\n  height={170} fill=\"#4F7CFF\" />",
+    code: "import { Ellipse } from '@celesta.studio/shapes';\n<Ellipse x={340} y={150} width={300}\n  height={170} fill=\"#4F7CFF\" />",
     merged: [[553, 'Add menu']],
     meta: 'drawn',
     Demo: AddDemo,

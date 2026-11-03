@@ -1,13 +1,13 @@
 /// <reference path="../wgsl.d.ts" preserve="true" />
 
-import { parseHexColor } from '@celesta/math';
-import type { ColorFilterValues, EffectFilterValues, LayerTint, LayerWave, ShaderEffect } from '@celesta/react';
-import { builtinFilter, colorFilter, shaderEffect, shaderSource } from '@celesta/react/internal';
+import { parseHexColor } from '@celesta.studio/math';
+import type { ColorFilterValues, EffectFilterValues, LayerTint, LayerWave, ShaderEffect } from '@celesta.studio/react';
+import { builtinFilter, colorFilter, shaderEffect, shaderSource } from '@celesta.studio/react/internal';
 
 export type {
   LayerChromaKey, LayerChromaticAberration, LayerHalftone, LayerNoise, LayerPixelate, LayerScanlines, LayerTint,
   LayerVignette, LayerWave, LayerZoomBlur, ShaderEffect,
-} from '@celesta/react';
+} from '@celesta.studio/react';
 
 /** The type of a shader parameter, and the WGSL type it is declared as. */
 export type ShaderParamType = 'f32' | 'vec2' | 'vec3' | 'vec4' | 'color';

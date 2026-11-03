@@ -10,8 +10,8 @@ import {
   Text,
   useCurrentFrame,
   useTextMetrics,
-} from '@celesta/react';
-import { Character, CharacterView, Dialogue } from '@celesta/character';
+} from '@celesta.studio/react';
+import { Character, CharacterView, Dialogue } from '@celesta.studio/character';
 
 function MeasuredSound() {
   const frame = useCurrentFrame();

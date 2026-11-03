@@ -6,9 +6,9 @@
 import * as React from 'react';
 import type { ReactNode } from 'react';
 
-import { isHexColor } from '@celesta/math';
-import { Span } from '@celesta/react';
-import type { ResolvedTheme } from '@celesta/react';
+import { isHexColor } from '@celesta.studio/math';
+import { Span } from '@celesta.studio/react';
+import type { ResolvedTheme } from '@celesta.studio/react';
 
 /** What an emphasis may change about its text. */
 export interface EmphasisStyle {

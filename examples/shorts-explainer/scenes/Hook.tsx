@@ -1,4 +1,4 @@
-import { Group, Rect, interpolate, spring, useCurrentFrame, useVideoConfig } from '@celesta/react';
+import { Group, Rect, interpolate, spring, useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
 import { CodeCard, highlightTsx } from '../components/CodeCard';
 import { Label } from '../components/Label';
 import { ScaleAbout } from '../components/Panel';

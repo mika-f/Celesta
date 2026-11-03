@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 import { test } from 'vitest';
 import React from 'react';
 
-import { Composition, Rect, Sequence } from '@celesta/react';
-import type { Layer, LayerContent } from '@celesta/react';
-import { mount, setAudioDecoder } from '@celesta/react/internal';
-import type { DecodedAudio } from '@celesta/react/internal';
+import { Composition, Rect, Sequence } from '@celesta.studio/react';
+import type { Layer, LayerContent } from '@celesta.studio/react';
+import { mount, setAudioDecoder } from '@celesta.studio/react/internal';
+import type { DecodedAudio } from '@celesta.studio/react/internal';
 import { analyzeAudioSpectrum, loadAudioSpectrum, spectrumAt, useAudioSpectrum } from '../src/index.js';
 import type { AudioSpectrum, AudioSpectrumOptions, UseAudioSpectrumOptions } from '../src/index.js';
 

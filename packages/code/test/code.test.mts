@@ -7,10 +7,10 @@ import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import React from 'react';
 import { onTestFinished, test } from 'vitest';
-import { Composition, Font, Group, Rect, Span, Text, useCurrentFrame, useTextMetrics } from '@celesta/react';
-import type { GlyphMetrics, Layer, LayerContent, Paint, Scene, TextMetrics } from '@celesta/react';
-import { mount, setTextMeasurer } from '@celesta/react/internal';
-import type { MeasureTextRequest, MountedComposition } from '@celesta/react/internal';
+import { Composition, Font, Group, Rect, Span, Text, useCurrentFrame, useTextMetrics } from '@celesta.studio/react';
+import type { GlyphMetrics, Layer, LayerContent, Paint, Scene, TextMetrics } from '@celesta.studio/react';
+import { mount, setTextMeasurer } from '@celesta.studio/react/internal';
+import type { MeasureTextRequest, MountedComposition } from '@celesta.studio/react/internal';
 import { Code, codeCharacterCount, codeLines, codeThemes, highlightCode, tokenizeCode, useCodePoint } from '../src/index.js';
 import type { CodeLanguage, HighlightedCodeLine } from '../src/index.js';
 
@@ -354,17 +354,17 @@ interface BridgeMessage {
 }
 
 // Integration test of the build: spawns packages/cli/bin/celesta-react-render.js
-// (and the staged runtime), which load @celesta/code's dist/, so it needs
+// (and the staged runtime), which load @celesta.studio/code's dist/, so it needs
 // `pnpm run build:runtime` first.
 for (const packaged of [false, true]) test(`${packaged ? 'packaged' : 'source'} CLI resolves Code without project dependencies and shares useTypewriter's runtime`, { timeout: 30000 }, async ({ signal }) => {
   const directory = mkdtempSync(join(tmpdir(), 'celesta-code-'));
   onTestFinished(() => rmSync(directory, { recursive: true, force: true }));
   const entry = join(directory, 'entry.tsx');
   writeFileSync(entry, `
-    import { Composition, type TextColorRun } from '@celesta/react';
-    import { useTypewriter } from '@celesta/text';
-    import { Code, codeCharacterCount, codeLines, highlightCode, tokenizeCode } from '@celesta/code';
-    import type { CodeLine, CodeRun, HighlightCodeOptions, HighlightedCodeLine, HighlightedCodeRun } from '@celesta/code';
+    import { Composition, type TextColorRun } from '@celesta.studio/react';
+    import { useTypewriter } from '@celesta.studio/text';
+    import { Code, codeCharacterCount, codeLines, highlightCode, tokenizeCode } from '@celesta.studio/code';
+    import type { CodeLine, CodeRun, HighlightCodeOptions, HighlightedCodeLine, HighlightedCodeRun } from '@celesta.studio/code';
     const source = 'const value = "😀";';
     const maximum: number = codeCharacterCount(source, { line: 1, column: Array.from(source).length + 1 });
     const options: HighlightCodeOptions = { language: 'ts', tabSize: 4 };
@@ -387,7 +387,7 @@ for (const packaged of [false, true]) test(`${packaged ? 'packaged' : 'source'} 
     const staged = spawnSync(process.execPath, [stage, runtime], { encoding: 'utf8' });
     assert.equal(staged.status, 0, staged.stderr);
     const closure = JSON.parse(readFileSync(join(runtime, 'runtime-packages.json'), 'utf8'));
-    assert.ok(closure['@celesta/code']);
+    assert.ok(closure['@celesta.studio/code']);
     assert.ok(closure['@twinkleplop/core']);
     // The editor copies this same support template into a project at setup.
     cpSync(join(runtime, 'dist/project-types'), join(directory, '.celesta'), { recursive: true });
@@ -567,7 +567,7 @@ test('highlightCode uses Code defaults and rejects the inputs Code rejects', () 
 
 test('one Text per line drawn from highlightCode matches Code, with colorRuns or <Span> fills', () => {
   setTextMeasurer(async request => metrics(request), metrics);
-  const source = 'import { Text } from "@celesta/react";\r\n\n\tconst 名前 = "👩‍💻";\r\texport default 名前;\n';
+  const source = 'import { Text } from "@celesta.studio/react";\r\n\n\tconst 名前 = "👩‍💻";\r\texport default 名前;\n';
   const style = { fontFamily: 'IBM Plex Mono', fontSize: 24, lineHeight: 36 };
   const theme = codeThemes.light;
   const counts = [0, 10, 41, 50, Infinity];

@@ -1,7 +1,7 @@
 // いま足したもの（`<Rect />` など）の名前が、画面の真ん中にぽんと出て消える。
 
-import { Text } from '@celesta/react';
-import { Motion } from '@celesta/components';
+import { Text } from '@celesta.studio/react';
+import { Motion } from '@celesta.studio/components';
 
 import { COLOR, FONT, solid } from '../theme.ts';
 

@@ -1,8 +1,8 @@
-# @celesta/aivis-speech
+# @celesta.studio/aivis-speech
 
 AivisSpeech AudioQuery timing and lip sync for Celesta React compositions, for
 AivisSpeech Engine. Dialogue components, WAV lip sync, and `LipSyncTrack` are
-in `@celesta/character`; VOICEVOX Engine voices use `@celesta/voicevox`.
+in `@celesta.studio/character`; VOICEVOX Engine voices use `@celesta.studio/voicevox`.
 
 AivisSpeech serves VOICEVOX's API, but its model chooses every phoneme's
 length itself: the query's lengths are dummy zeros. So the timing is read from
@@ -15,8 +15,8 @@ loudness, so pauses land on the silences the model made.
 ```tsx
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { Dialogue, type LipSyncTrack } from '@celesta/character';
-import { lipSyncFromAivisSpeech } from '@celesta/aivis-speech';
+import { Dialogue, type LipSyncTrack } from '@celesta.studio/character';
+import { lipSyncFromAivisSpeech } from '@celesta.studio/aivis-speech';
 import helloQuery from './voices/hello.json';
 
 let hello: LipSyncTrack;
@@ -50,14 +50,14 @@ lip-sync track is built from, so lit moras or a face change at a pause stay in
 step with the mouth. It takes under 10 ms per second of voice; call it
 once per line in `prepare()`.
 
-The result is a `SpeechTiming` from `@celesta/character`, the shape
+The result is a `SpeechTiming` from `@celesta.studio/character`, the shape
 `timingFromVoicevox` returns too, with `exact: false`: code that reads
 timings (lit moras, faces at pauses) takes either engine's, and
 `lipSyncFromSpeechTiming(timing)` builds the same track as
 `lipSyncFromAivisSpeech(timing)`.
 
 ```ts
-import { lipSyncFromAivisSpeech, timingFromAivisSpeech } from '@celesta/aivis-speech';
+import { lipSyncFromAivisSpeech, timingFromAivisSpeech } from '@celesta.studio/aivis-speech';
 
 const timing = timingFromAivisSpeech(helloQuery, wav);
 const hello = lipSyncFromAivisSpeech(timing);
@@ -76,7 +76,7 @@ included. A mark the model did not pause at is short or has
 `m.vowel.phoneme !== 'pau'`.
 
 Mouths follow `lipSyncFromSpeechTiming`'s rules, shared with
-`@celesta/voicevox`: vowels `a i u e o` (and devoiced `A I U E O`) map to
+`@celesta.studio/voicevox`: vowels `a i u e o` (and devoiced `A I U E O`) map to
 their shapes; `N` (ん), `cl` (っ), pauses and silence are `closed`; a
 consonant shows its mora's vowel, except `m`/`b`/`p`, which close the lips.
 
@@ -114,9 +114,9 @@ Exports: `timingFromAivisSpeech`, `lipSyncFromAivisSpeech`, and the types
 `AivisSpeechTiming`, `AivisSpeechAudioQuery`, `AivisSpeechAccentPhrase`, and
 `AivisSpeechMora`. The timing's parts (`SpeechMora`, `SpeechPause`,
 `SpeechPhoneme`, `SpeechSpan`, `SpeechAccentPhrase`), `speechVowelShape`, and
-`lipSyncFromSpeechTiming` are in `@celesta/character`.
+`lipSyncFromSpeechTiming` are in `@celesta.studio/character`.
 
-Building `@celesta/cli` also builds this package and stages its TypeScript
+Building `@celesta.studio/cli` also builds this package and stages its TypeScript
 support. Celesta's desktop runtime ships it separately and the CLI resolves it
 when a composition imports it. **File > Set Up TypeScript** includes its types
 and import mapping, without requiring an install in the composition's project.
@@ -125,8 +125,8 @@ The package is private and has not been published to npm.
 ```sh
 pnpm install
 pnpm --dir packages/react run codegen
-pnpm --filter "@celesta/cli..." run build
+pnpm --filter "@celesta.studio/cli..." run build
 pnpm --dir packages/aivis-speech run test
 ```
 
-`@celesta/character` does not depend on or re-export the adapter.
+`@celesta.studio/character` does not depend on or re-export the adapter.

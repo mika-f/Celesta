@@ -1,5 +1,5 @@
-import { probeMedia } from '@celesta/react/internal';
-import type { MediaInfo } from '@celesta/react/internal';
+import { probeMedia } from '@celesta.studio/react/internal';
+import type { MediaInfo } from '@celesta.studio/react/internal';
 
 export type {
   MediaAnimationInfo,
@@ -7,7 +7,7 @@ export type {
   MediaInfo,
   MediaVideoColor,
   MediaVideoInfo,
-} from '@celesta/react/internal';
+} from '@celesta.studio/react/internal';
 
 export { checkDuckGroup, duckEnvelope, duckGroups, resolveDuck } from './duck';
 export type { DuckShape, ResolvedDuck } from './duck';

@@ -384,7 +384,7 @@ pub(crate) fn resolve_window(
     };
     let targets = resolve_rows(read, &report, None, rows, RowRead::Unchecked)?;
     let (kind, followers) = found
-        .ok_or_else(|| "Not a `<Sequence>` or `<Series.Sequence>` of @celesta/react".to_owned())?;
+        .ok_or_else(|| "Not a `<Sequence>` or `<Series.Sequence>` of @celesta.studio/react".to_owned())?;
     Ok(WindowTargets {
         source: source.clone(),
         kind,

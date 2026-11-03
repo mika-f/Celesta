@@ -1,6 +1,6 @@
 import { useContext } from 'react';
-import { Easings, FreezeFrame, Group, Rect, Text, interpolate, progress } from '@celesta/react';
-import { Circle } from '@celesta/shapes';
+import { Easings, FreezeFrame, Group, Rect, Text, interpolate, progress } from '@celesta.studio/react';
+import { Circle } from '@celesta.studio/shapes';
 import type { DemoProps } from '../../components/ChapterShell';
 import { STAGE, enter } from '../../components/ChapterShell';
 import { C, FONT, W, solid } from '../../components/theme';

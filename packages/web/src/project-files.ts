@@ -3,20 +3,25 @@ import type { Plugin } from 'esbuild-wasm';
 /** The packages the web editor provides to compositions. */
 export const runtimeModules = [
   'react',
-  '@celesta/react',
-  '@celesta/math',
-  '@celesta/shapes',
-  '@celesta/lottie',
-  '@celesta/layout',
-  '@celesta/components',
-  '@celesta/transitions',
-  '@celesta/text',
-  '@celesta/debug',
-  '@celesta/media-utils',
-  '@celesta/character',
-  '@celesta/code',
-  '@celesta/shader',
+  '@celesta.studio/react',
+  '@celesta.studio/math',
+  '@celesta.studio/shapes',
+  '@celesta.studio/lottie',
+  '@celesta.studio/layout',
+  '@celesta.studio/components',
+  '@celesta.studio/transitions',
+  '@celesta.studio/text',
+  '@celesta.studio/debug',
+  '@celesta.studio/media-utils',
+  '@celesta.studio/character',
+  '@celesta.studio/code',
+  '@celesta.studio/shader',
 ] as const;
+
+/** `name` with the scope before `@celesta.studio` renamed, so compositions written then still import. */
+export function currentModuleName(name: string): string {
+  return name.startsWith('@celesta/') ? `@celesta.studio/${name.slice('@celesta/'.length)}` : name;
+}
 
 /** Virtual project files; no filesystem or network module resolution. */
 export function projectFiles(files: Record<string, string>, entry: string): Plugin {
@@ -32,7 +37,7 @@ export function projectFiles(files: Record<string, string>, entry: string): Plug
     name: 'composition-files',
     setup(build) {
       build.onResolve({ filter: /.*/ }, args => {
-        if ((runtimeModules as readonly string[]).includes(args.path)) return { path: args.path, external: true };
+        if ((runtimeModules as readonly string[]).includes(currentModuleName(args.path))) return { path: args.path, external: true };
         if (args.kind !== 'entry-point' && !args.path.startsWith('.')) return { errors: [{ text: `Import ${JSON.stringify(args.path)} is unavailable in the web editor.` }] };
         const path = normalize(args.kind === 'entry-point' ? entry : `${args.importer.slice(0, args.importer.lastIndexOf('/') + 1)}${args.path}`);
         const extensions = ['tsx', 'ts', 'jsx', 'js', 'json'];

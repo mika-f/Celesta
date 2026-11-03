@@ -32,7 +32,7 @@ function copyPackage(name, parent) {
       if (parts.includes('node_modules')) return false;
       // Workspace packages contain development files that are not part of
       // the installed runtime. Registry packages already have their publish set.
-      if (name.startsWith('@celesta/')) {
+      if (name.startsWith('@celesta.studio/')) {
         const top = parts[0];
         return top === 'dist' || top === 'package.json' || /^(readme|licen[cs]e)(\.|$)/i.test(top);
       }

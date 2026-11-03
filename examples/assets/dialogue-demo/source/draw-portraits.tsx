@@ -6,9 +6,9 @@
 // lip-sync shape lines up when drawn over either portrait.
 import * as React from 'react';
 
-import { Composition, Group, Rect, useCurrentFrame } from '@celesta/react';
-import { Path } from '@celesta/shapes';
-import type { PathCommand } from '@celesta/react';
+import { Composition, Group, Rect, useCurrentFrame } from '@celesta.studio/react';
+import { Path } from '@celesta.studio/shapes';
+import type { PathCommand } from '@celesta.studio/react';
 
 export const WIDTH = 360;
 export const HEIGHT = 400;

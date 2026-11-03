@@ -1,17 +1,17 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { Audio, Composition, Rect } from '@celesta/react';
-import { decodeWav } from '@celesta/character';
-import { analyzeAudioSpectrum, loadAudioSpectrum, useAudioSpectrum } from '@celesta/media-utils';
-import type { AudioSpectrum, AudioSpectrumOptions } from '@celesta/media-utils';
+import { Audio, Composition, Rect } from '@celesta.studio/react';
+import { decodeWav } from '@celesta.studio/character';
+import { analyzeAudioSpectrum, loadAudioSpectrum, useAudioSpectrum } from '@celesta.studio/media-utils';
+import type { AudioSpectrum, AudioSpectrumOptions } from '@celesta.studio/media-utils';
 
 // 001.wav is a ~1 s committed spoken fixture.
 const VOICE = '../../../examples/assets/voices/001.wav';
 const OPTIONS: AudioSpectrumOptions = { bands: 8, smoothing: { attack: 0.01, release: 0.15 } };
 
 let music: AudioSpectrum;
-// The same file read by the JavaScript WAV parser, as @celesta/web decodes it.
+// The same file read by the JavaScript WAV parser, as @celesta.studio/web decodes it.
 let reference: AudioSpectrum;
 
 export async function prepare(): Promise<void> {

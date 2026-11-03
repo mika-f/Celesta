@@ -1,8 +1,8 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-import { isHexColor } from '@celesta/math';
-import type { JsonValue, ProjectPropertyField, ProjectPropertySchema } from '@celesta/react';
+import { isHexColor } from '@celesta.studio/math';
+import type { JsonValue, ProjectPropertyField, ProjectPropertySchema } from '@celesta.studio/react';
 
 // Validates the project property values a render receives from outside its
 // source against the entry's `defineProjectProperties()` schema. Node-only

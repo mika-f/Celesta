@@ -3,8 +3,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'vitest';
 
-import { lipSyncFromSpeechTiming } from '@celesta/character';
-import type { LipSyncTrack, MouthShape, SpeechSpan } from '@celesta/character';
+import { lipSyncFromSpeechTiming } from '@celesta.studio/character';
+import type { LipSyncTrack, MouthShape, SpeechSpan } from '@celesta.studio/character';
 import { lipSyncFromAivisSpeech, timingFromAivisSpeech } from '../src/index.js';
 import { KONNICHIWA, queryOf, synthesize } from './fixtures/voice.js';
 import type { MoraSpec } from './fixtures/voice.js';

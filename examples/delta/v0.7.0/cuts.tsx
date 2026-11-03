@@ -1,8 +1,8 @@
-import { Easings } from '@celesta/react';
-import { chromaticAberration, noise, pixelate } from '@celesta/shader';
-import { Path } from '@celesta/shapes';
-import { blur, clockWipe, crossfade, cube, defineTransition, dissolve, flip, iris, slide, wipe, zoom } from '@celesta/transitions';
-import type { TransitionDefinition } from '@celesta/transitions';
+import { Easings } from '@celesta.studio/react';
+import { chromaticAberration, noise, pixelate } from '@celesta.studio/shader';
+import { Path } from '@celesta.studio/shapes';
+import { blur, clockWipe, crossfade, cube, defineTransition, dissolve, flip, iris, slide, wipe, zoom } from '@celesta.studio/transitions';
+import type { TransitionDefinition } from '@celesta.studio/transitions';
 import { trianglePoints } from '../components/Delta';
 
 // No two cuts in the film are alike: every built-in type (iris and zoom

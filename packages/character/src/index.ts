@@ -103,4 +103,4 @@ export type {
 export { loadPsdPreset, parsePfv, resolveVisibleLayers } from './psd-preset';
 export type { LoadPsdPresetOptions, ParsedPfv, PfvFavorite } from './psd-preset';
 
-export type { MouthShape } from '@celesta/react/internal';
+export type { MouthShape } from '@celesta.studio/react/internal';

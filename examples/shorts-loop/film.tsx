@@ -1,4 +1,4 @@
-import { Assets, Audio, Composition, Font } from '@celesta/react';
+import { Assets, Audio, Composition, Font } from '@celesta.studio/react';
 import { DURATION, FPS, H, W } from './constants';
 import { Loop } from './scenes/Loop';
 

@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 export default defineConfig({
   // Browser export loads the ducking curve from source, as vite.config.ts does.
   resolve: { alias: [
-    { find: /^@celesta\/media-utils\/duck$/, replacement: fileURLToPath(new URL('../media-utils/src/duck.ts', import.meta.url)) },
+    { find: /^@celesta\.studio\/media-utils\/duck$/, replacement: fileURLToPath(new URL('../media-utils/src/duck.ts', import.meta.url)) },
   ] },
   test: {
     // `pnpm test` type-checks the tests first (test/tsconfig.json).

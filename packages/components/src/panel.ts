@@ -3,10 +3,10 @@
 
 import * as React from 'react';
 
-import { LayoutBounds } from '@celesta/layout';
-import type { Insets } from '@celesta/layout';
-import { Group, Rect, useTheme } from '@celesta/react';
-import type { GroupProps, LayerShadow, Paint } from '@celesta/react';
+import { LayoutBounds } from '@celesta.studio/layout';
+import type { Insets } from '@celesta.studio/layout';
+import { Group, Rect, useTheme } from '@celesta.studio/react';
+import type { GroupProps, LayerShadow, Paint } from '@celesta.studio/react';
 
 import { hexColor } from './color';
 import { validators } from './validate';

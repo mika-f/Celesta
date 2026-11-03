@@ -1,7 +1,7 @@
-import { MediaFrame, PatternBackground } from '@celesta/components';
-import { preloadMedia } from '@celesta/media-utils';
-import type { MediaInfo } from '@celesta/media-utils';
-import { Composition, Easings, Font, Text, Theme, progress, useCurrentFrame } from '@celesta/react';
+import { MediaFrame, PatternBackground } from '@celesta.studio/components';
+import { preloadMedia } from '@celesta.studio/media-utils';
+import type { MediaInfo } from '@celesta.studio/media-utils';
+import { Composition, Easings, Font, Text, Theme, progress, useCurrentFrame } from '@celesta.studio/react';
 
 // <MediaFrame> fits an image or a video into a frame of a given size on a
 // <Panel>: `fit="contain"` shows all of it, letterboxed on the background;

@@ -1,6 +1,6 @@
-import { Audio, Composition, Rect } from '@celesta/react';
-import { loadAudioSpectrum, useAudioSpectrum } from '@celesta/media-utils';
-import type { AudioSpectrum } from '@celesta/media-utils';
+import { Audio, Composition, Rect } from '@celesta.studio/react';
+import { loadAudioSpectrum, useAudioSpectrum } from '@celesta.studio/media-utils';
+import type { AudioSpectrum } from '@celesta.studio/media-utils';
 
 let music: AudioSpectrum;
 

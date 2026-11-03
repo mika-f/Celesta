@@ -1,6 +1,6 @@
-import { Easings } from '@celesta/react';
-import type { AnimatedNumber } from '@celesta/react';
-import { duckEnvelope } from '@celesta/media-utils';
+import { Easings } from '@celesta.studio/react';
+import type { AnimatedNumber } from '@celesta.studio/react';
+import { duckEnvelope } from '@celesta.studio/media-utils';
 import { FPS } from '../components/theme';
 import { DURATION } from './timeline';
 import { voices } from './voices';

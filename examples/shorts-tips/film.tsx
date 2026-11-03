@@ -1,5 +1,5 @@
-import { Assets, Audio, Composition, Font } from '@celesta/react';
-import { TransitionSeries } from '@celesta/transitions';
+import { Assets, Audio, Composition, Font } from '@celesta.studio/react';
+import { TransitionSeries } from '@celesta.studio/transitions';
 import { Background, SafeGuides } from './components/Frame';
 import { Header } from './components/Header';
 import {

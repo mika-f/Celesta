@@ -1,5 +1,5 @@
-import { Group, Rect, useCurrentFrame, useVideoConfig } from '@celesta/react';
-import { blinkPhase } from '@celesta/character';
+import { Group, Rect, useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
+import { blinkPhase } from '@celesta.studio/character';
 import { Label } from '../components/Label';
 import { BODY, Panel } from '../components/Panel';
 import { CAST } from '../character';

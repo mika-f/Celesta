@@ -8,12 +8,12 @@ import React from 'react';
 import type { ElementType } from 'react';
 import { test } from 'vitest';
 
-import { Composition, Group, Sequence, Text, registerComponent, useCurrentFrame, useTextMetrics } from '@celesta/react';
-import type { CompositionConfig, Layer, LayerContent, Scene, TextMetrics } from '@celesta/react';
-import { TextBox, useFitText } from '@celesta/text';
-import { ProjectTimeline } from '@celesta/project';
-import { mount, createResolver, setTextMeasurer } from '@celesta/react/internal';
-import type { ComponentResolutions, MeasureTextRequest } from '@celesta/react/internal';
+import { Composition, Group, Sequence, Text, registerComponent, useCurrentFrame, useTextMetrics } from '@celesta.studio/react';
+import type { CompositionConfig, Layer, LayerContent, Scene, TextMetrics } from '@celesta.studio/react';
+import { TextBox, useFitText } from '@celesta.studio/text';
+import { ProjectTimeline } from '@celesta.studio/project';
+import { mount, createResolver, setTextMeasurer } from '@celesta.studio/react/internal';
+import type { ComponentResolutions, MeasureTextRequest } from '@celesta.studio/react/internal';
 
 type TextContent = Extract<LayerContent, { type: 'text' }>;
 
@@ -197,8 +197,8 @@ test('CLI inherits composition language for subtitles and preview requests from 
   const entry = join(dir, 'entry.tsx');
   writeFileSync(entry, `
     import React from 'react';
-    import { Assets, Composition, Group, Sequence, Text, registerComponent } from '@celesta/react';
-    import { Character, CharacterView, Dialogue } from '@celesta/character';
+    import { Assets, Composition, Group, Sequence, Text, registerComponent } from '@celesta.studio/react';
+    import { Character, CharacterView, Dialogue } from '@celesta.studio/character';
     const character = React.createRef();
     const view = React.createRef();
     function Caption() { return <Text>preview</Text>; }

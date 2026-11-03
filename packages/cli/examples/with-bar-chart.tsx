@@ -1,5 +1,5 @@
-import { BarChart, PatternBackground, Ranking } from '@celesta/components';
-import { Composition, Easings, Font, Text, Theme } from '@celesta/react';
+import { BarChart, PatternBackground, Ranking } from '@celesta.studio/components';
+import { Composition, Easings, Font, Text, Theme } from '@celesta.studio/react';
 
 // <BarChart> draws one row per item: a label column, a bar from 0, and the
 // value printed with formatNumber() (as <Counter> prints it). Each row starts

@@ -1,5 +1,5 @@
 // Host element types defined outside the core components. A package such as
-// `@celesta/character` renders its own lowercase host elements and registers
+// `@celesta.studio/character` renders its own lowercase host elements and registers
 // here how render.ts turns them into layers, audio, and subtitles, so the
 // walker needs no knowledge of them. Registration happens when the package's
 // module loads, before any element of that type can be rendered.

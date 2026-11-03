@@ -86,7 +86,7 @@ stays inside `SAFE` in `constants.ts`. To check, export with `--props '{"guides"
 
 ## How the code is drawn
 
-The code is split and colored with `highlightCode()` from `@celesta/code`, which follows the same rules as `<Code>`,
+The code is split and colored with `highlightCode()` from `@celesta.studio/code`, which follows the same rules as `<Code>`,
 and drawn as one `<Text>` per line, with its runs as `style.colorRuns`.
 It is drawn by hand rather than with the `<Code>` component to control the look: a band on the newest line with a colored edge,
 a caret that blinks on the beat, and bands that run to the frame's edges.

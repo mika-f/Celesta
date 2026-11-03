@@ -1,12 +1,12 @@
 // The lines the render CLI (packages/cli/bin/celesta-react-render.js) writes
 // to stdout, as far as the tests that spawn it read them; `Message` in
 // packages/cli/src/cli.ts has the rest. Those tests are integration tests of
-// the build: the CLI loads the entry's @celesta/character from dist/.
+// the build: the CLI loads the entry's @celesta.studio/character from dist/.
 
 import assert from 'node:assert/strict';
 
-import type { CompositionConfig, Scene } from '@celesta/react';
-import type { AudioClipDescriptor, PrepareDependency } from '@celesta/react/internal';
+import type { CompositionConfig, Scene } from '@celesta.studio/react';
+import type { AudioClipDescriptor, PrepareDependency } from '@celesta.studio/react/internal';
 
 /** The first line: what the entry declares, and the files its `prepare()` read. */
 export interface ReadyMessage {

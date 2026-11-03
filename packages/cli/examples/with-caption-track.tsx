@@ -1,6 +1,6 @@
-import { Composition, Font, Group, Rect, Sequence, Text, interpolate } from '@celesta/react';
-import { CaptionTrack } from '@celesta/components';
-import type { CaptionCue, CaptionRenderProps } from '@celesta/components';
+import { Composition, Font, Group, Rect, Sequence, Text, interpolate } from '@celesta.studio/react';
+import { CaptionTrack } from '@celesta.studio/components';
+import type { CaptionCue, CaptionRenderProps } from '@celesta.studio/components';
 
 // Captions from data alone: no <Character>, voice, or audio. The bottom track
 // uses the default band; the top one draws each cue itself with `render`,

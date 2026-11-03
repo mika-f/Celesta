@@ -19,7 +19,7 @@ function ready(imports: string[], body = ''): ReadyMessage {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), 'celesta-primitive-properties-')));
   const entry = join(dir, 'entry.tsx');
   writeFileSync(entry, [
-    "import { Composition } from '@celesta/react';",
+    "import { Composition } from '@celesta.studio/react';",
     ...imports,
     'export default function Film() {',
     `  return <Composition width={64} height={64} fps={30} durationInFrames={1}>${body}</Composition>;`,
@@ -46,7 +46,7 @@ test('a prop the props type requires is sent as required', () => {
   assert.equal(size?.find((row) => row.key === 'cornerRadius')?.field.required, undefined);
 });
 
-test('an entry importing @celesta/shapes lists the shapes too', () => {
-  const message = ready(["import { Star } from '@celesta/shapes';"], '<Star radius={8} points={5} />');
+test('an entry importing @celesta.studio/shapes lists the shapes too', () => {
+  const message = ready(["import { Star } from '@celesta.studio/shapes';"], '<Star radius={8} points={5} />');
   assert.ok(message.primitiveProperties.Star, Object.keys(message.primitiveProperties).join(', '));
 });

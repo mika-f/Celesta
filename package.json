@@ -1,11 +1,11 @@
 {
-  "name": "@celesta/root",
+  "name": "@celesta.studio/root",
   "private": true,
   "packageManager": "pnpm@12.16.1",
   "scripts": {
     "build": "turbo run build",
-    "build:runtime": "turbo run build --filter \"@celesta/cli...\"",
-    "test:runtime": "pnpm --filter \"@celesta/cli...\" run test",
+    "build:runtime": "turbo run build --filter \"@celesta.studio/cli...\"",
+    "test:runtime": "pnpm --filter \"@celesta.studio/cli...\" run test",
     "typecheck:examples": "node scripts/typecheck-examples.mjs"
   },
   "devDependencies": {

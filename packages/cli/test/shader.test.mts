@@ -1,4 +1,4 @@
-// `@celesta/shader` through the CLI: `.wgsl` files bundle as text, and the
+// `@celesta.studio/shader` through the CLI: `.wgsl` files bundle as text, and the
 // staged project types make them, and the shader API, type-check. Run after
 // `pnpm run build:runtime`: the tests exercise the built CLI (bin/ loads
 // dist/cli.js) and check the build's dist/project-types.
@@ -12,8 +12,8 @@ import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { test } from 'vitest';
 
-import type { Layer } from '@celesta/react';
-import type { ComponentResolutions } from '@celesta/react/internal';
+import type { Layer } from '@celesta.studio/react';
+import type { ComponentResolutions } from '@celesta.studio/react/internal';
 import type { FrameMessage, ReadyMessage } from '../src/cli.js';
 
 const cli = fileURLToPath(new URL('../bin/celesta-react-render.js', import.meta.url));
@@ -25,8 +25,8 @@ const RIPPLE = `fn effect(input: EffectInput) -> vec4f {
 }
 `;
 
-const ENTRY = `import { Composition, Rect, useCurrentFrame } from '@celesta/react';
-import { defineShader } from '@celesta/shader';
+const ENTRY = `import { Composition, Rect, useCurrentFrame } from '@celesta.studio/react';
+import { defineShader } from '@celesta.studio/shader';
 import rippleSource from './ripple.wgsl';
 
 const ripple = defineShader({
@@ -80,8 +80,8 @@ test('a composition imports a .wgsl file as the shader source', () => {
 
 test('a component resolution carries the shaders its layers use', () => {
   const entry = ENTRY.replace(
-    "import { Composition, Rect, useCurrentFrame } from '@celesta/react';",
-    "import { Composition, Rect, registerComponent, useCurrentFrame } from '@celesta/react';",
+    "import { Composition, Rect, useCurrentFrame } from '@celesta.studio/react';",
+    "import { Composition, Rect, registerComponent, useCurrentFrame } from '@celesta.studio/react';",
   ) + `
 registerComponent('Rippled', () => <Rect width={8} height={8} shader={ripple({ time: 0, tint: '#ffffff' })} />);
 `;

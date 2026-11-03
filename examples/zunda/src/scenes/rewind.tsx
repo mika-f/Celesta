@@ -4,7 +4,7 @@
 // 台詞に合わせて前後にスクラブし、最後に 1 枚を画面いっぱいに広げて、続きを
 // そのまま再生してみせる。
 
-import { Easings, Group, Rect, Text, progress, spring } from '@celesta/react';
+import { Easings, Group, Rect, Text, progress, spring } from '@celesta.studio/react';
 
 import { filmDuration, line, sceneStart, useFilmFrame } from '../timing.ts';
 import { CANVAS, COLOR, FONT, FPS, solid } from '../theme.ts';

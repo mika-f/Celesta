@@ -31,7 +31,7 @@ function renderFrame(source: string, frame = 0) {
 
 test('<Font> declarations become scene fonts only while mounted', () => {
   const source =
-    `import { Assets, Composition, Font, Sequence, Text } from '@celesta/react';\n` +
+    `import { Assets, Composition, Font, Sequence, Text } from '@celesta.studio/react';\n` +
       `export default function Root() {\n` +
       `  return (\n` +
       `    <Composition width={100} height={100} fps={30} durationInFrames={60}>\n` +
@@ -57,7 +57,7 @@ test('<Font> declarations become scene fonts only while mounted', () => {
 
 test('a scene without <Font> omits fonts', () => {
   const scene = renderFrame(
-    `import { Composition, Text } from '@celesta/react';\n` +
+    `import { Composition, Text } from '@celesta.studio/react';\n` +
       `export default function Root() {\n` +
       `  return <Composition width={100} height={100} fps={30} durationInFrames={1}><Text>hi</Text></Composition>;\n` +
       `}\n`,
@@ -68,7 +68,7 @@ test('a scene without <Font> omits fonts', () => {
 test('<Font google> uses the same stylesheet asset as src and googleFont(), including refs', () => {
   const scene = renderFrame(`
     import React from 'react';
-    import { Assets, Composition, Font, googleFont } from '@celesta/react';
+    import { Assets, Composition, Font, googleFont } from '@celesta.studio/react';
     export default function Root() {
       const font = React.useRef();
       return <Composition width={100} height={100} fps={30} durationInFrames={1}>
@@ -93,7 +93,7 @@ test('<Font google> uses the same stylesheet asset as src and googleFont(), incl
 
 test('<Font> rejects mixing a file source with a Google Fonts family', () => {
   assert.throws(() => renderFrame(`
-    import { Composition, Font } from '@celesta/react';
+    import { Composition, Font } from '@celesta.studio/react';
     export default function Root() {
       return <Composition width={100} height={100} fps={30} durationInFrames={1}>
         <Font src="font.ttf" google="Inter" />

@@ -1,5 +1,5 @@
-import { Easings, Group, MotionBlur, Rect, Text, Trail, interpolate, useCurrentFrame } from '@celesta/react';
-import { Circle, Star } from '@celesta/shapes';
+import { Easings, Group, MotionBlur, Rect, Text, Trail, interpolate, useCurrentFrame } from '@celesta.studio/react';
+import { Circle, Star } from '@celesta.studio/shapes';
 import type { DemoProps } from '../../components/ChapterShell';
 import { CUT, STAGE, enter } from '../../components/ChapterShell';
 import { Delta } from '../../components/Delta';

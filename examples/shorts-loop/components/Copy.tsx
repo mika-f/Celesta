@@ -1,4 +1,4 @@
-import { Group, Text } from '@celesta/react';
+import { Group, Text } from '@celesta.studio/react';
 import { BAR, CYAN, MAGENTA, SAFE, W, WHITE } from '../constants';
 import { within } from '../loop';
 import { sheen } from '../shaders';
@@ -27,6 +27,6 @@ export function Copy({ frame, pulse }: { frame: number; pulse: number }) {
       <Type y={SAFE.top + 245} size={160} color={WHITE} spacing={8}>FOLDED.</Type>
     </Group>
     <Type y={SAFE.bottom - 88} size={60} color={WHITE} spacing={22} opacity={0.92}>CELESTA</Type>
-    <Type y={SAFE.bottom - 36} size={24} color={CYAN} mono spacing={2} opacity={0.8}>@celesta/shader · WGSL</Type>
+    <Type y={SAFE.bottom - 36} size={24} color={CYAN} mono spacing={2} opacity={0.8}>@celesta.studio/shader · WGSL</Type>
   </>;
 }

@@ -1,5 +1,5 @@
-import { lerp } from '@celesta/math';
-import { Easings, Group, Rect, interpolate, progress, spring, useCurrentFrame } from '@celesta/react';
+import { lerp } from '@celesta.studio/math';
+import { Easings, Group, Rect, interpolate, progress, spring, useCurrentFrame } from '@celesta.studio/react';
 import { Label } from '../components/Label';
 import { Line } from '../components/Line';
 import { Rails } from '../components/Rails';

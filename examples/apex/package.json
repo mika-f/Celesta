@@ -1,13 +1,13 @@
 {
-  "name": "@celesta/example-apex",
+  "name": "@celesta.studio/example-apex",
   "private": true,
   "dependencies": {
-    "@celesta/components": "workspace:*",
-    "@celesta/layout": "workspace:*",
-    "@celesta/math": "workspace:*",
-    "@celesta/react": "workspace:*",
-    "@celesta/shapes": "workspace:*",
-    "@celesta/text": "workspace:*",
+    "@celesta.studio/components": "workspace:*",
+    "@celesta.studio/layout": "workspace:*",
+    "@celesta.studio/math": "workspace:*",
+    "@celesta.studio/react": "workspace:*",
+    "@celesta.studio/shapes": "workspace:*",
+    "@celesta.studio/text": "workspace:*",
     "react": "^19.3.0"
   },
   "devDependencies": {

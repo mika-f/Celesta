@@ -1,4 +1,4 @@
-import { Composition, Instances, useCurrentFrame } from '@celesta/react';
+import { Composition, Instances, useCurrentFrame } from '@celesta.studio/react';
 
 // Three circles drifting right, drawn as one <Instances> layer: the columns
 // are typed arrays, filled in place every frame.

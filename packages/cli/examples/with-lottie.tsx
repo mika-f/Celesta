@@ -1,5 +1,5 @@
-import { Composition, Sequence } from '@celesta/react';
-import { Lottie } from '@celesta/lottie';
+import { Composition, Sequence } from '@celesta.studio/react';
+import { Lottie } from '@celesta.studio/lottie';
 
 import demo from '../../../examples/assets/lottie/demo.json';
 

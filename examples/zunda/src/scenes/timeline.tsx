@@ -3,7 +3,7 @@
 // モニターの <Video> と下帯は本物。トラックの表示は説明のための絵だが、クリップの位置と
 // 再生位置は同じ秒数から計算するので、モニターに映るものはトラックの表示と一致する。
 
-import { Easings, Group, Rect, Sequence, Text, Video, interpolate, progress, spring, useCurrentFrame } from '@celesta/react';
+import { Easings, Group, Rect, Sequence, Text, Video, interpolate, progress, spring, useCurrentFrame } from '@celesta.studio/react';
 import type { ReactNode } from 'react';
 
 import { line, partway, sceneStart, useFilmFrame } from '../timing.ts';

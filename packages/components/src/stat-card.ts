@@ -3,9 +3,9 @@
 import * as React from 'react';
 import type { ReactNode } from 'react';
 
-import type { Insets } from '@celesta/layout';
-import { Easings, Text, useCurrentFrame, useTextMetrics } from '@celesta/react';
-import type { TextMetrics, TextStyle } from '@celesta/react';
+import type { Insets } from '@celesta.studio/layout';
+import { Easings, Text, useCurrentFrame, useTextMetrics } from '@celesta.studio/react';
+import type { TextMetrics, TextStyle } from '@celesta.studio/react';
 
 import { countProgress, finiteValue, formatNumber } from './count';
 import type { CountTiming, NumberFormat } from './count';

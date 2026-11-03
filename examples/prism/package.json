@@ -1,11 +1,11 @@
 {
-  "name": "@celesta/example-prism",
+  "name": "@celesta.studio/example-prism",
   "private": true,
   "dependencies": {
-    "@celesta/character": "workspace:*",
-    "@celesta/layout": "workspace:*",
-    "@celesta/react": "workspace:*",
-    "@celesta/transitions": "workspace:*",
+    "@celesta.studio/character": "workspace:*",
+    "@celesta.studio/layout": "workspace:*",
+    "@celesta.studio/react": "workspace:*",
+    "@celesta.studio/transitions": "workspace:*",
     "react": "^19.3.0"
   },
   "devDependencies": {

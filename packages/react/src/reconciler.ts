@@ -113,7 +113,7 @@ const hostConfig: Reconciler.HostConfig<
   supportsHydration: false,
   isPrimaryRenderer: true,
 
-  rendererPackageName: '@celesta/react',
+  rendererPackageName: '@celesta.studio/react',
   rendererVersion: React.version,
   extraDevToolsConfig: null,
   bindToConsole: (methodName, args) => console[methodName as 'error'].bind(console, ...args),

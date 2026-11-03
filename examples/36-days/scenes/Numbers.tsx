@@ -1,5 +1,5 @@
-import { Easings, Group, Rect, Stagger, progress, useCurrentFrame } from '@celesta/react';
-import { useCountUp } from '@celesta/text';
+import { Easings, Group, Rect, Stagger, progress, useCurrentFrame } from '@celesta.studio/react';
+import { useCountUp } from '@celesta.studio/text';
 import { Exit } from '../components/Exit';
 import { Header } from '../components/Header';
 import { Label } from '../components/Label';
@@ -10,7 +10,7 @@ const STATS = [
   { value: TOTAL_COMMITS, en: 'COMMITS', ja: 'マージを含む、すべてのコミット' },
   { value: SOURCES.length - 1, en: 'RUST CRATES', ja: 'ワークスペースのクレート' },
   { value: RUST_LINES, en: 'LINES OF RUST', ja: 'レンダラー、書き出し、エディタ' },
-  { value: TS_LINES, en: 'LINES OF TYPESCRIPT', ja: '@celesta/react のランタイム' },
+  { value: TS_LINES, en: 'LINES OF TYPESCRIPT', ja: '@celesta.studio/react のランタイム' },
 ];
 
 // Written for its own frame 0; <Stagger> starts each one a beat apart.

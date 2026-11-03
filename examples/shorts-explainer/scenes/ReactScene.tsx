@@ -1,4 +1,4 @@
-import { Easings, Group, Rect, interpolate, spring, useCurrentFrame, useVideoConfig } from '@celesta/react';
+import { Easings, Group, Rect, interpolate, spring, useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
 import { CodeCard, codeCardHeight, highlightTsx, lineEnd } from '../components/CodeCard';
 import { Label } from '../components/Label';
 import { BODY, Panel } from '../components/Panel';

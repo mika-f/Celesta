@@ -10,7 +10,7 @@ Mono and Japanese from Noto Sans JP, in one `<Text>`. Six seconds at 30 fps,
    even.
 2. The same line with `fontFamily: 'Inter'`, where the Japanese falls back to
    a system font even though Noto Sans JP is loaded, and with the stack.
-3. `@celesta/code`'s `<Code>` typing TSX with Japanese comments and strings
+3. `@celesta.studio/code`'s `<Code>` typing TSX with Japanese comments and strings
    in `['JetBrains Mono', 'Noto Sans JP']`; the highlighted lines cover them.
 
 The composition is `film.tsx`. The fonts come from Google Fonts, so the first

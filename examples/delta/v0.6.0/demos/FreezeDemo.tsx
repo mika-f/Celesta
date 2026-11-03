@@ -1,5 +1,5 @@
 import { useContext } from 'react';
-import { Easings, FreezeFrame, Group, Rect, Text, interpolate } from '@celesta/react';
+import { Easings, FreezeFrame, Group, Rect, Text, interpolate } from '@celesta.studio/react';
 import { Delta } from '../../components/Delta';
 import { STAGE, enter } from '../../components/ChapterShell';
 import type { DemoProps } from '../../components/ChapterShell';

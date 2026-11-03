@@ -1,6 +1,6 @@
-import { PatternBackground } from '@celesta/components';
-import type { PatternTile } from '@celesta/components';
-import { Composition, Font, Group, Text, Theme } from '@celesta/react';
+import { PatternBackground } from '@celesta.studio/components';
+import type { PatternTile } from '@celesta.studio/components';
+import { Composition, Font, Group, Text, Theme } from '@celesta.studio/react';
 import type { ReactNode } from 'react';
 
 // <PatternBackground> fills an area with dots, a grid, stripes, or marks of

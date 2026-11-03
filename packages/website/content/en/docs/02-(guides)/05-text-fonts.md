@@ -76,7 +76,7 @@ The desktop app and exporter cache both the stylesheet and each font file in the
 For measurements in `prepare()`, use the same URL helper:
 
 ```tsx
-import { googleFont, measureText } from '@celesta/react';
+import { googleFont, measureText } from '@celesta.studio/react';
 
 export async function prepare() {
   await measureText('こんにちは', { fontFamily: 'Noto Sans JP', fontWeight: 700 }, {

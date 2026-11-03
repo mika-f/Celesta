@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Easings, Group, Rect, interpolate, spring, useCurrentFrame, useVideoConfig } from '@celesta/react';
+import { Easings, Group, Rect, interpolate, spring, useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
 import { C, PANEL, SAFE, SAFE_W, W } from '../constants';
 import { Label } from './Label';
 

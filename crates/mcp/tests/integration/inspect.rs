@@ -2,7 +2,7 @@ use crate::common::{call, client, entry, is_error, root, runtime_built, structur
 use serde_json::json;
 
 const RECT: &str = r##"
-import { Composition, Rect } from '@celesta/react';
+import { Composition, Rect } from '@celesta.studio/react';
 export default function Root() {
   return <Composition width={320} height={180} fps={30} durationInFrames={30}>
     <Rect width={100} height={50} fill="#336699" />
@@ -54,7 +54,7 @@ async fn inspect_reports_missing_files() {
     }
     let (_dir, entry) = entry(
         r##"
-import { Composition, Image } from '@celesta/react';
+import { Composition, Image } from '@celesta.studio/react';
 export default function Root() {
   return <Composition width={320} height={180} fps={30} durationInFrames={30}>
     <Image src="./nope.png" width={100} height={100} />
@@ -83,7 +83,7 @@ async fn inspect_finds_a_loop_seam() {
     }
     let (_dir, fading) = entry(
         r##"
-import { Composition, Rect, useCurrentFrame } from '@celesta/react';
+import { Composition, Rect, useCurrentFrame } from '@celesta.studio/react';
 export default function Root() {
   return <Composition width={320} height={180} fps={30} durationInFrames={30}>
     <Fade />
@@ -111,7 +111,7 @@ async fn inspect_measures_text() {
     }
     let (dir, entry) = entry(
         r##"
-import { Composition, Font, Rect, useTextMetrics } from '@celesta/react';
+import { Composition, Font, Rect, useTextMetrics } from '@celesta.studio/react';
 const style = { fontFamily: 'Bebas Neue', fontSize: 96 };
 function Box() {
   const m = useTextMetrics('CELESTA', style, { fonts: ['./font.ttf'] });
@@ -142,7 +142,7 @@ async fn inspect_reports_a_failing_prepare() {
     }
     let (_dir, entry) = entry(
         r##"
-import { Composition } from '@celesta/react';
+import { Composition } from '@celesta.studio/react';
 export async function prepare() { throw new Error('boom'); }
 export default function Root() {
   return <Composition width={320} height={180} fps={30} durationInFrames={30} />;
@@ -165,7 +165,7 @@ async fn inspect_reports_invalid_properties() {
     }
     let (_dir, entry) = entry(
         r##"
-import { Composition, defineProjectProperties } from '@celesta/react';
+import { Composition, defineProjectProperties } from '@celesta.studio/react';
 defineProjectProperties({ n: { type: 'number', defaultValue: 1 } });
 export default function Root() {
   return <Composition width={320} height={180} fps={30} durationInFrames={30} />;

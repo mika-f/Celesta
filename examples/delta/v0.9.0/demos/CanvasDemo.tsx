@@ -1,5 +1,5 @@
-import { Easings, Group, Rect, Text, interpolate } from '@celesta/react';
-import { PatternBackground, Panel } from '@celesta/components';
+import { Easings, Group, Rect, Text, interpolate } from '@celesta.studio/react';
+import { PatternBackground, Panel } from '@celesta.studio/components';
 import { C, FONT, solid } from '../../components/theme';
 import type { DemoProps } from '../program';
 import { STAGE } from '../program';

@@ -1,6 +1,6 @@
 // Morphing between two paths, whatever their commands.
 
-import type { PathCommand } from '@celesta/react';
+import type { PathCommand } from '@celesta.studio/react';
 
 import { MeasuredPath, measureSegment, parameterAt, splitSegment, subpathsOf } from './path-geometry';
 import type { MeasuredSegment, Segment } from './path-geometry';

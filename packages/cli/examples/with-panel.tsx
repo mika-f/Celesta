@@ -1,6 +1,6 @@
-import { Panel, PatternBackground } from '@celesta/components';
-import { Center, useLayoutBounds } from '@celesta/layout';
-import { Composition, Easings, Font, Text, Theme, progress, useCurrentFrame } from '@celesta/react';
+import { Panel, PatternBackground } from '@celesta.studio/components';
+import { Center, useLayoutBounds } from '@celesta.studio/layout';
+import { Composition, Easings, Font, Text, Theme, progress, useCurrentFrame } from '@celesta.studio/react';
 
 // <Panel> is a box of a given size: a background, a border drawn inside the
 // edge, rounded corners, and a shadow cast by the background. Its children

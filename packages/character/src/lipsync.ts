@@ -15,9 +15,9 @@
 
 import * as fs from 'node:fs';
 
-import { useCurrentTime } from '@celesta/react';
-import { entryRelativePath, trackPrepareDependency } from '@celesta/react/internal';
-import type { MouthShape } from '@celesta/react/internal';
+import { useCurrentTime } from '@celesta.studio/react';
+import { entryRelativePath, trackPrepareDependency } from '@celesta.studio/react/internal';
+import type { MouthShape } from '@celesta.studio/react/internal';
 
 const A_KANA = 'aAあぁゃかがさざただなはばぱまやらわアァャカガサザタダナハバパマヤラワ';
 const I_KANA = 'iIいぃきぎしじちぢにひびぴみりイィキギシジチヂニヒビピミリ';
@@ -331,7 +331,7 @@ export interface MouthKeyframe {
 
 /**
  * Builds a `LipSyncTrack` from timed mouth shapes, for speech engines that
- * report phoneme timing (e.g. `@celesta/voicevox`). Each keyframe holds its
+ * report phoneme timing (e.g. `@celesta.studio/voicevox`). Each keyframe holds its
  * shape until the next one; the mouth is `closed` before the first keyframe
  * and from `durationInSeconds` on. Keyframes may be given in any order.
  */

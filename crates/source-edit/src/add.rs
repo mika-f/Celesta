@@ -16,7 +16,7 @@ use crate::resolve::{EditValue, LiteralForm, Span};
 use crate::{line_break, parse_checked};
 
 /// The package of `Ellipse` and `Circle`.
-const SHAPES: &str = "@celesta/shapes";
+const SHAPES: &str = "@celesta.studio/shapes";
 
 /// The `fill` an added Rect, Ellipse or Circle starts with.
 const SHAPE_COLOR: &str = "#4F7CFF";
@@ -48,8 +48,8 @@ impl NewKind {
         }
     }
 
-    /// The module that exports [`Self::tag`]: `@celesta/react` or
-    /// `@celesta/shapes`.
+    /// The module that exports [`Self::tag`]: `@celesta.studio/react` or
+    /// `@celesta.studio/shapes`.
     pub fn module(self) -> &'static str {
         match self {
             Self::Ellipse | Self::Circle => SHAPES,

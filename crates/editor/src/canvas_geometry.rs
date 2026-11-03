@@ -78,7 +78,7 @@ pub(crate) fn anchor_box(frame: &LayerFrame) -> Option<LocalBox> {
 /// The props that put a layer's anchor point at fractions of its box.
 pub(crate) const ANCHOR_PROPS: [&str; 2] = ["anchorX", "anchorY"];
 
-/// `@celesta/shapes` primitives sized by `radius`: their box is `2 * radius`
+/// `@celesta.studio/shapes` primitives sized by `radius`: their box is `2 * radius`
 /// square.
 const RADIUS_SHAPES: [&str; 4] = ["Circle", "Polygon", "Star", "Pie"];
 /// Primitives that bake their anchor into what they draw against `width` x

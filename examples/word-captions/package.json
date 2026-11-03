@@ -1,5 +1,5 @@
 {
-  "name": "@celesta/example-word-captions",
+  "name": "@celesta.studio/example-word-captions",
   "private": true,
   "scripts": {
     "preview": "celesta-editor film.tsx",

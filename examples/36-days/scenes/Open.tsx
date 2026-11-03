@@ -1,6 +1,6 @@
-import { TypewriterText } from '@celesta/components';
-import { Easings, Group, Rect, interpolate, progress, useCurrentFrame, useTextMetrics } from '@celesta/react';
-import { Camera } from '@celesta/layout';
+import { TypewriterText } from '@celesta.studio/components';
+import { Easings, Group, Rect, interpolate, progress, useCurrentFrame, useTextMetrics } from '@celesta.studio/react';
+import { Camera } from '@celesta.studio/layout';
 import { Label, textStyle } from '../components/Label';
 import { BEAT, C, H, W } from '../constants';
 import { DAYS } from '../data';

@@ -1,5 +1,5 @@
-import { lerp } from '@celesta/math';
-import { Easings, Rect, progress, useCurrentFrame } from '@celesta/react';
+import { lerp } from '@celesta.studio/math';
+import { Easings, Rect, progress, useCurrentFrame } from '@celesta.studio/react';
 import { Label } from '../components/Label';
 import { Prism } from '../components/Prism';
 import { H, INK, PAPER, RED, W } from '../constants';

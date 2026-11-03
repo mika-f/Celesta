@@ -5,8 +5,8 @@
 `useTypewriter()` の `length` を `visibleCharacters` に渡します。
 
 ```tsx title="ソースを入力風に表示"
-import { useTypewriter } from '@celesta/text';
-import { Code } from '@celesta/code';
+import { useTypewriter } from '@celesta.studio/text';
+import { Code } from '@celesta.studio/code';
 
 function Typed() {
   const { length } = useTypewriter(source, { from: 15, framesPerChar: 0.5 });
@@ -27,8 +27,8 @@ function Typed() {
 `useCodePoint(source, { line, column }, style?, tabSize?)` は `Code` と同じフォントとタブ展開で位置を計測し、カーソル・下線・注釈を置けます。行と列は **1 始まり**で、列は元の文字数です（タブや単一の絵文字も 1 列）。行末に置くため最後の文字の次も指定できます。無効な位置はエラーになります。
 
 ```tsx title="入力末尾で点滅するカーソル"
-import { Group, Rect } from '@celesta/react'; import { useTypewriter } from '@celesta/text';
-import { Code, useCodePoint } from '@celesta/code';
+import { Group, Rect } from '@celesta.studio/react'; import { useTypewriter } from '@celesta.studio/text';
+import { Code, useCodePoint } from '@celesta.studio/code';
 
 function TypedWithCaret() {
   const { length, caretVisible } = useTypewriter(source, { from: 15, framesPerChar: 0.5 });
@@ -54,7 +54,7 @@ function TypedWithCaret() {
 `codeCharacterCount(source, { line, column })` はソース位置をその手前の文字数に変換し、`visibleCharacters` に渡せます。通常の関数なので React の外でも使えます。4 行のコードの最初の 3 行を表示するには、以下を使います。
 
 ```tsx title="最初の 3 行を表示"
-import { Code, codeCharacterCount } from '@celesta/code';
+import { Code, codeCharacterCount } from '@celesta.studio/code';
 
 function FirstThreeLines({ source }: { source: string }) {
   const count = codeCharacterCount(source, { line: 4, column: 1 });
@@ -69,7 +69,7 @@ function FirstThreeLines({ source }: { source: string }) {
 `tokenizeCode(source, language?)` は `Code` のトークンを返します。各トークンは元の `text`、`type`（twinkleplop の名前または `plain`）、UTF-16 単位の `start` と `end`（終了位置は含まない）を持ちます。空白も含め全ソースを保持し、HTML や DOM は不要です。独自の描画やコード分析に使えます。
 
 ```tsx title="コメントを数える"
-import { tokenizeCode } from '@celesta/code';
+import { tokenizeCode } from '@celesta.studio/code';
 
 const comments = tokenizeCode(source, 'ts').filter((token) => token.type === 'comment');
 ```

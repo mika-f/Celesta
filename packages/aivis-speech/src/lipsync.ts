@@ -5,9 +5,9 @@
 // the loud parts of a WAV, this reads the query's moras (consonants, ん, っ
 // and punctuation included) and places them with `timingFromAivisSpeech`,
 // so the mouth and any other use of the timing agree. The mouth rules are
-// `lipSyncFromSpeechTiming`'s, shared with `@celesta/voicevox`.
+// `lipSyncFromSpeechTiming`'s, shared with `@celesta.studio/voicevox`.
 
-import { lipSyncFromSpeechTiming, type LipSyncTrack, type WavAudio } from '@celesta/character';
+import { lipSyncFromSpeechTiming, type LipSyncTrack, type WavAudio } from '@celesta.studio/character';
 
 import type { AivisSpeechAudioQuery } from './query.js';
 import { timingFromAivisSpeech } from './timing.js';

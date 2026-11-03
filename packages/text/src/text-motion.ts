@@ -3,8 +3,8 @@
 import * as React from 'react';
 import type { ReactNode } from 'react';
 
-import { Easings, Group, Text, progress, useCurrentFrame, useVideoConfig } from '@celesta/react';
-import type { CommonProps, TextStyle } from '@celesta/react';
+import { Easings, Group, Text, progress, useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
+import type { CommonProps, TextStyle } from '@celesta.studio/react';
 import {
   CompositionRuntimeContext,
   ThemeContext,
@@ -16,8 +16,8 @@ import {
   useMeasurementFonts,
   withInheritedText,
   withTextRuns,
-} from '@celesta/react/internal';
-import type { FlatText, MeasureTextRequest } from '@celesta/react/internal';
+} from '@celesta.studio/react/internal';
+import type { FlatText, MeasureTextRequest } from '@celesta.studio/react/internal';
 
 export interface TextRevealProps extends CommonProps {
   /**
@@ -197,7 +197,7 @@ export interface Typewriter {
  * ```
  *
  * For typed text with a caret, use `<TypewriterText>` from
- * `@celesta/components`: it times the typing with this hook and places the
+ * `@celesta.studio/components`: it times the typing with this hook and places the
  * caret on the measured layout, so any font, `\n`, and wrapping work.
  *
  * `content` may hold `<Span>`: pass `length` to `style.visibleCharacters` of

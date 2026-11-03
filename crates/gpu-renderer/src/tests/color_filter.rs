@@ -1,6 +1,6 @@
 //! Built-in color filters (`color_filter.wgsl`). The CPU reference renderer
 //! refuses filters, so these compare against the arithmetic below, which
-//! `LayerFilter`'s documentation and `@celesta/web` follow.
+//! `LayerFilter`'s documentation and `@celesta.studio/web` follow.
 
 use super::*;
 use celesta_composition::{LayerFilter, LayerShader, ShaderSource};

@@ -17,7 +17,7 @@ test('anchorY="baseline" anchors Text on its baseline', () => {
   const entry = join(dir, 'entry.tsx');
   writeFileSync(
     entry,
-    `import { Composition, Text } from '@celesta/react';\n` +
+    `import { Composition, Text } from '@celesta.studio/react';\n` +
       `export default function Root() {\n` +
       `  return (\n` +
       `    <Composition width={100} height={100} fps={30} durationInFrames={1}>\n` +

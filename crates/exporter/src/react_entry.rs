@@ -419,4 +419,7 @@ fn report_composition(
         frame_rate: metadata.frame_rate,
         frames: metadata.duration_in_frames,
     }));
+    for legacy in &metadata.legacy_imports {
+        progress(ExportProgress::Warning(legacy.to_string()));
+    }
 }

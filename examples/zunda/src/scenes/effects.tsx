@@ -2,7 +2,7 @@
 // タイトルが跳ねて出て、glow で光り、shadow で影が付き、背景の写真がぼける
 // （ぼかしは backdrop.tsx）。コードパネルの数値も、実際に描いている値を出す。
 
-import { Easings, Group, Text, progress, spring } from '@celesta/react';
+import { Easings, Group, Text, progress, spring } from '@celesta.studio/react';
 
 import { line, partway, useFilmFrame } from '../timing.ts';
 import { COLOR, FONT, FPS, alpha, solid } from '../theme.ts';

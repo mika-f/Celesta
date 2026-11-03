@@ -1,15 +1,15 @@
-# @celesta/web
+# @celesta.studio/web
 
 Browser runtime for [Celesta](https://github.com/mika-f/Celesta) React compositions. It compiles a self-contained TSX source string in a dedicated Web Worker, evaluates frames with Celesta's React renderer, draws `Scene` data on Canvas, and exports H.264/AAC MP4 with WebCodecs.
 
 ## Install
 
 ```sh
-pnpm add @celesta/web
+pnpm add @celesta.studio/web
 ```
 
 Use this command after the package is published. For a local build, run
-`pnpm --filter @celesta/web build`, pack from `packages/web`, and install the
+`pnpm --filter @celesta.studio/web build`, pack from `packages/web`, and install the
 resulting `.tgz` in your app. The website uses `workspace:*` directly.
 
 The package is browser-only. Its `dist/` includes the worker and esbuild WASM. Serve the packaged assets alongside the JavaScript bundle; bundlers that support `import.meta.url` asset references, including Vite, copy them automatically. A Content Security Policy must allow workers, WebAssembly compilation, and code evaluation in the worker (`unsafe-eval`).
@@ -17,10 +17,10 @@ The package is browser-only. Its `dist/` includes the worker and esbuild WASM. S
 ## Use
 
 ```ts
-import { Engine, SceneCanvas, exportMp4 } from '@celesta/web';
+import { Engine, SceneCanvas, exportMp4 } from '@celesta.studio/web';
 
 const source = `
-  import { Composition, Rect } from '@celesta/react';
+  import { Composition, Rect } from '@celesta.studio/react';
   export default function Film() {
     return <Composition width={320} height={180} fps={30} durationInFrames={60}>
       <Rect width={320} height={180} fill={{ type: 'solid', color: '#4e62bc' }} />
@@ -48,18 +48,18 @@ try {
 
 Pass local media as `new SceneCanvas(new Map<string, File>([['clip.mp4', file]]))`. Use the same file name in a composition's `src`. Remote media must allow CORS. Animated GIF, APNG, and WebP images play frame by frame where the browser has WebCodecs' `ImageDecoder`, picking the same frames as the desktop app; elsewhere they draw their first frame. `exportMp4` returns a `video/mp4` Blob and reports completed frames. Abort its signal to cancel.
 
-The source string accepts runtime imports from `react`, `@celesta/react`,
-`@celesta/math`, `@celesta/shapes`, `@celesta/layout`, `@celesta/components`, `@celesta/transitions`,
-`@celesta/text`, `@celesta/debug`, `@celesta/media-utils`, `@celesta/character`,
-`@celesta/code`, and `@celesta/shader`. It needs a default component returning
+The source string accepts runtime imports from `react`, `@celesta.studio/react`,
+`@celesta.studio/math`, `@celesta.studio/shapes`, `@celesta.studio/layout`, `@celesta.studio/components`, `@celesta.studio/transitions`,
+`@celesta.studio/text`, `@celesta.studio/debug`, `@celesta.studio/media-utils`, `@celesta.studio/character`,
+`@celesta.studio/code`, and `@celesta.studio/shader`. It needs a default component returning
 `<Composition>`. The built-in filters (the color filters such as
 `brightness` and `vignette`, the stylize effects such as `pixelate` and
-`noise`, and `chromaKey`, as props or from `@celesta/shader`) run in the
+`noise`, and `chromaKey`, as props or from `@celesta.studio/shader`) run in the
 browser; a frame that draws a custom WGSL shader from `defineShader()` fails.
 Paths, motion helpers, Canvas text measurement, and custom OpenType fonts or
 font CSS URLs are supported. An async `prepare()` may use browser APIs,
 `measureText()`, and `loadAudioSpectrum()`; filesystem helpers (`preloadMedia`,
-`loadLipSync`, `loadPsdPreset`), `@celesta/project`, PSD portraits, and
+`loadLipSync`, `loadPsdPreset`), `@celesta.studio/project`, PSD portraits, and
 arbitrary npm imports still require the native runtime.
 
 `loadAudioSpectrum()` reads the file from `assets` in the compile options
@@ -121,7 +121,7 @@ The worker evaluates author-provided JavaScript. Run only code you trust; a Work
 ```sh
 pnpm install
 pnpm --dir packages/react run codegen
-pnpm --filter @celesta/web build
-pnpm --filter @celesta/web test
-pnpm --filter @celesta/website build
+pnpm --filter @celesta.studio/web build
+pnpm --filter @celesta.studio/web test
+pnpm --filter @celesta.studio/website build
 ```

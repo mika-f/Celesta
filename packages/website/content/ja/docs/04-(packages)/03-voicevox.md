@@ -1,4 +1,4 @@
-`@celesta/voicevox` は、VOICEVOX の音声合成に使った AudioQuery から、各モーラ・音素・間が WAV のどこにあるかを求め、その時刻から LipSyncTrack を作ります。ローカルの VOICEVOX Engine で台本全体を音声合成し、その音声をキャッシュすることもできます。会話のコンポーネント、WAV から作る口パク、LipSyncTrack は `@celesta/character` にあります。変換機能は独立したパッケージから読み込んでください。@celesta/character からは再エクスポートされません。
+`@celesta.studio/voicevox` は、VOICEVOX の音声合成に使った AudioQuery から、各モーラ・音素・間が WAV のどこにあるかを求め、その時刻から LipSyncTrack を作ります。ローカルの VOICEVOX Engine で台本全体を音声合成し、その音声をキャッシュすることもできます。会話のコンポーネント、WAV から作る口パク、LipSyncTrack は `@celesta.studio/character` にあります。変換機能は独立したパッケージから読み込んでください。@celesta.studio/character からは再エクスポートされません。
 
 デスクトップアプリと CLI に同梱されています。ランタイムのビルド時にこのパッケージもビルドされ、File → Set Up TypeScript で型定義と読み込み設定が追加されます。非公開パッケージのため npm では配布していません。ブラウザのプレイグラウンドには対応していません。
 
@@ -36,7 +36,7 @@ plan = await planDialogue(lines, { fps: 30 });
 | `concurrency`、`timeout`、`signal` | 同時に合成する台詞の数（既定 2）、エンジンへの各リクエストの制限時間（ミリ秒、既定 60000）、中止に使う AbortSignal です。 |
 | `revision`、`refresh` | すべての台詞を無効にするか、キャッシュに関係なく合成し直します（`true` または台詞の id のリスト）。 |
 
-**@celesta/voicevox**
+**@celesta.studio/voicevox**
 
 | API | 用途 |
 | --- | --- |
@@ -53,4 +53,4 @@ plan = await planDialogue(lines, { fps: 30 });
 | `frameRate` | 既定は VOICEVOX の音素の時間刻みである 93.75 Hz です。丸めない場合は null、別のエンジンではその時間刻みを指定します。動画の fps とは別の設定です。 |
 | `interrogativeUpspeak` | 既定は true です。疑問文の語尾上げを無効にして音声を合成した場合は false を指定してください。 |
 
-NarrationError、NarrationLine、NarratedLine、NarrationAsset、NarrationStage、PrepareNarrationOptions、VoicevoxVoice、VoicevoxVoiceSettings、VoicevoxQuerySettings、VoicevoxAudioQuery、VoicevoxAccentPhrase、VoicevoxMora、VoicevoxTiming、VoicevoxTimedAccentPhrase、VoicevoxTimedMora、VoicevoxTimedPause、VoicevoxTimedPhoneme、VoicevoxSpan、VoicevoxTimingOptions、VoicevoxLipSyncOptions もエクスポートされます。LipSyncTrack は @celesta/character から読み込みます。
+NarrationError、NarrationLine、NarratedLine、NarrationAsset、NarrationStage、PrepareNarrationOptions、VoicevoxVoice、VoicevoxVoiceSettings、VoicevoxQuerySettings、VoicevoxAudioQuery、VoicevoxAccentPhrase、VoicevoxMora、VoicevoxTiming、VoicevoxTimedAccentPhrase、VoicevoxTimedMora、VoicevoxTimedPause、VoicevoxTimedPhoneme、VoicevoxSpan、VoicevoxTimingOptions、VoicevoxLipSyncOptions もエクスポートされます。LipSyncTrack は @celesta.studio/character から読み込みます。

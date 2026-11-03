@@ -5,10 +5,10 @@ import assert from 'node:assert/strict';
 import { test } from 'vitest';
 import React from 'react';
 
-import { Assets, Composition } from '@celesta/react';
-import type { AssetReference, TextMetrics } from '@celesta/react';
-import { mount, setTextMeasurer } from '@celesta/react/internal';
-import type { AudioClipDescriptor, MeasureTextRequest } from '@celesta/react/internal';
+import { Assets, Composition } from '@celesta.studio/react';
+import type { AssetReference, TextMetrics } from '@celesta.studio/react';
+import { mount, setTextMeasurer } from '@celesta.studio/react/internal';
+import type { AudioClipDescriptor, MeasureTextRequest } from '@celesta.studio/react/internal';
 import { Character, CharacterView, Dialogue, DialogueSeries, planDialogue } from '../src/index.js';
 import type { CharacterViewReference, DialogueLine, DialogueProps } from '../src/index.js';
 

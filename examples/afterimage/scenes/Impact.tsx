@@ -1,4 +1,4 @@
-import { Rect } from '@celesta/react';
+import { Rect } from '@celesta.studio/react';
 import { Ribbon } from '../components/Ribbon';
 import { Type } from '../components/Type';
 import { FPS, INK, PAPER } from '../constants';

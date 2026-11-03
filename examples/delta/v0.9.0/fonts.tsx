@@ -1,4 +1,4 @@
-import { Assets, Font } from '@celesta/react';
+import { Assets, Font } from '@celesta.studio/react';
 import { japaneseText } from '../components/theme';
 import { Shizuku } from './demos/DialogueDemo';
 import { PRS } from './prs';

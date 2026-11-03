@@ -20,7 +20,7 @@ fn runtime() -> Option<PathBuf> {
     }
 }
 
-/// An entry in a directory where `@celesta/react` resolves.
+/// An entry in a directory where `@celesta.studio/react` resolves.
 fn entry(source: &str) -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir_in(root().join("packages/cli")).unwrap();
     let entry = dir.path().join("scene.tsx");
@@ -71,7 +71,7 @@ fn native_inspection_measures_text_like_an_export() {
     let Some(cli) = runtime() else { return };
     let (dir, entry) = entry(
         r#"
-import { Composition, Font, Text, Rect, Audio, measureText, useTextMetrics, useCurrentFrame, defineProjectProperties, getProjectProperty } from '@celesta/react';
+import { Composition, Font, Text, Rect, Audio, measureText, useTextMetrics, useCurrentFrame, defineProjectProperties, getProjectProperty } from '@celesta.studio/react';
 defineProjectProperties({ title: { type: 'string', defaultValue: 'CELESTA' } });
 const style = { fontFamily: 'Bebas Neue', fontSize: 96 };
 let prepared;
@@ -155,7 +155,7 @@ fn inspection_reports_request_scene_and_runtime_errors() {
     }
     let (_dir, entry) = entry(
         r#"
-import { Composition, Text, useCurrentFrame } from '@celesta/react';
+import { Composition, Text, useCurrentFrame } from '@celesta.studio/react';
 function Title() {
   const frame = useCurrentFrame();
   if (frame === 1) throw new Error('broken scene');
@@ -198,7 +198,7 @@ fn startup_failures_replace_the_handshake() {
     }
     let (_dir, entry) = entry(
         r#"
-import { Composition, defineProjectProperties } from '@celesta/react';
+import { Composition, defineProjectProperties } from '@celesta.studio/react';
 defineProjectProperties({ count: { type: 'number', defaultValue: 1 } });
 export async function prepare() { throw new Error('prepare exploded'); }
 export default function Root() {
@@ -297,7 +297,7 @@ fn inspection_finds_a_source_build_of_the_exporter() {
     // A checkout whose build is the exporter under test.
     let (dir, entry) = entry(
         r#"
-import { Composition, Text, useTextMetrics } from '@celesta/react';
+import { Composition, Text, useTextMetrics } from '@celesta.studio/react';
 function Title() {
   const m = useTextMetrics('Celesta', { fontSize: 96 });
   return <Text x={(1920 - m.width) / 2} y={400} style={{ fontSize: 96 }}>Celesta</Text>;
@@ -351,7 +351,7 @@ fn native_inspection_evaluates_past_the_end_for_loop_checks() {
     let scene = |x: &str| {
         format!(
             r##"
-import {{ Composition, Rect, Sequence, useCurrentFrame }} from '@celesta/react';
+import {{ Composition, Rect, Sequence, useCurrentFrame }} from '@celesta.studio/react';
 function Mover() {{
   const frame = useCurrentFrame();
   return <Rect x={{{x}}} width={{4}} height={{4}} fill="#ffffff" />;
@@ -395,7 +395,7 @@ fn selects_compositions_for_native_inspection_and_json_exports() {
     let Some(cli) = runtime() else { return };
     let (dir, entry) = entry(
         r##"
-import { Composition, Rect, useCurrentFrame, useVideoConfig } from '@celesta/react';
+import { Composition, Rect, useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
 function Scene() {
   const { width, height, fps } = useVideoConfig();
   if (width === 2 && (height !== 4 || fps !== 24)) throw new Error('wrong selected config');

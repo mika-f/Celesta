@@ -1,4 +1,4 @@
-import { Composition, Group, Rect, Text, useCurrentFrame } from '@celesta/react';
+import { Composition, Group, Rect, Text, useCurrentFrame } from '@celesta.studio/react';
 
 // A text crawl receding into the distance. One `Text` layer, 1200 wide and
 // about 20000 tall, tilted back with `rotationX={70}` under a

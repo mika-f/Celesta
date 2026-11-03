@@ -1,6 +1,6 @@
 ---
 name: celesta
-description: Write, edit, check, and export Celesta videos. Covers React compositions (.tsx/.jsx files that import @celesta/react or another @celesta/* package), .celesta.json project timelines, starting a project (--init), animation, shapes and diagrams, text and fonts (measuring, fitting, language, Japanese line breaking), syntax-highlighted code, images/video/audio, character dialogue with subtitles, lip sync, and blinking, SRT/WebVTT subtitle files in and out (image or PSD portraits, custom subtitle bands), project properties, registered components, seamless loops for Shorts and TikTok, PNG frame and contact-sheet checks, and MP4 export with the Celesta command-line exporter. Use whenever a file imports @celesta/*, a *.celesta.json file is involved, or the user asks to make, change, preview, debug, or render a video with Celesta, even if they only say "the video" or "the scene".
+description: Write, edit, check, and export Celesta videos. Covers React compositions (.tsx/.jsx files that import @celesta.studio/react or another @celesta.studio/* package), .celesta.json project timelines, starting a project (--init), animation, shapes and diagrams, text and fonts (measuring, fitting, language, Japanese line breaking), syntax-highlighted code, images/video/audio, character dialogue with subtitles, lip sync, and blinking, SRT/WebVTT subtitle files in and out (image or PSD portraits, custom subtitle bands), project properties, registered components, seamless loops for Shorts and TikTok, PNG frame and contact-sheet checks, and MP4 export with the Celesta command-line exporter. Use whenever a file imports @celesta.studio/*, a *.celesta.json file is involved, or the user asks to make, change, preview, debug, or render a video with Celesta, even if they only say "the video" or "the scene".
 ---
 
 # Celesta
@@ -29,7 +29,7 @@ React project, run `--init` first ([setup.md](references/setup.md#create-a-react
 ## Minimal React composition
 
 ```tsx
-import { Composition, Rect, Text, interpolate, Easings, useCurrentFrame } from '@celesta/react';
+import { Composition, Rect, Text, interpolate, Easings, useCurrentFrame } from '@celesta.studio/react';
 
 function Title() {
   const frame = useCurrentFrame();
@@ -83,7 +83,7 @@ produces a video that differs between preview and export.
    `Date.now()`, timers, `useEffect`, or state that accumulates across
    renders: frames are rendered out of order when scrubbing and exporting. For
    "random" values, use `random(seed)` and `noise(seed, t)` from
-   `@celesta/math` (not `@celesta/react`).
+   `@celesta.studio/math` (not `@celesta.studio/react`).
 6. **Async work goes in `prepare()`.** Rendering is synchronous. Fetching,
    file reads, `preloadMedia()`, `loadAudioSpectrum()`, `measureText()`,
    `fitText()`, `planDialogue()`, `loadLipSync()`, and `loadPsdPreset()` belong in
@@ -153,7 +153,7 @@ produces a video that differs between preview and export.
      a React entry exactly like Celesta does, runs `prepare()`, evaluates
      frames, and reports every layer, audio clip, and missing media file.
      Entries that measure text (`useTextMetrics`, `TextBox`, `fitText`,
-     `@celesta/code`, …) are evaluated through the exporter, which it finds
+     `@celesta.studio/code`, …) are evaluated through the exporter, which it finds
      in the usual install and build locations or takes from
      `--native <Celesta-export>`; without one those frames report
      `UNSUPPORTED inspection` and exit code 2
@@ -185,29 +185,33 @@ layers sit; it does not prove the rendered pixels.
 
 | Package | Provides |
 | --- | --- |
-| `@celesta/react` | `Composition`, `Sequence`, `Series`, `Scenes`/`defineScenes`/`useScene`, `listChapters` (`<Composition chapters>`), `Stagger`, `FreezeFrame`, `MotionBlur`, `Trail`, `Group`, `Rect`, `Text`, `Span`, `Theme`/`useTheme`, `Image`, `Video`, `Audio`, `Font`, `Assets`, `useCurrentFrame`/`useCurrentTime`/`useVideoConfig`/`useIsPreview`/`useDebugGuides`, `interpolate`, `interpolateColor`, `Easings`, `spring`, `progress`, `frameKeyframes`, `useBeat`/`useCue`, timecodes, `parseSubtitles`/`formatSubtitles`/`Subtitles`, `measureText`/`useTextMetrics`/`textCaret`, `registerComponent`, `defineProjectProperties`/`getProjectProperty`, and the scene types |
-| `@celesta/shapes` | `Line`, `Polyline`, `Path`, `Circle`, `Ellipse`, `Arrow`, `Triangle`, `Polygon`, `Star`, `Pie`, `Heart`, `pointOnPolyline`, `trianglePath`/`polygonPath`/`starPath`/`piePath`/`heartPath`, `pointOnPath`/`tangentOnPath`, `measurePath`/`getLength`/`getPointAtLength`/`getTangentAtLength`, `interpolatePath`, `trimPath`, `parseSvgPath`/`toSvgPath` |
-| `@celesta/lottie` | `Lottie` (Lottie/Bodymovin JSON animations), `inspectLottie`, `lottieFrameAt`, and the Lottie file types |
-| `@celesta/shader` | `defineShader` (custom WGSL filters for the `shader` prop), and the built-in filters for the same array: the color filters `brightness`, `contrast`, `saturation`, `hue`, `grayscale`, `invert`, `tint`, `vignette`, the stylize effects `pixelate`, `halftone`, `chromaticAberration`, `wave`, `noise`, `scanlines`, `zoomBlur`, and `chromaKey` |
-| `@celesta/components` | `FrameChrome` (corner brackets, title, timecode, chapter, and progress bar around the picture), `PatternBackground` (dots, grid, stripes, or custom marks repeated over an area), `Panel` (a sized box with background, border, padding, shadow, and clip), `Badge` (a label or chip sized from its measured text), `Counter` (a counting number with a fixed locale, decimals, prefix/suffix), `StatCard` (a card with a label, a counting number, and a note), `BarChart` and `Ranking` (horizontal bars that grow while their values count up, with ranks), `Callout` (a measured note box with a line and arrowhead to a target point), `formatNumber`, `MediaFrame` (an image or a video fitted into a framed box, contain or cover, with a caption), `CaptionTrack` (timed captions from data on a band, wrapped, emphasized, and faded, or lit word by word and paged), `Motion` (one element's entrance, hold, and exit), `TitleCard` (chapter number, kicker, fitted title, and subtitle as one title screen), `TypewriterText` (text typed out with a measured caret), `LowerThird` (a name and role on a band in a corner of the frame) |
-| `@celesta/layout` | `Center`, `Stack`, `Grid`, `Fit`, `SafeArea`, `safeAreaInsets`, `LayoutBounds`, `useLayoutBounds`, `Camera` |
-| `@celesta/transitions` | `Transition`, `applyTransition`, `TransitionSeries`, `useTransitionSeriesScene`, `useTransitionVolume`, `defineTransition`, and the transition functions `iris`, `clockWipe`, `zoom`, `dissolve`, `blur`, `flip`, `cube`, `crossfade`, `slide`, `wipe` |
-| `@celesta/text` | `TextReveal`, `useTypewriter`, `useCountUp`, `TextBox`, `fitText`, `useFitText`, `emphasisContent`/`resolveEmphasis`/`sliceEmphasis`/`graphemes` (emphasis by grapheme range), `resolveTimedRanges`/`timedRangeAt` (half-open frame ranges) |
-| `@celesta/character` | `Character`, `CharacterView`, `Dialogue`, `DialogueSeries`, `planDialogue`, `importVoiceFolder`, `loadLipSync`, `loadDialogueLipSync`, `spokenTextOf`, `paginateSubtitles` (subtitle pages from measured text), `useLipSync`, `lipSyncFromSpeechTiming`, `speechVowelShape`, `blinkPhase`, `loadPsdPreset`, and their types |
-| `@celesta/media-utils` | `preloadMedia`, `mediaDurationInFrames`, `loadAudioSpectrum`, `useAudioSpectrum`, `spectrumAt`, `analyzeAudioSpectrum` |
-| `@celesta/project` | `ProjectProvider`, `ProjectTimeline`, `ProjectTrack`, `useProject`, `useProjectProperty`, `useProjectTrack`, `loadProject`, and the project file types |
-| `@celesta/debug` | `DebugOverlay`, `DebugBounds` |
-| `@celesta/math` | `random`, `noise`, `loopNoise`, and math helpers |
-| `@celesta/code` | `Code`, `highlightCode`, and syntax highlighting |
-| `@celesta/voicevox` | `prepareNarration` (synthesize and cache a script's voices with VOICEVOX Engine), `NarrationError`, `lipSyncFromVoicevox`, `timingFromVoicevox`, `voicevoxVowelShape`, and their types |
-| `@celesta/aivis-speech` | `lipSyncFromAivisSpeech`, `timingFromAivisSpeech`, and their types |
+| `@celesta.studio/react` | `Composition`, `Sequence`, `Series`, `Scenes`/`defineScenes`/`useScene`, `listChapters` (`<Composition chapters>`), `Stagger`, `FreezeFrame`, `MotionBlur`, `Trail`, `Group`, `Rect`, `Text`, `Span`, `Theme`/`useTheme`, `Image`, `Video`, `Audio`, `Font`, `Assets`, `useCurrentFrame`/`useCurrentTime`/`useVideoConfig`/`useIsPreview`/`useDebugGuides`, `interpolate`, `interpolateColor`, `Easings`, `spring`, `progress`, `frameKeyframes`, `useBeat`/`useCue`, timecodes, `parseSubtitles`/`formatSubtitles`/`Subtitles`, `measureText`/`useTextMetrics`/`textCaret`, `registerComponent`, `defineProjectProperties`/`getProjectProperty`, and the scene types |
+| `@celesta.studio/shapes` | `Line`, `Polyline`, `Path`, `Circle`, `Ellipse`, `Arrow`, `Triangle`, `Polygon`, `Star`, `Pie`, `Heart`, `pointOnPolyline`, `trianglePath`/`polygonPath`/`starPath`/`piePath`/`heartPath`, `pointOnPath`/`tangentOnPath`, `measurePath`/`getLength`/`getPointAtLength`/`getTangentAtLength`, `interpolatePath`, `trimPath`, `parseSvgPath`/`toSvgPath` |
+| `@celesta.studio/lottie` | `Lottie` (Lottie/Bodymovin JSON animations), `inspectLottie`, `lottieFrameAt`, and the Lottie file types |
+| `@celesta.studio/shader` | `defineShader` (custom WGSL filters for the `shader` prop), and the built-in filters for the same array: the color filters `brightness`, `contrast`, `saturation`, `hue`, `grayscale`, `invert`, `tint`, `vignette`, the stylize effects `pixelate`, `halftone`, `chromaticAberration`, `wave`, `noise`, `scanlines`, `zoomBlur`, and `chromaKey` |
+| `@celesta.studio/components` | `FrameChrome` (corner brackets, title, timecode, chapter, and progress bar around the picture), `PatternBackground` (dots, grid, stripes, or custom marks repeated over an area), `Panel` (a sized box with background, border, padding, shadow, and clip), `Badge` (a label or chip sized from its measured text), `Counter` (a counting number with a fixed locale, decimals, prefix/suffix), `StatCard` (a card with a label, a counting number, and a note), `BarChart` and `Ranking` (horizontal bars that grow while their values count up, with ranks), `Callout` (a measured note box with a line and arrowhead to a target point), `formatNumber`, `MediaFrame` (an image or a video fitted into a framed box, contain or cover, with a caption), `CaptionTrack` (timed captions from data on a band, wrapped, emphasized, and faded, or lit word by word and paged), `Motion` (one element's entrance, hold, and exit), `TitleCard` (chapter number, kicker, fitted title, and subtitle as one title screen), `TypewriterText` (text typed out with a measured caret), `LowerThird` (a name and role on a band in a corner of the frame) |
+| `@celesta.studio/layout` | `Center`, `Stack`, `Grid`, `Fit`, `SafeArea`, `safeAreaInsets`, `LayoutBounds`, `useLayoutBounds`, `Camera` |
+| `@celesta.studio/transitions` | `Transition`, `applyTransition`, `TransitionSeries`, `useTransitionSeriesScene`, `useTransitionVolume`, `defineTransition`, and the transition functions `iris`, `clockWipe`, `zoom`, `dissolve`, `blur`, `flip`, `cube`, `crossfade`, `slide`, `wipe` |
+| `@celesta.studio/text` | `TextReveal`, `useTypewriter`, `useCountUp`, `TextBox`, `fitText`, `useFitText`, `emphasisContent`/`resolveEmphasis`/`sliceEmphasis`/`graphemes` (emphasis by grapheme range), `resolveTimedRanges`/`timedRangeAt` (half-open frame ranges) |
+| `@celesta.studio/character` | `Character`, `CharacterView`, `Dialogue`, `DialogueSeries`, `planDialogue`, `importVoiceFolder`, `loadLipSync`, `loadDialogueLipSync`, `spokenTextOf`, `paginateSubtitles` (subtitle pages from measured text), `useLipSync`, `lipSyncFromSpeechTiming`, `speechVowelShape`, `blinkPhase`, `loadPsdPreset`, and their types |
+| `@celesta.studio/media-utils` | `preloadMedia`, `mediaDurationInFrames`, `loadAudioSpectrum`, `useAudioSpectrum`, `spectrumAt`, `analyzeAudioSpectrum` |
+| `@celesta.studio/project` | `ProjectProvider`, `ProjectTimeline`, `ProjectTrack`, `useProject`, `useProjectProperty`, `useProjectTrack`, `loadProject`, and the project file types |
+| `@celesta.studio/debug` | `DebugOverlay`, `DebugBounds` |
+| `@celesta.studio/math` | `random`, `noise`, `loopNoise`, and math helpers |
+| `@celesta.studio/code` | `Code`, `highlightCode`, and syntax highlighting |
+| `@celesta.studio/voicevox` | `prepareNarration` (synthesize and cache a script's voices with VOICEVOX Engine), `NarrationError`, `lipSyncFromVoicevox`, `timingFromVoicevox`, `voicevoxVowelShape`, and their types |
+| `@celesta.studio/aivis-speech` | `lipSyncFromAivisSpeech`, `timingFromAivisSpeech`, and their types |
 
-An import from the wrong package fails with `@celesta/react does not export
-Circle; import it from @celesta/shapes`; move it to the named package. Code
-written before the split imports everything from `@celesta/react`: run
-`node <this skill>/scripts/migrate-packages.mjs <project folder>` to move its
-named imports and re-exports at once, then fix any `import * as` namespace it
-reports by hand.
+An import from the wrong package fails with `@celesta.studio/react does not export
+Circle; import it from @celesta.studio/shapes`; move it to the named package. Code
+written before the split imports everything from `@celesta/react`, the scope
+the packages had before `@celesta.studio`: the runtime still resolves every
+`@celesta/*` name to its `@celesta.studio/*` package, but warns
+(`<file> imports @celesta/react, an old name; import @celesta.studio/react
+instead`) in Problems and export output; write `@celesta.studio/*` in new code. Run
+`node <this skill>/scripts/migrate-packages.mjs <project folder>` to rename
+`@celesta/*` imports and move named imports and re-exports at once, then fix
+any `import * as` namespace it reports by hand.
 
 ## References
 
@@ -221,11 +225,11 @@ Load only the one you need; each is self-contained.
 | Frame hooks, `interpolate`, `interpolateColor`, `Easings`, `spring`, `progress`, `Sequence`, `Series`, `Scenes`/`useScene`, `<Composition chapters>`/`listChapters`, `FrameChrome`, `TransitionSeries`, `Stagger`, `Motion`, `Transition`, `useBeat`, `useCue`, `Camera`, timecodes | [animation.md](references/animation.md) |
 | `Text`, `TextStyle`, shorthand props and `Theme`, fonts and fallback, font stacks (和欧混植), text language (`lang`), emoji, line breaking, `TextReveal`, `TypewriterText`, `useTypewriter`, `useCountUp`, `useTextMetrics`/`measureText`, `TextBox`/`useFitText`/`fitText`, `TitleCard`, `LowerThird` | [text.md](references/text.md) |
 | Subtitle files: reading SRT/WebVTT (`parseSubtitles`), drawing timed captions from data (`CaptionTrack`), `<Subtitles>`, writing them with `formatSubtitles` or `--subtitles` on export | [subtitles.md](references/subtitles.md) |
-| Syntax-highlighted code, typing code, highlighted lines, carets, drawing code lines yourself (`@celesta/code`) | [code.md](references/code.md) |
+| Syntax-highlighted code, typing code, highlighted lines, carets, drawing code lines yourself (`@celesta.studio/code`) | [code.md](references/code.md) |
 | About to write a small helper (clamp, eased progress, random hash, timecode, text width, current section): the API that already does it | [helpers.md](references/helpers.md) |
-| Seeded random, noise, clamp/lerp/remap, waves, angles, points (`@celesta/math`) | [math.md](references/math.md) |
+| Seeded random, noise, clamp/lerp/remap, waves, angles, points (`@celesta.studio/math`) | [math.md](references/math.md) |
 | A seamless loop (Shorts, TikTok): loop length from beats and bars, periodic motion, looping noise, folding the music's tail back, `inspect.mjs --loop`, exporting with `--loop` | [loops.md](references/loops.md) |
-| Custom WGSL filters: ripples, glitches, color grades (`@celesta/shader`, the `shader` prop); ordering built-in filters among them | [shader.md](references/shader.md) |
+| Custom WGSL filters: ripples, glitches, color grades (`@celesta.studio/shader`, the `shader` prop); ordering built-in filters among them | [shader.md](references/shader.md) |
 | Characters, portraits, subtitles (incl. custom `subtitle.render` bands and name plates), voices, `planDialogue`/`DialogueSeries`, voice-tool export folders (`importVoiceFolder`), voice level matching and BGM ducking (`matchVoiceLevels`, `duckingVolume`; `<Audio duck>` in react-core.md), VOICEVOX synthesis with `prepareNarration`, lip sync (WAV, VOICEVOX, or AivisSpeech), PSD portraits, blinking, in React and JSON | [dialogue.md](references/dialogue.md) |
 | `.celesta.json` schema, time values, tracks, item types, transforms, keyframes, easing names, validation rules, full example | [project-json.md](references/project-json.md) |
 | Template inputs (`defineProjectProperties`, `useProjectProperty`, `getProjectProperty`, `props.json`, `--props`/`--props-file`), React reading a project, `<ProjectTimeline />`, `registerComponent` | [project-data.md](references/project-data.md) |

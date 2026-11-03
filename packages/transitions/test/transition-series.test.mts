@@ -3,8 +3,8 @@ import { test } from 'vitest';
 import * as React from 'react';
 import type { ReactElement } from 'react';
 
-import { Audio, Composition, Text, useCurrentFrame, useVideoConfig } from '@celesta/react';
-import type { AnimatedNumber, Layer } from '@celesta/react';
+import { Audio, Composition, Text, useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
+import type { AnimatedNumber, Layer } from '@celesta.studio/react';
 import {
   TransitionSeries,
   computeTransitionSeries,
@@ -16,8 +16,8 @@ import type {
   TransitionSeriesItem,
   TransitionSeriesTransitionProps,
 } from '../src/index.js';
-import { mount } from '@celesta/react/internal';
-import type { MountedComposition } from '@celesta/react/internal';
+import { mount } from '@celesta.studio/react/internal';
+import type { MountedComposition } from '@celesta.studio/react/internal';
 import { childrenOf, contentOf } from './helpers.mjs';
 
 const h = React.createElement;

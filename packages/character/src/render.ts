@@ -4,9 +4,9 @@
 
 import type { ReactNode } from 'react';
 
-import type { EvaluatedTransform, Layer, LayerContent } from '@celesta/react';
-import { flattenTextContent, registerHostElement } from '@celesta/react/internal';
-import type { HostNode, HostVisit, HostWalk } from '@celesta/react/internal';
+import type { EvaluatedTransform, Layer, LayerContent } from '@celesta.studio/react';
+import { flattenTextContent, registerHostElement } from '@celesta.studio/react/internal';
+import type { HostNode, HostVisit, HostWalk } from '@celesta.studio/react/internal';
 
 import { type BlinkPhase, type BlinkTiming, blinkPhase } from './blink';
 import type { PsdCharacterBlink, PsdCharacterLipSync, PsdExpression } from './components';

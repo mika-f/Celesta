@@ -1,5 +1,5 @@
 {
-  "name": "@celesta/templates",
+  "name": "@celesta.studio/templates",
   "version": "0.9.0",
   "private": true,
   "description": "The ready-made projects Celesta offers when creating a new project.",
@@ -10,14 +10,14 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@celesta/character": "workspace:*",
-    "@celesta/components": "workspace:*",
-    "@celesta/layout": "workspace:*",
-    "@celesta/media-utils": "workspace:*",
-    "@celesta/project": "workspace:*",
-    "@celesta/react": "workspace:*",
-    "@celesta/text": "workspace:*",
-    "@celesta/transitions": "workspace:*",
+    "@celesta.studio/character": "workspace:*",
+    "@celesta.studio/components": "workspace:*",
+    "@celesta.studio/layout": "workspace:*",
+    "@celesta.studio/media-utils": "workspace:*",
+    "@celesta.studio/project": "workspace:*",
+    "@celesta.studio/react": "workspace:*",
+    "@celesta.studio/text": "workspace:*",
+    "@celesta.studio/transitions": "workspace:*",
     "react": "^19.3.0"
   },
   "devDependencies": {

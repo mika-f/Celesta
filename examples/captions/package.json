@@ -1,10 +1,10 @@
 {
-  "name": "@celesta/example-captions",
+  "name": "@celesta.studio/example-captions",
   "private": true,
   "dependencies": {
-    "@celesta/character": "workspace:*",
-    "@celesta/components": "workspace:*",
-    "@celesta/react": "workspace:*",
+    "@celesta.studio/character": "workspace:*",
+    "@celesta.studio/components": "workspace:*",
+    "@celesta.studio/react": "workspace:*",
     "react": "^19.3.0"
   },
   "devDependencies": {

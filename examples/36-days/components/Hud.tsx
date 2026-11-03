@@ -1,4 +1,4 @@
-import { Group, Rect, cueAt, frameToTimecode, useBeat, useCurrentFrame } from '@celesta/react';
+import { Group, Rect, cueAt, frameToTimecode, useBeat, useCurrentFrame } from '@celesta.studio/react';
 import { Label } from './Label';
 import { BPM, C, FPS, H, W } from '../constants';
 import { DAYS } from '../data';

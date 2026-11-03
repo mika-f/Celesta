@@ -1,6 +1,6 @@
 Content plugins add what Celesta does not ship itself: a kind of layer drawn from code of its own, or a component library such as a speech channel. A plugin is a folder you put on your computer; compositions import its components as `@celesta-plugin/<id>`.
 
-Plugins are new and still change. They work in the desktop app's preview and in `celesta-exporter`, not in `@celesta/web` or the CPU reference renderer.
+Plugins are new and still change. They work in the desktop app's preview and in `celesta-exporter`, not in `@celesta.studio/web` or the CPU reference renderer.
 
 ## Install a plugin
 
@@ -78,7 +78,7 @@ A plugin that draws layers runs as a program of its own, which Celesta starts wh
 ## Use its components
 
 ```tsx
-import { Composition } from '@celesta/react';
+import { Composition } from '@celesta.studio/react';
 import { Flag } from '@celesta-plugin/flag';
 
 export default function Root() {
@@ -126,7 +126,7 @@ node plugins/vrm/build.mjs               # writes plugins/vrm/dist/vrm
 Copy `plugins/vrm/dist/vrm` into your user plugin folder, or pass `plugins/vrm/dist` to the exporter with `--plugin-dir`. Building needs Rust and Node.js, as building Celesta does.
 
 ```tsx
-import { Composition } from '@celesta/react';
+import { Composition } from '@celesta.studio/react';
 import { Vrm } from '@celesta-plugin/vrm';
 
 export default function Root() {
@@ -211,7 +211,7 @@ Limits you may meet:
 
 A plugin has up to two parts, in any language:
 
-- **Components** (`module` and `types` in the manifest): an ES module and its declarations. Celesta bundles the module into the entry, and its `react` and `@celesta/*` imports use the app's own. A speech channel needs nothing else: it runs in `prepare()` like `@celesta/voicevox` and returns lines with `audio` and `lipSync`.
+- **Components** (`module` and `types` in the manifest): an ES module and its declarations. Celesta bundles the module into the entry, and its `react` and `@celesta.studio/*` imports use the app's own. A speech channel needs nothing else: it runs in `prepare()` like `@celesta.studio/voicevox` and returns lines with `audio` and `lipSync`.
 - **A program** (`executable`, one per platform): it reads requests on standard input and answers on standard output. For a layer it returns, for a given time, either 2D textured triangle meshes with their colors, masks, and blending, or a 3D scene: skinned, morphing triangle geometry with materials, seen through a camera it places. Celesta draws them; scenes get depth, anti-aliasing, and opaque, cut-out, and see-through materials. A material is either Celesta's unlit material or one the program brings, written in WGSL against Celesta's material interface, which can shade with the directional lights and ambient light the program sends and add an outline. Celesta checks that WGSL before compiling it: it may not bind resources of its own or declare entry points, workgroup variables (`var<workgroup>`, which are for compute shaders), pipeline-overridable constants (`override`), names WGSL already predeclares (such as `clamp` or `vec4f`), or names starting with `celesta` in any letter case. Each frame can also change a material's parameters, as a model's material animation does, and can set the layer's canvas size for that frame in place of the model's (each side from 1 to 16384 pixels), so a component can pass the resolution it wants in the layer's data. A frame must depend only on the model, the time, and the layer's data: Celesta may ask for the same frame again, such as when it renders it again or exports it. When it opens a model, the program can also return notices, such as the model's terms of use, which Celesta shows as above. Rust programs can use the `celesta-plugin` crate; the protocol itself is plain length-prefixed JSON.
 
 To offer components in the desktop app's Add menu, list them in the manifest's `components`:

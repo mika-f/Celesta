@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
-import { Badge } from '@celesta/components';
-import { Center } from '@celesta/layout';
-import { Easings, Group, Rect, progress, useCurrentFrame, useVideoConfig } from '@celesta/react';
+import { Badge } from '@celesta.studio/components';
+import { Center } from '@celesta.studio/layout';
+import { Easings, Group, Rect, progress, useCurrentFrame, useVideoConfig } from '@celesta.studio/react';
 import { CHAPTERS } from '../chapters';
 import { Label } from './Label';
 import { Swap } from './Swap';

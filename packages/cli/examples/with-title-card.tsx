@@ -1,5 +1,5 @@
-import { PatternBackground, TitleCard } from '@celesta/components';
-import { Composition, Font, Sequence, Theme } from '@celesta/react';
+import { PatternBackground, TitleCard } from '@celesta.studio/components';
+import { Composition, Font, Sequence, Theme } from '@celesta.studio/react';
 
 // <TitleCard> stacks a chapter number, kicker, title, and subtitle inside
 // the canvas or a safe area, fits the title to the room left, and brings

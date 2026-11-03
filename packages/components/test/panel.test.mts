@@ -3,10 +3,10 @@ import { test } from 'vitest';
 import * as React from 'react';
 import type { ReactElement } from 'react';
 
-import { Composition, Rect, Sequence, Text, Theme } from '@celesta/react';
-import type { Layer, LayerContent, Paint, ThemeValues } from '@celesta/react';
-import { mount } from '@celesta/react/internal';
-import { Center, Fit, useLayoutBounds } from '@celesta/layout';
+import { Composition, Rect, Sequence, Text, Theme } from '@celesta.studio/react';
+import type { Layer, LayerContent, Paint, ThemeValues } from '@celesta.studio/react';
+import { mount } from '@celesta.studio/react/internal';
+import { Center, Fit, useLayoutBounds } from '@celesta.studio/layout';
 import { Panel } from '../src/index.js';
 import type { PanelProps } from '../src/index.js';
 

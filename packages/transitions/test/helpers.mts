@@ -2,7 +2,7 @@
 
 import assert from 'node:assert/strict';
 
-import type { Layer, LayerContent } from '@celesta/react';
+import type { Layer, LayerContent } from '@celesta.studio/react';
 
 /** The content of a layer of type `T`. */
 export type Content<T extends LayerContent['type']> = Extract<LayerContent, { type: T }>;

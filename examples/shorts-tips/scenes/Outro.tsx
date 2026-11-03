@@ -1,4 +1,4 @@
-import { Easings, Group, Rect, Text, interpolate, progress, useCurrentFrame } from '@celesta/react';
+import { Easings, Group, Rect, Text, interpolate, progress, useCurrentFrame } from '@celesta.studio/react';
 import { BAR, C, CODE, FONT, OUTRO_AT, SAFE, W } from '../constants';
 import { DemoPanel } from '../components/Frame';
 import type { TipId } from '../demos';

@@ -1,8 +1,8 @@
 import {
   Composition, Font, Group, Rect, Text, registerComponent,
   useCurrentFrame, useTextMetrics,
-} from '@celesta/react';
-import type { TextStyle } from '@celesta/react';
+} from '@celesta.studio/react';
+import type { TextStyle } from '@celesta.studio/react';
 
 const style: TextStyle = { fontFamily: 'IBM Plex Mono', fontSize: 40 };
 

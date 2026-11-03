@@ -1,4 +1,4 @@
-import { Easings, Group, Rect, Text, progress, useCurrentFrame } from '@celesta/react';
+import { Easings, Group, Rect, Text, progress, useCurrentFrame } from '@celesta.studio/react';
 import { C, FONT, solid } from '../components/theme';
 import { CHAPTERS } from './chapters';
 import { PORTRAIT } from './layout';

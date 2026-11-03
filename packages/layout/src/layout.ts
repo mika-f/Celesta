@@ -1,7 +1,7 @@
 import * as React from 'react';
 
-import { Group, useVideoConfig } from '@celesta/react';
-import type { GroupProps } from '@celesta/react';
+import { Group, useVideoConfig } from '@celesta.studio/react';
+import type { GroupProps } from '@celesta.studio/react';
 
 /** The area nested layout components lay out in, in pixels. */
 export interface LayoutSize {

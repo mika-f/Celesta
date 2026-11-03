@@ -32,7 +32,7 @@ pub(crate) struct ReactMediaClips {
     pub(crate) videos: HashMap<String, bool>,
 }
 
-/// Spawns a transient `@celesta/cli` process, sweeps every frame of a
+/// Spawns a transient `@celesta.studio/cli` process, sweeps every frame of a
 /// standalone entry for its `<Audio>` and `<Video>` declarations, and returns
 /// the assembled [`AudioGraph`] — the standalone-preview counterpart of the audio graph
 /// `celesta-exporter` accumulates while rendering. Runs on its own thread

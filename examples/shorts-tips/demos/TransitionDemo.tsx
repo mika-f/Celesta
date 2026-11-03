@@ -1,6 +1,6 @@
-import { Easings, Group, Rect, Sequence, Text, progress, useCurrentFrame } from '@celesta/react';
-import { Circle } from '@celesta/shapes';
-import { TransitionSeries } from '@celesta/transitions';
+import { Easings, Group, Rect, Sequence, Text, progress, useCurrentFrame } from '@celesta.studio/react';
+import { Circle } from '@celesta.studio/shapes';
+import { TransitionSeries } from '@celesta.studio/transitions';
 import { withAlpha } from '../color';
 import { useAccent, useBarLoop, useStage } from '../components/DemoClock';
 import { BAR, C, DEMO, FONT, W } from '../constants';

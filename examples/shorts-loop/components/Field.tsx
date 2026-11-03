@@ -1,4 +1,4 @@
-import { Rect } from '@celesta/react';
+import { Rect } from '@celesta.studio/react';
 import { CY, H, INDIGO, NIGHT, VIOLET, W } from '../constants';
 import { theta } from '../loop';
 import { silk } from '../shaders';

@@ -15,7 +15,7 @@ const cli = fileURLToPath(new URL('../../cli/bin/celesta-react-render.js', impor
 function frames(setup: string, body: string, times = [0]) {
   const dir = mkdtempSync(join(tmpdir(), 'celesta-instances-'));
   const entry = join(dir, 'entry.tsx');
-  writeFileSync(entry, `import { Composition, Instances, useCurrentFrame } from '@celesta/react';
+  writeFileSync(entry, `import { Composition, Instances, useCurrentFrame } from '@celesta.studio/react';
     ${setup}
     export default () => <Composition width={100} height={100} fps={30} durationInFrames={10}>${body}</Composition>;`);
   const input = times.map((value) => JSON.stringify({ time: { value, timescale: 30 } })).join('\n') + '\n';

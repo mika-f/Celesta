@@ -1,4 +1,4 @@
-import { Rect } from '@celesta/react';
+import { Rect } from '@celesta.studio/react';
 
 export function Line({ a, b, color, width = 2, opacity = 1 }: {
   a: number[]; b: number[]; color: string; width?: number; opacity?: number;

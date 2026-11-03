@@ -151,7 +151,7 @@ fn react_png_preserves_sequence_boundaries_and_prepares_once_without_audio_mix()
     std::fs::write(
         &entry,
         r##"
-import { Composition, Rect, Sequence, Audio } from '@celesta/react';
+import { Composition, Rect, Sequence, Audio } from '@celesta.studio/react';
 import { appendFileSync } from 'node:fs';
 export async function prepare() { appendFileSync(PREPARED_PATH, 'once\n'); }
 export default function Root() {
@@ -219,8 +219,8 @@ fn react_png_runs_a_custom_shader_from_a_wgsl_file() {
     std::fs::write(
         &entry,
         r##"
-import { Composition, Rect } from '@celesta/react';
-import { defineShader } from '@celesta/shader';
+import { Composition, Rect } from '@celesta.studio/react';
+import { defineShader } from '@celesta.studio/shader';
 import source from './tint.wgsl';
 const tint = defineShader({ name: 'tint', wgsl: source, params: { tint: 'color' } });
 export default function Root() {
@@ -259,7 +259,7 @@ fn react_png_draws_a_masked_group() {
     std::fs::write(
         &entry,
         r##"
-import { Composition, Group, Rect } from '@celesta/react';
+import { Composition, Group, Rect } from '@celesta.studio/react';
 export default function Root() {
   return <Composition width={3} height={3} fps={4} durationInFrames={1}>
     <Group mask={<Rect width={1} height={3} fill="#ffffff" />}>
@@ -754,8 +754,8 @@ fn react_cli_props_win_over_the_companion_project_and_are_checked_first() {
     std::fs::write(
         &entry,
         r##"
-import { Composition, Rect, defineProjectProperties, getProjectProperty } from '@celesta/react';
-import { useProjectProperty } from '@celesta/project';
+import { Composition, Rect, defineProjectProperties, getProjectProperty } from '@celesta.studio/react';
+import { useProjectProperty } from '@celesta.studio/project';
 defineProjectProperties({
   fill: { type: 'color', defaultValue: '#ff0000' },
   frames: { type: 'number', defaultValue: 4 },
@@ -841,8 +841,8 @@ fn debug_guides_draw_into_png_frames_and_contact_sheets_only_when_asked() {
     std::fs::write(
         &entry,
         r##"
-import { Composition, Rect } from '@celesta/react';
-import { DebugOverlay } from '@celesta/debug';
+import { Composition, Rect } from '@celesta.studio/react';
+import { DebugOverlay } from '@celesta.studio/debug';
 export default function Root() {
   return <Composition width={3} height={3} fps={4} durationInFrames={4}>
     <Rect width={3} height={3} fill="#ff0000" />
@@ -910,7 +910,7 @@ fn entry_with_a_bad_frame(dir: &Path) -> PathBuf {
     std::fs::write(
         &entry,
         r##"
-import { Composition, Rect, useCurrentFrame } from '@celesta/react';
+import { Composition, Rect, useCurrentFrame } from '@celesta.studio/react';
 function Frame() {
   const frame = useCurrentFrame();
   return <Rect width={64} height={36} fill={frame === 6 ? 'ink' : '#ff0000'} />;

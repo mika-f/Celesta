@@ -1,5 +1,5 @@
-import { clamp01 } from '@celesta/math';
-import { Easings, Group, Rect, interpolate, progress, useCurrentFrame } from '@celesta/react';
+import { clamp01 } from '@celesta.studio/math';
+import { Easings, Group, Rect, interpolate, progress, useCurrentFrame } from '@celesta.studio/react';
 import { CHAPTERS } from '../chapters';
 import { Label } from '../components/Label';
 import { BAR, BEAT, C, H, W } from '../constants';

@@ -1,4 +1,4 @@
-import { Composition, Group, Image, Rect, Text, Video, interpolate, useCurrentFrame } from '@celesta/react';
+import { Composition, Group, Image, Rect, Text, Video, interpolate, useCurrentFrame } from '@celesta.studio/react';
 
 // Keys the green-screen footage (footage.tsx, exported to assets/) over a
 // night skyline. The presenter's video is keyed with chromaKey; its spill

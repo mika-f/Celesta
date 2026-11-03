@@ -1,7 +1,7 @@
 // SPECTRA: a performance reel that puts most of Celesta's renderer to work
 // in one 11.5-second, 60 fps film. See README.md.
-import { Motion } from '@celesta/components';
-import { Assets, Composition, Easings, Font, Group, Rect, Series, Text, computeSeries, frameToTimecode, useCurrentFrame } from '@celesta/react';
+import { Motion } from '@celesta.studio/components';
+import { Assets, Composition, Easings, Font, Group, Rect, Series, Text, computeSeries, frameToTimecode, useCurrentFrame } from '@celesta.studio/react';
 
 import { Geometry } from './scenes/Geometry';
 import { Ignition } from './scenes/Ignition';

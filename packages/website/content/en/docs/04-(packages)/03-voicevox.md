@@ -1,4 +1,4 @@
-`@celesta/voicevox` reads the AudioQuery used by VOICEVOX synthesis: where each mora, phoneme, and pause falls in the WAV, and a LipSyncTrack built from that timing. It can also synthesize a whole script with a local VOICEVOX Engine and cache the voices. Dialogue components, WAV-based lip sync, and LipSyncTrack are in `@celesta/character`. Import the adapter from its own package; @celesta/character does not re-export it.
+`@celesta.studio/voicevox` reads the AudioQuery used by VOICEVOX synthesis: where each mora, phoneme, and pause falls in the WAV, and a LipSyncTrack built from that timing. It can also synthesize a whole script with a local VOICEVOX Engine and cache the voices. Dialogue components, WAV-based lip sync, and LipSyncTrack are in `@celesta.studio/character`. Import the adapter from its own package; @celesta.studio/character does not re-export it.
 
 The desktop app and CLI bundle this package separately. Building the runtime builds it too, and File → Set Up TypeScript includes its declarations and import mapping. It is private and is not published to npm. The browser playground does not support it.
 
@@ -36,7 +36,7 @@ Voices are cached in cacheDir, relative to the entry file. A line is synthesized
 | `concurrency`, `timeout`, `signal` | Lines synthesized at once (default 2), milliseconds per engine request (default 60000), and an AbortSignal to cancel. |
 | `revision`, `refresh` | Invalidate every line, or synthesize again regardless of the cache (`true` or a list of line ids). |
 
-**@celesta/voicevox**
+**@celesta.studio/voicevox**
 
 | API | Use it for |
 | --- | --- |
@@ -53,4 +53,4 @@ Voices are cached in cacheDir, relative to the entry file. A line is synthesized
 | `frameRate` | Defaults to 93.75 Hz, the VOICEVOX phoneme frame grid. Set null for unrounded lengths or the engine’s own rate; this is not the composition’s fps. |
 | `interrogativeUpspeak` | Defaults to true. Set false when the WAV was synthesized with interrogative upspeak disabled. |
 
-Exports also include NarrationError, NarrationLine, NarratedLine, NarrationAsset, NarrationStage, PrepareNarrationOptions, VoicevoxVoice, VoicevoxVoiceSettings, VoicevoxQuerySettings, VoicevoxAudioQuery, VoicevoxAccentPhrase, VoicevoxMora, VoicevoxTiming, VoicevoxTimedAccentPhrase, VoicevoxTimedMora, VoicevoxTimedPause, VoicevoxTimedPhoneme, VoicevoxSpan, VoicevoxTimingOptions, and VoicevoxLipSyncOptions. LipSyncTrack is imported from @celesta/character.
+Exports also include NarrationError, NarrationLine, NarratedLine, NarrationAsset, NarrationStage, PrepareNarrationOptions, VoicevoxVoice, VoicevoxVoiceSettings, VoicevoxQuerySettings, VoicevoxAudioQuery, VoicevoxAccentPhrase, VoicevoxMora, VoicevoxTiming, VoicevoxTimedAccentPhrase, VoicevoxTimedMora, VoicevoxTimedPause, VoicevoxTimedPhoneme, VoicevoxSpan, VoicevoxTimingOptions, and VoicevoxLipSyncOptions. LipSyncTrack is imported from @celesta.studio/character.

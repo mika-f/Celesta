@@ -2,7 +2,7 @@
 
 ## 値を補間する
 
-タイトルのサンプルは透明度に `Math.min(frame / 30, 1)` を使っています。イージングなどを制御するには、`@celesta/react` から `interpolate` と `Easings` をインポートし、計算を以下に置き換えます。
+タイトルのサンプルは透明度に `Math.min(frame / 30, 1)` を使っています。イージングなどを制御するには、`@celesta.studio/react` から `interpolate` と `Easings` をインポートし、計算を以下に置き換えます。
 
 ```tsx title="イージング付きのフェード（コンポーネント内）"
 const opacity = interpolate(frame, [0, 30], [0, 1], {
@@ -18,7 +18,7 @@ const opacity = interpolate(frame, [0, 30], [0, 1], {
 
 ## 色を補間する
 
-`@celesta/react` から `interpolateColor` もインポートします。`interpolate` と同じ入力範囲と `easing` を取り、フレームを `#RRGGBB` または `#RRGGBBAA` の色に対応付けて `#RRGGBBAA` を返します。`Rect` の塗り、テキストの塗り、グラデーションの色、影などに使えます。
+`@celesta.studio/react` から `interpolateColor` もインポートします。`interpolate` と同じ入力範囲と `easing` を取り、フレームを `#RRGGBB` または `#RRGGBBAA` の色に対応付けて `#RRGGBBAA` を返します。`Rect` の塗り、テキストの塗り、グラデーションの色、影などに使えます。
 
 ```tsx title="夜から昼へ、タイトルをフェードイン"
 const sky = interpolateColor(frame, [0, 45, 90], ['#101820', '#EF7B45', '#7FC8F8']);
@@ -146,7 +146,7 @@ function Badge() {
 
 > [!NOTE]
 > **フレームに基づくアニメーション**
-> フレームや時間から値を計算すると、スクラブと書き出しで同じ瞬間を再現できます。ブラウザのタイマーや `Math.random()` はコンポジションの時計ではありません。ランダムな値もフレームやインデックスから、[`@celesta/math`](/ja/docs/math/) のシード付き `random` と `noise` で導いてください。
+> フレームや時間から値を計算すると、スクラブと書き出しで同じ瞬間を再現できます。ブラウザのタイマーや `Math.random()` はコンポジションの時計ではありません。ランダムな値もフレームやインデックスから、[`@celesta.studio/math`](/ja/docs/math/) のシード付き `random` と `noise` で導いてください。
 
 ## 指定したフレームで静止させる
 

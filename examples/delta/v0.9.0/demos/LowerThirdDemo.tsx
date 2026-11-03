@@ -1,7 +1,7 @@
-import { Group, Rect, Sequence } from '@celesta/react';
-import { LowerThird, PatternBackground } from '@celesta/components';
-import type { LowerThirdProps } from '@celesta/components';
-import { LayoutBounds } from '@celesta/layout';
+import { Group, Rect, Sequence } from '@celesta.studio/react';
+import { LowerThird, PatternBackground } from '@celesta.studio/components';
+import type { LowerThirdProps } from '@celesta.studio/components';
+import { LayoutBounds } from '@celesta.studio/layout';
 import { Delta } from '../../components/Delta';
 import { C } from '../../components/theme';
 import type { DemoProps } from '../program';

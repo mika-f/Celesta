@@ -1,5 +1,5 @@
-import { Group, Image, Rect, Text } from '@celesta/react';
-import { expressionAt } from '@celesta/character';
+import { Group, Image, Rect, Text } from '@celesta.studio/react';
+import { expressionAt } from '@celesta.studio/character';
 import type { DemoProps } from '../../components/ChapterShell';
 import { STAGE, enter } from '../../components/ChapterShell';
 import { C, FONT, FPS, solid } from '../../components/theme';

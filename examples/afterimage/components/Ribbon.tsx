@@ -1,5 +1,5 @@
-import { clamp01 } from '@celesta/math';
-import { Group } from '@celesta/react';
+import { clamp01 } from '@celesta.studio/math';
+import { Group } from '@celesta.studio/react';
 import { RED } from '../constants';
 import { Line } from './Line';
 

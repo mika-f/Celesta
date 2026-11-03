@@ -1,5 +1,5 @@
 import { useContext } from 'react';
-import { FreezeFrame, Group, Rect, Text } from '@celesta/react';
+import { FreezeFrame, Group, Rect, Text } from '@celesta.studio/react';
 import type { DemoProps } from '../../components/ChapterShell';
 import { STAGE, enter } from '../../components/ChapterShell';
 import { C, FONT, FPS, H, W, solid } from '../../components/theme';

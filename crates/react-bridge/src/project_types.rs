@@ -2,7 +2,7 @@
 //! directory from the template staged beside the runtime's `cli.js`
 //! (`packages/cli/scripts/stage-project-types.mjs`).
 //!
-//! Entries always run against the bundled `react` and `@celesta/*`, so
+//! Entries always run against the bundled `react` and `@celesta.studio/*`, so
 //! the project only needs matching declarations for editors and `tsc`.
 //! Copying them from the running Celesta keeps them in step with the runtime
 //! without a package registry or an install step.
@@ -227,7 +227,7 @@ pub(crate) mod tests {
         write(&template.join(STAMP), stamp);
         write(&template.join("tsconfig.json"), "{}");
         write(
-            &template.join("node_modules/@celesta/react/dist/index.d.ts"),
+            &template.join("node_modules/@celesta.studio/react/dist/index.d.ts"),
             stamp,
         );
         template
@@ -294,7 +294,7 @@ pub(crate) mod tests {
         assert!(support.join("tsconfig.json").is_file());
         assert!(
             support
-                .join("node_modules/@celesta/react/dist/index.d.ts")
+                .join("node_modules/@celesta.studio/react/dist/index.d.ts")
                 .is_file()
         );
         assert!(
@@ -395,7 +395,7 @@ pub(crate) mod tests {
         let support = root.join(PROJECT_TYPES_DIR);
         assert_eq!(fs::read_to_string(support.join(STAMP)).unwrap(), "v2");
         assert_eq!(
-            fs::read_to_string(support.join("node_modules/@celesta/react/dist/index.d.ts"))
+            fs::read_to_string(support.join("node_modules/@celesta.studio/react/dist/index.d.ts"))
                 .unwrap(),
             "v2"
         );

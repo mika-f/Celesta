@@ -1,14 +1,14 @@
-# Syntax-highlighted code (@celesta/code)
+# Syntax-highlighted code (@celesta.studio/code)
 
-`@celesta/code` draws syntax-highlighted source code with Celesta's `Text`
+`@celesta.studio/code` draws syntax-highlighted source code with Celesta's `Text`
 and `Rect` layers: code walkthroughs, typing animations, highlighted lines,
-and carets. It is a separate, optional package; `@celesta/react` does not
-re-export it. Celesta's runtime supplies it (like `@celesta/react`), so
+and carets. It is a separate, optional package; `@celesta.studio/react` does not
+re-export it. Celesta's runtime supplies it (like `@celesta.studio/react`), so
 **never `npm install` it**, and **File → Set Up TypeScript** / `--init` add
 its type declarations.
 
 ```tsx
-import { Code, codeThemes, useCodePoint, codeCharacterCount, tokenizeCode, highlightCode, codeLines } from '@celesta/code';
+import { Code, codeThemes, useCodePoint, codeCharacterCount, tokenizeCode, highlightCode, codeLines } from '@celesta.studio/code';
 ```
 
 ## Contents
@@ -23,8 +23,8 @@ import { Code, codeThemes, useCodePoint, codeCharacterCount, tokenizeCode, highl
 ## Code
 
 ```tsx
-import { Assets, Composition, Font, Rect } from '@celesta/react';
-import { Code, codeThemes } from '@celesta/code';
+import { Assets, Composition, Font, Rect } from '@celesta.studio/react';
+import { Code, codeThemes } from '@celesta.studio/code';
 
 const source = `const message: string = 'Hello, Celesta.';\nconsole.log(message);\n`;
 const style = { fontFamily: 'JetBrains Mono', fontSize: 32, lineHeight: 48 };
@@ -72,7 +72,7 @@ highlight band follow the stack.
 `visibleCharacters` uses the same counting as `useTypewriter().length`:
 
 ```tsx
-import { useTypewriter } from '@celesta/text';
+import { useTypewriter } from '@celesta.studio/text';
 
 function Typing() {
   const { length } = useTypewriter(source, { from: 15, framesPerChar: 0.5 });
@@ -163,8 +163,8 @@ what `Code` draws. `visible` here is a whole number of original code points,
 like `Code`'s `visibleCharacters`:
 
 ```tsx
-import { Group, Text, useTextMetrics } from '@celesta/react';
-import { codeThemes, highlightCode } from '@celesta/code';
+import { Group, Text, useTextMetrics } from '@celesta.studio/react';
+import { codeThemes, highlightCode } from '@celesta.studio/code';
 
 const style = { fontFamily: 'JetBrains Mono', fontSize: 32, lineHeight: 48 };
 const theme = codeThemes.dark;
@@ -240,4 +240,4 @@ same-type tokens: `{ type, text, column }`, where `text` is tab-expanded and
   shaping is cached). A line wider than the GPU texture limit is rasterized
   below 1x and can look softer. Show the part of a file that matters rather
   than hundreds of lines.
-- The browser playground (`@celesta/web`) does not support `@celesta/code`.
+- The browser playground (`@celesta.studio/web`) does not support `@celesta.studio/code`.

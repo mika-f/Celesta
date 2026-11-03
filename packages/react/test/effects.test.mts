@@ -16,7 +16,7 @@ test('effects on a group and layer change with the composition frame', () => {
   const dir = mkdtempSync(join(tmpdir(), 'celesta-effects-'));
   const entry = join(dir, 'entry.tsx');
   writeFileSync(entry, `
-    import { Composition, Group, Rect, useCurrentFrame } from '@celesta/react';
+    import { Composition, Group, Rect, useCurrentFrame } from '@celesta.studio/react';
     export default function Film() {
       const frame = useCurrentFrame();
       return <Composition width={64} height={64} fps={30} durationInFrames={2}>

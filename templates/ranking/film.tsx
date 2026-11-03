@@ -10,10 +10,10 @@ import {
   getProjectProperty,
   progress,
   useCurrentFrame,
-} from '@celesta/react';
-import { Counter } from '@celesta/components';
-import { TextBox } from '@celesta/text';
-import { useProjectProperty } from '@celesta/project';
+} from '@celesta.studio/react';
+import { Counter } from '@celesta.studio/components';
+import { TextBox } from '@celesta.studio/text';
+import { useProjectProperty } from '@celesta.studio/project';
 
 // A ranking card. The title, subtitle, colors, format and data file come from
 // project properties, so one source renders every variant:

@@ -1,4 +1,4 @@
-import { Composition, Group, Rect, Text } from '@celesta/react';
+import { Composition, Group, Rect, Text } from '@celesta.studio/react';
 
 export default function Film() {
   return (

@@ -133,7 +133,7 @@ function reportError(report: ExportReport): CelestaExportError {
     return new CelestaExportError(
       {
         ...error,
-        hint: 'this celesta-exporter is older than @celesta/exporter; set CELESTA_EXPORTER or pass exporter with a newer one',
+        hint: 'this celesta-exporter is older than @celesta.studio/exporter; set CELESTA_EXPORTER or pass exporter with a newer one',
       },
       { report },
     );

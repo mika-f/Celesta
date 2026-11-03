@@ -1,5 +1,5 @@
-import { Composition, Group, Rect, Text, useCurrentFrame } from '@celesta/react';
-import { Circle, Star } from '@celesta/shapes';
+import { Composition, Group, Rect, Text, useCurrentFrame } from '@celesta.studio/react';
+import { Circle, Star } from '@celesta.studio/shapes';
 
 // Skew and 3D transforms. Every layer and group takes `skewX`/`skewY`,
 // `rotationX`/`rotationY`, a `perspective` distance, and

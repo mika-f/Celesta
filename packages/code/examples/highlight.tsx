@@ -1,8 +1,8 @@
-import { Assets, Composition, Font, Group, Rect } from '@celesta/react';
-import { useTypewriter } from '@celesta/text';
-import { Code, useCodePoint } from '@celesta/code';
+import { Assets, Composition, Font, Group, Rect } from '@celesta.studio/react';
+import { useTypewriter } from '@celesta.studio/text';
+import { Code, useCodePoint } from '@celesta.studio/code';
 
-const source = `import { Composition, Text } from '@celesta/react';
+const source = `import { Composition, Text } from '@celesta.studio/react';
 
 export default function Title() {
   return <Text>Hello, Celesta.</Text>;

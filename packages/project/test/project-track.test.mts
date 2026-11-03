@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import * as React from 'react';
 import { test } from 'vitest';
-import { Composition, Rect, registerComponent } from '@celesta/react';
-import type { Layer, LayerEffects } from '@celesta/react';
-import { mount } from '@celesta/react/internal';
+import { Composition, Rect, registerComponent } from '@celesta.studio/react';
+import type { Layer, LayerEffects } from '@celesta.studio/react';
+import { mount } from '@celesta.studio/react/internal';
 
 import { ProjectTimeline, ProjectTrack, useProjectTrack } from '../src/index.js';
 

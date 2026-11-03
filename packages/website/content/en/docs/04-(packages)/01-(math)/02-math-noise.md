@@ -1,11 +1,11 @@
-Noise is smooth randomness: nearby inputs give nearby outputs, so values wander instead of jumping. Use it for drift, wobble, handheld shake, floating particles, and organic textures. Like everything in [`@celesta/math`](/en/docs/math/), it is deterministic: the same seed and coordinates return the same value on every render.
+Noise is smooth randomness: nearby inputs give nearby outputs, so values wander instead of jumping. Use it for drift, wobble, handheld shake, floating particles, and organic textures. Like everything in [`@celesta.studio/math`](/en/docs/math/), it is deterministic: the same seed and coordinates return the same value on every render.
 
 ## 1D noise over time
 
 `noise(seed, t)` returns a value in `[-1, 1]`. It picks a random value at each whole number of `t` and blends smoothly between them, so the scale of `t` sets the speed: `frame / 20` changes direction about every 20 frames.
 
 ```tsx title="A gentle floating motion"
-import { noise } from '@celesta/math';
+import { noise } from '@celesta.studio/math';
 
 function Floating({ children }: { children: React.ReactNode }) {
   const frame = useCurrentFrame();
@@ -32,7 +32,7 @@ function Floating({ children }: { children: React.ReactNode }) {
 `noise2D(seed, x, y)` samples a smooth field over a plane. Scale the position down, as in `x / 200`, to stretch the features; the smaller the divisor, the busier the field. `noise3D(seed, x, y, z)` adds a third coordinate, which you can treat as time to animate a field smoothly.
 
 ```tsx title="A field of dots that breathe"
-import { noise3D } from '@celesta/math';
+import { noise3D } from '@celesta.studio/math';
 
 function Field() {
   const frame = useCurrentFrame();
@@ -66,7 +66,7 @@ One layer of noise moves on a single scale, which looks smooth and a little arti
 | `gain` | How much weaker each layer is than the one before. A finite number of at least 0; the default is `0.5`. Lower values keep the result smoother, higher values make it rougher. |
 
 ```tsx title="A rough horizon line"
-import { fbm } from '@celesta/math';
+import { fbm } from '@celesta.studio/math';
 
 const points: [number, number][] = Array.from({ length: 97 }, (_, i) => [
   i * 20,
@@ -83,7 +83,7 @@ Invalid options throw an error that names the function, such as `fbm2D() require
 `noise` and `fbm` never repeat, so in a video that plays on repeat (Shorts, TikTok), a wobble driven by them jumps where the last frame meets the first. `loopNoise(seed, t, period)` is the same smooth noise, but it repeats every `period`, counted in the units of `t`: pass the length of the loop scaled the same way as the frame. `loopFbm` does the same for layered noise.
 
 ```tsx title="A sway that loops"
-import { loopNoise } from '@celesta/math';
+import { loopNoise } from '@celesta.studio/math';
 
 const LOOP = 384; // the composition's durationInFrames
 

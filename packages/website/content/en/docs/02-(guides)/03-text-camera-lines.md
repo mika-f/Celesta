@@ -7,10 +7,10 @@ Titles that reveal themselves, a camera that travels, and lines that draw on. Li
 | API | Use it for |
 | --- | --- |
 | `TextReveal` | Lines of a string slide up from behind their own masks, one after another. Set `lineHeight`, `from`, `stagger`, and `durationInFrames`; `align` pivots each line. `\n` breaks a line; with `maxWidth`, lines also wrap where `<Text maxWidth>` wraps (`style.lineBreak: 'phrase'` included), and each wrapped line is revealed on its own. |
-| `TypewriterText` (`@celesta/components`) | Text typed out with a line or block caret, timed as `useTypewriter` times it. The caret goes where the measured layout puts the next character, so proportional fonts, Japanese, `\n`, and `maxWidth` wrapping need no monospaced font. |
+| `TypewriterText` (`@celesta.studio/components`) | Text typed out with a line or block caret, timed as `useTypewriter` times it. The caret goes where the measured layout puts the next character, so proportional fonts, Japanese, `\n`, and `maxWidth` wrapping need no monospaced font. |
 | `useTypewriter(text, options)` | The typed-so-far `text`, its `length`, `done`, and `caretVisible`: steady while typing, blinking while idle. |
 | `useCountUp(to, options)` | A number counting to `to`, with `from`, `delay`, `durationInFrames`, `easing`, and `decimals`. |
-| `Counter`, `StatCard` (`@celesta/components`) | A `<Text>` drawing a counted number formatted, and a card with a label, the number, and a note. They count with `useCountUp`'s default timing and print with `locale` (`'en-US'` by default, never the machine's), `decimals` (always shown), `prefix`/`suffix`, or a `formatter`. With `anchorX={1}` the last digit and the unit stay in place as digits are added. |
+| `Counter`, `StatCard` (`@celesta.studio/components`) | A `<Text>` drawing a counted number formatted, and a card with a label, the number, and a note. They count with `useCountUp`'s default timing and print with `locale` (`'en-US'` by default, never the machine's), `decimals` (always shown), `prefix`/`suffix`, or a `formatter`. With `anchorX={1}` the last digit and the unit stay in place as digits are added. |
 
 ```tsx title="An editorial title reveal"
 <TextReveal x={160} y={300} lineHeight={200} stagger={6}
@@ -45,7 +45,7 @@ Every line and shape stroke takes `dash`, the lengths of its dashes and gaps in 
 
 A `<Path>` draws part of its stroke too, with `progress` and `progressStart` (0–1 of the path’s length); curves are split exactly along their length. Dashes stay where they are on the whole path, whichever part is drawn. A `fill` always covers the whole shape.
 
-`BarChart` from `@celesta/components` draws horizontal bars from an array of `{ id, label, value }`: a label column, a bar growing from 0, and the value past the bar's end or lined up at the right edge, each row starting `stagger` frames after the one above. The bar's length and the printed number come from the same progress, so the number always matches the bar; it is formatted as `Counter` formats it. `Ranking` adds a rank column and needs `order`: sorted by value (`'descending'` or `'ascending'`, equal values keeping their order) or kept as given (`'input'`). Values must be finite and 0 or more, and ids unique.
+`BarChart` from `@celesta.studio/components` draws horizontal bars from an array of `{ id, label, value }`: a label column, a bar growing from 0, and the value past the bar's end or lined up at the right edge, each row starting `stagger` frames after the one above. The bar's length and the printed number come from the same progress, so the number always matches the bar; it is formatted as `Counter` formats it. `Ranking` adds a rank column and needs `order`: sorted by value (`'descending'` or `'ascending'`, equal values keeping their order) or kept as given (`'input'`). Values must be finite and 0 or more, and ids unique.
 
 ```tsx title="Bars that grow in turn"
 <BarChart x={120} y={240} width={1000} stagger={8} decimals={1} suffix=" s" data={[
@@ -54,7 +54,7 @@ A `<Path>` draws part of its stroke too, with `progress` and `progressStart` (0�
 ]} />
 ```
 
-`Callout` from `@celesta/components` points at something: a box at `x`/`y`, `width` wide, holding a `title` and `text` and as tall as they measure, and a line from the box to a `target` point ending in an arrowhead. The line leaves the middle of the edge facing the target (or the `side` you name) and runs `straight` or as an `elbow` that turns once; `lineProgress` grows it from the target. `target`, `x`, and `y` are in the same coordinates, so a callout in the same `<Group>` as what it points at stays on it whatever that group's transform, and the line follows an animated target. A target inside the box draws no line.
+`Callout` from `@celesta.studio/components` points at something: a box at `x`/`y`, `width` wide, holding a `title` and `text` and as tall as they measure, and a line from the box to a `target` point ending in an arrowhead. The line leaves the middle of the edge facing the target (or the `side` you name) and runs `straight` or as an `elbow` that turns once; `lineProgress` grows it from the target. `target`, `x`, and `y` are in the same coordinates, so a callout in the same `<Group>` as what it points at stays on it whatever that group's transform, and the line follows an animated target. A target inside the box draws no line.
 
 ```tsx title="A note with an arrow"
 <Callout target={{ x: 960, y: 540 }} x={1200} y={240} width={480}

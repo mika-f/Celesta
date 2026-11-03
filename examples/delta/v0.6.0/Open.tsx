@@ -1,5 +1,5 @@
-import { Easings, Group, Instances, Rect, Text, interpolate, progress, useCurrentFrame } from '@celesta/react';
-import { random } from '@celesta/math';
+import { Easings, Group, Instances, Rect, Text, interpolate, progress, useCurrentFrame } from '@celesta.studio/react';
+import { random } from '@celesta.studio/math';
 import { Backdrop } from '../components/Backdrop';
 import { Delta } from '../components/Delta';
 import { glitch } from '../components/shaders';

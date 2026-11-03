@@ -1,5 +1,5 @@
-import { Easings, Group, Rect, interpolate, useCurrentFrame } from '@celesta/react';
-import { CharacterView } from '@celesta/character';
+import { Easings, Group, Rect, interpolate, useCurrentFrame } from '@celesta.studio/react';
+import { CharacterView } from '@celesta.studio/character';
 import { CAST } from '../character';
 import { C, SAFE, STAGE_Y, TAG_Y } from '../constants';
 import type { SpeakerId } from '../script';

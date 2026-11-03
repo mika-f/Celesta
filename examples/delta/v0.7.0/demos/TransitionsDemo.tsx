@@ -1,6 +1,6 @@
-import { Group, Rect, Sequence, Text } from '@celesta/react';
-import { blur, clockWipe, cube, dissolve, flip, iris, zoom, TransitionSeries } from '@celesta/transitions';
-import type { TransitionDefinition } from '@celesta/transitions';
+import { Group, Rect, Sequence, Text } from '@celesta.studio/react';
+import { blur, clockWipe, cube, dissolve, flip, iris, zoom, TransitionSeries } from '@celesta.studio/transitions';
+import type { TransitionDefinition } from '@celesta.studio/transitions';
 import type { DemoProps } from '../../components/ChapterShell';
 import { CUT, STAGE, enter } from '../../components/ChapterShell';
 import { Delta } from '../../components/Delta';

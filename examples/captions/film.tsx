@@ -10,12 +10,12 @@ import {
   formatSubtitles,
   parseSubtitles,
   useCurrentFrame,
-} from '@celesta/react';
-import { Character, CharacterView, Dialogue } from '@celesta/character';
-import { CaptionTrack } from '@celesta/components';
-import type { CaptionCue, CaptionTrackProps } from '@celesta/components';
-import type { AssetReference, SubtitleCue } from '@celesta/react';
-import type { CharacterViewReference, SubtitleRenderProps } from '@celesta/character';
+} from '@celesta.studio/react';
+import { Character, CharacterView, Dialogue } from '@celesta.studio/character';
+import { CaptionTrack } from '@celesta.studio/components';
+import type { CaptionCue, CaptionTrackProps } from '@celesta.studio/components';
+import type { AssetReference, SubtitleCue } from '@celesta.studio/react';
+import type { CharacterViewReference, SubtitleRenderProps } from '@celesta.studio/character';
 import captions from './captions.srt';
 
 // Captions from an SRT file. parseSubtitles() turns the file into frame-timed

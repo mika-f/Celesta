@@ -1,6 +1,6 @@
 import type { Run } from '../components/Mono';
-import { clamp } from '@celesta/math';
-import { Easings, Group, Rect, Text, progress, useCurrentFrame } from '@celesta/react';
+import { clamp } from '@celesta.studio/math';
+import { Easings, Group, Rect, Text, progress, useCurrentFrame } from '@celesta.studio/react';
 import { Mono, runLength } from '../components/Mono';
 import { Tag } from '../components/Tag';
 import { BEAT, C, DURATION, H, W } from '../constants';

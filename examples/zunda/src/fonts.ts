@@ -5,7 +5,7 @@
 // 別の書体で描かれ、書き出し時に警告が出る。和文を描くときは、その文字列を
 // 各シーンの `strings`（または台本）に入れておくこと。
 
-import { googleFont } from '@celesta/react';
+import { googleFont } from '@celesta.studio/react';
 
 import { FONT } from './theme.ts';
 

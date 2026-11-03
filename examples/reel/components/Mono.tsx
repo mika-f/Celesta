@@ -1,4 +1,4 @@
-import { Group, Text } from '@celesta/react';
+import { Group, Text } from '@celesta.studio/react';
 import { monoAdvance } from '../metrics';
 
 export type Run = { text: string; color: string; weight?: number };

@@ -1,10 +1,10 @@
 {
-  "name": "@celesta/example-shorts-loop",
+  "name": "@celesta.studio/example-shorts-loop",
   "private": true,
   "dependencies": {
-    "@celesta/react": "workspace:*",
-    "@celesta/shader": "workspace:*",
-    "@celesta/shapes": "workspace:*",
+    "@celesta.studio/react": "workspace:*",
+    "@celesta.studio/shader": "workspace:*",
+    "@celesta.studio/shapes": "workspace:*",
     "react": "^19.3.0"
   },
   "devDependencies": {

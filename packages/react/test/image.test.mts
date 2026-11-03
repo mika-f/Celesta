@@ -14,7 +14,7 @@ const cli = fileURLToPath(new URL('../../cli/bin/celesta-react-render.js', impor
 function renderTree(tree: string, seconds = 0) {
   const dir = mkdtempSync(join(tmpdir(), 'celesta-image-'));
   const entry = join(dir, 'entry.tsx');
-  writeFileSync(entry, `import { Composition, Image, Sequence, Static } from '@celesta/react';
+  writeFileSync(entry, `import { Composition, Image, Sequence, Static } from '@celesta.studio/react';
     export default () => <Composition width={100} height={100} fps={30} durationInFrames={90}>${tree}</Composition>;`);
   const input = `{"time":{"value":${seconds * 30},"timescale":30}}\n`;
   try { return spawnSync(process.execPath, [cli, entry], { input, encoding: 'utf8' }); }

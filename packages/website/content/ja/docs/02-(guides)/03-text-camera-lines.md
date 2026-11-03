@@ -7,10 +7,10 @@
 | API | 用途 |
 | --- | --- |
 | `TextReveal` | 文字列の各行を、それぞれのマスクの裏から順にスライド表示します。`lineHeight`、`from`、`stagger`、`durationInFrames` を設定し、`align` で各行の横方向の揃え位置（0 左、0.5 中央、1 右）を指定します。行は `\n` で区切ります。`maxWidth` を渡すと `<Text maxWidth>` と同じ位置（`style.lineBreak: 'phrase'` を含む）でも折り返し、折り返した行も 1 行ずつ表示します。 |
-| `TypewriterText`（`@celesta/components`） | 線またはブロックのカーソル付きで、文字を一文字ずつ入力して見せます。送りは `useTypewriter` と同じです。カーソルは組版を計測した位置に置くので、比例フォント・日本語・`\n`・`maxWidth` の折り返しでも等幅フォントは要りません。 |
+| `TypewriterText`（`@celesta.studio/components`） | 線またはブロックのカーソル付きで、文字を一文字ずつ入力して見せます。送りは `useTypewriter` と同じです。カーソルは組版を計測した位置に置くので、比例フォント・日本語・`\n`・`maxWidth` の折り返しでも等幅フォントは要りません。 |
 | `useTypewriter(text, options)` | 入力済みの `text`、その `length`、`done`、`caretVisible`。入力中は固定、停止中は点滅します。 |
 | `useCountUp(to, options)` | `to` まで数える数値。`from`、`delay`、`durationInFrames`、`easing`、`decimals` で調整します。 |
-| `Counter`、`StatCard`（`@celesta/components`） | 数えた数値を整形して描く `<Text>` と、ラベル・数値・補足を載せたカードです。`useCountUp` と同じ既定のタイミングで数え、`locale`（既定 `'en-US'`。実行環境の locale には依存しません）、`decimals`（常に表示）、`prefix` / `suffix`、`formatter` で表示を決めます。`anchorX={1}` にすると、桁が増えても末尾の桁と単位が動きません。 |
+| `Counter`、`StatCard`（`@celesta.studio/components`） | 数えた数値を整形して描く `<Text>` と、ラベル・数値・補足を載せたカードです。`useCountUp` と同じ既定のタイミングで数え、`locale`（既定 `'en-US'`。実行環境の locale には依存しません）、`decimals`（常に表示）、`prefix` / `suffix`、`formatter` で表示を決めます。`anchorX={1}` にすると、桁が増えても末尾の桁と単位が動きません。 |
 
 ```tsx title="タイトルを段階的に表示"
 <TextReveal x={160} y={300} lineHeight={200} stagger={6}
@@ -45,7 +45,7 @@
 
 `<Path>` も `progress` と `progressStart`（経路長に対する 0〜1）で線の一部だけを描けます。曲線も長さに沿って正確に切り出します。どの部分を描いても、破線は全体の線と同じ位置に並びます。`fill` は常に形全体を塗ります。
 
-`@celesta/components` の `BarChart` は、`{ id, label, value }` の配列から横棒グラフを描きます。行ごとにラベルの列、0 から伸びる棒、数値（棒の先端か右端に揃えた列）が並び、行は `stagger` フレームずつ遅れて始まります。棒の長さと数値は同じ進捗から決まるので、表示される数値は常に棒と一致します。数値は `Counter` と同じ整形です。`Ranking` は順位の列を加えたもので、値でソートするか（`'descending'` / `'ascending'`、同値は入力順を保持）入力順を保つか（`'input'`）を `order` で必ず指定します。値は 0 以上の有限数で、`id` は一意である必要があります。
+`@celesta.studio/components` の `BarChart` は、`{ id, label, value }` の配列から横棒グラフを描きます。行ごとにラベルの列、0 から伸びる棒、数値（棒の先端か右端に揃えた列）が並び、行は `stagger` フレームずつ遅れて始まります。棒の長さと数値は同じ進捗から決まるので、表示される数値は常に棒と一致します。数値は `Counter` と同じ整形です。`Ranking` は順位の列を加えたもので、値でソートするか（`'descending'` / `'ascending'`、同値は入力順を保持）入力順を保つか（`'input'`）を `order` で必ず指定します。値は 0 以上の有限数で、`id` は一意である必要があります。
 
 ```tsx title="時間差で伸びる棒グラフ"
 <BarChart x={120} y={240} width={1000} stagger={8} decimals={1} suffix=" s" data={[
@@ -54,7 +54,7 @@
 ]} />
 ```
 
-`@celesta/components` の `Callout` は対象を指す注釈です。`x` / `y` に置いた幅 `width` の枠に `title` と `text` を入れ、高さは文字を計測して決めます。枠から `target` の点まで線を引き、先端に矢印を付けます。線は対象に面した辺（または `side` で指定した辺）の中点から出て、`straight` ならまっすぐ、`elbow` なら一度だけ曲がって対象に届きます。`lineProgress` を動かすと線が対象側から伸びます。`target`・`x`・`y` は同じ座標系なので、指す対象と同じ `<Group>` に置けばその変形に関係なく線が対象からずれず、対象を動かせば線も追従します。対象が枠の内側にあるときは線を描きません。
+`@celesta.studio/components` の `Callout` は対象を指す注釈です。`x` / `y` に置いた幅 `width` の枠に `title` と `text` を入れ、高さは文字を計測して決めます。枠から `target` の点まで線を引き、先端に矢印を付けます。線は対象に面した辺（または `side` で指定した辺）の中点から出て、`straight` ならまっすぐ、`elbow` なら一度だけ曲がって対象に届きます。`lineProgress` を動かすと線が対象側から伸びます。`target`・`x`・`y` は同じ座標系なので、指す対象と同じ `<Group>` に置けばその変形に関係なく線が対象からずれず、対象を動かせば線も追従します。対象が枠の内側にあるときは線を描きません。
 
 ```tsx title="矢印付きの注釈"
 <Callout target={{ x: 960, y: 540 }} x={1200} y={240} width={480}

@@ -1,9 +1,9 @@
 import * as React from 'react';
 
-import { Assets, Audio, Composition } from '@celesta/react';
-import { Character, CharacterView, loadLipSync } from '@celesta/character';
-import type { AssetReference } from '@celesta/react';
-import type { LipSyncTrack } from '@celesta/character';
+import { Assets, Audio, Composition } from '@celesta.studio/react';
+import { Character, CharacterView, loadLipSync } from '@celesta.studio/character';
+import type { AssetReference } from '@celesta.studio/react';
+import type { LipSyncTrack } from '@celesta.studio/character';
 
 // 001.wav is a ~1s committed spoken fixture; enough to show the mouth
 // leaving 'closed' once the voice starts.

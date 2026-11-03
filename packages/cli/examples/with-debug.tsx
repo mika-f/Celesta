@@ -1,5 +1,5 @@
-import { Composition, Rect, registerComponent } from '@celesta/react';
-import { DebugBounds, DebugOverlay } from '@celesta/debug';
+import { Composition, Rect, registerComponent } from '@celesta.studio/react';
+import { DebugBounds, DebugOverlay } from '@celesta.studio/debug';
 
 function DebugCard() {
   return (

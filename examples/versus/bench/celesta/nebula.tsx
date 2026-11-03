@@ -1,7 +1,7 @@
 // NEBULA benchmark scene, Celesta version. See ../SCENE.md for the spec that
 // the Remotion and fframes versions implement with the same math.
-import { Assets, Composition, Font, Group, Rect, Text, useCurrentFrame } from '@celesta/react';
-import { Path } from '@celesta/shapes';
+import { Assets, Composition, Font, Group, Rect, Text, useCurrentFrame } from '@celesta.studio/react';
+import { Path } from '@celesta.studio/shapes';
 
 const W = 1920;
 const H = 1080;
@@ -12,7 +12,7 @@ const TAU = Math.PI * 2;
 const BLOBS = ['#FF3D7F', '#3DA5FF', '#7B5CFF', '#00E0B8', '#FFB13D', '#FF6B3D'];
 const STARS = ['#FFFFFF', '#9EC9FF', '#FFC2E0', '#B8FFF0'];
 
-// SCENE.md's rand(), not @celesta/math's random(): the Remotion and fframes
+// SCENE.md's rand(), not @celesta.studio/math's random(): the Remotion and fframes
 // versions use the same formula, so all three place every star alike.
 const rand = (i: number, k: number) => {
   const v = Math.sin(i * 12.9898 + k * 78.233) * 43758.5453;

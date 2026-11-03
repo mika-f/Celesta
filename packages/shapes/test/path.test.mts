@@ -28,7 +28,7 @@ function render(body: string, { allowFailure = false, frames = 1 }: { allowFailu
   const entry = join(dir, 'entry.tsx');
   writeFileSync(
     entry,
-    `import { Composition, Sequence, Theme } from '@celesta/react'; import { Arrow, Circle, Ellipse, Line, Path, Polyline } from '@celesta/shapes';\n` +
+    `import { Composition, Sequence, Theme } from '@celesta.studio/react'; import { Arrow, Circle, Ellipse, Line, Path, Polyline } from '@celesta.studio/shapes';\n` +
       `export default function Root() {\n` +
       `  return (\n` +
       `    <Composition width={300} height={200} fps={30} durationInFrames={${frames}}>\n` +

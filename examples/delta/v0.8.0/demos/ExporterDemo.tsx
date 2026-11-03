@@ -1,12 +1,12 @@
 import { useContext } from 'react';
-import { Easings, FreezeFrame, Group, Rect, Text, interpolate } from '@celesta/react';
+import { Easings, FreezeFrame, Group, Rect, Text, interpolate } from '@celesta.studio/react';
 import type { DemoProps } from '../../components/ChapterShell';
 import { STAGE, enter } from '../../components/ChapterShell';
 import { C, FONT, FPS, H, W, solid } from '../../components/theme';
 import { FilmContext } from '../film-context';
 import { BAR, BEAT, DURATION, chapterAt } from '../timeline';
 
-// A Node script exporting this film with @celesta/exporter, drawn: the
+// A Node script exporting this film with @celesta.studio/exporter, drawn: the
 // onProgress events as they arrive (their names and fields are the
 // package's; the numbers are this film's), the bar, and what it wrote. The
 // stills are a frame of this film, redrawn by <FreezeFrame>: one of Δ01,

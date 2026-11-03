@@ -3,9 +3,9 @@ import { test } from 'vitest';
 import * as React from 'react';
 import type { ReactElement } from 'react';
 
-import { Composition, Easings, Sequence } from '@celesta/react';
-import type { Layer, LayerContent, Paint } from '@celesta/react';
-import { mount } from '@celesta/react/internal';
+import { Composition, Easings, Sequence } from '@celesta.studio/react';
+import type { Layer, LayerContent, Paint } from '@celesta.studio/react';
+import { mount } from '@celesta.studio/react/internal';
 import { Counter, formatNumber } from '../src/index.js';
 
 const h = React.createElement;

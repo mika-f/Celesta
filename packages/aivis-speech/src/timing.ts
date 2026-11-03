@@ -22,7 +22,7 @@ import {
   type SpeechPhoneme,
   type SpeechTiming,
   type WavAudio,
-} from '@celesta/character';
+} from '@celesta.studio/character';
 
 import type { AivisSpeechAudioQuery, AivisSpeechMora } from './query.js';
 

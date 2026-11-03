@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Easings, Group, Rect, Span, Text, interpolateColor, progress, useCue, useCurrentFrame } from '@celesta/react';
+import { Easings, Group, Rect, Span, Text, interpolateColor, progress, useCue, useCurrentFrame } from '@celesta.studio/react';
 import { Copy, Tag } from '../components/Copy';
 import { Stage } from '../components/Stage';
 import { TAPES } from '../tapes';

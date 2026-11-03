@@ -1,4 +1,4 @@
-import { useCurrentFrame } from '@celesta/react';
+import { useCurrentFrame } from '@celesta.studio/react';
 import { BUILD_AT } from '../constants';
 import { CodePanel } from '../components/CodePanel';
 import { DemoPanel } from '../components/Frame';

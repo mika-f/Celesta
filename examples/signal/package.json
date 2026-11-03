@@ -1,8 +1,8 @@
 {
-  "name": "@celesta/example-signal",
+  "name": "@celesta.studio/example-signal",
   "private": true,
   "dependencies": {
-    "@celesta/react": "workspace:*",
+    "@celesta.studio/react": "workspace:*",
     "react": "^19.3.0"
   },
   "devDependencies": {

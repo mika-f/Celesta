@@ -4,12 +4,12 @@ import { isAbsolute } from 'node:path';
 import React from 'react';
 import type { ReactElement, ReactNode } from 'react';
 
-import { Composition, Font } from '@celesta/react';
-import type { Layer, LayerContent, Scene, TextMetrics } from '@celesta/react';
+import { Composition, Font } from '@celesta.studio/react';
+import type { Layer, LayerContent, Scene, TextMetrics } from '@celesta.studio/react';
 import { TextBox, fitText, useFitText } from '../src/index.js';
 import type { FitTextOptions, FitTextResult, TextBoxProps } from '../src/index.js';
-import { mount, setTextMeasurer } from '@celesta/react/internal';
-import type { MeasureTextRequest } from '@celesta/react/internal';
+import { mount, setTextMeasurer } from '@celesta.studio/react/internal';
+import type { MeasureTextRequest } from '@celesta.studio/react/internal';
 
 type GroupContent = Extract<LayerContent, { type: 'group' }>;
 type TextContent = Extract<LayerContent, { type: 'text' }>;

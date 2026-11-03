@@ -1,6 +1,6 @@
-import { Easings, Group, Rect, Text, interpolate } from '@celesta/react';
-import { PatternBackground, Panel } from '@celesta/components';
-import { Ellipse } from '@celesta/shapes';
+import { Easings, Group, Rect, Text, interpolate } from '@celesta.studio/react';
+import { PatternBackground, Panel } from '@celesta.studio/components';
+import { Ellipse } from '@celesta.studio/shapes';
 import { C, FONT, solid } from '../../components/theme';
 import type { DemoProps } from '../program';
 import { STAGE } from '../program';
@@ -51,7 +51,7 @@ export function AddDemo({ frame }: DemoProps) {
   const written = text
     ? ['<Sequence from={45} durationInFrames={75}>', `  <Text x={${TEXT_AT.x}} y={${TEXT_AT.y}} fontSize={48} color="#FFFFFF">Text</Text>`, '</Sequence>']
     : ellipse
-      ? ["import { Ellipse } from '@celesta/shapes';", '<Sequence from={45} durationInFrames={75}>',
+      ? ["import { Ellipse } from '@celesta.studio/shapes';", '<Sequence from={45} durationInFrames={75}>',
         `  <Ellipse x={${FROM.x}} y={${FROM.y}} width={${TO.x - FROM.x}} height={${TO.y - FROM.y}} fill="${BLUE}" />`]
       : ['<Group x={0} y={0}>', '  <Card title="ON AIR" />', '</Group>'];
   const status = adding !== '' ? `to <Group> in <Main> · ${adding === 'Text' ? 'Click where the text starts' : 'Drag a box, or click'} · Esc cancels`

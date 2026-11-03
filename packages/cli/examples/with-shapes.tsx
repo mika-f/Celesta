@@ -1,5 +1,5 @@
-import { Composition, Group, Rect, interpolate, useCurrentFrame } from '@celesta/react';
-import { Arrow, Circle, Ellipse } from '@celesta/shapes';
+import { Composition, Group, Rect, interpolate, useCurrentFrame } from '@celesta.studio/react';
+import { Arrow, Circle, Ellipse } from '@celesta.studio/shapes';
 
 // Circles, ellipses, and arrows for a diagram. A circle is one rounded
 // `<Rect>` layer; an ellipse or an arrow is one `<Path>` layer.

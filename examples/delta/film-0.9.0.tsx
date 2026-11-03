@@ -1,4 +1,4 @@
-import { Composition, FreezeFrame } from '@celesta/react';
+import { Composition, FreezeFrame } from '@celesta.studio/react';
 import { FPS, H, W } from './components/theme';
 import { Fonts } from './v0.9.0/fonts';
 import { Captions, Chrome, POSTER_AT, Reel, Sound } from './v0.9.0/reel';

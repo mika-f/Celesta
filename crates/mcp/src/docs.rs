@@ -47,17 +47,17 @@ pub static TOPICS: &[Topic] = &[
         "subtitles",
         "SRT/WebVTT subtitle files: reading them into cues, Subtitles, writing them on export"
     ),
-    reference!("code", "Syntax-highlighted and typed code (@celesta/code)"),
+    reference!("code", "Syntax-highlighted and typed code (@celesta.studio/code)"),
     reference!(
         "helpers",
         "The API to use before writing a helper: clamp, eased progress, random, timecodes, text widths, cues"
     ),
     reference!(
         "math",
-        "Seeded random, noise, and math helpers (@celesta/math)"
+        "Seeded random, noise, and math helpers (@celesta.studio/math)"
     ),
     reference!("loops", "Seamless loops for Shorts and TikTok"),
-    reference!("shader", "Custom WGSL filters (@celesta/shader)"),
+    reference!("shader", "Custom WGSL filters (@celesta.studio/shader)"),
     reference!(
         "dialogue",
         "Characters, subtitles, voices, lip sync, PSD portraits, blinking"
