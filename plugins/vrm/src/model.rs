@@ -45,7 +45,8 @@
 //! - **Spring bones** (see `springs`) are read before the geometry. Each
 //!   frame turns their heads to the tails of the last 60 Hz step at or
 //!   before its time, stepped from 0 s on the motions, tracks, and
-//!   constraints alone, from states the model keeps (see `stepping`).
+//!   constraints alone, from states kept in the process's cache (see
+//!   `stepping`).
 //! - **The camera** (see `camera`) frames the avatar at rest: what a
 //!   third-person camera sees, every vertex of every visible draw skinned
 //!   at rest without morphs, bounded once when the model opens (without a
@@ -85,7 +86,7 @@ use crate::nodes::{NodeTree, Pose};
 use crate::notices::Warnings;
 use crate::provider::{LookAtData, LookAtKeyword, PerformanceData};
 use crate::springs::Springs;
-use crate::stepping::Stepper;
+use crate::stepping::{SharedSpringCache, Stepper};
 use crate::tracks::apply_tracks;
 use crate::vrma::{Clip, ClipPose, Retarget};
 use celesta_plugin::{
@@ -164,7 +165,8 @@ pub struct VrmModel {
     look_at: LookAt,
     constraints: Constraints,
     springs: Springs,
-    /// The springs' states kept between frames (see `stepping`).
+    /// The springs' states kept between frames (see `stepping`), in a
+    /// cache of the model's own unless it shares its process's.
     stepper: Stepper,
     /// The layer's clips by asset name.
     clips: BTreeMap<String, Clip>,
@@ -758,7 +760,7 @@ impl VrmModel {
     /// turned to its tail after the steps `stepping` runs to `time` for
     /// `data`'s motions and tracks. An avatar without springs skips it.
     fn apply_springs(
-        &mut self,
+        &self,
         time: f64,
         data: &PerformanceData,
         pose: &mut Pose,
@@ -766,17 +768,20 @@ impl VrmModel {
         if self.springs.springs.is_empty() {
             return Ok(());
         }
-        // Taken out for the steps, which read the model; put back before
-        // an error returns, so a refused frame keeps the states.
-        let mut stepper = std::mem::take(&mut self.stepper);
-        let state = stepper.state_at(self, time, data);
-        self.stepper = stepper;
-        self.springs.settle(&self.tree, pose, &state?);
+        let state = self.stepper.state_at(self, time, data)?;
+        self.springs.settle(&self.tree, pose, &state);
         Ok(())
     }
 
     pub(crate) fn springs(&self) -> &Springs {
         &self.springs
+    }
+
+    /// Keeps the springs' states in `cache`, which the process's other
+    /// models share, rather than in a cache of the model's own (dropping
+    /// those).
+    pub(crate) fn share_spring_cache(&mut self, cache: &SharedSpringCache) {
+        self.stepper = Stepper::new(cache);
     }
 
     #[cfg(test)]

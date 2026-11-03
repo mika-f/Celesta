@@ -1,5 +1,5 @@
 //! The spring bones' clock: a fixed 60 Hz step from the layer's 0 s, with
-//! checkpoints, so a frame depends only on the model, its time, and its
+//! kept states, so a frame depends only on the model, its time, and its
 //! `data`, whatever was asked before it and at whatever frame rate.
 //!
 //! - **Clock:** a frame at `t` has run steps `0..=n`, `n = steps_until(t)`;
@@ -13,89 +13,302 @@
 //!   lookAt and expressions are a frame's own values, which earlier steps
 //!   cannot be given; in a VRM 1.0 avatar they turn no bone but the eyes,
 //!   so a spring hanging from an eye bone swings as if the eye rested.
-//! - **Checkpoints** only save work: a request resumes from the latest
-//!   state kept at or before its step (else from step 0) and keeps the ones
-//!   it passes, after each step `k` with `(k + 1) % (30 × spacing) == 0`.
-//!   They are keyed by `data`'s motions and tracks, everything the steps
-//!   read (the springs' settings are the model's). A model keeps at most
-//!   [`CHECKPOINT_KEYS`] keys, dropping the least recently used.
-//! - **Bounds:** a key keeps states within [`CHECKPOINT_BYTES`]; past them
-//!   its spacing doubles and the states off it are dropped, so the kept
-//!   ones still cover every time asked for. A frame past
-//!   [`MAX_SPRING_STEPS`] is refused: a request from a cold start runs every
-//!   step up to its time.
+//! - **Kept states** only save work; no frame depends on them. A
+//!   performance (a model's motions and tracks, everything the steps read:
+//!   the springs' settings are the model's) keeps a **cursor**, the state
+//!   its last request ended on, which each request replaces, and **grid
+//!   checkpoints**, the states after each step `k` with
+//!   `(k + 1) % (30 × spacing) == 0`. A request resumes from the later of
+//!   its cursor and the latest checkpoint at or before its step (else from
+//!   step 0), so sequential frames step only the steps between them and a
+//!   scrub back resumes at most `30 × spacing` steps before its step.
+//!   Performances are keyed by a SHA-256 of their motions and tracks.
+//! - **Memory:** the plugin's process keeps at most [`SPRING_CACHE_BYTES`]
+//!   of states over every model and performance, a ceiling against hostile
+//!   files that real compositions stay orders of magnitude below. Past it,
+//!   it gives up latency, never output, in this order: the performance with
+//!   the most checkpoints doubles its spacing (dropping the states off it),
+//!   repeatedly; then checkpoints go, cursors stay; then the least recently
+//!   used performances go. A request's own performance is out of the cache
+//!   while it steps, so it is never evicted by its own request, and keeps
+//!   checkpoints only within what the others leave; its cursor is always
+//!   kept. So the states kept are at most the ceiling plus one cursor.
+//! - **Bounds:** a frame past [`MAX_SPRING_STEPS`] is refused before any
+//!   state is looked up: a request from a cold start runs every step up to
+//!   its time.
 
 use crate::model::{FrameError, VrmModel};
 use crate::provider::PerformanceData;
 use crate::springs::SpringState;
 use glam::Vec3;
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::mem::size_of;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 /// The spring bones' steps a second.
 pub const SPRING_HZ: f64 = 60.0;
 
-/// The steps between two kept states of a performance.
+/// The steps between two checkpoints of a performance, before any thinning.
 pub const CHECKPOINT_STEPS: u64 = 30;
-
-/// The performances (motions and tracks) a model keeps states of.
-pub const CHECKPOINT_KEYS: usize = 8;
 
 /// The most steps a frame runs: four hours of the layer at [`SPRING_HZ`].
 /// A frame further in is refused, since a request from a cold start (or one
 /// whose performance was dropped) steps all the way from 0 s.
 pub const MAX_SPRING_STEPS: u64 = 4 * 3600 * 60;
 
-/// The most bytes of states one performance keeps: past them, its states
-/// thin out (see the module). Eight performances keep 256 MiB at most.
-pub const CHECKPOINT_BYTES: u64 = 32 << 20;
+/// The most bytes of spring states the plugin's process keeps, over every
+/// model and performance. A ceiling against hostile files, not a size for
+/// real ones: a ten-minute layer keeps about 1 MB, so it binds only for
+/// spring chains of millions of joints or hundreds of hour-long
+/// performances, and then costs latency only (see the module).
+pub const SPRING_CACHE_BYTES: u64 = 256 << 20;
 
 /// The step's length.
 const DT: f32 = (1.0 / SPRING_HZ) as f32;
 
-/// The spring bones' state at any time, from the states kept.
-pub(crate) struct Stepper {
-    keys: BTreeMap<String, Checkpoints>,
-    /// Counts requests; each key's `last_used` is the request that last
-    /// read it.
+/// What a kept performance takes beyond its states: its key and its entry.
+const PERFORMANCE_BYTES: u64 = 128;
+
+/// A performance's key: the SHA-256 of its motions and tracks as JSON.
+type PerformanceKey = [u8; 32];
+
+/// The spring states the plugin's process keeps, shared by its models.
+#[derive(Clone, Default)]
+pub(crate) struct SharedSpringCache(Arc<Mutex<SpringCache>>);
+
+impl SharedSpringCache {
+    /// A cache keeping at most `ceiling` bytes of states (see the module).
+    #[cfg(test)]
+    pub(crate) fn with_ceiling(ceiling: u64) -> Self {
+        Self(Arc::new(Mutex::new(SpringCache::with_ceiling(ceiling))))
+    }
+
+    /// The cache. Its states are whole whenever a lock is released, so one
+    /// poisoned by a panic is still sound to read.
+    fn lock(&self) -> MutexGuard<'_, SpringCache> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
+/// Every model's kept performances, by model and key.
+pub(crate) struct SpringCache {
+    performances: BTreeMap<(u64, PerformanceKey), Performance>,
+    /// What `performances` takes, by [`Performance::bytes`].
+    bytes: u64,
+    /// [`SPRING_CACHE_BYTES`], or a test's.
+    ceiling: u64,
+    /// Counts requests; each performance's `last_used` is the request that
+    /// last read it.
     clock: u64,
-    /// [`MAX_SPRING_STEPS`], or a test's.
-    max_steps: u64,
-    /// [`CHECKPOINT_BYTES`], or a test's.
-    checkpoint_bytes: u64,
+    /// The models that have joined: the last one's id.
+    models: u64,
 }
 
 /// One performance's kept states.
-struct Checkpoints {
+struct Performance {
     /// By step: the state after it.
-    after_step: BTreeMap<u64, SpringState>,
-    last_used: u64,
-    /// Kept states are [`CHECKPOINT_STEPS`] × `spacing` steps apart.
+    grid: BTreeMap<u64, SpringState>,
+    /// The step the last request ended on, and the state after it.
+    cursor: Option<(u64, SpringState)>,
+    /// Checkpoints are [`CHECKPOINT_STEPS`] × `spacing` steps apart.
     spacing: u64,
+    last_used: u64,
+    /// What one of its states takes.
+    state_bytes: u64,
+}
+
+impl Default for SpringCache {
+    fn default() -> Self {
+        Self::with_ceiling(SPRING_CACHE_BYTES)
+    }
+}
+
+impl SpringCache {
+    fn with_ceiling(ceiling: u64) -> Self {
+        Self {
+            performances: BTreeMap::new(),
+            bytes: 0,
+            ceiling,
+            clock: 0,
+            models: 0,
+        }
+    }
+
+    /// Takes `id`'s performance out, if it is kept.
+    fn take(&mut self, id: &(u64, PerformanceKey)) -> Option<Performance> {
+        let performance = self.performances.remove(id)?;
+        self.bytes -= performance.bytes();
+        Some(performance)
+    }
+
+    /// Puts `performance` back as `id`'s, the most recently used, then
+    /// gives up states past the ceiling (see the module), `id`'s last.
+    fn put(&mut self, id: (u64, PerformanceKey), mut performance: Performance) {
+        self.clock += 1;
+        performance.last_used = self.clock;
+        self.bytes += performance.bytes();
+        self.performances.insert(id, performance);
+        while self.bytes > self.ceiling {
+            // The performance with the most checkpoints: its spacing
+            // doubles, or its last checkpoint goes.
+            let widest = self
+                .performances
+                .iter()
+                .filter(|(_, performance)| !performance.grid.is_empty())
+                .max_by_key(|(_, performance)| performance.grid.len())
+                .map(|(id, _)| *id);
+            if let Some(widest) = widest {
+                let performance = self.performances.get_mut(&widest).expect("a kept id");
+                self.bytes -= performance.bytes();
+                if performance.grid.len() > 1 {
+                    performance.widen();
+                } else {
+                    performance.grid.clear();
+                }
+                self.bytes += performance.bytes();
+                continue;
+            }
+            // Only cursors are left: the least recently used goes.
+            let oldest = self
+                .performances
+                .iter()
+                .filter(|(kept, _)| **kept != id)
+                .min_by_key(|(_, performance)| performance.last_used)
+                .map(|(id, _)| *id);
+            match oldest {
+                Some(oldest) => {
+                    self.take(&oldest);
+                }
+                None => break,
+            }
+        }
+    }
+
+    /// Drops every performance of `model`.
+    fn forget(&mut self, model: u64) {
+        let mut bytes = 0;
+        self.performances.retain(|(of, _), performance| {
+            let keep = *of != model;
+            if !keep {
+                bytes += performance.bytes();
+            }
+            keep
+        });
+        self.bytes -= bytes;
+    }
+}
+
+impl Performance {
+    fn new(state_bytes: u64) -> Self {
+        Self {
+            grid: BTreeMap::new(),
+            cursor: None,
+            spacing: 1,
+            last_used: 0,
+            state_bytes,
+        }
+    }
+
+    /// What it takes: its states, its key, and its entry.
+    fn bytes(&self) -> u64 {
+        let states = self.grid.len() as u64 + u64::from(self.cursor.is_some());
+        PERFORMANCE_BYTES + states * self.state_bytes
+    }
+
+    /// The latest state kept at or before step `last`: the later of its
+    /// cursor and its checkpoints.
+    fn resume(&self, last: u64) -> Option<(u64, SpringState)> {
+        let checkpoint = self.grid.range(..=last).next_back();
+        let cursor = self
+            .cursor
+            .as_ref()
+            .filter(|(step, _)| *step <= last)
+            .map(|(step, state)| (step, state));
+        [checkpoint, cursor]
+            .into_iter()
+            .flatten()
+            .max_by_key(|(step, _)| **step)
+            .map(|(&step, state)| (step, state.clone()))
+    }
+
+    /// Whether the state after `step` is a checkpoint at its spacing.
+    fn on_grid(&self, step: u64) -> bool {
+        (step + 1).is_multiple_of(CHECKPOINT_STEPS.saturating_mul(self.spacing))
+    }
+
+    /// Doubles the spacing, dropping the checkpoints off it, until at least
+    /// one is dropped.
+    fn widen(&mut self) {
+        let before = self.grid.len();
+        while self.grid.len() >= before && !self.grid.is_empty() {
+            self.spacing = self.spacing.saturating_mul(2);
+            let every = CHECKPOINT_STEPS.saturating_mul(self.spacing);
+            self.grid.retain(|step, _| (step + 1).is_multiple_of(every));
+        }
+    }
+
+    /// Widens the spacing until at most `kept` checkpoints are left.
+    fn thin(&mut self, kept: usize) {
+        while self.grid.len() > kept {
+            self.widen();
+        }
+    }
+}
+
+/// The spring bones' state at any time, from the states a model keeps in
+/// its process's cache.
+pub(crate) struct Stepper {
+    cache: SharedSpringCache,
+    /// The model's id in `cache`.
+    model: u64,
+    /// [`MAX_SPRING_STEPS`], or a test's.
+    max_steps: u64,
+    /// The steps run, for tests.
+    #[cfg(test)]
+    steps: std::cell::Cell<u64>,
 }
 
 impl Default for Stepper {
+    /// A stepper with a cache of its own.
     fn default() -> Self {
-        Self::with_limits(MAX_SPRING_STEPS, CHECKPOINT_BYTES)
+        Self::new(&SharedSpringCache::default())
+    }
+}
+
+impl Drop for Stepper {
+    fn drop(&mut self) {
+        self.cache.lock().forget(self.model);
     }
 }
 
 impl Stepper {
-    /// A stepper refusing frames past `max_steps` and keeping at most
-    /// `checkpoint_bytes` of states per performance.
-    pub(crate) fn with_limits(max_steps: u64, checkpoint_bytes: u64) -> Self {
+    /// A stepper keeping its states in `cache`.
+    pub(crate) fn new(cache: &SharedSpringCache) -> Self {
+        Self::with_limits(cache, MAX_SPRING_STEPS)
+    }
+
+    /// A stepper keeping its states in `cache`, refusing frames past
+    /// `max_steps`.
+    pub(crate) fn with_limits(cache: &SharedSpringCache, max_steps: u64) -> Self {
+        let model = {
+            let mut cache = cache.lock();
+            cache.models += 1;
+            cache.models
+        };
         Self {
-            keys: BTreeMap::new(),
-            clock: 0,
+            cache: cache.clone(),
+            model,
             max_steps,
-            checkpoint_bytes,
+            #[cfg(test)]
+            steps: std::cell::Cell::new(0),
         }
     }
 
     /// The springs of `model` after the steps a frame at `time` seconds has
     /// run, for `data`'s motions and tracks. The model has springs.
     pub(crate) fn state_at(
-        &mut self,
+        &self,
         model: &VrmModel,
         time: f64,
         data: &PerformanceData,
@@ -109,9 +322,7 @@ impl Stepper {
                 self.max_steps
             )));
         }
-        let key = serde_json::to_string(&(&data.motions, &data.tracks))
-            .map_err(|error| FrameError(format!("the motions and tracks: {error}")))?;
-        let budget = self.checkpoint_bytes;
+        let id = (self.model, performance_key(data)?);
         let springs = model.springs();
         let tree = model.tree();
         let pose_at = |step: u64| {
@@ -120,74 +331,108 @@ impl Stepper {
                 .map_err(|error| FrameError(format!("spring bones' step {step}: {}", error.0)))
         };
 
-        let checkpoints = self.checkpoints(key);
-        let (mut step, mut state) = match checkpoints.after_step.range(..=last).next_back() {
-            Some((&kept, state)) => (kept + 1, state.clone()),
+        let mut cache = self.cache.lock();
+        // The state to start from, found before the cache changes: a
+        // performance that fails at step 0 leaves it as it was.
+        let resume = cache
+            .performances
+            .get(&id)
+            .and_then(|performance| performance.resume(last));
+        let (mut step, mut state) = match resume {
+            Some((kept, state)) => (kept + 1, state),
             None => (0, springs.initial_state(tree, &pose_at(0)?)),
         };
-        let state_bytes = (state.current.len() * 2 * size_of::<Vec3>()) as u64;
-        let kept = usize::try_from(budget / state_bytes.max(1)).unwrap_or(usize::MAX);
-        while step <= last {
-            let mut pose = pose_at(step)?;
+        let mut performance = cache
+            .take(&id)
+            .unwrap_or_else(|| Performance::new(state_bytes(&state)));
+        // Checkpoints within what the other performances leave of the
+        // ceiling, with room for the cursor.
+        let room = cache
+            .ceiling
+            .saturating_sub(cache.bytes + PERFORMANCE_BYTES + performance.state_bytes);
+        let kept = usize::try_from(room / performance.state_bytes.max(1)).unwrap_or(usize::MAX);
+        let stepped = loop {
+            if step > last {
+                break Ok(());
+            }
+            let mut pose = match pose_at(step) {
+                Ok(pose) => pose,
+                Err(error) => break Err(error),
+            };
             springs.step(tree, &mut pose, &mut state, DT);
-            if kept > 0 && (step + 1) % CHECKPOINT_STEPS.saturating_mul(checkpoints.spacing) == 0 {
-                checkpoints.after_step.insert(step, state.clone());
-                checkpoints.thin(kept);
+            #[cfg(test)]
+            self.steps.set(self.steps.get() + 1);
+            if kept > 0 && performance.on_grid(step) {
+                performance.grid.insert(step, state.clone());
+                performance.thin(kept);
             }
             step += 1;
+        };
+        if stepped.is_ok() {
+            performance.cursor = Some((last, state.clone()));
         }
-        Ok(state)
-    }
-
-    /// The states kept for `key`, made the most recently used; a new key
-    /// drops the least recently used past [`CHECKPOINT_KEYS`].
-    fn checkpoints(&mut self, key: String) -> &mut Checkpoints {
-        self.clock += 1;
-        if !self.keys.contains_key(&key) && self.keys.len() >= CHECKPOINT_KEYS {
-            let oldest = self
-                .keys
-                .iter()
-                .min_by_key(|(_, checkpoints)| checkpoints.last_used)
-                .map(|(key, _)| key.clone());
-            if let Some(oldest) = oldest {
-                self.keys.remove(&oldest);
-            }
+        if performance.cursor.is_some() || !performance.grid.is_empty() {
+            cache.put(id, performance);
         }
-        let checkpoints = self.keys.entry(key).or_insert_with(|| Checkpoints {
-            after_step: BTreeMap::new(),
-            last_used: 0,
-            spacing: 1,
-        });
-        checkpoints.last_used = self.clock;
-        checkpoints
+        stepped.map(|()| state)
     }
 
-    /// The performances whose states are kept.
+    /// The steps run so far.
     #[cfg(test)]
-    pub(crate) fn keys(&self) -> usize {
-        self.keys.len()
+    pub(crate) fn steps(&self) -> u64 {
+        self.steps.get()
     }
 
-    /// How many states `data`'s performance keeps, if it is kept.
+    /// The model's performances kept.
     #[cfg(test)]
-    pub(crate) fn kept(&self, data: &PerformanceData) -> Option<usize> {
-        let key = serde_json::to_string(&(&data.motions, &data.tracks)).unwrap();
-        self.keys
-            .get(&key)
-            .map(|checkpoints| checkpoints.after_step.len())
+    pub(crate) fn performances(&self) -> usize {
+        let cache = self.cache.lock();
+        cache
+            .performances
+            .keys()
+            .filter(|(model, _)| *model == self.model)
+            .count()
+    }
+
+    /// How many checkpoints `data`'s performance keeps, and its cursor's
+    /// step, if it is kept.
+    #[cfg(test)]
+    pub(crate) fn kept(&self, data: &PerformanceData) -> Option<(usize, Option<u64>)> {
+        let id = (self.model, performance_key(data).unwrap());
+        let cache = self.cache.lock();
+        cache.performances.get(&id).map(|performance| {
+            (
+                performance.grid.len(),
+                performance.cursor.as_ref().map(|(step, _)| *step),
+            )
+        })
+    }
+
+    /// What the whole cache takes, checked against its states.
+    #[cfg(test)]
+    pub(crate) fn cache_bytes(&self) -> u64 {
+        let cache = self.cache.lock();
+        let counted: u64 = cache.performances.values().map(Performance::bytes).sum();
+        assert_eq!(cache.bytes, counted, "the cache's running total drifted");
+        cache.bytes
     }
 }
 
-impl Checkpoints {
-    /// Doubles the spacing, dropping the states off it, until at most
-    /// `kept` states are left.
-    fn thin(&mut self, kept: usize) {
-        while self.after_step.len() > kept {
-            self.spacing = self.spacing.saturating_mul(2);
-            let every = CHECKPOINT_STEPS.saturating_mul(self.spacing);
-            self.after_step.retain(|step, _| (step + 1) % every == 0);
-        }
-    }
+/// `data`'s performance key: the SHA-256 of its motions and tracks as JSON,
+/// whose numbers serde_json writes to round-trip, so equal keys are equal
+/// data (and data that means the same written differently, as `-0.0` and
+/// `0.0`, only misses the cache).
+fn performance_key(data: &PerformanceData) -> Result<PerformanceKey, FrameError> {
+    let mut hasher = Sha256::new();
+    serde_json::to_writer(&mut hasher, &(&data.motions, &data.tracks))
+        .map_err(|error| FrameError(format!("the motions and tracks: {error}")))?;
+    Ok(hasher.finalize().into())
+}
+
+/// What one kept state takes: its tails, its vectors, and its step.
+fn state_bytes(state: &SpringState) -> u64 {
+    let tails = (state.prev.len() + state.current.len()) * size_of::<Vec3>();
+    (tails + size_of::<SpringState>() + size_of::<u64>()) as u64
 }
 
 /// The last step a frame at `time` seconds has run: `⌊max(time, 0) × 60⌋`,
@@ -241,6 +486,13 @@ mod tests {
         open_vrm(&vrm)
     }
 
+    /// [`open`], keeping its states in `cache`.
+    fn open_sharing(cache: &SharedSpringCache) -> (VrmModel, TempDir) {
+        let (mut model, files) = open();
+        model.share_spring_cache(cache);
+        (model, files)
+    }
+
     fn data(value: Value) -> PerformanceData {
         serde_json::from_value(value).unwrap()
     }
@@ -259,6 +511,14 @@ mod tests {
         data(json!({
             "motions": [{ "clip": "motion0", "loop": true }],
             "tracks": { "head": { "yaw": yaw } },
+        }))
+    }
+
+    /// The clip, looped from `index` eighths of a second: a performance of
+    /// its own for each index.
+    fn starting(index: u32) -> PerformanceData {
+        data(json!({
+            "motions": [{ "clip": "motion0", "loop": true, "from": f64::from(index) / 8.0 }],
         }))
     }
 
@@ -322,32 +582,22 @@ mod tests {
     }
 
     #[test]
-    fn checkpoints_are_keyed_by_motions_and_tracks() {
+    fn states_are_kept_by_motions_and_tracks() {
         let (mut model, _files) = open();
         let first = render(&mut model, 2.0, &a());
         let turned = render(&mut model, 2.0, &b());
         assert_ne!(first.1[node::HAIR1], turned.1[node::HAIR1]);
         assert!(render(&mut model, 2.0, &a()) == first);
-        assert_eq!(model.stepper().keys(), 2);
+        assert_eq!(model.stepper().performances(), 2);
+        // 120 steps: four checkpoints, and the cursor on step 120.
+        assert_eq!(model.stepper().kept(&a()), Some((4, Some(120))));
 
-        // Nine performances: the least recently used, B, is dropped.
-        let starting = |quarter: u32| {
-            data(json!({
-                "motions": [{ "clip": "motion0", "loop": true, "from": f64::from(quarter) / 4.0 }],
-            }))
-        };
-        for quarter in 1..=7 {
-            render(&mut model, 0.5, &starting(quarter));
+        // However many performances there are, none is dropped.
+        for index in 1..=20 {
+            render(&mut model, 0.5, &starting(index));
         }
-        assert_eq!(model.stepper().keys(), CHECKPOINT_KEYS);
-        assert!(model.stepper().kept(&b()).is_none());
-        assert!(model.stepper().kept(&a()).is_some());
-        // A used again outlives the next oldest.
-        render(&mut model, 0.5, &a());
-        render(&mut model, 0.5, &starting(8));
-        assert_eq!(model.stepper().keys(), CHECKPOINT_KEYS);
-        assert!(model.stepper().kept(&a()).is_some());
-        assert!(model.stepper().kept(&starting(1)).is_none());
+        assert_eq!(model.stepper().performances(), 22);
+        assert!(model.stepper().kept(&b()).is_some());
     }
 
     #[test]
@@ -364,7 +614,7 @@ mod tests {
         assert_eq!(hair_worlds(&mut other, 2.0, &gazing), plain);
         // They share the performance's states.
         assert_eq!(hair_worlds(&mut model, 2.0, &gazing), plain);
-        assert_eq!(model.stepper().keys(), 1);
+        assert_eq!(model.stepper().performances(), 1);
     }
 
     #[test]
@@ -375,6 +625,152 @@ mod tests {
         assert_eq!(hair_worlds(&mut model, 1.0 / 60.0 + 0.004, &still), one);
         // Gravity moves it from one step to the next.
         assert_ne!(hair_worlds(&mut model, 2.0 / 60.0, &still), one);
+    }
+
+    #[test]
+    fn sequential_frames_step_only_the_delta() {
+        let (mut model, _files) = open();
+        let mut before = 0;
+        for frame in 0..1800 {
+            let time = f64::from(frame) / 30.0;
+            render(&mut model, time, &a());
+            let steps = model.stepper().steps() - before;
+            before += steps;
+            // The first frame runs step 0; each later one, the two since.
+            assert_eq!(steps, if frame == 0 { 1 } else { 2 }, "frame {frame}");
+        }
+        assert_eq!(model.stepper().steps(), steps_until(1799.0 / 30.0) + 1);
+        // A scrub back resumes from a checkpoint, and forward again from
+        // the cursor it left.
+        render(&mut model, 30.0, &a());
+        assert!(model.stepper().steps() - before <= CHECKPOINT_STEPS);
+        before = model.stepper().steps();
+        render(&mut model, 30.0 + 1.0 / 30.0, &a());
+        assert_eq!(model.stepper().steps() - before, 2);
+    }
+
+    /// Twelve performances on one model, asked in turn at every frame of
+    /// 10 s at 30 fps, as an export of twelve layers of one file asks them:
+    /// the total of steps each performance runs, and the most one request
+    /// runs.
+    fn interleaved(model: &mut VrmModel) -> (u64, u64) {
+        let performances: Vec<PerformanceData> = (0..12).map(starting).collect();
+        let mut most = 0;
+        for frame in 0..300 {
+            let time = f64::from(frame) / 30.0;
+            for performance in &performances {
+                let before = model.stepper().steps();
+                render(model, time, performance);
+                most = most.max(model.stepper().steps() - before);
+            }
+        }
+        (model.stepper().steps(), most)
+    }
+
+    #[test]
+    fn interleaved_performances_keep_requests_small() {
+        let each = steps_until(299.0 / 30.0) + 1;
+        let (mut model, _files) = open();
+        assert_eq!(interleaved(&mut model), (12 * each, 2));
+        let kept = model.stepper().cache_bytes();
+        assert!(kept <= SPRING_CACHE_BYTES, "{kept}");
+        assert_eq!(model.stepper().performances(), 12);
+
+        // A ceiling that holds the twelve cursors and little else, with one
+        // performance's checkpoints already filling it: the checkpoints go,
+        // the cursors stay, and no request grows.
+        let one = (4 * size_of::<Vec3>() + size_of::<SpringState>() + size_of::<u64>()) as u64;
+        let ceiling = 12 * (PERFORMANCE_BYTES + one) + one;
+        let cache = SharedSpringCache::with_ceiling(ceiling);
+        let (mut tight, _tight) = open_sharing(&cache);
+        render(&mut tight, 299.0 / 30.0, &starting(0));
+        assert_eq!(tight.stepper().kept(&starting(0)), Some((19, Some(598))));
+        // (A warm checkpoint past a cursor can save a step.)
+        let (total, most) = interleaved(&mut tight);
+        assert!(total <= each + 12 * each && most <= 2, "{total}, {most}");
+        let kept = tight.stepper().cache_bytes();
+        assert!(kept <= ceiling, "{kept} > {ceiling}");
+        assert_eq!(tight.stepper().performances(), 12);
+    }
+
+    /// Frames of three performances on `model`, scrubbed back and forth.
+    fn scrubbed(model: &mut VrmModel) -> Vec<(SceneFrame, Vec<Mat4>)> {
+        let mut frames = Vec::new();
+        for time in [3.0, 0.5, 2.0, 2.0 + 1.0 / 30.0, 9.9, 1.0, 10.0, 0.0] {
+            for performance in [a(), b(), starting(3)] {
+                frames.push(render(model, time, &performance));
+            }
+        }
+        frames
+    }
+
+    #[test]
+    fn the_ceiling_costs_latency_only() {
+        let (mut uncapped, _uncapped) = open();
+        let expected = scrubbed(&mut uncapped);
+        // 4 KB: every cursor stays, the checkpoints thin. 100 B: less than
+        // one performance, so each request evicts the others.
+        for ceiling in [4096, 100] {
+            let cache = SharedSpringCache::with_ceiling(ceiling);
+            let (mut capped, _capped) = open_sharing(&cache);
+            let frames = scrubbed(&mut capped);
+            for (index, frame) in frames.iter().enumerate() {
+                assert!(
+                    *frame == expected[index],
+                    "ceiling {ceiling}, frame {index}"
+                );
+            }
+            let kept = capped.stepper().cache_bytes();
+            let performances = capped.stepper().performances();
+            if ceiling == 4096 {
+                assert!(kept <= ceiling, "{kept}");
+                assert_eq!(performances, 3);
+            } else {
+                // Only the last request's performance, over the ceiling by
+                // its cursor.
+                assert_eq!(performances, 1);
+                assert_eq!(capped.stepper().kept(&starting(3)), Some((0, Some(0))));
+            }
+        }
+    }
+
+    #[test]
+    fn models_share_the_ceiling_and_take_their_states_when_they_go() {
+        let cache = SharedSpringCache::with_ceiling(SPRING_CACHE_BYTES);
+        let (mut one, _one) = open_sharing(&cache);
+        let (mut two, _two) = open_sharing(&cache);
+        render(&mut one, 2.0, &a());
+        let alone = one.stepper().cache_bytes();
+        render(&mut two, 2.0, &a());
+        // One performance each: the same data on two models is two.
+        assert_eq!(two.stepper().cache_bytes(), 2 * alone);
+        assert_eq!(two.stepper().performances(), 1);
+        drop(one);
+        assert_eq!(two.stepper().cache_bytes(), alone);
+    }
+
+    #[test]
+    fn a_performance_failing_at_step_zero_leaves_the_cache_alone() {
+        // The head's yaw overshoots `f32` around 0 s (the keys around it
+        // are finite), so step 0 fails, but a frame at 2 s holds the last
+        // key and renders up to its steps.
+        let failing = data(json!({
+            "tracks": { "head": { "yaw": { "type": "keyframes", "keyframes": [
+                { "time": { "value": -30, "timescale": 30 }, "value": 0.0 },
+                { "time": { "value": 30, "timescale": 30 }, "value": 3.2e38, "easing": "ease-out-back" },
+            ] } } },
+        }));
+        let (mut probe, _probe) = open();
+        render(&mut probe, 2.0, &a());
+        let one = probe.stepper().cache_bytes();
+        // Room for A alone.
+        let cache = SharedSpringCache::with_ceiling(one);
+        let (mut model, _files) = open_sharing(&cache);
+        render(&mut model, 2.0, &a());
+        let error = model.render(2.0, &failing).unwrap_err().0;
+        assert!(error.contains("spring bones' step 0:"), "{error}");
+        assert_eq!(model.stepper().performances(), 1);
+        assert_eq!(model.stepper().kept(&a()), Some((4, Some(120))));
     }
 
     #[test]
@@ -398,34 +794,12 @@ mod tests {
                 "{error}"
             );
         }
-        *model.stepper_mut() = Stepper::with_limits(120, CHECKPOINT_BYTES);
+        *model.stepper_mut() = Stepper::with_limits(&SharedSpringCache::default(), 120);
         render(&mut model, 2.0, &a());
         assert!(model.render(2.0 + 1.0 / SPRING_HZ, &a()).is_err());
 
         // An avatar without springs has no clock to run.
         let (mut still, _still) = open_vrm(&SyntheticVrm::avatar());
         render(&mut still, past, &a());
-    }
-
-    #[test]
-    fn kept_states_per_performance_are_bounded() {
-        // Two moving joints: 48 bytes a state, so four states.
-        let (mut bounded, _bounded) = open();
-        *bounded.stepper_mut() = Stepper::with_limits(MAX_SPRING_STEPS, 4 * 48);
-        let late = render(&mut bounded, 10.0, &a());
-        let kept = bounded.stepper().kept(&a()).unwrap();
-        assert!((1..=4).contains(&kept), "{kept}");
-
-        let (mut fresh, _fresh) = open();
-        assert!(late == render(&mut fresh, 10.0, &a()));
-        for time in [7.3, 0.5, 9.9] {
-            assert!(
-                render(&mut bounded, time, &a()) == render(&mut fresh, time, &a()),
-                "at {time} s"
-            );
-        }
-        assert!(bounded.stepper().kept(&a()).unwrap() <= 4);
-        // Unbounded, the 600 steps keep 20.
-        assert_eq!(fresh.stepper().kept(&a()), Some(20));
     }
 }

@@ -8,6 +8,7 @@ use crate::PLUGIN;
 use crate::camera::{CameraData, LightsData};
 use crate::model::VrmModel;
 use crate::motion::MotionData;
+use crate::stepping::SharedSpringCache;
 use crate::tracks::TrackData;
 use celesta_plugin::{ContentFrame, ContentProvider, ModelId, Opened, PluginError};
 use serde::Deserialize;
@@ -79,11 +80,14 @@ pub enum LookAtKeyword {
 /// - `close` drops the model.
 ///
 /// `open` moves the scene's geometries out of the model it keeps (see
-/// [`VrmModel::take_scene_model`]): nothing may read them afterwards.
+/// [`VrmModel::take_scene_model`]): nothing may read them afterwards. Its
+/// models keep their spring states in one cache, within one ceiling for
+/// the process (see `stepping`); `close` drops a model's.
 #[derive(Default)]
 pub struct VrmProvider {
     models: HashMap<ModelId, VrmModel>,
     next: u64,
+    springs: SharedSpringCache,
     /// Where textures are written in place of the user's texture cache.
     cache: Option<PathBuf>,
 }
@@ -113,6 +117,7 @@ impl ContentProvider for VrmProvider {
             None => VrmModel::open(assets),
         }
         .map_err(|error| failed(error.to_string()))?;
+        model.share_spring_cache(&self.springs);
         self.next += 1;
         let id = ModelId(self.next);
         let opened = Opened {
