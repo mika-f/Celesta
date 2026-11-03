@@ -50,10 +50,12 @@ if (!values['skip-js'] && !existsSync(join(projectTypes, 'tsconfig.json'))) {
 }
 const fromRuntime = createRequire(join(runtime, 'package.json'));
 
-// The platform an executable is for, as manifests name it: `<os>-<arch>`.
+// The platform an executable is for, as manifests name it: `<os>-<arch>`,
+// in the names of Rust's `std::env::consts`, which the host matches against.
 function platform() {
   if (values.target) {
-    const [arch] = values.target.split('-');
+    const [triple] = values.target.split('-');
+    const arch = /^i[3-6]86$/.test(triple) ? 'x86' : /^arm(?!64)/.test(triple) ? 'arm' : triple;
     const os = values.target.includes('windows')
       ? 'windows'
       : values.target.includes('apple-darwin')
@@ -70,15 +72,26 @@ function platform() {
 
 /**
  * The plugin's process: built with Cargo in the plugin's own workspace and
- * copied under bin/<os>-<arch>/.
+ * copied under bin/<os>-<arch>/. Cargo runs in the plugin's folder, so it
+ * reads the same configuration (`.cargo/config.toml`) wherever the script is
+ * started, and says itself where it builds (`CARGO_TARGET_DIR` or
+ * `build.target-dir` included).
  */
 function buildExecutable(out, cargoPackage) {
   const { os, arch } = platform();
   const binary = os === 'windows' ? `${cargoPackage}.exe` : cargoPackage;
-  const args = ['build', '--release', '--manifest-path', join(here, 'Cargo.toml'), '--bin', cargoPackage];
+  const cargo = process.env.CARGO ?? 'cargo';
+  const manifest = join(here, 'Cargo.toml');
+  const args = ['build', '--release', '--locked', '--manifest-path', manifest, '--bin', cargoPackage];
   if (values.target) args.push('--target', values.target);
-  run(process.env.CARGO ?? 'cargo', args);
-  const targetDirectory = process.env.CARGO_TARGET_DIR ? resolve(process.env.CARGO_TARGET_DIR) : join(here, 'target');
+  run(cargo, args, { cwd: here });
+  const metadata = spawnSync(
+    cargo,
+    ['metadata', '--format-version', '1', '--no-deps', '--locked', '--manifest-path', manifest],
+    { cwd: here, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'], maxBuffer: 64 * 1024 * 1024 },
+  );
+  if (metadata.status !== 0) fail(`${cargo} metadata failed`);
+  const targetDirectory = JSON.parse(metadata.stdout).target_directory;
   const built = join(targetDirectory, ...(values.target ? [values.target] : []), 'release', binary);
   if (!existsSync(built)) fail(`${built} was not built`);
   mkdirSync(join(out, 'bin', `${os}-${arch}`), { recursive: true });
