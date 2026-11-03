@@ -76,9 +76,9 @@ UniVRM (vrm-c/UniVRM), the reference implementation.
   `examples/plugins/build.mjs` does for the samples, and its own CI job runs
   its tests.
 - **Not bundled.** It is not put in the bundled plugin folder. A user
-  installs the built directory into the user plugin folder (or passes
-  `--plugin-dir`), and it is asked about like any user plugin
-  (`2026-11-02-plugin-trust.md`).
+  installs the built directory into the user plugin folder, where the
+  editor asks about it like any user plugin; a `--plugin-dir` path is
+  explicit and runs without asking (`2026-11-02-plugin-trust.md`).
 - It stays a separate process like any plugin: Celesta's crates do not
   depend on it. Its licence is MIT OR Apache-2.0, like the workspace; code
   ported from UniVRM (MIT) carries UniVRM's notice.
@@ -130,8 +130,9 @@ to follow UniVRM's code anyway, so it is ported.
 - `geometries`: indexed triangle lists with vertex streams in the payload:
   `position` (3×f32), `normal` (3×f32), `uv0` (2×f32), optional `tangent`
   (4×f32), optional `joints` (4×u16) and `weights` (4×f32), and morph
-  targets as dense `position`/`normal` deltas. The plugin supplies tangents
-  where a material needs them (MikkTSpace when the file has none).
+  targets as dense `position`/`normal` deltas. The plugin supplies
+  MikkTSpace tangents where a material needs them (the file's are ignored,
+  as UniVRM does).
 - `skins`: joint counts. Inverse bind matrices stay in the plugin, which
   sends final skinning matrices.
 - `materials`: `kind` (`"unlit"`, `"mtoon"`, later `"pbr"`), `alphaMode`
