@@ -1,7 +1,7 @@
 // Takes a plugin's resolved scene canvas (see `scene.rs`) of linear,
 // premultiplied color to the layer's encoding: un-premultiplied, encoded
 // linear to sRGB, and premultiplied again, as 8-bit values. The scene's
-// materials draw that canvas through `scene_material.rs`'s modules.
+// materials draw onto that canvas through `scene_material.rs`'s modules.
 
 @group(0) @binding(0)
 var resolved: texture_2d<f32>;

@@ -35,7 +35,7 @@ struct Frame {
     light_count: u32,
     celesta_reserved: u32,
     // The main light first.
-    lights: array<Light, 4>,
+    lights: array<Light, MAX_LIGHTS>,
     // The RGB of the ambient light's nine spherical harmonics
     // coefficients, in `ambient_light`'s order.
     ambient: array<vec4f, 9>,

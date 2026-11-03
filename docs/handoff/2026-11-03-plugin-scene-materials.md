@@ -85,7 +85,7 @@ struct Frame {                                       // 512 bytes
     height_over_width: f32,   // the canvas's height over its width
     light_count: u32,         // 0 to MAX_LIGHTS
     celesta_reserved: u32,
-    lights: array<Light, 4>,  // the main light first
+    lights: array<Light, MAX_LIGHTS>, // the main light first
     ambient: array<vec4f, 9>, // RGB of the SH coefficients c0…c8
 };
 struct Draw {                 // 128 bytes
