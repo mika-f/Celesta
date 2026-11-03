@@ -145,6 +145,7 @@ for (const name of names) {
     ...(executable ? { executable } : {}),
     module: 'js/index.js',
     types: 'js/index.d.ts',
+    ...(plugin.components ? { components: plugin.components } : {}),
   };
   writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
   console.log(`${plugin.id}: ${out}${executable ? ` (executables: ${Object.keys(executable).join(', ')})` : ''}`);

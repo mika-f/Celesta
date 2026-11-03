@@ -122,6 +122,7 @@ impl EditorView {
             loudness: self.export_loudness.target(),
             cancellation: cancellation.clone(),
             driver: self.driver,
+            plugins: self.plugins.clone(),
         };
         self.export_path = Some(output);
         self.export_progress = Some(ExportProgress::Rendering { frame: 0, total: 0 });

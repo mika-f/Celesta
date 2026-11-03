@@ -1,4 +1,3 @@
-use crate::RenderQuality;
 use crate::control::{ExportCancellation, ExportProgress};
 use crate::error::ExportError;
 use crate::exporter::Exporter;
@@ -8,7 +7,7 @@ use crate::range::ExportWindow;
 use crate::react::ReactVideoRequest;
 use celesta_composition::{Rational, Time, TimeError};
 use celesta_evaluator::{EvaluationError, Evaluator};
-use celesta_gpu_renderer::{Color, GpuDriver, GpuRenderOptions, GpuRenderer, ReadbackFormat};
+use celesta_gpu_renderer::{Color, GpuRenderOptions, GpuRenderer, ReadbackFormat};
 use celesta_media::FfmpegBackend;
 use celesta_project::Project;
 use celesta_react_bridge::{ProjectFrame, ReactBridge};
@@ -35,14 +34,12 @@ impl Exporter {
             ..
         } = window;
         let frame_rate = project.settings.frame_rate;
-        let mut renderer = export_renderer(
+        let mut renderer = self.export_renderer(
             asset_root,
             frame_rate,
             self.options.video_format,
             self.options.video.color_conversion,
             self.options.video.bit_depth,
-            self.options.render_quality,
-            self.options.driver,
         )?;
         let mut writer = open_video_writer(
             project.settings.width,
@@ -139,14 +136,12 @@ impl Exporter {
         // stays the renderer's single asset_root either way (see
         // absolutize_layers/absolutize_fonts below for how a project's own,
         // differently-rooted assets still resolve).
-        let mut renderer = export_renderer(
+        let mut renderer = self.export_renderer(
             asset_root,
             metadata.frame_rate,
             self.options.video_format,
             self.options.video.color_conversion,
             self.options.video.bit_depth,
-            self.options.render_quality,
-            self.options.driver,
         )?;
         let mut writer = open_video_writer(
             metadata.width,
@@ -438,33 +433,47 @@ pub(crate) fn ffmpeg_path(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
-/// The renderer an export draws its frames with. For an alpha `format` it
-/// clears to transparent and reads back straight-alpha 16-bit RGBA, which the
-/// encoder converts; for MP4 it clears to the default opaque background and
-/// reads back yuv420p (or yuv420p10le for `bit_depth` 10) when
-/// `color_conversion` puts that conversion on the GPU, else RGBA of enough
-/// bits for `bit_depth`.
-pub(crate) fn export_renderer(
-    asset_root: &Path,
-    frame_rate: Rational,
+impl Exporter {
+    /// The renderer an export draws its frames with, at the options' render
+    /// quality, on their driver, with their plugins. For an alpha `format`
+    /// it clears to transparent and reads back straight-alpha 16-bit RGBA,
+    /// which the encoder converts; for MP4 it clears to the default opaque
+    /// background and reads back yuv420p (or yuv420p10le for `bit_depth` 10)
+    /// when `color_conversion` puts that conversion on the GPU, else RGBA of
+    /// enough bits for `bit_depth`.
+    pub(crate) fn export_renderer(
+        &self,
+        asset_root: &Path,
+        frame_rate: Rational,
+        format: VideoFormat,
+        color_conversion: ColorConversion,
+        bit_depth: BitDepth,
+    ) -> Result<GpuRenderer, ExportError> {
+        let background = if format.has_alpha() {
+            Color::TRANSPARENT
+        } else {
+            GpuRenderOptions::default().background
+        };
+        let driver = self.options.driver;
+        let renderer = GpuRenderer::new(GpuRenderOptions { background, driver })
+            .map_err(ExportError::Render)?
+            .with_render_quality(self.options.render_quality)
+            .with_asset_root(asset_root)
+            .with_video_decoder(FfmpegBackend::new().with_sequential_video(frame_rate))
+            // Plugin content comes from the plugins' own processes.
+            .with_content_provider(self.plugins().host());
+        with_readback(renderer, format, color_conversion, bit_depth)
+    }
+}
+
+/// `renderer` reading back what an export of `format` encodes (see
+/// [`Exporter::export_renderer`]).
+fn with_readback(
+    mut renderer: GpuRenderer,
     format: VideoFormat,
     color_conversion: ColorConversion,
     bit_depth: BitDepth,
-    render_quality: RenderQuality,
-    driver: GpuDriver,
 ) -> Result<GpuRenderer, ExportError> {
-    let background = if format.has_alpha() {
-        Color::TRANSPARENT
-    } else {
-        GpuRenderOptions::default().background
-    };
-    let mut renderer = GpuRenderer::new(GpuRenderOptions { background, driver })
-        .map_err(ExportError::Render)?
-        .with_render_quality(render_quality)
-        .with_asset_root(asset_root)
-        .with_video_decoder(FfmpegBackend::new().with_sequential_video(frame_rate))
-        // Plugin content comes from the plugins' own processes.
-        .with_content_provider(celesta_plugin_host::PluginHost::discover(&[]));
     let readback = if format.has_alpha() {
         ReadbackFormat::Rgba16Straight
     } else {

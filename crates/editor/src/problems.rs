@@ -21,6 +21,7 @@ pub(crate) enum Source {
     Schemas,
     Export,
     TypeScript,
+    Plugins,
 }
 
 impl Source {
@@ -33,14 +34,16 @@ impl Source {
             Self::Schemas => "Schemas",
             Self::Export => "Export",
             Self::TypeScript => "TypeScript",
+            Self::Plugins => "Plugins",
         }
     }
 
-    /// Audio and TypeScript problems leave the editor usable, so they are
+    /// Audio, TypeScript, and plugin problems (plugins waiting or skipped,
+    /// plugin settings not saved) leave the editor usable, so they are
     /// warnings; the rest block what the user asked for.
     pub(crate) fn severity(self) -> Severity {
         match self {
-            Self::Audio | Self::TypeScript => Severity::Warning,
+            Self::Audio | Self::TypeScript | Self::Plugins => Severity::Warning,
             _ => Severity::Error,
         }
     }
@@ -61,6 +64,7 @@ impl Source {
             Self::Schemas => "Couldn’t load component schemas",
             Self::Export => "Export failed",
             Self::TypeScript => "TypeScript setup failed",
+            Self::Plugins => "Some plugins were skipped",
         }
     }
 }

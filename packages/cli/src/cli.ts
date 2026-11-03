@@ -47,8 +47,8 @@ import type {
   WirePropertyTable,
 } from '@celesta/react/internal';
 
-import { PLUGIN_SPECIFIER, findPlugins, resolvePluginModule } from './plugins';
-import type { Plugins } from './plugins';
+import { PLUGIN_SPECIFIER, WAITING_PLUGIN_PATH_ENV, findPlugins, resolvePluginImport, standInSource } from './plugins';
+import type { Plugins, StandIn } from './plugins';
 import { resolvePropertyInputs } from './property-inputs';
 import type { PropertyInputLayer, PropertyIssue } from './property-inputs';
 
@@ -598,6 +598,9 @@ interface LoadedEntry {
   prepare: (() => Promise<void>) | undefined;
 }
 
+/** The esbuild namespace of the modules standing in for waiting plugins. */
+const STAND_IN_NAMESPACE = 'celesta-waiting-plugin';
+
 async function loadEntry(entryPath: string, sourceLocations: boolean): Promise<LoadedEntry> {
   const contents = path.resolve(__dirname, '../../..');
   if (process.platform === 'darwin' && path.basename(contents) === 'Contents') {
@@ -606,6 +609,8 @@ async function loadEntry(entryPath: string, sourceLocations: boolean): Promise<L
   }
   // eslint-disable-next-line global-require -- optional, only needed by this CLI
   const esbuild = require('esbuild') as typeof import('esbuild');
+  // `@celesta/shader` sources and subtitle files, imported as their text.
+  const loader: Record<string, import('esbuild').Loader> = { '.wgsl': 'text', '.srt': 'text', '.vtt': 'text' };
   const result = await esbuild.build({
     entryPoints: [entryPath],
     bundle: true,
@@ -616,8 +621,7 @@ async function loadEntry(entryPath: string, sourceLocations: boolean): Promise<L
     // `jsxDEV(type, props, key, isStatic, { fileName, lineNumber, columnNumber })`
     // for every JSX element in the entry's own files.
     ...(sourceLocations ? { jsxDev: true } : {}),
-    // `@celesta/shader` sources and subtitle files, imported as their text.
-    loader: { '.wgsl': 'text', '.srt': 'text', '.vtt': 'text' },
+    loader,
     absWorkingDir: path.dirname(entryPath),
     logLevel: 'silent',
     define: {
@@ -657,10 +661,35 @@ async function loadEntry(entryPath: string, sourceLocations: boolean): Promise<L
         // The plugin directories are read once per bundle, so a reload sees
         // plugins installed since.
         let plugins: Promise<Plugins> | undefined;
+        let waiting: Promise<Plugins> | undefined;
         build.onResolve({ filter: PLUGIN_SPECIFIER }, async (args) => {
           plugins ??= findPlugins();
-          const resolved = resolvePluginModule(args.path, await plugins);
-          return 'error' in resolved ? { errors: [{ text: resolved.error }] } : { path: resolved.path };
+          waiting ??= findPlugins(process.env[WAITING_PLUGIN_PATH_ENV] ?? '');
+          const resolved = resolvePluginImport(args.path, await plugins, await waiting);
+          if ('error' in resolved) return { errors: [{ text: resolved.error }] };
+          if ('standIn' in resolved) {
+            return { path: resolved.standIn.module, namespace: STAND_IN_NAMESPACE, pluginData: resolved.standIn };
+          }
+          return { path: resolved.path };
+        });
+        // A waiting plugin's module is bundled on its own only to learn what
+        // it exports; nothing in it runs, and its imports are left alone.
+        build.onLoad({ filter: /.*/, namespace: STAND_IN_NAMESPACE }, async (args) => {
+          const standIn = args.pluginData as StandIn;
+          const read = await esbuild.build({
+            entryPoints: [standIn.module],
+            bundle: true,
+            write: false,
+            metafile: true,
+            platform: 'node',
+            format: 'esm',
+            jsx: 'automatic',
+            loader,
+            packages: 'external',
+            logLevel: 'silent',
+          });
+          const names = Object.values(read.metafile.outputs).flatMap((output) => output.exports);
+          return { contents: standInSource(standIn.id, names), loader: 'js', resolveDir: path.dirname(standIn.module) };
         });
       },
     }],

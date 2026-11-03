@@ -124,6 +124,10 @@ impl ReactBridge {
         if options.source_locations {
             command.arg("--source-locations");
         }
+        let plugins = options.plugins.unwrap_or_else(|| {
+            celesta_plugin_host::InstalledPlugins::find_reporting(&[]).runtime()
+        });
+        command.envs(plugins.env());
         let mut child = command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

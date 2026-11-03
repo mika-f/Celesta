@@ -7,7 +7,7 @@
 //! Copying them from the running Celesta keeps them in step with the runtime
 //! without a package registry or an install step.
 
-use celesta_plugin_host::{PluginEntry, discover, plugin_paths};
+use celesta_plugin_host::{InstalledPlugins, PluginEntry};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -85,9 +85,15 @@ pub fn set_up_project_types_in(template: &Path, root: &Path) -> io::Result<Proje
 }
 
 /// Re-copies `.celesta/` when a project that already has one was set up by a
-/// different Celesta build. Returns the refreshed root; projects that never
-/// opted in, or a runtime without a template, are left untouched.
-pub fn refresh_project_types(template: &Path, entry: &Path) -> io::Result<Option<PathBuf>> {
+/// different Celesta build, and puts `plugins`' declarations in it either
+/// way (plugins come and go without a new build). Returns the refreshed
+/// root; projects that never opted in, or a runtime without a template, are
+/// left untouched.
+pub fn refresh_project_types(
+    template: &Path,
+    entry: &Path,
+    plugins: &[PluginEntry],
+) -> io::Result<Option<PathBuf>> {
     let Ok(expected) = fs::read(template.join(STAMP)) else {
         return Ok(None);
     };
@@ -98,17 +104,21 @@ pub fn refresh_project_types(template: &Path, entry: &Path) -> io::Result<Option
     else {
         return Ok(None);
     };
-    if fs::read(root.join(PROJECT_TYPES_DIR).join(STAMP))? == expected {
-        // Plugins come and go without a new Celesta build.
-        install_plugin_types(&root.join(PROJECT_TYPES_DIR), &installed_plugins())?;
-        return Ok(None);
-    }
-    install(template, root)?;
-    Ok(Some(root.to_owned()))
+    let refreshed = if fs::read(root.join(PROJECT_TYPES_DIR).join(STAMP))? == expected {
+        None
+    } else {
+        install(template, root)?;
+        Some(root.to_owned())
+    };
+    install_plugin_types(&root.join(PROJECT_TYPES_DIR), plugins)?;
+    Ok(refreshed)
 }
 
+/// The plugins `InstalledPlugins::find` returns, as the exporter finds
+/// them: not a project's own plugin folders, and including plugins the app
+/// still asks about. Only their declarations are copied, which run nothing.
 fn installed_plugins() -> Vec<PluginEntry> {
-    discover(&plugin_paths(&[])).0
+    InstalledPlugins::find(&[]).0.plugins
 }
 
 /// Copies each plugin's declarations to `target/plugins/<id>/index.d.ts`,
@@ -236,8 +246,10 @@ pub(crate) mod tests {
                 executable: Default::default(),
                 module: Some("js/index.js".into()),
                 types: Some("js/index.d.ts".into()),
+                components: Vec::new(),
             },
             directory: plugin,
+            source: celesta_plugin_host::PluginSource::Explicit,
         };
         let target = scratch.0.join("project/.celesta");
         write(&target.join("plugins/old/index.d.ts"), "");
@@ -342,7 +354,7 @@ pub(crate) mod tests {
         // An entry written there later is kept up to date like any other.
         let new = template(&scratch.0.join("new"), "v2");
         assert_eq!(
-            refresh_project_types(&new, &project.join("src/main.tsx")).unwrap(),
+            refresh_project_types(&new, &project.join("src/main.tsx"), &[]).unwrap(),
             Some(project.clone())
         );
     }
@@ -364,7 +376,7 @@ pub(crate) mod tests {
         let entry = project.join("src/main.tsx");
         write(&entry, "");
 
-        assert_eq!(refresh_project_types(&new, &entry).unwrap(), None);
+        assert_eq!(refresh_project_types(&new, &entry, &[]).unwrap(), None);
         assert!(!project.join(PROJECT_TYPES_DIR).exists());
 
         // Without a package root the entry's own directory is the root.
@@ -374,9 +386,9 @@ pub(crate) mod tests {
             &root.join(PROJECT_TYPES_DIR).join("node_modules/stale.d.ts"),
             "",
         );
-        assert_eq!(refresh_project_types(&old, &entry).unwrap(), None);
+        assert_eq!(refresh_project_types(&old, &entry, &[]).unwrap(), None);
         assert_eq!(
-            refresh_project_types(&new, &entry).unwrap(),
+            refresh_project_types(&new, &entry, &[]).unwrap(),
             Some(root.clone())
         );
 
@@ -397,7 +409,7 @@ pub(crate) mod tests {
         write(&project.join(PROJECT_TYPES_DIR).join(STAMP), "v1");
         let missing = scratch.0.join("missing");
         assert_eq!(
-            refresh_project_types(&missing, &project.join("main.tsx")).unwrap(),
+            refresh_project_types(&missing, &project.join("main.tsx"), &[]).unwrap(),
             None
         );
     }

@@ -50,6 +50,7 @@ PowerShell を使い、`C:\path\to\Celesta` をアプリのインストール先
 - `package.json`：プレビュー・書き出し・型検査のスクリプトと、開発依存として TypeScript `^7.0.2` を持つ非公開プロジェクト。
 - `tsconfig.json` と `.celesta/`：Celesta の同梱ランタイムに対応する設定と型宣言。
 - `.gitignore`：`node_modules/` と `output.mp4` を除外します。生成される `.celesta/` ディレクトリは自身を除外します。
+- `celesta.config.json`：このフォルダーがプロジェクトのルートであることを示します。これがあるので、エディタはプロジェクトを信頼したことを記憶できます。[プロジェクトに同梱するプラグイン](/ja/docs/plugins/#プロジェクトに同梱するプラグイン)を書くこともできます。
 
 プレビューと書き出しはパッケージをインストールせずに動作します。プロジェクトの TypeScript コンパイラを使うには、Node.js と pnpm を別途インストールし、プロジェクトのフォルダで以下を実行します。
 
@@ -60,7 +61,7 @@ pnpm typecheck
 
 > [!NOTE]
 > **既存のフォルダの初期化**
-> 再度初期化すると `.celesta/` が更新され、不足するひな形ファイルが作られます。既存のソース、`package.json` の依存関係とスクリプト、`tsconfig.json`、`.gitignore` は保持されます。既存の TypeScript 設定が `./.celesta/tsconfig.json` を継承していない場合、Celesta が必要な変更を表示します。自分の設定に取り込んでください。
+> 再度初期化すると `.celesta/` が更新され、不足するひな形ファイルが作られます。既存のソース、`package.json` の依存関係とスクリプト、`tsconfig.json`、`.gitignore`、`celesta.config.json` は保持されます。既存の TypeScript 設定が `./.celesta/tsconfig.json` を継承していない場合、Celesta が必要な変更を表示します。自分の設定に取り込んでください。
 
 ## npm の依存関係を追加
 

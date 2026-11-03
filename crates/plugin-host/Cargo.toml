@@ -10,8 +10,13 @@ rust-version.workspace = true
 [dependencies]
 celesta-plugin = { path = "../plugin" }
 serde.workspace = true
+sha2 = "0.10"
 serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
 tempfile = "3.23.0"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+

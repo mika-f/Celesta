@@ -1,11 +1,14 @@
 use crate::actions::{
-    CloseWindow, CreateNewProject, OpenProject, ReloadProject, SetUpTypeScript,
+    CloseWindow, CreateNewProject, OpenProject, ReloadPlugins, ReloadProject, SetUpTypeScript,
     SetUpTypeScriptInFolder,
 };
 use crate::inline_text_view::EditEvent;
+use crate::plugins::{FoundPlugins, trust_request, trusted_root};
 use crate::problems::{Source, error_chain};
+use crate::source::PropertyArgs;
 use crate::source::load_source;
 use crate::view::EditorView;
+use celesta_plugin_host::UserSettings;
 use celesta_react_bridge::{
     DEFAULT_TEMPLATE, ProjectTsconfig, ProjectTypesSetup, TemplateInfo, initialize_project,
     list_templates, project_templates_dir, project_types_template,
@@ -310,7 +313,19 @@ impl EditorView {
                                 cx,
                             );
                         }
+                        // The user just made this project here: it is theirs.
+                        let trusted =
+                            UserSettings::update(|settings| settings.trust(&setup.root));
                         this.load_path(Some(setup.root.join("film.tsx")), window, cx);
+                        // After the load starts, which clears the project's
+                        // problems; the trust question follows anyway.
+                        if let Err(error) = trusted {
+                            this.problems.report(
+                                Source::Project,
+                                "Couldn’t save that you trust this project",
+                                error_chain(&error),
+                            );
+                        }
                     }
                     Err(error) => {
                         this.problems.report(
@@ -398,6 +413,24 @@ impl EditorView {
         // clears (or with the view a reopen replaces).
         self.end_inline_text(EditEvent::ProjectCommand, cx);
         self.after_inline_commit(window, cx, Self::reload_project);
+    }
+
+    /// File > Reload Plugins: looks for plugins again and reopens the
+    /// project with them, so the preview's plugin processes and React
+    /// runtimes start over with what is installed now.
+    pub(crate) fn reload_plugins_action(
+        &mut self,
+        _: &ReloadPlugins,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.end_inline_text(EditEvent::ProjectCommand, cx);
+        self.after_inline_commit(window, cx, |this, window, cx| {
+            if this.opening || !this.can_replace_contents(window, cx) {
+                return;
+            }
+            this.load_path(this.source_path.clone(), window, cx);
+        });
     }
 
     fn reload_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -604,27 +637,83 @@ impl EditorView {
             })
             .map(|react| react.property_args.clone())
             .unwrap_or_default();
+        self.load_path_with(path, property_args, window, cx);
+    }
+
+    /// [`Self::load_path`] with these `--props`/`--props-file` values. A
+    /// project folder the user has not trusted is asked about first, before
+    /// any of its code runs.
+    pub(crate) fn load_path_with(
+        &mut self,
+        path: Option<PathBuf>,
+        property_args: PropertyArgs,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.opening = true;
         self.problems.clear(Source::Project);
         self.pause();
         cx.notify();
         cx.spawn_in(window, async move |view, cx| {
             let load_path = path.clone();
+            let retry_args = property_args.clone();
             let loaded = cx
                 .background_executor()
-                .spawn(async move { load_source(load_path.as_deref(), property_args) })
+                .spawn(async move {
+                    if let Some(request) = load_path
+                        .as_deref()
+                        .and_then(|path| trust_request(path, &property_args))
+                    {
+                        return Err(Box::new(request));
+                    }
+                    // Every open looks for plugins again, so ones installed
+                    // since are found.
+                    let plugins = FoundPlugins::find(trusted_root(load_path.as_deref()).as_deref());
+                    Ok((
+                        load_source(load_path.as_deref(), property_args, &plugins),
+                        plugins,
+                    ))
+                })
                 .await;
-            view.update_in(cx, |this, _, cx| {
+            view.update_in(cx, |this, window, cx| {
                 this.opening = false;
                 let driver = this.driver;
+                let (loaded, plugins) = match loaded {
+                    Err(request) => {
+                        this.ask_to_trust(*request, window, cx);
+                        cx.notify();
+                        return;
+                    }
+                    Ok(loaded) => loaded,
+                };
+                // Kept for a failed open: an entry that calls a plugin
+                // waiting for approval fails until it is allowed.
+                let waiting = plugins.pending.clone();
+                let note = plugins.failure_note();
                 let result = loaded.and_then(|(document, react_preview)| {
-                    EditorView::from_document(path, document, react_preview, driver)
-                        .map_err(|error| error_chain(error.as_ref()))
+                    EditorView::from_document(
+                        path.clone(),
+                        document,
+                        react_preview,
+                        plugins,
+                        driver,
+                    )
+                    .map_err(|error| error_chain(error.as_ref()))
                 });
                 match result {
-                    Ok(next) => this.replace_contents(next, cx),
+                    Ok(next) => {
+                        this.replace_contents(next, cx);
+                        this.ask_about_pending_plugins(window, cx);
+                    }
                     Err(error) => {
+                        let error = match note {
+                            Some(note) => format!("{error}\n\n{note}"),
+                            None => error,
+                        };
                         this.problems.fail(Source::Project, error);
+                        // Allowing them opens this project again, not the
+                        // one still shown.
+                        this.ask_to_allow(&waiting, Some((path, retry_args)), window, cx);
                     }
                 }
                 cx.notify();
@@ -657,6 +746,7 @@ impl EditorView {
         // The new project's first render closes the previous one's toasts.
         next.toasted_sources = std::mem::take(&mut self.toasted_sources);
         next.interactive = self.interactive;
+        next.asked_plugins = std::mem::take(&mut self.asked_plugins);
         // A reload of the same entry keeps its history; another file starts empty.
         next.edit_history = std::mem::take(&mut self.edit_history);
         if self.react_entry().is_none() || self.react_entry() != next.react_entry() {

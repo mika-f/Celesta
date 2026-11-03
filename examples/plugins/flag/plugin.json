@@ -2,5 +2,13 @@
   "id": "flag",
   "version": "0.1.0",
   "module": "js/index.ts",
-  "cargoPackage": "celesta-plugin-flag"
+  "cargoPackage": "celesta-plugin-flag",
+  "components": [
+    {
+      "name": "Flag",
+      "label": "Flag",
+      "src": "image",
+      "props": { "amplitude": 0.06 }
+    }
+  ]
 }

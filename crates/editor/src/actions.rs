@@ -6,6 +6,7 @@ actions!(
         CreateNewProject,
         OpenProject,
         ReloadProject,
+        ReloadPlugins,
         CloseWindow,
         Quit,
         ExportProject,

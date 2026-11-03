@@ -12,6 +12,7 @@ use crate::layer_select::SourceLookup;
 use crate::media_probe::{MediaAssetInfo, MediaProbeWorker, spawn_media_probe};
 use crate::meter::MasterLevels;
 use crate::occurrences::{OccurrenceState, OccurrenceWorker, spawn_occurrences};
+use crate::plugins::{FoundPlugins, trusted_root};
 use crate::preview::{
     AudioPreview, PreviewPresentation, PreviewWorker, ReactPreview, TextOverride, spawn_preview,
 };
@@ -33,6 +34,7 @@ use celesta_gpu_renderer::{
     GpuDriver, GpuRenderOptions, GpuRenderer, HitRegion, LayerFrame, TextLayout,
 };
 use celesta_media::FfmpegBackend;
+use celesta_plugin_host::InstalledPlugins;
 use celesta_react_bridge::{
     ComponentPropertyField, ComponentPropertySchema, PrimitivePropertyTable, SourcePos,
 };
@@ -56,6 +58,9 @@ pub(crate) enum RightTab {
     /// What can be edited in React-preview mode: the selected layer and the
     /// props file. Not offered for a project, whose inspector edits in place.
     Properties,
+    /// The content plugins: what was found, from where, and whether each
+    /// may run.
+    Plugins,
     Problems,
 }
 
@@ -64,7 +69,7 @@ impl RightTab {
     /// Problems.
     pub(crate) fn toggled_problems(self) -> Self {
         match self {
-            Self::Details | Self::Properties => Self::Problems,
+            Self::Details | Self::Properties | Self::Plugins => Self::Problems,
             Self::Problems => Self::Details,
         }
     }
@@ -72,9 +77,14 @@ impl RightTab {
     /// The tabs the right dock offers, in order.
     pub(crate) fn offered(react_preview: bool) -> &'static [Self] {
         if react_preview {
-            &[Self::Details, Self::Properties, Self::Problems]
+            &[
+                Self::Details,
+                Self::Properties,
+                Self::Plugins,
+                Self::Problems,
+            ]
         } else {
-            &[Self::Details, Self::Problems]
+            &[Self::Details, Self::Plugins, Self::Problems]
         }
     }
 
@@ -372,6 +382,17 @@ pub(crate) struct EditorView {
     /// The Add menu's mode, what it read about the parent, and the
     /// selection of an element just added.
     pub(crate) add: AddState,
+    /// The content plugins that may run (allowed and on) of those found when
+    /// this project opened: the preview's renderer runs them, and every React
+    /// runtime and export is given the same set (see `plugins.rs`).
+    pub(crate) plugins: InstalledPlugins,
+    /// Everything the last discovery found: what runs, what waits for the
+    /// user, what is turned off, and what was skipped (the Plugins tab).
+    pub(crate) found_plugins: FoundPlugins,
+    /// The plugins (directory and fingerprint) the user was already asked
+    /// about in this window, so "Not Now" is not asked again until they
+    /// change.
+    pub(crate) asked_plugins: HashSet<(PathBuf, String)>,
 }
 
 impl EditorView {
@@ -380,15 +401,23 @@ impl EditorView {
         property_args: PropertyArgs,
         driver: GpuDriver,
     ) -> anyhow::Result<Self> {
+        let plugins = FoundPlugins::find(trusted_root(path).as_deref());
         let (document, react_preview) =
-            load_source(path, property_args).map_err(anyhow::Error::msg)?;
-        Self::from_document(path.map(Path::to_path_buf), document, react_preview, driver)
+            load_source(path, property_args, &plugins).map_err(anyhow::Error::msg)?;
+        Self::from_document(
+            path.map(Path::to_path_buf),
+            document,
+            react_preview,
+            plugins,
+            driver,
+        )
     }
 
     pub(crate) fn from_document(
         source_path: Option<PathBuf>,
         document: EditorDocument,
         react_preview: Option<ReactPreview>,
+        plugins: FoundPlugins,
         driver: GpuDriver,
     ) -> anyhow::Result<Self> {
         let settings = &document.project().settings;
@@ -416,7 +445,7 @@ impl EditorView {
         })?
         .with_asset_root(document.asset_root())
         .with_video_decoder(FfmpegBackend::new().with_sequential_video(frame_rate_value))
-        .with_content_provider(celesta_plugin_host::PluginHost::discover(&[]));
+        .with_content_provider(plugins.installed.host());
         let adapter = renderer.adapter_info();
         let gpu_name = format!("{} ({})", adapter.name, adapter.backend).into();
         let preview_worker = spawn_preview(renderer)?;
@@ -554,7 +583,11 @@ impl EditorView {
             inline_end_due: None,
             inline_refocus: false,
             add: AddState::default(),
+            plugins: InstalledPlugins::default(),
+            found_plugins: FoundPlugins::default(),
+            asked_plugins: HashSet::new(),
         };
+        editor.set_plugins(plugins);
         editor.refresh_preview();
         editor.refresh_audio_preview();
         editor.refresh_occurrences(false);
@@ -593,14 +626,21 @@ mod tests {
     fn properties_tab_is_offered_only_in_react_preview() {
         assert_eq!(
             RightTab::offered(true),
-            [RightTab::Details, RightTab::Properties, RightTab::Problems]
+            [
+                RightTab::Details,
+                RightTab::Properties,
+                RightTab::Plugins,
+                RightTab::Problems
+            ]
         );
         assert_eq!(
             RightTab::offered(false),
-            [RightTab::Details, RightTab::Problems]
+            [RightTab::Details, RightTab::Plugins, RightTab::Problems]
         );
         assert_eq!(RightTab::Properties.shown(true), RightTab::Properties);
         assert_eq!(RightTab::Properties.shown(false), RightTab::Details);
         assert_eq!(RightTab::Problems.shown(false), RightTab::Problems);
+        assert_eq!(RightTab::Plugins.shown(false), RightTab::Plugins);
+        assert_eq!(RightTab::Plugins.toggled_problems(), RightTab::Problems);
     }
 }

@@ -1,6 +1,7 @@
 use crate::range::ExportRange;
 use crate::{GpuDriver, RenderQuality};
 use celesta_media::LoudnessTarget;
+use celesta_plugin_host::InstalledPlugins;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use strum::VariantArray;
@@ -41,6 +42,12 @@ pub struct ExportOptions {
     /// export measures its mix either way and reports the result in
     /// [`ExportedFile::Video`](crate::ExportedFile::Video).
     pub loudness: Option<LoudnessTarget>,
+    /// The content plugins the renderer and the React runtime use. `None`
+    /// discovers them when the [`Exporter`](crate::Exporter) is made, in
+    /// every location Celesta searches (see
+    /// [`InstalledPlugins::find`]); a caller that already discovered them,
+    /// as the editor and `--plugin-dir` do, passes its set.
+    pub plugins: Option<InstalledPlugins>,
 }
 
 /// The container (and, with it, the codecs) an exported video is written in.

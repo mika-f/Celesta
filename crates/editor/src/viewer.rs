@@ -1054,7 +1054,7 @@ impl EditorView {
         let (label, hint) = match &self.add.mode {
             AddMode::Off => ("Add".to_owned(), None),
             AddMode::Picking(kind) => (
-                format!("Adding {}", kind.tag()),
+                format!("Adding {}", self.adding_name(*kind)),
                 Some(format!("{to}Choose a file…")),
             ),
             AddMode::Armed(tool) | AddMode::Drawing { tool, .. } => {
@@ -1064,7 +1064,7 @@ impl EditorView {
                     _ => "Drag a box, or click · Esc cancels",
                 };
                 (
-                    format!("Adding {}", tool.kind.tag()),
+                    format!("Adding {}", self.adding_name(tool.kind)),
                     Some(format!("{to}{how}")),
                 )
             }
@@ -1091,6 +1091,24 @@ impl EditorView {
                             .disabled(why.is_some())
                             .on_click(move |_, _, cx| {
                                 let _ = view.update(cx, |this, cx| this.choose_add_kind(kind, cx));
+                            }),
+                    );
+                }
+                // The running plugins' components, after Celesta's own.
+                if !menu.components.is_empty() {
+                    popup = popup.separator();
+                }
+                for component in &menu.components {
+                    let (chosen, view) = (component.clone(), view.clone());
+                    popup = popup.item(
+                        PopupMenuItem::new(component.info.label().to_owned())
+                            .icon(kind_icon(component.kind()))
+                            .disabled(menu.reason.is_some())
+                            .on_click(move |_, _, cx| {
+                                let chosen = chosen.clone();
+                                let _ = view.update(cx, |this, cx| {
+                                    this.choose_add_component(chosen, cx);
+                                });
                             }),
                     );
                 }

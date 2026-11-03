@@ -7,7 +7,7 @@ use crate::project::{absolutize_fonts, absolutize_layers};
 use crate::range::{ExportRange, resolve_window};
 use crate::react::{CompanionProject, ReactRuntimeOptions};
 use crate::render::{
-    ReportedFontWarnings, ensure_not_cancelled, export_renderer, frame_count, report_font_fallbacks,
+    ReportedFontWarnings, ensure_not_cancelled, frame_count, report_font_fallbacks,
 };
 use celesta_composition::{Rational, Scene, Time};
 use celesta_evaluator::{EvaluationError, Evaluator};
@@ -678,14 +678,12 @@ impl Exporter {
         let evaluator = Evaluator::new(project).map_err(ExportError::Evaluation)?;
         // Stills keep an MP4 export's opaque background, read back as
         // 8-bit RGBA.
-        let mut renderer = export_renderer(
+        let mut renderer = self.export_renderer(
             asset_root,
             frame_rate,
             VideoFormat::Mp4,
             ColorConversion::Encoder,
             BitDepth::Eight,
-            self.options.render_quality,
-            self.options.driver,
         )?;
         render_stills(
             &frames,
@@ -752,7 +750,7 @@ impl Exporter {
             )
         });
         let project = project_owned.as_ref().map(|(p, root)| (*p, root.as_path()));
-        let mut bridge = runtime.spawn(entry, project)?;
+        let mut bridge = runtime.spawn(entry, project, self.plugins())?;
         bridge.set_debug_guides(request.debug_guides);
         let metadata = bridge.metadata().clone();
         progress(ExportProgress::ReactCompositions {
@@ -807,14 +805,12 @@ impl Exporter {
 
         // Stills keep an MP4 export's opaque background, read back as
         // 8-bit RGBA.
-        let mut renderer = export_renderer(
+        let mut renderer = self.export_renderer(
             asset_root,
             metadata.frame_rate,
             VideoFormat::Mp4,
             ColorConversion::Encoder,
             BitDepth::Eight,
-            self.options.render_quality,
-            self.options.driver,
         )?;
         render_stills(
             &frames,

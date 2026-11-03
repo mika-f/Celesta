@@ -1,7 +1,9 @@
 use crate::EDITOR_DEMO_PROJECT;
+use crate::plugins::FoundPlugins;
 use crate::preview::{KeptSchema, ReactPreview};
 use crate::problems::error_chain;
 use celesta_editor_core::EditorDocument;
+use celesta_plugin_host::PluginEntry;
 use celesta_react_bridge::{
     PrepareDependency, PropertyInputs, ReactBridge, SpawnOptions, project_types_template,
     refresh_project_types, runtime_paths as react_runtime_paths,
@@ -64,6 +66,7 @@ impl PropertyArgs {
 pub(crate) fn load_source(
     path: Option<&Path>,
     property_args: PropertyArgs,
+    plugins: &FoundPlugins,
 ) -> Result<(EditorDocument, Option<ReactPreview>), String> {
     if !property_args.is_empty() && !path.is_some_and(is_react_entry) {
         return Err(
@@ -83,6 +86,7 @@ pub(crate) fn load_source(
                 &properties,
                 SpawnOptions {
                     composition_id: property_args.composition.clone(),
+                    plugins: Some(plugins.installed.runtime()),
                     ..SpawnOptions::default()
                 },
             )
@@ -132,19 +136,21 @@ pub(crate) fn load_source(
             .map_err(|error| error_chain(&error)),
     };
     if let Ok((document, _)) = &loaded {
-        refresh_typescript_support(document);
+        refresh_typescript_support(document, &plugins.declared());
     }
     loaded
 }
 
 /// Keeps a project that ran File > Set Up TypeScript on this build's
-/// declarations. Best effort: stale types must not block opening the project.
-pub(crate) fn refresh_typescript_support(document: &EditorDocument) {
+/// declarations and on `plugins`'. Best effort: stale types must not block
+/// opening the project.
+pub(crate) fn refresh_typescript_support(document: &EditorDocument, plugins: &[PluginEntry]) {
     let Some(entry) = document.react_entry_absolute_path() else {
         return;
     };
     let (_, cli_script) = react_runtime_paths();
-    if let Err(error) = refresh_project_types(&project_types_template(&cli_script), &entry) {
+    if let Err(error) = refresh_project_types(&project_types_template(&cli_script), &entry, plugins)
+    {
         eprintln!("Celesta: couldn’t refresh TypeScript support: {error}");
     }
 }

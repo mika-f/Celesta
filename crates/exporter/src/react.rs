@@ -1,4 +1,5 @@
 use crate::error::ExportError;
+use celesta_plugin_host::InstalledPlugins;
 use celesta_project::Project;
 use celesta_react_bridge::{
     PropertyInputs, ReactAudioClipDescriptor, ReactBridge, ReactCompositionMetadata,
@@ -55,11 +56,13 @@ impl ReactRuntimeOptions {
         self
     }
 
-    /// Starts the entry with these properties over the companion project's.
+    /// Starts the entry with these properties over the companion project's,
+    /// resolving `@celesta-plugin/<id>` among `plugins`.
     pub(crate) fn spawn(
         &self,
         entry: &Path,
         project: Option<(&Project, &Path)>,
+        plugins: &InstalledPlugins,
     ) -> Result<ReactBridge, ExportError> {
         let properties = match project {
             Some((project, asset_root)) => {
@@ -76,6 +79,7 @@ impl ReactRuntimeOptions {
             &properties,
             SpawnOptions {
                 composition_id: self.composition_id.clone(),
+                plugins: Some(plugins.runtime()),
                 ..SpawnOptions::default()
             },
         )

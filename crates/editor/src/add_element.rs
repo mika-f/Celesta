@@ -17,11 +17,13 @@ use crate::view::EditorView;
 use celesta_composition::Point;
 use celesta_gpu_renderer::invert_affine;
 use celesta_media::FfmpegBackend;
+use celesta_plugin_host::{ComponentInfo, ComponentSource, InstalledPlugins};
 use celesta_react_bridge::{
     ElementKind, LayerSource, LayerSourceReport, ReactChapter, SourcePos, import_path, scenes_of,
 };
 use celesta_source_edit::{
-    NewElement, NewKind, Timing, add_child, add_locks, element_at, enclosing_component,
+    EditValue, NewComponent, NewElement, NewKind, Timing, add_child, add_component, add_locks,
+    element_at, enclosing_component,
 };
 use gpui_kit::{Context, MouseMoveEvent, PathPromptOptions, Pixels};
 use std::cell::RefCell;
@@ -584,7 +586,7 @@ pub(crate) fn add_files(
     file: &Path,
     parent: &SourcePos,
     tag: &str,
-    new: &NewElement,
+    new: &Addition,
     timing: Option<&Timing>,
 ) -> Result<(Vec<(PathBuf, String)>, SourcePos), String> {
     let changed = || SOURCE_CHANGED.to_owned();
@@ -592,7 +594,11 @@ pub(crate) fn add_files(
     let element = element_at(text, parent.line, parent.column)
         .filter(|element| tag_name(text, element) == tag)
         .ok_or_else(changed)?;
-    let added = add_child(text, &element, new, timing).map_err(|lock| lock.text())?;
+    let added = match new {
+        Addition::Element(new) => add_child(text, &element, new, timing),
+        Addition::Component(new) => add_component(text, &element, new, timing),
+    }
+    .map_err(|lock| lock.text())?;
     let written =
         celesta_source_edit::apply(text, &added.edits).map_err(|error| error.to_string())?;
     let position = SourcePos {
@@ -743,6 +749,105 @@ pub(crate) struct AddMenu {
     /// Why every item is disabled.
     pub(crate) reason: Option<String>,
     pub(crate) items: Vec<(NewKind, Option<String>)>,
+    /// The components the running plugins offer, after Celesta's own.
+    pub(crate) components: Vec<AddComponent>,
+}
+
+/// A component a plugin offers in the Add menu (its manifest's
+/// `components`), drawn like the kind it takes the shape of and written as
+/// `<Name … />` imported from `@celesta-plugin/<id>`.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct AddComponent {
+    pub(crate) plugin: String,
+    pub(crate) info: ComponentInfo,
+}
+
+impl AddComponent {
+    /// The components `plugins` offer, in search order.
+    pub(crate) fn offered(plugins: &InstalledPlugins) -> Vec<Self> {
+        plugins
+            .plugins
+            .iter()
+            .flat_map(|entry| {
+                entry.manifest.components.iter().map(|info| Self {
+                    plugin: entry.manifest.id.clone(),
+                    info: info.clone(),
+                })
+            })
+            .collect()
+    }
+
+    /// The kind whose drawing it takes: an Image or a Video when it takes a
+    /// file, else a Rect's box.
+    pub(crate) fn kind(&self) -> NewKind {
+        match self.info.src {
+            Some(ComponentSource::Image) => NewKind::Image,
+            Some(ComponentSource::Video) => NewKind::Video,
+            None => NewKind::Rect,
+        }
+    }
+
+    pub(crate) fn module(&self) -> String {
+        format!("@celesta-plugin/{}", self.plugin)
+    }
+
+    /// The component drawn as `drawn` (of [`Self::kind`]): its drawn props,
+    /// then the manifest's.
+    pub(crate) fn element(&self, drawn: &NewElement) -> NewComponent {
+        let number = |name: &str, value: f64| (name.to_owned(), EditValue::Number(value));
+        let mut attributes = match drawn {
+            NewElement::Image { src, x, y, width } | NewElement::Video { src, x, y, width } => {
+                vec![
+                    ("src".to_owned(), EditValue::String(src.clone())),
+                    number("x", *x),
+                    number("y", *y),
+                    number("width", *width),
+                ]
+            }
+            NewElement::Rect {
+                x,
+                y,
+                width,
+                height,
+            }
+            | NewElement::Ellipse {
+                x,
+                y,
+                width,
+                height,
+            } => vec![
+                number("x", *x),
+                number("y", *y),
+                number("width", *width),
+                number("height", *height),
+            ],
+            NewElement::Circle { x, y, .. } | NewElement::Text { x, y } => {
+                vec![number("x", *x), number("y", *y)]
+            }
+        };
+        attributes.extend(self.info.props.iter().filter_map(|(name, value)| {
+            let value = match value {
+                serde_json::Value::String(text) => EditValue::String(text.clone()),
+                serde_json::Value::Bool(flag) => EditValue::Bool(*flag),
+                serde_json::Value::Number(number) => EditValue::Number(number.as_f64()?),
+                _ => return None,
+            };
+            Some((name.clone(), value))
+        }));
+        NewComponent {
+            module: self.module(),
+            tag: self.info.name.clone(),
+            attributes,
+        }
+    }
+}
+
+/// What an addition writes: one of Celesta's elements, or a plugin's
+/// component.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Addition {
+    Element(NewElement),
+    Component(NewComponent),
 }
 
 /// The selected layer, its lookup and the lookup's frame.
@@ -811,6 +916,8 @@ pub(crate) struct AddState {
     confirm: Option<(String, SourcePos)>,
     /// Why the last addition was not written, for the viewer's notice.
     pub(crate) notice: Option<String>,
+    /// The plugin component being added, drawn as its kind.
+    pub(crate) component: Option<AddComponent>,
 }
 
 impl EditorView {
@@ -964,6 +1071,16 @@ impl EditorView {
             header,
             reason,
             items,
+            components: AddComponent::offered(&self.plugins),
+        }
+    }
+
+    /// What the Add button names while `kind` is drawn: the plugin
+    /// component being added, else the kind.
+    pub(crate) fn adding_name(&self, kind: NewKind) -> String {
+        match &self.add.component {
+            Some(component) => component.info.label().to_owned(),
+            None => kind.tag().to_owned(),
         }
     }
 
@@ -1010,6 +1127,24 @@ impl EditorView {
     /// A kind chosen in the Add menu: playback stops, and an Image or a
     /// Video asks for its file first.
     pub(crate) fn choose_add_kind(&mut self, kind: NewKind, cx: &mut Context<Self>) {
+        self.choose_add(kind, None, cx);
+    }
+
+    /// A plugin's component chosen in the Add menu: drawn as its kind (one
+    /// that takes a file asks for it first), written as the component.
+    pub(crate) fn choose_add_component(&mut self, component: AddComponent, cx: &mut Context<Self>) {
+        self.choose_add(component.kind(), Some(component), cx);
+    }
+
+    /// Starts drawing `kind`, written as `component` when one is given. The
+    /// component is kept only once the choice is taken, so a refused choice
+    /// leaves an earlier one's drawing with its own.
+    fn choose_add(
+        &mut self,
+        kind: NewKind,
+        component: Option<AddComponent>,
+        cx: &mut Context<Self>,
+    ) {
         self.pause();
         self.add.notice = None;
         // The element goes into the parent shown now, or into none.
@@ -1026,6 +1161,7 @@ impl EditorView {
                 return;
             }
         }
+        self.add.component = component;
         self.step_add(AddEvent::Chosen(kind));
         if self.add.mode == AddMode::Picking(kind) {
             self.pick_add_file(kind, cx);
@@ -1242,8 +1378,13 @@ impl EditorView {
                 slop,
             )
             .ok_or_else(|| SCALED_TO_ZERO.to_owned())?;
+            let new = match &self.add.component {
+                Some(component) => Addition::Component(component.element(&new)),
+                None => Addition::Element(new),
+            };
             Ok((parent, facts.tag.clone(), timing, new))
         });
+        self.add.component = None;
         let (parent, tag, timing, new) = match drawn {
             Ok(drawn) => drawn,
             Err(reason) => {

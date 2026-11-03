@@ -50,6 +50,7 @@ For a [source build](/en/docs/build-from-source/), build the React runtime first
 - `package.json`: a private project with preview, export, and typecheck scripts, and TypeScript `^7.0.2` as a development dependency.
 - `tsconfig.json` and `.celesta/`: configuration and declarations matching Celesta’s bundled runtime.
 - `.gitignore`: ignores `node_modules/` and `output.mp4`. The generated `.celesta/` directory ignores itself.
+- `celesta.config.json`: marks the folder as the project root, so the editor remembers that you trust the project. It can also list [plugins that come with the project](/en/docs/plugins/#plugins-that-come-with-a-project).
 
 Preview and export work without installing packages. To use the project’s TypeScript compiler, install Node.js and pnpm separately, then run these commands in the project folder:
 
@@ -60,7 +61,7 @@ pnpm typecheck
 
 > [!NOTE]
 > **Initializing an existing folder**
-> Re-running initialization refreshes `.celesta/` and creates missing starter files. Existing source files, `package.json` dependencies and scripts, `tsconfig.json`, and `.gitignore` are preserved. If an existing TypeScript configuration does not extend `./.celesta/tsconfig.json`, Celesta reports the change to make; merge it into your configuration.
+> Re-running initialization refreshes `.celesta/` and creates missing starter files. Existing source files, `package.json` dependencies and scripts, `tsconfig.json`, `.gitignore`, and `celesta.config.json` are preserved. If an existing TypeScript configuration does not extend `./.celesta/tsconfig.json`, Celesta reports the change to make; merge it into your configuration.
 
 ## Add npm dependencies
 

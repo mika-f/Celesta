@@ -1,7 +1,7 @@
 //! Plugin processes, one per plugin a renderer uses, behind the renderer's
 //! `ContentProvider` interface.
 
-use crate::manifest::{PluginEntry, discover, plugin_paths};
+use crate::manifest::{InstalledPlugins, PluginEntry};
 use celesta_plugin::protocol::{
     Message, PROTOCOL_VERSION, ProtocolError, decode_frame, decode_model, read_message,
     write_message,
@@ -132,14 +132,10 @@ impl PluginHost {
         }
     }
 
-    /// The plugins under `extra` and `CELESTA_PLUGIN_PATH`. Manifests that
-    /// cannot be read are reported on stderr and skipped.
+    /// The plugins in every location Celesta searches, `extra` first (see
+    /// [`InstalledPlugins::find`]). Skipped plugins are reported on stderr.
     pub fn discover(extra: &[PathBuf]) -> Self {
-        let (plugins, errors) = discover(&plugin_paths(extra));
-        for error in errors {
-            eprintln!("celesta: skipped a plugin: {error}");
-        }
-        Self::new(plugins)
+        InstalledPlugins::find_reporting(extra).host()
     }
 
     pub fn plugins(&self) -> impl Iterator<Item = &PluginEntry> {

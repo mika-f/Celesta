@@ -42,6 +42,8 @@ mod media_probe;
 mod occurrences;
 mod panels;
 mod playback;
+mod plugins;
+mod plugins_panel;
 mod preview;
 mod problems;
 mod problems_panel;
@@ -67,10 +69,10 @@ mod worker;
 use actions::{
     ClearExportRange, CloseWindow, CreateNewProject, ExportProject, GoToEnd, GoToIn, GoToOut,
     GoToStart, JumpBackward, JumpForward, NextEditPoint, NextFrame, OpenProject, PausePlayback,
-    PlayForward, PreviousEditPoint, PreviousFrame, Quit, Redo, ReloadProject, SetExportIn,
-    SetExportOut, SetUpTypeScript, SetUpTypeScriptInFolder, ShowProblems, ToggleInteractive,
-    ToggleLoop, TogglePlayback, ToggleSafeAreas, Undo, ZoomTimelineIn, ZoomTimelineOut,
-    ZoomTimelineToFit,
+    PlayForward, PreviousEditPoint, PreviousFrame, Quit, Redo, ReloadPlugins, ReloadProject,
+    SetExportIn, SetExportOut, SetUpTypeScript, SetUpTypeScriptInFolder, ShowProblems,
+    ToggleInteractive, ToggleLoop, TogglePlayback, ToggleSafeAreas, Undo, ZoomTimelineIn,
+    ZoomTimelineOut, ZoomTimelineToFit,
 };
 use inline_text_view::EditEvent;
 use source::PropertyArgs;
@@ -100,6 +102,17 @@ macro_rules! secondary {
 }
 
 const EDITOR_DEMO_PROJECT: &str = include_str!("../../../examples/editor-demo.celesta.json");
+
+/// What the window does with the project named on the command line once it
+/// is up.
+enum StartUp {
+    /// It opened (or none was named): ask about plugins waiting for approval.
+    Opened,
+    /// Its folder is not trusted: ask first.
+    AskToTrust(Box<plugins::TrustRequest>),
+    /// It failed to open: try again in the window, which shows why.
+    OpenAgain(std::path::PathBuf, PropertyArgs),
+}
 
 fn main() {
     if let Err(error) = run() {
@@ -141,7 +154,31 @@ fn run() -> anyhow::Result<()> {
     let path = args.path;
     let mut property_args = PropertyArgs::new(args.props_file, args.props);
     property_args.composition = args.composition;
-    let mut editor = EditorView::open(path.as_deref(), property_args, args.driver)?;
+    // A project the user has not trusted runs none of its code at start-up:
+    // the window opens on the demo and asks about the project first. One
+    // that fails to open (say, it imports a plugin waiting for approval)
+    // opens the demo too and is tried again in the window, where the error
+    // and the question about its plugins can show.
+    let mut start = match path
+        .as_deref()
+        .and_then(|path| plugins::trust_request(path, &property_args))
+    {
+        Some(request) => StartUp::AskToTrust(Box::new(request)),
+        None => StartUp::Opened,
+    };
+    let mut editor = match (&start, &path) {
+        (StartUp::Opened, Some(path)) => {
+            match EditorView::open(Some(path), property_args.clone(), args.driver) {
+                Ok(editor) => editor,
+                Err(_) => {
+                    start = StartUp::OpenAgain(path.clone(), property_args);
+                    EditorView::open(None, PropertyArgs::default(), args.driver)?
+                }
+            }
+        }
+        (StartUp::Opened, None) => EditorView::open(None, property_args, args.driver)?,
+        _ => EditorView::open(None, PropertyArgs::default(), args.driver)?,
+    };
 
     let app = gpui_kit::application().with_assets(CelestaAssets);
     app.run(move |cx: &mut App| {
@@ -236,6 +273,19 @@ fn run() -> anyhow::Result<()> {
                     }
                     editor
                 });
+                // Once the root that shows dialogs is in place.
+                window.defer(cx, {
+                    let view = view.clone();
+                    move |window, cx| {
+                        view.update(cx, |this, cx| match start {
+                            StartUp::AskToTrust(request) => this.ask_to_trust(*request, window, cx),
+                            StartUp::OpenAgain(path, property_args) => {
+                                this.load_path_with(Some(path), property_args, window, cx)
+                            }
+                            StartUp::Opened => this.ask_about_pending_plugins(window, cx),
+                        });
+                    }
+                });
                 cx.new(|cx| Root::new(view, window, cx))
             },
         )
@@ -252,6 +302,7 @@ fn app_menus() -> Vec<Menu> {
             MenuItem::action("Create New Project…", CreateNewProject),
             MenuItem::action("Open…", OpenProject),
             MenuItem::action("Reload", ReloadProject),
+            MenuItem::action("Reload Plugins", ReloadPlugins),
             MenuItem::separator(),
             MenuItem::action("Export…", ExportProject),
             MenuItem::separator(),

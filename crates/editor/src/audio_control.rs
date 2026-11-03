@@ -30,6 +30,7 @@ impl EditorView {
                 composition_id: react.composition_id.clone(),
                 sample_rate: self.document.project().settings.sample_rate,
                 master_volume: self.document.master_volume(),
+                plugins: self.plugins.runtime(),
             }) {
                 self.problems.fail(Source::Audio, error);
             }

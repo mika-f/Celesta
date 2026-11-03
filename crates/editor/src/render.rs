@@ -53,6 +53,7 @@ impl EditorView {
             .on_action(cx.listener(Self::open_project_action))
             .on_action(cx.listener(Self::create_new_project_action))
             .on_action(cx.listener(Self::reload_project_action))
+            .on_action(cx.listener(Self::reload_plugins_action))
             .on_action(cx.listener(Self::close_window_action))
             .on_action(cx.listener(Self::export_project_action))
             .on_action(cx.listener(Self::set_export_in_action))

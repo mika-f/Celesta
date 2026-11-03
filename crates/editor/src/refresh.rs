@@ -269,6 +269,7 @@ impl EditorView {
                     .react_preview
                     .as_ref()
                     .map(|react| react.composition_id.clone()),
+                plugins: self.plugins.runtime(),
             }
         });
         let react_mode = if self.is_react_preview() {
@@ -377,6 +378,7 @@ impl EditorView {
         let property_args = react.property_args.clone();
         let recorded = react.dependencies.clone();
         let (node, cli_script) = react_runtime_paths();
+        let plugins = self.plugins.runtime();
         let same_composition = composition_id.as_deref() == Some(react.composition_id.as_str());
         let frame = if same_composition {
             self.clock.frame()
@@ -416,6 +418,7 @@ impl EditorView {
                                 &properties,
                                 SpawnOptions {
                                     composition_id,
+                                    plugins: Some(plugins),
                                     ..SpawnOptions::default()
                                 },
                             )
@@ -723,6 +726,7 @@ impl EditorView {
                 node,
                 cli_script,
                 entry,
+                plugins: self.plugins.runtime(),
             })
         {
             self.problems.fail(Source::Schemas, error);

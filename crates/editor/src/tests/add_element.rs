@@ -4,10 +4,11 @@
 
 use super::*;
 use crate::add_element::{
-    AddedFate, PendingSelect, add_files, added_confirmed, added_fate, parent_facts,
+    AddComponent, AddedFate, Addition, PendingSelect, add_files, added_confirmed, added_fate,
+    parent_facts,
 };
 use crate::preview::AddedUnder;
-use celesta_source_edit::{NewElement, Timing};
+use celesta_source_edit::{EditValue, NewElement, NewKind, Timing};
 
 /// A scene whose `<Group>` at 4:3 holds a `<Text>`.
 const SCENE: &str = "import { Group, Text } from '@celesta/react';\n\nexport const Intro = () => (\n  <Group>\n    <Text>Hi</Text>\n  </Group>\n);\n";
@@ -45,6 +46,65 @@ fn rect() -> NewElement {
     }
 }
 
+fn element(new: NewElement) -> Addition {
+    Addition::Element(new)
+}
+
+/// The flag sample's component, as its manifest offers it.
+fn flag() -> AddComponent {
+    AddComponent {
+        plugin: "flag".into(),
+        info: serde_json::from_value(serde_json::json!({
+            "name": "Flag", "label": "Flag", "src": "image", "props": { "amplitude": 0.06 },
+        }))
+        .unwrap(),
+    }
+}
+
+#[test]
+fn a_plugin_component_is_drawn_as_its_kind_and_written_with_its_import() {
+    let component = flag();
+    assert_eq!(component.kind(), NewKind::Image);
+    let drawn = NewElement::Image {
+        src: "./portrait.png".into(),
+        x: 40.0,
+        y: 60.0,
+        width: 320.0,
+    };
+    let dir = scratch("component");
+    let file = dir.join("scene.tsx");
+    let (files, _) = add_files(
+        &texts(&file, SCENE),
+        &file,
+        &at(&file, 4, 3),
+        "Group",
+        &Addition::Component(component.element(&drawn)),
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        files[0].1,
+        "import { Group, Text } from '@celesta/react';\nimport { Flag } from '@celesta-plugin/flag';\n\nexport const Intro = () => (\n  <Group>\n    <Text>Hi</Text>\n    <Flag src=\"./portrait.png\" x={40} y={60} width={320} amplitude={0.06} />\n  </Group>\n);\n"
+    );
+
+    // Without a file, a component is drawn as a box.
+    let boxed = AddComponent {
+        info: serde_json::from_value(serde_json::json!({ "name": "Panel" })).unwrap(),
+        ..flag()
+    };
+    assert_eq!(boxed.kind(), NewKind::Rect);
+    assert_eq!(
+        boxed.element(&rect()).attributes,
+        [
+            ("x".to_owned(), EditValue::Number(120.0)),
+            ("y".to_owned(), EditValue::Number(80.0)),
+            ("width".to_owned(), EditValue::Number(320.0)),
+            ("height".to_owned(), EditValue::Number(180.0)),
+        ]
+    );
+    fs::remove_dir_all(dir).unwrap();
+}
+
 const TIMING: Timing = Timing {
     from: 45,
     duration: 75,
@@ -62,7 +122,15 @@ fn an_addition_writes_one_entry_and_undo_removes_it() {
     let parent = at(&file, 4, 3);
 
     let files = write_all_recorded(vec![file.clone()], |texts| {
-        add_files(texts, &file, &parent, "Group", &rect(), Some(&TIMING)).map(|(files, _)| files)
+        add_files(
+            texts,
+            &file,
+            &parent,
+            "Group",
+            &element(rect()),
+            Some(&TIMING),
+        )
+        .map(|(files, _)| files)
     })
     .unwrap();
     assert_eq!(files.len(), 1);
@@ -85,7 +153,15 @@ fn add_files_refuses_a_moved_parent() {
     let parent = at(&file, 4, 3);
 
     let refused = write_all_recorded(vec![file.clone()], |texts| {
-        add_files(texts, &file, &parent, "Group", &rect(), Some(&TIMING)).map(|(files, _)| files)
+        add_files(
+            texts,
+            &file,
+            &parent,
+            "Group",
+            &element(rect()),
+            Some(&TIMING),
+        )
+        .map(|(files, _)| files)
     });
     assert_eq!(refused, Err("The source changed while editing".to_owned()));
     assert_eq!(fs::read_to_string(&file).unwrap(), moved);
@@ -97,7 +173,7 @@ fn add_files_refuses_a_moved_parent() {
             &file,
             &at(&file, 2, 1),
             "Group",
-            &rect(),
+            &element(rect()),
             None
         ),
         Err("The source changed while editing".to_owned())
@@ -135,7 +211,7 @@ fn an_aliased_group_is_added_to() {
         &file,
         &at(&file, 4, 3),
         &group.tag,
-        &rect(),
+        &element(rect()),
         None,
     )
     .unwrap();
@@ -147,7 +223,7 @@ fn an_aliased_group_is_added_to() {
             &file,
             &at(&file, 4, 3),
             "Group",
-            &rect(),
+            &element(rect()),
             None
         ),
         Err("The source changed while editing".to_owned())
@@ -164,7 +240,7 @@ fn add_files_reports_the_position_after_the_import() {
         &file,
         &at(&file, 2, 3),
         "Group",
-        &NewElement::Text { x: 10.0, y: 20.0 },
+        &element(NewElement::Text { x: 10.0, y: 20.0 }),
         None,
     )
     .unwrap();

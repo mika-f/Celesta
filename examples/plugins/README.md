@@ -32,10 +32,14 @@ dist/flag/
 Each run adds this platform's executable (or `--target <triple>`'s) and
 keeps those already there, so builds on several platforms can fill one
 directory; later builds may pass `--skip-js`. To use the plugins in the
-desktop app's preview, start it with `CELESTA_PLUGIN_PATH` set to `dist/`.
+desktop app, add `dist/` with **Add Folder…** in its Plugins tab (or copy a
+plugin's folder into your plugin folder) and allow them when it asks, or
+with **Allow** in the Plugins tab.
 
-Each sample's `plugin.json` gives its id, version, module source, and, for a
-plugin with a program, the Cargo package that builds it.
+Each sample's `plugin.json` gives its id, version, and module source.
+flag's also names the Cargo package that builds its program and the
+`components` the app's Add menu offers, which the build copies into the
+manifest.
 
 ## Moving a sample out of this repository
 

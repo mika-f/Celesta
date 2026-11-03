@@ -1,6 +1,9 @@
 use crate::problems::error_chain;
 use crate::worker::LatestWorker;
-use celesta_react_bridge::{ComponentPropertyField, ComponentPropertySchema, ReactBridge};
+use celesta_plugin_host::RuntimePlugins;
+use celesta_react_bridge::{
+    ComponentPropertyField, ComponentPropertySchema, PropertyInputs, ReactBridge, SpawnOptions,
+};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -8,6 +11,8 @@ pub(crate) struct ComponentSchemaRequest {
     pub(crate) node: PathBuf,
     pub(crate) cli_script: PathBuf,
     pub(crate) entry: PathBuf,
+    /// The editor's plugins, as the runtime takes them.
+    pub(crate) plugins: RuntimePlugins,
 }
 
 pub(crate) struct ComponentSchemaResult {
@@ -25,7 +30,16 @@ pub(crate) type ComponentSchemaWorker = LatestWorker<ComponentSchemaRequest, Com
 
 pub(crate) fn spawn_component_schema() -> anyhow::Result<ComponentSchemaWorker> {
     LatestWorker::spawn("component schema", |request: ComponentSchemaRequest, _| {
-        let result = ReactBridge::spawn(&request.node, &request.cli_script, &request.entry);
+        let result = ReactBridge::spawn_with_options(
+            &request.node,
+            &request.cli_script,
+            &request.entry,
+            &PropertyInputs::default(),
+            SpawnOptions {
+                plugins: Some(request.plugins),
+                ..SpawnOptions::default()
+            },
+        );
         let schemas = result
             .as_ref()
             .map(|bridge| {
