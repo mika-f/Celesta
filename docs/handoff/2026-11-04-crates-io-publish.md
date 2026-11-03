@@ -41,8 +41,10 @@ cargo publish -p celesta-editor -p celesta-mcp --allow-dirty
 skips `publish = false` crates. The dry run takes `--allow-dirty` for the
 `bundled/` copies only. Its verification builds every crate, so
 FFmpeg 8 must be on `PKG_CONFIG_PATH`. crates.io rate-limits new crates, so a
-first publish of all 17 may stop partway; later, publish the rest with
-`--exclude` for each crate already on crates.io (or `-p` for each one left).
+first publish of all 17 may stop partway; later, rerun the step that
+stopped with `--exclude` for each crate already on crates.io (or `-p` for
+each one left), keeping `--allow-dirty` whenever celesta-editor or
+celesta-mcp is among them.
 
 Trusted Publishing (GitHub Actions OIDC) can be set up per crate on
 crates.io only after the crate's first version exists.
@@ -52,4 +54,6 @@ crates.io only after the crate's first version exists.
 - `cargo package -p celesta-mcp --list` and `-p celesta-editor --list` show
   `build.rs` and the `bundled/` copies.
 - `cargo check --workspace --all-targets`, `cargo test -p celesta-mcp docs`.
-- `cargo publish --workspace --dry-run`.
+- `cargo publish --workspace --dry-run --allow-dirty`.
+- `cargo package --workspace --exclude celesta-editor --exclude celesta-mcp`
+  succeeds without `--allow-dirty`.

@@ -14,7 +14,9 @@ fn main() {
 /// The window opens `examples/editor-demo.celesta.json` at the repository root
 /// when no project is named. A published crate cannot reach outside its own
 /// folder, so `scripts/bundle-crate-files.mjs` copies the project into
-/// `bundled/` before `cargo publish`.
+/// `bundled/` before `cargo publish`. Only a crate at `crates/editor` reads
+/// the repository's copy, so a vendored crate never picks up another
+/// project's `examples/`.
 fn find_demo_project() {
     const NAME: &str = "editor-demo.celesta.json";
     let manifest = std::path::PathBuf::from(
@@ -23,6 +25,7 @@ fn find_demo_project() {
     let path = manifest
         .ancestors()
         .nth(2)
+        .filter(|_| manifest.ends_with("crates/editor"))
         .map(|root| root.join("examples").join(NAME))
         .filter(|path| path.is_file())
         .unwrap_or_else(|| manifest.join("bundled").join(NAME));

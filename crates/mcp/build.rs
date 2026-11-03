@@ -1,7 +1,9 @@
 //! Finds the `celesta` skill that `src/docs.rs` embeds. In the repository it
 //! is `skills/celesta` at the root; a published crate cannot reach outside its
 //! own folder, so `scripts/bundle-crate-files.mjs` copies the skill into
-//! `bundled/` before `cargo publish`.
+//! `bundled/` before `cargo publish`. Only a crate at `crates/mcp` reads the
+//! repository's copy, so a vendored crate never picks up another project's
+//! `skills/celesta`.
 
 use std::path::PathBuf;
 
@@ -11,6 +13,7 @@ fn main() {
     let repository = manifest
         .ancestors()
         .nth(2)
+        .filter(|_| manifest.ends_with("crates/mcp"))
         .map(|root| root.join("skills").join("celesta"));
     let dir = repository
         .filter(|dir| dir.join("SKILL.md").is_file())
