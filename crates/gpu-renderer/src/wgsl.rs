@@ -109,42 +109,17 @@ pub(crate) fn check_declarations(
     }
     // Celesta's own declarations lie outside the author's code. Read from
     // naga's module, then from the source for what the module keeps no
-    // name of (aliases).
+    // name of (aliases). The author's entry points need no name check:
+    // every one that is not Celesta's was refused above.
     let reserved = |at: Option<usize>, name: &str| {
         fail(
             at,
             format!("declares `{name}`; names starting with `celesta` belong to Celesta"),
         )
     };
-    let declared = module
-        .functions
-        .iter()
-        .map(|(handle, function)| (function.name.as_deref(), module.functions.get_span(handle)))
-        .chain(module.global_variables.iter().map(|(handle, global)| {
-            (
-                global.name.as_deref(),
-                module.global_variables.get_span(handle),
-            )
-        }))
-        .chain(module.constants.iter().map(|(handle, constant)| {
-            (constant.name.as_deref(), module.constants.get_span(handle))
-        }))
-        .chain(module.overrides.iter().map(|(handle, constant)| {
-            (constant.name.as_deref(), module.overrides.get_span(handle))
-        }))
-        .chain(
-            module
-                .types
-                .iter()
-                .map(|(handle, ty)| (ty.name.as_deref(), module.types.get_span(handle))),
-        );
-    for (name, span) in declared {
-        let at = start(span);
-        if let Some(name) = name
-            && (rules.reserved)(name)
-            && at.is_some_and(|at| author.contains(&at))
-        {
-            return reserved(at, name);
+    for (name, at) in module_names(module, author) {
+        if (rules.reserved)(name) {
+            return reserved(Some(at), name);
         }
     }
     for (offset, name) in module_declarations(&code[author.clone()]) {
@@ -155,10 +130,79 @@ pub(crate) fn check_declarations(
     Ok(())
 }
 
-/// The names `source`, valid WGSL, declares at module scope (functions,
-/// constants, overrides, variables, structs, and aliases), each with the
-/// byte where it starts. Read from the source rather than from naga's
-/// module, which keeps no alias names.
+/// The names of `module`'s functions, global variables, constants,
+/// overrides, and named types declared in the `author` range of its
+/// source, each with the byte where its declaration starts. naga keeps no
+/// alias names, nor constants of abstract type, which it folds into their
+/// uses; `module_declarations` reads both from the source. (Calling a
+/// constant is a parse error, so one named like a built-in function or
+/// type cannot change what a call means.)
+pub(crate) fn module_names<'a>(
+    module: &'a naga::Module,
+    author: &Range<usize>,
+) -> Vec<(&'a str, usize)> {
+    let functions = module
+        .functions
+        .iter()
+        .map(|(handle, function)| (function.name.as_deref(), module.functions.get_span(handle)));
+    let globals = module.global_variables.iter().map(|(handle, global)| {
+        (
+            global.name.as_deref(),
+            module.global_variables.get_span(handle),
+        )
+    });
+    let constants = module
+        .constants
+        .iter()
+        .map(|(handle, constant)| (constant.name.as_deref(), module.constants.get_span(handle)));
+    let overrides = module
+        .overrides
+        .iter()
+        .map(|(handle, constant)| (constant.name.as_deref(), module.overrides.get_span(handle)));
+    let types = module
+        .types
+        .iter()
+        .map(|(handle, ty)| (ty.name.as_deref(), module.types.get_span(handle)));
+    functions
+        .chain(globals)
+        .chain(constants)
+        .chain(overrides)
+        .chain(types)
+        .filter_map(|(name, span)| {
+            let at = span.to_range()?.start;
+            (author.contains(&at)).then_some((name?, at))
+        })
+        .collect()
+}
+
+/// naga's line break, which ends a line comment: Unicode
+/// Pattern_White_Space but for the space, the tab, U+200E, and U+200F.
+const fn is_comment_end(c: char) -> bool {
+    matches!(
+        c,
+        '\u{000a}'..='\u{000d}' | '\u{0085}' | '\u{2028}' | '\u{2029}'
+    )
+}
+
+/// naga's blankspace: Unicode Pattern_White_Space.
+const fn is_blankspace(c: char) -> bool {
+    matches!(
+        c,
+        '\u{0020}' | '\u{0009}'
+            ..='\u{000d}' | '\u{0085}' | '\u{200e}' | '\u{200f}' | '\u{2028}' | '\u{2029}'
+    )
+}
+
+/// The names `source` declares at module scope (functions, constants,
+/// overrides, variables, structs, and aliases), each with the byte where
+/// it starts. Read from the source rather than from naga's module, which
+/// keeps no alias names.
+///
+/// Comments, blankspace, and words follow naga 30's lexer
+/// (`front/wgsl/parse/lexer.rs`). Numbers are only skipped, up to the next
+/// character that is neither a point nor XID_Continue; naga's number
+/// grammar can end one sooner, but valid WGSL never puts a word straight
+/// after a number, and source that is not valid fails to parse anyway.
 pub(crate) fn module_declarations(source: &str) -> Vec<(usize, &str)> {
     let mut declarations = Vec::new();
     let mut depth = 0usize;
@@ -168,16 +212,18 @@ pub(crate) fn module_declarations(source: &str) -> Vec<(usize, &str)> {
     let mut angle = 0usize;
     let mut chars = source.char_indices().peekable();
     while let Some((at, c)) = chars.next() {
-        if c.is_whitespace() {
+        if is_blankspace(c) {
             continue;
         }
         if c == '/' && chars.peek().is_some_and(|&(_, next)| next == '/') {
-            while chars.next_if(|&(_, next)| next != '\n').is_some() {}
+            // Up to and including the line break.
+            while chars.next().is_some_and(|(_, next)| !is_comment_end(next)) {}
             continue;
         }
         if c == '/' && chars.peek().is_some_and(|&(_, next)| next == '*') {
             chars.next();
-            // Block comments nest.
+            // Block comments nest. As in naga, a `*/` or `/*` pair is
+            // consumed whole, so its characters pair with nothing else.
             let mut nested = 1usize;
             while nested > 0 {
                 match chars.next() {
@@ -194,7 +240,8 @@ pub(crate) fn module_declarations(source: &str) -> Vec<(usize, &str)> {
             continue;
         }
         // A number declares nothing; its digits, letters, and points are
-        // skipped together.
+        // skipped together. naga also starts one at a point before a
+        // digit, which this reads as the point, then a number.
         if c.is_ascii_digit() {
             while chars
                 .next_if(|&(_, next)| next == '.' || unicode_ident::is_xid_continue(next))
@@ -366,6 +413,35 @@ mod tests {
         .map(|(_, name)| name)
         .collect();
         assert_eq!(names, ["a\u{203f}fn", "min\u{301}", "_x", "\u{3b1}\u{3b2}"]);
+
+        // naga's line breaks end a line comment; U+200E is blankspace.
+        let names: Vec<_> = module_declarations(
+            "// a\rfn b() {}\n// c\u{2028}alias d = f32;\n// e\u{85}const f = 1;\nfn\u{200e}g() {}\n/*/ fn h() {} */ fn i() {}\n",
+        )
+        .into_iter()
+        .map(|(_, name)| name)
+        .collect();
+        assert_eq!(names, ["b", "d", "f", "g", "i"]);
+    }
+
+    #[test]
+    fn module_names_reads_the_authors_declarations() {
+        let prelude = "fn before() {}\n";
+        let code = format!(
+            "{prelude}fn f() {{}}\nvar<private> v: f32;\nconst c: f32 = 1.0;\nconst abstract_c = 1.0;\noverride o: f32 = 1.0;\nstruct S {{ a: f32 }};\nalias A = f32;\n"
+        );
+        let module = naga::front::wgsl::parse_str(&code).unwrap();
+        let author = prelude.len()..code.len();
+        let mut names: Vec<_> = super::module_names(&module, &author)
+            .into_iter()
+            .map(|(name, at)| {
+                assert!(code[at..].contains(name), "{name}");
+                name
+            })
+            .collect();
+        names.sort_unstable();
+        // naga keeps neither alias names nor abstract constants.
+        assert_eq!(names, ["S", "c", "f", "o", "v"]);
     }
 
     #[test]

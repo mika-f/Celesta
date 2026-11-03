@@ -91,14 +91,17 @@ pub(crate) fn check_material(wgsl: &str, textures: usize) -> Result<CheckedMater
     // built-in, so a material redeclaring one would change what Celesta's
     // code around it calls. Checked before parsing, since such a
     // declaration can break the prelude's code first.
+    let shadows = |at: usize, name: &str| {
+        Err(locate(
+            Some(at),
+            format!(
+                "declares `{name}`, which WGSL predeclares; a material cannot redeclare WGSL's built-in functions and types"
+            ),
+        ))
+    };
     for (offset, name) in wgsl::module_declarations(wgsl) {
         if wgsl::predeclared(name) {
-            return Err(locate(
-                Some(author.start + offset),
-                format!(
-                    "declares `{name}`, which WGSL predeclares; a material cannot redeclare WGSL's built-in functions and types"
-                ),
-            ));
+            return shadows(author.start + offset, name);
         }
     }
 
@@ -118,11 +121,7 @@ pub(crate) fn check_material(wgsl: &str, textures: usize) -> Result<CheckedMater
             prelude_resource: &|name| prelude_resource(name, textures),
             entry_points: &[],
             instead: "a material defines `material_fragment` and Celesta's entry points call it",
-            // Celesta's own entry code declares `Celesta…` types too.
-            reserved: &|name| {
-                name.get(..7)
-                    .is_some_and(|prefix| prefix.eq_ignore_ascii_case("celesta"))
-            },
+            reserved: &material_reserved,
         },
     )?;
     // Every pipeline Celesta makes for a material sets no constants.
@@ -170,6 +169,21 @@ pub(crate) fn check_material(wgsl: &str, textures: usize) -> Result<CheckedMater
         assembled.push_str(OUTLINE_ENTRY);
     }
     let module = parse(&assembled)?;
+    // The same checks against naga's own reading of the material, should
+    // the source scan above ever read a declaration differently. naga
+    // keeps no alias names and no abstract constants, so those are the
+    // scan's alone (see `wgsl::module_names`).
+    for (name, at) in wgsl::module_names(&module, &author) {
+        if wgsl::predeclared(name) {
+            return shadows(at, name);
+        }
+        if material_reserved(name) {
+            return Err(locate(
+                Some(at),
+                format!("declares `{name}`; names starting with `celesta` belong to Celesta"),
+            ));
+        }
+    }
     naga::valid::Validator::new(
         naga::valid::ValidationFlags::all(),
         naga::valid::Capabilities::default(),
@@ -203,6 +217,14 @@ pub(crate) fn check_material(wgsl: &str, textures: usize) -> Result<CheckedMater
         params_size,
         outline,
     })
+}
+
+/// Whether `name` belongs to Celesta in a material: it starts with
+/// `celesta` in any case, since Celesta's entry code declares `Celesta…`
+/// types too.
+fn material_reserved(name: &str) -> bool {
+    name.get(..7)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("celesta"))
 }
 
 /// Whether the prelude or the slots of a material with `textures` slots
@@ -467,6 +489,19 @@ mod tests {
             error.contains("declares `min`, which WGSL predeclares"),
             "{error}"
         );
+        // A line comment ends at every line break naga knows, not only at
+        // `\n`.
+        for line_break in ["\r", "\u{b}", "\u{c}", "\u{85}", "\u{2028}", "\u{2029}"] {
+            let after_comment =
+                format!("// x{line_break}fn min(a: f32, b: f32) -> f32 {{\n    return a;\n}}\n");
+            let error =
+                check_material(&with_params(&format!("{FRAGMENT}{after_comment}")), 0).unwrap_err();
+            assert!(error.starts_with("5:"), "{line_break:?}: {error}");
+            assert!(
+                error.contains("declares `min`, which WGSL predeclares"),
+                "{line_break:?}: {error}"
+            );
+        }
         // A combining mark makes another name than the built-in's.
         let marked = "fn min\u{301}(a: f32, b: f32) -> f32 {\n    return a;\n}\n";
         check_material(&with_params(&format!("{FRAGMENT}{marked}")), 0).unwrap();

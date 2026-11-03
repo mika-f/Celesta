@@ -787,6 +787,8 @@ fn reports_errors_in_the_authors_code_by_line_and_column() {
             "celesta_x",
             5,
         ),
+        // A line comment ends at `\r` too.
+        ("// x\ralias celesta_t = f32;\n", "celesta_t", 4),
     ] {
         let reserved = error(&mut renderer, &format!("{IDENTITY}{declaration}"));
         assert!(reserved.contains(&format!("`{name}`")), "{reserved}");
