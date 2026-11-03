@@ -373,6 +373,7 @@ impl VrmModel {
             time,
             draws,
             skins,
+            canvas: None,
         })
     }
 

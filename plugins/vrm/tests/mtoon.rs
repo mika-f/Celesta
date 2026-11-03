@@ -230,6 +230,7 @@ fn one_square() -> Scenes {
                 params: None,
             }],
             skins: vec![],
+            canvas: None,
         },
         binds: vec![],
     }
