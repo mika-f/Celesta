@@ -73,7 +73,7 @@ speech channel (`@celesta-plugin/beep-voice`). They are new and may change.
 | `plugin "<id>" has no JavaScript module` | The plugin has only a program; its layers come from another package. |
 | `… has no executable for this platform` | The plugin was not built for this OS and CPU. |
 | `plugin "<id>": …` | The plugin's own error, such as a missing asset. |
-| `plugin layer <layer> cannot be drawn: …` | The plugin answered with meshes or a scene that fails Celesta's checks (bad indices, counts that do not match, a camera that sees nothing, more than 4 directional lights, a material shader that does not compile, parameters of the wrong size, a material that needs tangents on geometry without them). The plugin must be fixed. |
+| `plugin layer <layer> cannot be drawn: …` | The plugin answered with meshes or a scene that fails Celesta's checks (bad indices, counts that do not match, a camera that sees nothing, more than 4 directional lights, a material shader that does not compile, parameters of the wrong size, a material that needs tangents on geometry without them, a model's or frame's canvas with a side under 1 or over 16384). The plugin must be fixed. |
 | `<id> (layer <layer>): …`, or `note: <id> (layer <layer>): …` for information | Not an error: the plugin's notice about a model it opened, such as its terms of use. The exporter's terminal output prints a warning as a `warning: …` line; the app's Problems tab and `--json` (either kind among `warnings`) carry the message itself, a note keeping its `note: `. Relay it to the user; do not try to silence it. |
 
 ## Writing one
@@ -90,8 +90,11 @@ A plugin's program answers each frame with either 2D meshes or a 3D scene
 with depth; each material is Celesta's unlit one or the plugin's own in
 WGSL, which can shade with the directional lights (at most 4) and
 spherical-harmonics ambient light the program sends and add an outline; a
-frame can replace a material's parameters), and may return notices when it
-opens a model. A material's WGSL may not bind resources or declare entry
+frame can replace a material's parameters, and set the layer's canvas for
+that frame in place of the model's, each side 1 to 16384, as a resolution
+the component passes in `data`), and may return notices when it opens a
+model. A frame must depend only on the model, time, and `data`: Celesta
+may ask for the same frame again. A material's WGSL may not bind resources or declare entry
 points, `var<workgroup>` variables, `override` constants, names WGSL
 predeclares (such as `clamp` or `vec4f`), or names starting with `celesta`
 in any letter case.
