@@ -23,6 +23,10 @@
 //! - **Materials:** the file's, by index, then glTF's default material
 //!   (white, opaque, one-sided; metallic-roughness, so drawn unlit like
 //!   other PBR materials) once, when a primitive has no material.
+//! - **Expressions** (see `expressions`) are checked after the draws and
+//!   before the materials, so a model refused for them writes no texture.
+//!   Each frame they set the morph targets they bind, on every draw of the
+//!   bound node, and override the bound materials of every draw using them.
 //! - **Budgets:** the model's geometry, draws, and skins together take at
 //!   most [`GEOMETRY_BUDGET`] bytes, and its accessors decode at most
 //!   `READ_BUDGET` (see `geometry`).
@@ -31,6 +35,7 @@
 //! constraints, the lookAt, expressions, spring bones, then world matrices.
 
 use crate::document::{Document, LoadError};
+use crate::expressions::{ExpressionKey, Expressions, read_expressions};
 use crate::first_person::hidden_nodes;
 use crate::geometry::{
     Accessors, GEOMETRY_BUDGET, draws_triangles, geometry_bytes, inverse_binds, primitive_geometry,
@@ -42,7 +47,7 @@ use crate::provider::PerformanceData;
 use celesta_plugin::{
     AlphaMode, Camera, DrawInfo, DrawState, Geometry, Lights, Material, MaterialKind,
     MaterialOverrides, Notice, NoticeLevel, Projection, SceneFrame, SceneModel, Skin,
-    TextureTransform, UnlitMaterial,
+    UnlitMaterial,
 };
 use glam::{Mat4, Vec3};
 use std::collections::btree_map::Entry;
@@ -107,10 +112,7 @@ pub struct VrmModel {
     skins: Vec<SkinSource>,
     /// By mesh: the centre of its drawn primitives' bounds, in mesh space.
     centres: Vec<Vec3>,
-    /// By material: its base colour texture's transform.
-    // Texture transform binds (Task 5) start from these.
-    #[allow(dead_code)]
-    base_transforms: Vec<Option<TextureTransform>>,
+    expressions: Expressions,
     /// The bytes of the geometry budget the model takes.
     #[cfg_attr(not(test), allow(dead_code))]
     bytes: u64,
@@ -177,6 +179,10 @@ impl VrmModel {
             let draws = read_draws(&document, &accessors, &tree, &hidden, &skins, &mut budget)?;
             (skins, draws)
         };
+        // Expressions are checked before the materials write any texture.
+        let mut expression_notices = Vec::new();
+        let expression_binds =
+            read_expressions(&document, &draws.sources, &mut expression_notices)?;
         let read = materials(&document, cache)?;
         let mut scene_materials = read.materials;
         if draws.default_material {
@@ -208,7 +214,10 @@ impl VrmModel {
                 ),
             });
         }
+        notices.extend(expression_notices);
 
+        let expressions =
+            Expressions::new(expression_binds, &scene_materials, &read.base_transforms);
         let scene = SceneModel {
             canvas: CANVAS,
             textures: read.textures,
@@ -233,7 +242,7 @@ impl VrmModel {
             draws: draws.sources,
             skins,
             centres: draws.centres,
-            base_transforms: read.base_transforms,
+            expressions,
             bytes: budget.total - budget.left,
         })
     }
@@ -260,8 +269,19 @@ impl VrmModel {
         let mut pose = self.base_pose(time, data);
         self.apply_constraints(&mut pose);
         // The lookAt's yaw and pitch (Task 6) go here.
-        // Expressions (Task 5) validate and apply these, eye rotations too.
-        let _expressions = self.expression_inputs(time, data);
+        let inputs = self.expression_inputs(time, data)?;
+        let applied = self.expressions.validate(&inputs);
+        // The lookAt (Task 6) turns the eyes here, scaled by
+        // `applied.look_at_rate`, or writes its look keys into
+        // `applied.weights`.
+        let mut morph: Vec<Vec<f32>> = self
+            .draws
+            .iter()
+            .map(|draw| draw.morph_weights.clone())
+            .collect();
+        let mut overrides = vec![MaterialOverrides::default(); self.scene.materials.len()];
+        self.expressions
+            .apply(&applied.weights, &mut morph, &mut overrides);
         self.apply_springs(time, data, &mut pose);
         let worlds = self.tree.world(&pose);
 
@@ -280,9 +300,24 @@ impl VrmModel {
             skins.push(matrices);
         }
 
+        // Bind weights and colours add up, so many large ones can overflow.
+        for (material, overrides) in overrides.iter().enumerate() {
+            if !overrides_are_finite(overrides) {
+                return Err(FrameError(format!(
+                    "expressions make material {material}'s colours or texture transform not finite"
+                )));
+            }
+        }
+
         let centres = self.mesh_centers(&worlds);
         let mut draws = Vec::with_capacity(self.draws.len());
-        for (index, (draw, centre)) in self.draws.iter().zip(centres).enumerate() {
+        let sources = self.draws.iter().zip(centres).zip(morph);
+        for (index, ((draw, centre), morph_weights)) in sources.enumerate() {
+            if morph_weights.iter().any(|weight| !weight.is_finite()) {
+                return Err(FrameError(format!(
+                    "expressions make draw {index}'s morph weights not finite"
+                )));
+            }
             let world = match draw.skin {
                 Some(_) => Mat4::IDENTITY,
                 None => worlds[draw.node],
@@ -297,9 +332,15 @@ impl VrmModel {
                 index,
                 visible: draw.visible,
                 world: world.to_cols_array(),
-                morph_weights: draw.morph_weights.clone(),
+                morph_weights,
                 center: Some(centre.to_array()),
-                overrides: MaterialOverrides::default(),
+                overrides: self
+                    .scene
+                    .draws
+                    .get(index)
+                    .and_then(|info| overrides.get(info.material))
+                    .copied()
+                    .unwrap_or_default(),
             });
         }
 
@@ -324,11 +365,29 @@ impl VrmModel {
     /// The motion plan's node constraints; nothing yet.
     fn apply_constraints(&self, _pose: &mut Pose) {}
 
-    /// The expression weights asked for, by VRM name: `data.expressions`.
-    /// Expressions (Task 5) key them by preset; the motion plan adds its
-    /// clips'.
-    fn expression_inputs(&self, _time: f64, data: &PerformanceData) -> BTreeMap<String, f32> {
-        data.expressions.clone()
+    /// The expression weights asked for, by key: `data.expressions`; the
+    /// motion plan adds its clips'. A weight that is not finite is an
+    /// error naming the expression.
+    fn expression_inputs(
+        &self,
+        _time: f64,
+        data: &PerformanceData,
+    ) -> Result<BTreeMap<ExpressionKey, f32>, FrameError> {
+        data.expressions
+            .iter()
+            .map(|(name, &weight)| {
+                if weight.is_finite() {
+                    Ok((ExpressionKey::parse(name), weight))
+                } else {
+                    Err(FrameError(format!("expression {name} is not finite")))
+                }
+            })
+            .collect()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn expressions(&self) -> &Expressions {
+        &self.expressions
     }
 
     /// The motion plan's spring bones; nothing yet.
@@ -342,6 +401,36 @@ impl VrmModel {
             .map(|draw| worlds[draw.anchor].transform_point3(self.centres[draw.mesh]))
             .collect()
     }
+}
+
+/// Whether every override set is finite.
+fn overrides_are_finite(overrides: &MaterialOverrides) -> bool {
+    let MaterialOverrides {
+        base_color,
+        texture_offset,
+        texture_scale,
+        shade_color,
+        emission_color,
+        matcap_color,
+        rim_color,
+        outline_color,
+    } = overrides;
+    let finite = |values: &[f32]| values.iter().all(|value| value.is_finite());
+    base_color.iter().all(|value| finite(value))
+        && [texture_offset, texture_scale]
+            .into_iter()
+            .flatten()
+            .all(|value| finite(value))
+        && [
+            shade_color,
+            emission_color,
+            matcap_color,
+            rim_color,
+            outline_color,
+        ]
+        .into_iter()
+        .flatten()
+        .all(|value| finite(value))
 }
 
 /// Every glTF skin's joints and inverse bind matrices, by skin index.
@@ -781,16 +870,19 @@ mod tests {
 
     #[test]
     fn node_weights_win_over_the_mesh_weights() {
+        // The defaults, before expressions bind targets 0 and 2 (see
+        // `expressions`); target 1 is unbound, so the frame keeps it.
         let mut model =
-            edited(|root| root["nodes"][node::BODY]["weights"] = json!([1.0, 0.0, 0.5]));
-        assert_eq!(rest(&mut model).draws[0].morph_weights, [1.0, 0.0, 0.5]);
+            edited(|root| root["nodes"][node::BODY]["weights"] = json!([1.0, 0.5, 0.5]));
+        assert_eq!(model.draws[0].morph_weights, [1.0, 0.5, 0.5]);
+        assert_eq!(rest(&mut model).draws[0].morph_weights[1], 0.5);
         // Neither: zeros. Too few or too many: the rest are 0, or dropped.
-        let mut model = edited(|root| {
+        let model = edited(|root| {
             root["meshes"][0].as_object_mut().unwrap().remove("weights");
         });
-        assert_eq!(rest(&mut model).draws[0].morph_weights, [0.0; 3]);
-        let mut model = edited(|root| root["nodes"][node::BODY]["weights"] = json!([1.0]));
-        assert_eq!(rest(&mut model).draws[0].morph_weights, [1.0, 0.0, 0.0]);
+        assert_eq!(model.draws[0].morph_weights, [0.0; 3]);
+        let model = edited(|root| root["nodes"][node::BODY]["weights"] = json!([1.0]));
+        assert_eq!(model.draws[0].morph_weights, [1.0, 0.0, 0.0]);
         let message = refusal(|root| {
             root["nodes"][node::BODY]["weights"] = json!([0.0, 1e39, 0.0]);
         });

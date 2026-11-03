@@ -9,6 +9,7 @@
 //! texture coordinates from the top-left.
 
 mod document;
+mod expressions;
 mod first_person;
 mod geometry;
 mod humanoid;
@@ -20,6 +21,7 @@ mod provider;
 pub mod synthetic;
 
 pub use document::LoadError;
+pub use expressions::{ExpressionKey, Preset as ExpressionPreset};
 pub use humanoid::{HumanBone, Humanoid};
 pub use model::{CANVAS, FrameError, VrmModel};
 pub use nodes::{NodeTree, Pose, Trs};
