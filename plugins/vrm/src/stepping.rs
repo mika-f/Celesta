@@ -68,11 +68,11 @@ pub const MAX_SPRING_STEPS: u64 = 4 * 3600 * 60;
 
 /// The most work a frame's steps may take, in [`step_cost`]'s units: 2^33.
 ///
-/// A unit measured 2.8 to 5.1 ns of a laptop core (Apple M5, release
-/// build) on Seed-san, UniVRM's constraint twist sample, and a VRoid
-/// avatar, with and without a clip, so the worst frame accepted from a cold
-/// start takes about 45 s, under a minute. It is set that high so real
-/// avatars keep [`MAX_SPRING_STEPS`] with room for motions and tracks:
+/// A unit measured a few nanoseconds of a laptop core (Apple M5, release
+/// build) on Seed-san and UniVRM's constraint twist sample, with and
+/// without a clip, so the worst frame accepted from a cold start takes
+/// under a minute. It is set that high so real avatars keep
+/// [`MAX_SPRING_STEPS`] with room for motions and tracks:
 /// Seed-san (610 units a step) reaches 65 h alone and 27 h with a clip
 /// playing, the twist sample (2,183) 18 h and 13 h, while a file of a
 /// million empty nodes steps about 2.4 min of a layer.
@@ -84,22 +84,21 @@ const STEP_BASE_COST: u64 = 300;
 
 /// What a step pays for each motion, per channel of its clip and one for
 /// the motion, in [`step_cost`]'s units. Measured (release build, 600
-/// steps, the best of five): a looped 53-channel clip added 2.5 to 3.4 µs
-/// a step to Seed-san, the twist sample, and a VRoid avatar, and a second
-/// one fading with it 3.3 to 3.6 µs (sampling, blending, retargeting).
-/// Divided by each model's own nanoseconds a unit without data, that is
-/// 640 to 1,320 units a motion, 12 to 25 a channel: 16 keeps it within
-/// 2×.
+/// steps, the best of five) on Seed-san and the twist sample: a looped
+/// 53-channel clip added a few µs a step, and a second one fading with it
+/// about as much again (sampling, blending, retargeting). Divided by each
+/// model's own nanoseconds a unit without data, 16 a channel keeps the
+/// charge within 2× of each.
 const MOTION_CHANNEL_COST: u64 = 16;
 
 /// What a step pays for each track axis, beyond its keyframes. Measured as
-/// above: a one-keyframe track added 0.07 to 0.22 µs a step, 23 to 59
-/// units.
+/// above: a one-keyframe track added under a quarter of a µs a step, which
+/// 32 units covers within 2×.
 const TRACK_AXIS_COST: u64 = 32;
 
 /// How many track keyframes a step pays one unit for. Measured as above:
-/// a thousand keyframes added 0.39 to 0.48 µs a step, 0.08 to 0.17 units a
-/// keyframe, since reading a track walks its keyframes.
+/// a thousand keyframes added under half a µs a step, which a unit per 8
+/// keyframes covers within 2×, since reading a track walks its keyframes.
 const KEYFRAMES_PER_UNIT: u64 = 8;
 
 /// The most bytes of spring states the plugin's process keeps, over every
