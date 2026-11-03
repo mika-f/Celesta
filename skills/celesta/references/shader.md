@@ -97,8 +97,9 @@ fn effect(input: EffectInput) -> vec4f {
   every shader in it sees the same box.
 - There is no built-in time. Pass `frame / fps` (or any clock) as a
   parameter, so the shader follows `Sequence` and `FreezeFrame`.
-- Do not declare `@group`/`@binding` resources or entry points, or names
-  starting with `celesta`.
+- Do not declare `@group`/`@binding` resources, entry points, workgroup
+  variables (`var<workgroup>`, compute only), or names starting with
+  `celesta` (aliases and overrides included).
 
 ## Parameters
 

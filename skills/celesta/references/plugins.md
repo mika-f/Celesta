@@ -91,7 +91,9 @@ with depth, each material Celesta's unlit one or the plugin's own in
 WGSL, shaded by the directional lights (at most 4) and
 spherical-harmonics ambient light and able to add an outline; a frame can
 replace a material's parameters), and may return notices when it opens a
-model.
+model. A material's WGSL may not bind resources or declare entry points,
+`var<workgroup>` variables, or names starting with `celesta` in any
+letter case.
 
 Start from the samples in the Celesta repository's `examples/plugins`
 (`flag`: a program that returns meshes; `turntable`: a program that returns

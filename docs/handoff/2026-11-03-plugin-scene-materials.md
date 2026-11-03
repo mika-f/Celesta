@@ -76,7 +76,7 @@ its texture slots, the material's WGSL, and Celesta's entry points
 the material has an outline). The prelude gives:
 
 ```wgsl
-struct Light { to_light: vec4f, color: vec4f };      // towards the light, length 1; colour × intensity; black when absent
+struct Light { to_light: vec4f, color: vec4f };      // towards the light, length 1; color × intensity; black when absent
 struct Frame {                                       // 512 bytes
     view_projection: mat4x4f, view: mat4x4f, projection: mat4x4f,
     eye: vec4f,               // the camera's position in world; w 1 perspective, 0 orthographic
@@ -135,7 +135,7 @@ fn material_outline_vertex(vertex: Vertex) -> VertexOffset    // optional, only 
 ```
 
 Celesta's entry points call these and apply the alpha mode, so a material
-returns its colour and alpha whatever its mode: opaque writes alpha 1;
+returns its color and alpha whatever its mode: opaque writes alpha 1;
 mask writes alpha 1 and turns the returned alpha into sample coverage
 around `draw.alpha_cutoff`, `(a − cutoff) / max(fwidth(a), 1e-5) + 0.5`
 over 4 samples; blend clamps alpha to 0..1 and discards a fragment whose
@@ -189,31 +189,55 @@ fails to load is closed again. The limits are `pub const`s in
   (`MAX_MATERIAL_TEXTURES`: WebGPU's default 16 sampled textures and 16
   samplers a stage, 4 kept for Celesta); a custom material's `shader` in
   range, its `textures` no longer than the shader's slots, and each filled
-  slot's texture in range; an outline's `slopeScale` finite; a draw whose
+  slot's texture in range; an outline's `slopeScale` finite; an `unlit`
+  material's `baseColor` and its texture's transform finite
+  (`material {m}'s base color is not finite`,
+  `material {m}'s texture transform is not finite`); a draw whose
   material has `requiresTangents` on a geometry with tangents. Messages
   name the shader as `shader {s} ({name})`, the name only when it has one.
 - **Each shader the model lists, used or not, is checked** with naga on
   the CPU: the WGSL must parse and validate (`ValidationFlags::all()`,
   default capabilities) once assembled; declare no resource of its own
   (only `frame`, `draw`, `params`, and its own slots' `texture_k` and
-  `sampler_k`), no entry point, and no pipeline-overridable constant (no
-  material pipeline sets one); redeclare no name WGSL predeclares as a
-  built-in function or type (naga would resolve Celesta's own calls to
-  it); declare no name starting with `celesta`, in any case; define
-  `material_fragment`, and `material_outline_vertex` only with
-  `material_outline_fragment`; and declare `Params` as a struct of at most
-  512 bytes (`MAX_MATERIAL_PARAMS`), its size naga's layout's. An error
-  inside the material's WGSL is located as `{line}:{column}: {message}` in
-  that WGSL; one in the prelude or the entry points says what the
-  interface expects there. The message names the first material using
-  the shader (`material {m}'s shader {s} ({name}): …`), or the shader
-  alone when no material uses it.
-- **Compiled** from naga's module through `create_shader_module`, whose
-  runtime checks (bounds checks, loop bounding) stay on, never
-  `create_shader_module_trusted`. Modules and pipelines are made inside
-  validation, internal, and out-of-memory error scopes together: a
-  backend compiler refusing what naga accepted (Metal past a fragment
-  function's stack, for one) is the material's error, never a panic.
+  `sampler_k`), no entry point, no pipeline-overridable constant (no
+  material pipeline sets one), and no workgroup variable
+  (`var<workgroup>`: WGSL allows workgroup memory only in compute shaders,
+  but naga's validator lets any stage use it, so a backend's compiler or
+  driver would meet it in a vertex or fragment shader); redeclare no name
+  WGSL predeclares as a built-in function or type (naga would resolve
+  Celesta's own calls to it); declare no name starting with `celesta` in
+  any letter case (`Celesta_x` too, since Celesta's entry code declares
+  `Celesta…` types); define `material_fragment`, and
+  `material_outline_vertex` only with `material_outline_fragment`; and
+  declare `Params` as a struct of at most 512 bytes
+  (`MAX_MATERIAL_PARAMS`), its size naga's layout's. An error inside the
+  material's WGSL is located as `{line}:{column}: {message}` in that WGSL;
+  one in the prelude or the entry points says what the interface expects
+  there. The message names the first material using the shader
+  (`material {m}'s shader {s} ({name}): …`), or the shader alone when no
+  material uses it.
+- **Compiled** from naga's module through wgpu's safe
+  `create_shader_module`, never `create_shader_module_trusted`. In wgpu 30
+  the safe call always compiles with `ShaderRuntimeChecks::checked()`,
+  every runtime check wgpu has: naga's bounds-check policies on indexing,
+  buffer access, and texel loads, and loop bounding, so a backend compiler
+  cannot take a loop that never ends as unreachable code. Nothing in
+  Celesta sets these; they are what the safe call means. Modules and
+  pipelines are made inside validation, internal, and out-of-memory error
+  scopes together: a backend compiler refusing what naga accepted (Metal
+  past a fragment function's stack, for one) is the material's error,
+  never a panic.
+- **Not bounded: a material's own memory and time.** Private and
+  function-local memory (`var<private>`, a function's `var`) has no cap of
+  Celesta's: naga accepts arrays of any size. A backend may refuse the
+  pipeline (Metal past a fragment function's stack, refused as above), or
+  give each invocation the scratch memory it asks for, which can run the
+  device out of memory or, on Vulkan or DX12 (not tried), may lose the
+  device when it draws. Loop bounding keeps a long loop defined, not
+  short: a material that loops long enough hangs the GPU until the
+  operating system resets it. GPU hangs and device loss a hostile plugin
+  causes this way are out of scope: a plugin is a program the user
+  installs and allows, which can already use the GPU as it likes.
 - **Parameters on open:** a custom material's `params` must be as long as
   its shader's `Params` (`material {m}'s parameters are {a} bytes, but
   shader {s}'s Params is {b}`).
@@ -223,12 +247,19 @@ fails to load is closed again. The limits are `pub const`s in
   (`… is unlit, which takes no parameters`), and so are `overrides` on a
   custom draw (`… is custom: overrides are for unlit materials`).
 
+2D custom shaders (`defineShader`, `shader.rs`) share the declaration
+checks (`wgsl.rs`), and change with them: a `var<workgroup>` in one is now
+refused (it drew on Metal before), and a name starting with `celesta` is
+now refused in an override, an alias, or a constant of abstract type too
+(`alias celesta_t = f32;` was accepted before). A 2D shader's prefix check
+stays case-sensitive: only a material's covers every letter case.
+
 ## Per-frame parameters
 
 `DrawState::params` (`params` in a frame's draw) replaces the draw's
 custom material's `params` for that draw in that frame only: a later frame
 without them draws the material's own, and two draws of one material each
-show their own. The plugin packs whatever its material animates (colours,
+show their own. The plugin packs whatever its material animates (colors,
 texture transforms, a time-dependent scroll) into them. `MaterialOverrides`
 are the unlit material's per-frame values.
 
@@ -287,7 +318,7 @@ materials as `frame.lights` and `frame.ambient`.
   whatever `world`'s scale), and `VertexOffset.clip` to the projected
   `xy` (a width on screen, which a material scales by `clip.w` to keep it
   constant). `Fragment.position` is the moved position.
-  `material_outline_fragment` colours it.
+  `material_outline_fragment` colors it.
 - An outline pushed along vertex normals breaks at hard edges: vertices
   that do not share a normal move apart. A model whose outline must close
   shares its normals across the edge.
@@ -320,14 +351,32 @@ materials as `frame.lights` and `frame.ambient`.
   count (names and empty texels do not change the module), whichever
   models list it. A shader that fails is cached as failed too, so a model
   refused every frame does not compile it again, except when the device ran
-  out of memory, which the next model listing it tries again.
+  out of memory, which the next model listing it tries again. The cache is
+  bounded: when it holds 256 shaders (`MAX_CACHED_SHADERS`, eight models
+  of the most shaders a model may list) and another comes, it first drops
+  every failure and every compiled shader no loaded model holds, with the
+  pipelines made or refused for them. A `ShaderId` is never given out
+  again, so no pipeline key of a dropped shader stands for another.
 - **Pipelines** are made when a model is opened, for what its materials
   use: keyed by shader, pass (surface, or outline with its depth bias),
   culling and winding (both windings, since a mirroring `world` or view
   turns its front faces clockwise), and alpha (opaque, mask, blend writing
-  depth, blend). Each material's pipelines are made in one error scope:
-  when any fails, the message names the material and none of its
-  pipelines is kept.
+  depth, blend). The loaded model holds the pipelines it draws with. Each
+  pipeline is made in its own error scope: when one fails, the message
+  names the material (`material {m}'s pipelines: …`) and none of that
+  material's new pipelines is kept. A pipeline the device refused (a
+  validation or internal error, such as a backend's compiler refusing
+  what naga accepted) is remembered under its key while its shader is
+  cached, so a model sent again is refused with the same message without
+  making it again; one that ran out of memory is not remembered and is
+  tried again. When the cache holds 256 pipelines
+  (`MAX_CACHED_PIPELINES`), a model being opened first drops those no
+  loaded model holds, before it makes any: the pipelines of models whose
+  load failed after them (a later material's parameters, a texture, a
+  buffer limit).
+- **Both bounds are soft.** Shaders and pipelines that loaded models hold
+  are never dropped, however many; the bounds are on what models that
+  failed or are gone leave behind.
 - **The normal matrix** is the cofactor matrix of `world`'s upper 3×3
   times the sign of its determinant (+1 for 0), worked out in `f64` and
   divided by its largest entry: the inverse transpose up to a positive
@@ -379,7 +428,7 @@ material (`src/toon.wgsl`, the shader `turntable toon` with one slot,
 
 | Member | Value | What it does |
 | --- | --- | --- |
-| `shade` | (0.4, 0.42, 0.75, −0.05) | The shade colour (times the checker), a bluish lilac, and the shading shift. |
+| `shade` | (0.4, 0.42, 0.75, −0.05) | The shade color (times the checker), a bluish lilac, and the shading shift. |
 | `rim` | (0.25, 0.25, 0.32, 8) | A faint blue-grey rim and its fresnel power. |
 | `outline` | (0.01, 0.008, 0.012, 0.5) | A near-black outline, half shaded like the surface. |
 | `shape` | (0.95, 0.02, 0, 0) | Toony, and the outline's width: 2% of the canvas's height where a metre fills it. |
@@ -405,12 +454,12 @@ the corners; the README says so.
 | --- | --- |
 | `crates/plugin/src/scene.rs` | `SceneModel::shaders`, `SceneShader`, `ShaderTexture`, `EmptyTexel`, `MaterialKind::Custom`, `CustomMaterial`, `OutlinePass`, `CullFace`, `DepthBias`, `DrawState::params`; `AlphaMode::Blend { depth_write, queue_offset }` and `AlphaMode::BLEND`; the limits; the `Lights` SH polynomial and light direction documented. |
 | `crates/plugin/src/protocol.rs` | `shaders` and `materialParams` in a scene's `opened`, `params` in a frame's draws, their bytes in the payloads, and round-trip and malformed-payload tests. |
-| `crates/gpu-renderer/src/wgsl.rs` | Locating WGSL errors in an author's code and checking its declarations, shared by custom shaders (`shader.rs`) and materials. |
+| `crates/gpu-renderer/src/wgsl.rs` | Locating WGSL errors in an author's code and checking its declarations (entry points, resources, workgroup variables, `celesta` names, aliases read from the source), shared by custom shaders (`shader.rs`) and materials. |
 | `crates/gpu-renderer/src/scene_material.rs` | `check_material`: assembling a material's module and checking it with naga. |
 | `crates/gpu-renderer/src/scene_material_prelude.wgsl`, `scene_material_entry.wgsl`, `scene_material_outline_entry.wgsl` | The interface: the prelude, and the surface and outline entry points for each alpha mode. |
 | `crates/gpu-renderer/src/scene_unlit.wgsl` | The built-in unlit material against the interface. |
 | `crates/gpu-renderer/src/scene.wgsl` | Only the conversion to the layer texture remains. |
-| `crates/gpu-renderer/src/scene.rs` | The frame uniform and draw slots, the shader cache, material bind groups and pipelines made on open, outline passes, per-frame parameters, the normal matrix, render queues with offsets and distance sorting, `LessEqual`, and `SceneFrameResources`. |
+| `crates/gpu-renderer/src/scene.rs` | The frame uniform and draw slots, the bounded shader and pipeline caches with remembered refusals, material bind groups and pipelines made on open, outline passes, per-frame parameters, the normal matrix, render queues with offsets and distance sorting, `LessEqual`, and `SceneFrameResources`. |
 | `crates/gpu-renderer/src/mesh.rs`, `prepare.rs` | A model's material and pipeline errors as `InvalidPluginContent`; the renderer keeps `SceneFrameResources`, and each frame begins it. |
 | `examples/plugins/turntable` | The cube's own toon material (`src/toon.wgsl`), its light, and tests. |
 
@@ -439,9 +488,9 @@ change once it shows:
   needs them sets `requiresTangents`, and the plugin generates MikkTSpace
   tangents for a primitive that lacks them.
 - **A model's shaders and pipelines compile when it opens:** every shader
-  it lists that no model has compiled, and, in both windings, each pass,
-  culling, and alpha mode its materials use that no model has used, a
-  one-off stall on open, most of it at the first model of a plugin.
+  it lists that is not cached, and, in both windings, each pass, culling,
+  and alpha mode its materials use that is not cached, a one-off stall on
+  open, most of it at the first model of a plugin.
 - **Checking its own parameters.** Celesta cannot see inside the bytes: a
   plugin checks the numbers it packs (finite, in range) before sending
   them.
@@ -453,10 +502,11 @@ change once it shows:
   fragment what it needs from `Fragment`.
 - **`Frame.time` is `f32`.** A plugin sends values that need the time's
   full precision in its parameters.
-- **Compiled shaders and pipelines are never evicted.** Each is kept for
-  the renderer's life, whatever models still use it. Pipelines of a model
-  refused for its GPU limits (a buffer or texture too large, found after
-  the checks above pass) stay too, where later models reuse them.
+- **Remembered pipeline refusals grow with their shader.** A refusal is
+  kept while its shader is cached, and a shader a loaded model holds stays
+  cached: a plugin that keeps one shader loaded and keeps opening models
+  whose new pipeline keys (new depth biases, say) the device refuses adds
+  a short message each time.
 - **Shadows.** Nothing casts a shadow. A main-light shadow map is a later
   phase, to be offered to materials through the interface.
 - **Point and spot lights.** Only directional lights, at most 4; more is
@@ -497,32 +547,44 @@ change once it shows:
 - `scene_material.rs`'s unit tests check a minimal material, `Params`'
   size by WGSL's layout, the outline functions, errors located in the
   material's WGSL, wrong signatures naming the interface, missing parts,
-  the material's own resources, entry points, overrides, built-in names,
-  and `celesta` names in any case refused, vertex hooks refused implicit-LOD
-  sampling, slots declared by count, and the limits.
+  the material's own resources, entry points, overrides, workgroup
+  variables (alone, and written in `material_vertex`), built-in names, and
+  `celesta` names in any letter case refused, vertex hooks refused
+  implicit-LOD sampling, slots declared by count, and the limits.
+- The 2D custom shader tests (`crates/gpu-renderer/src/tests/shader.rs`)
+  refuse a workgroup variable an `effect` reads and writes, and `celesta`
+  names in overrides, aliases, and constants of abstract type, located in
+  the author's code.
 - Unit tests in `scene.rs` check that the frame and draw uniforms match
   the prelude's layout, that the built-in unlit material passes the
-  material checks, unlit's parameter packing, the render queue's clamping
-  and the offsets it ignores, the signed-cofactor normal matrix, the eye
+  material checks, that an unlit material's base color and texture
+  transform must be finite, unlit's parameter packing, the render queue's
+  clamping and the offsets it ignores, the signed-cofactor normal matrix, the eye
   of a view, the draw slot's size and the per-draw uniform check, and that
   `make_room` drops only sizes not drawn, only past the budget.
 - The GPU renderer's scene tests (`crates/gpu-renderer/src/tests/scene.rs`)
   draw made-up scenes, mostly a square seen from +Z with small test
   materials written against the interface, and compare pixels with values
   worked out by hand:
-  - `material_`: parameters colouring the surface; texture slots sampling
+  - `material_`: parameters coloring the surface; texture slots sampling
     their texture or their empty texel; lights and ambient reaching the
-    shader; each SH coefficient; normals through the inverse transpose of
-    `world`; tangents and handedness following `world`, and tangents of 0
-    without them; facing; the view direction, orthographic and
-    perspective; `linearstep` and `safe_normalize`; the alpha modes around
-    the returned alpha, with the near-clear discard of a depth-writing
-    blend; degenerate worlds without NaN; broken WGSL refused naming the
-    material and the line; parameters that do not fit their shader; the
-    limits; tangents required on geometry without them; pipelines the
-    backend refuses refused naming the material; a shader compiled once
-    for many materials and a broken one once for many frames; and a
-    shader the device ran out of memory compiling tried again.
+    shader, and more lights than the frame holds or a light without a
+    direction refused; each SH coefficient; normals through the inverse
+    transpose of `world`; tangents and handedness following `world`
+    (drawn with `requiresTangents` set), and tangents of 0 without them;
+    `material_vertex` moving the surface in world and clip space; facing;
+    the view direction, orthographic and perspective; `linearstep` and
+    `safe_normalize`; the alpha modes around the returned alpha, with the
+    near-clear discard of a depth-writing blend; degenerate worlds without
+    NaN; broken WGSL refused naming the material and the line; parameters
+    that do not fit their shader; the limits; tangents required on
+    geometry without them; pipelines the backend refuses refused naming
+    the material, and refused again without being made again; a pipeline
+    the device refused not made again while one that ran out of memory is;
+    a shader compiled once for many materials and a broken one once for
+    many frames; a shader the device ran out of memory compiling tried
+    again; and the shader and pipeline caches dropping what no loaded
+    model holds once past their caps, keeping what a loaded model holds.
   - `frame_params_`: a frame's parameters replacing the material's for
     that frame only, per draw, and refused when they do not fit, on an
     unlit draw, or beside overrides on a custom draw.
@@ -531,11 +593,16 @@ change once it shows:
     perspective sorting by distance and orthographic by view depth;
     coplanar opaque draws, the later winning.
   - `outline_`: world and clip offsets; texture slots reaching the vertex
-    hook; culling and bias as asked; mirrored worlds still culling the
-    front faces; the material's alpha; an outline without
-    `material_outline_fragment` and a bias that is not finite refused;
-    every alpha mode (`depthWrite` included) × side × world or clip offset
-    opened and drawn in both windings.
+    hook; culling and bias as asked, and, on a single square facing the
+    camera, each `cull` value and a mirrored world culling the front face;
+    mirrored worlds still culling the front faces of a two-sided shell;
+    the material's alpha; an outline without `material_outline_fragment`
+    and a bias that is not finite refused; every alpha mode (`depthWrite`
+    included) × side × no outline, world, or clip offset opened and drawn
+    in both windings.
+  - `override_not_finite_is_refused`: each of an unlit draw's overrides
+    (base color, texture offset, texture scale) refused when not finite,
+    naming the draw.
   - `mirrored_views_keep_front_faces`: a view mirrored in x shows the
     square's front face and culls its back, also with a mirrored world.
   - `scene_resources_`, `scene_frame_buffers_`: canvases and buffers

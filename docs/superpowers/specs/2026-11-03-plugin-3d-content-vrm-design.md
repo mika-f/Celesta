@@ -244,10 +244,12 @@ it unchanged.
 - **Safety and limits.** A material binds nothing of its own; the bindings
   are Celesta's and hold only the scene's own frame, draw, parameters, and
   textures. Celesta checks the WGSL with naga before any pipeline exists
-  (no entry points, resources, or `celesta` names of the material's own;
-  at most 262,144 bytes; at most 12 texture slots; `Params` at most 512
-  bytes and equal to the bytes sent; at most 32 shaders a model) and
-  compiles it with runtime bounds checks and loop bounding. Any failure is
+  (no entry points, resources, workgroup variables, or `celesta` names of
+  the material's own; at most 262,144 bytes; at most 12 texture slots;
+  `Params` at most 512 bytes and equal to the bytes sent; at most 32
+  shaders a model) and compiles it with wgpu's runtime checks (bounds
+  checks and loop bounding), which its safe `create_shader_module` always
+  applies. Any failure is
   `InvalidPluginContent` naming the material and the line in its WGSL.
 - **`unlit`** is Celesta's built-in material, drawn through the same
   interface.
