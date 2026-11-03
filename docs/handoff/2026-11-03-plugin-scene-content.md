@@ -39,7 +39,9 @@ field says otherwise.
 A model (`SceneModel`, sent once per opened asset set):
 
 - `canvas: [width, height]`: the layer's size in pixels, unless a frame
-  sets its own. The camera's aspect is the canvas's.
+  sets its own. The camera's aspect is the canvas's. Each side must be
+  finite, at least 1, and at most 16384 (`MAX_SCENE_CANVAS_SIDE`), the
+  same rule as a frame's own canvas.
 - `textures`: an image file (absolute path) or inline RGBA, straight alpha,
   each with a `colorSpace` (`srgb`, decoded to linear when sampled, or
   `linear` for data) and a glTF-like `sampler` (`wrapS`, `wrapT`:
@@ -72,10 +74,10 @@ A frame (`SceneFrame`, per request):
   resolution belongs to the composition: a component passes it in the
   frame's `data`, and the plugin answers it here. The canvas's texel
   size, the projection's aspect, and the layer size Celesta composites
-  all follow it. Each side must be finite, positive, and at most 16384
-  (`MAX_FRAME_CANVAS_SIDE`); the 8,388,608-texel cap below still applies
-  to the texels drawn. Without it, the frame is drawn on the model's
-  canvas. 2D meshes frames have no such field.
+  all follow it. Each side must be finite, at least 1, and at most 16384
+  (`MAX_SCENE_CANVAS_SIDE`), as the model's; the 8,388,608-texel cap below
+  still applies to the texels drawn. Without it, the frame is drawn on the
+  model's canvas. 2D meshes frames have no such field.
 - `camera`: `view` (world to camera) and `projection`, either
   `{ "perspective": { yfov, near, far } }` (radians) or
   `{ "orthographic": { height, near, far } }` (metres).
@@ -114,7 +116,9 @@ the identity as `world` for a glTF skinned mesh.
 `crates/gpu-renderer/src/scene.rs`, `scene_skin.wgsl`, `scene.wgsl`:
 
 - **Checked once and per frame.** On open, the model must have a canvas
-  with area, vertex streams of equal length, triangles inside their
+  whose sides are finite, at least 1, and at most 16384 (a subnormal side
+  would make the projection's aspect 0 or infinite), vertex streams of
+  equal length, triangles inside their
   vertices, references to things it has (textures, geometries, materials,
   skins), and skins with every joint their geometries' vertices name;
   buffers and textures must fit the GPU. The buffers the model has the GPU
@@ -123,9 +127,9 @@ the identity as `world` for a glTF skinned mesh.
   at most 1 GiB (`SCENE_BUFFER_BUDGET`, 1 << 30 bytes), counted before
   anything is allocated, so a small model listing many draws of a large
   geometry is refused rather than run out of memory. A frame's own
-  canvas, when it has one, must have finite, positive sides of at most
-  16384, checked before the canvas is sized, so that a bad one is refused
-  rather than clamped. Each frame must list
+  canvas, when it has one, is held to the model canvas's rule, checked
+  before the canvas is sized, so that a bad one is refused rather than
+  clamped. Each frame must list
   only draws the model has, each once, with as many morph weights as targets, as many
   skinning matrices per skin as joints, finite numbers, and a camera that
   sees something (`0 < near < far`, a `yfov` between 0 and π or a positive
@@ -353,8 +357,11 @@ Not done:
   frames repeat exactly; a layer zoomed ×64 renders on a canvas within
   `SCENE_CANVAS_TEXELS`; a frame's own canvas (32×64 on a 64×64 model)
   sizes the layer and the projection's aspect, a unit square staying
-  square, and a frame canvas of `[0, 64]`, `[NaN, 1]`, or `[20000, 10]` is
-  refused naming `canvas`; a model over the 1 GiB buffer budget is refused;
+  square, and measures, as a 3D plane's content, as it draws; a render
+  asks for a scene frame in a 3D plane once, and the next render asks
+  again; a frame or model canvas of `[0, 64]`, `[NaN, 1]`, `[1e-45, 64]`,
+  `[0.5, 64]`, `[20000, 10]`, or `[1e30, 64]` is refused naming `canvas`;
+  a model over the 1 GiB buffer budget is refused;
   the texture transform offsets, scales, and rotates (a quarter turn
   taking `(u, v)` to `(−v, u)`, as `KHR_texture_transform`'s column-major
   `mat3`), scaled before it is rotated; and the frame's overrides replace
@@ -371,7 +378,9 @@ Not done:
   and that
   projections put `near` at depth 0 and `far` at 1, the determinant, that
   sRGB mipmaps average in linear light, the capped canvas size (4K at 1×
-  untouched, aspect kept), the buffer byte count, and the per-draw uniform
+  untouched, aspect kept), the canvas rule's edges (1 and 16384 drawn;
+  `1e-45`, 0.5, 16384.5, `1e30`, infinity, and NaN refused, for the model
+  and a frame alike), the buffer byte count, and the per-draw uniform
   check (a GPU test would need over 500,000 queued draws).
 - The exporter's tests list a note among the JSON warnings and
   `--json-progress`'s `warning` events, and keep it out of the progress

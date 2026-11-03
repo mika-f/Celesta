@@ -1246,15 +1246,38 @@ fn frame_canvas_overrides_the_model_canvas() {
 
 #[test]
 fn bad_frame_canvas_is_refused() {
-    for canvas in [[0.0, 64.0], [f32::NAN, 1.0], [20000.0, 10.0]] {
+    for canvas in BAD_CANVASES {
         let mut scenes = one_square();
         scenes.frame.canvas = Some(canvas);
+        let Some(message) = invalid(scenes) else {
+            return;
+        };
+        assert!(message.contains("frame's canvas"), "{canvas:?}: {message}");
+    }
+}
+
+#[test]
+fn bad_model_canvas_is_refused() {
+    for canvas in BAD_CANVASES {
+        let mut scenes = one_square();
+        scenes.model.canvas = canvas;
         let Some(message) = invalid(scenes) else {
             return;
         };
         assert!(message.contains("canvas"), "{canvas:?}: {message}");
     }
 }
+
+/// Canvases neither a model nor a frame may have: without area, not a
+/// number, a subnormal side, under a pixel, or too long.
+const BAD_CANVASES: [[f32; 2]; 6] = [
+    [0.0, 64.0],
+    [f32::NAN, 1.0],
+    [1e-45, 64.0],
+    [0.5, 64.0],
+    [20000.0, 10.0],
+    [1e30, 64.0],
+];
 
 #[test]
 fn measured_scene_layer_follows_the_frame_canvas() {

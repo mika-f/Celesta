@@ -32,7 +32,7 @@ use crate::scene_material::{
     MAX_MATERIAL_PARAMS, MAX_MATERIAL_TEXTURES, MAX_SHADER_BYTES, check_material,
 };
 use crate::texture::LayerTexture;
-use celesta_plugin::scene::{MAX_FRAME_CANVAS_SIDE, MAX_SCENE_SHADERS};
+use celesta_plugin::scene::{MAX_SCENE_CANVAS_SIDE, MAX_SCENE_SHADERS};
 use celesta_plugin::{
     AlphaMode, Camera, ColorSpace, CullFace, DrawState, EmptyTexel, Filter, Material, MaterialKind,
     MaterialOverrides, ModelId, Projection, SceneFrame, SceneModel, SceneShader, TextureRef,
@@ -135,20 +135,28 @@ pub(crate) fn frame_canvas(model: &SceneModel, frame: &SceneFrame) -> [f32; 2] {
     frame.canvas.unwrap_or(model.canvas)
 }
 
-/// Why `frame`'s own canvas cannot be drawn on: a side that is not finite,
-/// not positive, or longer than `MAX_FRAME_CANVAS_SIDE`. Checked before the
-/// canvas is sized, so that it is refused rather than clamped.
-pub(crate) fn invalid_frame_canvas(frame: &SceneFrame) -> Option<String> {
-    let canvas = frame.canvas?;
+/// Why a scene cannot be drawn on `canvas`, the model's or a frame's own
+/// (`whose`): a side that is not finite, shorter than 1, or longer than
+/// `MAX_SCENE_CANVAS_SIDE`. At least 1 rather than positive: a subnormal
+/// side makes the aspect (`width / height`) 0 or infinite, which the
+/// projection divides by, so the shader would get infinities and NaNs.
+fn invalid_canvas(whose: &str, canvas: [f32; 2]) -> Option<String> {
     if canvas
         .iter()
-        .all(|size| size.is_finite() && *size > 0.0 && *size <= MAX_FRAME_CANVAS_SIDE)
+        .all(|side| (1.0..=MAX_SCENE_CANVAS_SIDE).contains(side))
     {
         return None;
     }
     Some(format!(
-        "the frame's canvas is {canvas:?}: each side must be finite, positive, and at most {MAX_FRAME_CANVAS_SIDE}"
+        "{whose} canvas is {canvas:?}: each side must be finite, at least 1, and at most {MAX_SCENE_CANVAS_SIDE}"
     ))
+}
+
+/// Why `frame`'s own canvas cannot be drawn on, by `invalid_canvas`'s
+/// rule. Checked before the canvas is sized, so that it is refused rather
+/// than clamped.
+pub(crate) fn invalid_frame_canvas(frame: &SceneFrame) -> Option<String> {
+    invalid_canvas("the frame's", frame.canvas?)
 }
 
 /// A scene model and its copy on the GPU.
@@ -1563,23 +1571,19 @@ fn finite(values: &[f32]) -> bool {
     values.iter().all(|value| value.is_finite())
 }
 
-/// Why `model` cannot be drawn: a canvas without area, vertex streams of
-/// different lengths, triangles outside their vertices, or a reference to
-/// something it lacks, buffers past `SCENE_BUFFER_BUDGET`, or shaders past
-/// the limits, more texture slots filled than a material's shader has, an
-/// unlit material's base color or texture transform that is not finite, or
-/// an outline depth bias that is not finite. A draw's skin must have every
-/// joint its geometry's vertices name, and a draw whose material requires
-/// tangents a geometry with tangents; all of these are fixed, so they are
-/// checked here, once, rather than in every frame, and before naga or the
-/// GPU reads any shader.
+/// Why `model` cannot be drawn: a canvas `invalid_canvas` refuses, vertex
+/// streams of different lengths, triangles outside their vertices, or a
+/// reference to something it lacks, buffers past `SCENE_BUFFER_BUDGET`, or
+/// shaders past the limits, more texture slots filled than a material's
+/// shader has, an unlit material's base color or texture transform that is
+/// not finite, or an outline depth bias that is not finite. A draw's skin
+/// must have every joint its geometry's vertices name, and a draw whose
+/// material requires tangents a geometry with tangents; all of these are
+/// fixed, so they are checked here, once, rather than in every frame, and
+/// before naga or the GPU reads any shader.
 pub(crate) fn invalid_scene(model: &SceneModel) -> Option<String> {
-    if !model
-        .canvas
-        .iter()
-        .all(|size| size.is_finite() && *size > 0.0)
-    {
-        return Some(format!("the canvas is {:?}", model.canvas));
+    if let Some(message) = invalid_canvas("the model's", model.canvas) {
+        return Some(message);
     }
     for (index, geometry) in model.geometries.iter().enumerate() {
         let vertices = geometry.positions.len();
@@ -3397,6 +3401,42 @@ mod tests {
                 };
                 draws
             ],
+        }
+    }
+
+    #[test]
+    fn canvas_sides_are_at_least_1_and_at_most_the_longest() {
+        // The model's canvas and a frame's own keep one rule.
+        let mut model = bare_model(4, 1);
+        for side in [1.0, 640.5, MAX_SCENE_CANVAS_SIDE] {
+            assert_eq!(invalid_canvas("the frame's", [side, 64.0]), None, "{side}");
+            model.canvas = [64.0, side];
+            assert_eq!(invalid_scene(&model), None, "{side}");
+        }
+        // A subnormal side, which would make the aspect 0 or infinite, as
+        // well as one too long to draw.
+        let refused = [
+            1e-45,
+            0.5,
+            0.0,
+            -1.0,
+            16_384.5,
+            1e30,
+            f32::INFINITY,
+            f32::NAN,
+        ];
+        for side in refused {
+            let message = invalid_canvas("the frame's", [side, 64.0]);
+            assert!(
+                message.as_deref().is_some_and(|m| m.contains("canvas")),
+                "{side}: {message:?}"
+            );
+            model.canvas = [64.0, side];
+            let message = invalid_scene(&model);
+            assert!(
+                message.as_deref().is_some_and(|m| m.contains("canvas")),
+                "{side}: {message:?}"
+            );
         }
     }
 
